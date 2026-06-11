@@ -18,6 +18,23 @@ namespace TravelApi.Domain.Reservations;
 /// </summary>
 public static class SupplierDebtCalculator
 {
+    // ADR-022 §4.10 (fix #4, 2026-06-11): UNICA fuente de los estados de Reserva en los que un servicio
+    // "cuenta" como vivo para la cuenta corriente del proveedor. Antes esta lista estaba DUPLICADA en
+    // SupplierService.ValidReservationStatuses y SupplierDebtPersister.ValidReservationStatuses: si una de
+    // las dos cambiaba, el numero de deuda salia distinto segun el camino (servicio del proveedor vs
+    // persister generico) y mentia en silencio. Centralizada aca, ambos consumen el mismo array.
+    // ADR-020: InManagement (En gestion) reemplazo al viejo Sold; ToSettle es la etapa de liquidar con el
+    // operador. La deuda real ademas filtra por servicio confirmado (CountsForSupplierDebtByType); este
+    // conjunto solo define que RESERVAS son "vivas" para el proveedor.
+    public static readonly string[] ValidReservationStatuses =
+    {
+        EstadoReserva.InManagement,
+        EstadoReserva.Confirmed,
+        EstadoReserva.Traveling,
+        EstadoReserva.ToSettle,
+        EstadoReserva.Closed
+    };
+
     /// <summary>
     /// Una compra confirmada que aporta a la deuda: su monto (NetCost) y su moneda (null = ARS).
     /// </summary>

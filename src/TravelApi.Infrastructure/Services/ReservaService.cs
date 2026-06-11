@@ -15,6 +15,7 @@ using TravelApi.Domain.Entities;
 using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
+using TravelApi.Infrastructure.Reservations;
 using TravelApi.Infrastructure.Services.Reservations;
 using TravelApi.Infrastructure.Time;
 
@@ -1808,7 +1809,32 @@ public class ReservaService : IReservaService
         await _context.SaveChangesAsync();
         await UpdateBalanceAsync(reservaId);
 
+        // ADR-022 §4.10 (fix P1): el servicio generico participa de la deuda del proveedor, pero hasta
+        // ahora ReservaService solo recalculaba el saldo de la RESERVA y nunca el del PROVEEDOR -> su
+        // CurrentBalance / SupplierBalanceByCurrency quedaban stale. Si el servicio recien creado tiene
+        // proveedor, recalculamos su deuda (escalar + tabla hija) con el mismo helper sin estado que usa
+        // SupplierService, asi el numero es identico. Solo si hay proveedor (un generico sin proveedor no
+        // toca ninguna cuenta).
+        if (supplierId.HasValue)
+        {
+            await RecalculateSupplierDebtAsync(supplierId.Value, ct);
+        }
+
         return (reservation, warning);
+    }
+
+    /// <summary>
+    /// ADR-022 §4.10 (fix P1): recalcula y persiste la deuda de un proveedor (escalar surrogate + tabla
+    /// hija por moneda) tras crear/editar/borrar un servicio generico con proveedor. Delega en
+    /// <see cref="SupplierDebtPersister"/> — el mismo helper sin estado que usa <c>SupplierService</c>, para
+    /// que el numero final sea EXACTAMENTE el que daria el servicio del proveedor (sin inyectar
+    /// <c>ISupplierService</c>, evitando el ciclo de dependencias). El persister no hace SaveChanges, por
+    /// eso lo cerramos aca con un SaveChanges propio.
+    /// </summary>
+    private async Task RecalculateSupplierDebtAsync(int supplierId, CancellationToken ct)
+    {
+        await SupplierDebtPersister.PersistAsync(_context, supplierId, ct);
+        await _context.SaveChangesAsync(ct);
     }
 
     public async Task<ServicioReserva> UpdateServiceAsync(int serviceId, AddServiceRequest request, CancellationToken ct = default)
@@ -1847,6 +1873,13 @@ public class ReservaService : IReservaService
 
         if (string.IsNullOrWhiteSpace(request.ServiceType)) throw new ArgumentException("Debe seleccionar un tipo de servicio");
         if (request.SalePrice <= 0) throw new ArgumentException("El precio de venta debe ser mayor a 0");
+
+        // ADR-022 §4.10 (fix P1): capturamos el proveedor ANTERIOR antes de pisarlo. Si el usuario cambia
+        // de proveedor (o le saca/pone proveedor), hay que recalcular la deuda del VIEJO y del NUEVO: el
+        // viejo deja de tener este servicio (su deuda baja) y el nuevo lo gana (su deuda sube). El cambio
+        // de NetCost/moneda/estado tambien afecta la deuda del proveedor vigente, por eso siempre que haya
+        // proveedor (viejo o nuevo) recalculamos.
+        var previousSupplierId = service.SupplierId;
 
         service.ServiceType = request.ServiceType;
         service.ProductType = request.ServiceType;
@@ -1890,6 +1923,18 @@ public class ReservaService : IReservaService
 
         await _context.SaveChangesAsync();
         if (service.ReservaId.HasValue) await UpdateBalanceAsync(service.ReservaId.Value);
+
+        // ADR-022 §4.10 (fix P1): recalcular la deuda del proveedor VIEJO y del NUEVO. Si no cambio de
+        // proveedor, ambos ids son iguales y un HashSet evita recalcular dos veces el mismo. Cada uno solo
+        // si no es null (un generico sin proveedor no toca ninguna cuenta).
+        var suppliersToRecalculate = new HashSet<int>();
+        if (previousSupplierId.HasValue) suppliersToRecalculate.Add(previousSupplierId.Value);
+        if (supplierId.HasValue) suppliersToRecalculate.Add(supplierId.Value);
+        foreach (var affectedSupplierId in suppliersToRecalculate)
+        {
+            await RecalculateSupplierDebtAsync(affectedSupplierId, ct);
+        }
+
         return service;
     }
 
@@ -1903,10 +1948,14 @@ public class ReservaService : IReservaService
                 || ServiceResolutionRules.IsOperatorConfirmed(service)
                 || ServiceResolutionRules.IsResolved(service);
             await EnsureCanRemoveServiceAsync(service.ReservaId ?? 0, confirmed, service.Id, ct);
+            // ADR-022 §4.10 (fix P1): capturamos el proveedor antes de borrar el servicio para recalcular
+            // su deuda despues (el servicio borrado deja de contar -> la deuda de ese proveedor baja).
+            var removedSupplierId = service.SupplierId;
             _context.Servicios.Remove(service);
             var resId = service.ReservaId;
             await _context.SaveChangesAsync(ct);
             if (resId.HasValue) await UpdateBalanceAsync(resId.Value);
+            if (removedSupplierId.HasValue) await RecalculateSupplierDebtAsync(removedSupplierId.Value, ct);
             return;
         }
 
@@ -2160,6 +2209,13 @@ public class ReservaService : IReservaService
     {
         return await _context.Payments
             .Where(p => p.ReservaId == reservaId)
+            // ADR-022 §4.9 (fix S1-bis): el Payment puente del saldo a favor (Method "SaldoAFavor",
+            // AffectsCash=false, monto negativo) es respaldo INTERNO; no es un cobro real. Se excluye del
+            // historial de cobros de la reserva (igual que MovementsService lo excluye de Movimientos): asi el
+            // usuario no ve una "fila rara negativa" borrable y "Recaudado" suma lo que el cliente pagó de
+            // verdad. El saldo de la reserva NO depende de esta lista (se calcula server-side), asi que ocultar
+            // el puente no descuadra el numero grande; el excedente vive en el bolsillo del cliente.
+            .Where(p => !(p.Method == OverpaymentCreditCleanup.BridgeMethod && !p.AffectsCash && p.OriginalPaymentId != null))
             .OrderByDescending(p => p.PaidAt)
             .ProjectTo<PaymentDto>(_mapper.ConfigurationProvider)
             .ToListAsync();
@@ -2198,6 +2254,16 @@ public class ReservaService : IReservaService
 
         if (updatedPayment.Amount <= 0) throw new ArgumentException("El monto debe ser mayor a 0");
 
+        // ADR-022 §4.9 (fix S1-bis): mismo candado que PaymentService.UpdatePaymentAsync para el path legacy
+        // nested. El Payment puente del saldo a favor no se edita a mano (desincroniza credito y reserva).
+        if (OverpaymentCreditCleanup.IsOverpaymentBridge(payment))
+        {
+            _logger.LogWarning(
+                "UpdatePaymentAsync (legacy via reserva) rejected (direct overpayment-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
+                paymentId, reservaId);
+            throw new InvalidOperationException(OverpaymentCreditCleanup.DirectBridgeMutationBlockReason);
+        }
+
         // B1.15 Fase 0' (CODE-01): mismo guard que PaymentService.UpdatePaymentAsync
         // — este es el path legacy "via reserva nested". Sin esto, el bypass del
         // controller nested deja editar pagos con recibo o factura AFIP viva.
@@ -2208,6 +2274,26 @@ public class ReservaService : IReservaService
                 "UpdatePaymentAsync (legacy via reserva) rejected. PaymentId={PaymentId} ReservaId={ReservaId}. Reason={Reason}",
                 paymentId, reservaId, blockReason);
             throw new InvalidOperationException(blockReason);
+        }
+
+        // ADR-022 §4.9 (fix S1): si cambia el monto y el cobro genero un saldo a favor de sobrepago ya
+        // usado, no se permite editar (recomputar destruiria la historia de consumo). Si esta intacto, se
+        // revierten los artefactos viejos antes del recalculo. El path legacy NO re-crea el saldo a favor:
+        // si el monto nuevo sigue sobrepagando, el excedente queda como saldo a favor de la RESERVA (saldo
+        // negativo, no fantasma), que es seguro; la conversion al bolsillo del cliente vive en PaymentService.
+        bool amountChanges = updatedPayment.Amount != payment.Amount;
+        if (amountChanges)
+        {
+            var overpaymentBlock = await OverpaymentCreditCleanup.GetConsumedBlockReasonAsync(_context, paymentId);
+            if (overpaymentBlock != null)
+            {
+                _logger.LogWarning(
+                    "UpdatePaymentAsync (legacy via reserva) rejected (overpayment credit already consumed). PaymentId={PaymentId} ReservaId={ReservaId}.",
+                    paymentId, reservaId);
+                throw new InvalidOperationException(overpaymentBlock);
+            }
+            await OverpaymentCreditCleanup.ReverseOverpaymentArtifactsAsync(
+                _context, paymentId, GetCurrentUserIdOrNull(), GetCurrentUserNameOrNull());
         }
 
         payment.Amount = updatedPayment.Amount;
@@ -2231,6 +2317,16 @@ public class ReservaService : IReservaService
         var file = await _context.Reservas.FindAsync(reservaId);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
+        // ADR-022 §4.9 (fix S1-bis): mismo candado que PaymentService.DeletePaymentAsync para el path legacy
+        // nested. El Payment puente del saldo a favor no se borra a mano (deja credito fantasma + deuda inflada).
+        if (OverpaymentCreditCleanup.IsOverpaymentBridge(payment))
+        {
+            _logger.LogWarning(
+                "DeletePaymentAsync (legacy via reserva) rejected (direct overpayment-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
+                paymentId, reservaId);
+            throw new InvalidOperationException(OverpaymentCreditCleanup.DirectBridgeMutationBlockReason);
+        }
+
         // C28: mismo guard que PaymentService.DeletePaymentAsync — este es el path
         // legacy "via reserva nested" (ReservasController.DeletePayment).
         var blockReason = await DeleteGuards.GetPaymentDeleteBlockReasonAsync(_context, paymentId);
@@ -2241,6 +2337,21 @@ public class ReservaService : IReservaService
                 paymentId, reservaId, blockReason);
             throw new InvalidOperationException(blockReason);
         }
+
+        // ADR-022 §4.9 (fix S1): el path legacy tambien puede anular un cobro que genero un saldo a favor de
+        // sobrepago (el credito se crea en PaymentService, pero se borra por aca). Mismo candado: si ese
+        // saldo a favor ya fue usado, no se anula; si esta intacto, se revierte el puente y se anula el
+        // credito ANTES del recalculo para no dejar credito fantasma ni inflar la deuda.
+        var overpaymentBlock = await OverpaymentCreditCleanup.GetConsumedBlockReasonAsync(_context, paymentId);
+        if (overpaymentBlock != null)
+        {
+            _logger.LogWarning(
+                "DeletePaymentAsync (legacy via reserva) rejected (overpayment credit already consumed). PaymentId={PaymentId} ReservaId={ReservaId}.",
+                paymentId, reservaId);
+            throw new InvalidOperationException(overpaymentBlock);
+        }
+        await OverpaymentCreditCleanup.ReverseOverpaymentArtifactsAsync(
+            _context, paymentId, GetCurrentUserIdOrNull(), GetCurrentUserNameOrNull());
 
         payment.IsDeleted = true;
         payment.DeletedAt = DateTime.UtcNow;

@@ -98,44 +98,59 @@ public class FinanceReadModelTests
     public async Task GetCashSummaryAsync_ShouldOnlyReturnCashMetrics()
     {
         using var context = new AppDbContext(_dbOptions);
-        context.Payments.Add(new Payment
-        {
-            Id = 1,
-            Amount = 500m,
-            PaidAt = DateTime.UtcNow,
-            Status = "Paid",
-            EntryType = PaymentEntryTypes.Payment,
-            AffectsCash = true,
-            Method = "Transfer"
-        });
-        context.SupplierPayments.Add(new SupplierPayment
-        {
-            Id = 1,
-            SupplierId = 1,
-            Amount = 120m,
-            PaidAt = DateTime.UtcNow,
-            Method = "Transfer"
-        });
-        context.ManualCashMovements.Add(new ManualCashMovement
-        {
-            Id = 1,
-            Direction = CashMovementDirections.Expense,
-            Amount = 30m,
-            OccurredAt = DateTime.UtcNow,
-            Method = "Cash",
-            Category = "Caja",
-            Description = "Ajuste",
-            CreatedBy = "Admin"
-        });
+        var now = DateTime.UtcNow;
+
+        // ADR-022 capa 4: la caja sale del LIBRO DE CAJA (asientos), no de unir Payments+SupplierPayments+
+        // ManualCashMovements al vuelo. Un cobro (Income 500), un pago a proveedor (Expense 120) y un ajuste
+        // manual (Expense 30): CashIn 500, CashOut 150, neto 350.
+        context.CashLedgerEntries.AddRange(
+            new CashLedgerEntry
+            {
+                Direction = CashMovementDirections.Income, Amount = 500m, Currency = Monedas.ARS,
+                Method = "Transfer", OccurredAt = now, SourceType = CashLedgerSourceTypes.CustomerPayment
+            },
+            new CashLedgerEntry
+            {
+                Direction = CashMovementDirections.Expense, Amount = 120m, Currency = Monedas.ARS,
+                Method = "Transfer", OccurredAt = now, SourceType = CashLedgerSourceTypes.SupplierPayment
+            },
+            new CashLedgerEntry
+            {
+                Direction = CashMovementDirections.Expense, Amount = 30m, Currency = Monedas.ARS,
+                Method = "Cash", OccurredAt = now, SourceType = CashLedgerSourceTypes.ManualAdjustment
+            });
         await context.SaveChangesAsync();
 
-        var service = new TreasuryService(context, null!);
+        // ADR-022 fix S2: la SALIDA de caja es costo -> se enmascara sin cobranzas.see_cost. Este test verifica
+        // la AGREGACION de metricas, asi que usa un caller CON see_cost (ve CashOut real). El enmascarado en si
+        // se prueba aparte (Adr022Tanda3Tests.CashSummary_WithoutSeeCost_MasksCashOut_KeepsCashIn).
+        var service = BuildTreasuryCanSeeCost(context);
 
         var summary = await service.GetCashSummaryAsync(CancellationToken.None);
 
         Assert.Equal(500m, summary.CashInThisMonth);
         Assert.Equal(150m, summary.CashOutThisMonth);
         Assert.Equal(350m, summary.NetCashThisMonth);
+    }
+
+    /// <summary>Tesoreria con un caller que SI ve costos (mismo patron que Adr022Tanda3Tests).</summary>
+    private static TreasuryService BuildTreasuryCanSeeCost(AppDbContext context)
+    {
+        const string userId = "see-cost-user";
+        var claims = new[] { new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.NameIdentifier, userId) };
+        var identity = new System.Security.Claims.ClaimsIdentity(claims, "Test");
+        var accessor = new Microsoft.AspNetCore.Http.HttpContextAccessor
+        {
+            HttpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext
+            {
+                User = new System.Security.Claims.ClaimsPrincipal(identity)
+            }
+        };
+        var resolver = new Mock<IUserPermissionResolver>();
+        IReadOnlySet<string> perms = new System.Collections.Generic.HashSet<string> { Permissions.CobranzasSeeCost };
+        resolver.Setup(r => r.GetPermissionsAsync(userId, It.IsAny<CancellationToken>())).ReturnsAsync(perms);
+        return new TreasuryService(context, null!, financePositionService: null,
+            httpContextAccessor: accessor, permissionResolver: resolver.Object);
     }
 
     [Fact]

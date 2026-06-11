@@ -306,7 +306,10 @@ public class CustomerService : ICustomerService
                 .CountAsync(payment => payment.Reserva != null && payment.Reserva.PayerId == id, cancellationToken),
             InvoiceCount = await _dbContext.Invoices
                 .AsNoTracking()
-                .CountAsync(invoice => invoice.Reserva != null && invoice.Reserva.PayerId == id, cancellationToken)
+                .CountAsync(invoice => invoice.Reserva != null && invoice.Reserva.PayerId == id, cancellationToken),
+            // ADR-022 Capa 8 (C2): la cuenta corriente por moneda + el bolsillo de saldo a favor.
+            ReceivableByCurrency = await BuildCustomerReceivableByCurrencyAsync(id, cancellationToken),
+            CreditBalanceByCurrency = await BuildCustomerCreditByCurrencyAsync(id, cancellationToken)
         };
 
         return new CustomerAccountOverviewDto
@@ -314,6 +317,80 @@ public class CustomerService : ICustomerService
             Customer = customer,
             Summary = summary
         };
+    }
+
+    // Estados de reserva que cuentan como saldo a COBRAR del cliente. Misma definicion que el AR de tesoreria
+    // (ADR-022 §4.7): una cotizacion/presupuesto todavia no tiene saldo exigible.
+    private static readonly string[] ReceivableStatuses =
+    {
+        EstadoReserva.InManagement,
+        EstadoReserva.Confirmed,
+        EstadoReserva.Traveling,
+        EstadoReserva.ToSettle
+    };
+
+    /// <summary>
+    /// ADR-022 Capa 8 (C2): saldo a COBRAR del cliente POR MONEDA, derivado de ReservaMoneyByCurrency (no del
+    /// surrogate escalar Reserva.Balance, que mezclaria monedas). Es la misma fuente que el AR de tesoreria,
+    /// filtrada a las reservas de ESTE cliente (PayerId) en estado activo, contando solo saldos positivos.
+    /// </summary>
+    private async Task<List<CurrencyAmountDto>> BuildCustomerReceivableByCurrencyAsync(int customerId, CancellationToken cancellationToken)
+    {
+        // Join explicito contra Reservas (no nav implicita) para correr igual en Postgres e InMemory.
+        var query =
+            from row in _dbContext.ReservaMoneyByCurrency
+            join reservaPadre in _dbContext.Reservas on row.ReservaId equals reservaPadre.Id
+            where reservaPadre.PayerId == customerId
+                && ReceivableStatuses.Contains(reservaPadre.Status)
+                && row.Balance > 0
+            select new { row.Currency, row.Balance };
+
+        var grouped = await query
+            .GroupBy(x => x.Currency)
+            .Select(g => new { Currency = g.Key, Amount = g.Sum(x => x.Balance) })
+            .ToListAsync(cancellationToken);
+
+        return ToOrderedCurrencyAmounts(grouped.Select(x => (x.Currency, x.Amount)));
+    }
+
+    /// <summary>
+    /// ADR-022 Capa 8 / decision #3: el "bolsillo" unificado de saldo A FAVOR del cliente POR MONEDA. Suma los
+    /// ClientCreditEntry activos (RemainingBalance &gt; 0) del cliente, CUALQUIER origen (cancelacion o sobrepago).
+    /// Es el eje OPUESTO al de cobrar; el backend los expone separados y NUNCA netea uno contra el otro.
+    /// </summary>
+    private async Task<List<CurrencyAmountDto>> BuildCustomerCreditByCurrencyAsync(int customerId, CancellationToken cancellationToken)
+    {
+        var grouped = await _dbContext.ClientCreditEntries
+            .AsNoTracking()
+            .Where(entry => entry.CustomerId == customerId && entry.RemainingBalance > 0m)
+            .GroupBy(entry => entry.Currency)
+            .Select(g => new { Currency = g.Key, Amount = g.Sum(x => x.RemainingBalance) })
+            .ToListAsync(cancellationToken);
+
+        return ToOrderedCurrencyAmounts(grouped.Select(x => (x.Currency, x.Amount)));
+    }
+
+    /// <summary>
+    /// Normaliza la moneda (null/vacio -> ARS para datos legacy), redondea y ordena por moneda. Las lineas en 0
+    /// no se omiten aca (un grupo solo existe si tuvo saldo &gt; 0 en la query).
+    /// </summary>
+    private static List<CurrencyAmountDto> ToOrderedCurrencyAmounts(IEnumerable<(string? Currency, decimal Amount)> rows)
+    {
+        var totals = new Dictionary<string, decimal>(StringComparer.Ordinal);
+        foreach (var (currency, amount) in rows)
+        {
+            var key = Monedas.Normalizar(currency);
+            totals[key] = totals.TryGetValue(key, out var current) ? current + amount : amount;
+        }
+
+        return totals
+            .OrderBy(kvp => kvp.Key, StringComparer.Ordinal)
+            .Select(kvp => new CurrencyAmountDto
+            {
+                Currency = kvp.Key,
+                Amount = EconomicRulesHelper.RoundCurrency(kvp.Value)
+            })
+            .ToList();
     }
 
     public async Task<PagedResponse<CustomerAccountReservaListItemDto>> GetCustomerAccountReservasAsync(int id, PagedQuery query, CancellationToken cancellationToken)

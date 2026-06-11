@@ -72,6 +72,8 @@ public class SupplierPaymentDto
 {
     public Guid PublicId { get; set; }
     public decimal Amount { get; set; }
+    /// <summary>ADR-021: moneda REAL del egreso (lo que salio de caja). Default ARS para el legacy.</summary>
+    public string Currency { get; set; } = "ARS";
     public string Method { get; set; } = string.Empty;
     public DateTime PaidAt { get; set; }
     public string? Reference { get; set; }
@@ -79,4 +81,10 @@ public class SupplierPaymentDto
     public string? NumeroReserva { get; set; }
     public string? FileName { get; set; }
     public Guid? ReservaPublicId { get; set; }
+    /// <summary>
+    /// ADR-022 §4 P4: true = anticipo "a cuenta" del proveedor (no imputado a ninguna reserva). Se deriva de
+    /// la ausencia de reserva (<see cref="ReservaPublicId"/> null). El front lo usa para mostrar "a cuenta"
+    /// en vez de un numero de reserva.
+    /// </summary>
+    public bool IsAdvanceToAccount { get; set; }
 }

@@ -536,6 +536,8 @@ builder.Services.AddScoped<ICommissionService, CommissionService>();
 builder.Services.AddScoped<IAlertService, AlertService>();
 builder.Services.AddScoped<IOperationalFinanceSettingsService, OperationalFinanceSettingsService>();
 builder.Services.AddScoped<ITreasuryService, TreasuryService>();
+// ADR-022 §4.7 (T4): fuente unica AR/AP por moneda, consumida por dashboard y tesoreria.
+builder.Services.AddScoped<IFinancePositionService, FinancePositionService>();
 builder.Services.AddScoped<OperationalFinanceMonitorService>();
 // ADR-020 F3: motor de estados automatico (confirmacion/regresion automatica + estampado ConfirmedAt).
 builder.Services.AddScoped<TravelApi.Infrastructure.Services.Reservations.ReservaAutoStateService>();
@@ -760,6 +762,36 @@ if (migrateOnly || applyMigrationsOnStartup)
                 {
                     app.Logger.LogError(backfillEx,
                         "ADR-021 multicurrency backfill failed. Startup continues; child tables will be completed on next recalculation or re-deploy.");
+                }
+
+                // ADR-022 Capa 3 (Libro de Caja): backfill IDEMPOTENTE de los asientos historicos. La
+                // migracion crea la tabla vacia; este job crea UN asiento por hecho vivo (cobro / pago a
+                // proveedor / movimiento manual incluyendo cancelacion) con la moneda real. Se corre DESPUES
+                // del backfill multimoneda (por prolijidad: las columnas Currency ya estan garantizadas y
+                // los saldos recalculados), con su propio NeedsBackfillAsync y try/catch no-abortante.
+                try
+                {
+                    var cashLedgerBackfill = new CashLedgerBackfillService(
+                        db,
+                        scope.ServiceProvider.GetService<ILogger<CashLedgerBackfillService>>());
+
+                    if (await cashLedgerBackfill.NeedsBackfillAsync())
+                    {
+                        app.Logger.LogInformation("ADR-022: running cash ledger backfill...");
+                        var (paymentsDone, supplierPaymentsDone, manualsDone) = await cashLedgerBackfill.RunAsync();
+                        app.Logger.LogInformation(
+                            "ADR-022 cash ledger backfill finished. Cobros={Payments}, PagosProveedor={SupplierPayments}, Manuales={Manuals}.",
+                            paymentsDone, supplierPaymentsDone, manualsDone);
+                    }
+                    else
+                    {
+                        app.Logger.LogInformation("ADR-022: cash ledger already populated, skipping backfill.");
+                    }
+                }
+                catch (Exception cashLedgerEx)
+                {
+                    app.Logger.LogError(cashLedgerEx,
+                        "ADR-022 cash ledger backfill failed. Startup continues; the ledger will be completed on next re-deploy.");
                 }
 
                 break;

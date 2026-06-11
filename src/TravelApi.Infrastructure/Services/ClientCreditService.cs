@@ -113,6 +113,9 @@ public class ClientCreditService : IClientCreditService
             // SaveChanges en orden topologico.
             Allocation = operatorRefundAllocation,
             CustomerId = customerId,
+            // ADR-022 §4.9 (Q2): el bolsillo de cancelacion lleva la moneda REAL del refund desde el dia
+            // uno (OperatorRefundReceived.Currency ya existe). Normalizamos por las dudas (null -> ARS).
+            Currency = Monedas.Normalizar(currency),
             CreditedAmount = netAmount,
             RemainingBalance = netAmount,
             CreatedAt = DateTime.UtcNow,
@@ -242,7 +245,8 @@ public class ClientCreditService : IClientCreditService
             {
                 withdrawalPublicId = withdrawal.PublicId,
                 entryPublicId = entry.PublicId,
-                bcPublicId = entry.BookingCancellation.PublicId,
+                // ADR-022 §4.9: nullable para creditos de SOBREPAGO (sin BC detras).
+                bcPublicId = entry.BookingCancellation?.PublicId,
                 customerPublicId = entry.Customer.PublicId,
                 kind = withdrawal.Kind.ToString(),
                 withdrawal.Amount,
@@ -266,7 +270,7 @@ public class ClientCreditService : IClientCreditService
                 details: JsonSerializer.Serialize(new
                 {
                     entryPublicId = entry.PublicId,
-                    bcPublicId = entry.BookingCancellation.PublicId,
+                    bcPublicId = entry.BookingCancellation?.PublicId,
                     customerPublicId = entry.Customer.PublicId,
                     withdrawalPublicId = withdrawal.PublicId,
                     withdrawal.Amount,
@@ -300,9 +304,15 @@ public class ClientCreditService : IClientCreditService
         //    callback YA VE las modificaciones de este flujo (RemainingBalance=0).
         //    El ChangeTracker quedo limpio para esos cambios; solo veria
         //    bc.Status si el callback lo modifica.
-        if (request.Kind != WithdrawalKind.KeptAsCredit && entry.IsFullyConsumed)
+        // ADR-022 §4.9 (B5): el cierre de cancelacion solo aplica a creditos que NACEN de una cancelacion
+        // (BookingCancellationId != null). Un credito de SOBREPAGO no tiene BC detras (FK null): consumirlo
+        // totalmente NO debe disparar OnAllCreditConsumedAsync (no hay cancelacion que cerrar; hacerlo con
+        // un id null/0 corromperia o explotaria). Por eso ramificamos por el origen del entry.
+        if (request.Kind != WithdrawalKind.KeptAsCredit
+            && entry.IsFullyConsumed
+            && entry.BookingCancellationId != null)
         {
-            await _bcService.OnAllCreditConsumedAsync(entry.BookingCancellationId, ct);
+            await _bcService.OnAllCreditConsumedAsync(entry.BookingCancellationId.Value, ct);
 
             // 8) SEGUNDO SaveChanges: persiste cambios del callback
             //    (bc.Status=Closed, bc.ClosedAt, bc.Reserva.Status=Cancelled).
@@ -792,6 +802,15 @@ public class ClientCreditService : IClientCreditService
             movement.Reference = request.Reference;
         }
         _db.ManualCashMovements.Add(movement);
+
+        // ADR-022 §4.4 (B1): asiento de caja de la devolucion fisica, en la MISMA SaveChanges. UN solo
+        // asiento por el manual (RK-1: NO se asienta el ClientCreditWithdrawal por separado). SourceType
+        // se deriva del FK del manual (ClientCreditWithdrawal). La MONEDA sale del ORIGEN REAL (la del
+        // bolsillo, entry.Currency), NO del manual (que nace en ARS por default). Asi un retiro de un
+        // bolsillo en USD asienta en USD.
+        var withdrawalLedgerEntry = TravelApi.Domain.Helpers.CashLedgerEntryFactory.ForManualMovement(
+            movement, currencyOverride: entry.Currency, actorUserId: userId, actorUserName: userName);
+        _db.CashLedgerEntries.Add(withdrawalLedgerEntry);
 
         return withdrawal;
     }

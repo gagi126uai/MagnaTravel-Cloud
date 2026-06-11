@@ -17,17 +17,23 @@ public class ReportService : IReportService
     // ReportService con el ctor de 2 args.
     private readonly IUserPermissionResolver? _permissionResolver;
     private readonly IHttpContextAccessor? _httpContextAccessor;
+    // ADR-022 §4.7 (T4): fuente unica AR/AP. Opcional (default null) para no romper los unit tests que
+    // instancian ReportService sin el; con null se usa el fallback inline (misma query) — ver
+    // BuildDashboardByCurrencyAsync.
+    private readonly IFinancePositionService? _financePositionService;
 
     public ReportService(
         AppDbContext dbContext,
         IBnaExchangeRateService bnaExchangeRateService,
         IUserPermissionResolver? permissionResolver = null,
-        IHttpContextAccessor? httpContextAccessor = null)
+        IHttpContextAccessor? httpContextAccessor = null,
+        IFinancePositionService? financePositionService = null)
     {
         _dbContext = dbContext;
         _bnaExchangeRateService = bnaExchangeRateService;
         _permissionResolver = permissionResolver;
         _httpContextAccessor = httpContextAccessor;
+        _financePositionService = financePositionService;
     }
 
     public async Task<DashboardResponse> GetDashboardAsync(CancellationToken cancellationToken)
@@ -60,8 +66,11 @@ public class ReportService : IReportService
         var cerrados = filesByStatus.FirstOrDefault(x => x.Status == EstadoReserva.Closed)?.Count ?? 0;
         var cancelados = filesByStatus.FirstOrDefault(x => x.Status == EstadoReserva.Cancelled)?.Count ?? 0;
 
+        // ADR-022 (fix #3): solo pagos que MOVIERON caja (AffectsCash). Excluye los Payment "puente" de
+        // AffectsCash=false (sobrepago "SaldoAFavor" y reversion de NC) que existen para imputar saldo, no
+        // para mover plata: si se contaran, su monto negativo ensuciaria el total de cobranzas del mes.
         var paymentsThisMonth = await _dbContext.Payments
-            .Where(p => p.PaidAt >= startOfMonth && !p.IsDeleted)
+            .Where(p => p.PaidAt >= startOfMonth && !p.IsDeleted && p.AffectsCash)
             .SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
 
         var outstandingBalance = await _dbContext.Reservas
@@ -264,29 +273,21 @@ public class ReportService : IReportService
                 cancellationToken)
             : new List<CurrencyAmount>();
 
-        // Saldo pendiente por moneda (cuentas por cobrar), excluyendo Closed/Cancelled/Budget igual que el escalar.
-        var saldoPendienteQuery =
-            from row in _dbContext.ReservaMoneyByCurrency
-            join reservaPadre in _dbContext.Reservas on row.ReservaId equals reservaPadre.Id
-            where reservaPadre.Status != EstadoReserva.Closed
-                && reservaPadre.Status != EstadoReserva.Cancelled
-                && reservaPadre.Status != EstadoReserva.Budget
-                && row.Balance > 0
-            select new { row.Currency, row.Balance };
+        // ADR-022 §4.7 (T4): cuentas por cobrar (AR) y por pagar (AP) por moneda salen ahora de la FUENTE
+        // UNICA compartida con tesoreria, para que dashboard y tesoreria den EXACTAMENTE el mismo numero.
+        // Si no se inyecto el servicio (unit tests con ctor corto), se construye sobre el mismo DbContext.
+        var financePosition = _financePositionService ?? new FinancePositionService(_dbContext);
 
-        var saldoPendiente = await SumByCurrencyAsync(
-            saldoPendienteQuery.GroupBy(x => x.Currency).Select(g => new CurrencyAmount(g.Key, g.Sum(x => x.Balance))),
-            cancellationToken);
+        // AR (cuentas por cobrar): plata de venta -> NO se enmascara.
+        var saldoPendiente = (await financePosition.GetAccountsReceivableByCurrencyAsync(cancellationToken))
+            .Select(x => new CurrencyAmount(x.Currency, x.Amount))
+            .ToList();
 
-        // Cuentas por pagar por moneda contra SupplierBalanceByCurrency (solo lectura; la tabla ya esta
-        // materializada por las capas 1-3). Es dato de costo -> se enmascara si no ve costos.
+        // AP (cuentas por pagar): dato de costo -> se enmascara si no ve costos.
         var cuentasPorPagar = canSeeCost
-            ? await SumByCurrencyAsync(
-                _dbContext.SupplierBalanceByCurrency
-                    .Where(row => row.Balance > 0)
-                    .GroupBy(row => row.Currency)
-                    .Select(g => new CurrencyAmount(g.Key, g.Sum(row => row.Balance))),
-                cancellationToken)
+            ? (await financePosition.GetAccountsPayableByCurrencyAsync(cancellationToken))
+                .Select(x => new CurrencyAmount(x.Currency, x.Amount))
+                .ToList()
             : new List<CurrencyAmount>();
 
         return new DashboardByCurrencyDto(
@@ -328,7 +329,9 @@ public class ReportService : IReportService
         var totalReservas = await _dbContext.Reservas.CountAsync(cancellationToken);
         var totalReservations = await _dbContext.Servicios.CountAsync(cancellationToken);
         
-        var totalRevenue = await _dbContext.Payments.Where(p => !p.IsDeleted).SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
+        // ADR-022 (fix #3): solo pagos que movieron caja; excluye los Payment puente AffectsCash=false
+        // (SaldoAFavor de sobrepago + reversion de NC) que netarian un negativo fantasma en la facturacion.
+        var totalRevenue = await _dbContext.Payments.Where(p => !p.IsDeleted && p.AffectsCash).SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
         var totalCosts = await _dbContext.Reservas.SumAsync(f => (decimal?)f.TotalCost, cancellationToken) ?? 0m;
         var totalSupplierPayments = await _dbContext.SupplierPayments.SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
         var outstandingBalance = await _dbContext.Reservas.SumAsync(f => (decimal?)f.Balance, cancellationToken) ?? 0m;
@@ -363,8 +366,9 @@ public class ReportService : IReportService
         var grossMargin = totalSales - totalCosts;
         var marginPercent = totalSales > 0 ? Math.Round((grossMargin / totalSales) * 100, 1) : 0;
 
+        // ADR-022 (fix #3): solo pagos que movieron caja; excluye los Payment puente AffectsCash=false.
         var customerPayments = await _dbContext.Payments
-            .Where(p => p.PaidAt >= dateFrom && p.PaidAt <= dateTo && !p.IsDeleted)
+            .Where(p => p.PaidAt >= dateFrom && p.PaidAt <= dateTo && !p.IsDeleted && p.AffectsCash)
             .SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
 
         var supplierPayments = await _dbContext.SupplierPayments
@@ -825,9 +829,10 @@ public class ReportService : IReportService
         var now = DateTime.UtcNow.Date;
         var historicalStart = now.AddDays(-30);
 
-        // Historical cash in (customer payments)
+        // Historical cash in (customer payments). ADR-022 (fix #3): solo los que movieron caja (AffectsCash);
+        // los Payment puente AffectsCash=false harian dipear el dia en negativo sin que entrara plata real.
         var cashInByDay = await _dbContext.Payments
-            .Where(p => p.PaidAt >= historicalStart && p.PaidAt <= now && !p.IsDeleted)
+            .Where(p => p.PaidAt >= historicalStart && p.PaidAt <= now && !p.IsDeleted && p.AffectsCash)
             .GroupBy(p => p.PaidAt.Date)
             .Select(g => new { Date = g.Key, Amount = g.Sum(p => p.Amount) })
             .ToListAsync(cancellationToken);

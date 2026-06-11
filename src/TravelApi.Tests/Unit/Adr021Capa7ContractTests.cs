@@ -129,7 +129,8 @@ public class Adr021Capa7ContractTests
         await using var context = new AppDbContext(_dbOptions);
         var now = DateTime.UtcNow;
         context.Reservas.Add(new Reserva { Id = 1, NumeroReserva = "F-1", Name = "R1", Status = EstadoReserva.Confirmed });
-        context.Payments.Add(new Payment { ReservaId = 1, Amount = 500m, Currency = "ARS", PaidAt = now, Status = "Paid", AffectsCash = true });
+        // ADR-022 capa 4: la caja sale del LIBRO (asiento del cobro), no del Payment al vuelo.
+        context.CashLedgerEntries.Add(NewIncomeLedger(amount: 500m, currency: "ARS", occurredAt: now));
         await context.SaveChangesAsync();
 
         var summary = await BuildTreasury(context).GetCashSummaryAsync(CancellationToken.None);
@@ -146,13 +147,8 @@ public class Adr021Capa7ContractTests
         await using var context = new AppDbContext(_dbOptions);
         var now = DateTime.UtcNow;
         context.Reservas.Add(new Reserva { Id = 1, NumeroReserva = "F-1", Name = "R1", Status = EstadoReserva.Confirmed });
-        // Cobro cruzado: entra a caja en ARS (moneda real), aunque impute a un saldo USD.
-        context.Payments.Add(new Payment
-        {
-            ReservaId = 1, Amount = 100000m, Currency = "ARS", ImputedCurrency = "USD",
-            ImputedAmount = 100m, ExchangeRate = 1000m, ExchangeRateSource = ExchangeRateSource.Manual,
-            ExchangeRateAt = now, PaidAt = now, Status = "Paid", AffectsCash = true
-        });
+        // ADR-022 capa 4: el asiento del cobro cruzado ya nace en ARS (moneda real), aunque impute USD.
+        context.CashLedgerEntries.Add(NewIncomeLedger(amount: 100000m, currency: "ARS", occurredAt: now));
         await context.SaveChangesAsync();
 
         var summary = await BuildTreasury(context).GetCashSummaryAsync(CancellationToken.None);
@@ -161,6 +157,18 @@ public class Adr021Capa7ContractTests
         Assert.Equal("ARS", row.Currency);
         Assert.Equal(100000m, row.CashInThisMonth);
     }
+
+    /// <summary>Asiento de cobro (Income) minimo para sembrar el libro: capa 4 lee la caja de aca.</summary>
+    private static CashLedgerEntry NewIncomeLedger(decimal amount, string currency, DateTime occurredAt)
+        => new()
+        {
+            Direction = CashMovementDirections.Income,
+            Amount = amount,
+            Currency = currency,
+            Method = "Transfer",
+            OccurredAt = occurredAt,
+            SourceType = CashLedgerSourceTypes.CustomerPayment,
+        };
 
     // ===================== A-3: reports/detailed por moneda =====================
 

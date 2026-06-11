@@ -578,6 +578,93 @@ public sealed class ClientCreditServiceTests
     }
 
     // =========================================================================
+    // ADR-022 B5: sobrepago (entry con BookingCancellationId null) NO cierra BC
+    // =========================================================================
+
+    [Fact]
+    public async Task Withdraw_SobrepagoEntry_ConsumoTotal_NoDisparaCierreDeBc_NiThrow()
+    {
+        // ADR-022 §4.9 (B5): un ClientCreditEntry de SOBREPAGO no tiene cancelacion detras
+        // (BookingCancellationId == null). Consumirlo totalmente NO debe invocar OnAllCreditConsumedAsync
+        // (no hay BC que cerrar) ni explotar. Sembramos el entry de sobrepago directo (como lo crearia
+        // PaymentService) sobre un Customer + Reserva sin cancelacion.
+        int customerId, reservaId, paymentId;
+        Guid entryPublicId;
+        await using (var ctx = _fixture.CreateDbContext())
+        {
+            var (custId, _, resId, _) = await CancellationTestData.SeedBaseAsync(ctx);
+            customerId = custId;
+            reservaId = resId;
+
+            var payment = new Payment
+            {
+                ReservaId = resId,
+                Amount = 500m,
+                Currency = "ARS",
+                Method = "Transfer",
+                PaidAt = DateTime.UtcNow,
+                Status = "Paid",
+                EntryType = PaymentEntryTypes.Payment,
+                AffectsCash = true,
+            };
+            ctx.Payments.Add(payment);
+            await ctx.SaveChangesAsync();
+            paymentId = payment.Id;
+
+            var credit = new ClientCreditEntry
+            {
+                CustomerId = custId,
+                OperatorRefundAllocationId = null, // sobrepago: sin allocation
+                BookingCancellationId = null,      // sobrepago: SIN cancelacion (discriminador B5)
+                Currency = "ARS",
+                CreditedAmount = 500m,
+                RemainingBalance = 500m,
+                IsFullyConsumed = false,
+                CreatedAt = DateTime.UtcNow,
+                SourcePaymentId = payment.Id,
+                SourceReservaId = resId,
+                CreatedByUserId = "seed",
+                CreatedByUserName = "Seed",
+            };
+            ctx.ClientCreditEntries.Add(credit);
+            await ctx.SaveChangesAsync();
+            entryPublicId = credit.PublicId;
+        }
+
+        using var scope = _fixture.BuildServiceProvider().CreateScope();
+        var svc = scope.ServiceProvider.GetRequiredService<IClientCreditService>();
+
+        // Consume TODO el saldo: no debe lanzar ni intentar cerrar una BC inexistente.
+        await svc.WithdrawAsync(
+            entryPublicId,
+            new WithdrawClientCreditRequest(
+                Kind: WithdrawalKind.Transfer,
+                Amount: 500m,
+                PaymentMethodOverride: null,
+                AppliedToReservaPublicId: null,
+                ApprovalRequestPublicId: null,
+                Reference: null),
+            userId: "user1", userName: "Cashier", ct: CancellationToken.None);
+
+        await using var verifyCtx = _fixture.CreateDbContext();
+        var entry = await verifyCtx.ClientCreditEntries.AsNoTracking()
+            .FirstAsync(e => e.PublicId == entryPublicId);
+        Assert.True(entry.IsFullyConsumed);
+        Assert.Equal(0m, entry.RemainingBalance);
+
+        // La reserva NO se cancelo por este consumo (B5: el sobrepago no cierra cancelaciones).
+        var reserva = await verifyCtx.Reservas.AsNoTracking().FirstAsync(r => r.Id == reservaId);
+        Assert.NotEqual(EstadoReserva.Cancelled, reserva.Status);
+
+        // Se asento la devolucion fisica como Expense en el Libro de Caja, en la moneda del bolsillo (ARS).
+        var ledger = await verifyCtx.CashLedgerEntries.AsNoTracking()
+            .FirstOrDefaultAsync(e => e.SourceType == CashLedgerSourceTypes.ClientCreditWithdrawal);
+        Assert.NotNull(ledger);
+        Assert.Equal(CashMovementDirections.Expense, ledger!.Direction);
+        Assert.Equal("ARS", ledger.Currency);
+    }
+
+    // =========================================================================
     // Queries
     // =========================================================================
 

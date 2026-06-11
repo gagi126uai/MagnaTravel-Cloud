@@ -62,18 +62,11 @@ public class Adr021TreasuryByCurrencyTests
 
         context.Reservas.Add(new Reserva { Id = 1, NumeroReserva = "F-1", Name = "R1", Status = EstadoReserva.Confirmed });
 
-        // Cobro cruzado: entra a caja en ARS (moneda real), aunque impute a un saldo USD.
-        context.Payments.Add(new Payment
-        {
-            ReservaId = 1, Amount = 100000m, Currency = "ARS", ImputedCurrency = "USD",
-            ImputedAmount = 100m, ExchangeRate = 1000m, ExchangeRateSource = ExchangeRateSource.Manual,
-            ExchangeRateAt = now, PaidAt = now, Status = "Paid", AffectsCash = true
-        });
-        // Cobro USD directo.
-        context.Payments.Add(new Payment
-        {
-            ReservaId = 1, Amount = 50m, Currency = "USD", PaidAt = now, Status = "Paid", AffectsCash = true
-        });
+        // ADR-022 capa 4: la caja sale del LIBRO. El asiento ya nace en la moneda REAL del cobro (un cobro
+        // cruzado entra en ARS aunque impute USD); por eso se siembra el asiento, no el Payment.
+        context.CashLedgerEntries.AddRange(
+            NewLedgerEntry(direction: CashMovementDirections.Income, amount: 100000m, currency: "ARS", occurredAt: now),
+            NewLedgerEntry(direction: CashMovementDirections.Income, amount: 50m, currency: "USD", occurredAt: now));
         await context.SaveChangesAsync();
 
         var summary = await BuildService(context).GetSummaryAsync(CancellationToken.None);
@@ -92,7 +85,9 @@ public class Adr021TreasuryByCurrencyTests
 
         context.Reservas.Add(new Reserva { Id = 1, NumeroReserva = "F-1", Name = "R1", Status = EstadoReserva.Confirmed, Balance = 400m });
         context.ReservaMoneyByCurrency.Add(new ReservaMoneyByCurrency { ReservaId = 1, Currency = "ARS", Balance = 400m, ConfirmedSale = 400m });
-        context.Payments.Add(new Payment { ReservaId = 1, Amount = 200m, Currency = "ARS", PaidAt = now, Status = "Paid", AffectsCash = true });
+        // ADR-022 capa 4: caja desde el libro (asiento del cobro ARS de 200).
+        context.CashLedgerEntries.Add(
+            NewLedgerEntry(direction: CashMovementDirections.Income, amount: 200m, currency: "ARS", occurredAt: now));
         await context.SaveChangesAsync();
 
         var summary = await BuildService(context).GetSummaryAsync(CancellationToken.None);
@@ -106,4 +101,18 @@ public class Adr021TreasuryByCurrencyTests
         Assert.Equal("ARS", cashIn.Currency);
         Assert.Equal(summary.CashInThisMonth, cashIn.Amount);
     }
+
+    /// <summary>Asiento de caja minimo para sembrar el libro (capa 4: la caja sale de aca, no de los pagos).</summary>
+    private static CashLedgerEntry NewLedgerEntry(string direction, decimal amount, string currency, DateTime occurredAt)
+        => new()
+        {
+            Direction = direction,
+            Amount = amount,
+            Currency = currency,
+            Method = "Transfer",
+            OccurredAt = occurredAt,
+            SourceType = direction == CashMovementDirections.Income
+                ? CashLedgerSourceTypes.CustomerPayment
+                : CashLedgerSourceTypes.SupplierPayment,
+        };
 }

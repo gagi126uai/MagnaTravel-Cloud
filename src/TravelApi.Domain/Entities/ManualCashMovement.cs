@@ -20,6 +20,19 @@ public class ManualCashMovement : IHasPublicId
     [Column(TypeName = "decimal(18,2)")]
     public decimal Amount { get; set; }
 
+    /// <summary>
+    /// ADR-022 §4.12 (T2): moneda REAL del gasto/ajuste manual. NOT NULL, default ARS a nivel BD
+    /// (los movimientos manuales legacy quedan en pesos automaticamente). Su <see cref="CashLedgerEntry"/>
+    /// de tipo <c>ManualAdjustment</c> toma la moneda de aca.
+    ///
+    /// <para><b>OJO (B1)</b>: esta columna llena la moneda SOLO de los gastos/ajustes que se cargan a mano.
+    /// Los <see cref="ManualCashMovement"/> de cancelacion (refund/withdrawal) nacen con <c>'ARS'</c> por
+    /// default y su asiento NO toma la moneda de aca, sino del origen real (<c>OperatorRefundReceived.Currency</c>
+    /// o <c>ClientCreditEntry.Currency</c>). No derivar la moneda del asiento de cancelacion de esta columna.</para>
+    /// </summary>
+    [MaxLength(3)]
+    public string Currency { get; set; } = Monedas.ARS;
+
     public DateTime OccurredAt { get; set; } = DateTime.UtcNow;
 
     [MaxLength(50)]

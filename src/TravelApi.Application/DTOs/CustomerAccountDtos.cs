@@ -42,6 +42,23 @@ public class CustomerAccountSummaryDto
     public int ReservaCount { get; set; }
     public int PaymentCount { get; set; }
     public int InvoiceCount { get; set; }
+
+    // ADR-022 Capa 8 (C2): la cuenta corriente del cliente deja de ser un escalar surrogate y pasa a
+    // exponerse POR MONEDA, alineada con ADR-021 (el saldo en USD no compensa el saldo en ARS). Los
+    // escalares de arriba quedan para compat (el front actual los usa); estas listas son ADITIVAS.
+
+    /// <summary>
+    /// Saldo a COBRAR por moneda (deuda del cliente con la agencia), desde ReservaMoneyByCurrency de sus
+    /// reservas activas. Misma fuente que el AR de tesoreria. NUNCA mezcla monedas en un total.
+    /// </summary>
+    public List<CurrencyAmountDto> ReceivableByCurrency { get; set; } = new();
+
+    /// <summary>
+    /// Saldo A FAVOR del cliente por moneda (el "bolsillo" unificado): suma de los ClientCreditEntry
+    /// activos (RemainingBalance &gt; 0), cualquier origen (cancelacion o sobrepago). Eje OPUESTO al de cobrar;
+    /// se exponen separados y NO se netea uno contra otro (ni dentro de una moneda ni entre monedas).
+    /// </summary>
+    public List<CurrencyAmountDto> CreditBalanceByCurrency { get; set; } = new();
 }
 
 public class CustomerAccountReservaListItemDto

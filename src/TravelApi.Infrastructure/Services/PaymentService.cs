@@ -12,6 +12,7 @@ using TravelApi.Application.Exceptions;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
+using TravelApi.Infrastructure.Reservations;
 using TravelApi.Infrastructure.Services.Reservations;
 
 namespace TravelApi.Infrastructure.Services;
@@ -409,6 +410,13 @@ public class PaymentService : IPaymentService
             .AsNoTracking()
             .Include(p => p.Receipt)
             .Where(p => p.ReservaId == ReservaId)
+            // ADR-022 §4.9 (fix S1-bis): excluir el Payment puente del saldo a favor (respaldo interno,
+            // AffectsCash=false, monto negativo). Esta es la lista que consume el front en /payments/reserva/{id}
+            // (PaymentModal/ReservaDetailPage): cada fila se renderiza con boton borrar/editar, asi que mostrar
+            // el puente invitaria al usuario a borrarlo. "Recaudado" se calcula sumando esta lista en el front,
+            // por lo que ocultar el puente hace que muestre lo que el cliente pagó de verdad; el saldo grande de
+            // la reserva se calcula aparte (server-side) y no cambia.
+            .Where(p => !(p.Method == OverpaymentCreditCleanup.BridgeMethod && !p.AffectsCash && p.OriginalPaymentId != null))
             .OrderByDescending(p => p.PaidAt)
             .ProjectTo<PaymentDto>(_mapper.ConfigurationProvider)
             .ToListAsync(cancellationToken);
@@ -486,8 +494,26 @@ public class PaymentService : IPaymentService
         };
 
         _dbContext.Payments.Add(payment);
+
+        // ADR-022 §4.4: el asiento de caja se escribe en la MISMA SaveChanges que el cobro. Solo los
+        // pagos que mueven caja (AffectsCash) generan asiento; aca el alta normal siempre es AffectsCash.
+        // La moneda del asiento es la REAL del pago (Payment.Currency), nunca la imputada.
+        var (ledgerActorUserId, ledgerActorUserName) = ResolveLedgerActor();
+        if (payment.AffectsCash)
+        {
+            var ledgerEntry = TravelApi.Domain.Helpers.CashLedgerEntryFactory.ForPayment(
+                payment, ledgerActorUserId, ledgerActorUserName);
+            _dbContext.CashLedgerEntries.Add(ledgerEntry);
+        }
+
         await _dbContext.SaveChangesAsync(cancellationToken);
         await RecalculateReservaBalanceAsync(reservaId, cancellationToken);
+
+        // ADR-022 §4.9 (Q1): si el cobro dejo la reserva con saldo a FAVOR del cliente en la moneda del
+        // pago, el excedente se convierte en saldo a favor del cliente (ClientCreditEntry) y la reserva
+        // queda en 0. Es una IMPUTACION (mueve plata de "saldo de reserva" a "bolsillo del cliente"), NO
+        // un movimiento de caja nuevo: el asiento del cobro ya reflejo la plata real que entro.
+        await ConvertOverpaymentToClientCreditAsync(payment, ledgerActorUserId, ledgerActorUserName, cancellationToken);
 
         var created = await _dbContext.Payments
             .Include(p => p.Receipt)
@@ -845,6 +871,147 @@ public class PaymentService : IPaymentService
         await TravelApi.Infrastructure.Reservations.ReservaMoneyPersister.PersistAsync(_dbContext, reservaId, cancellationToken);
     }
 
+    /// <summary>
+    /// ADR-022: resuelve el actor (userId, userName) del HttpContext para escribir la auditoria del
+    /// asiento de caja. En tests unitarios sin HttpContext devuelve (null, null) — el asiento queda
+    /// con autor desconocido, lo que es aceptable (no rompe; solo pierde el "quien" en ese contexto).
+    /// </summary>
+    private (string? UserId, string? UserName) ResolveLedgerActor()
+    {
+        var httpUser = _httpContextAccessor?.HttpContext?.User;
+        if (httpUser is null) return (null, null);
+        var userId = httpUser.FindFirstValue(ClaimTypes.NameIdentifier);
+        var userName = httpUser.FindFirstValue(ClaimTypes.Name) ?? httpUser.Identity?.Name;
+        return (string.IsNullOrWhiteSpace(userId) ? null : userId,
+                string.IsNullOrWhiteSpace(userName) ? null : userName);
+    }
+
+    /// <summary>
+    /// ADR-022 §4.5: marca el asiento vigente de un Payment como revertido e inserta su reversa,
+    /// en el ORDEN estricto exigido por el indice unico parcial (marcar viejo IsReversed=true ANTES
+    /// de Add de la reversa). NO hace SaveChanges — lo hace el caller dentro de su transaccion.
+    /// Si el pago no tiene asiento vigente (legacy sin backfill todavia), no hace nada.
+    /// </summary>
+    private async Task ReverseLivePaymentLedgerEntryAsync(int paymentId, CancellationToken cancellationToken)
+    {
+        var live = await _dbContext.CashLedgerEntries
+            .FirstOrDefaultAsync(
+                e => e.PaymentId == paymentId && !e.IsReversal && !e.IsReversed,
+                cancellationToken);
+        if (live is null) return;
+
+        var (userId, userName) = ResolveLedgerActor();
+        // 1) sacar el viejo del indice de vigentes ANTES de insertar nada nuevo.
+        live.IsReversed = true;
+        // 2) insertar la reversa (Direction invertida, ReversedEntryId al viejo).
+        var reversal = TravelApi.Domain.Helpers.CashLedgerEntryFactory.Reverse(
+            live, DateTime.UtcNow, userId, userName);
+        _dbContext.CashLedgerEntries.Add(reversal);
+    }
+
+    /// <summary>
+    /// ADR-022 §4.9 (Q1): convierte el SOBREPAGO de una reserva en saldo a favor del cliente.
+    ///
+    /// <para>Despues de recalcular el saldo, si la reserva quedo a favor del cliente en la moneda a la que
+    /// se imputo el cobro (la fila <c>ReservaMoneyByCurrency.Balance &lt; 0</c> de esa moneda), el excedente
+    /// se mueve al bolsillo del cliente como un <see cref="ClientCreditEntry"/> de origen "sobrepago" y la
+    /// reserva se recalcula para que quede saldada en 0 en esa moneda. El bolsillo es POR MONEDA.</para>
+    ///
+    /// <para><b>NO mueve caja</b>: el cobro ya asento la plata real que entro; esto es una imputacion de
+    /// posicion del cliente, no un egreso. <b>NO crea asiento de caja.</b></para>
+    ///
+    /// <para>Precondiciones para convertir: la reserva tiene un pagador (PayerId) y el excedente es &gt; 0.
+    /// Sin pagador no hay bolsillo de cliente posible, se deja como esta (no rompe).</para>
+    /// </summary>
+    private async Task ConvertOverpaymentToClientCreditAsync(
+        Payment payment,
+        string? actorUserId,
+        string? actorUserName,
+        CancellationToken cancellationToken)
+    {
+        if (payment.ReservaId is null) return;
+        var reservaId = payment.ReservaId.Value;
+
+        // La moneda del SALDO al que se imputo el pago: la imputada si cruzo, si no la real del pago.
+        var saldoCurrency = Monedas.Normalizar(payment.ImputedCurrency ?? payment.Currency);
+
+        // Saldo de esa moneda DESPUES del recalculo. Balance < 0 = la reserva esta sobre-pagada (a favor
+        // del cliente) en esa moneda. El excedente es el valor absoluto.
+        var row = await _dbContext.ReservaMoneyByCurrency
+            .FirstOrDefaultAsync(
+                m => m.ReservaId == reservaId && m.Currency == saldoCurrency,
+                cancellationToken);
+        if (row is null || row.Balance >= 0m) return;
+
+        var overpaid = EconomicRulesHelper.RoundCurrency(-row.Balance);
+        if (overpaid <= 0m) return;
+
+        var reserva = await _dbContext.Reservas
+            .FirstOrDefaultAsync(r => r.Id == reservaId, cancellationToken);
+        if (reserva?.PayerId is null)
+        {
+            // Sin pagador no hay bolsillo de cliente. Se deja el saldo a favor en la reserva (no se rompe).
+            _logger.LogWarning(
+                "Sobrepago detectado en reserva {ReservaId} ({Currency} {Overpaid}) pero la reserva no tiene pagador; no se convierte a saldo a favor.",
+                reservaId, saldoCurrency, overpaid);
+            return;
+        }
+
+        // Crear el bolsillo de saldo a favor del cliente por el excedente, en la moneda del saldo.
+        var credit = new ClientCreditEntry
+        {
+            CustomerId = reserva.PayerId.Value,
+            // Origen SOBREPAGO: FKs de cancelacion en null (es el discriminador de la guarda B5).
+            OperatorRefundAllocationId = null,
+            BookingCancellationId = null,
+            Currency = saldoCurrency,
+            CreditedAmount = overpaid,
+            RemainingBalance = overpaid,
+            IsFullyConsumed = false,
+            CreatedAt = DateTime.UtcNow,
+            // Trazabilidad del sobrepago: que cobro y que reserva lo generaron + actor.
+            SourcePaymentId = payment.Id,
+            SourceReservaId = reservaId,
+            CreatedByUserId = actorUserId,
+            CreatedByUserName = actorUserName,
+        };
+        _dbContext.ClientCreditEntries.Add(credit);
+
+        // El excedente se SACA del saldo de la reserva con un Payment "puente" NEGATIVO y AffectsCash=false
+        // (NO mueve caja, NO genera asiento): el calculator suma los pagos vivos para TotalPaid, asi que un
+        // monto negativo baja lo "pagado a la reserva" por el excedente y la deja en 0 en esa moneda. La
+        // plata YA entro a caja (asiento del cobro original); este puente solo TRASLADA la posicion del
+        // excedente al bolsillo del cliente, no es un hecho de caja. AffectsCash=false => el guard del
+        // asiento (RegisterPayment) nunca lo asienta.
+        var bridge = new Payment
+        {
+            ReservaId = reservaId,
+            Amount = -overpaid,
+            Currency = saldoCurrency,
+            Method = OverpaymentCreditCleanup.BridgeMethod,
+            Notes = $"Sobrepago trasladado a saldo a favor del cliente (cobro {payment.PublicId}).",
+            PaidAt = DateTime.UtcNow,
+            Status = "Paid",
+            EntryType = PaymentEntryTypes.Payment,
+            AffectsCash = false,
+            // ADR-022 §4.9 (fix S1): atamos el puente al cobro fuente por OriginalPaymentId. Es la FK real que
+            // luego usa OverpaymentCreditCleanup para encontrarlo al anular/editar el cobro, sin parsear Notes.
+            OriginalPaymentId = payment.Id,
+            CreatedByUserId = actorUserId,
+            CreatedByUserName = actorUserName,
+        };
+        _dbContext.Payments.Add(bridge);
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+
+        // Recalcular: el Payment puente (AffectsCash=false pero imputado) deja la reserva en 0 en esa moneda.
+        await RecalculateReservaBalanceAsync(reservaId, cancellationToken);
+
+        _logger.LogInformation(
+            "Sobrepago convertido a saldo a favor. ReservaId={ReservaId} CustomerId={CustomerId} {Currency} {Overpaid} CreditPublicId={CreditPublicId}",
+            reservaId, reserva.PayerId.Value, saldoCurrency, overpaid, credit.PublicId);
+    }
+
     private static IQueryable<Payment> ApplyPaymentSearch(IQueryable<Payment> query, string? search)
     {
         if (string.IsNullOrWhiteSpace(search))
@@ -886,6 +1053,17 @@ public class PaymentService : IPaymentService
 
         if (payment == null)
             throw new KeyNotFoundException("Pago no encontrado.");
+
+        // ADR-022 §4.9 (fix S1-bis): el Payment puente del saldo a favor NO se edita a mano. Cambiarle el monto
+        // desincroniza el credito del bolsillo respecto del excedente que sacó de la reserva. Solo el sistema lo
+        // manipula (OverpaymentCreditCleanup).
+        if (OverpaymentCreditCleanup.IsOverpaymentBridge(payment))
+        {
+            _logger.LogWarning(
+                "UpdatePaymentAsync rejected (direct overpayment-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
+                paymentId, payment.ReservaId);
+            throw new InvalidOperationException(OverpaymentCreditCleanup.DirectBridgeMutationBlockReason);
+        }
 
         // B1.15 Fase 0' (CODE-01): inmutabilidad post-recibo / post-CAE. Editar
         // el monto/metodo/referencia de un pago con recibo emitido o ligado a
@@ -929,15 +1107,59 @@ public class PaymentService : IPaymentService
             return;
         }
 
+        // ADR-022 §4.9 (fix S1): si este cobro genero un saldo a favor de sobrepago YA usado, no se permite
+        // editar el monto (subir o bajar): recomputar el excedente destruiria la historia de consumo del
+        // bolsillo del cliente. Hay que anular primero el uso de ese saldo a favor. Si el credito esta
+        // intacto, se revierte el puente/credito y se RE-CREA desde cero contra el nuevo monto (recalculo
+        // limpio), que es la opcion mas auditable: el excedente nuevo nace de la cuenta nueva, no se parchea.
+        bool amountChanges = EconomicRulesHelper.RoundCurrency(request.Amount) != payment.Amount;
+        if (amountChanges)
+        {
+            var overpaymentBlock = await OverpaymentCreditCleanup.GetConsumedBlockReasonAsync(_dbContext, paymentId, cancellationToken);
+            if (overpaymentBlock != null)
+            {
+                _logger.LogWarning(
+                    "UpdatePaymentAsync rejected (overpayment credit already consumed). PaymentId={PaymentId} ReservaId={ReservaId}.",
+                    paymentId, payment.ReservaId);
+                throw new InvalidOperationException(overpaymentBlock);
+            }
+            var (cleanupActorUserId, cleanupActorUserName) = ResolveLedgerActor();
+            await OverpaymentCreditCleanup.ReverseOverpaymentArtifactsAsync(
+                _dbContext, paymentId, cleanupActorUserId, cleanupActorUserName, cancellationToken);
+        }
+
         payment.Amount = EconomicRulesHelper.RoundCurrency(request.Amount);
         payment.Method = request.Method;
         payment.Reference = request.Reference;
         payment.Notes = request.Notes;
 
+        // ADR-022 §4.5: editar el monto = reversa del asiento viejo + asiento nuevo, en una sola
+        // SaveChanges y en este orden (marcar viejo IsReversed ANTES de insertar la reversa y el nuevo,
+        // para no violar el indice unico parcial). El libro conserva el rastro viejo (+) -> reversa (-)
+        // -> nuevo; la historia no se reescribe. Solo aplica a pagos que mueven caja.
+        if (payment.AffectsCash)
+        {
+            await ReverseLivePaymentLedgerEntryAsync(payment.Id, cancellationToken);
+            var (actorUserId, actorUserName) = ResolveLedgerActor();
+            var newEntry = TravelApi.Domain.Helpers.CashLedgerEntryFactory.ForPayment(
+                payment, actorUserId, actorUserName);
+            _dbContext.CashLedgerEntries.Add(newEntry);
+        }
+
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         if (payment.ReservaId.HasValue)
             await RecalculateReservaBalanceAsync(payment.ReservaId.Value, cancellationToken);
+
+        // ADR-022 §4.9 (fix S1): tras recalcular con el monto NUEVO, si el cobro sigue sobre-pagando la
+        // reserva, se vuelve a crear el saldo a favor por el EXCEDENTE NUEVO (puente + credito frescos). Si
+        // el nuevo monto ya no sobrepaga, no crea nada. Solo si el monto cambio (los artefactos viejos ya se
+        // revirtieron arriba); editar Method/Reference/Notes sin tocar el monto no toca el sobrepago.
+        if (amountChanges && payment.ReservaId.HasValue)
+        {
+            var (recreateActorUserId, recreateActorUserName) = ResolveLedgerActor();
+            await ConvertOverpaymentToClientCreditAsync(payment, recreateActorUserId, recreateActorUserName, cancellationToken);
+        }
     }
 
     public async Task DeletePaymentAsync(string paymentPublicIdOrLegacyId, CancellationToken cancellationToken)
@@ -947,6 +1169,17 @@ public class PaymentService : IPaymentService
 
         if (payment == null)
             throw new KeyNotFoundException("Pago no encontrado.");
+
+        // ADR-022 §4.9 (fix S1-bis): el Payment puente del saldo a favor NO se borra a mano. Borrarlo deja el
+        // credito vivo y devuelve el excedente a la reserva -> el excedente existe dos veces. Solo el sistema
+        // lo anula (OverpaymentCreditCleanup, que opera sobre la entidad y no pasa por aca).
+        if (OverpaymentCreditCleanup.IsOverpaymentBridge(payment))
+        {
+            _logger.LogWarning(
+                "DeletePaymentAsync rejected (direct overpayment-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
+                paymentId, payment.ReservaId);
+            throw new InvalidOperationException(OverpaymentCreditCleanup.DirectBridgeMutationBlockReason);
+        }
 
         // C28: bloquear si tiene Receipt (Issued/Voided) o RelatedInvoiceId.
         // Voided tambien bloquea: el recibo ocupa numeracion correlativa y debe
@@ -960,9 +1193,30 @@ public class PaymentService : IPaymentService
             throw new InvalidOperationException(blockReason);
         }
 
+        // ADR-022 §4.9 (fix S1): si este cobro genero un saldo a favor de sobrepago YA usado, no se anula
+        // (compensar a mano corromperia el bolsillo del cliente). Si esta intacto, se revierte el puente y
+        // se anula el credito ANTES del recalculo, asi no queda credito fantasma ni el puente infla la deuda.
+        var overpaymentBlock = await OverpaymentCreditCleanup.GetConsumedBlockReasonAsync(_dbContext, paymentId, cancellationToken);
+        if (overpaymentBlock != null)
+        {
+            _logger.LogWarning(
+                "DeletePaymentAsync rejected (overpayment credit already consumed). PaymentId={PaymentId} ReservaId={ReservaId}.",
+                paymentId, payment.ReservaId);
+            throw new InvalidOperationException(overpaymentBlock);
+        }
+        var (overpaymentActorUserId, overpaymentActorUserName) = ResolveLedgerActor();
+        await OverpaymentCreditCleanup.ReverseOverpaymentArtifactsAsync(
+            _dbContext, paymentId, overpaymentActorUserId, overpaymentActorUserName, cancellationToken);
+
         // Soft delete
         payment.IsDeleted = true;
         payment.DeletedAt = DateTime.UtcNow;
+
+        // ADR-022 §4.5: anular un cobro NO borra su asiento. En la misma SaveChanges se marca el asiento
+        // vigente IsReversed=true y se inserta su reversa (Direction invertida). El neto original+reversa
+        // queda en 0 y la historia no vibra. Solo aplica a pagos que movieron caja.
+        if (payment.AffectsCash)
+            await ReverseLivePaymentLedgerEntryAsync(payment.Id, cancellationToken);
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 

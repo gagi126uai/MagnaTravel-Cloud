@@ -146,6 +146,14 @@ public class OperatorRefundService : IOperatorRefundService
         }
         _db.ManualCashMovements.Add(movement);
 
+        // ADR-022 §4.4 (B1): asiento de caja del ingreso del refund, en la MISMA SaveChanges que el
+        // ManualCashMovement. UN solo asiento por el manual (RK-1: NO se asienta el OperatorRefundReceived
+        // por separado). La MONEDA sale del ORIGEN REAL (refund.Currency), NO del manual (que nace en ARS
+        // por default y no refleja el hecho). Asi un refund en USD asienta en USD aunque el manual este en ARS.
+        var refundLedgerEntry = TravelApi.Domain.Helpers.CashLedgerEntryFactory.ForManualMovement(
+            movement, currencyOverride: refund.Currency, actorUserId: userId, actorUserName: userName);
+        _db.CashLedgerEntries.Add(refundLedgerEntry);
+
         // 4) Audit. Lo armamos con todo el contexto fiscal del ingreso para que
         //    el contador pueda reconstruir el evento sin ir a la tabla principal.
         //    EntityId: usamos refund.PublicId (Guid asignado por default en el

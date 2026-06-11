@@ -5,24 +5,18 @@ using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
+using TravelApi.Infrastructure.Reservations;
 using TravelApi.Infrastructure.Services.Reservations;
 
 namespace TravelApi.Infrastructure.Services;
 
 public class SupplierService : ISupplierService
 {
-    // Estados de Reserva en los que un servicio "cuenta" para la cuenta corriente del proveedor.
-    // ADR-020 (2026-06-07): InManagement (En gestion) reemplaza al viejo Sold. La deuda real con el
-    // proveedor ya filtra por servicio confirmado (CountsForSupplierDebtByType); este conjunto solo
-    // define que reservas son "vivas" para el proveedor. ToSettle es la etapa de liquidar con el operador.
-    private static readonly string[] ValidReservationStatuses =
-    {
-        EstadoReserva.InManagement,
-        EstadoReserva.Confirmed,
-        EstadoReserva.Traveling,
-        EstadoReserva.ToSettle,
-        EstadoReserva.Closed
-    };
+    // ADR-022 §4.10 (fix #4): estados de Reserva "vivos" para la cuenta corriente del proveedor. FUENTE
+    // UNICA en Domain (SupplierDebtCalculator.ValidReservationStatuses), compartida con SupplierDebtPersister
+    // para que la deuda sea identica salga el numero del servicio del proveedor o del persister generico.
+    // Antes estaba duplicada aca y en el persister, con riesgo de divergencia silenciosa.
+    private static readonly string[] ValidReservationStatuses = SupplierDebtCalculator.ValidReservationStatuses;
 
     private readonly AppDbContext _dbContext;
     // B1.15 Fase 0' (CODE-10 / INV-2): IAuditService + ILogger opcionales para no
@@ -522,6 +516,10 @@ public class SupplierService : ISupplierService
             throw new ArgumentException("El monto debe ser mayor a 0");
         }
 
+        // ADR-021: resolver y validar el bloque de moneda/TC server-side (no confiar en el front). Para un
+        // pago ARS no cruzado todo queda en null = identico al legacy.
+        var currency = ResolvePaymentCurrencyBlock(request);
+
         var currentDebt = await CalculateSupplierDebt(id, cancellationToken);
         if (request.Amount > currentDebt)
         {
@@ -532,30 +530,26 @@ public class SupplierService : ISupplierService
             // evitar esa incoherencia (y un eventual leak si algun futuro caller surfacea
             // ex.Message), el mensaje es generico para todos. El enmascarado real de montos
             // vive en los DTOs (MaskSupplierPaymentAmountsAsync), no en los mensajes de error.
+            // ADR-022 §4 P4: esta es la validacion GLOBAL (tope general contra toda la deuda del
+            // proveedor). Si el pago viene imputado a una reserva, ademas se valida que no exceda la
+            // deuda de ese proveedor EN ESA RESERVA y EN ESA MONEDA (ResolveImputationAsync).
             throw new InvalidOperationException("El pago excede la deuda actual con el proveedor.");
         }
 
-        int? reservaId = null;
-        int? servicioReservaId = null;
-
-        if (!string.IsNullOrWhiteSpace(request.ReservaId))
-        {
-            reservaId = await _dbContext.Reservas
-                .AsNoTracking()
-                .ResolveInternalIdAsync(request.ReservaId, cancellationToken);
-        }
-
-        if (!string.IsNullOrWhiteSpace(request.ServicioReservaId))
-        {
-            servicioReservaId = await _dbContext.Servicios
-                .AsNoTracking()
-                .ResolveInternalIdAsync(request.ServicioReservaId, cancellationToken);
-        }
+        // ADR-022 §4 P4: la imputacion del pago. O una reserva concreta (validada) o anticipo "a cuenta".
+        var (reservaId, servicioReservaId) = await ResolveSupplierPaymentImputationAsync(
+            id, request, currency, cancellationToken);
 
         var payment = new SupplierPayment
         {
             SupplierId = id,
             Amount = request.Amount,
+            Currency = currency.Currency,
+            ImputedCurrency = currency.ImputedCurrency,
+            ExchangeRate = currency.ExchangeRate,
+            ExchangeRateSource = currency.ExchangeRateSource,
+            ExchangeRateAt = currency.ExchangeRateAt,
+            ImputedAmount = currency.ImputedAmount,
             Method = request.Method ?? "Transfer",
             Reference = request.Reference,
             Notes = request.Notes,
@@ -565,6 +559,13 @@ public class SupplierService : ISupplierService
         };
 
         _dbContext.SupplierPayments.Add(payment);
+
+        // ADR-022 §4.4: el asiento de caja (Expense) se escribe en la MISMA SaveChanges que el pago al
+        // proveedor. Moneda = la REAL del egreso (SupplierPayment.Currency), nunca la imputada.
+        var (ledgerUserId, ledgerUserName) = ResolveCurrentActor();
+        var ledgerEntry = TravelApi.Domain.Helpers.CashLedgerEntryFactory.ForSupplierPayment(
+            payment, ledgerUserId, ledgerUserName);
+        _dbContext.CashLedgerEntries.Add(ledgerEntry);
 
         // ADR-021 §15.3: primero persistimos el pago, despues recalculamos la deuda por moneda y
         // sincronizamos escalar surrogate + tabla hija. El recalculo lee los pagos de la BD (su query
@@ -597,6 +598,9 @@ public class SupplierService : ISupplierService
             throw new ArgumentException("El monto debe ser mayor a 0");
         }
 
+        // ADR-021: resolver/validar el bloque de moneda igual que en el alta.
+        var currency = ResolvePaymentCurrencyBlock(request);
+
         var realDebt = await CalculateSupplierDebt(id, cancellationToken);
         var debtPrePayment = realDebt + payment.Amount;
 
@@ -608,19 +612,31 @@ public class SupplierService : ISupplierService
             throw new InvalidOperationException("La modificacion del pago excede la deuda actual con el proveedor.");
         }
 
-        int? reservaId = null;
-        if (!string.IsNullOrWhiteSpace(request.ReservaId))
-        {
-            reservaId = await _dbContext.Reservas
-                .AsNoTracking()
-                .ResolveInternalIdAsync(request.ReservaId, cancellationToken);
-        }
+        // ADR-022 §4 P4: re-resolver la imputacion (reserva concreta o anticipo a cuenta), excluyendo el
+        // propio pago de la deuda restante de la reserva (su monto viejo no debe contarse como "ya pagado").
+        var (reservaId, servicioReservaId) = await ResolveSupplierPaymentImputationAsync(
+            id, request, currency, cancellationToken, excludePaymentId: payment.Id);
 
         payment.Amount = request.Amount;
+        payment.Currency = currency.Currency;
+        payment.ImputedCurrency = currency.ImputedCurrency;
+        payment.ExchangeRate = currency.ExchangeRate;
+        payment.ExchangeRateSource = currency.ExchangeRateSource;
+        payment.ExchangeRateAt = currency.ExchangeRateAt;
+        payment.ImputedAmount = currency.ImputedAmount;
         payment.Method = request.Method ?? payment.Method;
         payment.Reference = request.Reference;
         payment.Notes = request.Notes;
         payment.ReservaId = reservaId;
+        payment.ServicioReservaId = servicioReservaId;
+
+        // ADR-022 §4.5: editar el monto = reversa del asiento viejo + asiento nuevo (orden estricto:
+        // marcar viejo IsReversed ANTES de insertar). El libro conserva viejo (-) -> reversa (+) -> nuevo.
+        await ReverseLiveSupplierPaymentLedgerEntryAsync(payment.Id, cancellationToken);
+        var (updUserId, updUserName) = ResolveCurrentActor();
+        var newLedgerEntry = TravelApi.Domain.Helpers.CashLedgerEntryFactory.ForSupplierPayment(
+            payment, updUserId, updUserName);
+        _dbContext.CashLedgerEntries.Add(newLedgerEntry);
 
         // ADR-021 §15.3: persistimos la edicion del pago y recalculamos la deuda por moneda
         // (escalar surrogate + tabla hija). Para un pago ARS no cruzado el escalar resultante es
@@ -656,6 +672,10 @@ public class SupplierService : ISupplierService
         payment.IsDeleted = true;
         payment.DeletedAt = DateTime.UtcNow;
         payment.DeletedByUserId = userId;
+
+        // ADR-022 §4.5: anular el pago NO borra su asiento: se marca IsReversed=true y se inserta su
+        // reversa (Income que netea el Expense original). El libro conserva la historia.
+        await ReverseLiveSupplierPaymentLedgerEntryAsync(payment.Id, cancellationToken);
 
         // ADR-021 §15.6bis (BUG LATENTE CORREGIDO): antes hacia `currentDebt + payment.Amount`, que
         // suma el AMOUNT DE CAJA al recalculo — esto da el numero correcto SOLO si el pago fue en la
@@ -705,6 +725,27 @@ public class SupplierService : ISupplierService
                        ?? user.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value
                        ?? "Sistema";
         return (userId, userName);
+    }
+
+    /// <summary>
+    /// ADR-022 §4.5: marca el asiento vigente de un SupplierPayment como revertido e inserta su reversa,
+    /// en el orden estricto del indice unico parcial (marcar viejo IsReversed=true ANTES de Add de la
+    /// reversa). NO hace SaveChanges — lo hace el caller. Si el pago no tiene asiento vigente (legacy sin
+    /// backfill todavia), no hace nada.
+    /// </summary>
+    private async Task ReverseLiveSupplierPaymentLedgerEntryAsync(int supplierPaymentId, CancellationToken cancellationToken)
+    {
+        var live = await _dbContext.CashLedgerEntries
+            .FirstOrDefaultAsync(
+                e => e.SupplierPaymentId == supplierPaymentId && !e.IsReversal && !e.IsReversed,
+                cancellationToken);
+        if (live is null) return;
+
+        var (userId, userName) = ResolveCurrentActor();
+        live.IsReversed = true;
+        var reversal = TravelApi.Domain.Helpers.CashLedgerEntryFactory.Reverse(
+            live, DateTime.UtcNow, userId, userName);
+        _dbContext.CashLedgerEntries.Add(reversal);
     }
 
     public async Task<IEnumerable<SupplierPaymentDto>> GetSupplierPaymentsHistoryAsync(int id, CancellationToken cancellationToken)
@@ -869,13 +910,16 @@ public class SupplierService : ISupplierService
             {
                 PublicId = payment.PublicId,
                 Amount = payment.Amount,
+                Currency = payment.Currency,
                 Method = payment.Method,
                 PaidAt = payment.PaidAt,
                 Reference = payment.Reference,
                 Notes = payment.Notes,
                 NumeroReserva = payment.Reserva != null ? payment.Reserva.NumeroReserva : null,
                 FileName = payment.Reserva != null ? payment.Reserva.Name : null,
-                ReservaPublicId = payment.Reserva != null ? (Guid?)payment.Reserva.PublicId : null
+                ReservaPublicId = payment.Reserva != null ? (Guid?)payment.Reserva.PublicId : null,
+                // ADR-022 §4 P4: sin reserva = anticipo "a cuenta" (incluye el legacy con ReservaId null).
+                IsAdvanceToAccount = payment.ReservaId == null
             });
     }
 
@@ -993,49 +1037,192 @@ public class SupplierService : ISupplierService
     }
 
     /// <summary>
-    /// ADR-021 §15.3/§B5: UNICO punto de escritura de la deuda de un proveedor. Recalcula por moneda,
-    /// persiste el escalar surrogate <c>Supplier.CurrentBalance</c> Y sincroniza la tabla hija
-    /// <c>SupplierBalanceByCurrency</c> (upsert por moneda, borrar las ausentes). NO llama a
-    /// SaveChanges: lo hace el caller (asi escalar + hija quedan en la misma transaccion).
+    /// ADR-021 + ADR-022 §4 P4: valida y resuelve el bloque de moneda/TC de un pago a proveedor. Es la unica
+    /// fuente server-side (no confiar en el front). Para un pago ARS no cruzado el bloque queda en null.
+    /// Lanza <see cref="ArgumentException"/> (el controller la traduce a 400) si el bloque es incoherente.
     /// </summary>
-    private async Task PersistSupplierBalanceAsync(Supplier supplier, CancellationToken cancellationToken)
+    private static PaymentCurrencyResolver.Resolved ResolvePaymentCurrencyBlock(SupplierPaymentRequest request)
     {
-        var porMoneda = await CalculateSupplierDebtPorMonedaAsync(supplier.Id, cancellationToken);
-
-        // 1) Escalar surrogate (semaforo).
-        supplier.CurrentBalance = SupplierDebtCalculator.ToSurrogateBalance(porMoneda);
-
-        // 2) Tabla hija: upsert por moneda + borrar las monedas que ya no aplican.
-        var existingRows = await _dbContext.SupplierBalanceByCurrency
-            .Where(row => row.SupplierId == supplier.Id)
-            .ToListAsync(cancellationToken);
-        var existingByCurrency = existingRows.ToDictionary(row => row.Currency, StringComparer.Ordinal);
-
-        foreach (var (currency, line) in porMoneda)
-        {
-            if (existingByCurrency.TryGetValue(currency, out var row))
-            {
-                row.ConfirmedPurchases = line.ConfirmedPurchases;
-                row.TotalPaid = line.TotalPaid;
-                row.Balance = line.Balance;
-            }
-            else
-            {
-                _dbContext.SupplierBalanceByCurrency.Add(new SupplierBalanceByCurrency
-                {
-                    SupplierId = supplier.Id,
-                    Currency = currency,
-                    ConfirmedPurchases = line.ConfirmedPurchases,
-                    TotalPaid = line.TotalPaid,
-                    Balance = line.Balance
-                });
-            }
-        }
-
-        foreach (var row in existingRows)
-        {
-            if (!porMoneda.ContainsKey(row.Currency))
-                _dbContext.SupplierBalanceByCurrency.Remove(row);
-        }
+        var roundedAmount = EconomicRulesHelper.RoundCurrency(request.Amount);
+        return PaymentCurrencyResolver.Resolve(
+            amount: roundedAmount,
+            rawCurrency: request.Currency,
+            rawImputedCurrency: request.ImputedCurrency,
+            exchangeRate: request.ExchangeRate,
+            exchangeRateSource: request.ExchangeRateSource,
+            exchangeRateAt: request.ExchangeRateAt,
+            imputedAmount: request.ImputedAmount,
+            round: EconomicRulesHelper.RoundCurrency);
     }
+
+    /// <summary>
+    /// ADR-022 §4 P4: resuelve la imputacion de un pago a proveedor. Dos caminos validos y mutuamente
+    /// excluyentes:
+    /// <list type="bullet">
+    /// <item><b>A reserva concreta</b> (<c>request.ReservaId</c> seteado, sin el flag a-cuenta): la reserva
+    ///   debe existir, tener servicios de ESTE proveedor, y el equivalente imputado del pago no puede
+    ///   exceder la deuda de este proveedor EN ESA RESERVA y EN ESA MONEDA (validacion adicional al tope
+    ///   global del proveedor que ya corrio el caller).</item>
+    /// <item><b>Anticipo "a cuenta"</b> (<c>request.IsAdvanceToAccount</c> = true, sin reserva): no se imputa
+    ///   a ninguna reserva; vale solo el tope global. Es la opcion explicita del dueño (decision #2).</item>
+    /// </list>
+    /// Legacy sin reserva y sin el flag tambien se tolera (queda "a cuenta" implicito, no se migra).
+    /// Devuelve los ids internos resueltos (reserva + servicio) para volcar en el <c>SupplierPayment</c>.
+    /// <paramref name="excludePaymentId"/> excluye el propio pago al editar (su monto no debe contarse como
+    /// "ya pagado" al validar la deuda restante de la reserva).
+    /// </summary>
+    private async Task<(int? ReservaId, int? ServicioReservaId)> ResolveSupplierPaymentImputationAsync(
+        int supplierId,
+        SupplierPaymentRequest request,
+        PaymentCurrencyResolver.Resolved currency,
+        CancellationToken cancellationToken,
+        int? excludePaymentId = null)
+    {
+        bool hasReserva = !string.IsNullOrWhiteSpace(request.ReservaId);
+
+        // No se puede pedir imputar a una reserva Y marcar anticipo a cuenta a la vez: son caminos opuestos.
+        if (hasReserva && request.IsAdvanceToAccount)
+        {
+            throw new ArgumentException(
+                "Un pago no puede imputarse a una reserva y marcarse como anticipo a cuenta a la vez.");
+        }
+
+        if (!hasReserva)
+        {
+            // Anticipo a cuenta (explicito o legacy): sin reserva ni servicio. Vale solo el tope global.
+            return (null, null);
+        }
+
+        // ----- Imputado a una reserva concreta: validamos existencia, pertenencia y deuda por moneda -----
+        var reservaId = await _dbContext.Reservas
+            .AsNoTracking()
+            .ResolveInternalIdAsync(request.ReservaId!, cancellationToken);
+        if (!reservaId.HasValue)
+        {
+            throw new KeyNotFoundException("Reserva no encontrada");
+        }
+
+        int? servicioReservaId = null;
+        if (!string.IsNullOrWhiteSpace(request.ServicioReservaId))
+        {
+            servicioReservaId = await _dbContext.Servicios
+                .AsNoTracking()
+                .ResolveInternalIdAsync(request.ServicioReservaId, cancellationToken);
+        }
+
+        // La reserva tiene que tener al menos un servicio de ESTE proveedor (no se puede imputar un pago a
+        // una reserva con la que el proveedor no tiene relacion).
+        var supplierDebtInReserva = await CalculateSupplierDebtInReservaAsync(
+            supplierId, reservaId.Value, excludePaymentId, cancellationToken);
+        if (supplierDebtInReserva.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "La reserva no tiene servicios de este proveedor para imputar el pago.");
+        }
+
+        // La moneda a la que se imputa el pago: la imputada si cruzo, si no la propia del pago.
+        string imputedCurrency = currency.ImputedCurrency ?? currency.Currency;
+        decimal imputedAmount = currency.ImputedAmount ?? EconomicRulesHelper.RoundCurrency(request.Amount);
+
+        supplierDebtInReserva.TryGetValue(imputedCurrency, out var debtLine);
+        decimal debtInCurrency = debtLine?.Balance ?? 0m;
+
+        // No exceder la deuda de este proveedor EN ESA RESERVA y EN ESA MONEDA. Si la moneda imputada no
+        // tiene deuda en la reserva (debtInCurrency == 0), tambien se rechaza: no se imputa plata a una
+        // moneda donde no se debe nada en esa reserva.
+        if (imputedAmount > debtInCurrency)
+        {
+            throw new InvalidOperationException(
+                "El pago excede la deuda de este proveedor en la reserva y la moneda indicadas.");
+        }
+
+        return (reservaId, servicioReservaId);
+    }
+
+    /// <summary>
+    /// ADR-022 §4 P4: deuda de un proveedor SEPARADA por moneda PERO acotada a UNA reserva. Mismo motor que
+    /// <see cref="CalculateSupplierDebtPorMonedaAsync"/> (compras confirmadas - pagos imputados, por moneda),
+    /// solo que tanto los servicios como los pagos se filtran por <paramref name="reservaId"/>.
+    /// <paramref name="excludePaymentId"/> saca el pago que se esta editando del "ya pagado".
+    /// </summary>
+    private async Task<IReadOnlyDictionary<string, SupplierDebtLine>> CalculateSupplierDebtInReservaAsync(
+        int supplierId, int reservaId, int? excludePaymentId, CancellationToken cancellationToken)
+    {
+        // Servicios de este proveedor en ESTA reserva, por tipo/estado/moneda. Reusar el calculador puro
+        // mantiene la cuenta identica a la global, solo que acotada a la reserva.
+        var serviceRows = await BuildSupplierServiceDebtRowsInReservaAsync(supplierId, reservaId, cancellationToken);
+        var confirmedPurchases = serviceRows
+            .Where(r => WorkflowStatusHelper.CountsForSupplierDebtByType(r.Type, r.Status))
+            .Select(r => new SupplierDebtCalculator.ConfirmedPurchase(r.Currency, r.NetCost));
+
+        var paymentRows = await _dbContext.SupplierPayments
+            .Where(p => p.SupplierId == supplierId
+                        && p.ReservaId == reservaId
+                        && (excludePaymentId == null || p.Id != excludePaymentId.Value))
+            .Select(p => new { p.Amount, p.Currency, p.ImputedCurrency, p.ImputedAmount })
+            .ToListAsync(cancellationToken);
+
+        var payments = paymentRows.Select(p => new SupplierDebtCalculator.SupplierPaymentInput(
+            p.Amount, p.Currency, p.ImputedCurrency, p.ImputedAmount));
+
+        return SupplierDebtCalculator.Calculate(confirmedPurchases, payments);
+    }
+
+    /// <summary>
+    /// Proyecta (Type, Status, NetCost, Currency) de los servicios de un proveedor en UNA reserva. Recorre
+    /// los 5 tipos tipados + el generico, igual que <c>BuildSupplierServicesQuery</c>, pero filtrando por la
+    /// reserva. Se usa solo para la validacion de deuda por reserva (P4).
+    /// </summary>
+    private async Task<List<(string Type, string Status, decimal NetCost, string Currency)>>
+        BuildSupplierServiceDebtRowsInReservaAsync(int supplierId, int reservaId, CancellationToken cancellationToken)
+    {
+        var result = new List<(string Type, string Status, decimal NetCost, string Currency)>();
+
+        // Currency se normaliza (null -> ARS) igual que en el calculador, para que la moneda nunca sea null.
+        var flights = await _dbContext.FlightSegments.AsNoTracking()
+            .Where(s => s.SupplierId == supplierId && s.ReservaId == reservaId)
+            .Select(s => new { s.Status, s.NetCost, s.Currency }).ToListAsync(cancellationToken);
+        result.AddRange(flights.Select(s => ("Vuelo", s.Status, s.NetCost, Monedas.Normalizar(s.Currency))));
+
+        var hotels = await _dbContext.HotelBookings.AsNoTracking()
+            .Where(s => s.SupplierId == supplierId && s.ReservaId == reservaId)
+            .Select(s => new { s.Status, s.NetCost, s.Currency }).ToListAsync(cancellationToken);
+        result.AddRange(hotels.Select(s => ("Hotel", s.Status, s.NetCost, Monedas.Normalizar(s.Currency))));
+
+        var transfers = await _dbContext.TransferBookings.AsNoTracking()
+            .Where(s => s.SupplierId == supplierId && s.ReservaId == reservaId)
+            .Select(s => new { s.Status, s.NetCost, s.Currency }).ToListAsync(cancellationToken);
+        result.AddRange(transfers.Select(s => ("Traslado", s.Status, s.NetCost, Monedas.Normalizar(s.Currency))));
+
+        var packages = await _dbContext.PackageBookings.AsNoTracking()
+            .Where(s => s.SupplierId == supplierId && s.ReservaId == reservaId)
+            .Select(s => new { s.Status, s.NetCost, s.Currency }).ToListAsync(cancellationToken);
+        result.AddRange(packages.Select(s => ("Paquete", s.Status, s.NetCost, Monedas.Normalizar(s.Currency))));
+
+        var assistances = await _dbContext.AssistanceBookings.AsNoTracking()
+            .Where(s => s.SupplierId == supplierId && s.ReservaId == reservaId)
+            .Select(s => new { s.Status, s.NetCost, s.Currency }).ToListAsync(cancellationToken);
+        result.AddRange(assistances.Select(s => ("Asistencia", s.Status, s.NetCost, Monedas.Normalizar(s.Currency))));
+
+        var generics = await _dbContext.Servicios.AsNoTracking()
+            .Where(s => s.SupplierId == supplierId && s.ReservaId == reservaId)
+            .Select(s => new { s.ServiceType, s.Status, s.NetCost, s.Currency }).ToListAsync(cancellationToken);
+        result.AddRange(generics.Select(s => (s.ServiceType ?? string.Empty, s.Status, s.NetCost, Monedas.Normalizar(s.Currency))));
+
+        return result;
+    }
+
+    /// <summary>
+    /// ADR-021 §15.3/§B5 + ADR-022 §4.10: UNICO punto de escritura de la deuda de un proveedor. Recalcula
+    /// por moneda, persiste el escalar surrogate <c>Supplier.CurrentBalance</c> Y sincroniza la tabla hija
+    /// <c>SupplierBalanceByCurrency</c>. NO llama a SaveChanges: lo hace el caller.
+    ///
+    /// <para>Delega en <see cref="SupplierDebtPersister"/> (helper sin estado), para que el numero sea
+    /// EXACTAMENTE el mismo se invoque desde aca o desde <c>ReservaService</c> (fix P1: el servicio
+    /// generico desincronizaba la deuda porque solo este service la recalculaba). El <paramref name="supplier"/>
+    /// que recibe ya esta tracked; el persister lo re-resuelve por Id y obtiene la misma instancia tracked,
+    /// asi que el escalar se escribe sobre el mismo objeto.</para>
+    /// </summary>
+    private Task PersistSupplierBalanceAsync(Supplier supplier, CancellationToken cancellationToken)
+        => SupplierDebtPersister.PersistAsync(_dbContext, supplier.Id, cancellationToken);
 }

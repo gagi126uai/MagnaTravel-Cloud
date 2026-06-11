@@ -326,6 +326,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<ClientCreditEntry> ClientCreditEntries => Set<ClientCreditEntry>();
     public DbSet<ClientCreditWithdrawal> ClientCreditWithdrawals => Set<ClientCreditWithdrawal>();
 
+    // ADR-022 (Libro de Caja persistido, 2026-06-11): el asiento inmutable de cada hecho que
+    // mueve caja, en su moneda real. Fuente de verdad de la CAJA. Configuracion (FKs, indice unico
+    // parcial por origen, CHECK constraints) en OnModelCreating.
+    public DbSet<CashLedgerEntry> CashLedgerEntries => Set<CashLedgerEntry>();
+
     // FC1.3 Fase 2 (plan tactico Fase 2 §FC1.3.F2.2, 2026-05-27): tabla operacional
     // (no fiscal) para idempotencia de emision de NC parcial al ARCA. Evita doble-POST
     // si Hangfire reintenta el job. Configuracion (indice UNIQUE) en OnModelCreating.
@@ -1243,6 +1248,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         {
             entity.Property(m => m.Direction).HasMaxLength(20).IsRequired();
             entity.Property(m => m.Amount).HasPrecision(18, 2);
+            // ADR-022 §4.12 (T2): moneda del gasto/ajuste manual. NOT NULL default ARS a nivel BD
+            // (los movimientos legacy quedan en pesos sin migrar datos).
+            entity.Property(m => m.Currency).HasMaxLength(3).IsRequired().HasDefaultValue(Monedas.ARS);
             entity.Property(m => m.Method).HasMaxLength(50).IsRequired();
             entity.Property(m => m.Category).HasMaxLength(100).IsRequired();
             entity.Property(m => m.Description).HasMaxLength(500).IsRequired();
@@ -1750,20 +1758,42 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.ToTable("ClientCreditEntries");
             entity.Property(c => c.CreditedAmount).HasPrecision(18, 2);
             entity.Property(c => c.RemainingBalance).HasPrecision(18, 2);
+            // ADR-022 §4.9 (Q1): bolsillo por moneda. NOT NULL default ARS a nivel BD (creditos legacy en pesos).
+            entity.Property(c => c.Currency).HasMaxLength(3).IsRequired().HasDefaultValue(Monedas.ARS);
+            entity.Property(c => c.CreatedByUserId).HasMaxLength(450);
+            entity.Property(c => c.CreatedByUserName).HasMaxLength(200);
 
             entity.HasOne(c => c.Customer)
                   .WithMany()
                   .HasForeignKey(c => c.CustomerId)
                   .OnDelete(DeleteBehavior.Restrict);
 
+            // ADR-022 §4.9: FK ahora NULLABLE (relajado de NOT NULL). Un credito de SOBREPAGO la deja
+            // en null; la relacion pasa a IsRequired(false). Relajar NOT NULL->NULL es aditivo-seguro
+            // (las filas legacy de cancelacion conservan su valor).
             entity.HasOne(c => c.Allocation)
                   .WithMany()
                   .HasForeignKey(c => c.OperatorRefundAllocationId)
+                  .IsRequired(false)
                   .OnDelete(DeleteBehavior.Restrict);
 
             entity.HasOne(c => c.BookingCancellation)
                   .WithMany()
                   .HasForeignKey(c => c.BookingCancellationId)
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            // ADR-022 §4.9: origen "sobrepago" (solo seteado en creditos de sobrepago).
+            entity.HasOne(c => c.SourcePayment)
+                  .WithMany()
+                  .HasForeignKey(c => c.SourcePaymentId)
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(c => c.SourceReserva)
+                  .WithMany()
+                  .HasForeignKey(c => c.SourceReservaId)
+                  .IsRequired(false)
                   .OnDelete(DeleteBehavior.Restrict);
 
             entity.HasMany(c => c.Withdrawals)
@@ -1812,6 +1842,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .HasForeignKey(m => m.OperatorRefundReceivedId)
                   .OnDelete(DeleteBehavior.SetNull);
         });
+
+        // ===== CashLedgerEntry (ADR-022: Libro de Caja persistido) =====
+        ConfigureCashLedger(modelBuilder);
 
         // ===== ArcaIdempotencyKey (FC1.3 Fase 2 §FC1.3.F2.2, 2026-05-27) =====
         // Tabla operacional anti-doble-POST de NC parcial al ARCA. Ver comentario
@@ -1910,6 +1943,141 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.PublicId)
                 .HasColumnType("uuid");
             entity.HasIndex(e => e.PublicId).IsUnique();
+        });
+    }
+
+    /// <summary>
+    /// ADR-022 §4.1-§4.3: configuracion del Libro de Caja (<see cref="CashLedgerEntry"/>).
+    /// Define las 5 FKs de origen (cada una opcional, OnDelete Restrict para no perder el asiento
+    /// si el origen se borra), las FKs de trazabilidad de negocio, la auto-referencia de reversa,
+    /// los indices de consulta, el INDICE UNICO PARCIAL por origen y los CHECK constraints.
+    ///
+    /// <para><b>Indice unico parcial (B4, §4.2)</b>: a lo sumo UN asiento VIGENTE por origen, donde
+    /// "vigente" = <c>IsReversal=false AND IsReversed=false</c>. El predicado deja conviviendo para
+    /// siempre el original-revertido + su reversa + el nuevo (ciclo de edicion §4.5). EF emite el
+    /// predicado via <c>HasFilter</c> -> <c>CREATE UNIQUE INDEX ... WHERE ...</c> (Postgres).</para>
+    ///
+    /// <para><b>CHECKs (§4.3)</b>: declarados via <c>HasCheckConstraint</c>, que EF emite como parte
+    /// del CREATE TABLE de la tabla NUEVA — no es un ALTER con SQL crudo sobre columnas con
+    /// <c>HasColumnName</c> historico, asi que NO reproduce el incidente M2 (TravelFileId vs ReservaId).</para>
+    /// </summary>
+    private static void ConfigureCashLedger(ModelBuilder modelBuilder)
+    {
+        ConfigurePublicEntity<CashLedgerEntry>(modelBuilder);
+
+        modelBuilder.Entity<CashLedgerEntry>(entity =>
+        {
+            entity.ToTable("CashLedgerEntries");
+
+            entity.Property(e => e.Direction).HasMaxLength(20).IsRequired();
+            entity.Property(e => e.Amount).HasPrecision(18, 2);
+            entity.Property(e => e.Currency).HasMaxLength(3).IsRequired();
+            entity.Property(e => e.Method).HasMaxLength(50).IsRequired();
+            entity.Property(e => e.SourceType).HasMaxLength(20).IsRequired();
+            entity.Property(e => e.CreatedByUserId).HasMaxLength(450);
+            entity.Property(e => e.CreatedByUserName).HasMaxLength(200);
+
+            // --- FKs de origen (exactamente una no-null; el CHECK lo garantiza). Restrict: el asiento
+            //     sobrevive al borrado del origen (el libro nunca pierde historia). ---
+            entity.HasOne(e => e.Payment)
+                  .WithMany()
+                  .HasForeignKey(e => e.PaymentId)
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.SupplierPayment)
+                  .WithMany()
+                  .HasForeignKey(e => e.SupplierPaymentId)
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.OperatorRefundReceived)
+                  .WithMany()
+                  .HasForeignKey(e => e.OperatorRefundReceivedId)
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.ClientCreditWithdrawal)
+                  .WithMany()
+                  .HasForeignKey(e => e.ClientCreditWithdrawalId)
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.ManualCashMovement)
+                  .WithMany()
+                  .HasForeignKey(e => e.ManualCashMovementId)
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            // --- FKs de trazabilidad de negocio (solo filtros/reportes; NO afectan saldos). ---
+            entity.HasOne(e => e.Reserva)
+                  .WithMany()
+                  .HasForeignKey(e => e.ReservaId)
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.Supplier)
+                  .WithMany()
+                  .HasForeignKey(e => e.SupplierId)
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(e => e.Customer)
+                  .WithMany()
+                  .HasForeignKey(e => e.CustomerId)
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            // --- Auto-referencia de reversa: una reversa apunta al asiento original que anula. ---
+            entity.HasOne(e => e.ReversedEntry)
+                  .WithMany()
+                  .HasForeignKey(e => e.ReversedEntryId)
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            // --- Indices de consulta (resumenes por mes/moneda + joins/filtros por origen). ---
+            entity.HasIndex(e => new { e.Currency, e.OccurredAt });
+            entity.HasIndex(e => e.SourceType);
+            entity.HasIndex(e => e.ReservaId);
+            entity.HasIndex(e => e.SupplierId);
+            entity.HasIndex(e => e.CustomerId);
+
+            // --- Indice unico parcial por origen (B4 / §4.2): a lo sumo UN asiento VIGENTE por origen.
+            //     Vigente = no es reversa Y todavia no fue revertido. El ciclo de edicion (§4.5) marca el
+            //     viejo IsReversed=true ANTES de insertar el nuevo, asi nunca hay dos vigentes a la vez. ---
+            entity.HasIndex(e => e.PaymentId)
+                  .IsUnique()
+                  .HasFilter("\"PaymentId\" IS NOT NULL AND \"IsReversal\" = false AND \"IsReversed\" = false");
+
+            entity.HasIndex(e => e.SupplierPaymentId)
+                  .IsUnique()
+                  .HasFilter("\"SupplierPaymentId\" IS NOT NULL AND \"IsReversal\" = false AND \"IsReversed\" = false");
+
+            entity.HasIndex(e => e.OperatorRefundReceivedId)
+                  .IsUnique()
+                  .HasFilter("\"OperatorRefundReceivedId\" IS NOT NULL AND \"IsReversal\" = false AND \"IsReversed\" = false");
+
+            entity.HasIndex(e => e.ClientCreditWithdrawalId)
+                  .IsUnique()
+                  .HasFilter("\"ClientCreditWithdrawalId\" IS NOT NULL AND \"IsReversal\" = false AND \"IsReversed\" = false");
+
+            entity.HasIndex(e => e.ManualCashMovementId)
+                  .IsUnique()
+                  .HasFilter("\"ManualCashMovementId\" IS NOT NULL AND \"IsReversal\" = false AND \"IsReversed\" = false");
+
+            // --- CHECK constraints (§4.3). ---
+            entity.ToTable(t =>
+            {
+                t.HasCheckConstraint("chk_cashledger_amount_positive", "\"Amount\" > 0");
+                t.HasCheckConstraint("chk_cashledger_direction", "\"Direction\" IN ('Income','Expense')");
+                // Exactamente UNO de los 5 FKs de origen es no-null. Cada (... IS NOT NULL) se castea a int
+                // (0/1) y la suma debe dar 1.
+                t.HasCheckConstraint(
+                    "chk_cashledger_exactly_one_source",
+                    "((\"PaymentId\" IS NOT NULL)::int + (\"SupplierPaymentId\" IS NOT NULL)::int + " +
+                    "(\"OperatorRefundReceivedId\" IS NOT NULL)::int + (\"ClientCreditWithdrawalId\" IS NOT NULL)::int + " +
+                    "(\"ManualCashMovementId\" IS NOT NULL)::int) = 1");
+            });
         });
     }
 }
