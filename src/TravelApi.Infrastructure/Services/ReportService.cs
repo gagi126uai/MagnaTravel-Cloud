@@ -194,7 +194,13 @@ public class ReportService : IReportService
         var activePotentialCustomers = await _dbContext.Leads
             .CountAsync(lead => lead.Status != LeadStatus.Won && lead.Status != LeadStatus.Lost, cancellationToken);
 
-        var bnaUsdSellerRate = await _bnaExchangeRateService.GetUsdSellerRateAsync(cancellationToken);
+        // La cotizacion BNA es INFORMATIVA: nunca debe bloquear el dashboard. GetUsdSellerRateAsync puede
+        // disparar un fetch HTTP en vivo a bna.com.ar (timeout interno de 10s) y, si BNA no responde, dejaria la
+        // pantalla en skeleton todo ese tiempo. No hay refresher en background, asi que aca acotamos la espera:
+        // si la cotizacion no llega en una ventana corta, nos degradamos al ultimo snapshot persistido (lectura
+        // local, sin red) y, en ultima instancia, a null. El contrato DashboardResponse.bnaUsdSellerRate admite
+        // null y el front ya lo tolera.
+        var bnaUsdSellerRate = await GetDashboardBnaRateAsync(cancellationToken);
 
         // ADR-021 Capa 6: desgloses por moneda (aditivos). Cobros/pagos por moneda REAL del movimiento;
         // ventas/costos por moneda del servicio (tabla hija filtrada por CreatedAt del mes); saldo
@@ -225,6 +231,59 @@ public class ReportService : IReportService
             PorMoneda: porMoneda
         );
     }
+
+    /// <summary>
+    /// Obtiene la cotizacion BNA para el dashboard SIN que la pantalla quede esperando a Banco Nacion.
+    ///
+    /// <para>Corre el fetch en vivo (que puede ir a la red, timeout interno de 10s) contra una ventana corta
+    /// (<see cref="DashboardBnaTimeout"/>). Si gana la ventana, o si el fetch falla, nos degradamos al ultimo
+    /// snapshot persistido en DB (lectura local, sin red). Si ni siquiera hay snapshot persistido, devolvemos
+    /// null. NUNCA propaga excepcion: la cotizacion es informativa y no puede tumbar el dashboard.</para>
+    ///
+    /// <para>El CancellationTokenSource se linkea al token del request para que, si el usuario abandona la
+    /// pantalla, tambien se corte el intento en vivo.</para>
+    /// </summary>
+    private async Task<BnaUsdSellerRateDto?> GetDashboardBnaRateAsync(CancellationToken cancellationToken)
+    {
+        // Ventana propia para el intento en vivo: si BNA no contesta a tiempo, cancelamos y caemos al snapshot.
+        using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutSource.CancelAfter(DashboardBnaTimeout);
+
+        try
+        {
+            return await _bnaExchangeRateService.GetUsdSellerRateAsync(timeoutSource.Token);
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            // Timeout de la ventana corta (OperationCanceledException por el linked token) o cualquier falla del
+            // fetch en vivo. Degradamos al snapshot persistido leyendo con el token ORIGINAL del request (no el
+            // ya cancelado). Si el usuario abandono el request, cancellationToken.IsCancellationRequested es true
+            // y dejamos que la excepcion de cancelacion del request se propague (no es nuestro caso a degradar).
+            return await TryLoadPersistedBnaRateAsync(cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Lee el ultimo snapshot BNA persistido sin tocar la red. Si tambien falla (ej. DB), devuelve null en vez de
+    /// tumbar el dashboard: la cotizacion es informativa.
+    /// </summary>
+    private async Task<BnaUsdSellerRateDto?> TryLoadPersistedBnaRateAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await _bnaExchangeRateService.GetPersistedUsdSellerRateAsync(cancellationToken);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Cuanto espera el dashboard la cotizacion en vivo antes de degradarse al snapshot persistido. Corto a
+    /// proposito: la cotizacion es secundaria y la pantalla no puede quedar bloqueada por un servicio externo.
+    /// </summary>
+    private static readonly TimeSpan DashboardBnaTimeout = TimeSpan.FromSeconds(2);
 
     /// <summary>
     /// ADR-021 Capa 6: arma los desgloses por moneda del dashboard. Cada lista nunca mezcla monedas.

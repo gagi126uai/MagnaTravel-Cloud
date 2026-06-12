@@ -112,6 +112,16 @@ public class BnaExchangeRateService : IBnaExchangeRateService
         };
     }
 
+    /// <summary>
+    /// Lectura local del ultimo snapshot persistido, sin tocar la red. Reusa <see cref="LoadPersistedSnapshotAsync"/>
+    /// (que ya marca IsStale=true). El dashboard la usa como fallback rapido cuando el fetch en vivo no responde a
+    /// tiempo, asi la pantalla nunca queda esperando a Banco Nacion.
+    /// </summary>
+    public Task<BnaUsdSellerRateDto?> GetPersistedUsdSellerRateAsync(CancellationToken cancellationToken)
+    {
+        return LoadPersistedSnapshotAsync(cancellationToken);
+    }
+
     private async Task<BnaUsdSellerRateDto?> LoadPersistedSnapshotAsync(CancellationToken cancellationToken)
     {
         var snapshot = await _dbContext.BnaExchangeRateSnapshots
