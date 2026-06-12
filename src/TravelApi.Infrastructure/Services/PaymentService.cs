@@ -263,57 +263,114 @@ public class PaymentService : IPaymentService
     {
         var normalizedSearch = query.Search?.Trim().ToLowerInvariant();
         // B1.15 Fase 2a (FIX 5): filter mine. Sin cobranzas.view_all el historial expone
-        // solo eventos (payments/invoices/movements) cuya reserva esta a cargo del user.
-        // Los manualMovements con RelatedReserva null se excluyen para roles sin view_all
-        // — si Caja necesita verlos, ese permiso es independiente y futuro.
+        // solo eventos cuya reserva esta a cargo del user. Los asientos de libro sin reserva
+        // (ajustes manuales puros, pagos a proveedor "a cuenta") se excluyen para roles sin
+        // view_all — si Caja necesita verlos, ese permiso es independiente (caja.view).
         var ownerScope = await GetOwnerScopeOrNullAsync(cancellationToken);
 
-        var customerPaymentsBase = _dbContext.Payments.AsNoTracking().AsQueryable();
+        // ADR-023 T2: la PLATA del historial sale del LIBRO DE CAJA (CashLedgerEntry), la MISMA fuente que
+        // la pantalla de Caja (TreasuryService.GetMovementsAsync). Antes se unian Payments + ManualCashMovements
+        // al vuelo, con tres bugs: (1) el puente de sobrepago aparecia como fila fantasma negativa; (2) los
+        // pagos a proveedor eran invisibles; (3) una anulacion (soft-delete) DESAPARECIA en vez de mostrarse.
+        // Leyendo del libro los tres se resuelven por construccion: el puente no tiene asiento (AffectsCash=false),
+        // los pagos a proveedor SI tienen asiento, y una anulacion es un par original+reversa visible.
+        var ledgerBase = _dbContext.CashLedgerEntries.AsNoTracking().AsQueryable();
         var invoicesBase = _dbContext.Invoices.AsNoTracking().AsQueryable();
-        var manualMovementsBase = _dbContext.ManualCashMovements.AsNoTracking().Where(m => !m.IsVoided);
         if (ownerScope is not null)
         {
-            customerPaymentsBase = customerPaymentsBase.Where(p => p.Reserva != null && p.Reserva.ResponsibleUserId == ownerScope);
+            // Owner-scope: solo asientos de una reserva a cargo del user. Los asientos SIN reserva
+            // (pagos a proveedor a cuenta, ajustes manuales puros) quedan fuera — correcto: un Vendedor
+            // no ve el libro completo (M4 del review).
+            ledgerBase = ledgerBase.Where(e => e.Reserva != null && e.Reserva.ResponsibleUserId == ownerScope);
             invoicesBase = invoicesBase.Where(i => i.Reserva != null && i.Reserva.ResponsibleUserId == ownerScope);
-            manualMovementsBase = manualMovementsBase.Where(m => m.RelatedReserva != null && m.RelatedReserva.ResponsibleUserId == ownerScope);
         }
 
-        var customerPayments = customerPaymentsBase
-            .Where(payment => string.IsNullOrWhiteSpace(normalizedSearch) ||
-                payment.Reference != null && payment.Reference.ToLower().Contains(normalizedSearch) ||
-                payment.Method.ToLower().Contains(normalizedSearch) ||
-                payment.Notes != null && payment.Notes.ToLower().Contains(normalizedSearch) ||
-                payment.Reserva != null && payment.Reserva.NumeroReserva.ToLower().Contains(normalizedSearch))
-            .Select(payment => new FinanceHistoryItemDto
+        var ledgerRows = ledgerBase
+            .Where(e => string.IsNullOrWhiteSpace(normalizedSearch) ||
+                e.Method.ToLower().Contains(normalizedSearch) ||
+                (e.Payment != null && e.Payment.Reference != null && e.Payment.Reference.ToLower().Contains(normalizedSearch)) ||
+                (e.Payment != null && e.Payment.Notes != null && e.Payment.Notes.ToLower().Contains(normalizedSearch)) ||
+                (e.SupplierPayment != null && e.SupplierPayment.Reference != null && e.SupplierPayment.Reference.ToLower().Contains(normalizedSearch)) ||
+                (e.SupplierPayment != null && e.SupplierPayment.Notes != null && e.SupplierPayment.Notes.ToLower().Contains(normalizedSearch)) ||
+                (e.ManualCashMovement != null && e.ManualCashMovement.Description.ToLower().Contains(normalizedSearch)) ||
+                (e.ManualCashMovement != null && e.ManualCashMovement.Reference != null && e.ManualCashMovement.Reference.ToLower().Contains(normalizedSearch)) ||
+                (e.Reserva != null && e.Reserva.NumeroReserva.ToLower().Contains(normalizedSearch)) ||
+                (e.Supplier != null && e.Supplier.Name.ToLower().Contains(normalizedSearch)))
+            .Select(e => new FinanceHistoryItemDto
             {
-                PublicId = payment.PublicId,
-                EntityType = "payment",
-                OccurredAt = payment.PaidAt,
-                Amount = payment.Amount,
-                Kind = payment.EntryType == PaymentEntryTypes.CreditNoteReversal ? "Reversion" : "Cobranza",
-                Title = payment.EntryType == PaymentEntryTypes.CreditNoteReversal
-                    ? "Reversion por nota de credito"
-                    : "Cobranza recibida",
-                Subtitle = payment.Reserva != null
-                    ? "Reserva " + payment.Reserva.NumeroReserva
+                // PublicId del ORIGEN (no del asiento), igual que TreasuryService: el front lo usa para abrir
+                // el cobro/pago/movimiento. Para una reversa, conserva el FK de origen, asi apunta al mismo.
+                PublicId =
+                    e.Payment != null ? e.Payment.PublicId
+                    : e.SupplierPayment != null ? e.SupplierPayment.PublicId
+                    : e.ManualCashMovement != null ? e.ManualCashMovement.PublicId
+                    : e.PublicId,
+                // EntityType: se conserva "payment" para cobros de cliente y "movement" para el resto, para
+                // minimizar el impacto en el front actual (decision documentada, recomendada por el ADR).
+                EntityType = e.SourceType == CashLedgerSourceTypes.CustomerPayment ? "payment" : "movement",
+                OccurredAt = e.OccurredAt,
+                // Signo: ingreso positivo, egreso negativo. Para una reversa el signo ya viene invertido en su
+                // Direction (la reversa de un Income es un Expense), asi que el par original+reversa netea 0.
+                Amount = e.Direction == CashMovementDirections.Expense ? -e.Amount : e.Amount,
+                // Kind/Title derivados del origen. Una reversa se rotula "Anulacion" para que se distinga del
+                // hecho original (INV-T2-2: la anulacion nunca pasa desapercibida).
+                Kind = e.IsReversal ? "Anulacion"
+                    : e.SourceType == CashLedgerSourceTypes.CustomerPayment ? "Cobranza"
+                    : e.SourceType == CashLedgerSourceTypes.SupplierPayment ? "Pago a proveedor"
+                    : e.SourceType == CashLedgerSourceTypes.OperatorRefund ? "Devolucion de operador"
+                    : e.SourceType == CashLedgerSourceTypes.ClientCreditWithdrawal ? "Devolucion al cliente"
+                    : "Caja",
+                Title = e.IsReversal
+                    ? (e.SourceType == CashLedgerSourceTypes.CustomerPayment ? "Anulacion de cobranza"
+                        : e.SourceType == CashLedgerSourceTypes.SupplierPayment ? "Anulacion de pago a proveedor"
+                        : "Anulacion de movimiento")
+                    : e.SourceType == CashLedgerSourceTypes.CustomerPayment ? "Cobranza recibida"
+                    : e.SourceType == CashLedgerSourceTypes.SupplierPayment ? "Pago a proveedor"
+                    : e.SourceType == CashLedgerSourceTypes.OperatorRefund ? "Devolucion recibida del operador"
+                    : e.SourceType == CashLedgerSourceTypes.ClientCreditWithdrawal ? "Devolucion fisica al cliente"
+                    : (e.ManualCashMovement != null ? e.ManualCashMovement.Description : "Movimiento de caja"),
+                Subtitle =
+                    e.Reserva != null ? "Reserva " + e.Reserva.NumeroReserva
+                    : e.Supplier != null ? e.Supplier.Name
+                    : e.ManualCashMovement != null && e.ManualCashMovement.Reference != null ? e.ManualCashMovement.Reference
                     : "Sin reserva",
-                ReservaPublicId = payment.Reserva != null ? (Guid?)payment.Reserva.PublicId : null,
-                NumeroReserva = payment.Reserva != null ? payment.Reserva.NumeroReserva : null,
-                Reference = payment.Reference,
-                Method = payment.Method,
-                PaymentEntryType = payment.EntryType,
-                ReceiptPublicId = payment.Receipt != null ? (Guid?)payment.Receipt.PublicId : null,
-                ReceiptNumber = payment.Receipt != null ? payment.Receipt.ReceiptNumber : null,
-                ReceiptStatus = payment.Receipt != null ? payment.Receipt.Status : null,
+                ReservaPublicId = e.Reserva != null ? (Guid?)e.Reserva.PublicId : null,
+                NumeroReserva = e.Reserva != null ? e.Reserva.NumeroReserva : null,
+                Reference =
+                    e.Payment != null ? e.Payment.Reference
+                    : e.SupplierPayment != null ? e.SupplierPayment.Reference
+                    : e.ManualCashMovement != null ? e.ManualCashMovement.Reference
+                    : null,
+                Method = e.Method,
+                PaymentEntryType = null,
+                ReceiptPublicId = e.Payment != null && e.Payment.Receipt != null ? (Guid?)e.Payment.Receipt.PublicId : null,
+                ReceiptNumber = e.Payment != null && e.Payment.Receipt != null ? e.Payment.Receipt.ReceiptNumber : null,
+                ReceiptStatus = e.Payment != null && e.Payment.Receipt != null ? e.Payment.Receipt.Status : null,
                 InvoiceTipoComprobante = null,
                 InvoiceResultado = null,
                 InvoiceWasForced = false,
                 InvoiceForceReason = null,
-                MovementSourceType = null,
-                MovementDirection = null,
-                IsManual = false
+                // MovementSourceType: se COLAPSA para compat del front (igual que TreasuryService:319-322):
+                // CustomerPayment/SupplierPayment se conservan, todo lo demas viaja como "ManualAdjustment".
+                MovementSourceType =
+                    e.SourceType == CashLedgerSourceTypes.CustomerPayment ? "CustomerPayment"
+                    : e.SourceType == CashLedgerSourceTypes.SupplierPayment ? "SupplierPayment"
+                    : "ManualAdjustment",
+                MovementDirection = e.Direction,
+                // IsManual = todo lo que no es cobro de cliente ni pago directo a proveedor (ajustes, cancelaciones).
+                IsManual = e.SourceType != CashLedgerSourceTypes.CustomerPayment
+                        && e.SourceType != CashLedgerSourceTypes.SupplierPayment,
+                Currency = e.Currency,          // moneda REAL de caja. Fin del bug "todo ARS".
+                IsReversal = e.IsReversal,
+                AmountMasked = false,           // se setea en el masking post-paginacion (T2.4)
+                // LedgerSourceType CRUDO (no colapsado): sobre este campo decide el enmascarado de costo (B2).
+                LedgerSourceType = e.SourceType
             });
 
+        // ADR-023 T2.3: las filas de COMPROBANTE (factura/NC/ND) NO son caja: se conservan desde Invoices.
+        // Decision del dueño (OPS-INV-001): se muestran TODAS, marcadas claro por estado — no se filtra por
+        // Resultado. Una factura rechazada ("R") o anulada (AnnulmentStatus=Succeeded) se muestra con un
+        // Title/Kind que lo dice, para que nunca pase por aprobada ni desaparezca.
         var invoices = invoicesBase
             .Where(invoice => string.IsNullOrWhiteSpace(normalizedSearch) ||
                 invoice.ForceReason != null && invoice.ForceReason.ToLower().Contains(normalizedSearch) ||
@@ -325,10 +382,20 @@ public class PaymentService : IPaymentService
                 EntityType = "invoice",
                 OccurredAt = invoice.CreatedAt,
                 Amount = invoice.ImporteTotal,
-                Kind = invoice.TipoComprobante == 3 || invoice.TipoComprobante == 8 || invoice.TipoComprobante == 13 || invoice.TipoComprobante == 53
-                    ? "Nota de credito"
-                    : "Factura AFIP",
-                Title = invoice.TipoComprobante == 1 ? "Factura A" :
+                // Kind distingue el ESTADO del comprobante para que el front lo marque sin ambiguedad.
+                // Resultado de ARCA: "A"=aprobado, "R"=rechazado, "PENDING"=en proceso (NUNCA "P" — m1 del review).
+                Kind = invoice.AnnulmentStatus == AnnulmentStatus.Succeeded ? "Comprobante anulado"
+                    : invoice.Resultado == "R" ? "Comprobante rechazado"
+                    : invoice.Resultado == "PENDING" ? "Comprobante en proceso"
+                    : invoice.TipoComprobante == 3 || invoice.TipoComprobante == 8 || invoice.TipoComprobante == 13 || invoice.TipoComprobante == 53
+                        ? "Nota de credito"
+                        : "Factura AFIP",
+                Title =
+                    (invoice.AnnulmentStatus == AnnulmentStatus.Succeeded ? "[Anulada] "
+                        : invoice.Resultado == "R" ? "[Rechazada por ARCA] "
+                        : invoice.Resultado == "PENDING" ? "[En proceso] "
+                        : "") +
+                    (invoice.TipoComprobante == 1 ? "Factura A" :
                     invoice.TipoComprobante == 6 ? "Factura B" :
                     invoice.TipoComprobante == 11 ? "Factura C" :
                     invoice.TipoComprobante == 3 ? "Nota de Credito A" :
@@ -340,7 +407,7 @@ public class PaymentService : IPaymentService
                     invoice.TipoComprobante == 51 ? "Factura M" :
                     invoice.TipoComprobante == 52 ? "Nota de Debito M" :
                     invoice.TipoComprobante == 53 ? "Nota de Credito M" :
-                    "Comp. " + invoice.TipoComprobante,
+                    "Comp. " + invoice.TipoComprobante),
                 Subtitle = invoice.Reserva != null
                     ? "Reserva " + invoice.Reserva.NumeroReserva
                     : "Sin reserva",
@@ -358,56 +425,45 @@ public class PaymentService : IPaymentService
                 InvoiceForceReason = invoice.ForceReason,
                 MovementSourceType = null,
                 MovementDirection = null,
-                IsManual = false
+                IsManual = false,
+                Currency = null,                // un comprobante no es caja: no lleva moneda de caja
+                IsReversal = false,
+                AmountMasked = false,
+                LedgerSourceType = null
             });
 
-        var manualMovements = manualMovementsBase
-            .Where(movement => string.IsNullOrWhiteSpace(normalizedSearch) ||
-                movement.Description.ToLower().Contains(normalizedSearch) ||
-                movement.Reference != null && movement.Reference.ToLower().Contains(normalizedSearch) ||
-                movement.Method.ToLower().Contains(normalizedSearch) ||
-                movement.RelatedReserva != null && movement.RelatedReserva.NumeroReserva.ToLower().Contains(normalizedSearch) ||
-                movement.RelatedSupplier != null && movement.RelatedSupplier.Name.ToLower().Contains(normalizedSearch))
-            .Select(movement => new FinanceHistoryItemDto
-            {
-                PublicId = movement.PublicId,
-                EntityType = "movement",
-                OccurredAt = movement.OccurredAt,
-                Amount = movement.Direction == CashMovementDirections.Expense ? -movement.Amount : movement.Amount,
-                Kind = "Caja",
-                Title = movement.Description,
-                Subtitle = movement.Reference ??
-                    (movement.RelatedReserva != null
-                        ? movement.RelatedReserva.NumeroReserva
-                        : movement.RelatedSupplier != null
-                            ? movement.RelatedSupplier.Name
-                            : "Ajuste manual"),
-                ReservaPublicId = movement.RelatedReserva != null ? (Guid?)movement.RelatedReserva.PublicId : null,
-                NumeroReserva = movement.RelatedReserva != null ? movement.RelatedReserva.NumeroReserva : null,
-                Reference = movement.Reference,
-                Method = movement.Method,
-                PaymentEntryType = null,
-                ReceiptPublicId = null,
-                ReceiptNumber = null,
-                ReceiptStatus = null,
-                InvoiceTipoComprobante = null,
-                InvoiceResultado = null,
-                InvoiceWasForced = false,
-                InvoiceForceReason = null,
-                MovementSourceType = "ManualAdjustment",
-                MovementDirection = movement.Direction,
-                IsManual = true
-            });
+        // ADR-023 T2.3: el Payment tecnico con EntryType=CreditNoteReversal (AffectsCash=false) YA NO se muestra
+        // como fila "Reversion". Razon: no tiene asiento en el libro (no movio caja) y la NC que representa ya
+        // aparece por la rama Invoices como comprobante. Mantener la fila "Reversion" duplicaba la NC. La
+        // trazabilidad fiscal se conserva en Invoices; aca solo se elimina una representacion redundante.
 
-        var timeline = customerPayments
-            .Concat(invoices)
-            .Concat(manualMovements);
+        var timeline = ledgerRows.Concat(invoices);
 
         timeline = query.IsSortDescending()
             ? timeline.OrderByDescending(item => item.OccurredAt).ThenByDescending(item => item.PublicId)
             : timeline.OrderBy(item => item.OccurredAt).ThenBy(item => item.PublicId);
 
-        return await timeline.ToPagedResponseAsync(query, cancellationToken);
+        var page = await timeline.ToPagedResponseAsync(query, cancellationToken);
+
+        // ADR-023 T2.4: enmascarado de COSTO, simetrico con Caja (TreasuryService.GetMovementsAsync). Sin
+        // cobranzas.see_cost, los egresos que son informacion de costo se ocultan: pagos a proveedor y
+        // devoluciones recibidas del operador. IMPORTANTE (review B2): la decision se toma sobre el
+        // LedgerSourceType CRUDO, nunca sobre el MovementSourceType colapsado del front (que mete el
+        // OperatorRefund dentro de "ManualAdjustment" y filtraria el costo). CostMasking es fail-closed:
+        // sin HttpContext/resolver, oculta. NO se enmascaran cobros de cliente, ajustes manuales genuinos
+        // ni la devolucion fisica al cliente.
+        if (!await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, cancellationToken))
+        {
+            foreach (var item in page.Items.Where(i =>
+                i.LedgerSourceType == CashLedgerSourceTypes.SupplierPayment ||
+                i.LedgerSourceType == CashLedgerSourceTypes.OperatorRefund))
+            {
+                item.Amount = 0m;
+                item.AmountMasked = true;
+            }
+        }
+
+        return page;
     }
 
     public async Task<IEnumerable<PaymentDto>> GetPaymentsForReservaAsync(int ReservaId, CancellationToken cancellationToken)
@@ -829,6 +885,27 @@ public class PaymentService : IPaymentService
         payment.IsDeleted = false;
         payment.DeletedAt = null;
 
+        // ADR-023 T2.5: restaurar un cobro re-asienta en el libro. El delete dejo el asiento original
+        // IsReversed=true + su reversa (neto 0). Restaurar NO des-revierte (el libro nunca reescribe una
+        // reversa): se crea un asiento vivo NUEVO equivalente al cobro, asi el neto vuelve a +Amount y la
+        // historia queda completa (cobro + anulacion + re-cobro). Antes este metodo NO re-asentaba, lo que
+        // dejaba un pago vivo sin asiento (par original+reversa neteando 0) — bug de integridad libro<->pagos.
+        if (payment.AffectsCash)
+        {
+            // Guard de idempotencia: si ya hay un asiento vivo para este pago (p.ej. re-restaurar), no duplicar.
+            var hasLive = await _dbContext.CashLedgerEntries
+                .AnyAsync(e => e.PaymentId == payment.Id && !e.IsReversal && !e.IsReversed, cancellationToken);
+            if (!hasLive)
+            {
+                var (userId, userName) = ResolveLedgerActor();
+                var entry = TravelApi.Domain.Helpers.CashLedgerEntryFactory.ForPayment(payment, userId, userName);
+                _dbContext.CashLedgerEntries.Add(entry);
+            }
+        }
+
+        // El SaveChanges va DESPUES del Add: limpiar IsDeleted y crear el asiento vivo deben ocurrir en la
+        // MISMA transaccion. Si se guardara antes del Add, una caida entre ambos dejaria pago vivo sin asiento
+        // (justo el bug que se esta arreglando).
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         if (payment.ReservaId.HasValue)
