@@ -23,6 +23,9 @@ public class Customer : IHasPublicId
     public string TaxCondition { get; set; } = "Consumidor Final"; // Responsable Inscripto, Monotributo, Exento, Consumidor Final
     public int? TaxConditionId { get; set; } // AFIP Code: 1=RI, 4=Exento, 5=Consumidor Final, 6=Monotributo
     public decimal CreditLimit { get; set; } = 0;
+    // ADR-023 T1.6: zombie. NUNCA se escribe (nunca se escribio) y desde ADR-023 NUNCA se lee: el saldo a cobrar
+    // del cliente se deriva de ReservaMoneyByCurrency via FinancePositionService (fuente unica). No borrar la
+    // columna: son datos historicos y poblarla seria una cuarta fuente de verdad.
     public decimal CurrentBalance { get; set; } = 0; // Positive = they owe us
     public bool IsActive { get; set; } = true;
 

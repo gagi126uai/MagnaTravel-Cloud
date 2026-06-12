@@ -28,6 +28,34 @@ public interface IFinancePositionService
     /// proveedores). Es plata de COSTO: el caller decide si la enmascara segun <c>cobranzas.see_cost</c>.
     /// </summary>
     Task<List<FinanceCurrencyAmount>> GetAccountsPayableByCurrencyAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// ADR-023 T1: saldo a COBRAR del cliente POR MONEDA (deuda exigible), derivado de
+    /// ReservaMoneyByCurrency de sus reservas en firme. Misma definicion canonica de "en firme"
+    /// (InManagement / Confirmed / Traveling / ToSettle) que el AR global. NUNCA mezcla monedas.
+    /// </summary>
+    Task<List<FinanceCurrencyAmount>> GetCustomerReceivableByCurrencyAsync(int customerId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// ADR-023 T1: escalar de compat (suma cross-moneda) del saldo a cobrar de UN cliente. Solo para los
+    /// campos escalares que el front actual todavia lee (CurrentBalance / TotalBalance). NUNCA se usa para
+    /// decidir nada por moneda. Con todo en ARS coincide con la unica linea ARS.
+    /// </summary>
+    Task<decimal> GetCustomerReceivableScalarAsync(int customerId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// ADR-023 T1: saldo a cobrar escalar de TODOS los clientes activos de una sola pasada (para el
+    /// ordenamiento de la lista y el enriquecimiento de la grilla). Devuelve <c>Customer.PublicId -&gt; escalar</c>.
+    /// Se agrupa por PublicId (no por Id interno) porque el DTO de la lista expone PublicId, no Id.
+    /// </summary>
+    Task<Dictionary<Guid, decimal>> GetReceivableScalarByCustomerPublicIdAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// ADR-023 T1: indica si un estado de reserva cuenta como deuda exigible (en firme). Expuesto para que
+    /// los consumidores (CustomerService overview, ReportService) usen el MISMO predicado canonico sin
+    /// re-declarar la lista de estados. Evita que existan dos definiciones de "que es saldo a cobrar".
+    /// </summary>
+    bool IsInFirmReceivableStatus(string status);
 }
 
 /// <summary>

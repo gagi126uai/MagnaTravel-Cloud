@@ -30,7 +30,7 @@ namespace TravelApi.Tests.Unit
         {
             // Arrange
             using var context = new AppDbContext(_dbOptions);
-            var service = new CustomerService(context);
+            var service = new CustomerService(context, new FinancePositionService(context));
             var customer = new Customer { FullName = "John Doe", Email = "john@example.com" };
 
             // Act
@@ -52,7 +52,7 @@ namespace TravelApi.Tests.Unit
             context.Customers.Add(new Customer { FullName = "Inactive", IsActive = false });
             await context.SaveChangesAsync();
 
-            var service = new CustomerService(context);
+            var service = new CustomerService(context, new FinancePositionService(context));
 
             // Act
             var activeOnly = await service.GetCustomersAsync(new TravelApi.Application.DTOs.CustomerListQuery { IncludeInactive = false }, CancellationToken.None);
@@ -73,7 +73,7 @@ namespace TravelApi.Tests.Unit
             await context.SaveChangesAsync();
             context.ChangeTracker.Clear();
 
-            var service = new CustomerService(context);
+            var service = new CustomerService(context, new FinancePositionService(context));
             var updatedCustomer = new Customer { Id = 1, FullName = "New Name", IsActive = true };
 
             // Act
@@ -133,7 +133,7 @@ namespace TravelApi.Tests.Unit
             context.Payments.AddRange(realPayment, overpaymentBridge);
             await context.SaveChangesAsync();
 
-            var service = new CustomerService(context);
+            var service = new CustomerService(context, new FinancePositionService(context));
 
             // Act
             var result = await service.GetCustomerAccountPaymentsAsync(customer.Id, new PagedQuery(), CancellationToken.None);

@@ -557,14 +557,14 @@ public class ReportService : IReportService
                 cancellationToken)
             : new List<CurrencyAmount>();
 
-        // Saldo pendiente (cuentas por cobrar) por moneda: no es un dato del periodo sino el saldo
-        // vigente, igual que el escalar de otros reportes. Excluye Closed/Cancelled/Budget.
+        // Saldo pendiente (cuentas por cobrar) por moneda: no es un dato del periodo sino el saldo vigente.
+        // ADR-023 T1.3: usa la MISMA lista canonica de estados en firme que el AR de tesoreria y la cuenta del
+        // cliente (antes excluia Closed/Cancelled/Budget pero contaba Quotation/Lost/PendingOperatorRefund, que
+        // no son deuda exigible). Asi el saldo pendiente del dashboard cierra con el resto de las pantallas.
         var saldoPendienteQuery =
             from row in _dbContext.ReservaMoneyByCurrency
             join reservaPadre in _dbContext.Reservas on row.ReservaId equals reservaPadre.Id
-            where reservaPadre.Status != EstadoReserva.Closed
-                && reservaPadre.Status != EstadoReserva.Cancelled
-                && reservaPadre.Status != EstadoReserva.Budget
+            where FinancePositionService.ActiveReceivableStatuses.Contains(reservaPadre.Status)
                 && row.Balance > 0
             select new { row.Currency, row.Balance };
 
@@ -598,18 +598,18 @@ public class ReportService : IReportService
         // positivo de las reservas vigentes (no Closed/Cancelled/Budget) por cliente + moneda: un cliente
         // que debe en dos monedas produce DOS filas, NUNCA una fila con monto mezclado.
         //
-        // Se excluyen Closed/Cancelled/Budget para que el saldo por moneda sea coherente con el resto de
-        // los reportes (la deuda exigible). Por eso el total por cliente puede no coincidir con el escalar
-        // legacy Customer.CurrentBalance, que sumaba todo sin filtrar estado.
+        // ADR-023 T1.3: la deuda exigible son SOLO las reservas en firme (InManagement/Confirmed/Traveling/
+        // ToSettle), misma lista canonica que el AR de tesoreria y la cuenta del cliente. Antes esta query
+        // excluia Closed/Cancelled/Budget pero seguia contando Quotation/Lost/PendingOperatorRefund (que no son
+        // deuda). Por eso el total por cliente puede no coincidir con el escalar legacy Customer.CurrentBalance,
+        // que sumaba todo sin filtrar estado.
         var receivablesByCurrency =
             from row in _dbContext.ReservaMoneyByCurrency
             join reservaPadre in _dbContext.Reservas on row.ReservaId equals reservaPadre.Id
             join customer in _dbContext.Customers on reservaPadre.PayerId equals customer.Id
             where row.Balance > 0
                 && customer.IsActive
-                && reservaPadre.Status != EstadoReserva.Closed
-                && reservaPadre.Status != EstadoReserva.Cancelled
-                && reservaPadre.Status != EstadoReserva.Budget
+                && FinancePositionService.ActiveReceivableStatuses.Contains(reservaPadre.Status)
             group new { row.Balance, reservaPadre.CreatedAt }
                 by new { customer.PublicId, customer.FullName, customer.DocumentNumber, row.Currency }
             into grouped
@@ -637,6 +637,47 @@ public class ReportService : IReportService
                 CurrentBalance = EconomicRulesHelper.RoundCurrency(x.Balance),
                 x.LastMovementDate
             })
+            .ToList();
+    }
+
+    /// <summary>
+    /// ADR-023 T1.3: fila tipada de cuenta por cobrar por cliente + MONEDA, para el Excel. El dashboard
+    /// (GetDetailedReceivablesAsync) usa objetos anonimos por contrato historico; el Excel necesita un tipo con
+    /// nombre para iterar, asi que comparte la MISMA fuente canonica via este metodo.
+    /// </summary>
+    private sealed record ReceivableRow(string FullName, string? DocumentNumber, string Currency, decimal Balance);
+
+    private async Task<List<ReceivableRow>> GetReceivablesByCustomerCurrencyAsync(CancellationToken cancellationToken)
+    {
+        // Misma fuente canonica que GetDetailedReceivablesAsync: ReservaMoneyByCurrency de reservas en firme,
+        // por cliente + moneda. Reemplaza la lectura del zombie Customer.CurrentBalance.
+        var query =
+            from row in _dbContext.ReservaMoneyByCurrency
+            join reservaPadre in _dbContext.Reservas on row.ReservaId equals reservaPadre.Id
+            join customer in _dbContext.Customers on reservaPadre.PayerId equals customer.Id
+            where row.Balance > 0
+                && customer.IsActive
+                && FinancePositionService.ActiveReceivableStatuses.Contains(reservaPadre.Status)
+            group row.Balance by new { customer.FullName, customer.DocumentNumber, row.Currency }
+            into grouped
+            select new
+            {
+                grouped.Key.FullName,
+                grouped.Key.DocumentNumber,
+                grouped.Key.Currency,
+                Balance = grouped.Sum()
+            };
+
+        var raw = await query
+            .OrderByDescending(x => x.Balance)
+            .ToListAsync(cancellationToken);
+
+        return raw
+            .Select(x => new ReceivableRow(
+                x.FullName,
+                x.DocumentNumber,
+                Monedas.Normalizar(x.Currency),
+                EconomicRulesHelper.RoundCurrency(x.Balance)))
             .ToList();
     }
 
@@ -687,23 +728,26 @@ public class ReportService : IReportService
             var debtSheet = workbook.Worksheets.Add("Cuentas por Cobrar");
             debtSheet.Cell(1, 1).Value = "Cliente";
             debtSheet.Cell(1, 2).Value = "Documento";
-            debtSheet.Cell(1, 3).Value = "Saldo Deudor";
-            
-            var debtors = await _dbContext.Customers
-                .Where(c => c.CurrentBalance > 0)
-                .OrderByDescending(c => c.CurrentBalance)
-                .ToListAsync(cancellationToken);
+            // ADR-023 T1.3: columna Moneda nueva. El saldo deja de ser un escalar mezclado (ARS+USD) y se
+            // reporta una fila por cliente + moneda (no se puede sumar ARS con USD; consistente con ADR-021).
+            debtSheet.Cell(1, 3).Value = "Moneda";
+            debtSheet.Cell(1, 4).Value = "Saldo Deudor";
+
+            // ADR-023 T1.3: el Excel deja de leer el zombie Customer.CurrentBalance (que daba el reporte vacio).
+            // Sale de la MISMA fuente canonica que el dashboard: ReservaMoneyByCurrency en firme, por moneda.
+            var debtors = await GetReceivablesByCustomerCurrencyAsync(cancellationToken);
 
             int row = 2;
             foreach (var debtor in debtors)
             {
                 debtSheet.Cell(row, 1).Value = debtor.FullName;
                 debtSheet.Cell(row, 2).Value = debtor.DocumentNumber;
-                debtSheet.Cell(row, 3).Value = debtor.CurrentBalance;
+                debtSheet.Cell(row, 3).Value = debtor.Currency;
+                debtSheet.Cell(row, 4).Value = debtor.Balance;
                 row++;
             }
 
-            debtSheet.Range(2, 3, row - 1, 3).Style.NumberFormat.Format = "$ #,##0.00";
+            debtSheet.Range(2, 4, row - 1, 4).Style.NumberFormat.Format = "$ #,##0.00";
             debtSheet.Columns().AdjustToContents();
         }
 

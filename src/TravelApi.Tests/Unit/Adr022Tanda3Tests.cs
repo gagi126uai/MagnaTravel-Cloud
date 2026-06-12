@@ -423,7 +423,7 @@ public class Adr022Tanda3Tests
             new ReservaMoneyByCurrency { ReservaId = 2, Currency = "USD", Balance = 100m, ConfirmedSale = 100m });
         await context.SaveChangesAsync();
 
-        var overview = await new CustomerService(context).GetCustomerAccountOverviewAsync(1, CancellationToken.None);
+        var overview = await new CustomerService(context, new FinancePositionService(context)).GetCustomerAccountOverviewAsync(1, CancellationToken.None);
 
         Assert.Equal(500m, overview.Summary.ReceivableByCurrency.Single(x => x.Currency == "ARS").Amount);
         Assert.Equal(100m, overview.Summary.ReceivableByCurrency.Single(x => x.Currency == "USD").Amount);
@@ -446,7 +446,7 @@ public class Adr022Tanda3Tests
             new ClientCreditEntry { Id = 4, CustomerId = 1, Currency = "ARS", CreditedAmount = 70m, RemainingBalance = 0m, BookingCancellationId = 100, IsFullyConsumed = true });
         await context.SaveChangesAsync();
 
-        var overview = await new CustomerService(context).GetCustomerAccountOverviewAsync(1, CancellationToken.None);
+        var overview = await new CustomerService(context, new FinancePositionService(context)).GetCustomerAccountOverviewAsync(1, CancellationToken.None);
 
         Assert.Equal(250m, overview.Summary.CreditBalanceByCurrency.Single(x => x.Currency == "ARS").Amount); // 200 + 50
         Assert.Equal(40m, overview.Summary.CreditBalanceByCurrency.Single(x => x.Currency == "USD").Amount);
@@ -463,7 +463,7 @@ public class Adr022Tanda3Tests
         context.ReservaMoneyByCurrency.Add(new ReservaMoneyByCurrency { ReservaId = 1, Currency = "ARS", Balance = 300m, ConfirmedSale = 300m });
         await context.SaveChangesAsync();
 
-        var overview = await new CustomerService(context).GetCustomerAccountOverviewAsync(1, CancellationToken.None);
+        var overview = await new CustomerService(context, new FinancePositionService(context)).GetCustomerAccountOverviewAsync(1, CancellationToken.None);
 
         // Sin creditos: el bolsillo viene vacio y el escalar de compat (semaforo) no cambia.
         Assert.Empty(overview.Summary.CreditBalanceByCurrency);

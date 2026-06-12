@@ -252,12 +252,16 @@ public class CustomersController : ControllerBase
             TaxId = request.TaxId,
             TaxCondition = request.TaxCondition ?? "Consumidor Final",
             TaxConditionId = request.TaxConditionId,
-            CreditLimit = request.CreditLimit,
+            // ADR-023 T1.5: CreditLimit ya NO viaja en el request ni se mapea. La columna en DB queda intacta
+            // (no se borran datos); simplemente deja de poder setearse por API. El campo sigue en el DTO de
+            // salida hasta que el front lo retire (en su tanda con UX gate).
             IsActive = request.IsActive
         };
     }
 }
 
+// ADR-023 T1.5: CreditLimit quitado del request (no se puede setear por API). El nuevo Customer creado/editado
+// usa el default de la entidad (0) para CreditLimit; en edicion no se toca el valor guardado.
 public record CustomerUpsertRequest(
     string FullName,
     string? Email,
@@ -269,5 +273,4 @@ public record CustomerUpsertRequest(
     string? TaxId,
     string? TaxCondition,
     int? TaxConditionId,
-    decimal CreditLimit,
     bool IsActive = true);

@@ -11,10 +11,17 @@ namespace TravelApi.Infrastructure.Services;
 public class CustomerService : ICustomerService
 {
     private readonly AppDbContext _dbContext;
+    // ADR-023 T1: fuente UNICA del saldo a cobrar del cliente. Antes CustomerService calculaba el saldo con
+    // su propio predicado de estados (incluia canceladas/cotizaciones) -> daba un numero distinto al del
+    // dashboard/tesoreria. Ahora pide el saldo a este componente, que lo deriva de ReservaMoneyByCurrency
+    // con la lista canonica de estados en firme. NO es opcional a proposito: no debe quedar un segundo camino
+    // de saldo dentro de este service.
+    private readonly IFinancePositionService _financePosition;
 
-    public CustomerService(AppDbContext dbContext)
+    public CustomerService(AppDbContext dbContext, IFinancePositionService financePosition)
     {
         _dbContext = dbContext;
+        _financePosition = financePosition;
     }
 
     public async Task<PagedResponse<CustomerListItemDto>> GetCustomersAsync(CustomerListQuery query, CancellationToken cancellationToken)
@@ -26,8 +33,17 @@ public class CustomerService : ICustomerService
             customersQuery = customersQuery.Where(customer => customer.IsActive);
         }
 
+        var sortBy = (query.SortBy ?? "fullName").Trim().ToLowerInvariant();
+        var sortByBalance = sortBy == "currentbalance";
+
+        // ADR-023 T1: el saldo del cliente ya no vive en la entidad ni se calcula por fila en SQL; sale del
+        // componente canonico (ReservaMoneyByCurrency en firme). Por eso el ordenamiento por saldo no se puede
+        // hacer en SQL: la proyeccion sale por un orden estable (FullName) y, si se pidio orden por saldo, se
+        // reordena EN MEMORIA la pagina ya enriquecida. Limitacion conocida (R2 del ADR): con paginacion
+        // server-side el orden por saldo es POR PAGINA, no global. Aceptable para el volumen actual.
         customersQuery = ApplyCustomerOrdering(customersQuery, query);
 
+        // La proyeccion NO calcula CurrentBalance (se enriquece despues desde el componente canonico).
         var projectedQuery = customersQuery.Select(customer => new CustomerListItemDto
         {
             PublicId = customer.PublicId,
@@ -40,13 +56,30 @@ public class CustomerService : ICustomerService
             TaxId = customer.TaxId,
             CreditLimit = customer.CreditLimit,
             IsActive = customer.IsActive,
-            TaxConditionId = customer.TaxConditionId,
-            CurrentBalance = customer.Reservas
-                .Where(reserva => reserva.Status != EstadoReserva.Cancelled && reserva.Status != EstadoReserva.Budget && reserva.Status != "Archived")
-                .Sum(reserva => (decimal?)reserva.Balance) ?? 0m
+            TaxConditionId = customer.TaxConditionId
         });
 
-        return await projectedQuery.ToPagedResponseAsync(query, cancellationToken);
+        var page = await projectedQuery.ToPagedResponseAsync(query, cancellationToken);
+
+        // Una sola pasada trae el saldo en firme de todos los clientes con deuda (PublicId -> escalar).
+        var scalarsByPublicId = await _financePosition.GetReceivableScalarByCustomerPublicIdAsync(cancellationToken);
+        foreach (var item in page.Items)
+        {
+            item.CurrentBalance = scalarsByPublicId.GetValueOrDefault(item.PublicId, 0m);
+        }
+
+        if (!sortByBalance)
+        {
+            return page;
+        }
+
+        // Reordenar la pagina por saldo (en memoria) y reconstruir el PagedResponse: Items es init-only.
+        var desc = string.Equals(query.SortDir, "desc", StringComparison.OrdinalIgnoreCase);
+        var ordered = desc
+            ? page.Items.OrderByDescending(item => item.CurrentBalance).ThenBy(item => item.FullName).ToList()
+            : page.Items.OrderBy(item => item.CurrentBalance).ThenBy(item => item.FullName).ToList();
+
+        return PagedResponse<CustomerListItemDto>.Create(ordered, page.Page, page.PageSize, page.TotalCount);
     }
 
     public async Task<CustomerListItemDto> GetCustomerAsync(int id, CancellationToken cancellationToken)
@@ -66,14 +99,19 @@ public class CustomerService : ICustomerService
                 TaxId = found.TaxId,
                 CreditLimit = found.CreditLimit,
                 IsActive = found.IsActive,
-                TaxConditionId = found.TaxConditionId,
-                CurrentBalance = found.Reservas
-                    .Where(reserva => reserva.Status != EstadoReserva.Cancelled && reserva.Status != EstadoReserva.Budget && reserva.Status != "Archived")
-                    .Sum(reserva => (decimal?)reserva.Balance) ?? 0m
+                TaxConditionId = found.TaxConditionId
             })
             .FirstOrDefaultAsync(cancellationToken);
 
-        return customer ?? throw new KeyNotFoundException("Cliente no encontrado");
+        if (customer == null)
+        {
+            throw new KeyNotFoundException("Cliente no encontrado");
+        }
+
+        // ADR-023 T1: el saldo sale del componente canonico (reservas en firme), no de un subquery local
+        // que incluia cotizaciones/canceladas.
+        customer.CurrentBalance = await _financePosition.GetCustomerReceivableScalarAsync(id, cancellationToken);
+        return customer;
     }
 
     public async Task<Customer> CreateCustomerAsync(Customer customer, CancellationToken cancellationToken)
@@ -218,13 +256,27 @@ public class CustomerService : ICustomerService
         existing.FullName = customer.FullName;
         existing.Email = customer.Email;
         existing.Phone = customer.Phone;
-        existing.DocumentType = customer.DocumentType;
-        existing.DocumentNumber = customer.DocumentNumber;
+
+        // ADR-023 T1 (fix clobber documento): un PUT que OMITE documentType/documentNumber llega con null aca.
+        // No se confia en el front: si el entrante viene vacio se PRESERVA el valor guardado (mandar vacio =
+        // "no tocar"). Asi se corta la corrupcion silenciosa del documento al editar otros campos del cliente.
+        // Trade-off: hoy no se puede "borrar" el documento por PUT; si algun dia hace falta, va con una
+        // intencion explicita (no omitiendo el campo).
+        if (!string.IsNullOrWhiteSpace(customer.DocumentType))
+        {
+            existing.DocumentType = customer.DocumentType;
+        }
+        if (!string.IsNullOrWhiteSpace(customer.DocumentNumber))
+        {
+            existing.DocumentNumber = customer.DocumentNumber;
+        }
+
         existing.Address = customer.Address;
         existing.Notes = customer.Notes;
         existing.IsActive = customer.IsActive;
         existing.TaxId = customer.TaxId;
-        existing.CreditLimit = customer.CreditLimit;
+        // ADR-023 T1.5: CreditLimit sale de la vista. Ya no llega por request (se quito de CustomerUpsertRequest
+        // y de MapCustomer), asi que no se toca aca: el valor en DB queda como esta (columna historica).
         existing.TaxConditionId = customer.TaxConditionId;
         existing.TaxCondition = customer.TaxCondition;
 
@@ -280,10 +332,7 @@ public class CustomerService : ICustomerService
                 Email = entity.Email,
                 Phone = entity.Phone,
                 TaxId = entity.TaxId,
-                CreditLimit = entity.CreditLimit,
-                CurrentBalance = entity.Reservas
-                    .Where(reserva => reserva.Status != EstadoReserva.Cancelled && reserva.Status != EstadoReserva.Budget && reserva.Status != "Archived")
-                    .Sum(reserva => (decimal?)reserva.Balance) ?? 0m
+                CreditLimit = entity.CreditLimit
             })
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -292,15 +341,29 @@ public class CustomerService : ICustomerService
             throw new KeyNotFoundException("Cliente no encontrado");
         }
 
+        // ADR-023 T1: el "Saldo Actual" del cliente sale del componente canonico (reservas en firme).
+        customer.CurrentBalance = await _financePosition.GetCustomerReceivableScalarAsync(id, cancellationToken);
+
+        // ADR-023 T1 (fix bug A3): el resumen TotalSales/TotalPaid/TotalBalance se calcula SOLO sobre las
+        // reservas en firme. Antes sumaba TODAS las reservas del cliente (incluidas canceladas y cotizaciones)
+        // -> el "Saldo Actual" grande del front estaba inflado. Con el mismo conjunto en los tres, el trio
+        // TotalSales - TotalPaid queda coherente con TotalBalance (INV-T1-2).
+        var firmReservasQuery = _dbContext.Reservas
+            .AsNoTracking()
+            .Where(reserva => reserva.PayerId == id
+                && FinancePositionService.ActiveReceivableStatuses.Contains(reserva.Status));
+
+        // El contador de reservas sigue contando TODAS las del cliente (es el badge "Reservas: N" de la
+        // pestaña, no un numero de plata): solo los tres importes pasan a la lista en firme.
         var reservasQuery = _dbContext.Reservas
             .AsNoTracking()
             .Where(reserva => reserva.PayerId == id);
 
         var summary = new CustomerAccountSummaryDto
         {
-            TotalSales = await reservasQuery.SumAsync(reserva => (decimal?)reserva.TotalSale, cancellationToken) ?? 0m,
-            TotalPaid = await reservasQuery.SumAsync(reserva => (decimal?)reserva.TotalPaid, cancellationToken) ?? 0m,
-            TotalBalance = await reservasQuery.SumAsync(reserva => (decimal?)reserva.Balance, cancellationToken) ?? 0m,
+            TotalSales = await firmReservasQuery.SumAsync(reserva => (decimal?)reserva.TotalSale, cancellationToken) ?? 0m,
+            TotalPaid = await firmReservasQuery.SumAsync(reserva => (decimal?)reserva.TotalPaid, cancellationToken) ?? 0m,
+            TotalBalance = await firmReservasQuery.SumAsync(reserva => (decimal?)reserva.Balance, cancellationToken) ?? 0m,
             ReservaCount = await reservasQuery.CountAsync(cancellationToken),
             // ADR-022 §4.9 (fix S1-bis): el contador NO debe incluir el Payment puente del saldo a favor,
             // o el badge "Pagos: N" no coincidiria con las filas visibles en GetCustomerAccountPaymentsAsync
@@ -314,8 +377,11 @@ public class CustomerService : ICustomerService
             InvoiceCount = await _dbContext.Invoices
                 .AsNoTracking()
                 .CountAsync(invoice => invoice.Reserva != null && invoice.Reserva.PayerId == id, cancellationToken),
-            // ADR-022 Capa 8 (C2): la cuenta corriente por moneda + el bolsillo de saldo a favor.
-            ReceivableByCurrency = await BuildCustomerReceivableByCurrencyAsync(id, cancellationToken),
+            // ADR-022 Capa 8 (C2) / ADR-023 T1: la cuenta corriente por moneda sale del componente canonico
+            // (mismo predicado en firme que el AR de tesoreria). El bolsillo de saldo a favor sigue local
+            // (es de ClientCreditEntry, no de cuentas por cobrar).
+            ReceivableByCurrency = MapToCurrencyAmounts(
+                await _financePosition.GetCustomerReceivableByCurrencyAsync(id, cancellationToken)),
             CreditBalanceByCurrency = await BuildCustomerCreditByCurrencyAsync(id, cancellationToken)
         };
 
@@ -326,39 +392,15 @@ public class CustomerService : ICustomerService
         };
     }
 
-    // Estados de reserva que cuentan como saldo a COBRAR del cliente. Misma definicion que el AR de tesoreria
-    // (ADR-022 §4.7): una cotizacion/presupuesto todavia no tiene saldo exigible.
-    private static readonly string[] ReceivableStatuses =
-    {
-        EstadoReserva.InManagement,
-        EstadoReserva.Confirmed,
-        EstadoReserva.Traveling,
-        EstadoReserva.ToSettle
-    };
-
     /// <summary>
-    /// ADR-022 Capa 8 (C2): saldo a COBRAR del cliente POR MONEDA, derivado de ReservaMoneyByCurrency (no del
-    /// surrogate escalar Reserva.Balance, que mezclaria monedas). Es la misma fuente que el AR de tesoreria,
-    /// filtrada a las reservas de ESTE cliente (PayerId) en estado activo, contando solo saldos positivos.
+    /// ADR-023 T1: mapea el resultado neutral del componente canonico (FinanceCurrencyAmount) al DTO de la
+    /// capa de aplicacion (CurrencyAmountDto). El componente ya normaliza moneda, redondea y ordena, asi que
+    /// aca solo se cambia el tipo.
     /// </summary>
-    private async Task<List<CurrencyAmountDto>> BuildCustomerReceivableByCurrencyAsync(int customerId, CancellationToken cancellationToken)
-    {
-        // Join explicito contra Reservas (no nav implicita) para correr igual en Postgres e InMemory.
-        var query =
-            from row in _dbContext.ReservaMoneyByCurrency
-            join reservaPadre in _dbContext.Reservas on row.ReservaId equals reservaPadre.Id
-            where reservaPadre.PayerId == customerId
-                && ReceivableStatuses.Contains(reservaPadre.Status)
-                && row.Balance > 0
-            select new { row.Currency, row.Balance };
-
-        var grouped = await query
-            .GroupBy(x => x.Currency)
-            .Select(g => new { Currency = g.Key, Amount = g.Sum(x => x.Balance) })
-            .ToListAsync(cancellationToken);
-
-        return ToOrderedCurrencyAmounts(grouped.Select(x => (x.Currency, x.Amount)));
-    }
+    private static List<CurrencyAmountDto> MapToCurrencyAmounts(IEnumerable<FinanceCurrencyAmount> amounts)
+        => amounts
+            .Select(x => new CurrencyAmountDto { Currency = x.Currency, Amount = x.Amount })
+            .ToList();
 
     /// <summary>
     /// ADR-022 Capa 8 / decision #3: el "bolsillo" unificado de saldo A FAVOR del cliente POR MONEDA. Suma los
@@ -554,11 +596,12 @@ public class CustomerService : ICustomerService
         var sortBy = (request.SortBy ?? "fullName").Trim().ToLowerInvariant();
         var desc = string.Equals(request.SortDir, "desc", StringComparison.OrdinalIgnoreCase);
 
+        // ADR-023 T1.4: el orden por saldo ("currentbalance") ya NO se hace en SQL (el saldo dejo de vivir en
+        // Customer.CurrentBalance, que era zombie). Cuando se pide ese orden, GetCustomersAsync trae la pagina
+        // por el orden estable (FullName) y la reordena en memoria con el saldo canonico ya enriquecido. Por eso
+        // aca "currentbalance" cae al orden por FullName (estable) en vez de ordenar por la columna zombie.
         return sortBy switch
         {
-            "currentbalance" => desc
-                ? query.OrderByDescending(customer => customer.CurrentBalance).ThenBy(customer => customer.FullName)
-                : query.OrderBy(customer => customer.CurrentBalance).ThenBy(customer => customer.FullName),
             "createdat" => desc
                 ? query.OrderByDescending(customer => customer.CreatedAt).ThenByDescending(customer => customer.Id)
                 : query.OrderBy(customer => customer.CreatedAt).ThenBy(customer => customer.Id),
