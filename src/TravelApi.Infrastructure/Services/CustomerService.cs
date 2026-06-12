@@ -3,6 +3,7 @@ using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
+using TravelApi.Infrastructure.Reservations;
 using TravelApi.Infrastructure.Services.Reservations;
 
 namespace TravelApi.Infrastructure.Services;
@@ -301,9 +302,15 @@ public class CustomerService : ICustomerService
             TotalPaid = await reservasQuery.SumAsync(reserva => (decimal?)reserva.TotalPaid, cancellationToken) ?? 0m,
             TotalBalance = await reservasQuery.SumAsync(reserva => (decimal?)reserva.Balance, cancellationToken) ?? 0m,
             ReservaCount = await reservasQuery.CountAsync(cancellationToken),
+            // ADR-022 §4.9 (fix S1-bis): el contador NO debe incluir el Payment puente del saldo a favor,
+            // o el badge "Pagos: N" no coincidiria con las filas visibles en GetCustomerAccountPaymentsAsync
+            // (que ya lo excluye). Mismo predicado del puente.
             PaymentCount = await _dbContext.Payments
                 .AsNoTracking()
-                .CountAsync(payment => payment.Reserva != null && payment.Reserva.PayerId == id, cancellationToken),
+                .CountAsync(payment => payment.Reserva != null && payment.Reserva.PayerId == id
+                    && !(payment.Method == OverpaymentCreditCleanup.BridgeMethod
+                        && !payment.AffectsCash
+                        && payment.OriginalPaymentId != null), cancellationToken),
             InvoiceCount = await _dbContext.Invoices
                 .AsNoTracking()
                 .CountAsync(invoice => invoice.Reserva != null && invoice.Reserva.PayerId == id, cancellationToken),
@@ -432,7 +439,18 @@ public class CustomerService : ICustomerService
     {
         var paymentsQuery = _dbContext.Payments
             .AsNoTracking()
-            .Where(payment => payment.Reserva != null && payment.Reserva.PayerId == id);
+            .Where(payment => payment.Reserva != null && payment.Reserva.PayerId == id)
+            // ADR-022 §4.9 (fix S1-bis): excluir el Payment puente del saldo a favor (Method="SaldoAFavor",
+            // AffectsCash=false, OriginalPaymentId!=null, monto negativo). Es respaldo INTERNO del sobrepago, no
+            // un cobro real, y su Notes contiene un GUID que no debe filtrarse a la pestaña Pagos del cliente.
+            // Mismo predicado inline que PaymentService.GetPaymentsForReservaAsync: OverpaymentCreditCleanup.
+            // IsOverpaymentBridge(Payment) NO se usa aca porque recibe la entidad y EF no lo traduce a SQL.
+            // Los totales de la cuenta del cliente (TotalSales/TotalPaid/TotalBalance, ReceivableByCurrency,
+            // CreditBalanceByCurrency) se calculan por OTRA via (Reserva.* y ClientCreditEntries), no sumando
+            // esta lista, asi que ocultar el puente no los altera.
+            .Where(payment => !(payment.Method == OverpaymentCreditCleanup.BridgeMethod
+                && !payment.AffectsCash
+                && payment.OriginalPaymentId != null));
 
         if (!string.IsNullOrWhiteSpace(query.Search))
         {

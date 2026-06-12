@@ -235,6 +235,12 @@ public class PaymentService : IPaymentService
         var ownerScope = await GetOwnerScopeOrNullAsync(cancellationToken);
 
         var paymentsQuery = ApplyPaymentSearch(_dbContext.Payments.AsNoTracking(), query.Search);
+        // ADR-022 §4.9 (fix S1-bis): la lista global de pagos (GET /payments) proyecta a PaymentDto, que
+        // expone Notes; el Payment puente del saldo a favor lleva un GUID interno en Notes y monto negativo.
+        // Es respaldo interno, no un cobro real -> se excluye, igual que GetPaymentsForReservaAsync (:419) y
+        // GetCustomerAccountPaymentsAsync. Mismo predicado inline (IsOverpaymentBridge no se traduce a SQL).
+        paymentsQuery = paymentsQuery.Where(p => !(p.Method == OverpaymentCreditCleanup.BridgeMethod
+            && !p.AffectsCash && p.OriginalPaymentId != null));
         if (ownerScope is not null)
         {
             paymentsQuery = paymentsQuery.Where(p => p.Reserva != null && p.Reserva.ResponsibleUserId == ownerScope);
