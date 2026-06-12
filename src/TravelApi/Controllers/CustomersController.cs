@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
+using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
 using TravelApi.Errors;
 using TravelApi.Infrastructure.Persistence;
@@ -22,7 +23,14 @@ public class CustomersController : ControllerBase
         _entityReferenceResolver = entityReferenceResolver;
     }
 
+    // ADR-023 T3.2: todo CustomersController estaba [Authorize] sin permiso fino ->
+    // cualquier autenticado leia la lista de clientes (con documento, CUIT y saldo) y la
+    // cuenta completa de cualquiera. Lecturas exigen clientes.view; escrituras clientes.edit;
+    // las pantallas que muestran montos del cliente (cuenta y pagos) ademas cobranzas.view
+    // (AND apilando atributos). Admin/Vendedor/Colaborador tienen clientes.view+clientes.edit
+    // en sus defaults, asi que el gate no rompe las pantallas que ya operan clientes.
     [HttpGet]
+    [RequirePermission(Permissions.ClientesView)]
     public async Task<ActionResult<PagedResponse<CustomerListItemDto>>> GetCustomers([FromQuery] CustomerListQuery query, CancellationToken cancellationToken = default)
     {
         var customers = await _customerService.GetCustomersAsync(query, cancellationToken);
@@ -30,6 +38,7 @@ public class CustomersController : ControllerBase
     }
 
     [HttpGet("{publicIdOrLegacyId}")]
+    [RequirePermission(Permissions.ClientesView)]
     public async Task<ActionResult<CustomerListItemDto>> GetCustomer(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
@@ -45,6 +54,7 @@ public class CustomersController : ControllerBase
     }
 
     [HttpPost]
+    [RequirePermission(Permissions.ClientesEdit)]
     public async Task<ActionResult<Customer>> CreateCustomer(CustomerUpsertRequest customer, CancellationToken cancellationToken)
     {
         try
@@ -72,6 +82,7 @@ public class CustomersController : ControllerBase
     }
 
     [HttpGet("search-similar")]
+    [RequirePermission(Permissions.ClientesView)]
     public async Task<ActionResult<IReadOnlyList<CustomerSimilarMatchDto>>> SearchSimilar(
         [FromQuery] string? fullName,
         [FromQuery] string? documentType,
@@ -85,6 +96,7 @@ public class CustomersController : ControllerBase
     }
 
     [HttpPut("{publicIdOrLegacyId}")]
+    [RequirePermission(Permissions.ClientesEdit)]
     public async Task<ActionResult<Customer>> UpdateCustomer(string publicIdOrLegacyId, CustomerUpsertRequest customer, CancellationToken cancellationToken)
     {
         try
@@ -123,6 +135,7 @@ public class CustomersController : ControllerBase
     }
 
     [HttpDelete("{publicIdOrLegacyId}")]
+    [RequirePermission(Permissions.ClientesEdit)]
     public async Task<IActionResult> DeleteOrArchive(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
@@ -146,6 +159,7 @@ public class CustomersController : ControllerBase
     }
 
     [HttpPatch("{publicIdOrLegacyId}/reactivate")]
+    [RequirePermission(Permissions.ClientesEdit)]
     public async Task<IActionResult> Reactivate(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
@@ -164,7 +178,12 @@ public class CustomersController : ControllerBase
     /// <summary>
     /// Cuenta corriente del cliente: reservas, pagos y saldo
     /// </summary>
+    // ADR-023 T3.2: la cuenta muestra saldo y plata -> exige clientes.view Y cobranzas.view
+    // (AND: dos atributos apilados). Asi un usuario que ve clientes pero no cobranzas no
+    // accede a los montos de la cuenta.
     [HttpGet("{publicIdOrLegacyId}/account")]
+    [RequirePermission(Permissions.ClientesView)]
+    [RequirePermission(Permissions.CobranzasView)]
     public async Task<ActionResult<CustomerAccountOverviewDto>> GetCustomerAccount(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
@@ -188,6 +207,7 @@ public class CustomersController : ControllerBase
     }
 
     [HttpGet("{publicIdOrLegacyId}/account/reservas")]
+    [RequirePermission(Permissions.ClientesView)]
     public async Task<ActionResult<PagedResponse<CustomerAccountReservaListItemDto>>> GetCustomerAccountReservas(
         string publicIdOrLegacyId,
         [FromQuery] PagedQuery query,
@@ -204,7 +224,10 @@ public class CustomersController : ControllerBase
         }
     }
 
+    // ADR-023 T3.2: los pagos muestran montos -> clientes.view Y cobranzas.view (AND).
     [HttpGet("{publicIdOrLegacyId}/account/payments")]
+    [RequirePermission(Permissions.ClientesView)]
+    [RequirePermission(Permissions.CobranzasView)]
     public async Task<ActionResult<PagedResponse<CustomerAccountPaymentListItemDto>>> GetCustomerAccountPayments(
         string publicIdOrLegacyId,
         [FromQuery] PagedQuery query,
@@ -222,6 +245,7 @@ public class CustomersController : ControllerBase
     }
 
     [HttpGet("{publicIdOrLegacyId}/account/invoices")]
+    [RequirePermission(Permissions.ClientesView)]
     public async Task<ActionResult<PagedResponse<InvoiceListDto>>> GetCustomerAccountInvoices(
         string publicIdOrLegacyId,
         [FromQuery] PagedQuery query,

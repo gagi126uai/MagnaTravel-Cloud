@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.RateLimiting;
 using System.Security.Claims;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
+using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
 
@@ -24,19 +25,28 @@ public class TreasuryController : ControllerBase
         _entityReferenceResolver = entityReferenceResolver;
     }
 
+    // ADR-023 T3.1: el libro de caja / tesoreria es back-office. Antes estos GET eran
+    // [Authorize] sin permiso fino -> cualquier usuario autenticado leia el libro completo.
+    // Ahora exigen caja.view. El masking de costo (cobranzas.see_cost) sigue dentro de
+    // TreasuryService y tapa montos a quien ve Caja pero no tiene ver-costos.
+    // Decision del dueno (OPS-PERM-001): el Vendedor NO ve Caja (DefaultVendedor no tiene
+    // caja.view; Admin y Colaborador si). No se toca ningun seed de rol.
     [HttpGet("summary")]
+    [RequirePermission(Permissions.CajaView)]
     public async Task<ActionResult<TreasurySummaryDto>> GetSummary(CancellationToken cancellationToken)
     {
         return Ok(await _treasuryService.GetSummaryAsync(cancellationToken));
     }
 
     [HttpGet("cash-summary")]
+    [RequirePermission(Permissions.CajaView)]
     public async Task<ActionResult<CashSummaryDto>> GetCashSummary(CancellationToken cancellationToken)
     {
         return Ok(await _treasuryService.GetCashSummaryAsync(cancellationToken));
     }
 
     [HttpGet("movements")]
+    [RequirePermission(Permissions.CajaView)]
     public async Task<ActionResult<PagedResponse<CashMovementDto>>> GetMovements([FromQuery] TreasuryMovementsQuery query, CancellationToken cancellationToken)
     {
         return Ok(await _treasuryService.GetMovementsAsync(query, cancellationToken));

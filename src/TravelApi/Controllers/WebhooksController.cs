@@ -6,6 +6,7 @@ using System.Text;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Application.Contracts.Leads;
+using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
 
 namespace TravelApi.Controllers;
@@ -145,8 +146,12 @@ public class WebhooksController : ControllerBase
         }
     }
 
+    // ADR-023 T3.3: enviar un mensaje saliente a un lead es una escritura sobre el lead ->
+    // exige crm.edit (no solo [Authorize]). El webhook ENTRANTE publico de WhatsApp
+    // (whatsapp / whatsapp/message arriba, validados por secret, sin auth) NO se toca:
+    // es el canal del bot y no lleva usuario.
     [HttpPost("/api/leads/{publicIdOrLegacyId}/whatsapp-message")]
-    [Authorize]
+    [RequirePermission(Permissions.CrmEdit)]
     [EnableRateLimiting("auth")]
     public async Task<ActionResult> SendWhatsAppMessage(
         string publicIdOrLegacyId,
