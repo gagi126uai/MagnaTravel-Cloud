@@ -80,6 +80,14 @@ public class CreatePaymentRequest
     /// de caja, que es el comportamiento contable correcto.
     /// </summary>
     public DateTime? PaidAt { get; set; }
+
+    /// <summary>
+    /// ADR-024 item 4 (vinculo basico cobro<->factura, 2026-06-12): PublicId de la factura a la que el
+    /// usuario quiere asociar este cobro, de forma INFORMATIVA. OPCIONAL: null = cobro sin vinculo (igual
+    /// que hoy). Si viene, el backend lo resuelve a la factura y valida que pertenezca a la MISMA reserva
+    /// del cobro (si no, 400). El vinculo NO toca saldos ni congela el cobro (los guards no lo miran).
+    /// </summary>
+    public string? LinkedInvoicePublicId { get; set; }
 }
 public class UpdatePaymentRequest
 {

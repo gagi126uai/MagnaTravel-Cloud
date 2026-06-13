@@ -99,6 +99,21 @@ public class Payment : IHasPublicId
     public int? RelatedInvoiceId { get; set; }
     public Invoice? RelatedInvoice { get; set; }
 
+    // ====================================================================================
+    // ADR-024 item 4 (vinculo basico cobro<->factura, ex ADR-023 T2.6, 2026-06-12).
+    // ====================================================================================
+
+    /// <summary>
+    /// ADR-024: factura a la que el usuario asocia ESTE cobro, de forma INFORMATIVA. Es distinto de
+    /// <see cref="RelatedInvoiceId"/>: aquel es el vinculo FISCAL/ECONOMICO (lo miran los guards de
+    /// borrado/edicion y la reconciliacion de NC), este es solo un dato de presentacion ("este pago
+    /// corresponde a tal factura"). DELIBERADAMENTE los guards y la reconciliacion NO miran este campo
+    /// (review B1 de ADR-023): vincular un cobro a una factura por aca NO lo congela ni toca saldos. Sin
+    /// indice unico: una factura puede tener varios cobros vinculados y un cobro vincularse o no.
+    /// </summary>
+    public int? LinkedInvoiceId { get; set; }
+    public Invoice? LinkedInvoice { get; set; }
+
     public int? OriginalPaymentId { get; set; }
     public Payment? OriginalPayment { get; set; }
     public ICollection<Payment> Reversals { get; set; } = new List<Payment>();

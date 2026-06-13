@@ -364,7 +364,12 @@ public class PaymentService : IPaymentService
                 IsReversal = e.IsReversal,
                 AmountMasked = false,           // se setea en el masking post-paginacion (T2.4)
                 // LedgerSourceType CRUDO (no colapsado): sobre este campo decide el enmascarado de costo (B2).
-                LedgerSourceType = e.SourceType
+                LedgerSourceType = e.SourceType,
+                // ADR-024 item 4: vinculo informativo cobro->factura. Solo aplica a cobros de cliente (los
+                // que tienen Payment); el resto queda null. No afecta saldos ni enmascarado.
+                LinkedInvoicePublicId = e.Payment != null && e.Payment.LinkedInvoice != null
+                    ? (Guid?)e.Payment.LinkedInvoice.PublicId
+                    : null
             });
 
         // ADR-023 T2.3: las filas de COMPROBANTE (factura/NC/ND) NO son caja: se conservan desde Invoices.
@@ -429,7 +434,8 @@ public class PaymentService : IPaymentService
                 Currency = null,                // un comprobante no es caja: no lleva moneda de caja
                 IsReversal = false,
                 AmountMasked = false,
-                LedgerSourceType = null
+                LedgerSourceType = null,
+                LinkedInvoicePublicId = null    // una fila de comprobante no es un cobro: sin vinculo informativo
             });
 
         // ADR-023 T2.3: el Payment tecnico con EntryType=CreditNoteReversal (AffectsCash=false) YA NO se muestra
@@ -536,9 +542,17 @@ public class PaymentService : IPaymentService
             imputedAmount: request.ImputedAmount,
             round: EconomicRulesHelper.RoundCurrency);
 
+        // ADR-024 item 4 (vinculo INFORMATIVO cobro<->factura, 2026-06-12): si el request trae una factura
+        // a vincular, la resolvemos y validamos que sea de la MISMA reserva del cobro. El vinculo NO toca
+        // saldos ni congela el cobro; es solo un dato de presentacion. Validar la pertenencia evita
+        // vincular un cobro a una factura de otra reserva (dato fiscal incoherente).
+        var linkedInvoiceId = await ResolveLinkedInvoiceIdOrNullAsync(
+            request.LinkedInvoicePublicId, reservaId, cancellationToken);
+
         var payment = new Payment
         {
             ReservaId = reservaId,
+            LinkedInvoiceId = linkedInvoiceId,
             Amount = amount,
             Currency = moneyBlock.Currency,
             ImputedCurrency = moneyBlock.ImputedCurrency,
@@ -959,6 +973,42 @@ public class PaymentService : IPaymentService
     /// asiento de caja. En tests unitarios sin HttpContext devuelve (null, null) — el asiento queda
     /// con autor desconocido, lo que es aceptable (no rompe; solo pierde el "quien" en ese contexto).
     /// </summary>
+    /// <summary>
+    /// ADR-024 item 4: resuelve el PublicId de la factura a vincular (informativo) a su Id interno,
+    /// validando que pertenezca a la reserva del cobro. Devuelve null si el request no trae vinculo.
+    /// Lanza <see cref="ArgumentException"/> (el controller la traduce a 400) si el PublicId no existe,
+    /// no es un Guid valido, o la factura es de OTRA reserva.
+    /// </summary>
+    private async Task<int?> ResolveLinkedInvoiceIdOrNullAsync(
+        string? linkedInvoicePublicId, int reservaId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(linkedInvoicePublicId))
+        {
+            return null;
+        }
+
+        if (!Guid.TryParse(linkedInvoicePublicId.Trim(), out var publicId))
+        {
+            throw new ArgumentException("La factura a vincular no es valida.");
+        }
+
+        // Resolvemos por PublicId Y misma reserva en una sola consulta: si la factura es de otra reserva,
+        // no la encontramos aca y rechazamos con el mismo mensaje (no filtramos si existe en otra reserva).
+        var invoice = await _dbContext.Invoices
+            .AsNoTracking()
+            .Where(i => i.PublicId == publicId && i.ReservaId == reservaId)
+            .Select(i => new { i.Id })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (invoice is null)
+        {
+            throw new ArgumentException(
+                "La factura a vincular no existe o no pertenece a la misma reserva del cobro.");
+        }
+
+        return invoice.Id;
+    }
+
     private (string? UserId, string? UserName) ResolveLedgerActor()
     {
         var httpUser = _httpContextAccessor?.HttpContext?.User;

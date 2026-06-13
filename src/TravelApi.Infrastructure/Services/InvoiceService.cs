@@ -381,6 +381,14 @@ public class InvoiceService : IInvoiceService
         // moneda es pesos, este metodo no toca nada (comportamiento byte-identico a hoy).
         await ValidateMultiCurrencyInvoicingAsync(request, ct);
 
+        // ADR-024 item 3 (auditoria de emision, 2026-06-12): sellamos quien emite con el usuario actual
+        // (el controller lo resolvio del HttpContext y lo paso como userId/userName). Se SOBREESCRIBE lo
+        // que pudiera haber mandado el cliente: el actor de auditoria no se confia al body. IssuedAt NO se
+        // setea aca — se completa cuando ProcessInvoiceJob recibe el CAE aprobado (Resultado="A"), que es
+        // el momento real de la emision fiscal.
+        request.IssuedByUserId = userId;
+        request.IssuedByUserName = userName;
+
         // 1. Create Pending in DB
         //
         // B1.15 (2026-05-11, fiscal critico): el guard aplicativo de arriba (AnyAsync)
@@ -1001,8 +1009,15 @@ public class InvoiceService : IInvoiceService
                 ReservaId = original.Reserva?.PublicId.ToString() ?? string.Empty,
                 CbteTipo = cbteTipo,
                 Concepto = 3, // Productos y Servicios (default)
-                DocTipo = 99, // Sin info
+                DocTipo = 99, // Sin info (se sobreescribe abajo desde el snapshot del cliente)
                 DocNro = 0,
+                // ADR-024 item 3 (auditoria de emision, 2026-06-12): la NC de anulacion es un camino
+                // AUTOMATICO que arma el request a mano y llama CreatePendingInvoice SIN pasar por
+                // CreateAsync, donde se puebla IssuedByUserId server-side. Si no lo seteamos aca, la NC
+                // queda con IssuedByUserId/Name en NULL = sin rastro de quien la disparo. userId es el
+                // usuario que pidio la anulacion (viaja por el job ProcessAnnulmentJob). userName no esta
+                // disponible en este job, queda null (aceptable: el Id es el rastro de auditoria fuerte).
+                IssuedByUserId = userId,
                 OriginalInvoiceId = original.PublicId.ToString(),
                 // Centralizado en InvoiceComprobanteHelpers para evitar duplicacion
                 // y desalineo. Las ramas == 52/== 53 originales eran inalcanzables
@@ -1027,27 +1042,26 @@ public class InvoiceService : IInvoiceService
                 MonCotiz = original.MonCotiz
             };
 
-            // Use Snapshots if available
+            // ADR-024 (2026-06-12): los datos fiscales del receptor (DocTipo/DocNro) salen del snapshot
+            // inmutable del cliente y se resuelven con ArcaReceptorResolver — la FUENTE UNICA de verdad
+            // para todo el repo. Antes este bloque tenia su propio algoritmo buggy (TaxId -> 80 sin validar
+            // el digito verificador, DocumentNumber -> 96/DNI a ciegas, sin contemplar pasaporte extranjero),
+            // un segundo algoritmo en paralelo al de AfipService que se desincronizaba en silencio.
+            //
+            // IMPORTANTE: para el sobre SOAP que se manda a ARCA, estos campos del request son DEAD CODE:
+            // AfipService.ProcessInvoiceJob IGNORA request.DocTipo/DocNro y RE-DERIVA del snapshot del cliente
+            // con el mismo ArcaReceptorResolver.ResolveDocument (ver AfipService ~1106). Igual los poblamos
+            // con el algoritmo canonico para no dejar un dato fiscal inconsistente en el request por si algun
+            // otro consumidor (PDF/voucher/reporte) lo llegara a leer.
             if (!string.IsNullOrEmpty(original.CustomerSnapshot))
             {
                 var customer = System.Text.Json.JsonSerializer.Deserialize<Customer>(original.CustomerSnapshot);
                 if (customer != null)
                 {
-                   if (!string.IsNullOrEmpty(customer.TaxId)) 
-                    {
-                        request.DocTipo = 80; // CUIT
-                        if (long.TryParse(customer.TaxId.Replace("-", ""), out long cuit)) request.DocNro = cuit;
-                    }
-                    else if (!string.IsNullOrEmpty(customer.DocumentNumber))
-                    {
-                        request.DocTipo = 96; // DNI
-                         if (long.TryParse(customer.DocumentNumber, out long dni)) request.DocNro = dni;
-                    }
-                    else
-                    {
-                        request.DocTipo = 99;
-                        request.DocNro = 0;
-                    }
+                    var receptorDoc = ArcaReceptorResolver.ResolveDocument(
+                        customer.TaxId, customer.DocumentType, customer.DocumentNumber);
+                    request.DocTipo = receptorDoc.DocTipo;
+                    request.DocNro = receptorDoc.DocNro;
                 }
             }
 
@@ -2208,6 +2222,11 @@ public class InvoiceService : IInvoiceService
             ReservaId = originalInvoice.ReservaId!.Value.ToString(),
             CbteTipo = creditNoteCbteTipo,
             Concepto = 3, // Productos y Servicios (igual que ProcessAnnulmentJob).
+            // ADR-024 item 3 (auditoria de emision, 2026-06-12): igual que la NC de anulacion, la NC parcial
+            // es un camino AUTOMATICO que arma el request y llama CreatePendingInvoice SIN pasar por
+            // CreateAsync (donde se puebla IssuedByUserId server-side). Sin esto la NC parcial quedaria con
+            // IssuedByUserId en NULL. userId es quien disparo la liquidacion (viaja por EmitPartialCreditNoteAsync).
+            IssuedByUserId = userId,
             // OriginalInvoiceId apunta a la factura origen por su PublicId (igual que la NC
             // total). CreatePendingInvoice lo resuelve y vincula la NC -> <CbtesAsoc>.
             OriginalInvoiceId = originalInvoice.PublicId.ToString(),

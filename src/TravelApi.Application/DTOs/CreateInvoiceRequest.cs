@@ -23,6 +23,16 @@ public class CreateInvoiceRequest
     public string? ForcedByUserName { get; set; }
 
     /// <summary>
+    /// ADR-024 item 3 (auditoria de emision, 2026-06-12): quien emite la factura. Se POBLA SERVER-SIDE
+    /// en InvoiceService.CreateAsync con el usuario actual del HttpContext; lo que mande el cliente se
+    /// SOBREESCRIBE (no es spoofeable). Viaja a Invoice.IssuedByUserId/IssuedByUserName en
+    /// CreatePendingInvoice. Mismo patron que ForcedByUserId. NO confundir con la fecha del comprobante
+    /// (CbteFch): esto es el rastro de "quien y cuando emitio", evidencia de auditoria fiscal (§9).
+    /// </summary>
+    public string? IssuedByUserId { get; set; }
+    public string? IssuedByUserName { get; set; }
+
+    /// <summary>
     /// FC1.3.F2.5 (multimoneda, 2026-05-28): codigo de moneda del catalogo de ARCA
     /// ("PES" = pesos, "DOL" = dolar). Viaja hasta <c>Invoice.MonId</c> y termina en el
     /// XML SOAP que se manda a ARCA.

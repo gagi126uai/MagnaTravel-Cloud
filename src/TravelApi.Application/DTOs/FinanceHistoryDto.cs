@@ -39,4 +39,11 @@ public class FinanceHistoryItemDto
     /// <see cref="MovementSourceType"/> colapsado del front. null en filas de comprobante.
     /// </summary>
     public string? LedgerSourceType { get; set; }
+
+    /// <summary>
+    /// ADR-024 item 4 (vinculo INFORMATIVO cobro<->factura, 2026-06-12): PublicId de la factura que el
+    /// usuario asocio a este cobro, si la hay. null en cobros sin vinculo y en filas que no son cobro de
+    /// cliente. Es solo presentacion (el front puede mostrar "vinculado a factura N"); no afecta saldos.
+    /// </summary>
+    public Guid? LinkedInvoicePublicId { get; set; }
 }

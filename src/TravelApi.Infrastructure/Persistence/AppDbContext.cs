@@ -569,6 +569,16 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .HasForeignKey(p => p.RelatedInvoiceId)
                   .OnDelete(DeleteBehavior.SetNull);
 
+            // ADR-024 item 4 (vinculo INFORMATIVO cobro<->factura, 2026-06-12): FK opcional, SIN indice
+            // unico (una factura puede tener varios cobros vinculados). SetNull: si la factura se borra,
+            // el cobro NO se toca, solo pierde el vinculo. Los guards (DeleteGuards/MutationGuards) y la
+            // reconciliacion de NC NO miran este campo a proposito (review B1 de ADR-023): no congela ni
+            // toca saldos.
+            entity.HasOne(p => p.LinkedInvoice)
+                  .WithMany()
+                  .HasForeignKey(p => p.LinkedInvoiceId)
+                  .OnDelete(DeleteBehavior.SetNull);
+
             entity.HasOne(p => p.OriginalPayment)
                   .WithMany(p => p.Reversals)
                   .HasForeignKey(p => p.OriginalPaymentId)

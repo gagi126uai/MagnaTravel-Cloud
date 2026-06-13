@@ -995,4 +995,80 @@ public class InvoiceServiceFilteringAndAnnulmentTests
         Assert.Equal("PES", capturedRequest!.MonId);
         Assert.Equal(1m, capturedRequest.MonCotiz);
     }
+
+    /// <summary>
+    /// ADR-024 item 3 (auditoria de emision, 2026-06-12): CreateAsync sella quien emite con el usuario
+    /// actual (userId/userName que el controller resolvio del HttpContext), SOBREESCRIBIENDO lo que pudiera
+    /// venir en el body. Verificamos que el request que llega a CreatePendingInvoice (= lo que se persiste
+    /// en Invoice.IssuedByUser*) lleve el actor server-side, no el spoofeado.
+    /// </summary>
+    [Fact]
+    public async Task CreateAsync_StampsIssuedByUser_ServerSide_OverridingBody()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedAsync(context);
+        var reserva = await context.Reservas.FirstAsync(r => r.Id == 1);
+
+        CreateInvoiceRequest? capturedRequest = null;
+        _afipMock
+            .Setup(a => a.CreatePendingInvoice(It.IsAny<int>(), It.IsAny<CreateInvoiceRequest>()))
+            .Callback<int, CreateInvoiceRequest>((_, req) => capturedRequest = req)
+            .ReturnsAsync(new Invoice { Id = 600, ReservaId = 1, TipoComprobante = 11, Resultado = "PENDING" });
+
+        var service = BuildService(context);
+        var request = new CreateInvoiceRequest
+        {
+            ReservaId = reserva.PublicId.ToString(),
+            CbteTipo = 11,
+            // El cliente intenta spoofear el actor: debe ser ignorado.
+            IssuedByUserId = "atacante",
+            IssuedByUserName = "Atacante"
+        };
+
+        await service.CreateAsync(request, "user-real", "Usuario Real", CancellationToken.None);
+
+        Assert.NotNull(capturedRequest);
+        Assert.Equal("user-real", capturedRequest!.IssuedByUserId);
+        Assert.Equal("Usuario Real", capturedRequest.IssuedByUserName);
+    }
+
+    /// <summary>
+    /// ADR-024 item 3 (auditoria de emision, 2026-06-12): la NC de anulacion es un camino AUTOMATICO que
+    /// arma el request a mano y llama CreatePendingInvoice SIN pasar por CreateAsync (donde se sella
+    /// IssuedByUserId server-side). Verificamos que la NC de anulacion igual persista el actor: el request
+    /// que llega a CreatePendingInvoice (= lo que termina en Invoice.IssuedByUserId via AfipService) debe
+    /// llevar el userId que disparo el ProcessAnnulmentJob. Sin el fix M2 quedaba en NULL = NC sin rastro.
+    /// </summary>
+    [Fact]
+    public async Task ProcessAnnulmentJob_StampsIssuedByUser_FromJobActor()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedAsync(context);
+
+        var inv = await context.Invoices.FirstAsync(i => i.Id == 1);
+        inv.MonId = "PES";
+        inv.MonCotiz = 1m;
+        inv.AnnulmentStatus = AnnulmentStatus.Pending;
+        await context.SaveChangesAsync();
+
+        CreateInvoiceRequest? capturedRequest = null;
+        _afipMock
+            .Setup(a => a.CreatePendingInvoice(It.IsAny<int>(), It.IsAny<CreateInvoiceRequest>()))
+            .Callback<int, CreateInvoiceRequest>((_, req) => capturedRequest = req)
+            .ReturnsAsync(new Invoice
+            {
+                Id = 700,
+                ReservaId = 1,
+                TipoComprobante = 8,
+                Resultado = "PENDING",
+                MonId = "PES",
+                MonCotiz = 1m
+            });
+
+        var service = BuildService(context);
+        await service.ProcessAnnulmentJob(1, "vendedor-anula", approvalRequestId: null);
+
+        Assert.NotNull(capturedRequest);
+        Assert.Equal("vendedor-anula", capturedRequest!.IssuedByUserId);
+    }
 }

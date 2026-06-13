@@ -766,6 +766,10 @@ public class AfipService : IAfipService
              ForcedByUserId = request.ForcedByUserId,
              ForcedByUserName = request.ForcedByUserName,
              ForcedAt = request.ForceIssue ? DateTime.UtcNow : null,
+             // ADR-024 item 3 (auditoria de emision, 2026-06-12): quien emite. InvoiceService.CreateAsync
+             // los sello server-side con el usuario actual. IssuedAt queda NULL hasta que llegue el CAE.
+             IssuedByUserId = request.IssuedByUserId,
+             IssuedByUserName = request.IssuedByUserName,
              OutstandingBalanceAtIssuance = reserva.Balance,
              AgencySnapshot = agencySettings != null ? System.Text.Json.JsonSerializer.Serialize(agencySettings) : null,
              CustomerSnapshot = System.Text.Json.JsonSerializer.Serialize(customer, new JsonSerializerOptions { ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles }),
@@ -1082,24 +1086,32 @@ public class AfipService : IAfipService
             // 2. Doc Details from Snapshot or Relation? 
             // Better to parse from Snapshot to ensure immutability, but for now use relation or fallback
             // Parsing CustomerSnapshot is safer.
+            // ADR-024 (2026-06-12): los datos fiscales del receptor (DocTipo, DocNro, CondicionIVAReceptorId)
+            // salen del snapshot inmutable del cliente y se resuelven con ArcaReceptorResolver (fuente de
+            // verdad unica, blindada por tests). Antes esta logica estaba inline aca con dos bugs reales:
+            // un pasaporte extranjero se emitia como DNI argentino (DocTipo=96) y la condicion IVA del
+            // receptor nunca leia Customer.TaxConditionId (siempre salia Consumidor Final). Si el snapshot
+            // no trae datos, el resolver cae al fallback consumidor final sin identificar (99/0) -> mismo
+            // comportamiento que el default historico.
             long docNro = 0;
-            int docTipo = 99;
-            
-            // Try parse customer snapshot
+            int docTipo = ArcaReceptorResolver.DocTipoConsumidorFinalSinIdentificar; // 99
+            int condicionIvaReceptorId = ArcaReceptorResolver.CondicionIvaConsumidorFinal; // 5
+
             if (!string.IsNullOrEmpty(invoice.CustomerSnapshot))
             {
                  var cust = System.Text.Json.JsonSerializer.Deserialize<Customer>(invoice.CustomerSnapshot);
                  if (cust != null)
                  {
-                     if (!string.IsNullOrEmpty(cust.TaxId))
-                     {
-                        var clean = cust.TaxId.Replace("-", "").Replace(".", "").Trim();
-                        if (long.TryParse(clean, out long val)) { docTipo = 80; docNro = val; }
-                     }
-                     else if (!string.IsNullOrEmpty(cust.DocumentNumber))
-                     {
-                        if (long.TryParse(cust.DocumentNumber, out long val)) { docTipo = 96; docNro = val; }
-                     }
+                     // ADR-024 §3.4: DocTipo/DocNro con precedencia CUIT > DocumentType > numero suelto > sin dato.
+                     var receptorDoc = ArcaReceptorResolver.ResolveDocument(cust.TaxId, cust.DocumentType, cust.DocumentNumber);
+                     docTipo = receptorDoc.DocTipo;
+                     docNro = receptorDoc.DocNro;
+
+                     // ADR-024 §4.2: CondicionIVAReceptorId desde TaxConditionId del snapshot (snapshots viejos
+                     // sin ese campo lo tienen null tras deserializar -> el resolver parsea el texto o deriva
+                     // por DocTipo). Se evalua contra el docTipo YA resuelto para la derivacion conservadora.
+                     condicionIvaReceptorId = ArcaReceptorResolver.ResolveCondicionIva(
+                         cust.TaxConditionId, cust.TaxCondition, docTipo);
                  }
             }
 
@@ -1237,7 +1249,9 @@ public class AfipService : IAfipService
                     {BuildMonedaSoapFragment(invoice.MonId, invoice.MonCotiz)}
                     <!-- FC1.3.F2.5: CanMisMonExt (solo moneda extranjera). Ver nota arriba del envelope. -->
                     {BuildCanMisMonExtFragment(invoice.MonId)}
-                    <CondicionIVAReceptorId>{GetConditionIvaId(null, docTipo)}</CondicionIVAReceptorId>
+                    <!-- ADR-024 §4: CondicionIVAReceptorId resuelto desde el snapshot del cliente
+                         (ArcaReceptorResolver), NO mas fijado en Consumidor Final. Obligatorio RG 5616. -->
+                    <CondicionIVAReceptorId>{condicionIvaReceptorId}</CondicionIVAReceptorId>
                     {sbCbtesAsoc}
                     {sbTrib}
                     {sbIva}
@@ -1310,6 +1324,10 @@ public class AfipService : IAfipService
             invoice.VencimientoCAE = DateTime.ParseExact(caeVto!, "yyyyMMdd", null).ToUniversalTime();
             invoice.NumeroComprobante = cbteNro; // Assign actual number used
             invoice.Observaciones = null;
+            // ADR-024 item 3 (auditoria de emision, 2026-06-12): IssuedAt = momento en que ARCA aprobo el
+            // CAE (Resultado="A"). Es la evidencia fiscal de cuando se emitio realmente el comprobante. UTC
+            // para coherencia con el resto de timestamps (la columna es timestamptz).
+            invoice.IssuedAt = DateTime.UtcNow;
             
             await _context.SaveChangesAsync();
 
@@ -2015,33 +2033,12 @@ public class AfipService : IAfipService
             MonCotiz: detail.MonCotiz);
     }
 
-    private int GetConditionIvaId(string? taxCondition, int docTipo)
-    {
-        // 1: IVA Responsable Inscripto
-        // 4: IVA Sujeto Exento
-        // 5: Consumidor Final
-        // 6: Responsable Monotributo
-        // 8: Proveedor del Exterior
-        // 9: Cliente del Exterior
-        // 10: IVA Liberado - Ley Nº 19.640
-        // 11: IVA Responsable Inscripto - Agente de Percepción
-        // 13: Monotributista Social
-        // 15: IVA No Alcanzado
-
-        if (docTipo == 99) return 5; // Final Consumer
-        if (docTipo == 80) // CUIT
-        {
-            if (string.IsNullOrEmpty(taxCondition)) return 5; // Default
-
-            var tc = taxCondition.ToLower();
-            if (tc.Contains("inscripto") && !tc.Contains("monotributo")) return 1;
-            if (tc.Contains("monotributo")) return 6;
-            if (tc.Contains("exento")) return 4;
-            if (tc.Contains("consumidor")) return 5;
-        }
-        
-        return 5; // Default to Final Consumer
-    }
+    // ADR-024 (2026-06-12): GetConditionIvaId fue ELIMINADO. Tenia dos problemas que la spec ADR-024
+    // §4.1 senalo: (1) nunca se le pasaba la condicion del cliente (se llamaba con null literal, asi que
+    // TODO receptor salia Consumidor Final); (2) su comentario listaba un codigo "11: RI Agente de
+    // Percepcion" que NO existe en la tabla CondicionIVAReceptorId verificada (RG 5616). La resolucion
+    // ahora vive en ArcaReceptorResolver.ResolveCondicionIva, que SI lee Customer.TaxConditionId del
+    // snapshot y solo emite codigos de la tabla §4.1.
 
     private decimal ParseDecimal(string? val)
     {
