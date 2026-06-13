@@ -370,7 +370,20 @@ export default function CRMPage() {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100/60 dark:divide-slate-800/60">
-                                {leads.map((lead) => <LeadRow key={getPublicId(lead)} lead={lead} onOpen={() => loadDetail(getPublicId(lead))} />)}
+                                {leads.map((lead) => (
+                                    <LeadRow
+                                        key={getPublicId(lead)}
+                                        lead={lead}
+                                        onOpen={() => loadDetail(getPublicId(lead))}
+                                        // Solo mostramos el botón rápido en leads activos (ni Ganado ni Perdido).
+                                        // La misma condición que usa la ficha: no es estado cerrado.
+                                        onCrearPresupuesto={
+                                            !isClosedStatus(lead.status)
+                                                ? () => navigate("/reservas", { state: { newBudgetForLead: getPublicId(lead) } })
+                                                : null
+                                        }
+                                    />
+                                ))}
                             </tbody>
                         </table>
                     </div>
@@ -448,8 +461,17 @@ function SegmentedView({ value, onChange }) {
     );
 }
 
-function LeadRow({ lead, onOpen }) {
+/**
+ * Fila de un lead en la tabla de la lista de posibles clientes.
+ * Muestra los datos clave del lead y, cuando el lead es activo (no Ganado/Perdido),
+ * ofrece un botón rápido "Crear presupuesto" para no tener que abrir la ficha primero.
+ *
+ * El botón rápido hace exactamente lo mismo que el botón de la ficha del lead:
+ * navega a /reservas con el parámetro newBudgetForLead para pre-vincular el lead.
+ */
+function LeadRow({ lead, onOpen, onCrearPresupuesto }) {
     const statusConfig = getStatusConfig(lead.status);
+    const leadPublicId = getPublicId(lead);
 
     return (
         <tr onClick={onOpen} className="group cursor-pointer transition-colors hover:bg-indigo-50/30 dark:hover:bg-indigo-900/5">
@@ -480,7 +502,26 @@ function LeadRow({ lead, onOpen }) {
                 </span>
             </td>
             <td className="px-4 py-4 text-right text-[11px] font-medium text-slate-400">{timeAgo(lead.createdAt)}</td>
-            <td className="px-6 py-4 text-right"><div className="flex justify-end"><div className="flex h-8 w-8 items-center justify-center rounded-full bg-white shadow-sm dark:bg-slate-800"><ChevronRight className="h-4 w-4 text-indigo-600" /></div></div></td>
+            <td className="px-6 py-4 text-right">
+                <div className="flex items-center justify-end gap-2">
+                    {/* Botón rápido solo para leads activos (no Ganado/Perdido).
+                        Detenemos la propagación para que el click en el botón no abra la ficha del lead. */}
+                    {onCrearPresupuesto && (
+                        <button
+                            onClick={(event) => { event.stopPropagation(); onCrearPresupuesto(); }}
+                            className="flex items-center gap-1.5 rounded-xl bg-violet-50 px-3 py-1.5 text-[10px] font-black uppercase tracking-widest text-violet-600 opacity-0 transition-all group-hover:opacity-100 hover:bg-violet-100 dark:bg-violet-900/20 dark:text-violet-400 dark:hover:bg-violet-900/40"
+                            title="Crear presupuesto vinculado a este posible cliente"
+                            data-testid={`btn-crear-presupuesto-lead-${leadPublicId}`}
+                        >
+                            <FileText className="h-3.5 w-3.5" />
+                            Presupuesto
+                        </button>
+                    )}
+                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white shadow-sm dark:bg-slate-800">
+                        <ChevronRight className="h-4 w-4 text-indigo-600" />
+                    </div>
+                </div>
+            </td>
         </tr>
     );
 }
