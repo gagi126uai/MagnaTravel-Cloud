@@ -423,7 +423,12 @@ public sealed class OperatorRefundServiceTests
 
         var (custId, supId, resId, invId) = await CancellationTestData.SeedBaseAsync(ctx);
 
-        var bc = CancellationTestData.NewCancellation(custId, supId, resId, invId, BookingCancellationStatus.AwaitingOperatorRefund);
+        // lineCurrency = bcCurrency: la moneda de la LINEA del operador (donde vive INV-118)
+        // sigue a la moneda del evento. El test de INV-118 manda refundCurrency=USD vs bcCurrency=ARS,
+        // asi la linea queda en ARS y el refund USD rebota correcto en INV-118 (no en INV-126).
+        var bc = CancellationTestData.NewCancellation(
+            custId, supId, resId, invId, BookingCancellationStatus.AwaitingOperatorRefund,
+            lineCurrency: bcCurrency);
         bc.FiscalSnapshot.AgencyTaxConditionAtEvent = agencyCondition;
         bc.FiscalSnapshot.SupplierTaxConditionAtEvent = supplierCondition;
         bc.FiscalSnapshot.CurrencyAtEvent = bcCurrency;

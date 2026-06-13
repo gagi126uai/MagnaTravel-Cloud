@@ -2069,7 +2069,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.Amount).HasPrecision(18, 2);
             entity.Property(e => e.Currency).HasMaxLength(3).IsRequired();
             entity.Property(e => e.Method).HasMaxLength(50).IsRequired();
-            entity.Property(e => e.SourceType).HasMaxLength(20).IsRequired();
+            // ADR-028 fix: 50 (no 20). "ClientCreditWithdrawal" mide 22 y rompia el INSERT del asiento
+            // de un retiro de saldo en Postgres. Ver comentario en CashLedgerEntry.SourceType.
+            entity.Property(e => e.SourceType).HasMaxLength(50).IsRequired();
             entity.Property(e => e.CreatedByUserId).HasMaxLength(450);
             entity.Property(e => e.CreatedByUserName).HasMaxLength(200);
 

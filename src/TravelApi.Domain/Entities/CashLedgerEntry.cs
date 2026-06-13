@@ -77,7 +77,11 @@ public class CashLedgerEntry : IHasPublicId
     /// <summary>Cuando se ESCRIBIO el asiento (puede ser != <see cref="OccurredAt"/> si se asienta tarde o en backfill).</summary>
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
-    [MaxLength(20)]
+    // ADR-028 fix (2026-06-13): la columna nacio en varchar(20), pero la constante mas larga
+    // "ClientCreditWithdrawal" mide 22. El path de refund de operador ("OperatorRefund", 14) cabia,
+    // por eso el bug quedo latente; recien explota al asentar un RETIRO de saldo del cliente (Withdraw).
+    // InMemory no valida longitud -> solo se veia en Postgres (trap M2). La subimos a 50 (igual que Method).
+    [MaxLength(50)]
     public string SourceType { get; set; } = CashLedgerSourceTypes.ManualAdjustment;
 
     // --- Origen (exactamente UNO no-null segun SourceType; CHECK SQL lo garantiza) ---

@@ -26,7 +26,8 @@ namespace TravelApi.Tests.Cancellation.Integration;
 /// Lo que esta feature garantiza y estos tests cubren:
 /// <list type="bullet">
 ///   <item>Reserva mono-operador con servicios tipados -> se desbloquea (autorresuelve).</item>
-///   <item>Reserva con varios operadores -> INV-152 (bloqueado hasta Fase 2).</item>
+///   <item>Reserva con varios operadores -> ADR-025 (2026-06-13) LEVANTO INV-152: ya no
+///         se bloquea, se arma UNA linea por operador (modelo BC-padre + lineas hijas).</item>
 ///   <item>No-regresion: una reserva que hoy se cancela via tabla generica con 1
 ///         operador sigue resolviendo EXACTAMENTE ese operador.</item>
 /// </list>
@@ -335,11 +336,20 @@ public sealed class BookingCancellationSupplierInferenceTests
     }
 
     // =========================================================================
-    // Caso bloqueado: multi-operador -> INV-152
+    // Multi-operador: ADR-025 LEVANTO INV-152 -> ahora arma UNA linea por operador
     // =========================================================================
+    //
+    // Antes (Fase 1) estos 3 casos rebotaban con INV-152 (multi-operador bloqueado).
+    // ADR-025 (2026-06-13) cambio el modelo a BC-padre + lineas hijas: una cancelacion
+    // TOTAL de un file con varios operadores ya NO se rechaza; arma una linea Full por
+    // operador y la cara fiscal hacia el cliente sigue unica en el padre. El operador
+    // "principal" denormalizado del BC (bc.SupplierId) queda en el de la primera linea
+    // (sirve solo para el regimen Mono/RI de la NC). No asumimos cual es la primera
+    // (depende del orden de barrido de tablas en BuildCancellationLinesAsync); solo
+    // exigimos que sea uno de los dos operadores reales.
 
     [Fact]
-    public async Task DraftAsync_DosHotelesOperadoresDistintos_RechazaINV152()
+    public async Task DraftAsync_DosHotelesOperadoresDistintos_OK_BuildsOneLinePerOperator()
     {
         var (service, ctx) = BuildService();
         var (reservaId, reservaPublicId) = await SeedReservaWithInvoiceAsync(ctx);
@@ -348,21 +358,28 @@ public sealed class BookingCancellationSupplierInferenceTests
         await AddHotelAsync(ctx, reservaId, supplierA);
         await AddHotelAsync(ctx, reservaId, supplierB);
 
-        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(
-            () => DraftAsync(service, reservaPublicId));
-        Assert.Equal("INV-152", ex.InvariantCode);
+        var dto = await DraftAsync(service, reservaPublicId);
 
-        // Defensa en profundidad: el bloqueo NO debe dejar un BC a medias.
-        Assert.False(await ctx.BookingCancellations.AnyAsync(b => b.ReservaId == reservaId));
+        var bc = await ctx.BookingCancellations.AsNoTracking()
+            .Include(b => b.Lines)
+            .FirstAsync(b => b.PublicId == dto.PublicId);
+
+        // Una linea por operador distinto (los dos hoteles son de operadores distintos).
+        Assert.Equal(2, bc.Lines.Count);
+        Assert.Contains(bc.Lines, l => l.SupplierId == supplierA && l.ServiceTable == CancellableServiceTable.Hotel);
+        Assert.Contains(bc.Lines, l => l.SupplierId == supplierB && l.ServiceTable == CancellableServiceTable.Hotel);
+        Assert.All(bc.Lines, l => Assert.Equal(BookingCancellationLineScope.Full, l.Scope));
+        // El operador principal denormalizado es uno de los dos (no asumimos cual).
+        Assert.Contains(bc.SupplierId, new[] { supplierA, supplierB });
     }
 
     /// <summary>
     /// Multi-operador repartido entre DOS tablas tipadas DISTINTAS (Hotel op-A +
-    /// Vuelo op-B). Verifica que el dedupe junta correctamente desde fuentes
-    /// distintas y que el conteo > 1 dispara INV-152.
+    /// Vuelo op-B). Verifica que el armado de lineas junta desde fuentes distintas:
+    /// una linea Hotel del operador hotelero y una linea Flight del operador aereo.
     /// </summary>
     [Fact]
-    public async Task DraftAsync_HotelYVueloOperadoresDistintos_RechazaINV152()
+    public async Task DraftAsync_HotelYVueloOperadoresDistintos_OK_BuildsOneLinePerOperator()
     {
         var (service, ctx) = BuildService();
         var (reservaId, reservaPublicId) = await SeedReservaWithInvoiceAsync(ctx);
@@ -371,12 +388,16 @@ public sealed class BookingCancellationSupplierInferenceTests
         await AddHotelAsync(ctx, reservaId, supplierHotel);
         await AddFlightAsync(ctx, reservaId, supplierAerea);
 
-        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(
-            () => DraftAsync(service, reservaPublicId));
-        Assert.Equal("INV-152", ex.InvariantCode);
+        var dto = await DraftAsync(service, reservaPublicId);
 
-        // Defensa en profundidad: el bloqueo NO debe dejar un BC a medias.
-        Assert.False(await ctx.BookingCancellations.AnyAsync(b => b.ReservaId == reservaId));
+        var bc = await ctx.BookingCancellations.AsNoTracking()
+            .Include(b => b.Lines)
+            .FirstAsync(b => b.PublicId == dto.PublicId);
+
+        Assert.Equal(2, bc.Lines.Count);
+        Assert.Contains(bc.Lines, l => l.SupplierId == supplierHotel && l.ServiceTable == CancellableServiceTable.Hotel);
+        Assert.Contains(bc.Lines, l => l.SupplierId == supplierAerea && l.ServiceTable == CancellableServiceTable.Flight);
+        Assert.Contains(bc.SupplierId, new[] { supplierHotel, supplierAerea });
     }
 
     // =========================================================================
@@ -399,22 +420,32 @@ public sealed class BookingCancellationSupplierInferenceTests
     }
 
     [Fact]
-    public async Task DraftAsync_GenericaYHotelOperadoresDistintos_RechazaINV152()
+    public async Task DraftAsync_GenericaYHotelOperadoresDistintos_OK_BuildsOneLinePerOperator()
     {
         var (service, ctx) = BuildService();
         var (reservaId, reservaPublicId) = await SeedReservaWithInvoiceAsync(ctx);
         var supplierGenerico = await SeedSupplierAsync(ctx, "Operador Generico");
         var supplierHotel = await SeedSupplierAsync(ctx, "Operador Hotel");
 
-        // Caso documentado del cambio de comportamiento: antes la inferencia tomaba
-        // SOLO el operador generico (cancelaba con el operador equivocado, ignorando
-        // el hotel). Ahora detecta los dos operadores y bloquea con INV-152.
+        // Historia del comportamiento:
+        //  - Fase 1: la inferencia tomaba SOLO el operador generico (cancelaba con el
+        //    operador equivocado, ignorando el hotel) -> riesgo.
+        //  - Fase intermedia: se detectaban dos operadores y se bloqueaba con INV-152.
+        //  - ADR-025 (actual): se arma una linea por operador (generico + hotel), cada
+        //    una en su tabla, sin bloqueo. La cara fiscal sigue unica en el padre.
         await AddGenericServiceAsync(ctx, reservaId, supplierGenerico);
         await AddHotelAsync(ctx, reservaId, supplierHotel);
 
-        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(
-            () => DraftAsync(service, reservaPublicId));
-        Assert.Equal("INV-152", ex.InvariantCode);
+        var dto = await DraftAsync(service, reservaPublicId);
+
+        var bc = await ctx.BookingCancellations.AsNoTracking()
+            .Include(b => b.Lines)
+            .FirstAsync(b => b.PublicId == dto.PublicId);
+
+        Assert.Equal(2, bc.Lines.Count);
+        Assert.Contains(bc.Lines, l => l.SupplierId == supplierGenerico && l.ServiceTable == CancellableServiceTable.Generic);
+        Assert.Contains(bc.Lines, l => l.SupplierId == supplierHotel && l.ServiceTable == CancellableServiceTable.Hotel);
+        Assert.Contains(bc.SupplierId, new[] { supplierGenerico, supplierHotel });
     }
 
     // =========================================================================

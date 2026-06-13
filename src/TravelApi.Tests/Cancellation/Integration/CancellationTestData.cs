@@ -76,15 +76,28 @@ internal static class CancellationTestData
     /// Construye una <see cref="BookingCancellation"/> con <see cref="FiscalSnapshot"/>
     /// COMPLETO (apto para AwaitingFiscalConfirmation+). El status default
     /// queda en Drafted; los tests lo cambian segun el escenario.
+    ///
+    /// <para>
+    /// ADR-025 (2026-06-13): un BC real SIEMPRE nace con al menos una
+    /// <see cref="BookingCancellationLine"/> (la arma <c>BuildCancellationLinesAsync</c>
+    /// o el backfill). El allocate del operador imputa el reintegro a la(s) linea(s) de
+    /// ESE operador (INV-126/INV-118 viven a nivel linea). Por eso el seed tambien debe
+    /// nacer con una linea, o el primer allocate del test rebota con INV-126 ("el proveedor
+    /// del reintegro no corresponde a ninguna linea"). Aca adjuntamos UNA linea del mismo
+    /// <paramref name="supplierId"/> del BC, en la moneda <paramref name="lineCurrency"/>
+    /// (misma que el snapshot del evento en mono-operador). EF la inserta en cascada al
+    /// persistir el BC (la FK la resuelve por la navigation property, igual que produccion).
+    /// </para>
     /// </summary>
     public static BookingCancellation NewCancellation(
         int customerId,
         int supplierId,
         int reservaId,
         int originatingInvoiceId,
-        BookingCancellationStatus status = BookingCancellationStatus.Drafted)
+        BookingCancellationStatus status = BookingCancellationStatus.Drafted,
+        string lineCurrency = "ARS")
     {
-        return new BookingCancellation
+        var bc = new BookingCancellation
         {
             CustomerId = customerId,
             SupplierId = supplierId,
@@ -103,12 +116,45 @@ internal static class CancellationTestData
                 CustomerTaxConditionAtEvent = "Consumidor Final",
                 SupplierTaxConditionAtEvent = "IVA_RESP_INSCRIPTO",
                 AgencyTaxConditionAtEvent = "Monotributo",
-                CurrencyAtEvent = "ARS",
+                CurrencyAtEvent = lineCurrency,
                 ExchangeRateAtOriginalInvoice = 1m,
                 Source = ExchangeRateSource.Manual,
                 ManualJustification = "Test",
                 FetchedAt = DateTime.UtcNow,
             },
+        };
+
+        bc.Lines.Add(NewCancellationLine(supplierId, lineCurrency));
+        return bc;
+    }
+
+    /// <summary>
+    /// ADR-025: crea una <see cref="BookingCancellationLine"/> Full del operador
+    /// <paramref name="supplierId"/> con un <see cref="BookingCancellationLine.RefundCap"/>
+    /// holgado, replicando lo que arma <c>BuildCancellationLinesAsync</c> en produccion.
+    ///
+    /// <para>El cap se deja generoso (igual al SalePrice) para que los allocates de los
+    /// tests no choquen contra el tope del operador — los tests de cap del refund validan
+    /// el cap del <see cref="OperatorRefundReceived"/>, no el de la linea. Sin FK a un
+    /// servicio real: <see cref="BookingCancellationLine.ServiceId"/>=0 es el centinela de
+    /// backfill (no hay servicio puntual en el esqueleto del test).</para>
+    /// </summary>
+    public static BookingCancellationLine NewCancellationLine(
+        int supplierId,
+        string currency = "ARS",
+        decimal lineSaleAmount = 1000m,
+        decimal refundCap = 1000m)
+    {
+        return new BookingCancellationLine
+        {
+            SupplierId = supplierId,
+            ServiceTable = CancellableServiceTable.Generic,
+            ServiceId = 0, // centinela backfill: el esqueleto del test no apunta a un servicio real
+            Scope = BookingCancellationLineScope.Full,
+            Currency = string.IsNullOrWhiteSpace(currency) ? "ARS" : currency,
+            LineSaleAmount = lineSaleAmount,
+            RefundCap = refundCap,
+            ReceivedRefundAmount = 0m,
         };
     }
 
