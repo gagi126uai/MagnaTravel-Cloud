@@ -103,6 +103,24 @@ export const cancellationsApi = {
     api.post("/cancellations/cancel-service", payload),
 
   /**
+   * ADR-025: bandeja back-office de cancelaciones de servicio con NC pendiente de revision.
+   * Aparece cuando se cancela un servicio y queda una nota de credito sin emitir
+   * (flujo NC parcial congelado hasta firma del contador — ADR-025 decision #3).
+   *
+   * HOY esta lista viene VACIA casi siempre. Es correcto y esperado:
+   * el flujo que la llena (NC parcial) esta congelado hasta que el contador firme.
+   * El empty state de la bandeja lo explica al usuario.
+   *
+   * Requiere permiso cobranzas.view_all (back-office).
+   *
+   * @returns {Promise<PendingCreditNoteReviewDto[]>}
+   *   Cada item: { bookingCancellationPublicId, reservaPublicId, reservaNumero,
+   *                clienteNombre, status, enteredReviewAt, creditNoteAmount, creditNoteCurrency }
+   */
+  pendingCreditNoteReview: () =>
+    api.get("/cancellations/pending-credit-note-review"),
+
+  /**
    * Lectura del estado actual de un BookingCancellation.
    *
    * @param {string} publicId - GUID del BookingCancellation.

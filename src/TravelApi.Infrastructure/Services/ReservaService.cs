@@ -1573,6 +1573,14 @@ public class ReservaService : IReservaService
         dto.HasLiveEditAuthorization = liveAuthExpiry.HasValue;
         dto.EditAuthorizationExpiresAt = liveAuthExpiry;
 
+        // ADR-025 (read-model cancelacion parcial): motivo del candado fiscal que impide cancelar CUALQUIER
+        // servicio (factura CAE viva o voucher emitido), o null si se puede cancelar. El front pre-bloquea
+        // los casilleros con esto. Reusamos el guard (fuente unica) en vez de recalcular: lo que se ve es
+        // exactamente lo que el backend enforza al cancelar. Costo: 2 AnyAsync chicos en el detalle (no hot
+        // path; misma magnitud que la query de autorizacion de arriba).
+        dto.ServiceCancellationBlockReason =
+            await MutationGuards.GetReservaCancellationBlockReasonAsync(_context, file.Id, CancellationToken.None);
+
         return dto;
     }
 

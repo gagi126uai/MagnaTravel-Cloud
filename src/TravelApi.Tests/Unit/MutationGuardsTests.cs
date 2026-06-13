@@ -542,4 +542,66 @@ public class MutationGuardsTests
         var reason = await MutationGuards.GetPassengerMutationBlockReasonAsync(ctx, 33);
         Assert.Null(reason);
     }
+
+    // ============= GetReservaCancellationBlockReasonAsync (ADR-025, read-model) =============
+
+    [Fact]
+    public async Task CancellationBlock_LiveCae_Blocks()
+    {
+        // Reserva con factura CAE viva -> ningun servicio se puede cancelar.
+        await using var ctx = await SeedReservaAsync();
+        ctx.Invoices.Add(MakeInvoice(73, 1));
+        await ctx.SaveChangesAsync();
+
+        var reason = await MutationGuards.GetReservaCancellationBlockReasonAsync(ctx, 1);
+        Assert.NotNull(reason);
+        Assert.Contains("factura", reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CancellationBlock_IssuedVoucher_Blocks()
+    {
+        // Reserva con voucher emitido -> ningun servicio se puede cancelar.
+        await using var ctx = await SeedReservaAsync();
+        ctx.Vouchers.Add(new Voucher { Id = 95, ReservaId = 1, FileName = "v.pdf", Status = VoucherStatuses.Issued });
+        await ctx.SaveChangesAsync();
+
+        var reason = await MutationGuards.GetReservaCancellationBlockReasonAsync(ctx, 1);
+        Assert.NotNull(reason);
+        Assert.Contains("voucher", reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CancellationBlock_NoCaeNoVoucher_Allows()
+    {
+        // Reserva sin factura viva ni voucher emitido -> se puede cancelar (null).
+        await using var ctx = await SeedReservaAsync();
+
+        var reason = await MutationGuards.GetReservaCancellationBlockReasonAsync(ctx, 1);
+        Assert.Null(reason);
+    }
+
+    [Fact]
+    public async Task CancellationBlock_AnnulledCae_Allows()
+    {
+        // Factura anulada (NC aprobada, AnnulmentStatus.Succeeded) -> no bloquea.
+        await using var ctx = await SeedReservaAsync();
+        ctx.Invoices.Add(MakeInvoice(74, 1, status: AnnulmentStatus.Succeeded));
+        await ctx.SaveChangesAsync();
+
+        var reason = await MutationGuards.GetReservaCancellationBlockReasonAsync(ctx, 1);
+        Assert.Null(reason);
+    }
+
+    [Fact]
+    public async Task CancellationBlock_DraftVoucher_Allows()
+    {
+        // Voucher en Draft (no Issued) NO bloquea — mismo criterio que el resto de los guards.
+        await using var ctx = await SeedReservaAsync();
+        ctx.Vouchers.Add(new Voucher { Id = 96, ReservaId = 1, FileName = "v.pdf", Status = VoucherStatuses.Draft });
+        await ctx.SaveChangesAsync();
+
+        var reason = await MutationGuards.GetReservaCancellationBlockReasonAsync(ctx, 1);
+        Assert.Null(reason);
+    }
 }

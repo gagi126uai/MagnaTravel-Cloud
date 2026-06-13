@@ -2002,6 +2002,58 @@ public class BookingCancellationService
             ConfirmedAt = b.ConfirmedWithClientAt,
         };
 
+    /// <summary>
+    /// ADR-009/ADR-025 (read-model, 2026-06-13): estados del BC que representan "NC parcial esperando
+    /// revision/emision manual". <c>ManualReviewPending</c> (9) es el que se persiste bajo el flujo
+    /// normal (SubmitForReviewAsync); <c>RequiresManualReview</c> (8) es un marker transitorio del enum
+    /// que no se persiste, pero lo incluimos por completitud para que la bandeja no dependa de ese
+    /// detalle de implementacion.
+    /// </summary>
+    private static readonly BookingCancellationStatus[] PendingCreditNoteReviewStates =
+    {
+        BookingCancellationStatus.RequiresManualReview,
+        BookingCancellationStatus.ManualReviewPending,
+    };
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<PendingCreditNoteReviewDto>> GetCancellationsPendingCreditNoteReviewAsync(
+        CancellationToken ct)
+    {
+        // Solo lectura: NO reconciliamos ni mutamos nada (a diferencia de la bandeja de notas de debito).
+        // Esta bandeja solo lista lo que espera revision manual; el approve/reject lo hace el flujo de
+        // approvals + EditLiquidation.
+        //
+        // Materializamos las entidades (con Reserva + Payer) y proyectamos en memoria, mismo patron que
+        // GetCancellationsWithMissingDebitNoteAsync. Lo hacemos asi (en vez de proyectar en la query)
+        // porque el monto sale del owned VO OPCIONAL FiscalLiquidation y el Status es un enum: resolverlo
+        // en memoria evita depender de como cada provider traduce el null-check del owned object y el
+        // ToString() del enum. El volumen de esta bandeja es chico (cancelaciones esperando revision).
+        var candidates = await _db.BookingCancellations
+            .AsNoTracking()
+            .Include(b => b.Reserva)
+                .ThenInclude(r => r.Payer)
+            .Where(b => PendingCreditNoteReviewStates.Contains(b.Status))
+            .OrderBy(b => b.ConfirmedWithClientAt) // mas antiguo primero (prioridad de revision)
+            .ToListAsync(ct);
+
+        var rows = candidates
+            .Select(b => new PendingCreditNoteReviewDto
+            {
+                BookingCancellationPublicId = b.PublicId,
+                ReservaPublicId = b.Reserva?.PublicId ?? Guid.Empty,
+                ReservaNumero = b.Reserva?.NumeroReserva ?? string.Empty,
+                // Preferimos el nombre del cliente pagador; si no hay, el nombre de la reserva.
+                ClienteNombre = b.Reserva?.Payer?.FullName ?? b.Reserva?.Name ?? string.Empty,
+                Status = b.Status.ToString(),
+                EnteredReviewAt = b.ConfirmedWithClientAt,
+                CreditNoteAmount = b.FiscalLiquidation?.FiscalAmountToCredit,
+                CreditNoteCurrency = b.FiscalLiquidation?.Currency,
+            })
+            .ToList();
+
+        return rows;
+    }
+
     // =========================================================================
     // FC1.3.3 (ADR-009 §2.7 G3, 2026-05-21): edicion admin de la liquidacion
     // =========================================================================

@@ -83,6 +83,17 @@ public class ReservaDto
     /// <summary>Cuando vence la autorizacion de edicion viva (null si no hay ninguna viva).</summary>
     public DateTime? EditAuthorizationExpiresAt { get; set; }
 
+    /// <summary>
+    /// ADR-025 (read-model cancelacion parcial, 2026-06-13): motivo por el que NINGUN servicio de la
+    /// reserva se puede cancelar (candado fiscal: factura con CAE viva o voucher emitido), o <c>null</c>
+    /// si se puede cancelar. El front lo usa para PRE-BLOQUEAR los casilleros de "cancelar varios
+    /// servicios" antes de intentar (y evitar el 409). El bloqueo es a NIVEL RESERVA: si esta seteado,
+    /// todos los servicios estan trabados. Calculado (no es columna): misma fuente de verdad que el
+    /// guard que enforza la cancelacion (MutationGuards), asi no divergen UI y backend.
+    /// Es info OPERATIVA (no costo): no se enmascara por ver-costos.
+    /// </summary>
+    public string? ServiceCancellationBlockReason { get; set; }
+
     // P3 (cuadre de facturacion): cuanto se le facturo NETO al cliente por esta reserva
     // (facturas + ND - NC, solo comprobantes con CAE vivo) y cuanto QUEDA por facturar
     // respecto de lo vendido (TotalSale). La UI los usa para avisar si se factura de mas.

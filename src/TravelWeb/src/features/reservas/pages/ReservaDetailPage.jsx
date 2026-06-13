@@ -795,6 +795,17 @@ export default function ReservaDetailPage() {
                 onDeleteService={(service) => handleDeleteService(service)}
                 onCancelService={(service, motivo) => handleCancelService(service, motivo)}
                 onIrAFacturas={() => setActiveTab("account")}
+                // ADR-025: "Cancelar varios" en línea.
+                // canCancelServices: gate UI-only; el server siempre re-valida.
+                canCancelServices={canCancelReserva}
+                // serviceCancellationBlockReason: viene del DTO de la reserva.
+                // Si no es null, toda la reserva tiene un bloqueo fiscal activo.
+                serviceCancellationBlockReason={reserva?.serviceCancellationBlockReason ?? null}
+                onCancelacionVariosTerminada={() => {
+                    // Al terminar la tanda, recargamos la reserva para reflejar
+                    // el nuevo estado de los servicios y el contador "N de M".
+                    fetchReserva({ showLoading: false, preserveOnError: true });
+                }}
               />
 
               {/* Ficha de carga en línea (ADR-017): solo aparece con EnableCatalogFindOrCreate ON.

@@ -18,11 +18,18 @@
  *   - Servicio NO confirmado por el operador → "¿Borrar?" → desaparece de la reserva.
  *   - Servicio YA confirmado por el operador → "¿Cancelar?" → queda tachado (con motivo opcional).
  *   La decisión la toma el sistema solo según esServicioResuelto(svc).
+ *
+ * Botón "Cancelar varios" (ADR-025):
+ *   Permite cancelar múltiples servicios de una vez con un único motivo.
+ *   Despliega una sección INLINE debajo de la lista (no modal).
+ *   Gateada por: el usuario debe tener permiso reservas.cancel.
+ *   El bloqueo fiscal (serviceCancellationBlockReason) se propaga a la sección inline.
  */
 
 import React, { useCallback, useRef, useState } from 'react';
-import { AlertTriangle, Plus, Plane, Hotel, Car, Package, ShieldCheck, Edit2, Trash2, CheckCircle2, Clock, X, Loader2, FileText, Ban } from "lucide-react";
+import { AlertTriangle, Plus, Plane, Hotel, Car, Package, ShieldCheck, Edit2, Trash2, CheckCircle2, Clock, X, Loader2, FileText, Ban, XSquare } from "lucide-react";
 import { isAdmin, hasPermission } from "../../../auth";
+import { CancelarVariosServiciosInline } from "./CancelarVariosServiciosInline";
 import { api } from "../../../api";
 import { showError, showSuccess } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
@@ -589,6 +596,12 @@ function ServiceIcon({ service, className = "w-4 h-4 mr-2" }) {
  *   onIrAFacturas                   — callback () => void para navegar a la solapa "Estado de Cuenta" (facturas).
  *                                     Se usa en el modal de bloqueo 409 para llevar al usuario a las facturas.
  *                                     Opcional; si no se pasa, el botón no aparece.
+ *   canCancelServices               — bool: si el usuario tiene permiso reservas.cancel (UI-only gate).
+ *                                     El server siempre re-valida. Si no se pasa, el botón no aparece.
+ *   serviceCancellationBlockReason  — string|null: motivo de bloqueo fiscal a nivel reserva (ADR-025).
+ *                                     Si no es null, toda la reserva está bloqueada para cancelaciones.
+ *                                     Se propaga a la sección inline "Cancelar varios".
+ *   onCancelacionVariosTerminada    — callback () => void: el padre recarga la reserva al terminar.
  */
 export function ServiceList({
     services,
@@ -609,6 +622,10 @@ export function ServiceList({
     // Cuando es true se muestra el cartelito $/US$ en cada precio y la fila TOTAL al pie.
     // Regla ③: con false (o sin el prop) la lista se ve igual que siempre.
     esMultimoneda = false,
+    // ADR-025: "Cancelar varios" en línea.
+    canCancelServices = false,
+    serviceCancellationBlockReason = null,
+    onCancelacionVariosTerminada,
 }) {
     // Gate de costo: con flag OFF se usa isAdmin() (comportamiento original).
     // Con flag ON se usa hasPermission("cobranzas.see_cost") — admin pasa igual (bypass en hasPermission).
@@ -629,6 +646,20 @@ export function ServiceList({
     // cancelacion porque hay factura con CAE viva o voucher emitido.
     // Guarda el mensaje descriptivo que vino del backend.
     const [modalBloqueo409, setModalBloqueo409] = useState(null);
+
+    // ADR-025: visibilidad de la sección inline "Cancelar varios".
+    // Solo se muestra cuando el usuario lo solicita con el botón "Cancelar varios".
+    const [showCancelarVarios, setShowCancelarVarios] = useState(false);
+
+    // Servicios "cancelables": los que tienen proveedor asignado Y no están ya cancelados.
+    // Estos son los candidatos para mostrar en la sección "Cancelar varios".
+    // Misma lógica que calculateServiciosCanceladosResumen para determinar "con proveedor".
+    const serviciosCancelables = (services || []).filter((svc) => {
+        const tieneProveedor = Boolean(svc.supplierPublicId || svc.supplierId || svc.supplierName);
+        const esTipoEspecifico = svc.recordKind && svc.recordKind !== 'generic';
+        const estaCancelado = (svc.workflowStatus || svc.status) === 'Cancelado';
+        return (tieneProveedor || esTipoEspecifico) && !estaCancelado;
+    });
 
     /**
      * Maneja el clic en la papelera de un servicio.
@@ -713,12 +744,27 @@ export function ServiceList({
 
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
                 <h3 className="text-lg font-medium text-gray-900 dark:text-white">Servicios Contratados</h3>
-                <button
-                    onClick={onAddService}
-                    className="w-full sm:w-auto flex items-center justify-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors shadow-sm"
-                >
-                    <Plus className="w-4 h-4" /> Agregar Servicio
-                </button>
+                <div className="flex flex-wrap gap-2 w-full sm:w-auto justify-end">
+                    {/* Botón "Cancelar varios": solo con permiso reservas.cancel y cuando hay cancelables.
+                        La sección inline muestra el bloqueo fiscal si aplica; no lo ocultamos antes. */}
+                    {canCancelServices && serviciosCancelables.length > 0 && !showCancelarVarios && (
+                        <button
+                            type="button"
+                            onClick={() => setShowCancelarVarios(true)}
+                            data-testid="btn-cancelar-varios"
+                            className="flex items-center justify-center gap-2 border border-amber-300 bg-amber-50 text-amber-700 px-4 py-2 rounded-lg hover:bg-amber-100 transition-colors text-sm font-semibold dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-900/40"
+                        >
+                            <XSquare className="w-4 h-4" />
+                            Cancelar varios
+                        </button>
+                    )}
+                    <button
+                        onClick={onAddService}
+                        className="flex items-center justify-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors shadow-sm text-sm"
+                    >
+                        <Plus className="w-4 h-4" /> Agregar Servicio
+                    </button>
+                </div>
             </div>
 
             {/* Resumen "X de Y servicios resueltos": solo aparece en estado InManagement (decision 4 de UX) */}
@@ -1226,6 +1272,32 @@ export function ServiceList({
                         })}
                     </div>
                 </>
+            )}
+
+            {/* ─ Sección inline "Cancelar varios" (ADR-025) ───────────────────────
+                Se despliega debajo de la lista cuando el usuario presiona el botón.
+                Solo visible cuando showCancelarVarios = true.
+                El bloqueo fiscal (serviceCancellationBlockReason) se pasa hacia abajo:
+                si hay bloqueo, los checkboxes aparecen deshabilitados y el botón
+                Confirmar queda apagado — la sección igual se muestra con el aviso. */}
+            {showCancelarVarios && (
+                <div className="mt-4" data-testid="seccion-cancelar-varios-wrapper">
+                    <CancelarVariosServiciosInline
+                        serviciosCancelables={serviciosCancelables}
+                        reservaPublicId={reservaId}
+                        blockReason={serviceCancellationBlockReason}
+                        onCerrar={() => setShowCancelarVarios(false)}
+                        onCancelacionTerminada={() => {
+                            // Solo recargamos los datos del padre — NO cerramos la sección.
+                            // El usuario necesita leer el resultado (qué falló / cuántos OK)
+                            // antes de cerrar manualmente. El botón "Cerrar" del inline
+                            // llama a onCerrar cuando el usuario está listo.
+                            if (onCancelacionVariosTerminada) {
+                                onCancelacionVariosTerminada();
+                            }
+                        }}
+                    />
+                </div>
             )}
         </div>
     );

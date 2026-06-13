@@ -350,6 +350,33 @@ public static class MutationGuards
     }
 
     /// <summary>
+    /// ADR-025 (read-model para el front de cancelacion parcial, 2026-06-13): devuelve el motivo por el
+    /// que NINGUN servicio de la reserva se puede cancelar (factura con CAE viva o voucher emitido), o
+    /// <c>null</c> si se puede cancelar. El bloqueo es a NIVEL RESERVA (igual que el resto de los guards
+    /// de mutacion, CODE-04/05): si la reserva esta congelada fiscalmente, todos sus servicios lo estan.
+    ///
+    /// <para>Existe para que la pantalla de detalle pueda PRE-BLOQUEAR los casilleros de "cancelar varios
+    /// servicios" sin tener que intentar la cancelacion y comerse el 409. Es la MISMA fuente de verdad
+    /// que usa <c>BookingCancellationService.ResolveServiceCancellationBlockReasonAsync</c> al cancelar
+    /// (que termina en <see cref="GetReservaMutationBlockReasonInternalAsync"/>), asi que lo que el front
+    /// ve y lo que el backend enforza nunca pueden divergir.</para>
+    ///
+    /// <para>El mensaje es del candado fiscal (CAE/voucher). El bloqueo por ESTADO de la reserva (p. ej.
+    /// ya cancelada) lo resuelve la maquina de estados aparte; aca solo cubrimos el candado fiscal, que
+    /// es lo que el front todavia no podia conocer por estado.</para>
+    /// </summary>
+    public static Task<string?> GetReservaCancellationBlockReasonAsync(
+        AppDbContext db,
+        int reservaId,
+        CancellationToken ct = default)
+    {
+        return GetReservaMutationBlockReasonInternalAsync(
+            db, reservaId,
+            entityLabel: "los servicios de la reserva",
+            ct: ct);
+    }
+
+    /// <summary>
     /// Helper interno usado por los guards a nivel reserva (servicio/booking/
     /// fechas). Devuelve un mensaje uniforme parametrizado por la entidad que
     /// se intenta modificar.

@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   Inbox,
   FileWarning,
+  FileMinus2,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useAlerts } from "../contexts/AlertsContext";
@@ -42,6 +43,9 @@ const mainLinks = [
   // ADR-013/014: "Cargos de cancelación pendientes" eliminado del menú (decisión 2026-06-02).
   // La pantalla y la ruta siguen existiendo en App.jsx pero no se exponen al mostrador
   // hasta que la feature de nota de débito esté completa y habilitada.
+  // ADR-025: bandeja de NC por revisar (servicios cancelados con NC pendiente de emision).
+  // Gateada por cobranzas.view_all (solo personal de back-office de facturacion).
+  { to: "/cancellations/credit-notes/inbox", label: "NC por revisar", icon: FileMinus2, requiredPermission: "cobranzas.view_all" },
 { to: "/admin", label: "Administración", icon: Shield, requiredPermission: "auditoria.view" },
   { to: "/settings", label: "Configuración", icon: Settings, requiredPermission: "configuracion.view" },
 ];

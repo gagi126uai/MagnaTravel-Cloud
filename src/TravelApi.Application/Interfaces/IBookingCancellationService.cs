@@ -252,4 +252,17 @@ public interface IBookingCancellationService
     /// </summary>
     Task<IReadOnlyList<CancellationDebitNotePendingDto>> GetCancellationsWithMissingDebitNoteAsync(
         CancellationToken ct);
+
+    /// <summary>
+    /// ADR-009/ADR-025 (read-model, 2026-06-13): bandeja "Notas de credito por revisar". Devuelve los
+    /// BCs que estan esperando revision/emision manual de la NC parcial, es decir en estado
+    /// <c>BookingCancellationStatus.ManualReviewPending</c> (o <c>RequiresManualReview</c>, que bajo el
+    /// flujo normal no se persiste pero se incluye por completitud).
+    ///
+    /// <para>Es SOLO LECTURA (no reconcilia ni muta nada, a diferencia de
+    /// <see cref="GetCancellationsWithMissingDebitNoteAsync"/>). El front la usa para listar las
+    /// cancelaciones pendientes de aprobar/emitir su NC y navegar a cada una por PublicId.</para>
+    /// </summary>
+    Task<IReadOnlyList<PendingCreditNoteReviewDto>> GetCancellationsPendingCreditNoteReviewAsync(
+        CancellationToken ct);
 }

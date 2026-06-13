@@ -47,6 +47,8 @@ import MovementsPreviewPage from "./features/movements/pages/MovementsPreviewPag
 import CreditNoteReconciliationInboxPage from "./features/creditNoteReconciliation/pages/CreditNoteReconciliationInboxPage";
 // ADR-013/ADR-014: bandeja de cargos de cancelacion pendientes (ND sin emitir o fallida).
 import CancellationDebitNoteInboxPage from "./features/cancellations/pages/CancellationDebitNoteInboxPage";
+// ADR-025: bandeja de notas de credito por revisar (NC parciales de servicios cancelados).
+import CancellationCreditNoteInboxPage from "./features/cancellations/pages/CancellationCreditNoteInboxPage";
 
 function FullScreenLoader() {
   return (
@@ -274,6 +276,12 @@ export default function App() {
                     <Route
                       path="/cancellations/debit-notes/inbox"
                       element={hasPermission("cobranzas.invoice_annul") ? <CancellationDebitNoteInboxPage /> : <Navigate to="/dashboard" replace />}
+                    />
+                    {/* ADR-025: bandeja de NC por revisar (NC parciales de servicios cancelados).
+                        Permiso cobranzas.view_all (back-office, solo personal de facturacion). */}
+                    <Route
+                      path="/cancellations/credit-notes/inbox"
+                      element={hasPermission("cobranzas.view_all") ? <CancellationCreditNoteInboxPage /> : <Navigate to="/dashboard" replace />}
                     />
                     <Route
                       path="/approvals/my-requests"

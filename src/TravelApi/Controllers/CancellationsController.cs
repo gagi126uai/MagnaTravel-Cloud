@@ -453,6 +453,28 @@ public class CancellationsController : ControllerBase
     }
 
     /// <summary>
+    /// ADR-009/ADR-025 (read-model, 2026-06-13): bandeja "Notas de credito por revisar" (dentro de
+    /// Cobranza). Devuelve las cancelaciones cuya NC parcial esta esperando revision/emision manual
+    /// (estado <c>ManualReviewPending</c>). Es una vista de LECTURA pura: el approve/reject de cada una
+    /// se hace por el flujo de approvals + <c>edit-liquidation</c>.
+    ///
+    /// <para><b>Permiso</b>: <see cref="Permissions.CobranzasViewAll"/> (cobranzas.view_all) — es el permiso
+    /// de back-office que habilita ver TODAS las cobranzas, no solo las propias. Esta bandeja es una lista
+    /// agregada cross-reserva SIN filtro de ownership por fila y EXPONE el nombre del cliente, asi que debe
+    /// quedar restringida a back-office. NO usamos <c>CobranzasInvoiceAnnul</c> porque el rol Vendedor lo
+    /// tiene (para anular SUS propias facturas, con ownership), y eso le filtraria nombres de clientes de
+    /// reservas ajenas (fuga horizontal — SEC-1). El Vendedor NO tiene <c>cobranzas.view_all</c>.</para>
+    /// </summary>
+    [HttpGet("pending-credit-note-review")]
+    [RequirePermission(Permissions.CobranzasViewAll)]
+    public async Task<ActionResult<IReadOnlyList<PendingCreditNoteReviewDto>>> GetPendingCreditNoteReview(
+        CancellationToken cancellationToken)
+    {
+        var rows = await _bcService.GetCancellationsPendingCreditNoteReviewAsync(cancellationToken);
+        return Ok(rows);
+    }
+
+    /// <summary>
     /// FC1.3.5 (ADR-009 §2.7 G3 + §2.11, 2026-05-21): G3 self-loop. El admin
     /// (o el Vendedor que tenga <c>CobranzasInvoiceAnnul</c> + ownership)
     /// edita los inputs de la liquidacion fiscal de un BC que esta esperando
