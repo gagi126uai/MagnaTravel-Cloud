@@ -189,4 +189,36 @@ public class Reserva : IHasPublicId
 
     /// <summary>Cuando ocurrio la ultima regresion automatica (par de <see cref="LastRegressionReason"/>).</summary>
     public DateTime? LastRegressionAt { get; set; }
+
+    // === ADR-027 (auditoria ERP, hallazgo #10): "confirmada con cambios" ===
+    // Cuando el operador confirma un servicio PERO con otro precio/condicion, el vendedor edita el
+    // servicio para reflejarlo. Si la reserva YA estaba en un estado vivo (En gestion en adelante),
+    // ese cambio recalcula el saldo del cliente solo (ReservaMoneyPersister) Y deja la reserva
+    // "marcada" para que el dueño la revise y de su OK. Nada cambia a sus espaldas.
+
+    /// <summary>
+    /// ADR-027: true cuando se edito el precio/costo de un servicio (SalePrice o NetCost) de esta
+    /// reserva estando en un estado VIVO (InManagement/Confirmed/Traveling/ToSettle) y todavia nadie
+    /// dio el OK. La pone el trigger de edicion; la limpia el endpoint acknowledge-changes. El front
+    /// muestra la marca "confirmada con cambios" y el bucket de alertas la lista mientras este en true.
+    /// </summary>
+    public bool HasUnacknowledgedChanges { get; set; } = false;
+
+    /// <summary>
+    /// ADR-027: cuando se marco POR PRIMERA VEZ el cambio sin revisar (par de
+    /// <see cref="HasUnacknowledgedChanges"/>). Una segunda edicion mientras sigue sin acusar NO pisa
+    /// esta fecha: representa "desde cuando hay algo pendiente de revisar". Se pone en null al acusar.
+    /// </summary>
+    public DateTime? ChangesPendingSince { get; set; }
+
+    /// <summary>ADR-027: usuario que dio el OK a los cambios (auditoria). Se setea al acusar.</summary>
+    [MaxLength(200)]
+    public string? ChangesAckByUserId { get; set; }
+
+    /// <summary>ADR-027: nombre snapshot de quien dio el OK (par de <see cref="ChangesAckByUserId"/>).</summary>
+    [MaxLength(200)]
+    public string? ChangesAckByUserName { get; set; }
+
+    /// <summary>ADR-027: cuando se dio el OK a los cambios (auditoria). Par de <see cref="ChangesAckByUserId"/>.</summary>
+    public DateTime? ChangesAckAt { get; set; }
 }

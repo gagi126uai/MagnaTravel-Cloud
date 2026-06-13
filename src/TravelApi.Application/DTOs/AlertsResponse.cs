@@ -34,7 +34,8 @@ public sealed class AlertsResponse
         int totalCount,
         object? operatorPaymentDeadlines = null,
         object? ticketingDeadlines = null,
-        object? passportExpiries = null)
+        object? passportExpiries = null,
+        object? confirmedWithChanges = null)
     {
         UrgentTrips = urgentTrips;
         SupplierDebts = supplierDebts;
@@ -45,6 +46,7 @@ public sealed class AlertsResponse
         OperatorPaymentDeadlines = operatorPaymentDeadlines;
         TicketingDeadlines = ticketingDeadlines;
         PassportExpiries = passportExpiries;
+        ConfirmedWithChanges = confirmedWithChanges;
     }
 
     public object UrgentTrips { get; }
@@ -99,6 +101,15 @@ public sealed class AlertsResponse
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public object? PassportExpiries { get; }
+
+    /// <summary>
+    /// ADR-027 (auditoria ERP, hallazgo #10): reservas "confirmadas con cambios" sin revisar — un aviso POR
+    /// RESERVA viva marcada (el operador confirmo con otro precio/condicion y el dueño todavia no dio el OK).
+    /// Item: <c>{ reservaPublicId, numeroReserva, name, status, holderName, changesPendingSince }</c>. NO
+    /// expone montos. Se OMITE del JSON cuando no hay nada que avisar (null).
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public object? ConfirmedWithChanges { get; }
 
     public int TotalCount { get; }
 }

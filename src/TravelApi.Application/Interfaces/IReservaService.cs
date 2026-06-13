@@ -65,6 +65,21 @@ public interface IReservaService
     Task<ReservaEditAuthorizationDto> CreateEditAuthorizationAsync(string publicIdOrLegacyId, CreateEditAuthorizationRequest request, string actorUserId, string? actorUserName, bool actorIsAdmin, CancellationToken ct = default);
 
     Task UpdateBalanceAsync(int reservaId);
+
+    /// <summary>
+    /// ADR-027 (hallazgo #10): igual que <see cref="UpdateBalanceAsync(int)"/> pero los paths de EDICION de
+    /// servicio pasan <paramref name="markChangesIfMeaningfulOnLive"/>=true cuando detectaron un cambio de
+    /// precio/costo; si la reserva esta en estado vivo, queda marcada "confirmada con cambios" para revision.
+    /// </summary>
+    Task UpdateBalanceAsync(int reservaId, bool markChangesIfMeaningfulOnLive);
+
+    /// <summary>
+    /// ADR-027 (hallazgo #10): el dueño da el OK a los cambios de una reserva "confirmada con cambios".
+    /// Limpia <c>HasUnacknowledgedChanges</c> y registra quien/cuando (auditoria). No-op idempotente si la
+    /// reserva no estaba marcada. Lanza <see cref="KeyNotFoundException"/> si la reserva no existe.
+    /// </summary>
+    Task<ReservaDto> AcknowledgeChangesAsync(string publicIdOrLegacyId, string actorUserId, string? actorUserName, CancellationToken ct = default);
+
     Task<ReservaDto> ArchiveReservaAsync(string publicIdOrLegacyId, CancellationToken ct = default);
     Task DeleteReservaAsync(string publicIdOrLegacyId, CancellationToken ct = default);
 }

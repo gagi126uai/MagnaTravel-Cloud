@@ -39,6 +39,10 @@ public class BookingServiceTests
         reservaService
             .Setup(service => service.UpdateBalanceAsync(It.IsAny<int>()))
             .Returns(Task.CompletedTask);
+        // ADR-027: overload nuevo que pasan los paths de edicion (marca "confirmada con cambios").
+        reservaService
+            .Setup(service => service.UpdateBalanceAsync(It.IsAny<int>(), It.IsAny<bool>()))
+            .Returns(Task.CompletedTask);
 
         var supplierService = new Mock<ISupplierService>();
         supplierService

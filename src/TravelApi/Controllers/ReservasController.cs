@@ -497,6 +497,28 @@ public class ReservasController : ControllerBase
 
     // ============= /Phase 2.4 =============
 
+    // ADR-027 (auditoria ERP, hallazgo #10): el dueño da el OK a una reserva "confirmada con cambios".
+    // Mismo gating que el resto de edicion de reserva: ReservasEdit + ownership (Admin/view_all bypass).
+    // Limpia la marca y registra quien/cuando. Idempotente: acusar una reserva no marcada devuelve 200 sin
+    // tocar nada (no es error). El candado de edicion (ADR-020 F4) NO aplica: dar el OK NO edita servicios.
+    [HttpPost("{publicIdOrLegacyId}/acknowledge-changes")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<ActionResult<ReservaDto>> AcknowledgeChanges(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var actorUserId = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "System";
+            var actorUserName = User.FindFirstValue("FullName") ?? User.FindFirstValue(ClaimTypes.Name) ?? User.Identity?.Name;
+            var dto = await _reservaService.AcknowledgeChangesAsync(publicIdOrLegacyId, actorUserId, actorUserName, cancellationToken);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
     [HttpGet("{publicIdOrLegacyId}/transition-readiness")]
     [RequirePermission(Permissions.ReservasView)]
     [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]

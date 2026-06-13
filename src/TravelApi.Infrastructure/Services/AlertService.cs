@@ -78,10 +78,13 @@ public class AlertService : IAlertService
         var operatorPaymentDeadlines = await ComputeOperatorPaymentDeadlinesAsync(caller, today, cancellationToken);
         var ticketingDeadlines = await ComputeTicketingDeadlinesAsync(caller, today, cancellationToken);
         var passportExpiries = await ComputePassportExpiriesAsync(caller, cancellationToken);
+        // ADR-027 (hallazgo #10): reservas "confirmadas con cambios" sin revisar. Mismo gating que las otras.
+        var confirmedWithChanges = await ComputeConfirmedWithChangesAsync(caller, cancellationToken);
 
         var hasNewAlarms = operatorPaymentDeadlines.Count > 0
                            || ticketingDeadlines.Count > 0
-                           || passportExpiries.Count > 0;
+                           || passportExpiries.Count > 0
+                           || confirmedWithChanges.Count > 0;
 
         // CAMINO BYTE-IDENTICO (default historico): si NINGUN bucket nuevo esta activo Y no hay NINGUNA
         // alarma nueva que mostrar, devolvemos el MISMO objeto anonimo de siempre (3 propiedades, mismo
@@ -111,7 +114,8 @@ public class AlertService : IAlertService
         // omite del JSON), misma presencia condicional que el path historico.
         var totalCount = financialCount
                          + upcomingStarts.Count + costsToConfirm.Count
-                         + operatorPaymentDeadlines.Count + ticketingDeadlines.Count + passportExpiries.Count;
+                         + operatorPaymentDeadlines.Count + ticketingDeadlines.Count + passportExpiries.Count
+                         + confirmedWithChanges.Count;
         return new AlertsResponse(
             urgentTrips: urgentTrips,
             supplierDebts: supplierDebts,
@@ -124,7 +128,8 @@ public class AlertService : IAlertService
             // Alarmas nuevas: se omiten del JSON cuando estan vacias (null), igual presencia condicional.
             operatorPaymentDeadlines: operatorPaymentDeadlines.Count > 0 ? operatorPaymentDeadlines : null,
             ticketingDeadlines: ticketingDeadlines.Count > 0 ? ticketingDeadlines : null,
-            passportExpiries: passportExpiries.Count > 0 ? passportExpiries : null);
+            passportExpiries: passportExpiries.Count > 0 ? passportExpiries : null,
+            confirmedWithChanges: confirmedWithChanges.Count > 0 ? confirmedWithChanges : null);
     }
 
     /// <summary>
@@ -600,6 +605,57 @@ public class AlertService : IAlertService
         // Orden estable: el que vence antes primero.
         return alerts
             .OrderBy(a => (DateTime)a.GetType().GetProperty("PassportExpiry")!.GetValue(a)!)
+            .ToList();
+    }
+
+    /// <summary>
+    /// ADR-027 (auditoria ERP, hallazgo #10): bucket "reservas confirmadas con cambios sin revisar".
+    /// Lista UN aviso POR RESERVA viva (InManagement/Confirmed/Traveling/ToSettle) marcada
+    /// <c>HasUnacknowledgedChanges</c>=true: el operador confirmo un servicio con otro precio/condicion, el
+    /// vendedor lo reflejo editando el servicio, el saldo del cliente ya se ajusto solo y la reserva espera
+    /// el OK del dueño.
+    ///
+    /// <para>Filtra por estado vivo aunque el flag siga en true: si una reserva marcada cae luego a
+    /// Cancelada/Cerrada, deja de avisar (el flag se limpia recien al acusar, pero el aviso no tiene sentido
+    /// fuera de un estado vivo). Mismo gating de visibilidad que las demas alarmas: admin ve todas, el
+    /// vendedor solo SUS reservas, no-admin sin identidad -> vacio (fail-closed). NO expone montos.</para>
+    /// </summary>
+    private async Task<List<object>> ComputeConfirmedWithChangesAsync(AlertCallerContext caller, CancellationToken ct)
+    {
+        // Fail-closed: un no-admin sin identidad no ve avisos de nadie (mismo borde que UpcomingStarts).
+        if (!caller.IsAdmin && string.IsNullOrEmpty(caller.UserId))
+            return new List<object>();
+
+        var rows = await _context.Reservas
+            .Where(r => r.HasUnacknowledgedChanges
+                        && (r.Status == EstadoReserva.InManagement
+                            || r.Status == EstadoReserva.Confirmed
+                            || r.Status == EstadoReserva.Traveling
+                            || r.Status == EstadoReserva.ToSettle)
+                        && (caller.IsAdmin || r.ResponsibleUserId == caller.UserId))
+            .Select(r => new
+            {
+                r.PublicId,
+                r.NumeroReserva,
+                r.Name,
+                r.Status,
+                r.ChangesPendingSince,
+                PayerName = r.Payer != null ? r.Payer.FullName : null
+            })
+            // Lo que espera revision desde hace mas tiempo, primero.
+            .OrderBy(r => r.ChangesPendingSince)
+            .ToListAsync(ct);
+
+        return rows
+            .Select(r => (object)new
+            {
+                ReservaPublicId = r.PublicId,
+                NumeroReserva = r.NumeroReserva,
+                Name = r.Name,
+                Status = r.Status,
+                HolderName = r.PayerName,
+                ChangesPendingSince = r.ChangesPendingSince
+            })
             .ToList();
     }
 

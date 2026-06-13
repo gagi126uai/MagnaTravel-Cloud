@@ -64,6 +64,16 @@ public class ReservaDto
     public DateTime? LastRegressionAt { get; set; }
 
     /// <summary>
+    /// ADR-027 (hallazgo #10): true si se edito el precio/costo de un servicio estando la reserva en estado
+    /// vivo y todavia nadie dio el OK. El frontend muestra la marca "confirmada con cambios" y un boton para
+    /// dar el OK (POST /api/reservas/{id}/acknowledge-changes). Se limpia al acusar.
+    /// </summary>
+    public bool HasUnacknowledgedChanges { get; set; }
+
+    /// <summary>ADR-027: desde cuando hay cambios sin revisar (par de <see cref="HasUnacknowledgedChanges"/>). Null si no hay nada pendiente.</summary>
+    public DateTime? ChangesPendingSince { get; set; }
+
+    /// <summary>
     /// ADR-020 F4 (candado): true si la reserva esta bajo candado y tiene una autorizacion de edicion
     /// VIVA (ExpiresAt &gt; ahora). El frontend muestra "destrabada por unos minutos" en vez de "pedi
     /// autorizacion". Calculado (no es columna): derivado de ReservaEditAuthorizations.

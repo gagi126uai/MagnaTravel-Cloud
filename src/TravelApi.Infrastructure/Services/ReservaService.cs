@@ -1159,6 +1159,39 @@ public class ReservaService : IReservaService
         };
     }
 
+    /// <summary>
+    /// ADR-027 (hallazgo #10): el dueño da el OK a los cambios de una reserva "confirmada con cambios".
+    /// Limpia la bandera y registra quien/cuando. Idempotente: si la reserva no estaba marcada, igual
+    /// devuelve el DTO actual sin tocar nada (no es error acusar dos veces).
+    /// </summary>
+    public async Task<ReservaDto> AcknowledgeChangesAsync(
+        string publicIdOrLegacyId, string actorUserId, string? actorUserName, CancellationToken ct = default)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, ct);
+        var reserva = await _context.Reservas.FirstOrDefaultAsync(r => r.Id == reservaId, ct)
+            ?? throw new KeyNotFoundException("Reserva no encontrada");
+
+        // No estaba marcada: no-op idempotente. Devolvemos el estado actual sin escribir auditoria falsa.
+        if (!reserva.HasUnacknowledgedChanges)
+            return await GetReservaByIdAsync(reservaId);
+
+        var now = DateTime.UtcNow;
+        reserva.HasUnacknowledgedChanges = false;
+        reserva.ChangesPendingSince = null;
+        reserva.ChangesAckByUserId = actorUserId;
+        reserva.ChangesAckByUserName = actorUserName;
+        reserva.ChangesAckAt = now;
+
+        await _context.SaveChangesAsync(ct);
+
+        // Auditoria: quien dio el OK y cuando. Solo identificadores, sin montos ni datos de pasajeros.
+        _logger.LogInformation(
+            "ADR-027: Reserva {ReservaId} acusada ('confirmada con cambios' revisada) por {ActorUserId} en {OccurredAt:o}.",
+            reservaId, actorUserId, now);
+
+        return await GetReservaByIdAsync(reservaId);
+    }
+
     public async Task DeleteReservaAsync(string publicIdOrLegacyId, CancellationToken ct = default)
     {
         var id = await ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, ct);
@@ -1919,6 +1952,12 @@ public class ReservaService : IReservaService
         // proveedor (viejo o nuevo) recalculamos.
         var previousSupplierId = service.SupplierId;
 
+        // ADR-027 (hallazgo #10): capturamos precio/costo ANTES de pisarlos para detectar si esta edicion
+        // es "el operador confirmo con otro precio". Si SalePrice o NetCost cambian y la reserva esta viva,
+        // se marca "confirmada con cambios" (lo decide UpdateBalanceAsync con el flag de abajo).
+        var previousSalePrice = service.SalePrice;
+        var previousNetCost = service.NetCost;
+
         service.ServiceType = request.ServiceType;
         service.ProductType = request.ServiceType;
         service.Description = request.Description ?? request.ServiceType;
@@ -1965,7 +2004,12 @@ public class ReservaService : IReservaService
         }
 
         await _context.SaveChangesAsync();
-        if (service.ReservaId.HasValue) await UpdateBalanceAsync(service.ReservaId.Value);
+
+        // ADR-027: hubo cambio de precio/costo si SalePrice o NetCost difieren de lo persistido antes.
+        // El flag viaja a UpdateBalanceAsync, que decide (estado vivo + no re-pisar fecha) si marca.
+        var meaningfulChange = previousSalePrice != service.SalePrice || previousNetCost != service.NetCost;
+        if (service.ReservaId.HasValue)
+            await UpdateBalanceAsync(service.ReservaId.Value, markChangesIfMeaningfulOnLive: meaningfulChange);
 
         // ADR-022 §4.10 (fix P1): recalcular la deuda del proveedor VIEJO y del NUEVO. Si no cambio de
         // proveedor, ambos ids son iguales y un HashSet evita recalcular dos veces el mismo. Cada uno solo
@@ -2798,7 +2842,35 @@ public class ReservaService : IReservaService
         });
     }
 
-    public async Task UpdateBalanceAsync(int reservaId)
+    public Task UpdateBalanceAsync(int reservaId)
+        => UpdateBalanceAsync(reservaId, markChangesIfMeaningfulOnLive: false);
+
+    /// <summary>
+    /// ADR-027 (auditoria ERP, hallazgo #10): estados VIVOS en los que una edicion de precio/costo de un
+    /// servicio se interpreta como "el operador confirmo con cambios". Editar en Cotizacion/Presupuesto NO
+    /// marca nada (todavia no hay nada confirmado con el cliente). Es un conjunto PROPIO, distinto del
+    /// candado (<see cref="ReservaLockGuard"/>): incluye InManagement (donde no hay candado) y NO incluye
+    /// Closed (una reserva cerrada no deberia recibir cambios; si los recibe, no abrimos un pendiente nuevo).
+    /// </summary>
+    private static readonly HashSet<string> ChangeTrackingLiveStatuses = new(StringComparer.OrdinalIgnoreCase)
+    {
+        EstadoReserva.InManagement,
+        EstadoReserva.Confirmed,
+        EstadoReserva.Traveling,
+        EstadoReserva.ToSettle,
+    };
+
+    /// <summary>
+    /// Recalcula la plata + corre el motor de estados, y opcionalmente marca la reserva como
+    /// "confirmada con cambios" (ADR-027).
+    ///
+    /// <para><paramref name="markChangesIfMeaningfulOnLive"/>: lo pasan en <c>true</c> SOLO los paths de
+    /// EDICION de servicio (generico + 5 tipados) cuando detectaron que cambio el SalePrice o el NetCost.
+    /// Los paths de alta/baja de servicio, el recalculo por pago y el de AFIP lo dejan en <c>false</c>: no
+    /// son "el operador confirmo con otro precio". La decision de si realmente corresponde marcar (estado
+    /// vivo + no re-pisar la fecha) vive abajo, en un solo lugar.</para>
+    /// </summary>
+    public async Task UpdateBalanceAsync(int reservaId, bool markChangesIfMeaningfulOnLive)
     {
         await RecalculateMoneyAsync(reservaId);
 
@@ -2808,6 +2880,42 @@ public class ReservaService : IReservaService
         // llaman a UpdateBalanceAsync, enchufar el motor aca lo cubre todo sin tocar cada call-site.
         if (_autoStateService != null)
             await _autoStateService.EvaluateAndApplyAsync(reservaId);
+
+        // ADR-027: si fue una EDICION de precio/costo y la reserva quedo (o sigue) en estado vivo, dejamos
+        // la marca "confirmada con cambios". Va DESPUES del motor a proposito: el motor pudo regresar la
+        // reserva de Confirmed a InManagement (sigue siendo estado vivo), o no tocarla; en ambos casos el
+        // estado leido aca es el definitivo de la operacion.
+        if (markChangesIfMeaningfulOnLive)
+            await MarkUnacknowledgedChangesIfLiveAsync(reservaId);
+    }
+
+    /// <summary>
+    /// ADR-027 (hallazgo #10): marca la reserva como "confirmada con cambios" si esta en un estado vivo
+    /// (<see cref="ChangeTrackingLiveStatuses"/>). Idempotente: si ya estaba marcada, NO re-pisa
+    /// <c>ChangesPendingSince</c> (esa fecha representa "desde cuando hay algo pendiente de revisar", y la
+    /// primera vez es la que importa hasta que el dueño de el OK). Si la reserva no esta viva, no hace nada.
+    ///
+    /// <para>Corre como un SaveChanges propio, mismo patron que el motor de estados. No toca el saldo: el
+    /// saldo ya se recalculo solo (ReservaMoneyPersister). Solo levanta la bandera de revision humana.</para>
+    /// </summary>
+    private async Task MarkUnacknowledgedChangesIfLiveAsync(int reservaId)
+    {
+        var reserva = await _context.Reservas.FirstOrDefaultAsync(r => r.Id == reservaId);
+        if (reserva == null) return;
+
+        if (!ChangeTrackingLiveStatuses.Contains(reserva.Status)) return;
+
+        // Ya marcada: mantener la PRIMERA fecha (no re-pisar). Una segunda edicion antes del OK no
+        // reinicia el reloj de "desde cuando hay pendiente".
+        if (reserva.HasUnacknowledgedChanges) return;
+
+        reserva.HasUnacknowledgedChanges = true;
+        reserva.ChangesPendingSince = DateTime.UtcNow;
+        await _context.SaveChangesAsync();
+
+        _logger.LogInformation(
+            "ADR-027: Reserva {ReservaId} marcada 'confirmada con cambios' (edicion de precio/costo en estado {Status}).",
+            reservaId, reserva.Status);
     }
 
     /// <summary>

@@ -562,6 +562,9 @@ public partial class BookingService : IBookingService
 
         var oldSupplierId = flight.SupplierId;
         var oldStatus = flight.Status;
+        // ADR-027 (hallazgo #10): precio/costo ANTES del map para detectar "el operador confirmo con cambios".
+        var oldSalePrice = flight.SalePrice;
+        var oldNetCost = flight.NetCost;
         var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
 
         _mapper.Map(req, flight);
@@ -631,7 +634,9 @@ public partial class BookingService : IBookingService
         }
 
         await RecalculateReservationScheduleAsync(reservaId, ct);
-        await _reservaService.UpdateBalanceAsync(reservaId);
+        // ADR-027: marca "confirmada con cambios" si cambio precio/costo y la reserva esta viva.
+        var meaningfulChange = oldSalePrice != flight.SalePrice || oldNetCost != flight.NetCost;
+        await _reservaService.UpdateBalanceAsync(reservaId, markChangesIfMeaningfulOnLive: meaningfulChange);
 
         var dto = _mapper.Map<FlightSegmentDto>(flight);
         dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(flight.RateId, ct);
@@ -815,6 +820,9 @@ public partial class BookingService : IBookingService
 
         var oldSupplierId = hotel.SupplierId;
         var oldStatus = hotel.Status;
+        // ADR-027 (hallazgo #10): precio/costo ANTES del map para detectar "el operador confirmo con cambios".
+        var oldSalePrice = hotel.SalePrice;
+        var oldNetCost = hotel.NetCost;
         var oldRateId = hotel.RateId;
         var oldHotelName = hotel.HotelName;
         var oldCity = hotel.City;
@@ -891,7 +899,9 @@ public partial class BookingService : IBookingService
         }
 
         await RecalculateReservationScheduleAsync(reservaId, ct);
-        await _reservaService.UpdateBalanceAsync(reservaId);
+        // ADR-027: marca "confirmada con cambios" si cambio precio/costo y la reserva esta viva.
+        var meaningfulChange = oldSalePrice != hotel.SalePrice || oldNetCost != hotel.NetCost;
+        await _reservaService.UpdateBalanceAsync(reservaId, markChangesIfMeaningfulOnLive: meaningfulChange);
 
         var dto = _mapper.Map<HotelBookingDto>(hotel);
         dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(hotel.RateId, ct);
@@ -1069,6 +1079,8 @@ public partial class BookingService : IBookingService
         }
 
         var oldNetCost = package.NetCost;
+        // ADR-027 (hallazgo #10): precio ANTES del map para detectar "el operador confirmo con cambios".
+        var oldSalePrice = package.SalePrice;
         var oldSupplierId = package.SupplierId;
         var oldStatus = package.Status;
         var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
@@ -1117,7 +1129,9 @@ public partial class BookingService : IBookingService
         }
 
         await RecalculateReservationScheduleAsync(reservaId, ct);
-        await _reservaService.UpdateBalanceAsync(reservaId);
+        // ADR-027: marca "confirmada con cambios" si cambio precio/costo y la reserva esta viva.
+        var meaningfulChange = oldSalePrice != package.SalePrice || oldNetCost != package.NetCost;
+        await _reservaService.UpdateBalanceAsync(reservaId, markChangesIfMeaningfulOnLive: meaningfulChange);
 
         var dto = _mapper.Map<PackageBookingDto>(package);
         dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(package.RateId, ct);
@@ -1300,6 +1314,8 @@ public partial class BookingService : IBookingService
         }
 
         var oldNetCost = transfer.NetCost;
+        // ADR-027 (hallazgo #10): precio ANTES del map para detectar "el operador confirmo con cambios".
+        var oldSalePrice = transfer.SalePrice;
         var oldSupplierId = transfer.SupplierId;
         var oldStatus = transfer.Status;
         var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
@@ -1359,7 +1375,9 @@ public partial class BookingService : IBookingService
         }
 
         await RecalculateReservationScheduleAsync(reservaId, ct);
-        await _reservaService.UpdateBalanceAsync(reservaId);
+        // ADR-027: marca "confirmada con cambios" si cambio precio/costo y la reserva esta viva.
+        var meaningfulChange = oldSalePrice != transfer.SalePrice || oldNetCost != transfer.NetCost;
+        await _reservaService.UpdateBalanceAsync(reservaId, markChangesIfMeaningfulOnLive: meaningfulChange);
 
         var dto = _mapper.Map<TransferBookingDto>(transfer);
         dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(transfer.RateId, ct);
@@ -1569,6 +1587,9 @@ public partial class BookingService : IBookingService
 
         var oldSupplierId = assistance.SupplierId;
         var oldStatus = assistance.Status;
+        // ADR-027 (hallazgo #10): precio/costo ANTES del map para detectar "el operador confirmo con cambios".
+        var oldSalePrice = assistance.SalePrice;
+        var oldNetCost = assistance.NetCost;
 
         _mapper.Map(req, assistance);
         var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
@@ -1619,7 +1640,9 @@ public partial class BookingService : IBookingService
         }
 
         await RecalculateReservationScheduleAsync(reservaId, ct);
-        await _reservaService.UpdateBalanceAsync(reservaId);
+        // ADR-027: marca "confirmada con cambios" si cambio precio/costo y la reserva esta viva.
+        var meaningfulChange = oldSalePrice != assistance.SalePrice || oldNetCost != assistance.NetCost;
+        await _reservaService.UpdateBalanceAsync(reservaId, markChangesIfMeaningfulOnLive: meaningfulChange);
 
         var dto = _mapper.Map<AssistanceBookingDto>(assistance);
         dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(assistance.RateId, ct);

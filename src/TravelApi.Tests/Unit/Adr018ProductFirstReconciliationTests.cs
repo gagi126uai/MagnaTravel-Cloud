@@ -590,6 +590,8 @@ public class Adr018ProductFirstReconciliationTests
     {
         var reservaServiceMock = new Mock<IReservaService>();
         reservaServiceMock.Setup(s => s.UpdateBalanceAsync(It.IsAny<int>())).Returns(Task.CompletedTask);
+        // ADR-027: overload nuevo que pasan los paths de edicion (marca "confirmada con cambios").
+        reservaServiceMock.Setup(s => s.UpdateBalanceAsync(It.IsAny<int>(), It.IsAny<bool>())).Returns(Task.CompletedTask);
 
         var supplierServiceMock = new Mock<ISupplierService>();
         supplierServiceMock.Setup(s => s.UpdateBalanceAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
