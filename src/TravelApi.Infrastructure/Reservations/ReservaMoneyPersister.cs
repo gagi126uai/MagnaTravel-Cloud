@@ -68,6 +68,14 @@ internal static class ReservaMoneyPersister
 
         // 3) Escalar y filas hijas en UNA sola SaveChangesAsync -> nunca divergen.
         await db.SaveChangesAsync(ct);
+
+        // 4) Comision del vendedor (auditoria ERP 2026-06-12, hallazgo #1): este es el chokepoint de la
+        //    plata de la reserva, asi que devengar/revertir la comision aca cubre TODOS los caminos que
+        //    mueven el saldo (cobro, mutacion de servicio, anulacion de factura, cancelacion) sin tocar
+        //    cada call-site. Corre DESPUES del SaveChanges del saldo para leer un Balance ya actualizado;
+        //    guarda sus propios cambios en una SaveChanges separada. Si el toggle EnableSellerCommissions
+        //    esta apagado, el persister es un no-op total (comportamiento byte-identico a antes).
+        await CommissionAccrualPersister.RecalculateAsync(db, reservaId, ct);
     }
 
     /// <summary>

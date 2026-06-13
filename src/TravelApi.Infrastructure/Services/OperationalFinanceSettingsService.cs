@@ -116,6 +116,14 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             entity.ServiceDeadlineAlertDays = Math.Clamp(request.ServiceDeadlineAlertDays.Value, 1, 60);
         }
 
+        // Auditoria ERP 2026-06-12 (hallazgo #1): interruptor de comision del vendedor. Update CONDICIONAL
+        // (patch-like, criterio B-002): solo se aplica si el request trae valor. Es un ajuste de negocio
+        // puro, sin dependencias con otros flags, por eso NO hay validacion cruzada para el mas abajo.
+        if (request.EnableSellerCommissions.HasValue)
+        {
+            entity.EnableSellerCommissions = request.EnableSellerCommissions.Value;
+        }
+
         entity.UpdatedAt = DateTime.UtcNow;
 
         // FC1.3.2 (ADR-009 §2.10, N-004 round 3, 2026-05-21): pre-condicion GR-002.
@@ -259,6 +267,8 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             StaleCostReferenceDays = entity.StaleCostReferenceDays,
             // ADR-017 F1.4: el GET expone la ventana de alertas para que el panel la muestre/edite.
             ServiceDeadlineAlertDays = entity.ServiceDeadlineAlertDays,
+            // Auditoria ERP 2026-06-12 (hallazgo #1): el GET expone el interruptor de comision del vendedor.
+            EnableSellerCommissions = entity.EnableSellerCommissions,
         };
     }
 }

@@ -262,6 +262,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     // por moneda (queryable en SQL para cuenta corriente / reportes / tesoreria / top-N).
     public DbSet<ReservaMoneyByCurrency> ReservaMoneyByCurrency => Set<ReservaMoneyByCurrency>();
     public DbSet<SupplierBalanceByCurrency> SupplierBalanceByCurrency => Set<SupplierBalanceByCurrency>();
+
+    // Auditoria ERP 2026-06-12 (hallazgo #1): comision del vendedor devengada por reserva, separada por
+    // moneda (una fila por Reserva + Vendedor + Moneda). Config en OnModelCreating.
+    public DbSet<CommissionAccrual> CommissionAccruals => Set<CommissionAccrual>();
     
     // Sprint 4: Egresos y Configuración
     public DbSet<SupplierPayment> SupplierPayments => Set<SupplierPayment>();
@@ -1240,6 +1244,32 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         modelBuilder.Entity<OperationalFinanceSettings>(entity =>
         {
             entity.Property(s => s.AfipInvoiceControlMode).HasMaxLength(50).IsRequired();
+        });
+
+        // Auditoria ERP 2026-06-12 (hallazgo #1): comision del vendedor por reserva+moneda.
+        // Columnas SIN HasColumnName -> nombre de columna = nombre de propiedad (evita el trap M2 que
+        // rompio produccion al usar nombre de propiedad en SQL crudo). FK Cascade: al borrar la reserva,
+        // sus comisiones se borran.
+        modelBuilder.Entity<CommissionAccrual>(entity =>
+        {
+            entity.ToTable("CommissionAccruals");
+            entity.Property(x => x.SellerUserId).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.SellerName).HasMaxLength(200);
+            entity.Property(x => x.Currency).HasMaxLength(3).IsRequired().HasDefaultValue(Monedas.ARS);
+            entity.Property(x => x.Amount).HasPrecision(18, 2);
+            entity.Property(x => x.RatePercent).HasPrecision(7, 4);
+            entity.Property(x => x.Status).HasMaxLength(20).IsRequired();
+
+            entity.HasOne(x => x.Reserva)
+                  .WithMany()
+                  .HasForeignKey(x => x.ReservaId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            // Unicidad funcional: una sola fila por (reserva, vendedor, moneda). Es lo que hace
+            // idempotente el upsert: el recalculo nunca duplica un devengo.
+            entity.HasIndex(x => new { x.ReservaId, x.SellerUserId, x.Currency }).IsUnique();
+            // Para el listado de liquidacion por vendedor + filtro de estado.
+            entity.HasIndex(x => new { x.SellerUserId, x.Status });
         });
 
         modelBuilder.Entity<PaymentReceipt>(entity =>

@@ -517,6 +517,29 @@ public class OperationalFinanceSettings
     /// </summary>
     public int ServiceDeadlineAlertDays { get; set; } = 7;
 
+    // ============================================================
+    // Auditoria ERP 2026-06-12 (hallazgo #1): comision del vendedor. INTERRUPTOR de negocio (NO un feature
+    // flag de los prohibidos): la funcion va completa y el dueño decide si la usa desde Configuracion.
+    // ============================================================
+
+    /// <summary>
+    /// Auditoria ERP 2026-06-12 (hallazgo #1, decision del dueño): interruptor maestro de la comision del
+    /// vendedor.
+    ///
+    /// <para><b>Con OFF (default)</b>: byte-identico a antes de esta feature. El persister de comisiones es
+    /// un no-op total: no calcula ni escribe ninguna fila de <c>CommissionAccrual</c>. Cero devengo.</para>
+    ///
+    /// <para><b>Con ON</b>: cuando una reserva queda totalmente cobrada (<c>Balance &lt;= 0</c>), se devenga
+    /// la comision del vendedor responsable como un % (de <c>CommissionRule</c>) sobre la GANANCIA de los
+    /// servicios confirmados, separada por moneda (ADR-021). Si la reserva se cancela o el saldo vuelve a
+    /// positivo, la comision devengada vuelve a 0 (tope cero). Sin regla aplicable -> 0 (no se inventa %).</para>
+    ///
+    /// <para>Es un ajuste de NEGOCIO puro, sin dependencias con otros flags, por eso NO tiene validacion
+    /// cruzada. Editable por Admin desde el panel (PUT operational-finance) y expuesto read-only en el GET.
+    /// Default <c>false</c>: el dueño lo prende cuando quiera.</para>
+    /// </summary>
+    public bool EnableSellerCommissions { get; set; } = false;
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

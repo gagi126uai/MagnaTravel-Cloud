@@ -173,4 +173,17 @@ public class OperationalFinanceSettingsDto
     /// </summary>
     [Range(1, 60, ErrorMessage = "ServiceDeadlineAlertDays debe estar entre 1 y 60.")]
     public int? ServiceDeadlineAlertDays { get; set; }
+
+    /// <summary>
+    /// Auditoria ERP 2026-06-12 (hallazgo #1): interruptor de la comision del vendedor. El admin lo
+    /// prende/apaga desde el panel de Configuracion. Es un ajuste de NEGOCIO, sin validacion cruzada.
+    ///
+    /// <para>Con OFF (default) no se devenga ninguna comision (comportamiento byte-identico a antes). Con
+    /// ON, las reservas totalmente cobradas devengan comision del vendedor responsable por moneda.</para>
+    ///
+    /// <para>Nullable y patch-like (mismo criterio B-002 que el resto del DTO): enviar null u omitir el
+    /// campo en el PUT = no se modifica el valor actual. Solo se persiste si viene con valor. Se expone
+    /// read-only en el GET para que el panel lo muestre como toggle.</para>
+    /// </summary>
+    public bool? EnableSellerCommissions { get; set; }
 }

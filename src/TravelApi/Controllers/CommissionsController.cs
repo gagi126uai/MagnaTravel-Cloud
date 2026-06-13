@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
+using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
 
@@ -89,6 +91,23 @@ public class CommissionsController : ControllerBase
 
         var percent = await _commissionService.CalculateCommissionAsync(resolvedSupplierId, serviceType, cancellationToken);
         return Ok(new { commissionPercent = percent });
+    }
+
+    /// <summary>
+    /// Auditoria ERP 2026-06-12 (hallazgo #1): listado de comisiones de vendedor devengadas (insumo de la
+    /// futura pantalla de liquidacion). Filtrable por vendedor / periodo / estado.
+    ///
+    /// <para><b>Gate de permiso</b>: la comision revela margen/ganancia (dato sensible tipo costo), por eso
+    /// exige <c>cobranzas.see_cost</c> — el mismo permiso que destapa los costos en el resto del sistema. Un
+    /// vendedor comun (que NO tiene see_cost) no puede leer comisiones, ni las propias: este endpoint es para
+    /// el back-office que liquida. No hace falta enmascarado parcial porque el gate es todo-o-nada.</para>
+    /// </summary>
+    [HttpGet("accruals")]
+    [RequirePermission(Permissions.CobranzasSeeCost)]
+    public async Task<ActionResult<PagedResponse<CommissionAccrualDto>>> GetAccruals(
+        [FromQuery] CommissionAccrualsQuery query, CancellationToken cancellationToken)
+    {
+        return Ok(await _commissionService.GetAccrualsAsync(query, cancellationToken));
     }
 
     private async Task<int?> ResolveOptionalSupplierIdAsync(string? supplierPublicIdOrLegacyId, CancellationToken cancellationToken)
