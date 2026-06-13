@@ -1694,6 +1694,27 @@ public class ReservaService : IReservaService
                     }
                 }
 
+                // CRM leads (2026-06-12): si la reserva nace de un lead, resolvemos el lead de origen
+                // ADENTRO de la transaccion para que el linkeo + el cambio de estado del lead viajen
+                // junto con la creacion de la reserva (todo o nada). Buscamos la ENTIDAD trackeada (no
+                // AsNoTracking) porque despues le cambiamos el Status y necesitamos que EF lo persista.
+                Lead? sourceLead = null;
+                if (!string.IsNullOrWhiteSpace(request.SourceLeadPublicId))
+                {
+                    var sourceLeadId = await _context.Leads
+                        .AsNoTracking()
+                        .ResolveInternalIdAsync(request.SourceLeadPublicId, CancellationToken.None);
+
+                    if (!sourceLeadId.HasValue)
+                    {
+                        // Lead inexistente = pedido invalido del cliente -> 400 (ArgumentException lo mapea
+                        // el controller). No es 404 de "la reserva no existe": la reserva todavia no se creo.
+                        throw new ArgumentException("Lead de origen no encontrado.");
+                    }
+
+                    sourceLead = await _context.Leads.FindAsync(new object[] { sourceLeadId.Value }, CancellationToken.None);
+                }
+
                 var numeroReserva = await GenerateNumeroReservaAsync(CancellationToken.None);
 
                 var fileName = !string.IsNullOrWhiteSpace(request.Name)
@@ -1711,13 +1732,24 @@ public class ReservaService : IReservaService
                     Description = request.Description,
                     // ADR-020 (D9 / INV-020-01): toda reserva nace en Cotizacion. El estado inicial
                     // ya NO se puede elegir desde el request (el campo Status se elimino del DTO).
-                    Status = EstadoReserva.Quotation
+                    Status = EstadoReserva.Quotation,
+                    // CRM leads: linkeo de trazabilidad lead -> reserva (se setea aunque el lead ya
+                    // estuviera Ganado/Perdido; el linkeo no depende del estado).
+                    SourceLeadId = sourceLead?.Id
                 };
-                
+
                 _context.Reservas.Add(file);
+
+                if (sourceLead != null)
+                {
+                    // Se concreto una venta a partir del lead -> Ganado (misma regla que la conversion
+                    // de cotizacion). Si el lead ya estaba Perdido, MarkLeadAsWonForSale no lo reabre.
+                    LeadService.MarkLeadAsWonForSale(sourceLead);
+                }
+
                 await _context.SaveChangesAsync();
                 await transaction.CommitAsync();
-                
+
                 return file;
             }
             catch

@@ -3,6 +3,7 @@ using TravelApi.Application.Contracts.Leads;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Helpers;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Infrastructure.Services;
@@ -34,13 +35,7 @@ public class WhatsAppWebhookService : IWhatsAppWebhookService
             throw new ArgumentException("Nombre y telefono son obligatorios.");
         }
 
-        var phoneToSearch = NormalizePhone(dto.Phone);
-        var existingLead = await _db.Leads
-            .Where(lead =>
-                (lead.Phone == dto.Phone || lead.Phone == phoneToSearch) &&
-                lead.Status != LeadStatus.Won &&
-                lead.Status != LeadStatus.Lost)
-            .FirstOrDefaultAsync(cancellationToken);
+        var existingLead = await FindActiveLeadByPhoneAsync(dto.Phone, cancellationToken);
 
         if (existingLead is not null)
         {
@@ -126,13 +121,7 @@ public class WhatsAppWebhookService : IWhatsAppWebhookService
             }
         }
 
-        var phoneToSearch = NormalizePhone(dto.Phone);
-        var lead = await _db.Leads
-            .Where(item =>
-                (item.Phone == dto.Phone || item.Phone == phoneToSearch) &&
-                item.Status != LeadStatus.Won &&
-                item.Status != LeadStatus.Lost)
-            .FirstOrDefaultAsync(cancellationToken);
+        var lead = await FindActiveLeadByPhoneAsync(dto.Phone, cancellationToken);
 
         if (lead is null)
         {
@@ -181,7 +170,32 @@ public class WhatsAppWebhookService : IWhatsAppWebhookService
         };
     }
 
-    private static string NormalizePhone(string phone) => phone.Replace("+", "").Trim();
+    /// <summary>
+    /// Busca un lead ACTIVO (no Ganado, no Perdido) cuyo telefono coincida con el dado.
+    ///
+    /// <para><b>Compatibilidad</b>: antes el match se hacia en SQL con una regla laxa (sacaba solo '+').
+    /// Ahora usamos <see cref="PhoneNormalizer"/> (solo digitos) en AMBOS lados. Eso cubre todo lo que
+    /// matcheaba antes (si "+54911..." matcheaba con "54911...", al dejar solo digitos siguen iguales)
+    /// y suma casos nuevos que antes se escapaban (guiones, parentesis, espacios). Como EF no traduce el
+    /// helper a SQL, traemos los leads activos con telefono y comparamos en memoria.</para>
+    /// </summary>
+    private async Task<Lead?> FindActiveLeadByPhoneAsync(string phone, CancellationToken cancellationToken)
+    {
+        var phoneNorm = PhoneNormalizer.Normalize(phone);
+        if (phoneNorm.Length == 0)
+        {
+            return null;
+        }
+
+        var activeLeadsWithPhone = await _db.Leads
+            .Where(lead => lead.Phone != null && lead.Phone != ""
+                && lead.Status != LeadStatus.Won
+                && lead.Status != LeadStatus.Lost)
+            .ToListAsync(cancellationToken);
+
+        return activeLeadsWithPhone
+            .FirstOrDefault(lead => PhoneNormalizer.Normalize(lead.Phone) == phoneNorm);
+    }
 
     private static bool IsPlaceholderLeadName(string? name) =>
         string.IsNullOrWhiteSpace(name) ||

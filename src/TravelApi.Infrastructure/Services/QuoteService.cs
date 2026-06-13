@@ -545,10 +545,10 @@ public class QuoteService : IQuoteService
         if (quote.LeadId.HasValue)
         {
             var lead = await _db.Leads.FindAsync(new object[] { quote.LeadId.Value }, cancellationToken);
-            if (lead != null && lead.Status != LeadStatus.Lost)
+            if (lead != null)
             {
-                lead.Status = LeadStatus.Won;
-                lead.ClosedAt = DateTime.UtcNow;
+                // Fuente unica de la regla "se concreto una venta -> lead Ganado" (no reabre Perdido).
+                LeadService.MarkLeadAsWonForSale(lead);
             }
         }
         await _db.SaveChangesAsync(cancellationToken);

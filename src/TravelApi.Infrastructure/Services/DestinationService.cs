@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Helpers;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Infrastructure.Services;
@@ -354,6 +355,46 @@ public class DestinationService : IDestinationService
             throw new InvalidOperationException("La salida seleccionada no esta disponible.");
         }
 
+        var consultaDescription = BuildLeadNotes(destination, selectedDeparture, TrimToNull(request.Message), referer);
+
+        // Dedup del formulario PUBLICO de paquetes (2026-06-12): si esta misma persona (mismo telefono
+        // normalizado) ya tiene un lead ACTIVO, NO creamos un lead duplicado por cada vez que llena el
+        // formulario. En su lugar le sumamos una actividad "Nota" con la nueva consulta. Importante de
+        // SEGURIDAD: este endpoint es ANONIMO (cualquiera lo puede llamar), asi que la consulta web NUNCA
+        // pisa campos del lead existente (nombre, interes, etc.). Solo AGREGA actividad. Esto evita que un
+        // tercero, mandando el form con un telefono ajeno, sobrescriba los datos de un lead real.
+        var phoneNorm = PhoneNormalizer.Normalize(phone);
+        Lead? existingActiveLead = null;
+        if (phoneNorm.Length > 0)
+        {
+            // EF no traduce PhoneNormalizer a SQL, asi que traemos los leads activos con telefono y
+            // comparamos en memoria. El universo de leads activos de una agencia chica es acotado.
+            var activeLeadsWithPhone = await _db.Leads
+                .Where(lead => lead.Phone != null && lead.Phone != ""
+                    && lead.Status != LeadStatus.Won
+                    && lead.Status != LeadStatus.Lost)
+                .ToListAsync(ct);
+
+            existingActiveLead = activeLeadsWithPhone
+                .FirstOrDefault(lead => PhoneNormalizer.Normalize(lead.Phone) == phoneNorm);
+        }
+
+        if (existingActiveLead != null)
+        {
+            // Lead ya existe y esta activo -> solo dejamos rastro de la nueva consulta, sin tocar el lead.
+            _db.LeadActivities.Add(new LeadActivity
+            {
+                LeadId = existingActiveLead.Id,
+                Type = "Nota",
+                Description = $"Nueva consulta web (paquete {destination.Title}):\n{consultaDescription}",
+                CreatedBy = "Formulario Web",
+                CreatedAt = DateTime.UtcNow
+            });
+
+            await _db.SaveChangesAsync(ct);
+            return;
+        }
+
         var lead = new Lead
         {
             FullName = fullName,
@@ -363,11 +404,24 @@ public class DestinationService : IDestinationService
             Status = LeadStatus.New,
             InterestedIn = destination.Title,
             TravelDates = $"{selectedDeparture.StartDate:dd/MM/yyyy} - {selectedDeparture.Nights} noches",
-            Notes = BuildLeadNotes(destination, selectedDeparture, TrimToNull(request.Message), referer),
+            Notes = consultaDescription,
             CreatedAt = DateTime.UtcNow
         };
 
         _db.Leads.Add(lead);
+        await _db.SaveChangesAsync(ct);
+
+        // Trazabilidad: dejamos una actividad inicial "Consulta web" para que el lead nazca con su
+        // historial visible desde el minuto cero (y no parezca un lead "vacio" cargado a mano).
+        _db.LeadActivities.Add(new LeadActivity
+        {
+            LeadId = lead.Id,
+            Type = "Nota",
+            Description = $"Consulta web (paquete {destination.Title}):\n{consultaDescription}",
+            CreatedBy = "Formulario Web",
+            CreatedAt = DateTime.UtcNow
+        });
+
         await _db.SaveChangesAsync(ct);
     }
 

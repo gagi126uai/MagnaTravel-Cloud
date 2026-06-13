@@ -13,7 +13,6 @@ public interface ILeadService
     Task<LeadDetailDto> UpdateStatusAsync(string publicIdOrLegacyId, string status, CancellationToken cancellationToken);
     Task<LeadActivityDto> AddActivityAsync(string publicIdOrLegacyId, LeadActivityUpsertRequest activity, string? createdBy, CancellationToken cancellationToken);
     Task<LeadConversionResultDto> ConvertToCustomerAsync(string publicIdOrLegacyId, CancellationToken cancellationToken);
-    Task<QuoteDraftResultDto> CreateQuoteDraftAsync(string publicIdOrLegacyId, CancellationToken cancellationToken);
     Task<LeadJourneyDto> GetJourneyAsync(string publicIdOrLegacyId, CancellationToken cancellationToken);
     Task<object> GetPipelineAsync(CancellationToken cancellationToken);
 }

@@ -219,6 +219,98 @@ public class DestinationServiceTests : IDisposable
         Assert.Contains("12 noches", lead.TravelDates);
         Assert.Contains("VIK Hotel Arena Blanca", lead.Notes);
         Assert.Contains("Referer: https://www.hostinger-site.test/landing", lead.Notes);
+
+        // Trazabilidad: el lead nuevo nace con una actividad inicial "Consulta web".
+        var activity = await context.LeadActivities.SingleAsync(a => a.LeadId == lead.Id);
+        Assert.Contains("Consulta web", activity.Description);
+    }
+
+    [Fact]
+    public async Task CreatePublicLeadAsync_WithExistingActiveLeadSamePhone_DoesNotDuplicate_AddsActivity_KeepsLeadFields()
+    {
+        await using var context = CreateContext();
+        var country = BuildCountry();
+        var destination = BuildPublishedReadyDestination(country);
+
+        // Lead activo preexistente con el MISMO telefono escrito de otra forma (sin '+', con guiones).
+        var existingLead = new Lead
+        {
+            FullName = "Cliente Original",
+            Phone = "5491155555555", // mismos digitos que "+54 9 11 5555-5555" del form
+            Status = LeadStatus.Contacted,
+            Source = "WhatsApp",
+            InterestedIn = "Otro destino",
+            Notes = "datos cargados a mano",
+            CreatedAt = DateTime.UtcNow
+        };
+        context.Leads.Add(existingLead);
+        context.Countries.Add(country);
+        context.Destinations.Add(destination);
+        await context.SaveChangesAsync();
+
+        var service = CreateDestinationService(context);
+        await service.CreatePublicLeadAsync(
+            destination.Slug,
+            new PublicPackageLeadRequest(
+                "Nombre Distinto Del Form",
+                "+54 9 11 5555-5555", // mismo telefono normalizado que el lead existente
+                "form@example.com",
+                "Consulta nueva por el paquete.",
+                null,
+                null),
+            null,
+            CancellationToken.None);
+
+        // No se creo un lead nuevo.
+        Assert.Equal(1, await context.Leads.CountAsync());
+
+        // Los campos del lead existente quedaron intactos (input anonimo NO pisa datos).
+        var refreshed = await context.Leads.FindAsync(existingLead.Id);
+        Assert.Equal("Cliente Original", refreshed!.FullName);
+        Assert.Equal("Otro destino", refreshed.InterestedIn);
+        Assert.Equal("datos cargados a mano", refreshed.Notes);
+        Assert.Equal(LeadStatus.Contacted, refreshed.Status);
+
+        // Se agrego una actividad con la nueva consulta.
+        var activity = await context.LeadActivities.SingleAsync(a => a.LeadId == existingLead.Id);
+        Assert.Contains("Nueva consulta web", activity.Description);
+    }
+
+    [Fact]
+    public async Task CreatePublicLeadAsync_WithExistingClosedLeadSamePhone_CreatesNewLead()
+    {
+        await using var context = CreateContext();
+        var country = BuildCountry();
+        var destination = BuildPublishedReadyDestination(country);
+
+        // Lead CERRADO (Ganado) con el mismo telefono: no es "activo", asi que la consulta nueva
+        // SI debe abrir un lead nuevo (no se engancha a un lead ya cerrado).
+        var wonLead = new Lead
+        {
+            FullName = "Cliente Ganado",
+            Phone = "+54 9 11 5555-5555",
+            Status = LeadStatus.Won,
+            CreatedAt = DateTime.UtcNow
+        };
+        context.Leads.Add(wonLead);
+        context.Countries.Add(country);
+        context.Destinations.Add(destination);
+        await context.SaveChangesAsync();
+
+        var service = CreateDestinationService(context);
+        await service.CreatePublicLeadAsync(
+            destination.Slug,
+            new PublicPackageLeadRequest(
+                "Nuevo Interesado",
+                "+54 9 11 5555-5555", // mismo telefono que el lead Ganado, pero ese esta cerrado
+                null,
+                null,
+                null,
+                null),
+            null,
+            CancellationToken.None);
+
+        Assert.Equal(2, await context.Leads.CountAsync());
     }
 
     [Fact]

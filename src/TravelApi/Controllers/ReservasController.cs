@@ -122,6 +122,16 @@ public class ReservasController : ControllerBase
             var reserva = await _reservaService.CreateReservaAsync(request, createdByUserId, cancellationToken);
             return CreatedAtAction(nameof(GetReserva), new { publicIdOrLegacyId = reserva.PublicId }, reserva);
         }
+        catch (ArgumentException ex)
+        {
+            // Pedido invalido del cliente (ej. SourceLeadPublicId que no resuelve a ningun lead).
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (KeyNotFoundException)
+        {
+            // Referencia que no existe (ej. PayerId de un cliente inexistente).
+            return NotFound();
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected error creating reserva");

@@ -3,6 +3,7 @@ using TravelApi.Application.Contracts.Leads;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Helpers;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Infrastructure.Services;
@@ -76,21 +77,6 @@ public class LeadService : ILeadService
         return new LeadConversionResultDto
         {
             CustomerPublicId = customerPublicId ?? Guid.Empty
-        };
-    }
-
-    public async Task<QuoteDraftResultDto> CreateQuoteDraftAsync(string publicIdOrLegacyId, CancellationToken cancellationToken)
-    {
-        var id = await ResolveRequiredIdAsync<Lead>(publicIdOrLegacyId, cancellationToken);
-        var quote = await CreateQuoteDraftAsync(id, cancellationToken);
-        var leadPublicId = await _entityReferenceResolver.ResolvePublicIdAsync<Lead>(id, cancellationToken);
-
-        return new QuoteDraftResultDto
-        {
-            QuotePublicId = quote.PublicId,
-            QuoteNumber = quote.QuoteNumber,
-            CustomerPublicId = quote.Customer?.PublicId,
-            LeadPublicId = leadPublicId ?? Guid.Empty
         };
     }
 
@@ -230,17 +216,21 @@ public class LeadService : ILeadService
             throw new InvalidOperationException("Este lead ya fue convertido a cliente.");
 
         // Dedup: si ya existe un cliente con el mismo telefono normalizado o email exacto, reusarlo.
+        // Normalizamos el telefono en MEMORIA con el helper unico (PhoneNormalizer). No se puede usar
+        // el helper dentro del Where (EF no traduce un metodo C# a SQL), asi que traemos los clientes
+        // con telefono y comparamos en el cliente. El universo de clientes de una agencia chica es
+        // acotado; si en el futuro crece, esto se reemplaza por una columna PhoneNormalized indexada.
         Customer? existing = null;
-        var phoneNorm = string.IsNullOrWhiteSpace(lead.Phone)
-            ? null
-            : lead.Phone.Replace(" ", "").Replace("+", "").Replace("-", "").Replace("(", "").Replace(")", "");
+        var phoneNorm = PhoneNormalizer.Normalize(lead.Phone);
 
-        if (phoneNorm != null)
+        if (phoneNorm.Length > 0)
         {
-            existing = await _db.Customers
-                .Where(c => c.Phone != null
-                    && c.Phone.Replace(" ", "").Replace("+", "").Replace("-", "").Replace("(", "").Replace(")", "") == phoneNorm)
-                .FirstOrDefaultAsync(cancellationToken);
+            var candidates = await _db.Customers
+                .Where(c => c.Phone != null && c.Phone != "")
+                .ToListAsync(cancellationToken);
+
+            existing = candidates
+                .FirstOrDefault(c => PhoneNormalizer.Normalize(c.Phone) == phoneNorm);
         }
 
         if (existing == null && !string.IsNullOrWhiteSpace(lead.Email))
@@ -254,15 +244,21 @@ public class LeadService : ILeadService
         Customer customer;
         if (existing != null)
         {
+            // Cliente ya existente: NO le pisamos nada (ni Notes ni datos). Los datos de viaje del
+            // lead quedan en el propio lead, que ya queda linkeado via ConvertedCustomerId. Pisar el
+            // cliente existente con info del lead podria borrar datos cargados antes a mano.
             customer = existing;
         }
         else
         {
+            // Cliente NUEVO: arrastramos los datos de viaje del lead a las notas del cliente, de forma
+            // legible, para que el vendedor no tenga que ir a buscar el lead. Solo en alta nueva.
             customer = new Customer
             {
                 FullName = lead.FullName,
                 Email = lead.Email,
                 Phone = lead.Phone,
+                Notes = BuildCustomerNotesFromLead(lead),
                 IsActive = true,
                 CreatedAt = DateTime.UtcNow
             };
@@ -271,53 +267,51 @@ public class LeadService : ILeadService
         }
 
         lead.ConvertedCustomerId = customer.Id;
+
+        // Si el lead todavia estaba en "Nuevo", al convertirlo a cliente lo pasamos a "Contactado":
+        // es lo minimo honesto, ya hubo contacto real con la persona. NUNCA lo marcamos Ganado por
+        // convertir: Ganado significa VENTA concretada, y eso solo lo dispara la creacion de la
+        // reserva (ver MarkLeadAsWonForSale). Cualquier otro estado (Contactado/Cotizado) se respeta.
+        if (lead.Status == LeadStatus.New)
+        {
+            lead.Status = LeadStatus.Contacted;
+        }
+
         await _db.SaveChangesAsync(cancellationToken);
 
         return customer.Id;
     }
 
-    public async Task<Quote> CreateQuoteDraftAsync(int leadId, CancellationToken cancellationToken)
+    /// <summary>
+    /// Arma un texto legible con los datos de viaje del lead para volcarlos en las notas de un
+    /// cliente NUEVO recien creado desde ese lead. Solo incluye los campos que tienen valor, asi no
+    /// quedan etiquetas vacias. Si el lead no trae ningun dato de viaje, devuelve sus notas tal cual
+    /// (o null si tampoco hay notas).
+    /// </summary>
+    private static string? BuildCustomerNotesFromLead(Lead lead)
     {
-        var lead = await _db.Leads
-            .FirstOrDefaultAsync(l => l.Id == leadId, cancellationToken)
-            ?? throw new KeyNotFoundException($"Lead {leadId} no encontrado.");
+        var parts = new List<string>();
 
-        var existingDraft = await _db.Quotes
-            .Where(q => q.LeadId == leadId && q.ConvertedReservaId == null && q.Status == QuoteStatus.Draft)
-            .OrderByDescending(q => q.CreatedAt)
-            .FirstOrDefaultAsync(cancellationToken);
+        if (!string.IsNullOrWhiteSpace(lead.InterestedIn))
+            parts.Add($"Interes: {lead.InterestedIn.Trim()}");
 
-        if (existingDraft != null)
-        {
-            if (!existingDraft.CustomerId.HasValue && lead.ConvertedCustomerId.HasValue)
-            {
-                existingDraft.CustomerId = lead.ConvertedCustomerId;
-                await _db.SaveChangesAsync(cancellationToken);
-            }
+        if (!string.IsNullOrWhiteSpace(lead.TravelDates))
+            parts.Add($"Fechas: {lead.TravelDates.Trim()}");
 
-            return existingDraft;
-        }
+        if (!string.IsNullOrWhiteSpace(lead.Travelers))
+            parts.Add($"Viajeros: {lead.Travelers.Trim()}");
 
-        var count = await _db.Quotes.CountAsync(cancellationToken);
-        var quote = new Quote
-        {
-            QuoteNumber = $"COT-{(count + 1).ToString().PadLeft(5, '0')}",
-            Title = !string.IsNullOrWhiteSpace(lead.InterestedIn)
-                ? $"Cotizacion para {lead.FullName} - {lead.InterestedIn}"
-                : $"Cotizacion para {lead.FullName}",
-            Description = lead.Notes,
-            Status = QuoteStatus.Draft,
-            CustomerId = lead.ConvertedCustomerId,
-            LeadId = lead.Id,
-            Destination = lead.InterestedIn,
-            Notes = $"Cotizacion creada desde posible cliente {lead.FullName}",
-            CreatedAt = DateTime.UtcNow,
-            ValidUntil = DateTime.UtcNow.AddDays(15)
-        };
+        if (lead.EstimatedBudget > 0)
+            parts.Add($"Presupuesto est.: {lead.EstimatedBudget}");
 
-        _db.Quotes.Add(quote);
-        await _db.SaveChangesAsync(cancellationToken);
-        return quote;
+        var travelSummary = parts.Count > 0 ? string.Join(" | ", parts) : null;
+        var leadNotes = string.IsNullOrWhiteSpace(lead.Notes) ? null : lead.Notes.Trim();
+
+        // Combinamos el resumen de viaje con las notas propias del lead (si las hay), en ese orden.
+        if (travelSummary != null && leadNotes != null)
+            return $"{travelSummary}\n{leadNotes}";
+
+        return travelSummary ?? leadNotes;
     }
 
     public async Task<LeadJourneyDto> GetJourneyAsync(int leadId, CancellationToken cancellationToken)
@@ -394,6 +388,28 @@ public class LeadService : ILeadService
                 ? Math.Round((decimal)leads.Count(l => l.Status == LeadStatus.Won) / leads.Count * 100, 1)
                 : 0
         };
+    }
+
+    /// <summary>
+    /// Marca un lead como GANADO porque se concreto una venta (se creo una reserva a partir de el).
+    /// Es la fuente UNICA de esa regla: la usan tanto la conversion de cotizacion -> reserva
+    /// (QuoteService) como la creacion de reserva nacida de un lead (ReservaService), para no
+    /// duplicar el criterio en dos lugares.
+    ///
+    /// Regla de negocio (intencional): si el lead ya esta en Perdido, NO se reabre — un lead
+    /// descartado a mano no se "resucita" solo porque se cargo una reserva enganchada a el. En ese
+    /// caso el linkeo (SourceLeadId) se hace igual afuera, pero el estado no se toca. Idem si ya
+    /// estaba Ganado: queda como esta (operacion idempotente).
+    /// </summary>
+    public static void MarkLeadAsWonForSale(Lead lead)
+    {
+        if (lead.Status == LeadStatus.Lost)
+        {
+            return;
+        }
+
+        lead.Status = LeadStatus.Won;
+        lead.ClosedAt = DateTime.UtcNow;
     }
 
     private async Task<int> ResolveRequiredIdAsync<TEntity>(string publicIdOrLegacyId, CancellationToken cancellationToken)
