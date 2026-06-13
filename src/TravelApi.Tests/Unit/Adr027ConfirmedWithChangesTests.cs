@@ -306,4 +306,144 @@ public class Adr027ConfirmedWithChangesTests
         Assert.True(dto.HasUnacknowledgedChanges);
         Assert.NotNull(dto.ChangesPendingSince);
     }
+
+    // ============================= DETALLE (que cambio) =============================
+
+    /// <summary>
+    /// Service con un usuario SIN cobranzas.see_cost (rol "Vendedor", sin el permiso): el detalle de un
+    /// cambio de COSTO debe llegar enmascarado. Espeja CreateService pero cambiando rol/permiso.
+    /// </summary>
+    private static ReservaService CreateServiceWithoutSeeCost(AppDbContext context)
+    {
+        var settings = new Mock<IOperationalFinanceSettingsService>();
+        settings.Setup(s => s.GetEntityAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new OperationalFinanceSettings());
+
+        const string userId = "vendedor-sin-costo";
+        var accessor = BuildHttpContextAccessor(userId, "Vendedor"); // NO Admin
+        var resolver = BuildResolver(userId /* sin permisos: no ve costos */);
+
+        return new ReservaService(
+            context,
+            new MapperConfiguration(c => c.AddProfile<MappingProfile>()).CreateMapper(),
+            settings.Object,
+            BuildUserManager(),
+            NullLogger<ReservaService>.Instance,
+            resolver,
+            accessor);
+    }
+
+    [Fact]
+    public async Task EditingSalePrice_RecordsPendingChangeDetail_WithOldAndNewValue()
+    {
+        await using var context = CreateContext();
+        var (reserva, service) = await SeedAsync(context, EstadoReserva.Confirmed);
+        var sut = CreateService(context);
+
+        await sut.UpdateServiceAsync(service.Id, Edit(salePrice: 200m), CancellationToken.None);
+
+        var dto = await sut.GetReservaByIdAsync(reserva.PublicId.ToString(), CancellationToken.None);
+        var change = Assert.Single(dto.PendingChanges);
+        Assert.Equal(PendingChangeFields.SalePrice, change.Field);
+        Assert.Equal(150m, change.OldValue);
+        Assert.Equal(200m, change.NewValue);
+        Assert.Equal("Excursion", change.ServiceType);
+        Assert.Equal(service.PublicId, change.ServicePublicId);
+        Assert.False(change.ValuesMasked); // precio de venta no se enmascara
+    }
+
+    [Fact]
+    public async Task EditingBothPriceAndCost_RecordsTwoDetailRows()
+    {
+        await using var context = CreateContext();
+        var (reserva, service) = await SeedAsync(context, EstadoReserva.Confirmed);
+        var sut = CreateService(context);
+
+        // Cambia venta (150 -> 220) y costo (100 -> 130): dos cambios, dos filas.
+        await sut.UpdateServiceAsync(service.Id, Edit(salePrice: 220m, netCost: 130m), CancellationToken.None);
+
+        var dto = await sut.GetReservaByIdAsync(reserva.PublicId.ToString(), CancellationToken.None);
+        Assert.Equal(2, dto.PendingChanges.Count);
+
+        var sale = Assert.Single(dto.PendingChanges, c => c.Field == PendingChangeFields.SalePrice);
+        Assert.Equal(150m, sale.OldValue);
+        Assert.Equal(220m, sale.NewValue);
+
+        var cost = Assert.Single(dto.PendingChanges, c => c.Field == PendingChangeFields.NetCost);
+        Assert.Equal(100m, cost.OldValue);
+        Assert.Equal(130m, cost.NewValue);
+    }
+
+    [Fact]
+    public async Task TwoSeparateEdits_AccumulateDetailRows()
+    {
+        await using var context = CreateContext();
+        var (reserva, service) = await SeedAsync(context, EstadoReserva.Confirmed);
+        var sut = CreateService(context);
+
+        await sut.UpdateServiceAsync(service.Id, Edit(salePrice: 200m), CancellationToken.None);
+        await sut.UpdateServiceAsync(service.Id, Edit(salePrice: 250m), CancellationToken.None);
+
+        // Dos ediciones de precio dejan DOS rastros (200<-150 y 250<-200). El dueño ve toda la historia.
+        var dto = await sut.GetReservaByIdAsync(reserva.PublicId.ToString(), CancellationToken.None);
+        Assert.Equal(2, dto.PendingChanges.Count);
+        Assert.All(dto.PendingChanges, c => Assert.Equal(PendingChangeFields.SalePrice, c.Field));
+    }
+
+    [Fact]
+    public async Task Acknowledge_ClearsPendingChangeDetail()
+    {
+        await using var context = CreateContext();
+        var (reserva, service) = await SeedAsync(context, EstadoReserva.Confirmed);
+        var sut = CreateService(context);
+        await sut.UpdateServiceAsync(service.Id, Edit(salePrice: 200m), CancellationToken.None);
+        Assert.NotEmpty(await context.ReservaPendingChanges.ToListAsync());
+
+        await sut.AcknowledgeChangesAsync(reserva.PublicId.ToString(), "owner-1", "Gaston", CancellationToken.None);
+
+        // El OK borra el detalle: ya no hay nada pendiente que mostrar.
+        Assert.Empty(await context.ReservaPendingChanges.ToListAsync());
+        var dto = await sut.GetReservaByIdAsync(reserva.PublicId.ToString(), CancellationToken.None);
+        Assert.Empty(dto.PendingChanges);
+    }
+
+    [Fact]
+    public async Task CostChangeDetail_IsMasked_ForUserWithoutSeeCost()
+    {
+        await using var context = CreateContext();
+        var (reserva, service) = await SeedAsync(context, EstadoReserva.Confirmed);
+
+        // El cambio se REGISTRA con el costo real (lo hace cualquier editor). Lo creamos con un service que
+        // ve costos para no enmascarar al persistir; el enmascarado es solo de LECTURA.
+        var writer = CreateService(context);
+        await writer.UpdateServiceAsync(service.Id, Edit(salePrice: 150m, netCost: 130m), CancellationToken.None);
+
+        // Ahora LEEMOS con un usuario que NO ve costos: el cambio de costo debe venir enmascarado.
+        var reader = CreateServiceWithoutSeeCost(context);
+        var dto = await reader.GetReservaByIdAsync(reserva.PublicId.ToString(), CancellationToken.None);
+
+        var costChange = Assert.Single(dto.PendingChanges, c => c.Field == PendingChangeFields.NetCost);
+        Assert.True(costChange.ValuesMasked);
+        Assert.Equal(0m, costChange.OldValue);
+        Assert.Equal(0m, costChange.NewValue);
+    }
+
+    [Fact]
+    public async Task SalePriceChangeDetail_IsNeverMasked_EvenWithoutSeeCost()
+    {
+        await using var context = CreateContext();
+        var (reserva, service) = await SeedAsync(context, EstadoReserva.Confirmed);
+
+        var writer = CreateService(context);
+        await writer.UpdateServiceAsync(service.Id, Edit(salePrice: 210m), CancellationToken.None);
+
+        var reader = CreateServiceWithoutSeeCost(context);
+        var dto = await reader.GetReservaByIdAsync(reserva.PublicId.ToString(), CancellationToken.None);
+
+        // El precio de venta al cliente NO es sensible: se ve aunque el usuario no vea costos.
+        var saleChange = Assert.Single(dto.PendingChanges, c => c.Field == PendingChangeFields.SalePrice);
+        Assert.False(saleChange.ValuesMasked);
+        Assert.Equal(150m, saleChange.OldValue);
+        Assert.Equal(210m, saleChange.NewValue);
+    }
 }

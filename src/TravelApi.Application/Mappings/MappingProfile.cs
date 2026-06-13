@@ -263,6 +263,9 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.PackageBookings, opt => opt.MapFrom(src => src.PackageBookings))
             .ForMember(dest => dest.AssistanceBookings, opt => opt.MapFrom(src => src.AssistanceBookings))
             .ForMember(dest => dest.Invoices, opt => opt.MapFrom(src => src.Invoices))
+            // ADR-027 (detalle): PendingChanges se llena a mano en ReservaService (para enmascarar el costo
+            // segun permiso). AutoMapper lo ignora; si no, intentaria mapear la entidad sin map definido.
+            .ForMember(dest => dest.PendingChanges, opt => opt.Ignore())
             .ForMember(dest => dest.TotalPaid, opt => opt.MapFrom(src => src.TotalPaid));
 
         CreateMap<Reserva, ReservaListDto>()

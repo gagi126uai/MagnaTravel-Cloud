@@ -74,6 +74,14 @@ public interface IReservaService
     Task UpdateBalanceAsync(int reservaId, bool markChangesIfMeaningfulOnLive);
 
     /// <summary>
+    /// ADR-027 (detalle, 2026-06-13): igual que la sobrecarga con bool, pero ademas REGISTRA el detalle del
+    /// cambio (que servicio, que campo, de cuanto a cuanto, moneda, quien/cuando) si <paramref name="change"/>
+    /// trae un cambio significativo y la reserva esta en estado vivo. Pasar <c>null</c> = no marcar ni
+    /// registrar (equivalente a la sobrecarga sin flag). El detalle se limpia al dar el OK (acknowledge).
+    /// </summary>
+    Task UpdateBalanceAsync(int reservaId, Contracts.Reservations.PendingServiceChange? change);
+
+    /// <summary>
     /// ADR-027 (hallazgo #10): el dueño da el OK a los cambios de una reserva "confirmada con cambios".
     /// Limpia <c>HasUnacknowledgedChanges</c> y registra quien/cuando (auditoria). No-op idempotente si la
     /// reserva no estaba marcada. Lanza <see cref="KeyNotFoundException"/> si la reserva no existe.

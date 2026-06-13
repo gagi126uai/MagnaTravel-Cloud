@@ -1182,6 +1182,14 @@ public class ReservaService : IReservaService
         reserva.ChangesAckByUserName = actorUserName;
         reserva.ChangesAckAt = now;
 
+        // ADR-027 (detalle, 2026-06-13): el OK borra TODO el detalle pendiente de la reserva. La auditoria de
+        // "quien dio el OK" queda en la reserva (ChangesAckBy*); el detalle de los cambios ya no es "pendiente".
+        var pendingChanges = await _context.ReservaPendingChanges
+            .Where(c => c.ReservaId == reservaId)
+            .ToListAsync(ct);
+        if (pendingChanges.Count > 0)
+            _context.ReservaPendingChanges.RemoveRange(pendingChanges);
+
         await _context.SaveChangesAsync(ct);
 
         // Auditoria: quien dio el OK y cuando. Solo identificadores, sin montos ni datos de pasajeros.
@@ -1501,6 +1509,8 @@ public class ReservaService : IReservaService
             .Include(f => f.TransferBookings).ThenInclude(tb => tb.Supplier)
             .Include(f => f.PackageBookings).ThenInclude(pb => pb.Supplier)
             .Include(f => f.AssistanceBookings).ThenInclude(ab => ab.Supplier)
+            // ADR-027 (detalle "confirmada con cambios"): cargamos los cambios pendientes para exponerlos en el DTO.
+            .Include(f => f.PendingChanges)
             .FirstOrDefaultAsync(f => f.Id == id);
 
         if (file == null) 
@@ -1554,6 +1564,26 @@ public class ReservaService : IReservaService
         // (a proposito: incluirla cambiaria campos preexistentes como RatePublicId/IsPriceSynced en
         // este response). Se resuelve aparte con UNA query batcheada sobre los RateId cargados.
         await StampProductCreatedInSaleAsync(file, dto, CancellationToken.None);
+
+        // ADR-027 (detalle "confirmada con cambios"): mapeamos el detalle de cambios pendientes a mano (no por
+        // AutoMapper) para poder enmascarar el costo segun permiso dentro de ApplyCostMaskingAsync. Los montos
+        // se cargan crudos aca; si el cambio es de COSTO y el caller no ve costos, se ponen en 0 mas abajo.
+        dto.PendingChanges = file.PendingChanges
+            .OrderBy(c => c.ChangedAt)
+            .Select(c => new ReservaPendingChangeDto
+            {
+                ServiceType = c.ServiceType,
+                ServiceDescription = c.ServiceDescription,
+                ServicePublicId = c.ServicePublicId,
+                Field = c.Field,
+                OldValue = c.OldValue,
+                NewValue = c.NewValue,
+                Currency = c.Currency,
+                ChangedByUserName = c.ChangedByUserName,
+                ChangedAt = c.ChangedAt,
+                ValuesMasked = false,
+            })
+            .ToList();
 
         // B1.15 Fase 2a (Decision 4): mascara de costos para roles sin
         // cobranzas.see_cost. Admin bypass.
@@ -1700,6 +1730,22 @@ public class ReservaService : IReservaService
         if (dto.AssistanceBookings is not null)
         {
             foreach (var a in dto.AssistanceBookings) { a.NetCost = 0m; a.Tax = 0m; a.CostToConfirm = false; }
+        }
+
+        // ADR-027 (detalle "confirmada con cambios"): un cambio de COSTO revela el costo del proveedor -> se
+        // enmascara igual que el resto de los costos. El cambio de PRECIO DE VENTA al cliente NO es sensible:
+        // se ve siempre. Marcamos ValuesMasked=true para que el front muestre "—" en vez de los ceros.
+        if (dto.PendingChanges is not null)
+        {
+            foreach (var change in dto.PendingChanges)
+            {
+                if (change.Field == PendingChangeFields.NetCost)
+                {
+                    change.OldValue = 0m;
+                    change.NewValue = 0m;
+                    change.ValuesMasked = true;
+                }
+            }
         }
     }
 
@@ -2013,11 +2059,22 @@ public class ReservaService : IReservaService
 
         await _context.SaveChangesAsync();
 
-        // ADR-027: hubo cambio de precio/costo si SalePrice o NetCost difieren de lo persistido antes.
-        // El flag viaja a UpdateBalanceAsync, que decide (estado vivo + no re-pisar fecha) si marca.
-        var meaningfulChange = previousSalePrice != service.SalePrice || previousNetCost != service.NetCost;
+        // ADR-027 (detalle): armamos el descriptor del cambio (que servicio, antes/despues) y lo pasamos a
+        // UpdateBalanceAsync, que decide (estado vivo) si marca la reserva y registra el detalle. Si no cambio
+        // ni precio ni costo, el descriptor no tiene cambio significativo y el trigger no hace nada.
+        var serviceChange = new PendingServiceChange
+        {
+            ServiceType = string.IsNullOrWhiteSpace(service.ServiceType) ? "Servicio" : service.ServiceType,
+            ServiceDescription = string.IsNullOrWhiteSpace(service.Description) ? service.ServiceType ?? "Servicio" : service.Description,
+            ServicePublicId = service.PublicId,
+            Currency = service.Currency,
+            OldSalePrice = previousSalePrice,
+            NewSalePrice = service.SalePrice,
+            OldNetCost = previousNetCost,
+            NewNetCost = service.NetCost,
+        };
         if (service.ReservaId.HasValue)
-            await UpdateBalanceAsync(service.ReservaId.Value, markChangesIfMeaningfulOnLive: meaningfulChange);
+            await UpdateBalanceAsync(service.ReservaId.Value, serviceChange);
 
         // ADR-022 §4.10 (fix P1): recalcular la deuda del proveedor VIEJO y del NUEVO. Si no cambio de
         // proveedor, ambos ids son iguales y un HashSet evita recalcular dos veces el mismo. Cada uno solo
@@ -2912,7 +2969,13 @@ public class ReservaService : IReservaService
     /// son "el operador confirmo con otro precio". La decision de si realmente corresponde marcar (estado
     /// vivo + no re-pisar la fecha) vive abajo, en un solo lugar.</para>
     /// </summary>
-    public async Task UpdateBalanceAsync(int reservaId, bool markChangesIfMeaningfulOnLive)
+    public Task UpdateBalanceAsync(int reservaId, bool markChangesIfMeaningfulOnLive)
+        // Sobrecarga legacy sin detalle: si hay que marcar, pasamos un descriptor "vacio" (sin servicio ni
+        // montos) para que el trigger levante la bandera igual que antes, pero NO registre una fila de detalle
+        // (no tenemos de donde sacar el que/cuanto). Si no hay que marcar, null.
+        => UpdateBalanceAsync(reservaId, markChangesIfMeaningfulOnLive ? PendingServiceChange.MarkOnly : null);
+
+    public async Task UpdateBalanceAsync(int reservaId, PendingServiceChange? change)
     {
         await RecalculateMoneyAsync(reservaId);
 
@@ -2924,11 +2987,11 @@ public class ReservaService : IReservaService
             await _autoStateService.EvaluateAndApplyAsync(reservaId);
 
         // ADR-027: si fue una EDICION de precio/costo y la reserva quedo (o sigue) en estado vivo, dejamos
-        // la marca "confirmada con cambios". Va DESPUES del motor a proposito: el motor pudo regresar la
-        // reserva de Confirmed a InManagement (sigue siendo estado vivo), o no tocarla; en ambos casos el
-        // estado leido aca es el definitivo de la operacion.
-        if (markChangesIfMeaningfulOnLive)
-            await MarkUnacknowledgedChangesIfLiveAsync(reservaId);
+        // la marca "confirmada con cambios" Y registramos el detalle (que servicio, que campo, antes/despues).
+        // Va DESPUES del motor a proposito: el motor pudo regresar la reserva de Confirmed a InManagement
+        // (sigue siendo estado vivo), o no tocarla; en ambos casos el estado leido aca es el definitivo.
+        if (change != null && (change.HasMeaningfulChange || change.IsMarkOnly))
+            await MarkUnacknowledgedChangesIfLiveAsync(reservaId, change);
     }
 
     /// <summary>
@@ -2940,24 +3003,92 @@ public class ReservaService : IReservaService
     /// <para>Corre como un SaveChanges propio, mismo patron que el motor de estados. No toca el saldo: el
     /// saldo ya se recalculo solo (ReservaMoneyPersister). Solo levanta la bandera de revision humana.</para>
     /// </summary>
-    private async Task MarkUnacknowledgedChangesIfLiveAsync(int reservaId)
+    private async Task MarkUnacknowledgedChangesIfLiveAsync(int reservaId, PendingServiceChange change)
     {
         var reserva = await _context.Reservas.FirstOrDefaultAsync(r => r.Id == reservaId);
         if (reserva == null) return;
 
         if (!ChangeTrackingLiveStatuses.Contains(reserva.Status)) return;
 
-        // Ya marcada: mantener la PRIMERA fecha (no re-pisar). Una segunda edicion antes del OK no
-        // reinicia el reloj de "desde cuando hay pendiente".
-        if (reserva.HasUnacknowledgedChanges) return;
+        var now = DateTime.UtcNow;
 
-        reserva.HasUnacknowledgedChanges = true;
-        reserva.ChangesPendingSince = DateTime.UtcNow;
+        // La bandera + la fecha "desde cuando hay pendiente" se ponen la PRIMERA vez (no se re-pisan): una
+        // segunda edicion antes del OK no reinicia el reloj. El DETALLE en cambio SI se acumula: cada edicion
+        // deja su propia(s) fila(s) de "que cambio", para que el dueño vea TODOS los cambios antes de dar el OK.
+        if (!reserva.HasUnacknowledgedChanges)
+        {
+            reserva.HasUnacknowledgedChanges = true;
+            reserva.ChangesPendingSince = now;
+        }
+
+        // Detalle del cambio (que servicio, que campo, antes/despues). El descriptor MarkOnly (sin servicio ni
+        // montos) levanta la bandera pero no agrega filas — lo usa la sobrecarga legacy que no trae detalle.
+        if (!change.IsMarkOnly)
+        {
+            await AddPendingChangeRowsAsync(reserva, change, now);
+        }
+
         await _context.SaveChangesAsync();
 
         _logger.LogInformation(
             "ADR-027: Reserva {ReservaId} marcada 'confirmada con cambios' (edicion de precio/costo en estado {Status}).",
             reservaId, reserva.Status);
+    }
+
+    /// <summary>
+    /// ADR-027 (detalle, 2026-06-13): agrega una fila de <see cref="ReservaPendingChange"/> por cada campo que
+    /// cambio (precio de venta y/o costo). Resuelve el usuario actual (snapshot del nombre) para auditoria.
+    /// No llama a SaveChanges: lo hace el caller junto con la bandera, en una sola transaccion logica.
+    /// </summary>
+    private async Task AddPendingChangeRowsAsync(Reserva reserva, PendingServiceChange change, DateTime now)
+    {
+        // Actor: el usuario que hizo la edicion. Resoluble solo si hay HttpContext (en tests/jobs queda null,
+        // lo cual es aceptable: el cambio se registra igual, sin nombre).
+        string? actorUserId = GetCurrentUserIdOrNull();
+        string? actorUserName = null;
+        if (!string.IsNullOrEmpty(actorUserId))
+        {
+            var actor = await _userManager.FindByIdAsync(actorUserId);
+            actorUserName = actor?.FullName;
+        }
+
+        string currency = Monedas.Normalizar(change.Currency);
+
+        if (change.SalePriceChanged)
+        {
+            _context.ReservaPendingChanges.Add(new ReservaPendingChange
+            {
+                ReservaId = reserva.Id,
+                ServiceType = change.ServiceType,
+                ServiceDescription = change.ServiceDescription,
+                ServicePublicId = change.ServicePublicId,
+                Field = PendingChangeFields.SalePrice,
+                OldValue = change.OldSalePrice!.Value,
+                NewValue = change.NewSalePrice!.Value,
+                Currency = currency,
+                ChangedByUserId = actorUserId,
+                ChangedByUserName = actorUserName,
+                ChangedAt = now,
+            });
+        }
+
+        if (change.NetCostChanged)
+        {
+            _context.ReservaPendingChanges.Add(new ReservaPendingChange
+            {
+                ReservaId = reserva.Id,
+                ServiceType = change.ServiceType,
+                ServiceDescription = change.ServiceDescription,
+                ServicePublicId = change.ServicePublicId,
+                Field = PendingChangeFields.NetCost,
+                OldValue = change.OldNetCost!.Value,
+                NewValue = change.NewNetCost!.Value,
+                Currency = currency,
+                ChangedByUserId = actorUserId,
+                ChangedByUserName = actorUserName,
+                ChangedAt = now,
+            });
+        }
     }
 
     /// <summary>

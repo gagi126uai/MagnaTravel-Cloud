@@ -186,4 +186,17 @@ public class OperationalFinanceSettingsDto
     /// read-only en el GET para que el panel lo muestre como toggle.</para>
     /// </summary>
     public bool? EnableSellerCommissions { get; set; }
+
+    /// <summary>
+    /// Auditoria ERP 2026-06-13 (decision del dueño): UN SOLO porcentaje de comision parejo para TODAS las
+    /// reservas (sin reglas por operador/tipo). El admin lo setea desde el panel; con
+    /// <see cref="EnableSellerCommissions"/> ON y este valor &gt; 0, cada servicio confirmado devenga este % de
+    /// su ganancia. Con 0 (default) no se devenga nada aunque el interruptor este prendido.
+    ///
+    /// <para>Rango 0..100 (validado por <c>[Range]</c>). Nullable y patch-like (criterio B-002): enviar null
+    /// u omitir el campo en el PUT = no se modifica el valor actual; solo se persiste si viene con valor. Se
+    /// expone read-only en el GET para que el panel lo muestre como input numerico.</para>
+    /// </summary>
+    [Range(0, 100, ErrorMessage = "SellerCommissionPercent debe estar entre 0 y 100.")]
+    public decimal? SellerCommissionPercent { get; set; }
 }

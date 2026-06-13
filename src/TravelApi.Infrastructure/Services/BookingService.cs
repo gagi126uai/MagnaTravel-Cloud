@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using System.Security.Claims;
+using TravelApi.Application.Contracts.Reservations;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -634,9 +635,20 @@ public partial class BookingService : IBookingService
         }
 
         await RecalculateReservationScheduleAsync(reservaId, ct);
-        // ADR-027: marca "confirmada con cambios" si cambio precio/costo y la reserva esta viva.
-        var meaningfulChange = oldSalePrice != flight.SalePrice || oldNetCost != flight.NetCost;
-        await _reservaService.UpdateBalanceAsync(reservaId, markChangesIfMeaningfulOnLive: meaningfulChange);
+        // ADR-027 (detalle): marca "confirmada con cambios" + registra el detalle (que servicio, antes/despues)
+        // si cambio precio/costo y la reserva esta viva.
+        var flightChange = new PendingServiceChange
+        {
+            ServiceType = "Aereo",
+            ServiceDescription = BuildFlightChangeDescription(flight),
+            ServicePublicId = flight.PublicId,
+            Currency = flight.Currency,
+            OldSalePrice = oldSalePrice,
+            NewSalePrice = flight.SalePrice,
+            OldNetCost = oldNetCost,
+            NewNetCost = flight.NetCost,
+        };
+        await _reservaService.UpdateBalanceAsync(reservaId, flightChange);
 
         var dto = _mapper.Map<FlightSegmentDto>(flight);
         dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(flight.RateId, ct);
@@ -644,6 +656,18 @@ public partial class BookingService : IBookingService
         // permiso. Enmascaramos NetCost igual que Hotel.
         await CostMasking.MaskFlightAsync(dto, _httpContextAccessor, _permissionResolver, ct);
         return dto;
+    }
+
+    /// <summary>
+    /// ADR-027 (detalle): arma una descripcion legible del vuelo para la franja "confirmada con cambios"
+    /// (ej. "Aereo AR EZE-MIA"). Cae a "Aereo" pelado si no hay datos. Solo para mostrar, no es identidad.
+    /// </summary>
+    private static string BuildFlightChangeDescription(FlightSegment flight)
+    {
+        var route = string.Join("-", new[] { flight.Origin, flight.Destination }.Where(p => !string.IsNullOrWhiteSpace(p)));
+        var airline = flight.AirlineCode ?? flight.AirlineName;
+        var parts = new[] { "Aereo", airline, route }.Where(p => !string.IsNullOrWhiteSpace(p));
+        return string.Join(" ", parts);
     }
 
     public async Task DeleteFlightAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, CancellationToken ct)
@@ -899,9 +923,19 @@ public partial class BookingService : IBookingService
         }
 
         await RecalculateReservationScheduleAsync(reservaId, ct);
-        // ADR-027: marca "confirmada con cambios" si cambio precio/costo y la reserva esta viva.
-        var meaningfulChange = oldSalePrice != hotel.SalePrice || oldNetCost != hotel.NetCost;
-        await _reservaService.UpdateBalanceAsync(reservaId, markChangesIfMeaningfulOnLive: meaningfulChange);
+        // ADR-027 (detalle): marca "confirmada con cambios" + registra el detalle si cambio precio/costo.
+        var hotelChange = new PendingServiceChange
+        {
+            ServiceType = "Hotel",
+            ServiceDescription = string.IsNullOrWhiteSpace(hotel.HotelName) ? "Hotel" : $"Hotel {hotel.HotelName}",
+            ServicePublicId = hotel.PublicId,
+            Currency = hotel.Currency,
+            OldSalePrice = oldSalePrice,
+            NewSalePrice = hotel.SalePrice,
+            OldNetCost = oldNetCost,
+            NewNetCost = hotel.NetCost,
+        };
+        await _reservaService.UpdateBalanceAsync(reservaId, hotelChange);
 
         var dto = _mapper.Map<HotelBookingDto>(hotel);
         dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(hotel.RateId, ct);
@@ -1129,9 +1163,19 @@ public partial class BookingService : IBookingService
         }
 
         await RecalculateReservationScheduleAsync(reservaId, ct);
-        // ADR-027: marca "confirmada con cambios" si cambio precio/costo y la reserva esta viva.
-        var meaningfulChange = oldSalePrice != package.SalePrice || oldNetCost != package.NetCost;
-        await _reservaService.UpdateBalanceAsync(reservaId, markChangesIfMeaningfulOnLive: meaningfulChange);
+        // ADR-027 (detalle): marca "confirmada con cambios" + registra el detalle si cambio precio/costo.
+        var packageChange = new PendingServiceChange
+        {
+            ServiceType = "Paquete",
+            ServiceDescription = string.IsNullOrWhiteSpace(package.PackageName) ? "Paquete" : $"Paquete {package.PackageName}",
+            ServicePublicId = package.PublicId,
+            Currency = package.Currency,
+            OldSalePrice = oldSalePrice,
+            NewSalePrice = package.SalePrice,
+            OldNetCost = oldNetCost,
+            NewNetCost = package.NetCost,
+        };
+        await _reservaService.UpdateBalanceAsync(reservaId, packageChange);
 
         var dto = _mapper.Map<PackageBookingDto>(package);
         dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(package.RateId, ct);
@@ -1375,9 +1419,19 @@ public partial class BookingService : IBookingService
         }
 
         await RecalculateReservationScheduleAsync(reservaId, ct);
-        // ADR-027: marca "confirmada con cambios" si cambio precio/costo y la reserva esta viva.
-        var meaningfulChange = oldSalePrice != transfer.SalePrice || oldNetCost != transfer.NetCost;
-        await _reservaService.UpdateBalanceAsync(reservaId, markChangesIfMeaningfulOnLive: meaningfulChange);
+        // ADR-027 (detalle): marca "confirmada con cambios" + registra el detalle si cambio precio/costo.
+        var transferChange = new PendingServiceChange
+        {
+            ServiceType = "Traslado",
+            ServiceDescription = string.IsNullOrWhiteSpace(transfer.ProductName) ? "Traslado" : $"Traslado {transfer.ProductName}",
+            ServicePublicId = transfer.PublicId,
+            Currency = transfer.Currency,
+            OldSalePrice = oldSalePrice,
+            NewSalePrice = transfer.SalePrice,
+            OldNetCost = oldNetCost,
+            NewNetCost = transfer.NetCost,
+        };
+        await _reservaService.UpdateBalanceAsync(reservaId, transferChange);
 
         var dto = _mapper.Map<TransferBookingDto>(transfer);
         dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(transfer.RateId, ct);
@@ -1640,9 +1694,19 @@ public partial class BookingService : IBookingService
         }
 
         await RecalculateReservationScheduleAsync(reservaId, ct);
-        // ADR-027: marca "confirmada con cambios" si cambio precio/costo y la reserva esta viva.
-        var meaningfulChange = oldSalePrice != assistance.SalePrice || oldNetCost != assistance.NetCost;
-        await _reservaService.UpdateBalanceAsync(reservaId, markChangesIfMeaningfulOnLive: meaningfulChange);
+        // ADR-027 (detalle): marca "confirmada con cambios" + registra el detalle si cambio precio/costo.
+        var assistanceChange = new PendingServiceChange
+        {
+            ServiceType = "Asistencia",
+            ServiceDescription = string.IsNullOrWhiteSpace(assistance.PlanType) ? "Asistencia al viajero" : $"Asistencia {assistance.PlanType}",
+            ServicePublicId = assistance.PublicId,
+            Currency = assistance.Currency,
+            OldSalePrice = oldSalePrice,
+            NewSalePrice = assistance.SalePrice,
+            OldNetCost = oldNetCost,
+            NewNetCost = assistance.NetCost,
+        };
+        await _reservaService.UpdateBalanceAsync(reservaId, assistanceChange);
 
         var dto = _mapper.Map<AssistanceBookingDto>(assistance);
         dto.ProductCreatedInSale = await ResolveProductCreatedInSaleAsync(assistance.RateId, ct);

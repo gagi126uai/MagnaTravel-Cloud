@@ -530,15 +530,38 @@ public class OperationalFinanceSettings
     /// un no-op total: no calcula ni escribe ninguna fila de <c>CommissionAccrual</c>. Cero devengo.</para>
     ///
     /// <para><b>Con ON</b>: cuando una reserva queda totalmente cobrada (<c>Balance &lt;= 0</c>), se devenga
-    /// la comision del vendedor responsable como un % (de <c>CommissionRule</c>) sobre la GANANCIA de los
-    /// servicios confirmados, separada por moneda (ADR-021). Si la reserva se cancela o el saldo vuelve a
-    /// positivo, la comision devengada vuelve a 0 (tope cero). Sin regla aplicable -> 0 (no se inventa %).</para>
+    /// la comision del vendedor responsable usando el <c>SellerCommissionPercent</c> GLOBAL de estos settings
+    /// (un unico % parejo para todo; decision del dueño 2026-06-13) sobre la GANANCIA de los servicios
+    /// confirmados, separada por moneda (ADR-021). Si la reserva se cancela o el saldo vuelve a positivo, la
+    /// comision devengada vuelve a 0 (tope cero). Con <c>%=0</c> no devenga nada aunque el toggle este ON.</para>
     ///
     /// <para>Es un ajuste de NEGOCIO puro, sin dependencias con otros flags, por eso NO tiene validacion
     /// cruzada. Editable por Admin desde el panel (PUT operational-finance) y expuesto read-only en el GET.
     /// Default <c>false</c>: el dueño lo prende cuando quiera.</para>
     /// </summary>
     public bool EnableSellerCommissions { get; set; } = false;
+
+    /// <summary>
+    /// Auditoria ERP 2026-06-13 (decision del dueño): UN SOLO porcentaje de comision parejo para TODAS las
+    /// reservas. El dueño NO quiere reglas por operador ni por tipo de servicio: pone un numero (ej. 10) y
+    /// se aplica a la ganancia de cualquier servicio comisionable.
+    ///
+    /// <para><b>Como se usa</b>: cuando <see cref="EnableSellerCommissions"/> esta en true, el devengo
+    /// (<c>CommissionAccrualPersister</c>) aplica ESTE porcentaje a la ganancia de cada servicio confirmado,
+    /// sin mirar la tabla <c>CommissionRule</c>. Con 0 (default) no se devenga nada aunque el interruptor este
+    /// prendido — es la posicion segura: el dueño primero prende el interruptor y despues elige el numero.</para>
+    ///
+    /// <para><b>Por que un campo global y no una regla "catch-all"</b>: el dueño setea UN numero en
+    /// Configuracion; modelarlo como una fila de <c>CommissionRule</c> obligaria al panel a hacer upsert de una
+    /// regla con desempate por prioridad/Id, que es justo la complejidad que el dueño pidio sacar. Un decimal en
+    /// settings es el camino mas simple y directo. La tabla <c>CommissionRule</c> queda intacta para el
+    /// calculador suelto del <c>CommissionsController</c> (que NO toca el devengo de la reserva).</para>
+    ///
+    /// <para>Rango valido 0..100, validado en el DTO con <c>[Range]</c>. Editable por Admin desde el panel
+    /// (PUT operational-finance) y expuesto read-only en el GET.</para>
+    /// </summary>
+    [System.ComponentModel.DataAnnotations.Schema.Column(TypeName = "numeric(5,2)")]
+    public decimal SellerCommissionPercent { get; set; } = 0m;
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;

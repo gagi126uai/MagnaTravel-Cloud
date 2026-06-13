@@ -33,6 +33,7 @@ import { ReservaHeader } from "../components/ReservaHeader";
 import { ReservaLockBanner } from "../components/ReservaLockBanner";
 import { ReservaSummaryStrip } from "../components/ReservaSummaryStrip";
 import { RegistrarCobroInline } from "../components/RegistrarCobroInline";
+import { EmitirFacturaInline } from "../components/EmitirFacturaInline";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import { RevertStatusModal } from "../components/RevertStatusModal";
 import { ServiceList, calculateServiciosCanceladosResumen } from "../components/ServiceList";
@@ -410,6 +411,9 @@ export default function ReservaDetailPage() {
   // Ficha de cobro en línea (2026-06-09): reemplaza el modal de pago en la solapa Estado de Cuenta.
   const [showCobroInline, setShowCobroInline] = useState(false);
   const [cobroAEditar, setCobroAEditar] = useState(null);
+  // Ficha de emisión de factura en línea (2026-06-13, guia-ux-gaston.md): reemplaza CreateInvoiceModal.
+  // Solo una ficha abierta a la vez: si está abierta la factura, se oculta el botón de cobro y viceversa.
+  const [showFacturaInline, setShowFacturaInline] = useState(false);
   // ADR-020: targetStatus es "InManagement" (Budget→InManagement, con modal de pasajeros).
   const [confirmReservaModal, setConfirmReservaModal] = useState({ isOpen: false, readiness: null, targetStatus: "InManagement" });
   const [showRevertModal, setShowRevertModal] = useState(false);
@@ -936,11 +940,11 @@ export default function ReservaDetailPage() {
           {activeTab === "account" ? (
             <div className="animate-in fade-in space-y-6 duration-500">
 
-              {/* Botón "Registrar cobro": abre la ficha inline debajo.
-                  Wording "cobro" (guia 2026-06-10). Se oculta mientras la ficha está abierta
-                  para no permitir dos fichas simultáneas. */}
-              {!showCobroInline && (
-                <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/50">
+              {/* Barra de acciones: "Registrar cobro" y "Emitir factura".
+                  Se oculta completa cuando alguna ficha inline está abierta (no se
+                  permiten dos fichas simultáneas para evitar confusión). */}
+              {!showCobroInline && !showFacturaInline && (
+                <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/50">
                   <button
                     onClick={() => {
                       setCobroAEditar(null);
@@ -951,13 +955,17 @@ export default function ReservaDetailPage() {
                   >
                     <Plus className="w-4 h-4" /> Registrar cobro
                   </button>
-                  <div className="text-xs italic font-medium text-slate-500">
-                    Los cobros recibidos afectan directamente al saldo de la reserva.
-                  </div>
+                  <button
+                    onClick={() => setShowFacturaInline(true)}
+                    className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white transition-all hover:bg-indigo-700"
+                    data-testid="btn-emitir-factura"
+                  >
+                    <FileText className="w-4 h-4" /> Emitir factura
+                  </button>
                 </div>
               )}
 
-              {/* Ficha inline de cobro: se despliega aquí, debajo del botón / sobre el historial */}
+              {/* Ficha inline de cobro: se despliega aquí, debajo de la barra de acciones */}
               {showCobroInline && (
                 <RegistrarCobroInline
                   reservaId={publicId}
@@ -972,6 +980,23 @@ export default function ReservaDetailPage() {
                     setShowCobroInline(false);
                     setCobroAEditar(null);
                   }}
+                />
+              )}
+
+              {/* Ficha inline de factura AFIP (2026-06-13): los renglones se precargan
+                  desde los servicios confirmados vía GET /invoices/reserva/{id}/suggested-items.
+                  El usuario puede editar antes de emitir. No bloquea la emisión si descuadra. */}
+              {showFacturaInline && (
+                <EmitirFacturaInline
+                  reservaId={publicId}
+                  reserva={reserva}
+                  clientName={reserva?.customerName ?? reserva?.client?.fullName ?? null}
+                  clientCuit={reserva?.customerCuit ?? reserva?.client?.cuit ?? null}
+                  onFacturaEmitida={() => {
+                    setShowFacturaInline(false);
+                    fetchReserva({ showLoading: false, preserveOnError: true });
+                  }}
+                  onCancelar={() => setShowFacturaInline(false)}
                 />
               )}
 

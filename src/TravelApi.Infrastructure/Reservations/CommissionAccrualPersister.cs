@@ -22,6 +22,11 @@ namespace TravelApi.Infrastructure.Reservations;
 ///
 /// <para><b>Toggle (decision del dueño)</b>: si <c>EnableSellerCommissions</c> esta en false, este persister
 /// es un no-op TOTAL: no calcula ni escribe nada. Comportamiento byte-identico a antes de esta feature.</para>
+///
+/// <para><b>Porcentaje (decision del dueño, 2026-06-13)</b>: el % es UNO SOLO y parejo para TODAS las reservas,
+/// tomado de <c>OperationalFinanceSettings.SellerCommissionPercent</c>. Ya NO se resuelve por operador/tipo
+/// contra <c>CommissionRule</c> (el dueño saco las reglas). Con % global = 0, este persister tampoco escribe
+/// nada (la posicion segura: prender el interruptor no devenga hasta elegir un numero).</para>
 /// </summary>
 internal static class CommissionAccrualPersister
 {
@@ -42,6 +47,13 @@ internal static class CommissionAccrualPersister
         bool commissionsEnabled = settings?.EnableSellerCommissions ?? false;
         if (!commissionsEnabled) return;
 
+        // Auditoria ERP 2026-06-13 (decision del dueño): UN SOLO porcentaje parejo para TODAS las reservas.
+        // El % ya NO sale de la tabla CommissionRule (por operador/tipo): sale de este campo unico de settings.
+        // Con 0 no se devenga nada aunque el interruptor este prendido (el dueño primero prende, despues elige
+        // el numero). Cortamos temprano para no recorrer la reserva al pedo.
+        decimal globalPercent = settings?.SellerCommissionPercent ?? 0m;
+        if (globalPercent <= 0m) return;
+
         // 2) Cargamos la reserva con los 6 tipos de servicio (mismo grafo economico que el persister de
         //    plata). Necesitamos SupplierId/Currency/Commission/Status de cada servicio y el Balance/Status
         //    ya recalculado de la reserva.
@@ -56,16 +68,10 @@ internal static class CommissionAccrualPersister
 
         if (reserva == null) return;
 
-        // 3) Cargamos las reglas de comision activas UNA sola vez (no N+1): la resolucion del % por servicio
-        //    se hace en memoria contra esta lista. Sin regla aplicable => 0 (NO usamos el 10% default de la
-        //    calculadora suelta; el dueño pidio: sin regla, no se inventa %).
-        var activeRules = await db.CommissionRules
-            .AsNoTracking()
-            .Where(rule => rule.IsActive)
-            .ToListAsync(ct);
-
-        decimal ResolvePercent(int? supplierId, string serviceType)
-            => ResolveRulePercentInMemory(activeRules, supplierId, serviceType);
+        // 3) El % es PAREJO para todo (decision del dueño): cualquier (proveedor, tipo) devenga el mismo
+        //    porcentaje global. Ya no hay query a CommissionRule ni resolucion por "mejor match" — el dueño
+        //    saco las reglas a proposito. La funcion ignora sus argumentos y devuelve siempre el % global.
+        decimal ResolvePercent(int? supplierId, string serviceType) => globalPercent;
 
         // 4) Calculo PURO por moneda. Lista vacia = la reserva no devenga (tope cero / sin vendedor /
         //    estado no devengable / no cobrada).
@@ -75,38 +81,6 @@ internal static class CommissionAccrualPersister
         await SyncAccrualRowsAsync(db, reserva, lines, ct);
 
         await db.SaveChangesAsync(ct);
-    }
-
-    /// <summary>
-    /// Resuelve el % de comision para un (proveedor, tipo) contra las reglas en memoria. Espejo EXACTO de
-    /// la logica de prioridad de <c>CommissionService.CalculateCommissionAsync</c>, con UNA diferencia
-    /// deliberada: si no hay regla aplicable devuelve <b>0</b> (la del controller cae a 10% default, que
-    /// aca NO queremos: el dueño pidio que sin regla no se devengue nada).
-    /// </summary>
-    private static decimal ResolveRulePercentInMemory(List<CommissionRule> activeRules, int? supplierId, string? serviceType)
-    {
-        CommissionRule? best = null;
-        foreach (var rule in activeRules)
-        {
-            bool matchesExact = rule.SupplierId == supplierId && rule.ServiceType == serviceType;
-            bool matchesSupplierOnly = rule.SupplierId == supplierId && rule.ServiceType == null;
-            bool matchesServiceOnly = rule.SupplierId == null && rule.ServiceType == serviceType;
-            bool matchesDefault = rule.SupplierId == null && rule.ServiceType == null;
-
-            if (!(matchesExact || matchesSupplierOnly || matchesServiceOnly || matchesDefault))
-                continue;
-
-            // ADR-026 (M3 review): gana la de mayor Priority y, ante empate, la de mayor Id —
-            // MISMO desempate que el query de CommissionService (OrderByDescending(Priority)
-            // .ThenByDescending(Id)), para que el % persistido como plata sea reproducible y no
-            // dependa del orden no garantizado de la lista.
-            if (best == null
-                || rule.Priority > best.Priority
-                || (rule.Priority == best.Priority && rule.Id > best.Id))
-                best = rule;
-        }
-
-        return best?.CommissionPercent ?? 0m;
     }
 
     /// <summary>

@@ -17,6 +17,48 @@ public class ReservaMoneyLineDto
     public decimal Balance { get; set; }
 }
 
+/// <summary>
+/// ADR-027 (detalle "confirmada con cambios", 2026-06-13): UN cambio de precio/costo pendiente de revisar.
+/// El front lo muestra en la franja "confirmada con cambios" (que servicio, que campo, de cuanto a cuanto).
+/// Cuando <see cref="Field"/> es costo y el usuario no ve costos, <see cref="OldValue"/>/<see cref="NewValue"/>
+/// llegan en 0 (enmascarado) y <see cref="ValuesMasked"/> en true para que el front muestre "—" en vez de "0".
+/// </summary>
+public class ReservaPendingChangeDto
+{
+    /// <summary>Tipo de servicio que cambio ("Hotel", "Aereo", etc.), para mostrar.</summary>
+    public string ServiceType { get; set; } = string.Empty;
+
+    /// <summary>Nombre/descripcion del servicio que cambio.</summary>
+    public string ServiceDescription { get; set; } = string.Empty;
+
+    /// <summary>PublicId del servicio que cambio (para que el front lo linkee con su fila). Null si no se conocia.</summary>
+    public Guid? ServicePublicId { get; set; }
+
+    /// <summary>Campo que cambio: "SalePrice" (precio de venta) o "NetCost" (costo).</summary>
+    public string Field { get; set; } = string.Empty;
+
+    /// <summary>Valor anterior. 0 si es costo y el usuario no ve costos (ver <see cref="ValuesMasked"/>).</summary>
+    public decimal OldValue { get; set; }
+
+    /// <summary>Valor nuevo. 0 si es costo y el usuario no ve costos (ver <see cref="ValuesMasked"/>).</summary>
+    public decimal NewValue { get; set; }
+
+    /// <summary>Moneda del servicio ("ARS"/"USD").</summary>
+    public string Currency { get; set; } = "ARS";
+
+    /// <summary>Quien hizo el cambio (snapshot del nombre).</summary>
+    public string? ChangedByUserName { get; set; }
+
+    /// <summary>Cuando se hizo el cambio.</summary>
+    public DateTime ChangedAt { get; set; }
+
+    /// <summary>
+    /// True si los montos vienen enmascarados (cambio de costo + usuario sin <c>cobranzas.see_cost</c>). El
+    /// front debe mostrar "—" en vez de los ceros. El cambio de precio de venta NUNCA se enmascara.
+    /// </summary>
+    public bool ValuesMasked { get; set; }
+}
+
 public class ReservaDto
 {
     public Guid PublicId { get; set; }
@@ -72,6 +114,13 @@ public class ReservaDto
 
     /// <summary>ADR-027: desde cuando hay cambios sin revisar (par de <see cref="HasUnacknowledgedChanges"/>). Null si no hay nada pendiente.</summary>
     public DateTime? ChangesPendingSince { get; set; }
+
+    /// <summary>
+    /// ADR-027 (detalle, 2026-06-13): DETALLE de los cambios pendientes de revisar (que servicio, que campo,
+    /// antes/despues, moneda, quien/cuando). El front lo muestra en la franja "confirmada con cambios". Vacio
+    /// si no hay nada pendiente. Los montos de COSTO se enmascaran a quien no tiene <c>cobranzas.see_cost</c>.
+    /// </summary>
+    public List<ReservaPendingChangeDto> PendingChanges { get; set; } = new();
 
     /// <summary>
     /// ADR-020 F4 (candado): true si la reserva esta bajo candado y tiene una autorizacion de edicion

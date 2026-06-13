@@ -224,4 +224,74 @@ public class OperationalFinanceSettingsFlagsTests
 
         Assert.True(dto.EnableCancellationDebitNote);
     }
+
+    // ============================================================
+    // Auditoria ERP 2026-06-13: porcentaje unico de comision del vendedor
+    // ============================================================
+
+    [Fact]
+    public async Task UpdateAsync_SellerCommissionPercent_Persists()
+    {
+        await using var db = BuildDbContext();
+        await SeedSettingsAsync(db);
+        var service = new OperationalFinanceSettingsService(db);
+
+        var request = BaseRequest();
+        request.SellerCommissionPercent = 12.5m;
+
+        var result = await service.UpdateAsync(request, CancellationToken.None);
+
+        Assert.Equal(12.5m, result.SellerCommissionPercent);
+        var persisted = await db.OperationalFinanceSettings.SingleAsync();
+        Assert.Equal(12.5m, persisted.SellerCommissionPercent);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_OmittedSellerCommissionPercent_DoesNotOverwrite()
+    {
+        await using var db = BuildDbContext();
+        // El admin ya configuro 10%.
+        await SeedSettingsAsync(db, s => s.SellerCommissionPercent = 10m);
+        var service = new OperationalFinanceSettingsService(db);
+
+        // El PUT NO incluye SellerCommissionPercent (queda null = omitido).
+        var request = BaseRequest();
+        Assert.Null(request.SellerCommissionPercent);
+
+        var result = await service.UpdateAsync(request, CancellationToken.None);
+
+        // Un PUT legacy que no manda el campo no lo vuelve a 0.
+        Assert.Equal(10m, result.SellerCommissionPercent);
+        var persisted = await db.OperationalFinanceSettings.SingleAsync();
+        Assert.Equal(10m, persisted.SellerCommissionPercent);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_SellerCommissionPercent_ClampsOutOfRange()
+    {
+        await using var db = BuildDbContext();
+        await SeedSettingsAsync(db);
+        var service = new OperationalFinanceSettingsService(db);
+
+        // Defensa adicional al [Range] del DTO: si entra un valor fuera de 0..100 por un camino que no pasa
+        // por el binder (seed/test), el service lo clampa en vez de persistir basura.
+        var request = BaseRequest();
+        request.SellerCommissionPercent = 150m;
+
+        var result = await service.UpdateAsync(request, CancellationToken.None);
+
+        Assert.Equal(100m, result.SellerCommissionPercent);
+    }
+
+    [Fact]
+    public async Task GetAsync_ExposesSellerCommissionPercent()
+    {
+        await using var db = BuildDbContext();
+        await SeedSettingsAsync(db, s => s.SellerCommissionPercent = 8m);
+        var service = new OperationalFinanceSettingsService(db);
+
+        var dto = await service.GetAsync(CancellationToken.None);
+
+        Assert.Equal(8m, dto.SellerCommissionPercent);
+    }
 }

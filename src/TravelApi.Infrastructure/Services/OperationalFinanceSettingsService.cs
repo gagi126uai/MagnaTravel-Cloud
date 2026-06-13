@@ -124,6 +124,15 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             entity.EnableSellerCommissions = request.EnableSellerCommissions.Value;
         }
 
+        // Auditoria ERP 2026-06-13 (decision del dueño): porcentaje unico de comision para todas las reservas.
+        // Update CONDICIONAL (patch-like, criterio B-002): solo se aplica si el request trae valor. El rango
+        // 0..100 lo valida el [Range] del DTO (HTTP 400 antes de llegar aca); el Math.Clamp es defensa adicional
+        // por si entra por un camino que no pasa por el binder (seed/test).
+        if (request.SellerCommissionPercent.HasValue)
+        {
+            entity.SellerCommissionPercent = Math.Clamp(request.SellerCommissionPercent.Value, 0m, 100m);
+        }
+
         entity.UpdatedAt = DateTime.UtcNow;
 
         // FC1.3.2 (ADR-009 §2.10, N-004 round 3, 2026-05-21): pre-condicion GR-002.
@@ -269,6 +278,8 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             ServiceDeadlineAlertDays = entity.ServiceDeadlineAlertDays,
             // Auditoria ERP 2026-06-12 (hallazgo #1): el GET expone el interruptor de comision del vendedor.
             EnableSellerCommissions = entity.EnableSellerCommissions,
+            // Auditoria ERP 2026-06-13: el GET expone el porcentaje unico de comision para que el panel lo muestre.
+            SellerCommissionPercent = entity.SellerCommissionPercent,
         };
     }
 }

@@ -266,6 +266,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     // Auditoria ERP 2026-06-12 (hallazgo #1): comision del vendedor devengada por reserva, separada por
     // moneda (una fila por Reserva + Vendedor + Moneda). Config en OnModelCreating.
     public DbSet<CommissionAccrual> CommissionAccruals => Set<CommissionAccrual>();
+
+    // ADR-027 (detalle "confirmada con cambios", 2026-06-13): cambios de precio/costo pendientes de revisar
+    // por reserva (que servicio, que campo, antes/despues). Config en OnModelCreating. Ver ReservaPendingChange.
+    public DbSet<ReservaPendingChange> ReservaPendingChanges => Set<ReservaPendingChange>();
     
     // Sprint 4: Egresos y Configuración
     public DbSet<SupplierPayment> SupplierPayments => Set<SupplierPayment>();
@@ -1272,6 +1276,30 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(x => new { x.ReservaId, x.SellerUserId, x.Currency }).IsUnique();
             // Para el listado de liquidacion por vendedor + filtro de estado.
             entity.HasIndex(x => new { x.SellerUserId, x.Status });
+        });
+
+        // ADR-027 (detalle "confirmada con cambios", 2026-06-13): detalle de los cambios de precio/costo
+        // pendientes de revisar. Columnas SIN HasColumnName (nombre columna = nombre propiedad, evita el trap
+        // M2). FK Cascade: al borrar la reserva se borran sus cambios pendientes. Indice por ReservaId para
+        // listar/limpiar los cambios de una reserva.
+        modelBuilder.Entity<ReservaPendingChange>(entity =>
+        {
+            entity.ToTable("ReservaPendingChanges");
+            entity.Property(x => x.ServiceType).HasMaxLength(50).IsRequired();
+            entity.Property(x => x.ServiceDescription).HasMaxLength(300).IsRequired();
+            entity.Property(x => x.Field).HasMaxLength(20).IsRequired();
+            entity.Property(x => x.OldValue).HasPrecision(18, 2);
+            entity.Property(x => x.NewValue).HasPrecision(18, 2);
+            entity.Property(x => x.Currency).HasMaxLength(3).IsRequired().HasDefaultValue(Monedas.ARS);
+            entity.Property(x => x.ChangedByUserId).HasMaxLength(200);
+            entity.Property(x => x.ChangedByUserName).HasMaxLength(200);
+
+            entity.HasOne(x => x.Reserva)
+                  .WithMany(r => r.PendingChanges)
+                  .HasForeignKey(x => x.ReservaId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(x => x.ReservaId);
         });
 
         modelBuilder.Entity<PaymentReceipt>(entity =>

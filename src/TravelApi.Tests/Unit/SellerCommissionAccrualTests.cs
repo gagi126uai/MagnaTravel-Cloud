@@ -28,23 +28,16 @@ public class SellerCommissionAccrualTests
             .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning))
             .Options);
 
-    /// <summary>Crea la fila singleton de settings con el toggle de comision en el valor pedido.</summary>
-    private static async Task SeedSettingsAsync(AppDbContext db, bool commissionsEnabled)
+    /// <summary>
+    /// Crea la fila singleton de settings con el interruptor de comision y el porcentaje unico global.
+    /// Desde 2026-06-13 el % ya no sale de CommissionRule sino de este campo (decision del dueño).
+    /// </summary>
+    private static async Task SeedSettingsAsync(AppDbContext db, bool commissionsEnabled, decimal globalPercent = 0m)
     {
-        db.OperationalFinanceSettings.Add(new OperationalFinanceSettings { EnableSellerCommissions = commissionsEnabled });
-        await db.SaveChangesAsync();
-    }
-
-    /// <summary>Crea una regla "default" (aplica a todo) con el % dado.</summary>
-    private static async Task SeedDefaultRuleAsync(AppDbContext db, decimal percent)
-    {
-        db.CommissionRules.Add(new CommissionRule
+        db.OperationalFinanceSettings.Add(new OperationalFinanceSettings
         {
-            SupplierId = null,
-            ServiceType = null,
-            CommissionPercent = percent,
-            Priority = 1,
-            IsActive = true,
+            EnableSellerCommissions = commissionsEnabled,
+            SellerCommissionPercent = globalPercent,
         });
         await db.SaveChangesAsync();
     }
@@ -56,8 +49,8 @@ public class SellerCommissionAccrualTests
     public async Task ToggleOff_NoAccrual_EvenWhenFullyPaid()
     {
         await using var db = NewContext();
-        await SeedSettingsAsync(db, commissionsEnabled: false);
-        await SeedDefaultRuleAsync(db, percent: 10m);
+        // Interruptor OFF aunque haya un % global cargado: no debe devengar nada.
+        await SeedSettingsAsync(db, commissionsEnabled: false, globalPercent: 10m);
 
         // Reserva cobrada (pago = venta confirmada) con ganancia. Con toggle OFF NO debe devengar nada.
         var reserva = new Reserva { Name = "R", Status = EstadoReserva.InManagement, ResponsibleUserId = "seller-1", ResponsibleUserName = "Vendedor Uno" };
@@ -76,8 +69,7 @@ public class SellerCommissionAccrualTests
     public async Task ToggleOn_FullyPaid_AccruesPercentOfProfit_AttributedToResponsible()
     {
         await using var db = NewContext();
-        await SeedSettingsAsync(db, commissionsEnabled: true);
-        await SeedDefaultRuleAsync(db, percent: 10m);
+        await SeedSettingsAsync(db, commissionsEnabled: true, globalPercent: 10m);
 
         var reserva = new Reserva { Name = "R", Status = EstadoReserva.InManagement, ResponsibleUserId = "seller-1", ResponsibleUserName = "Vendedor Uno" };
         reserva.HotelBookings.Add(new HotelBooking { Status = "Confirmado", Currency = "ARS", SalePrice = 1000m, NetCost = 700m, Commission = 300m });
@@ -101,8 +93,7 @@ public class SellerCommissionAccrualTests
     public async Task ToggleOn_NotFullyPaid_DoesNotAccrue()
     {
         await using var db = NewContext();
-        await SeedSettingsAsync(db, commissionsEnabled: true);
-        await SeedDefaultRuleAsync(db, percent: 10m);
+        await SeedSettingsAsync(db, commissionsEnabled: true, globalPercent: 10m);
 
         // Pago parcial: queda saldo positivo -> no se devenga todavia.
         var reserva = new Reserva { Name = "R", Status = EstadoReserva.InManagement, ResponsibleUserId = "seller-1" };
@@ -120,8 +111,7 @@ public class SellerCommissionAccrualTests
     public async Task ToggleOn_NoResponsible_DoesNotAccrue()
     {
         await using var db = NewContext();
-        await SeedSettingsAsync(db, commissionsEnabled: true);
-        await SeedDefaultRuleAsync(db, percent: 10m);
+        await SeedSettingsAsync(db, commissionsEnabled: true, globalPercent: 10m);
 
         // Cobrada y con ganancia, pero SIN vendedor responsable -> no inventamos dueño de la comision.
         var reserva = new Reserva { Name = "R", Status = EstadoReserva.InManagement, ResponsibleUserId = null };
@@ -136,11 +126,12 @@ public class SellerCommissionAccrualTests
     }
 
     [Fact]
-    public async Task ToggleOn_NoApplicableRule_AccruesZero()
+    public async Task ToggleOn_GlobalPercentZero_AccruesZero()
     {
         await using var db = NewContext();
-        await SeedSettingsAsync(db, commissionsEnabled: true);
-        // NO sembramos ninguna regla -> sin regla aplicable el % es 0 (NO el 10% default de la calculadora suelta).
+        // Interruptor prendido pero el % global esta en 0 (el dueño prendio pero todavia no eligio el numero).
+        // Posicion segura: no se devenga nada hasta que ponga un %.
+        await SeedSettingsAsync(db, commissionsEnabled: true, globalPercent: 0m);
 
         var reserva = new Reserva { Name = "R", Status = EstadoReserva.InManagement, ResponsibleUserId = "seller-1" };
         reserva.HotelBookings.Add(new HotelBooking { Status = "Confirmado", Currency = "ARS", SalePrice = 1000m, NetCost = 700m, Commission = 300m });
@@ -150,7 +141,7 @@ public class SellerCommissionAccrualTests
 
         await ReservaMoneyPersister.PersistAsync(db, reserva.Id, CancellationToken.None);
 
-        // Sin regla -> comision 0 -> no se crea fila (la calculadora no emite lineas en 0).
+        // % global 0 -> comision 0 -> no se crea fila.
         Assert.Empty(await AccrualsForAsync(db, reserva.Id));
     }
 
@@ -158,8 +149,7 @@ public class SellerCommissionAccrualTests
     public async Task ToggleOn_Cancellation_RevertsAccruedToZero_NeverNegative()
     {
         await using var db = NewContext();
-        await SeedSettingsAsync(db, commissionsEnabled: true);
-        await SeedDefaultRuleAsync(db, percent: 10m);
+        await SeedSettingsAsync(db, commissionsEnabled: true, globalPercent: 10m);
 
         var reserva = new Reserva { Name = "R", Status = EstadoReserva.InManagement, ResponsibleUserId = "seller-1" };
         var hotel = new HotelBooking { Status = "Confirmado", Currency = "ARS", SalePrice = 1000m, NetCost = 700m, Commission = 300m };
@@ -187,8 +177,7 @@ public class SellerCommissionAccrualTests
     public async Task ToggleOn_BalanceGoesBackPositive_RevertsToZero()
     {
         await using var db = NewContext();
-        await SeedSettingsAsync(db, commissionsEnabled: true);
-        await SeedDefaultRuleAsync(db, percent: 10m);
+        await SeedSettingsAsync(db, commissionsEnabled: true, globalPercent: 10m);
 
         var reserva = new Reserva { Name = "R", Status = EstadoReserva.InManagement, ResponsibleUserId = "seller-1" };
         reserva.HotelBookings.Add(new HotelBooking { Status = "Confirmado", Currency = "ARS", SalePrice = 1000m, NetCost = 700m, Commission = 300m });
@@ -212,8 +201,7 @@ public class SellerCommissionAccrualTests
     public async Task ToggleOn_MultiCurrency_OneAccrualPerCurrency()
     {
         await using var db = NewContext();
-        await SeedSettingsAsync(db, commissionsEnabled: true);
-        await SeedDefaultRuleAsync(db, percent: 10m);
+        await SeedSettingsAsync(db, commissionsEnabled: true, globalPercent: 10m);
 
         var reserva = new Reserva { Name = "R", Status = EstadoReserva.InManagement, ResponsibleUserId = "seller-1" };
         reserva.HotelBookings.Add(new HotelBooking { Status = "Confirmado", Currency = "ARS", SalePrice = 1000m, NetCost = 700m, Commission = 300m });
@@ -236,8 +224,7 @@ public class SellerCommissionAccrualTests
     public async Task ToggleOn_RecalculatingTwice_IsIdempotent_NoDuplicateAccrual()
     {
         await using var db = NewContext();
-        await SeedSettingsAsync(db, commissionsEnabled: true);
-        await SeedDefaultRuleAsync(db, percent: 10m);
+        await SeedSettingsAsync(db, commissionsEnabled: true, globalPercent: 10m);
 
         var reserva = new Reserva { Name = "R", Status = EstadoReserva.InManagement, ResponsibleUserId = "seller-1" };
         reserva.HotelBookings.Add(new HotelBooking { Status = "Confirmado", Currency = "ARS", SalePrice = 1000m, NetCost = 700m, Commission = 300m });
@@ -259,8 +246,7 @@ public class SellerCommissionAccrualTests
     public async Task ToggleOn_ProfitWithTax_AccruesOnCommissionField_NotSaleMinusCostRaw()
     {
         await using var db = NewContext();
-        await SeedSettingsAsync(db, commissionsEnabled: true);
-        await SeedDefaultRuleAsync(db, percent: 10m);
+        await SeedSettingsAsync(db, commissionsEnabled: true, globalPercent: 10m);
 
         // El campo Commission del servicio (= venta - costo - impuesto) es la base. Si lo seteamos a 200
         // (porque hay impuesto incluido), la comision es 10% de 200 = 20, NO 10% de (1000-700)=30.

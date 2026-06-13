@@ -221,4 +221,12 @@ public class Reserva : IHasPublicId
 
     /// <summary>ADR-027: cuando se dio el OK a los cambios (auditoria). Par de <see cref="ChangesAckByUserId"/>.</summary>
     public DateTime? ChangesAckAt { get; set; }
+
+    /// <summary>
+    /// ADR-027 (detalle de cambios, 2026-06-13): lista de cambios de precio/costo pendientes de revisar
+    /// (que servicio, que campo, de cuanto a cuanto). Se acumulan mientras
+    /// <see cref="HasUnacknowledgedChanges"/> es true y se borran de una al dar el OK. El front las muestra
+    /// en la franja "confirmada con cambios". Ver <see cref="ReservaPendingChange"/>.
+    /// </summary>
+    public ICollection<ReservaPendingChange> PendingChanges { get; set; } = new List<ReservaPendingChange>();
 }
