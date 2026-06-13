@@ -3543,6 +3543,9 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Property<bool>("IsDeleted")
                         .HasColumnType("boolean");
 
+                    b.Property<int?>("LinkedInvoiceId")
+                        .HasColumnType("integer");
+
                     b.Property<string>("Method")
                         .IsRequired()
                         .HasMaxLength(50)
@@ -3582,6 +3585,8 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("CreatedByUserId");
+
+                    b.HasIndex("LinkedInvoiceId");
 
                     b.HasIndex("OriginalPaymentId");
 
@@ -6193,6 +6198,11 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasForeignKey("CreatedByUserId")
                         .OnDelete(DeleteBehavior.SetNull);
 
+                    b.HasOne("TravelApi.Domain.Entities.Invoice", "LinkedInvoice")
+                        .WithMany()
+                        .HasForeignKey("LinkedInvoiceId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("TravelApi.Domain.Entities.Payment", "OriginalPayment")
                         .WithMany("Reversals")
                         .HasForeignKey("OriginalPaymentId")
@@ -6212,6 +6222,8 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .WithMany("Payments")
                         .HasForeignKey("ServicioReservaId")
                         .OnDelete(DeleteBehavior.Cascade);
+
+                    b.Navigation("LinkedInvoice");
 
                     b.Navigation("OriginalPayment");
 
