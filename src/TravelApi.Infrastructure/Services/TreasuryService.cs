@@ -48,6 +48,42 @@ public class TreasuryService : ITreasuryService
     private Task<bool> CanSeeCostAsync(CancellationToken cancellationToken)
         => CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, cancellationToken);
 
+    /// <summary>
+    /// Resuelve el rango [primer dia del mes, primer dia del mes siguiente) en UTC para el arqueo de caja.
+    /// Es la fuente UNICA del rango que comparten el resumen y los movimientos, para que nunca discrepen.
+    ///
+    /// <para>Si <paramref name="year"/> y <paramref name="month"/> vienen, se usan tal cual (mes pedido por las
+    /// flechas de la pantalla). Si NO vienen (ambos null), se usa el mes actual de UtcNow — identico al historico.</para>
+    ///
+    /// <para>Validacion: o vienen LOS DOS o NINGUNO; month en 1..12; year en un rango sensato. Cualquier dato
+    /// invalido tira <see cref="ArgumentException"/>, que el controlador mapea a 400 (no 500).</para>
+    /// </summary>
+    private static (DateTime StartOfMonth, DateTime EndExclusive) ResolveMonthRange(int? year, int? month)
+    {
+        // Sin mes explicito -> mes actual. El tope superior (mes siguiente) sigue siendo inocuo para el mes
+        // actual porque no hay movimientos futuros, asi se preserva la byte-equivalencia con la version vieja.
+        if (year is null && month is null)
+        {
+            var now = DateTime.UtcNow;
+            var currentStart = new DateTime(now.Year, now.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+            return (currentStart, currentStart.AddMonths(1));
+        }
+
+        // Pedir solo uno de los dos es ambiguo: no se puede armar un mes con un solo dato.
+        if (year is null || month is null)
+            throw new ArgumentException("Para filtrar por mes hay que enviar 'year' y 'month' juntos.");
+
+        if (month is < 1 or > 12)
+            throw new ArgumentException("El mes debe estar entre 1 y 12.");
+
+        // Cota de cordura: descarta años absurdos (typos del front) sin atarse a una fecha de negocio puntual.
+        if (year is < 2000 or > 2100)
+            throw new ArgumentException("El año esta fuera del rango permitido (2000..2100).");
+
+        var startOfMonth = new DateTime(year.Value, month.Value, 1, 0, 0, 0, DateTimeKind.Utc);
+        return (startOfMonth, startOfMonth.AddMonths(1));
+    }
+
     public async Task<TreasurySummaryDto> GetSummaryAsync(CancellationToken cancellationToken)
     {
         var startOfMonth = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
@@ -116,7 +152,8 @@ public class TreasuryService : ITreasuryService
             });
         }
 
-        var cashSummary = await GetCashSummaryAsync(cancellationToken);
+        // El dashboard siempre mira el mes actual: se llama sin year/month (mismo comportamiento historico).
+        var cashSummary = await GetCashSummaryAsync(year: null, month: null, cancellationToken);
         var (cashInByCurrency, cashOutByCurrency) = await GetCashByCurrencyAsync(cancellationToken);
 
         // ADR-022 §4.6 (fix S2): la SALIDA de caja (pagos a proveedor + devoluciones de operador) es
@@ -157,8 +194,9 @@ public class TreasuryService : ITreasuryService
     private async Task<(List<CurrencyAmountDto> CashIn, List<CurrencyAmountDto> CashOut)> GetCashByCurrencyAsync(
         CancellationToken cancellationToken)
     {
-        var startOfMonth = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
-        var (incomeByCurrency, expenseByCurrency) = await LoadSignedCashByCurrencyAsync(startOfMonth, cancellationToken);
+        // El dashboard (GetSummaryAsync) siempre mira el mes actual: sin year/month explicitos.
+        var (startOfMonth, endExclusive) = ResolveMonthRange(year: null, month: null);
+        var (incomeByCurrency, expenseByCurrency) = await LoadSignedCashByCurrencyAsync(startOfMonth, endExclusive, cancellationToken);
 
         var cashIn = ToOrderedCurrencyList(incomeByCurrency);
         var cashOut = ToOrderedCurrencyList(expenseByCurrency);
@@ -170,14 +208,18 @@ public class TreasuryService : ITreasuryService
     /// reversas restando dentro del bucket de su direccion original). Devuelve dos diccionarios moneda -&gt; neto.
     /// </summary>
     private async Task<(Dictionary<string, decimal> Income, Dictionary<string, decimal> Expense)>
-        LoadSignedCashByCurrencyAsync(DateTime startOfMonth, CancellationToken cancellationToken)
+        LoadSignedCashByCurrencyAsync(DateTime startOfMonth, DateTime endExclusive, CancellationToken cancellationToken)
     {
         // Se traen las filas crudas del mes (Currency/Direction/Amount/IsReversal) y se agregan en memoria.
         // El agrupado por "direccion original + signo" no es trivial de expresar en SQL puro de forma legible,
         // y el universo (movimientos de UN mes) es chico; preferimos claridad a una sola query oscura.
+        //
+        // El tope superior (endExclusive = primer dia del mes siguiente) es lo que evita arrastrar movimientos
+        // de meses posteriores cuando se consulta un mes pasado. Para el mes actual es inocuo (no hay futuros),
+        // por eso el resumen del dashboard sigue dando el mismo numero que antes.
         var rows = await _dbContext.CashLedgerEntries
             .AsNoTracking()
-            .Where(e => e.OccurredAt >= startOfMonth)
+            .Where(e => e.OccurredAt >= startOfMonth && e.OccurredAt < endExclusive)
             .Select(e => new { e.Currency, e.Direction, e.Amount, e.IsReversal })
             .ToListAsync(cancellationToken);
 
@@ -217,14 +259,15 @@ public class TreasuryService : ITreasuryService
             .OrderBy(dto => dto.Currency, StringComparer.Ordinal)
             .ToList();
 
-    public async Task<CashSummaryDto> GetCashSummaryAsync(CancellationToken cancellationToken)
+    public async Task<CashSummaryDto> GetCashSummaryAsync(int? year = null, int? month = null, CancellationToken cancellationToken = default)
     {
-        var startOfMonth = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        // Navegacion por mes: si vienen year/month se acota a ese mes; si no, mes actual (igual que el dashboard).
+        var (startOfMonth, endExclusive) = ResolveMonthRange(year, month);
 
         // ADR-022 §4.6 (capa 4): el arqueo del mes sale del LIBRO DE CAJA (con reversas netendo en su bucket
         // original), no de unir las tres fuentes al vuelo. El desglose por moneda y los escalares salen de la
         // MISMA agregacion para que nunca discrepen entre si.
-        var (incomeByCurrency, expenseByCurrency) = await LoadSignedCashByCurrencyAsync(startOfMonth, cancellationToken);
+        var (incomeByCurrency, expenseByCurrency) = await LoadSignedCashByCurrencyAsync(startOfMonth, endExclusive, cancellationToken);
 
         var cashInByCurrency = ToOrderedCurrencyList(incomeByCurrency);
         var cashOutByCurrency = ToOrderedCurrencyList(expenseByCurrency);
@@ -292,12 +335,22 @@ public class TreasuryService : ITreasuryService
     {
         var normalizedSearch = query.Search?.Trim().ToLowerInvariant();
 
+        // Navegacion por mes (flechas de la pantalla de Caja): si vienen year/month se acotan los movimientos a
+        // ese mes calendario, usando EXACTAMENTE el mismo rango que el resumen (fuente unica ResolveMonthRange).
+        // Si NO vienen, no se aplica ningun filtro de fecha -> se devuelven todos (comportamiento historico).
+        // year/month invalidos tiran ArgumentException -> el controlador lo mapea a 400.
+        var entries = _dbContext.CashLedgerEntries.AsNoTracking();
+        if (query.Year is not null || query.Month is not null)
+        {
+            var (startOfMonth, endExclusive) = ResolveMonthRange(query.Year, query.Month);
+            entries = entries.Where(e => e.OccurredAt >= startOfMonth && e.OccurredAt < endExclusive);
+        }
+
         // ADR-022 §4.6 (capa 4): los movimientos salen del LIBRO DE CAJA (CashLedgerEntry), no de unir las
         // tres fuentes al vuelo. El libro es su propia verdad: NO se filtra por IsDeleted (el libro nunca
         // borra; una anulacion es una REVERSA, una fila propia con signo invertido — Q4). Cada asiento se
         // proyecta resolviendo Description/Category/Reserva/Supplier por JOIN a traves de su FK de origen.
-        var movements = _dbContext.CashLedgerEntries
-            .AsNoTracking()
+        var movements = entries
             .Where(e => string.IsNullOrWhiteSpace(normalizedSearch) ||
                 e.Method.ToLower().Contains(normalizedSearch) ||
                 (e.Payment != null && e.Payment.Reference != null && e.Payment.Reference.ToLower().Contains(normalizedSearch)) ||

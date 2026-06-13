@@ -5,11 +5,14 @@
  * Multimoneda (2026-06-11): las 3 métricas muestran pesos y dólares por separado cuando
  * el backend entrega datos por moneda. Los movimientos llevan su cartelito $/US$.
  * El filtro "Moneda" siempre está visible (decisión D, 2026-06-11).
+ * Navegación mensual (2026-06-13): selector ◀ Mes Año ▶ arriba de las métricas.
+ * El botón ▶ se deshabilita cuando el mes seleccionado es el actual (no hay datos futuros).
  */
 import { Filter, Loader2, Search } from "lucide-react";
 import { isAdmin } from "../../../auth";
 import { DatabaseUnavailableState } from "../../../components/ui/DatabaseUnavailableState";
 import { ListToolbar } from "../../../components/ui/ListToolbar";
+import { MonthNavigator } from "../../../components/ui/MonthNavigator";
 import { PaginationFooter } from "../../../components/ui/PaginationFooter";
 import { FinanceMetricsGrid } from "../components/FinanceMetricsGrid";
 import { MovementsTab } from "../components/MovementsTab";
@@ -105,6 +108,10 @@ export default function PaymentsCashPage() {
     handleUpdateManualMovement,
     handleDeleteManualMovement,
     databaseUnavailable,
+    // Navegación mensual
+    selectedMonth,
+    handleMonthChange,
+    canGoNext,
   } = useCash();
 
   // Filtro de moneda client-side: "all" muestra todo; "ARS" o "USD" filtra por currency del movimiento.
@@ -178,6 +185,21 @@ export default function PaymentsCashPage() {
           </>
         }
       />
+
+      {/* Navegación mensual: permite ver la caja de meses anteriores.
+          El botón ▶ se deshabilita cuando ya estamos en el mes actual
+          porque no hay movimientos futuros registrados en caja.
+          El botón "Hoy" aparece automáticamente cuando el mes elegido no es el actual. */}
+      {/* MonthNavigator no propaga data-testid (destructura props explícitas),
+          por eso el id de automatización va en el wrapper. */}
+      <div className="flex justify-center" data-testid="caja-month-navigator">
+        <MonthNavigator
+          month={selectedMonth}
+          onChange={handleMonthChange}
+          disabled={loading}
+          disableNext={!canGoNext}
+        />
+      </div>
 
       {/* Las 3 métricas: con soporte bi-moneda cuando el summary lo entrega */}
       <FinanceMetricsGrid items={metricItems} />

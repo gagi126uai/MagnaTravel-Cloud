@@ -119,7 +119,7 @@ public class Adr022Tanda3Tests
             Ledger(CashMovementDirections.Expense, 100m, CashLedgerSourceTypes.CustomerPayment, isReversal: true, occurredAt: now));
         await context.SaveChangesAsync();
 
-        var summary = await BuildTreasuryCanSeeCost(context).GetCashSummaryAsync(CancellationToken.None);
+        var summary = await BuildTreasuryCanSeeCost(context).GetCashSummaryAsync(cancellationToken: CancellationToken.None);
 
         Assert.Equal(0m, summary.CashInThisMonth);
         Assert.Equal(0m, summary.CashOutThisMonth);
@@ -140,7 +140,7 @@ public class Adr022Tanda3Tests
             Ledger(CashMovementDirections.Income, 150m, CashLedgerSourceTypes.CustomerPayment, occurredAt: now));
         await context.SaveChangesAsync();
 
-        var summary = await BuildTreasuryCanSeeCost(context).GetCashSummaryAsync(CancellationToken.None);
+        var summary = await BuildTreasuryCanSeeCost(context).GetCashSummaryAsync(cancellationToken: CancellationToken.None);
 
         Assert.Equal(150m, summary.CashInThisMonth);
         Assert.Equal(0m, summary.CashOutThisMonth);
@@ -294,8 +294,8 @@ public class Adr022Tanda3Tests
             Ledger(CashMovementDirections.Expense, 120m, CashLedgerSourceTypes.SupplierPayment, currency: "ARS", occurredAt: now));
         await context.SaveChangesAsync();
 
-        var hidden = await BuildTreasuryNoCost(context).GetCashSummaryAsync(CancellationToken.None);
-        var shown = await BuildTreasuryCanSeeCost(context).GetCashSummaryAsync(CancellationToken.None);
+        var hidden = await BuildTreasuryNoCost(context).GetCashSummaryAsync(cancellationToken: CancellationToken.None);
+        var shown = await BuildTreasuryCanSeeCost(context).GetCashSummaryAsync(cancellationToken: CancellationToken.None);
 
         // Sin see_cost: la entrada se ve, la salida no; el neto se reporta = entrada (no se filtra por resta).
         Assert.Equal(500m, hidden.CashInThisMonth);

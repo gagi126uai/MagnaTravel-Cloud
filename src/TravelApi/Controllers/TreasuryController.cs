@@ -38,18 +38,37 @@ public class TreasuryController : ControllerBase
         return Ok(await _treasuryService.GetSummaryAsync(cancellationToken));
     }
 
+    // year/month opcionales para la navegacion por mes (flechas de la pantalla de Caja). Si no vienen, el
+    // servicio usa el mes actual (comportamiento historico, lo reusa el dashboard).
     [HttpGet("cash-summary")]
     [RequirePermission(Permissions.CajaView)]
-    public async Task<ActionResult<CashSummaryDto>> GetCashSummary(CancellationToken cancellationToken)
+    public async Task<ActionResult<CashSummaryDto>> GetCashSummary(
+        [FromQuery] int? year,
+        [FromQuery] int? month,
+        CancellationToken cancellationToken)
     {
-        return Ok(await _treasuryService.GetCashSummaryAsync(cancellationToken));
+        try
+        {
+            return Ok(await _treasuryService.GetCashSummaryAsync(year, month, cancellationToken));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     [HttpGet("movements")]
     [RequirePermission(Permissions.CajaView)]
     public async Task<ActionResult<PagedResponse<CashMovementDto>>> GetMovements([FromQuery] TreasuryMovementsQuery query, CancellationToken cancellationToken)
     {
-        return Ok(await _treasuryService.GetMovementsAsync(query, cancellationToken));
+        try
+        {
+            return Ok(await _treasuryService.GetMovementsAsync(query, cancellationToken));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     [HttpPost("manual-movements")]

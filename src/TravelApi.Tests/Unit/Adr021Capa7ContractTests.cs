@@ -133,7 +133,7 @@ public class Adr021Capa7ContractTests
         context.CashLedgerEntries.Add(NewIncomeLedger(amount: 500m, currency: "ARS", occurredAt: now));
         await context.SaveChangesAsync();
 
-        var summary = await BuildTreasury(context).GetCashSummaryAsync(CancellationToken.None);
+        var summary = await BuildTreasury(context).GetCashSummaryAsync(cancellationToken: CancellationToken.None);
 
         var row = Assert.Single(summary.CashByCurrency);
         Assert.Equal("ARS", row.Currency);
@@ -151,7 +151,7 @@ public class Adr021Capa7ContractTests
         context.CashLedgerEntries.Add(NewIncomeLedger(amount: 100000m, currency: "ARS", occurredAt: now));
         await context.SaveChangesAsync();
 
-        var summary = await BuildTreasury(context).GetCashSummaryAsync(CancellationToken.None);
+        var summary = await BuildTreasury(context).GetCashSummaryAsync(cancellationToken: CancellationToken.None);
 
         var row = Assert.Single(summary.CashByCurrency);
         Assert.Equal("ARS", row.Currency);

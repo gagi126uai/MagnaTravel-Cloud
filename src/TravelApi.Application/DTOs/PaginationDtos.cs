@@ -98,6 +98,13 @@ public class TreasuryMovementsQuery : PagedQuery
 {
     public string Direction { get; set; } = "all";
     public string SourceType { get; set; } = "all";
+
+    // Navegacion por mes (flechas de la pantalla de Caja). Si ambos vienen, los movimientos se acotan a ese
+    // mes calendario; si NO vienen, se devuelven todos (comportamiento historico). Coherentes con el mismo par
+    // year/month del resumen de caja.
+    public int? Year { get; set; }
+    public int? Month { get; set; }
+
     public TreasuryMovementsQuery()
     {
         SortBy = "occurredAt";

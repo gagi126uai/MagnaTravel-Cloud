@@ -188,6 +188,10 @@ Ronda 9 (avisos automáticos, detalles finos — respuestas de Gastón, 2026-06-
 Ronda 10 (botón "Listo" de Próximos inicios, 2026-06-07):
 - **El "Listo" es un BOTÓN con la palabra "Listo", siempre visible**, a la derecha de cada aviso de la campanita (elegido sobre la tilde-al-pasar-el-mouse y el texto-chiquito). Sin ventana de confirmación. El click en "Listo" no navega a la reserva; el click en el resto del aviso sí.
 
+Vencimientos — confirmación de la regla y vencimiento de pasaporte (2026-06-13):
+- **(2026-06-13) Las fechas de PAGO AL OPERADOR y de EMISIÓN del aéreo (time-limit) siguen siendo AUTOMÁTICAS. NO se vuelve a poner el campo "Fecha límite" a mano para esos dos.** Esto CONFIRMA y NO revierte lo decidido en la Ronda 8 (2026-06-06): el aviso sale solo por "Próximos inicios" (la campanita avisa X días antes del inicio de cada servicio, con los "Días de anticipación" de Configuración), sin que nadie cargue fechas a mano. El campo manual de fecha límite quedó eliminado de la ficha de carga y así se mantiene.
+- **(2026-06-13) El VENCIMIENTO DE PASAPORTE del pasajero SÍ se carga a mano**, en los datos de cada pasajero (es un dato nuevo y no choca con lo anterior, porque no es una fecha de gestión interna de la reserva sino un dato propio del pasajero). La campanita muestra los pasaportes por vencer como una **sección propia** (aparte de "Próximos inicios" y de "Costos a confirmar"; misma idea de secciones apiladas de la Ronda 6).
+
 Ronda 7 (obligatoriedad heredada de la pantalla vieja — probando en vivo, 2026-06-06):
 - **REGLA GENERAL nueva de Gastón (textual): "que no asuma nada, nada que yo no le pida; que me pregunte así como lo hace el ux/ui; que no ponga campos que nadie le pidió y si eso lo hizo el backend o el arquitecto, que me pregunten primero".** La obligatoriedad de un campo es una decisión de producto de Gastón, NUNCA del código viejo ni de un implementador. Si una regla heredada choca con la ficha nueva, se le pregunta antes.
 - **Hotel: Régimen y Tipo de habitación A LA VISTA y OBLIGATORIOS** en la ficha principal (salen de "Más detalles"), como desplegables con las mismas opciones de siempre (Régimen: Solo Alojamiento/Desayuno/Media Pensión/Pensión Completa/All Inclusive, default Desayuno; Habitación: Single/Doble/Triple/Cuádruple/Familiar, default Doble).
@@ -276,3 +280,9 @@ Ronda 2:
 - **(2026-06-11) Selectores nuevos del cobro ("Moneda del cobro" e "Imputar a"): se ESCONDEN en reservas de una sola moneda.** Aparecen solo cuando hay dos monedas (donde puede haber cobro cruzado). Con una sola moneda, el cobro se ve igual que hoy.
 - **(2026-06-11) Editar un cobro cruzado ya cargado: solo NOTAS y MÉTODO de pago.** El monto, la moneda y el tipo de cambio quedan fijos (el backend ya los bloquea); si están mal, se anula y se rehace.
 - **(2026-06-11) Filtro "Moneda" en la caja: SIEMPRE visible** (decisión de Gastón, distinta del default sugerido). Está siempre, aunque no haya movimientos en dólares.
+
+## Tanda de frontend de las 6 features (2026-06-13) — se aprueba PANTALLA POR PANTALLA
+
+> Gastón pidió ir "una por una": ve cada pantalla con su boceto y la aprueba antes de construirla. Acá se anotan las decisiones a medida que las va aprobando.
+
+- **(2026-06-13) Caja — "este mes" con flechas.** Arriba de los 3 números de la Caja se agrega un encabezado de mes con flechas: `◀  Junio 2026  ▶`. Arranca SIEMPRE en el mes actual. ◀ retrocede un mes, ▶ avanza. **La flecha ▶ queda DESHABILITADA (gris) en el mes actual: no se puede ir a meses futuros** (no hay plata futura en la caja). Hacia atrás se navega libre. Los 3 números (Ingresos/Egresos/Resultado del mes) y la lista de movimientos pasan a ser del mes elegido; sigue valiendo la regla dura de no mezclar monedas. Reusa el componente de navegación de mes que ya usan otras pantallas (trae un botón "Hoy" para volver rápido al mes actual; OK de Gastón pendiente de confirmar verbalmente, es coherencia con el resto del sistema). No se agrega calendario ni rango de fechas.

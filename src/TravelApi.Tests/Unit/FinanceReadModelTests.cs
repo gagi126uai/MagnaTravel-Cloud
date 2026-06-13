@@ -126,7 +126,7 @@ public class FinanceReadModelTests
         // se prueba aparte (Adr022Tanda3Tests.CashSummary_WithoutSeeCost_MasksCashOut_KeepsCashIn).
         var service = BuildTreasuryCanSeeCost(context);
 
-        var summary = await service.GetCashSummaryAsync(CancellationToken.None);
+        var summary = await service.GetCashSummaryAsync(cancellationToken: CancellationToken.None);
 
         Assert.Equal(500m, summary.CashInThisMonth);
         Assert.Equal(150m, summary.CashOutThisMonth);

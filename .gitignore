@@ -51,3 +51,9 @@ src/.claude/
 .pi/
 context.md
 **/TestResults/
+
+# Mapa local de graphify (no se versiona)
+graphify-out/
+
+# Carpetas .claude anidadas (config local de agentes)
+**/.claude/

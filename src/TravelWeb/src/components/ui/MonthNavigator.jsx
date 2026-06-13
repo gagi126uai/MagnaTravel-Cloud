@@ -7,14 +7,16 @@ import { Calendar, ChevronLeft, ChevronRight } from "lucide-react";
 // para mantener sinergia visual entre pantallas del módulo financiero.
 //
 // Props:
-//   month:    Date | null — primer dia del mes activo (ej. new Date(2026, 4, 1)).
-//             Si es null, el componente muestra "Todo el historial" y los
-//             chevrons navegan hacia el mes actual como punto de partida.
-//             El caller interpreta month=null como "no enviar filtros de fecha".
-//   onChange: (date: Date | null) => void — recibe el primer dia del mes
-//             seleccionado, o null cuando el usuario activa "todo el historial".
-//   disabled: boolean (opcional) — cuando true, deshabilita prev/next/Hoy.
-//             Util para evitar race conditions durante fetch en curso.
+//   month:       Date | null — primer dia del mes activo (ej. new Date(2026, 4, 1)).
+//                Si es null, el componente muestra "Todo el historial" y los
+//                chevrons navegan hacia el mes actual como punto de partida.
+//                El caller interpreta month=null como "no enviar filtros de fecha".
+//   onChange:    (date: Date | null) => void — recibe el primer dia del mes
+//                seleccionado, o null cuando el usuario activa "todo el historial".
+//   disabled:    boolean (opcional) — cuando true, deshabilita prev/next/Hoy.
+//                Util para evitar race conditions durante fetch en curso.
+//   disableNext: boolean (opcional) — cuando true, deshabilita solo el botón ▶.
+//                Util para impedir navegar al futuro (ej. Caja: no hay datos futuros).
 //
 // Uso:
 //   const [month, setMonth] = useState(() => {
@@ -62,7 +64,7 @@ function isCurrentMonth(date) {
   );
 }
 
-export function MonthNavigator({ month, onChange, disabled = false }) {
+export function MonthNavigator({ month, onChange, disabled = false, disableNext = false }) {
   const now = new Date();
 
   // Cuando month es null mostramos "Todo el historial" y usamos el mes actual
@@ -133,8 +135,8 @@ export function MonthNavigator({ month, onChange, disabled = false }) {
       <button
         type="button"
         onClick={handleNext}
-        disabled={disabled}
-        className={`${btnBase} ${disabled ? btnDisabled : btnEnabled}`}
+        disabled={disabled || disableNext}
+        className={`${btnBase} ${disabled || disableNext ? btnDisabled : btnEnabled}`}
         title="Mes siguiente"
         aria-label="Mes siguiente"
         data-testid="month-nav-next"
