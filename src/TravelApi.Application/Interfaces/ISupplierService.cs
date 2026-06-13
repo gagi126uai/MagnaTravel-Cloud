@@ -19,6 +19,13 @@ public interface ISupplierService
     Task UpdateSupplierPaymentAsync(int id, int paymentId, SupplierPaymentRequest request, CancellationToken cancellationToken);
     Task DeleteSupplierPaymentAsync(int id, int paymentId, CancellationToken cancellationToken);
     Task<IEnumerable<SupplierPaymentDto>> GetSupplierPaymentsHistoryAsync(int id, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Auditoria ERP hallazgo #4: deuda con el proveedor DESGLOSADA POR EXPEDIENTE (reserva) y por moneda,
+    /// mas el bucket de anticipos "a cuenta" (pagos sin reserva imputada). Reconcilia por moneda con el
+    /// total global de la cuenta corriente del proveedor. Los montos respetan el masking see_cost.
+    /// </summary>
+    Task<SupplierDebtByReservaDto> GetSupplierDebtByReservaAsync(int id, CancellationToken cancellationToken);
 }
 
 /// <summary>

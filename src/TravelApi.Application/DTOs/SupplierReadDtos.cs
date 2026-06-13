@@ -68,6 +68,74 @@ public class SupplierAccountServiceListItemDto
     public Guid? ReservaPublicId { get; set; }
 }
 
+// ===================================================================================================
+// Auditoria ERP hallazgo #4 (2026-06-12): deuda al proveedor DESGLOSADA POR EXPEDIENTE (reserva).
+// La cuenta corriente del proveedor hasta hoy era GLOBAL (todo lo que se le debe al operador, sumado).
+// El dueño concilia con los mayoristas POR EXPEDIENTE, asi que necesita ver, para un proveedor dado:
+//   - cuanto se le debe en CADA reserva (por moneda), descontando los pagos imputados a esa reserva; y
+//   - un bucket "a cuenta / anticipos" con los pagos que NO estan atados a ninguna reserva.
+// Invariante (verificado por test): la suma de los saldos por reserva + los anticipos a cuenta RECONCILIA
+// exactamente con el total global por moneda de SupplierService.CalculateSupplierDebtPorMonedaAsync.
+// ===================================================================================================
+
+/// <summary>
+/// Vista completa de la deuda de la agencia con UN proveedor, abierta por expediente (reserva) y por
+/// moneda, mas el bucket de anticipos a cuenta y el total global de reconciliacion.
+/// </summary>
+public class SupplierDebtByReservaDto
+{
+    public Guid SupplierPublicId { get; set; }
+    public string SupplierName { get; set; } = string.Empty;
+
+    /// <summary>Una entrada por reserva donde el proveedor tiene deuda y/o pagos imputados.</summary>
+    public List<SupplierDebtReservaLineDto> Reservas { get; set; } = new();
+
+    /// <summary>
+    /// Anticipos "a cuenta": pagos al proveedor SIN reserva imputada (incluye el legacy con ReservaId null).
+    /// Una linea por moneda. Estos montos NO estan atados a un expediente concreto.
+    /// </summary>
+    public List<SupplierDebtCurrencyAmountDto> AdvancesToAccount { get; set; } = new();
+
+    /// <summary>
+    /// Total global de la deuda por moneda (el mismo numero que la cuenta corriente global ya calculaba).
+    /// Sirve de control de reconciliacion: por moneda, debe igualar la suma de los saldos por reserva mas
+    /// los anticipos a cuenta de esa moneda.
+    /// </summary>
+    public List<SupplierDebtCurrencyAmountDto> GlobalTotals { get; set; } = new();
+}
+
+/// <summary>
+/// La deuda del proveedor en UNA reserva, abierta por moneda. Datos de identidad de la reserva (numero,
+/// nombre) viajan SIEMPRE; los montos respetan el masking see_cost igual que el resto de la cuenta.
+/// </summary>
+public class SupplierDebtReservaLineDto
+{
+    public Guid ReservaPublicId { get; set; }
+    public string? NumeroReserva { get; set; }
+    public string? FileName { get; set; }
+
+    /// <summary>Una linea por moneda: compras confirmadas, pagado imputado y saldo de ESTE proveedor en ESTA reserva.</summary>
+    public List<SupplierDebtCurrencyLineDto> Currencies { get; set; } = new();
+}
+
+/// <summary>Compras confirmadas, pagado y saldo de una moneda. Espejo de <c>SupplierDebtLine</c> del dominio.</summary>
+public class SupplierDebtCurrencyLineDto
+{
+    public string Currency { get; set; } = "ARS";
+    public decimal ConfirmedPurchases { get; set; }
+    public decimal TotalPaid { get; set; }
+
+    /// <summary>Saldo = compras confirmadas - pagado. Puede ser negativo (sobrepago a esta reserva/proveedor).</summary>
+    public decimal Balance { get; set; }
+}
+
+/// <summary>Par moneda + monto. Para anticipos a cuenta y totales globales de reconciliacion.</summary>
+public class SupplierDebtCurrencyAmountDto
+{
+    public string Currency { get; set; } = "ARS";
+    public decimal Amount { get; set; }
+}
+
 public class SupplierPaymentDto
 {
     public Guid PublicId { get; set; }

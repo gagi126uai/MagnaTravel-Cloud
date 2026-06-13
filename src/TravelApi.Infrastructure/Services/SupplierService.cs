@@ -1213,6 +1213,293 @@ public class SupplierService : ISupplierService
     }
 
     /// <summary>
+    /// Auditoria ERP hallazgo #4 (2026-06-12): deuda con el proveedor DESGLOSADA POR EXPEDIENTE (reserva) y
+    /// por moneda, mas el bucket de anticipos "a cuenta". El dueño concilia con los mayoristas por
+    /// expediente, no solo por el total global.
+    ///
+    /// <para><b>Reconciliacion (invariante clave)</b>: este desglose NO reimplementa el calculo de deuda;
+    /// reusa exactamente el mismo universo de servicios que el total global (<see cref="BuildSupplierServicesQuery"/>,
+    /// ya filtrado por estados de reserva vivos + regla por tipo confirmado) y el mismo motor puro
+    /// (<see cref="SupplierDebtCalculator"/>). Las compras se reparten por reserva; los pagos se reparten en
+    /// (imputados a esa reserva) + (anticipos sin reserva). Por construccion, por cada moneda:
+    /// suma(saldos por reserva) + suma(anticipos a cuenta) == total global. Hay un test de reconciliacion
+    /// que lo verifica. NO se crea una segunda formula que pueda divergir (leccion ADR-023: una sola fuente).</para>
+    ///
+    /// <para><b>Masking</b>: la deuda al proveedor es COSTO. Sin <c>cobranzas.see_cost</c> los montos
+    /// (compras, pagado, saldo, anticipos, totales) se anulan a 0; la estructura (que reservas, en que
+    /// monedas) y la identidad de la reserva siguen visibles, igual que la caja y el resto de la cuenta.</para>
+    /// </summary>
+    public async Task<SupplierDebtByReservaDto> GetSupplierDebtByReservaAsync(int id, CancellationToken cancellationToken)
+    {
+        var supplier = await _dbContext.Suppliers
+            .AsNoTracking()
+            .Where(s => s.Id == id)
+            .Select(s => new { s.PublicId, s.Name })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (supplier == null)
+        {
+            throw new KeyNotFoundException("Proveedor no encontrado");
+        }
+
+        // 1) COMPRAS CONFIRMADAS por reserva. Reusamos la MISMA query que alimenta el total global (ya
+        //    filtrada por estados de reserva vivos), y nos quedamos solo con las que generan deuda por la
+        //    regla oficial por tipo. Cada fila trae su ReservaPublicId/NumeroReserva/FileName y su moneda.
+        var serviceRows = await BuildSupplierServicesQuery(id).ToListAsync(cancellationToken);
+        var confirmedServiceRows = serviceRows
+            .Where(row => WorkflowStatusHelper.CountsForSupplierDebtByType(row.Type, row.Status))
+            .ToList();
+
+        // 2) PAGOS del proveedor: traemos lo minimo para imputar (monto/moneda/imputado + a que reserva).
+        //    El query filter !IsDeleted ya excluye los pagos anulados (igual que el calculo global), asi que
+        //    una anulacion es self-healing y el desglose sigue reconciliando.
+        var paymentRows = await _dbContext.SupplierPayments
+            .Where(payment => payment.SupplierId == id)
+            .Select(payment => new SupplierPaymentImputationRow(
+                payment.ReservaId,
+                payment.Reserva != null ? (Guid?)payment.Reserva.PublicId : null,
+                payment.Reserva != null ? payment.Reserva.NumeroReserva : null,
+                payment.Reserva != null ? payment.Reserva.Name : null,
+                payment.Amount,
+                payment.Currency,
+                payment.ImputedCurrency,
+                payment.ImputedAmount))
+            .ToListAsync(cancellationToken);
+
+        var result = BuildSupplierDebtByReserva(supplier.PublicId, supplier.Name, confirmedServiceRows, paymentRows);
+
+        // Masking see_cost: sin permiso, la estructura queda visible pero todos los montos en 0.
+        if (!await CanSeeSupplierCostFiguresAsync(cancellationToken))
+        {
+            MaskSupplierDebtByReservaAmounts(result);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Fila minima de un pago al proveedor para imputarlo en el desglose por reserva. Si <see cref="ReservaId"/>
+    /// es null el pago es un anticipo "a cuenta" (incluye el legacy sin reserva).
+    /// </summary>
+    private readonly record struct SupplierPaymentImputationRow(
+        int? ReservaId,
+        Guid? ReservaPublicId,
+        string? NumeroReserva,
+        string? FileName,
+        decimal Amount,
+        string? Currency,
+        string? ImputedCurrency,
+        decimal? ImputedAmount);
+
+    /// <summary>
+    /// Arma el DTO de deuda por reserva a partir de las compras confirmadas y los pagos ya materializados.
+    /// Funcion pura sobre listas en memoria (sin EF): construye una linea por reserva (con sus monedas),
+    /// el bucket de anticipos a cuenta, y los totales globales de reconciliacion. Separada del metodo
+    /// publico para poder razonar la reconciliacion sin la capa de acceso a datos.
+    /// </summary>
+    private static SupplierDebtByReservaDto BuildSupplierDebtByReserva(
+        Guid supplierPublicId,
+        string supplierName,
+        IReadOnlyList<SupplierAccountServiceListItemDto> confirmedServiceRows,
+        IReadOnlyList<SupplierPaymentImputationRow> paymentRows)
+    {
+        // --- Compras confirmadas agrupadas por reserva (y dentro, por moneda) ---
+        // Por cada reserva guardamos su identidad (numero/nombre) y las compras por moneda.
+        var reservaPurchases = new Dictionary<Guid, ReservaDebtAccumulator>();
+
+        foreach (var row in confirmedServiceRows)
+        {
+            // Un servicio sin ReservaPublicId no deberia pasar el filtro de estados (siempre tiene reserva),
+            // pero por las dudas lo ignoramos para no crear una entrada fantasma.
+            if (row.ReservaPublicId is not Guid reservaPublicId) continue;
+
+            if (!reservaPurchases.TryGetValue(reservaPublicId, out var accumulator))
+            {
+                accumulator = new ReservaDebtAccumulator(reservaPublicId, row.NumeroReserva, row.FileName);
+                reservaPurchases[reservaPublicId] = accumulator;
+            }
+
+            string currency = Monedas.Normalizar(row.Currency);
+            accumulator.AddPurchase(currency, row.NetCost);
+        }
+
+        // --- Pagos: imputados a una reserva concreta vs anticipos a cuenta ---
+        // Anticipos: pagos sin ReservaId. Una linea por moneda imputada.
+        var advancesByCurrency = new Dictionary<string, decimal>(StringComparer.Ordinal);
+
+        foreach (var payment in paymentRows)
+        {
+            // El pago imputa a la moneda imputada si cruzo, si no a su propia moneda; el monto imputado es
+            // ImputedAmount si cruzo, si no el Amount de caja. Misma regla que SupplierDebtCalculator.
+            string imputedCurrency = Monedas.Normalizar(payment.ImputedCurrency ?? payment.Currency);
+            decimal imputedAmount = payment.ImputedAmount ?? payment.Amount;
+
+            if (payment.ReservaId is null || payment.ReservaPublicId is not Guid paymentReservaPublicId)
+            {
+                // Anticipo "a cuenta": no atado a un expediente.
+                advancesByCurrency.TryGetValue(imputedCurrency, out var currentAdvance);
+                advancesByCurrency[imputedCurrency] = currentAdvance + imputedAmount;
+                continue;
+            }
+
+            // Pago imputado a una reserva. Puede ser una reserva que NO tiene compras confirmadas vivas
+            // (p.ej. quedo Closed o sus servicios se cancelaron despues de pagar): igual debe aparecer para
+            // que la reconciliacion cierre, asi que la creamos si no existe usando los datos del propio pago.
+            if (!reservaPurchases.TryGetValue(paymentReservaPublicId, out var accumulator))
+            {
+                accumulator = new ReservaDebtAccumulator(
+                    paymentReservaPublicId, payment.NumeroReserva, payment.FileName);
+                reservaPurchases[paymentReservaPublicId] = accumulator;
+            }
+
+            accumulator.AddPayment(imputedCurrency, imputedAmount);
+        }
+
+        // --- Materializar el DTO ---
+        var dto = new SupplierDebtByReservaDto
+        {
+            SupplierPublicId = supplierPublicId,
+            SupplierName = supplierName
+        };
+
+        // Totales globales de reconciliacion: se acumulan sumando TODAS las lineas por moneda (reservas +
+        // anticipos). Por construccion esto iguala compras totales - pagos totales por moneda, que es el
+        // mismo numero que el calculo global de la cuenta corriente.
+        var globalByCurrency = new Dictionary<string, decimal>(StringComparer.Ordinal);
+
+        foreach (var accumulator in reservaPurchases.Values)
+        {
+            var reservaLine = new SupplierDebtReservaLineDto
+            {
+                ReservaPublicId = accumulator.ReservaPublicId,
+                NumeroReserva = accumulator.NumeroReserva,
+                FileName = accumulator.FileName
+            };
+
+            foreach (var (currency, line) in accumulator.ToLines())
+            {
+                reservaLine.Currencies.Add(new SupplierDebtCurrencyLineDto
+                {
+                    Currency = currency,
+                    ConfirmedPurchases = EconomicRulesHelper.RoundCurrency(line.ConfirmedPurchases),
+                    TotalPaid = EconomicRulesHelper.RoundCurrency(line.TotalPaid),
+                    Balance = EconomicRulesHelper.RoundCurrency(line.Balance)
+                });
+
+                AccumulateCurrency(globalByCurrency, currency, line.Balance);
+            }
+
+            dto.Reservas.Add(reservaLine);
+        }
+
+        foreach (var (currency, amount) in advancesByCurrency)
+        {
+            // Un anticipo es plata pagada al proveedor sin compra que la respalde todavia: en la cuenta es
+            // un saldo a FAVOR de la agencia, por eso resta a la deuda global (saldo negativo de esa moneda).
+            dto.AdvancesToAccount.Add(new SupplierDebtCurrencyAmountDto
+            {
+                Currency = currency,
+                Amount = EconomicRulesHelper.RoundCurrency(amount)
+            });
+
+            AccumulateCurrency(globalByCurrency, currency, -amount);
+        }
+
+        foreach (var (currency, amount) in globalByCurrency)
+        {
+            dto.GlobalTotals.Add(new SupplierDebtCurrencyAmountDto
+            {
+                Currency = currency,
+                Amount = EconomicRulesHelper.RoundCurrency(amount)
+            });
+        }
+
+        return dto;
+    }
+
+    /// <summary>Acumula <paramref name="amount"/> en la moneda indicada (crea la entrada si no existe).</summary>
+    private static void AccumulateCurrency(Dictionary<string, decimal> byCurrency, string currency, decimal amount)
+    {
+        byCurrency.TryGetValue(currency, out var current);
+        byCurrency[currency] = current + amount;
+    }
+
+    /// <summary>
+    /// Acumulador mutable de compras y pagos de un proveedor en UNA reserva, agrupados por moneda. Solo se
+    /// usa dentro de <see cref="BuildSupplierDebtByReserva"/> para armar las lineas por moneda de la reserva.
+    /// </summary>
+    private sealed class ReservaDebtAccumulator
+    {
+        public Guid ReservaPublicId { get; }
+        public string? NumeroReserva { get; }
+        public string? FileName { get; }
+
+        private readonly Dictionary<string, decimal> _purchasesByCurrency = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, decimal> _paidByCurrency = new(StringComparer.Ordinal);
+
+        public ReservaDebtAccumulator(Guid reservaPublicId, string? numeroReserva, string? fileName)
+        {
+            ReservaPublicId = reservaPublicId;
+            NumeroReserva = numeroReserva;
+            FileName = fileName;
+        }
+
+        public void AddPurchase(string currency, decimal netCost)
+        {
+            _purchasesByCurrency.TryGetValue(currency, out var current);
+            _purchasesByCurrency[currency] = current + netCost;
+        }
+
+        public void AddPayment(string currency, decimal imputedAmount)
+        {
+            _paidByCurrency.TryGetValue(currency, out var current);
+            _paidByCurrency[currency] = current + imputedAmount;
+        }
+
+        /// <summary>Devuelve una <see cref="SupplierDebtLine"/> por cada moneda presente en compras o pagos.</summary>
+        public IEnumerable<KeyValuePair<string, SupplierDebtLine>> ToLines()
+        {
+            var currencies = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var key in _purchasesByCurrency.Keys) currencies.Add(key);
+            foreach (var key in _paidByCurrency.Keys) currencies.Add(key);
+
+            foreach (var currency in currencies)
+            {
+                _purchasesByCurrency.TryGetValue(currency, out var purchases);
+                _paidByCurrency.TryGetValue(currency, out var paid);
+                yield return new KeyValuePair<string, SupplierDebtLine>(
+                    currency, new SupplierDebtLine(currency, purchases, paid));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Anula a 0 todos los montos del desglose por reserva (compras, pagado, saldo, anticipos, totales) cuando
+    /// el caller no puede ver costos (ADR-017 F1b). La estructura (reservas, monedas) y la identidad quedan.
+    /// </summary>
+    private static void MaskSupplierDebtByReservaAmounts(SupplierDebtByReservaDto dto)
+    {
+        foreach (var reserva in dto.Reservas)
+        {
+            foreach (var currencyLine in reserva.Currencies)
+            {
+                currencyLine.ConfirmedPurchases = 0m;
+                currencyLine.TotalPaid = 0m;
+                currencyLine.Balance = 0m;
+            }
+        }
+
+        foreach (var advance in dto.AdvancesToAccount)
+        {
+            advance.Amount = 0m;
+        }
+
+        foreach (var total in dto.GlobalTotals)
+        {
+            total.Amount = 0m;
+        }
+    }
+
+    /// <summary>
     /// ADR-021 §15.3/§B5 + ADR-022 §4.10: UNICO punto de escritura de la deuda de un proveedor. Recalcula
     /// por moneda, persiste el escalar surrogate <c>Supplier.CurrentBalance</c> Y sincroniza la tabla hija
     /// <c>SupplierBalanceByCurrency</c>. NO llama a SaveChanges: lo hace el caller.

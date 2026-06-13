@@ -159,6 +159,26 @@ public class SuppliersController : ControllerBase
         }
     }
 
+    // Auditoria ERP hallazgo #4 (2026-06-12): deuda con el proveedor DESGLOSADA POR EXPEDIENTE (reserva).
+    // Mismo permiso que el resto de la cuenta del proveedor (proveedores.view): la estructura (que reservas,
+    // que monedas) es visible con ese permiso; los MONTOS los enmascara el servicio si falta cobranzas.see_cost.
+    [HttpGet("{publicIdOrLegacyId}/account/debt-by-reserva")]
+    [RequirePermission(Permissions.ProveedoresView)]
+    public async Task<ActionResult<SupplierDebtByReservaDto>> GetSupplierDebtByReserva(
+        string publicIdOrLegacyId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
+            return Ok(await _supplierService.GetSupplierDebtByReservaAsync(id, cancellationToken));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
     [HttpGet("{publicIdOrLegacyId}/account/payments")]
     [RequirePermission(Permissions.TesoreriaSupplierPayments)]
     public async Task<ActionResult<PagedResponse<SupplierPaymentDto>>> GetSupplierAccountPayments(
