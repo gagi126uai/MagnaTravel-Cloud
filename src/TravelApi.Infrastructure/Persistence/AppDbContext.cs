@@ -324,6 +324,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     // + 3 children. Configuracion fluida en OnModelCreating (CHECK constraints,
     // unique partial index y xmin concurrency token en la migracion EF).
     public DbSet<BookingCancellation> BookingCancellations => Set<BookingCancellation>();
+    // ADR-025: lineas hijas de la cancelacion (una por servicio cancelado). Ver BookingCancellationLine.
+    public DbSet<BookingCancellationLine> BookingCancellationLines => Set<BookingCancellationLine>();
     public DbSet<OperatorRefundReceived> OperatorRefundReceived => Set<OperatorRefundReceived>();
     public DbSet<OperatorRefundAllocation> OperatorRefundAllocations => Set<OperatorRefundAllocation>();
     public DbSet<DeductionLine> DeductionLines => Set<DeductionLine>();
@@ -1411,6 +1413,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     {
         // Public IDs (Guid uuid en BD + unique index, patron del repo).
         ConfigurePublicEntity<BookingCancellation>(modelBuilder);
+        ConfigurePublicEntity<BookingCancellationLine>(modelBuilder);   // ADR-025
         ConfigurePublicEntity<OperatorRefundReceived>(modelBuilder);
         ConfigurePublicEntity<OperatorRefundAllocation>(modelBuilder);
         ConfigurePublicEntity<DeductionLine>(modelBuilder);
@@ -1620,6 +1623,59 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
             // Concurrency lock-free (ADR-002 §2.5 / B11). Pre-requisito FC1.1
             // verificado: Npgsql 8.x soporta xmin nativamente.
+            entity.UseXminAsConcurrencyToken();
+        });
+
+        // ===== BookingCancellationLine (hija del BC, ADR-025) =====
+        modelBuilder.Entity<BookingCancellationLine>(entity =>
+        {
+            entity.ToTable("BookingCancellationLines");
+
+            // Enums como int (consistencia con el resto del modulo de cancelacion).
+            entity.Property(l => l.ServiceTable).HasConversion<int>();
+            entity.Property(l => l.Scope).HasConversion<int>();
+            entity.Property(l => l.ConceptKind).HasConversion<int>();
+            entity.Property(l => l.PenaltyStatus).HasConversion<int>();
+            entity.Property(l => l.DebitNoteStatus).HasConversion<int>();
+            entity.Property(l => l.RefundStatus).HasConversion<int>();
+
+            entity.Property(l => l.Currency).HasMaxLength(3).IsRequired();
+            entity.Property(l => l.LineSaleAmount).HasPrecision(18, 2);
+            entity.Property(l => l.PenaltyAmount).HasPrecision(18, 2);
+            entity.Property(l => l.RefundCap).HasPrecision(18, 2);
+            entity.Property(l => l.ReceivedRefundAmount).HasPrecision(18, 2);
+
+            entity.Property(l => l.ConceptClassifiedByUserId).HasMaxLength(450);
+            entity.Property(l => l.ConceptClassifiedByUserName).HasMaxLength(200);
+            entity.Property(l => l.DebitNoteArcaErrorMessage).HasMaxLength(1000);
+
+            // FK al padre. Cascade: la linea no tiene sentido sin su BC (y el BC nunca se
+            // borra fisicamente, se anula, asi que el cascade no es riesgo de perdida fiscal).
+            entity.HasOne(l => l.BookingCancellation)
+                  .WithMany(b => b.Lines)
+                  .HasForeignKey(l => l.BookingCancellationId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            // FK al operador. Restrict: el operador es dato de auditoria del evento, no se borra en cascada.
+            entity.HasOne(l => l.Supplier)
+                  .WithMany()
+                  .HasForeignKey(l => l.SupplierId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            // ND opcional de la linea (SetNull, mismo patron que el DebitNoteInvoice del padre).
+            entity.HasOne(l => l.DebitNoteInvoice)
+                  .WithMany()
+                  .HasForeignKey(l => l.DebitNoteInvoiceId)
+                  .OnDelete(DeleteBehavior.SetNull);
+
+            // Indices: el padre (cargar las lineas de un BC) y el operador (imputar refund por SupplierId,
+            // INV-126 reformulado a nivel linea). Ambos son los accesos calientes.
+            entity.HasIndex(l => l.BookingCancellationId)
+                  .HasDatabaseName("IX_BookingCancellationLines_BookingCancellationId");
+            entity.HasIndex(l => l.SupplierId)
+                  .HasDatabaseName("IX_BookingCancellationLines_SupplierId");
+
+            // Concurrencia igual que el padre: cancelar un servicio y editar la reserva en paralelo -> 409.
             entity.UseXminAsConcurrencyToken();
         });
 

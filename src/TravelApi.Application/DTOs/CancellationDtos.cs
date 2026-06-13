@@ -143,6 +143,44 @@ public record DraftCancellationRequest(
 );
 
 /// <summary>
+/// ADR-025 (DT.3.1, 2026-06-13): request para cancelar UN servicio dentro de una reserva, dejando el
+/// resto del file vivo (cancelacion PARCIAL). NO mueve el estado de la reserva (decision sellada #1 de
+/// Gaston): solo marca el servicio cancelado; el saldo del cliente baja solo (el servicio cancelado sale
+/// del calculo por ServiceResolutionRules) y la deuda del operador de ESE servicio baja en la misma
+/// operacion (B1).
+///
+/// <para><b>Que tabla/servicio</b>: <see cref="ServiceTable"/> + <see cref="ServicePublicId"/> identifican
+/// el servicio puntual. El service VALIDA server-side que el servicio pertenece a la reserva (no se confia
+/// en el frontend, espejo de INV-151).</para>
+///
+/// <para><b>Fiscal</b>: NO se emite NC automatica (decision #3). El borrador/calculo queda para revision
+/// manual. La penalidad se clasifica por linea (pass-through vs cargo propio).</para>
+/// </summary>
+public record CancelServiceRequest(
+    [Required] Guid ReservaPublicId,
+
+    /// <summary>En que tabla vive el servicio. Valores: Generic|Flight|Hotel|Transfer|Package|Assistance.</summary>
+    [Required] string ServiceTable,
+
+    [Required] Guid ServicePublicId,
+
+    [Required, MinLength(10), MaxLength(1000)]
+    string Reason
+);
+
+/// <summary>
+/// ADR-025 (DT.3.1): resultado de cancelar un servicio. Devuelve datos minimos para que la UI muestre el
+/// contador "N de M servicios cancelado" sin re-consultar (decision #1: no hay estado nuevo de reserva).
+/// </summary>
+public record CancelServiceResultDto(
+    Guid ReservaPublicId,
+    Guid ServicePublicId,
+    string ServiceTable,
+    int CancelledServicesCount,
+    int TotalServicesWithSupplierCount
+);
+
+/// <summary>
 /// FC1.2.1 §3.2: request para transicionar el BC de <c>Drafted</c> a
 /// <c>AwaitingFiscalConfirmation</c> (T0). Dispara la NC en AFIP via
 /// <c>InvoiceService.EnqueueAnnulmentAsync</c>.
