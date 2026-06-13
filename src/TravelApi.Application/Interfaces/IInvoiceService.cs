@@ -10,6 +10,13 @@ public interface IInvoiceService
     Task<InvoicingSummaryDto> GetInvoicingSummaryAsync(CancellationToken ct);
     Task<PagedResponse<InvoicingWorkItemDto>> GetInvoicingWorklistAsync(InvoicingWorklistQuery query, CancellationToken ct);
     Task<InvoiceDto> CreateAsync(CreateInvoiceRequest request, string? userId, string? userName, CancellationToken ct);
+
+    // Hallazgo auditoria ERP #9 (2026-06-13): arma los items de factura SUGERIDOS desde los servicios
+    // CONFIRMADOS de la reserva (una linea por servicio, por moneda) para que el modal de creacion
+    // prerrellene desde los servicios reales en vez del unico item generico "Servicios Turisticos".
+    // Solo LECTURA: no crea ni muta nada. Throws InvalidOperationException si la reserva no existe.
+    Task<InvoiceSuggestedItemsResponse> GetSuggestedItemsAsync(int reservaId, CancellationToken ct);
+
     Task<bool> RetryAsync(int id, CancellationToken ct);
     Task<IEnumerable<InvoiceListDto>> GetByReservaIdAsync(int reservaId, CancellationToken ct);
     Task<byte[]> GetPdfAsync(int id, CancellationToken ct);

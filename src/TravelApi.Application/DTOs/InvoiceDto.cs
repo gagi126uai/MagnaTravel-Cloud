@@ -31,4 +31,13 @@ public class InvoiceDto
     public long? OriginalInvoiceNumeroComprobante { get; set; }
     public int? OriginalInvoiceTipoComprobante { get; set; }
     public int? OriginalInvoicePuntoDeVenta { get; set; }
+
+    /// <summary>
+    /// Hallazgo auditoria ERP #9 (2026-06-13): aviso NO bloqueante que se completa al CREAR la factura
+    /// cuando la suma de los items facturados no coincide con lo vendido confirmado de la reserva en esa
+    /// moneda (ver <c>InvoiceMismatchChecker</c>). <c>null</c> cuando cuadra (caso normal). El operador
+    /// puede facturar igual: el campo solo informa el descuadre para que lo revise. NO se persiste en
+    /// la entidad <c>Invoice</c> — es transitorio, solo viaja en la respuesta de creacion.
+    /// </summary>
+    public string? Warning { get; set; }
 }

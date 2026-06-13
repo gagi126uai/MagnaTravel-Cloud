@@ -10,6 +10,7 @@ using TravelApi.Application.Exceptions;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Helpers;
+using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
 using AutoMapper;
@@ -424,7 +425,132 @@ public class InvoiceService : IInvoiceService
         // 2. Enqueue Job
         _backgroundJobClient.Enqueue<IAfipService>(s => s.ProcessInvoiceJob(invoice.Id));
 
-        return _mapper.Map<InvoiceDto>(invoice);
+        var dto = _mapper.Map<InvoiceDto>(invoice);
+
+        // Hallazgo auditoria ERP #9 (2026-06-13): aviso de descuadre NO bloqueante. Si la suma de los
+        // items facturados no coincide con lo vendido confirmado de la reserva en esa moneda, llenamos
+        // InvoiceDto.Warning. NO frena la emision (el job ya quedo encolado arriba) — la decision del
+        // dueño es avisar, no impedir. Solo aplica a facturas normales: las NC/ND replican/ajustan otro
+        // comprobante y su monto no se compara contra ConfirmedSale.
+        if (!request.IsCreditNote && !request.IsDebitNote)
+        {
+            dto.Warning = await BuildInvoiceMismatchWarningAsync(reservaId, request, ct);
+        }
+
+        return dto;
+    }
+
+    /// <summary>
+    /// Hallazgo #9: compara la suma de los items de la factura contra la venta CONFIRMADA de la reserva
+    /// en la moneda del comprobante y devuelve un texto de aviso si no cuadran (o <c>null</c> si cuadran).
+    ///
+    /// <para>La factura lleva su moneda en codigo ARCA (<c>request.MonId</c>: "PES"/"DOL"); la venta
+    /// confirmada por moneda vive en codigo ISO ("ARS"/"USD") en <see cref="ReservaMoneyByCurrency"/>.
+    /// Mapeamos ARCA -> ISO para buscar la linea correcta. Si la reserva no tiene venta confirmada en esa
+    /// moneda (linea ausente), comparamos contra 0 — que es lo correcto: facturar algo cuando no hay venta
+    /// confirmada en esa moneda es justamente un descuadre que vale la pena avisar.</para>
+    ///
+    /// <para>NO bloquea ni tira: cualquier problema al calcular el aviso (dato raro de moneda) se traga
+    /// devolviendo <c>null</c>, porque el aviso es accesorio y nunca debe romper una emision valida.</para>
+    /// </summary>
+    private async Task<string?> BuildInvoiceMismatchWarningAsync(
+        int reservaId, CreateInvoiceRequest request, CancellationToken ct)
+    {
+        // M1 (review backend): el aviso corre DESPUES de encolar el job de emision. Si la lectura de la
+        // proyeccion fallara (problema transitorio), la excepcion subiria al controller y devolveria 500
+        // AUNQUE la factura ya quedo creada y encolada -> la UI mentiria. Como el aviso es accesorio,
+        // tragamos cualquier error devolviendo null (honra el docstring) y dejamos rastro en el log.
+        try
+        {
+            // Moneda del comprobante en ISO. request.MonId ya viene normalizado a ARCA ("PES"/"DOL") por
+            // ValidateMultiCurrencyInvoicingAsync; "PES"/vacio = pesos = ARS, "DOL" = USD. Si fuera un codigo
+            // que no sabemos mapear, no avisamos (devolvemos null) en vez de inventar una moneda.
+            string isoCurrency = MapArcaToIsoOrDefault(request.MonId);
+
+            // Venta confirmada de la reserva en esa moneda. Lectura puntual (AsNoTracking) de la proyeccion
+            // por moneda; si no hay linea de esa moneda, ConfirmedSale = 0.
+            decimal confirmedSale = await _context.ReservaMoneyByCurrency
+                .AsNoTracking()
+                .Where(line => line.ReservaId == reservaId && line.Currency == isoCurrency)
+                .Select(line => (decimal?)line.ConfirmedSale)
+                .FirstOrDefaultAsync(ct) ?? 0m;
+
+            decimal invoicedItemsTotal = request.Items.Sum(item => item.Total);
+
+            return InvoiceMismatchChecker.BuildMismatchWarning(
+                currency: isoCurrency,
+                invoicedItemsTotal: invoicedItemsTotal,
+                confirmedSaleForCurrency: confirmedSale);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "No se pudo calcular el aviso de descuadre para ReservaId {ReservaId}; se emite igual sin aviso.",
+                reservaId);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Hallazgo #9: traduce el codigo de moneda ARCA del comprobante ("PES"/"DOL") al codigo ISO del
+    /// dominio de reservas ("ARS"/"USD"), que es el eje de <see cref="ReservaMoneyByCurrency"/>.
+    /// Vacio/"PES" -> ARS (regla legacy: una factura sin moneda es en pesos). "DOL" -> USD. Cualquier
+    /// otro valor cae a ARS por defecto (no deberia pasar: el boundary de facturacion solo deja PES/DOL).
+    /// </summary>
+    private static string MapArcaToIsoOrDefault(string? arcaCurrencyCode)
+    {
+        if (string.IsNullOrWhiteSpace(arcaCurrencyCode)
+            || string.Equals(arcaCurrencyCode, "PES", StringComparison.OrdinalIgnoreCase))
+        {
+            return Monedas.ARS;
+        }
+
+        if (string.Equals(arcaCurrencyCode, "DOL", StringComparison.OrdinalIgnoreCase))
+        {
+            return Monedas.USD;
+        }
+
+        return Monedas.ARS;
+    }
+
+    public async Task<InvoiceSuggestedItemsResponse> GetSuggestedItemsAsync(int reservaId, CancellationToken ct)
+    {
+        // Cargamos la reserva con las 6 colecciones de servicios. El builder es PURO y necesita las
+        // colecciones materializadas (AsNoTracking: solo lectura, no vamos a mutar nada).
+        var reserva = await _context.Reservas
+            .AsNoTracking()
+            .Include(r => r.FlightSegments)
+            .Include(r => r.HotelBookings)
+            .Include(r => r.TransferBookings)
+            .Include(r => r.PackageBookings)
+            .Include(r => r.AssistanceBookings)
+            .Include(r => r.Servicios)
+            .FirstOrDefaultAsync(r => r.Id == reservaId, ct)
+            ?? throw new InvalidOperationException("Reserva no encontrada.");
+
+        var groups = InvoiceSuggestedItemsBuilder.Build(reserva);
+
+        var response = new InvoiceSuggestedItemsResponse();
+        foreach (var group in groups)
+        {
+            var groupDto = new InvoiceSuggestedItemGroupDto
+            {
+                Currency = group.Currency,
+                SuggestedTotal = group.SuggestedTotal,
+                Items = group.Items
+                    .Select(item => new InvoiceItemDto
+                    {
+                        Description = item.Description,
+                        Quantity = item.Quantity,
+                        UnitPrice = item.UnitPrice,
+                        Total = item.Total,
+                        AlicuotaIvaId = item.AlicuotaIvaId
+                    })
+                    .ToList()
+            };
+            response.Groups.Add(groupDto);
+        }
+        return response;
     }
 
     /// <summary>

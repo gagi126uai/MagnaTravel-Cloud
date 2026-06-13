@@ -80,6 +80,35 @@ public class InvoicesController : ControllerBase
         }
     }
 
+    // Hallazgo auditoria ERP #9 (2026-06-13): el modal de creacion de factura pide aca los items
+    // sugeridos armados desde los servicios CONFIRMADOS de la reserva (uno por servicio, por moneda)
+    // y prerrellena las lineas reales en vez del unico item generico "Servicios Turisticos".
+    //
+    // Gateado con CobranzasInvoice (el mismo permiso que CreateInvoice: quien puede facturar puede pedir
+    // la sugerencia) + ownership por reserva con bypass CobranzasViewAll (un vendedor solo arma facturas
+    // sobre SUS reservas). Solo lectura: no crea ni muta nada.
+    [HttpGet("reserva/{publicIdOrLegacyId}/suggested-items")]
+    [RequirePermission(Permissions.CobranzasInvoice)]
+    [RequireOwnership(OwnedEntity.Reserva, "publicIdOrLegacyId", bypassPermission: Permissions.CobranzasViewAll)]
+    public async Task<ActionResult<InvoiceSuggestedItemsResponse>> GetSuggestedItems(string publicIdOrLegacyId, CancellationToken ct)
+    {
+        try
+        {
+            var reservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, ct);
+            var suggestion = await _invoiceService.GetSuggestedItemsAsync(reservaId, ct);
+            return Ok(suggestion);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Reserva no encontrada -> el service tira InvalidOperationException con mensaje claro.
+            return Conflict(new { message = ex.Message });
+        }
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+        }
+    }
+
     [HttpPost("{publicIdOrLegacyId}/retry")]
     [RequirePermission(Permissions.CobranzasInvoice)]
     [RequireOwnership(OwnedEntity.Invoice, "publicIdOrLegacyId", bypassPermission: Permissions.CobranzasViewAll)]
