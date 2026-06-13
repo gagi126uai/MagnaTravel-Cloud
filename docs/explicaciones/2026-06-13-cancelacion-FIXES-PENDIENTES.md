@@ -1,4 +1,23 @@
-# Cancelación parcial / multi-operador — FIXES PENDIENTES (retomar acá)
+# Cancelación parcial / multi-operador — FIXES (RESUELTO, mergeado a main)
+
+> **✅ CERRADO 2026-06-13 (commit merge `0af620a`).** Los 4 bloqueantes (SEC-B1/B1b/B2/INV-118) ya estaban
+> implementados en el código del commit base `0d9cdf5` (el plan de abajo quedó viejo respecto al código).
+> Se agregaron **11 tests de regresión** (`0304c66`) que los sellan y se corrió la re-review de seguridad:
+> **Approved with comments**. Suite **1709/1709** unit verde. Mergeado a main con `--no-ff`.
+>
+> **Dictamen del SEC-B1b (el único punto abierto):** NO bloquea. El candado SEC-B1 y el ancla del rastro
+> parcial miran la misma condición (factura viva) → son mutuamente excluyentes → en parcial nunca se
+> materializa el `BookingCancellation`+`Line` Scope=Partial. **Limitación ACEPTADA y documentada**: no hay
+> pérdida de plata (la deuda al operador se recalcula igual), el evento queda en el audit log, y la emisión
+> fiscal sigue manual. Si en el futuro se quiere ancla fiscal del parcial → desacoplar ancla del candado
+> (diseño nuevo, fuera de este merge).
+>
+> **Pendiente pre-deploy (paso de Gastón, VPS):** integración Postgres del `Adr028_M1` + backfill
+> (`bash scripts/ops/run-tests-all.sh`) antes de desplegar el acumulado de main.
+>
+> Lo de abajo es el plan original (histórico); se conserva por trazabilidad.
+
+---
 
 Esta rama (`wip/adr025-cancelacion-parcial`, commit base `0d9cdf5`) tiene la cancelación parcial + multi-operador CONSTRUIDA (1698/1698 unit verde, migración Adr028_M1) pero la revisión de seguridad dejó **Changes Required**. NO mergear a main hasta cerrar lo de abajo, re-revisar con `security-data-risk-reviewer` y dejar la suite verde.
 
