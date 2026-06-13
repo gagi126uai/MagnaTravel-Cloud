@@ -65,8 +65,13 @@ public record CreateFlightRequest(
     NewCatalogProductRequest? NewCatalogProduct = null,
     // ADR-018 (§4-bis): nombre del producto que VIO/tipeo el vendedor en la ficha. Fuente UNICA de
     // FlightSegment.ProductName (se copia al crear, no se re-deriva del Rate). Opcional al final.
-    // (ADR-019: aca vivia TicketingDeadline; la fecha limite manual murio con el aviso automatico.)
-    string? ProductName = null
+    string? ProductName = null,
+    // Auditoria ERP 2026-06-12 (item 5): VUELVE el time-limit de emision del aereo (la carga el
+    // operador). Opcional al final. En el ALTA se mapea por convencion. Ver FlightSegment.TicketingDeadline.
+    DateTime? TicketingDeadline = null,
+    // Auditoria ERP 2026-06-12 (item 5): fecha limite de pago al operador del segmento (distinta del
+    // time-limit). Opcional al final. Ver FlightSegment.OperatorPaymentDeadline.
+    DateTime? OperatorPaymentDeadline = null
 );
 
 public record UpdateFlightRequest(
@@ -92,8 +97,14 @@ public record UpdateFlightRequest(
     // ADR-018 (§4-bis): nombre del producto que VIO/tipeo el vendedor. La ficha inline lo reenvia en la
     // edicion (round-trip), pero el modal viejo NO lo manda (llega null): por eso el map lo IGNORA y el
     // service lo asigna a mano solo si viene con valor (anti-clobber, ver UpdateFlightAsync). Opcional al final.
-    // (ADR-019: aca vivian TicketingDeadline + DeadlinesSpecified; murieron con el aviso automatico.)
-    string? ProductName = null
+    string? ProductName = null,
+    // Auditoria ERP 2026-06-12 (item 5): time-limit de emision. Opcional al final. En el UPDATE el map
+    // lo IGNORA (anti-clobber, mismo motivo que ProductName); el service lo asigna a mano solo si viene
+    // con valor (ver UpdateFlightAsync). Ver FlightSegment.TicketingDeadline.
+    DateTime? TicketingDeadline = null,
+    // Auditoria ERP 2026-06-12 (item 5): fecha limite de pago al operador del segmento. Opcional al
+    // final, anti-clobber en el UPDATE igual que TicketingDeadline. Ver FlightSegment.OperatorPaymentDeadline.
+    DateTime? OperatorPaymentDeadline = null
 );
 
 public record CreateHotelRequest(
@@ -113,11 +124,14 @@ public record CreateHotelRequest(
     // ADR-017 F1.3 (§2.3.b): crear producto del catalogo en linea. Mutuamente excluyente con RateId.
     // Para Hotel exige City (D6).
     NewCatalogProductRequest? NewCatalogProduct = null,
-    // (ADR-019: aca vivia OperatorPaymentDeadline; la fecha limite manual murio con el aviso automatico.)
     // Direccion del hotel (campo "Mas detalles" del form). Antes el front la mandaba y se descartaba
     // porque el request no la tenia. Opcional con default null para no romper los callers posicionales.
     // AutoMapper la mapea por nombre contra HotelBooking.Address (no es campo de costo, es inocuo).
-    string? Address = null
+    string? Address = null,
+    // Auditoria ERP 2026-06-12 (item 5): VUELVE la fecha limite de pago al operador (la carga el
+    // operador por servicio). Opcional al final (null = no informada). En el ALTA se mapea por
+    // convencion contra HotelBooking.OperatorPaymentDeadline. Ver HotelBooking.OperatorPaymentDeadline.
+    DateTime? OperatorPaymentDeadline = null
 );
 
 public record UpdateHotelRequest(
@@ -134,11 +148,14 @@ public record UpdateHotelRequest(
     // Impuesto INCLUIDO en el costo (no suma al precio del cliente). Opcional con default 0 para
     // no romper los callers posicionales existentes. Ver HotelBooking.Tax.
     decimal Tax = 0,
-    // (ADR-019: aca vivian OperatorPaymentDeadline + DeadlinesSpecified; murieron con el aviso automatico.)
     // Direccion del hotel (campo "Mas detalles" del form). Opcional con default null para no romper los
     // callers posicionales. AutoMapper la mapea por nombre a HotelBooking.Address, igual que los demas
     // strings del hotel (Country/Notes): el modal la reenvia en cada edicion, no usa discriminador.
-    string? Address = null
+    string? Address = null,
+    // Auditoria ERP 2026-06-12 (item 5): fecha limite de pago al operador. Opcional al final. En el
+    // UPDATE el map la IGNORA (anti-clobber): un modal viejo que no la manda llega null y borraria una
+    // fecha cargada; el service la asigna a mano solo cuando viene con valor (ver UpdateHotelAsync).
+    DateTime? OperatorPaymentDeadline = null
 );
 
 public record CreateTransferRequest(
@@ -168,7 +185,10 @@ public record CreateTransferRequest(
     string? ServiceMode = null,
     // ADR-018 (§4-bis): nombre del producto que VIO/tipeo el vendedor. Fuente UNICA de
     // TransferBooking.ProductName (se copia al crear, no se re-deriva del Rate). Opcional al final.
-    string? ProductName = null
+    string? ProductName = null,
+    // Auditoria ERP 2026-06-12 (item 5): fecha limite de pago al operador. Opcional al final, mapeada
+    // por convencion en el ALTA. Ver TransferBooking.OperatorPaymentDeadline.
+    DateTime? OperatorPaymentDeadline = null
 );
 
 public record UpdateTransferRequest(
@@ -193,7 +213,10 @@ public record UpdateTransferRequest(
     // ADR-018 (§4-bis): nombre del producto que VIO/tipeo el vendedor. La ficha inline lo reenvia en la
     // edicion (round-trip), pero el modal viejo NO lo manda (llega null): por eso el map lo IGNORA y el
     // service lo asigna a mano solo si viene con valor (anti-clobber, ver UpdateTransferAsync). Opcional al final.
-    string? ProductName = null
+    string? ProductName = null,
+    // Auditoria ERP 2026-06-12 (item 5): fecha limite de pago al operador. Opcional al final, anti-clobber
+    // en el UPDATE (el map la ignora; el service la asigna si viene con valor). Ver TransferBooking.OperatorPaymentDeadline.
+    DateTime? OperatorPaymentDeadline = null
 );
 
 // Bloque 3: Asistencia al viajero (seguro). Espeja a CreateHotelRequest/UpdateHotelRequest:
@@ -215,7 +238,10 @@ public record CreateAssistanceRequest(
     // ADR-017 F1.3 (§2.1, D5): moneda REAL de esta venta. Obligatoria con flag ON, ignorada con OFF.
     string? Currency = null,
     // ADR-017 F1.3 (§2.3.b): crear producto del catalogo en linea. Mutuamente excluyente con RateId.
-    NewCatalogProductRequest? NewCatalogProduct = null
+    NewCatalogProductRequest? NewCatalogProduct = null,
+    // Auditoria ERP 2026-06-12 (item 5): fecha limite de pago al operador. Opcional al final, mapeada
+    // por convencion en el ALTA. Ver AssistanceBooking.OperatorPaymentDeadline.
+    DateTime? OperatorPaymentDeadline = null
 );
 
 public record UpdateAssistanceRequest(
@@ -231,7 +257,10 @@ public record UpdateAssistanceRequest(
     string WorkflowStatus = "Solicitado",
     // Impuesto INCLUIDO en el costo (no suma al precio del cliente). Opcional con default 0 para
     // no romper los callers posicionales existentes. Ver AssistanceBooking.Tax.
-    decimal Tax = 0
+    decimal Tax = 0,
+    // Auditoria ERP 2026-06-12 (item 5): fecha limite de pago al operador. Opcional al final, anti-clobber
+    // en el UPDATE (el map la ignora; el service la asigna si viene con valor). Ver AssistanceBooking.OperatorPaymentDeadline.
+    DateTime? OperatorPaymentDeadline = null
 );
 
 public record CreatePackageRequest(
@@ -253,10 +282,12 @@ public record CreatePackageRequest(
     string? Currency = null,
     // ADR-017 F1.3 (§2.3.b): crear producto del catalogo en linea. Mutuamente excluyente con RateId.
     NewCatalogProductRequest? NewCatalogProduct = null,
-    // (ADR-019: aca vivia OperatorPaymentDeadline; la fecha limite manual murio con el aviso automatico.)
     // Ficha F2: base de ocupacion ("double"/"triple"/etc). Metadato operativo opcional, no afecta costos.
     // Opcional al final para no romper callers posicionales. Ver PackageBooking.OccupancyBase.
-    string? OccupancyBase = null
+    string? OccupancyBase = null,
+    // Auditoria ERP 2026-06-12 (item 5): VUELVE la fecha limite de pago al operador. Opcional al final,
+    // mapeada por convencion en el ALTA. Ver PackageBooking.OperatorPaymentDeadline.
+    DateTime? OperatorPaymentDeadline = null
 );
 
 public record UpdatePackageRequest(
@@ -272,9 +303,11 @@ public record UpdatePackageRequest(
     // Impuesto INCLUIDO en el costo (no suma al precio del cliente). Opcional con default 0 para
     // no romper los callers posicionales existentes. Ver PackageBooking.Tax.
     decimal Tax = 0,
-    // (ADR-019: aca vivian OperatorPaymentDeadline + DeadlinesSpecified; murieron con el aviso automatico.)
     // Ficha F2: base de ocupacion ("double"/"triple"/etc). El front siempre lo reenvia en la edicion
     // (round-trip), por eso se mapea por convencion (sin Ignore): null pisa, igual que Notes.
     // Ver PackageBooking.OccupancyBase.
-    string? OccupancyBase = null
+    string? OccupancyBase = null,
+    // Auditoria ERP 2026-06-12 (item 5): fecha limite de pago al operador. Opcional al final, anti-clobber
+    // en el UPDATE (el map la ignora; el service la asigna si viene con valor). Ver PackageBooking.OperatorPaymentDeadline.
+    DateTime? OperatorPaymentDeadline = null
 );

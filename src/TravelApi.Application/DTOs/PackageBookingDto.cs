@@ -32,6 +32,9 @@ public class PackageBookingDto
     public string? Notes { get; set; }
     public string Status { get; set; } = "Pendiente";
     public string? ConfirmationNumber { get; set; }
+    // Auditoria ERP 2026-06-12 (item 5): fecha limite de pago al operador. Aditivo, null = no informada.
+    // Ver PackageBooking.OperatorPaymentDeadline.
+    public DateTime? OperatorPaymentDeadline { get; set; }
     public decimal SalePrice { get; set; }
     public decimal NetCost { get; set; }
     // Impuestos incluidos en el costo (mismo criterio que FlightSegmentDto.Tax). No suma al precio

@@ -90,9 +90,22 @@ public class HotelBooking : IHasPublicId
     [MaxLength(500)]
     public string? Notes { get; set; }
 
-    // (ADR-019, 2026-06-06: aca vivia OperatorPaymentDeadline — fecha limite manual de ADR-017 F1.4,
-    // nunca prendida en prod. La reemplazo el aviso automatico "Proximos inicios"; la columna se
-    // dropeo en la migracion Adr019_M1.)
+    /// <summary>
+    /// Auditoria ERP 2026-06-12 (item 5, decision del dueño): VUELVE la fecha limite de pago al
+    /// operador. La carga el operador por servicio: es la fecha tope para pagarle al proveedor sin
+    /// perder el cupo/tarifa. Opcional (null = no informada).
+    ///
+    /// <para><b>Por que vuelve tras ADR-019</b>: ADR-019 (D7) no dropeo este campo porque la fecha en
+    /// si fuera invalida, sino porque la VIEJA campanita de "fechas limite manuales" (ADR-017 F1.4) fue
+    /// reemplazada por el aviso automatico "Proximos inicios" (que mira el INICIO del viaje, no el pago
+    /// al operador). El concepto "pago al operador" NUNCA fue cubierto por ese aviso. La auditoria de
+    /// negocio lo identifico como el vencimiento que mas plata cuesta y el dueño lo reintrodujo. Ahora
+    /// alimenta una ALARMA PROPIA (AlertService.ComputeOperatorPaymentDeadlinesAsync), NO la pill vieja.</para>
+    ///
+    /// <para>Date-only "de pared" con Kind=Utc, igual criterio que CheckIn (sin hora, sin conversion de
+    /// zona — ver NormalizeCalendarDate en BookingService).</para>
+    /// </summary>
+    public DateTime? OperatorPaymentDeadline { get; set; }
 
     /// <summary>
     /// ADR-017 F1.1 (decision D7, 2026-06-05): marca "costo a confirmar". Aditivo, default false: las

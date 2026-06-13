@@ -9,7 +9,10 @@ public record PassengerUpsertRequest(
     string? Phone,
     string? Email,
     string? Gender,
-    string? Notes);
+    string? Notes,
+    // Auditoria ERP 2026-06-12 (item 8): vencimiento del pasaporte. Opcional al final para no romper
+    // los callers posicionales existentes (null = no informado). Ver Passenger.PassportExpiry.
+    DateTime? PassportExpiry = null);
 
 public record ReservationPaymentUpsertRequest(
     decimal Amount,

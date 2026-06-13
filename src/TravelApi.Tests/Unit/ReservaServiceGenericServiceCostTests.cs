@@ -404,4 +404,83 @@ public class ReservaServiceGenericServiceCostTests
         Assert.Equal(120m, dto.NetCost);
         Assert.Equal(60m, dto.Commission);
     }
+
+    // ===== ADR-026 (vencimientos): fecha limite de pago al operador del servicio generico =====
+    // El generico tiene la columna + la alarma pero le faltaba el campo en AddServiceRequest
+    // (auditoria 2026-06-12): la fecha nunca llegaba por la ruta real de escritura, asi que la
+    // alarma de pago al operador nunca disparaba para este tipo. Estos tests cubren esa ruta.
+
+    [Fact]
+    public async Task AddServiceAsync_PersistsOperatorPaymentDeadline_NormalizedToUtcMidnight()
+    {
+        await using var context = CreateContext();
+        var (reserva, _) = await SeedReservaAndRateAsync(context);
+        var seeCost = CreateServiceForUser(context, canSeeCost: true);
+
+        var request = new AddServiceRequest(
+            ServiceType: "Excursion",
+            SupplierId: null,
+            Description: "Excursion glaciar",
+            ConfirmationNumber: null,
+            DepartureDate: DateTime.UtcNow.AddDays(10),
+            ReturnDate: null,
+            SalePrice: 160m,
+            NetCost: 100m,
+            RateId: null,
+            OperatorPaymentDeadline: new DateTime(2026, 7, 15, 9, 30, 0, DateTimeKind.Unspecified));
+
+        await seeCost.AddServiceAsync(reserva.Id, request, CancellationToken.None);
+
+        var stored = await context.Servicios.AsNoTracking().SingleAsync();
+        Assert.NotNull(stored.OperatorPaymentDeadline);
+        Assert.Equal(new DateTime(2026, 7, 15), stored.OperatorPaymentDeadline!.Value.Date);
+        Assert.Equal(DateTimeKind.Utc, stored.OperatorPaymentDeadline!.Value.Kind); // fecha de pared
+        Assert.Equal(TimeSpan.Zero, stored.OperatorPaymentDeadline!.Value.TimeOfDay); // medianoche
+    }
+
+    [Fact]
+    public async Task UpdateServiceAsync_WithoutDeadline_PreservesStoredDeadline()
+    {
+        await using var context = CreateContext();
+        var (reserva, _) = await SeedReservaAndRateAsync(context);
+        var service = await SeedServiceAsync(context, reserva.Id);
+        service.OperatorPaymentDeadline = DateTime.SpecifyKind(new DateTime(2026, 7, 15), DateTimeKind.Utc);
+        await context.SaveChangesAsync();
+        var seeCost = CreateServiceForUser(context, canSeeCost: true);
+
+        // El form que NO manda la fecha (default null) no debe borrar la fecha cargada (anti-pisado).
+        await seeCost.UpdateServiceAsync(
+            service.Id, BuildAddRequest(netCost: 120m, salePrice: 180m), CancellationToken.None);
+
+        var stored = await context.Servicios.AsNoTracking().SingleAsync();
+        Assert.NotNull(stored.OperatorPaymentDeadline);
+        Assert.Equal(new DateTime(2026, 7, 15), stored.OperatorPaymentDeadline!.Value.Date);
+    }
+
+    [Fact]
+    public async Task UpdateServiceAsync_WithDeadline_UpdatesIt()
+    {
+        await using var context = CreateContext();
+        var (reserva, _) = await SeedReservaAndRateAsync(context);
+        var service = await SeedServiceAsync(context, reserva.Id);
+        var seeCost = CreateServiceForUser(context, canSeeCost: true);
+
+        var request = new AddServiceRequest(
+            ServiceType: "Excursion",
+            SupplierId: null,
+            Description: "Excursion glaciar",
+            ConfirmationNumber: null,
+            DepartureDate: DateTime.UtcNow.AddDays(10),
+            ReturnDate: null,
+            SalePrice: 180m,
+            NetCost: 120m,
+            RateId: null,
+            OperatorPaymentDeadline: new DateTime(2026, 8, 1, 14, 0, 0, DateTimeKind.Unspecified));
+
+        await seeCost.UpdateServiceAsync(service.Id, request, CancellationToken.None);
+
+        var stored = await context.Servicios.AsNoTracking().SingleAsync();
+        Assert.Equal(new DateTime(2026, 8, 1), stored.OperatorPaymentDeadline!.Value.Date);
+        Assert.Equal(DateTimeKind.Utc, stored.OperatorPaymentDeadline!.Value.Kind);
+    }
 }

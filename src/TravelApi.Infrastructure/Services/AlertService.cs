@@ -11,6 +11,23 @@ namespace TravelApi.Infrastructure.Services;
 
 public class AlertService : IAlertService
 {
+    // === Auditoria ERP 2026-06-12 (items 5 y 8): ventanas de las 3 alarmas nuevas ===
+    // Defaults elegidos y documentados (sin feature flag — son alarmas operativas siempre activas, igual
+    // que los buckets financieros). NO se hicieron settings de DB a proposito: son umbrales operativos
+    // estables; si el dueño quiere configurarlos, se agregan como settings despues sin cambiar el contrato.
+
+    /// <summary>
+    /// Pago al operador y time-limit aereo: avisar desde 3 dias antes del vencimiento. Vencidos
+    /// (daysLeft &lt; 0) tambien avisan — un pago/emision vencido es lo MAS urgente, no se silencia.
+    /// </summary>
+    private const int OperatorDeadlineAlertDays = 3;
+
+    /// <summary>
+    /// Pasaporte: regla tipica de vigencia — muchos destinos exigen que el pasaporte siga vigente 6 meses
+    /// DESPUES del viaje. Avisamos si el pasaporte vence dentro de los 6 meses posteriores al inicio del viaje.
+    /// </summary>
+    private const int PassportValidityMonthsAfterTrip = 6;
+
     private readonly AppDbContext _context;
     private readonly IOperationalFinanceSettingsService _operationalFinanceSettingsService;
     private readonly ILogger<AlertService> _logger;
@@ -49,10 +66,27 @@ public class AlertService : IAlertService
         // CostsToConfirm: gateado por el flag del catalogo + que el caller pueda ver costos (§2.8/D8b).
         var costsToConfirmActive = settings.EnableCatalogFindOrCreate && caller.CanSeeCost;
 
-        // CAMINO BYTE-IDENTICO (default en prod): si ningun bucket nuevo esta activo, devolvemos el
-        // MISMO objeto anonimo de siempre (mismas 3 propiedades, mismo orden) — /alerts no cambia en
-        // nada para los consumidores actuales.
-        if (!upcomingStartsActive && !costsToConfirmActive)
+        // El "hoy" del corte es la fecha LOCAL de Argentina: comparar contra UtcNow.Date correria el dia
+        // 3h antes (a las 21:00 ART ya seria "mañana"). Lo necesitan los buckets nuevos y las alarmas.
+        var today = AgencyTimezone.TodayWallClockUtc();
+
+        // === Auditoria ERP 2026-06-12 (items 5 y 8): 3 alarmas nuevas, SIEMPRE activas (sin flag) ===
+        // Mismo gating de visibilidad que UpcomingStarts: admin ve todas, el vendedor solo SUS reservas,
+        // no-admin sin identidad -> vacio (fail-closed). NO dependen de EnableServiceDeadlineAlerts: son
+        // alarmas operativas propias, no la pill vieja. Solo aplican a reservas vivas y servicios/pax no
+        // cancelados (cada compute lo aplica inline).
+        var operatorPaymentDeadlines = await ComputeOperatorPaymentDeadlinesAsync(caller, today, cancellationToken);
+        var ticketingDeadlines = await ComputeTicketingDeadlinesAsync(caller, today, cancellationToken);
+        var passportExpiries = await ComputePassportExpiriesAsync(caller, cancellationToken);
+
+        var hasNewAlarms = operatorPaymentDeadlines.Count > 0
+                           || ticketingDeadlines.Count > 0
+                           || passportExpiries.Count > 0;
+
+        // CAMINO BYTE-IDENTICO (default historico): si NINGUN bucket nuevo esta activo Y no hay NINGUNA
+        // alarma nueva que mostrar, devolvemos el MISMO objeto anonimo de siempre (3 propiedades, mismo
+        // orden) — /alerts no cambia para los consumidores actuales cuando no hay nada nuevo que avisar.
+        if (!upcomingStartsActive && !costsToConfirmActive && !hasNewAlarms)
         {
             return new
             {
@@ -62,10 +96,6 @@ public class AlertService : IAlertService
             };
         }
 
-        // Con al menos un bucket nuevo activo, el "hoy" del corte es la fecha LOCAL de Argentina:
-        // comparar contra UtcNow.Date correria el dia 3h antes (a las 21:00 ART ya seria "mañana").
-        var today = AgencyTimezone.TodayWallClockUtc();
-
         var upcomingStarts = upcomingStartsActive
             ? await ComputeUpcomingStartsAsync(caller, settings.ServiceDeadlineAlertDays, today, cancellationToken)
             : new List<object>();
@@ -74,12 +104,14 @@ public class AlertService : IAlertService
             ? await ComputeCostsToConfirmAsync(caller, cancellationToken)
             : new List<object>();
 
-        // Objeto extendido (solo en el path con flag ON): claves nuevas aditivas. Devolvemos un DTO TIPADO
-        // (NO un Dictionary<string,object>) para que System.Text.Json aplique el PropertyNamingPolicy camelCase
-        // a las claves — un diccionario deja las claves verbatim (PascalCase) y prender el flag renombraria en
-        // silencio urgentTrips->UrgentTrips, rompiendo a los consumidores. Ver AlertsResponse. Cada bucket nuevo
-        // se incluye SOLO si su gate esta activo (null = se omite del JSON), misma presencia condicional que antes.
-        var totalCount = financialCount + upcomingStarts.Count + costsToConfirm.Count;
+        // Objeto extendido: claves nuevas aditivas. Devolvemos un DTO TIPADO (NO un Dictionary<string,object>)
+        // para que System.Text.Json aplique el PropertyNamingPolicy camelCase a las claves — un diccionario deja
+        // las claves verbatim (PascalCase) y romperia a los consumidores que sirven el path con flag OFF. Ver
+        // AlertsResponse. Cada bucket/alarma se incluye SOLO si tiene contenido o su gate esta activo (null = se
+        // omite del JSON), misma presencia condicional que el path historico.
+        var totalCount = financialCount
+                         + upcomingStarts.Count + costsToConfirm.Count
+                         + operatorPaymentDeadlines.Count + ticketingDeadlines.Count + passportExpiries.Count;
         return new AlertsResponse(
             urgentTrips: urgentTrips,
             supplierDebts: supplierDebts,
@@ -88,7 +120,11 @@ public class AlertService : IAlertService
             // mismo umbral. NO va en OperationalFlagsResponse (regla dura "solo booleanos").
             upcomingStartsWindowDays: upcomingStartsActive ? settings.ServiceDeadlineAlertDays : null,
             costsToConfirm: costsToConfirmActive ? costsToConfirm : null,
-            totalCount: totalCount);
+            totalCount: totalCount,
+            // Alarmas nuevas: se omiten del JSON cuando estan vacias (null), igual presencia condicional.
+            operatorPaymentDeadlines: operatorPaymentDeadlines.Count > 0 ? operatorPaymentDeadlines : null,
+            ticketingDeadlines: ticketingDeadlines.Count > 0 ? ticketingDeadlines : null,
+            passportExpiries: passportExpiries.Count > 0 ? passportExpiries : null);
     }
 
     /// <summary>
@@ -355,6 +391,239 @@ public class AlertService : IAlertService
             BuildCostToConfirmAlert(x.PublicId, x.NumeroReserva, "Asistencia", x.Label, x.CostToConfirmReason)));
 
         return alerts;
+    }
+
+    /// <summary>
+    /// Auditoria ERP 2026-06-12 (item 5): alarma "vence el pago al operador". UN aviso POR SERVICIO no
+    /// cancelado, de reservas VIVAS (InManagement/Confirmed/Traveling), cuya fecha limite de pago cae
+    /// dentro de la ventana <c>[.. hoy + OperatorDeadlineAlertDays]</c> O ya vencio (sin borde inferior:
+    /// un pago vencido es lo MAS urgente). Recorre los 6 tipos de servicio con costo/proveedor.
+    ///
+    /// <para>Mismo gating que UpcomingStarts: admin ve todas, el vendedor solo SUS reservas, no-admin sin
+    /// identidad -> vacio (fail-closed). El texto de negocio (serviceLabel + daysLeft) viaja listo para que
+    /// el front lo muestre sin logica extra (daysLeft &lt; 0 = vencido).</para>
+    /// </summary>
+    private async Task<List<object>> ComputeOperatorPaymentDeadlinesAsync(
+        AlertCallerContext caller, DateTime today, CancellationToken ct)
+    {
+        // Fail-closed: un no-admin sin identidad no ve alarmas de nadie (mismo borde que UpcomingStarts).
+        if (!caller.IsAdmin && string.IsNullOrEmpty(caller.UserId))
+            return new List<object>();
+
+        // Tope superior EXCLUSIVO contra la medianoche del dia siguiente: "hasta hoy + X inclusive".
+        var windowUpperExclusive = today.AddDays(OperatorDeadlineAlertDays + 1);
+        var alerts = new List<object>();
+
+        // Predicados inline (EF no traduce helpers propios). "Reserva viva" = compromiso con el operador
+        // ya existe: InManagement/Confirmed/Traveling. El servicio no debe estar cancelado.
+
+        // Hotel
+        var hotel = await (
+            from h in _context.HotelBookings
+            join r in _context.Reservas on h.ReservaId equals r.Id
+            where h.OperatorPaymentDeadline != null
+                  && h.OperatorPaymentDeadline < windowUpperExclusive
+                  && h.Status != "Cancelado"
+                  && (r.Status == EstadoReserva.InManagement || r.Status == EstadoReserva.Confirmed || r.Status == EstadoReserva.Traveling)
+                  && (caller.IsAdmin || r.ResponsibleUserId == caller.UserId)
+            select new { r.PublicId, r.NumeroReserva, Label = h.HotelName, Deadline = h.OperatorPaymentDeadline!.Value }).ToListAsync(ct);
+        alerts.AddRange(hotel.Select(x => BuildDeadlineAlert(x.PublicId, x.NumeroReserva, "Hotel", x.Label, x.Deadline, today)));
+
+        // Aereo (pago al operador, distinto del time-limit de emision)
+        var flight = await (
+            from f in _context.FlightSegments
+            join r in _context.Reservas on f.ReservaId equals r.Id
+            where f.OperatorPaymentDeadline != null
+                  && f.OperatorPaymentDeadline < windowUpperExclusive
+                  && f.Status != "UN" && f.Status != "UC" && f.Status != "HX" && f.Status != "NO"
+                  && (r.Status == EstadoReserva.InManagement || r.Status == EstadoReserva.Confirmed || r.Status == EstadoReserva.Traveling)
+                  && (caller.IsAdmin || r.ResponsibleUserId == caller.UserId)
+            select new { r.PublicId, r.NumeroReserva, f.ProductName, f.AirlineCode, f.FlightNumber, Deadline = f.OperatorPaymentDeadline!.Value }).ToListAsync(ct);
+        alerts.AddRange(flight.Select(x => BuildDeadlineAlert(
+            x.PublicId, x.NumeroReserva, "Aereo",
+            ServiceDisplayName.ForFlight(x.ProductName, x.AirlineCode, x.FlightNumber), x.Deadline, today)));
+
+        // Traslado
+        var transfer = await (
+            from t in _context.TransferBookings
+            join r in _context.Reservas on t.ReservaId equals r.Id
+            where t.OperatorPaymentDeadline != null
+                  && t.OperatorPaymentDeadline < windowUpperExclusive
+                  && t.Status != "Cancelado"
+                  && (r.Status == EstadoReserva.InManagement || r.Status == EstadoReserva.Confirmed || r.Status == EstadoReserva.Traveling)
+                  && (caller.IsAdmin || r.ResponsibleUserId == caller.UserId)
+            select new { r.PublicId, r.NumeroReserva, t.ProductName, t.PickupLocation, t.DropoffLocation, t.VehicleType, Deadline = t.OperatorPaymentDeadline!.Value }).ToListAsync(ct);
+        alerts.AddRange(transfer.Select(x => BuildDeadlineAlert(
+            x.PublicId, x.NumeroReserva, "Traslado",
+            ServiceDisplayName.ForTransfer(x.ProductName, x.PickupLocation, x.DropoffLocation, x.VehicleType), x.Deadline, today)));
+
+        // Paquete
+        var package = await (
+            from p in _context.PackageBookings
+            join r in _context.Reservas on p.ReservaId equals r.Id
+            where p.OperatorPaymentDeadline != null
+                  && p.OperatorPaymentDeadline < windowUpperExclusive
+                  && p.Status != "Cancelado"
+                  && (r.Status == EstadoReserva.InManagement || r.Status == EstadoReserva.Confirmed || r.Status == EstadoReserva.Traveling)
+                  && (caller.IsAdmin || r.ResponsibleUserId == caller.UserId)
+            select new { r.PublicId, r.NumeroReserva, Label = p.PackageName, Deadline = p.OperatorPaymentDeadline!.Value }).ToListAsync(ct);
+        alerts.AddRange(package.Select(x => BuildDeadlineAlert(x.PublicId, x.NumeroReserva, "Paquete", x.Label, x.Deadline, today)));
+
+        // Asistencia
+        var assistance = await (
+            from a in _context.AssistanceBookings
+            join r in _context.Reservas on a.ReservaId equals r.Id
+            where a.OperatorPaymentDeadline != null
+                  && a.OperatorPaymentDeadline < windowUpperExclusive
+                  && a.Status != "Cancelado"
+                  && (r.Status == EstadoReserva.InManagement || r.Status == EstadoReserva.Confirmed || r.Status == EstadoReserva.Traveling)
+                  && (caller.IsAdmin || r.ResponsibleUserId == caller.UserId)
+            select new { r.PublicId, r.NumeroReserva, Label = a.PlanType, Deadline = a.OperatorPaymentDeadline!.Value }).ToListAsync(ct);
+        alerts.AddRange(assistance.Select(x => BuildDeadlineAlert(x.PublicId, x.NumeroReserva, "Asistencia", x.Label, x.Deadline, today)));
+
+        // Servicio generico (ReservaId nullable en esta entidad)
+        var generic = await (
+            from s in _context.Servicios
+            join r in _context.Reservas on s.ReservaId equals r.Id
+            where s.OperatorPaymentDeadline != null
+                  && s.OperatorPaymentDeadline < windowUpperExclusive
+                  && s.Status != "Cancelado"
+                  && (r.Status == EstadoReserva.InManagement || r.Status == EstadoReserva.Confirmed || r.Status == EstadoReserva.Traveling)
+                  && (caller.IsAdmin || r.ResponsibleUserId == caller.UserId)
+            select new { r.PublicId, r.NumeroReserva, s.Description, s.ServiceType, Deadline = s.OperatorPaymentDeadline!.Value }).ToListAsync(ct);
+        alerts.AddRange(generic.Select(x => BuildDeadlineAlert(
+            x.PublicId, x.NumeroReserva, "Servicio",
+            string.IsNullOrWhiteSpace(x.Description) ? x.ServiceType : x.Description, x.Deadline, today)));
+
+        // Orden estable: lo que vence antes (mas urgente) primero.
+        return alerts
+            .OrderBy(a => (DateTime)a.GetType().GetProperty("Deadline")!.GetValue(a)!)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Auditoria ERP 2026-06-12 (item 5): alarma "vence la emision del aereo" (time-limit). Mismo criterio
+    /// que <see cref="ComputeOperatorPaymentDeadlinesAsync"/> pero SOLO sobre segmentos de vuelo no
+    /// cancelados y mirando <c>FlightSegment.TicketingDeadline</c>. Es ESPECIFICA del aereo: solo el vuelo
+    /// tiene emision. Vencidos incluidos (un time-limit pasado = cupo perdido, lo mas urgente).
+    /// </summary>
+    private async Task<List<object>> ComputeTicketingDeadlinesAsync(
+        AlertCallerContext caller, DateTime today, CancellationToken ct)
+    {
+        if (!caller.IsAdmin && string.IsNullOrEmpty(caller.UserId))
+            return new List<object>();
+
+        var windowUpperExclusive = today.AddDays(OperatorDeadlineAlertDays + 1);
+
+        var flight = await (
+            from f in _context.FlightSegments
+            join r in _context.Reservas on f.ReservaId equals r.Id
+            where f.TicketingDeadline != null
+                  && f.TicketingDeadline < windowUpperExclusive
+                  && f.Status != "UN" && f.Status != "UC" && f.Status != "HX" && f.Status != "NO"
+                  && (r.Status == EstadoReserva.InManagement || r.Status == EstadoReserva.Confirmed || r.Status == EstadoReserva.Traveling)
+                  && (caller.IsAdmin || r.ResponsibleUserId == caller.UserId)
+            select new { r.PublicId, r.NumeroReserva, f.ProductName, f.AirlineCode, f.FlightNumber, Deadline = f.TicketingDeadline!.Value }).ToListAsync(ct);
+
+        return flight
+            .Select(x => BuildDeadlineAlert(
+                x.PublicId, x.NumeroReserva, "Aereo",
+                ServiceDisplayName.ForFlight(x.ProductName, x.AirlineCode, x.FlightNumber), x.Deadline, today))
+            .OrderBy(a => (DateTime)a.GetType().GetProperty("Deadline")!.GetValue(a)!)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Auditoria ERP 2026-06-12 (item 8): alarma "pasaporte por vencer". UN aviso POR PASAJERO de reservas
+    /// VIVAS cuyo pasaporte vence dentro de los <see cref="PassportValidityMonthsAfterTrip"/> meses
+    /// POSTERIORES al inicio del viaje (regla tipica: el destino exige vigencia 6 meses despues del viaje).
+    ///
+    /// <para>"Inicio del viaje" = el PRIMER inicio de servicio no cancelado de la reserva
+    /// (<see cref="UpcomingStartCalculator"/>, MISMA definicion que el aviso "Proximos inicios"): si todos
+    /// los servicios estan cancelados o no hay servicios, no hay viaje y la reserva no genera esta alarma.</para>
+    ///
+    /// <para>PII: solo expone el nombre del pasajero (ya viaja en otros buckets como holderName), NO el
+    /// numero de documento ni la nacionalidad. Mismo gating de visibilidad que las otras alarmas.</para>
+    /// </summary>
+    private async Task<List<object>> ComputePassportExpiriesAsync(AlertCallerContext caller, CancellationToken ct)
+    {
+        if (!caller.IsAdmin && string.IsNullOrEmpty(caller.UserId))
+            return new List<object>();
+
+        // Pasajeros con vencimiento informado, de reservas vivas visibles para el caller. Traemos el
+        // minimo: id de reserva (para cruzar con el inicio del viaje), datos de display y la fecha.
+        var candidates = await (
+            from p in _context.Passengers
+            join r in _context.Reservas on p.ReservaId equals r.Id
+            where p.PassportExpiry != null
+                  && (r.Status == EstadoReserva.InManagement || r.Status == EstadoReserva.Confirmed || r.Status == EstadoReserva.Traveling)
+                  && (caller.IsAdmin || r.ResponsibleUserId == caller.UserId)
+            select new
+            {
+                ReservaId = r.Id,
+                r.PublicId,
+                r.NumeroReserva,
+                PassengerName = p.FullName,
+                PassportExpiry = p.PassportExpiry!.Value
+            }).ToListAsync(ct);
+
+        if (candidates.Count == 0)
+            return new List<object>();
+
+        // Inicio del viaje por reserva (MIN sin cancelados). Sin tope: necesitamos la fecha exacta para
+        // comparar contra el vencimiento del pasaporte. Reservas sin servicios elegibles quedan afuera.
+        var reservaIds = candidates.Select(c => c.ReservaId).Distinct().ToList();
+        var tripStartByReserva = await UpcomingStartCalculator.ComputeFirstStartsAsync(
+            _context, reservaIds, maxStartDateInclusive: null, ct);
+
+        var alerts = new List<object>();
+        foreach (var candidate in candidates)
+        {
+            if (!tripStartByReserva.TryGetValue(candidate.ReservaId, out var tripStart))
+                continue; // sin viaje (todos los servicios cancelados o sin servicios): no avisa
+
+            // Regla de vigencia: avisar si el pasaporte vence ANTES de [inicio del viaje + 6 meses].
+            var validityRequiredUntil = tripStart.AddMonths(PassportValidityMonthsAfterTrip);
+            if (candidate.PassportExpiry.Date < validityRequiredUntil.Date)
+            {
+                alerts.Add(new
+                {
+                    ReservaPublicId = candidate.PublicId,
+                    NumeroReserva = candidate.NumeroReserva,
+                    PassengerName = candidate.PassengerName,
+                    PassportExpiry = candidate.PassportExpiry,
+                    TripStartDate = tripStart
+                });
+            }
+        }
+
+        // Orden estable: el que vence antes primero.
+        return alerts
+            .OrderBy(a => (DateTime)a.GetType().GetProperty("PassportExpiry")!.GetValue(a)!)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Item de alarma de fecha limite (pago al operador / time-limit de emision). El texto de negocio viaja
+    /// listo: <c>deadline</c> (fecha) + <c>daysLeft</c> (negativo = vencido) para que el front no recompute.
+    /// </summary>
+    private static object BuildDeadlineAlert(
+        Guid reservaPublicId, string numeroReserva, string serviceKind, string? serviceLabel,
+        DateTime deadline, DateTime today)
+    {
+        // deadline ya es fecha de pared Kind=Utc (NormalizeCalendarDate al persistir). La resta da dias
+        // enteros exactos; daysLeft < 0 => vencido (el front lo pinta en rojo "Vencio hace N dias").
+        var deadlineDate = DateTime.SpecifyKind(deadline.Date, DateTimeKind.Utc);
+        var daysLeft = (int)(deadlineDate - today).TotalDays;
+        return new
+        {
+            ReservaPublicId = reservaPublicId,
+            NumeroReserva = numeroReserva,
+            ServiceKind = serviceKind,
+            ServiceLabel = string.IsNullOrWhiteSpace(serviceLabel) ? serviceKind : serviceLabel,
+            Deadline = deadlineDate,
+            DaysLeft = daysLeft
+        };
     }
 
     /// <summary>

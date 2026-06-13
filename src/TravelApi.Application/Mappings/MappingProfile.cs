@@ -92,6 +92,11 @@ public class MappingProfile : Profile
             // del servicio revertiria a "Vuelo "/ruta. La ficha inline (producto-primero) SIEMPRE reenvia el
             // texto, asi que el service lo asigna a mano solo cuando viene con valor (ver UpdateFlightAsync).
             .ForMember(dest => dest.ProductName, opt => opt.Ignore())
+            // Auditoria ERP item 5 (anti-clobber): los deadlines NO se mapean por convencion en el UPDATE.
+            // Un modal viejo que no los manda llega null y borraria una fecha cargada por el operador; el
+            // service los asigna a mano solo cuando vienen con valor (ver UpdateFlightAsync).
+            .ForMember(dest => dest.TicketingDeadline, opt => opt.Ignore())
+            .ForMember(dest => dest.OperatorPaymentDeadline, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus == "Confirmado" ? "HK" : src.WorkflowStatus == "Cancelado" ? "UN" : "HL"));
 
         CreateMap<HotelBooking, HotelBookingDto>()
@@ -122,6 +127,9 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.NetCost, opt => opt.Ignore())
             .ForMember(dest => dest.Tax, opt => opt.Ignore())
             .ForMember(dest => dest.Commission, opt => opt.Ignore())
+            // Auditoria ERP item 5 (anti-clobber): el deadline NO se mapea por convencion en el UPDATE
+            // (ver Flight). El service lo asigna a mano solo cuando viene con valor (ver UpdateHotelAsync).
+            .ForMember(dest => dest.OperatorPaymentDeadline, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus))
             .ForMember(dest => dest.Nights, opt => opt.MapFrom(src => (src.CheckOut - src.CheckIn).Days))
             .ForMember(dest => dest.RoomingAssignmentsJson, opt => opt.MapFrom(src => src.RoomingAssignments));
@@ -154,7 +162,9 @@ public class MappingProfile : Profile
             // ADR-018 (anti-clobber): ProductName NO se mapea por convencion en el UPDATE (ver UpdateFlightRequest
             // arriba). El modal viejo edita estos traslados sin mandar ProductName -> null borraria la identidad.
             // El service lo asigna a mano solo cuando viene con valor (ver UpdateTransferAsync).
-            .ForMember(dest => dest.ProductName, opt => opt.Ignore());
+            .ForMember(dest => dest.ProductName, opt => opt.Ignore())
+            // Auditoria ERP item 5 (anti-clobber): deadline asignado a mano solo si viene con valor.
+            .ForMember(dest => dest.OperatorPaymentDeadline, opt => opt.Ignore());
 
         CreateMap<PackageBooking, PackageBookingDto>()
             .ForMember(dest => dest.PublicId, opt => opt.MapFrom(src => src.PublicId))
@@ -184,6 +194,8 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.Tax, opt => opt.Ignore())
             .ForMember(dest => dest.Commission, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus))
+            // Auditoria ERP item 5 (anti-clobber): deadline asignado a mano solo si viene con valor.
+            .ForMember(dest => dest.OperatorPaymentDeadline, opt => opt.Ignore())
             // ADR-018: EndDate puede venir null (ficha "producto-primero"). Se coalesce a StartDate
             // para que Nights quede en 0 sin inventar fecha (NO se persiste una fecha de fin falsa).
             .ForMember(dest => dest.Nights, opt => opt.MapFrom(src => ((src.EndDate ?? src.StartDate) - src.StartDate).Days));
@@ -214,6 +226,8 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.NetCost, opt => opt.Ignore())
             .ForMember(dest => dest.Tax, opt => opt.Ignore())
             .ForMember(dest => dest.Commission, opt => opt.Ignore())
+            // Auditoria ERP item 5 (anti-clobber): deadline asignado a mano solo si viene con valor.
+            .ForMember(dest => dest.OperatorPaymentDeadline, opt => opt.Ignore())
             .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus));
 
         // Customers

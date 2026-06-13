@@ -81,6 +81,13 @@ public class ServicioReserva : IHasPublicId
 
     public string? SupplierName { get; set; }
 
+    /// <summary>
+    /// Auditoria ERP 2026-06-12 (item 5): fecha limite de pago al operador del servicio generico.
+    /// Mismo criterio que <see cref="HotelBooking.OperatorPaymentDeadline"/>. Opcional (null = no
+    /// informada). Date-only "de pared" Kind=Utc.
+    /// </summary>
+    public DateTime? OperatorPaymentDeadline { get; set; }
+
     // === ADR-020 (2026-06-07): trazabilidad de confirmacion del operador y de cancelacion del servicio ===
 
     /// <summary>

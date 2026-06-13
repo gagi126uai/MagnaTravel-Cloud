@@ -488,6 +488,11 @@ public partial class BookingService : IBookingService
         flight.DepartureTime = NormalizeAirportWallClock(flight.DepartureTime);
         flight.ArrivalTime = NormalizeAirportWallClock(flight.ArrivalTime);
 
+        // Auditoria ERP item 5: los deadlines mapean por convencion en el ALTA; solo falta normalizar a
+        // fecha de pared (Npgsql exige Kind=Utc en timestamptz). Ver NormalizeCalendarDate.
+        flight.TicketingDeadline = NormalizeCalendarDate(flight.TicketingDeadline);
+        flight.OperatorPaymentDeadline = NormalizeCalendarDate(flight.OperatorPaymentDeadline);
+
         // Snapshot desde tarifario: si viene RateId, congelamos precios del tarifario
         var rate = await GetRateAsync(req.RateId, ct);
         if (rate != null)
@@ -567,6 +572,15 @@ public partial class BookingService : IBookingService
         // PRESERVAMOS el valor persistido, para que la identidad del servicio no revierta a "Vuelo "/ruta.
         if (!string.IsNullOrWhiteSpace(req.ProductName))
             flight.ProductName = req.ProductName.Trim();
+
+        // Auditoria ERP item 5 (anti-clobber): el map IGNORA los deadlines. La ficha de aereo los
+        // reenvia (round-trip) y ahi los actualizamos; un modal viejo que NO los manda llega null y
+        // PRESERVAMOS el valor persistido (no borramos una fecha que cargo el operador). Se normalizan a
+        // fecha de pared (Kind=Utc) igual que en el alta. Ver NormalizeCalendarDate.
+        if (req.TicketingDeadline.HasValue)
+            flight.TicketingDeadline = NormalizeCalendarDate(req.TicketingDeadline.Value);
+        if (req.OperatorPaymentDeadline.HasValue)
+            flight.OperatorPaymentDeadline = NormalizeCalendarDate(req.OperatorPaymentDeadline.Value);
 
         // ADR-018 Ronda 7: cabina opcional. OJO, aca NO hay anti-clobber a proposito: la ficha reenvia
         // la cabina en cada edicion (round-trip), asi que null/vacio significa "el vendedor la dejo en
@@ -734,6 +748,10 @@ public partial class BookingService : IBookingService
         hotel.CheckIn = NormalizeCalendarDate(hotel.CheckIn);
         hotel.CheckOut = NormalizeCalendarDate(hotel.CheckOut);
 
+        // Auditoria ERP item 5: el deadline mapea por convencion en el ALTA; normalizamos a fecha de
+        // pared (Kind=Utc). Ver NormalizeCalendarDate.
+        hotel.OperatorPaymentDeadline = NormalizeCalendarDate(hotel.OperatorPaymentDeadline);
+
         if (rate != null)
         {
             ApplyHotelRateSnapshot(hotel, rate);
@@ -821,6 +839,11 @@ public partial class BookingService : IBookingService
         // (Kind=Unspecified) y Npgsql las rechaza en timestamptz. Ver NormalizeCalendarDate.
         hotel.CheckIn = NormalizeCalendarDate(hotel.CheckIn);
         hotel.CheckOut = NormalizeCalendarDate(hotel.CheckOut);
+
+        // Auditoria ERP item 5 (anti-clobber): el map IGNORA el deadline; lo asignamos solo si viene con
+        // valor, asi un caller que no lo manda (null) no borra la fecha cargada. Ver NormalizeCalendarDate.
+        if (req.OperatorPaymentDeadline.HasValue)
+            hotel.OperatorPaymentDeadline = NormalizeCalendarDate(req.OperatorPaymentDeadline.Value);
 
         // Fuga 3 (F1b): el map ignora NetCost/Tax/Commission; se aplican segun permiso del caller.
         // (ApplyHotelRateSnapshot, mas abajo, no toca precios en Hotel: solo atributos.)
@@ -980,6 +1003,9 @@ public partial class BookingService : IBookingService
         package.StartDate = NormalizeCalendarDate(package.StartDate);
         package.EndDate = NormalizeCalendarDate(package.EndDate);
 
+        // Auditoria ERP item 5: deadline mapeado por convencion en el ALTA; normalizado a fecha de pared.
+        package.OperatorPaymentDeadline = NormalizeCalendarDate(package.OperatorPaymentDeadline);
+
         // Snapshot desde tarifario
         var rate = await GetRateAsync(req.RateId, ct);
         if (rate != null)
@@ -1054,6 +1080,10 @@ public partial class BookingService : IBookingService
         // ficha inline son rechazadas por Npgsql en timestamptz. Ver NormalizeCalendarDate.
         package.StartDate = NormalizeCalendarDate(package.StartDate);
         package.EndDate = NormalizeCalendarDate(package.EndDate);
+
+        // Auditoria ERP item 5 (anti-clobber): el map IGNORA el deadline; asignamos solo si viene con valor.
+        if (req.OperatorPaymentDeadline.HasValue)
+            package.OperatorPaymentDeadline = NormalizeCalendarDate(req.OperatorPaymentDeadline.Value);
 
         // Fuga 3 (F1b): el map ignora NetCost/Tax/Commission; se aplican segun permiso del caller.
         (package.NetCost, package.Tax, package.Commission) = await ResolveUpdateCostFieldsAsync(
@@ -1204,6 +1234,9 @@ public partial class BookingService : IBookingService
         if (transfer.ReturnDateTime.HasValue)
             transfer.ReturnDateTime = NormalizeAirportWallClock(transfer.ReturnDateTime.Value);
 
+        // Auditoria ERP item 5: deadline mapeado por convencion en el ALTA; normalizado a fecha de pared.
+        transfer.OperatorPaymentDeadline = NormalizeCalendarDate(transfer.OperatorPaymentDeadline);
+
         // Snapshot desde tarifario
         var rate = await GetRateAsync(req.RateId, ct);
         if (rate != null)
@@ -1296,6 +1329,10 @@ public partial class BookingService : IBookingService
         transfer.PickupDateTime = NormalizeAirportWallClock(transfer.PickupDateTime);
         if (transfer.ReturnDateTime.HasValue)
             transfer.ReturnDateTime = NormalizeAirportWallClock(transfer.ReturnDateTime.Value);
+
+        // Auditoria ERP item 5 (anti-clobber): el map IGNORA el deadline; asignamos solo si viene con valor.
+        if (req.OperatorPaymentDeadline.HasValue)
+            transfer.OperatorPaymentDeadline = NormalizeCalendarDate(req.OperatorPaymentDeadline.Value);
 
         var rateId = await ResolveRateIdAsync(req.RateId, ct);
         if (rateId.HasValue)
@@ -1471,6 +1508,9 @@ public partial class BookingService : IBookingService
         assistance.ValidFrom = NormalizeCalendarDate(assistance.ValidFrom);
         assistance.ValidTo = NormalizeCalendarDate(assistance.ValidTo);
 
+        // Auditoria ERP item 5: deadline mapeado por convencion en el ALTA; normalizado a fecha de pared.
+        assistance.OperatorPaymentDeadline = NormalizeCalendarDate(assistance.OperatorPaymentDeadline);
+
         if (rate != null)
         {
             ApplyAssistanceRateSnapshot(assistance, rate);
@@ -1538,6 +1578,10 @@ public partial class BookingService : IBookingService
         // ficha inline son rechazadas por Npgsql en timestamptz. Ver NormalizeCalendarDate.
         assistance.ValidFrom = NormalizeCalendarDate(assistance.ValidFrom);
         assistance.ValidTo = NormalizeCalendarDate(assistance.ValidTo);
+
+        // Auditoria ERP item 5 (anti-clobber): el map IGNORA el deadline; asignamos solo si viene con valor.
+        if (req.OperatorPaymentDeadline.HasValue)
+            assistance.OperatorPaymentDeadline = NormalizeCalendarDate(req.OperatorPaymentDeadline.Value);
 
         // Fuga 3 (F1b): el map ignora NetCost/Tax/Commission; se aplican segun permiso del caller.
         (assistance.NetCost, assistance.Tax, assistance.Commission) = await ResolveUpdateCostFieldsAsync(

@@ -23,6 +23,18 @@ public class Passenger : IHasPublicId
 
     public DateTime? BirthDate { get; set; }
 
+    /// <summary>
+    /// Auditoria ERP 2026-06-12 (item 8, decision del dueño): vencimiento del PASAPORTE del pasajero.
+    /// Opcional (null = no informado). Alimenta la alarma de vigencia de pasaporte en AlertService:
+    /// muchos destinos exigen que el pasaporte siga vigente 6 meses DESPUES de la fecha del viaje, asi
+    /// que la alarma avisa cuando el pasaporte vence dentro de los 6 meses posteriores al inicio del
+    /// viaje (regla tipica de vigencia). Date-only "de pared" Kind=Utc, igual que BirthDate.
+    ///
+    /// <para>FUERA DE ALCANCE (auditoria): que documento exige cada destino. Por ahora solo el
+    /// vencimiento del pasaporte + la alarma de vigencia.</para>
+    /// </summary>
+    public DateTime? PassportExpiry { get; set; }
+
     [MaxLength(50)]
     public string? Nationality { get; set; }
 

@@ -32,6 +32,12 @@ public class FlightSegmentDto
     public string? PNR { get; set; }
     // Numero de confirmacion que entrega el proveedor (distinto del PNR).
     public string? ConfirmationNumber { get; set; }
+    // Auditoria ERP 2026-06-12 (item 5): time-limit de emision del aereo. Se expone para la ficha
+    // (round-trip) y la alarma de emision. Aditivo, null = no informada. Ver FlightSegment.TicketingDeadline.
+    public DateTime? TicketingDeadline { get; set; }
+    // Auditoria ERP 2026-06-12 (item 5): fecha limite de pago al operador del segmento (distinta del
+    // time-limit). Aditivo, null = no informada. Ver FlightSegment.OperatorPaymentDeadline.
+    public DateTime? OperatorPaymentDeadline { get; set; }
     // Numero de ticket emitido (si ya se emitio el billete).
     public string? TicketNumber { get; set; }
     // Equipaje incluido (ej. "23kg" o "2PC").

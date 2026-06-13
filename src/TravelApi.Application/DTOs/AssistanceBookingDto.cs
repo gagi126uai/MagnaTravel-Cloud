@@ -29,6 +29,10 @@ public class AssistanceBookingDto
     public string? ConfirmationNumber { get; set; }
     public string? Notes { get; set; }
 
+    // Auditoria ERP 2026-06-12 (item 5): fecha limite de pago al operador. Aditivo, null = no informada.
+    // Ver AssistanceBooking.OperatorPaymentDeadline.
+    public DateTime? OperatorPaymentDeadline { get; set; }
+
     public decimal SalePrice { get; set; }
     // NetCost se enmascara a 0 para usuarios sin cobranzas.see_cost (ver CostMasking.MaskAssistanceAsync).
     public decimal NetCost { get; set; }

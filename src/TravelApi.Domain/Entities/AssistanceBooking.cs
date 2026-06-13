@@ -119,8 +119,13 @@ public class AssistanceBooking : IHasPublicId
     [Column(TypeName = "jsonb")]
     public string? NonRefundableConceptsJson { get; set; }
 
-    // ADR-017 F1.1 (2026-06-05): Asistencia NO lleva fecha limite (la tabla de campos por tipo del
-    // mockup no la incluye — no inventamos alcance). Solo la marca "costo a confirmar".
+    /// <summary>
+    /// Auditoria ERP 2026-06-12 (item 5): fecha limite de pago a la aseguradora/operador. Mismo
+    /// criterio que <see cref="HotelBooking.OperatorPaymentDeadline"/>. La Asistencia no tenia el
+    /// campo antes de ADR-019 (el mockup viejo no lo incluia), pero la auditoria pide cobertura de
+    /// pago al operador en todo servicio con costo/proveedor. Opcional. Date-only "de pared" Kind=Utc.
+    /// </summary>
+    public DateTime? OperatorPaymentDeadline { get; set; }
 
     /// <summary>
     /// ADR-017 F1.1 (decision D7): marca "costo a confirmar" (default false, ortogonal al workflow).

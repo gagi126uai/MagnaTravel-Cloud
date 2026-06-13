@@ -18,6 +18,10 @@ public class HotelBookingDto
     public string? MealPlan { get; set; }
     public string Status { get; set; } = "Pendiente";
     public string? ConfirmationNumber { get; set; }
+    // Auditoria ERP 2026-06-12 (item 5): fecha limite de pago al operador. Se expone para que la ficha
+    // la muestre/edite (round-trip) y para la alarma de pago. Aditivo, null = no informada. NO es dato
+    // de costo (es solo una fecha): no se enmascara. Ver HotelBooking.OperatorPaymentDeadline.
+    public DateTime? OperatorPaymentDeadline { get; set; }
     // Direccion del hotel (campo de "Mas detalles"). Se expone para que la ficha de edicion
     // la recupere y no la pise al guardar (round-trip). No es dato de costo.
     public string? Address { get; set; }

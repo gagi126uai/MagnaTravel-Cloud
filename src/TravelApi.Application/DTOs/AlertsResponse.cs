@@ -31,7 +31,10 @@ public sealed class AlertsResponse
         object? upcomingStarts,
         int? upcomingStartsWindowDays,
         object? costsToConfirm,
-        int totalCount)
+        int totalCount,
+        object? operatorPaymentDeadlines = null,
+        object? ticketingDeadlines = null,
+        object? passportExpiries = null)
     {
         UrgentTrips = urgentTrips;
         SupplierDebts = supplierDebts;
@@ -39,6 +42,9 @@ public sealed class AlertsResponse
         UpcomingStartsWindowDays = upcomingStartsWindowDays;
         CostsToConfirm = costsToConfirm;
         TotalCount = totalCount;
+        OperatorPaymentDeadlines = operatorPaymentDeadlines;
+        TicketingDeadlines = ticketingDeadlines;
+        PassportExpiries = passportExpiries;
     }
 
     public object UrgentTrips { get; }
@@ -65,6 +71,34 @@ public sealed class AlertsResponse
     /// <summary>Servicios "costo a confirmar". Se OMITE del JSON cuando el bucket esta apagado (null).</summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public object? CostsToConfirm { get; }
+
+    /// <summary>
+    /// Auditoria ERP 2026-06-12 (item 5): alarma "vence el pago al operador" — un aviso POR SERVICIO no
+    /// cancelado, de reservas vivas, cuya fecha limite de pago cae dentro de la ventana (3 dias por
+    /// defecto) o ya vencio. Item: <c>{ reservaPublicId, numeroReserva, serviceKind, serviceLabel,
+    /// deadline, daysLeft }</c> (<c>daysLeft &lt; 0</c> = vencido). Se OMITE del JSON cuando no hay nada
+    /// que avisar (null) — el path "sin alarmas y sin buckets nuevos" sigue siendo el objeto historico.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public object? OperatorPaymentDeadlines { get; }
+
+    /// <summary>
+    /// Auditoria ERP 2026-06-12 (item 5): alarma "vence la emision del aereo" (time-limit). Mismo shape
+    /// que <see cref="OperatorPaymentDeadlines"/>, solo para segmentos de vuelo no cancelados. Se OMITE
+    /// del JSON cuando no hay nada que avisar (null).
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public object? TicketingDeadlines { get; }
+
+    /// <summary>
+    /// Auditoria ERP 2026-06-12 (item 8): alarma "pasaporte por vencer" — un aviso POR PASAJERO de
+    /// reservas vivas cuyo pasaporte vence dentro de los 6 meses POSTERIORES al inicio del viaje (regla
+    /// tipica de vigencia). Item: <c>{ reservaPublicId, numeroReserva, passengerName, passportExpiry,
+    /// tripStartDate }</c>. NO expone documento ni nacionalidad (PII minima: solo el nombre que ya viaja
+    /// en otros buckets). Se OMITE del JSON cuando no hay nada que avisar (null).
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public object? PassportExpiries { get; }
 
     public int TotalCount { get; }
 }

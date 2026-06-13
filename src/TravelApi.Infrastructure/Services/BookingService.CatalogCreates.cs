@@ -117,6 +117,8 @@ public partial class BookingService
             // INSERT a timestamptz. Normalizamos a fecha de pared (medianoche Kind=Utc). Ver NormalizeCalendarDate.
             hotel.CheckIn = NormalizeCalendarDate(hotel.CheckIn);
             hotel.CheckOut = NormalizeCalendarDate(hotel.CheckOut);
+            // Auditoria ERP item 5: deadline mapeado por convencion desde el request; normalizado a pared.
+            hotel.OperatorPaymentDeadline = NormalizeCalendarDate(hotel.OperatorPaymentDeadline);
 
             var divisor = CatalogUnitization.HotelDivisor(hotel.Nights, hotel.Rooms);
             var (net, tax, commission, toConfirm, reason) = await ResolveCatalogCostsAsync(
@@ -215,6 +217,9 @@ public partial class BookingService
             flight.Currency = currency;
             flight.DepartureTime = NormalizeAirportWallClock(flight.DepartureTime);
             flight.ArrivalTime = NormalizeAirportWallClock(flight.ArrivalTime);
+            // Auditoria ERP item 5: deadlines mapeados por convencion desde el request; normalizados a pared.
+            flight.TicketingDeadline = NormalizeCalendarDate(flight.TicketingDeadline);
+            flight.OperatorPaymentDeadline = NormalizeCalendarDate(flight.OperatorPaymentDeadline);
             // ADR-018 (§4-bis): la identidad visible = el texto que vio el vendedor. Fuente unica = req.ProductName;
             // si no vino (path producto NUEVO), caemos al nombre del producto de catalogo. NUNCA se re-deriva del
             // Rate despues (preserva el snapshot de ADR-017 §6).
@@ -293,6 +298,8 @@ public partial class BookingService
             transfer.PickupDateTime = NormalizeAirportWallClock(transfer.PickupDateTime);
             if (transfer.ReturnDateTime.HasValue)
                 transfer.ReturnDateTime = NormalizeAirportWallClock(transfer.ReturnDateTime.Value);
+            // Auditoria ERP item 5: deadline mapeado por convencion desde el request; normalizado a pared.
+            transfer.OperatorPaymentDeadline = NormalizeCalendarDate(transfer.OperatorPaymentDeadline);
             // ADR-018 (§4-bis): identidad visible = texto del vendedor (ver Flight).
             transfer.ProductName = ResolveCatalogProductName(req.ProductName, req.NewCatalogProduct);
             // ADR-018 Ronda 7 (2026-06-06): el tipo de vehiculo es OPCIONAL — vacio/null se persiste
@@ -369,6 +376,8 @@ public partial class BookingService
             // y Npgsql las rechaza en timestamptz. Normalizamos a fecha de pared. Ver NormalizeCalendarDate.
             package.StartDate = NormalizeCalendarDate(package.StartDate);
             package.EndDate = NormalizeCalendarDate(package.EndDate);
+            // Auditoria ERP item 5: deadline mapeado por convencion desde el request; normalizado a pared.
+            package.OperatorPaymentDeadline = NormalizeCalendarDate(package.OperatorPaymentDeadline);
 
             var divisor = CatalogUnitization.PackageDivisor(package.Adults, package.Children);
             var (net, tax, commission, toConfirm, reason) = await ResolveCatalogCostsAsync(
@@ -442,6 +451,8 @@ public partial class BookingService
             // de vigencia. Ver NormalizeCalendarDate.
             assistance.ValidFrom = NormalizeCalendarDate(assistance.ValidFrom);
             assistance.ValidTo = NormalizeCalendarDate(assistance.ValidTo);
+            // Auditoria ERP item 5: deadline mapeado por convencion desde el request; normalizado a pared.
+            assistance.OperatorPaymentDeadline = NormalizeCalendarDate(assistance.OperatorPaymentDeadline);
 
             var days = CatalogUnitization.AssistanceDays(assistance.ValidFrom, assistance.ValidTo);
             var divisor = CatalogUnitization.AssistanceDivisor(assistance.Adults, assistance.Children, days);

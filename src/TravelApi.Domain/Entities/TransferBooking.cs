@@ -105,8 +105,14 @@ public class TransferBooking : IHasPublicId
     [MaxLength(500)]
     public string? Notes { get; set; }
 
-    // ADR-017 F1.1 (2026-06-05): Traslado NO lleva fecha limite (la tabla de campos por tipo del
-    // mockup no la incluye — no inventamos alcance). Solo la marca "costo a confirmar".
+    /// <summary>
+    /// Auditoria ERP 2026-06-12 (item 5): fecha limite de pago al operador (la carga el operador por
+    /// servicio). Mismo criterio que <see cref="HotelBooking.OperatorPaymentDeadline"/>. El Traslado
+    /// NO tenia este campo antes de ADR-019 (el mockup viejo no lo incluia), pero la auditoria pide
+    /// cobertura de pago al operador en TODO servicio con costo/proveedor — un traslado tambien se le
+    /// paga a un operador. Opcional (null = no informada). Date-only "de pared" Kind=Utc.
+    /// </summary>
+    public DateTime? OperatorPaymentDeadline { get; set; }
 
     /// <summary>
     /// ADR-017 F1.1 (decision D7): marca "costo a confirmar" (default false, ortogonal al workflow).

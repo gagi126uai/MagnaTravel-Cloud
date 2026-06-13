@@ -1431,6 +1431,7 @@ public class ReservaService : IReservaService
             DocumentType = passenger.DocumentType,
             DocumentNumber = passenger.DocumentNumber,
             BirthDate = passenger.BirthDate,
+            PassportExpiry = passenger.PassportExpiry,
             Nationality = passenger.Nationality,
             Phone = passenger.Phone,
             Email = passenger.Email,
@@ -1804,6 +1805,11 @@ public class ReservaService : IReservaService
             SalePrice = request.SalePrice,
             NetCost = request.NetCost,
             Commission = request.SalePrice - request.NetCost,
+            // ADR-026 (vencimientos): fecha de pared (medianoche Kind=Utc) igual que los tipos
+            // catalogados (NormalizeCalendarDate de BookingService); Npgsql rechaza Kind!=Utc en timestamptz.
+            OperatorPaymentDeadline = request.OperatorPaymentDeadline.HasValue
+                ? DateTime.SpecifyKind(request.OperatorPaymentDeadline.Value.Date, DateTimeKind.Utc)
+                : (DateTime?)null,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -1921,6 +1927,11 @@ public class ReservaService : IReservaService
         service.ReturnDate = request.ReturnDate?.ToUniversalTime();
         service.SupplierId = supplierId;
         service.SalePrice = request.SalePrice;
+
+        // ADR-026 (vencimientos): anti-pisado igual que los tipos catalogados — solo se asigna
+        // si el request trae la fecha; un form viejo que no la manda NO borra la fecha cargada.
+        if (request.OperatorPaymentDeadline.HasValue)
+            service.OperatorPaymentDeadline = DateTime.SpecifyKind(request.OperatorPaymentDeadline.Value.Date, DateTimeKind.Utc);
 
         // B2 (ADR-017 F1b — Fuga 3 en el servicio generico): a un caller sin
         // cobranzas.see_cost el GET le enmascara NetCost a 0; el form re-envia ese 0 y la
@@ -2148,6 +2159,13 @@ public class ReservaService : IReservaService
             passenger.BirthDate = DateTime.SpecifyKind(passenger.BirthDate.Value, DateTimeKind.Utc);
         }
 
+        // Auditoria ERP item 8: el vencimiento de pasaporte es fecha "de pared" date-only (Npgsql exige
+        // Kind=Utc en timestamptz). Mismo tratamiento que BirthDate.
+        if (passenger.PassportExpiry.HasValue)
+        {
+            passenger.PassportExpiry = DateTime.SpecifyKind(passenger.PassportExpiry.Value.Date, DateTimeKind.Utc);
+        }
+
         passenger.ReservaId = reservaId;
         passenger.CreatedAt = DateTime.UtcNow;
 
@@ -2202,6 +2220,14 @@ public class ReservaService : IReservaService
         {
             passenger.BirthDate = null;
         }
+
+        // Auditoria ERP item 8: vencimiento de pasaporte. NO entra al guard de "datos personales"
+        // (personalDataChanged): no es identidad que invalide un voucher emitido, es un dato operativo
+        // del documento que el vendedor completa/corrige a medida que recibe la documentacion. Se
+        // normaliza a fecha de pared Kind=Utc; null = se limpio el dato.
+        passenger.PassportExpiry = updated.PassportExpiry.HasValue
+            ? DateTime.SpecifyKind(updated.PassportExpiry.Value.Date, DateTimeKind.Utc)
+            : null;
 
         passenger.Nationality = updated.Nationality;
         passenger.Phone = updated.Phone;

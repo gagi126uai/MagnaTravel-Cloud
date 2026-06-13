@@ -120,9 +120,28 @@ public class FlightSegment : IHasPublicId
     [MaxLength(500)]
     public string? Notes { get; set; }
 
-    // (ADR-019, 2026-06-06: aca vivia TicketingDeadline — fecha limite manual de emision de ADR-017
-    // F1.4, nunca prendida en prod. La reemplazo el aviso automatico "Proximos inicios"; columna
-    // dropeada en la migracion Adr019_M1.)
+    /// <summary>
+    /// Auditoria ERP 2026-06-12 (item 5, decision del dueño): VUELVE la fecha limite de EMISION del
+    /// aereo (time-limit). Es la fecha tope que da la aerolinea/consolidador para emitir el ticket: si
+    /// se pasa, se cae la reserva del vuelo. La carga el operador. Opcional (null = no informada).
+    ///
+    /// <para><b>Por que vuelve tras ADR-019</b>: igual que <see cref="OperatorPaymentDeadline"/>, ADR-019
+    /// la dropeo porque murio la pill manual vieja (ADR-017 F1.4), no porque el time-limit sea invalido.
+    /// El aviso "Proximos inicios" mira la SALIDA del vuelo, NO el time-limit de emision — son fechas
+    /// distintas (el time-limit suele ser mucho antes de la salida). Ahora alimenta una ALARMA PROPIA
+    /// (AlertService.ComputeTicketingDeadlinesAsync). Es ESPECIFICA del aereo: solo el vuelo tiene emision.</para>
+    ///
+    /// <para>Date-only "de pared" Kind=Utc (sin hora, sin conversion de zona — ver NormalizeCalendarDate).</para>
+    /// </summary>
+    public DateTime? TicketingDeadline { get; set; }
+
+    /// <summary>
+    /// Auditoria ERP 2026-06-12 (item 5): fecha limite de pago al operador/consolidador del segmento,
+    /// por paridad con los demas servicios. Mismo criterio que
+    /// <see cref="HotelBooking.OperatorPaymentDeadline"/>. Distinta del time-limit de emision
+    /// (<see cref="TicketingDeadline"/>): una es PAGAR, la otra EMITIR. Opcional. Date-only Kind=Utc.
+    /// </summary>
+    public DateTime? OperatorPaymentDeadline { get; set; }
 
     /// <summary>
     /// ADR-017 F1.1 (decision D7): marca "costo a confirmar" (default false, ortogonal al workflow).

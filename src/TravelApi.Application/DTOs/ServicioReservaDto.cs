@@ -13,7 +13,11 @@ public class ServicioReservaDto
     
     public DateTime DepartureDate { get; set; }
     public DateTime? ReturnDate { get; set; }
-    
+
+    // Auditoria ERP 2026-06-12 (item 5): fecha limite de pago al operador del servicio generico.
+    // Aditivo, null = no informada. Ver ServicioReserva.OperatorPaymentDeadline.
+    public DateTime? OperatorPaymentDeadline { get; set; }
+
     public decimal NetCost { get; set; }
     public decimal SalePrice { get; set; }
     public decimal Commission { get; set; }
