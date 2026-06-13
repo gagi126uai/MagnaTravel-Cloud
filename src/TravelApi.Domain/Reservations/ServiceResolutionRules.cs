@@ -79,6 +79,53 @@ public static class ServiceResolutionRules
     public static bool IsResolved(ServicioReserva service) => ConfirmedByGenericStatus(service.Status);
     public static bool IsCancelled(ServicioReserva service) => CancelledByGenericStatus(service.Status);
 
+    // ===================== Agregados a nivel reserva (reusados por motor de estados y vouchers) =====================
+
+    /// <summary>
+    /// Nombra los TIPOS de servicio vivos (no cancelados) que todavia NO estan resueltos por el
+    /// operador, recorriendo las 6 colecciones de la reserva. Devuelve una etiqueta legible por cada
+    /// tipo con al menos un servicio sin resolver (sin repetir el tipo). Lista vacia = no hay nada
+    /// pendiente de resolver (todos los servicios vivos estan asegurados, o la reserva no tiene
+    /// servicios vivos).
+    ///
+    /// <para>Por que existe: tanto la confirmacion automatica de la reserva (motor de estados ADR-020)
+    /// como el bloqueo de emision de voucher (auditoria de negocio 2026-06-12) necesitan la MISMA
+    /// definicion de "que falta resolver". Centralizarla aca evita que dos lugares la dupliquen y se
+    /// desincronicen. El llamador es responsable de cargar las 6 colecciones (Includes en EF); una
+    /// coleccion null se trata como vacia.</para>
+    /// </summary>
+    public static IReadOnlyList<string> GetUnresolvedLiveServiceLabels(Reserva reserva)
+    {
+        ArgumentNullException.ThrowIfNull(reserva);
+
+        var unresolvedTypes = new List<string>();
+
+        // Agrega la etiqueta del tipo si encuentra AL MENOS un servicio vivo sin resolver. Corta en el
+        // primero (break): basta con saber que ese tipo tiene un pendiente para nombrarlo una vez.
+        void CheckType<T>(IEnumerable<T>? items, Func<T, bool> isCancelled, Func<T, bool> isResolved, string typeLabel)
+        {
+            if (items == null) return;
+            foreach (var item in items)
+            {
+                if (isCancelled(item)) continue; // los cancelados no cuentan ni bloquean
+                if (!isResolved(item))
+                {
+                    unresolvedTypes.Add(typeLabel);
+                    break;
+                }
+            }
+        }
+
+        CheckType(reserva.FlightSegments, IsCancelled, IsResolved, "un aereo (sin emitir)");
+        CheckType(reserva.HotelBookings, IsCancelled, IsResolved, "un hotel");
+        CheckType(reserva.TransferBookings, IsCancelled, IsResolved, "un traslado");
+        CheckType(reserva.PackageBookings, IsCancelled, IsResolved, "un paquete");
+        CheckType(reserva.AssistanceBookings, IsCancelled, IsResolved, "una asistencia");
+        CheckType(reserva.Servicios, IsCancelled, IsResolved, "un servicio");
+
+        return unresolvedTypes;
+    }
+
     // --- helpers de mapeo de estado generico (texto libre que contiene "confirm"/"emit"/"cancel") ---
 
     private static bool ConfirmedByGenericStatus(string? status)

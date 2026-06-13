@@ -101,15 +101,29 @@ public class AlertService : IAlertService
         var today = DateTime.UtcNow.Date;
         var threshold = today.AddDays(Math.Max(settings.UpcomingUnpaidReservationAlertDays, 1));
 
-        // ADR-020 (2026-06-07): "viajes urgentes" = reservas activas con viaje inminente y saldo
-        // pendiente. InManagement (En gestion) reemplaza al viejo Sold. NO sumamos ToSettle (post-viaje).
+        // ADR-020 (2026-06-07): "viajes urgentes" = reservas activas con saldo pendiente. InManagement
+        // (En gestion) reemplaza al viejo Sold. NO sumamos ToSettle (post-viaje).
+        //
+        // Cubre DOS casos (auditoria de negocio 2026-06-12, item 6 "viajó y debe"):
+        //  (A) viaje INMINENTE: salida en [hoy ... hoy + ventana]. El cliente todavia no viajo y debe.
+        //  (B) viaje EN CURSO con saldo: Status == Traveling y el viaje ya arranco pero no termino.
+        //      Antes este caso DESAPARECIA: el prefiltro StartDate >= hoy lo excluia apenas empezaba el
+        //      viaje, y la deuda nunca cerraba sola. Ahora se incluye sin tope de ventana (un viaje en
+        //      curso impago es lo MAS urgente). "No termino" = sin EndDate o EndDate >= hoy.
         var urgentTrips = await _context.Reservas
-            .Where(f => (f.Status == EstadoReserva.InManagement ||
-                         f.Status == EstadoReserva.Confirmed ||
-                         f.Status == EstadoReserva.Traveling) &&
-                        f.StartDate >= today &&
-                        f.StartDate <= threshold &&
-                        f.Balance > 0)
+            .Where(f => f.Balance > 0 &&
+                        (
+                            // (A) Inminente (cualquier estado activo, ventana futura).
+                            ((f.Status == EstadoReserva.InManagement ||
+                              f.Status == EstadoReserva.Confirmed ||
+                              f.Status == EstadoReserva.Traveling) &&
+                             f.StartDate >= today &&
+                             f.StartDate <= threshold)
+                            ||
+                            // (B) En viaje y debe (sin tope de ventana, viaje no terminado).
+                            (f.Status == EstadoReserva.Traveling &&
+                             (f.EndDate == null || f.EndDate >= today))
+                        ))
             .Select(f => new
             {
                 f.PublicId,
@@ -117,6 +131,9 @@ public class AlertService : IAlertService
                 f.Name,
                 f.StartDate,
                 f.Balance,
+                // El front (PaymentsHomePage) ya recibe Status; hoy muestra un rotulo fijo "Urgente",
+                // pero al venir Status="Traveling" puede distinguir el caso "en viaje con saldo
+                // pendiente" sin cambios de contrato (campo ya presente, mismo shape).
                 f.Status,
                 PayerName = f.Payer != null ? f.Payer.FullName : "Sin Cliente"
             })

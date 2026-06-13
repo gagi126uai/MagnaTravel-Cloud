@@ -9,6 +9,7 @@ using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Helpers;
+using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Infrastructure.Services;
@@ -420,8 +421,11 @@ public class VoucherService : IVoucherService
             throw new InvalidOperationException("El voucher ya esta emitido o cargado como externo.");
         }
 
+        var issueGate = BuildIssueGate(voucher.Reserva);
         var authorization = await ValidateExceptionalAuthorizationAsync(
             voucher.Reserva,
+            issueGate.RequiresException,
+            issueGate.MissingReasonMessage,
             request.ExceptionalReason,
             request.AuthorizedBySuperiorUserId,
             actor,
@@ -462,6 +466,8 @@ public class VoucherService : IVoucherService
                 voucher.AuthorizationStatus = VoucherAuthorizationStatuses.Approved;
             }
 
+            // El detalle del rastro nombra POR QUE hizo falta la excepcion (saldo y/o servicio sin
+            // resolver) en vez de asumir "saldo pendiente": el gate ahora bloquea por dos motivos.
             AddVoucherAudit(
                 voucher,
                 voucher.Reserva,
@@ -470,7 +476,9 @@ public class VoucherService : IVoucherService
                 authorization.WasExceptional ? authorization.Reason : voucher.IssueReason,
                 authorization.SuperiorUserId,
                 authorization.SuperiorUserName,
-                authorization.WasExceptional ? "Reserva con saldo pendiente (Autorizado directamente por Admin)." : null);
+                authorization.WasExceptional
+                    ? $"Emision excepcional: {issueGate.MissingReasonMessage}"
+                    : null);
         }
 
         await _db.SaveChangesAsync(cancellationToken);
@@ -647,8 +655,14 @@ public class VoucherService : IVoucherService
             }
         }
 
+        // Gate de ENVIO: sigue mirando SOLO el saldo impago (regla historica). El servicio no resuelto
+        // no se re-chequea aca porque el voucher solo llega a enviable habiendo pasado antes el gate de
+        // EMISION (BuildIssueGate), que ya exige servicios resueltos; revalidarlo aca seria redundante.
+        var sendRequiresException = ReservationEconomicPolicy.HasOutstandingBalance(voucher.Reserva);
         var authorization = await ValidateExceptionalAuthorizationAsync(
             voucher.Reserva,
+            sendRequiresException,
+            "Debe indicar un motivo de excepcion de al menos 10 caracteres porque la reserva tiene saldo pendiente.",
             exception?.ExceptionalReason,
             exception?.AuthorizedBySuperiorUserId,
             actor,
@@ -757,6 +771,21 @@ public class VoucherService : IVoucherService
                 .ThenInclude(r => r!.Passengers)
             .Include(v => v.Reserva)
                 .ThenInclude(r => r!.Payer)
+            // Las 6 colecciones de servicios se cargan porque el gate de emision (IssueVoucherAsync)
+            // necesita saber si TODOS los servicios estan resueltos por el operador. Sin estos Includes
+            // las colecciones vendrian vacias y el gate creeria — erroneamente — que no hay nada pendiente.
+            .Include(v => v.Reserva)
+                .ThenInclude(r => r!.FlightSegments)
+            .Include(v => v.Reserva)
+                .ThenInclude(r => r!.HotelBookings)
+            .Include(v => v.Reserva)
+                .ThenInclude(r => r!.TransferBookings)
+            .Include(v => v.Reserva)
+                .ThenInclude(r => r!.PackageBookings)
+            .Include(v => v.Reserva)
+                .ThenInclude(r => r!.AssistanceBookings)
+            .Include(v => v.Reserva)
+                .ThenInclude(r => r!.Servicios)
             .Include(v => v.PassengerAssignments)
                 .ThenInclude(a => a.Passenger)
             .FirstOrDefaultAsync(v => v.Id == voucherId, cancellationToken)
@@ -908,14 +937,66 @@ public class VoucherService : IVoucherService
         }
     }
 
+    /// <summary>
+    /// Decide si emitir el voucher de esta reserva exige autorizacion excepcional y arma el mensaje de
+    /// negocio que se muestra si no se justifica. Hay DOS precondiciones que bloquean la emision normal:
+    ///
+    /// <list type="number">
+    /// <item><b>Saldo impago</b> del cliente (regla historica).</item>
+    /// <item><b>Servicio no resuelto por el operador</b> (auditoria de negocio 2026-06-12): si algun
+    ///   servicio vivo de la reserva todavia NO esta asegurado por el operador, el voucher no deberia
+    ///   salir — el cliente podria llegar y no tener la reserva. El voucher es de la RESERVA ENTERA
+    ///   (Voucher.ReservaId, no apunta a un servicio puntual), por eso se exige que TODOS los servicios
+    ///   vivos esten resueltos. Reusa <see cref="ServiceResolutionRules.GetUnresolvedLiveServiceLabels"/>,
+    ///   la misma definicion de "resuelto" que usa la confirmacion automatica (ADR-020).</item>
+    /// </list>
+    ///
+    /// <para>Cualquiera de las dos (o ambas) habilita el circuito de superior + auditoria. El supervisor
+    /// puede saltear AMBAS con el mismo motivo/quien/cuando que ya se registra.</para>
+    /// </summary>
+    private static (bool RequiresException, string MissingReasonMessage) BuildIssueGate(Reserva reserva)
+    {
+        var blockers = new List<string>();
+
+        if (ReservationEconomicPolicy.HasOutstandingBalance(reserva))
+        {
+            blockers.Add("la reserva tiene saldo pendiente");
+        }
+
+        var unresolved = ServiceResolutionRules.GetUnresolvedLiveServiceLabels(reserva);
+        if (unresolved.Count > 0)
+        {
+            blockers.Add($"hay servicios sin confirmar por el operador: {string.Join(", ", unresolved)}");
+        }
+
+        if (blockers.Count == 0)
+        {
+            return (false, string.Empty);
+        }
+
+        var why = string.Join("; ", blockers);
+        var message =
+            $"Debe indicar un motivo de excepcion de al menos 10 caracteres porque {why}.";
+        return (true, message);
+    }
+
+    /// <summary>
+    /// Valida la autorizacion excepcional cuando una emision/envio de voucher cae sobre una reserva
+    /// que NO cumple alguna precondicion de negocio. Es gate-agnostica: el llamador ya decidio si hace
+    /// falta excepcion (<paramref name="requiresException"/>) y por que (<paramref name="missingReasonMessage"/>,
+    /// el texto que se muestra si no se justifica). Asi un mismo circuito de superior + auditoria cubre
+    /// TANTO el saldo impago COMO el servicio no resuelto por el operador (auditoria de negocio 2026-06-12).
+    /// </summary>
     private async Task<ExceptionalAuthorization> ValidateExceptionalAuthorizationAsync(
         Reserva reserva,
+        bool requiresException,
+        string missingReasonMessage,
         string? exceptionalReason,
         string? superiorUserId,
         OperationActor actor,
         CancellationToken cancellationToken)
     {
-        if (!ReservationEconomicPolicy.HasOutstandingBalance(reserva))
+        if (!requiresException)
         {
             return ExceptionalAuthorization.NotRequired;
         }
@@ -923,7 +1004,7 @@ public class VoucherService : IVoucherService
         var reason = NormalizeOptionalReason(exceptionalReason);
         if (string.IsNullOrWhiteSpace(reason) || reason.Length < 10)
         {
-            throw new InvalidOperationException("Debe indicar un motivo de excepcion de al menos 10 caracteres porque la reserva tiene saldo pendiente.");
+            throw new InvalidOperationException(missingReasonMessage);
         }
 
         if (actor.IsAdmin)

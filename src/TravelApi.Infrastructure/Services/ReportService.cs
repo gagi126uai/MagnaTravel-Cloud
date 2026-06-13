@@ -821,64 +821,105 @@ public class ReportService : IReportService
 
     // ===== BI ANALYTICS =====
 
+    // Bucket para las reservas que no tienen vendedor responsable asignado. NO inventamos dueño:
+    // se agrupan aparte para que el ranking sea honesto (auditoria de negocio 2026-06-12, item 7).
+    private const string UnassignedSellerUserId = "";
+    private const string UnassignedSellerName = "Sin asignar";
+
+    /// <summary>
+    /// Ranking de vendedores HONESTO (auditoria de negocio 2026-06-12, item 7). Cambios respecto del
+    /// comportamiento anterior:
+    /// <list type="bullet">
+    /// <item>Atribuye la venta al <b>vendedor responsable</b> de la reserva (<c>ResponsibleUserId</c>),
+    ///   no a quien la creo segun los AuditLogs (que podia ser otra persona o "System").</item>
+    /// <item>Mide <b>venta CONFIRMADA</b> (<c>ConfirmedSale</c> = servicios resueltos), no el presupuesto
+    ///   (<c>TotalSale</c>, que incluye servicios todavia sin confirmar). Una reserva sin servicios
+    ///   confirmados aporta 0.</item>
+    /// <item>Excluye <c>PendingOperatorRefund</c> ademas de <c>Budget</c> y <c>Cancelled</c>: una reserva
+    ///   en pleno circuito de devolucion del operador no es una venta a acreditarle al vendedor.</item>
+    /// <item>Las reservas sin responsable caen en el bucket "Sin asignar" en vez de inventar un dueño.</item>
+    /// </list>
+    /// La forma del DTO (<see cref="SellerRankingDto"/>) NO cambia: es contenido del reporte, no layout.
+    /// </summary>
     public async Task<List<SellerRankingDto>> GetSellerRankingAsync(DateTime? from, DateTime? to, CancellationToken cancellationToken)
     {
         var dateFrom = from?.ToUniversalTime() ?? new DateTime(DateTime.UtcNow.Year, 1, 1, 0, 0, 0, DateTimeKind.Utc);
         var dateTo = to?.ToUniversalTime() ?? DateTime.UtcNow;
 
-        // Get file creation events from audit logs to attribute files to sellers
-        var fileCreations = await _dbContext.AuditLogs
-            .Where(a => a.Action == "Create" && (a.EntityName == "Reserva" || a.EntityName == "TravelFile")
-                && a.Timestamp >= dateFrom && a.Timestamp <= dateTo)
-            .Select(a => new { a.UserId, a.UserName, FileId = a.EntityId })
-            .ToListAsync(cancellationToken);
-
-        if (!fileCreations.Any()) return new List<SellerRankingDto>();
-
-        var fileIds = fileCreations.Select(fc => int.TryParse(fc.FileId, out var id) ? id : 0).Where(id => id > 0).ToList();
-
+        // Universo: reservas creadas en el periodo que representan una venta real. Se descartan los
+        // estados que NO son venta atribuible (presupuesto, cancelada, y la que esta esperando
+        // devolucion del operador). El costo asociado a la venta confirmada lo tomamos de TotalCost
+        // (el costo del file); ConfirmedSale es la venta exigible.
         var files = await _dbContext.Reservas
-            .Where(f => fileIds.Contains(f.Id) && f.Status != EstadoReserva.Budget && f.Status != EstadoReserva.Cancelled)
-            .Select(f => new { f.Id, f.TotalSale, f.TotalCost })
+            .Where(f => f.CreatedAt >= dateFrom && f.CreatedAt <= dateTo
+                        && f.Status != EstadoReserva.Budget
+                        && f.Status != EstadoReserva.Cancelled
+                        && f.Status != EstadoReserva.PendingOperatorRefund)
+            .Select(f => new
+            {
+                f.ResponsibleUserId,
+                f.ResponsibleUserName,
+                f.ConfirmedSale,
+                f.TotalCost
+            })
             .ToListAsync(cancellationToken);
 
-        // Get all users to map IDs to Names if AuditLog is missing them
+        if (files.Count == 0) return new List<SellerRankingDto>();
+
+        // Para completar el nombre cuando la reserva no lo tiene cacheado (ResponsibleUserName null).
         var users = await _dbContext.Users.ToDictionaryAsync(u => u.Id, u => u.FullName, cancellationToken);
 
-        var ranking = fileCreations
-            .GroupBy(fc => fc.UserId)
-            .Select(g => {
-                var userId = g.Key;
-                var userName = g.First().UserName;
-                if (string.IsNullOrWhiteSpace(userName) || userName == "System")
-                {
-                    if (users.TryGetValue(userId, out var fullName)) userName = fullName;
-                    else userName = "Sistema / Desconocido";
-                }
+        var ranking = files
+            // Las reservas sin responsable se agrupan todas juntas bajo la misma clave vacia.
+            .GroupBy(f => f.ResponsibleUserId ?? UnassignedSellerUserId)
+            .Select(group =>
+            {
+                var userId = group.Key;
+                var sellerName = ResolveSellerName(userId, group.Select(g => g.ResponsibleUserName), users);
 
-                var sellerFileIds = g.Select(x => int.TryParse(x.FileId, out var id) ? id : 0).Where(id => id > 0).ToHashSet();
-                var sellerFiles = files.Where(f => sellerFileIds.Contains(f.Id)).ToList();
-                
-                var totalSales = sellerFiles.Sum(f => f.TotalSale);
-                var totalCosts = sellerFiles.Sum(f => f.TotalCost);
-                var margin = totalSales - totalCosts;
-                var marginPercent = totalSales > 0 ? Math.Round((margin / totalSales) * 100, 1) : 0;
+                var confirmedSales = group.Sum(f => f.ConfirmedSale);
+                var totalCosts = group.Sum(f => f.TotalCost);
+                var margin = confirmedSales - totalCosts;
+                var marginPercent = confirmedSales > 0 ? Math.Round((margin / confirmedSales) * 100, 1) : 0;
 
                 return new SellerRankingDto(
                     userId,
-                    userName,
-                    sellerFiles.Count,
-                    totalSales,
+                    sellerName,
+                    group.Count(),
+                    confirmedSales,
                     totalCosts,
                     margin,
-                    marginPercent
-                );
+                    marginPercent);
             })
-            .Where(s => s.ReservasCreated > 0)
             .OrderByDescending(s => s.TotalSales)
             .ToList();
 
         return ranking;
+    }
+
+    /// <summary>
+    /// Resuelve el nombre a mostrar de un vendedor. Prioridad: nombre cacheado en la reserva -> nombre
+    /// del usuario en Identity -> "Sin asignar" (bucket sin responsable) -> fallback generico.
+    /// </summary>
+    private static string ResolveSellerName(string userId, IEnumerable<string?> cachedNames, IDictionary<string, string> users)
+    {
+        if (string.IsNullOrEmpty(userId))
+        {
+            return UnassignedSellerName;
+        }
+
+        var cached = cachedNames.FirstOrDefault(name => !string.IsNullOrWhiteSpace(name));
+        if (!string.IsNullOrWhiteSpace(cached))
+        {
+            return cached!;
+        }
+
+        if (users.TryGetValue(userId, out var fullName) && !string.IsNullOrWhiteSpace(fullName))
+        {
+            return fullName;
+        }
+
+        return "Vendedor desconocido";
     }
 
     public async Task<List<DestinationAnalyticsDto>> GetDestinationAnalyticsAsync(DateTime? from, DateTime? to, CancellationToken cancellationToken)

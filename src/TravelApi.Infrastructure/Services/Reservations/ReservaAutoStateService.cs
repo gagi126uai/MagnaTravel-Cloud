@@ -166,23 +166,8 @@ public class ReservaAutoStateService
     /// </summary>
     private static string BuildRegressionReason(Reserva reserva)
     {
-        var unresolvedTypes = new List<string>();
-
-        void Check<T>(IEnumerable<T> items, Func<T, bool> isCancelled, Func<T, bool> isResolved, string typeLabel)
-        {
-            foreach (var item in items)
-            {
-                if (isCancelled(item)) continue;
-                if (!isResolved(item)) { unresolvedTypes.Add(typeLabel); break; }
-            }
-        }
-
-        Check(reserva.FlightSegments, ServiceResolutionRules.IsCancelled, ServiceResolutionRules.IsResolved, "un aereo (sin emitir)");
-        Check(reserva.HotelBookings, ServiceResolutionRules.IsCancelled, ServiceResolutionRules.IsResolved, "un hotel");
-        Check(reserva.TransferBookings, ServiceResolutionRules.IsCancelled, ServiceResolutionRules.IsResolved, "un traslado");
-        Check(reserva.PackageBookings, ServiceResolutionRules.IsCancelled, ServiceResolutionRules.IsResolved, "un paquete");
-        Check(reserva.AssistanceBookings, ServiceResolutionRules.IsCancelled, ServiceResolutionRules.IsResolved, "una asistencia");
-        Check(reserva.Servicios, ServiceResolutionRules.IsCancelled, ServiceResolutionRules.IsResolved, "un servicio");
+        // Reusa la fuente unica de "que servicios vivos siguen sin resolver" (misma que usa el voucher).
+        var unresolvedTypes = ServiceResolutionRules.GetUnresolvedLiveServiceLabels(reserva);
 
         if (unresolvedTypes.Count == 0)
             return "Un servicio dejo de estar resuelto: regresion automatica a En gestion";
