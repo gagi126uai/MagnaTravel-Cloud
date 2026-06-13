@@ -21,6 +21,23 @@ public class Invoice : IHasPublicId
     public string? Resultado { get; set; } // A (Aprobado), R (Rechazado), P (Parcial)
     public string? Observaciones { get; set; } // Error messages from AFIP
 
+    /// <summary>
+    /// Leyenda fiscal obligatoria del comprobante (campo Obs del WSFEv1 / texto del PDF).
+    ///
+    /// <para><b>Por que es un campo aparte de <see cref="Observaciones"/></b>: Observaciones
+    /// guarda los mensajes de ERROR que devuelve ARCA y se sobreescribe en cada intento. La
+    /// leyenda, en cambio, forma parte del CONTENIDO del comprobante (lo que se manda a ARCA y
+    /// se imprime) y se decide al crear la factura PENDING. Mezclarlas pisaria la leyenda con un
+    /// mensaje de error o viceversa.</para>
+    ///
+    /// <para>Hoy el unico uso es la leyenda de la Ley 27.618 que debe llevar una Factura A
+    /// emitida por un Responsable Inscripto a un Monotributista (ver
+    /// <c>InvoiceTypeResolver.LeyendaFacturaAMonotributista</c>). NULL para todos los demas
+    /// comprobantes -> envelope byte-identico al historico (no se emite el nodo Obs).</para>
+    /// </summary>
+    [MaxLength(1000)]
+    public string? FiscalLegend { get; set; }
+
     // Financial Data
     [Column(TypeName = "decimal(18,2)")]
     public decimal ImporteTotal { get; set; }

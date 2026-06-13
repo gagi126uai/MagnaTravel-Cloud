@@ -466,11 +466,14 @@ public class MultiCurrencyInvoicingTests
     }
 
     [Theory]
-    // Agencia RI + cliente RI -> A (1). Agencia RI + cliente no RI -> B (6).
-    // Agencia Monotributo -> C (11). La moneda (USD) NO debe cambiar estos resultados.
+    // Agencia RI + cliente RI -> A (1). Agencia RI + cliente Monotributo -> A (1) (Ley 27.618).
+    // Agencia RI + cliente Consumidor Final -> B (6). Agencia Monotributo -> C (11).
+    // La moneda (USD) NO debe cambiar estos resultados.
     [InlineData("Responsable Inscripto", "Responsable Inscripto", 1)]
+    [InlineData("Responsable Inscripto", "Monotributo", 1)]        // FIX fiscal 2026-06-13: antes daba B
     [InlineData("Responsable Inscripto", "Consumidor Final", 6)]
     [InlineData("Monotributo", "Consumidor Final", 11)]
+    [InlineData("Exento", "Consumidor Final", 11)]
     public async Task CreatePendingInvoice_WithUsd_KeepsAbcDecisionUnchanged(
         string agencyTaxCondition,
         string customerTaxCondition,
@@ -485,5 +488,72 @@ public class MultiCurrencyInvoicingTests
         // El tipo de comprobante depende SOLO de la condicion fiscal, no de la moneda.
         Assert.Equal(expectedTipoComprobante, invoice.TipoComprobante);
         Assert.Equal("DOL", invoice.MonId);
+    }
+
+    // ============================================================
+    // Fix fiscal RI->Monotributista (2026-06-13): leyenda obligatoria Ley 27.618.
+    // ============================================================
+
+    /// <summary>
+    /// Emisor RI a receptor Monotributo: la Factura A debe persistir la leyenda obligatoria de
+    /// la Ley 27.618 en Invoice.FiscalLegend (el job la mandara a ARCA en el campo Obs).
+    /// </summary>
+    [Fact]
+    public async Task CreatePendingInvoice_RI_a_Monotributo_PersistsLey27618Legend()
+    {
+        using var context = new AppDbContext(_dbOptions);
+        await SeedAfipScenarioAsync(context, agencyTaxCondition: "Responsable Inscripto", customerTaxCondition: "Monotributo");
+
+        var afip = BuildAfipService(context);
+        var invoice = await afip.CreatePendingInvoice(1, BuildUsdRequest());
+
+        // Factura A.
+        Assert.Equal(1, invoice.TipoComprobante);
+        var persisted = await context.Invoices.FindAsync(invoice.Id);
+        Assert.NotNull(persisted);
+        Assert.Equal(InvoiceTypeResolver.LeyendaFacturaAMonotributista, persisted!.FiscalLegend);
+    }
+
+    /// <summary>
+    /// La variante de texto del receptor ("MONOTRIBUTISTA") no degrada: sigue dando Factura A y
+    /// la leyenda igual se persiste (no se pierde por el formato del dato).
+    /// </summary>
+    [Fact]
+    public async Task CreatePendingInvoice_RI_a_MonotributoVariante_StillFacturaA_WithLegend()
+    {
+        using var context = new AppDbContext(_dbOptions);
+        await SeedAfipScenarioAsync(context, agencyTaxCondition: "Responsable Inscripto", customerTaxCondition: "MONOTRIBUTISTA");
+
+        var afip = BuildAfipService(context);
+        var invoice = await afip.CreatePendingInvoice(1, BuildUsdRequest());
+
+        Assert.Equal(1, invoice.TipoComprobante);
+        var persisted = await context.Invoices.FindAsync(invoice.Id);
+        Assert.Equal(InvoiceTypeResolver.LeyendaFacturaAMonotributista, persisted!.FiscalLegend);
+    }
+
+    /// <summary>
+    /// La leyenda va SOLO en RI->Monotributo. En los demas casos (RI->RI, RI->CF, Mono, Exento)
+    /// FiscalLegend queda NULL -> el job NO emite el nodo Obs (envelope byte-identico al historico).
+    /// </summary>
+    [Theory]
+    [InlineData("Responsable Inscripto", "Responsable Inscripto")] // Factura A pero RI->RI: sin leyenda
+    [InlineData("Responsable Inscripto", "Consumidor Final")]      // Factura B: sin leyenda
+    [InlineData("Responsable Inscripto", "Exento")]                // Factura B (RI->Exento): sin leyenda
+    [InlineData("Responsable Inscripto", "Extranjero")]            // Factura B (RI->Extranjero): sin leyenda
+    [InlineData("Monotributo", "Monotributo")]                     // Factura C: sin leyenda
+    [InlineData("Exento", "Consumidor Final")]                     // Factura C: sin leyenda
+    public async Task CreatePendingInvoice_OtherCases_DoNotPersistLegend(
+        string agencyTaxCondition,
+        string customerTaxCondition)
+    {
+        using var context = new AppDbContext(_dbOptions);
+        await SeedAfipScenarioAsync(context, agencyTaxCondition, customerTaxCondition);
+
+        var afip = BuildAfipService(context);
+        var invoice = await afip.CreatePendingInvoice(1, BuildUsdRequest());
+
+        var persisted = await context.Invoices.FindAsync(invoice.Id);
+        Assert.Null(persisted!.FiscalLegend);
     }
 }

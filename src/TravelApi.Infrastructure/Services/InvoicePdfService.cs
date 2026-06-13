@@ -282,6 +282,33 @@ public class InvoicePdfService : IInvoicePdfService
                 // PDF queda byte-identico a hoy.
                 ComposeForeignCurrencyDetails(c, invoice);
             });
+
+            // Leyenda fiscal obligatoria al pie del cuerpo del comprobante. Hoy el unico uso es la
+            // leyenda de la Ley 27.618 / RG 5003 que lleva una Factura A emitida por un Responsable
+            // Inscripto a un Monotributista. Es un requisito del comprobante IMPRESO (NO un dato que
+            // ARCA reciba), por eso vive en el PDF y no en el envelope WSFEv1.
+            ComposeFiscalLegend(column, invoice);
+        });
+    }
+
+    /// <summary>
+    /// Imprime la leyenda fiscal (Invoice.FiscalLegend) al pie del cuerpo del comprobante, tal cual
+    /// fue persistida y sin truncar. Hoy aplica a la Factura A de RI a Monotributista (Ley 27.618 /
+    /// RG 5003), que la norma exige en el comprobante impreso. Cuando FiscalLegend es null/vacio no
+    /// agrega nada, asi el layout de las demas facturas queda intacto.
+    /// </summary>
+    private void ComposeFiscalLegend(ColumnDescriptor column, Invoice invoice)
+    {
+        if (string.IsNullOrWhiteSpace(invoice.FiscalLegend))
+            return;
+
+        var legendStyle = TextStyle.Default.FontSize(8).Italic().FontColor(Colors.Grey.Darken3);
+
+        column.Item().PaddingTop(12).Column(legendBlock =>
+        {
+            legendBlock.Item().PaddingBottom(3).LineHorizontal(0.5f).LineColor(Colors.Grey.Lighten2);
+            // Texto EXACTO de la norma: no se trunca ni se reformatea.
+            legendBlock.Item().Text(invoice.FiscalLegend).Style(legendStyle);
         });
     }
 

@@ -355,12 +355,20 @@ public class AfipService : IAfipService
              var url = settings.IsProduction ? WsfeUrlProd : WsfeUrlDev;
              var action = "http://ar.gov.afip.dif.FEV1/FECompUltimoAutorizado";
              
-             // Determine Voucher Type based on Agency Tax Condition
-             // Responsable Inscripto -> Check Type 001 (Factura A)
-             // Monotributo -> Check Type 011 (Factura C)
-             // Exento -> Check Type 011 (Factura C) (Usually)
+             // Tipo de comprobante para consultar el ULTIMO numero autorizado, segun la condicion
+             // fiscal del EMISOR (la agencia):
+             //   - Monotributo / Exento -> Factura C (11)
+             //   - cualquier otro (Responsable Inscripto, default) -> Factura A (1)
+             //
+             // Normalizamos con TaxConditionNormalizer (igual que InvoiceTypeResolver en el path de
+             // emision) para que la SECUENCIA y la EMISION usen exactamente la misma logica: asi una
+             // variante de texto ("MONOTRIBUTISTA", "IVA_EXENTO", con tildes) no consulta la serie
+             // equivocada. Para los valores actuales del dropdown ("Monotributo"/"Exento") el
+             // resultado es identico al literal previo.
+             var emisorCondition = TaxConditionNormalizer.Normalize(settings.TaxCondition);
              int cbteTipo = 1; // Default Factura A
-             if (settings.TaxCondition == "Monotributo" || settings.TaxCondition == "Exento")
+             if (emisorCondition == TaxConditionCanonical.Monotributista ||
+                 emisorCondition == TaxConditionCanonical.Exento)
              {
                  cbteTipo = 11; // Factura C
              }
@@ -592,18 +600,30 @@ public class AfipService : IAfipService
             if (originalInvoice == null) throw new Exception("Comprobante original no encontrado");
         }
 
-        // 3. Determine Type (Logic kept same)
-        int baseType = 6; // B
-        if (settings.TaxCondition == "Responsable Inscripto")
+        // 3. Determine Type (matriz emisor x receptor).
+        //
+        // ADR (fix fiscal RI->Monotributo, 2026-06-13): la decision A/B/C ahora vive en
+        // InvoiceTypeResolver (Domain, testeable como unidad pura) y NO se compara mas por
+        // string literal. Cambios respecto del codigo previo:
+        //   - emisor RI a receptor Monotributo -> AHORA Factura A (1). Antes daba B (6). Era un
+        //     BUG fiscal: ARCA (RG 5003/2021, Ley 27.618) exige A para esa combinacion.
+        //   - las dos condiciones (agencia y cliente) pasan por TaxConditionNormalizer, asi
+        //     variantes de texto ("Monotributista", "MONOTRIBUTO", con tildes) no degradan la
+        //     letra en silencio.
+        // Los casos ya correctos se preservan EXACTO: RI->RI=A, RI->Consumidor Final=B,
+        // Monotributo=C, Exento=C.
+        int baseType = InvoiceTypeResolver.ResolveSaleInvoiceType(
+            emisorTaxCondition: settings.TaxCondition,
+            receptorTaxCondition: customer.TaxCondition);
+
+        // Leyenda obligatoria Ley 27.618 cuando RI factura a Monotributista (Factura A). Va SOLO
+        // en ese caso. Se persiste en Invoice.FiscalLegend para que el PDF la imprima
+        // (InvoicePdfService.ComposeFiscalLegend). NO va en el envelope WSFEv1: la leyenda es un
+        // requisito del comprobante IMPRESO, no un dato que ARCA reciba (no existe ese nodo en el XSD).
+        string? fiscalLegend = null;
+        if (InvoiceTypeResolver.RequiresMonotributistaLegend(settings.TaxCondition, customer.TaxCondition))
         {
-            if (customer.TaxCondition != null && customer.TaxCondition.Equals("Responsable Inscripto", StringComparison.OrdinalIgnoreCase)) 
-                baseType = 1; // A
-            else 
-                baseType = 6; // B
-        }
-        else // Monotributo/Exento
-        {
-            baseType = 11; // C
+            fiscalLegend = InvoiceTypeResolver.LeyendaFacturaAMonotributista;
         }
 
         int cbteTipo = baseType;
@@ -744,6 +764,9 @@ public class AfipService : IAfipService
              CAE = null,
              VencimientoCAE = null,
              Resultado = "PENDING", // <--- NEW STATE
+             // Leyenda Ley 27.618 (solo RI->Monotributista, Factura A). NULL en cualquier otro caso.
+             // Se imprime en el PDF (InvoicePdfService.ComposeFiscalLegend); NO se manda a ARCA.
+             FiscalLegend = fiscalLegend,
              ImporteTotal = total,
              ImporteNeto = net,
              ImporteIva = iva,
@@ -1190,12 +1213,42 @@ public class AfipService : IAfipService
                 </CbtesAsoc>");
             }
             
+            // LEYENDA FISCAL (Ley 27.618 / RG 5003) -> NO va en el envelope WSFEv1.
+            //
+            // El experto ARCA verifico contra el XSD del WSFEv1 (y pyafipws) que NO existe un nodo
+            // <Observaciones>/<Obs> de texto libre en FECAEDetRequest. El unico campo de datos
+            // libres es <Opcionales>, cuyos Id salen de una tabla enumerada (FEParamGetTiposOpcional),
+            // NO texto arbitrario con Id=1. Ademas, la leyenda RG 5003 es un requisito del comprobante
+            // IMPRESO (PDF), no un dato que ARCA reciba o valide. Por eso:
+            //   - NO se construye ni se emite el nodo <Observaciones> aca (era invalido: un emisor RI
+            //     habria hecho REBOTAR el comprobante en ARCA).
+            //   - La leyenda se sigue persistiendo en Invoice.FiscalLegend (CreatePendingInvoice) y se
+            //     RENDERIZA en el PDF (ver InvoicePdfService.ComposeFiscalLegend), que es donde la
+            //     norma la exige.
+            // Para emisor Monotributo FiscalLegend siempre fue NULL, asi que el envelope queda
+            // BYTE-IDENTICO al historico (no se quita ningun nodo que se estuviera emitiendo en Mono).
+
             var today = DateTime.Now.ToString("yyyyMMdd");
 
-            // For Factura C, ImpNeto MUST be exactly equal to the subtotal before taxes. 
+            // For Factura C, ImpNeto MUST be exactly equal to the subtotal before taxes.
             // And ImpIVA MUST be 0.
             decimal impNeto = isFacturaC ? invoice.ImporteTotal - invoice.Tributes.Sum(t => t.Importe) : invoice.ImporteNeto;
             decimal impIva = isFacturaC ? 0 : invoice.ImporteIva;
+
+            // MULTIALICUOTA (verificado 2026-06-13): el desglose por renglon YA esta soportado.
+            // Cada InvoiceItem lleva su propio AlicuotaIvaId; el bloque <Iva> (sbIva, mas arriba)
+            // agrupa los items por alicuota y emite un <AlicIva> por cada grupo. O sea 21% + 10.5%
+            // conviven en una misma Factura A sin nada hardcodeado, y las tasas viven en
+            // GetVatMultiplier (tabla), no en linea. No hubo que tocar nada para esto.
+            //
+            // GAP CONOCIDO - EXENTO real + base sobre el MARGEN (PENDIENTE FIRMA CONTADOR):
+            // <ImpOpEx> esta fijo en 0. Una operacion EXENTA (sin IVA, distinta de la alicuota 0%)
+            // deberia ir a ImpOpEx + ImpTotConc, NO como un <AlicIva> de 0%. Hoy un item con
+            // AlicuotaIvaId=3 se trata como alicuota 0% (AlicIva Id=3, Importe=0), que NO es
+            // identico fiscalmente a 'exento'. Tampoco se descuentan los componentes de tercero del
+            // operador para facturar IVA sobre el MARGEN (art. 61 DR Ley 23.349 / Ley 18.829 IVA
+            // agencias). Ambas cosas necesitan criterio fino del matriculado caso por caso: hoy la
+            // Factura A se arma por linea manual. NO construir sin firma del contador.
 
             // FC1.3.F2.5 (multimoneda) — nodo CanMisMonExt ("Cancela en Misma Moneda Extranjera",
             // RG ARCA 5616/2024). Lo arma BuildCanMisMonExtFragment(invoice.MonId): para pesos
