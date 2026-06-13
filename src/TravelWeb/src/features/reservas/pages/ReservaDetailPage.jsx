@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Clock, CreditCard, Download, Eye, ExternalLink, FileText, History, Paperclip, Receipt, Users, Trash2, Edit2, Plus } from "lucide-react";
 import { api } from "../../../api";
@@ -35,7 +35,7 @@ import { ReservaSummaryStrip } from "../components/ReservaSummaryStrip";
 import { RegistrarCobroInline } from "../components/RegistrarCobroInline";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import { RevertStatusModal } from "../components/RevertStatusModal";
-import { ServiceList } from "../components/ServiceList";
+import { ServiceList, calculateServiciosCanceladosResumen } from "../components/ServiceList";
 import { EditAuthorizationModal } from "../components/EditAuthorizationModal";
 import { MarkLostModal } from "../components/MarkLostModal";
 import { isStatusLocked } from "../components/ReservaStatusBadge";
@@ -554,6 +554,13 @@ export default function ReservaDetailPage() {
   // "isEarlyStage" reemplaza al antiguo "isBudget" que solo chequeaba Budget.
   const isEarlyStage = reserva?.status === "Quotation" || reserva?.status === "Budget";
 
+  // Contador "N de M servicios cancelados" para el ReservaHeader (ADR-025).
+  // Se recalcula solo cuando cambia allServices (memoizado para no correr en cada render).
+  const serviciosCancelados = useMemo(
+    () => calculateServiciosCanceladosResumen(allServices),
+    [allServices]
+  );
+
   // Si el usuario esta en una tab que no se muestra en estado early-stage (por ej:
   // la reserva regresa de InManagement a Budget), redirigir a "services" para evitar
   // una pantalla en blanco.
@@ -617,6 +624,7 @@ export default function ReservaDetailPage() {
         onCancelReserva={() => setShowCancelModal(true)}
         onRequestEdit={() => setShowEditAuthModal(true)}
         onMarkLost={() => setShowMarkLostModal(true)}
+        serviciosCancelados={serviciosCancelados}
       />
 
       <ReservaSummaryStrip reserva={reserva} />
@@ -786,6 +794,7 @@ export default function ReservaDetailPage() {
                 }}
                 onDeleteService={(service) => handleDeleteService(service)}
                 onCancelService={(service, motivo) => handleCancelService(service, motivo)}
+                onIrAFacturas={() => setActiveTab("account")}
               />
 
               {/* Ficha de carga en línea (ADR-017): solo aparece con EnableCatalogFindOrCreate ON.

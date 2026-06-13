@@ -70,4 +70,9 @@ public class FlightSegmentDto
     public bool IsPriceSynced { get; set; } = true;
     public string SourceKind { get; set; } = "Flight";
     public string WorkflowStatus { get; set; } = "Solicitado";
+    // Auditoria de cancelacion (ADR-020): cuando se cancelo el segmento (Status -> HX) y quien lo cancelo.
+    // El front los muestra como "Cancelado por X el DD/MM/YYYY". Null = no cancelado. NO son datos de costo
+    // ni fiscales: no se enmascaran. Mapean por convencion (mismo nombre que la entidad FlightSegment).
+    public DateTime? CancelledAt { get; set; }
+    public string? CancelledByUserName { get; set; }
 }

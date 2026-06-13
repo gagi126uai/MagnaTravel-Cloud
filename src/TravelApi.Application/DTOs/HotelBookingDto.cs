@@ -55,5 +55,11 @@ public class HotelBookingDto
     public string SourceKind { get; set; } = "Hotel";
     public string WorkflowStatus { get; set; } = "Solicitado";
     public string? RoomingAssignments { get; set; }
+    // Auditoria de cancelacion (ADR-020): cuando se cancelo el servicio y quien lo cancelo. El front
+    // los muestra como "Cancelado por X el DD/MM/YYYY". Null = servicio no cancelado. NO son datos de
+    // costo ni fiscales (trazabilidad operativa): no se enmascaran. Mapean por convencion (mismo nombre
+    // que la entidad HotelBooking). No hay motivo de cancelacion a nivel servicio (solo va al audit log).
+    public DateTime? CancelledAt { get; set; }
+    public string? CancelledByUserName { get; set; }
 }
 

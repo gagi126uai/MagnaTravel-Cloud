@@ -4,6 +4,7 @@ import { showError, showSuccess } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { getPublicId } from "../../../lib/publicIds";
 import { camelize } from "../../../lib/utils";
+import { cancellationsApi } from "../../cancellations/api/cancellationsApi";
 import {
     findNormalizedService,
     getReservationCollectionKeyForRecordKind,
@@ -465,47 +466,53 @@ export function useReservaDetail(reservaId, navigate) {
      * Decisión #9 (guia UX 2026-06-08): el servicio queda con workflowStatus="Cancelado"
      * (tachado en la lista) en vez de desaparecer. Hubo compromiso real con el operador.
      *
-     * Endpoint: PATCH /api/{tipo}-bookings/{publicId}/status (o flight-segments)
-     * Body: { status: "Cancelado" }
+     * ADR-025: migrado de PATCH /{tipo}-bookings/{id}/status a POST /cancellations/cancel-service.
+     * El nuevo endpoint pasa por el candado fiscal del backend: si hay factura con CAE viva
+     * o voucher emitido, devuelve 409 con un mensaje descriptivo (el llamador debe mostrarlo
+     * en un modal explicativo, no en un toast genérico).
      *
-     * La ruta de status es ABSOLUTA (no anidada bajo reservas/{id}) — así lo expone el backend.
-     * Mapeo de recordKind a segmento de ruta verificado en los controllers (.cs).
+     * @param {object} service - El servicio normalizado (con recordKind).
+     * @param {string|null} motivo - Motivo de la cancelación (obligatorio en backend: mín 10 chars).
+     *   Si viene null o vacío, mostramos error de validación antes de llamar al API.
+     * @returns {{ ok: boolean, result?: CancelServiceResultDto, error?: Error }}
+     *   Retornamos el objeto para que el llamador pueda actualizar el contador "N de M"
+     *   sin hacer un fetch completo (los contadores vienen en el resultado).
      */
     const handleCancelService = async (service, motivo = null) => {
-        // Mapeo de recordKind al segmento de ruta del endpoint de status.
-        // Verificado contra controllers: HotelBookings, FlightSegments, TransferBookings,
-        // PackageBookings, AssistanceBookings.
-        const STATUS_ENDPOINT_SEGMENT = {
-            hotel: 'hotel-bookings',
-            flight: 'flight-segments',
-            transfer: 'transfer-bookings',
-            package: 'package-bookings',
-            assistance: 'assistance-bookings',
+        // Mapeo de recordKind (front) → serviceTable (backend).
+        // Verificado contra CancelServiceRequest del backend (CancellationDtos.cs).
+        const RECORD_KIND_TO_SERVICE_TABLE = {
+            hotel: 'Hotel',
+            flight: 'Flight',
+            transfer: 'Transfer',
+            package: 'Package',
+            assistance: 'Assistance',
+            generic: 'Generic',
         };
 
-        const segmento = STATUS_ENDPOINT_SEGMENT[service?.recordKind];
-        if (!segmento) {
-            // Servicios genéricos (ServicioReserva) no tienen endpoint de status propio.
-            // No deberían llegar aquí porque esServicioResuelto no aplica a genéricos.
+        const serviceTable = RECORD_KIND_TO_SERVICE_TABLE[service?.recordKind];
+        if (!serviceTable) {
             showError('Este tipo de servicio no se puede cancelar desde aquí.');
-            return false;
+            return { ok: false };
         }
 
         const servicePublicId = service.publicId || service.id;
         if (!servicePublicId) {
             showError('No se pudo identificar el servicio para cancelarlo.');
-            return false;
+            return { ok: false };
         }
 
-        const endpoint = `/api/${segmento}/${servicePublicId}/status`;
+        // El motivo es obligatorio en el backend (mínimo 10 caracteres, máximo 1000).
+        // La validación del largo mínimo la hace el modal antes de llamar a este hook,
+        // así que acá solo saneamos espacios y confiamos en que el valor ya cumple la regla.
+        const motivoFinal = motivo ? motivo.trim() : '';
 
         try {
-            await api.patch(endpoint, {
-                status: 'Cancelado',
-                // El motivo no forma parte del ServiceStatusUpdateRequest del backend hoy,
-                // pero lo enviamos por si el backend evoluciona para aceptarlo.
-                // Si el backend lo ignora, la cancelación igualmente funciona.
-                ...(motivo ? { notes: motivo } : {}),
+            const result = await cancellationsApi.cancelService({
+                reservaPublicId: reservaId,
+                serviceTable,
+                servicePublicId,
+                reason: motivoFinal,
             });
 
             // Recargamos la colección del tipo de servicio para que el workflowStatus
@@ -518,10 +525,12 @@ export function useReservaDetail(reservaId, navigate) {
             });
 
             showSuccess('Servicio cancelado. Quedó tachado en la lista de la reserva.');
-            return true;
+            return { ok: true, result };
         } catch (error) {
-            showError(getApiErrorMessage(error, 'No se pudo cancelar el servicio.'));
-            return false;
+            // Devolvemos el error para que el llamador decida cómo mostrarlo.
+            // 409 = bloqueo fiscal (factura con CAE viva / voucher emitido) → modal explicativo.
+            // Otros errores → el llamador puede mostrar toast si quiere.
+            return { ok: false, error };
         }
     };
 

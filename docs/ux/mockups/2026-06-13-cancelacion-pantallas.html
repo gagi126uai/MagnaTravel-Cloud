@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Cancelación de servicios — pantallas para aprobar (2026-06-13)</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: #f1f5f9; color: #1f2937; padding: 36px 16px 90px; }
+  .wrap { max-width: 1040px; margin: 0 auto; }
+  h1 { font-size: 27px; margin-bottom: 8px; }
+  .sub { color: #475569; margin-bottom: 18px; font-size: 15px; line-height: 1.6; }
+  .reglas { background:#ecfdf5; border:1px solid #a7f3d0; border-radius:12px; padding:14px 18px; font-size:13.5px; color:#065f46; line-height:1.7; margin-bottom:44px; }
+  .reglas b { color:#064e3b; }
+
+  .pantalla { margin-bottom: 64px; }
+  .pnum { display:inline-block; background:#0f172a; color:#fff; font-size:12px; font-weight:800; letter-spacing:.5px; border-radius:999px; padding:5px 14px; margin-bottom:10px; }
+  .pantalla h2 { font-size:22px; color:#0f172a; margin-bottom:6px; }
+  .que { background:#fffbeb; border-left:4px solid #f59e0b; border-radius:0 8px 8px 0; padding:11px 16px; font-size:13.5px; color:#78350f; line-height:1.6; margin-bottom:18px; }
+  .que b { color:#451a03; }
+
+  /* marco de "ventana del navegador" */
+  .win { border:1px solid #cbd5e1; border-radius:14px; overflow:hidden; box-shadow:0 10px 34px rgba(15,23,42,.14); background:#fff; }
+  .winbar { display:flex; align-items:center; gap:12px; background:#e2e8f0; padding:11px 16px; border-bottom:1px solid #cbd5e1; }
+  .winbar .dots { display:flex; gap:7px; }
+  .winbar .dots i { width:12px; height:12px; border-radius:50%; display:block; }
+  .winbar .addr { background:#fff; border-radius:7px; padding:6px 16px; font-size:12.5px; color:#475569; flex:1; font-weight:600; }
+  .winbody { padding:24px; background:#f8fafc; }
+
+  .mon { font-size:10.5px; font-weight:700; color:#fff; border-radius:5px; padding:1px 5px; margin-right:4px; }
+  .mon.ars { background:#0f766e; }
+  .mon.usd { background:#4338ca; }
+
+  .pill { display:inline-block; border-radius:6px; font-size:10px; font-weight:700; padding:2px 7px; vertical-align:middle; text-transform:uppercase; letter-spacing:.5px; }
+  .pill.green { background:#d1fae5; color:#047857; }
+  .pill.amber { background:#fef3c7; color:#b45309; }
+  .pill.rose  { background:#ffe4e6; color:#be123c; }
+  .pill.slate { background:#e2e8f0; color:#475569; }
+
+  table { width:100%; border-collapse:collapse; background:#fff; border-radius:10px; overflow:hidden; font-size:13px; }
+  th { text-align:left; background:#f1f5f9; color:#475569; padding:9px 13px; font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; }
+  td { padding:11px 13px; border-top:1px solid #e5e7eb; color:#334155; vertical-align:middle; }
+  .r { text-align:right; }
+  .mono { font-family:monospace; font-weight:700; }
+
+  /* franja de la reserva (3 numeros limpios) */
+  .resvhead { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px; }
+  .resvhead .ttl { font-size:22px; font-weight:800; color:#0f172a; }
+  .resvhead .ttl .num { color:#4f46e5; }
+  .estadoline { display:flex; align-items:center; gap:8px; margin-top:8px; flex-wrap:wrap; }
+  .badge-estado { background:#cffafe; color:#0e7490; border:1px solid #a5f3fc; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; border-radius:999px; padding:4px 12px; }
+  .badge-estado.confirmada { background:#dcfce7; color:#15803d; border-color:#bbf7d0; }
+  /* P-CANC1: contador "N de M cancelados" — linea chica gris debajo del estado */
+  .canc-counter { font-size:12px; color:#94a3b8; margin-top:5px; display:inline-flex; align-items:center; gap:6px; }
+  .canc-counter .dot { width:6px; height:6px; border-radius:50%; background:#cbd5e1; }
+  .clientline { font-size:16px; font-weight:700; color:#0f172a; margin-top:9px; }
+
+  .acts { display:flex; gap:8px; flex-wrap:wrap; }
+  .acts .btn { display:inline-flex; align-items:center; gap:6px; border-radius:9px; padding:7px 12px; font-size:12.5px; font-weight:700; border:1px solid transparent; cursor:default; }
+  .acts .btn.rose { background:#ffe4e6; color:#be123c; }
+  .acts .btn.amber { background:#fef3c7; color:#b45309; }
+  .acts .btn.slate { background:#f1f5f9; color:#475569; }
+
+  /* lista de servicios */
+  .listttl { display:flex; justify-content:space-between; align-items:center; margin:22px 0 12px; }
+  .listttl h3 { font-size:16px; font-weight:700; color:#0f172a; }
+  .listttl .addbtn { background:#2563eb; color:#fff; border-radius:9px; padding:8px 14px; font-size:13px; font-weight:700; }
+  .listttl .cancelvarios { background:#fff; color:#be123c; border:1px solid #fecdd3; border-radius:9px; padding:8px 14px; font-size:13px; font-weight:700; margin-right:8px; }
+  .svc-type { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; color:#64748b; }
+  .svc-name { font-size:13.5px; font-weight:700; color:#0f172a; }
+  /* servicio TACHADO (cancelado) */
+  tr.cancelado td { color:#94a3b8; background:#fafbfc; }
+  tr.cancelado .svc-name { text-decoration:line-through; color:#94a3b8; }
+  tr.cancelado .svc-type { color:#cbd5e1; }
+  .cancel-meta { font-size:11px; color:#94a3b8; margin-top:3px; font-style:italic; }
+  .acciones-cell { text-align:right; }
+  .acciones-cell .mini { display:inline-flex; align-items:center; gap:4px; font-size:12px; font-weight:700; padding:4px 8px; border-radius:7px; }
+  .acciones-cell .mini.edit { color:#2563eb; }
+  .acciones-cell .mini.del { color:#dc2626; }
+  .acciones-cell .mini.lock { color:#b45309; background:#fef3c7; }
+  .total-row td { background:#f8fafc; font-weight:800; border-top:2px solid #e2e8f0; }
+
+  /* MODAL (ventana que se abre encima) */
+  .modal-bg { background:rgba(15,23,42,.55); border-radius:12px; padding:38px 20px; display:flex; justify-content:center; }
+  .modal { width:100%; max-width:460px; background:#fff; border-radius:16px; box-shadow:0 20px 50px rgba(0,0,0,.3); overflow:hidden; }
+  .modal .mh { display:flex; align-items:center; gap:12px; padding:16px 20px; border-bottom:1px solid #e5e7eb; background:#fafafa; }
+  .modal .mh .ic { width:38px; height:38px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:18px; }
+  .modal .mh .ic.rose { background:#ffe4e6; color:#be123c; }
+  .modal .mh .ic.amber { background:#fef3c7; color:#b45309; }
+  .modal .mh h4 { font-size:16px; font-weight:800; color:#0f172a; }
+  .modal .mh .mhsub { font-size:11.5px; color:#94a3b8; margin-top:2px; }
+  .modal .mb { padding:20px; }
+  .modal .mf { padding:14px 20px; border-top:1px solid #e5e7eb; background:#fafafa; display:flex; justify-content:flex-end; gap:10px; }
+  .mbtn { border-radius:10px; padding:9px 16px; font-size:13.5px; font-weight:700; border:1px solid transparent; }
+  .mbtn.ghost { color:#475569; background:transparent; }
+  .mbtn.rose { color:#fff; background:#e11d48; }
+  .mbtn.amber { color:#fff; background:#d97706; }
+  .mbtn.indigo { color:#fff; background:#4f46e5; }
+  .mbtn.disabled { color:#94a3b8; background:#e2e8f0; }
+
+  .alert-block { border-radius:11px; padding:14px 16px; font-size:13.5px; line-height:1.55; display:flex; gap:11px; align-items:flex-start; }
+  .alert-block.rose { background:#fff1f2; border:1px solid #fecdd3; color:#9f1239; }
+  .alert-block.amber { background:#fffbeb; border:1px solid #fde68a; color:#78350f; }
+  .alert-block .bic { font-size:18px; flex-shrink:0; }
+  .alert-block b { color:#7f1d1d; }
+  .factura-chip { display:inline-block; background:#0f172a; color:#fff; font-family:monospace; font-weight:700; font-size:12.5px; border-radius:6px; padding:3px 9px; margin:0 2px; }
+  .link-accion { display:inline-flex; align-items:center; gap:6px; margin-top:14px; color:#4f46e5; font-weight:700; font-size:13.5px; }
+
+  /* check de cancelar varios */
+  .check { width:17px; height:17px; border:2px solid #cbd5e1; border-radius:5px; display:inline-block; vertical-align:middle; }
+  .check.on { background:#e11d48; border-color:#e11d48; position:relative; }
+  .check.on:after { content:"✓"; color:#fff; font-size:12px; font-weight:900; position:absolute; top:-2px; left:2px; }
+  .check.dis { background:#f1f5f9; border-color:#e2e8f0; }
+  tr.selected td { background:#fff5f6; }
+  .refund-box { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:16px 18px; margin-top:16px; }
+  .refund-box .rl { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.8px; color:#94a3b8; margin-bottom:10px; }
+  .refund-line { display:flex; justify-content:space-between; align-items:center; padding:7px 0; font-size:14px; }
+  .refund-line .am { font-family:monospace; font-weight:800; font-size:18px; color:#0f172a; }
+  .refund-mid { color:#cbd5e1; margin:0 6px; }
+
+  /* bandeja NC */
+  .bandeja-hd { display:flex; align-items:center; gap:12px; margin-bottom:18px; }
+  .bandeja-hd .bic { width:40px; height:40px; border-radius:10px; background:#ffedd5; color:#c2410c; display:flex; align-items:center; justify-content:center; font-size:18px; }
+  .bandeja-hd h3 { font-size:19px; font-weight:800; color:#0f172a; }
+  .bandeja-hd p { font-size:12.5px; color:#64748b; margin-top:2px; }
+  .nc-row { display:flex; justify-content:space-between; align-items:center; padding:14px 16px; border:1px solid #e2e8f0; border-radius:12px; background:#fff; margin-bottom:10px; }
+  .nc-row .meta { font-size:12px; color:#64748b; margin-top:5px; display:flex; gap:16px; flex-wrap:wrap; }
+  .nc-row .meta b { color:#334155; }
+  .nc-row .verbtn { border:1px solid #c7d2fe; background:#eef2ff; color:#4338ca; border-radius:9px; padding:8px 14px; font-size:12.5px; font-weight:700; }
+
+  .aviso-reserva { background:#fffbeb; border:1px solid #fde68a; border-radius:12px; padding:13px 16px; font-size:13px; color:#78350f; display:flex; align-items:center; gap:10px; margin-bottom:18px; }
+  .aviso-reserva .bic { font-size:17px; }
+  .aviso-reserva b { color:#451a03; }
+
+  .preg { background:#fdf2f8; border:1px solid #f9a8d4; border-radius:12px; padding:14px 18px; margin-top:16px; }
+  .preg .pq { font-size:12px; font-weight:800; color:#be185d; letter-spacing:.5px; margin-bottom:5px; }
+  .preg .pt { font-size:13.5px; color:#831843; line-height:1.55; }
+  .preg .pt b { color:#500724; }
+
+  .rec { background:#eef2ff; border:1px solid #c7d2fe; border-radius:10px; padding:11px 16px; font-size:13px; color:#3730a3; margin-bottom:16px; line-height:1.55; }
+  .rec b { color:#1e1b4b; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Cancelar servicios — las 4 pantallas, para que las apruebes</h1>
+  <p class="sub">
+    Estas pantallas son las que se usan cuando se da de baja <b>un servicio suelto</b> (o varios) de una reserva, sin tirar abajo todo el viaje.
+    Las dibujé <b>calcando tu sistema de hoy</b>: la misma franja de la reserva, la misma lista de servicios, el mismo aspecto de los avisos.
+    Cada una tiene mi recomendación; vos decidís.
+  </p>
+
+  <div class="reglas">
+    <b>Lo que ya está decidido y respeto acá:</b>
+    ① El servicio cancelado queda <b>tachado</b> en la lista, con quién lo canceló y cuándo. &nbsp;
+    ② La nota de crédito <b>no se emite sola</b>: queda esperando la revisión del contador. &nbsp;
+    ③ Pesos y dólares <b>siempre separados</b>, nunca un total mezclado.
+  </div>
+
+  <!-- ============ P-CANC1 — CONTADOR + SERVICIO TACHADO ============ -->
+  <div class="pantalla">
+    <span class="pnum">P-CANC 1</span>
+    <h2>El contador "N de M servicios cancelados" + cómo se ve un servicio tachado</h2>
+    <p class="que"><b>La decisión:</b> ¿dónde y cómo mostramos que esta reserva tiene servicios dados de baja, sin inventar un estado nuevo de la reserva?</p>
+    <div class="rec"><b>Recomendado:</b> una línea chiquita gris debajo del estado de la reserva ("1 de 3 servicios cancelados"), que aparece <b>solo si hay alguno cancelado</b>. La reserva no cambia de color ni de estado por esto: sigue siendo lo que era. Y en la lista, el servicio dado de baja queda <b>tachado</b>, en gris, con el motivo, quién y cuándo.</p>
+
+    <div class="win">
+      <div class="winbar"><div class="dots"><i style="background:#f87171"></i><i style="background:#fbbf24"></i><i style="background:#34d399"></i></div><div class="addr">magnatravel.app/reservas/R-1042</div></div>
+      <div class="winbody">
+
+        <div class="resvhead">
+          <div>
+            <div class="ttl">Reserva <span class="num">#R-1042</span></div>
+            <div class="estadoline">
+              <span class="badge-estado confirmada">Confirmada</span>
+              <span style="font-size:14px;">🔒</span>
+            </div>
+            <!-- P-CANC1: contador como dato calculado, NO estado -->
+            <div class="canc-counter"><span class="dot"></span> 1 de 3 servicios cancelados</div>
+            <div class="clientline">Fam. García</div>
+          </div>
+          <div class="acts">
+            <span class="btn rose">⊘ Cancelar</span>
+            <span class="btn amber">↩ Volver atrás</span>
+            <span class="btn slate">🗄 Archivar</span>
+          </div>
+        </div>
+
+        <div class="listttl">
+          <h3>Servicios Contratados</h3>
+          <div>
+            <span class="cancelvarios">⊘ Cancelar varios</span>
+            <span class="addbtn">+ Agregar Servicio</span>
+          </div>
+        </div>
+
+        <table>
+          <thead>
+            <tr><th>Tipo</th><th>Descripción</th><th>Fecha / Estancia</th><th>Estado</th><th class="r">Precio Venta</th><th class="r">Acciones</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="svc-type">✈ Aéreo</span></td>
+              <td><div class="svc-name">EZE → MAD · Iberia</div></td>
+              <td>12/07/2026</td>
+              <td><span class="pill green">Confirmado</span></td>
+              <td class="r mono">US$ 1.250</td>
+              <td class="acciones-cell"><span class="mini edit">✎ Editar</span> <span class="mini del">⊘ Cancelar</span></td>
+            </tr>
+            <tr>
+              <td><span class="svc-type">🏨 Hotel</span></td>
+              <td><div class="svc-name">Hotel Riu Madrid · 4 noches</div></td>
+              <td>12/07 al 16/07</td>
+              <td><span class="pill green">Confirmado</span></td>
+              <td class="r mono">US$ 820</td>
+              <td class="acciones-cell"><span class="mini edit">✎ Editar</span> <span class="mini del">⊘ Cancelar</span></td>
+            </tr>
+            <!-- servicio TACHADO -->
+            <tr class="cancelado">
+              <td><span class="svc-type">🚐 Traslado</span></td>
+              <td>
+                <div class="svc-name">Aeropuerto → Hotel · Madrid</div>
+                <div class="cancel-meta">Cancelado por J. Pérez · 13/06/2026 — "El cliente llega en auto propio"</div>
+              </td>
+              <td>12/07/2026</td>
+              <td><span class="pill rose">Cancelado</span></td>
+              <td class="r mono">US$ 45</td>
+              <td class="acciones-cell"><span style="color:#cbd5e1; font-size:12px;">—</span></td>
+            </tr>
+            <tr class="total-row">
+              <td colspan="4">Total venta</td>
+              <td class="r mono"><span class="mon usd">US$</span> 2.070</td>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+        <p style="font-size:11.5px; color:#94a3b8; margin-top:10px;">El total de venta <b>no incluye</b> el servicio cancelado (queda visible tachado, pero ya no suma).</p>
+
+      </div>
+    </div>
+
+    <div class="preg">
+      <div class="pq">PREGUNTA PARA VOS</div>
+      <div class="pt"><b>El total al pie, ¿qué te gusta más?</b> (a) que <b>no cuente</b> el servicio cancelado (como dibujé). (b) que muestre los dos: "Total venta US$ 2.070" y abajo chiquito "antes de cancelar: US$ 2.115". &nbsp;Mi recomendación: la (a), más limpia.</div>
+    </div>
+  </div>
+
+  <!-- ============ P-CANC2 — BLOQUEO POR FACTURA / VOUCHER ============ -->
+  <div class="pantalla">
+    <span class="pnum">P-CANC 2</span>
+    <h2>No se puede cancelar: el servicio ya tiene factura o voucher</h2>
+    <p class="que"><b>La decisión:</b> si el servicio que se quiere dar de baja ya tiene una factura con número fiscal o un voucher emitido, el sistema <b>no deja</b> cancelarlo (hay que anular primero el comprobante). ¿Cómo se lo explicamos al vendedor?</p>
+    <div class="rec"><b>Recomendado:</b> una ventanita clara que dice <b>por qué no se puede</b> y <b>qué hay que hacer</b>, con el número de la factura/voucher a la vista y un botón para ir directo a anularla.</div>
+
+    <div class="modal-bg">
+      <div class="modal">
+        <div class="mh">
+          <div class="ic rose">⊘</div>
+          <div>
+            <h4>No se puede cancelar este servicio</h4>
+            <div class="mhsub">Aéreo EZE → MAD · Iberia</div>
+          </div>
+        </div>
+        <div class="mb">
+          <div class="alert-block rose">
+            <span class="bic">🧾</span>
+            <span>
+              Este servicio ya tiene una <b>factura emitida</b>: <span class="factura-chip">A-0001-00012</span>.
+              Para poder cancelarlo, primero hay que <b>anular esa factura</b> (se emite la nota de crédito correspondiente).
+              Recién después vas a poder dar de baja el servicio.
+            </span>
+          </div>
+          <div class="link-accion">→ Ir a la factura A-0001-00012</div>
+        </div>
+        <div class="mf">
+          <span class="mbtn ghost">Volver</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="preg">
+      <div class="pq">PREGUNTAS PARA VOS</div>
+      <div class="pt">
+        <b>1) El botón "Ir a la factura":</b> ¿lo querés? Te lleva a la pantalla de esa factura para anularla. O preferís solo el cartel explicando, sin botón (lo busca a mano).<br>
+        <b>2) El caso del voucher:</b> cuando lo que está emitido es un <b>voucher</b> (no una factura), el cartel diría: "Este servicio ya tiene un <b>voucher emitido</b> (V-00034). Primero anulá el voucher." ¿Mismo formato? <br>
+        <b>3) ¿Texto del cartel?</b> Lo escribí en criollo a propósito (sin "CAE" ni jerga fiscal). Si querés que diga otra cosa, decímelo.
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ P-CANC3 — BANDEJA NC POR REVISAR ============ -->
+  <div class="pantalla">
+    <span class="pnum">P-CANC 3</span>
+    <h2>Bandeja "Notas de crédito por revisar" + el aviso en la reserva</h2>
+    <p class="que"><b>La decisión:</b> cuando se cancela un servicio, la nota de crédito <b>no sale sola</b>: queda anotada para que el contador la revise y la firme. ¿Dónde junta el sistema todas las que están esperando?</p>
+    <div class="rec"><b>Recomendado:</b> una lista accesible desde <b>Cobranza y Facturación</b> (donde ya vive todo lo de plata) que muestra todas las notas de crédito pendientes de revisar. Y en la reserva afectada, un avisito amarillo que dice "hay una nota de crédito en revisión".</div>
+
+    <!-- aviso dentro de la reserva -->
+    <p style="font-size:12.5px; font-weight:700; color:#64748b; margin-bottom:8px;">Cómo se ve el aviso DENTRO de la reserva:</p>
+    <div class="win" style="margin-bottom:26px;">
+      <div class="winbar"><div class="dots"><i style="background:#f87171"></i><i style="background:#fbbf24"></i><i style="background:#34d399"></i></div><div class="addr">magnatravel.app/reservas/R-1042</div></div>
+      <div class="winbody">
+        <div class="aviso-reserva">
+          <span class="bic">🧾</span>
+          <span><b>Nota de crédito en revisión.</b> Se canceló un servicio de esta reserva. La nota de crédito está esperando que el contador la revise y la firme.</span>
+        </div>
+        <div style="font-size:13px; color:#94a3b8;">(debajo sigue la reserva normal — la franja, la lista de servicios, etc.)</div>
+      </div>
+    </div>
+
+    <!-- la bandeja -->
+    <p style="font-size:12.5px; font-weight:700; color:#64748b; margin-bottom:8px;">La bandeja (dentro de Cobranza y Facturación):</p>
+    <div class="win">
+      <div class="winbar"><div class="dots"><i style="background:#f87171"></i><i style="background:#fbbf24"></i><i style="background:#34d399"></i></div><div class="addr">magnatravel.app/payments → Notas de crédito por revisar</div></div>
+      <div class="winbody">
+
+        <div class="bandeja-hd">
+          <div class="bic">🧾</div>
+          <div>
+            <h3>Notas de crédito por revisar</h3>
+            <p>Servicios cancelados cuya nota de crédito todavía no fue revisada ni firmada por el contador.</p>
+          </div>
+        </div>
+
+        <div class="nc-row">
+          <div>
+            <div style="font-weight:800; color:#0f172a;">Reserva #R-1042 — Fam. García</div>
+            <div class="meta">
+              <span>Servicio: <b>Traslado Aeropuerto → Hotel</b></span>
+              <span>Importe: <b>US$ 45</b></span>
+              <span>Cancelado: <b>13/06/2026</b> por J. Pérez</span>
+            </div>
+          </div>
+          <span class="verbtn">Ver reserva</span>
+        </div>
+
+        <div class="nc-row">
+          <div>
+            <div style="font-weight:800; color:#0f172a;">Reserva #R-1031 — Empresa Sur SRL</div>
+            <div class="meta">
+              <span>Servicio: <b>Hotel NH Centro · 2 noches</b></span>
+              <span>Importe: <b>$ 184.000</b></span>
+              <span>Cancelado: <b>11/06/2026</b> por M. López</span>
+            </div>
+          </div>
+          <span class="verbtn">Ver reserva</span>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="preg">
+      <div class="pq">PREGUNTAS PARA VOS</div>
+      <div class="pt">
+        <b>1) ¿Dónde la colgamos?</b> La puse dentro de <b>Cobranza y Facturación</b> (como una solapa más). ¿Te gusta ahí, o preferís que sea un ítem propio en el menú de la izquierda, con su numerito de cuántas hay pendientes?<br>
+        <b>2) El botón de la fila:</b> lo dejé como <b>"Ver reserva"</b> (lleva a la reserva). ¿Está bien, o querés que el contador pueda marcar "revisada / firmada" desde acá mismo? &nbsp;(Ojo: esto es trabajo del contador; si querés ese botón, lo definimos aparte.)<br>
+        <b>3) ¿Quién la ve?</b> Recomiendo que solo la vea quien maneja facturación (mismo permiso que hoy tiene la facturación). ¿De acuerdo?
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ P-CANC4 — CANCELAR VARIOS JUNTOS ============ -->
+  <div class="pantalla">
+    <span class="pnum">P-CANC 4</span>
+    <h2>Cancelar varios servicios juntos (de uno o de varios operadores)</h2>
+    <p class="que"><b>La decisión:</b> cómo cancelar varios servicios de una sola vez, ver cuánto se le devuelve al cliente, y confirmar una sola vez — respetando que pesos y dólares <b>nunca se mezclan</b>.</p>
+    <div class="rec"><b>Recomendado:</b> apretás "Cancelar varios", se prenden unos casilleros para tildar los servicios que querés dar de baja (de cualquier operador), abajo ves el total que se le devuelve al cliente <b>separado por moneda</b>, ponés el motivo y confirmás una sola vez. Los servicios que tienen factura o voucher vivo aparecen con el casillero <b>bloqueado</b> y la explicación al lado (no se pueden tildar hasta anular el comprobante).</div>
+
+    <div class="modal-bg">
+      <div class="modal" style="max-width:600px;">
+        <div class="mh">
+          <div class="ic rose">⊘</div>
+          <div>
+            <h4>Cancelar servicios</h4>
+            <div class="mhsub">Reserva #R-1042 — Fam. García</div>
+          </div>
+        </div>
+        <div class="mb">
+          <p style="font-size:13px; color:#475569; margin-bottom:12px;">Tildá los servicios que querés dar de baja:</p>
+          <table>
+            <tbody>
+              <tr class="selected">
+                <td style="width:38px;"><span class="check on"></span></td>
+                <td><div class="svc-name">🚐 Traslado Aeropuerto → Hotel</div><div style="font-size:11px;color:#94a3b8;">Operador: Transfers ES</div></td>
+                <td class="r mono">US$ 45</td>
+              </tr>
+              <tr class="selected">
+                <td><span class="check on"></span></td>
+                <td><div class="svc-name">🏨 Hotel Riu Madrid · 4 noches</div><div style="font-size:11px;color:#94a3b8;">Operador: Hotelbeds</div></td>
+                <td class="r mono">US$ 820</td>
+              </tr>
+              <tr>
+                <td><span class="check"></span></td>
+                <td><div class="svc-name">🛡 Asistencia Universal · 10 días</div><div style="font-size:11px;color:#94a3b8;">Operador: Universal Assist</div></td>
+                <td class="r mono">$ 38.000</td>
+              </tr>
+              <!-- bloqueado por factura viva -->
+              <tr>
+                <td><span class="check dis"></span></td>
+                <td>
+                  <div class="svc-name" style="color:#94a3b8;">✈ Aéreo EZE → MAD · Iberia</div>
+                  <div style="font-size:11px;color:#be123c; margin-top:3px;">🔒 Tiene factura emitida (A-0001-00012). Para cancelarlo, anulá primero la factura.</div>
+                </td>
+                <td class="r mono" style="color:#cbd5e1;">US$ 1.250</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <!-- total a devolver POR MONEDA -->
+          <div class="refund-box">
+            <div class="rl">Se le devuelve al cliente</div>
+            <div class="refund-line">
+              <span>En dólares</span>
+              <span class="am"><span class="mon usd">US$</span>865</span>
+            </div>
+            <div class="refund-line">
+              <span>En pesos</span>
+              <span class="am"><span class="mon ars">$</span>38.000</span>
+            </div>
+            <p style="font-size:11px; color:#94a3b8; margin-top:8px; line-height:1.5;">Cada moneda va por su lado, nunca sumadas. Lo que el operador devuelva de verdad puede tener penalidades — eso se gestiona después con cada operador.</p>
+          </div>
+
+          <div style="margin-top:16px;">
+            <label style="font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; color:#94a3b8; display:block; margin-bottom:6px;">Motivo de la cancelación *</label>
+            <div style="border:1px solid #cbd5e1; border-radius:10px; padding:10px 12px; font-size:13px; color:#94a3b8; background:#fff;">El cliente redujo el viaje…</div>
+          </div>
+        </div>
+        <div class="mf">
+          <span class="mbtn ghost">Volver</span>
+          <span class="mbtn rose">Cancelar 2 servicios</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="preg">
+      <div class="pq">PREGUNTAS PARA VOS</div>
+      <div class="pt">
+        <b>1) ¿Ventana o en línea?</b> Lo dibujé como ventana que se abre encima porque acá tildás y confirmás de una. Sé que el modal no te gusta para cargar cosas largas; para esta acción corta (tildar + motivo + confirmar) la ventana es lo más directo. ¿La dejamos como ventana, o la abrimos <b>debajo de la lista</b> (en línea) como la carga de servicios y el cobro?<br>
+        <b>2) El motivo:</b> lo puse <b>obligatorio</b> y uno solo para todos los servicios que tildaste. ¿Está bien uno solo, o querés un motivo por servicio?<br>
+        <b>3) El botón "Cancelar varios"</b> de la lista: ¿lo querés siempre visible, o que aparezca solo cuando empezás a tildar? &nbsp;Recomiendo siempre visible (es una acción clara).<br>
+        <b>4) Servicios bloqueados:</b> los dejé en la lista, con el casillero apagado y la explicación. ¿Te gusta verlos así (para entender por qué no entran), o preferís que no aparezcan?
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

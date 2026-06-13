@@ -37,6 +37,9 @@ function formatTripDate(value) {
  * - onRequestEdit: callback para abrir el modal de autorizacion de edicion (cuando hay candado)
  * - onMarkLost: callback para abrir el modal "Marcar como perdida"
  * - Los callbacks onStatusChange, onDelete, onArchive, onRevert, onEditDates son manejados por el padre
+ * - serviciosCancelados: { cancelados: number, totalConProveedor: number } — para el contador "N de M".
+ *   El padre lo calcula con calculateServiciosCanceladosResumen(allServices).
+ *   Si viene null/undefined no se muestra nada (diseño conservador).
  */
 export function ReservaHeader({
     reserva,
@@ -50,6 +53,7 @@ export function ReservaHeader({
     onCancelReserva,
     onRequestEdit,
     onMarkLost,
+    serviciosCancelados = null,
 }) {
     const isArchived = reserva.status === 'Archived';
     const locked = isStatusLocked(reserva.status);
@@ -126,6 +130,21 @@ export function ReservaHeader({
                     </div>
                     <ReservaStatusChips reserva={reserva} />
                 </div>
+
+                {/* Contador "N de M servicios cancelados" (ADR-025 DT.3.1 decision #1).
+                    Solo aparece cuando hay AL MENOS UN servicio cancelado.
+                    Es informativo: no cambia el estado ni el color de la reserva.
+                    El dato viene del padre, calculado con calculateServiciosCanceladosResumen(allServices). */}
+                {serviciosCancelados && serviciosCancelados.cancelados > 0 && (
+                    <p
+                        className="mt-1 text-xs text-slate-400 dark:text-slate-500"
+                        data-testid="contador-servicios-cancelados"
+                    >
+                        {serviciosCancelados.cancelados} de {serviciosCancelados.totalConProveedor}{' '}
+                        {serviciosCancelados.totalConProveedor === 1 ? 'servicio cancelado' : 'servicios cancelados'}
+                    </p>
+                )}
+
                 <p className="text-xl text-slate-900 dark:text-white mt-2 font-bold flex items-center gap-2">
                     {reserva.customerName}
                 </p>

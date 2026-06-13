@@ -58,4 +58,9 @@ public class PackageBookingDto
     public bool IsPriceSynced { get; set; } = true;
     public string SourceKind { get; set; } = "Package";
     public string WorkflowStatus { get; set; } = "Solicitado";
+    // Auditoria de cancelacion (ADR-020): cuando se cancelo el servicio y quien lo cancelo. El front
+    // los muestra como "Cancelado por X el DD/MM/YYYY". Null = no cancelado. NO son datos de costo ni
+    // fiscales: no se enmascaran. Mapean por convencion (mismo nombre que la entidad PackageBooking).
+    public DateTime? CancelledAt { get; set; }
+    public string? CancelledByUserName { get; set; }
 }

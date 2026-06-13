@@ -21,7 +21,7 @@
  */
 
 import React, { useCallback, useRef, useState } from 'react';
-import { AlertTriangle, Plus, Plane, Hotel, Car, Package, ShieldCheck, Edit2, Trash2, CheckCircle2, Clock, X, Loader2 } from "lucide-react";
+import { AlertTriangle, Plus, Plane, Hotel, Car, Package, ShieldCheck, Edit2, Trash2, CheckCircle2, Clock, X, Loader2, FileText, Ban } from "lucide-react";
 import { isAdmin, hasPermission } from "../../../auth";
 import { api } from "../../../api";
 import { showError, showSuccess } from "../../../alerts";
@@ -34,6 +34,42 @@ import { UpcomingStartPill, estaEnVentana } from "./UpcomingStartPill";
 import { CostConfirmCell, CostConfirmCellMobile } from "./CostConfirmCell";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import { formatCurrency } from "../../../lib/utils";
+
+/**
+ * Calcula el resumen de servicios cancelados para el contador "N de M" del ReservaHeader.
+ *
+ * M = cantidad de servicios con proveedor (los "cancelables": vuelo, hotel, traslado, paquete,
+ *     asistencia). Los servicios genéricos sin supplierId también se cuentan si tienen proveedor.
+ * N = cuántos de esos tienen workflowStatus === "Cancelado".
+ *
+ * Se exporta para que el padre (ReservaDetailPage) lo calcule sobre allServices y lo pase
+ * al ReservaHeader sin que este último tenga que conocer el array completo de servicios.
+ *
+ * @param {Array} services - Lista de servicios normalizados (salida de normalizeReservaServices).
+ * @returns {{ cancelados: number, totalConProveedor: number }}
+ */
+export function calculateServiciosCanceladosResumen(services) {
+    // Consideramos "con proveedor" a todos los servicios que tienen supplierId/supplierPublicId
+    // o que son de un tipo específico (no genérico sin supplier). Los servicios genéricos sin
+    // proveedor (solo descripción) no son "cancelables" en el sentido del ADR-025.
+    const serviciosConProveedor = (services || []).filter(svc => {
+        // Un servicio con proveedor asignado siempre es cancelable.
+        const tieneProveedor = Boolean(svc.supplierPublicId || svc.supplierId || svc.supplierName);
+        // Los tipos específicos (vuelo, hotel, traslado, paquete, asistencia) son cancelables
+        // por definición aunque en algún caso raro no tengan el campo supplier poblado en front.
+        const esTipoEspecifico = svc.recordKind && svc.recordKind !== 'generic';
+        return tieneProveedor || esTipoEspecifico;
+    });
+
+    const cancelados = serviciosConProveedor.filter(
+        svc => (svc.workflowStatus || svc.status) === 'Cancelado'
+    ).length;
+
+    return {
+        cancelados,
+        totalConProveedor: serviciosConProveedor.length,
+    };
+}
 
 /**
  * Determina si un servicio esta "resuelto" para el ciclo ADR-020.
@@ -130,12 +166,17 @@ function formatFechaSegura(valor) {
  *
  * Decisión #9 (guia UX 2026-06-08):
  * - Servicio NO confirmado: texto "¿Borrar?" → llama onBorrar.
- * - Servicio CONFIRMADO: texto "¿Cancelar?" + campo motivo opcional → llama onCancelar.
+ * - Servicio CONFIRMADO: texto "¿Cancelar?" + campo motivo obligatorio (min 10 chars) → llama onCancelar.
+ *
+ * El backend exige Reason entre 10 y 1000 caracteres. La validación se hace acá: el botón
+ * permanece deshabilitado hasta que el motivo cumpla el mínimo. No se rellena texto automático.
+ *
+ * Accesibilidad: foco al textarea al montar (camino cancelación), Escape cierra, role="dialog".
  *
  * Props:
  * - service: objeto del servicio
  * - onBorrar: () => void — callback cuando el usuario confirma borrar
- * - onCancelar: (motivo: string|null) => void — callback cuando confirma cancelar
+ * - onCancelar: (motivo: string) => void — callback cuando confirma cancelar (motivo ya valido)
  * - onClose: () => void
  */
 function ModalBorrarVsCancelar({ service, onBorrar, onCancelar, onClose }) {
@@ -143,6 +184,23 @@ function ModalBorrarVsCancelar({ service, onBorrar, onCancelar, onClose }) {
     const [motivo, setMotivo] = useState('');
     const [loading, setLoading] = useState(false);
     const motivoInputRef = useRef(null);
+
+    // Regla del backend: el motivo de cancelación debe tener entre 10 y 1000 caracteres.
+    // Validamos acá para no mandar texto inventado — el hook ya no rellena automáticamente.
+    const MOTIVO_MIN_CHARS = 10;
+    const motivoValido = motivo.trim().length >= MOTIVO_MIN_CHARS;
+
+    // Al abrir el modal de cancelación (servicio confirmado), el foco va directo al textarea
+    // para que el usuario pueda tipear el motivo sin hacer clic primero.
+    // Solo corre cuando estaConfirmado=true porque en el camino "borrar" no hay textarea.
+    useEffect(() => {
+        if (estaConfirmado && motivoInputRef.current) {
+            motivoInputRef.current.focus();
+        }
+    // useEffect con [] corre solo al montar el componente (una sola vez).
+    // estaConfirmado no cambia durante la vida del modal; motivoInputRef es estable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const handleCerrarConEscape = (e) => {
         if (e.key === 'Escape') onClose();
@@ -152,7 +210,7 @@ function ModalBorrarVsCancelar({ service, onBorrar, onCancelar, onClose }) {
         setLoading(true);
         try {
             if (estaConfirmado) {
-                await onCancelar(motivo.trim() || null);
+                await onCancelar(motivo.trim());
             } else {
                 await onBorrar();
             }
@@ -202,7 +260,7 @@ function ModalBorrarVsCancelar({ service, onBorrar, onCancelar, onClose }) {
                                     htmlFor="motivo-cancelacion-servicio"
                                     className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400"
                                 >
-                                    Motivo (opcional)
+                                    Motivo
                                 </label>
                                 <textarea
                                     id="motivo-cancelacion-servicio"
@@ -213,6 +271,13 @@ function ModalBorrarVsCancelar({ service, onBorrar, onCancelar, onClose }) {
                                     rows={2}
                                     className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                                 />
+                                {/* Helper visible solo cuando el usuario empezó a tipear pero aún no llega al mínimo.
+                                    No lo mostramos desde el inicio para no ser intrusivos antes de que el usuario toque el campo. */}
+                                {motivo.length > 0 && !motivoValido && (
+                                    <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                                        Mínimo {MOTIVO_MIN_CHARS} caracteres ({motivo.trim().length}/{MOTIVO_MIN_CHARS})
+                                    </p>
+                                )}
                             </div>
                         </>
                     ) : (
@@ -236,7 +301,9 @@ function ModalBorrarVsCancelar({ service, onBorrar, onCancelar, onClose }) {
                     <button
                         type="button"
                         onClick={handleConfirmar}
-                        disabled={loading}
+                        // En el camino de cancelación (servicio confirmado) exigimos motivo válido.
+                        // En el camino de borrado no hay textarea, así que no aplica la restricción.
+                        disabled={loading || (estaConfirmado && !motivoValido)}
                         data-testid={estaConfirmado ? 'btn-confirm-cancel-service' : 'btn-confirm-delete-service'}
                         className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-bold text-white transition-colors disabled:opacity-50 ${
                             estaConfirmado
@@ -251,6 +318,121 @@ function ModalBorrarVsCancelar({ service, onBorrar, onCancelar, onClose }) {
             </div>
         </div>
     );
+}
+
+/**
+ * Modal que aparece cuando el backend rechaza la cancelacion de un servicio con 409.
+ * Esto ocurre cuando hay una factura con CAE viva o un voucher emitido que bloquea la
+ * cancelacion fiscal (el backend no puede modificar un comprobante ya enviado a AFIP/ARCA).
+ *
+ * El mensaje descriptivo viene del backend (no generamos uno generico).
+ * El boton "Ver facturas" navega a la solapa "Estado de Cuenta" donde estan los Documentos
+ * Fiscales AFIP de la reserva.
+ *
+ * Accesibilidad: foco al boton "Entendido" al montar, Escape cierra, role="dialog".
+ *
+ * Props:
+ * - mensaje: string con el detalle del error que mando el backend
+ * - onIrAFacturas: () => void — navega a la solapa de facturacion
+ * - onClose: () => void
+ */
+function ModalBloqueoCancelacionServicio({ mensaje, onIrAFacturas, onClose }) {
+    // Al abrir el modal de bloqueo, enfocamos el botón "Entendido" para que el usuario
+    // pueda cerrarlo con Enter o con Escape sin tener que mover el mouse.
+    const entendidoButtonRef = useRef(null);
+
+    useEffect(() => {
+        if (entendidoButtonRef.current) {
+            entendidoButtonRef.current.focus();
+        }
+    // useEffect con [] corre solo al montar (una vez por apertura del modal).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    const handleCerrarConEscape = (e) => {
+        if (e.key === 'Escape') onClose();
+    };
+
+    return (
+        <div
+            data-testid="modal-bloqueo-cancelacion"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="bloqueo-cancelacion-titulo"
+            onKeyDown={handleCerrarConEscape}
+        >
+            <div className="w-full max-w-md rounded-2xl border bg-white shadow-2xl dark:bg-slate-900 dark:border-slate-800">
+                {/* Header */}
+                <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4 dark:border-slate-800">
+                    <div className="flex items-center gap-2">
+                        <Ban className="h-4 w-4 text-rose-500" />
+                        <h3
+                            id="bloqueo-cancelacion-titulo"
+                            className="font-bold text-slate-900 dark:text-white"
+                        >
+                            No se puede cancelar el servicio
+                        </h3>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        aria-label="Cerrar"
+                        className="text-slate-400 hover:text-slate-600 transition-colors dark:hover:text-slate-200"
+                    >
+                        <X className="h-5 w-5" />
+                    </button>
+                </div>
+
+                <div className="p-6 space-y-4">
+                    {/* El mensaje viene del backend con el detalle fiscal (factura con CAE, voucher emitido, etc.) */}
+                    <div className="rounded-xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-200">
+                        {mensaje}
+                    </div>
+                    <p className="text-sm text-slate-600 dark:text-slate-300">
+                        Para poder cancelar este servicio primero hay que gestionar la nota de crédito
+                        correspondiente en la sección de facturación de la reserva.
+                    </p>
+                </div>
+
+                <div className="flex flex-col sm:flex-row justify-end gap-3 border-t border-slate-100 px-6 py-4 dark:border-slate-800">
+                    <button
+                        ref={entendidoButtonRef}
+                        type="button"
+                        onClick={onClose}
+                        className="rounded-lg px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 transition-colors dark:text-slate-300 dark:hover:bg-slate-800"
+                    >
+                        Entendido
+                    </button>
+                    {onIrAFacturas && (
+                        <button
+                            type="button"
+                            data-testid="btn-ir-a-facturas"
+                            onClick={() => {
+                                onIrAFacturas();
+                                onClose();
+                            }}
+                            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-indigo-700"
+                        >
+                            <FileText className="h-4 w-4" />
+                            Ver facturas de la reserva
+                        </button>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+/**
+ * Formatea una fecha ISO en texto corto legible (ej. "08/06/2026").
+ * Retorna null si la fecha no es válida o no existe.
+ */
+function formatFechaCancelacion(valorFecha) {
+    if (!valorFecha) return null;
+    const fecha = new Date(valorFecha);
+    if (Number.isNaN(fecha.getTime())) return null;
+    return fecha.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
 /**
@@ -392,7 +574,9 @@ function ServiceIcon({ service, className = "w-4 h-4 mr-2" }) {
  *   onAddService                    — callback para agregar un servicio nuevo
  *   onEditService                   — callback(service) para editar un servicio existente
  *   onDeleteService                 — callback(service) para eliminar un servicio (NO confirmado por operador)
- *   onCancelService                 — callback(service, motivo|null) para cancelar un servicio confirmado por operador
+ *   onCancelService                 — callback async (service, motivo|null) → { ok, result?, error? }
+ *                                     Cancela un servicio confirmado por el operador. Retorna el resultado
+ *                                     del backend para actualizar el contador sin hacer fetch completo.
  *   reservaId                       — publicId de la reserva (necesario para los endpoints confirm-cost y resolver)
  *   reservaStatus                   — status actual de la reserva (para mostrar resumen InManagement y pelotitas)
  *   isCatalogFindOrCreateEnabled    — flag catálogo: cuando es false, el render es IDÉNTICO al original
@@ -402,6 +586,9 @@ function ServiceIcon({ service, className = "w-4 h-4 mr-2" }) {
  *   onServiceConfirmed              — callback(servicioActualizado) cuando confirm-cost tiene éxito
  *   onServiceResolved               — callback() cuando un servicio se resuelve (marcar emitido / no requiere confirmacion)
  *                                     El padre recarga la reserva para reflejar el nuevo estado.
+ *   onIrAFacturas                   — callback () => void para navegar a la solapa "Estado de Cuenta" (facturas).
+ *                                     Se usa en el modal de bloqueo 409 para llevar al usuario a las facturas.
+ *                                     Opcional; si no se pasa, el botón no aparece.
  */
 export function ServiceList({
     services,
@@ -417,6 +604,7 @@ export function ServiceList({
     windowDays = null,
     onServiceConfirmed,
     onServiceResolved,
+    onIrAFacturas,
     // Multimoneda (2026-06-11): true cuando la reserva mezcla servicios en ARS y USD.
     // Cuando es true se muestra el cartelito $/US$ en cada precio y la fila TOTAL al pie.
     // Regla ③: con false (o sin el prop) la lista se ve igual que siempre.
@@ -436,6 +624,11 @@ export function ServiceList({
     // Estado del modal de borrar vs cancelar (decisión #9 guia UX 2026-06-08).
     // El modal se abre al presionar la papelera de cualquier servicio.
     const [modalBorrarCancelar, setModalBorrarCancelar] = useState(null);
+
+    // Estado del modal de bloqueo fiscal 409: se abre cuando el backend rechaza la
+    // cancelacion porque hay factura con CAE viva o voucher emitido.
+    // Guarda el mensaje descriptivo que vino del backend.
+    const [modalBloqueo409, setModalBloqueo409] = useState(null);
 
     /**
      * Maneja el clic en la papelera de un servicio.
@@ -458,7 +651,23 @@ export function ServiceList({
     const handleModalCancelar = useCallback(async (motivo) => {
         if (!modalBorrarCancelar) return;
         if (onCancelService) {
-            await onCancelService(modalBorrarCancelar, motivo);
+            const respuesta = await onCancelService(modalBorrarCancelar, motivo);
+
+            // Si la cancelación fue bloqueada por el backend (409), mostramos el modal
+            // explicativo en vez del toast genérico de error.
+            // El 409 ocurre cuando hay factura con CAE viva o voucher emitido.
+            if (!respuesta?.ok && respuesta?.error?.status === 409) {
+                setModalBorrarCancelar(null);
+                setModalBloqueo409(
+                    getApiErrorMessage(respuesta.error, 'No se puede cancelar el servicio en este momento.')
+                );
+                return;
+            }
+
+            // Cualquier otro error: mostramos toast genérico (el hook ya no lo muestra).
+            if (!respuesta?.ok && respuesta?.error) {
+                showError(getApiErrorMessage(respuesta.error, 'No se pudo cancelar el servicio.'));
+            }
         }
         setModalBorrarCancelar(null);
     }, [modalBorrarCancelar, onCancelService]);
@@ -488,6 +697,17 @@ export function ServiceList({
                     onBorrar={handleModalBorrar}
                     onCancelar={handleModalCancelar}
                     onClose={() => setModalBorrarCancelar(null)}
+                />
+            )}
+
+            {/* Modal de bloqueo fiscal 409: aparece cuando el backend rechaza la cancelacion
+                porque hay factura con CAE viva o voucher emitido. NO un toast genérico:
+                mostramos el mensaje del backend + el camino para resolver (ir a facturas). */}
+            {modalBloqueo409 && (
+                <ModalBloqueoCancelacionServicio
+                    mensaje={modalBloqueo409}
+                    onIrAFacturas={onIrAFacturas}
+                    onClose={() => setModalBloqueo409(null)}
                 />
             )}
 
@@ -565,7 +785,34 @@ export function ServiceList({
                                                 </div>
                                             </td>
                                             <td className="py-4 align-middle">
-                                                <div className="text-sm font-semibold text-slate-900 dark:text-white line-clamp-1">{svc.name}</div>
+                                                {/* Nombre tachado cuando el servicio está cancelado.
+                                                    El badge "Cancelado" ya aparece en la columna Estado.
+                                                    El tachado + quién/cuándo dan contexto adicional sin ser chillones. */}
+                                                <div className={`text-sm font-semibold line-clamp-1 ${
+                                                    (svc.workflowStatus || svc.status) === 'Cancelado'
+                                                        ? 'line-through text-slate-400 dark:text-slate-500'
+                                                        : 'text-slate-900 dark:text-white'
+                                                }`}>
+                                                    {svc.name}
+                                                </div>
+                                                {/* Línea de auditoría de cancelación: quién y cuándo.
+                                                    cancelledAt y cancelledByUserName son proyectados por el backend
+                                                    en los 6 DTOs de servicio (vuelo, hotel, traslado, paquete,
+                                                    asistencia, genérico) y llegan al recargar la colección
+                                                    tras la cancelación.
+                                                    La línea se renderiza solo cuando ambos campos están presentes. */}
+                                                {(svc.workflowStatus || svc.status) === 'Cancelado' &&
+                                                    (svc.cancelledAt || svc.cancelledByUserName) && (
+                                                    <div className="mt-0.5 text-[10px] text-slate-400 dark:text-slate-500 flex items-center gap-1">
+                                                        <span>Cancelado</span>
+                                                        {svc.cancelledByUserName && (
+                                                            <span>por <span className="font-semibold">{svc.cancelledByUserName}</span></span>
+                                                        )}
+                                                        {svc.cancelledAt && (
+                                                            <span>el {formatFechaCancelacion(svc.cancelledAt)}</span>
+                                                        )}
+                                                    </div>
+                                                )}
                                                 <div className="flex flex-wrap gap-2 mt-1">
                                                     {/* FIX 4: pill "creado en venta" eliminada (no aporta al usuario) */}
                                                     {svc.pnr && (
@@ -835,7 +1082,27 @@ export function ServiceList({
                                             {etiquetaEstadoServicio(svc.workflowStatus, reservaStatus)}
                                         </span>
                                     </div>
-                                    <div className="font-medium text-slate-900 dark:text-white mb-1 line-clamp-1">{svc.name}</div>
+                                    {/* Nombre tachado en mobile cuando el servicio está cancelado */}
+                                    <div className={`font-medium mb-1 line-clamp-1 ${
+                                        (svc.workflowStatus || svc.status) === 'Cancelado'
+                                            ? 'line-through text-slate-400 dark:text-slate-500'
+                                            : 'text-slate-900 dark:text-white'
+                                    }`}>
+                                        {svc.name}
+                                    </div>
+                                    {/* Auditoria de cancelacion en mobile: quién y cuándo (campos opcionales del backend) */}
+                                    {(svc.workflowStatus || svc.status) === 'Cancelado' &&
+                                        (svc.cancelledAt || svc.cancelledByUserName) && (
+                                        <div className="mb-1 text-[10px] text-slate-400 dark:text-slate-500 flex items-center gap-1 flex-wrap">
+                                            <span>Cancelado</span>
+                                            {svc.cancelledByUserName && (
+                                                <span>por <span className="font-semibold">{svc.cancelledByUserName}</span></span>
+                                            )}
+                                            {svc.cancelledAt && (
+                                                <span>el {formatFechaCancelacion(svc.cancelledAt)}</span>
+                                            )}
+                                        </div>
+                                    )}
 
                                     {/* Línea de pill de próximo inicio: solo si aplica */}
                                     {mostrarLineaPills && (

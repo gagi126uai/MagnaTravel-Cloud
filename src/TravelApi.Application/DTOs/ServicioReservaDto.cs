@@ -39,4 +39,10 @@ public class ServicioReservaDto
     /// costo, no se enmascara con see_cost (es solo el rotulo de moneda).
     /// </summary>
     public string Currency { get; set; } = "ARS";
+
+    // Auditoria de cancelacion (ADR-020): cuando se cancelo el servicio generico y quien lo cancelo. El
+    // front los muestra como "Cancelado por X el DD/MM/YYYY". Null = no cancelado. NO son datos de costo
+    // ni fiscales: no se enmascaran. Mapean por convencion (mismo nombre que la entidad ServicioReserva).
+    public DateTime? CancelledAt { get; set; }
+    public string? CancelledByUserName { get; set; }
 }

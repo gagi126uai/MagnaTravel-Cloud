@@ -82,6 +82,27 @@ export const cancellationsApi = {
     api.patch(`/cancellations/${publicId}/confirm-penalty`, payload),
 
   /**
+   * ADR-025: cancela UN servicio dentro de una reserva activa.
+   * La reserva sigue viva; solo ese servicio queda con workflowStatus="Cancelado".
+   * Baja el saldo del cliente y la deuda del operador en la misma operación.
+   * NO emite NC automática (decisión #3 ADR-025 — queda en revisión manual).
+   *
+   * Puede devolver 409 cuando hay factura con CAE viva o voucher emitido que bloquea
+   * la cancelación fiscal. En ese caso el backend trae un mensaje descriptivo en el body.
+   *
+   * @param {object} payload - CancelServiceRequest
+   *   - reservaPublicId: string GUID
+   *   - serviceTable: "Generic"|"Flight"|"Hotel"|"Transfer"|"Package"|"Assistance"
+   *   - servicePublicId: string GUID
+   *   - reason: string (10-1000 chars)
+   * @returns {Promise<CancelServiceResultDto>}
+   *   - reservaPublicId, servicePublicId, serviceTable
+   *   - cancelledServicesCount, totalServicesWithSupplierCount
+   */
+  cancelService: (payload) =>
+    api.post("/cancellations/cancel-service", payload),
+
+  /**
    * Lectura del estado actual de un BookingCancellation.
    *
    * @param {string} publicId - GUID del BookingCancellation.
