@@ -112,6 +112,27 @@ public interface IBookingCancellationService
         string? userName,
         CancellationToken ct);
 
+    /// <summary>
+    /// ADR-025 (DT.3.1, 2026-06-13): cancela UN servicio dentro de una reserva, dejando el resto del file
+    /// vivo (cancelacion PARCIAL). Decisiones selladas: NO mueve el estado de la reserva (#1); el saldo del
+    /// cliente baja solo (el servicio cancelado sale del calculo por ServiceResolutionRules, ADR-020); la
+    /// deuda del operador de ESE servicio baja en la MISMA transaccion (B1, reusa SupplierDebtPersister).
+    ///
+    /// <para><b>NO emite NC automatica</b> (decision #3): el calculo de la NC parcial queda en revision
+    /// manual hasta la firma del contador (Q-F2). Este metodo marca el servicio + recalcula plata; el armado
+    /// del borrador fiscal y la emision manual son piezas separadas.</para>
+    ///
+    /// <para><b>Seguridad</b>: valida server-side que el servicio pertenece a la reserva (no confia en el
+    /// frontend, espejo de INV-151).</para>
+    ///
+    /// <para><b>Idempotencia</b>: si el servicio ya esta cancelado, es no-op (devuelve el contador actual).</para>
+    /// </summary>
+    Task<CancelServiceResultDto> CancelServiceAsync(
+        CancelServiceRequest request,
+        string userId,
+        string? userName,
+        CancellationToken ct);
+
     // ===== Reacciones internas (llamadas desde otros services del modulo) =====
 
     /// <summary>

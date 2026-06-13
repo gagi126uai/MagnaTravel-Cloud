@@ -794,6 +794,34 @@ if (migrateOnly || applyMigrationsOnStartup)
                         "ADR-022 cash ledger backfill failed. Startup continues; the ledger will be completed on next re-deploy.");
                 }
 
+                // ADR-025 (DT.1.3): backfill IDEMPOTENTE de las lineas de cancelacion. La migracion Adr028_M1
+                // crea la tabla vacia; el modelo nuevo asume que todo BC tiene al menos una linea (mono-operador
+                // = 1 BC = 1 linea). Este job crea UNA linea sintetica por BC historico sin lineas (centinela
+                // ServiceId=0). Propio NeedsBackfillAsync + try/catch no-abortante (es derivada/historica).
+                try
+                {
+                    var lineBackfill = new BookingCancellationLineBackfillService(
+                        db,
+                        scope.ServiceProvider.GetService<ILogger<BookingCancellationLineBackfillService>>());
+
+                    if (await lineBackfill.NeedsBackfillAsync())
+                    {
+                        app.Logger.LogInformation("ADR-025: running booking cancellation line backfill...");
+                        var linesDone = await lineBackfill.RunAsync();
+                        app.Logger.LogInformation(
+                            "ADR-025 booking cancellation line backfill finished. Lineas={Lines}.", linesDone);
+                    }
+                    else
+                    {
+                        app.Logger.LogInformation("ADR-025: cancellation lines already populated, skipping backfill.");
+                    }
+                }
+                catch (Exception lineBackfillEx)
+                {
+                    app.Logger.LogError(lineBackfillEx,
+                        "ADR-025 cancellation line backfill failed. Startup continues; lines will be completed on next re-deploy.");
+                }
+
                 break;
             }
             catch (Exception ex)

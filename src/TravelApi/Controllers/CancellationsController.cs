@@ -121,6 +121,57 @@ public class CancellationsController : ControllerBase
     }
 
     /// <summary>
+    /// ADR-025 (DT.3.1): cancela UN servicio dentro de una reserva (cancelacion PARCIAL). El resto del
+    /// file sigue vivo y la reserva NO cambia de estado (decision #1). Baja el saldo del cliente del
+    /// servicio cancelado y la deuda del operador de ESE servicio (B1), en la misma operacion. NO emite
+    /// NC automatica (decision #3): el calculo fiscal queda en revision manual.
+    ///
+    /// <para>Mismo permiso que cancelar una reserva (<c>reservas.cancel</c>). El ReservaPublicId viene en
+    /// el body, asi que se valida ownership a mano (igual que Draft). El service revalida server-side que
+    /// el servicio pertenece a la reserva.</para>
+    /// </summary>
+    [HttpPost("cancel-service")]
+    [RequirePermission(Permissions.ReservasCancel)]
+    public async Task<ActionResult<CancelServiceResultDto>> CancelService(
+        CancelServiceRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!await UserIsAllowedOverReservaAsync(request.ReservaPublicId.ToString(), cancellationToken))
+        {
+            return new ObjectResult(PermissionDeniedProblemFactory.OwnershipRequired(OwnedEntity.Reserva.ToString()))
+            {
+                StatusCode = StatusCodes.Status403Forbidden
+            };
+        }
+
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
+        var userName = User.FindFirst("FullName")?.Value ?? User.FindFirst(ClaimTypes.Name)?.Value;
+
+        try
+        {
+            var result = await _bcService.CancelServiceAsync(request, userId, userName, cancellationToken);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+        // BusinessInvariantViolationException la atrapa GlobalExceptionHandler (409 con invariantCode).
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+        }
+    }
+
+    /// <summary>
     /// T0: transiciona <c>Drafted</c> → <c>AwaitingFiscalConfirmation</c>.
     /// Encola la NC en AFIP via InvoiceService.EnqueueAnnulmentAsync.
     /// Si requiere override de invariantes, el service tira ApprovalRequiredException.

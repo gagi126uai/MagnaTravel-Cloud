@@ -285,6 +285,7 @@ public class OperatorRefundService : IOperatorRefundService
         var bc = await _db.BookingCancellations
             .Include(b => b.Reserva)
             .Include(b => b.Supplier)
+            .Include(b => b.Lines)   // ADR-025: INV-126 se imputa a la(s) linea(s) del operador del refund
             .FirstOrDefaultAsync(b => b.PublicId == request.BookingCancellationPublicId, ct)
             ?? throw new KeyNotFoundException(
                 $"BookingCancellation {request.BookingCancellationPublicId} no encontrado.");
@@ -303,33 +304,60 @@ public class OperatorRefundService : IOperatorRefundService
                 invariantCode: "INV-093");
         }
 
-        // 4) Validar coherencia de moneda: el ingreso del operador y la moneda
-        //    del FiscalSnapshot del BC tienen que coincidir. Si no, hay un error
-        //    operativo (cargo el wrong refund) y no podemos hacer asientos.
-        if (!string.Equals(
-                refund.Currency,
-                bc.FiscalSnapshot?.CurrencyAtEvent,
-                StringComparison.OrdinalIgnoreCase))
+        // 4) INV-126 (ADR-025: reformulado a nivel LINEA): el operador del ingreso
+        //    (refund.SupplierId) tiene que coincidir con el operador de AL MENOS UNA
+        //    linea de esta cancelacion. Sin este check un cashier podria allocate por
+        //    error un ingreso de Despegar contra una cancelacion que no tiene a Despegar
+        //    como operador de ninguna linea, contaminando el cap y los reportes por
+        //    operador. La validacion vive aca (no en BD) porque es runtime cross-aggregate.
+        //
+        //    IMPUTACION AGREGADA POR OPERADOR (B2 / decision #2 de Gaston): un operador
+        //    puede tener 2+ servicios cancelados en el mismo evento (hotel + traslado del
+        //    mismo operador). El reintegro del operador es UN monto agregado, no "por
+        //    servicio". Por eso usamos Where(...).ToList() y NUNCA SingleOrDefault: con
+        //    2+ lineas del mismo operador SingleOrDefault tiraria InvalidOperationException
+        //    (500 no controlado). El reembolso se acumula al saldo a favor del cliente por
+        //    moneda (ClientCreditEntry); las lineas de ese operador llevan el agregado.
+        //
+        //    Se resuelve ANTES de la coherencia de moneda (paso 4-bis) porque en
+        //    multi-operador la moneda correcta del refund es la de las LINEAS de ese
+        //    operador (M-B / INV-118), no la del FiscalSnapshot del evento.
+        var operatorLines = bc.Lines
+            .Where(l => l.SupplierId == refund.SupplierId)
+            .ToList();
+        if (operatorLines.Count == 0)
         {
             throw new BusinessInvariantViolationException(
-                $"La moneda del refund ({refund.Currency}) no coincide con la del " +
-                $"FiscalSnapshot del BC ({bc.FiscalSnapshot?.CurrencyAtEvent ?? "<vacio>"}). " +
-                "Revisa el ingreso correcto del operador.",
-                invariantCode: "INV-118");
+                "El proveedor del reintegro no corresponde a ninguna linea de esta cancelacion.",
+                invariantCode: "INV-126");
         }
 
-        // 4-bis) INV-126: el operador del ingreso (refund.SupplierId) y el operador
-        //        de la cancelacion (bc.SupplierId) tienen que ser el MISMO. Sin
-        //        este check un cashier podria allocate por error un ingreso de
-        //        Despegar contra una cancelacion cuyo operador era Avantrip,
-        //        contaminando el cap del refund y los reportes contables por
-        //        operador. La validacion vive aca (no en BD) porque es runtime
-        //        cross-aggregate — un CHECK SQL acoplaria dos tablas.
-        if (refund.SupplierId != bc.SupplierId)
+        // 4-bis) INV-118 (M-B, ADR-025): coherencia de moneda del refund contra la moneda de
+        //        las LINEAS del operador que recibe el reintegro, NO contra el FiscalSnapshot
+        //        del evento. Por que: la cara fiscal hacia el cliente (FiscalSnapshot) es UNA
+        //        en la moneda de la factura de venta, pero cada operador cobra/devuelve en SU
+        //        moneda. En multi-operador con monedas mixtas (hotel USD + aereo ARS), validar
+        //        contra el snapshot rechazaria/aceptaria en la moneda equivocada (un refund USD
+        //        del hotel se compararia contra el ARS del snapshot). La moneda real del circuito
+        //        de proveedor vive en la linea.
+        //
+        //        Caso mono-operador (1 linea, misma moneda que el snapshot): byte-equivalente al
+        //        check anterior. Si un operador tuviera lineas en monedas distintas (no deberia:
+        //        un operador factura en una moneda por servicio), exigimos que el refund coincida
+        //        con AL MENOS UNA de ellas.
+        var operatorLineCurrencies = operatorLines
+            .Select(l => l.Currency)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        bool refundCurrencyMatchesAnyLine = operatorLineCurrencies
+            .Any(c => string.Equals(c, refund.Currency, StringComparison.OrdinalIgnoreCase));
+        if (!refundCurrencyMatchesAnyLine)
         {
             throw new BusinessInvariantViolationException(
-                "El proveedor del reintegro no coincide con el proveedor de la cancelacion.",
-                invariantCode: "INV-126");
+                $"La moneda del refund ({refund.Currency}) no coincide con la moneda de las " +
+                $"lineas del operador en esta cancelacion ({string.Join("/", operatorLineCurrencies)}). " +
+                "Revisa el ingreso correcto del operador.",
+                invariantCode: "INV-118");
         }
 
         // 5) Validar matriz fiscal Mono/RI usando el FiscalSnapshot cristalizado.
@@ -444,6 +472,13 @@ public class OperatorRefundService : IOperatorRefundService
         //     contra la suma real para detectar drift (HC del plan).
         bc.ReceivedRefundAmount += allocation.NetAmount;
 
+        // 10-bis) ADR-025 (B2): imputar el neto recibido a la(s) linea(s) del operador,
+        //         AGREGADO por operador. Llenamos linea por linea hasta su RefundCap
+        //         (cuando hay cap definido) y el excedente cae en la ultima linea, asi el
+        //         total imputado al operador == lo recibido. NUNCA dejamos saldo negativo.
+        //         Las lineas del operador que quedan con su cap cubierto pasan a Settled.
+        DistributeReceivedRefundToOperatorLines(operatorLines, allocation.NetAmount);
+
         // 11) Notificar al BookingCancellationService que hubo allocation.
         //     Si era la primera activa, transiciona el BC a ClientCreditApplied.
         //     IMPORTANTE: el callback NO commitea (HC1) — solo modifica el Status
@@ -536,6 +571,48 @@ public class OperatorRefundService : IOperatorRefundService
             allocation.PublicId, refund.PublicId, bc.PublicId, allocation.NetAmount);
 
         return MapAllocation(allocation);
+    }
+
+    /// <summary>
+    /// ADR-025 (B2 / decision #2): reparte el neto recibido de un operador entre SUS lineas, agregado.
+    /// El operador devuelve UN monto, no "por servicio"; lo distribuimos linea por linea hasta el
+    /// <see cref="BookingCancellationLine.RefundCap"/> de cada una y el excedente cae en la ultima
+    /// (asi el total imputado == lo recibido). Marca Settled las lineas cuyo cap quedo cubierto.
+    /// </summary>
+    // internal (no private) para poder testear la regla de imputacion B2 como funcion pura
+    // (sin DB) desde TravelApi.Tests (InternalsVisibleTo). No tiene dependencias de EF.
+    internal static void DistributeReceivedRefundToOperatorLines(
+        List<BookingCancellationLine> operatorLines,
+        decimal netReceived)
+    {
+        if (operatorLines.Count == 0) return;
+
+        decimal remaining = netReceived;
+        for (int i = 0; i < operatorLines.Count; i++)
+        {
+            var line = operatorLines[i];
+            bool isLastLine = i == operatorLines.Count - 1;
+
+            // Capacidad libre de la linea segun su cap. La ultima linea absorbe todo lo que reste
+            // (incluso por encima del cap, para no "perder" plata recibida que no entra en ningun cap).
+            decimal freeCapacity = line.RefundCap - line.ReceivedRefundAmount;
+            decimal toThisLine = isLastLine
+                ? remaining
+                : Math.Min(Math.Max(freeCapacity, 0m), remaining);
+
+            line.ReceivedRefundAmount += toThisLine;
+            remaining -= toThisLine;
+
+            // Settled cuando ya cubrio su cap (o cuando hay cap 0 y recibio algo). El cap 0 significa
+            // "no se esperaba refund de esta linea"; si igual entro plata, queda en PendingOperatorRefund
+            // salvo que la cubra completamente la imputacion.
+            if (line.RefundCap > 0m && line.ReceivedRefundAmount >= line.RefundCap)
+                line.RefundStatus = BookingCancellationLineRefundStatus.Settled;
+            else if (line.ReceivedRefundAmount > 0m && line.RefundStatus == BookingCancellationLineRefundStatus.None)
+                line.RefundStatus = BookingCancellationLineRefundStatus.PendingOperatorRefund;
+
+            if (remaining <= 0m) break;
+        }
     }
 
     /// <summary>

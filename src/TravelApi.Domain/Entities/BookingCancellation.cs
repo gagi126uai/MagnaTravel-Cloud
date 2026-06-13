@@ -434,4 +434,17 @@ public class BookingCancellation : IHasPublicId
     /// </summary>
     [MaxLength(500)]
     public string? SupportingDocumentReference { get; set; }
+
+    // ============================================================
+    // ADR-025 (DT.1.1, 2026-06-13): lineas hijas (una por servicio cancelado).
+    //
+    // La multiplicidad (varios operadores, varios servicios cancelados) vive aca,
+    // DEBAJO del BC, no en multiples BC por reserva. El padre conserva la cara
+    // fiscal UNICA hacia el cliente (factura/NC); cada linea lleva su operador,
+    // moneda, penalidad y circuito de refund. Ver BookingCancellationLine.
+    //
+    // Los BC mono-operador historicos tienen 1 linea sintetica (backfill Adr028_M1),
+    // asi que el path mono-operador es byte-equivalente: 1 linea con bc.SupplierId.
+    // ============================================================
+    public ICollection<BookingCancellationLine> Lines { get; set; } = new List<BookingCancellationLine>();
 }

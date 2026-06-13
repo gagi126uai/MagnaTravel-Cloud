@@ -10,7 +10,9 @@ using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Exceptions;
 using TravelApi.Domain.Helpers;
+using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
+using TravelApi.Infrastructure.Services.Reservations; // MutationGuards (candado fiscal CAE/voucher, SEC-B1)
 
 namespace TravelApi.Infrastructure.Services;
 
@@ -46,6 +48,12 @@ public class BookingCancellationService
       IInvoiceAnnulmentBcBridge,
       IPartialCreditNoteApprovalBridge
 {
+    // SEC-B1b (ADR-025): cbteTipo de las Notas de Credito (3=A, 8=B, 13=C, 53=M). Se usa para EXCLUIR las NC
+    // al buscar la factura de VENTA viva que ancla el BC de la cancelacion parcial. Espejo de
+    // MutationGuards.LiveInvoiceCreditNoteTypes (EF Core no traduce InvoiceComprobanteHelpers.IsCreditNote a
+    // SQL); mantener ambos sincronizados si se agrega un tipo de NC.
+    private static readonly int[] LiveInvoiceCreditNoteTypes = { 3, 8, 13, 53 };
+
     private readonly AppDbContext _db;
     private readonly IInvoiceService _invoiceService;
     private readonly IApprovalRequestService _approvalService;
@@ -218,9 +226,13 @@ public class BookingCancellationService
             throw new InvalidOperationException(
                 $"La reserva {reserva.NumeroReserva} no tiene Payer asignado. No se puede crear cancelacion.");
 
-        // ADR-015 Fase 1: el operador que gobierna el evento fiscal (Mono vs RI,
-        // PenaltyOwnership, INV-126) sale de inferir el unico operador de la reserva.
-        var supplierId = await InferSingleSupplierIdAsync(reserva, ct);
+        // ADR-025: levanta INV-152. En vez de exigir UN solo operador, construimos UNA LINEA por
+        // servicio/operador de la reserva (Scope=Full: es una cancelacion TOTAL del file). La cara
+        // fiscal hacia el cliente sigue siendo UNICA (factura/NC en el padre); la multiplicidad de
+        // operadores vive en las lineas. El operador "principal" del BC (bc.SupplierId, denormalizado
+        // para compat fiscal: regimen Mono/RI de la NC) es el de la primera linea.
+        var cancellationLines = await BuildCancellationLinesAsync(reserva, BookingCancellationLineScope.Full, ct);
+        var supplierId = cancellationLines[0].SupplierId;
 
         // 6) Calcular AmountPaidAtCancellation: suma de pagos activos
         //    (no soft-deleted y con Status != "Cancelled") de la reserva.
@@ -255,6 +267,11 @@ public class BookingCancellationService
             },
             IsLegacyPreCancellationModel = false,
         };
+
+        // ADR-025: adjuntar las lineas (una por servicio/operador). EF las inserta en cascada con el
+        // padre en el mismo SaveChanges. El path mono-operador queda con 1 linea (byte-equivalente).
+        foreach (var line in cancellationLines)
+            bc.Lines.Add(line);
 
         _db.BookingCancellations.Add(bc);
 
@@ -325,6 +342,395 @@ public class BookingCancellationService
 
         return await MapToDtoAsync(bc.Id, ct)
             ?? throw new InvalidOperationException("BC no encontrada despues de crearla. Estado inconsistente.");
+    }
+
+    /// <summary>
+    /// ADR-025 (DT.3.1): cancela UN servicio dentro de una reserva, dejando el resto del file vivo.
+    /// Ver la doc del contrato en <see cref="IBookingCancellationService.CancelServiceAsync"/>.
+    ///
+    /// <para>Flujo: (1) validar que el servicio pertenece a la reserva (server-side, INV-151); (2) marcar
+    /// el Status del servicio en cancelado + CancelledAt/By; (3) recalcular la plata de la reserva
+    /// (el servicio cancelado sale del saldo solo, ADR-020); (4) <b>B1</b>: recalcular la deuda del
+    /// operador de ESE servicio en la MISMA transaccion (el Status cancelado NO recalcula la deuda solo).
+    /// NO mueve el estado de la reserva (decision #1) ni emite NC automatica (decision #3).</para>
+    /// </summary>
+    public async Task<CancelServiceResultDto> CancelServiceAsync(
+        CancelServiceRequest request,
+        string userId,
+        string? userName,
+        CancellationToken ct)
+    {
+        if (!Enum.TryParse<CancellableServiceTable>(request.ServiceTable, ignoreCase: true, out var serviceTable))
+            throw new ArgumentException(
+                $"Tipo de servicio invalido: '{request.ServiceTable}'. " +
+                "Valores validos: Generic, Flight, Hotel, Transfer, Package, Assistance.",
+                nameof(request));
+
+        var reserva = await _db.Reservas.FirstOrDefaultAsync(r => r.PublicId == request.ReservaPublicId, ct)
+            ?? throw new KeyNotFoundException($"Reserva {request.ReservaPublicId} no encontrada.");
+
+        // 0) SEC-B1 (candado fiscal): ANTES de tocar nada, consultar el mismo guard que usa el path normal
+        //    de cambio de Status (BookingService). Si la reserva tiene una FACTURA viva (CAE no anulado) o
+        //    un VOUCHER emitido, cancelar un servicio bajaria silenciosamente la venta confirmada por debajo
+        //    del ImporteTotal de la factura SIN emitir NC -> divergencia fiscal irreversible. El guard es a
+        //    nivel reserva (mismo criterio que CODE-04/05): se bloquea y se exige anular la factura/voucher
+        //    primero. Se lanza InvalidOperationException -> el controller la mapea a 409 (igual que el path
+        //    normal expone el bloqueo). NO se baja el saldo a escondidas.
+        var blockReason = await ResolveServiceCancellationBlockReasonAsync(
+            serviceTable, request.ServicePublicId, reserva.Id, ct);
+        if (blockReason is not null)
+            throw new InvalidOperationException(blockReason);
+
+        // 1) Cargar el servicio puntual y VALIDAR pertenencia a la reserva (server-side, espejo INV-151:
+        //    no se confia en el frontend para que el servicio sea de esta reserva). CancelOneServiceAsync
+        //    marca el Status cancelado y devuelve (supplierId, alreadyCancelled).
+        var (affectedSupplierId, alreadyCancelled) = await MarkTypedServiceCancelledAsync(
+            serviceTable, request.ServicePublicId, reserva.Id, userId, userName, ct);
+
+        if (!alreadyCancelled)
+        {
+            // 2) Persistir el Status cancelado del servicio.
+            await _db.SaveChangesAsync(ct);
+
+            // 3) Recalcular la plata de la reserva: el servicio cancelado sale del saldo del cliente solo
+            //    (ServiceResolutionRules lo excluye). ReservaMoneyPersister hace su propio SaveChanges.
+            await TravelApi.Infrastructure.Reservations.ReservaMoneyPersister.PersistAsync(_db, reserva.Id, ct);
+
+            // 4) B1 (OBLIGATORIO): recalcular la deuda del operador del servicio cancelado en la misma
+            //    operacion. El cambio de Status NO recalcula la deuda solo (bug P1 del ADR-022): hay que
+            //    invocar el persister explicitamente, igual que el path generico de ReservaService.
+            if (affectedSupplierId.HasValue)
+            {
+                await TravelApi.Infrastructure.Reservations.SupplierDebtPersister.PersistAsync(_db, affectedSupplierId.Value, ct);
+                await _db.SaveChangesAsync(ct);
+            }
+
+            // 5) SEC-B1b: dejar RASTRO y ANCLA del evento parcial. Sin esto Scope.Partial es dead-code y un
+            //    servicio parcial PAGADO al operador no tiene linea contra la cual imputar el refund (§3.2).
+            //    Reusamos (o creamos) el BookingCancellation padre de la reserva y le agregamos UNA linea
+            //    Scope=Partial para el servicio cancelado. NO se emite NC automatica (decision #3): el armado
+            //    queda como borrador para revision manual.
+            await RecordPartialCancellationLineAsync(reserva, serviceTable, request.ServicePublicId, userId, userName, ct);
+
+            await _auditService.LogBusinessEventAsync(
+                action: AuditActions.BookingCancellationDrafted, // reusamos la accion del modulo; el detail aclara que es parcial
+                entityName: AuditActions.BookingCancellationEntityName,
+                entityId: reserva.PublicId.ToString(),
+                details: JsonSerializer.Serialize(new
+                {
+                    kind = "PartialServiceCancellation",
+                    ReservaPublicId = reserva.PublicId,
+                    request.ServiceTable,
+                    request.ServicePublicId,
+                    AffectedSupplierId = affectedSupplierId,
+                    request.Reason,
+                }),
+                userId: userId,
+                userName: userName,
+                ct: ct);
+
+            _logger.LogInformation(
+                "metric:partial_service_cancelled | ReservaPublicId={ReservaPublicId} ServiceTable={ServiceTable} ServicePublicId={ServicePublicId} SupplierId={SupplierId}",
+                reserva.PublicId, request.ServiceTable, request.ServicePublicId, affectedSupplierId);
+        }
+
+        // Contadores para el header "N de M servicios cancelado" (decision #1: dato calculado, no estado nuevo).
+        var (cancelledCount, totalWithSupplier) = await CountServicesAsync(reserva.Id, ct);
+
+        return new CancelServiceResultDto(
+            ReservaPublicId: reserva.PublicId,
+            ServicePublicId: request.ServicePublicId,
+            ServiceTable: request.ServiceTable,
+            CancelledServicesCount: cancelledCount,
+            TotalServicesWithSupplierCount: totalWithSupplier);
+    }
+
+    /// <summary>
+    /// ADR-025 (DT.3.1): carga el servicio puntual por (tabla, PublicId), valida que pertenece a la
+    /// reserva y marca su Status en cancelado + CancelledAt/By. Devuelve (SupplierId afectado,
+    /// yaEstabaCancelado). NO llama a SaveChanges: lo hace el caller.
+    ///
+    /// <para>El aereo se cancela con un codigo IATA de cancelacion ("UN"): su Status mapea por codigo
+    /// IATA (UN/UC/HX/NO = cancelado), no por texto generico, asi que poner "Cancelado" literal NO lo
+    /// sacaria del saldo ni de la deuda. El resto de los tipos usan el literal "Cancelado".</para>
+    /// </summary>
+    private async Task<(int? supplierId, bool alreadyCancelled)> MarkTypedServiceCancelledAsync(
+        CancellableServiceTable serviceTable,
+        Guid servicePublicId,
+        int reservaId,
+        string userId,
+        string? userName,
+        CancellationToken ct)
+    {
+        switch (serviceTable)
+        {
+            case CancellableServiceTable.Flight:
+            {
+                var flight = await _db.FlightSegments.FirstOrDefaultAsync(f => f.PublicId == servicePublicId, ct)
+                    ?? throw new KeyNotFoundException("Vuelo no encontrado.");
+                if (flight.ReservaId != reservaId) throw new KeyNotFoundException("Vuelo no encontrado.");
+                if (ServiceResolutionRules.IsCancelled(flight)) return (flight.SupplierId, true);
+                flight.Status = "UN"; // codigo IATA de cancelacion (MapFlightStatus -> Cancelado)
+                flight.CancelledAt = DateTime.UtcNow;
+                flight.CancelledByUserId = userId;
+                flight.CancelledByUserName = userName;
+                return (flight.SupplierId, false);
+            }
+            case CancellableServiceTable.Hotel:
+            {
+                var hotel = await _db.HotelBookings.FirstOrDefaultAsync(h => h.PublicId == servicePublicId, ct)
+                    ?? throw new KeyNotFoundException("Hotel no encontrado.");
+                if (hotel.ReservaId != reservaId) throw new KeyNotFoundException("Hotel no encontrado.");
+                if (ServiceResolutionRules.IsCancelled(hotel)) return (hotel.SupplierId, true);
+                hotel.Status = WorkflowStatuses.Cancelado;
+                hotel.CancelledAt = DateTime.UtcNow;
+                hotel.CancelledByUserId = userId;
+                hotel.CancelledByUserName = userName;
+                return (hotel.SupplierId, false);
+            }
+            case CancellableServiceTable.Transfer:
+            {
+                var transfer = await _db.TransferBookings.FirstOrDefaultAsync(t => t.PublicId == servicePublicId, ct)
+                    ?? throw new KeyNotFoundException("Traslado no encontrado.");
+                if (transfer.ReservaId != reservaId) throw new KeyNotFoundException("Traslado no encontrado.");
+                if (ServiceResolutionRules.IsCancelled(transfer)) return (transfer.SupplierId, true);
+                transfer.Status = WorkflowStatuses.Cancelado;
+                transfer.CancelledAt = DateTime.UtcNow;
+                transfer.CancelledByUserId = userId;
+                transfer.CancelledByUserName = userName;
+                return (transfer.SupplierId, false);
+            }
+            case CancellableServiceTable.Package:
+            {
+                var package = await _db.PackageBookings.FirstOrDefaultAsync(p => p.PublicId == servicePublicId, ct)
+                    ?? throw new KeyNotFoundException("Paquete no encontrado.");
+                if (package.ReservaId != reservaId) throw new KeyNotFoundException("Paquete no encontrado.");
+                if (ServiceResolutionRules.IsCancelled(package)) return (package.SupplierId, true);
+                package.Status = WorkflowStatuses.Cancelado;
+                package.CancelledAt = DateTime.UtcNow;
+                package.CancelledByUserId = userId;
+                package.CancelledByUserName = userName;
+                return (package.SupplierId, false);
+            }
+            case CancellableServiceTable.Assistance:
+            {
+                var assistance = await _db.AssistanceBookings.FirstOrDefaultAsync(a => a.PublicId == servicePublicId, ct)
+                    ?? throw new KeyNotFoundException("Asistencia no encontrada.");
+                if (assistance.ReservaId != reservaId) throw new KeyNotFoundException("Asistencia no encontrada.");
+                if (ServiceResolutionRules.IsCancelled(assistance)) return (assistance.SupplierId, true);
+                assistance.Status = WorkflowStatuses.Cancelado;
+                assistance.CancelledAt = DateTime.UtcNow;
+                assistance.CancelledByUserId = userId;
+                assistance.CancelledByUserName = userName;
+                return (assistance.SupplierId, false);
+            }
+            case CancellableServiceTable.Generic:
+            default:
+            {
+                var service = await _db.Servicios.FirstOrDefaultAsync(s => s.PublicId == servicePublicId, ct)
+                    ?? throw new KeyNotFoundException("Servicio no encontrado.");
+                if (service.ReservaId != reservaId) throw new KeyNotFoundException("Servicio no encontrado.");
+                if (ServiceResolutionRules.IsCancelled(service)) return (service.SupplierId, true);
+                service.Status = WorkflowStatuses.Cancelado;
+                service.CancelledAt = DateTime.UtcNow;
+                service.CancelledByUserId = userId;
+                service.CancelledByUserName = userName;
+                return (service.SupplierId, false);
+            }
+        }
+    }
+
+    /// <summary>
+    /// SEC-B1 (ADR-025 / candado fiscal): devuelve el motivo de bloqueo si NO se puede cancelar el servicio
+    /// porque la reserva tiene una factura viva (CAE) o un voucher emitido; <c>null</c> si se permite.
+    ///
+    /// <para>Reusa <see cref="MutationGuards"/> — la MISMA fuente de verdad que el path normal de cambio de
+    /// Status en <c>BookingService</c> (CODE-04/05). Para los tipos tipados consulta el guard de booking a
+    /// nivel reserva; para el generico, el guard de servicio. El bloqueo es a nivel reserva porque una NC se
+    /// emite sobre la factura del evento, no por servicio: bajar la venta confirmada por debajo del total
+    /// facturado sin NC es divergencia fiscal. La emision fiscal sigue en revision manual (decision #3); el
+    /// guard solo evita el agujero de bajar el saldo a escondidas.</para>
+    /// </summary>
+    private async Task<string?> ResolveServiceCancellationBlockReasonAsync(
+        CancellableServiceTable serviceTable,
+        Guid servicePublicId,
+        int reservaId,
+        CancellationToken ct)
+    {
+        // El generico tiene su propio guard por Id de servicio (CODE-05). Resolvemos el Id desde el PublicId
+        // validando pertenencia a la reserva (espejo INV-151) para no consultar el guard de un servicio ajeno.
+        if (serviceTable == CancellableServiceTable.Generic)
+        {
+            var servicioReservaId = await _db.Servicios.AsNoTracking()
+                .Where(s => s.PublicId == servicePublicId && s.ReservaId == reservaId)
+                .Select(s => (int?)s.Id)
+                .FirstOrDefaultAsync(ct);
+            if (servicioReservaId is null) return null; // el servicio se valida (y 404ea) al marcarlo; aca no bloqueamos.
+
+            return await MutationGuards.GetServiceMutationBlockReasonAsync(_db, servicioReservaId.Value, ct);
+        }
+
+        // Tipos tipados: el guard de booking es a nivel reserva (CODE-04). El label personaliza el mensaje.
+        var bookingType = serviceTable switch
+        {
+            CancellableServiceTable.Hotel => "hotel",
+            CancellableServiceTable.Flight => "flight",
+            CancellableServiceTable.Package => "package",
+            CancellableServiceTable.Transfer => "transfer",
+            _ => "service"
+        };
+        return await MutationGuards.GetBookingMutationBlockReasonAsync(_db, reservaId, bookingType, ct);
+    }
+
+    /// <summary>
+    /// SEC-B1b (ADR-025 DT.3.1 / §3.2): registra el evento de cancelacion PARCIAL como una linea hija de un
+    /// <see cref="BookingCancellation"/> padre de la reserva. Crea (o reusa) el BC y le agrega UNA
+    /// <see cref="BookingCancellationLine"/> con <c>Scope=Partial</c> para el servicio cancelado, con su
+    /// operador, moneda, monto y <see cref="BookingCancellationLine.RefundCap"/> (lo pagado al operador
+    /// topeado por el costo). Asi el refund del operador (OperatorRefundService) encuentra su ANCLA y el
+    /// evento queda trazable.
+    ///
+    /// <para><b>Idempotente</b>: si ya existe una linea Partial para ese (tabla, servicio) en el BC del
+    /// evento, no la duplica. <b>No emite NC</b> (decision #3): el armado queda como borrador para revision
+    /// manual.</para>
+    ///
+    /// <para><b>Limitacion declarada (NO inventar)</b>: el padre <see cref="BookingCancellation"/> exige
+    /// <c>OriginatingInvoiceId</c> (factura de venta) y hay un UNIQUE por reserva. Si la reserva NO tiene
+    /// factura viva, no hay ancla fiscal donde colgar el BC: en ese caso se omite la creacion de la linea
+    /// (no hay NC posible ni evento fiscal) y queda solo el servicio cancelado + la deuda recalculada. La
+    /// reconciliacion del modelo BC-padre-unico vs cancelacion parcial sin factura es Q abierta del ADR
+    /// (UNIQUE por reserva); fuera del alcance de este fix.</para>
+    /// </summary>
+    private async Task RecordPartialCancellationLineAsync(
+        Reserva reserva,
+        CancellableServiceTable serviceTable,
+        Guid servicePublicId,
+        string userId,
+        string? userName,
+        CancellationToken ct)
+    {
+        // Resolver el Id (int) del servicio cancelado en su tabla, validando pertenencia a la reserva.
+        var serviceId = await ResolveServiceIdAsync(serviceTable, servicePublicId, reserva.Id, ct);
+        if (serviceId is null) return; // no deberia pasar (ya se marco), defensivo.
+
+        // Buscar la factura de venta VIVA de la reserva (misma regla que DraftAsync: no NC, CAE, no anulada).
+        // Si no hay, no hay ancla fiscal para el BC padre -> no creamos linea (ver limitacion en el doc).
+        var originatingInvoiceId = await _db.Invoices.AsNoTracking()
+            .Where(i => i.ReservaId == reserva.Id
+                     && !LiveInvoiceCreditNoteTypes.Contains(i.TipoComprobante)
+                     && !string.IsNullOrEmpty(i.CAE)
+                     && i.AnnulmentStatus != AnnulmentStatus.Succeeded)
+            .OrderByDescending(i => i.CreatedAt)
+            .Select(i => (int?)i.Id)
+            .FirstOrDefaultAsync(ct);
+        if (originatingInvoiceId is null) return;
+
+        if (reserva.PayerId is null) return; // sin Payer no hay BC posible (mismo precondicion que DraftAsync).
+
+        // Reusar el BC NO-abortado existente de la reserva, o crear uno nuevo (Drafted). El UNIQUE parcial
+        // (Status <> 6) permite a lo sumo un BC vivo por reserva: lo reusamos como padre del evento parcial.
+        var bc = await _db.BookingCancellations
+            .Include(b => b.Lines)
+            .Where(b => b.ReservaId == reserva.Id && b.Status != BookingCancellationStatus.Aborted)
+            .OrderByDescending(b => b.Id)
+            .FirstOrDefaultAsync(ct);
+
+        if (bc is null)
+        {
+            bc = new BookingCancellation
+            {
+                ReservaId = reserva.Id,
+                CustomerId = reserva.PayerId.Value,
+                SupplierId = 0, // se setea abajo con el operador de la primera linea (denormalizado).
+                OriginatingInvoiceId = originatingInvoiceId.Value,
+                Status = BookingCancellationStatus.Drafted,
+                Reason = "Cancelacion parcial de servicio",
+                DraftedAt = DateTime.UtcNow,
+                DraftedByUserId = userId,
+                DraftedByUserName = userName,
+                AmountPaidAtCancellation = 0m,
+                EstimatedRefundAmount = 0m,
+                ReceivedRefundAmount = 0m,
+                // Snapshot vacio: en Drafted el CHECK SQL lo permite. La emision (que lo completa) es manual.
+                FiscalSnapshot = new FiscalSnapshot { Source = ExchangeRateSource.Unset, FetchedAt = default },
+                IsLegacyPreCancellationModel = false,
+            };
+            _db.BookingCancellations.Add(bc);
+        }
+
+        // Idempotencia: no duplicar la linea si ya existe para (tabla, servicio).
+        bool lineAlreadyExists = bc.Lines.Any(l => l.ServiceTable == serviceTable && l.ServiceId == serviceId.Value);
+        if (lineAlreadyExists) return;
+
+        // Construir la linea Partial reusando el mismo armado que el path total (incluye el RefundCap, B2).
+        var builtLines = await BuildCancellationLinesAsync(
+            reserva, BookingCancellationLineScope.Partial, ct,
+            onlyServiceTable: serviceTable, onlyServiceId: serviceId.Value);
+        var partialLine = builtLines[0]; // BuildCancellationLinesAsync tira si no arma ninguna.
+
+        bc.Lines.Add(partialLine);
+
+        // Denormalizado del operador "principal" del BC (compat fiscal Mono/RI): si recien lo creamos y
+        // todavia estaba en 0, lo fijamos con el operador de esta primera linea.
+        if (bc.SupplierId == 0)
+            bc.SupplierId = partialLine.SupplierId;
+
+        await _db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Resuelve el Id (int) de un servicio por (tabla, PublicId) validando que pertenece a la reserva.
+    /// Devuelve <c>null</c> si no existe o no es de la reserva. AsNoTracking: es solo lectura para armar la linea.
+    /// </summary>
+    private async Task<int?> ResolveServiceIdAsync(
+        CancellableServiceTable serviceTable, Guid servicePublicId, int reservaId, CancellationToken ct)
+    {
+        return serviceTable switch
+        {
+            CancellableServiceTable.Flight => await _db.FlightSegments.AsNoTracking()
+                .Where(f => f.PublicId == servicePublicId && f.ReservaId == reservaId).Select(f => (int?)f.Id).FirstOrDefaultAsync(ct),
+            CancellableServiceTable.Hotel => await _db.HotelBookings.AsNoTracking()
+                .Where(h => h.PublicId == servicePublicId && h.ReservaId == reservaId).Select(h => (int?)h.Id).FirstOrDefaultAsync(ct),
+            CancellableServiceTable.Transfer => await _db.TransferBookings.AsNoTracking()
+                .Where(t => t.PublicId == servicePublicId && t.ReservaId == reservaId).Select(t => (int?)t.Id).FirstOrDefaultAsync(ct),
+            CancellableServiceTable.Package => await _db.PackageBookings.AsNoTracking()
+                .Where(p => p.PublicId == servicePublicId && p.ReservaId == reservaId).Select(p => (int?)p.Id).FirstOrDefaultAsync(ct),
+            CancellableServiceTable.Assistance => await _db.AssistanceBookings.AsNoTracking()
+                .Where(a => a.PublicId == servicePublicId && a.ReservaId == reservaId).Select(a => (int?)a.Id).FirstOrDefaultAsync(ct),
+            _ => await _db.Servicios.AsNoTracking()
+                .Where(s => s.PublicId == servicePublicId && s.ReservaId == reservaId).Select(s => (int?)s.Id).FirstOrDefaultAsync(ct),
+        };
+    }
+
+    /// <summary>
+    /// ADR-025 (DT.3.1, decision #1): cuenta, sobre las 6 colecciones de servicios CON operador, cuantos
+    /// estan cancelados y cuantos hay en total. Alimenta el contador "N de M servicios cancelado" del
+    /// header (dato calculado, no estado nuevo de reserva).
+    /// </summary>
+    private async Task<(int cancelled, int total)> CountServicesAsync(int reservaId, CancellationToken ct)
+    {
+        int cancelled = 0;
+        int total = 0;
+
+        var hotels = await _db.HotelBookings.AsNoTracking().Where(h => h.ReservaId == reservaId).ToListAsync(ct);
+        foreach (var h in hotels) { total++; if (ServiceResolutionRules.IsCancelled(h)) cancelled++; }
+
+        var flights = await _db.FlightSegments.AsNoTracking().Where(f => f.ReservaId == reservaId).ToListAsync(ct);
+        foreach (var f in flights) { total++; if (ServiceResolutionRules.IsCancelled(f)) cancelled++; }
+
+        var transfers = await _db.TransferBookings.AsNoTracking().Where(t => t.ReservaId == reservaId).ToListAsync(ct);
+        foreach (var t in transfers) { total++; if (ServiceResolutionRules.IsCancelled(t)) cancelled++; }
+
+        var packages = await _db.PackageBookings.AsNoTracking().Where(p => p.ReservaId == reservaId).ToListAsync(ct);
+        foreach (var p in packages) { total++; if (ServiceResolutionRules.IsCancelled(p)) cancelled++; }
+
+        var assistances = await _db.AssistanceBookings.AsNoTracking().Where(a => a.ReservaId == reservaId).ToListAsync(ct);
+        foreach (var a in assistances) { total++; if (ServiceResolutionRules.IsCancelled(a)) cancelled++; }
+
+        var generics = await _db.Servicios.AsNoTracking().Where(s => s.ReservaId == reservaId).ToListAsync(ct);
+        foreach (var s in generics) { total++; if (ServiceResolutionRules.IsCancelled(s)) cancelled++; }
+
+        return (cancelled, total);
     }
 
     /// <summary>
@@ -827,6 +1233,27 @@ public class BookingCancellationService
                 "FC1.3 auto-aprobable: BC {BcPublicId} clasificado Kind={Kind} sin motivos manual review. " +
                 "Continua flujo FC1.2 (NC total real Fase 1).",
                 bc.PublicId, liquidation.Kind);
+        }
+
+        // 7-bis) ADR-025 (DT.7 / riesgo fiscal medio): guard MonCotiz para factura USD legacy en el path
+        //        de NC TOTAL. El path de NC parcial ya tiene su guard (foreign + rate <=0 o ==1 -> manual,
+        //        F2.5). El path de NC total dejaba MonId/MonCotiz en su default PES/1 ("MVP: solo ARS"):
+        //        una NC total sobre una factura en moneda extranjera SIN cotizacion confiable en el
+        //        snapshot saldria con MonCotiz=1 (error fiscal grave). En ese caso NO emitimos: rechazamos
+        //        con un mensaje que rutea la operacion a gestion manual (el operador la emite a mano).
+        //        Se materializa ANTES de transicionar para no dejar el BC a medio confirmar.
+        if (IsForeignCurrencyInvoiceWithoutReliableRate(bc))
+        {
+            _logger.LogCritical(
+                "ADR-025 ABORT NC total - factura USD legacy sin cotizacion confiable en el snapshot " +
+                "(rate<=0 o ==1). No se emite para evitar MonCotiz=1. bcId={BcId}, invoiceId={InvoiceId}.",
+                bc.Id, bc.OriginatingInvoiceId);
+
+            throw new BusinessInvariantViolationException(
+                "La factura original esta en moneda extranjera pero no tiene una cotizacion confiable " +
+                "registrada. La nota de credito saldria con cotizacion 1 (error fiscal). Gestionala " +
+                "manualmente: revisa/recarga la cotizacion de la factura original antes de cancelar.",
+                invariantCode: "INV-156");
         }
 
         // 8) Transicionar BC + Reserva (HC2 plan v3: bypass UpdateStatusAsync —
@@ -2672,6 +3099,26 @@ public class BookingCancellationService
     }
 
     /// <summary>
+    /// ADR-025 (DT.7): true si la factura original esta en moneda extranjera pero el snapshot fiscal NO
+    /// tiene una cotizacion confiable (rate &lt;= 0 o == 1). Espeja el guard del path de NC parcial
+    /// (F2.5, <c>:3644</c>). Una factura en pesos (CurrencyAtEvent ARS/null o MonId PES/vacio) nunca dispara.
+    /// </summary>
+    private static bool IsForeignCurrencyInvoiceWithoutReliableRate(BookingCancellation bc)
+    {
+        // Moneda del evento: del snapshot si esta, sino de la factura. ARS / PES / vacio = pesos -> no aplica.
+        string currency = bc.FiscalSnapshot?.CurrencyAtEvent ?? bc.OriginatingInvoice?.MonId ?? "ARS";
+        bool isForeign =
+            !string.IsNullOrWhiteSpace(currency)
+            && !string.Equals(currency, "ARS", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(currency, "PES", StringComparison.OrdinalIgnoreCase);
+        if (!isForeign) return false;
+
+        // Cotizacion confiable = > 0 y != 1. El 1 es el default peligroso ("se me olvido la cotizacion").
+        decimal rate = bc.FiscalSnapshot?.ExchangeRateAtOriginalInvoice ?? 0m;
+        return rate <= 0m || rate == 1m;
+    }
+
+    /// <summary>
     /// ADR-013 §3.8/§3.11: congela el snapshot fiscal de la ND al momento del evento. Sirve
     /// para auditoria: prueba con que reglas (monto, moneda, tipo de comprobante, condicion
     /// fiscal, quien confirmo/clasifico) se emitio. El tipo de la ND se deriva del
@@ -3206,6 +3653,189 @@ public class BookingCancellationService
     /// El dedupe por SupplierId vive aca: un mismo operador en 2 hoteles cuenta 1 vez.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// ADR-025 (DT.2.1 / DT.3.2): construye UNA LINEA por servicio con operador de la reserva. Reemplaza
+    /// el viejo <see cref="InferSingleSupplierIdAsync"/> (que bloqueaba multi-operador con INV-152): ahora
+    /// una reserva con varios operadores produce varias lineas, una por servicio/operador, todas hijas del
+    /// mismo BC (la cara fiscal hacia el cliente sigue siendo UNICA en el padre).
+    ///
+    /// <para>Recorre las 5 tablas tipadas + la generica (mismo universo que
+    /// <see cref="GetDistinctSupplierIdsAsync"/>) y arma una linea por cada servicio que tenga operador.
+    /// Cada linea congela <c>(ServiceTable, ServiceId)</c>, <c>SupplierId</c>, <c>Currency</c> y
+    /// <c>LineSaleAmount</c>. <paramref name="onlyServiceTable"/>/<paramref name="onlyServiceId"/> filtran
+    /// a UN servicio puntual (cancelacion parcial); null = todos los servicios (cancelacion total).</para>
+    ///
+    /// <para>Tira si no hay ningun servicio con operador (no se puede cancelar lo que no tiene proveedor),
+    /// igual que el viejo metodo.</para>
+    /// </summary>
+    private async Task<List<BookingCancellationLine>> BuildCancellationLinesAsync(
+        Reserva reserva,
+        BookingCancellationLineScope scope,
+        CancellationToken ct,
+        CancellableServiceTable? onlyServiceTable = null,
+        int? onlyServiceId = null)
+    {
+        var lines = new List<BookingCancellationLine>();
+        // NetCost de cada linea, paralelo a `lines` (mismo indice): se usa para topear el RefundCap por su
+        // costo (no se puede devolver mas de lo que costo el servicio). No vive en la entidad: es insumo de
+        // calculo del cap, no estado persistido.
+        var lineNetCosts = new List<decimal>();
+        bool wantsOne = onlyServiceTable.HasValue && onlyServiceId.HasValue;
+
+        // Helper local: agrega una linea si el servicio tiene operador y pasa el filtro de "solo este".
+        void AddLine(CancellableServiceTable table, int serviceId, int? supplierId, string? currency, decimal salePrice, decimal netCost)
+        {
+            if (supplierId is null) return;                       // servicio sin operador no genera linea (ni deuda)
+            if (wantsOne && (table != onlyServiceTable!.Value || serviceId != onlyServiceId!.Value)) return;
+
+            lines.Add(new BookingCancellationLine
+            {
+                SupplierId = supplierId.Value,
+                ServiceTable = table,
+                ServiceId = serviceId,
+                Scope = scope,
+                Currency = string.IsNullOrWhiteSpace(currency) ? Monedas.ARS : currency!,
+                LineSaleAmount = salePrice,
+                // RefundCap se completa abajo (CalculateRefundCapsAsync): necesita el pool pagado al operador,
+                // que se conoce recien con todas las lineas armadas.
+            });
+            lineNetCosts.Add(netCost);
+        }
+
+        var hotels = await _db.HotelBookings.AsNoTracking()
+            .Where(h => h.ReservaId == reserva.Id)
+            .Select(h => new { h.Id, h.SupplierId, h.Currency, h.SalePrice, h.NetCost })
+            .ToListAsync(ct);
+        foreach (var h in hotels) AddLine(CancellableServiceTable.Hotel, h.Id, h.SupplierId, h.Currency, h.SalePrice, h.NetCost);
+
+        var flights = await _db.FlightSegments.AsNoTracking()
+            .Where(f => f.ReservaId == reserva.Id)
+            .Select(f => new { f.Id, f.SupplierId, f.Currency, f.SalePrice, f.NetCost })
+            .ToListAsync(ct);
+        foreach (var f in flights) AddLine(CancellableServiceTable.Flight, f.Id, f.SupplierId, f.Currency, f.SalePrice, f.NetCost);
+
+        var transfers = await _db.TransferBookings.AsNoTracking()
+            .Where(t => t.ReservaId == reserva.Id)
+            .Select(t => new { t.Id, t.SupplierId, t.Currency, t.SalePrice, t.NetCost })
+            .ToListAsync(ct);
+        foreach (var t in transfers) AddLine(CancellableServiceTable.Transfer, t.Id, t.SupplierId, t.Currency, t.SalePrice, t.NetCost);
+
+        var packages = await _db.PackageBookings.AsNoTracking()
+            .Where(p => p.ReservaId == reserva.Id)
+            .Select(p => new { p.Id, p.SupplierId, p.Currency, p.SalePrice, p.NetCost })
+            .ToListAsync(ct);
+        foreach (var p in packages) AddLine(CancellableServiceTable.Package, p.Id, p.SupplierId, p.Currency, p.SalePrice, p.NetCost);
+
+        var assistances = await _db.AssistanceBookings.AsNoTracking()
+            .Where(a => a.ReservaId == reserva.Id)
+            .Select(a => new { a.Id, a.SupplierId, a.Currency, a.SalePrice, a.NetCost })
+            .ToListAsync(ct);
+        foreach (var a in assistances) AddLine(CancellableServiceTable.Assistance, a.Id, a.SupplierId, a.Currency, a.SalePrice, a.NetCost);
+
+        // Generico: SupplierId nullable; los que no tienen operador no generan linea.
+        var generics = await _db.Servicios.AsNoTracking()
+            .Where(s => s.ReservaId == reserva.Id && s.SupplierId != null)
+            .Select(s => new { s.Id, s.SupplierId, s.Currency, s.SalePrice, s.NetCost })
+            .ToListAsync(ct);
+        foreach (var s in generics) AddLine(CancellableServiceTable.Generic, s.Id, s.SupplierId, s.Currency, s.SalePrice, s.NetCost);
+
+        if (lines.Count == 0)
+        {
+            if (wantsOne)
+                throw new InvalidOperationException(
+                    $"El servicio indicado de la reserva {reserva.NumeroReserva} no existe o no tiene operador asignado.");
+
+            throw new InvalidOperationException(
+                $"La reserva {reserva.NumeroReserva} no tiene servicios con Supplier asignado. " +
+                "Se requiere al menos un servicio con operador para registrar la cancelacion.");
+        }
+
+        // SEC-B2: completar el RefundCap de cada linea (lo pagado al operador por ese servicio menos su
+        //         penalidad). Sin esto el cap queda en 0 y RefundStatus=Settled nunca es alcanzable.
+        await AssignRefundCapsAsync(reserva.Id, lines, lineNetCosts, ct);
+
+        return lines;
+    }
+
+    /// <summary>
+    /// SEC-B2 (ADR-025 §3.2 / INV-126): asigna el <see cref="BookingCancellationLine.RefundCap"/> de cada
+    /// linea = lo pagado al operador por ese servicio, topeado por el costo del servicio (NetCost), menos la
+    /// penalidad de la linea, nunca negativo.
+    ///
+    /// <para><b>Granularidad real del dato</b>: los pagos a proveedor (<see cref="SupplierPayment"/>) se
+    /// imputan a nivel operador+reserva (hay <c>ReservaId</c>/<c>ServicioReservaId</c>, pero NO un link por
+    /// servicio TIPADO). No existe "pagado por ESTE hotel". Por eso el cap se calcula con un <b>pool por
+    /// operador</b>: lo pagado a ese operador imputable a esta reserva, en cada moneda, repartido entre sus
+    /// lineas topeando cada una por su propio NetCost. Coherente con la decision #2 (el cap se opera AGREGADO
+    /// por operador): la suma de caps de un operador nunca supera lo que se le pago.</para>
+    ///
+    /// <para><b>Penalidad</b>: al armar las lineas (draft) la penalidad todavia no esta confirmada
+    /// (<c>PenaltyStatus=Estimated</c>, <c>PenaltyAmount=null</c>), asi que no se descuenta aca. Cuando el
+    /// operador confirma la penalidad (ADR-014), el flujo de confirmacion ajusta el cap restando el monto
+    /// confirmado. Restamos <c>PenaltyAmount</c> solo si ya viene cargado (defensivo).</para>
+    /// </summary>
+    private async Task AssignRefundCapsAsync(
+        int reservaId,
+        List<BookingCancellationLine> lines,
+        List<decimal> lineNetCosts,
+        CancellationToken ct)
+    {
+        // Operadores involucrados en estas lineas.
+        var supplierIds = lines.Select(l => l.SupplierId).Distinct().ToList();
+
+        // Pool pagado por (operador, moneda) imputable a esta reserva. Pagos vivos (el query filter
+        // !IsDeleted ya excluye los soft-deleted). Para un pago cruzado (ImputedCurrency != Currency) usamos
+        // el monto/moneda IMPUTADO (lo que efectivamente baja de la deuda en esa moneda); si no cruza, el
+        // Amount sobre su Currency. Mismo criterio que SupplierDebtCalculator.
+        var paymentRows = await _db.SupplierPayments
+            .Where(p => p.ReservaId == reservaId && supplierIds.Contains(p.SupplierId))
+            .Select(p => new { p.SupplierId, p.Amount, p.Currency, p.ImputedCurrency, p.ImputedAmount })
+            .ToListAsync(ct);
+
+        // pool[(supplierId, currency)] = monto disponible para devolver de ese operador en esa moneda.
+        var pool = new Dictionary<(int supplierId, string currency), decimal>();
+        foreach (var payment in paymentRows)
+        {
+            bool isCrossCurrency =
+                !string.IsNullOrWhiteSpace(payment.ImputedCurrency)
+                && !string.Equals(payment.ImputedCurrency, payment.Currency, StringComparison.OrdinalIgnoreCase);
+
+            string currency = isCrossCurrency ? payment.ImputedCurrency! : payment.Currency;
+            decimal amount = isCrossCurrency ? (payment.ImputedAmount ?? 0m) : payment.Amount;
+
+            var key = (payment.SupplierId, currency);
+            pool[key] = pool.TryGetValue(key, out var acc) ? acc + amount : amount;
+        }
+
+        // Repartir el pool de cada operador entre sus lineas, topeando cada linea por su NetCost. El orden de
+        // las lineas es el de construccion (estable); el reparto no "pierde" plata: lo que no entra por el
+        // tope de costo de una linea queda disponible para las demas del mismo operador/moneda.
+        for (int i = 0; i < lines.Count; i++)
+        {
+            var line = lines[i];
+            decimal serviceCost = lineNetCosts[i];
+            var key = (line.SupplierId, line.Currency);
+
+            decimal available = pool.TryGetValue(key, out var remaining) ? remaining : 0m;
+
+            // El cap de la linea no puede superar ni lo pagado disponible ni lo que costo el servicio.
+            decimal capBeforePenalty = Math.Min(available, serviceCost);
+            if (capBeforePenalty < 0m) capBeforePenalty = 0m;
+
+            // Penalidad ya confirmada (raro al draft): reduce lo que se devuelve. Nunca cap negativo.
+            decimal penalty = line.PenaltyAmount ?? 0m;
+            decimal cap = capBeforePenalty - penalty;
+            if (cap < 0m) cap = 0m;
+
+            line.RefundCap = cap;
+
+            // Consumir del pool lo que esta linea reserva (capBeforePenalty, no el cap neto: la penalidad la
+            // retiene el operador, no vuelve a estar disponible para otra linea).
+            if (pool.ContainsKey(key))
+                pool[key] = Math.Max(0m, remaining - capBeforePenalty);
+        }
+    }
+
     private async Task<List<int>> GetDistinctSupplierIdsAsync(int reservaId, CancellationToken ct)
     {
         var supplierIds = new HashSet<int>();
