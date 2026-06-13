@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Clock, CreditCard, Download, Eye, ExternalLink, FileText, History, Paperclip, Receipt, Users, Trash2, Edit2, Plus } from "lucide-react";
+import { Clock, CreditCard, Download, Eye, ExternalLink, FileText, History, Paperclip, Receipt, Users, Trash2, Edit2, Plus, RefreshCw, Check } from "lucide-react";
 import { api } from "../../../api";
 import { showConfirm, showError, showSuccess } from "../../../alerts";
 import ReservaTimeline from "../../../components/ReservaTimeline";
@@ -43,7 +43,7 @@ import { useReservaDetail } from "../hooks/useReservaDetail";
 import { useOperationalFlags } from "../../../contexts/OperationalFlagsContext";
 import { useAlerts } from "../../../contexts/AlertsContext";
 import CancelReservaModal from "../../cancellations/components/CancelReservaModal";
-import { hasPermission } from "../../../auth";
+import { hasPermission, isAdmin } from "../../../auth";
 
 // Mapa de TipoComprobante AFIP a etiqueta legible.
 //  Facturas: 1=A, 6=B, 11=C, 51=M.
@@ -399,6 +399,10 @@ export default function ReservaDetailPage() {
 
   const [showCancelModal, setShowCancelModal] = useState(false);
 
+  // ADR-027: estado de carga del botón "Dar OK" (acknowledge-changes).
+  // Evita doble click y da feedback visual al usuario mientras espera la respuesta del backend.
+  const [acknowledging, setAcknowledging] = useState(false);
+
   const [showServiceModal, setShowServiceModal] = useState(false);
   const [serviceToEdit, setServiceToEdit] = useState(null);
   const [showPassengerForm, setShowPassengerForm] = useState(false);
@@ -506,6 +510,26 @@ export default function ReservaDetailPage() {
       await fetchReserva({ showLoading: false, preserveOnError: true });
     } catch (error) {
       showError(getApiErrorMessage(error, "No se pudieron actualizar las cantidades."));
+    }
+  };
+
+  /**
+   * ADR-027: el dueño da OK a los cambios de precio/costo.
+   * Llama a POST /api/reservas/{id}/acknowledge-changes, que limpia el flag
+   * HasUnacknowledgedChanges y registra quien/cuando acuso el cambio.
+   * Tras el OK, recargamos la reserva para que el banner y el badge desaparezcan.
+   */
+  const handleAcknowledgeChanges = async () => {
+    if (acknowledging) return;
+    setAcknowledging(true);
+    try {
+      await api.post(`/reservas/${publicId}/acknowledge-changes`);
+      showSuccess("Cambios revisados. El saldo ya está al día.");
+      await fetchReserva({ showLoading: false, preserveOnError: true });
+    } catch (error) {
+      showError(getApiErrorMessage(error, "No se pudo confirmar el acuse. Intentá de nuevo."), "Error");
+    } finally {
+      setAcknowledging(false);
     }
   };
 
@@ -647,6 +671,58 @@ export default function ReservaDetailPage() {
         hasLiveEditAuthorization={reserva.hasLiveEditAuthorization ?? false}
         editAuthorizationExpiresAt={reserva.editAuthorizationExpiresAt ?? null}
       />
+
+      {/* ADR-027: franja amarilla "Confirmada con cambios".
+          Aparece cuando el vendedor edito precio o costo de un servicio en una reserva viva
+          (InManagement/Confirmed/Traveling/ToSettle) y el dueño todavía no revisó el cambio.
+          El DTO puede no traer el detalle exacto de qué cambió (solo el flag + fecha),
+          por lo que mostramos un mensaje general claro y el saldo actual.
+          El botón "Dar OK" es SOLO para administradores (isAdmin()); un no-admin ve la franja
+          pero sin botón — ya puede ver el saldo actualizado y los servicios. */}
+      {reserva.hasUnacknowledgedChanges && (
+        <div
+          className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-200"
+          data-testid="banner-con-cambios"
+          role="status"
+          aria-live="polite"
+        >
+          <RefreshCw className="h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+          <div className="flex-1">
+            <span className="font-bold">Se editaron precios o costos de esta reserva.</span>
+            {' '}El saldo a cobrar se actualizó automáticamente.
+            {reserva.changesPendingSince && (
+              <span className="ml-1 text-amber-700 dark:text-amber-300 text-xs">
+                (desde el {new Date(reserva.changesPendingSince).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" })})
+              </span>
+            )}
+          </div>
+          {/* Botón "Dar OK": solo visible para administradores.
+              Un no-admin puede VER el saldo actualizado en los servicios pero no puede
+              "limpiar" la marca — esa decisión la toma el dueño. */}
+          {isAdmin() && (
+            <button
+              type="button"
+              onClick={handleAcknowledgeChanges}
+              disabled={acknowledging}
+              className="flex-shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-amber-700 disabled:opacity-60 dark:bg-amber-700 dark:hover:bg-amber-600"
+              data-testid="btn-dar-ok-cambios"
+              aria-label="Marcar cambios como revisados"
+            >
+              {acknowledging ? (
+                <>
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                  Revisando...
+                </>
+              ) : (
+                <>
+                  <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                  Dar OK
+                </>
+              )}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Banner early-stage: Cotizacion y Presupuesto — la reserva no es operativa todavia.
           El texto orienta al vendedor sobre el siguiente paso. */}

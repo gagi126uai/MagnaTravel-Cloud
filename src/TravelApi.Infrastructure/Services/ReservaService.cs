@@ -1782,12 +1782,12 @@ public class ReservaService : IReservaService
 
                 _context.Reservas.Add(file);
 
-                if (sourceLead != null)
-                {
-                    // Se concreto una venta a partir del lead -> Ganado (misma regla que la conversion
-                    // de cotizacion). Si el lead ya estaba Perdido, MarkLeadAsWonForSale no lo reabre.
-                    LeadService.MarkLeadAsWonForSale(sourceLead);
-                }
+                // Decision del dueño (auditoria ERP 2026-06-13): crear una reserva/presupuesto desde un
+                // lead ya NO lo marca Ganado. Solo dejamos el linkeo de trazabilidad (SourceLeadId, seteado
+                // arriba). El lead pasa a Ganado recien cuando la reserva linkeada llega a un estado EN FIRME
+                // (ver MarkSourceLeadAsWonIfReservaIsFirmAsync, disparado desde UpdateStatusAsync). Una reserva
+                // nace en Cotizacion, que NO es un estado en firme: marcar Ganado aca seria prematuro (el
+                // cliente todavia no acepto el presupuesto).
 
                 await _context.SaveChangesAsync();
                 await transaction.CommitAsync();
@@ -2514,8 +2514,42 @@ public class ReservaService : IReservaService
 
         file.Status = status;
 
+        // CRM leads (auditoria ERP 2026-06-13, decision del dueño): el lead de origen pasa a Ganado
+        // recien cuando la reserva linkeada llega a un estado EN FIRME (el cliente acepto el presupuesto),
+        // no al crear la reserva. Esta es la unica entrada MANUAL al set en firme (Budget -> InManagement);
+        // los estados firmes posteriores (Confirmed/Traveling/ToSettle) se alcanzan desde uno ya firme, asi
+        // que evaluar aca cubre el evento real. Idempotente: si el lead ya estaba Ganado/Perdido, no se toca.
+        if (isRealChange)
+        {
+            await MarkSourceLeadAsWonIfReservaIsFirmAsync(file);
+        }
+
         await _context.SaveChangesAsync();
         return file;
+    }
+
+    /// <summary>
+    /// CRM leads (auditoria ERP 2026-06-13): si la <paramref name="file"/> esta en un estado EN FIRME
+    /// (<see cref="FinancePositionService.ActiveReceivableStatuses"/> = {InManagement, Confirmed, Traveling,
+    /// ToSettle}) y nacio de un lead, marca ese lead como Ganado. Es la regla "el lead se gana cuando el
+    /// cliente ACEPTA el presupuesto" (= la reserva avanza a en firme), reemplazando el viejo disparo al
+    /// crear la reserva.
+    ///
+    /// <para>Idempotente y seguro: <see cref="LeadService.MarkLeadAsWonForSale"/> no reabre un lead Perdido
+    /// y no re-procesa uno ya Ganado. NO hace SaveChanges: el caller persiste el lead trackeado junto con la
+    /// transicion (todo o nada). Si la reserva no tiene <c>SourceLeadId</c>, es un no-op.</para>
+    /// </summary>
+    private async Task MarkSourceLeadAsWonIfReservaIsFirmAsync(Reserva file)
+    {
+        if (file.SourceLeadId == null) return;
+        if (!FinancePositionService.ActiveReceivableStatuses.Contains(file.Status)) return;
+
+        // Cargamos la entidad trackeada (no AsNoTracking): le vamos a cambiar el Status y necesitamos que
+        // EF lo persista en el SaveChanges del caller.
+        var sourceLead = await _context.Leads.FindAsync(file.SourceLeadId.Value);
+        if (sourceLead == null) return;
+
+        LeadService.MarkLeadAsWonForSale(sourceLead);
     }
 
     // ============================================================

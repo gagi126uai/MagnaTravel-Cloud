@@ -294,3 +294,12 @@ Ronda 2:
   - **Cancelar todo y cancelar suelto CONVIVEN**: sigue el botón "Cancelar" de la franja (cancela toda la reserva) Y se puede cancelar servicios sueltos desde la lista.
   - **Cancelar varios = EN LÍNEA, debajo de la lista** (no ventana, coherente con la carga de servicios y el cobro). Tildás los servicios (de cualquier operador), ves el total a devolver al cliente POR MONEDA (nunca mezclado), un solo motivo para la tanda, confirmás una vez. Los servicios bloqueados (factura/voucher vivo) aparecen VISIBLES con el casillero apagado y la explicación al lado.
   - **Bandeja "Notas de crédito por revisar" = dentro de Cobranza y Facturación.** PENDIENTE DE BACKEND: hoy no hay un listado estructurado de cancelaciones esperando NC (la parcial solo deja rastro en el log de auditoría; `debit-notes/pending` es para notas de DÉBITO). Antes de construir la bandeja hay que agregar la lista real en backend. Las otras 3 piezas se construyen ya.
+
+## Tanda de frontend — elecciones de Gastón (2026-06-13, mockup `2026-06-13-tanda-front-opciones.html`)
+
+- **(2026-06-13) Comisiones de vendedor.** Interruptor en Configuración con **un % general único para todos** (no por vendedor). Pantalla NUEVA propia "Comisiones": navegador de mes (flechas, como Caja) + lista de vendedores con su total del mes → al tocar, detalle reserva por reserva. **La ve SOLO el dueño/admin** (los vendedores NO ven comisiones).
+- **(2026-06-13) Deuda al operador por reserva.** Dentro de la cuenta del operador: total arriba + lista de reservas con lo que se le debe de cada una; **anticipos a cuenta como fila aparte que RESTA**. Sin permiso ver-costos → tapado. Nunca mezclar monedas.
+- **(2026-06-13) Factura desde servicios.** EN LÍNEA debajo (no ventana), renglones precargados desde los servicios confirmados, **franja amarilla arriba** si el total no coincide con lo vendido (no bloquea, se factura igual).
+- **(2026-06-13) "Confirmada con cambios".** Etiqueta "Con cambios" al lado del estado + franja amarilla que **muestra qué cambió** + botón "Dar OK". El OK lo da **solo un administrador**.
+- **(2026-06-13) Saldo a favor del cliente.** El cartel de saldo cambia a "A FAVOR EN $" en verde + **botón "Usar saldo a favor"** que abre el flujo de uso (aplicar a otra reserva / devolver). Un renglón por moneda.
+- **(2026-06-13) Crear presupuesto desde lead.** Botón en la ficha del lead (ya existe) + **agregar botón rápido en la LISTA de leads**. El lead se marca **Ganado cuando el cliente ACEPTA el presupuesto** (la reserva pasa a firme), NO al crear el presupuesto.

@@ -110,6 +110,32 @@ public class CommissionsController : ControllerBase
         return Ok(await _commissionService.GetAccrualsAsync(query, cancellationToken));
     }
 
+    /// <summary>
+    /// Auditoria ERP 2026-06-13 (decision del dueño): resumen MENSUAL de comisiones por vendedor (pantalla
+    /// "Comisiones"). Devuelve, para el (año, mes) pedido, un renglon por vendedor con su total de comision
+    /// por moneda. El detalle reserva-por-reserva se obtiene con <c>GET /api/commissions/accruals</c>
+    /// filtrando por <c>sellerUserId</c> + <c>from/to</c>.
+    ///
+    /// <para><b>Gate (decision del dueño)</b>: esta pantalla la ve SOLO el dueño/admin. Por eso
+    /// <c>[Authorize(Roles="Admin")]</c> y NO un permiso (el Colaborador tiene <c>cobranzas.see_cost</c>, asi
+    /// que reusar ese permiso —como hace <c>/accruals</c>— dejaria entrar al back-office, no solo al dueño).
+    /// El gate por rol Admin es el que ya usan los endpoints de alta/baja de reglas de este mismo controller.</para>
+    /// </summary>
+    [HttpGet("summary")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<CommissionMonthlySummaryDto>> GetMonthlySummary(
+        [FromQuery] int year, [FromQuery] int month, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return Ok(await _commissionService.GetMonthlySummaryAsync(year, month, cancellationToken));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
     private async Task<int?> ResolveOptionalSupplierIdAsync(string? supplierPublicIdOrLegacyId, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(supplierPublicIdOrLegacyId))

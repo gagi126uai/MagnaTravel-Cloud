@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
+import { hasPermission } from "../../../auth";
 import {
     ArrowLeft,
     Building2,
@@ -16,6 +17,8 @@ import {
     Filter,
     Check,
     X,
+    Layers,
+    ExternalLink,
 } from "lucide-react";
 import { api } from "../../../api";
 import SupplierPaymentModal from "../../../components/SupplierPaymentModal";
@@ -52,6 +55,283 @@ const emptyPage = {
     hasPreviousPage: false,
     hasNextPage: false,
 };
+
+/**
+ * Tabla de deuda al proveedor abierta POR EXPEDIENTE (reserva) y por moneda.
+ *
+ * Regla clave: NUNCA sumar pesos con dólares. Cada moneda ocupa su propio renglón
+ * dentro de cada reserva y en el bloque de "Anticipos a cuenta".
+ *
+ * Enmascarado de montos: si el usuario NO tiene permiso cobranzas.see_cost,
+ * el backend devuelve 0 para todos los montos. En ese caso mostramos "—" en gris
+ * (no verde ni rojo) y un aviso en el encabezado para que quede claro que es
+ * falta de permiso, no que la deuda es cero.
+ *
+ * Se usa en la pagina de cuenta corriente del proveedor (SupplierAccountPage),
+ * debajo de las tarjetas de resumen.
+ *
+ * Props:
+ * - publicId: string — publicId del proveedor (para el endpoint)
+ */
+function SupplierDebtByReservaSection({ publicId }) {
+    const [data, setData] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(null);
+
+    // hasPermission("cobranzas.see_cost") ya incluye el check de isAdmin internamente.
+    // Si es false, el backend devuelve 0 en todos los montos → mostramos "—" en gris
+    // para distinguir "sin permiso" de "no hay deuda".
+    const puedeVerMontos = hasPermission("cobranzas.see_cost");
+
+    // Carga la deuda por expediente al montar (o al cambiar el proveedor).
+    // El backend ya filtra por permiso: si no tiene see_cost, los montos llegan enmascarados.
+    useEffect(() => {
+        let cancelled = false;
+        setLoading(true);
+        setError(null);
+
+        api.get(`/suppliers/${publicId}/account/debt-by-reserva`)
+            .then((response) => {
+                if (!cancelled) {
+                    setData(response);
+                }
+            })
+            .catch((err) => {
+                if (!cancelled) {
+                    setError(err?.message || "No se pudo cargar la deuda por expediente.");
+                }
+            })
+            .finally(() => {
+                if (!cancelled) setLoading(false);
+            });
+
+        // Limpieza: si el componente se desmonta antes de que llegue la respuesta,
+        // no actualizamos el estado para evitar memory leaks y warnings de React.
+        return () => { cancelled = true; };
+    }, [publicId]);
+
+    if (loading) {
+        return (
+            <div
+                className="overflow-hidden rounded-xl border bg-card shadow-sm"
+                data-testid="deuda-loading"
+            >
+                <div className="border-b p-4 flex items-center gap-2">
+                    <Layers className="h-5 w-5" />
+                    <h2 className="font-semibold">Deuda por expediente</h2>
+                </div>
+                <div className="p-6 text-sm text-muted-foreground text-center">Cargando deuda por expediente...</div>
+            </div>
+        );
+    }
+
+    if (error) {
+        return (
+            <div
+                className="overflow-hidden rounded-xl border bg-card shadow-sm"
+                data-testid="deuda-error"
+            >
+                <div className="border-b p-4 flex items-center gap-2">
+                    <Layers className="h-5 w-5" />
+                    <h2 className="font-semibold">Deuda por expediente</h2>
+                </div>
+                <div className="p-6 text-sm text-rose-600 text-center">
+                    No se pudo cargar la información. Intentá recargar la página.
+                </div>
+            </div>
+        );
+    }
+
+    // Si no hay reservas ni anticipos, tampoco hay deuda.
+    const reservas = data?.reservas || [];
+    const anticipos = data?.advancesToAccount || [];
+    const globales = data?.globalTotals || [];
+    const hayDatos = reservas.length > 0 || anticipos.length > 0;
+
+    return (
+        <div
+            className="overflow-hidden rounded-xl border bg-card shadow-sm"
+            data-testid="deuda-por-expediente-section"
+        >
+            <div className="border-b p-4 flex items-center justify-between flex-wrap gap-2">
+                <div className="flex flex-col gap-1">
+                    <h2
+                        className="flex items-center gap-2 font-semibold"
+                        data-testid="deuda-por-expediente-title"
+                    >
+                        <Layers className="h-5 w-5" />
+                        Deuda por expediente
+                    </h2>
+                    {/* Aviso de sin permiso: el backend manda 0 en todos los montos cuando
+                        el usuario no tiene cobranzas.see_cost. Mostramos el aviso para que
+                        no se confunda "sin permiso" con "no hay deuda". */}
+                    {!puedeVerMontos && (
+                        <p
+                            className="text-xs text-muted-foreground"
+                            data-testid="deuda-sin-permiso-aviso"
+                        >
+                            No tenés permiso para ver los montos de deuda.
+                        </p>
+                    )}
+                </div>
+                {/* Total global por moneda: reconcilia con el saldo de la cuenta corriente general.
+                    Si no hay permiso, mostramos "—" en gris en vez de "$0,00" en verde (que parecería
+                    que no se debe nada). */}
+                {globales.length > 0 && (
+                    <div className="flex items-center gap-3 text-sm" data-testid="deuda-global-totals">
+                        <span className="text-muted-foreground text-xs uppercase tracking-wider">Total deuda</span>
+                        {globales.map((global) => (
+                            <span
+                                key={global.currency}
+                                className={
+                                    !puedeVerMontos
+                                        ? "font-bold font-mono text-muted-foreground"
+                                        : `font-bold font-mono ${global.amount > 0 ? "text-red-600" : "text-emerald-600"}`
+                                }
+                                data-testid={`deuda-global-${global.currency}`}
+                            >
+                                {puedeVerMontos ? formatCurrency(global.amount, global.currency) : "—"}
+                            </span>
+                        ))}
+                    </div>
+                )}
+            </div>
+
+            {!hayDatos ? (
+                <div
+                    className="p-6 text-center text-sm text-muted-foreground"
+                    data-testid="deuda-empty"
+                >
+                    No hay deuda registrada con este proveedor.
+                </div>
+            ) : (
+                <div className="divide-y">
+                    {/* =========================================================
+                        Bloque de reservas: una fila por reserva + moneda.
+                        Regla anti-mezcla: cada moneda ocupa su propia celda
+                        (nunca sumamos ARS con USD en una misma linea).
+                    ========================================================= */}
+                    {reservas.map((reserva) => (
+                        <div
+                            key={reserva.reservaPublicId}
+                            className="p-4 space-y-2"
+                            data-testid={`deuda-reserva-${reserva.reservaPublicId}`}
+                        >
+                            {/* Cabecera de la reserva: Link real en vez de button+navigate
+                                para que funcione Ctrl+click / abrir en pestaña nueva. */}
+                            <div className="flex items-center gap-2">
+                                <Link
+                                    to={`/reservas/${reserva.reservaPublicId}`}
+                                    className="inline-flex items-center gap-1 font-bold text-primary hover:underline text-sm"
+                                    title="Ir a la reserva"
+                                    data-testid={`link-reserva-${reserva.reservaPublicId}`}
+                                >
+                                    {reserva.numeroReserva || "Ver reserva"}
+                                    <ExternalLink className="h-3 w-3" />
+                                </Link>
+                                {reserva.fileName && (
+                                    <span className="text-xs text-muted-foreground">
+                                        — {reserva.fileName}
+                                    </span>
+                                )}
+                            </div>
+
+                            {/* Detalle por moneda: cada moneda va en su propia fila.
+                                Si no hay permiso: mostramos "—" en gris en Compras/Pagado/Saldo,
+                                sin color rojo/verde que induzca a error. */}
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                {(reserva.currencies || []).map((linea) => (
+                                    <div
+                                        key={linea.currency}
+                                        className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-800/40"
+                                        data-testid={`deuda-reserva-${reserva.reservaPublicId}-${linea.currency}`}
+                                    >
+                                        <div className="space-y-0.5">
+                                            <div className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">
+                                                {linea.currency}
+                                            </div>
+                                            <div className="text-[10px] text-muted-foreground">
+                                                Compras:{" "}
+                                                <span className="font-mono">
+                                                    {puedeVerMontos
+                                                        ? formatCurrency(linea.confirmedPurchases, linea.currency)
+                                                        : "—"}
+                                                </span>
+                                            </div>
+                                            <div className="text-[10px] text-muted-foreground">
+                                                Pagado:{" "}
+                                                <span className="font-mono">
+                                                    {puedeVerMontos
+                                                        ? formatCurrency(linea.totalPaid, linea.currency)
+                                                        : "—"}
+                                                </span>
+                                            </div>
+                                        </div>
+                                        {/* Saldo: si no hay permiso se muestra "Sin permiso" en gris neutro,
+                                            no en verde (que parecería "no se debe nada"). */}
+                                        {puedeVerMontos ? (
+                                            <div
+                                                className={`font-bold font-mono text-sm ${linea.balance > 0 ? "text-red-600" : linea.balance < 0 ? "text-emerald-600" : "text-muted-foreground"}`}
+                                                title={linea.balance > 0 ? "Deuda pendiente" : linea.balance < 0 ? "Saldo a favor" : "Sin saldo"}
+                                            >
+                                                {formatCurrency(linea.balance, linea.currency)}
+                                            </div>
+                                        ) : (
+                                            <div
+                                                className="text-muted-foreground text-sm"
+                                                title="Sin permiso para ver montos"
+                                            >
+                                                Sin permiso
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    ))}
+
+                    {/* =========================================================
+                        Bloque de anticipos: pagos que NO estan imputados a ninguna
+                        reserva concreta. Restan del total adeudado pero no se saben
+                        a que expediente asignar.
+                    ========================================================= */}
+                    {anticipos.length > 0 && (
+                        <div
+                            className="p-4 space-y-2"
+                            data-testid="deuda-anticipos-section"
+                        >
+                            <div className="flex items-center gap-2">
+                                <span className="text-sm font-semibold text-muted-foreground">
+                                    Anticipos a cuenta
+                                </span>
+                                <span className="text-xs text-muted-foreground italic">
+                                    (pagos sin reserva imputada — restan del total)
+                                </span>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                                {anticipos.map((anticipo) => (
+                                    <div
+                                        key={anticipo.currency}
+                                        className="inline-flex items-center gap-2 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-1.5 dark:border-emerald-900/30 dark:bg-emerald-950/20"
+                                        data-testid={`anticipo-${anticipo.currency}`}
+                                    >
+                                        <span className="text-[10px] font-black uppercase text-emerald-700 dark:text-emerald-300">
+                                            {anticipo.currency}
+                                        </span>
+                                        {/* Anticipos reducen la deuda → se muestran como negativo (resta) */}
+                                        <span className="font-bold font-mono text-sm text-emerald-700 dark:text-emerald-300">
+                                            − {formatCurrency(anticipo.amount, anticipo.currency)}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
 
 // Mapeo de Type (en espanol, viene del backend) -> endpoint de status update.
 // Si no esta mapeado (servicios genericos), no se permite editar inline aca.
@@ -474,6 +754,11 @@ export default function SupplierAccountPage() {
                     <p className="text-2xl font-bold text-red-600">{formatCurrency(summary.balance)}</p>
                 </div>
             </div>
+
+            {/* Sección de deuda por expediente (reserva): auditoria ERP hallazgo #4.
+                Muestra lo que se le debe al proveedor, abierto reserva por reserva y por moneda.
+                Los anticipos a cuenta (pagos sin reserva imputada) van al final y restan del total. */}
+            <SupplierDebtByReservaSection publicId={publicId} />
 
             <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
                 <div className="border-b p-4 space-y-4">

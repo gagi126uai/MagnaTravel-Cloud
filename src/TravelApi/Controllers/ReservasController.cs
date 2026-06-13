@@ -498,12 +498,17 @@ public class ReservasController : ControllerBase
     // ============= /Phase 2.4 =============
 
     // ADR-027 (auditoria ERP, hallazgo #10): el dueño da el OK a una reserva "confirmada con cambios".
-    // Mismo gating que el resto de edicion de reserva: ReservasEdit + ownership (Admin/view_all bypass).
-    // Limpia la marca y registra quien/cuando. Idempotente: acusar una reserva no marcada devuelve 200 sin
-    // tocar nada (no es error). El candado de edicion (ADR-020 F4) NO aplica: dar el OK NO edita servicios.
+    //
+    // Gate (decision del dueño, auditoria ERP 2026-06-13): SOLO un administrador puede dar el OK. Antes
+    // estaba gateado con ReservasEdit (que tiene el Vendedor) + ownership, asi que el propio vendedor podia
+    // auto-acusar el cambio de precio/costo de SU reserva, anulando el control. Ahora exige rol Admin: el
+    // OK es una validacion del responsable del negocio, no del vendedor que hizo (o sufrio) el cambio. Se
+    // quita el RequireOwnership porque el Admin opera sobre TODAS las reservas (no hay scope por vendedor
+    // para esta accion). Limpia la marca y registra quien/cuando. Idempotente: acusar una reserva no marcada
+    // devuelve 200 sin tocar nada (no es error). El candado de edicion (ADR-020 F4) NO aplica: dar el OK NO
+    // edita servicios.
     [HttpPost("{publicIdOrLegacyId}/acknowledge-changes")]
-    [RequirePermission(Permissions.ReservasEdit)]
-    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
+    [Authorize(Roles = "Admin")]
     public async Task<ActionResult<ReservaDto>> AcknowledgeChanges(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try

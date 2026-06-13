@@ -16,6 +16,13 @@ public interface ICommissionService
     /// <c>cobranzas.see_cost</c>.
     /// </summary>
     Task<PagedResponse<CommissionAccrualDto>> GetAccrualsAsync(CommissionAccrualsQuery query, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Auditoria ERP 2026-06-13 (decision del dueño): resumen MENSUAL de comisiones por vendedor (pantalla
+    /// "Comisiones", admin-only). Agrupa los devengos del mes (sobre CreatedAt) por vendedor + moneda. Solo
+    /// cuenta filas con monto &gt; 0 (las que cayeron a 0 por tope cero no ensucian el resumen).
+    /// </summary>
+    Task<CommissionMonthlySummaryDto> GetMonthlySummaryAsync(int year, int month, CancellationToken cancellationToken);
 }
 
 public record CreateCommissionRuleRequest(

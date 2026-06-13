@@ -73,8 +73,11 @@ public class LeadsCircuitTests
     // ===================== Item 1: reserva nacida de un lead =====================
 
     [Fact]
-    public async Task CreateReserva_WithSourceLead_LinksAndMarksLeadWon()
+    public async Task CreateReserva_WithSourceLead_LinksButDoesNotMarkWonYet()
     {
+        // Decision del dueño (auditoria ERP 2026-06-13): crear la reserva desde un lead solo LINKEA. El lead
+        // se gana recien cuando la reserva linkeada llega a un estado EN FIRME (el cliente acepta el
+        // presupuesto). Al nacer en Cotizacion, el lead debe conservar su estado actual.
         await using var ctx = NewContext();
         var lead = new Lead { FullName = "Ana", Phone = "1122334455", Status = LeadStatus.Contacted };
         ctx.Leads.Add(lead);
@@ -86,11 +89,88 @@ public class LeadsCircuitTests
         var dto = await service.CreateReservaAsync(request, createdByUserId: null, CancellationToken.None);
 
         var reserva = await ctx.Reservas.FirstAsync(r => r.PublicId == dto.PublicId);
-        Assert.Equal(lead.Id, reserva.SourceLeadId);
+        Assert.Equal(lead.Id, reserva.SourceLeadId);     // se linkea
+        Assert.Equal(EstadoReserva.Quotation, reserva.Status); // nace en Cotizacion (no en firme)
+
+        var refreshedLead = await ctx.Leads.FindAsync(lead.Id);
+        Assert.Equal(LeadStatus.Contacted, refreshedLead!.Status); // NO se marca Ganado al crear
+        Assert.Null(refreshedLead.ClosedAt);
+    }
+
+    [Fact]
+    public async Task UpdateStatus_ReservaFromLeadReachesFirmStatus_MarksLeadWon()
+    {
+        // El lead se gana cuando la reserva linkeada transiciona a un estado EN FIRME. La unica entrada
+        // manual al set en firme es Budget -> InManagement (el cliente acepto el presupuesto).
+        await using var ctx = NewContext();
+        var lead = new Lead { FullName = "Ana", Phone = "1122334455", Status = LeadStatus.Contacted };
+        ctx.Leads.Add(lead);
+
+        // Reserva linkeada al lead, ya en Presupuesto y con un servicio cargado (gate de readiness).
+        var reserva = new Reserva
+        {
+            Name = "Viaje Ana",
+            NumeroReserva = "RES-00001",
+            Status = EstadoReserva.Budget,
+            SourceLeadId = lead.Id,
+            AdultCount = 1, // el gate de readiness exige >= 1 pasajero declarado
+        };
+        reserva.HotelBookings.Add(new HotelBooking
+        {
+            Status = ReservationStatuses.Requested,
+            Currency = "ARS",
+            SalePrice = 1000m,
+        });
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        // El gate de readiness pide nominales cargados por la cantidad declarada (1).
+        ctx.Passengers.Add(new Passenger { ReservaId = reserva.Id, FullName = "Ana Lopez" });
+        await ctx.SaveChangesAsync();
+
+        var service = NewReservaService(ctx);
+        await service.UpdateStatusAsync(reserva.Id, EstadoReserva.InManagement, actorUserId: "u1");
 
         var refreshedLead = await ctx.Leads.FindAsync(lead.Id);
         Assert.Equal(LeadStatus.Won, refreshedLead!.Status);
         Assert.NotNull(refreshedLead.ClosedAt);
+    }
+
+    [Fact]
+    public async Task UpdateStatus_ReservaFromLostLeadReachesFirmStatus_DoesNotReopenLead()
+    {
+        // Idempotencia/seguridad: un lead Perdido NO se reabre aunque la reserva linkeada avance a en firme.
+        await using var ctx = NewContext();
+        var closedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var lead = new Lead { FullName = "Beto", Phone = "1100000000", Status = LeadStatus.Lost, ClosedAt = closedAt };
+        ctx.Leads.Add(lead);
+
+        var reserva = new Reserva
+        {
+            Name = "Viaje Beto",
+            NumeroReserva = "RES-00002",
+            Status = EstadoReserva.Budget,
+            SourceLeadId = lead.Id,
+            AdultCount = 1,
+        };
+        reserva.HotelBookings.Add(new HotelBooking
+        {
+            Status = ReservationStatuses.Requested,
+            Currency = "ARS",
+            SalePrice = 1000m,
+        });
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        ctx.Passengers.Add(new Passenger { ReservaId = reserva.Id, FullName = "Beto Diaz" });
+        await ctx.SaveChangesAsync();
+
+        var service = NewReservaService(ctx);
+        await service.UpdateStatusAsync(reserva.Id, EstadoReserva.InManagement, actorUserId: "u1");
+
+        var refreshedLead = await ctx.Leads.FindAsync(lead.Id);
+        Assert.Equal(LeadStatus.Lost, refreshedLead!.Status); // no se reabre
+        Assert.Equal(closedAt, refreshedLead.ClosedAt);       // no se toca
     }
 
     [Fact]

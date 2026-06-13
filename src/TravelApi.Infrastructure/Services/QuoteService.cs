@@ -542,15 +542,11 @@ public class QuoteService : IQuoteService
         quote.ConvertedReservaId = file.Id;
         quote.Status = QuoteStatus.Accepted;
         quote.AcceptedAt = DateTime.UtcNow;
-        if (quote.LeadId.HasValue)
-        {
-            var lead = await _db.Leads.FindAsync(new object[] { quote.LeadId.Value }, cancellationToken);
-            if (lead != null)
-            {
-                // Fuente unica de la regla "se concreto una venta -> lead Ganado" (no reabre Perdido).
-                LeadService.MarkLeadAsWonForSale(lead);
-            }
-        }
+        // Decision del dueño (auditoria ERP 2026-06-13): convertir una cotizacion en reserva ya NO marca el
+        // lead como Ganado. La reserva nace en Cotizacion (NO es estado en firme), asi que marcarlo aca seria
+        // prematuro. El lead pasa a Ganado recien cuando la reserva linkeada transiciona a un estado EN FIRME
+        // (ver ReservaService.MarkSourceLeadAsWonIfReservaIsFirmAsync). El linkeo lead->reserva ya quedo
+        // hecho via SourceLeadId al construir el file.
         await _db.SaveChangesAsync(cancellationToken);
 
         // ADR-017 F1.3 (§2.3.b.7): upsert POST-EXITO best-effort de la "ultima venta" por (producto, operador).

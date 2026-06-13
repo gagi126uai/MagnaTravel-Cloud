@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowLeft, Trash2, Archive, AlertTriangle, Undo2, Calendar, Pencil, Ban, Lock, XCircle } from "lucide-react";
+import { ArrowLeft, Trash2, Archive, AlertTriangle, Undo2, Calendar, Pencil, Ban, Lock, XCircle, RefreshCw } from "lucide-react";
 import { getReservaArchiveBlockReason } from "../archiveRules";
 import { getStatusConfig, translateStatus, isStatusLocked } from "./ReservaStatusBadge";
 import { ReservaStatusChips } from "./ReservaStatusChips";
@@ -126,6 +126,19 @@ export function ReservaHeader({
                                 title="Esta reserva tiene el candado activo. Para editar necesitas autorizacion."
                                 aria-label="Reserva bloqueada"
                             />
+                        )}
+                        {/* ADR-027: etiqueta "Con cambios" al lado del estado.
+                            Aparece cuando el vendedor editó precio/costo de un servicio
+                            en una reserva viva y el dueño todavía no acusó el cambio. */}
+                        {reserva.hasUnacknowledgedChanges && (
+                            <span
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-900/40 dark:text-amber-200 dark:border-amber-700"
+                                data-testid="badge-con-cambios"
+                                title="Hay cambios de precio/costo pendientes de revisión"
+                            >
+                                <RefreshCw className="w-2.5 h-2.5" aria-hidden="true" />
+                                Con cambios
+                            </span>
                         )}
                     </div>
                     <ReservaStatusChips reserva={reserva} />

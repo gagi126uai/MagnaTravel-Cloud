@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tanda de frontend — opciones para elegir (2026-06-13)</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; background: #f1f5f9; color: #1f2937; padding: 36px 16px 90px; }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 27px; margin-bottom: 8px; }
+  .sub { color: #475569; margin-bottom: 18px; font-size: 15px; line-height: 1.6; }
+  .reglas { background:#ecfdf5; border:1px solid #a7f3d0; border-radius:12px; padding:14px 18px; font-size:13.5px; color:#065f46; line-height:1.7; margin-bottom:30px; }
+  .reglas b { color:#064e3b; }
+  .indice { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:16px 20px; margin-bottom:44px; font-size:14px; line-height:1.9; }
+  .indice b { color:#0f172a; }
+  .indice a { color:#4338ca; text-decoration:none; font-weight:700; }
+
+  .pantalla { margin-bottom: 70px; }
+  .pnum { display:inline-block; background:#0f172a; color:#fff; font-size:12px; font-weight:800; letter-spacing:.5px; border-radius:999px; padding:5px 14px; margin-bottom:10px; }
+  .pantalla h2 { font-size:22px; color:#0f172a; margin-bottom:6px; }
+  .que { background:#fffbeb; border-left:4px solid #f59e0b; border-radius:0 8px 8px 0; padding:11px 16px; font-size:13.5px; color:#78350f; line-height:1.6; margin-bottom:18px; }
+  .que b { color:#451a03; }
+
+  /* etiqueta de opcion */
+  .optlabel { display:flex; align-items:center; gap:10px; margin:26px 0 12px; }
+  .optlabel .tag { background:#4338ca; color:#fff; font-size:13px; font-weight:800; border-radius:8px; padding:5px 14px; letter-spacing:.4px; }
+  .optlabel .tag.b { background:#0e7490; }
+  .optlabel .tag.c { background:#b45309; }
+  .optlabel .desc { font-size:14px; font-weight:700; color:#334155; }
+  .optlabel .star { background:#dcfce7; color:#15803d; border:1px solid #bbf7d0; font-size:11px; font-weight:800; border-radius:999px; padding:3px 10px; text-transform:uppercase; letter-spacing:.5px; }
+
+  .twocol { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+  @media (max-width:760px){ .twocol{ grid-template-columns:1fr; } }
+
+  /* marco de "ventana del navegador" */
+  .win { border:1px solid #cbd5e1; border-radius:14px; overflow:hidden; box-shadow:0 10px 34px rgba(15,23,42,.12); background:#fff; }
+  .winbar { display:flex; align-items:center; gap:12px; background:#e2e8f0; padding:10px 14px; border-bottom:1px solid #cbd5e1; }
+  .winbar .dots { display:flex; gap:7px; }
+  .winbar .dots i { width:11px; height:11px; border-radius:50%; display:block; }
+  .winbar .addr { background:#fff; border-radius:7px; padding:5px 14px; font-size:12px; color:#475569; flex:1; font-weight:600; }
+  .winbody { padding:22px; background:#f8fafc; }
+
+  .mon { font-size:10.5px; font-weight:700; color:#fff; border-radius:5px; padding:1px 5px; margin-right:4px; }
+  .mon.ars { background:#0f766e; }
+  .mon.usd { background:#4338ca; }
+
+  .pill { display:inline-block; border-radius:6px; font-size:10px; font-weight:700; padding:2px 7px; vertical-align:middle; text-transform:uppercase; letter-spacing:.5px; }
+  .pill.green { background:#d1fae5; color:#047857; }
+  .pill.amber { background:#fef3c7; color:#b45309; }
+  .pill.rose  { background:#ffe4e6; color:#be123c; }
+  .pill.slate { background:#e2e8f0; color:#475569; }
+  .pill.indigo{ background:#e0e7ff; color:#4338ca; }
+
+  table { width:100%; border-collapse:collapse; background:#fff; border-radius:10px; overflow:hidden; font-size:12.5px; }
+  th { text-align:left; background:#f1f5f9; color:#475569; padding:8px 12px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; }
+  td { padding:10px 12px; border-top:1px solid #e5e7eb; color:#334155; vertical-align:middle; }
+  .r { text-align:right; }
+  .mono { font-family:monospace; font-weight:700; }
+
+  /* tarjetas tipo "5 tarjetitas" (proveedor / reportes) */
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:18px; }
+  .card { background:#fff; border:1px solid #e5e7eb; border-radius:14px; padding:14px 16px; }
+  .card .cl { font-size:10.5px; font-weight:800; text-transform:uppercase; letter-spacing:.5px; color:#94a3b8; margin-bottom:8px; }
+  .card .cv { font-family:monospace; font-weight:800; font-size:17px; color:#0f172a; line-height:1.5; }
+  .card .cv .second { font-size:14px; color:#475569; }
+  .card.danger { background:#fff1f2; border-color:#fecdd3; }
+  .card.danger .cv { color:#be123c; }
+  .card.masked .cv { color:#cbd5e1; letter-spacing:2px; }
+
+  /* franja de la reserva (3 numeros limpios) */
+  .resvhead { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px; }
+  .resvhead .ttl { font-size:21px; font-weight:800; color:#0f172a; }
+  .resvhead .ttl .num { color:#4f46e5; }
+  .estadoline { display:flex; align-items:center; gap:8px; margin-top:8px; flex-wrap:wrap; }
+  .badge-estado { background:#cffafe; color:#0e7490; border:1px solid #a5f3fc; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; border-radius:999px; padding:4px 12px; }
+  .badge-estado.confirmada { background:#dcfce7; color:#15803d; border-color:#bbf7d0; }
+  .badge-cambios { background:#fef3c7; color:#b45309; border:1px solid #fde68a; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.6px; border-radius:999px; padding:4px 12px; }
+  .clientline { font-size:16px; font-weight:700; color:#0f172a; margin-top:9px; }
+  .platagrid { display:flex; gap:34px; margin-top:6px; }
+  .plata .pl { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.5px; color:#94a3b8; }
+  .plata .pv { font-family:monospace; font-weight:800; font-size:22px; color:#0f172a; }
+  .plata .pv.green { color:#15803d; }
+  .plata .pvsub { font-size:11px; color:#94a3b8; }
+
+  .acts { display:flex; gap:8px; flex-wrap:wrap; }
+  .acts .btn { display:inline-flex; align-items:center; gap:6px; border-radius:9px; padding:7px 12px; font-size:12.5px; font-weight:700; border:1px solid transparent; cursor:default; }
+  .acts .btn.rose { background:#ffe4e6; color:#be123c; }
+  .acts .btn.amber { background:#fef3c7; color:#b45309; }
+  .acts .btn.slate { background:#f1f5f9; color:#475569; }
+  .acts .btn.green { background:#dcfce7; color:#15803d; }
+
+  /* franjas / avisos */
+  .franja { border-radius:12px; padding:13px 16px; font-size:13px; display:flex; align-items:center; gap:11px; margin-bottom:16px; line-height:1.5; }
+  .franja .bic { font-size:18px; flex-shrink:0; }
+  .franja.amber { background:#fffbeb; border:1px solid #fde68a; color:#78350f; }
+  .franja.amber b { color:#451a03; }
+  .franja.green { background:#ecfdf5; border:1px solid #a7f3d0; color:#065f46; }
+  .franja .ok-btn { margin-left:auto; background:#16a34a; color:#fff; border-radius:9px; padding:7px 14px; font-size:12.5px; font-weight:700; white-space:nowrap; }
+  .franja .detail { display:block; font-size:12px; color:#92400e; margin-top:4px; }
+
+  .btnp { display:inline-flex; align-items:center; gap:7px; border-radius:10px; padding:8px 16px; font-size:13px; font-weight:700; }
+  .btnp.indigo { background:#4f46e5; color:#fff; }
+  .btnp.violet { background:#7c3aed; color:#fff; }
+  .btnp.slate { background:#f1f5f9; color:#475569; border:1px solid #e2e8f0; }
+  .btnp.green { background:#16a34a; color:#fff; }
+
+  /* config toggle (calcado de OperationalFinanceSettingsTab) */
+  .cfg-card { background:#fff; border:1px solid #e2e8f0; border-radius:16px; padding:16px; display:flex; gap:12px; align-items:flex-start; }
+  .cfg-card .chk { width:18px; height:18px; border:2px solid #94a3b8; border-radius:5px; flex-shrink:0; margin-top:2px; }
+  .cfg-card .chk.on { background:#4f46e5; border-color:#4f46e5; position:relative; }
+  .cfg-card .chk.on:after { content:"✓"; color:#fff; font-size:12px; font-weight:900; position:absolute; top:-2px; left:2px; }
+  .cfg-card .ct { font-size:14px; font-weight:700; color:#0f172a; display:flex; align-items:center; gap:7px; }
+  .cfg-card .cd { font-size:12px; color:#64748b; margin-top:5px; line-height:1.5; }
+  .cfg-sub { display:flex; align-items:center; gap:10px; margin-top:12px; padding-top:12px; border-top:1px dashed #e2e8f0; }
+  .cfg-sub label { font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.5px; color:#64748b; }
+  .cfg-sub .field { border:1px solid #cbd5e1; border-radius:8px; padding:5px 10px; font-size:13px; font-weight:700; color:#334155; background:#fff; min-width:60px; }
+
+  /* navegador de mes */
+  .monthnav { display:inline-flex; align-items:center; gap:14px; background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:8px 14px; font-weight:800; color:#0f172a; font-size:15px; }
+  .monthnav .arrow { color:#4338ca; font-size:18px; }
+  .monthnav .arrow.dis { color:#cbd5e1; }
+  .monthnav .hoy { font-size:11px; font-weight:700; color:#4338ca; background:#eef2ff; border-radius:7px; padding:4px 9px; margin-left:4px; }
+
+  /* tabs (cuenta cliente) */
+  .tabs { display:flex; gap:6px; margin-bottom:16px; }
+  .tabs .tab { font-size:12.5px; font-weight:700; padding:7px 14px; border-radius:9px; color:#64748b; background:#fff; border:1px solid #e2e8f0; }
+  .tabs .tab.active { background:#0f172a; color:#fff; border-color:#0f172a; }
+
+  .preg { background:#fdf2f8; border:1px solid #f9a8d4; border-radius:12px; padding:14px 18px; margin-top:20px; }
+  .preg .pq { font-size:12px; font-weight:800; color:#be185d; letter-spacing:.5px; margin-bottom:5px; }
+  .preg .pt { font-size:13.5px; color:#831843; line-height:1.7; }
+  .preg .pt b { color:#500724; }
+
+  .rec { background:#eef2ff; border:1px solid #c7d2fe; border-radius:10px; padding:11px 16px; font-size:13px; color:#3730a3; margin-bottom:16px; line-height:1.55; }
+  .rec b { color:#1e1b4b; }
+  .nota-guia { background:#f1f5f9; border-left:4px solid #94a3b8; border-radius:0 8px 8px 0; padding:9px 14px; font-size:12.5px; color:#475569; margin:14px 0; line-height:1.5; }
+  .nota-guia b { color:#1e293b; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Las 6 pantallas que faltan — con opciones para que elijas</h1>
+  <p class="sub">
+    Cada pantalla tiene <b>2 o 3 maneras de quedar</b> (Opción A / B / C). Las dibujé <b>calcando tu sistema de hoy</b>:
+    la misma franja de la reserva, las mismas tarjetitas, los mismos colores. Mirás, comparás y elegís —
+    podés mezclar (ej. "1B, 2A, 3 las dos…"). Donde algo ya lo decidiste antes, lo respeto y te lo aclaro.
+  </p>
+
+  <div class="reglas">
+    <b>Lo que ya está decidido y respeto en todas:</b>
+    ① Pesos y dólares <b>SIEMPRE separados</b>, nunca un total mezclado. &nbsp;
+    ② Si una reserva/cliente/operador maneja <b>una sola moneda</b>, se ve igual que hoy (la segunda moneda aparece solo si de verdad hay dos). &nbsp;
+    ③ Quien <b>no puede ver costos</b> no ve costos ni deuda al operador, en ninguna moneda. &nbsp;
+    ④ La nota de crédito de una cancelación <b>no se emite sola</b>.
+  </div>
+
+  <div class="indice">
+    <b>Las 6 pantallas:</b><br>
+    1 · <a href="#p1">Comisiones del vendedor</a> &nbsp;—&nbsp;
+    2 · <a href="#p2">Deuda al operador por reserva</a> &nbsp;—&nbsp;
+    3 · <a href="#p3">Factura armada desde los servicios</a><br>
+    4 · <a href="#p4">"Confirmada con cambios"</a> &nbsp;—&nbsp;
+    5 · <a href="#p5">Saldo a favor del cliente</a> &nbsp;—&nbsp;
+    6 · <a href="#p6">Crear presupuesto desde un lead</a>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- PANTALLA 1 — COMISIONES -->
+  <!-- ============================================================ -->
+  <div class="pantalla" id="p1">
+    <span class="pnum">PANTALLA 1</span>
+    <h2>Comisiones del vendedor</h2>
+    <p class="que"><b>Qué es:</b> un porcentaje sobre la ganancia, para el vendedor responsable de la reserva. Se gana cuando el cliente paga; si la reserva se cancela, queda en cero. Hay dos cosas que dibujar: <b>(A)</b> el interruptor para prenderlo en Configuración, y <b>(B)</b> la pantalla para ver las comisiones.</p>
+
+    <h3 style="font-size:16px; color:#0f172a; margin:24px 0 4px;">1.1 — El interruptor en Configuración</h3>
+    <div class="rec"><b>Recomendado:</b> un interruptor igual a los que ya tenés en "Funciones avanzadas" (mismo aspecto), con el casillero del porcentaje pegado abajo. Es un ajuste de negocio, no una llave técnica peligrosa: se prende derecho, sin la ventana de "¿seguro?" (esa queda solo para lo fiscal).</p>
+
+    <div class="optlabel"><span class="tag">Opción A</span><span class="desc">Un porcentaje general, igual para todos los vendedores</span><span class="star">★ Recomendada</span></div>
+    <div class="win">
+      <div class="winbar"><div class="dots"><i style="background:#f87171"></i><i style="background:#fbbf24"></i><i style="background:#34d399"></i></div><div class="addr">magnatravel.app/configuracion → Funciones avanzadas</div></div>
+      <div class="winbody">
+        <div class="cfg-card">
+          <span class="chk on"></span>
+          <div style="flex:1;">
+            <div class="ct">💰 Comisión del vendedor por reserva</div>
+            <div class="cd">El vendedor responsable de cada reserva gana una comisión sobre la ganancia. Se gana cuando el cliente paga; si la reserva se cancela, queda en cero. Apagado, no se calcula ninguna comisión.</div>
+            <div class="cfg-sub">
+              <label>Porcentaje sobre la ganancia</label>
+              <span class="field">10 %</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="optlabel"><span class="tag b">Opción B</span><span class="desc">El interruptor general + un porcentaje propio por vendedor (en la ficha de cada uno)</span></div>
+    <div class="win">
+      <div class="winbar"><div class="dots"><i style="background:#f87171"></i><i style="background:#fbbf24"></i><i style="background:#34d399"></i></div><div class="addr">magnatravel.app/usuarios → Juan Pérez</div></div>
+      <div class="winbody">
+        <div class="cfg-card" style="margin-bottom:14px;">
+          <span class="chk on"></span>
+          <div style="flex:1;">
+            <div class="ct">💰 Comisión del vendedor por reserva</div>
+            <div class="cd">Prendido en Configuración (interruptor general). El porcentaje de cada vendedor se ajusta en su ficha.</div>
+          </div>
+        </div>
+        <div class="cfg-card">
+          <div style="flex:1;">
+            <div class="ct">Comisión de Juan Pérez</div>
+            <div class="cd">Porcentaje que gana este vendedor sobre la ganancia de sus reservas. Si lo dejás vacío, usa el general.</div>
+            <div class="cfg-sub"><label>Porcentaje</label><span class="field">12 %</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <h3 style="font-size:16px; color:#0f172a; margin:34px 0 4px;">1.2 — La pantalla para VER las comisiones</h3>
+    <div class="rec"><b>Recomendado:</b> una pantalla nueva "Comisiones" con <b>navegador de mes</b> (las mismas flechas ◀ ▶ que la Caja), una lista de vendedores con su total del mes, y al tocar un vendedor, el detalle reserva por reserva. El dueño ve a todos; cada vendedor ve solo la suya.</p>
+
+    <div class="optlabel"><span class="tag">Opción A</span><span class="desc">Pantalla propia "Comisiones" con navegador de mes y lista de vendedores</span><span class="star">★ Recomendada</span></div>
+    <div class="win">
+      <div class="winbar"><div class="dots"><i style="background:#f87171"></i><i style="background:#fbbf24"></i><i style="background:#34d399"></i></div><div class="addr">magnatravel.app/comisiones</div></div>
+      <div class="winbody">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+          <h3 style="font-size:18px; font-weight:800; color:#0f172a;">Comisiones</h3>
+          <div class="monthnav"><span class="arrow">◀</span> Junio 2026 <span class="arrow dis">▶</span> <span class="hoy">Hoy</span></div>
+        </div>
+        <table>
+          <thead><tr><th>Vendedor</th><th class="r">Reservas que cobraron</th><th class="r">Comisión del mes</th><th></th></tr></thead>
+          <tbody>
+            <tr><td><b>Juan Pérez</b></td><td class="r">7</td><td class="r mono"><span class="mon ars">$</span>184.500 · <span class="mon usd">US$</span>320</td><td class="r"><span class="pill indigo">Ver detalle</span></td></tr>
+            <tr><td><b>María López</b></td><td class="r">4</td><td class="r mono"><span class="mon ars">$</span>96.000</td><td class="r"><span class="pill indigo">Ver detalle</span></td></tr>
+            <tr><td><b>Sofía Díaz</b></td><td class="r">2</td><td class="r mono"><span class="mon usd">US$</span>140</td><td class="r"><span class="pill indigo">Ver detalle</span></td></tr>
+            <tr class="total-row" style="font-weight:800;"><td>Total del mes</td><td class="r">13</td><td class="r mono"><span class="mon ars">$</span>280.500 · <span class="mon usd">US$</span>460</td><td></td></tr>
+          </tbody>
+        </table>
+        <p style="font-size:11.5px; color:#94a3b8; margin-top:10px;">Al tocar "Ver detalle" de un vendedor se abre, debajo, la lista reserva por reserva: cliente, ganancia, % y comisión. Pesos y dólares separados, nunca sumados.</p>
+      </div>
+    </div>
+
+    <div class="optlabel"><span class="tag b">Opción B</span><span class="desc">Sin pantalla nueva: las comisiones se ven dentro de la ficha de cada vendedor</span></div>
+    <div class="win">
+      <div class="winbar"><div class="dots"><i style="background:#f87171"></i><i style="background:#fbbf24"></i><i style="background:#34d399"></i></div><div class="addr">magnatravel.app/usuarios → Juan Pérez → solapa "Comisiones"</div></div>
+      <div class="winbody">
+        <div class="tabs"><span class="tab">Datos</span><span class="tab active">Comisiones</span></div>
+        <div class="monthnav" style="margin-bottom:14px;"><span class="arrow">◀</span> Junio 2026 <span class="arrow dis">▶</span></div>
+        <div class="cards" style="grid-template-columns:repeat(2,1fr);">
+          <div class="card"><div class="cl">Comisión del mes</div><div class="cv"><span class="mon ars">$</span>184.500<br><span class="second"><span class="mon usd">US$</span>320</span></div></div>
+          <div class="card"><div class="cl">Reservas que cobraron</div><div class="cv">7</div></div>
+        </div>
+        <table>
+          <thead><tr><th>Reserva</th><th>Cliente</th><th class="r">Comisión</th></tr></thead>
+          <tbody>
+            <tr><td>#R-1042</td><td>Fam. García</td><td class="r mono"><span class="mon usd">US$</span>92</td></tr>
+            <tr><td>#R-1038</td><td>Empresa Sur SRL</td><td class="r mono"><span class="mon ars">$</span>54.000</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="optlabel"><span class="tag c">Opción C</span><span class="desc">Las dos cosas: pantalla "Comisiones" (para el dueño, todos juntos) + solapa en la ficha de cada vendedor</span></div>
+    <p style="font-size:13px; color:#475569; line-height:1.6;">Es la suma de A + B. Más completo pero más pantallas para construir y mantener. La pantalla "Comisiones" sirve al dueño para ver todo de un golpe; la solapa, para que cada vendedor mire la suya en su propia ficha.</p>
+
+    <div class="preg">
+      <div class="pq">PARA DECIDIR</div>
+      <div class="pt">
+        <b>1)</b> El interruptor: ¿<b>un porcentaje general</b> para todos (1.1-A, recomendado) o <b>uno por vendedor</b> en su ficha (1.1-B)?<br>
+        <b>2)</b> Ver comisiones: ¿<b>pantalla propia "Comisiones"</b> (1.2-A, recomendado), <b>dentro de la ficha del vendedor</b> (1.2-B), o <b>las dos</b> (1.2-C)?<br>
+        <b>3)</b> ¿Confirmás que <b>cada vendedor ve solo la suya</b> y el dueño ve todas? ¿O querés que un vendedor no vea ni la propia (solo el dueño)?
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- PANTALLA 2 — DEUDA AL OPERADOR POR RESERVA -->
+  <!-- ============================================================ -->
+  <div class="pantalla" id="p2">
+    <span class="pnum">PANTALLA 2</span>
+    <h2>Lo que le debés a cada operador, reserva por reserva</h2>
+    <p class="que"><b>Qué es:</b> hoy ves solo el total que le debés a un operador. Ahora el sistema sabe el detalle: <b>cuánto le debés por cada reserva</b>, por moneda, y los anticipos que ya le pagaste a cuenta. ¿Dónde mostramos ese desglose?</p>
+    <div class="nota-guia"><b>Ya decidido:</b> sin permiso de ver costos, los montos de deuda al operador van <b>tapados</b>. Pesos y dólares separados. (Guía 2026-06-05 y multimoneda 2026-06-09 P8.)</div>
+    <div class="rec"><b>Recomendado:</b> dentro de la <b>cuenta del operador</b> — arriba el total que le debés (las tarjetitas que ya tenés), y abajo una lista de reservas con lo que le debés de cada una. Los anticipos a cuenta, como una <b>fila aparte que resta</b>.</p>
+
+    <div class="optlabel"><span class="tag">Opción A</span><span class="desc">Dentro de la cuenta del operador: total arriba + lista de reservas abajo</span><span class="star">★ Recomendada</span></div>
+    <div class="win">
+      <div class="winbar"><div class="dots"><i style="background:#f87171"></i><i style="background:#fbbf24"></i><i style="background:#34d399"></i></div><div class="addr">magnatravel.app/operadores → Hotelbeds</div></div>
+      <div class="winbody">
+        <div class="cards">
+          <div class="card"><div class="cl">Total compras</div><div class="cv"><span class="mon usd">US$</span>4.200</div></div>
+          <div class="card"><div class="cl">Total pagado</div><div class="cv"><span class="mon usd">US$</span>2.500</div></div>
+          <div class="card danger"><div class="cl">Le debo</div><div class="cv"><span class="mon usd">US$</span>1.700</div></div>
+        </div>
+        <h3 style="font-size:14px; font-weight:700; color:#0f172a; margin:6px 0 10px;">Lo que le debo, reserva por reserva</h3>
+        <table>
+          <thead><tr><th>Reserva</th><th>Cliente</th><th class="r">Costo</th><th class="r">Pagado</th><th class="r">Le debo</th></tr></thead>
+          <tbody>
+            <tr><td>#R-1042</td><td>Fam. García</td><td class="r mono">US$ 820</td><td class="r mono">US$ 0</td><td class="r mono" style="color:#be123c;">US$ 820</td></tr>
+            <tr><td>#R-1031</td><td>Empresa Sur SRL</td><td class="r mono">US$ 1.200</td><td class="r mono">US$ 500</td><td class="r mono" style="color:#be123c;">US$ 700</td></tr>
+            <tr><td>#R-1025</td><td>Fam. Romero</td><td class="r mono">US$ 2.180</td><td class="r mono">US$ 2.000</td><td class="r mono" style="color:#be123c;">US$ 180</td></tr>
+            <tr style="background:#f0fdf4;"><td colspan="4" style="color:#15803d; font-weight:700;">➖ Anticipo a cuenta (sin reserva asignada)</td><td class="r mono" style="color:#15803d;">− US$ 0</td></tr>
+            <tr class="total-row" style="font-weight:800;"><td colspan="4">Le debo en total</td><td class="r mono" style="color:#be123c;"><span class="mon usd">US$</span> 1.700</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="optlabel"><span class="tag b">Opción B</span><span class="desc">Dentro de cada reserva: una sección "Lo que se le debe a cada operador"</span></div>
+    <div class="win">
+      <div class="winbar"><div class="dots"><i style="background:#f87171"></i><i style="background:#fbbf24"></i><i style="background:#34d399"></i></div><div class="addr">magnatravel.app/reservas/R-1042</div></div>
+      <div class="winbody">
+        <div style="font-size:13px; color:#94a3b8; margin-bottom:12px;">(arriba la reserva normal — franja, lista de servicios…)</div>
+        <h3 style="font-size:14px; font-weight:700; color:#0f172a; margin-bottom:10px;">Lo que se le debe a cada operador (de esta reserva)</h3>
+        <table>
+          <thead><tr><th>Operador</th><th class="r">Costo</th><th class="r">Pagado</th><th class="r">Se le debe</th></tr></thead>
+          <tbody>
+            <tr><td>Hotelbeds</td><td class="r mono">US$ 820</td><td class="r mono">US$ 0</td><td class="r mono" style="color:#be123c;">US$ 820</td></tr>
+            <tr><td>Iberia</td><td class="r mono">US$ 1.250</td><td class="r mono">US$ 1.250</td><td class="r mono" style="color:#15803d;">Saldado</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="optlabel"><span class="tag c">Opción C</span><span class="desc">Las dos: el desglose en la cuenta del operador Y la sección dentro de cada reserva</span></div>
+    <p style="font-size:13px; color:#475569; line-height:1.6;">El que mira al operador ve todas sus reservas; el que mira una reserva ve a quién le debe de ESA. Más completo, dos lugares para construir.</p>
+
+    <div class="preg">
+      <div class="pq">PARA DECIDIR</div>
+      <div class="pt">
+        <b>1)</b> ¿Dónde lo querés? <b>En la cuenta del operador</b> (2-A, recomendado), <b>dentro de cada reserva</b> (2-B), o <b>las dos</b> (2-C).<br>
+        <b>2)</b> Los anticipos a cuenta (lo que le pagaste sin asignar a una reserva): ¿como <b>fila aparte que resta</b> (como dibujé en A) o <b>repartido</b> sobre las reservas? Recomiendo fila aparte: es más claro de dónde sale.<br>
+        <b>3)</b> Te confirmo: sin permiso de ver costos, esta lista <b>no se muestra</b> (los montos van tapados). ¿De acuerdo?
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- PANTALLA 3 — FACTURA DESDE SERVICIOS -->
+  <!-- ============================================================ -->
+  <div class="pantalla" id="p3">
+    <span class="pnum">PANTALLA 3</span>
+    <h2>La factura se arma sola desde los servicios</h2>
+    <p class="que"><b>Qué es:</b> al armar la factura, los renglones <b>salen solos</b> de los servicios confirmados. Si el total no coincide con lo vendido, el sistema avisa pero <b>deja facturar igual</b> (aviso que no te frena).</p>
+    <div class="nota-guia"><b>Tema de coherencia:</b> el cobro y la carga de servicios ya pasaron a abrirse <b>en línea</b> (debajo, sin ventana encima) porque "el modal me parece horrible". La factura hoy es una ventana encima. Acá la decisión grande es si la pasamos a en línea también.</div>
+    <div class="rec"><b>Recomendado:</b> armado <b>en línea</b> (debajo, coherente con cobro y servicios), renglones <b>ya precargados</b> de los servicios confirmados, y si no cuadra, una <b>franja amarilla arriba</b> avisando — pero el botón "Emitir factura" sigue habilitado.</p>
+
+    <div class="optlabel"><span class="tag">Opción A</span><span class="desc">En línea (debajo), renglones ya precargados, franja amarilla si no cuadra</span><span class="star">★ Recomendada</span></div>
+    <div class="win">
+      <div class="winbar"><div class="dots"><i style="background:#f87171"></i><i style="background:#fbbf24"></i><i style="background:#34d399"></i></div><div class="addr">magnatravel.app/reservas/R-1042 → Facturar</div></div>
+      <div class="winbody">
+        <div class="franja amber"><span class="bic">⚠️</span><span>El total de la factura (<b>$ 198.000</b>) no coincide con lo vendido en esta reserva (<b>$ 205.000</b>). Podés facturar igual, o revisar los renglones.</span></div>
+        <h3 style="font-size:14px; font-weight:700; color:#0f172a; margin-bottom:10px;">Renglones de la factura <span style="font-size:11px; color:#94a3b8; font-weight:500;">(salieron de los servicios confirmados — podés editar)</span></h3>
+        <table>
+          <thead><tr><th>Detalle</th><th class="r">Cant.</th><th class="r">Importe</th></tr></thead>
+          <tbody>
+            <tr><td>Hotel Riu Madrid · 4 noches</td><td class="r">1</td><td class="r mono">$ 130.000</td></tr>
+            <tr><td>Traslado Aeropuerto → Hotel</td><td class="r">1</td><td class="r mono">$ 18.000</td></tr>
+            <tr><td>Asistencia Universal · 10 días</td><td class="r">1</td><td class="r mono">$ 50.000</td></tr>
+            <tr class="total-row" style="font-weight:800;"><td colspan="2">Total a facturar</td><td class="r mono"><span class="mon ars">$</span> 198.000</td></tr>
+          </tbody>
+        </table>
+        <div style="margin-top:16px; display:flex; gap:10px; justify-content:flex-end;">
+          <span class="btnp slate">Cancelar</span>
+          <span class="btnp indigo">Emitir factura</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="optlabel"><span class="tag b">Opción B</span><span class="desc">Sigue siendo ventana encima (como hoy), renglones precargados, aviso al apretar "Emitir"</span></div>
+    <div class="win">
+      <div class="winbar"><div class="dots"><i style="background:#f87171"></i><i style="background:#fbbf24"></i><i style="background:#34d399"></i></div><div class="addr">magnatravel.app/reservas/R-1042</div></div>
+      <div class="winbody" style="background:rgba(15,23,42,.30); display:flex; justify-content:center; padding:30px 16px;">
+        <div style="width:100%; max-width:440px; background:#fff; border-radius:16px; box-shadow:0 20px 50px rgba(0,0,0,.3); overflow:hidden;">
+          <div style="padding:16px 20px; border-bottom:1px solid #e5e7eb; background:#fafafa; font-weight:800; color:#0f172a;">🧾 Nueva factura — R-1042</div>
+          <div style="padding:18px 20px;">
+            <table>
+              <tbody>
+                <tr><td>Hotel Riu Madrid · 4 noches</td><td class="r mono">$ 130.000</td></tr>
+                <tr><td>Traslado Aeropuerto → Hotel</td><td class="r mono">$ 18.000</td></tr>
+                <tr><td>Asistencia Universal · 10 días</td><td class="r mono">$ 50.000</td></tr>
+                <tr class="total-row" style="font-weight:800;"><td>Total</td><td class="r mono">$ 198.000</td></tr>
+              </tbody>
+            </table>
+            <div class="franja amber" style="margin:14px 0 0;"><span class="bic">⚠️</span><span>No cuadra con lo vendido ($ 205.000). Si emitís igual, queda registrado.</span></div>
+          </div>
+          <div style="padding:14px 20px; border-top:1px solid #e5e7eb; background:#fafafa; display:flex; justify-content:flex-end; gap:10px;">
+            <span class="btnp slate">Cerrar</span><span class="btnp indigo">Emitir igual</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="optlabel"><span class="tag c">Opción C</span><span class="desc">En línea pero VACÍA: un botón "Traer servicios" que precarga los renglones cuando vos querés</span></div>
+    <div class="win">
+      <div class="winbar"><div class="dots"><i style="background:#f87171"></i><i style="background:#fbbf24"></i><i style="background:#34d399"></i></div><div class="addr">magnatravel.app/reservas/R-1042 → Facturar</div></div>
+      <div class="winbody">
+        <div style="text-align:center; padding:24px; border:2px dashed #cbd5e1; border-radius:12px; background:#fff;">
+          <p style="font-size:14px; color:#475569; margin-bottom:14px;">La factura arranca vacía. Traé los servicios confirmados con un toque:</p>
+          <span class="btnp violet">⬇ Traer servicios confirmados</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="preg">
+      <div class="pq">PARA DECIDIR</div>
+      <div class="pt">
+        <b>1)</b> ¿<b>En línea</b> debajo (3-A, recomendado, coherente con cobro y servicios) o <b>ventana encima</b> como hoy (3-B)?<br>
+        <b>2)</b> Renglones: ¿<b>ya precargados</b> al abrir (A/B) o <b>vacíos con botón "Traer servicios"</b> (3-C)? Recomiendo precargados: menos clics.<br>
+        <b>3)</b> El aviso de descuadre: ¿<b>franja amarilla arriba</b> desde el principio (A) o <b>cartel al apretar "Emitir"</b> (B)? Recomiendo la franja arriba: lo ves antes de facturar.
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- PANTALLA 4 — CONFIRMADA CON CAMBIOS -->
+  <!-- ============================================================ -->
+  <div class="pantalla" id="p4">
+    <span class="pnum">PANTALLA 4</span>
+    <h2>"Confirmada con cambios"</h2>
+    <p class="que"><b>Qué es:</b> si en una reserva viva se edita el precio o el costo de un servicio, la reserva queda marcada <b>"con cambios"</b>, el saldo se reacomoda solo, y un responsable tiene que <b>dar el OK</b> (queda registrado quién y cuándo).</p>
+    <div class="nota-guia"><b>Ya tenés un patrón parecido:</b> el candado de la reserva Confirmada (etiqueta al lado del estado + franja arriba). Acá reuso esa misma idea para que se sienta del mismo sistema.</div>
+    <div class="rec"><b>Recomendado:</b> una <b>etiqueta "Con cambios"</b> al lado del estado + una <b>franja amarilla</b> arriba que muestra qué cambió y trae el botón verde <b>"Dar OK"</b>. Quién puede darlo: lo definís en la pregunta de abajo.</p>
+
+    <div class="optlabel"><span class="tag">Opción A</span><span class="desc">Etiqueta "Con cambios" al lado del estado + franja con el detalle y botón "Dar OK"</span><span class="star">★ Recomendada</span></div>
+    <div class="win">
+      <div class="winbar"><div class="dots"><i style="background:#f87171"></i><i style="background:#fbbf24"></i><i style="background:#34d399"></i></div><div class="addr">magnatravel.app/reservas/R-1042</div></div>
+      <div class="winbody">
+        <div class="franja amber">
+          <span class="bic">✏️</span>
+          <span>
+            <b>Esta reserva tiene cambios sin aprobar.</b>
+            <span class="detail">El Hotel Riu Madrid pasó de $ 130.000 a $ 142.000. El saldo a cobrar subió $ 12.000.</span>
+          </span>
+          <span class="ok-btn">✓ Dar OK</span>
+        </div>
+        <div class="resvhead">
+          <div>
+            <div class="ttl">Reserva <span class="num">#R-1042</span></div>
+            <div class="estadoline">
+              <span class="badge-estado confirmada">Confirmada</span>
+              <span class="badge-cambios">Con cambios</span>
+            </div>
+            <div class="clientline">Fam. García</div>
+          </div>
+        </div>
+        <p style="font-size:13px; color:#94a3b8;">(debajo sigue la lista de servicios — con el Riu mostrando el precio nuevo)</p>
+      </div>
+    </div>
+
+    <div class="optlabel"><span class="tag b">Opción B</span><span class="desc">Solo la franja arriba (sin etiqueta al lado del estado)</span></div>
+    <div class="win">
+      <div class="winbar"><div class="dots"><i style="background:#f87171"></i><i style="background:#fbbf24"></i><i style="background:#34d399"></i></div><div class="addr">magnatravel.app/reservas/R-1042</div></div>
+      <div class="winbody">
+        <div class="franja amber">
+          <span class="bic">✏️</span>
+          <span><b>Esta reserva tiene cambios sin aprobar.</b> Un responsable tiene que dar el OK.</span>
+          <span class="ok-btn">✓ Dar OK</span>
+        </div>
+        <div class="resvhead">
+          <div>
+            <div class="ttl">Reserva <span class="num">#R-1042</span></div>
+            <div class="estadoline"><span class="badge-estado confirmada">Confirmada</span></div>
+            <div class="clientline">Fam. García</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="preg">
+      <div class="pq">PARA DECIDIR</div>
+      <div class="pt">
+        <b>1)</b> ¿<b>Etiqueta "Con cambios" al lado del estado + franja</b> (4-A, recomendado) o <b>solo la franja</b> (4-B)?<br>
+        <b>2)</b> ¿La franja debe <b>mostrar QUÉ cambió</b> ("el Hotel pasó de $X a $Y, el saldo subió $Z", como en A) o alcanza con avisar que <b>hay cambios</b> sin el detalle (como en B)? Recomiendo mostrar el detalle: el que da el OK sabe qué aprueba.<br>
+        <b>3)</b> ¿Quién puede <b>dar el OK</b>? <b>(a)</b> cualquier vendedor; <b>(b)</b> solo un administrador. (Esto define quién ve el botón verde.)
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- PANTALLA 5 — SALDO A FAVOR DEL CLIENTE -->
+  <!-- ============================================================ -->
+  <div class="pantalla" id="p5">
+    <span class="pnum">PANTALLA 5</span>
+    <h2>Saldo a favor del cliente (pagó de más)</h2>
+    <p class="que"><b>Qué es:</b> la cuenta del cliente ya separa por moneda, y puede quedar con saldo <b>a favor</b> (pagó más de lo que debía). ¿Cómo lo mostramos arriba, y ofrecemos usarlo en otra reserva?</p>
+    <div class="nota-guia"><b>Ya decidido (multimoneda 2026-06-09 P5):</b> arriba van los saldos por moneda ("Debe en $", "Debe en US$"), y abajo una sola lista con la moneda en cada fila. Acá solo agregamos el caso "a favor".</div>
+    <div class="rec"><b>Recomendado:</b> el <b>mismo cartel</b> de arriba, cuando el cliente pagó de más, cambia a <b>"A favor en $"</b> en verde (un renglón por moneda). El "usar saldo a favor" arranca como <b>solo informativo</b> (se ve, no hay botón todavía): así no abrimos un flujo nuevo sin charlarlo.</p>
+
+    <div class="optlabel"><span class="tag">Opción A</span><span class="desc">El mismo cartel de arriba cambia a "A favor" en verde (un renglón por moneda), sin botón por ahora</span><span class="star">★ Recomendada</span></div>
+    <div class="win">
+      <div class="winbar"><div class="dots"><i style="background:#f87171"></i><i style="background:#fbbf24"></i><i style="background:#34d399"></i></div><div class="addr">magnatravel.app/customers/fam-garcia/account</div></div>
+      <div class="winbody">
+        <div class="cards" style="grid-template-columns:repeat(2,1fr);">
+          <div class="card" style="border-color:#bbf7d0; background:#f0fdf4;"><div class="cl" style="color:#16a34a;">A favor en pesos</div><div class="cv" style="color:#15803d;"><span class="mon ars">$</span>12.000</div></div>
+          <div class="card danger"><div class="cl">Debe en dólares</div><div class="cv"><span class="mon usd">US$</span>450</div></div>
+        </div>
+        <table>
+          <thead><tr><th>Fecha</th><th>Movimiento</th><th>Moneda</th><th class="r">Importe</th></tr></thead>
+          <tbody>
+            <tr><td>10/06</td><td>Cobro reserva R-1042</td><td><span class="pill slate">$ Pesos</span></td><td class="r mono" style="color:#15803d;">+ $ 50.000</td></tr>
+            <tr><td>05/06</td><td>Factura R-1042</td><td><span class="pill slate">$ Pesos</span></td><td class="r mono">− $ 38.000</td></tr>
+          </tbody>
+        </table>
+        <p style="font-size:11.5px; color:#94a3b8; margin-top:10px;">El cliente debe en dólares y tiene a favor en pesos a la vez: cada moneda va por su lado, nunca se compensan entre sí.</p>
+      </div>
+    </div>
+
+    <div class="optlabel"><span class="tag b">Opción B</span><span class="desc">Un cartel separado y aparte para el saldo a favor, debajo de la deuda</span></div>
+    <div class="win">
+      <div class="winbar"><div class="dots"><i style="background:#f87171"></i><i style="background:#fbbf24"></i><i style="background:#34d399"></i></div><div class="addr">magnatravel.app/customers/fam-garcia/account</div></div>
+      <div class="winbody">
+        <div class="cards" style="grid-template-columns:repeat(2,1fr); margin-bottom:10px;">
+          <div class="card"><div class="cl">Saldo actual (pesos)</div><div class="cv">$ 0</div></div>
+          <div class="card danger"><div class="cl">Debe en dólares</div><div class="cv"><span class="mon usd">US$</span>450</div></div>
+        </div>
+        <div class="franja green"><span class="bic">💚</span><span>Este cliente tiene <b>$ 12.000 a favor</b> (pagó de más). Se puede usar en una próxima reserva.</span></div>
+      </div>
+    </div>
+
+    <div class="optlabel"><span class="tag c">Opción C</span><span class="desc">Como A, pero con un botón "Usar saldo a favor" para aplicarlo a otra reserva</span></div>
+    <div class="win">
+      <div class="winbar"><div class="dots"><i style="background:#f87171"></i><i style="background:#fbbf24"></i><i style="background:#34d399"></i></div><div class="addr">magnatravel.app/customers/fam-garcia/account</div></div>
+      <div class="winbody">
+        <div class="cards" style="grid-template-columns:repeat(2,1fr); margin-bottom:12px;">
+          <div class="card" style="border-color:#bbf7d0; background:#f0fdf4;"><div class="cl" style="color:#16a34a;">A favor en pesos</div><div class="cv" style="color:#15803d;"><span class="mon ars">$</span>12.000</div></div>
+          <div class="card"><div class="cl">&nbsp;</div><div class="cv" style="font-size:13px;"><span class="btnp green">Usar saldo a favor</span></div></div>
+        </div>
+        <p style="font-size:12px; color:#92400e; background:#fffbeb; border:1px solid #fde68a; border-radius:10px; padding:10px 12px;">⚠️ Este botón abre un flujo NUEVO (elegir a qué reserva aplicarlo). No lo dibujo en detalle hasta que lo charlemos: tiene reglas de plata que conviene pensar bien.</p>
+      </div>
+    </div>
+
+    <div class="preg">
+      <div class="pq">PARA DECIDIR</div>
+      <div class="pt">
+        <b>1)</b> ¿El <b>mismo cartel cambia a "A favor" en verde</b> (5-A, recomendado), un <b>cartel separado</b> debajo (5-B), o con <b>botón "Usar saldo a favor"</b> (5-C)?<br>
+        <b>2)</b> Por ahora recomiendo <b>solo mostrarlo</b> (sin botón de usar): es lo más rápido y seguro. Si querés el botón (5-C), lo diseñamos aparte con sus reglas de plata. ¿Lo dejamos solo informativo por ahora?
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- PANTALLA 6 — CREAR PRESUPUESTO DESDE LEAD -->
+  <!-- ============================================================ -->
+  <div class="pantalla" id="p6">
+    <span class="pnum">PANTALLA 6</span>
+    <h2>Crear presupuesto desde un lead (consulta)</h2>
+    <p class="que"><b>Qué es:</b> de una consulta (lead) querés pasar a armar el presupuesto sin recargar los datos. El sistema ya <b>conecta</b> la reserva con el lead y lo marca <b>"Ganado"</b>.</p>
+    <div class="nota-guia"><b>Ojo, dato real del sistema de hoy:</b> en la <b>ficha del lead</b> YA existe un botón <b>"Crear presupuesto"</b> (te lleva a armar el presupuesto con el lead enganchado). Lo que falta es decidir: ¿lo querés también en la <b>lista</b> de leads (para no tener que abrir la ficha), y cuándo se marca "Ganado"?</div>
+    <div class="rec"><b>Recomendado:</b> dejar el botón en la ficha (ya está) Y agregar un botón rápido en cada fila de la <b>lista</b> de leads. Marcar "Ganado" <b>automático</b> recién cuando el cliente acepta el presupuesto (no al crearlo: crear el presupuesto todavía no es una venta ganada).</p>
+
+    <div class="optlabel"><span class="tag">Opción A</span><span class="desc">En la ficha del lead (ya existe) + un botón rápido en cada fila de la lista</span><span class="star">★ Recomendada</span></div>
+    <div class="win">
+      <div class="winbar"><div class="dots"><i style="background:#f87171"></i><i style="background:#fbbf24"></i><i style="background:#34d399"></i></div><div class="addr">magnatravel.app/crm → Consultas</div></div>
+      <div class="winbody">
+        <table>
+          <thead><tr><th>Consulta</th><th>Origen</th><th>Estado</th><th class="r">Acción</th></tr></thead>
+          <tbody>
+            <tr><td><b>Lucía Fernández</b><div style="font-size:11px;color:#94a3b8;">Cancún en septiembre</div></td><td><span class="pill green">WhatsApp</span></td><td><span class="pill amber">Contactado</span></td><td class="r"><span class="btnp violet" style="font-size:12px; padding:6px 12px;">+ Presupuesto</span></td></tr>
+            <tr><td><b>Empresa Sur SRL</b><div style="font-size:11px;color:#94a3b8;">Viaje corporativo</div></td><td><span class="pill slate">Web</span></td><td><span class="pill indigo">Cotizado</span></td><td class="r"><span class="btnp violet" style="font-size:12px; padding:6px 12px;">+ Presupuesto</span></td></tr>
+          </tbody>
+        </table>
+        <p style="font-size:11.5px; color:#94a3b8; margin-top:10px;">El botón "+ Presupuesto" te lleva a armar el presupuesto con los datos del lead ya cargados (titular, contacto, lo que pidió).</p>
+      </div>
+    </div>
+
+    <div class="optlabel"><span class="tag b">Opción B</span><span class="desc">Solo en la ficha del lead (como está hoy), sin tocar la lista</span></div>
+    <div class="win">
+      <div class="winbar"><div class="dots"><i style="background:#f87171"></i><i style="background:#fbbf24"></i><i style="background:#34d399"></i></div><div class="addr">magnatravel.app/crm → Lucía Fernández (ficha abierta)</div></div>
+      <div class="winbody">
+        <div style="background:#fff; border:1px solid #e2e8f0; border-radius:14px; padding:18px;">
+          <div style="font-size:16px; font-weight:800; color:#0f172a; margin-bottom:4px;">Lucía Fernández</div>
+          <div style="font-size:12px; color:#94a3b8; margin-bottom:14px;">Cancún en septiembre · 2 adultos</div>
+          <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <span class="btnp violet">📄 Crear presupuesto</span>
+            <span class="btnp slate">Crear cliente</span>
+          </div>
+        </div>
+        <p style="font-size:11.5px; color:#94a3b8; margin-top:10px;">Es lo que ya tenés hoy. Para crear el presupuesto hay que abrir primero la ficha del lead.</p>
+      </div>
+    </div>
+
+    <div class="preg">
+      <div class="pq">PARA DECIDIR</div>
+      <div class="pt">
+        <b>1)</b> ¿Botón en la <b>ficha + en la lista</b> (6-A, recomendado, más a mano) o <b>solo en la ficha</b> como hoy (6-B)?<br>
+        <b>2)</b> ¿El lead se marca <b>"Ganado" automático</b> en qué momento? <b>(a)</b> recién cuando el cliente <b>acepta</b> el presupuesto (recomendado: crear el presupuesto todavía no es venta cerrada); <b>(b)</b> apenas creás el presupuesto; <b>(c)</b> a mano, vos lo marcás cuando quieras.
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

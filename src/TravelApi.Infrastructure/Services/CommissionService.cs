@@ -193,4 +193,80 @@ public class CommissionService : ICommissionService
 
         return PagedResponse<CommissionAccrualDto>.Create(pageRows, page, pageSize, totalCount);
     }
+
+    /// <summary>
+    /// Auditoria ERP 2026-06-13 (decision del dueño): resumen mensual de comisiones por vendedor. Filtra los
+    /// devengos cuyo CreatedAt cae en el mes pedido y los agrupa por vendedor + moneda, sumando montos. Solo
+    /// lectura; admin-only (lo gatea el controller). Devuelve un resumen vacio (sin vendedores) si no hubo
+    /// devengo en el mes.
+    /// </summary>
+    public async Task<CommissionMonthlySummaryDto> GetMonthlySummaryAsync(
+        int year, int month, CancellationToken cancellationToken)
+    {
+        // Validamos el periodo antes de armar la ventana: un mes fuera de 1..12 o un año disparatado es un
+        // pedido invalido del cliente, no un resultado vacio (el controller mapea ArgumentException a 400).
+        if (month < 1 || month > 12)
+            throw new ArgumentException("El mes debe estar entre 1 y 12.", nameof(month));
+        if (year < 2000 || year > 2100)
+            throw new ArgumentException("El año esta fuera de rango.", nameof(year));
+
+        // Ventana [primero del mes, primero del mes siguiente) en UTC. CreatedAt se persiste en UTC, asi que
+        // comparamos contra limites UTC. Usamos rango half-open (>= inicio, < fin) para no depender de la
+        // precision del timestamp ni arriesgar incluir/excluir el ultimo instante del mes.
+        var monthStartUtc = new DateTime(year, month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var nextMonthStartUtc = monthStartUtc.AddMonths(1);
+
+        // Traemos solo lo necesario (vendedor, moneda, monto) de las filas del mes con devengo positivo.
+        // Las filas en 0 (tope cero por cancelacion / saldo positivo) NO se cuentan: no son comision real.
+        var rows = await _dbContext.CommissionAccruals
+            .AsNoTracking()
+            .Where(accrual => accrual.CreatedAt >= monthStartUtc
+                && accrual.CreatedAt < nextMonthStartUtc
+                && accrual.Amount > 0m)
+            .Select(accrual => new
+            {
+                accrual.SellerUserId,
+                accrual.SellerName,
+                accrual.Currency,
+                accrual.Amount,
+            })
+            .ToListAsync(cancellationToken);
+
+        // Agrupamos en memoria (el set por mes es chico): primero por vendedor, dentro por moneda.
+        var sellers = new List<CommissionSellerMonthlyTotalDto>();
+        foreach (var sellerGroup in rows.GroupBy(row => row.SellerUserId))
+        {
+            var totalsByCurrency = sellerGroup
+                .GroupBy(row => row.Currency)
+                .Select(currencyGroup => new CommissionCurrencyTotalDto
+                {
+                    Currency = currencyGroup.Key,
+                    Amount = currencyGroup.Sum(row => row.Amount),
+                })
+                .OrderBy(total => total.Currency)
+                .ToList();
+
+            sellers.Add(new CommissionSellerMonthlyTotalDto
+            {
+                SellerUserId = sellerGroup.Key,
+                // El nombre snapshot puede variar entre filas (raro); tomamos el primero no vacio.
+                SellerName = sellerGroup
+                    .Select(row => row.SellerName)
+                    .FirstOrDefault(name => !string.IsNullOrWhiteSpace(name)),
+                TotalsByCurrency = totalsByCurrency,
+            });
+        }
+
+        // Orden estable para el front: por nombre de vendedor (cae al Id si no hay nombre).
+        sellers = sellers
+            .OrderBy(seller => seller.SellerName ?? seller.SellerUserId, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return new CommissionMonthlySummaryDto
+        {
+            Year = year,
+            Month = month,
+            Sellers = sellers,
+        };
+    }
 }
