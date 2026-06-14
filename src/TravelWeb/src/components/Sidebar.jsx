@@ -19,6 +19,7 @@ import {
   Inbox,
   FileWarning,
   FileMinus2,
+  TrendingUp,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useAlerts } from "../contexts/AlertsContext";
@@ -46,15 +47,24 @@ const mainLinks = [
   // ADR-025: bandeja de NC por revisar (servicios cancelados con NC pendiente de emision).
   // Gateada por cobranzas.view_all (solo personal de back-office de facturacion).
   { to: "/cancellations/credit-notes/inbox", label: "NC por revisar", icon: FileMinus2, requiredPermission: "cobranzas.view_all" },
+  // Comisiones de vendedor: solo el dueño/admin la ve. El vendedor nunca ve sus propias comisiones
+  // desde este menú — esa decisión es del dueño (guia-ux-gaston.md 2026-06-13).
+  { to: "/commissions", label: "Comisiones", icon: TrendingUp, adminOnly: true },
 { to: "/admin", label: "Administración", icon: Shield, requiredPermission: "auditoria.view" },
   { to: "/settings", label: "Configuración", icon: Settings, requiredPermission: "configuracion.view" },
 ];
 
-export default function Sidebar({ onLogout, isAdmin, className, collapsed, onCloseMobile }) {
+// App.jsx pasa una prop isAdmin, pero el gate de adminOnly usa la funcion isAdmin()
+// del modulo auth (fuente de verdad del store), no la prop. Ignoramos la prop a
+// proposito para no depender de un valor que podria estar stale.
+export default function Sidebar({ onLogout, className, collapsed, onCloseMobile }) {
   const { alerts } = useAlerts();
   // Badge dinámico de aprobaciones pendientes (solo lo carga si el user es reviewer).
   const canReview = hasPermission("approvals.review");
   const { count: pendingApprovals } = useApprovalsPendingCount(canReview);
+
+  // Usamos la funcion isAdmin() del store (fuente de verdad) para el gate de admin.
+  const isAdminUser = isAdmin();
 
   const linksWithBadges = mainLinks.map((link) => {
     if (link.to === "/alerts") {
@@ -70,8 +80,12 @@ export default function Sidebar({ onLogout, isAdmin, className, collapsed, onClo
     return link;
   });
 
-  // Filter links based on permissions (Dashboard is always visible)
+  // Filtramos los links según permisos.
+  // adminOnly=true: solo el dueño/admin (isAdmin() del store de auth).
+  // requiredPermission: usa hasPermission(), que ya devuelve true para admin.
+  // Sin ninguno de los dos: visible para todos los usuarios autenticados.
   const finalLinks = linksWithBadges.filter((link) => {
+    if (link.adminOnly) return isAdminUser;
     if (!link.requiredPermission) return true;
     return hasPermission(link.requiredPermission);
   });

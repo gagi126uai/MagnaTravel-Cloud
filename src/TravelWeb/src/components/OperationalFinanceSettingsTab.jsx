@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, BookOpen, CalendarClock, DollarSign, FileWarning, GitBranch, Settings2, ShieldAlert, X } from "lucide-react";
+import { AlertTriangle, BookOpen, CalendarClock, DollarSign, FileWarning, GitBranch, Settings2, ShieldAlert, TrendingUp, X } from "lucide-react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
 import { Button } from "./ui/button";
@@ -28,6 +28,13 @@ const defaultSettings = {
   enableServiceDeadlineAlerts: false,
   // Días de anticipación para los avisos de fechas límite (el DTO valida Range(1,60): fuera de rango = 400).
   serviceDeadlineAlertDays: 7,
+  // OFF por defecto: el sistema no calcula comisiones para vendedores.
+  // Con ON, calcula un % de la ganancia de cada reserva como comisión del vendedor que la cargó.
+  // La comisión se gana al cobrar (no al confirmar la reserva).
+  enableSellerCommissions: false,
+  // % de ganancia que le corresponde al vendedor como comisión. Rango: 0-100.
+  // El backend valida el rango; este default no se envía hasta que el usuario lo edite.
+  sellerCommissionPercent: 0,
 };
 
 export default function OperationalFinanceSettingsTab() {
@@ -120,6 +127,8 @@ export default function OperationalFinanceSettingsTab() {
         // fuera de rango el server devuelve 400 con mensaje (no clamp silencioso); el
         // min/max del input cubre el caso típico.
         serviceDeadlineAlertDays: Number(form.serviceDeadlineAlertDays || 7),
+        // sellerCommissionPercent: convertido a número. El backend valida Range(0,100).
+        sellerCommissionPercent: Number(form.sellerCommissionPercent ?? 0),
       });
       showSuccess("Configuración operativa guardada.");
     } catch (error) {
@@ -301,6 +310,76 @@ export default function OperationalFinanceSettingsTab() {
               </div>
             </div>
           </div>
+
+            {/* Comisiones de vendedor.
+                Con ON, el sistema calcula un % de la ganancia de cada reserva y se lo
+                acredita al vendedor que la cargó, cuando se cobra. El % se configura acá.
+                La pantalla de consulta (solo admin) está en el menú lateral → "Comisiones". */}
+            <div
+              className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 space-y-4"
+              aria-label="Comisiones a vendedores"
+            >
+              <label className="flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  checked={form.enableSellerCommissions}
+                  onChange={(event) => updateField("enableSellerCommissions", event.target.checked)}
+                  className="mt-1 rounded border-slate-300"
+                  disabled={loading}
+                  data-testid="toggle-seller-commissions"
+                  aria-label="Comisiones a vendedores"
+                />
+                <div>
+                  <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
+                    <TrendingUp className="w-4 h-4 text-indigo-500" aria-hidden="true" />
+                    Comisiones a vendedores
+                  </div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                    El sistema calcula una comisión para el vendedor de cada reserva, como un % de la ganancia.
+                    Se gana al cobrar. Apagado, no se calcula nada.
+                  </div>
+                </div>
+              </label>
+
+              {/* Campo de % — visible siempre para que el admin lo configure antes de activar.
+                  El backend valida que esté entre 0 y 100. */}
+              <div>
+                <label
+                  htmlFor="seller-commission-percent"
+                  className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-1.5"
+                >
+                  % de comisión sobre la ganancia
+                </label>
+                <div className="relative max-w-[10rem]">
+                  <input
+                    id="seller-commission-percent"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.1"
+                    value={form.sellerCommissionPercent}
+                    onChange={(event) => updateField("sellerCommissionPercent", event.target.value)}
+                    className="w-full rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2 pr-8 text-sm"
+                    disabled={loading}
+                    data-testid="input-seller-commission-percent"
+                    aria-describedby="seller-commission-percent-hint"
+                  />
+                  {/* Sufijo "%" visual, no funcional */}
+                  <span
+                    className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3 text-slate-400 text-sm"
+                    aria-hidden="true"
+                  >
+                    %
+                  </span>
+                </div>
+                <p
+                  id="seller-commission-percent-hint"
+                  className="mt-1 text-xs text-slate-400 dark:text-slate-500"
+                >
+                  Ej.: 10 = el vendedor gana el 10% de la ganancia de cada reserva que cobre.
+                </p>
+              </div>
+            </div>
 
           {/* ================================================================
               ZONA PELIGROSA: Nota de Débito por penalidad en cancelaciones.

@@ -679,52 +679,118 @@ export default function ReservaDetailPage() {
       {/* ADR-027: franja amarilla "Confirmada con cambios".
           Aparece cuando el vendedor edito precio o costo de un servicio en una reserva viva
           (InManagement/Confirmed/Traveling/ToSettle) y el dueño todavía no revisó el cambio.
-          El DTO puede no traer el detalle exacto de qué cambió (solo el flag + fecha),
-          por lo que mostramos un mensaje general claro y el saldo actual.
+
+          Detalle de pendingChanges[]: si el backend manda la lista, mostramos cada cambio
+          con su descripción, campo, valores viejo→nuevo y moneda. Si no viene o viene vacía,
+          mostramos el mensaje general (fallback seguro para versiones de API sin ese campo).
+
           El botón "Dar OK" es SOLO para administradores (isAdmin()); un no-admin ve la franja
           pero sin botón — ya puede ver el saldo actualizado y los servicios. */}
       {reserva.hasUnacknowledgedChanges && (
         <div
-          className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-200"
+          className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-200"
           data-testid="banner-con-cambios"
           role="status"
           aria-live="polite"
         >
-          <RefreshCw className="h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
-          <div className="flex-1">
-            <span className="font-bold">Se editaron precios o costos de esta reserva.</span>
-            {' '}El saldo a cobrar se actualizó automáticamente.
-            {reserva.changesPendingSince && (
-              <span className="ml-1 text-amber-700 dark:text-amber-300 text-xs">
-                (desde el {new Date(reserva.changesPendingSince).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" })})
-              </span>
+          {/* Encabezado de la franja */}
+          <div className="flex flex-col sm:flex-row sm:items-start gap-3">
+            <RefreshCw className="h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" aria-hidden="true" />
+            <div className="flex-1 min-w-0">
+              <span className="font-bold">Se editaron precios o costos de esta reserva.</span>
+              {' '}El saldo a cobrar se actualizó automáticamente.
+              {reserva.changesPendingSince && (
+                <span className="ml-1 text-amber-700 dark:text-amber-300 text-xs">
+                  (desde el {new Date(reserva.changesPendingSince).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" })})
+                </span>
+              )}
+
+              {/* Detalle de cada cambio — solo si el backend los manda y hay al menos uno.
+                  Si pendingChanges viene vacío o undefined, el fallback (mensaje general) ya está arriba. */}
+              {Array.isArray(reserva.pendingChanges) && reserva.pendingChanges.length > 0 && (
+                <ul
+                  className="mt-2 space-y-1"
+                  aria-label="Detalle de cambios pendientes de revisión"
+                  data-testid="pending-changes-list"
+                >
+                  {reserva.pendingChanges.map((change, index) => {
+                    // "SalePrice" → "precio de venta"; "NetCost" → "costo".
+                    const campoLabel = change.field === "SalePrice" ? "precio de venta" : "costo";
+
+                    // Formato de valor con moneda, o "—" si el cambio está enmascarado
+                    // (el vendedor editó un costo que este usuario no puede ver).
+                    const formatearValor = (value) => {
+                      if (change.valuesMasked) return "—";
+                      if (value == null) return "—";
+                      // Usamos Intl para formatear con símbolo de moneda.
+                      // No mezclamos monedas: cada cambio tiene su propia currency.
+                      const currency = change.currency ?? "ARS";
+                      return new Intl.NumberFormat("es-AR", {
+                        style: "currency",
+                        currency,
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      }).format(value);
+                    };
+
+                    return (
+                      <li
+                        key={index}
+                        className="text-xs text-amber-800 dark:text-amber-300"
+                        data-testid={`pending-change-${index}`}
+                      >
+                        {/* Nombre del servicio + campo + valores viejo y nuevo */}
+                        <span className="font-semibold">
+                          {change.serviceDescription ?? "Servicio"}
+                        </span>
+                        {" — "}
+                        {campoLabel}:{" "}
+                        <span className="line-through opacity-70">
+                          {formatearValor(change.oldValue)}
+                        </span>
+                        {" → "}
+                        <span className="font-semibold">
+                          {formatearValor(change.newValue)}
+                        </span>
+                        {/* Quién y cuándo hizo el cambio */}
+                        {change.changedByUserName && (
+                          <span className="ml-1 opacity-60">
+                            ({change.changedByUserName})
+                          </span>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+
+            {/* Botón "Dar OK": solo visible para administradores.
+                Un no-admin puede VER el saldo actualizado en los servicios pero no puede
+                "limpiar" la marca — esa decisión la toma el dueño. */}
+            {isAdmin() && (
+              <button
+                type="button"
+                onClick={handleAcknowledgeChanges}
+                disabled={acknowledging}
+                className="flex-shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-amber-700 disabled:opacity-60 dark:bg-amber-700 dark:hover:bg-amber-600"
+                data-testid="btn-dar-ok-cambios"
+                aria-label="Marcar cambios como revisados"
+              >
+                {acknowledging ? (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                    Revisando...
+                  </>
+                ) : (
+                  <>
+                    <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                    Dar OK
+                  </>
+                )}
+              </button>
             )}
           </div>
-          {/* Botón "Dar OK": solo visible para administradores.
-              Un no-admin puede VER el saldo actualizado en los servicios pero no puede
-              "limpiar" la marca — esa decisión la toma el dueño. */}
-          {isAdmin() && (
-            <button
-              type="button"
-              onClick={handleAcknowledgeChanges}
-              disabled={acknowledging}
-              className="flex-shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-amber-700 disabled:opacity-60 dark:bg-amber-700 dark:hover:bg-amber-600"
-              data-testid="btn-dar-ok-cambios"
-              aria-label="Marcar cambios como revisados"
-            >
-              {acknowledging ? (
-                <>
-                  <RefreshCw className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                  Revisando...
-                </>
-              ) : (
-                <>
-                  <Check className="h-3.5 w-3.5" aria-hidden="true" />
-                  Dar OK
-                </>
-              )}
-            </button>
-          )}
         </div>
       )}
 

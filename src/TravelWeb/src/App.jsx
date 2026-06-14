@@ -49,6 +49,8 @@ import CreditNoteReconciliationInboxPage from "./features/creditNoteReconciliati
 import CancellationDebitNoteInboxPage from "./features/cancellations/pages/CancellationDebitNoteInboxPage";
 // ADR-025: bandeja de notas de credito por revisar (NC parciales de servicios cancelados).
 import CancellationCreditNoteInboxPage from "./features/cancellations/pages/CancellationCreditNoteInboxPage";
+// Comisiones de vendedor: solo visible para el dueño/admin.
+import CommissionsPage from "./features/commissions/pages/CommissionsPage";
 
 function FullScreenLoader() {
   return (
@@ -291,7 +293,13 @@ export default function App() {
                       path="/movements"
                       element={hasPermission("cobranzas.view") ? <MovementsPreviewPage /> : <Navigate to="/dashboard" replace />}
                     />
-                                      <Route
+                                      {/* Comisiones de vendedor: solo el dueño/admin puede ver esta pantalla.
+                        El backend también valida el permiso. Mismo patrón que /admin. */}
+                    <Route
+                      path="/commissions"
+                      element={isAdmin() ? <CommissionsPage /> : <Navigate to="/dashboard" replace />}
+                    />
+                    <Route
                       path="/admin"
                       element={isAdmin() ? <AdminHubPage /> : <Navigate to="/dashboard" replace />}
                     />
