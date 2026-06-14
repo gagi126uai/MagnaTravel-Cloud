@@ -61,6 +61,39 @@ public class CustomerAccountSummaryDto
     public List<CurrencyAmountDto> CreditBalanceByCurrency { get; set; } = new();
 }
 
+/// <summary>
+/// DETALLE de un saldo a favor disponible del cliente (un <c>ClientCreditEntry</c> con
+/// <c>RemainingBalance &gt; 0</c>). El cartel del front usa el AGREGADO por moneda
+/// (<see cref="CustomerAccountSummaryDto.CreditBalanceByCurrency"/>); este DTO es para el
+/// botón "usar saldo a favor", donde el usuario elige DE QUÉ entry retirar.
+///
+/// <para>Trae el <c>EntryPublicId</c> para que el front lo pase tal cual al withdraw
+/// (<c>POST /api/client-credit-entries/{EntryPublicId}/withdrawals</c>). Incluye el origen
+/// (reserva de la cancelación o reserva sobre-pagada) solo como contexto para que el usuario
+/// reconozca de qué viene el crédito; puede ser null en créditos legacy sin origen trazable.</para>
+/// </summary>
+public class CustomerAvailableCreditEntryDto
+{
+    public Guid EntryPublicId { get; set; }
+
+    /// <summary>Saldo aún disponible para retirar (siempre &gt; 0 en esta lista).</summary>
+    public decimal RemainingBalance { get; set; }
+
+    /// <summary>Monto original acreditado (para mostrar "quedan $X de $Y").</summary>
+    public decimal CreditedAmount { get; set; }
+
+    /// <summary>Moneda del bolsillo. El saldo en USD no compensa deuda en ARS (bolsillo por moneda).</summary>
+    public string Currency { get; set; } = string.Empty;
+
+    /// <summary>Número de la reserva que originó el crédito (cancelación o sobrepago). Null si no es trazable.</summary>
+    public string? OriginReservaNumber { get; set; }
+
+    /// <summary>PublicId de la reserva de origen, para que el front pueda enlazarla. Null si no es trazable.</summary>
+    public Guid? OriginReservaPublicId { get; set; }
+
+    public DateTime CreatedAt { get; set; }
+}
+
 public class CustomerAccountReservaListItemDto
 {
     public Guid PublicId { get; set; }

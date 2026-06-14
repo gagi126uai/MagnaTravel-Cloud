@@ -262,6 +262,39 @@ public class CustomersController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// Lista los saldos a favor DISPONIBLES del cliente (entries con RemainingBalance &gt; 0), del más
+    /// viejo al más nuevo. El front lo usa para el botón "usar saldo a favor": el usuario elige de qué
+    /// entry retirar y luego llama al withdraw (POST /api/client-credit-entries/{entryPublicId}/withdrawals).
+    /// </summary>
+    // Mismo gate que /account: la lista expone montos a favor del cliente -> clientes.view Y cobranzas.view
+    // (AND apilando atributos). Coherente con el resto de la cuenta del cliente.
+    [HttpGet("{publicIdOrLegacyId}/available-credit")]
+    [RequirePermission(Permissions.ClientesView)]
+    [RequirePermission(Permissions.CobranzasView)]
+    public async Task<ActionResult<IReadOnlyList<CustomerAvailableCreditEntryDto>>> GetCustomerAvailableCredit(
+        string publicIdOrLegacyId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Customer>(publicIdOrLegacyId, cancellationToken);
+            return Ok(await _customerService.GetCustomerAvailableCreditAsync(id, cancellationToken));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (Exception ex)
+        {
+            if (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+            }
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo obtener el saldo a favor del cliente.");
+        }
+    }
+
     private static Customer MapCustomer(CustomerUpsertRequest request)
     {
         return new Customer

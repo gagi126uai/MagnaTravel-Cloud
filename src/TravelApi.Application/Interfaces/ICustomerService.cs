@@ -15,6 +15,13 @@ public interface ICustomerService
     Task<PagedResponse<CustomerAccountReservaListItemDto>> GetCustomerAccountReservasAsync(int id, PagedQuery query, CancellationToken cancellationToken);
     Task<PagedResponse<CustomerAccountPaymentListItemDto>> GetCustomerAccountPaymentsAsync(int id, PagedQuery query, CancellationToken cancellationToken);
     Task<PagedResponse<InvoiceListDto>> GetCustomerAccountInvoicesAsync(int id, PagedQuery query, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Lista los saldos a favor DISPONIBLES (RemainingBalance &gt; 0) del cliente, ordenados del más
+    /// viejo al más nuevo (FIFO de consumo). El front lo usa para que el usuario elija de qué entry
+    /// retirar/aplicar. El agregado por moneda para el cartel ya viene en GetCustomerAccountOverviewAsync.
+    /// </summary>
+    Task<IReadOnlyList<CustomerAvailableCreditEntryDto>> GetCustomerAvailableCreditAsync(int id, CancellationToken cancellationToken);
     Task<IReadOnlyList<CustomerSimilarMatchDto>> SearchSimilarAsync(string? fullName, string? documentType, string? documentNumber, string? phone, int take, CancellationToken cancellationToken);
 }
 

@@ -420,6 +420,53 @@ public class CustomerService : ICustomerService
     }
 
     /// <summary>
+    /// DETALLE de los saldos a favor disponibles del cliente (cada ClientCreditEntry con saldo &gt; 0).
+    /// A diferencia de <see cref="BuildCustomerCreditByCurrencyAsync"/> (que AGREGA por moneda para el cartel),
+    /// esta devuelve fila por fila para que el front arme el flujo "usar saldo": el usuario elige de qué entry
+    /// retira. Orden FIFO (más viejo primero) para que el front sugiera consumir primero el crédito más antiguo.
+    /// </summary>
+    public async Task<IReadOnlyList<CustomerAvailableCreditEntryDto>> GetCustomerAvailableCreditAsync(int id, CancellationToken cancellationToken)
+    {
+        // Una sola query con los dos posibles orígenes incluidos:
+        //  - Cancelación: la reserva vive en BookingCancellation.Reserva.
+        //  - Sobrepago: la reserva vive en SourceReserva (FK directa del entry).
+        // Traemos solo los campos que el DTO necesita (proyección) para no materializar entidades enteras
+        // ni disparar N+1: el Select arma la fila con el número/PublicId de la reserva de origen en el mismo SQL.
+        var entries = await _dbContext.ClientCreditEntries
+            .AsNoTracking()
+            .Where(entry => entry.CustomerId == id && entry.RemainingBalance > 0m)
+            .OrderBy(entry => entry.CreatedAt)
+            .Select(entry => new CustomerAvailableCreditEntryDto
+            {
+                EntryPublicId = entry.PublicId,
+                RemainingBalance = entry.RemainingBalance,
+                CreditedAmount = entry.CreditedAmount,
+                Currency = entry.Currency,
+                CreatedAt = entry.CreatedAt,
+
+                // Origen: primero el de la cancelación; si el crédito nació de un sobrepago,
+                // la cancelación es null y usamos la reserva sobre-pagada. Si ninguno existe
+                // (crédito legacy sin trazabilidad), quedan null y el front simplemente no muestra origen.
+                OriginReservaNumber = entry.BookingCancellation != null && entry.BookingCancellation.Reserva != null
+                    ? entry.BookingCancellation.Reserva.NumeroReserva
+                    : (entry.SourceReserva != null ? entry.SourceReserva.NumeroReserva : null),
+                OriginReservaPublicId = entry.BookingCancellation != null && entry.BookingCancellation.Reserva != null
+                    ? entry.BookingCancellation.Reserva.PublicId
+                    : (entry.SourceReserva != null ? (Guid?)entry.SourceReserva.PublicId : null),
+            })
+            .ToListAsync(cancellationToken);
+
+        // Normalizamos la moneda en memoria (null/vacío -> ARS para créditos legacy) por coherencia con el
+        // resto de la cuenta. No se puede hacer dentro del Select porque Monedas.Normalizar no traduce a SQL.
+        foreach (var dto in entries)
+        {
+            dto.Currency = Monedas.Normalizar(dto.Currency);
+        }
+
+        return entries;
+    }
+
+    /// <summary>
     /// Normaliza la moneda (null/vacio -> ARS para datos legacy), redondea y ordena por moneda. Las lineas en 0
     /// no se omiten aca (un grupo solo existe si tuvo saldo &gt; 0 en la query).
     /// </summary>

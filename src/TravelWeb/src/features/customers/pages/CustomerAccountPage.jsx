@@ -10,13 +10,16 @@ import {
   Receipt,
   Search,
   Trash2,
+  Wallet,
   XCircle,
 } from "lucide-react";
 import { api } from "../../../api";
 import { showConfirm, showError, showSuccess } from "../../../alerts";
+import { hasPermission } from "../../../auth";
 import CustomerPaymentModal from "../../../components/CustomerPaymentModal";
 import RequestApprovalModal from "../../approvals/components/RequestApprovalModal";
 import { useFinanceActions } from "../../payments/hooks/useFinanceActions";
+import { UsarSaldoAFavorInline } from "../components/UsarSaldoAFavorInline";
 import { Button } from "../../../components/ui/button";
 import {
   DataGrid,
@@ -157,6 +160,10 @@ export default function CustomerAccountPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [paymentToEdit, setPaymentToEdit] = useState(null);
   const [approvalContext, setApprovalContext] = useState(null);
+  // Controla qué ficha "Usar saldo a favor" está abierta. Guarda la moneda del cartel
+  // que disparó la apertura (ej. "ARS" o "USD"). null = ninguna ficha abierta.
+  // Solo puede haber una abierta a la vez para no confundir al usuario.
+  const [monedaFichaUsarSaldo, setMonedaFichaUsarSaldo] = useState(null);
   const debouncedSearch = useDebounce(searchTerm, 300);
 
   const loadOverview = useCallback(async () => {
@@ -538,6 +545,77 @@ export default function CustomerAccountPage() {
           </div>
         </div>
       </div>
+
+      {/*
+        Carteles "A FAVOR" por moneda.
+
+        El backend devuelve summary.creditBalanceByCurrency: lista de { currency, amount }
+        con SOLO las monedas que tienen saldo a favor > 0 (el backend ya filtra).
+        Regla multimoneda: un cartel por moneda, nunca sumados ni mezclados.
+        Permiso cobranzas.edit: si el usuario lo tiene, muestra el botón "Usar saldo a favor".
+        Si no tiene el permiso, el cartel es solo informativo (sin botón).
+      */}
+      {Array.isArray(summary.creditBalanceByCurrency) && summary.creditBalanceByCurrency.length > 0 && (
+        <div className="flex flex-col gap-3">
+          {summary.creditBalanceByCurrency.map((creditEntry) => (
+            <div key={creditEntry.currency}>
+              {/* Cartel verde "A FAVOR EN $" o "A FAVOR EN US$" */}
+              <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 dark:border-emerald-900/40 dark:bg-emerald-950/20">
+                <div>
+                  <div className="text-[11px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
+                    A FAVOR EN {creditEntry.currency === "USD" ? "US$" : "$"}
+                  </div>
+                  <div className="mt-0.5 text-2xl font-bold text-emerald-700 dark:text-emerald-400">
+                    {creditEntry.currency === "USD"
+                      ? `US$${Number(creditEntry.amount).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                      : `$${Number(creditEntry.amount).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                    }
+                  </div>
+                  <div className="mt-1 text-xs text-emerald-600 dark:text-emerald-500">
+                    El cliente pagó de más en {creditEntry.currency === "USD" ? "dólares" : "pesos"}
+                  </div>
+                </div>
+
+                {/*
+                  Botón "Usar saldo a favor": solo si el usuario tiene permiso cobranzas.edit.
+                  Sin ese permiso el cartel sigue siendo visible (informativo para quien consulta la cuenta).
+                  El botón abre la ficha inline de esa moneda; cierra cualquier otra que esté abierta.
+                */}
+                {hasPermission("cobranzas.edit") && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setMonedaFichaUsarSaldo(
+                        monedaFichaUsarSaldo === creditEntry.currency ? null : creditEntry.currency
+                      )
+                    }
+                    className="flex items-center gap-2 rounded-lg border border-emerald-300 bg-white px-4 py-2 text-sm font-semibold text-emerald-700 shadow-sm hover:bg-emerald-50 dark:border-emerald-800 dark:bg-slate-900 dark:text-emerald-400 dark:hover:bg-emerald-950/30 transition-colors"
+                    data-testid={`usar-saldo-btn-${creditEntry.currency}`}
+                  >
+                    <Wallet className="h-4 w-4" />
+                    {monedaFichaUsarSaldo === creditEntry.currency ? "Cerrar" : "Usar saldo a favor"}
+                  </button>
+                )}
+              </div>
+
+              {/* Ficha inline: se despliega debajo del cartel de la moneda correspondiente */}
+              {monedaFichaUsarSaldo === creditEntry.currency && (
+                <div className="mt-2">
+                  <UsarSaldoAFavorInline
+                    publicId={publicId}
+                    moneda={creditEntry.currency}
+                    onConfirmado={() => {
+                      setMonedaFichaUsarSaldo(null);
+                      loadOverview();
+                    }}
+                    onCancelar={() => setMonedaFichaUsarSaldo(null)}
+                  />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="flex flex-col gap-4">
         <div className="flex flex-wrap gap-6 border-b border-slate-200 dark:border-slate-800">
