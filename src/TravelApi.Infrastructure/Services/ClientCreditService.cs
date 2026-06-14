@@ -1,4 +1,6 @@
+using System.Security.Claims;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using TravelApi.Application.Constants;
@@ -9,6 +11,7 @@ using TravelApi.Domain.Entities;
 using TravelApi.Domain.Exceptions;
 using TravelApi.Domain.Helpers;
 using TravelApi.Infrastructure.Persistence;
+using TravelApi.Infrastructure.Reservations;
 
 namespace TravelApi.Infrastructure.Services;
 
@@ -55,6 +58,12 @@ public class ClientCreditService : IClientCreditService
     private readonly IAuditService _auditService;
     private readonly IOperationalFinanceSettingsService _settings;
     private readonly ILogger<ClientCreditService> _logger;
+    // FC4 (fix I1, 2026-06-14): resolucion de ownership de la reserva DESTINO al aplicar saldo a favor.
+    // Opcionales (null por default) por la MISMA razon que en PaymentService: los tests unitarios viejos
+    // construyen el service sin HttpContext/resolver, y en ese caso NO filtramos (comportamiento legacy).
+    // Ver GetTargetReservaOwnerScopeOrNullAsync.
+    private readonly IUserPermissionResolver? _permissionResolver;
+    private readonly IHttpContextAccessor? _httpContextAccessor;
 
     public ClientCreditService(
         AppDbContext db,
@@ -62,7 +71,9 @@ public class ClientCreditService : IClientCreditService
         IApprovalRequestService approvalService,
         IAuditService auditService,
         IOperationalFinanceSettingsService settings,
-        ILogger<ClientCreditService> logger)
+        ILogger<ClientCreditService> logger,
+        IUserPermissionResolver? permissionResolver = null,
+        IHttpContextAccessor? httpContextAccessor = null)
     {
         _db = db;
         _bcService = bcService;
@@ -70,6 +81,46 @@ public class ClientCreditService : IClientCreditService
         _auditService = auditService;
         _settings = settings;
         _logger = logger;
+        _permissionResolver = permissionResolver;
+        _httpContextAccessor = httpContextAccessor;
+    }
+
+    /// <summary>
+    /// FC4 (fix I1, 2026-06-14): replica EXACTA de <c>PaymentService.GetOwnerScopeOrNullAsync</c>.
+    /// Devuelve null si el usuario ve TODAS las cobranzas (Admin o permiso <c>cobranzas.view_all</c>) =>
+    /// no se filtra por reserva. Si no, devuelve el userId actual, que el caller compara contra
+    /// <c>Reserva.ResponsibleUserId</c> de la reserva DESTINO.
+    ///
+    /// <para><b>Por que existe</b>: el endpoint Withdraw valida ownership del BOLSILLO origen
+    /// (RequireOwnership sobre ClientCreditEntry), pero la reserva DESTINO viaja en el body
+    /// (<c>AppliedToReservaPublicId</c>) y NO pasa por ningun attribute de ownership. Sin este chequeo, un
+    /// vendedor con scope acotado podia aplicar saldo a una reserva del mismo cliente pero a cargo de OTRO
+    /// vendedor — algo que el alta de pago normal (PaymentService.CreatePaymentAsync) ya le bloquea. Esto
+    /// cierra esa fuga horizontal manteniendo la frontera de ownership por-reserva de Cobranzas.</para>
+    ///
+    /// <para><b>Comportamiento legacy</b>: si no hay HttpContext (tests unitarios que llaman WithdrawAsync
+    /// directo), devuelve null => no se filtra, identico a hoy. Asi no se rompen los tests existentes.</para>
+    /// </summary>
+    private async Task<string?> GetTargetReservaOwnerScopeOrNullAsync(CancellationToken ct)
+    {
+        var httpUser = _httpContextAccessor?.HttpContext?.User;
+        if (httpUser is null) return null; // sin HttpContext (tests unitarios): comportamiento legacy
+        if (httpUser.IsInRole("Admin")) return null;
+
+        var currentUserId = httpUser.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (_permissionResolver is null || string.IsNullOrEmpty(currentUserId))
+        {
+            // No podemos resolver permisos => fail-safe: filtrar por user actual o sentinel imposible.
+            return string.IsNullOrEmpty(currentUserId) ? "__no_user__" : currentUserId;
+        }
+
+        var perms = await _permissionResolver.GetPermissionsAsync(currentUserId, ct);
+        if (perms.Contains(Permissions.CobranzasViewAll))
+        {
+            return null; // ve todas las cobranzas
+        }
+
+        return currentUserId; // scope acotado: solo sus reservas
     }
 
     // =========================================================================
@@ -193,8 +244,11 @@ public class ClientCreditService : IClientCreditService
         //    - Crea el ManualCashMovement asociado si corresponde (Add() en memoria).
         //    - Para ReversedToOperator: NO loguea audit reforzado todavia (se
         //      reordeno post-SaveChanges, ver paso 6b).
-        //    Retorna el withdrawal armado (todavia con Id=0 — SaveChanges al final).
-        var withdrawal = request.Kind switch
+        //    Retorna el withdrawal armado (todavia con Id=0 — SaveChanges al final) Y, como segundo
+        //    valor, el Id de la reserva DESTINO a recalcular post-commit (solo AppliedToNewBooking lo
+        //    devuelve; los otros 4 kinds devuelven null porque no tocan otra reserva). FC4: necesitamos
+        //    saber que reserva recalcular para que el puente de aplicacion baje su deuda atomicamente.
+        var (withdrawal, targetReservaIdToRecalc) = request.Kind switch
         {
             WithdrawalKind.KeptAsCredit => await HandleKeptAsCreditAsync(entry, request, userId, userName, ct),
             WithdrawalKind.PhysicalCash => await HandlePhysicalCashAsync(entry, request, userId, userName, ct),
@@ -204,125 +258,181 @@ public class ClientCreditService : IClientCreditService
             _ => throw new ArgumentException($"WithdrawalKind no soportado: {request.Kind}", nameof(request)),
         };
 
-        // 4) Decrementar el saldo (excepto KeptAsCredit que NO consume).
-        //    Regla 5 policy del ADR-002: KeptAsCredit deja huella de la decision
-        //    pero no toca el saldo. El cliente puede retirar mas adelante.
-        if (request.Kind != WithdrawalKind.KeptAsCredit)
-        {
-            entry.RemainingBalance = ReservationEconomicPolicy.RoundCurrency(
-                entry.RemainingBalance - request.Amount);
+        // 4-8) Persistencia + recalculo del destino + audit + cierre del BC.
+        //
+        //    FC4 (2026-06-14, fix bloqueante B1 del review): cuando el kind es AppliedToNewBooking, el
+        //    decremento del bolsillo, el INSERT del withdrawal Y el INSERT del Payment puente en la reserva
+        //    destino, MAS el recalculo de la deuda de esa reserva (ReservaMoneyByCurrency), tienen que ser
+        //    atomicos. Si el recalculo del destino fallara despues de bajar el bolsillo, quedaria plata
+        //    perdida (saldo descontado sin haber acreditado la reserva) — exactamente el bug que FC4 cierra.
+        //    Por eso, SOLO cuando hay una reserva destino a recalcular, envolvemos todo en una transaccion
+        //    explicita. Para los otros 4 kinds dejamos el flujo viejo intacto (sin transaccion envolvente):
+        //    minimizamos el blast radius y no cambiamos su comportamiento.
+        //
+        //    OJO trainee/junior: la transaccion envolvente SOLO se puede usar contra un provider RELACIONAL.
+        //    Los tests unit corren sobre EF InMemory, que NO soporta transacciones (BeginTransactionAsync
+        //    explota). Por eso ramificamos por _db.Database.IsRelational(): en InMemory ejecutamos el mismo
+        //    cuerpo sin transaccion (los tests de atomicidad real viven en integracion Postgres).
+        bool needsWrappingTransaction = targetReservaIdToRecalc != null && _db.Database.IsRelational();
 
-            // Si llegamos a saldo cero exacto, marcamos consumido. El BC se
-            // cierra solo si TODOS los entries del BC estan en este estado
-            // (eval en OnAllCreditConsumedAsync — un BC puede tener N entries
-            // por N retiros del operador).
-            if (entry.RemainingBalance == 0m)
+        if (needsWrappingTransaction)
+        {
+            // CreateExecutionStrategy + BeginTransactionAsync: mismo patron que ReservaService.CreateReservaAsync.
+            // El ExecutionStrategy reintenta toda la lambda si Postgres devuelve un error transitorio.
+            var strategy = _db.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async () =>
             {
-                entry.IsFullyConsumed = true;
-            }
+                await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+                await PersistAndFinalizeAsync(commitDestinationRecalc: true);
+                await transaction.CommitAsync(ct);
+            });
+        }
+        else
+        {
+            // Flujo sin transaccion envolvente: los otros kinds (sin destino) o InMemory en tests.
+            await PersistAndFinalizeAsync(commitDestinationRecalc: targetReservaIdToRecalc != null);
         }
 
-        // 5) PRIMER SaveChanges: persiste withdrawal + (opcional) ManualCashMovement
-        //    + decremento saldo del entry. Si el CHECK SQL del saldo o cualquier
-        //    constraint falla, throws aca SIN haber emitido audit. La fila de
-        //    audit fiscal solo se emite si este SaveChanges salio bien.
-        //
-        //    EF resuelve aca el orden topologico: ClientCreditWithdrawal primero
-        //    (obtiene Id real de la secuencia Postgres), luego ManualCashMovement
-        //    con la FK ya valida (gracias al fix del builder en Obs 2).
-        await _db.SaveChangesAsync(ct);
+        return MapWithdrawal(withdrawal, entry.PublicId);
 
-        // 6) Audit base ClientCreditWithdrawn (todos los kinds, ya con withdrawal
-        //    persistido). withdrawal.PublicId es estable desde el momento del
-        //    new (lo genera la BD via DEFAULT gen_random_uuid()? No — lo asigna
-        //    el modelo en construccion). Lo logueamos solo ahora para que el
-        //    audit no pueda quedar huerfano si el SaveChanges hubiera fallado.
-        await _auditService.LogBusinessEventAsync(
-            action: AuditActions.ClientCreditWithdrawn,
-            entityName: AuditActions.ClientCreditWithdrawalEntityName,
-            entityId: withdrawal.PublicId.ToString(),
-            details: JsonSerializer.Serialize(new
-            {
-                withdrawalPublicId = withdrawal.PublicId,
-                entryPublicId = entry.PublicId,
-                // ADR-022 §4.9: nullable para creditos de SOBREPAGO (sin BC detras).
-                bcPublicId = entry.BookingCancellation?.PublicId,
-                customerPublicId = entry.Customer.PublicId,
-                kind = withdrawal.Kind.ToString(),
-                withdrawal.Amount,
-                remainingBalanceAfter = entry.RemainingBalance,
-                approvalRequestId = withdrawal.ApprovalRequestId,
-            }),
-            userId: userId,
-            userName: userName,
-            ct: ct);
-
-        // 6b) Audit reforzado para ReversedToOperator (movido post-SaveChanges
-        //     desde HandleReversedToOperatorAsync — Obs 4). Se loguea SOLO si
-        //     el SaveChanges del paso 5 salio bien, garantizando que no quede
-        //     audit de reversal huerfano si el withdrawal no se persistio.
-        if (withdrawal.Kind == WithdrawalKind.ReversedToOperator)
+        // Cuerpo comun de persistencia. Definido como local function para reusarlo dentro y fuera de la
+        // transaccion envolvente sin duplicar codigo. El parametro indica si ademas hay que recalcular la
+        // reserva destino (solo AppliedToNewBooking). Las SaveChanges internas (de aca, del audit y del
+        // persister del destino) participan de la transaccion ambiente cuando existe, asi un fallo en
+        // cualquier paso revierte TODO.
+        async Task PersistAndFinalizeAsync(bool commitDestinationRecalc)
         {
+            // 4) Decrementar el saldo (excepto KeptAsCredit que NO consume).
+            //    Regla 5 policy del ADR-002: KeptAsCredit deja huella de la decision
+            //    pero no toca el saldo. El cliente puede retirar mas adelante.
+            if (request.Kind != WithdrawalKind.KeptAsCredit)
+            {
+                entry.RemainingBalance = ReservationEconomicPolicy.RoundCurrency(
+                    entry.RemainingBalance - request.Amount);
+
+                // Si llegamos a saldo cero exacto, marcamos consumido. El BC se
+                // cierra solo si TODOS los entries del BC estan en este estado
+                // (eval en OnAllCreditConsumedAsync — un BC puede tener N entries
+                // por N retiros del operador).
+                if (entry.RemainingBalance == 0m)
+                {
+                    entry.IsFullyConsumed = true;
+                }
+            }
+
+            // 5) PRIMER SaveChanges: persiste withdrawal + (opcional) ManualCashMovement o Payment puente
+            //    + decremento saldo del entry. Si el CHECK SQL del saldo o cualquier
+            //    constraint falla, throws aca SIN haber emitido audit. La fila de
+            //    audit fiscal solo se emite si este SaveChanges salio bien.
+            //
+            //    EF resuelve aca el orden topologico: ClientCreditWithdrawal primero
+            //    (obtiene Id real de la secuencia Postgres), luego el Payment puente
+            //    con la FK AppliedFromCreditWithdrawalId ya valida (lo seteamos por
+            //    navigation property en el handler, no por Id escalar=0).
+            await _db.SaveChangesAsync(ct);
+
+            // 5b) FC4: recalcular la deuda de la reserva DESTINO. El Payment puente ya esta persistido (vivo,
+            //     AffectsCash=false, monto positivo), asi que ReservaMoneyCalculator lo cuenta y baja la deuda
+            //     exigible de la moneda del bolsillo. Esto es lo que hace que el saldo a favor efectivamente
+            //     PAGUE la otra reserva (antes de FC4 esto no existia -> plata perdida). Corre DENTRO de la
+            //     transaccion envolvente (cuando la hay), antes del commit.
+            if (commitDestinationRecalc && targetReservaIdToRecalc != null)
+            {
+                await ReservaMoneyPersister.PersistAsync(_db, targetReservaIdToRecalc.Value, ct);
+            }
+
+            // 6) Audit base ClientCreditWithdrawn (todos los kinds, ya con withdrawal
+            //    persistido). Lo logueamos solo ahora para que el audit no pueda
+            //    quedar huerfano si el SaveChanges hubiera fallado.
             await _auditService.LogBusinessEventAsync(
-                action: AuditActions.ClientRefundReversalApproved,
-                entityName: AuditActions.ClientCreditEntryEntityName,
-                entityId: entry.PublicId.ToString(),
+                action: AuditActions.ClientCreditWithdrawn,
+                entityName: AuditActions.ClientCreditWithdrawalEntityName,
+                entityId: withdrawal.PublicId.ToString(),
                 details: JsonSerializer.Serialize(new
                 {
+                    withdrawalPublicId = withdrawal.PublicId,
                     entryPublicId = entry.PublicId,
+                    // ADR-022 §4.9: nullable para creditos de SOBREPAGO (sin BC detras).
                     bcPublicId = entry.BookingCancellation?.PublicId,
                     customerPublicId = entry.Customer.PublicId,
-                    withdrawalPublicId = withdrawal.PublicId,
+                    kind = withdrawal.Kind.ToString(),
                     withdrawal.Amount,
-                    approvalRequestPublicId = withdrawal.ApprovalRequestId,
-                    executedByUserId = userId,
+                    remainingBalanceAfter = entry.RemainingBalance,
+                    approvalRequestId = withdrawal.ApprovalRequestId,
                 }),
                 userId: userId,
                 userName: userName,
                 ct: ct);
+
+            // 6b) Audit reforzado para ReversedToOperator (movido post-SaveChanges
+            //     desde HandleReversedToOperatorAsync — Obs 4). Se loguea SOLO si
+            //     el SaveChanges del paso 5 salio bien, garantizando que no quede
+            //     audit de reversal huerfano si el withdrawal no se persistio.
+            if (withdrawal.Kind == WithdrawalKind.ReversedToOperator)
+            {
+                await _auditService.LogBusinessEventAsync(
+                    action: AuditActions.ClientRefundReversalApproved,
+                    entityName: AuditActions.ClientCreditEntryEntityName,
+                    entityId: entry.PublicId.ToString(),
+                    details: JsonSerializer.Serialize(new
+                    {
+                        entryPublicId = entry.PublicId,
+                        bcPublicId = entry.BookingCancellation?.PublicId,
+                        customerPublicId = entry.Customer.PublicId,
+                        withdrawalPublicId = withdrawal.PublicId,
+                        withdrawal.Amount,
+                        approvalRequestPublicId = withdrawal.ApprovalRequestId,
+                        executedByUserId = userId,
+                    }),
+                    userId: userId,
+                    userName: userName,
+                    ct: ct);
+            }
+
+            // 6c) FC4: audit dedicado del LADO DESTINO. Ademas del audit base (que vive del lado del bolsillo),
+            //     dejamos rastro de que ESTA reserva recibio un saldo a favor como pago. Asi la auditoria de la
+            //     reserva destino muestra de donde salio la plata que bajo su deuda (no es un cobro de caja).
+            if (withdrawal.Kind == WithdrawalKind.AppliedToNewBooking && targetReservaIdToRecalc != null)
+            {
+                await _auditService.LogBusinessEventAsync(
+                    action: AuditActions.ClientCreditAppliedToBooking,
+                    entityName: AuditActions.ClientCreditWithdrawalEntityName,
+                    entityId: withdrawal.PublicId.ToString(),
+                    details: JsonSerializer.Serialize(new
+                    {
+                        withdrawalPublicId = withdrawal.PublicId,
+                        entryPublicId = entry.PublicId,
+                        customerPublicId = entry.Customer.PublicId,
+                        targetReservaPublicId = request.AppliedToReservaPublicId,
+                        amount = withdrawal.Amount,
+                        currency = entry.Currency,
+                    }),
+                    userId: userId,
+                    userName: userName,
+                    ct: ct);
+            }
+
+            // FC1.2.7b counter: el cliente retiro saldo. Pasamos `kind` como property
+            // estructurada para que el dashboard pueda filtrar por tipo de retiro.
+            _logger.LogInformation(
+                "metric:client_credit_withdrawn | WithdrawalPublicId={WithdrawalPublicId} EntryPublicId={EntryPublicId} Kind={Kind} Amount={Amount}",
+                withdrawal.PublicId, entry.PublicId, withdrawal.Kind.ToString(), withdrawal.Amount);
+
+            // 7) Cierre del BC si TODOS los entries estan consumidos.
+            // ADR-022 §4.9 (B5): el cierre de cancelacion solo aplica a creditos que NACEN de una cancelacion
+            // (BookingCancellationId != null). Un credito de SOBREPAGO no tiene BC detras (FK null): consumirlo
+            // totalmente NO debe disparar OnAllCreditConsumedAsync. Por eso ramificamos por el origen del entry.
+            if (request.Kind != WithdrawalKind.KeptAsCredit
+                && entry.IsFullyConsumed
+                && entry.BookingCancellationId != null)
+            {
+                await _bcService.OnAllCreditConsumedAsync(entry.BookingCancellationId.Value, ct);
+
+                // 8) SEGUNDO SaveChanges: persiste cambios del callback
+                //    (bc.Status=Closed, bc.ClosedAt, bc.Reserva.Status=Cancelled).
+                await _db.SaveChangesAsync(ct);
+            }
         }
-
-        // FC1.2.7b counter: el cliente retiro saldo. Pasamos `kind` como property
-        // estructurada para que el dashboard pueda filtrar por tipo de retiro
-        // (PhysicalCash vs Transfer vs ReversedToOperator) y armar series por
-        // kind. Si physical_cash crece desproporcionado, hay problema operativo
-        // (la caja deberia preferir transfer para evitar manejo de efectivo).
-        _logger.LogInformation(
-            "metric:client_credit_withdrawn | WithdrawalPublicId={WithdrawalPublicId} EntryPublicId={EntryPublicId} Kind={Kind} Amount={Amount}",
-            withdrawal.PublicId, entry.PublicId, withdrawal.Kind.ToString(), withdrawal.Amount);
-
-        // 7) Cierre del BC si TODOS los entries estan consumidos.
-        //    MR-02 plan v3: el callback evalua con SQL crudo + ChangeTracker
-        //    (porque los cambios in-memory de este metodo todavia no estan en BD)
-        //    si quedan entries con saldo > 0 en el BC. Si no quedan, transiciona
-        //    el BC a Closed y la Reserva a Cancelled. NO hace SaveChanges (HC1):
-        //    el SaveChanges del paso 8 commitea bc.Status + Reserva.Status +
-        //    audit BookingCancellationClosed (este ultimo lo persistio
-        //    AuditService internamente).
-        //
-        //    NOTA: ahora que ya hicimos SaveChanges en paso 5, la query SQL del
-        //    callback YA VE las modificaciones de este flujo (RemainingBalance=0).
-        //    El ChangeTracker quedo limpio para esos cambios; solo veria
-        //    bc.Status si el callback lo modifica.
-        // ADR-022 §4.9 (B5): el cierre de cancelacion solo aplica a creditos que NACEN de una cancelacion
-        // (BookingCancellationId != null). Un credito de SOBREPAGO no tiene BC detras (FK null): consumirlo
-        // totalmente NO debe disparar OnAllCreditConsumedAsync (no hay cancelacion que cerrar; hacerlo con
-        // un id null/0 corromperia o explotaria). Por eso ramificamos por el origen del entry.
-        if (request.Kind != WithdrawalKind.KeptAsCredit
-            && entry.IsFullyConsumed
-            && entry.BookingCancellationId != null)
-        {
-            await _bcService.OnAllCreditConsumedAsync(entry.BookingCancellationId.Value, ct);
-
-            // 8) SEGUNDO SaveChanges: persiste cambios del callback
-            //    (bc.Status=Closed, bc.ClosedAt, bc.Reserva.Status=Cancelled).
-            //    Solo si el callback efectivamente modifico algo (puede haber
-            //    sido no-op por idempotencia bajo concurrencia, en cuyo caso
-            //    el SaveChanges queda como no-op tambien — EF detecta 0 cambios).
-            await _db.SaveChangesAsync(ct);
-        }
-
-        return MapWithdrawal(withdrawal, entry.PublicId);
     }
 
     // =========================================================================
@@ -348,7 +458,7 @@ public class ClientCreditService : IClientCreditService
     /// </list>
     /// </para>
     /// </summary>
-    private Task<ClientCreditWithdrawal> HandleKeptAsCreditAsync(
+    private Task<(ClientCreditWithdrawal withdrawal, int? targetReservaIdToRecalc)> HandleKeptAsCreditAsync(
         ClientCreditEntry entry,
         WithdrawClientCreditRequest request,
         string userId,
@@ -380,7 +490,8 @@ public class ClientCreditService : IClientCreditService
         };
         _db.ClientCreditWithdrawals.Add(withdrawal);
 
-        return Task.FromResult(withdrawal);
+        // KeptAsCredit no toca otra reserva -> segundo valor null.
+        return Task.FromResult<(ClientCreditWithdrawal, int?)>((withdrawal, null));
     }
 
     /// <summary>
@@ -397,7 +508,7 @@ public class ClientCreditService : IClientCreditService
     /// </list>
     /// </para>
     /// </summary>
-    private async Task<ClientCreditWithdrawal> HandlePhysicalCashAsync(
+    private async Task<(ClientCreditWithdrawal withdrawal, int? targetReservaIdToRecalc)> HandlePhysicalCashAsync(
         ClientCreditEntry entry,
         WithdrawClientCreditRequest request,
         string userId,
@@ -450,7 +561,8 @@ public class ClientCreditService : IClientCreditService
             userId,
             userName);
 
-        return withdrawal;
+        // No toca otra reserva -> segundo valor null.
+        return (withdrawal, null);
     }
 
     /// <summary>
@@ -458,7 +570,7 @@ public class ClientCreditService : IClientCreditService
     /// Sin tope Ley 25.345 (no es efectivo). Genera ManualCashMovement Expense
     /// con el method override del request si vino (ej. "Transfer-BBVA").
     /// </summary>
-    private Task<ClientCreditWithdrawal> HandleTransferAsync(
+    private Task<(ClientCreditWithdrawal withdrawal, int? targetReservaIdToRecalc)> HandleTransferAsync(
         ClientCreditEntry entry,
         WithdrawClientCreditRequest request,
         string userId,
@@ -472,25 +584,35 @@ public class ClientCreditService : IClientCreditService
             userId,
             userName);
 
-        return Task.FromResult(withdrawal);
+        // No toca otra reserva -> segundo valor null.
+        return Task.FromResult<(ClientCreditWithdrawal, int?)>((withdrawal, null));
     }
 
     /// <summary>
-    /// Kind 4: <c>AppliedToNewBooking</c>. El saldo se aplica como pago de otra
-    /// reserva del cliente. NO genera ManualCashMovement — el
-    /// <c>PaymentService</c> lo hara al registrar el pago en la reserva destino
-    /// (decision diferida a FC4, hoy validamos la reserva existe y dejamos el
-    /// withdrawal registrado).
+    /// Kind 4: <c>AppliedToNewBooking</c> (FC4, 2026-06-14). El saldo a favor del cliente se aplica como
+    /// PAGO de OTRA reserva del mismo cliente. Ademas de registrar el withdrawal y decrementar el bolsillo,
+    /// crea un <see cref="Payment"/> "puente" POSITIVO en la reserva destino (ver <see cref="AppliedCreditBridge"/>):
+    /// no mueve caja (<c>AffectsCash=false</c>, porque la plata ya entro cuando el operador devolvio el
+    /// refund) pero baja la deuda exigible de esa reserva.
     ///
-    /// <para>
-    /// <b>FC1.2.3 alcance</b>: este handler decrementa el saldo y registra el
-    /// withdrawal, pero NO crea el Payment en la reserva destino. Esa
-    /// integracion vive en FC4 cuando se modele <c>PaymentService.ApplyCreditAsync</c>.
-    /// Hoy un admin/contador tendria que crear el Payment a mano apuntando a la
-    /// reserva destino + verificando el ClientCreditWithdrawal en auditoria.
-    /// </para>
+    /// <para><b>Por que un Payment y no un ManualCashMovement</b>: lo que tiene que bajar es la DEUDA del
+    /// cliente en la reserva destino, y eso lo calcula <c>ReservaMoneyCalculator</c> a partir de los
+    /// Payments vivos. Un ManualCashMovement no entra en esa cuenta. Por eso el puente es un Payment.</para>
+    ///
+    /// <para><b>Validaciones (diseño aprobado + correcciones del review)</b>:
+    /// <list type="bullet">
+    ///   <item>INV-093: la reserva destino debe ser del MISMO cliente del bolsillo.</item>
+    ///   <item>Estado destino: debe estar en un estado COBRABLE (<see cref="EstadoReserva.ActiveCollectionStatuses"/>).
+    ///         Aplicar saldo a un Presupuesto/Cotizacion/Perdida/Cancelada no tiene sentido (no hay venta
+    ///         vigente que pagar) -> INV-096.</item>
+    ///   <item>Moneda (MVP same-currency): el puente lleva la moneda del bolsillo. Si la reserva destino NO
+    ///         tiene deuda exigible en esa moneda, se rechaza (INV-095). Esto bloquea de hecho el cruce de
+    ///         monedas: un bolsillo en USD no puede pagar una deuda en ARS.</item>
+    ///   <item>Tope: el monto aplicado no puede superar la deuda exigible del destino en esa moneda (INV-097).
+    ///         No sobre-pagamos la reserva destino.</item>
+    /// </list></para>
     /// </summary>
-    private async Task<ClientCreditWithdrawal> HandleAppliedToNewBookingAsync(
+    private async Task<(ClientCreditWithdrawal withdrawal, int? targetReservaIdToRecalc)> HandleAppliedToNewBookingAsync(
         ClientCreditEntry entry,
         WithdrawClientCreditRequest request,
         string userId,
@@ -504,11 +626,10 @@ public class ClientCreditService : IClientCreditService
                 nameof(request));
         }
 
-        // Validar que la reserva destino existe y pertenece al mismo customer
-        // (defense-in-depth: el controller deberia haber validado ownership,
-        // pero aca validamos integridad logica del saldo).
-        var targetReserva = await _db.Reservas
-            .FirstOrDefaultAsync(r => r.PublicId == request.AppliedToReservaPublicId, ct)
+        // Cargamos la reserva destino CON su grafo economico (servicios + pagos) porque ademas de validar
+        // ownership/estado necesitamos calcular su deuda exigible por moneda. Mismos Includes que el persister
+        // canonico (ReservaMoneyPersister): si difieren, la cuenta podria descuadrar.
+        var targetReserva = await LoadReservaWithEconomicGraphAsync(request.AppliedToReservaPublicId.Value, ct)
             ?? throw new KeyNotFoundException(
                 $"Reserva destino {request.AppliedToReservaPublicId} no encontrada.");
 
@@ -522,22 +643,138 @@ public class ClientCreditService : IClientCreditService
                 invariantCode: "INV-093");
         }
 
+        // FC4 (fix I1, 2026-06-14): ownership de la reserva DESTINO. INV-093 (arriba) ya garantiza que la
+        // reserva sea del MISMO cliente, pero eso NO alcanza: un cliente puede tener reservas a cargo de
+        // distintos vendedores. El alta de pago normal exige que, si el usuario no ve todas las cobranzas,
+        // la reserva sea suya (Reserva.ResponsibleUserId == userId). Replicamos ese mismo scope aca para no
+        // dejar una puerta lateral que permita aplicar saldo a una reserva ajena (misma fuga que cierra
+        // PaymentService.CreatePaymentAsync). Si no hay HttpContext (tests/legacy), el scope es null y no
+        // se filtra. Tiramos UnauthorizedAccessException, que el controller traduce a 403.
+        var ownerScope = await GetTargetReservaOwnerScopeOrNullAsync(ct);
+        if (ownerScope is not null
+            && !string.Equals(targetReserva.ResponsibleUserId, ownerScope, StringComparison.Ordinal))
+        {
+            throw new UnauthorizedAccessException(
+                "La reserva destino no esta asignada al usuario actual. No se puede aplicar saldo a una " +
+                "reserva a cargo de otro vendedor.");
+        }
+
+        // Estado cobrable: no se aplica saldo a una reserva que no es una venta vigente (Presupuesto,
+        // Cotizacion, Perdida, Cancelada). Reusamos la lista canonica que comparte el cobro normal.
+        if (!EstadoReserva.ActiveCollectionStatuses.Contains(targetReserva.Status))
+        {
+            throw new BusinessInvariantViolationException(
+                "No se puede aplicar un saldo a favor a una reserva que no esta en gestion de cobro " +
+                $"(estado actual: {targetReserva.Status}). Pasala a En gestion primero.",
+                invariantCode: "INV-096");
+        }
+
+        var creditCurrency = Monedas.Normalizar(entry.Currency);
+
+        // Deuda exigible de la reserva destino EN LA MONEDA DEL BOLSILLO. El calculador agrupa por moneda y
+        // nunca mezcla USD/ARS, asi que esto es exactamente "cuanto debe la reserva en esa moneda".
+        decimal targetDebtInCreditCurrency = GetReservaConfirmedBalanceForCurrency(targetReserva, creditCurrency);
+
+        // Moneda (MVP same-currency): si la reserva destino no tiene deuda en la moneda del bolsillo, no hay
+        // nada que pagar en esa moneda. Esto bloquea de hecho aplicar un saldo USD a una reserva que solo
+        // debe ARS (y viceversa) sin convertir, que es justo lo que NO queremos en el MVP.
+        if (targetDebtInCreditCurrency <= 0m)
+        {
+            throw new BusinessInvariantViolationException(
+                $"No se puede aplicar un saldo a favor en {creditCurrency} a una reserva que no tiene " +
+                $"deuda en {creditCurrency}.",
+                invariantCode: "INV-095");
+        }
+
+        var appliedAmount = ReservationEconomicPolicy.RoundCurrency(request.Amount);
+
+        // Tope a la deuda destino: no sobre-pagamos la reserva destino. Leemos la deuda lo mas cerca posible
+        // del commit; aun asi es best-effort ante una carrera (otro cobro entrando en paralelo). La red dura
+        // es la transaccion envolvente + el recalculo final del destino dentro de esa transaccion: si el
+        // numero cambio, el recalculo lo refleja y, en el peor caso de carrera, la reserva podria quedar con
+        // un sobrepago leve que el circuito de sobrepago ya sabe manejar. No se permite forzar un sobre-pago
+        // grande a proposito desde aca.
+        if (appliedAmount > targetDebtInCreditCurrency)
+        {
+            throw new BusinessInvariantViolationException(
+                $"El monto a aplicar (${appliedAmount:N2} {creditCurrency}) supera la deuda de la reserva " +
+                $"destino en esa moneda (${targetDebtInCreditCurrency:N2}). Aplica como mucho la deuda.",
+                invariantCode: "INV-097");
+        }
+
         var withdrawal = new ClientCreditWithdrawal
         {
             ClientCreditEntryId = entry.Id,
             Entry = entry,
             Kind = WithdrawalKind.AppliedToNewBooking,
-            Amount = ReservationEconomicPolicy.RoundCurrency(request.Amount),
+            Amount = appliedAmount,
             ExecutedAt = DateTime.UtcNow,
             ExecutedByUserId = userId,
             ExecutedByUserName = userName ?? string.Empty,
-            // NO genera ManualCashMovement (FC4 hara el Payment en la reserva nueva).
+            // NO genera ManualCashMovement: el efecto en la reserva destino es el Payment puente de abajo.
             ManualCashMovementId = null,
             ApprovalRequestId = null,
         };
         _db.ClientCreditWithdrawals.Add(withdrawal);
 
-        return withdrawal;
+        // Payment puente POSITIVO en la reserva destino: baja su deuda sin tocar caja.
+        var bridge = new Payment
+        {
+            ReservaId = targetReserva.Id,
+            Amount = appliedAmount,                         // POSITIVO (a diferencia del puente de sobrepago)
+            Currency = creditCurrency,                      // moneda del bolsillo
+            ImputedCurrency = null,                         // MVP same-currency: se imputa a su propia moneda
+            Method = AppliedCreditBridge.BridgeMethod,      // "SaldoAFavorAplicado"
+            AffectsCash = false,                            // la plata ya entro con el refund; NO mueve caja
+            EntryType = PaymentEntryTypes.Payment,
+            Status = "Paid",
+            PaidAt = DateTime.UtcNow,
+            Notes = $"Saldo a favor aplicado (bolsillo {entry.PublicId}).",
+            CreatedByUserId = userId,
+            CreatedByUserName = userName,
+            // FC4: atamos el puente al withdrawal por NAVIGATION property (no por Id escalar). withdrawal.Id
+            // es 0 hasta el SaveChanges; EF resuelve la FK en orden topologico (withdrawal primero, luego el
+            // puente con AppliedFromCreditWithdrawalId ya valido). Mismo patron que el resto del modulo.
+            AppliedFromCreditWithdrawal = withdrawal,
+        };
+        _db.Payments.Add(bridge);
+
+        // Segundo valor: la reserva destino a recalcular post-SaveChanges (dentro de la transaccion envolvente).
+        return (withdrawal, targetReserva.Id);
+    }
+
+    /// <summary>
+    /// FC4: carga una reserva por PublicId con el MISMO grafo economico que usa <c>ReservaMoneyPersister</c>
+    /// (pagos + 5 servicios tipados + genericos), para poder correr <c>ReservaMoneyCalculator</c> y leer la
+    /// deuda por moneda. Se trackea (no AsNoTracking) porque la misma instancia se usa para crear el Payment
+    /// puente apuntando a <c>targetReserva.Id</c>.
+    /// </summary>
+    private Task<Reserva?> LoadReservaWithEconomicGraphAsync(Guid reservaPublicId, CancellationToken ct)
+    {
+        return _db.Reservas
+            .Include(f => f.Payments)
+            .Include(f => f.Servicios)
+            .Include(f => f.FlightSegments)
+            .Include(f => f.HotelBookings)
+            .Include(f => f.TransferBookings)
+            .Include(f => f.PackageBookings)
+            .Include(f => f.AssistanceBookings)
+            .FirstOrDefaultAsync(r => r.PublicId == reservaPublicId, ct);
+    }
+
+    /// <summary>
+    /// FC4: deuda exigible (ConfirmedSale - TotalPaid) de una reserva ya cargada, EN UNA moneda concreta.
+    /// Devuelve 0 si esa moneda no aparece en la reserva o si esta saldada/a favor (Balance &lt;= 0). Usa el
+    /// calculador puro <c>ReservaMoneyCalculator</c> para no duplicar la matematica oficial de la plata.
+    /// </summary>
+    private static decimal GetReservaConfirmedBalanceForCurrency(Reserva reserva, string currency)
+    {
+        var summary = TravelApi.Domain.Reservations.ReservaMoneyCalculator.Calculate(reserva);
+        if (summary.PorMoneda.TryGetValue(currency, out var line))
+        {
+            return line.Balance;
+        }
+        return 0m;
     }
 
     /// <summary>
@@ -559,7 +796,7 @@ public class ClientCreditService : IClientCreditService
     /// </list>
     /// </para>
     /// </summary>
-    private async Task<ClientCreditWithdrawal> HandleReversedToOperatorAsync(
+    private async Task<(ClientCreditWithdrawal withdrawal, int? targetReservaIdToRecalc)> HandleReversedToOperatorAsync(
         ClientCreditEntry entry,
         WithdrawClientCreditRequest request,
         string userId,
@@ -634,7 +871,8 @@ public class ClientCreditService : IClientCreditService
             userName,
             approvalRequestId: approval.PublicId.ToString());
 
-        return withdrawal;
+        // No toca otra reserva -> segundo valor null.
+        return (withdrawal, null);
     }
 
     // =========================================================================

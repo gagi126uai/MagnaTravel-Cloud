@@ -74,6 +74,25 @@ public static class EstadoReserva
     /// hasta que llegue el refund (T2 del flujo) o se marque AbandonedByOperator.
     /// </summary>
     public const string PendingOperatorRefund = "PendingOperatorRefund";
+
+    /// <summary>
+    /// Estados "cobrables": la reserva tiene una venta cerrada con saldo que se le puede pedir al cliente
+    /// (o aplicarle un saldo a favor). ADR-020: InManagement (En gestion) reemplaza al viejo Sold; ToSettle
+    /// (post-viaje) con saldo pendiente sigue siendo cobrable. Quotation/Budget/Lost/Cancelled NO entran
+    /// (todavia no hay —o ya no hay— venta vigente).
+    ///
+    /// <para>FC4 (2026-06-14): se MOVIO aca desde <c>PaymentService.ActiveCollectionStatuses</c> (que era
+    /// privado) para que el saldo a favor aplicado (<c>ClientCreditService.HandleAppliedToNewBookingAsync</c>)
+    /// use exactamente la misma lista que el cobro normal — un saldo a favor solo se aplica a reservas a las
+    /// que tambien se les podria cobrar. Fuente unica para no divergir.</para>
+    /// </summary>
+    public static readonly string[] ActiveCollectionStatuses =
+    {
+        InManagement,
+        Confirmed,
+        Traveling,
+        ToSettle
+    };
 }
 
 public class Reserva : IHasPublicId

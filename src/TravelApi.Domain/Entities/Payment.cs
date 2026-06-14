@@ -118,5 +118,24 @@ public class Payment : IHasPublicId
     public Payment? OriginalPayment { get; set; }
     public ICollection<Payment> Reversals { get; set; } = new List<Payment>();
 
+    // ====================================================================================
+    // FC4 (saldo a favor aplicado a otra reserva, 2026-06-14).
+    // ====================================================================================
+
+    /// <summary>
+    /// FC4: cuando un saldo a favor del cliente se APLICA como pago de OTRA reserva (kind
+    /// AppliedToNewBooking), el sistema crea un Payment "puente" POSITIVO en la reserva destino
+    /// (no mueve caja, baja la deuda). Esta FK lo ata al <see cref="ClientCreditWithdrawal"/> que lo
+    /// origino, de forma estructural (no por texto en Notes). Es lo que distingue el puente de
+    /// aplicacion de un cobro real y del puente de sobrepago (ese usa <see cref="OriginalPaymentId"/>).
+    ///
+    /// <para><b>Por que una FK propia y no reusar OriginalPaymentId</b>: el puente de sobrepago apunta
+    /// a un Payment fuente; este apunta a un withdrawal del bolsillo del cliente. Son orígenes
+    /// distintos. Mantenerlos en columnas separadas hace que <c>IsOverpaymentBridge</c> y
+    /// <c>IsAppliedCreditBridge</c> nunca se confundan entre sí.</para>
+    /// </summary>
+    public int? AppliedFromCreditWithdrawalId { get; set; }
+    public ClientCreditWithdrawal? AppliedFromCreditWithdrawal { get; set; }
+
     public PaymentReceipt? Receipt { get; set; }
 }

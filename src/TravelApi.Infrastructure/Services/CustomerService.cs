@@ -370,10 +370,13 @@ public class CustomerService : ICustomerService
             // (que ya lo excluye). Mismo predicado del puente.
             PaymentCount = await _dbContext.Payments
                 .AsNoTracking()
+                // FC4 (2026-06-14): el contador excluye AMBOS puentes (sobrepago + saldo a favor aplicado),
+                // para que el badge "Pagos: N" coincida con las filas visibles en GetCustomerAccountPaymentsAsync.
                 .CountAsync(payment => payment.Reserva != null && payment.Reserva.PayerId == id
-                    && !(payment.Method == OverpaymentCreditCleanup.BridgeMethod
-                        && !payment.AffectsCash
-                        && payment.OriginalPaymentId != null), cancellationToken),
+                    && !((payment.Method == OverpaymentCreditCleanup.BridgeMethod
+                            && !payment.AffectsCash && payment.OriginalPaymentId != null)
+                        || (payment.Method == AppliedCreditBridge.BridgeMethod
+                            && !payment.AffectsCash && payment.AppliedFromCreditWithdrawalId != null)), cancellationToken),
             InvoiceCount = await _dbContext.Invoices
                 .AsNoTracking()
                 .CountAsync(invoice => invoice.Reserva != null && invoice.Reserva.PayerId == id, cancellationToken),
@@ -537,9 +540,13 @@ public class CustomerService : ICustomerService
             // Los totales de la cuenta del cliente (TotalSales/TotalPaid/TotalBalance, ReceivableByCurrency,
             // CreditBalanceByCurrency) se calculan por OTRA via (Reserva.* y ClientCreditEntries), no sumando
             // esta lista, asi que ocultar el puente no los altera.
-            .Where(payment => !(payment.Method == OverpaymentCreditCleanup.BridgeMethod
-                && !payment.AffectsCash
-                && payment.OriginalPaymentId != null));
+            // FC4 (2026-06-14): excluir tambien el puente de saldo a favor APLICADO (positivo). Su Notes lleva
+            // el GUID del bolsillo y no debe filtrarse a la pestaña Pagos del cliente.
+            .Where(payment => !(
+                (payment.Method == OverpaymentCreditCleanup.BridgeMethod
+                    && !payment.AffectsCash && payment.OriginalPaymentId != null)
+                || (payment.Method == AppliedCreditBridge.BridgeMethod
+                    && !payment.AffectsCash && payment.AppliedFromCreditWithdrawalId != null)));
 
         if (!string.IsNullOrWhiteSpace(query.Search))
         {

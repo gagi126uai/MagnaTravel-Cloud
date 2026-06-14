@@ -85,20 +85,32 @@ public class ClientCreditsControllerTests : IClassFixture<CustomWebApplicationFa
         db.Suppliers.Add(supplier);
         await db.SaveChangesAsync();
 
-        var (entryOwnPid, entryAjenoPid, bcOwnPid) = await SeedBcAndEntryAsync(
+        var seedIds = await SeedBcAndEntryAsync(
             db, customer.Id, supplier.Id, vendedorId, "owner-other", suffix, initialBalance);
 
         scope.ServiceProvider.GetRequiredService<IUserPermissionResolver>().InvalidateAll();
 
-        return new TestSeed(vendedorId, entryOwnPid, entryAjenoPid, bcOwnPid);
+        return new TestSeed(
+            vendedorId,
+            seedIds.EntryOwnPid,
+            seedIds.EntryAjenoPid,
+            seedIds.BcOwnPid,
+            seedIds.OwnReservaPid,
+            seedIds.AjenaReservaPid);
     }
 
     /// <summary>
     /// Helper: crea un BC propio + un BC ajeno + un entry asociado a cada uno.
-    /// Retorna los PublicIds de los entries y del BC propio (que tambien sirve
-    /// para testear el endpoint nested GET /booking-cancellations/{bc}/credit-entries).
+    /// Retorna los PublicIds de los entries, del BC propio (que tambien sirve para testear el endpoint
+    /// nested GET /booking-cancellations/{bc}/credit-entries) y de las DOS reservas (propia/ajena), que
+    /// los tests de FC4-I1 usan como destino al aplicar saldo a favor.
+    ///
+    /// <para>FC4 (fix I1): ambas reservas llevan un servicio confirmado en ARS de 1000 para que tengan deuda
+    /// exigible en esa moneda. Asi un saldo a favor (que nace en ARS) puede aplicarse sin chocar contra la
+    /// validacion de "no hay deuda en esa moneda" (INV-095), y el unico filtro que separa el caso 403 del 201
+    /// es el OWNERSHIP de la reserva destino (lo que I1 verifica).</para>
     /// </summary>
-    private static async Task<(Guid EntryOwnPid, Guid EntryAjenoPid, Guid BcOwnPid)> SeedBcAndEntryAsync(
+    private static async Task<(Guid EntryOwnPid, Guid EntryAjenoPid, Guid BcOwnPid, Guid OwnReservaPid, Guid AjenaReservaPid)> SeedBcAndEntryAsync(
         AppDbContext db, int customerId, int supplierId,
         string ownerUserId, string otherUserId, string suffix, decimal initialBalance)
     {
@@ -121,6 +133,26 @@ public class ClientCreditsControllerTests : IClassFixture<CustomWebApplicationFa
             Status = EstadoReserva.Confirmed,
         };
         db.Reservas.AddRange(ownRes, ajenaRes);
+        await db.SaveChangesAsync();
+
+        // FC4 (fix I1): un servicio confirmado en ARS por reserva => deuda exigible en ARS de 1000 cada una.
+        foreach (var res in new[] { ownRes, ajenaRes })
+        {
+            db.Servicios.Add(new ServicioReserva
+            {
+                ReservaId = res.Id,
+                ServiceType = "Hotel",
+                ProductType = "Hotel",
+                Description = "Hotel destino " + suffix,
+                ConfirmationNumber = "OK-" + res.NumeroReserva,
+                Status = "Confirmado",
+                Currency = "ARS",
+                DepartureDate = DateTime.UtcNow.AddDays(20),
+                SalePrice = 1000m,
+                NetCost = 0m,
+                CreatedAt = DateTime.UtcNow,
+            });
+        }
         await db.SaveChangesAsync();
 
         // Invoice cada una.
@@ -216,7 +248,7 @@ public class ClientCreditsControllerTests : IClassFixture<CustomWebApplicationFa
         db.ClientCreditEntries.AddRange(entryOwn, entryAjeno);
         await db.SaveChangesAsync();
 
-        return (entryOwn.PublicId, entryAjeno.PublicId, bcOwn.PublicId);
+        return (entryOwn.PublicId, entryAjeno.PublicId, bcOwn.PublicId, ownRes.PublicId, ajenaRes.PublicId);
     }
 
     private static void SetVendedorHeaders(HttpClient client, string userId)
@@ -365,5 +397,86 @@ public class ClientCreditsControllerTests : IClassFixture<CustomWebApplicationFa
         Assert.Equal(HttpStatusCode.NotFound, resp.StatusCode);
     }
 
-    private record TestSeed(string VendedorId, Guid EntryOwnPublicId, Guid EntryAjenoPublicId, Guid BcOwnPublicId);
+    // =========================================================================
+    // FC4 fix I1: ownership de la reserva DESTINO al aplicar saldo a favor.
+    // El bolsillo origen ya lo cubre RequireOwnership(ClientCreditEntry); estos tests cubren que la reserva
+    // destino (que viaja en el body) tambien respete la frontera por-reserva de Cobranzas.
+    // =========================================================================
+
+    [Fact]
+    public async Task POST_Withdraw_Applied_Vendedor_ToAjenaReserva_SameCustomer_Returns403()
+    {
+        // El Vendedor es dueño del bolsillo (entryOwn) y de su propia reserva, pero la reserva DESTINO es del
+        // MISMO cliente y a cargo de OTRO vendedor. Aunque INV-093 (mismo cliente) pasaria, el ownership de la
+        // reserva destino NO: debe rechazar con 403 (igual que el alta de pago normal en PaymentsController).
+        var seed = await SeedAsync(Guid.NewGuid().ToString("N")[..6]);
+        var client = _factory.CreateClient();
+        SetVendedorHeaders(client, seed.VendedorId);
+
+        var payload = new WithdrawClientCreditRequest(
+            Kind: WithdrawalKind.AppliedToNewBooking,
+            Amount: 500m,
+            PaymentMethodOverride: null,
+            AppliedToReservaPublicId: seed.AjenaReservaPublicId,
+            ApprovalRequestPublicId: null,
+            Reference: null);
+
+        var resp = await client.PostAsJsonAsync(
+            $"/api/client-credit-entries/{seed.EntryOwnPublicId}/withdrawals", payload);
+
+        Assert.Equal(HttpStatusCode.Forbidden, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task POST_Withdraw_Applied_Vendedor_ToOwnReserva_Returns201()
+    {
+        // Misma operacion pero la reserva destino es propia del Vendedor: debe permitir (201 Created).
+        var seed = await SeedAsync(Guid.NewGuid().ToString("N")[..6]);
+        var client = _factory.CreateClient();
+        SetVendedorHeaders(client, seed.VendedorId);
+
+        var payload = new WithdrawClientCreditRequest(
+            Kind: WithdrawalKind.AppliedToNewBooking,
+            Amount: 500m,
+            PaymentMethodOverride: null,
+            AppliedToReservaPublicId: seed.OwnReservaPublicId,
+            ApprovalRequestPublicId: null,
+            Reference: null);
+
+        var resp = await client.PostAsJsonAsync(
+            $"/api/client-credit-entries/{seed.EntryOwnPublicId}/withdrawals", payload);
+
+        Assert.Equal(HttpStatusCode.Created, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task POST_Withdraw_Applied_Admin_ToAjenaReserva_Returns201()
+    {
+        // Admin ve todas las cobranzas (bypass de ownership): puede aplicar a la reserva del otro vendedor
+        // siempre que sea del mismo cliente. Verifica que la guarda I1 NO sea un bloqueo absoluto, sino el
+        // mismo scope view_all que el resto de Cobranzas.
+        var seed = await SeedAsync(Guid.NewGuid().ToString("N")[..6]);
+        var client = _factory.CreateClient(); // Admin por default
+
+        var payload = new WithdrawClientCreditRequest(
+            Kind: WithdrawalKind.AppliedToNewBooking,
+            Amount: 500m,
+            PaymentMethodOverride: null,
+            AppliedToReservaPublicId: seed.AjenaReservaPublicId,
+            ApprovalRequestPublicId: null,
+            Reference: null);
+
+        var resp = await client.PostAsJsonAsync(
+            $"/api/client-credit-entries/{seed.EntryOwnPublicId}/withdrawals", payload);
+
+        Assert.Equal(HttpStatusCode.Created, resp.StatusCode);
+    }
+
+    private record TestSeed(
+        string VendedorId,
+        Guid EntryOwnPublicId,
+        Guid EntryAjenoPublicId,
+        Guid BcOwnPublicId,
+        Guid OwnReservaPublicId,
+        Guid AjenaReservaPublicId);
 }

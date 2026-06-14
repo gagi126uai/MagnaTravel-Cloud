@@ -144,6 +144,15 @@ public static class AuditActions
     public const string ClientRefundReversalApproved = "ClientRefundReversalApproved";
 
     /// <summary>
+    /// FC4 (2026-06-14): el saldo a favor del cliente se APLICO como pago de OTRA reserva
+    /// (kind <c>AppliedToNewBooking</c>). Se loguea ADEMAS del audit base
+    /// <see cref="ClientCreditWithdrawn"/>, del LADO de la reserva destino: deja rastro de que esa reserva
+    /// recibio plata desde un bolsillo del cliente (no fue un cobro de caja). Detalle: withdrawal, bolsillo,
+    /// cliente, reserva destino, monto y moneda.
+    /// </summary>
+    public const string ClientCreditAppliedToBooking = "ClientCreditAppliedToBooking";
+
+    /// <summary>
     /// FC1.2.3 (2026-05-18): cuando el ultimo withdraw deja el BC sin saldos
     /// pendientes (todos los entries en RemainingBalance=0), el BC pasa a
     /// <c>Closed</c> y la Reserva a <c>Cancelled</c>. El audit deja trazabilidad

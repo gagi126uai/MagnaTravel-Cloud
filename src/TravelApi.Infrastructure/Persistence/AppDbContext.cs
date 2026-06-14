@@ -594,6 +594,17 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .HasForeignKey(p => p.OriginalPaymentId)
                   .OnDelete(DeleteBehavior.SetNull);
 
+            // FC4 (saldo a favor aplicado, 2026-06-14): FK del Payment puente de aplicacion al withdrawal
+            // que lo origino. Nullable (la enorme mayoria de pagos no son puentes de aplicacion) + indice de
+            // consulta (lo busca el barrendero de reversa futura) + Restrict: NO se permite borrar un
+            // withdrawal mientras exista el puente que lo respalda (preserva la trazabilidad credito->pago).
+            entity.HasOne(p => p.AppliedFromCreditWithdrawal)
+                  .WithMany()
+                  .HasForeignKey(p => p.AppliedFromCreditWithdrawalId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(p => p.AppliedFromCreditWithdrawalId);
+
             entity.HasOne(p => p.Receipt)
                   .WithOne(r => r.Payment)
                   .HasForeignKey<PaymentReceipt>(r => r.PaymentId)

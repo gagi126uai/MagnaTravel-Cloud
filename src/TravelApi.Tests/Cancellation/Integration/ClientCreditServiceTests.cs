@@ -208,12 +208,17 @@ public sealed class ClientCreditServiceTests
     // =========================================================================
 
     [Fact]
-    public async Task Withdraw_AppliedToNewBooking_NoCreaManualCashMovement()
+    public async Task Withdraw_AppliedToNewBooking_CreaPuenteYNoManualCashMovement()
     {
+        // FC4 (2026-06-14): el credito de SeedScenarioWithCreditEntryAsync nace en ARS (refund del operador
+        // normalizado a ARS). La reserva destino debe tener deuda EXIGIBLE en ARS para que la aplicacion sea
+        // valida (regla nueva: no se aplica saldo a una reserva sin deuda en esa moneda). Le damos un servicio
+        // confirmado de 1000 ARS.
         var seed = await SeedScenarioWithCreditEntryAsync(creditAmount: 500m);
 
-        // Crear una reserva destino para el mismo customer.
+        // Crear una reserva destino COBRABLE y CON deuda para el mismo customer.
         Guid targetReservaPublicId;
+        int targetReservaId;
         await using (var setupCtx = _fixture.CreateDbContext())
         {
             var targetReserva = new Reserva
@@ -225,7 +230,24 @@ public sealed class ClientCreditServiceTests
             };
             setupCtx.Reservas.Add(targetReserva);
             await setupCtx.SaveChangesAsync();
+            targetReservaId = targetReserva.Id;
             targetReservaPublicId = targetReserva.PublicId;
+
+            setupCtx.Servicios.Add(new ServicioReserva
+            {
+                ReservaId = targetReserva.Id,
+                ServiceType = "Hotel",
+                ProductType = "Hotel",
+                Description = "Hotel destino",
+                ConfirmationNumber = "OK-DEST",
+                Status = "Confirmado",
+                Currency = "ARS",
+                DepartureDate = DateTime.UtcNow.AddDays(20),
+                SalePrice = 1000m,
+                NetCost = 0m,
+                CreatedAt = DateTime.UtcNow,
+            });
+            await setupCtx.SaveChangesAsync();
         }
 
         using var scope = _fixture.BuildServiceProvider().CreateScope();
@@ -243,15 +265,28 @@ public sealed class ClientCreditServiceTests
             userId: "user1", userName: "Cashier", ct: CancellationToken.None);
 
         await using var ctx = _fixture.CreateDbContext();
-        // Saldo decremento.
+        // Bolsillo decremento 500 -> 300.
         var entry = await ctx.ClientCreditEntries.AsNoTracking()
             .FirstAsync(e => e.PublicId == seed.EntryPublicId);
         Assert.Equal(300m, entry.RemainingBalance);
 
-        // NO se creo ManualCashMovement (lo hara el PaymentService en FC4).
+        // NO se creo ManualCashMovement (el efecto es el Payment puente).
         var movements = await ctx.ManualCashMovements.AsNoTracking()
             .CountAsync(m => m.ClientCreditWithdrawalId != null);
         Assert.Equal(0, movements);
+
+        // SI se creo el Payment puente: positivo, AffectsCash=false, atado al withdrawal, en la reserva destino.
+        var withdrawal = await ctx.ClientCreditWithdrawals.AsNoTracking().FirstAsync();
+        var bridge = await ctx.Payments.IgnoreQueryFilters().AsNoTracking()
+            .FirstAsync(p => p.AppliedFromCreditWithdrawalId == withdrawal.Id);
+        Assert.Equal(200m, bridge.Amount);
+        Assert.False(bridge.AffectsCash);
+        Assert.Equal(targetReservaId, bridge.ReservaId);
+
+        // La deuda exigible de la reserva destino bajo: 1000 - 200 = 800 (linea ARS).
+        var line = await ctx.ReservaMoneyByCurrency.AsNoTracking()
+            .FirstAsync(r => r.ReservaId == targetReservaId && r.Currency == "ARS");
+        Assert.Equal(800m, line.Balance);
     }
 
     [Fact]

@@ -34,16 +34,10 @@ public class PaymentService : IPaymentService
     private readonly IAuditService? _auditService;
 
     // Estados de Reserva considerados "cobrables" (tienen saldo que se le puede pedir al cliente).
-    // ADR-020 (2026-06-07): InManagement (En gestion) reemplaza al viejo Sold — la sena se cobra
-    // durante la gestion ("la plata viene despues, el si alcanza"). ToSettle (post-viaje) con saldo
-    // pendiente sigue siendo cobrable. Quotation/Budget/Lost NO entran (todavia no hay venta cerrada).
-    private static readonly string[] ActiveCollectionStatuses =
-    {
-        EstadoReserva.InManagement,
-        EstadoReserva.Confirmed,
-        EstadoReserva.Traveling,
-        EstadoReserva.ToSettle
-    };
+    // FC4 (2026-06-14): la lista canonica se MOVIO a EstadoReserva.ActiveCollectionStatuses (Domain) para
+    // compartirla con el saldo a favor aplicado (ClientCreditService) sin duplicarla. Este alias mantiene los
+    // call-sites de PaymentService intactos.
+    private static readonly string[] ActiveCollectionStatuses = EstadoReserva.ActiveCollectionStatuses;
 
     public PaymentService(
         AppDbContext dbContext,
@@ -235,12 +229,13 @@ public class PaymentService : IPaymentService
         var ownerScope = await GetOwnerScopeOrNullAsync(cancellationToken);
 
         var paymentsQuery = ApplyPaymentSearch(_dbContext.Payments.AsNoTracking(), query.Search);
-        // ADR-022 §4.9 (fix S1-bis): la lista global de pagos (GET /payments) proyecta a PaymentDto, que
-        // expone Notes; el Payment puente del saldo a favor lleva un GUID interno en Notes y monto negativo.
-        // Es respaldo interno, no un cobro real -> se excluye, igual que GetPaymentsForReservaAsync (:419) y
-        // GetCustomerAccountPaymentsAsync. Mismo predicado inline (IsOverpaymentBridge no se traduce a SQL).
-        paymentsQuery = paymentsQuery.Where(p => !(p.Method == OverpaymentCreditCleanup.BridgeMethod
-            && !p.AffectsCash && p.OriginalPaymentId != null));
+        // ADR-022 §4.9 (fix S1-bis) + FC4 (2026-06-14): la lista global de pagos (GET /payments) proyecta a
+        // PaymentDto, que expone Notes; los Payment puente (sobrepago Y saldo a favor aplicado) son respaldo
+        // interno, no cobros reales -> se excluyen AMBOS. Predicado UNICO centralizado en AppliedCreditBridge
+        // para no repetir las dos condiciones en cada sitio (y que no se desincronicen).
+        paymentsQuery = paymentsQuery.Where(p => !(
+            (p.Method == OverpaymentCreditCleanup.BridgeMethod && !p.AffectsCash && p.OriginalPaymentId != null)
+            || (p.Method == AppliedCreditBridge.BridgeMethod && !p.AffectsCash && p.AppliedFromCreditWithdrawalId != null)));
         if (ownerScope is not null)
         {
             paymentsQuery = paymentsQuery.Where(p => p.Reserva != null && p.Reserva.ResponsibleUserId == ownerScope);
@@ -484,7 +479,11 @@ public class PaymentService : IPaymentService
             // el puente invitaria al usuario a borrarlo. "Recaudado" se calcula sumando esta lista en el front,
             // por lo que ocultar el puente hace que muestre lo que el cliente pagó de verdad; el saldo grande de
             // la reserva se calcula aparte (server-side) y no cambia.
-            .Where(p => !(p.Method == OverpaymentCreditCleanup.BridgeMethod && !p.AffectsCash && p.OriginalPaymentId != null))
+            // FC4 (2026-06-14): excluir AMBOS puentes (sobrepago + saldo a favor aplicado). El de aplicacion
+            // es positivo, asi que sin esto aparece como un "cobro" extra en el historial de la reserva.
+            .Where(p => !(
+                (p.Method == OverpaymentCreditCleanup.BridgeMethod && !p.AffectsCash && p.OriginalPaymentId != null)
+                || (p.Method == AppliedCreditBridge.BridgeMethod && !p.AffectsCash && p.AppliedFromCreditWithdrawalId != null)))
             .OrderByDescending(p => p.PaidAt)
             .ProjectTo<PaymentDto>(_mapper.ConfigurationProvider)
             .ToListAsync(cancellationToken);
@@ -646,6 +645,14 @@ public class PaymentService : IPaymentService
 
         if (entryType != PaymentEntryTypes.Payment || payment.Amount <= 0)
             throw new InvalidOperationException("Solo los pagos positivos pueden emitir comprobante.");
+
+        // FC4 (2026-06-14): el Payment puente de un saldo a favor APLICADO es positivo (pasa el filtro de
+        // arriba) pero NO es un cobro real — es el respaldo interno de aplicar el bolsillo a esta reserva, no
+        // entro plata a caja. Emitir un recibo/comprobante de caja sobre el seria fiscalmente falso. Se
+        // bloquea explicitamente (los campos escalares del puente ya vienen cargados en este query).
+        if (AppliedCreditBridge.IsAppliedCreditBridge(payment))
+            throw new InvalidOperationException(
+                "No se puede emitir comprobante de un saldo a favor aplicado; no es un cobro real.");
 
         if (string.IsNullOrWhiteSpace(payment.EntryType))
         {
@@ -1198,6 +1205,16 @@ public class PaymentService : IPaymentService
             throw new InvalidOperationException(OverpaymentCreditCleanup.DirectBridgeMutationBlockReason);
         }
 
+        // FC4 (2026-06-14): mismo candado para el OTRO puente (saldo a favor aplicado). Editarlo a mano
+        // desincroniza el bolsillo del cliente respecto de la deuda que pago en la reserva destino.
+        if (AppliedCreditBridge.IsAppliedCreditBridge(payment))
+        {
+            _logger.LogWarning(
+                "UpdatePaymentAsync rejected (direct applied-credit-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
+                paymentId, payment.ReservaId);
+            throw new InvalidOperationException(AppliedCreditBridge.DirectBridgeMutationBlockReason);
+        }
+
         // B1.15 Fase 0' (CODE-01): inmutabilidad post-recibo / post-CAE. Editar
         // el monto/metodo/referencia de un pago con recibo emitido o ligado a
         // factura AFIP viva rompe la trazabilidad fiscal y la auditoria del
@@ -1312,6 +1329,16 @@ public class PaymentService : IPaymentService
                 "DeletePaymentAsync rejected (direct overpayment-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
                 paymentId, payment.ReservaId);
             throw new InvalidOperationException(OverpaymentCreditCleanup.DirectBridgeMutationBlockReason);
+        }
+
+        // FC4 (2026-06-14): mismo candado para el puente de saldo a favor aplicado. Borrarlo devolveria la
+        // deuda a la reserva destino mientras el bolsillo del cliente sigue descontado -> plata descuadrada.
+        if (AppliedCreditBridge.IsAppliedCreditBridge(payment))
+        {
+            _logger.LogWarning(
+                "DeletePaymentAsync rejected (direct applied-credit-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
+                paymentId, payment.ReservaId);
+            throw new InvalidOperationException(AppliedCreditBridge.DirectBridgeMutationBlockReason);
         }
 
         // C28: bloquear si tiene Receipt (Issued/Voided) o RelatedInvoiceId.

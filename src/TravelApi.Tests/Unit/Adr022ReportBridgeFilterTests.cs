@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -60,6 +61,18 @@ public class Adr022ReportBridgeFilterTests
         Method = "Transfer", EntryType = PaymentEntryTypes.CreditNoteReversal, AffectsCash = false
     };
 
+    /// <summary>
+    /// FC4 (fix I2): puente de SALDO A FAVOR APLICADO. NO mueve caja (AffectsCash=false) pero su monto es
+    /// POSITIVO (a diferencia de los otros dos puentes). Por eso, sin el filtro AffectsCash, infla "Cobros
+    /// por moneda" con un ingreso de caja que nunca entro. AppliedFromCreditWithdrawalId != null lo distingue.
+    /// </summary>
+    private static Payment AppliedCreditBridgePayment(int id, decimal amount, DateTime at) => new()
+    {
+        Id = id, ReservaId = 1, Amount = amount, Currency = "ARS", PaidAt = at, Status = "Paid",
+        Method = AppliedCreditBridge.BridgeMethod, EntryType = PaymentEntryTypes.Payment,
+        AffectsCash = false, AppliedFromCreditWithdrawalId = 1
+    };
+
     private static async Task SeedAsync(AppDbContext context, params Payment[] payments)
     {
         context.Reservas.Add(new Reserva { Id = 1, NumeroReserva = "F-1", Name = "R1", Status = EstadoReserva.Confirmed });
@@ -114,5 +127,54 @@ public class Adr022ReportBridgeFilterTests
         // completo (depende del modelo de proyeccion); con que no explote y el caso real cuente, basta el
         // contrato de exclusion del puente — verificado de fondo por las dos sumas de arriba.
         Assert.NotNull(projection);
+    }
+
+    // =========================================================================
+    // FC4 fix I2: panel "Cobros por moneda" (PorMoneda.CobrosDelMes) debe excluir AMBOS puentes.
+    // El de aplicacion (FC4) es POSITIVO, asi que sin el filtro AffectsCash inflaba el panel.
+    // =========================================================================
+
+    [Fact]
+    public async Task DashboardByCurrency_CobrosDelMes_ExcludesAppliedAndOverpaymentBridges()
+    {
+        await using var context = CreateContext();
+        var now = DateTime.UtcNow;
+        // Cobro real 150 (ARS) + puente sobrepago -50 (negativo) + puente saldo a favor aplicado +70 (positivo).
+        // Solo el cobro real debe figurar en "Cobros por moneda" para ARS.
+        await SeedAsync(context,
+            RealPayment(1, 150m, now),
+            OverpaymentBridge(2, 50m, now),
+            AppliedCreditBridgePayment(3, 70m, now));
+
+        var dashboard = await BuildReports(context).GetDashboardAsync(CancellationToken.None);
+
+        Assert.NotNull(dashboard.PorMoneda);
+        var arsCobros = dashboard.PorMoneda!.CobrosDelMes.SingleOrDefault(c => c.Currency == "ARS");
+        Assert.NotNull(arsCobros);
+        Assert.Equal(150m, arsCobros!.Amount);
+    }
+
+    [Fact]
+    public async Task DetailedSummaryByCurrency_CobrosDelPeriodo_ExcludesAppliedAndOverpaymentBridges()
+    {
+        await using var context = CreateContext();
+        var now = DateTime.UtcNow;
+        await SeedAsync(context,
+            RealPayment(1, 200m, now),
+            OverpaymentBridge(2, 40m, now),
+            AppliedCreditBridgePayment(3, 90m, now));
+
+        // El reporte detallado usa una ventana [from, to] que abarca el dia de hoy. GetDetailedReportAsync
+        // devuelve un objeto anonimo (Summary.PorMoneda), por eso accedemos al desglose por moneda con
+        // `dynamic` en lugar de un cast tipado. El panel ARS debe valer solo el cobro real (200), nunca
+        // sumando el puente positivo de saldo aplicado (90) ni restando el de sobrepago (40).
+        dynamic report = await BuildReports(context).GetDetailedReportAsync(
+            now.Date.AddDays(-1), now.Date.AddDays(1), CancellationToken.None);
+
+        DashboardByCurrencyDto porMoneda = report.Summary.PorMoneda;
+        Assert.NotNull(porMoneda);
+        var arsCobros = porMoneda.CobrosDelMes.SingleOrDefault(c => c.Currency == "ARS");
+        Assert.NotNull(arsCobros);
+        Assert.Equal(200m, arsCobros!.Amount);
     }
 }

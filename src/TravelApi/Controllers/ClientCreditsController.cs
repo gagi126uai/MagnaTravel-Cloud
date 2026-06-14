@@ -103,6 +103,16 @@ public class ClientCreditsController : ControllerBase
         {
             return NotFound();
         }
+        catch (UnauthorizedAccessException)
+        {
+            // FC4 (fix I1): el service tira esto cuando se intenta aplicar saldo (AppliedToNewBooking) a una
+            // reserva DESTINO que no esta a cargo del usuario actual (y este no ve todas las cobranzas).
+            // Mismo mapeo a 403 que PaymentsController.CreatePayment para mantener el contrato uniforme.
+            return new ObjectResult(PermissionDeniedProblemFactory.OwnershipRequired(OwnedEntity.Reserva.ToString()))
+            {
+                StatusCode = StatusCodes.Status403Forbidden
+            };
+        }
         catch (ApprovalRequiredException ex)
         {
             // ReversedToOperator requiere approval ClientRefundReversal aprobado.

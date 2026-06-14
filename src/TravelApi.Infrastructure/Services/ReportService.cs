@@ -296,9 +296,13 @@ public class ReportService : IReportService
         DateTime startOfMonth, bool canSeeCost, CancellationToken cancellationToken)
     {
         // Cobros del mes por moneda REAL del cobro.
+        // ADR-022 / FC4 (fix I2, 2026-06-14): solo pagos que MOVIERON caja (AffectsCash). Sin este filtro
+        // los Payment "puente" (AffectsCash=false) se cuelan en "Cobros por moneda": el de sobrepago
+        // ("SaldoAFavor", negativo) ensucia el total, y el de saldo a favor APLICADO (FC4, positivo) infla
+        // el panel con un ingreso de caja que nunca entro. Mismo criterio que CobrosDelMes/TotalRevenue.
         var cobros = await SumByCurrencyAsync(
             _dbContext.Payments
-                .Where(p => p.PaidAt >= startOfMonth && !p.IsDeleted)
+                .Where(p => p.PaidAt >= startOfMonth && !p.IsDeleted && p.AffectsCash)
                 .GroupBy(p => p.Currency)
                 .Select(g => new CurrencyAmount(g.Key, g.Sum(p => p.Amount))),
             cancellationToken);
@@ -523,9 +527,12 @@ public class ReportService : IReportService
     private async Task<DashboardByCurrencyDto> BuildDetailedSummaryByCurrencyAsync(
         DateTime dateFrom, DateTime dateTo, bool canSeeCost, CancellationToken cancellationToken)
     {
+        // ADR-022 / FC4 (fix I2, 2026-06-14): igual que el dashboard, solo pagos que movieron caja
+        // (AffectsCash). Excluye los puentes de sobrepago (negativo) y de saldo a favor aplicado (positivo),
+        // que existen para imputar deuda, no para mover plata. Coherente con el resto de ReportService.
         var cobros = await SumByCurrencyAsync(
             _dbContext.Payments
-                .Where(p => p.PaidAt >= dateFrom && p.PaidAt <= dateTo && !p.IsDeleted)
+                .Where(p => p.PaidAt >= dateFrom && p.PaidAt <= dateTo && !p.IsDeleted && p.AffectsCash)
                 .GroupBy(p => p.Currency)
                 .Select(g => new CurrencyAmount(g.Key, g.Sum(p => p.Amount))),
             cancellationToken);

@@ -62,13 +62,14 @@ public class MovementsService : IMovementsService
             var paymentsQuery = _context.Payments
                 .AsNoTracking()
                 .Where(p => !p.IsDeleted && p.Status != "Cancelled")
-                // ADR-022 (fix #3): el Payment "puente" de sobrepago (Method=SaldoAFavor, AffectsCash=false)
-                // NO es un movimiento de caja: solo traslada el excedente al bolsillo del cliente. No debe
-                // listarse en Movimientos como un pago negativo. Se filtra SOLO ese puente, a proposito: el
-                // puente de reversion de NC (EntryType=CreditNoteReversal, tambien AffectsCash=false) SI se
-                // sigue mostrando como su propio tipo (MovementKinds.CreditNoteReversal), comportamiento
-                // historico que esta pantalla ya tenia. Por eso filtramos por Method, no por AffectsCash.
-                .Where(p => p.Method != OverpaymentCreditCleanup.BridgeMethod);
+                // ADR-022 (fix #3) + FC4 (2026-06-14): los Payment "puente" (sobrepago Method=SaldoAFavor y
+                // saldo a favor aplicado Method=SaldoAFavorAplicado, ambos AffectsCash=false) NO son
+                // movimientos de caja: solo trasladan plata entre la reserva y el bolsillo del cliente. No
+                // deben listarse en Movimientos. Se filtran AMBOS por Method, a proposito: el puente de
+                // reversion de NC (EntryType=CreditNoteReversal, tambien AffectsCash=false) SI se sigue
+                // mostrando como su propio tipo (comportamiento historico). Por eso filtramos por Method.
+                .Where(p => p.Method != OverpaymentCreditCleanup.BridgeMethod
+                    && p.Method != AppliedCreditBridge.BridgeMethod);
 
             if (ownerScope is not null)
             {
