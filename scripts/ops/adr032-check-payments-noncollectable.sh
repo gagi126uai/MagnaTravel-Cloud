@@ -28,8 +28,12 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 if [ -f .env ]; then
+  # Usamos el lector SEGURO (mismo que deploy.sh): parsea KEY=VALUE linea por linea SIN
+  # evaluar el valor como bash. `. ./.env` directo rompe si un valor tiene caracteres
+  # especiales sin comillas (ej. ')' en una contraseña/clave) -> "syntax error near `)'".
   # shellcheck disable=SC1091
-  set -a; . ./.env; set +a
+  . scripts/ops/lib/env.sh
+  load_env_file .env
 fi
 
 : "${POSTGRES_USER:?POSTGRES_USER no definido}"
