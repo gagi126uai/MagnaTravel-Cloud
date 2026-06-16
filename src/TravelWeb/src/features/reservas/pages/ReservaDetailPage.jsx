@@ -1001,6 +1001,26 @@ export default function ReservaDetailPage() {
         <div className="p-4 sm:p-6 lg:p-8">
           {activeTab === "services" ? (
             <div className="space-y-6">
+              {/* ADR-031: en Cotizacion/Presupuesto se carga la CANTIDAD de pasajeros aca
+                  (los nombres van despues, por servicio). Sin esto el total queda en 0 y el
+                  boton "El cliente acepto" no se habilita. La solapa Pasajeros se redirige a
+                  Servicios en etapa temprana, asi que este es el lugar para cargar la cantidad. */}
+              {isEarlyStage && (
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                  <h3 className="mb-4 text-sm font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                    Pasajeros del viaje
+                  </h3>
+                  <PassengerCountsWidget
+                    key={`pax-counts-${reserva?.publicId}`}
+                    initial={{
+                      adultCount: reserva?.adultCount || 0,
+                      childCount: reserva?.childCount || 0,
+                      infantCount: reserva?.infantCount || 0,
+                    }}
+                    onSave={handleSavePassengerCounts}
+                  />
+                </div>
+              )}
               <ServiceList
                 services={allServices}
                 serviceCollectionErrors={serviceCollectionErrors}
