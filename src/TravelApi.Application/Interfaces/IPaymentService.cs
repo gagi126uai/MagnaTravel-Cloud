@@ -30,6 +30,15 @@ public interface IPaymentService
     Task<Guid> RestorePaymentAsync(string paymentPublicIdOrLegacyId, CancellationToken cancellationToken);
     Task UpdatePaymentAsync(string paymentPublicIdOrLegacyId, UpdatePaymentRequest request, CancellationToken cancellationToken);
     Task DeletePaymentAsync(string paymentPublicIdOrLegacyId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// ADR-032 (2026-06-15): anula un cobro CON RASTRO. A diferencia del DELETE libre, opera tambien en
+    /// reservas terminales (cancelada/cerrada) — es la salida valida para corregir un cobro mal cargado
+    /// cuando la reserva ya no es cobrable. Reusa el mismo mecanismo de reversa (soft-delete + contra-asiento
+    /// de caja). Mantiene los guards de puente y fiscales: un cobro con recibo/CAE vivo sigue exigiendo la
+    /// anulacion fiscal existente. <paramref name="reason"/> es opcional y queda en el audit trail.
+    /// </summary>
+    Task AnnulPaymentAsync(string paymentPublicIdOrLegacyId, string? reason, CancellationToken cancellationToken);
 }
 
 public class CreatePaymentRequest

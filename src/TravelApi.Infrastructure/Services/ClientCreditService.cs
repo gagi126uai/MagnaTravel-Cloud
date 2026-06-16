@@ -660,8 +660,15 @@ public class ClientCreditService : IClientCreditService
         }
 
         // Estado cobrable: no se aplica saldo a una reserva que no es una venta vigente (Presupuesto,
-        // Cotizacion, Perdida, Cancelada). Reusamos la lista canonica que comparte el cobro normal.
-        if (!EstadoReserva.ActiveCollectionStatuses.Contains(targetReserva.Status))
+        // Cotizacion, Perdida, Cancelada).
+        //
+        // ADR-032 (2026-06-15, fix B1): la PREGUNTA "es cobrable?" pasa a ser la fuente unica de dominio
+        // (EstadoReserva.IsCollectableStatus). Pero la RESPUESTA de FC4 se conserva tal cual: tira
+        // BusinessInvariantViolationException con invariantCode="INV-096" (NO el InvalidOperationException
+        // generico de EnsureCollectable). Esto importa porque el GlobalExceptionHandler propaga el
+        // invariantCode a la respuesta 409 y el frontend de saldo a favor depende de ese codigo. Cambiar el
+        // tipo de excepcion romperia el contrato HTTP de FC4 y el test AppliedToNonCollectibleReserva_RejectsInv096.
+        if (!EstadoReserva.IsCollectableStatus(targetReserva.Status))
         {
             throw new BusinessInvariantViolationException(
                 "No se puede aplicar un saldo a favor a una reserva que no esta en gestion de cobro " +

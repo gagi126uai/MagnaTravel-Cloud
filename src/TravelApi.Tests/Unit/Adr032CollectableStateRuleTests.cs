@@ -1,0 +1,847 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Security.Claims;
+using System.Threading;
+using System.Threading.Tasks;
+using AutoMapper;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
+using TravelApi.Application.Contracts.Reservations;
+using TravelApi.Application.DTOs;
+using TravelApi.Application.Interfaces;
+using TravelApi.Application.Mappings;
+using TravelApi.Controllers;
+using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
+using TravelApi.Infrastructure.Identity;
+using TravelApi.Infrastructure.Persistence;
+using TravelApi.Infrastructure.Reservations;
+using TravelApi.Infrastructure.Services;
+using Xunit;
+
+namespace TravelApi.Tests.Unit;
+
+/// <summary>
+/// ADR-032 (2026-06-15): regla UNICA de "estado cobrable" para los pagos del cliente.
+///
+/// <para>Cubre la decision del dueño: solo se cobra/edita/borra plata en
+/// <see cref="EstadoReserva.ActiveCollectionStatuses"/> (InManagement, Confirmed, Traveling, ToSettle);
+/// el resto (Quotation, Budget, Lost, Cancelled, Closed, PendingOperatorRefund, "Archived") queda fuera.
+/// Verifica:</para>
+/// <list type="bullet">
+///   <item>la regla pura de dominio (IsCollectableStatus / EnsureCollectable / EnsurePaymentsEditable);</item>
+///   <item>alta de cobro por los DOS caminos (PaymentService.CreatePaymentAsync y el endpoint anidado
+///         ReservaService.AddPaymentAsync) rechaza en estados no cobrables — incluido EL AGUJERO del path anidado;</item>
+///   <item>el rechazo del path anidado llega al CONTROLLER real como 409 (D2);</item>
+///   <item>FC4 (saldo a favor aplicado) sigue tirando BusinessInvariantViolationException + INV-096 (B1);</item>
+///   <item>el puente de sobrepago y el puente FC4 siguen creandose en estados cobrables;</item>
+///   <item>editar/borrar en Cancelada/Cerrada rechaza pidiendo anular (B2);</item>
+///   <item>anular en estado terminal funciona y deja rastro (soft-delete + contra-asiento).</item>
+/// </list>
+///
+/// <para><b>Nota InMemory</b>: el provider InMemory no aplica CHECK constraints ni transacciones. Estos
+/// tests verifican el COMPORTAMIENTO de la regla y los servicios; la atomicidad real se cubre en integracion.</para>
+/// </summary>
+public class Adr032CollectableStateRuleTests
+{
+    private readonly IMapper _mapper;
+    private readonly Mock<IOperationalFinanceSettingsService> _settingsMock;
+
+    public Adr032CollectableStateRuleTests()
+    {
+        _mapper = new MapperConfiguration(c => c.AddProfile<MappingProfile>()).CreateMapper();
+        _settingsMock = new Mock<IOperationalFinanceSettingsService>();
+        _settingsMock
+            .Setup(s => s.GetEntityAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OperationalFinanceSettings { EnableNewCancellationFlow = true });
+    }
+
+    private static AppDbContext CreateContext()
+    {
+        var options = new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
+        return new AppDbContext(options);
+    }
+
+    private PaymentService BuildPaymentService(AppDbContext context)
+        => new(
+            context,
+            new EntityReferenceResolver(context),
+            _mapper,
+            _settingsMock.Object,
+            NullLogger<PaymentService>.Instance);
+
+    private ReservaService BuildReservaService(AppDbContext context)
+        => new(
+            context,
+            _mapper,
+            _settingsMock.Object,
+            BuildUserManager(),
+            NullLogger<ReservaService>.Instance,
+            permissionResolver: null,
+            httpContextAccessor: null);
+
+    private static UserManager<ApplicationUser> BuildUserManager()
+    {
+        var store = new Mock<IUserStore<ApplicationUser>>();
+        store.Setup(s => s.FindByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+             .ReturnsAsync((ApplicationUser?)null);
+        return new UserManager<ApplicationUser>(
+            store.Object, null!, null!,
+            Array.Empty<IUserValidator<ApplicationUser>>(),
+            Array.Empty<IPasswordValidator<ApplicationUser>>(),
+            null!, null!, null!, null!);
+    }
+
+    /// <summary>
+    /// Crea una reserva con UN servicio confirmado que sustenta su deuda exigible (ConfirmedSale).
+    /// El estado se pasa por parametro para barrer cobrables y no-cobrables.
+    /// </summary>
+    private static async Task<Reserva> SeedReservaAsync(AppDbContext context, string status, decimal salePrice = 1000m)
+    {
+        var customer = new Customer { FullName = "Cliente ADR-032", TaxCondition = "Consumidor Final", IsActive = true };
+        context.Customers.Add(customer);
+        await context.SaveChangesAsync();
+
+        var reserva = new Reserva
+        {
+            NumeroReserva = "R-032",
+            Name = "Reserva ADR-032",
+            Status = status,
+            PayerId = customer.Id,
+            TotalSale = salePrice,
+            ConfirmedSale = salePrice,
+            Balance = salePrice,
+        };
+        context.Reservas.Add(reserva);
+        await context.SaveChangesAsync();
+
+        context.Servicios.Add(new ServicioReserva
+        {
+            ReservaId = reserva.Id,
+            ServiceType = "Hotel",
+            ProductType = "Hotel",
+            Description = "Hotel sustento",
+            ConfirmationNumber = "OK-1",
+            Status = "Confirmado",
+            Currency = Monedas.ARS,
+            DepartureDate = DateTime.UtcNow.AddDays(20),
+            SalePrice = salePrice,
+            NetCost = 0m,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await context.SaveChangesAsync();
+
+        return reserva;
+    }
+
+    private static readonly string[] CollectableStatuses =
+    {
+        EstadoReserva.InManagement, EstadoReserva.Confirmed,
+        EstadoReserva.Traveling, EstadoReserva.ToSettle,
+    };
+
+    private static readonly string[] NonCollectableStatuses =
+    {
+        EstadoReserva.Quotation, EstadoReserva.Budget, EstadoReserva.Lost,
+        EstadoReserva.Cancelled, EstadoReserva.Closed, EstadoReserva.PendingOperatorRefund,
+        "Archived",
+    };
+
+    // =====================================================================================================
+    // Regla pura de dominio.
+    // =====================================================================================================
+
+    [Theory]
+    [InlineData("InManagement")]
+    [InlineData("Confirmed")]
+    [InlineData("Traveling")]
+    [InlineData("ToSettle")]
+    [InlineData("inmanagement")] // case-insensitive
+    public void IsCollectableStatus_ReturnsTrue_ForCollectable(string status)
+        => Assert.True(EstadoReserva.IsCollectableStatus(status));
+
+    [Theory]
+    [InlineData("Quotation")]
+    [InlineData("Budget")]
+    [InlineData("Lost")]
+    [InlineData("Cancelled")]
+    [InlineData("Closed")]
+    [InlineData("PendingOperatorRefund")]
+    [InlineData("Archived")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void IsCollectableStatus_ReturnsFalse_ForNonCollectable(string? status)
+        => Assert.False(EstadoReserva.IsCollectableStatus(status));
+
+    [Fact]
+    public void EnsureCollectable_Throws_OnTerminal()
+    {
+        var reserva = new Reserva { Status = EstadoReserva.Cancelled };
+        var ex = Assert.Throws<InvalidOperationException>(() => reserva.EnsureCollectable());
+        Assert.Equal(Reserva.NotCollectableForChargeMessage, ex.Message);
+    }
+
+    [Fact]
+    public void EnsurePaymentsEditable_Throws_OnTerminal_WithEditMessage()
+    {
+        var reserva = new Reserva { Status = EstadoReserva.Closed };
+        var ex = Assert.Throws<InvalidOperationException>(() => reserva.EnsurePaymentsEditable());
+        Assert.Equal(Reserva.NotCollectableForEditMessage, ex.Message);
+    }
+
+    // =====================================================================================================
+    // ALTA — Camino A (PaymentService.CreatePaymentAsync).
+    // =====================================================================================================
+
+    [Theory]
+    [InlineData("InManagement")]
+    [InlineData("Confirmed")]
+    [InlineData("Traveling")]
+    [InlineData("ToSettle")]
+    public async Task CreatePayment_OnCollectable_Succeeds(string status)
+    {
+        await using var context = CreateContext();
+        var reserva = await SeedReservaAsync(context, status);
+        var service = BuildPaymentService(context);
+
+        var dto = await service.CreatePaymentAsync(
+            new CreatePaymentRequest { ReservaId = reserva.PublicId.ToString(), Amount = 300m, Method = "Transfer" },
+            CancellationToken.None);
+
+        Assert.Equal(300m, dto.Amount);
+    }
+
+    [Theory]
+    [InlineData("Quotation")]
+    [InlineData("Budget")]
+    [InlineData("Lost")]
+    [InlineData("Cancelled")]
+    [InlineData("Closed")]
+    [InlineData("PendingOperatorRefund")]
+    [InlineData("Archived")]
+    public async Task CreatePayment_OnNonCollectable_Rejects(string status)
+    {
+        await using var context = CreateContext();
+        var reserva = await SeedReservaAsync(context, status);
+        var service = BuildPaymentService(context);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.CreatePaymentAsync(
+                new CreatePaymentRequest { ReservaId = reserva.PublicId.ToString(), Amount = 300m, Method = "Transfer" },
+                CancellationToken.None));
+
+        // No quedo ningun cobro vivo.
+        Assert.Equal(0, await context.Payments.CountAsync(p => !p.IsDeleted));
+    }
+
+    // =====================================================================================================
+    // ALTA — Camino B (endpoint anidado, ReservaService.AddPaymentAsync) — EL AGUJERO.
+    // =====================================================================================================
+
+    [Theory]
+    [InlineData("InManagement")]
+    [InlineData("Confirmed")]
+    [InlineData("Traveling")]
+    [InlineData("ToSettle")]
+    public async Task NestedAddPayment_OnCollectable_Succeeds(string status)
+    {
+        await using var context = CreateContext();
+        var reserva = await SeedReservaAsync(context, status);
+        var service = BuildReservaService(context);
+
+        var dto = await service.AddPaymentAsync(reserva.Id, new Payment { Amount = 250m, Method = "Cash" });
+
+        Assert.Equal(250m, dto.Amount);
+    }
+
+    [Theory]
+    [InlineData("Quotation")]
+    [InlineData("Budget")]
+    [InlineData("Lost")]
+    [InlineData("Cancelled")]
+    [InlineData("Closed")]
+    [InlineData("PendingOperatorRefund")]
+    [InlineData("Archived")]
+    public async Task NestedAddPayment_OnNonCollectable_Rejects(string status)
+    {
+        await using var context = CreateContext();
+        var reserva = await SeedReservaAsync(context, status);
+        var service = BuildReservaService(context);
+
+        // Antes de ADR-032 este path NO miraba el estado: cobraba en Cancelada/Perdida. Ahora rechaza.
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.AddPaymentAsync(reserva.Id, new Payment { Amount = 250m, Method = "Cash" }));
+
+        Assert.Equal(0, await context.Payments.CountAsync(p => !p.IsDeleted));
+    }
+
+    // =====================================================================================================
+    // D2 — el rechazo del endpoint anidado llega al CONTROLLER real como 409 Conflict.
+    // =====================================================================================================
+
+    [Fact]
+    public async Task NestedAddPayment_OnCancelled_ThroughController_Returns409()
+    {
+        await using var context = CreateContext();
+        var reserva = await SeedReservaAsync(context, EstadoReserva.Cancelled);
+        var service = BuildReservaService(context);
+
+        var controller = new ReservasController(
+            service,
+            Mock.Of<IVoucherService>(),
+            Mock.Of<ITimelineService>(),
+            NullLogger<ReservasController>.Instance);
+
+        var result = await controller.AddPayment(
+            reserva.PublicId.ToString(),
+            new ReservationPaymentUpsertRequest(
+                Amount: 100m,
+                PaidAt: DateTime.UtcNow,
+                Method: "Cash",
+                Reference: null,
+                Notes: null),
+            CancellationToken.None);
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result);
+        Assert.Equal(StatusCodes.Status409Conflict, conflict.StatusCode);
+    }
+
+    // =====================================================================================================
+    // B1 — FC4 (saldo a favor aplicado) conserva BusinessInvariantViolationException + INV-096.
+    // =====================================================================================================
+
+    [Fact]
+    public async Task Fc4_AppliedToNonCollectable_StillThrowsInv096_NotGenericInvalidOperation()
+    {
+        await using var context = CreateContext();
+        var service = BuildClientCreditService(context);
+
+        var customer = new Customer { FullName = "Cliente FC4", TaxCondition = "Consumidor Final", IsActive = true };
+        context.Customers.Add(customer);
+        await context.SaveChangesAsync();
+
+        var entry = new ClientCreditEntry
+        {
+            CustomerId = customer.Id,
+            Currency = Monedas.ARS,
+            CreditedAmount = 500m,
+            RemainingBalance = 500m,
+            CreatedAt = DateTime.UtcNow,
+            SourcePaymentId = 999, // origen sobrepago
+        };
+        context.ClientCreditEntries.Add(entry);
+
+        var target = await SeedReservaAsync(context, EstadoReserva.Budget); // destino NO cobrable
+        target.PayerId = customer.Id;
+        await context.SaveChangesAsync();
+
+        var request = new WithdrawClientCreditRequest(
+            Kind: WithdrawalKind.AppliedToNewBooking,
+            Amount: 100m,
+            PaymentMethodOverride: null,
+            AppliedToReservaPublicId: target.PublicId,
+            ApprovalRequestPublicId: null,
+            Reference: null);
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            service.WithdrawAsync(entry.PublicId, request, userId: "user1", userName: null, ct: CancellationToken.None));
+
+        Assert.Equal("INV-096", ex.InvariantCode);
+    }
+
+    // =====================================================================================================
+    // Puentes: siguen creandose en estados cobrables (no se rompen).
+    // =====================================================================================================
+
+    [Fact]
+    public async Task OverpaymentBridge_OnCollectable_StillCreatesClientCredit()
+    {
+        await using var context = CreateContext();
+        var reserva = await SeedReservaAsync(context, EstadoReserva.Confirmed, salePrice: 1000m);
+        var service = BuildPaymentService(context);
+
+        // Cobro que sobrepaga (1500 > 1000) en una reserva cobrable -> debe generar saldo a favor.
+        await service.CreatePaymentAsync(
+            new CreatePaymentRequest { ReservaId = reserva.PublicId.ToString(), Amount = 1500m, Method = "Transfer" },
+            CancellationToken.None);
+
+        var credit = await context.ClientCreditEntries.AsNoTracking().FirstOrDefaultAsync(c => c.SourceReservaId == reserva.Id);
+        Assert.NotNull(credit);
+        Assert.Equal(500m, credit!.CreditedAmount);
+    }
+
+    [Fact]
+    public async Task Fc4Bridge_OnCollectableTarget_StillCreatesBridgePayment()
+    {
+        await using var context = CreateContext();
+        var service = BuildClientCreditService(context);
+
+        var customer = new Customer { FullName = "Cliente FC4 OK", TaxCondition = "Consumidor Final", IsActive = true };
+        context.Customers.Add(customer);
+        await context.SaveChangesAsync();
+
+        var entry = new ClientCreditEntry
+        {
+            CustomerId = customer.Id,
+            Currency = Monedas.ARS,
+            CreditedAmount = 500m,
+            RemainingBalance = 500m,
+            CreatedAt = DateTime.UtcNow,
+            SourcePaymentId = 999,
+        };
+        context.ClientCreditEntries.Add(entry);
+
+        var target = await SeedReservaAsync(context, EstadoReserva.Confirmed); // destino cobrable
+        target.PayerId = customer.Id;
+        await context.SaveChangesAsync();
+
+        var request = new WithdrawClientCreditRequest(
+            Kind: WithdrawalKind.AppliedToNewBooking,
+            Amount: 200m,
+            PaymentMethodOverride: null,
+            AppliedToReservaPublicId: target.PublicId,
+            ApprovalRequestPublicId: null,
+            Reference: null);
+
+        await service.WithdrawAsync(entry.PublicId, request, userId: "user1", userName: "Cajero", ct: CancellationToken.None);
+
+        var withdrawal = await context.ClientCreditWithdrawals.AsNoTracking().FirstAsync();
+        var bridge = await context.Payments.IgnoreQueryFilters().AsNoTracking()
+            .FirstAsync(p => p.AppliedFromCreditWithdrawalId == withdrawal.Id);
+        Assert.Equal(200m, bridge.Amount);
+        Assert.False(bridge.AffectsCash);
+        Assert.Equal(target.Id, bridge.ReservaId);
+    }
+
+    // =====================================================================================================
+    // B2 — editar/borrar en terminal rechaza; anular en terminal funciona y deja rastro.
+    // =====================================================================================================
+
+    [Fact]
+    public async Task UpdatePayment_OnTerminal_Rejects()
+    {
+        await using var context = CreateContext();
+        // Creamos el cobro mientras la reserva es cobrable, luego la pasamos a terminal.
+        var reserva = await SeedReservaAsync(context, EstadoReserva.Confirmed);
+        var paymentService = BuildPaymentService(context);
+        var p = await paymentService.CreatePaymentAsync(
+            new CreatePaymentRequest { ReservaId = reserva.PublicId.ToString(), Amount = 300m, Method = "Transfer" },
+            CancellationToken.None);
+
+        await MoveReservaToStatusAsync(context, reserva.Id, EstadoReserva.Cancelled);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            paymentService.UpdatePaymentAsync(
+                p.PublicId.ToString(),
+                new UpdatePaymentRequest { Amount = 400m, Method = "Cash" },
+                CancellationToken.None));
+        Assert.Equal(Reserva.NotCollectableForEditMessage, ex.Message);
+    }
+
+    [Fact]
+    public async Task DeletePayment_OnTerminal_Rejects_AskingForAnnul()
+    {
+        await using var context = CreateContext();
+        var reserva = await SeedReservaAsync(context, EstadoReserva.Confirmed);
+        var paymentService = BuildPaymentService(context);
+        var p = await paymentService.CreatePaymentAsync(
+            new CreatePaymentRequest { ReservaId = reserva.PublicId.ToString(), Amount = 300m, Method = "Transfer" },
+            CancellationToken.None);
+
+        await MoveReservaToStatusAsync(context, reserva.Id, EstadoReserva.Closed);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            paymentService.DeletePaymentAsync(p.PublicId.ToString(), CancellationToken.None));
+        Assert.Equal(Reserva.NotCollectableForEditMessage, ex.Message);
+
+        var payment = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(x => x.PublicId == p.PublicId);
+        Assert.False(payment.IsDeleted); // no se borro
+    }
+
+    [Fact]
+    public async Task NestedDeletePayment_OnTerminal_Rejects()
+    {
+        await using var context = CreateContext();
+        var reserva = await SeedReservaAsync(context, EstadoReserva.Confirmed);
+        var reservaService = BuildReservaService(context);
+        var p = await reservaService.AddPaymentAsync(reserva.Id, new Payment { Amount = 300m, Method = "Cash" });
+        var paymentId = await context.Payments.Where(x => x.PublicId == p.PublicId).Select(x => x.Id).FirstAsync();
+
+        await MoveReservaToStatusAsync(context, reserva.Id, EstadoReserva.Cancelled);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            reservaService.DeletePaymentAsync(reserva.Id, paymentId));
+        Assert.Equal(Reserva.NotCollectableForEditMessage, ex.Message);
+    }
+
+    [Fact]
+    public async Task AnnulPayment_OnTerminal_SoftDeletes_AndReversesLedger()
+    {
+        await using var context = CreateContext();
+        var reserva = await SeedReservaAsync(context, EstadoReserva.Confirmed);
+        var paymentService = BuildPaymentService(context);
+        var p = await paymentService.CreatePaymentAsync(
+            new CreatePaymentRequest { ReservaId = reserva.PublicId.ToString(), Amount = 300m, Method = "Transfer" },
+            CancellationToken.None);
+
+        // El alta creo un asiento de caja vigente.
+        var liveBefore = await context.CashLedgerEntries.AsNoTracking()
+            .CountAsync(e => !e.IsReversal && !e.IsReversed);
+        Assert.Equal(1, liveBefore);
+
+        await MoveReservaToStatusAsync(context, reserva.Id, EstadoReserva.Cancelled);
+
+        // Anular SI funciona en terminal (a diferencia de DELETE/PUT).
+        await paymentService.AnnulPaymentAsync(p.PublicId.ToString(), reason: "cobro mal cargado", CancellationToken.None);
+
+        var payment = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(x => x.PublicId == p.PublicId);
+        Assert.True(payment.IsDeleted);
+        Assert.NotNull(payment.DeletedAt);
+
+        // El asiento original quedo revertido (rastro) y se inserto su contra-asiento.
+        var liveAfter = await context.CashLedgerEntries.AsNoTracking()
+            .CountAsync(e => !e.IsReversal && !e.IsReversed);
+        Assert.Equal(0, liveAfter);
+        var reversal = await context.CashLedgerEntries.AsNoTracking().CountAsync(e => e.IsReversal);
+        Assert.Equal(1, reversal);
+    }
+
+    [Fact]
+    public async Task AnnulPayment_OnCollectable_AlsoWorks()
+    {
+        // Anular tambien debe poder usarse en estados cobrables (es la operacion de reversa).
+        await using var context = CreateContext();
+        var reserva = await SeedReservaAsync(context, EstadoReserva.Confirmed);
+        var paymentService = BuildPaymentService(context);
+        var p = await paymentService.CreatePaymentAsync(
+            new CreatePaymentRequest { ReservaId = reserva.PublicId.ToString(), Amount = 300m, Method = "Transfer" },
+            CancellationToken.None);
+
+        await paymentService.AnnulPaymentAsync(p.PublicId.ToString(), reason: null, CancellationToken.None);
+
+        var payment = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(x => x.PublicId == p.PublicId);
+        Assert.True(payment.IsDeleted);
+    }
+
+    // =====================================================================================================
+    // ADR-032 (review) — el ANNUL NO exime el guard FISCAL, solo el de estado.
+    // =====================================================================================================
+
+    [Fact]
+    public async Task AnnulPayment_WithIssuedReceipt_StillBlockedByFiscalGuard_EvenOnTerminal()
+    {
+        // Un cobro con recibo emitido (Issued) sigue bloqueado al anular, AUNQUE la reserva sea terminal.
+        // El annul exime el gate de ESTADO, pero NO el guard fiscal: el camino correcto es /receipt/void.
+        await using var context = CreateContext();
+        var reserva = await SeedReservaAsync(context, EstadoReserva.Confirmed);
+        var paymentService = BuildPaymentService(context);
+        var p = await paymentService.CreatePaymentAsync(
+            new CreatePaymentRequest { ReservaId = reserva.PublicId.ToString(), Amount = 300m, Method = "Transfer" },
+            CancellationToken.None);
+
+        // Emitir el recibo y dejar la reserva en terminal.
+        await paymentService.IssueReceiptAsync(p.PublicId.ToString(), CancellationToken.None);
+        await MoveReservaToStatusAsync(context, reserva.Id, EstadoReserva.Cancelled);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            paymentService.AnnulPaymentAsync(p.PublicId.ToString(), reason: "intento", CancellationToken.None));
+        Assert.Contains("comprobante vigente", ex.Message);
+
+        // El cobro sigue vivo: el guard fiscal corto la anulacion.
+        var payment = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(x => x.PublicId == p.PublicId);
+        Assert.False(payment.IsDeleted);
+    }
+
+    [Fact]
+    public async Task AnnulPayment_LinkedToLiveInvoice_StillBlockedByFiscalGuard()
+    {
+        // Un cobro vinculado a una factura (RelatedInvoiceId) sigue bloqueado al anular: hay que generar una NC.
+        await using var context = CreateContext();
+        var reserva = await SeedReservaAsync(context, EstadoReserva.Confirmed);
+        var paymentService = BuildPaymentService(context);
+        var p = await paymentService.CreatePaymentAsync(
+            new CreatePaymentRequest { ReservaId = reserva.PublicId.ToString(), Amount = 300m, Method = "Transfer" },
+            CancellationToken.None);
+
+        // Vincular el cobro a una factura viva (RelatedInvoiceId es el FK que mira el guard fiscal).
+        var invoice = new Invoice
+        {
+            ReservaId = reserva.Id,
+            TipoComprobante = 11,
+            ImporteTotal = 300m,
+            NumeroComprobante = 1,
+            CreatedAt = DateTime.UtcNow,
+        };
+        context.Invoices.Add(invoice);
+        await context.SaveChangesAsync();
+
+        var paymentEntity = await context.Payments.IgnoreQueryFilters().FirstAsync(x => x.PublicId == p.PublicId);
+        paymentEntity.RelatedInvoiceId = invoice.Id;
+        await context.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            paymentService.AnnulPaymentAsync(p.PublicId.ToString(), reason: "intento", CancellationToken.None));
+        Assert.Contains("vinculado a una factura", ex.Message);
+
+        var afterPayment = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(x => x.PublicId == p.PublicId);
+        Assert.False(afterPayment.IsDeleted);
+    }
+
+    // =====================================================================================================
+    // ADR-032 (review) — anular un PUENTE (sobrepago / FC4) se rechaza incluso por la ruta annul.
+    // =====================================================================================================
+
+    [Fact]
+    public async Task AnnulPayment_OnOverpaymentBridge_RejectsByEnsureNotBridge()
+    {
+        await using var context = CreateContext();
+        var reserva = await SeedReservaAsync(context, EstadoReserva.Confirmed);
+        // Firma exacta del puente de sobrepago: Method=SaldoAFavor + AffectsCash=false + OriginalPaymentId != null.
+        var bridge = new Payment
+        {
+            ReservaId = reserva.Id,
+            Amount = -200m,
+            Method = "SaldoAFavor",
+            AffectsCash = false,
+            OriginalPaymentId = 12345,
+            Status = "Paid",
+            EntryType = PaymentEntryTypes.Payment,
+            PaidAt = DateTime.UtcNow,
+        };
+        context.Payments.Add(bridge);
+        await context.SaveChangesAsync();
+
+        var paymentService = BuildPaymentService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            paymentService.AnnulPaymentAsync(bridge.PublicId.ToString(), reason: null, CancellationToken.None));
+        Assert.Equal(OverpaymentCreditCleanup.DirectBridgeMutationBlockReason, ex.Message);
+
+        var after = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(x => x.PublicId == bridge.PublicId);
+        Assert.False(after.IsDeleted);
+    }
+
+    [Fact]
+    public async Task AnnulPayment_OnAppliedCreditBridge_RejectsByEnsureNotBridge()
+    {
+        await using var context = CreateContext();
+        var reserva = await SeedReservaAsync(context, EstadoReserva.Confirmed);
+        // Firma exacta del puente FC4: Method=SaldoAFavorAplicado + AffectsCash=false + AppliedFromCreditWithdrawalId != null.
+        var bridge = new Payment
+        {
+            ReservaId = reserva.Id,
+            Amount = 200m,
+            Method = "SaldoAFavorAplicado",
+            AffectsCash = false,
+            AppliedFromCreditWithdrawalId = 54321,
+            Status = "Paid",
+            EntryType = PaymentEntryTypes.Payment,
+            PaidAt = DateTime.UtcNow,
+        };
+        context.Payments.Add(bridge);
+        await context.SaveChangesAsync();
+
+        var paymentService = BuildPaymentService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            paymentService.AnnulPaymentAsync(bridge.PublicId.ToString(), reason: null, CancellationToken.None));
+        Assert.Equal(AppliedCreditBridge.DirectBridgeMutationBlockReason, ex.Message);
+
+        var after = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(x => x.PublicId == bridge.PublicId);
+        Assert.False(after.IsDeleted);
+    }
+
+    // =====================================================================================================
+    // ADR-032 (review) — anti doble-anulacion. El guard EnsureNotAlreadyAnnulled corta sobre un cobro YA
+    // soft-deleted (FindAsync ignora el filtro global !IsDeleted, por eso el guard existe).
+    //
+    // NOTA (verificada en codigo): por la RUTA de public-id, el resolver de ids
+    // (EntityReferenceResolver.ResolveRequiredIdAsync) consulta Set<Payment>() SIN IgnoreQueryFilters, asi
+    // que el filtro global !IsDeleted ya esconde el cobro anulado -> la segunda anulacion NO llega al guard,
+    // sale antes como KeyNotFoundException. El efecto de negocio buscado igual se cumple: la segunda
+    // anulacion NO duplica contra-asiento ni evento de auditoria. El guard queda como defensa en profundidad
+    // para cualquier caller que cargue el cobro saltando el filtro (p.ej. overloads por id interno).
+    // =====================================================================================================
+
+    [Fact]
+    public async Task AnnulPayment_AlreadyAnnulled_DoesNotDuplicateLedgerOrAudit()
+    {
+        await using var context = CreateContext();
+        var auditMock = new Mock<IAuditService>();
+        var reserva = await SeedReservaAsync(context, EstadoReserva.Confirmed);
+        var paymentService = BuildPaymentServiceWithAudit(context, auditMock.Object);
+        var p = await paymentService.CreatePaymentAsync(
+            new CreatePaymentRequest { ReservaId = reserva.PublicId.ToString(), Amount = 300m, Method = "Transfer" },
+            CancellationToken.None);
+
+        // Primera anulacion: OK. Deja un contra-asiento y un evento de auditoria.
+        await paymentService.AnnulPaymentAsync(p.PublicId.ToString(), reason: "primera", CancellationToken.None);
+
+        var reversalsAfterFirst = await context.CashLedgerEntries.AsNoTracking().CountAsync(e => e.IsReversal);
+        Assert.Equal(1, reversalsAfterFirst);
+        auditMock.Verify(a => a.LogBusinessEventAsync(
+            "PaymentAnnulled", "Payment", It.IsAny<string>(), It.IsAny<string?>(),
+            It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+
+        // Segunda anulacion sobre el MISMO cobro (ya soft-deleted): el cobro ya no es resoluble por public-id
+        // (filtro global) -> KeyNotFoundException. Lo importante: NO vuelve a procesar.
+        await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+            paymentService.AnnulPaymentAsync(p.PublicId.ToString(), reason: "segunda", CancellationToken.None));
+
+        // No se duplico el contra-asiento ni el evento de auditoria.
+        var reversalsAfterSecond = await context.CashLedgerEntries.AsNoTracking().CountAsync(e => e.IsReversal);
+        Assert.Equal(1, reversalsAfterSecond);
+        auditMock.Verify(a => a.LogBusinessEventAsync(
+            "PaymentAnnulled", "Payment", It.IsAny<string>(), It.IsAny<string?>(),
+            It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task EnsureNotAlreadyAnnulled_GuardCutsSoftDeletedPayment_WithStableMessage()
+    {
+        // Test directo del guard: cuando un caller carga un cobro ya soft-deleted (saltando el filtro, como
+        // hace FindAsync), el DELETE/ANNUL deben cortar con "El cobro ya está anulado." en vez de re-procesar.
+        // Se invoca el helper privado por reflexion para no depender de un caller que ya esconde el cobro.
+        await using var context = CreateContext();
+        var reserva = await SeedReservaAsync(context, EstadoReserva.Confirmed);
+        var paymentService = BuildPaymentService(context);
+        var p = await paymentService.CreatePaymentAsync(
+            new CreatePaymentRequest { ReservaId = reserva.PublicId.ToString(), Amount = 300m, Method = "Transfer" },
+            CancellationToken.None);
+
+        var payment = await context.Payments.IgnoreQueryFilters().FirstAsync(x => x.PublicId == p.PublicId);
+        payment.IsDeleted = true; // simula un cobro ya anulado
+
+        var guard = typeof(PaymentService).GetMethod(
+            "EnsureNotAlreadyAnnulled",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+
+        var thrown = Assert.Throws<System.Reflection.TargetInvocationException>(
+            () => guard.Invoke(null, new object[] { payment }));
+        var inner = Assert.IsType<InvalidOperationException>(thrown.InnerException);
+        Assert.Equal("El cobro ya está anulado.", inner.Message);
+    }
+
+    [Fact]
+    public async Task AnnulPayment_AuditDetails_IncludeAmountAndCurrency()
+    {
+        // El rastro de PaymentAnnulled lleva el delta economico (monto + moneda), ademas del motivo.
+        await using var context = CreateContext();
+        var auditMock = new Mock<IAuditService>();
+        string? capturedDetails = null;
+        auditMock
+            .Setup(a => a.LogBusinessEventAsync(
+                "PaymentAnnulled", "Payment", It.IsAny<string>(), It.IsAny<string?>(),
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, string, string?, string, string?, CancellationToken>(
+                (_, _, _, details, _, _, _) => capturedDetails = details)
+            .Returns(Task.CompletedTask);
+
+        var reserva = await SeedReservaAsync(context, EstadoReserva.Confirmed);
+        var paymentService = BuildPaymentServiceWithAudit(context, auditMock.Object);
+        var p = await paymentService.CreatePaymentAsync(
+            new CreatePaymentRequest { ReservaId = reserva.PublicId.ToString(), Amount = 300m, Method = "Transfer", Currency = Monedas.ARS },
+            CancellationToken.None);
+
+        await paymentService.AnnulPaymentAsync(p.PublicId.ToString(), reason: "cobro mal cargado", CancellationToken.None);
+
+        Assert.NotNull(capturedDetails);
+        Assert.Contains("300", capturedDetails!);
+        Assert.Contains(Monedas.ARS, capturedDetails!);
+        Assert.Contains("cobro mal cargado", capturedDetails!);
+    }
+
+    // =====================================================================================================
+    // ADR-032 (review) — el controller AnnulPayment mapea InvalidOperationException->409 y KeyNotFound->404.
+    // =====================================================================================================
+
+    [Fact]
+    public async Task AnnulPaymentController_OnBridge_MapsInvalidOperationTo409()
+    {
+        // El controller mapea InvalidOperationException (aca: intentar anular un puente) -> 409 Conflict.
+        await using var context = CreateContext();
+        var reserva = await SeedReservaAsync(context, EstadoReserva.Confirmed);
+        var bridge = new Payment
+        {
+            ReservaId = reserva.Id,
+            Amount = -200m,
+            Method = "SaldoAFavor",
+            AffectsCash = false,
+            OriginalPaymentId = 12345,
+            Status = "Paid",
+            EntryType = PaymentEntryTypes.Payment,
+            PaidAt = DateTime.UtcNow,
+        };
+        context.Payments.Add(bridge);
+        await context.SaveChangesAsync();
+
+        var paymentService = BuildPaymentService(context);
+        var controller = new PaymentsController(paymentService);
+
+        var result = await controller.AnnulPayment(
+            bridge.PublicId.ToString(), new AnnulPaymentRequest("intento"), CancellationToken.None);
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result);
+        Assert.Equal(StatusCodes.Status409Conflict, conflict.StatusCode);
+    }
+
+    [Fact]
+    public async Task AnnulPaymentController_OnUnknownPayment_Returns404()
+    {
+        // Tanto un cobro inexistente como uno YA anulado (escondido por el filtro global) salen como 404.
+        await using var context = CreateContext();
+        var paymentService = BuildPaymentService(context);
+        var controller = new PaymentsController(paymentService);
+
+        var result = await controller.AnnulPayment(
+            Guid.NewGuid().ToString(), new AnnulPaymentRequest(null), CancellationToken.None);
+
+        Assert.IsType<NotFoundResult>(result);
+    }
+
+    // =====================================================================================================
+    // Helpers
+    // =====================================================================================================
+
+    private PaymentService BuildPaymentServiceWithAudit(AppDbContext context, IAuditService auditService)
+        => new(
+            context,
+            new EntityReferenceResolver(context),
+            _mapper,
+            _settingsMock.Object,
+            NullLogger<PaymentService>.Instance,
+            permissionResolver: null,
+            httpContextAccessor: null,
+            approvalService: null,
+            approvalPolicyService: null,
+            auditService: auditService);
+
+    private ClientCreditService BuildClientCreditService(AppDbContext context)
+        => new(
+            context,
+            Mock.Of<IBookingCancellationService>(),
+            Mock.Of<IApprovalRequestService>(),
+            Mock.Of<IAuditService>(),
+            _settingsMock.Object,
+            NullLogger<ClientCreditService>.Instance);
+
+    /// <summary>
+    /// Cambia el Status de la reserva directamente en BD (sin pasar por el motor de transiciones), para
+    /// poner a la reserva en un estado terminal y probar los gates de editar/borrar/anular sobre un cobro
+    /// que ya existia. Refresca el contexto rastreado para que los servicios lean el estado nuevo.
+    /// </summary>
+    private static async Task MoveReservaToStatusAsync(AppDbContext context, int reservaId, string status)
+    {
+        var reserva = await context.Reservas.FirstAsync(r => r.Id == reservaId);
+        reserva.Status = status;
+        await context.SaveChangesAsync();
+    }
+}

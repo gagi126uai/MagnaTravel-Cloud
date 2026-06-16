@@ -257,6 +257,45 @@ public class PaymentsController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// ADR-032 (2026-06-15, B2 Opcion 1): ANULAR un cobro CON RASTRO. A diferencia del DELETE libre, esta
+    /// ruta SI permite anular cobros de reservas terminales (cancelada/cerrada) — es la salida valida para
+    /// corregir un cobro mal cargado cuando la reserva ya no es cobrable. Reusa el mecanismo de reversa
+    /// existente (soft-delete + contra-asiento de caja). Mantiene los guards de puente y fiscales: un cobro
+    /// con recibo/CAE vivo sigue exigiendo la anulacion fiscal (/receipt/void, /invoices/{id}/annul).
+    ///
+    /// <para>Permiso: igual que el DELETE (Admin role + cobranzas.edit). Anular plata es accion sensible.</para>
+    /// </summary>
+    [HttpPost("{publicIdOrLegacyId}/annul")]
+    [RequirePermission(Permissions.CobranzasEdit)]
+    [RequireOwnership(OwnedEntity.Payment, "publicIdOrLegacyId", bypassPermission: Permissions.CobranzasViewAll)]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult> AnnulPayment(
+        string publicIdOrLegacyId,
+        [FromBody] AnnulPaymentRequest? request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _paymentService.AnnulPaymentAsync(publicIdOrLegacyId, request?.Reason, cancellationToken);
+            return Ok(new { message = "Cobro anulado correctamente." });
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (InvalidOperationException ex)
+        {
+            // 409 Conflict: el cobro es un puente (lo anula el sistema) o tiene recibo/CAE vivo
+            // (el camino correcto es la anulacion fiscal, no esta ruta).
+            return Conflict(new { message = ex.Message });
+        }
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+        }
+    }
+
     [HttpDelete("{publicIdOrLegacyId}")]
     [Authorize(Roles = "Admin")]
     public async Task<ActionResult> DeletePayment(string publicIdOrLegacyId, CancellationToken cancellationToken)
@@ -290,3 +329,9 @@ public class PaymentsController : ControllerBase
 /// <c>Reason</c> queda persistido en <c>PaymentReceipt.VoidReason</c> (audit trail).
 /// </summary>
 public record VoidReceiptRequest(string? Reason);
+
+/// <summary>
+/// ADR-032 (2026-06-15): payload opcional para anular un cobro con rastro. <c>Reason</c> queda en el
+/// audit trail (PaymentAnnulled). El body es opcional: anular sin motivo es valido.
+/// </summary>
+public record AnnulPaymentRequest(string? Reason);

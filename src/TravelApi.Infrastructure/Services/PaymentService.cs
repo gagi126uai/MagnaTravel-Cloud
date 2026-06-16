@@ -515,8 +515,11 @@ public class PaymentService : IPaymentService
             throw new UnauthorizedAccessException("La reserva no esta asignada al usuario actual.");
         }
 
-        if (reserva.Status == EstadoReserva.Budget)
-            throw new InvalidOperationException("No se pueden registrar pagos en una Reserva en estado Presupuesto. Pasala a Reservado primero.");
+        // ADR-032 (2026-06-15): regla UNICA de estado cobrable. Antes esto solo bloqueaba Budget y dejaba
+        // cobrar en Quotation/Lost/Cancelled/Closed/PendingOperatorRefund/Archived (todos fuera de
+        // ActiveCollectionStatuses). Ahora converge en el guard de dominio: solo se cobra en estados
+        // cobrables. Lanza InvalidOperationException (mapeada a 409 en PaymentsController.CreatePayment).
+        reserva.EnsureCollectable();
 
         if (request.Amount <= 0)
             throw new ArgumentException("El monto debe ser mayor a 0.");
@@ -1215,6 +1218,12 @@ public class PaymentService : IPaymentService
             throw new InvalidOperationException(AppliedCreditBridge.DirectBridgeMutationBlockReason);
         }
 
+        // ADR-032 (2026-06-15, B2): en reservas terminales (todo lo que no es cobrable) NO se edita un cobro
+        // a mano; la correccion va por anulacion con rastro (AnnulPaymentAsync). Se evalua DESPUES de los
+        // guards de puente (D1: un puente lo bloquea su propio guard, con su mensaje, no el de estado) y
+        // ANTES de los guards fiscales. InvalidOperationException -> 409 en el controller.
+        await EnsureReservaPaymentsEditableAsync(payment.ReservaId, cancellationToken);
+
         // B1.15 Fase 0' (CODE-01): inmutabilidad post-recibo / post-CAE. Editar
         // el monto/metodo/referencia de un pago con recibo emitido o ligado a
         // factura AFIP viva rompe la trazabilidad fiscal y la auditoria del
@@ -1320,26 +1329,149 @@ public class PaymentService : IPaymentService
         if (payment == null)
             throw new KeyNotFoundException("Pago no encontrado.");
 
+        // ADR-032 (review): guard de re-entrancy (anti doble-anulacion). FindAsync ignora el filtro global
+        // !IsDeleted, asi que un cobro YA anulado puede cargarse aca. Sin este check, borrarlo de nuevo
+        // re-correria la limpieza de sobrepago y emitiria un segundo evento de auditoria (el contra-asiento
+        // ya es idempotente, pero igual ensucia el rastro). Mismo patron que IssueReceiptAsync (~636).
+        EnsureNotAlreadyAnnulled(payment);
+
+        EnsureNotBridge(payment, "DeletePaymentAsync");
+
+        // ADR-032 (2026-06-15, B2): en reservas terminales NO se borra un cobro a mano; la salida valida es
+        // AnnulPaymentAsync (que SI opera en terminal, deja rastro y reusa el mismo mecanismo de reversa).
+        // Este DELETE "libre" queda solo para estados cobrables. Se evalua DESPUES del guard de puente (D1)
+        // y ANTES del guard fiscal. El nucleo de reversa (DeletePaymentCoreAsync) NO mira el estado: por eso
+        // AnnulPaymentAsync lo reusa sin este gate.
+        await EnsureReservaPaymentsEditableAsync(payment.ReservaId, cancellationToken);
+
+        await DeletePaymentCoreAsync(payment, cancellationToken);
+    }
+
+    /// <summary>
+    /// ADR-032 (2026-06-15, B2 Opcion 1): ANULAR un cobro CON RASTRO. A diferencia del DELETE libre, esta
+    /// accion SI opera en reservas terminales (cancelada/cerrada): es la unica forma valida de corregir un
+    /// cobro mal cargado en una reserva que ya no es cobrable. NO inventa nada nuevo: reusa exactamente el
+    /// mismo mecanismo de reversa que el DELETE (soft-delete <see cref="Payment.IsDeleted"/> + contra-asiento
+    /// de caja ADR-022 + limpieza de sobrepago), pero EXENTA del gate de estado de §4.3.
+    ///
+    /// <para>Mantiene TODOS los guards de integridad: no se anula un puente a mano (lo hace el sistema), y un
+    /// cobro con recibo emitido / CAE vivo sigue bloqueado por el guard fiscal — el camino correcto en ese
+    /// caso es la anulacion fiscal existente (/receipt/void, /invoices/{id}/annul). No se duplica esa logica.</para>
+    ///
+    /// <para>Deja rastro de auditoria de negocio (PaymentAnnulled) ademas del soft-delete y el contra-asiento.</para>
+    /// </summary>
+    public async Task AnnulPaymentAsync(string paymentPublicIdOrLegacyId, string? reason, CancellationToken cancellationToken)
+    {
+        var paymentId = await ResolveRequiredIdAsync<Payment>(paymentPublicIdOrLegacyId, cancellationToken);
+        var payment = await _dbContext.Payments.FindAsync(new object[] { paymentId }, cancellationToken);
+
+        if (payment == null)
+            throw new KeyNotFoundException("Pago no encontrado.");
+
+        // ADR-032 (review): guard de re-entrancy (anti doble-anulacion). FindAsync ignora el filtro global
+        // !IsDeleted, asi que anular un cobro YA anulado vuelve a correr la limpieza de sobrepago y emite un
+        // segundo PaymentAnnulled. Cortamos aca con un 409 claro antes de tocar nada.
+        EnsureNotAlreadyAnnulled(payment);
+
+        // Un puente de saldo a favor lo anula el sistema, nunca el usuario (mismo criterio que DELETE).
+        EnsureNotBridge(payment, "AnnulPaymentAsync");
+
+        // OJO: a proposito NO llamamos a EnsureReservaPaymentsEditableAsync. Anular es justamente la salida
+        // valida en estados terminales. Los guards fiscales y de sobrepago SIGUEN aplicando dentro del core.
+        var (actorUserId, actorUserName) = ResolveLedgerActor();
+        await DeletePaymentCoreAsync(payment, cancellationToken);
+
+        // ADR-032 (review): el rastro incluye el DELTA economico (monto + moneda) del cobro anulado, ademas
+        // del motivo. Asi la auditoria sabe cuanta plata se anulo sin tener que abrir el libro de caja. No se
+        // agregan otros datos del pago (cliente, referencia, notas): solo el importe y su moneda.
+        var auditDetails = BuildPaymentAnnulledAuditDetails(payment, reason);
+
+        // Rastro de negocio (best-effort, no rompe la anulacion si el audit falla).
+        if (_auditService is not null)
+        {
+            await _auditService.LogBusinessEventAsync(
+                action: "PaymentAnnulled",
+                entityName: "Payment",
+                entityId: payment.Id.ToString(),
+                details: auditDetails,
+                userId: actorUserId ?? "System",
+                userName: actorUserName,
+                ct: cancellationToken);
+        }
+        else
+        {
+            _logger.LogInformation(
+                "Payment annulled. PaymentId={PaymentId} ReservaId={ReservaId} Amount={Amount} Currency={Currency} ByUser={UserId} Reason={Reason}",
+                payment.Id, payment.ReservaId, payment.Amount, payment.Currency, actorUserId,
+                string.IsNullOrWhiteSpace(reason) ? "<none>" : reason!.Trim());
+        }
+    }
+
+    /// <summary>
+    /// ADR-032 (review): arma el texto de auditoria de una anulacion de cobro. Incluye el importe y la
+    /// moneda (delta economico) y, si lo hay, el motivo. Formato estable y legible: "Monto: 300 ARS.
+    /// Motivo: cobro mal cargado". Sin datos sensibles del cliente.
+    /// </summary>
+    private static string BuildPaymentAnnulledAuditDetails(Payment payment, string? reason)
+    {
+        var economicPart = $"Monto: {payment.Amount} {payment.Currency}.";
+        var trimmedReason = reason?.Trim();
+        return string.IsNullOrWhiteSpace(trimmedReason)
+            ? economicPart
+            : $"{economicPart} Motivo: {trimmedReason}";
+    }
+
+    /// <summary>
+    /// ADR-032 (review): mensaje unico para el guard de re-entrancy (anti doble-anulacion).
+    /// </summary>
+    private const string AlreadyAnnulledMessage = "El cobro ya está anulado.";
+
+    /// <summary>
+    /// ADR-032 (review): corta cualquier intento de anular/borrar un cobro que YA esta anulado
+    /// (soft-deleted). El caller lo cargo con FindAsync, que ignora el filtro global !IsDeleted, asi que
+    /// puede traer una fila ya borrada. Re-procesarla duplicaria el evento de auditoria y volveria a correr
+    /// la limpieza de sobrepago. Tira InvalidOperationException -> el controller la mapea a 409.
+    /// </summary>
+    private static void EnsureNotAlreadyAnnulled(Payment payment)
+    {
+        if (payment.IsDeleted)
+            throw new InvalidOperationException(AlreadyAnnulledMessage);
+    }
+
+    /// <summary>
+    /// ADR-032: candado compartido por DELETE y ANNUL para los DOS puentes (sobrepago y saldo a favor
+    /// aplicado). Ningun puente se borra/anula a mano: el sistema los maneja (OverpaymentCreditCleanup).
+    /// </summary>
+    private void EnsureNotBridge(Payment payment, string operationName)
+    {
         // ADR-022 §4.9 (fix S1-bis): el Payment puente del saldo a favor NO se borra a mano. Borrarlo deja el
-        // credito vivo y devuelve el excedente a la reserva -> el excedente existe dos veces. Solo el sistema
-        // lo anula (OverpaymentCreditCleanup, que opera sobre la entidad y no pasa por aca).
+        // credito vivo y devuelve el excedente a la reserva -> el excedente existe dos veces.
         if (OverpaymentCreditCleanup.IsOverpaymentBridge(payment))
         {
             _logger.LogWarning(
-                "DeletePaymentAsync rejected (direct overpayment-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
-                paymentId, payment.ReservaId);
+                "{Operation} rejected (direct overpayment-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
+                operationName, payment.Id, payment.ReservaId);
             throw new InvalidOperationException(OverpaymentCreditCleanup.DirectBridgeMutationBlockReason);
         }
 
-        // FC4 (2026-06-14): mismo candado para el puente de saldo a favor aplicado. Borrarlo devolveria la
-        // deuda a la reserva destino mientras el bolsillo del cliente sigue descontado -> plata descuadrada.
+        // FC4 (2026-06-14): mismo candado para el puente de saldo a favor aplicado.
         if (AppliedCreditBridge.IsAppliedCreditBridge(payment))
         {
             _logger.LogWarning(
-                "DeletePaymentAsync rejected (direct applied-credit-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
-                paymentId, payment.ReservaId);
+                "{Operation} rejected (direct applied-credit-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
+                operationName, payment.Id, payment.ReservaId);
             throw new InvalidOperationException(AppliedCreditBridge.DirectBridgeMutationBlockReason);
         }
+    }
+
+    /// <summary>
+    /// ADR-032: nucleo de reversa de un cobro, COMPARTIDO por DELETE libre y ANNUL. Aplica los guards
+    /// fiscales (recibo/CAE) y de sobrepago, hace el soft-delete, el contra-asiento de caja y el recalculo.
+    /// NO mira el estado de la reserva — esa decision la toma cada caller (DELETE pone el gate, ANNUL no).
+    /// </summary>
+    private async Task DeletePaymentCoreAsync(Payment payment, CancellationToken cancellationToken)
+    {
+        var paymentId = payment.Id;
 
         // C28: bloquear si tiene Receipt (Issued/Voided) o RelatedInvoiceId.
         // Voided tambien bloquea: el recibo ocupa numeracion correlativa y debe
@@ -1348,7 +1480,7 @@ public class PaymentService : IPaymentService
         if (blockReason != null)
         {
             _logger.LogWarning(
-                "DeletePaymentAsync rejected. PaymentId={PaymentId} ReservaId={ReservaId}. Reason={Reason}",
+                "DeletePaymentCoreAsync rejected (fiscal guard). PaymentId={PaymentId} ReservaId={ReservaId}. Reason={Reason}",
                 paymentId, payment.ReservaId, blockReason);
             throw new InvalidOperationException(blockReason);
         }
@@ -1360,7 +1492,7 @@ public class PaymentService : IPaymentService
         if (overpaymentBlock != null)
         {
             _logger.LogWarning(
-                "DeletePaymentAsync rejected (overpayment credit already consumed). PaymentId={PaymentId} ReservaId={ReservaId}.",
+                "DeletePaymentCoreAsync rejected (overpayment credit already consumed). PaymentId={PaymentId} ReservaId={ReservaId}.",
                 paymentId, payment.ReservaId);
             throw new InvalidOperationException(overpaymentBlock);
         }
@@ -1382,6 +1514,23 @@ public class PaymentService : IPaymentService
 
         if (payment.ReservaId.HasValue)
             await RecalculateReservaBalanceAsync(payment.ReservaId.Value, cancellationToken);
+    }
+
+    /// <summary>
+    /// ADR-032 (2026-06-15): guard de estado para editar/borrar un cobro. Carga el estado de la reserva del
+    /// pago y aplica <see cref="Reserva.EnsurePaymentsEditable"/>. Si el pago no esta ligado a una reserva
+    /// (caso teorico), no bloquea. La carga es AsNoTracking: solo leemos el Status.
+    /// </summary>
+    private async Task EnsureReservaPaymentsEditableAsync(int? reservaId, CancellationToken cancellationToken)
+    {
+        if (reservaId is null) return;
+
+        var reserva = await _dbContext.Reservas
+            .AsNoTracking()
+            .FirstOrDefaultAsync(r => r.Id == reservaId.Value, cancellationToken);
+
+        // Si la reserva no existe (dato roto), no inventamos un bloqueo: lo resuelven los guards de abajo.
+        reserva?.EnsurePaymentsEditable();
     }
 
     private static IQueryable<CollectionWorkItemDto> ApplyCollectionWorkItemOrdering(

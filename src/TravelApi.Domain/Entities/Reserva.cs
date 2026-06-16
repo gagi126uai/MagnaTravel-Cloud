@@ -1,3 +1,4 @@
+using System;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
@@ -93,6 +94,29 @@ public static class EstadoReserva
         Traveling,
         ToSettle
     };
+
+    /// <summary>
+    /// ADR-032 (2026-06-15): FUENTE UNICA de la regla "se puede cobrar / tocar plata en este estado".
+    /// Antes esta pregunta estaba escrita de tres formas distintas (PaymentService solo bloqueaba Budget,
+    /// el endpoint anidado no bloqueaba nada, y la cobranza/FC4 usaban la lista canonica). Ahora los tres
+    /// caminos convergen aca: cobrable == el estado esta en <see cref="ActiveCollectionStatuses"/>.
+    ///
+    /// <para>Comparacion case-insensitive para alinearse con el resto del dominio (los strings se
+    /// persisten tal cual, pero no dependemos del casing exacto). Un estado nulo/vacio NO es cobrable.</para>
+    /// </summary>
+    public static bool IsCollectableStatus(string? status)
+    {
+        if (string.IsNullOrWhiteSpace(status))
+            return false;
+
+        foreach (var collectable in ActiveCollectionStatuses)
+        {
+            if (string.Equals(collectable, status, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
 }
 
 public class Reserva : IHasPublicId
@@ -248,4 +272,53 @@ public class Reserva : IHasPublicId
     /// en la franja "confirmada con cambios". Ver <see cref="ReservaPendingChange"/>.
     /// </summary>
     public ICollection<ReservaPendingChange> PendingChanges { get; set; } = new List<ReservaPendingChange>();
+
+    // ====================================================================================
+    // ADR-032 (2026-06-15): regla unica de "estado cobrable" aplicada a TODOS los caminos
+    // de plata del cliente (alta de cobro, editar/borrar cobro). Ver EstadoReserva.IsCollectableStatus.
+    // ====================================================================================
+
+    /// <summary>
+    /// Mensaje unico cuando se intenta REGISTRAR un cobro (o aplicar un saldo a favor) en una reserva
+    /// que no esta en un estado cobrable. Sin datos sensibles (ni montos ni nombres).
+    /// </summary>
+    public const string NotCollectableForChargeMessage =
+        "No se puede registrar un cobro en este estado de la reserva. Pasala a En gestion primero.";
+
+    /// <summary>
+    /// Mensaje unico cuando se intenta EDITAR o BORRAR a mano un cobro de una reserva terminal
+    /// (cancelada, cerrada, etc.). La correccion valida es ANULAR el cobro, que deja rastro
+    /// (soft-delete + contra-asiento de caja). Sin datos sensibles.
+    /// </summary>
+    public const string NotCollectableForEditMessage =
+        "Esta reserva esta cerrada o cancelada. No se puede editar ni borrar el cobro directamente; " +
+        "la correccion se hace anulando el cobro (queda rastro).";
+
+    /// <summary>True si a esta reserva se le puede cobrar / aplicar saldo a favor (estado cobrable).</summary>
+    public bool IsCollectable() => EstadoReserva.IsCollectableStatus(Status);
+
+    /// <summary>
+    /// ADR-032: guard de ALTA de cobro. Si la reserva no esta en un estado cobrable, corta con
+    /// <see cref="InvalidOperationException"/> (los controllers de cobro ya la mapean a 409). Se usa en
+    /// los DOS puntos de entrada de alta de pago del usuario (PaymentService.CreatePaymentAsync y el
+    /// endpoint anidado ReservaService.AddPaymentAsync). NO se usa en los caminos internos
+    /// (puentes de sobrepago/FC4, cancelacion/refund), que crean Payments directamente y no pasan por aca.
+    /// </summary>
+    public void EnsureCollectable()
+    {
+        if (!IsCollectable())
+            throw new InvalidOperationException(NotCollectableForChargeMessage);
+    }
+
+    /// <summary>
+    /// ADR-032 (B2 Opcion 1): guard de EDITAR/BORRAR libre de un cobro. En estados terminales (todo lo
+    /// que no es cobrable) la edicion/borrado a mano queda bloqueada; la salida valida es la anulacion con
+    /// rastro (PaymentService.AnnulPaymentAsync). Se evalua ANTES de los guards fiscales/puente existentes,
+    /// que siguen vigentes (un cobro con recibo emitido sigue bloqueado por su propio guard, no por este).
+    /// </summary>
+    public void EnsurePaymentsEditable()
+    {
+        if (!IsCollectable())
+            throw new InvalidOperationException(NotCollectableForEditMessage);
+    }
 }

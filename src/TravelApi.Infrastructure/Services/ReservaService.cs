@@ -2491,6 +2491,12 @@ public class ReservaService : IReservaService
         var file = await _context.Reservas.FindAsync(reservaId);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
+        // ADR-032 (2026-06-15): EL AGUJERO. Este path anidado (POST /api/reservas/{id}/payments) NO
+        // chequeaba el estado de la reserva, dejando cobrar en Cancelada/Perdida/etc. Ahora aplica la
+        // MISMA regla unica que PaymentService.CreatePaymentAsync. InvalidOperationException -> 409 en
+        // ReservasController.AddPayment.
+        file.EnsureCollectable();
+
         if (payment.Amount <= 0) throw new ArgumentException("El monto debe ser mayor a 0");
         if (string.IsNullOrWhiteSpace(payment.Method)) throw new ArgumentException("Debe seleccionar un mÃ©todo de pago");
         
@@ -2537,6 +2543,11 @@ public class ReservaService : IReservaService
                 paymentId, reservaId);
             throw new InvalidOperationException(AppliedCreditBridge.DirectBridgeMutationBlockReason);
         }
+
+        // ADR-032 (2026-06-15, B2): mismo gate de estado que PaymentService.UpdatePaymentAsync para este path
+        // legacy anidado. En reservas terminales no se edita un cobro a mano; la correccion va por anulacion.
+        // DESPUES de los guards de puente (D1), ANTES del guard fiscal. InvalidOperationException -> 409.
+        file.EnsurePaymentsEditable();
 
         // B1.15 Fase 0' (CODE-01): mismo guard que PaymentService.UpdatePaymentAsync
         // — este es el path legacy "via reserva nested". Sin esto, el bypass del
@@ -2609,6 +2620,12 @@ public class ReservaService : IReservaService
                 paymentId, reservaId);
             throw new InvalidOperationException(AppliedCreditBridge.DirectBridgeMutationBlockReason);
         }
+
+        // ADR-032 (2026-06-15, B2): mismo gate de estado que PaymentService.DeletePaymentAsync para el path
+        // legacy anidado. En reservas terminales el borrado libre se bloquea; la salida valida es la
+        // anulacion con rastro (POST /api/payments/{id}/annul). DESPUES del guard de puente (D1), ANTES del
+        // guard fiscal. InvalidOperationException -> 409 en ReservasController.DeletePayment.
+        file.EnsurePaymentsEditable();
 
         // C28: mismo guard que PaymentService.DeletePaymentAsync — este es el path
         // legacy "via reserva nested" (ReservasController.DeletePayment).
