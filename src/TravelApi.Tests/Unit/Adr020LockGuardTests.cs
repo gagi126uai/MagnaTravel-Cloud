@@ -162,8 +162,12 @@ public class Adr020LockGuardTests
     public async Task AddPayment_OnConfirmedReserva_NotBlockedByLock()
     {
         // (f) Pagos NO estan bajo candado: cobrar una reserva confirmada es flujo normal.
+        // ADR-033: el guard de alta exige Balance > 0 (deuda real). Se siembra una deuda viva.
         await using var ctx = NewContext();
-        ctx.Reservas.Add(Reserva(1, EstadoReserva.Confirmed));
+        var reserva = Reserva(1, EstadoReserva.Confirmed);
+        reserva.ConfirmedSale = 1000m;
+        reserva.Balance = 1000m;
+        ctx.Reservas.Add(reserva);
         await ctx.SaveChangesAsync();
 
         var dto = await NewReservaService(ctx).AddPaymentAsync(1, new Payment { Amount = 100m, Method = "Efectivo" });

@@ -37,4 +37,10 @@ public class ReservaListDto
 
     /// <summary>ADR-021: true si la reserva mueve mas de una moneda.</summary>
     public bool EsMultimoneda { get; set; }
+
+    /// <summary>
+    /// ADR-033 (E7/A5, 2026-06-16): estado de cobro derivado del saldo POR MONEDA (ver
+    /// <see cref="ReservaCollectionStatus"/>). Mismo criterio que el detalle. Se llena junto con PorMoneda.
+    /// </summary>
+    public string CollectionStatus { get; set; } = ReservaCollectionStatus.Settled;
 }

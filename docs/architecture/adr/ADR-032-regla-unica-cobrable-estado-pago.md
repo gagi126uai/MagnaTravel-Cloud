@@ -2,6 +2,8 @@
 
 ## 1. Status
 
+**SUPERSEDED por [ADR-033](ADR-033-cobro-desacoplado-del-estado.md) (2026-06-16).** ADR-033 desacopla el cobro del estado operativo: la cobrabilidad pasa de "estado en `ActiveCollectionStatuses`" a **"venta firme + `Balance > 0`"** (agrega `Closed` con deuda) y el gate de **estado** para editar/borrar un cobro se elimina (la inmutabilidad fiscal/puente queda). Se conserva de este ADR: la **fuente única** de la regla, la **anulación con rastro** (`AnnulPaymentAsync`, `POST /api/payments/{id}/annul`), la **convergencia de call-sites** y los **guards fiscales/puente** de editar/borrar. Lo que cambia: el predicado de cobrabilidad y el desacople de editabilidad respecto del estado.
+
 **IMPLEMENTADO (v2, 2026-06-15).** Backend construido con las 3 correcciones del `software-architect-reviewer`
 (B1 conserva INV-096 en FC4, B2 = anular-con-rastro en estados terminales, B3 = consulta de control + sin
 migración). Suite unitaria (`!~Integration`) verde: **1846/1846**. Ver §13 (changelog v2) para el detalle de

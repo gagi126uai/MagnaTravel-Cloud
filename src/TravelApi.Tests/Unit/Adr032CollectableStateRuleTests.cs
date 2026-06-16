@@ -27,20 +27,19 @@ using Xunit;
 namespace TravelApi.Tests.Unit;
 
 /// <summary>
-/// ADR-032 (2026-06-15): regla UNICA de "estado cobrable" para los pagos del cliente.
+/// ADR-032 (2026-06-15) + ADR-033 (2026-06-16): regla de cobrabilidad de los pagos del cliente.
 ///
-/// <para>Cubre la decision del dueño: solo se cobra/edita/borra plata en
-/// <see cref="EstadoReserva.ActiveCollectionStatuses"/> (InManagement, Confirmed, Traveling, ToSettle);
-/// el resto (Quotation, Budget, Lost, Cancelled, Closed, PendingOperatorRefund, "Archived") queda fuera.
-/// Verifica:</para>
+/// <para>ADR-033 SUPERSEDE la regla de estado de ADR-032: la cobrabilidad pasa a ser "venta firme +
+/// deuda real" (incluye Closed con deuda), y el gate de ESTADO para editar/borrar un cobro se ELIMINA (la
+/// inmutabilidad fiscal/puente queda). Este archivo conserva la cobertura de ADR-032 que sigue vigente y la
+/// ACTUALIZA donde ADR-033 cambio el comportamiento. Verifica:</para>
 /// <list type="bullet">
-///   <item>la regla pura de dominio (IsCollectableStatus / EnsureCollectable / EnsurePaymentsEditable);</item>
-///   <item>alta de cobro por los DOS caminos (PaymentService.CreatePaymentAsync y el endpoint anidado
-///         ReservaService.AddPaymentAsync) rechaza en estados no cobrables — incluido EL AGUJERO del path anidado;</item>
-///   <item>el rechazo del path anidado llega al CONTROLLER real como 409 (D2);</item>
-///   <item>FC4 (saldo a favor aplicado) sigue tirando BusinessInvariantViolationException + INV-096 (B1);</item>
-///   <item>el puente de sobrepago y el puente FC4 siguen creandose en estados cobrables;</item>
-///   <item>editar/borrar en Cancelada/Cerrada rechaza pidiendo anular (B2);</item>
+///   <item>la regla pura de dominio (IsCollectableStatus helper / IsSaleFirmStatus / EnsureCollectable);</item>
+///   <item>alta de cobro por los DOS caminos rechaza en pre-venta/terminal-no-firme y AHORA permite Closed con deuda;</item>
+///   <item>el rechazo del path anidado llega al CONTROLLER real como 409;</item>
+///   <item>FC4 (saldo a favor aplicado) sigue tirando BusinessInvariantViolationException + INV-096 (B2);</item>
+///   <item>el puente de sobrepago y el puente FC4 siguen creandose;</item>
+///   <item>editar/borrar en terminal SIN atadura fiscal AHORA funciona (ADR-033 E3); con recibo/CAE sigue bloqueado por lo fiscal;</item>
 ///   <item>anular en estado terminal funciona y deja rastro (soft-delete + contra-asiento).</item>
 /// </list>
 ///
@@ -142,19 +141,6 @@ public class Adr032CollectableStateRuleTests
         return reserva;
     }
 
-    private static readonly string[] CollectableStatuses =
-    {
-        EstadoReserva.InManagement, EstadoReserva.Confirmed,
-        EstadoReserva.Traveling, EstadoReserva.ToSettle,
-    };
-
-    private static readonly string[] NonCollectableStatuses =
-    {
-        EstadoReserva.Quotation, EstadoReserva.Budget, EstadoReserva.Lost,
-        EstadoReserva.Cancelled, EstadoReserva.Closed, EstadoReserva.PendingOperatorRefund,
-        "Archived",
-    };
-
     // =====================================================================================================
     // Regla pura de dominio.
     // =====================================================================================================
@@ -182,20 +168,53 @@ public class Adr032CollectableStateRuleTests
         => Assert.False(EstadoReserva.IsCollectableStatus(status));
 
     [Fact]
-    public void EnsureCollectable_Throws_OnTerminal()
+    public void EnsureCollectable_Throws_OnNonFirm_WithSaleFirmMessage()
     {
-        var reserva = new Reserva { Status = EstadoReserva.Cancelled };
+        // ADR-033: una Cancelada no es venta firme -> mensaje "pasala a En gestion primero".
+        var reserva = new Reserva { Status = EstadoReserva.Cancelled, Balance = 1000m };
         var ex = Assert.Throws<InvalidOperationException>(() => reserva.EnsureCollectable());
-        Assert.Equal(Reserva.NotCollectableForChargeMessage, ex.Message);
+        Assert.Equal(Reserva.NotSaleFirmForChargeMessage, ex.Message);
     }
 
     [Fact]
-    public void EnsurePaymentsEditable_Throws_OnTerminal_WithEditMessage()
+    public void EnsureCollectable_Throws_OnFirmButZeroBalance_WithNoPendingMessage()
     {
-        var reserva = new Reserva { Status = EstadoReserva.Closed };
-        var ex = Assert.Throws<InvalidOperationException>(() => reserva.EnsurePaymentsEditable());
-        Assert.Equal(Reserva.NotCollectableForEditMessage, ex.Message);
+        // ADR-033: firme pero sin saldo -> mensaje distinto "no hay saldo pendiente para cobrar".
+        var reserva = new Reserva { Status = EstadoReserva.Confirmed, Balance = 0m };
+        var ex = Assert.Throws<InvalidOperationException>(() => reserva.EnsureCollectable());
+        Assert.Equal(Reserva.NoPendingBalanceForChargeMessage, ex.Message);
     }
+
+    [Fact]
+    public void EnsureCollectable_Passes_OnClosedWithDebt()
+    {
+        // ADR-033 (caso semilla): una Finalizada con deuda AHORA es cobrable -> no tira.
+        var reserva = new Reserva { Status = EstadoReserva.Closed, Balance = 500m };
+        reserva.EnsureCollectable(); // no exception
+        Assert.True(reserva.IsCollectable());
+    }
+
+    [Theory]
+    [InlineData("InManagement")]
+    [InlineData("Confirmed")]
+    [InlineData("Traveling")]
+    [InlineData("ToSettle")]
+    [InlineData("Closed")] // ADR-033: Closed firme
+    [InlineData("closed")] // case-insensitive
+    public void IsSaleFirmStatus_ReturnsTrue_ForFirm(string status)
+        => Assert.True(EstadoReserva.IsSaleFirmStatus(status));
+
+    [Theory]
+    [InlineData("Quotation")]
+    [InlineData("Budget")]
+    [InlineData("Lost")]
+    [InlineData("Cancelled")]
+    [InlineData("PendingOperatorRefund")]
+    [InlineData("Archived")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void IsSaleFirmStatus_ReturnsFalse_ForNonFirm(string? status)
+        => Assert.False(EstadoReserva.IsSaleFirmStatus(status));
 
     // =====================================================================================================
     // ALTA — Camino A (PaymentService.CreatePaymentAsync).
@@ -206,6 +225,7 @@ public class Adr032CollectableStateRuleTests
     [InlineData("Confirmed")]
     [InlineData("Traveling")]
     [InlineData("ToSettle")]
+    [InlineData("Closed")] // ADR-033: Finalizada con deuda AHORA es cobrable.
     public async Task CreatePayment_OnCollectable_Succeeds(string status)
     {
         await using var context = CreateContext();
@@ -224,7 +244,6 @@ public class Adr032CollectableStateRuleTests
     [InlineData("Budget")]
     [InlineData("Lost")]
     [InlineData("Cancelled")]
-    [InlineData("Closed")]
     [InlineData("PendingOperatorRefund")]
     [InlineData("Archived")]
     public async Task CreatePayment_OnNonCollectable_Rejects(string status)
@@ -251,6 +270,7 @@ public class Adr032CollectableStateRuleTests
     [InlineData("Confirmed")]
     [InlineData("Traveling")]
     [InlineData("ToSettle")]
+    [InlineData("Closed")] // ADR-033: Finalizada con deuda AHORA es cobrable por el path anidado tambien.
     public async Task NestedAddPayment_OnCollectable_Succeeds(string status)
     {
         await using var context = CreateContext();
@@ -267,7 +287,6 @@ public class Adr032CollectableStateRuleTests
     [InlineData("Budget")]
     [InlineData("Lost")]
     [InlineData("Cancelled")]
-    [InlineData("Closed")]
     [InlineData("PendingOperatorRefund")]
     [InlineData("Archived")]
     public async Task NestedAddPayment_OnNonCollectable_Rejects(string status)
@@ -422,14 +441,16 @@ public class Adr032CollectableStateRuleTests
     }
 
     // =====================================================================================================
-    // B2 — editar/borrar en terminal rechaza; anular en terminal funciona y deja rastro.
+    // ADR-033 (E3/A2) — editar/borrar un cobro SIN atadura fiscal AHORA funciona en terminal (el gate de
+    // ESTADO se elimino). Con recibo/CAE sigue bloqueado por lo FISCAL (cubierto en otros tests). Anular en
+    // terminal funciona y deja rastro.
     // =====================================================================================================
 
     [Fact]
-    public async Task UpdatePayment_OnTerminal_Rejects()
+    public async Task UpdatePayment_OnTerminal_WithoutFiscalLink_NowSucceeds()
     {
         await using var context = CreateContext();
-        // Creamos el cobro mientras la reserva es cobrable, luego la pasamos a terminal.
+        // Creamos el cobro mientras la reserva es cobrable, luego la pasamos a terminal (sin recibo/CAE).
         var reserva = await SeedReservaAsync(context, EstadoReserva.Confirmed);
         var paymentService = BuildPaymentService(context);
         var p = await paymentService.CreatePaymentAsync(
@@ -438,16 +459,19 @@ public class Adr032CollectableStateRuleTests
 
         await MoveReservaToStatusAsync(context, reserva.Id, EstadoReserva.Cancelled);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            paymentService.UpdatePaymentAsync(
-                p.PublicId.ToString(),
-                new UpdatePaymentRequest { Amount = 400m, Method = "Cash" },
-                CancellationToken.None));
-        Assert.Equal(Reserva.NotCollectableForEditMessage, ex.Message);
+        // ADR-033: ya NO se rechaza por estado. Sin recibo ni factura, el cobro se puede corregir.
+        await paymentService.UpdatePaymentAsync(
+            p.PublicId.ToString(),
+            new UpdatePaymentRequest { Amount = 400m, Method = "Cash" },
+            CancellationToken.None);
+
+        var payment = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(x => x.PublicId == p.PublicId);
+        Assert.Equal(400m, payment.Amount);
+        Assert.Equal("Cash", payment.Method);
     }
 
     [Fact]
-    public async Task DeletePayment_OnTerminal_Rejects_AskingForAnnul()
+    public async Task DeletePayment_OnTerminal_WithoutFiscalLink_NowSucceeds()
     {
         await using var context = CreateContext();
         var reserva = await SeedReservaAsync(context, EstadoReserva.Confirmed);
@@ -458,16 +482,15 @@ public class Adr032CollectableStateRuleTests
 
         await MoveReservaToStatusAsync(context, reserva.Id, EstadoReserva.Closed);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            paymentService.DeletePaymentAsync(p.PublicId.ToString(), CancellationToken.None));
-        Assert.Equal(Reserva.NotCollectableForEditMessage, ex.Message);
+        // ADR-033: el DELETE libre ya no se gatea por estado. Sin atadura fiscal, se borra.
+        await paymentService.DeletePaymentAsync(p.PublicId.ToString(), CancellationToken.None);
 
         var payment = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(x => x.PublicId == p.PublicId);
-        Assert.False(payment.IsDeleted); // no se borro
+        Assert.True(payment.IsDeleted);
     }
 
     [Fact]
-    public async Task NestedDeletePayment_OnTerminal_Rejects()
+    public async Task NestedDeletePayment_OnTerminal_WithoutFiscalLink_NowSucceeds()
     {
         await using var context = CreateContext();
         var reserva = await SeedReservaAsync(context, EstadoReserva.Confirmed);
@@ -477,9 +500,33 @@ public class Adr032CollectableStateRuleTests
 
         await MoveReservaToStatusAsync(context, reserva.Id, EstadoReserva.Cancelled);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            reservaService.DeletePaymentAsync(reserva.Id, paymentId));
-        Assert.Equal(Reserva.NotCollectableForEditMessage, ex.Message);
+        // ADR-033: el path legacy anidado tampoco gatea por estado. Sin atadura fiscal, se borra.
+        await reservaService.DeletePaymentAsync(reserva.Id, paymentId);
+
+        var payment = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(x => x.Id == paymentId);
+        Assert.True(payment.IsDeleted);
+    }
+
+    [Fact]
+    public async Task DeletePayment_OnTerminal_WithIssuedReceipt_StillBlockedByFiscalGuard()
+    {
+        // ADR-033: el DELETE libre se libero del ESTADO, pero el guard FISCAL queda. Un cobro con recibo
+        // emitido NO se borra (esta donde este la reserva); la salida es la anulacion fiscal/annul.
+        await using var context = CreateContext();
+        var reserva = await SeedReservaAsync(context, EstadoReserva.Confirmed);
+        var paymentService = BuildPaymentService(context);
+        var p = await paymentService.CreatePaymentAsync(
+            new CreatePaymentRequest { ReservaId = reserva.PublicId.ToString(), Amount = 300m, Method = "Transfer" },
+            CancellationToken.None);
+
+        await paymentService.IssueReceiptAsync(p.PublicId.ToString(), CancellationToken.None);
+        await MoveReservaToStatusAsync(context, reserva.Id, EstadoReserva.Closed);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            paymentService.DeletePaymentAsync(p.PublicId.ToString(), CancellationToken.None));
+
+        var payment = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(x => x.PublicId == p.PublicId);
+        Assert.False(payment.IsDeleted); // el guard fiscal corto el borrado
     }
 
     [Fact]

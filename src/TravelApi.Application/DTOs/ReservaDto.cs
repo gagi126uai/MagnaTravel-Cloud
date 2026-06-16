@@ -188,4 +188,13 @@ public class ReservaDto
 
     /// <summary>ADR-021: true si la reserva mueve mas de una moneda.</summary>
     public bool EsMultimoneda { get; set; }
+
+    /// <summary>
+    /// ADR-033 (E7/A5, 2026-06-16): ESTADO DE COBRO derivado del saldo POR MONEDA (no persistido, no es
+    /// columna). Valores: "ConDeuda" (alguna moneda con Balance &gt; 0), "SaldoAFavor" (sin deuda y alguna
+    /// moneda &lt; 0), "Saldado" (todas en 0). "ConDeuda" gana sobre "SaldoAFavor" cuando hay ambas en
+    /// monedas distintas (una reserva que debe USD y tiene saldo a favor ARS esta, antes que nada, con deuda).
+    /// Se calcula desde <see cref="PorMoneda"/>. Eje independiente del estado operativo y de la facturacion.
+    /// </summary>
+    public string CollectionStatus { get; set; } = ReservaCollectionStatus.Settled;
 }

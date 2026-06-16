@@ -571,7 +571,7 @@ public class ReportService : IReportService
         var saldoPendienteQuery =
             from row in _dbContext.ReservaMoneyByCurrency
             join reservaPadre in _dbContext.Reservas on row.ReservaId equals reservaPadre.Id
-            where FinancePositionService.ActiveReceivableStatuses.Contains(reservaPadre.Status)
+            where FinancePositionService.ReceivableDebtStatuses.Contains(reservaPadre.Status)
                 && row.Balance > 0
             select new { row.Currency, row.Balance };
 
@@ -616,7 +616,7 @@ public class ReportService : IReportService
             join customer in _dbContext.Customers on reservaPadre.PayerId equals customer.Id
             where row.Balance > 0
                 && customer.IsActive
-                && FinancePositionService.ActiveReceivableStatuses.Contains(reservaPadre.Status)
+                && FinancePositionService.ReceivableDebtStatuses.Contains(reservaPadre.Status)
             group new { row.Balance, reservaPadre.CreatedAt }
                 by new { customer.PublicId, customer.FullName, customer.DocumentNumber, row.Currency }
             into grouped
@@ -664,7 +664,7 @@ public class ReportService : IReportService
             join customer in _dbContext.Customers on reservaPadre.PayerId equals customer.Id
             where row.Balance > 0
                 && customer.IsActive
-                && FinancePositionService.ActiveReceivableStatuses.Contains(reservaPadre.Status)
+                && FinancePositionService.ReceivableDebtStatuses.Contains(reservaPadre.Status)
             group row.Balance by new { customer.FullName, customer.DocumentNumber, row.Currency }
             into grouped
             select new

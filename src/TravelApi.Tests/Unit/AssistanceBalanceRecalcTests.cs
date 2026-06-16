@@ -52,12 +52,17 @@ public class AssistanceBalanceRecalcTests
         var mapper = CreateMapper();
 
         // Reserva fuera de Budget (CreatePaymentAsync rechaza pagos en Budget).
+        // ADR-033: el guard de alta exige Balance > 0 fresco. En produccion lo mantiene UpdateBalanceAsync;
+        // aca lo sembramos coherente con la venta confirmada de la asistencia (250) para que EnsureCollectable
+        // no rechace por "saldo cero" antes de que CreatePaymentAsync recalcule.
         var reserva = new Reserva
         {
             Id = 1,
             NumeroReserva = "F-2026-7001",
             Name = "Reserva con asistencia",
-            Status = EstadoReserva.Confirmed
+            Status = EstadoReserva.Confirmed,
+            ConfirmedSale = 250m,
+            Balance = 250m
         };
         context.Reservas.Add(reserva);
         // Venta 250 / costo 100 - es la unica linea de la reserva, asi que TODO el saldo

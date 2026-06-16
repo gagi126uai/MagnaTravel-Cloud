@@ -88,16 +88,14 @@ public class TreasuryService : ITreasuryService
     {
         var startOfMonth = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
         // Estados de Reserva que cuentan para tesoreria / cuentas por cobrar (AR).
-        // ADR-020 (2026-06-07): InManagement (En gestion) reemplaza al viejo Sold; ToSettle es el
-        // file post-viaje pendiente de liquidar, su saldo sigue siendo cuenta por cobrar.
-        // Quotation/Budget/Lost no entran (no hay AR exigible todavia).
-        var activeStatuses = new[]
-        {
-            EstadoReserva.InManagement,
-            EstadoReserva.Confirmed,
-            EstadoReserva.Traveling,
-            EstadoReserva.ToSettle
-        };
+        //
+        // ADR-033 (2026-06-16, A3/E2): usa la MISMA lista de deuda cobrable que el AR por moneda
+        // (FinancePositionService.ReceivableDebtStatuses, que INCLUYE Closed). Antes este escalar tenia su
+        // propia lista inline SIN Closed -> divergia del AR por moneda (que ya pasa por FinancePosition) en
+        // cuanto una Finalizada quedara con deuda. Ahora el escalar y el por-moneda muestran lo mismo: la
+        // deuda de una Finalizada es cuenta por cobrar real. Quotation/Budget/Lost/Cancelled/esperando-refund
+        // siguen fuera.
+        var activeStatuses = FinancePositionService.ReceivableDebtStatuses;
 
         var accountsReceivable = await _dbContext.Reservas
             .Where(r => activeStatuses.Contains(r.Status) && r.Balance > 0)

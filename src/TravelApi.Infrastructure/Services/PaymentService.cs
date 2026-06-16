@@ -33,11 +33,15 @@ public class PaymentService : IPaymentService
     private readonly IApprovalPolicyService? _approvalPolicyService;
     private readonly IAuditService? _auditService;
 
-    // Estados de Reserva considerados "cobrables" (tienen saldo que se le puede pedir al cliente).
-    // FC4 (2026-06-14): la lista canonica se MOVIO a EstadoReserva.ActiveCollectionStatuses (Domain) para
-    // compartirla con el saldo a favor aplicado (ClientCreditService) sin duplicarla. Este alias mantiene los
-    // call-sites de PaymentService intactos.
-    private static readonly string[] ActiveCollectionStatuses = EstadoReserva.ActiveCollectionStatuses;
+    // Estados de Reserva que tienen DEUDA COBRABLE (cuenta por cobrar viva). Lo usan la worklist y el summary
+    // de cobranza para listar a quien se le puede cobrar.
+    //
+    // ADR-033 (2026-06-16, A3/E2): pasa a la lista de DEUDA (EstadoReserva.SaleFirmStatuses, INCLUYE Closed),
+    // misma fuente que el AR / dashboard / saldo del cliente. Antes (ADR-032) usaba ActiveCollectionStatuses
+    // (sin Closed) -> una reserva Finalizada con deuda no aparecia en la cobranza aunque se le pudiera cobrar
+    // (la nueva regla de A1 si lo permite). Ahora el front de cobranza y la regla de alta de cobro coinciden.
+    // Las queries filtran ademas Balance > 0, asi que una Closed saldada no aparece.
+    private static readonly string[] CollectableDebtStatuses = EstadoReserva.SaleFirmStatuses;
 
     public PaymentService(
         AppDbContext dbContext,
@@ -105,7 +109,7 @@ public class PaymentService : IPaymentService
 
         var reservasQuery = _dbContext.Reservas
             .AsNoTracking()
-            .Where(r => ActiveCollectionStatuses.Contains(r.Status) && r.Balance > 0);
+            .Where(r => CollectableDebtStatuses.Contains(r.Status) && r.Balance > 0);
         if (ownerScope is not null)
         {
             reservasQuery = reservasQuery.Where(r => r.ResponsibleUserId == ownerScope);
@@ -164,7 +168,7 @@ public class PaymentService : IPaymentService
 
         var reservationsQuery = _dbContext.Reservas
             .AsNoTracking()
-            .Where(r => ActiveCollectionStatuses.Contains(r.Status) && r.Balance > 0);
+            .Where(r => CollectableDebtStatuses.Contains(r.Status) && r.Balance > 0);
         if (ownerScope is not null)
         {
             reservationsQuery = reservationsQuery.Where(r => r.ResponsibleUserId == ownerScope);
@@ -1218,11 +1222,12 @@ public class PaymentService : IPaymentService
             throw new InvalidOperationException(AppliedCreditBridge.DirectBridgeMutationBlockReason);
         }
 
-        // ADR-032 (2026-06-15, B2): en reservas terminales (todo lo que no es cobrable) NO se edita un cobro
-        // a mano; la correccion va por anulacion con rastro (AnnulPaymentAsync). Se evalua DESPUES de los
-        // guards de puente (D1: un puente lo bloquea su propio guard, con su mensaje, no el de estado) y
-        // ANTES de los guards fiscales. InvalidOperationException -> 409 en el controller.
-        await EnsureReservaPaymentsEditableAsync(payment.ReservaId, cancellationToken);
+        // ADR-033 (2026-06-16, E3/A2): el gate de ESTADO operativo para editar un cobro se ELIMINO. Editar
+        // libremente lo restringe la INMUTABILIDAD FISCAL del cobro (recibo emitido / CAE vivo) y los guards
+        // de puente — NO el estado de la reserva. Un cobro sin atadura fiscal se puede corregir este la
+        // reserva donde este (incluida una Finalizada con deuda); un cobro fiscalmente sellado se ANULA con
+        // rastro (AnnulPaymentAsync), esta donde este. Los guards de puente (arriba) y fiscales (abajo)
+        // siguen vigentes; aca solo desaparece la pregunta por el estado operativo.
 
         // B1.15 Fase 0' (CODE-01): inmutabilidad post-recibo / post-CAE. Editar
         // el monto/metodo/referencia de un pago con recibo emitido o ligado a
@@ -1337,12 +1342,12 @@ public class PaymentService : IPaymentService
 
         EnsureNotBridge(payment, "DeletePaymentAsync");
 
-        // ADR-032 (2026-06-15, B2): en reservas terminales NO se borra un cobro a mano; la salida valida es
-        // AnnulPaymentAsync (que SI opera en terminal, deja rastro y reusa el mismo mecanismo de reversa).
-        // Este DELETE "libre" queda solo para estados cobrables. Se evalua DESPUES del guard de puente (D1)
-        // y ANTES del guard fiscal. El nucleo de reversa (DeletePaymentCoreAsync) NO mira el estado: por eso
-        // AnnulPaymentAsync lo reusa sin este gate.
-        await EnsureReservaPaymentsEditableAsync(payment.ReservaId, cancellationToken);
+        // ADR-033 (2026-06-16, E3/A2): el gate de ESTADO operativo para borrar un cobro se ELIMINO. El DELETE
+        // "libre" lo restringe la inmutabilidad fiscal (guard fiscal dentro de DeletePaymentCoreAsync) y los
+        // guards de puente (arriba) — NO el estado de la reserva. Un cobro fiscalmente sellado sigue
+        // bloqueado para DELETE y su salida es AnnulPaymentAsync (que SI opera en terminal, deja rastro y
+        // reusa el mismo mecanismo de reversa). DeletePaymentCoreAsync nunca miro el estado: por eso ANNUL lo
+        // reusaba sin este gate; ahora DELETE tampoco lo mira.
 
         await DeletePaymentCoreAsync(payment, cancellationToken);
     }
@@ -1514,23 +1519,6 @@ public class PaymentService : IPaymentService
 
         if (payment.ReservaId.HasValue)
             await RecalculateReservaBalanceAsync(payment.ReservaId.Value, cancellationToken);
-    }
-
-    /// <summary>
-    /// ADR-032 (2026-06-15): guard de estado para editar/borrar un cobro. Carga el estado de la reserva del
-    /// pago y aplica <see cref="Reserva.EnsurePaymentsEditable"/>. Si el pago no esta ligado a una reserva
-    /// (caso teorico), no bloquea. La carga es AsNoTracking: solo leemos el Status.
-    /// </summary>
-    private async Task EnsureReservaPaymentsEditableAsync(int? reservaId, CancellationToken cancellationToken)
-    {
-        if (reservaId is null) return;
-
-        var reserva = await _dbContext.Reservas
-            .AsNoTracking()
-            .FirstOrDefaultAsync(r => r.Id == reservaId.Value, cancellationToken);
-
-        // Si la reserva no existe (dato roto), no inventamos un bloqueo: lo resuelven los guards de abajo.
-        reserva?.EnsurePaymentsEditable();
     }
 
     private static IQueryable<CollectionWorkItemDto> ApplyCollectionWorkItemOrdering(

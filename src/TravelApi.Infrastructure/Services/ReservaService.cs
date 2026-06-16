@@ -901,6 +901,11 @@ public class ReservaService : IReservaService
         [EstadoReserva.Traveling] = new[] { EstadoReserva.Confirmed },
         [EstadoReserva.ToSettle] = new[] { EstadoReserva.Traveling },
         [EstadoReserva.Closed] = new[] { EstadoReserva.Traveling },
+        // ADR-033 (2026-06-16, E4/B4): una Cancelada se puede REABRIR a En gestion SOLO si la cancelacion no
+        // dejo huella fiscal ni de plata (sin NC, sin saldo a favor, sin refund del operador). El gate duro
+        // que verifica eso vive en RevertStatusAsync (query D2); aca solo se declara el destino legal.
+        // Simetrico con Lost (que tambien revierte si no hubo movimiento).
+        [EstadoReserva.Cancelled] = new[] { EstadoReserva.InManagement },
     };
 
     /// <summary>
@@ -961,6 +966,27 @@ public class ReservaService : IReservaService
         {
             dto.HardBlockers.Add("La reserva tiene facturas AFIP emitidas con CAE. No se puede revertir el estado (rompe la historia fiscal). Si necesitas anular, emiti una Nota de Credito primero.");
             dto.AllowedTargets.Clear();
+        }
+
+        // ADR-033 (2026-06-16, E4/B4 — gate D2 en las OPCIONES): si la reserva es Cancelada con huella fiscal
+        // o de plata de la cancelacion (NC / saldo a favor / refund), no se ofrece el revert (la UI no muestra
+        // una opcion que despues va a 409). Misma query que el enforcement en RevertStatusAsync (fuente unica
+        // del criterio). Solo aplica cuando el estado actual es Cancelled.
+        if (string.Equals(reserva.Status, EstadoReserva.Cancelled, StringComparison.OrdinalIgnoreCase)
+            && dto.AllowedTargets.Count > 0)
+        {
+            var hasFiscalOrMoneyTrace = await _context.BookingCancellations.AsNoTracking()
+                .Where(bc => bc.ReservaId == id)
+                .AnyAsync(bc =>
+                    bc.CreditNoteInvoiceId != null
+                    || bc.ReceivedRefundAmount > 0
+                    || _context.ClientCreditEntries.Any(cce => cce.BookingCancellationId == bc.Id),
+                    ct);
+            if (hasFiscalOrMoneyTrace)
+            {
+                dto.HardBlockers.Add("Esta cancelacion ya genero una nota de credito, un saldo a favor o un reintegro del operador. No se puede revertir sin deshacer ese movimiento por su circuito.");
+                dto.AllowedTargets.Clear();
+            }
         }
 
         // Si requiere autorizacion, listar supervisores con permiso
@@ -1037,6 +1063,31 @@ public class ReservaService : IReservaService
             && string.Equals(request.TargetStatus, EstadoReserva.Budget, StringComparison.OrdinalIgnoreCase))
         {
             await EnsureCanRevertToBudgetAsync(id, ct);
+        }
+
+        // ADR-033 (2026-06-16, E4/B4 — gate duro D2): reabrir una Cancelada solo es valido si la cancelacion
+        // NO genero ningun movimiento fiscal o de plata por su propio circuito. Si hubo NC, saldo a favor o
+        // refund del operador, "reabrir" sin deshacer esos movimientos dejaria la plata descuadrada -> hay que
+        // deshacerlos por su circuito, no por un revert de estado. El hard-block CAE (arriba) ya corrio antes,
+        // asi que una reserva con factura viva ni llega aca; este gate cubre lo especifico de la cancelacion
+        // que la factura no captura. Anclado en la BookingCancellation de la reserva (ata NC + credito + refund).
+        if (string.Equals(reserva.Status, EstadoReserva.Cancelled, StringComparison.OrdinalIgnoreCase))
+        {
+            // 1) NC emitida:            BookingCancellation.CreditNoteInvoiceId != null
+            // 2) Refund recibido:       BookingCancellation.ReceivedRefundAmount > 0
+            // 3) Saldo a favor de la cancelacion: existe un ClientCreditEntry apuntando a una BC de esta reserva
+            //    (cubre el caso refund -> credito del cliente).
+            var hasFiscalOrMoneyTrace = await _context.BookingCancellations
+                .Where(bc => bc.ReservaId == id)
+                .AnyAsync(bc =>
+                    bc.CreditNoteInvoiceId != null
+                    || bc.ReceivedRefundAmount > 0
+                    || _context.ClientCreditEntries.Any(cce => cce.BookingCancellationId == bc.Id),
+                    ct);
+            if (hasFiscalOrMoneyTrace)
+                throw new InvalidOperationException(
+                    "Esta cancelacion ya genero una nota de credito, un saldo a favor o un reintegro del operador. " +
+                    "No se puede revertir sin deshacer ese movimiento por su circuito.");
         }
 
         // Autorizacion
@@ -1499,7 +1550,10 @@ public class ReservaService : IReservaService
         {
             if (!byReserva.TryGetValue(item.PublicId, out var reservaRows))
             {
-                // Sin filas hijas (reserva saldada en 0 o legacy sin backfill): se deja PorMoneda vacio.
+                // Sin filas hijas (reserva saldada en 0 o legacy sin backfill): se deja PorMoneda vacio. El
+                // estado de cobro cae al escalar Balance de la fila (unica fuente disponible aca). Para una
+                // reserva saldada da "Saldado"; una legacy con saldo escalar refleja deuda/saldo a favor.
+                item.CollectionStatus = ReservaCollectionStatus.Derive(new[] { item.Balance });
                 continue;
             }
 
@@ -1517,6 +1571,9 @@ public class ReservaService : IReservaService
                 .ToList();
 
             item.EsMultimoneda = item.PorMoneda.Count > 1;
+
+            // ADR-033 (E7/A5): estado de cobro derivado del saldo POR MONEDA de las filas hijas.
+            item.CollectionStatus = ReservaCollectionStatus.Derive(item.PorMoneda.Select(line => line.Balance));
         }
     }
 
@@ -1610,6 +1667,9 @@ public class ReservaService : IReservaService
                 Balance = line.Balance
             })
             .ToList();
+
+        // ADR-033 (E7/A5): estado de cobro derivado del saldo POR MONEDA (no del escalar, que mezcla ARS+USD).
+        dto.CollectionStatus = ReservaCollectionStatus.Derive(dto.PorMoneda.Select(line => line.Balance));
 
         // P3 (cuadre de facturacion): cuanto se facturo NETO al cliente (facturas + ND - NC,
         // solo comprobantes con CAE vivo y no anulados) y cuanto queda disponible respecto de
@@ -2544,10 +2604,9 @@ public class ReservaService : IReservaService
             throw new InvalidOperationException(AppliedCreditBridge.DirectBridgeMutationBlockReason);
         }
 
-        // ADR-032 (2026-06-15, B2): mismo gate de estado que PaymentService.UpdatePaymentAsync para este path
-        // legacy anidado. En reservas terminales no se edita un cobro a mano; la correccion va por anulacion.
-        // DESPUES de los guards de puente (D1), ANTES del guard fiscal. InvalidOperationException -> 409.
-        file.EnsurePaymentsEditable();
+        // ADR-033 (2026-06-16, E3/A2): el gate de ESTADO operativo se ELIMINO tambien en este path legacy
+        // anidado, igual que en PaymentService.UpdatePaymentAsync. Editar libre lo restringe la inmutabilidad
+        // fiscal (MutationGuards, abajo) + los guards de puente (arriba), no el estado de la reserva.
 
         // B1.15 Fase 0' (CODE-01): mismo guard que PaymentService.UpdatePaymentAsync
         // — este es el path legacy "via reserva nested". Sin esto, el bypass del
@@ -2621,11 +2680,11 @@ public class ReservaService : IReservaService
             throw new InvalidOperationException(AppliedCreditBridge.DirectBridgeMutationBlockReason);
         }
 
-        // ADR-032 (2026-06-15, B2): mismo gate de estado que PaymentService.DeletePaymentAsync para el path
-        // legacy anidado. En reservas terminales el borrado libre se bloquea; la salida valida es la
-        // anulacion con rastro (POST /api/payments/{id}/annul). DESPUES del guard de puente (D1), ANTES del
-        // guard fiscal. InvalidOperationException -> 409 en ReservasController.DeletePayment.
-        file.EnsurePaymentsEditable();
+        // ADR-033 (2026-06-16, E3/A2): el gate de ESTADO operativo se ELIMINO tambien en este path legacy
+        // anidado, igual que en PaymentService.DeletePaymentAsync. El borrado libre lo restringe la
+        // inmutabilidad fiscal (DeleteGuards, abajo) + los guards de puente (arriba), no el estado de la
+        // reserva. La salida para un cobro fiscalmente sellado sigue siendo la anulacion con rastro
+        // (POST /api/payments/{id}/annul).
 
         // C28: mismo guard que PaymentService.DeletePaymentAsync — este es el path
         // legacy "via reserva nested" (ReservasController.DeletePayment).
@@ -2719,11 +2778,18 @@ public class ReservaService : IReservaService
     }
 
     /// <summary>
-    /// CRM leads (auditoria ERP 2026-06-13): si la <paramref name="file"/> esta en un estado EN FIRME
-    /// (<see cref="FinancePositionService.ActiveReceivableStatuses"/> = {InManagement, Confirmed, Traveling,
-    /// ToSettle}) y nacio de un lead, marca ese lead como Ganado. Es la regla "el lead se gana cuando el
-    /// cliente ACEPTA el presupuesto" (= la reserva avanza a en firme), reemplazando el viejo disparo al
-    /// crear la reserva.
+    /// CRM leads (auditoria ERP 2026-06-13): si la <paramref name="file"/> esta en un estado de VENTA
+    /// OPERATIVA VIVA (<see cref="EstadoReserva.ActiveCollectionStatuses"/> = {InManagement, Confirmed,
+    /// Traveling, ToSettle}, SIN Closed) y nacio de un lead, marca ese lead como Ganado. Es la regla "el lead
+    /// se gana cuando el cliente ACEPTA el presupuesto" (= la reserva avanza a en firme), reemplazando el
+    /// viejo disparo al crear la reserva.
+    ///
+    /// <para>ADR-033 (2026-06-16, B1/C9 — fix de regresion): este chequeo usa a proposito
+    /// <see cref="EstadoReserva.ActiveCollectionStatuses"/> (operativo vivo, SIN Closed) y NO la lista de
+    /// deuda <see cref="FinancePositionService.ReceivableDebtStatuses"/> (que ahora incluye Closed). Cerrar
+    /// una reserva NO es un evento de "venta nueva concretada" y NO debe marcar el lead como Ganado. "Venta
+    /// viva" (lead-won) y "tiene deuda cobrable" (AR/cobranza) son ejes distintos: el split de ADR-033 los
+    /// separo justamente para que el agregado de Closed a la lista de deuda no arrastrara este disparo.</para>
     ///
     /// <para>Idempotente y seguro: <see cref="LeadService.MarkLeadAsWonForSale"/> no reabre un lead Perdido
     /// y no re-procesa uno ya Ganado. NO hace SaveChanges: el caller persiste el lead trackeado junto con la
@@ -2732,7 +2798,7 @@ public class ReservaService : IReservaService
     private async Task MarkSourceLeadAsWonIfReservaIsFirmAsync(Reserva file)
     {
         if (file.SourceLeadId == null) return;
-        if (!FinancePositionService.ActiveReceivableStatuses.Contains(file.Status)) return;
+        if (!EstadoReserva.ActiveCollectionStatuses.Contains(file.Status)) return;
 
         // Cargamos la entidad trackeada (no AsNoTracking): le vamos a cambiar el Status y necesitamos que
         // EF lo persista en el SaveChanges del caller.

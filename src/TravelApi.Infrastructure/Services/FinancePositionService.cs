@@ -13,21 +13,23 @@ public class FinancePositionService : IFinancePositionService
 {
     private readonly AppDbContext _dbContext;
 
-    // Estados de reserva que cuentan como cuenta por cobrar (AR). Definicion CANONICA y unica:
-    // antes tesoreria usaba esta lista positiva y el dashboard una lista negativa (!= Closed/Cancelled/Budget)
-    // -> daban numeros distintos para Cotizacion/Perdido. ADR-022 §4.7 fija la lista positiva como la verdad:
-    // una cotizacion o un presupuesto todavia NO tienen saldo exigible, asi que no son AR.
+    // Estados de reserva que tienen CUENTA POR COBRAR (deuda viva cobrable). Definicion CANONICA y unica.
     //
-    // ADR-023 T1: se expone como `public static` (antes era `private`) para que CustomerService y
-    // ReportService usen LA MISMA lista de estados en firme, en vez de re-declararla cada uno (que es
-    // justamente lo que producia los saldos divergentes que ADR-023 viene a unificar).
-    public static readonly string[] ActiveReceivableStatuses =
-    {
-        EstadoReserva.InManagement,
-        EstadoReserva.Confirmed,
-        EstadoReserva.Traveling,
-        EstadoReserva.ToSettle
-    };
+    // ADR-033 (2026-06-16, B1 split): esta lista representa el concepto "tiene deuda que se puede cobrar" y
+    // ahora INCLUYE Closed (= EstadoReserva.SaleFirmStatuses). Una reserva Finalizada con deuda es una cuenta
+    // por cobrar legitima (factura con CAE, saldo que reaparece post-cierre, etc.) y debe verse en AR /
+    // cobranza / saldo del cliente / dashboard / alertas. Las queries ya filtran Balance > 0 por moneda, asi
+    // que una Closed saldada (Balance 0) NO aparece; solo aparece Closed con deuda.
+    //
+    // ATENCION (B1): este concepto es DISTINTO de "venta operativa viva" (lead ganado), que sigue usando
+    // EstadoReserva.ActiveCollectionStatuses (SIN Closed) en ReservaService.MarkSourceLeadAsWonIfReservaIsFirmAsync.
+    // Cerrar una reserva NO debe marcar su lead como Ganado. PROHIBIDO mezclar los dos conceptos en una sola
+    // lista (eso era el bug que motivo el split). Por eso esta lista se llama ReceivableDebtStatuses (deuda),
+    // no "ActiveReceivableStatuses" (el nombre viejo, que mezclaba ambas intenciones).
+    //
+    // Historia: antes (ADR-022/023) se llamaba "ActiveReceivableStatuses" y NO incluia Closed -> la deuda en
+    // reservas Finalizadas quedaba invisible (el deadlock que ADR-033 resuelve).
+    public static readonly string[] ReceivableDebtStatuses = EstadoReserva.SaleFirmStatuses;
 
     public FinancePositionService(AppDbContext dbContext)
     {
@@ -41,7 +43,7 @@ public class FinancePositionService : IFinancePositionService
         var query =
             from row in _dbContext.ReservaMoneyByCurrency
             join reservaPadre in _dbContext.Reservas on row.ReservaId equals reservaPadre.Id
-            where ActiveReceivableStatuses.Contains(reservaPadre.Status) && row.Balance > 0
+            where ReceivableDebtStatuses.Contains(reservaPadre.Status) && row.Balance > 0
             select new { row.Currency, row.Balance };
 
         var grouped = await query
@@ -72,7 +74,7 @@ public class FinancePositionService : IFinancePositionService
             from row in _dbContext.ReservaMoneyByCurrency
             join reservaPadre in _dbContext.Reservas on row.ReservaId equals reservaPadre.Id
             where reservaPadre.PayerId == customerId
-                && ActiveReceivableStatuses.Contains(reservaPadre.Status)
+                && ReceivableDebtStatuses.Contains(reservaPadre.Status)
                 && row.Balance > 0
             select new { row.Currency, row.Balance };
 
@@ -106,7 +108,7 @@ public class FinancePositionService : IFinancePositionService
             from row in _dbContext.ReservaMoneyByCurrency
             join reservaPadre in _dbContext.Reservas on row.ReservaId equals reservaPadre.Id
             join customer in _dbContext.Customers on reservaPadre.PayerId equals customer.Id
-            where ActiveReceivableStatuses.Contains(reservaPadre.Status)
+            where ReceivableDebtStatuses.Contains(reservaPadre.Status)
                 && row.Balance > 0
             group row.Balance by customer.PublicId into g
             select new { PublicId = g.Key, Amount = g.Sum() })
@@ -115,8 +117,11 @@ public class FinancePositionService : IFinancePositionService
         return grouped.ToDictionary(x => x.PublicId, x => EconomicRulesHelper.RoundCurrency(x.Amount));
     }
 
+    // ADR-033 (B1, C4): helper publico del concepto "tiene cuenta por cobrar" (= ReceivableDebtStatuses,
+    // incluye Closed). Hoy NO tiene callers. Si algun consumidor de "venta operativa viva" (lead-won) lo
+    // necesitara, NO debe usar este (arrastraria Closed): debe usar EstadoReserva.ActiveCollectionStatuses.
     public bool IsInFirmReceivableStatus(string status)
-        => ActiveReceivableStatuses.Contains(status);
+        => ReceivableDebtStatuses.Contains(status);
 
     /// <summary>
     /// Normaliza la moneda (null/vacio -> ARS, para servicios genericos legacy) agrupando en memoria,

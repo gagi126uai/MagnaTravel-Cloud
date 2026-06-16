@@ -80,11 +80,14 @@ public class AlertService : IAlertService
         var passportExpiries = await ComputePassportExpiriesAsync(caller, cancellationToken);
         // ADR-027 (hallazgo #10): reservas "confirmadas con cambios" sin revisar. Mismo gating que las otras.
         var confirmedWithChanges = await ComputeConfirmedWithChangesAsync(caller, cancellationToken);
+        // ADR-033 (E6/B3): reservas "esperando refund del operador" con saldo a favor que quedo sin consumir.
+        var stuckOperatorRefunds = await ComputeStuckOperatorRefundsAsync(caller, cancellationToken);
 
         var hasNewAlarms = operatorPaymentDeadlines.Count > 0
                            || ticketingDeadlines.Count > 0
                            || passportExpiries.Count > 0
-                           || confirmedWithChanges.Count > 0;
+                           || confirmedWithChanges.Count > 0
+                           || stuckOperatorRefunds.Count > 0;
 
         // CAMINO BYTE-IDENTICO (default historico): si NINGUN bucket nuevo esta activo Y no hay NINGUNA
         // alarma nueva que mostrar, devolvemos el MISMO objeto anonimo de siempre (3 propiedades, mismo
@@ -115,7 +118,7 @@ public class AlertService : IAlertService
         var totalCount = financialCount
                          + upcomingStarts.Count + costsToConfirm.Count
                          + operatorPaymentDeadlines.Count + ticketingDeadlines.Count + passportExpiries.Count
-                         + confirmedWithChanges.Count;
+                         + confirmedWithChanges.Count + stuckOperatorRefunds.Count;
         return new AlertsResponse(
             urgentTrips: urgentTrips,
             supplierDebts: supplierDebts,
@@ -129,7 +132,8 @@ public class AlertService : IAlertService
             operatorPaymentDeadlines: operatorPaymentDeadlines.Count > 0 ? operatorPaymentDeadlines : null,
             ticketingDeadlines: ticketingDeadlines.Count > 0 ? ticketingDeadlines : null,
             passportExpiries: passportExpiries.Count > 0 ? passportExpiries : null,
-            confirmedWithChanges: confirmedWithChanges.Count > 0 ? confirmedWithChanges : null);
+            confirmedWithChanges: confirmedWithChanges.Count > 0 ? confirmedWithChanges : null,
+            stuckOperatorRefunds: stuckOperatorRefunds.Count > 0 ? stuckOperatorRefunds : null);
     }
 
     /// <summary>
@@ -145,12 +149,16 @@ public class AlertService : IAlertService
         // ADR-020 (2026-06-07): "viajes urgentes" = reservas activas con saldo pendiente. InManagement
         // (En gestion) reemplaza al viejo Sold. NO sumamos ToSettle (post-viaje).
         //
-        // Cubre DOS casos (auditoria de negocio 2026-06-12, item 6 "viajó y debe"):
+        // Cubre TRES casos (auditoria de negocio 2026-06-12 item 6 "viajó y debe" + ADR-033 A3 "terminado y debe"):
         //  (A) viaje INMINENTE: salida en [hoy ... hoy + ventana]. El cliente todavia no viajo y debe.
         //  (B) viaje EN CURSO con saldo: Status == Traveling y el viaje ya arranco pero no termino.
         //      Antes este caso DESAPARECIA: el prefiltro StartDate >= hoy lo excluia apenas empezaba el
         //      viaje, y la deuda nunca cerraba sola. Ahora se incluye sin tope de ventana (un viaje en
         //      curso impago es lo MAS urgente). "No termino" = sin EndDate o EndDate >= hoy.
+        //  (C) ADR-033 (A3/F6): TERMINADO y debe. Status == Closed (Finalizada) con saldo pendiente. Antes la
+        //      deuda de una reserva finalizada quedaba INVISIBLE en alertas; ahora es deuda post-viaje real y
+        //      sin tope de ventana (igual que el caso B). El front distingue el rotulo por el Status que ya
+        //      viaja en la proyeccion ("terminado y debe" vs "en viaje y debe"); sin cambio de contrato.
         var urgentTrips = await _context.Reservas
             .Where(f => f.Balance > 0 &&
                         (
@@ -164,6 +172,9 @@ public class AlertService : IAlertService
                             // (B) En viaje y debe (sin tope de ventana, viaje no terminado).
                             (f.Status == EstadoReserva.Traveling &&
                              (f.EndDate == null || f.EndDate >= today))
+                            ||
+                            // (C) Terminado y debe (sin tope de ventana).
+                            (f.Status == EstadoReserva.Closed)
                         ))
             .Select(f => new
             {
@@ -656,6 +667,68 @@ public class AlertService : IAlertService
                 HolderName = r.PayerName,
                 ChangesPendingSince = r.ChangesPendingSince
             })
+            .ToList();
+    }
+
+    /// <summary>
+    /// ADR-033 (2026-06-16, E6/B3 — SOLO VISIBILIDAD): reservas atascadas en "esperando refund del operador"
+    /// (PendingOperatorRefund) cuyo saldo a favor del cliente quedo SIN consumir (RemainingBalance &gt; 0).
+    /// La cancelacion ya devolvio la plata como saldo a favor, pero si el cliente nunca lo aplica/cobra, la
+    /// reserva queda colgada para siempre. Esta alarma la hace VISIBLE para que alguien la accione.
+    ///
+    /// <para>Solo visibilidad: NO da de baja ni devuelve el remanente (eso espera firma de contador, Parte C
+    /// del ADR). NO toca el estado de la reserva.</para>
+    ///
+    /// <para>El saldo a favor de cancelacion se ata a la reserva por la cadena
+    /// ClientCreditEntry.BookingCancellationId -&gt; BookingCancellation.ReservaId. Se suma el remanente vivo
+    /// por reserva (puede haber mas de un entry). Mismo gating de visibilidad que los demas buckets nuevos.</para>
+    /// </summary>
+    private async Task<List<object>> ComputeStuckOperatorRefundsAsync(AlertCallerContext caller, CancellationToken ct)
+    {
+        // Fail-closed: un no-admin sin identidad no ve avisos de nadie (mismo borde que UpcomingStarts).
+        if (!caller.IsAdmin && string.IsNullOrEmpty(caller.UserId))
+            return new List<object>();
+
+        // Saldos a favor de cancelacion todavia vivos (RemainingBalance > 0), unidos a su reserva via la BC.
+        // Se filtra a reservas que SIGUEN esperando refund: si el cliente ya consumio todo, la reserva paso a
+        // Cancelada (OnAllCreditConsumedAsync) y no es un caso "atascado".
+        var query =
+            from credit in _context.ClientCreditEntries
+            where credit.RemainingBalance > 0 && credit.BookingCancellationId != null
+            join bc in _context.BookingCancellations on credit.BookingCancellationId equals bc.Id
+            join reserva in _context.Reservas on bc.ReservaId equals reserva.Id
+            where reserva.Status == EstadoReserva.PendingOperatorRefund
+                  && (caller.IsAdmin || reserva.ResponsibleUserId == caller.UserId)
+            select new
+            {
+                reserva.PublicId,
+                reserva.NumeroReserva,
+                reserva.Name,
+                PayerName = reserva.Payer != null ? reserva.Payer.FullName : null,
+                credit.Currency,
+                credit.RemainingBalance,
+                credit.CreatedAt
+            };
+
+        var rows = await query.ToListAsync(ct);
+
+        // Agrupamos por reserva + moneda: una reserva con remanente en dos monedas produce dos filas (igual
+        // criterio que el resto de la plata, que nunca mezcla monedas en un solo numero). Lo mas viejo
+        // primero (lleva mas tiempo atascado) -> se ordena ANTES de boxear a object.
+        return rows
+            .GroupBy(r => new { r.PublicId, r.NumeroReserva, r.Name, r.PayerName, r.Currency })
+            .Select(g => new
+            {
+                ReservaPublicId = g.Key.PublicId,
+                NumeroReserva = g.Key.NumeroReserva,
+                Name = g.Key.Name,
+                HolderName = g.Key.PayerName,
+                Currency = Monedas.Normalizar(g.Key.Currency),
+                RemainingCredit = EconomicRulesHelper.RoundCurrency(g.Sum(x => x.RemainingBalance)),
+                Since = g.Min(x => x.CreatedAt)
+            })
+            .OrderBy(x => x.Since)
+            .Select(x => (object)x)
             .ToList();
     }
 

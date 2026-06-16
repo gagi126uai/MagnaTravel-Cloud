@@ -292,10 +292,11 @@ public class FaseDStateSetTests
     // =====================================================================
 
     [Fact]
-    public async Task PaymentService_HistoricStates_Unchanged()
+    public async Task PaymentService_ClosedWithDebt_NowCollectable_Adr033()
     {
         using var context = new AppDbContext(NewDbOptions());
-        // Cobrables historicos: Confirmed y Traveling. NO cobrables: Budget, Closed, Cancelled.
+        // ADR-033 (A1/A3): cobrables = venta firme con deuda, INCLUIDO Closed. Budget (pre-venta) y Cancelled
+        // (terminal-no-firme) siguen fuera. Antes (ADR-032) Closed quedaba fuera; ahora suma a la cobranza.
         context.Reservas.Add(ReservaWithBalance(1, EstadoReserva.Confirmed, 100m));
         context.Reservas.Add(ReservaWithBalance(2, EstadoReserva.Traveling, 100m));
         context.Reservas.Add(ReservaWithBalance(3, EstadoReserva.Budget, 100m));
@@ -312,12 +313,12 @@ public class FaseDStateSetTests
 
         var summary = await service.GetCollectionsSummaryAsync(CancellationToken.None);
 
-        // Solo Confirmed + Traveling cobrables = 200. Budget/Closed/Cancelled afuera (como siempre).
-        Assert.Equal(200m, summary.PendingAmount);
+        // Confirmed + Traveling + Closed = 300. Budget/Cancelled afuera.
+        Assert.Equal(300m, summary.PendingAmount);
     }
 
     [Fact]
-    public async Task AlertService_HistoricStates_Unchanged()
+    public async Task AlertService_ClosedWithDebt_NowVisible_Adr033()
     {
         using var context = new AppDbContext(NewDbOptions());
         context.Reservas.Add(ReservaWithBalance(1, EstadoReserva.Confirmed));
@@ -335,16 +336,17 @@ public class FaseDStateSetTests
         Assert.Contains(EstadoReserva.Confirmed, urgentStatuses);
         Assert.Contains(EstadoReserva.Traveling, urgentStatuses);
         Assert.DoesNotContain(EstadoReserva.Budget, urgentStatuses);
-        Assert.DoesNotContain(EstadoReserva.Closed, urgentStatuses);
+        // ADR-033 (A3/F6): la deuda de una Finalizada AHORA aparece en alertas ("terminado y debe").
+        Assert.Contains(EstadoReserva.Closed, urgentStatuses);
     }
 
     [Fact]
-    public async Task TreasuryService_HistoricStates_Unchanged()
+    public async Task TreasuryService_ClosedWithDebt_NowCountsAR_Adr033()
     {
         using var context = new AppDbContext(NewDbOptions());
         context.Reservas.Add(ReservaWithBalance(1, EstadoReserva.Confirmed, 100m));
         context.Reservas.Add(ReservaWithBalance(2, EstadoReserva.Traveling, 100m));
-        // Budget/Closed/Cancelled NO deben sumar a AR (igual que siempre).
+        // ADR-033 (A3/E2): Closed con deuda AHORA suma a AR (deuda real cobrable). Budget sigue fuera.
         context.Reservas.Add(ReservaWithBalance(3, EstadoReserva.Budget, 100m));
         context.Reservas.Add(ReservaWithBalance(4, EstadoReserva.Closed, 100m));
         await context.SaveChangesAsync();
@@ -353,7 +355,8 @@ public class FaseDStateSetTests
 
         var summary = await service.GetSummaryAsync(CancellationToken.None);
 
-        Assert.Equal(200m, summary.AccountsReceivable);
+        // Confirmed + Traveling + Closed = 300. Budget afuera.
+        Assert.Equal(300m, summary.AccountsReceivable);
     }
 
     [Fact]

@@ -602,9 +602,9 @@ public class ClientCreditService : IClientCreditService
     /// <para><b>Validaciones (diseño aprobado + correcciones del review)</b>:
     /// <list type="bullet">
     ///   <item>INV-093: la reserva destino debe ser del MISMO cliente del bolsillo.</item>
-    ///   <item>Estado destino: debe estar en un estado COBRABLE (<see cref="EstadoReserva.ActiveCollectionStatuses"/>).
-    ///         Aplicar saldo a un Presupuesto/Cotizacion/Perdida/Cancelada no tiene sentido (no hay venta
-    ///         vigente que pagar) -> INV-096.</item>
+    ///   <item>Estado destino: debe ser VENTA FIRME (<see cref="EstadoReserva.IsSaleFirmStatus"/>, incluye
+    ///         Closed desde ADR-033). Aplicar saldo a un Presupuesto/Cotizacion/Perdida/Cancelada no tiene
+    ///         sentido (no hay venta firme que pagar) -> INV-096. Una Finalizada con deuda SI acepta saldo.</item>
     ///   <item>Moneda (MVP same-currency): el puente lleva la moneda del bolsillo. Si la reserva destino NO
     ///         tiene deuda exigible en esa moneda, se rechaza (INV-095). Esto bloquea de hecho el cruce de
     ///         monedas: un bolsillo en USD no puede pagar una deuda en ARS.</item>
@@ -659,16 +659,19 @@ public class ClientCreditService : IClientCreditService
                 "reserva a cargo de otro vendedor.");
         }
 
-        // Estado cobrable: no se aplica saldo a una reserva que no es una venta vigente (Presupuesto,
-        // Cotizacion, Perdida, Cancelada).
+        // Estado VENTA FIRME: no se aplica saldo a una reserva que no es una venta firme (Presupuesto,
+        // Cotizacion, Perdida, Cancelada, esperando refund).
         //
-        // ADR-032 (2026-06-15, fix B1): la PREGUNTA "es cobrable?" pasa a ser la fuente unica de dominio
-        // (EstadoReserva.IsCollectableStatus). Pero la RESPUESTA de FC4 se conserva tal cual: tira
-        // BusinessInvariantViolationException con invariantCode="INV-096" (NO el InvalidOperationException
-        // generico de EnsureCollectable). Esto importa porque el GlobalExceptionHandler propaga el
-        // invariantCode a la respuesta 409 y el frontend de saldo a favor depende de ese codigo. Cambiar el
-        // tipo de excepcion romperia el contrato HTTP de FC4 y el test AppliedToNonCollectibleReserva_RejectsInv096.
-        if (!EstadoReserva.IsCollectableStatus(targetReserva.Status))
+        // ADR-033 (2026-06-16, E5/B2): la pregunta de estado pasa de IsCollectableStatus (sin Closed) a
+        // IsSaleFirmStatus (CON Closed). Asi se puede aplicar un saldo a favor a una reserva Finalizada que
+        // todavia tiene deuda (mismo desacople que el cobro normal: cobrar/aplicar saldo depende de la deuda
+        // real, no del estado operativo). NO se baja a IsCollectable()/EnsureCollectable() escalar: eso
+        // romperia el contrato fuerte de FC4. Se conserva EXACTAMENTE:
+        //   - la BusinessInvariantViolationException con invariantCode="INV-096" (el GlobalExceptionHandler lo
+        //     propaga al 409 y el front de saldo a favor + el test AppliedToNonCollectibleReserva_RejectsInv096
+        //     dependen de ese codigo; EnsureCollectable tira InvalidOperationException generico y lo perderia);
+        //   - la validacion de deuda PER-MONEDA de mas abajo (INV-095), mas fuerte que el Balance escalar.
+        if (!EstadoReserva.IsSaleFirmStatus(targetReserva.Status))
         {
             throw new BusinessInvariantViolationException(
                 "No se puede aplicar un saldo a favor a una reserva que no esta en gestion de cobro " +

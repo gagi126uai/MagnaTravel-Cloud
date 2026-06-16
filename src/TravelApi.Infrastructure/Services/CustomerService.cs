@@ -348,10 +348,13 @@ public class CustomerService : ICustomerService
         // reservas en firme. Antes sumaba TODAS las reservas del cliente (incluidas canceladas y cotizaciones)
         // -> el "Saldo Actual" grande del front estaba inflado. Con el mismo conjunto en los tres, el trio
         // TotalSales - TotalPaid queda coherente con TotalBalance (INV-T1-2).
+        // ADR-033 (2026-06-16, A3/B1): el "Saldo Actual" y el resumen del cliente usan ahora la lista de
+        // DEUDA cobrable (ReceivableDebtStatuses, incluye Closed). Una reserva Finalizada con deuda es deuda
+        // real del cliente y debe sumar a su saldo. El conteo de reservas (abajo) NO cambia.
         var firmReservasQuery = _dbContext.Reservas
             .AsNoTracking()
             .Where(reserva => reserva.PayerId == id
-                && FinancePositionService.ActiveReceivableStatuses.Contains(reserva.Status));
+                && FinancePositionService.ReceivableDebtStatuses.Contains(reserva.Status));
 
         // El contador de reservas sigue contando TODAS las del cliente (es el badge "Reservas: N" de la
         // pestaña, no un numero de plata): solo los tres importes pasan a la lista en firme.

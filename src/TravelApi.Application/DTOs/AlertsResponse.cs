@@ -35,7 +35,8 @@ public sealed class AlertsResponse
         object? operatorPaymentDeadlines = null,
         object? ticketingDeadlines = null,
         object? passportExpiries = null,
-        object? confirmedWithChanges = null)
+        object? confirmedWithChanges = null,
+        object? stuckOperatorRefunds = null)
     {
         UrgentTrips = urgentTrips;
         SupplierDebts = supplierDebts;
@@ -47,6 +48,7 @@ public sealed class AlertsResponse
         TicketingDeadlines = ticketingDeadlines;
         PassportExpiries = passportExpiries;
         ConfirmedWithChanges = confirmedWithChanges;
+        StuckOperatorRefunds = stuckOperatorRefunds;
     }
 
     public object UrgentTrips { get; }
@@ -110,6 +112,15 @@ public sealed class AlertsResponse
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public object? ConfirmedWithChanges { get; }
+
+    /// <summary>
+    /// ADR-033 (E6/B3, 2026-06-16): reservas atascadas en "esperando refund del operador" cuyo saldo a favor
+    /// del cliente quedo SIN consumir — un aviso POR RESERVA + moneda. Item: <c>{ reservaPublicId,
+    /// numeroReserva, name, holderName, currency, remainingCredit, since }</c>. Solo VISIBILIDAD (la baja o
+    /// devolucion del remanente espera firma de contador). Se OMITE del JSON cuando no hay nada (null).
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public object? StuckOperatorRefunds { get; }
 
     public int TotalCount { get; }
 }

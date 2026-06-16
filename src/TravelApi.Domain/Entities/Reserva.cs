@@ -96,22 +96,70 @@ public static class EstadoReserva
     };
 
     /// <summary>
+    /// ADR-033 (2026-06-16): VENTA FIRME = la reserva ya paso por venta (NO es pre-venta ni descartada) y
+    /// puede tener una cuenta por cobrar real, INCLUIDO el estado terminal Closed (Finalizada). La unica
+    /// diferencia con <see cref="ActiveCollectionStatuses"/> es justamente <see cref="Closed"/>: una reserva
+    /// finalizada esta operativamente terminada (el viaje paso) pero puede seguir financieramente abierta
+    /// (deuda viva). Esta lista es la base de:
+    ///   - la cobrabilidad por deuda real (ver <see cref="Reserva.IsCollectable"/>): cobrar se permite en
+    ///     {InManagement, Confirmed, Traveling, ToSettle, Closed} cuando hay deuda;
+    ///   - el concepto "tiene cuenta por cobrar" que usan AR / cobranza / saldo del cliente / alertas
+    ///     (FinancePositionService.ReceivableDebtStatuses, que expone exactamente esta lista).
+    ///
+    /// <para>Quotation/Budget/Lost (pre-venta o descartado-sin-venta) NUNCA son firmes. Cancelled y
+    /// PendingOperatorRefund quedan FUERA a proposito: su plata se resuelve por el circuito de cancelacion
+    /// /refund (NC, saldo a favor, devolucion del operador), no por el recibo de cobro normal.</para>
+    ///
+    /// <para>IMPORTANTE: esta lista NO reemplaza a <see cref="ActiveCollectionStatuses"/> para el concepto
+    /// "venta operativa viva" (lead ganado). Cerrar una reserva NO debe marcar su lead como Ganado, por eso
+    /// el lead-won sigue usando ActiveCollectionStatuses (sin Closed). Son ejes distintos (ADR-033 B1).</para>
+    /// </summary>
+    public static readonly string[] SaleFirmStatuses =
+    {
+        InManagement,
+        Confirmed,
+        Traveling,
+        ToSettle,
+        Closed
+    };
+
+    /// <summary>
     /// ADR-032 (2026-06-15): FUENTE UNICA de la regla "se puede cobrar / tocar plata en este estado".
     /// Antes esta pregunta estaba escrita de tres formas distintas (PaymentService solo bloqueaba Budget,
     /// el endpoint anidado no bloqueaba nada, y la cobranza/FC4 usaban la lista canonica). Ahora los tres
     /// caminos convergen aca: cobrable == el estado esta en <see cref="ActiveCollectionStatuses"/>.
     ///
+    /// <para>ADR-033 (2026-06-16): este predicado de SOLO-ESTADO se conserva como helper, pero ya NO es la
+    /// regla de cobrabilidad completa. La cobrabilidad ahora es "venta firme + deuda real" (ver
+    /// <see cref="IsSaleFirmStatus"/> y <see cref="Reserva.IsCollectable"/>). FC4 (saldo a favor) lo
+    /// reemplazo por <see cref="IsSaleFirmStatus"/> para permitir destino Closed con deuda.</para>
+    ///
     /// <para>Comparacion case-insensitive para alinearse con el resto del dominio (los strings se
     /// persisten tal cual, pero no dependemos del casing exacto). Un estado nulo/vacio NO es cobrable.</para>
     /// </summary>
     public static bool IsCollectableStatus(string? status)
+        => ContainsStatus(ActiveCollectionStatuses, status);
+
+    /// <summary>
+    /// ADR-033 (2026-06-16): true si el estado es una VENTA FIRME (ver <see cref="SaleFirmStatuses"/>,
+    /// incluye Closed). Es la mitad-de-estado de la regla de cobrabilidad: la otra mitad es que haya deuda
+    /// real (<see cref="Reserva.IsCollectable"/> combina ambas). Tambien lo usa FC4 para aceptar destino
+    /// Closed con deuda sin abrir el cobro a estados pre-venta/terminales-no-firmes.
+    ///
+    /// <para>Comparacion case-insensitive; estado nulo/vacio NO es firme.</para>
+    /// </summary>
+    public static bool IsSaleFirmStatus(string? status)
+        => ContainsStatus(SaleFirmStatuses, status);
+
+    /// <summary>Busqueda case-insensitive de un estado en una lista (helper interno de las reglas de estado).</summary>
+    private static bool ContainsStatus(string[] statuses, string? status)
     {
         if (string.IsNullOrWhiteSpace(status))
             return false;
 
-        foreach (var collectable in ActiveCollectionStatuses)
+        foreach (var candidate in statuses)
         {
-            if (string.Equals(collectable, status, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(candidate, status, StringComparison.OrdinalIgnoreCase))
                 return true;
         }
 
@@ -274,51 +322,59 @@ public class Reserva : IHasPublicId
     public ICollection<ReservaPendingChange> PendingChanges { get; set; } = new List<ReservaPendingChange>();
 
     // ====================================================================================
-    // ADR-032 (2026-06-15): regla unica de "estado cobrable" aplicada a TODOS los caminos
-    // de plata del cliente (alta de cobro, editar/borrar cobro). Ver EstadoReserva.IsCollectableStatus.
+    // ADR-033 (2026-06-16): COBRABILIDAD = venta firme + deuda real (NO solo-estado como en ADR-032).
+    // Una reserva Finalizada (Closed) con deuda SI es cobrable; una firme ya saldada NO lo es. El alta
+    // de cobro usa esta regla; editar/borrar cobro YA NO mira el estado (solo guardas fiscal/puente).
+    // Ver EstadoReserva.IsSaleFirmStatus y Reserva.IsCollectable.
     // ====================================================================================
 
     /// <summary>
-    /// Mensaje unico cuando se intenta REGISTRAR un cobro (o aplicar un saldo a favor) en una reserva
-    /// que no esta en un estado cobrable. Sin datos sensibles (ni montos ni nombres).
+    /// ADR-033 (2026-06-16): mensaje cuando se intenta cobrar en una reserva que NO es venta firme
+    /// (pre-venta: Cotizacion/Presupuesto/Perdido, o terminal-no-firme: Cancelada/esperando refund).
+    /// Sin datos sensibles (ni montos ni nombres).
     /// </summary>
-    public const string NotCollectableForChargeMessage =
+    public const string NotSaleFirmForChargeMessage =
         "No se puede registrar un cobro en este estado de la reserva. Pasala a En gestion primero.";
 
     /// <summary>
-    /// Mensaje unico cuando se intenta EDITAR o BORRAR a mano un cobro de una reserva terminal
-    /// (cancelada, cerrada, etc.). La correccion valida es ANULAR el cobro, que deja rastro
-    /// (soft-delete + contra-asiento de caja). Sin datos sensibles.
+    /// ADR-033 (2026-06-16): mensaje cuando la reserva ES venta firme pero ya no tiene saldo pendiente
+    /// (Balance &lt;= 0). Cobrar sobre saldo cero seria un sobrepago a ciegas; el excedente legitimo se
+    /// maneja por el puente a saldo a favor, no abriendo el cobro normal. Sin datos sensibles.
     /// </summary>
-    public const string NotCollectableForEditMessage =
-        "Esta reserva esta cerrada o cancelada. No se puede editar ni borrar el cobro directamente; " +
-        "la correccion se hace anulando el cobro (queda rastro).";
-
-    /// <summary>True si a esta reserva se le puede cobrar / aplicar saldo a favor (estado cobrable).</summary>
-    public bool IsCollectable() => EstadoReserva.IsCollectableStatus(Status);
+    public const string NoPendingBalanceForChargeMessage =
+        "Esta reserva no tiene saldo pendiente para cobrar.";
 
     /// <summary>
-    /// ADR-032: guard de ALTA de cobro. Si la reserva no esta en un estado cobrable, corta con
-    /// <see cref="InvalidOperationException"/> (los controllers de cobro ya la mapean a 409). Se usa en
-    /// los DOS puntos de entrada de alta de pago del usuario (PaymentService.CreatePaymentAsync y el
-    /// endpoint anidado ReservaService.AddPaymentAsync). NO se usa en los caminos internos
-    /// (puentes de sobrepago/FC4, cancelacion/refund), que crean Payments directamente y no pasan por aca.
+    /// ADR-033 (2026-06-16): COBRABILIDAD = venta firme (ver <see cref="EstadoReserva.IsSaleFirmStatus"/>,
+    /// incluye Closed) Y deuda real (<see cref="Balance"/> &gt; 0). Antes (ADR-032) era solo-estado; ahora
+    /// una reserva Finalizada (Closed) con deuda SI es cobrable, y una firme ya saldada NO lo es.
+    ///
+    /// <para>PRECONDICION DURA (ADR-033 D3): este predicado debe evaluarse con el <see cref="Balance"/> YA
+    /// recalculado. Los call-sites de alta cargan la reserva con su Balance persistido (fresco) antes del
+    /// guard; si en el futuro alguien recalcula despues del guard, el resultado seria falso.</para>
+    ///
+    /// <para>El <see cref="Balance"/> es el escalar (suma cross-moneda). Es un PISO ("hay ALGO de deuda");
+    /// la imputacion por moneda la resuelve el flujo de pago (ReservaMoneyByCurrency, A5/B4). No reemplaza
+    /// al calculo por moneda.</para>
+    /// </summary>
+    public bool IsCollectable() => EstadoReserva.IsSaleFirmStatus(Status) && Balance > 0;
+
+    /// <summary>
+    /// ADR-033 (2026-06-16): guard de ALTA de cobro. Corta con <see cref="InvalidOperationException"/> (los
+    /// controllers de cobro ya la mapean a 409) en dos casos, con mensajes distintos para no confundir:
+    ///   (a) NO es venta firme (pre-venta/terminal-no-firme) -&gt; "pasala a En gestion primero";
+    ///   (b) es firme pero sin saldo pendiente (Balance &lt;= 0) -&gt; "no hay saldo pendiente para cobrar".
+    ///
+    /// <para>Se usa en los DOS puntos de entrada de alta de pago del usuario (PaymentService.CreatePaymentAsync
+    /// y el endpoint anidado ReservaService.AddPaymentAsync). NO se usa en los caminos internos (puentes de
+    /// sobrepago/FC4, cancelacion/refund), que crean Payments directamente y no pasan por aca.</para>
     /// </summary>
     public void EnsureCollectable()
     {
-        if (!IsCollectable())
-            throw new InvalidOperationException(NotCollectableForChargeMessage);
-    }
+        if (!EstadoReserva.IsSaleFirmStatus(Status))
+            throw new InvalidOperationException(NotSaleFirmForChargeMessage);
 
-    /// <summary>
-    /// ADR-032 (B2 Opcion 1): guard de EDITAR/BORRAR libre de un cobro. En estados terminales (todo lo
-    /// que no es cobrable) la edicion/borrado a mano queda bloqueada; la salida valida es la anulacion con
-    /// rastro (PaymentService.AnnulPaymentAsync). Se evalua ANTES de los guards fiscales/puente existentes,
-    /// que siguen vigentes (un cobro con recibo emitido sigue bloqueado por su propio guard, no por este).
-    /// </summary>
-    public void EnsurePaymentsEditable()
-    {
-        if (!IsCollectable())
-            throw new InvalidOperationException(NotCollectableForEditMessage);
+        if (Balance <= 0)
+            throw new InvalidOperationException(NoPendingBalanceForChargeMessage);
     }
 }
