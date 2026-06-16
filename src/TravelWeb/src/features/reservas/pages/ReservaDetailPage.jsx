@@ -423,27 +423,11 @@ export default function ReservaDetailPage() {
   const [showMarkLostModal, setShowMarkLostModal] = useState(false);
   const [showEditDatesModal, setShowEditDatesModal] = useState(false);
 
-  // ADR-031 v2.1 — Pieza C: sugerencia de composición de pasajeros a partir de los servicios.
-  // Cargamos el TransitionReadinessDto cuando el usuario abre la solapa Pasajeros.
-  // Solo cuando la reserva existe y tiene servicios cargados (sin servicios no hay sugerencia útil).
+  // ADR-031 v2.1 — Pieza C: estado del readiness. Se declara aquí porque useState
+  // siempre va al inicio del componente, pero el useEffect que lo carga se mueve
+  // DESPUÉS de useReservaDetail para evitar TDZ en el bundle de producción.
+  // (Causa del crash: useEffect referenciaba `reserva` antes de que se declarara con const.)
   const [readiness, setReadiness] = useState(null);
-
-  useEffect(() => {
-    // Solo cargamos el readiness al abrir la tab de pasajeros y si hay una reserva cargada.
-    if (activeTab !== "passengers" || !publicId || !reserva) return;
-
-    // Usamos "to=InManagement" porque ese es el destino desde Budget.
-    // Lo que nos interesa del DTO son los campos expectedAdults/Children/Infants.
-    api.get(`/reservas/${publicId}/transition-readiness?to=InManagement`)
-        .then(res => setReadiness(res.data))
-        .catch(() => setReadiness(null)); // Si falla, no mostramos franja (best-effort)
-  // Corremos el efecto cuando: la tab activa cambia, o la reserva recarga (publicId + reserva).
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, publicId, reserva?.status]);
-
-  // Calculamos la sugerencia de composición a partir del readiness y la reserva actual.
-  // calcularSugerenciaComposicion devuelve null si ya coincide o no hay datos (no molesta).
-  const sugerenciaComposicion = calcularSugerenciaComposicion(readiness, reserva);
 
   const [confirmConfig, setConfirmConfig] = useState({
     isOpen: false,
@@ -501,6 +485,30 @@ export default function ReservaDetailPage() {
     allServices,
     capacity,
   } = useReservaDetail(publicId, navigate);
+
+  // ADR-031 v2.1 — Pieza C: cargamos el TransitionReadinessDto cuando el usuario abre
+  // la solapa Pasajeros. Este useEffect se coloca DESPUÉS de useReservaDetail para que
+  // `reserva` ya esté declarado como const — evita el TDZ que crasheaba en producción.
+  // (En dev el TDZ no se manifestaba porque el dev server tolera el orden; en el bundle
+  //  de producción Vite/Rollup reordena y la referencia a `reserva` explotaba con
+  //  "Cannot access 'ae' before initialization".)
+  useEffect(() => {
+    // Solo cargamos el readiness al abrir la tab de pasajeros y si hay una reserva cargada.
+    if (activeTab !== "passengers" || !publicId || !reserva) return;
+
+    // Usamos "to=InManagement" porque ese es el destino desde Budget.
+    // Lo que nos interesa del DTO son los campos expectedAdults/Children/Infants.
+    api.get(`/reservas/${publicId}/transition-readiness?to=InManagement`)
+        .then(res => setReadiness(res.data))
+        .catch(() => setReadiness(null)); // Si falla, no mostramos franja (best-effort)
+  // Corremos el efecto cuando: la tab activa cambia, o la reserva recarga (publicId + reserva).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, publicId, reserva?.status]);
+
+  // Calculamos la sugerencia de composición a partir del readiness y la reserva actual.
+  // calcularSugerenciaComposicion devuelve null si ya coincide o no hay datos (no molesta).
+  // Se coloca acá (post useReservaDetail) por el mismo motivo que el useEffect de arriba.
+  const sugerenciaComposicion = calcularSugerenciaComposicion(readiness, reserva);
 
   const handleDeletePayment = async (payment) => {
     try {
