@@ -11,6 +11,7 @@ using TravelApi.Application.Exceptions;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Exceptions;
+using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Tests.Fixtures;
 using Xunit;
@@ -215,6 +216,11 @@ public sealed class ClientCreditServiceTests
         // valida (regla nueva: no se aplica saldo a una reserva sin deuda en esa moneda). Le damos un servicio
         // confirmado de 1000 ARS.
         var seed = await SeedScenarioWithCreditEntryAsync(creditAmount: 500m);
+
+        // El Payment puente que crea AppliedToNewBooking se persiste con CreatedByUserId = userId
+        // actuante. En produccion ese userId es un usuario real (existe en AspNetUsers); en el test
+        // debemos sembrarlo o el INSERT viola FK_Payments_AspNetUsers_CreatedByUserId (23503).
+        await SeedUserAsync("user1");
 
         // Crear una reserva destino COBRABLE y CON deuda para el mismo customer.
         Guid targetReservaPublicId;
@@ -825,5 +831,29 @@ public sealed class ClientCreditServiceTests
             BcId: bc.Id,
             ReservaId: resId,
             CustomerId: custId);
+    }
+
+    /// <summary>
+    /// Inserta un <see cref="ApplicationUser"/> con el Id dado (idempotente).
+    /// Necesario cuando el flujo persiste una fila con FK a AspNetUsers — p.ej. el Payment puente
+    /// de AppliedToNewBooking usa CreatedByUserId = userId actuante (FK_Payments_AspNetUsers_CreatedByUserId).
+    /// Para satisfacer la FK alcanza con que exista la fila; insertamos directo via el DbSet (sin UserManager).
+    /// </summary>
+    private async Task SeedUserAsync(string userId)
+    {
+        await using var ctx = _fixture.CreateDbContext();
+        if (await ctx.Users.AnyAsync(u => u.Id == userId)) return;
+        ctx.Users.Add(new ApplicationUser
+        {
+            Id = userId,
+            UserName = userId,
+            NormalizedUserName = userId.ToUpperInvariant(),
+            Email = $"{userId}@test.local",
+            NormalizedEmail = $"{userId.ToUpperInvariant()}@TEST.LOCAL",
+            FullName = "Cashier Test",
+            IsActive = true,
+            SecurityStamp = Guid.NewGuid().ToString(),
+        });
+        await ctx.SaveChangesAsync();
     }
 }

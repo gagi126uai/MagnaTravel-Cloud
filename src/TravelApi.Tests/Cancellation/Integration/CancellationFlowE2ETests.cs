@@ -9,6 +9,7 @@ using TravelApi.Application.Constants;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Tests.Fixtures;
 using Xunit;
@@ -547,7 +548,15 @@ public sealed class CancellationFlowE2ETests
         var (bcPublicId, entryPublicId, _, customerId) = await RunFlowUntilCreditEntryAsync(
             seed, provider, creditAmount: 2_000m);
 
-        // Crear otra Reserva del mismo customer (destino del credito).
+        // El Payment puente de AppliedToNewBooking se persiste con CreatedByUserId = userId actuante.
+        // En produccion ese usuario existe; en el test hay que sembrarlo o el INSERT viola
+        // FK_Payments_AspNetUsers_CreatedByUserId (23503).
+        await SeedUserAsync("user-cashier");
+
+        // Crear otra Reserva del mismo customer (destino del credito). FC4 (2026-06-14): la reserva
+        // destino debe tener deuda EXIGIBLE en la misma moneda del saldo (ARS) para que la aplicacion
+        // sea valida (INV-095: no se aplica saldo a una reserva sin deuda en esa moneda). Le damos un
+        // servicio confirmado en ARS con deuda suficiente (>= 2000, el monto que se aplica).
         Guid targetReservaPublicId;
         await using (var setupCtx = _fixture.CreateDbContext())
         {
@@ -561,6 +570,22 @@ public sealed class CancellationFlowE2ETests
             setupCtx.Reservas.Add(targetReserva);
             await setupCtx.SaveChangesAsync();
             targetReservaPublicId = targetReserva.PublicId;
+
+            setupCtx.Servicios.Add(new ServicioReserva
+            {
+                ReservaId = targetReserva.Id,
+                ServiceType = "Hotel",
+                ProductType = "Hotel",
+                Description = "Hotel destino V4",
+                ConfirmationNumber = "OK-DEST-V4",
+                Status = "Confirmado",
+                Currency = "ARS",
+                DepartureDate = DateTime.UtcNow.AddDays(20),
+                SalePrice = 2_000m,
+                NetCost = 0m,
+                CreatedAt = DateTime.UtcNow,
+            });
+            await setupCtx.SaveChangesAsync();
         }
 
         using (var scope = provider.CreateScope())
@@ -890,5 +915,29 @@ public sealed class CancellationFlowE2ETests
             .FirstAsync(e => e.BookingCancellationId == bc.Id);
 
         return (bcPublicId, entry.PublicId, entry.Id, seed.CustomerId);
+    }
+
+    /// <summary>
+    /// Inserta un <see cref="ApplicationUser"/> con el Id dado (idempotente).
+    /// Necesario cuando el flujo persiste una fila con FK a AspNetUsers — p.ej. el Payment puente
+    /// de AppliedToNewBooking usa CreatedByUserId = userId actuante (FK_Payments_AspNetUsers_CreatedByUserId).
+    /// Para satisfacer la FK alcanza con que exista la fila; insertamos directo via el DbSet (sin UserManager).
+    /// </summary>
+    private async Task SeedUserAsync(string userId)
+    {
+        await using var ctx = _fixture.CreateDbContext();
+        if (await ctx.Users.AnyAsync(u => u.Id == userId)) return;
+        ctx.Users.Add(new ApplicationUser
+        {
+            Id = userId,
+            UserName = userId,
+            NormalizedUserName = userId.ToUpperInvariant(),
+            Email = $"{userId}@test.local",
+            NormalizedEmail = $"{userId.ToUpperInvariant()}@TEST.LOCAL",
+            FullName = "Cajero Test",
+            IsActive = true,
+            SecurityStamp = Guid.NewGuid().ToString(),
+        });
+        await ctx.SaveChangesAsync();
     }
 }
