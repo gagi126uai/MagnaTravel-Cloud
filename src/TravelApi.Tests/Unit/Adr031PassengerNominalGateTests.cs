@@ -270,6 +270,60 @@ public class Adr031PassengerNominalGateTests
         Assert.Equal(EstadoReserva.Confirmed, (await ctx.Reservas.FindAsync(1))!.Status);
     }
 
+    // ===================== Bug 2026-06-15: confirmar "desde proveedor" con 1 pasajero cargado =====================
+    // Reporte del dueno: reserva con 1 servicio y 1 pasajero con NOMBRE; al confirmar "desde proveedor" el
+    // sistema rechazaba diciendo que "el pasajero no esta cargado". Estos tests fijan el comportamiento real
+    // por tipo de servicio y verifican que el mensaje nombre EXACTAMENTE lo que falta.
+
+    [Fact]
+    public async Task ConfirmFlightFromProvider_OnePassengerWithNameOnly_RejectedWithClearDocumentMessage()
+    {
+        // El aereo exige nombre + documento. El dueno cargo solo el nombre -> rechazo. El mensaje NO debe
+        // decir "el pasajero no esta cargado" ni "falta nombre": debe decir que falta el DOCUMENTO.
+        await using var ctx = NewContext();
+        ctx.Reservas.Add(InManagementReserva());
+        ctx.Passengers.Add(new Passenger { Id = 1, ReservaId = 1, FullName = "Pasajero Cargado" }); // sin documento
+        ctx.FlightSegments.Add(new FlightSegment
+        {
+            Id = 50, ReservaId = 1, Status = "HK", SalePrice = 500m, AirlineCode = "AR", FlightNumber = "1234"
+        });
+        await ctx.SaveChangesAsync();
+
+        var reservaService = NewReservaService(ctx);
+        var booking = NewBookingService(ctx, reservaService);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => booking.MarkFlightTicketIssuedAsync("1", "50", ticketNumber: null, CancellationToken.None));
+
+        Assert.Contains("documento", ex.Message);
+        Assert.DoesNotContain("nombre", ex.Message); // el nombre SI estaba cargado
+        Assert.DoesNotContain("sin pasajeros", ex.Message); // no es un set vacio
+    }
+
+    [Fact]
+    public async Task ConfirmHotelFromProvider_OnePassengerWithNameOnly_Succeeds()
+    {
+        // Control positivo del mismo escenario: para HOTEL alcanza el titular con nombre, asi que confirmar
+        // "desde proveedor" con 1 pasajero cargado (solo nombre) DEBE pasar. Esto es lo que el dueno esperaba.
+        await using var ctx = NewContext();
+        ctx.Reservas.Add(InManagementReserva());
+        ctx.Passengers.Add(new Passenger { Id = 1, ReservaId = 1, FullName = "Pasajero Cargado" });
+        ctx.HotelBookings.Add(new HotelBooking
+        {
+            Id = 10, ReservaId = 1, HotelName = "Hotel", Status = "Solicitado", SalePrice = 200m,
+            CheckIn = DateTime.UtcNow.Date.AddDays(10), CheckOut = DateTime.UtcNow.Date.AddDays(12)
+        });
+        await ctx.SaveChangesAsync();
+
+        var reservaService = NewReservaService(ctx);
+        var booking = NewBookingService(ctx, reservaService);
+
+        var dto = await booking.UpdateHotelStatusAsync("10", "Confirmado", confirmationNumber: null, CancellationToken.None);
+
+        Assert.Equal("Confirmado", dto.Status);
+        Assert.Equal(EstadoReserva.Confirmed, (await ctx.Reservas.FindAsync(1))!.Status);
+    }
+
     // ===================== Editar a confirmado sin nombres -> rechazado =====================
 
     [Fact]

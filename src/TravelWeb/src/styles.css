@@ -4,6 +4,12 @@
 
 @layer base {
     :root {
+        /* color-scheme le dice al navegador en que tono pintar los controles NATIVOS
+           (desplegables <select>, inputs, calendarios, barras de scroll, autocompletado).
+           Sin esto, en modo oscuro los desplegables nativos salian claros -> texto y fondo
+           invertidos. Va atado al tema: light por defecto, dark cuando la clase .dark esta. */
+        color-scheme: light;
+
         --background: 210 40% 98%;
         --foreground: 222.2 84% 4.9%;
 
@@ -36,6 +42,8 @@
     }
 
     .dark {
+        color-scheme: dark;
+
         --background: 222.2 84% 4.9%;
         --foreground: 210 40% 98%;
 

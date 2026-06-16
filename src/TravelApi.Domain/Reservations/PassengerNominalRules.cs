@@ -251,19 +251,44 @@ public static class PassengerNominalRules
             return $"No se puede {actionLabel} sin pasajeros: el servicio no tiene pasajeros para validar.";
         }
 
-        // Validamos TODO el set (sin recorte). Contamos cuantos estan incompletos para el mensaje.
+        // Validamos TODO el set (sin recorte). Contamos cuantos estan incompletos y, ademas, QUE campos
+        // faltan REALMENTE en el conjunto. El mensaje debe decir exactamente lo que falta: si el agente
+        // ya cargo el nombre pero le falta el documento, no tiene sentido decirle "falta nombre" (ese fue
+        // el bug reportado: el aereo decia "Faltan nombre y documento" aunque el nombre estuviera cargado).
         var incompletePassengers = 0;
+        var anyNameMissing = false;
+        var anyDocumentMissing = false;
+        var anyBirthDateMissing = false;
+
         foreach (var passenger in serviceSet)
         {
-            if (!HasRequiredFields(passenger, requireDocument, requireBirthDate))
+            if (HasRequiredFields(passenger, requireDocument, requireBirthDate))
             {
-                incompletePassengers++;
+                continue;
+            }
+
+            incompletePassengers++;
+
+            if (string.IsNullOrWhiteSpace(passenger.FullName))
+            {
+                anyNameMissing = true;
+            }
+            if (requireDocument
+                && (string.IsNullOrWhiteSpace(passenger.DocumentType)
+                    || string.IsNullOrWhiteSpace(passenger.DocumentNumber)))
+            {
+                anyDocumentMissing = true;
+            }
+            if (requireBirthDate && passenger.BirthDate == null)
+            {
+                anyBirthDateMissing = true;
             }
         }
 
         if (incompletePassengers > 0)
         {
-            return BuildMissingDataMessage(incompletePassengers, requireDocument, requireBirthDate, actionLabel);
+            return BuildMissingDataMessage(
+                incompletePassengers, anyNameMissing, anyDocumentMissing, anyBirthDateMissing, actionLabel);
         }
 
         return null;
@@ -294,29 +319,54 @@ public static class PassengerNominalRules
     }
 
     /// <summary>
-    /// Arma el mensaje accionable segun que campos exige el tipo. NUNCA incluye el numero de
-    /// documento (dato sensible): solo cuenta cuantos pasajeros estan incompletos.
+    /// Arma el mensaje accionable nombrando SOLO los campos que faltan de verdad en el set, no todos los
+    /// que el tipo podria exigir. Asi, si el nombre ya esta cargado y solo falta el documento, el mensaje
+    /// dice "Falta el documento ..." y no "Faltan nombre y documento ..." (que confundia al agente
+    /// haciendole creer que el pasajero no estaba cargado). NUNCA incluye el numero de documento (dato
+    /// sensible): solo cuenta cuantos pasajeros estan incompletos y que campos faltan.
     /// </summary>
     private static string BuildMissingDataMessage(
         int affectedPassengers,
-        bool requireDocument,
-        bool requireBirthDate,
+        bool nameMissing,
+        bool documentMissing,
+        bool birthDateMissing,
         string actionLabel)
     {
-        string missingFields;
-        if (requireDocument && requireBirthDate)
+        // Listamos solo los campos realmente faltantes, en orden estable.
+        var missingFieldNames = new List<string>(capacity: 3);
+        if (nameMissing) missingFieldNames.Add("nombre");
+        if (documentMissing) missingFieldNames.Add("documento");
+        if (birthDateMissing) missingFieldNames.Add("fecha de nacimiento");
+
+        // Defensa: si por algun motivo no se marco ningun campo (no deberia pasar cuando hay incompletos),
+        // caemos a un mensaje generico para no devolver un texto roto.
+        if (missingFieldNames.Count == 0)
         {
-            missingFields = "nombre, documento y fecha de nacimiento";
-        }
-        else if (requireDocument)
-        {
-            missingFields = "nombre y documento";
-        }
-        else
-        {
-            missingFields = "nombre";
+            return $"Faltan datos de {affectedPassengers} pasajero(s) para {actionLabel}.";
         }
 
-        return $"Faltan {missingFields} de {affectedPassengers} pasajero(s) para {actionLabel}.";
+        var fieldList = JoinWithSpanishConjunction(missingFieldNames);
+        // "Falta el nombre" (singular) vs "Faltan nombre y documento" (plural): elegimos el verbo segun
+        // cuantos campos falten, para que el castellano suene natural.
+        var verb = missingFieldNames.Count == 1 ? "Falta el" : "Faltan";
+
+        return $"{verb} {fieldList} de {affectedPassengers} pasajero(s) para {actionLabel}.";
+    }
+
+    /// <summary>
+    /// Une una lista de campos con comas y "y" antes del ultimo, al estilo castellano:
+    /// ["nombre"] -> "nombre"; ["nombre","documento"] -> "nombre y documento";
+    /// ["nombre","documento","fecha de nacimiento"] -> "nombre, documento y fecha de nacimiento".
+    /// </summary>
+    private static string JoinWithSpanishConjunction(IReadOnlyList<string> items)
+    {
+        if (items.Count == 1)
+        {
+            return items[0];
+        }
+
+        var allButLast = string.Join(", ", items.Take(items.Count - 1));
+        var last = items[items.Count - 1];
+        return $"{allButLast} y {last}";
     }
 }

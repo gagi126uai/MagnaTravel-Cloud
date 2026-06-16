@@ -138,6 +138,48 @@ public class PassengerNominalRulesTests
             () => PassengerNominalRules.EnsureCovered(set, PassengerNominalRules.ServiceKind.Flight));
     }
 
+    // ===================== Bug 2026-06-15: el mensaje nombra SOLO lo que falta de verdad =====================
+    // El agente cargo el NOMBRE pero le falta el DOCUMENTO. El mensaje viejo decia "Faltan nombre y
+    // documento", lo que hacia creer que el pasajero no estaba cargado. Ahora debe nombrar solo el documento.
+
+    [Fact]
+    public void Flight_NameLoadedButDocumentMissing_MessageMentionsOnlyDocument_NotName()
+    {
+        var set = Set(Pax(1, "Pasajero Con Nombre")); // tiene nombre, NO tiene documento
+        var message = PassengerNominalRules.GetMissing(set, PassengerNominalRules.ServiceKind.Flight);
+
+        Assert.NotNull(message);
+        Assert.Contains("documento", message);
+        // Lo clave del fix: NO debe decir que falta el nombre, porque el nombre SI esta cargado.
+        Assert.DoesNotContain("nombre", message);
+        Assert.Contains("emitir este vuelo", message);
+    }
+
+    [Fact]
+    public void Flight_NameAndDocumentBothMissing_MessageMentionsBoth()
+    {
+        var set = Set(Pax(1, "   ")); // sin nombre ni documento
+        var message = PassengerNominalRules.GetMissing(set, PassengerNominalRules.ServiceKind.Flight);
+
+        Assert.NotNull(message);
+        Assert.Contains("nombre", message);
+        Assert.Contains("documento", message);
+    }
+
+    [Fact]
+    public void Assistance_OnlyBirthDateMissing_MessageMentionsOnlyBirthDate()
+    {
+        // Nombre + documento cargados; falta SOLO la fecha de nacimiento.
+        var set = Set(Pax(1, "Uno", "DNI", "11111111", birthDate: null));
+        var message = PassengerNominalRules.GetMissing(set, PassengerNominalRules.ServiceKind.Assistance);
+
+        Assert.NotNull(message);
+        Assert.Contains("fecha de nacimiento", message);
+        Assert.DoesNotContain("nombre", message);
+        // "documento" no debe aparecer como faltante (el numero esta cargado).
+        Assert.DoesNotContain("falta el documento", message.ToLowerInvariant());
+    }
+
     [Fact]
     public void Flight_DoesNotRequireBirthDate()
     {
