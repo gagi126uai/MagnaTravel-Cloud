@@ -26,10 +26,12 @@
  *   El bloqueo fiscal (serviceCancellationBlockReason) se propaga a la sección inline.
  */
 
-import React, { useCallback, useRef, useState } from 'react';
-import { AlertTriangle, Plus, Plane, Hotel, Car, Package, ShieldCheck, Edit2, Trash2, CheckCircle2, Clock, X, Loader2, FileText, Ban, XSquare } from "lucide-react";
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { AlertTriangle, Plus, Plane, Hotel, Car, Package, ShieldCheck, Edit2, Trash2, CheckCircle2, Clock, X, Loader2, FileText, Ban, XSquare, UserX } from "lucide-react";
 import { isAdmin, hasPermission } from "../../../auth";
 import { CancelarVariosServiciosInline } from "./CancelarVariosServiciosInline";
+import { PasajeroInlineForm } from "./PasajeroInlineForm";
+import { ControlAsignacionServicio } from "./ControlAsignacionServicio";
 import { api } from "../../../api";
 import { showError, showSuccess } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
@@ -37,10 +39,81 @@ import {
     SERVICE_RECORD_KIND,
     getReservationServicePublicId
 } from "../lib/reservationServiceModel";
+import { calcularHintPorTipo, calcularSlotsFaltantesDelSet } from "../lib/pasajeroHint";
+import { useServiceNominalCoverage } from "../lib/useServiceNominalCoverage";
 import { UpcomingStartPill, estaEnVentana } from "./UpcomingStartPill";
 import { CostConfirmCell, CostConfirmCellMobile } from "./CostConfirmCell";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import { formatCurrency } from "../../../lib/utils";
+
+/**
+ * Convierte el recordKind del frontend al serviceType que espera el endpoint de nominal-coverage.
+ *
+ * El backend usa los valores: "Hotel", "Flight", "Transfer", "Package", "Assistance", "Generic".
+ * El frontend usa: "hotel", "flight", "transfer", "package", "assistance", "generic".
+ *
+ * @param {string} recordKind - valor del frontend (minúscula)
+ * @returns {string} - valor del backend (capitalizado)
+ */
+function recordKindAServiceType(recordKind) {
+    const mapa = {
+        flight: "Flight",
+        hotel: "Hotel",
+        transfer: "Transfer",
+        package: "Package",
+        assistance: "Assistance",
+        generic: "Generic",
+    };
+    return mapa[recordKind] || "Generic";
+}
+
+/**
+ * Wrapper por servicio que encapsula el hook de nominal-coverage.
+ *
+ * Necesitamos un componente separado porque los hooks de React no se pueden llamar
+ * dentro de un .map() — cada servicio necesita su propia instancia del hook.
+ * Este componente solo maneja el estado de coverage y delega el render al padre.
+ *
+ * Props:
+ *   reservaId           — publicId de la reserva
+ *   svc                 — objeto del servicio normalizado
+ *   pasajerosConNombre  — array de pasajeros con fullName cargado
+ *   children            — función render prop: (coverage, coverageLoading, updateCoverage, serviceType, servicePublicId) => JSX
+ *
+ * NOTA D1 (follow-up, no bloqueante): en reservas con muchos servicios y pasajeros con nombre
+ * se hacen N llamadas GET /nominal-coverage al mismo tiempo al renderizar la lista.
+ * Una mejora futura sería cargar la coverage solo al abrir el panel (lazy), pero eso
+ * requiere cambiar el texto "Para: X de N" del botón cerrado (hoy depende de coverage).
+ * No resuelto ahora — se anota como follow-up.
+ *
+ * Props adicional:
+ *   reservaStatus — necesario para saber si cargar coverage aunque no haya nombres
+ *                   (en InManagement el mini-form la necesita para los slots faltantes).
+ */
+function ConCoverageDeServicio({ reservaId, svc, pasajerosConNombre, reservaStatus, children }) {
+    const servicePublicId = getReservationServicePublicId(svc);
+    const serviceType = recordKindAServiceType(svc.recordKind);
+
+    const hayNombres = Array.isArray(pasajerosConNombre) && pasajerosConNombre.length > 0;
+
+    // Habilitamos la llamada al backend cuando:
+    //   1. Hay pasajeros con nombre → necesario para el control "Para: X de N".
+    //   2. La reserva está en InManagement → necesario para el mini-form de slots faltantes
+    //      (aunque aún no haya ningún nombre cargado, el backend dice qué slots faltan).
+    const necesitaCoverageParaMiniForm = reservaStatus === 'InManagement' && !esServicioResuelto(svc);
+    const habilitarCoverage = (hayNombres || necesitaCoverageParaMiniForm) && Boolean(servicePublicId);
+
+    const { coverage, loading: coverageLoading, updateCoverage } = useServiceNominalCoverage({
+        reservaId,
+        serviceType,
+        servicePublicId,
+        enabled: habilitarCoverage,
+    });
+
+    // updateCoverage: función que permite pisar la coverage localmente con el DTO que devuelve
+    // el PUT atómico de assignments (B2). Así evitamos re-pedir GET nominal-coverage tras guardar.
+    return children(coverage, coverageLoading, updateCoverage, serviceType, servicePublicId);
+}
 
 /**
  * Calcula el resumen de servicios cancelados para el contador "N de M" del ReservaHeader.
@@ -575,6 +648,114 @@ function ServiceIcon({ service, className = "w-4 h-4 mr-2" }) {
 
 
 /**
+ * Mini-formulario inline que aparece debajo de un servicio cuando faltan datos de pasajeros.
+ *
+ * Guía UX 2026-06-15 (P4b, P5):
+ *   - Pantalla D (Aéreo): aparece cuando faltan nombre o documento de algún pasajero declarado.
+ *   - Pantalla E (Hotel/Traslado): aparece cuando el titular no tiene nombre.
+ *   - NUNCA ventana flotante: siempre en línea, debajo del servicio.
+ *   - Cuando todos los slots quedan completos, el mini-formulario desaparece.
+ *
+ * Fix B1 (ADR-031 v2.1 review): usa el SET del servicio para calcular los slots faltantes.
+ *   Si el servicio tiene asignaciones explícitas ("2 de 3"), solo pide esos 2.
+ *   Si el servicio es "Para: Todos", pide todos los que falten.
+ *   Antes usaba calcularSlotsFaltantes sobre TODOS los pasajeros de la reserva — incorrecto.
+ *
+ * Props:
+ *   reservaId          — publicId de la reserva
+ *   reserva            — objeto reserva (para pasajeros completos: se pasan como pasajerosCompletos)
+ *   servicio           — objeto del servicio (para saber el recordKind y el label)
+ *   coverage           — ServiceNominalCoverageDto del backend (del render-prop ConCoverageDeServicio)
+ *   onPasajeroGuardado — callback() tras guardar un pasajero (el padre recarga)
+ */
+function MiniFormularioPasajerosFaltantes({ reservaId, reserva, servicio, coverage, onPasajeroGuardado }) {
+    const [slotAbierto, setSlotAbierto] = useState(null);
+
+    // Fix B1: usamos calcularSlotsFaltantesDelSet en vez de calcularSlotsFaltantes.
+    // La diferencia clave: calcularSlotsFaltantesDelSet trabaja sobre el SET del servicio
+    // que ya resolvió el backend (hasExplicitAssignments + serviceSet[]).
+    // Un servicio "2 de 3" solo pide los 2 nombres, no los 3.
+    // Si coverage aún no llegó → lista vacía → el mini-form no se muestra todavía.
+    const slotsFaltantes = calcularSlotsFaltantesDelSet(
+        coverage,
+        reserva?.passengers || [],
+    );
+
+    // Si no hay slots faltantes, no mostramos nada (el botón ya estará habilitado).
+    if (slotsFaltantes.length === 0) return null;
+
+    // Determinamos el modo del mini-formulario según el tipo de servicio.
+    // El "mode" controla qué campos se piden (nombre, documento, fecha de nacimiento).
+    function modeDelServicio(recordKind) {
+        switch (recordKind) {
+            case "flight": return "flight";
+            case "hotel": return "hotel";
+            case "transfer": return "transfer";
+            case "assistance": return "assistance";
+            case "package": return "package";
+            default: return "full";
+        }
+    }
+
+    const mode = modeDelServicio(servicio.recordKind);
+
+    return (
+        <tr
+            className="bg-amber-50/60 dark:bg-amber-950/10"
+            data-testid={`mini-form-pasajeros-${getReservationServicePublicId(servicio)}`}
+        >
+            <td colSpan={20} className="px-4 pb-4 pt-2">
+                {/* Encabezado del mini-formulario */}
+                <div className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+                    <UserX className="h-4 w-4" aria-hidden="true" />
+                    Faltan datos para emitir — cargá los pasajeros que faltan:
+                </div>
+
+                {/* Un mini-formulario por cada slot faltante */}
+                <div className="space-y-2">
+                    {slotsFaltantes.map((slot, i) => {
+                        const esteSlotAbierto = slotAbierto === i;
+
+                        return (
+                            <div key={`${slot.slot}-${i}`}>
+                                {/* Mostrar botón "Completar" si el slot no está expandido */}
+                                {!esteSlotAbierto && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setSlotAbierto(i)}
+                                        className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-100 px-3 py-1.5 text-xs font-bold text-amber-700 hover:bg-amber-200 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+                                    >
+                                        <Plus className="h-3 w-3" aria-hidden="true" />
+                                        {slot.slot}
+                                    </button>
+                                )}
+
+                                {/* Mini-formulario expandido */}
+                                {esteSlotAbierto && (
+                                    <PasajeroInlineForm
+                                        reservaId={reservaId}
+                                        passengerToEdit={slot.passenger}
+                                        slotLabel={slot.slot}
+                                        mode={mode}
+                                        onGuardado={() => {
+                                            setSlotAbierto(null);
+                                            // El padre recarga para que el hint se recalcule
+                                            // con los datos frescos del backend.
+                                            onPasajeroGuardado?.();
+                                        }}
+                                        onCancelar={() => setSlotAbierto(null)}
+                                    />
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+            </td>
+        </tr>
+    );
+}
+
+/**
  * Props:
  *   services                        — lista de servicios normalizados
  *   serviceCollectionErrors         — objeto { tipoKey: mensajeError } para mostrar errores de carga
@@ -602,6 +783,9 @@ function ServiceIcon({ service, className = "w-4 h-4 mr-2" }) {
  *                                     Si no es null, toda la reserva está bloqueada para cancelaciones.
  *                                     Se propaga a la sección inline "Cancelar varios".
  *   onCancelacionVariosTerminada    — callback () => void: el padre recarga la reserva al terminar.
+ *   pasajerosConNombre              — Array de pasajeros que ya tienen fullName cargado.
+ *                                     Necesario para el control "Para: Todos" (Pieza A ADR-031 v2.1).
+ *                                     Si no se pasa (o vacío), el control aparece en modo deshabilitado.
  */
 export function ServiceList({
     services,
@@ -612,6 +796,10 @@ export function ServiceList({
     onCancelService,
     reservaId,
     reservaStatus,
+    // reserva: objeto completo de la reserva. Necesario para el hint de pasajeros
+    // (adultCount/childCount/infantCount y la lista de passengers ya cargados).
+    // Si no se pasa, los botones de resolución/emisión no quedan gateados por pasajeros.
+    reserva = null,
     isCatalogFindOrCreateEnabled = false,
     isServiceDeadlineAlertsEnabled = false,
     windowDays = null,
@@ -626,6 +814,12 @@ export function ServiceList({
     canCancelServices = false,
     serviceCancellationBlockReason = null,
     onCancelacionVariosTerminada,
+    // Callback para cuando se guarda un pasajero desde el mini-formulario inline.
+    // El padre recarga la reserva para que el hint se actualice con datos frescos.
+    onPasajeroGuardado,
+    // ADR-031 v2.1 — Pieza A: pasajeros con nombre para el control "Para: Todos".
+    // El padre filtra reserva.passengers por los que tienen fullName.
+    pasajerosConNombre = [],
 }) {
     // Gate de costo: con flag OFF se usa isAdmin() (comportamiento original).
     // Con flag ON se usa hasPermission("cobranzas.see_cost") — admin pasa igual (bypass en hasPermission).
@@ -817,8 +1011,21 @@ export function ServiceList({
                                     const displayType = svc.displayType || svc._type || 'Servicio';
                                     const serviceKey = `${svc.recordKind || displayType}-${getReservationServicePublicId(svc)}`;
 
+                                    // Usamos Fragment con key para poder devolver fila + mini-formulario
+                                    // como un bloque sin envolver en un <div> (que rompería el <tbody>).
+                                    // ConCoverageDeServicio encapsula el hook de nominal-coverage (no se puede
+                                    // llamar hooks dentro de un .map(), necesita un componente propio).
                                     return (
-                                        <tr key={serviceKey} className="group border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors">
+                                        <ConCoverageDeServicio
+                                            key={serviceKey}
+                                            reservaId={reservaId}
+                                            svc={svc}
+                                            pasajerosConNombre={pasajerosConNombre}
+                                            reservaStatus={reservaStatus}
+                                        >
+                                        {(coverage, coverageLoading, updateCoverage, serviceType, servicePublicId) => (
+                                        <React.Fragment>
+                                        <tr className="group border-b border-slate-50 dark:border-slate-800/50 hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-colors">
                                             <td className="py-4 align-middle whitespace-nowrap pr-4">
                                                 <div className="flex items-center">
                                                     <ServiceIcon service={svc} />
@@ -988,25 +1195,74 @@ export function ServiceList({
                                             <td className="py-4 align-middle pr-4">
                                                 <div className="flex flex-col items-end gap-1.5">
                                                     {/* Botones de resolver: decision 3 de UX (ADR-020).
-                                                        Solo aparecen en InManagement Y cuando el servicio todavia no esta resuelto. */}
-                                                    {reservaStatus === 'InManagement' && !esServicioResuelto(svc) && (
-                                                        <>
-                                                            {svc.recordKind === SERVICE_RECORD_KIND.FLIGHT && (
-                                                                <BotonMarcarEmitido
-                                                                    reservaId={reservaId}
-                                                                    servicePublicId={getReservationServicePublicId(svc)}
-                                                                    onResuelto={onServiceResolved}
-                                                                />
-                                                            )}
-                                                            {svc.recordKind === SERVICE_RECORD_KIND.TRANSFER && (
-                                                                <BotonNoRequiereConfirmacion
-                                                                    reservaId={reservaId}
-                                                                    servicePublicId={getReservationServicePublicId(svc)}
-                                                                    onResuelto={onServiceResolved}
-                                                                />
-                                                            )}
-                                                        </>
+                                                        Solo aparecen en InManagement Y cuando el servicio todavia no esta resuelto.
+                                                        ADR-031: el botón también se gate-a si faltan datos de pasajeros
+                                                        (el hint calcula la condición; el backend siempre re-valida). */}
+                                                    {reservaStatus === 'InManagement' && !esServicioResuelto(svc) && (() => {
+                                                        // Calculamos el hint para este servicio.
+                                                        // Si reserva es null (prop no pasada), no aplicamos gate.
+                                                        const hint = reserva
+                                                            ? calcularHintPorTipo(svc.recordKind, reserva.passengers || [], reserva)
+                                                            : { listo: true };
+                                                        const pasajerosListos = hint.listo;
+
+                                                        return (
+                                                            <>
+                                                                {svc.recordKind === SERVICE_RECORD_KIND.FLIGHT && (
+                                                                    pasajerosListos ? (
+                                                                        <BotonMarcarEmitido
+                                                                            reservaId={reservaId}
+                                                                            servicePublicId={getReservationServicePublicId(svc)}
+                                                                            onResuelto={onServiceResolved}
+                                                                        />
+                                                                    ) : (
+                                                                        // P5: botón apagado + texto explicativo
+                                                                        <span
+                                                                            className="text-[10px] font-semibold text-amber-600 dark:text-amber-400"
+                                                                            data-testid={`hint-pasajeros-flight-${getReservationServicePublicId(svc)}`}
+                                                                        >
+                                                                            Cargá los nombres primero
+                                                                        </span>
+                                                                    )
+                                                                )}
+                                                                {svc.recordKind === SERVICE_RECORD_KIND.TRANSFER && (
+                                                                    pasajerosListos ? (
+                                                                        <BotonNoRequiereConfirmacion
+                                                                            reservaId={reservaId}
+                                                                            servicePublicId={getReservationServicePublicId(svc)}
+                                                                            onResuelto={onServiceResolved}
+                                                                        />
+                                                                    ) : (
+                                                                        // P6: titular falta → botón apagado + aviso
+                                                                        <span
+                                                                            className="text-[10px] font-semibold text-amber-600 dark:text-amber-400"
+                                                                            data-testid={`hint-pasajeros-transfer-${getReservationServicePublicId(svc)}`}
+                                                                        >
+                                                                            Cargá al menos el titular primero
+                                                                        </span>
+                                                                    )
+                                                                )}
+                                                            </>
+                                                        );
+                                                    })()}
+                                                    {/* Control "Para: Todos" (ADR-031 v2.1 — Pieza A).
+                                                        Aparece en desktop antes de los botones Editar/Borrar.
+                                                        Al tocarlo, despliega el panel de tildes en línea.
+                                                        D2: NO se muestra si el servicio está cancelado
+                                                        (evita llamadas inútiles y UI confusa). */}
+                                                    {(svc.workflowStatus || svc.status) !== 'Cancelado' && (
+                                                        <ControlAsignacionServicio
+                                                            reservaId={reservaId}
+                                                            serviceType={serviceType}
+                                                            servicePublicId={servicePublicId}
+                                                            pasajerosConNombre={pasajerosConNombre}
+                                                            coverage={coverage}
+                                                            coverageLoading={coverageLoading}
+                                                            onAsignacionGuardada={updateCoverage}
+                                                            className="mb-1"
+                                                        />
                                                     )}
+
                                                     {/* Desktop: icono + palabra siempre visible (spec UX 2026-06-08).
                                                         textoTacho es dinámico: "Cancelar" si el operador ya confirmó, "Borrar" si no.
                                                         aria-label y texto visible dicen lo mismo para coherencia con lectores de pantalla. */}
@@ -1039,6 +1295,34 @@ export function ServiceList({
                                                 </div>
                                             </td>
                                         </tr>
+
+                                        {/* Mini-formulario inline de pasajeros faltantes (ADR-031, pantallas D y E).
+                                            Fix B1: ahora gateado por coverage.isComplete del backend
+                                            (no por calcularHintPorTipo sobre todos los pasajeros).
+                                            Solo aparece en InManagement + servicio no resuelto + coverage cargada.
+                                            Si coverage no llegó aún, no mostramos (evita parpadeo incorrecto).
+                                            La fila completa del servicio sigue visible arriba.
+                                            Guard de cancelado: no tiene sentido pedir nombres para un servicio
+                                            tachado — el control "Para:" ya lo ocultaba, el mini-form también. */}
+                                        {reservaStatus === 'InManagement' && !esServicioResuelto(svc) &&
+                                            (svc.workflowStatus || svc.status) !== 'Cancelado' &&
+                                            coverage && !coverage.isComplete &&
+                                            (svc.recordKind === SERVICE_RECORD_KIND.FLIGHT ||
+                                             svc.recordKind === SERVICE_RECORD_KIND.HOTEL ||
+                                             svc.recordKind === SERVICE_RECORD_KIND.TRANSFER ||
+                                             svc.recordKind === SERVICE_RECORD_KIND.ASSISTANCE ||
+                                             svc.recordKind === SERVICE_RECORD_KIND.PACKAGE) && (
+                                            <MiniFormularioPasajerosFaltantes
+                                                reservaId={reservaId}
+                                                reserva={reserva}
+                                                servicio={svc}
+                                                coverage={coverage}
+                                                onPasajeroGuardado={onPasajeroGuardado}
+                                            />
+                                        )}
+                                        </React.Fragment>
+                                        )}
+                                        </ConCoverageDeServicio>
                                     );
                                 })}
 
@@ -1099,6 +1383,17 @@ export function ServiceList({
                             const displayType = svc.displayType || svc._type || 'Servicio';
                             const serviceKey = `${svc.recordKind || displayType}-${getReservationServicePublicId(svc)}`;
 
+                            // ConCoverageDeServicio también envuelve la card mobile:
+                            // necesitamos la coverage por servicio para el control "Para: Todos".
+                            return (
+                                <ConCoverageDeServicio
+                                    key={serviceKey}
+                                    reservaId={reservaId}
+                                    svc={svc}
+                                    pasajerosConNombre={pasajerosConNombre}
+                                    reservaStatus={reservaStatus}
+                                >
+                                {(coverage, coverageLoading, updateCoverage, serviceType, servicePublicId) => {
                             // FIX 4: pill "creado en venta" eliminada. Solo queda la pill de próximo inicio.
                             // Sin pill no hay "—" en mobile (solo omitimos la línea entera).
                             // Pill de próximo inicio: solo con flag avisos ON, sin cancelado,
@@ -1111,7 +1406,7 @@ export function ServiceList({
                             const mostrarLineaPills = tieneUpcomingPillMobile;
 
                             return (
-                                <div key={serviceKey} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm">
+                                <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 shadow-sm">
                                     <div className="flex justify-between mb-2">
                                         <div className="flex items-center gap-2">
                                             <ServiceIcon service={svc} className="w-4 h-4" />
@@ -1218,25 +1513,59 @@ export function ServiceList({
                                             )}
                                         </div>
                                         <div className="flex flex-col items-end gap-2">
-                                            {/* Botones de resolver en mobile: decision 3 de UX */}
-                                            {reservaStatus === 'InManagement' && !esServicioResuelto(svc) && (
-                                                <>
-                                                    {svc.recordKind === SERVICE_RECORD_KIND.FLIGHT && (
-                                                        <BotonMarcarEmitido
-                                                            reservaId={reservaId}
-                                                            servicePublicId={getReservationServicePublicId(svc)}
-                                                            onResuelto={onServiceResolved}
-                                                        />
-                                                    )}
-                                                    {svc.recordKind === SERVICE_RECORD_KIND.TRANSFER && (
-                                                        <BotonNoRequiereConfirmacion
-                                                            reservaId={reservaId}
-                                                            servicePublicId={getReservationServicePublicId(svc)}
-                                                            onResuelto={onServiceResolved}
-                                                        />
-                                                    )}
-                                                </>
-                                            )}
+                                            {/* Botones de resolver en mobile: ADR-020 + ADR-031.
+                                                Mismo criterio que desktop: si faltan datos de pasajeros
+                                                el botón se apaga y aparece el aviso ámbar.
+                                                El mini-formulario en línea no entra en la card mobile,
+                                                así que el aviso apunta a la solapa Pasajeros. */}
+                                            {reservaStatus === 'InManagement' && !esServicioResuelto(svc) && (() => {
+                                                // Calculamos el hint igual que en desktop.
+                                                // Si reserva es null (prop no pasada), dejamos pasar sin gate.
+                                                const hint = reserva
+                                                    ? calcularHintPorTipo(svc.recordKind, reserva.passengers || [], reserva)
+                                                    : { listo: true };
+                                                const pasajerosListos = hint.listo;
+
+                                                return (
+                                                    <>
+                                                        {svc.recordKind === SERVICE_RECORD_KIND.FLIGHT && (
+                                                            pasajerosListos ? (
+                                                                <BotonMarcarEmitido
+                                                                    reservaId={reservaId}
+                                                                    servicePublicId={getReservationServicePublicId(svc)}
+                                                                    onResuelto={onServiceResolved}
+                                                                />
+                                                            ) : (
+                                                                // Aéreo: faltan nombre o documento.
+                                                                // El usuario tiene que ir a la solapa Pasajeros a completar.
+                                                                <span
+                                                                    className="text-[10px] font-semibold text-amber-600 dark:text-amber-400 text-right"
+                                                                    data-testid={`hint-pasajeros-flight-mobile-${getReservationServicePublicId(svc)}`}
+                                                                >
+                                                                    Cargá los nombres primero
+                                                                </span>
+                                                            )
+                                                        )}
+                                                        {svc.recordKind === SERVICE_RECORD_KIND.TRANSFER && (
+                                                            pasajerosListos ? (
+                                                                <BotonNoRequiereConfirmacion
+                                                                    reservaId={reservaId}
+                                                                    servicePublicId={getReservationServicePublicId(svc)}
+                                                                    onResuelto={onServiceResolved}
+                                                                />
+                                                            ) : (
+                                                                // Traslado: falta al menos el titular.
+                                                                <span
+                                                                    className="text-[10px] font-semibold text-amber-600 dark:text-amber-400 text-right"
+                                                                    data-testid={`hint-pasajeros-transfer-mobile-${getReservationServicePublicId(svc)}`}
+                                                                >
+                                                                    Cargá al menos el titular primero
+                                                                </span>
+                                                            )
+                                                        )}
+                                                    </>
+                                                );
+                                            })()}
                                             {/* Mobile: mismo patrón icono + palabra (spec UX 2026-06-08).
                                                 textoTachoMobile sincronizado con la lógica desktop para no bifurcar. */}
                                             {(() => {
@@ -1267,8 +1596,30 @@ export function ServiceList({
                                             })()}
                                         </div>
                                     </div>
+
+                                    {/* Control "Para: Todos" en mobile (ADR-031 v2.1 — Pieza A).
+                                        Va debajo del nombre del servicio, en línea propia, arriba de los botones.
+                                        El panel de tildes se abre a ancho completo debajo del control.
+                                        D2: NO se muestra si el servicio está cancelado
+                                        (evita llamadas inútiles y UI confusa). */}
+                                    {(svc.workflowStatus || svc.status) !== 'Cancelado' && (
+                                        <div className="mt-2">
+                                            <ControlAsignacionServicio
+                                                reservaId={reservaId}
+                                                serviceType={serviceType}
+                                                servicePublicId={servicePublicId}
+                                                pasajerosConNombre={pasajerosConNombre}
+                                                coverage={coverage}
+                                                coverageLoading={coverageLoading}
+                                                onAsignacionGuardada={updateCoverage}
+                                            />
+                                        </div>
+                                    )}
                                 </div>
                             );
+                            }}
+                            </ConCoverageDeServicio>
+                        );
                         })}
                     </div>
                 </>

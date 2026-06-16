@@ -43,4 +43,19 @@ public interface IAuditService
         string userId,
         string? userName,
         CancellationToken ct);
+
+    /// <summary>
+    /// Igual que <see cref="LogBusinessEventAsync"/> pero NO guarda: solo deja el AuditLog "para insertar"
+    /// en el contexto compartido. Sirve cuando la auditoria tiene que entrar en la MISMA transaccion que la
+    /// mutacion que la origina (ej. la cascada de borrado de asignaciones de ADR-031 §4.3): el caller cierra
+    /// la mutacion + esta auditoria con un unico SaveChanges -> atomico. Con <see cref="LogBusinessEventAsync"/>
+    /// se rompia la atomicidad porque guardaba en una transaccion separada ANTES del SaveChanges del caller.
+    /// </summary>
+    void StageBusinessEvent(
+        string action,
+        string entityName,
+        string entityId,
+        string? details,
+        string userId,
+        string? userName);
 }

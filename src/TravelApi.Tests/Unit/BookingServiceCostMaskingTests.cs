@@ -103,12 +103,34 @@ public class BookingServiceCostMaskingTests
     }
 
     // Seed minimo: una reserva + un proveedor. Devuelve los ids para usar en los requests.
+    //
+    // ADR-031: la reserva nace con 2 pasajeros DECLARADOS y 2 nominales completos (nombre + documento +
+    // fecha de nacimiento). Asi cubre el gate de pasajeros nominales por tipo cuando estos tests
+    // confirman/emiten servicios (hotel/transfer pide titular; paquete pide nombre de todos; asistencia
+    // pide nombre + documento + nacimiento). Sin esto, confirmar un servicio fallaria por nombres
+    // faltantes — el gate es nuevo y deliberado, no se debilita para que pasen los tests de masking.
     private static async Task<(Reserva reserva, Supplier supplier)> SeedReservaAndSupplierAsync(AppDbContext context)
     {
         var supplier = new Supplier { Id = 1, Name = "Proveedor test" };
-        var reserva = new Reserva { Id = 1, NumeroReserva = "F-2026-9001", Name = "Reserva test" };
+        var reserva = new Reserva
+        {
+            Id = 1, NumeroReserva = "F-2026-9001", Name = "Reserva test",
+            AdultCount = 2, ChildCount = 0, InfantCount = 0
+        };
         context.Suppliers.Add(supplier);
         context.Reservas.Add(reserva);
+        context.Passengers.Add(new Passenger
+        {
+            Id = 1, ReservaId = 1, FullName = "Pasajero Uno",
+            DocumentType = "DNI", DocumentNumber = "11111111",
+            BirthDate = new DateTime(1990, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+        });
+        context.Passengers.Add(new Passenger
+        {
+            Id = 2, ReservaId = 1, FullName = "Pasajero Dos",
+            DocumentType = "DNI", DocumentNumber = "22222222",
+            BirthDate = new DateTime(1992, 2, 2, 0, 0, 0, DateTimeKind.Utc)
+        });
         await context.SaveChangesAsync();
         return (reserva, supplier);
     }

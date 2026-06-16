@@ -42,6 +42,13 @@ public class ReservationsRepository<T> : IRepository<T> where T : class
         await _db.SaveChangesAsync(ct);
     }
 
+    public virtual void Stage(T entity)
+    {
+        // Solo trackea el alta (Added); el SaveChanges lo decide el caller para agrupar en una
+        // sola transaccion. Mismo contrato que Repository<T>.Stage.
+        _dbSet.Add(entity);
+    }
+
     public virtual async Task UpdateAsync(T entity, CancellationToken ct = default)
     {
         _dbSet.Update(entity);

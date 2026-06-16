@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using System.Data;
 using System.Linq;
 using System.Security.Claims;
+using TravelApi.Application.Constants;
 using TravelApi.Application.Contracts.Files;
 using TravelApi.Application.Contracts.Reservations;
 using TravelApi.Application.DTOs;
@@ -33,6 +34,10 @@ public class ReservaService : IReservaService
     // ADR-020 F3: motor de estados automatico. Opcional (default null) para no romper los tests
     // unitarios que construyen ReservaService a mano; en runtime lo inyecta DI.
     private readonly ReservaAutoStateService? _autoStateService;
+    // ADR-031 v2.1: auditoria del alta/baja de asignaciones pasajero<->servicio (determinan el SET del
+    // servicio: a quien se le exige nombre/documento y quien aparece en el voucher). Opcional para no
+    // romper los ctores de tests; si es null, la operacion funciona igual, solo no se registra el evento.
+    private readonly IAuditService? _auditService;
 
     /// <summary>
     /// cbteTipo de las Notas de Credito de AFIP (3=A, 8=B, 13=C, 53=M). Se usa para
@@ -52,7 +57,8 @@ public class ReservaService : IReservaService
         ILogger<ReservaService> logger,
         IUserPermissionResolver? permissionResolver = null,
         IHttpContextAccessor? httpContextAccessor = null,
-        ReservaAutoStateService? autoStateService = null)
+        ReservaAutoStateService? autoStateService = null,
+        IAuditService? auditService = null)
     {
         _context = context;
         _mapper = mapper;
@@ -64,6 +70,22 @@ public class ReservaService : IReservaService
         _permissionResolver = permissionResolver;
         _httpContextAccessor = httpContextAccessor;
         _autoStateService = autoStateService;
+        _auditService = auditService;
+    }
+
+    /// <summary>
+    /// ADR-031 v2.1: resuelve el actor (userId, userName) del HttpContext para la auditoria de
+    /// asignaciones. En tests sin HttpContext devuelve (null, null) — el evento, si se loguea, queda
+    /// con autor desconocido (aceptable, no rompe).
+    /// </summary>
+    private (string? userId, string? userName) ResolveAuditActor()
+    {
+        var user = _httpContextAccessor?.HttpContext?.User;
+        if (user is null) return (null, null);
+        var userId = user.FindFirstValue(System.Security.Claims.ClaimTypes.NameIdentifier);
+        var userName = user.FindFirstValue(System.Security.Claims.ClaimTypes.Name) ?? user.Identity?.Name;
+        return (string.IsNullOrWhiteSpace(userId) ? null : userId,
+                string.IsNullOrWhiteSpace(userName) ? null : userName);
     }
 
     /// <summary>
@@ -474,6 +496,13 @@ public class ReservaService : IReservaService
         _context.PassengerServiceAssignments.Add(assignment);
         await _context.SaveChangesAsync(ct);
 
+        // ADR-031 v2.1 (§6.5): auditar el alta. La asignacion determina el SET del servicio (a quien se
+        // le exige nombre/documento al resolver y quien aparece en su voucher), por eso queda trazada
+        // quien/cuando. details SIN numero de documento (misma regla que el gate); con los ids alcanza.
+        await LogAssignmentAuditAsync(
+            AuditActions.PassengerAssignedToService,
+            assignment.Id, request.ServiceType, serviceId, passengerId, reservaId, ct);
+
         // Re-cargar con Passenger include para el mapeo
         var saved = await _context.PassengerServiceAssignments
             .Include(a => a.Passenger)
@@ -535,8 +564,53 @@ public class ReservaService : IReservaService
             .FirstOrDefaultAsync(a => a.Id == assignmentId, ct);
         if (assignment == null) throw new KeyNotFoundException("Asignacion no encontrada");
 
+        // ADR-031 v2.1 (§6.5): capturamos los datos para el audit ANTES de borrar (luego ya no estan).
+        // La reserva la inferimos del pasajero (la asignacion no la guarda directo).
+        var reservaIdForAudit = await _context.Passengers
+            .AsNoTracking()
+            .Where(p => p.Id == assignment.PassengerId)
+            .Select(p => (int?)p.ReservaId)
+            .FirstOrDefaultAsync(ct) ?? 0;
+        var auditServiceType = assignment.ServiceType;
+        var auditServiceId = assignment.ServiceId;
+        var auditPassengerId = assignment.PassengerId;
+
         _context.PassengerServiceAssignments.Remove(assignment);
         await _context.SaveChangesAsync(ct);
+
+        // Auditar la baja MANUAL (distinta de la baja por cascada al borrar el servicio, §4.3).
+        await LogAssignmentAuditAsync(
+            AuditActions.PassengerUnassignedFromService,
+            assignmentId, auditServiceType, auditServiceId, auditPassengerId, reservaIdForAudit, ct);
+    }
+
+    /// <summary>
+    /// ADR-031 v2.1 (§6.5): registra un evento de auditoria de asignacion (alta o baja manual). El
+    /// <c>details</c> JSON lleva SOLO ids (serviceType/serviceId/passengerId/reservaId) — NUNCA el numero
+    /// de documento. Best-effort: si no hay IAuditService inyectado (tests), no hace nada; la integridad
+    /// de la asignacion no depende del audit.
+    /// </summary>
+    private async Task LogAssignmentAuditAsync(
+        string action, int assignmentId, string serviceType, int serviceId, int passengerId, int reservaId, CancellationToken ct)
+    {
+        if (_auditService is null) return;
+
+        var (userId, userName) = ResolveAuditActor();
+        var details = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            serviceType,
+            serviceId,
+            passengerId,
+            reservaId
+        });
+        await _auditService.LogBusinessEventAsync(
+            action,
+            AuditActions.PassengerServiceAssignmentEntityName,
+            assignmentId.ToString(),
+            details,
+            userId ?? string.Empty,
+            userName,
+            ct);
     }
 
     private static PassengerServiceAssignmentDto MapAssignment(PassengerServiceAssignment a, Guid? servicePublicId = null)
@@ -684,11 +758,16 @@ public class ReservaService : IReservaService
             CurrentPassengerCount = reserva.Passengers?.Count ?? 0
         };
 
-        // Reglas de transicion Budget -> Reserved
-        if (targetStatus == EstadoReserva.Confirmed && reserva.Status == EstadoReserva.Budget)
+        // ADR-031: preview de la transicion manual real Budget -> InManagement (el cliente acepta el
+        // presupuesto). Antes este bloque apuntaba a Budget -> Confirmed, que NO es una transicion
+        // manual (Confirmed lo alcanza solo el motor automatico) -> era un preview muerto que ademas
+        // exigia nominales, contradiciendo la nueva regla. Realineado al target correcto y a la regla
+        // nueva: solo CANTIDAD (≥1 servicio + cantidad declarada > 0). Los nombres ya NO se exigen aca:
+        // se exigen al resolver/emitir cada servicio (PassengerNominalRules en BookingService).
+        if (targetStatus == EstadoReserva.InManagement && reserva.Status == EstadoReserva.Budget)
         {
-            // Bug fix: chequeamos las 5 tablas de servicios (no solo Servicios genericos).
-            // El typical caso del agente es cargar un Hotel — antes daba "no hay servicios".
+            // Chequeamos las 6 tablas de servicios (no solo Servicios genericos). El caso tipico del
+            // agente es cargar un Hotel — antes daba "no hay servicios" por mirar solo la generica.
             var hasAnyService = (reserva.Servicios?.Any() ?? false)
                 || (reserva.HotelBookings?.Any() ?? false)
                 || (reserva.TransferBookings?.Any() ?? false)
@@ -698,24 +777,16 @@ public class ReservaService : IReservaService
             if (!hasAnyService)
             {
                 dto.Allowed = false;
-                dto.BlockingReasons.Add("Cargá al menos un servicio (hotel, vuelo, transfer, paquete o asistencia) antes de confirmar la reserva.");
+                dto.BlockingReasons.Add("Cargá al menos un servicio (hotel, vuelo, transfer, paquete o asistencia) antes de continuar.");
             }
 
-            // Regla A: sin pasajeros declarados no se puede avanzar (coherente con el gate del
-            // backend). Antes este bloque solo validaba si ExpectedPassengerCount>0, asi que con
-            // 0 declarados el front mostraba "permitido" y el backend rechazaba — contradiccion.
+            // Regla A: sin pasajeros DECLARADOS no se puede avanzar (coherente con el gate del
+            // backend EnsureReadinessForSaleAsync). Es la unica exigencia de pasajeros en este punto.
             if (dto.ExpectedPassengerCount <= 0)
             {
                 dto.Allowed = false;
                 dto.BlockingReasons.Add(
                     "No se puede continuar sin pasajeros: declará al menos 1 pasajero en la reserva.");
-            }
-            else if (dto.CurrentPassengerCount < dto.ExpectedPassengerCount)
-            {
-                dto.MissingPassengers = dto.ExpectedPassengerCount - dto.CurrentPassengerCount;
-                dto.Allowed = false;
-                dto.BlockingReasons.Add(
-                    $"Faltan {dto.MissingPassengers} pasajero(s) nominales (cargados: {dto.CurrentPassengerCount} / esperados: {dto.ExpectedPassengerCount}).");
             }
         }
 
@@ -1930,6 +2001,13 @@ public class ReservaService : IReservaService
             }
         }
 
+        // ADR-031 (bypass B1, servicio generico): si el alta deja el servicio resuelto, exigir el nombre
+        // de TODOS los declarados ANTES de persistir. Hoy AddServiceAsync fuerza Status="Solicitado"
+        // (nunca resuelve), asi que este gate es defensivo; corre igual para que una ruta futura que deje
+        // el generico resuelto no se cuele sin nombres y el motor no auto-confirme la reserva. El alta
+        // nace sin resolver previo -> wasResolved=false.
+        await EnsureGenericNominalCoverageBeforeResolvingAsync(reservation, serviceWasResolved: false, ct);
+
         _context.Servicios.Add(reservation);
         await _context.SaveChangesAsync();
         await UpdateBalanceAsync(reservaId);
@@ -1970,6 +2048,10 @@ public class ReservaService : IReservaService
 
 
         if (service == null) throw new KeyNotFoundException("Servicio no encontrado");
+
+        // ADR-031: estado de resolucion ANTES de la edicion (para gatear solo la transicion a resuelto).
+        // La edicion del generico no toca el Status, asi que en la practica nunca hay transicion aca.
+        var genericWasResolved = ServiceResolutionRules.IsResolved(service);
 
         // B1.15 Fase 0' (CODE-05): inmutabilidad post-CAE / post-voucher. Cambiar
         // monto/proveedor/fechas del servicio rompe la coherencia con la factura
@@ -2057,6 +2139,11 @@ public class ReservaService : IReservaService
             service.Commission = request.SalePrice - service.NetCost - service.Tax;
         }
 
+        // ADR-031 (bypass B1, servicio generico): si la edicion deja el servicio resuelto (no lo estaba
+        // antes), exigir el nombre de TODOS los declarados ANTES de persistir. Defensivo (la edicion del
+        // generico no toca el Status hoy), igual que en AddServiceAsync.
+        await EnsureGenericNominalCoverageBeforeResolvingAsync(service, genericWasResolved, ct);
+
         await _context.SaveChangesAsync();
 
         // ADR-027 (detalle): armamos el descriptor del cambio (que servicio, antes/despues) y lo pasamos a
@@ -2103,6 +2190,8 @@ public class ReservaService : IReservaService
             // ADR-022 §4.10 (fix P1): capturamos el proveedor antes de borrar el servicio para recalcular
             // su deuda despues (el servicio borrado deja de contar -> la deuda de ese proveedor baja).
             var removedSupplierId = service.SupplierId;
+            // ADR-031 v2.1 (M1): limpiar asignaciones del generico en la misma transaccion que el borrado.
+            await CleanupAssignmentsForDeletedServiceAsync(AssignmentServiceType.Generic, service.Id, service.ReservaId ?? 0, ct);
             _context.Servicios.Remove(service);
             var resId = service.ReservaId;
             await _context.SaveChangesAsync(ct);
@@ -2119,6 +2208,7 @@ public class ReservaService : IReservaService
                 || ServiceResolutionRules.IsOperatorConfirmed(flight)
                 || ServiceResolutionRules.IsResolved(flight);
             await EnsureCanRemoveServiceAsync(flight.ReservaId, confirmed, null, ct);
+            await CleanupAssignmentsForDeletedServiceAsync(AssignmentServiceType.Flight, flight.Id, flight.ReservaId, ct);
             _context.FlightSegments.Remove(flight);
             var resId = flight.ReservaId;
             await _context.SaveChangesAsync(ct);
@@ -2134,6 +2224,7 @@ public class ReservaService : IReservaService
                 || ServiceResolutionRules.IsOperatorConfirmed(hotel)
                 || ServiceResolutionRules.IsResolved(hotel);
             await EnsureCanRemoveServiceAsync(hotel.ReservaId, confirmed, null, ct);
+            await CleanupAssignmentsForDeletedServiceAsync(AssignmentServiceType.Hotel, hotel.Id, hotel.ReservaId, ct);
             _context.HotelBookings.Remove(hotel);
             var resId = hotel.ReservaId;
             await _context.SaveChangesAsync(ct);
@@ -2149,6 +2240,7 @@ public class ReservaService : IReservaService
                 || ServiceResolutionRules.IsOperatorConfirmed(transfer)
                 || ServiceResolutionRules.IsResolved(transfer);
             await EnsureCanRemoveServiceAsync(transfer.ReservaId, confirmed, null, ct);
+            await CleanupAssignmentsForDeletedServiceAsync(AssignmentServiceType.Transfer, transfer.Id, transfer.ReservaId, ct);
             _context.TransferBookings.Remove(transfer);
             var resId = transfer.ReservaId;
             await _context.SaveChangesAsync(ct);
@@ -2164,6 +2256,7 @@ public class ReservaService : IReservaService
                 || ServiceResolutionRules.IsOperatorConfirmed(package)
                 || ServiceResolutionRules.IsResolved(package);
             await EnsureCanRemoveServiceAsync(package.ReservaId, confirmed, null, ct);
+            await CleanupAssignmentsForDeletedServiceAsync(AssignmentServiceType.Package, package.Id, package.ReservaId, ct);
             _context.PackageBookings.Remove(package);
             var resId = package.ReservaId;
             await _context.SaveChangesAsync(ct);
@@ -2180,6 +2273,7 @@ public class ReservaService : IReservaService
                 || ServiceResolutionRules.IsOperatorConfirmed(assistance)
                 || ServiceResolutionRules.IsResolved(assistance);
             await EnsureCanRemoveServiceAsync(assistance.ReservaId, confirmed, null, ct);
+            await CleanupAssignmentsForDeletedServiceAsync(AssignmentServiceType.Assistance, assistance.Id, assistance.ReservaId, ct);
             _context.AssistanceBookings.Remove(assistance);
             var resId = assistance.ReservaId;
             await _context.SaveChangesAsync(ct);
@@ -2728,10 +2822,16 @@ public class ReservaService : IReservaService
     }
 
     /// <summary>
-    /// Gate de readiness para vender una reserva (≥1 servicio + normalizar servicios a
-    /// "Solicitado" + pasajeros nominales completos). En el ciclo clasico corre en
-    /// Budget-&gt;Confirmed; en el nuevo, en Budget-&gt;Sold. Es la misma logica, solo se movio
-    /// de paso.
+    /// Gate de readiness para pasar de Presupuesto a En gestion (Budget -&gt; InManagement):
+    /// exige ≥1 servicio + cantidad de pasajeros DECLARADA &gt; 0 + normaliza los servicios a
+    /// "Solicitado".
+    ///
+    /// <para>ADR-031 (2026-06-15): este gate YA NO exige los pasajeros NOMINALES (nombre/documento).
+    /// Cuando el cliente acepta el presupuesto la agencia todavia no tiene (ni necesita) los nombres
+    /// legales de todos; frenar el avance del file aca era friccion innecesaria. La exigencia de
+    /// nombres se MOVIO al momento en que cada servicio se reserva/emite con el operador
+    /// (<see cref="TravelApi.Domain.Reservations.PassengerNominalRules"/>, invocado desde BookingService).
+    /// Aca queda solo la CANTIDAD.</para>
     /// </summary>
     private async Task EnsureReadinessForSaleAsync(int id)
     {
@@ -2766,15 +2866,343 @@ public class ReservaService : IReservaService
                 "No se puede continuar sin pasajeros: declará al menos 1 pasajero en la reserva.");
         }
 
-        // last-line defense ante bypass via API directa: deben estar cargados los nominales
-        // (nombre + documento) por la cantidad declarada. El frontend ya fuerza esto en el
-        // modal de confirmacion antes de transicionar.
-        var currentPax = await _context.Passengers.CountAsync(p => p.ReservaId == id);
-        if (currentPax < declaredPax)
+        // ADR-031: ya NO se exigen los pasajeros NOMINALES (nombre/documento) en este punto. Esa
+        // exigencia se movio al momento de resolver/emitir cada servicio con el operador (gate por
+        // tipo en PassengerNominalRules, invocado desde BookingService). Aca solo se valida la CANTIDAD.
+    }
+
+    /// <summary>
+    /// ADR-031: gate de pasajeros nominales para el servicio GENERICO (ServicioReserva), espejo del
+    /// envoltorio de BookingService. Solo la TRANSICION no-resuelto -> resuelto exige el nombre de TODOS
+    /// los declarados (regla Generico) ANTES de persistir; editar un generico que YA estaba resuelto no
+    /// re-valida (la cobertura ya se exigio cuando se resolvio). Hoy el alta fuerza "Solicitado" y la
+    /// edicion no toca el Status, asi que es defensivo (no hay transicion posible por estas rutas); se
+    /// mantiene para que ninguna ruta futura confirme un generico sin nombres y el motor auto-confirme la
+    /// reserva. Mensaje sin numero de documento (lo garantiza PassengerNominalRules).
+    /// </summary>
+    private async Task EnsureGenericNominalCoverageBeforeResolvingAsync(
+        ServicioReserva service, bool serviceWasResolved, CancellationToken ct)
+    {
+        // Solo la transicion no-resuelto -> resuelto exige nombres.
+        if (serviceWasResolved || !ServiceResolutionRules.IsResolved(service))
+            return;
+        if (!service.ReservaId.HasValue)
+            return;
+
+        // v2.1: el gate opera sobre el SET del servicio generico (asignaciones explicitas si existen; si
+        // no, toda la reserva), igual que el envoltorio de BookingService. service.Id puede ser 0 en un
+        // alta (todavia sin Id) -> no hay asignaciones -> set = toda la reserva (default seguro).
+        var serviceSet = await ResolveServiceSetAsync(
+            service.ReservaId.Value, AssignmentServiceType.Generic, service.Id, ct);
+        PassengerNominalRules.EnsureCovered(serviceSet, PassengerNominalRules.ServiceKind.Generic);
+    }
+
+    /// <summary>
+    /// ADR-031 v2.1 (§4.2): resuelve el SET de pasajeros de un servicio para el gate generico / preview.
+    /// Lee de la DB las dos colecciones (pasajeros de la reserva + ids asignados a este servicio) y delega
+    /// la regla de seleccion en el helper PURO <see cref="PassengerNominalRules.ResolveServiceSet"/>, para
+    /// que ReservaService y BookingService resuelvan el set EXACTAMENTE igual (fuente unica). serviceId&lt;=0
+    /// (alta sin Id) => no hay asignaciones => set = toda la reserva.
+    /// </summary>
+    private async Task<IReadOnlyList<Passenger>> ResolveServiceSetAsync(
+        int reservaId, string assignmentServiceType, int serviceId, CancellationToken ct)
+    {
+        var reservaPassengers = await _context.Passengers
+            .AsNoTracking()
+            .Where(p => p.ReservaId == reservaId)
+            .ToListAsync(ct);
+
+        var assignedPassengerIds = serviceId > 0
+            ? await _context.PassengerServiceAssignments
+                .AsNoTracking()
+                .Where(a => a.ServiceType == assignmentServiceType && a.ServiceId == serviceId)
+                .Select(a => a.PassengerId)
+                .ToListAsync(ct)
+            : new List<int>();
+
+        return PassengerNominalRules.ResolveServiceSet(reservaPassengers, assignedPassengerIds);
+    }
+
+    /// <summary>
+    /// ADR-031 v2.1 (§10.9, punto 6): expone al front, POR SERVICIO, los pasajeros del SET y que nombres
+    /// faltan, para que el mini-form de nombres sepa a QUIEN pedirle los datos. Usa EXACTAMENTE la misma
+    /// resolucion del set (<see cref="PassengerNominalRules.ResolveServiceSet"/>) y la misma matriz por tipo
+    /// que el gate del backend, asi front y back nunca se contradicen. El <paramref name="serviceType"/> es
+    /// el discriminator (Hotel/Transfer/Package/Flight/Assistance/Generic); el servicio se identifica por su
+    /// publicId/legacy id. Respuesta SIN numero de documento.
+    /// </summary>
+    public async Task<ServiceNominalCoverageDto> GetServiceNominalCoverageAsync(
+        string reservaPublicIdOrLegacyId, string serviceType, string servicePublicIdOrLegacyId, CancellationToken ct = default)
+    {
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        var serviceId = await ResolveAndValidateServiceIdAsync(serviceType, servicePublicIdOrLegacyId, reservaId, ct);
+        return await BuildServiceNominalCoverageDtoAsync(reservaId, serviceType, serviceId, ct);
+    }
+
+    /// <summary>
+    /// ADR-031 v2.1: REEMPLAZO TOTAL ATOMICO del set de pasajeros de un servicio. El front antes hacia
+    /// "borrar todas + crear N" en llamadas separadas; si fallaba a la mitad quedaba un set inconsistente.
+    /// Aca todo ocurre en UNA unidad de trabajo: validacion -> borrar asignaciones actuales -> crear solo
+    /// las pedidas -> auditar -> UN SOLO SaveChanges. O entra todo o no entra nada.
+    ///
+    /// <para>Normalizacion "todos" (§3.2, invariante "todos = sin asignaciones"): si la lista pedida es
+    /// vacia O es exactamente igual a TODOS los pasajeros de la reserva, NO se crean asignaciones (el set
+    /// queda implicito = toda la reserva). Subconjunto estricto => se crean solo esas. Asi una asignacion
+    /// explicita siempre significa "este servicio es para MENOS que todos".</para>
+    ///
+    /// <para>Idempotente: llamarlo dos veces con el mismo set deja el mismo estado final.</para>
+    /// </summary>
+    public async Task<ServiceNominalCoverageDto> ReplaceServiceAssignmentsAsync(
+        string reservaPublicIdOrLegacyId, string serviceType, string servicePublicIdOrLegacyId,
+        ReplaceServiceAssignmentsRequest request, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        var serviceId = await ResolveAndValidateServiceIdAsync(serviceType, servicePublicIdOrLegacyId, reservaId, ct);
+
+        // Pasajeros de la reserva: los necesitamos para (a) traducir publicId -> Id interno validando
+        // ownership, y (b) detectar el caso "todos" para la normalizacion.
+        var reservaPassengers = await _context.Passengers
+            .Where(p => p.ReservaId == reservaId)
+            .ToListAsync(ct);
+        var passengerByPublicId = reservaPassengers.ToDictionary(p => p.PublicId, p => p);
+
+        // Traducir cada publicId pedido a su Id interno, validando que pertenezca a ESTA reserva. Un publicId
+        // de otra reserva (o inexistente) => rechazo. Deduplicamos por si el front manda repetidos.
+        var requestedPassengerIds = new HashSet<int>();
+        var requestedPublicIds = request.PassengerPublicIds ?? Array.Empty<string>();
+        foreach (var rawPublicId in requestedPublicIds)
         {
-            throw new InvalidOperationException(
-                $"Faltan {declaredPax - currentPax} pasajero(s) nominales para confirmar la reserva " +
-                $"(cargados: {currentPax} / esperados: {declaredPax}). Cargá los nombres y documentos antes de continuar.");
+            if (!Guid.TryParse(rawPublicId, out var passengerPublicId)
+                || !passengerByPublicId.TryGetValue(passengerPublicId, out var passenger))
+            {
+                throw new InvalidOperationException("Uno de los pasajeros indicados no pertenece a esta reserva.");
+            }
+            requestedPassengerIds.Add(passenger.Id);
+        }
+
+        // Normalizacion "todos = sin asignaciones": set vacio, o pidio exactamente a todos -> CERO filas.
+        // Cualquier otro caso (subconjunto estricto) -> creamos asignaciones solo de los pedidos.
+        var isEffectivelyAll = requestedPassengerIds.Count == 0
+            || requestedPassengerIds.Count == reservaPassengers.Count;
+        var idsToPersist = isEffectivelyAll
+            ? new HashSet<int>()
+            : requestedPassengerIds;
+
+        // 1) Borrar las asignaciones actuales del servicio (set completo, reemplazo total).
+        var currentAssignments = await _context.PassengerServiceAssignments
+            .Where(a => a.ServiceType == serviceType && a.ServiceId == serviceId)
+            .ToListAsync(ct);
+        var previousAssignedCount = currentAssignments.Count;
+        if (currentAssignments.Count > 0)
+            _context.PassengerServiceAssignments.RemoveRange(currentAssignments);
+
+        // 2) Crear las nuevas (solo si quedo un subconjunto estricto tras la normalizacion).
+        foreach (var passengerId in idsToPersist)
+        {
+            _context.PassengerServiceAssignments.Add(new PassengerServiceAssignment
+            {
+                PassengerId = passengerId,
+                ServiceType = serviceType,
+                ServiceId = serviceId,
+                CreatedAt = DateTime.UtcNow
+            });
+        }
+
+        // 3) Auditar el reemplazo como UN solo evento (con conteos), STAGEADO para entrar en el mismo
+        //    SaveChanges que el borrado + las altas => atomico. details sin documento ni nombres.
+        StageReplaceAssignmentsAudit(
+            serviceType, serviceId, reservaId,
+            previousAssignedCount, idsToPersist.Count, isEffectivelyAll);
+
+        // 4) UNA sola escritura: borrado + altas + audit entran juntos o no entra nada.
+        await _context.SaveChangesAsync(ct);
+
+        // 5) Devolver el contrato actualizado (mismo shape que el GET) para que el front no re-pida.
+        return await BuildServiceNominalCoverageDtoAsync(reservaId, serviceType, serviceId, ct);
+    }
+
+    /// <summary>
+    /// ADR-031 v2.1: resuelve el Id interno del servicio a partir de su tipo + publicId/legacy id y valida
+    /// que pertenezca a la reserva (defensa en profundidad sobre el ownership de la ruta). Centraliza el
+    /// switch por tipo que comparten el GET de nominal-coverage y el PUT de reemplazo, para que ambos
+    /// resuelvan/validen el servicio EXACTAMENTE igual (fuente unica). Lanza ArgumentException si el tipo es
+    /// invalido, KeyNotFoundException si el servicio no existe, InvalidOperationException si es de otra reserva.
+    /// </summary>
+    private async Task<int> ResolveAndValidateServiceIdAsync(
+        string serviceType, string servicePublicIdOrLegacyId, int reservaId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(serviceType) || !AssignmentServiceType.All.Contains(serviceType))
+            throw new ArgumentException($"ServiceType invalido. Valores aceptados: {string.Join(", ", AssignmentServiceType.All)}.");
+
+        var serviceId = serviceType switch
+        {
+            AssignmentServiceType.Hotel => await ResolveRequiredIdAsync<HotelBooking>(servicePublicIdOrLegacyId, ct),
+            AssignmentServiceType.Transfer => await ResolveRequiredIdAsync<TransferBooking>(servicePublicIdOrLegacyId, ct),
+            AssignmentServiceType.Package => await ResolveRequiredIdAsync<PackageBooking>(servicePublicIdOrLegacyId, ct),
+            AssignmentServiceType.Flight => await ResolveRequiredIdAsync<FlightSegment>(servicePublicIdOrLegacyId, ct),
+            AssignmentServiceType.Assistance => await ResolveRequiredIdAsync<AssistanceBooking>(servicePublicIdOrLegacyId, ct),
+            AssignmentServiceType.Generic => await ResolveRequiredIdAsync<ServicioReserva>(servicePublicIdOrLegacyId, ct),
+            _ => throw new ArgumentException("ServiceType no soportado.")
+        };
+
+        var serviceBelongsToReserva = serviceType switch
+        {
+            AssignmentServiceType.Hotel => await _context.HotelBookings.AnyAsync(b => b.Id == serviceId && b.ReservaId == reservaId, ct),
+            AssignmentServiceType.Transfer => await _context.TransferBookings.AnyAsync(b => b.Id == serviceId && b.ReservaId == reservaId, ct),
+            AssignmentServiceType.Package => await _context.PackageBookings.AnyAsync(b => b.Id == serviceId && b.ReservaId == reservaId, ct),
+            AssignmentServiceType.Flight => await _context.FlightSegments.AnyAsync(f => f.Id == serviceId && f.ReservaId == reservaId, ct),
+            AssignmentServiceType.Assistance => await _context.AssistanceBookings.AnyAsync(a => a.Id == serviceId && a.ReservaId == reservaId, ct),
+            AssignmentServiceType.Generic => await _context.Servicios.AnyAsync(s => s.Id == serviceId && s.ReservaId == reservaId, ct),
+            _ => false
+        };
+        if (!serviceBelongsToReserva)
+            throw new InvalidOperationException("El servicio no pertenece a esta reserva.");
+
+        return serviceId;
+    }
+
+    /// <summary>
+    /// ADR-031 v2.1: arma el <see cref="ServiceNominalCoverageDto"/> de un servicio YA resuelto/validado.
+    /// Lo comparten el GET de nominal-coverage y el PUT de reemplazo (que lo devuelve tras escribir), asi el
+    /// shape de la respuesta es identico en los dos caminos. Usa la MISMA resolucion del set
+    /// (<see cref="PassengerNominalRules.ResolveServiceSet"/>) y la misma matriz por tipo que el gate del
+    /// backend. Respuesta SIN numero de documento.
+    /// </summary>
+    private async Task<ServiceNominalCoverageDto> BuildServiceNominalCoverageDtoAsync(
+        int reservaId, string serviceType, int serviceId, CancellationToken ct)
+    {
+        // Todos los pasajeros de la reserva (para el "N" de "X de N") + ids asignados a este servicio.
+        var reservaPassengers = await _context.Passengers
+            .AsNoTracking()
+            .Where(p => p.ReservaId == reservaId)
+            .ToListAsync(ct);
+        var assignedPassengerIds = await _context.PassengerServiceAssignments
+            .AsNoTracking()
+            .Where(a => a.ServiceType == serviceType && a.ServiceId == serviceId)
+            .Select(a => a.PassengerId)
+            .ToListAsync(ct);
+
+        var serviceSet = PassengerNominalRules.ResolveServiceSet(reservaPassengers, assignedPassengerIds);
+        var serviceKind = MapToServiceKind(serviceType);
+        var lead = PassengerNominalRules.GetLeadPassenger(serviceSet);
+
+        var dto = new ServiceNominalCoverageDto
+        {
+            ServiceType = serviceType,
+            ServiceId = serviceId,
+            ServicePublicId = await ResolveServicePublicIdAsync(serviceType, serviceId, ct),
+            HasExplicitAssignments = assignedPassengerIds.Count > 0,
+            ServiceSetCount = serviceSet.Count,
+            ReservaPassengerCount = reservaPassengers.Count,
+            MissingMessage = PassengerNominalRules.GetMissing(serviceSet, serviceKind),
+        };
+
+        foreach (var passenger in serviceSet.OrderBy(p => p.Id))
+        {
+            var isLead = lead != null && passenger.Id == lead.Id;
+            dto.ServiceSet.Add(new ServiceSetPassengerDto
+            {
+                PassengerPublicId = passenger.PublicId,
+                FullName = passenger.FullName,
+                IsLead = isLead,
+                HasRequiredDataForServiceType =
+                    PassengerNominalRules.PassengerHasRequiredData(passenger, serviceKind, isLead),
+            });
+        }
+
+        return dto;
+    }
+
+    /// <summary>
+    /// ADR-031 v2.1 (§6.5): audita el REEMPLAZO TOTAL del set como UN solo evento con conteos, en vez de N
+    /// altas + M bajas sueltas (mas legible para una operacion bulk). STAGEADO con
+    /// <c>StageBusinessEvent</c> (no guarda) para entrar en el MISMO SaveChanges que el borrado + las altas
+    /// => atomico (mismo patron que la cascada de borrado §4.3). Best-effort: sin IAuditService inyectado no
+    /// hace nada; la integridad del set no depende del audit. details SIN numero de documento ni nombres.
+    /// </summary>
+    private void StageReplaceAssignmentsAudit(
+        string serviceType, int serviceId, int reservaId,
+        int previousAssignedCount, int newAssignedCount, bool normalizedToAll)
+    {
+        if (_auditService is null) return;
+
+        var (userId, userName) = ResolveAuditActor();
+        var details = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            serviceType,
+            serviceId,
+            reservaId,
+            previousAssignedCount,
+            newAssignedCount,
+            normalizedToAll
+        });
+        _auditService.StageBusinessEvent(
+            AuditActions.PassengerAssignmentsReplaced,
+            AuditActions.PassengerServiceAssignmentEntityName,
+            serviceId.ToString(),
+            details,
+            userId ?? string.Empty,
+            userName);
+    }
+
+    /// <summary>Traduce el discriminator string del assignment al enum del helper de dominio.</summary>
+    private static PassengerNominalRules.ServiceKind MapToServiceKind(string assignmentServiceType)
+        => assignmentServiceType switch
+        {
+            AssignmentServiceType.Hotel => PassengerNominalRules.ServiceKind.Hotel,
+            AssignmentServiceType.Transfer => PassengerNominalRules.ServiceKind.Transfer,
+            AssignmentServiceType.Package => PassengerNominalRules.ServiceKind.Package,
+            AssignmentServiceType.Flight => PassengerNominalRules.ServiceKind.Flight,
+            AssignmentServiceType.Assistance => PassengerNominalRules.ServiceKind.Assistance,
+            AssignmentServiceType.Generic => PassengerNominalRules.ServiceKind.Generic,
+            _ => throw new ArgumentException("ServiceType no soportado.")
+        };
+
+    /// <summary>
+    /// ADR-031 v2.1 (M1, §4.3 — bloqueante de integridad): borra las <c>PassengerServiceAssignment</c> de
+    /// un servicio que se esta borrando por ESTE path (<see cref="RemoveServiceAsync"/>). Mismo motivo que el
+    /// gemelo de BookingService: <c>ServiceId</c> es soft-FK, EF no cascadea, y el Id se reusa -> sin esta
+    /// limpieza un servicio nuevo heredaria el set del muerto. NO hace SaveChanges: el caller marca el
+    /// borrado del servicio y la baja de asignaciones en el MISMO contexto y cierra todo con un solo
+    /// SaveChanges (atomico).
+    ///
+    /// <para><b>Atomicidad (I-ATOM / M-ATOM-1)</b>: la auditoria se STAGEA con <c>StageBusinessEvent</c> (no
+    /// se guarda) para que el alta del audit entre en ese mismo SaveChanges. Antes usaba
+    /// <c>LogBusinessEventAsync</c>, que hace AddAsync + SaveChanges inmediato y flusheaba la baja de
+    /// asignaciones en una transaccion separada ANTES del borrado del servicio, rompiendo la atomicidad que
+    /// promete el ADR §4.3. details sin numero de documento.</para>
+    /// </summary>
+    private async Task CleanupAssignmentsForDeletedServiceAsync(
+        string assignmentServiceType, int serviceId, int reservaId, CancellationToken ct)
+    {
+        var orphanAssignments = await _context.PassengerServiceAssignments
+            .Where(a => a.ServiceType == assignmentServiceType && a.ServiceId == serviceId)
+            .ToListAsync(ct);
+
+        if (orphanAssignments.Count == 0)
+            return;
+
+        _context.PassengerServiceAssignments.RemoveRange(orphanAssignments);
+
+        if (_auditService is not null)
+        {
+            var (userId, userName) = ResolveAuditActor();
+            var details = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                serviceType = assignmentServiceType,
+                serviceId,
+                reservaId,
+                removedAssignmentCount = orphanAssignments.Count
+            });
+            _auditService.StageBusinessEvent(
+                AuditActions.PassengerUnassignedFromServiceByDelete,
+                AuditActions.PassengerServiceAssignmentEntityName,
+                serviceId.ToString(),
+                details,
+                userId ?? string.Empty,
+                userName);
         }
     }
 

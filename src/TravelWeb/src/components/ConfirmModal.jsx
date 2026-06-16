@@ -69,6 +69,7 @@ export default function ConfirmModal({
                     <button
                         onClick={onConfirm}
                         disabled={isLoading}
+                        data-testid="confirm-modal-confirm"
                         className={`w-full rounded-2xl px-6 py-4 text-sm font-extrabold shadow-xl transition-all active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-3 ${confirmColors[type]}`}
                     >
                         {isLoading ? (

@@ -54,6 +54,7 @@ export function ReservaHeader({
     onRequestEdit,
     onMarkLost,
     serviciosCancelados = null,
+    totalPasajerosDeclarados = null,
 }) {
     const isArchived = reserva.status === 'Archived';
     const locked = isStatusLocked(reserva.status);
@@ -223,18 +224,48 @@ export function ReservaHeader({
                         </button>
                     )}
 
-                    {reserva.status === 'Budget' && (
-                        // "El cliente acepto" → InManagement.
-                        // No pide pasajeros en este paso; los servicios se solicitan despues.
-                        <button
-                            onClick={() => onStatusChange('InManagement')}
-                            data-testid="reserva-action-client-accepted"
-                            className="bg-cyan-600 hover:bg-cyan-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-cyan-200 dark:shadow-none transition-all active:scale-95"
-                            title="El cliente acepto el presupuesto — empieza la gestion con los operadores"
-                        >
-                            El cliente acepto
-                        </button>
-                    )}
+                    {reserva.status === 'Budget' && (() => {
+                        // P2 (ADR-031): el botón se apaga cuando no hay ningún pasajero declarado.
+                        // El backend también valida (suma >= 1 en /transition-readiness),
+                        // pero bloqueamos en la UI para dar feedback inmediato antes de enviar nada.
+                        //
+                        // totalPasajerosDeclarados viene del padre (suma adultCount + childCount + infantCount).
+                        // Si el padre no lo pasa (null), asumimos que puede avanzar (graceful degradation).
+                        const sinPasajeros = totalPasajerosDeclarados !== null && totalPasajerosDeclarados === 0;
+                        return (
+                            <div className="flex flex-col items-start gap-1">
+                                <button
+                                    onClick={() => onStatusChange('InManagement')}
+                                    disabled={sinPasajeros}
+                                    data-testid="reserva-action-client-accepted"
+                                    data-disabled-reason={sinPasajeros ? "sin-pasajeros" : undefined}
+                                    className={`px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg transition-all active:scale-95 ${
+                                        sinPasajeros
+                                            ? 'bg-slate-300 dark:bg-slate-700 text-slate-500 dark:text-slate-400 cursor-not-allowed shadow-none'
+                                            : 'bg-cyan-600 hover:bg-cyan-700 text-white shadow-cyan-200 dark:shadow-none'
+                                    }`}
+                                    title={
+                                        sinPasajeros
+                                            ? "Tiene que haber al menos 1 pasajero declarado"
+                                            : "El cliente acepto el presupuesto — empieza la gestion con los operadores"
+                                    }
+                                >
+                                    El cliente acepto
+                                </button>
+                                {/* Cartelito informativo: solo cuando no hay pasajeros.
+                                    No reemplaza el disabled — es ayuda adicional para que el usuario
+                                    sepa exactamente qué tiene que hacer antes de poder avanzar. */}
+                                {sinPasajeros && (
+                                    <p
+                                        className="text-xs text-amber-600 dark:text-amber-400 font-medium"
+                                        data-testid="reserva-action-client-accepted-hint"
+                                    >
+                                        Tiene que haber al menos 1 pasajero
+                                    </p>
+                                )}
+                            </div>
+                        );
+                    })()}
 
                     {/* En gestion: Confirmada es automatica al resolverse todos los servicios.
                         No hay boton manual de "Confirmar". */}

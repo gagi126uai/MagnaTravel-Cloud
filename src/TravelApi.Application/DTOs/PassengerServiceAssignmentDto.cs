@@ -21,3 +21,14 @@ public record CreatePassengerAssignmentRequest(
     int? RoomNumber,
     string? SeatNumber,
     string? Notes);
+
+/// <summary>
+/// ADR-031 v2.1: cuerpo del REEMPLAZO TOTAL ATOMICO del set de un servicio
+/// (PUT .../services/{serviceType}/{servicePublicId}/assignments). Es el conjunto EXACTO de pasajeros
+/// que viajan en ese servicio: el backend borra las asignaciones actuales y deja solo estas, todo en
+/// una sola transaccion. El servicio se identifica por la ruta (no por el body), igual que el GET de
+/// nominal-coverage. Lista vacia (o == todos los pasajeros de la reserva) => CERO asignaciones, por el
+/// invariante "todos = sin asignaciones". Solo viajan publicIds de pasajero (sin documento ni datos PII).
+/// </summary>
+public record ReplaceServiceAssignmentsRequest(
+    IReadOnlyList<string> PassengerPublicIds);

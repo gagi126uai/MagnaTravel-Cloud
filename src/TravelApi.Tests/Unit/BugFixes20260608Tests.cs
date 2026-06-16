@@ -355,26 +355,25 @@ public class BugFixes20260608Tests
         Assert.Equal(EstadoReserva.Budget, (await context.Reservas.FindAsync(1))!.Status);
     }
 
-    // (2) El esperado = AdultCount+ChildCount+InfantCount, sin importar la capacidad de los servicios.
+    // (2) ADR-031: Budget -> InManagement ya NO exige los pasajeros NOMINALES (solo la cantidad
+    // declarada > 0). Con 3 declarados y solo 2 nominales cargados, antes esto bloqueaba; ahora el
+    // avance es PERMITIDO (los nombres se exigen recien al resolver/emitir cada servicio).
     [Fact]
-    public async Task ExpectedCount_ComesFromDeclaredReserva_NotFromServices()
+    public async Task AdvanceToInManagement_WithDeclaredPaxButIncompleteNominals_IsAllowed()
     {
         await using var context = NewContext();
-        // Declarados: 3 (2 adultos + 1 menor). El hotel declara 2 adultos: NO debe mandar el conteo.
+        // Declarados: 3 (2 adultos + 1 menor). Solo 2 nominales cargados de los 3 declarados.
         context.Reservas.Add(BudgetReservaWithDeclaredPax(adults: 2, children: 1, infants: 0));
         context.HotelBookings.Add(SolicitadoHotel(reservaId: 1, adults: 2));
-        // Solo 2 nominales cargados de los 3 declarados -> debe faltar 1.
         context.Passengers.Add(new Passenger { Id = 1, ReservaId = 1, FullName = "Pasajero Uno" });
         context.Passengers.Add(new Passenger { Id = 2, ReservaId = 1, FullName = "Pasajero Dos" });
         await context.SaveChangesAsync();
 
         var service = NewReservaService(context);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => service.UpdateStatusAsync(1, EstadoReserva.InManagement));
-        // El mensaje refleja el esperado DECLARADO (3), no la capacidad del hotel (2).
-        Assert.Contains("esperados: 3", ex.Message);
-        Assert.Contains("Faltan 1", ex.Message);
+        // ADR-031: el avance NO debe lanzar por nominales incompletos.
+        var advanced = await service.UpdateStatusAsync(1, EstadoReserva.InManagement);
+        Assert.Equal(EstadoReserva.InManagement, advanced.Status);
     }
 
     // (3a) Cargar exactamente la cantidad declarada funciona.

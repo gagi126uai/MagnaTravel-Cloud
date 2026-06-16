@@ -122,9 +122,16 @@ public class ServiceCatalogPillsDtoTests
     private static async Task<(Reserva reserva, Supplier supplier)> SeedReservaAndSupplierAsync(AppDbContext context)
     {
         var supplier = new Supplier { Id = 1, Name = "Proveedor test" };
-        var reserva = new Reserva { Id = 1, NumeroReserva = "F-2026-9001", Name = "Reserva test" };
+        // ADR-031: 1 pasajero DECLARADO + titular con nombre, para que confirmar un servicio (hotel)
+        // pase el gate de pasajeros nominales por tipo (hotel exige titular con nombre).
+        var reserva = new Reserva
+        {
+            Id = 1, NumeroReserva = "F-2026-9001", Name = "Reserva test",
+            AdultCount = 1, ChildCount = 0, InfantCount = 0
+        };
         context.Suppliers.Add(supplier);
         context.Reservas.Add(reserva);
+        context.Passengers.Add(new Passenger { Id = 1, ReservaId = 1, FullName = "Titular Test" });
         await context.SaveChangesAsync();
         return (reserva, supplier);
     }

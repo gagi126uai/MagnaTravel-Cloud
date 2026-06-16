@@ -136,6 +136,8 @@ public class Adr020StatusUnlockTests
         {
             Id = 30, ReservaId = 1, Status = "Solicitado", NoConfirmationRequired = false, Passengers = 2
         });
+        // ADR-031: resolver el traslado exige el TITULAR con nombre (regla Hotel/Traslado).
+        ctx.Passengers.Add(new Passenger { Id = 1, ReservaId = 1, FullName = "Titular Traslado" });
         await ctx.SaveChangesAsync();
 
         // Marcar "no requiere confirmacion" RESUELVE el traslado. Es accion del operador -> sin candado.

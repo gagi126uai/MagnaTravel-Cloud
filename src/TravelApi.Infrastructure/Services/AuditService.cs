@@ -143,16 +143,20 @@ public class AuditService : IAuditService
         return new PagedResult<AuditLog>(items, totalCount, page, pageSize);
     }
 
-    public async Task LogBusinessEventAsync(
+    /// <summary>
+    /// Construye el AuditLog de un evento de negocio. Centralizado para que
+    /// <see cref="LogBusinessEventAsync"/> (guarda) y <see cref="StageBusinessEvent"/> (no guarda)
+    /// produzcan exactamente la misma fila.
+    /// </summary>
+    private static AuditLog BuildBusinessEvent(
         string action,
         string entityName,
         string entityId,
         string? details,
         string userId,
-        string? userName,
-        CancellationToken ct)
+        string? userName)
     {
-        var auditLog = new AuditLog
+        return new AuditLog
         {
             UserId = userId,
             UserName = userName,
@@ -163,6 +167,35 @@ public class AuditService : IAuditService
             Category = "Business",
             Changes = details
         };
+    }
+
+    public void StageBusinessEvent(
+        string action,
+        string entityName,
+        string entityId,
+        string? details,
+        string userId,
+        string? userName)
+    {
+        var auditLog = BuildBusinessEvent(action, entityName, entityId, details, userId, userName);
+
+        // Stage = Add sin SaveChanges (mismo AppDbContext scoped que el caller). El alta del audit se
+        // flushea junto con la mutacion del caller en su unico SaveChanges -> atomico. A proposito NO
+        // tragamos excepciones aca: a diferencia de LogBusinessEventAsync (que guarda ya y aisla los
+        // fallos de auditoria), Stage no toca la base todavia, asi que no hay nada que pueda fallar.
+        _auditRepo.Stage(auditLog);
+    }
+
+    public async Task LogBusinessEventAsync(
+        string action,
+        string entityName,
+        string entityId,
+        string? details,
+        string userId,
+        string? userName,
+        CancellationToken ct)
+    {
+        var auditLog = BuildBusinessEvent(action, entityName, entityId, details, userId, userName);
 
         try
         {

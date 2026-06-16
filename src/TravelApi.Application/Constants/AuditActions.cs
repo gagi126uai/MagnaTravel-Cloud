@@ -240,4 +240,43 @@ public static class AuditActions
     /// rastro de auditoria para que se vea quien intento forzar y cuando.
     /// </summary>
     public const string BookingCancellationForceApprovalCallbackNoop = "BookingCancellationForceApprovalCallback_NoOp";
+
+    // ===== ADR-031 v2.1 — Asignaciones pasajero <-> servicio =====
+
+    /// <summary>
+    /// ADR-031 v2.1 (2026-06-15): se asigno un pasajero a un servicio especifico
+    /// (<c>PassengerServiceAssignment</c>). Importa auditarlo porque la asignacion DETERMINA quien
+    /// integra el SET del servicio: a quien se le exige nombre/documento al resolver, y quien aparece
+    /// en su voucher. El detail JSON lleva <c>serviceType</c>, <c>serviceId</c>, <c>passengerId</c>,
+    /// <c>reservaId</c> — NUNCA el numero de documento.
+    /// </summary>
+    public const string PassengerAssignedToService = "PassengerAssignedToService";
+
+    /// <summary>
+    /// ADR-031 v2.1 (2026-06-15): se quito (manualmente) la asignacion de un pasajero a un servicio.
+    /// Cambia el SET del servicio, por eso queda trazado quien/cuando. Detail JSON sin numero de documento.
+    /// </summary>
+    public const string PassengerUnassignedFromService = "PassengerUnassignedFromService";
+
+    /// <summary>
+    /// ADR-031 v2.1 (2026-06-15): baja de asignaciones por CASCADA al borrar el servicio (limpieza
+    /// transaccional M1). Se distingue de la baja manual (<see cref="PassengerUnassignedFromService"/>)
+    /// para que las queries de auditoria sepan que no fue una desasignacion deliberada sino el borrado del
+    /// servicio. El detail JSON incluye <c>serviceType</c>, <c>serviceId</c>, <c>removedAssignmentCount</c>.
+    /// </summary>
+    public const string PassengerUnassignedFromServiceByDelete = "PassengerUnassignedFromServiceByDelete";
+
+    /// <summary>
+    /// ADR-031 v2.1 (2026-06-15): REEMPLAZO TOTAL del set de pasajeros de un servicio en UNA operacion
+    /// atomica (endpoint PUT .../assignments). En vez de emitir N altas + M bajas sueltas, se audita el
+    /// cambio del set como un solo evento con conteos (<c>previousAssignedCount</c>, <c>newAssignedCount</c>,
+    /// <c>normalizedToAll</c>). Mas legible y trazable para una operacion bulk. El detail JSON lleva
+    /// <c>serviceType</c>, <c>serviceId</c>, <c>reservaId</c> y los conteos — NUNCA numeros de documento ni
+    /// nombres. <c>normalizedToAll=true</c> significa que el set pedido era vacio o == todos -> se dejaron
+    /// CERO asignaciones (invariante "todos = sin asignaciones").
+    /// </summary>
+    public const string PassengerAssignmentsReplaced = "PassengerAssignmentsReplaced";
+
+    /// <summary>ADR-031 v2.1: entityName para los eventos sobre la asignacion pasajero &lt;-&gt; servicio.</summary>
+    public const string PassengerServiceAssignmentEntityName = "PassengerServiceAssignment";
 }

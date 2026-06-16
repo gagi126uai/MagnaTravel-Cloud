@@ -870,11 +870,34 @@ public class VoucherService : IVoucherService
         return passengers.OrderBy(p => p.FullName).ToList();
     }
 
+    /// <summary>
+    /// ADR-031: refuerzo del guard de voucher. Antes solo contaba filas (Passengers.Count > 0); ahora
+    /// exige que exista el TITULAR (primer pasajero por Id, definicion compartida en
+    /// <see cref="TravelApi.Domain.Reservations.PassengerNominalRules"/>) y que tenga NOMBRE no vacio.
+    ///
+    /// <para>El voucher no viaja con un tipo de servicio (su request solo trae scope + pasajeros), asi
+    /// que no se puede aplicar la regla por tipo (aereo exige documento, asistencia nacimiento, etc.).
+    /// El titular-con-nombre es el minimo universal valido para cualquier voucher. La cobertura nominal
+    /// completa por tipo ya quedo garantizada AL RESOLVER cada servicio (gate de BookingService): un
+    /// voucher de un servicio resuelto tiene, por construccion, sus pasajeros completos. Ademas, el guard
+    /// de "servicios sin resolver" (GetUnresolvedLiveServiceLabels, 2026-06-12) sigue bloqueando emitir
+    /// un voucher de algo todavia no resuelto.</para>
+    /// </summary>
     private static void EnsureReservaHasPassengers(Reserva reserva)
     {
-        if (reserva.Passengers.Count == 0)
+        // v2.1: GetLeadPassenger ahora recibe un SET (lista de pasajeros). Para este guard UNIVERSAL de
+        // voucher pasamos TODA la reserva (reserva.Passengers), NO el set resuelto por servicio: el voucher
+        // no viaja con tipo de servicio, asi que aca no aplica la regla por tipo ni la resolucion del set
+        // (PassengerNominalRules.ResolveServiceSet). El unico minimo que se exige aca es titular-con-nombre
+        // (primer pasajero por Id de la reserva). La cobertura nominal completa por tipo (y, si el voucher
+        // fuera de un subconjunto, su set) ya quedo garantizada AL RESOLVER cada servicio (gate de
+        // BookingService), que SI usa ResolveServiceSet.
+        var reservaSet = reserva.Passengers.ToList();
+        var lead = TravelApi.Domain.Reservations.PassengerNominalRules.GetLeadPassenger(reservaSet);
+        if (lead == null || string.IsNullOrWhiteSpace(lead.FullName))
         {
-            throw new InvalidOperationException("No se puede crear un voucher en una reserva sin pasajeros.");
+            throw new InvalidOperationException(
+                "No se puede crear un voucher: falta el nombre del titular en la reserva.");
         }
     }
 

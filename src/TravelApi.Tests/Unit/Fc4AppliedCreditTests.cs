@@ -330,5 +330,10 @@ public class Fc4AppliedCreditTests
 
         public Task LogBusinessEventAsync(string action, string entityName, string entityId, string? details, string userId, string? userName, CancellationToken ct)
             => Task.CompletedTask;
+
+        public void StageBusinessEvent(string action, string entityName, string entityId, string? details, string userId, string? userName)
+        {
+            // No-op: los tests de FC4 no verifican el audit, solo el efecto economico.
+        }
     }
 }

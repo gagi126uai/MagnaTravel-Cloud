@@ -224,6 +224,63 @@ Ronda 2:
 
 - **(2026-06-08) Una reserva NUNCA puede tener 0 pasajeros:** no se puede avanzar de etapa (ej. de Presupuesto a En gestión) si la composición declarada es 0 adultos + 0 menores + 0 infantes. El sistema bloquea el botón y muestra aviso claro ("Tiene que haber al menos 1 pasajero"). El usuario debe ajustar la composición antes de continuar.
 
+## Pasajeros: cantidad en el presupuesto, nombres por servicio (2026-06-15)
+
+> Cambio de flujo decidido por Gastón + experto de dominio: el presupuesto pide solo la
+> CANTIDAD de pasajeros; los NOMBRES se cargan más adelante, recién cuando hace falta para
+> emitir/confirmar cada servicio. Estas decisiones REEMPLAZAN el comportamiento viejo del
+> modal "Pasar a En gestión", que obligaba a cargar nombre + documento de todos al avanzar.
+> Sigue valiendo la regla "nunca 0 pasajeros" (2026-06-08).
+
+- **(2026-06-15) En el presupuesto se carga SOLO la cantidad, en tres casilleros: adultos / menores / infantes.** Son los tres casilleros que ya existen. Nada de nombres en esta etapa (P1).
+
+- **(2026-06-15) Si la cantidad quedó en 0, el botón "El cliente aceptó" queda APAGADO** (gris, no se puede tocar) con el cartelito "Tiene que haber al menos 1 pasajero". El vendedor corrige la cantidad y el botón se prende solo (P2). (Refuerza la regla 2026-06-08.)
+
+- **(2026-06-15) "El cliente aceptó" pasa DERECHO a En gestión, sin ventana.** Con cantidad correcta (≥1) y al menos un servicio cargado, al apretar el botón la reserva pasa a En gestión sin abrir ninguna ventana de nombres. **El modal de nombres al avanzar MUERE** (coherente con "el modal me parece horrible"). En su lugar, la reserva queda con un **cartelito recordatorio arriba** que dice: "Cargá los nombres de los pasajeros antes de emitir cada servicio." (P3).
+
+- **(2026-06-15) Los nombres se cargan en DOS lugares (P4):**
+  - **(a)** En la solapa **"Pasajeros"** de la reserva (la que ya existe) — es el lugar principal y tranquilo para cargarlos.
+  - **(b)** Como **red de seguridad**, al ir a emitir/confirmar un servicio que los necesita: aparece un **mini-formulario EN LÍNEA** (debajo del servicio, dentro de la página, NUNCA una ventana flotante) que pide solo los nombres que falten. Mismo dato, dos puertas de entrada.
+
+- **(2026-06-15) Aéreo: para emitir exige NOMBRE + DOCUMENTO de TODOS los pasajeros.** Si faltan, el botón "Marcar emitido" queda APAGADO con el cartelito "Cargá los nombres primero". El mini-formulario en línea (P4b) es donde el vendedor los carga; al completarlos, el botón se prende (P5). El aéreo es el ÚNICO servicio que exige todos los nombres + documento antes de avanzar.
+
+- **(2026-06-15) Hotel y traslado se confirman con SOLO el TITULAR cargado.** No exigen todos los nombres como el aéreo (P6).
+
+- **(2026-06-15) Los pasajeros van a TODOS los servicios automáticamente.** No hay paso de "elegir a mano quién va en cada servicio": todos los pasajeros declarados quedan en todos los servicios solos (P7).
+
+- **(2026-06-15) Si se agrega un pasajero nuevo más tarde, se suma SOLO a todos los servicios.** Sin paso manual de asignación (P8).
+
+- **(2026-06-15) La solapa "Pasajeros" con cantidad declarada pero sin nombres muestra renglones vacíos, uno por pasajero declarado:** "Adulto 1 — sin cargar", "Menor 1 — sin cargar", etc., cada uno con un botón [Cargar] (P9).
+
+- **(2026-06-15) Contador "X de N nombres cargados".** Se muestra en dos lados: en la solapa Pasajeros y arriba de la reserva (junto al cartelito recordatorio de P3) (P10).
+
+## Pasajeros: "solo para algunos" por servicio + autocompletado de la cantidad (2026-06-15, tarde)
+
+> Segunda ronda del mismo día, DESPUÉS de cerrar el flujo de nombres diferidos de arriba.
+> Gastón pidió dos cosas: (1) poder decir que un servicio es "solo para algunos" pasajeros
+> (no todos), y (2) que el sistema sugiera la cantidad de pasajeros mirando los servicios.
+> Todo EN LÍNEA, nada de ventanas flotantes (regla dura de siempre).
+
+**Cómo queda P7/P8 (lo de la mañana) — IMPORTANTE, NO es una contradicción:**
+- **El default NO cambia: todos los pasajeros van en todos los servicios, con CERO clics.** Eso de la mañana (P7/P8) sigue intacto: el vendedor no tiene que asignar a nadie a mano. Si no toca nada, el servicio es para todos.
+- **"Solo para algunos" es una EXCEPCIÓN opcional y escondida.** Aparece como un control discreto en cada servicio; solo el que quiere acotar lo abre. El que no lo usa, ni se entera: su flujo es el de la mañana.
+- En palabras simples: la regla sigue siendo "todos a todos"; ahora además SE PUEDE, si hace falta, decir que un servicio puntual es para 2 de los 3 pasajeros.
+
+**1) Marcar "solo para algunos" en un servicio (P1 = sí, escondido y default todos):**
+- **(2026-06-15) En la fila de cada servicio hay un control "Para: Todos".** Es discreto, no grita. Mientras dice "Para: Todos", el servicio es para todos los pasajeros (el default de siempre).
+- **(2026-06-15) Al tocar "Para: Todos" se despliega EN LÍNEA, debajo, la lista de pasajeros de la reserva con tildes** para elegir quiénes van en ese servicio. **Por defecto vienen TODOS tildados** (destildar es la acción de acotar). Nada de ventana flotante: se abre dentro de la página, como todo lo demás.
+- **(2026-06-15) Si TODAVÍA no hay nombres cargados, el control dice "Para: Todos — cargá los nombres para elegir"** y NO deja acotar: no se puede elegir "solo algunos" hasta que existan los pasajeros con nombre. (No se acota por cantidad/tipo: se acota por pasajero concreto, así que primero tienen que existir.)
+- **(2026-06-15) Cuando el servicio quedó acotado, el control muestra el conteo del set: "Para: 2 de 3".** Si está en todos, dice "Para: Todos" (no muestra número).
+
+**2) Qué nombres pide cada servicio según su set (modelo cerrado en ADR-031 v2.1):**
+- **(2026-06-15) El subconjunto de un servicio lo determinan SOLO las tildes (asignaciones explícitas).** Servicio sin tocar = para TODOS. La cantidad propia del servicio (ej. "2 adultos + 1 menor" del hotel) NO achica a quién se le piden nombres; esa cantidad propia solo sirve para la sugerencia del total de la reserva (ver punto 3).
+- **(2026-06-15) Los nombres que pide un servicio para emitir/confirmar son los de SU set:** si está en "Para: Todos", pide los de todos los pasajeros; si está acotado, pide solo los de los pasajeros tildados. Ejemplos: excursión con 2 adultos tildados → pide 2 nombres; aéreo "Para: Todos" en una reserva de 3 → pide 3. El mini-formulario en línea de nombres (el de la mañana, P4b) trabaja sobre ESE set, no sobre todos.
+
+**3) Sugerencia de cantidad de pasajeros desde los servicios (P3 = solo avisa, no pisa):**
+- **(2026-06-15) El sistema sugiere la cantidad mirando los servicios, pero NUNCA la pisa.** Cuando deduce una composición a partir de los servicios cargados, muestra una franja tipo "💡 Por los servicios, parece que viajan 2 adultos + 1 menor" con un botón "Usar". El que decide es el vendedor: confirma con "Usar" o lo deja como está y ajusta a mano.
+- **(2026-06-15) "Usar" completa los casilleros de cantidad con lo sugerido.** No se autollena solo, ni siquiera si la cantidad está en 0: siempre hace falta que el vendedor toque "Usar". Lo que ya cargó a mano no se sobrescribe sin que él lo pida.
+- **(2026-06-15) La franja de sugerencia NO aparece si la cantidad ya coincide con lo que sugieren los servicios** (no molesta cuando no hay nada que sugerir).
+
 # Multimoneda — pesos y dólares (decisiones de Gastón, 2026-06-09)
 
 > Sesión de 8 preguntas con dibujos. El sistema empieza a mostrar dos monedas (pesos ARS y dólares USD)

@@ -4,12 +4,14 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using System.Security.Claims;
+using TravelApi.Application.Constants;
 using TravelApi.Application.Contracts.Reservations;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Helpers;
 using TravelApi.Domain.Interfaces;
+using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Services.Reservations;
 
@@ -38,6 +40,10 @@ public partial class BookingService : IBookingService
     // EnableCatalogFindOrCreate + el setting StaleCostReferenceDays. Opcional para no romper los
     // ctores de tests existentes (14 args). Si es null -> flag OFF (byte-identico), fail-closed.
     private readonly IOperationalFinanceSettingsService? _settingsService;
+    // ADR-031 v2.1: auditoria de la baja de asignaciones por cascada al borrar un servicio (M1).
+    // Opcional para no romper los ctores de tests existentes; si es null, la limpieza igual ocurre
+    // (la integridad NO depende del audit), solo no se registra el evento.
+    private readonly IAuditService? _auditService;
 
     public BookingService(
         IRepository<FlightSegment> flightRepo,
@@ -54,7 +60,8 @@ public partial class BookingService : IBookingService
         ILogger<BookingService> logger,
         IUserPermissionResolver? permissionResolver = null,
         IHttpContextAccessor? httpContextAccessor = null,
-        IOperationalFinanceSettingsService? settingsService = null)
+        IOperationalFinanceSettingsService? settingsService = null,
+        IAuditService? auditService = null)
     {
         _flightRepo = flightRepo;
         _hotelRepo = hotelRepo;
@@ -71,6 +78,7 @@ public partial class BookingService : IBookingService
         _permissionResolver = permissionResolver;
         _httpContextAccessor = httpContextAccessor;
         _settingsService = settingsService;
+        _auditService = auditService;
     }
 
     // === RATE RESOLUTION (Snapshot) ===
@@ -108,6 +116,140 @@ public partial class BookingService : IBookingService
             ?? user?.Identity?.Name;
         return ReservaLockGuard.EnsureCanEditAsync(
             _db, reservaId, operation, userId, userName, entityType, entityId, summary, ct);
+    }
+
+    /// <summary>
+    /// ADR-031 (2026-06-15): GATE UNICO de pasajeros nominales por servicio. Se invoca en TODOS los
+    /// call-sites que pueden dejar un servicio RESUELTO/EMITIDO (no solo los Update*StatusAsync, sino
+    /// tambien los Create*/Update* de edicion, que pueden hacer nacer un servicio ya "Confirmado" — el
+    /// bypass B1 del ADR §2.4). Corre ANTES de persistir el status resuelto y ANTES de
+    /// <c>UpdateBalanceAsync</c>, de modo que el motor automatico (ReservaAutoStateService) NUNCA vea
+    /// "todo resuelto" con nombres faltantes y auto-confirme una reserva sin pasajeros nominales.
+    ///
+    /// <para><b>Por que un unico envoltorio</b>: centraliza la invocacion para no olvidar ningun
+    /// call-site. Toda ruta nueva que resuelva un servicio DEBE llamar a este metodo. El test del
+    /// bypass B1 (Adr031PassengerNominalGateTests) es la red de seguridad contra regresiones.</para>
+    ///
+    /// <para><b>Cuando NO bloquea</b>: el gate corre SOLO en la TRANSICION no-resuelto -> resuelto
+    /// (ADR §7). Si el servicio NO queda resuelto, o si YA estaba resuelto antes de esta operacion (ej.
+    /// editar el costo de un hotel que ya estaba "Confirmado"), no se exige nada nuevo: la cobertura
+    /// nominal ya se valido cuando se resolvio, y re-validarla en cada edicion posterior seria friccion
+    /// sin razon. Para las altas, <paramref name="serviceWasResolved"/> es false (nace ahora).</para>
+    ///
+    /// <para><b>v2.1 (set por servicio)</b>: el gate ya NO valida la reserva entera; valida el SET DEL
+    /// SERVICIO que se esta resolviendo. El set se resuelve por <paramref name="assignmentServiceType"/>
+    /// + <paramref name="serviceId"/> via <see cref="ResolveServiceSetAsync"/> (asignaciones explicitas
+    /// si existen; si no, toda la reserva). En un ALTA el servicio todavia no tiene Id propio (se asigna
+    /// despues del AddAsync) y no puede tener asignaciones, asi que el call-site pasa
+    /// <paramref name="serviceId"/>=0 y el set queda en "toda la reserva" (default seguro, correcto).</para>
+    ///
+    /// <para><b>Seguridad</b>: el mensaje de error nunca incluye el numero de documento (lo garantiza
+    /// PassengerNominalRules); tampoco se loguea aca.</para>
+    /// </summary>
+    private async Task EnsureNominalCoverageBeforeResolvingAsync(
+        int reservaId,
+        bool serviceWasResolved,
+        bool serviceIsResolved,
+        PassengerNominalRules.ServiceKind serviceKind,
+        string assignmentServiceType,
+        int serviceId,
+        CancellationToken ct)
+    {
+        // Solo la TRANSICION no-resuelto -> resuelto exige nombres. Si no queda resuelto, o si ya lo
+        // estaba (edicion sobre un servicio ya confirmado/emitido), no hay nada nuevo que validar.
+        if (serviceWasResolved || !serviceIsResolved)
+            return;
+
+        var serviceSet = await ResolveServiceSetAsync(reservaId, assignmentServiceType, serviceId, ct);
+        PassengerNominalRules.EnsureCovered(serviceSet, serviceKind);
+    }
+
+    /// <summary>
+    /// ADR-031 v2.1 (§4.2): resuelve el SET de pasajeros de un servicio para el gate / voucher. Lee de la
+    /// DB las dos colecciones (pasajeros de la reserva + ids asignados a este servicio) y delega la regla
+    /// de seleccion en el helper PURO <see cref="PassengerNominalRules.ResolveServiceSet"/>, para que el
+    /// gate, el preview del front y el voucher resuelvan el set EXACTAMENTE igual (fuente unica).
+    ///
+    /// <para>Default seguro: si el servicio no tiene asignaciones (caso tipico, cero clics del agente), el
+    /// set es TODA la reserva. La cantidad propia del servicio (Adults, etc.) NO se consulta aca a
+    /// proposito (ADR §2.7/§3.2): el subconjunto se expresa SOLO asignando.</para>
+    /// </summary>
+    private async Task<IReadOnlyList<Passenger>> ResolveServiceSetAsync(
+        int reservaId,
+        string assignmentServiceType,
+        int serviceId,
+        CancellationToken ct)
+    {
+        // Pasajeros de la reserva (la regla es pura y necesita la coleccion cargada). AsNoTracking:
+        // solo leemos para validar, no mutamos nada aca.
+        var reservaPassengers = await _db.Passengers
+            .AsNoTracking()
+            .Where(p => p.ReservaId == reservaId)
+            .ToListAsync(ct);
+
+        // Ids asignados a ESTE servicio. serviceId<=0 (alta sin Id propio aun) => no hay asignaciones.
+        var assignedPassengerIds = serviceId > 0
+            ? await _db.PassengerServiceAssignments
+                .AsNoTracking()
+                .Where(a => a.ServiceType == assignmentServiceType && a.ServiceId == serviceId)
+                .Select(a => a.PassengerId)
+                .ToListAsync(ct)
+            : new List<int>();
+
+        return PassengerNominalRules.ResolveServiceSet(reservaPassengers, assignedPassengerIds);
+    }
+
+    /// <summary>
+    /// ADR-031 v2.1 (M1, §4.3 — bloqueante de integridad): borra las <c>PassengerServiceAssignment</c> de
+    /// un servicio que se esta borrando. Como <c>ServiceId</c> es soft-FK (la tabla destino varia), EF NO
+    /// cascadea: sin esta limpieza quedan filas huerfanas y, como el Id se reusa, un servicio NUEVO con el
+    /// mismo (ServiceType, ServiceId) heredaria el set del servicio muerto -> gate/voucher sobre los
+    /// pasajeros equivocados, en silencio.
+    ///
+    /// <para><b>Atomicidad (I-ATOM / M-ATOM-1)</b>: NO hace SaveChanges, y la auditoria se STAGEA (no se
+    /// guarda). El caller marca el borrado del servicio, la baja de asignaciones Y el alta del audit en el
+    /// MISMO AppDbContext y cierra todo con su propio SaveChanges -> EF las agrupa en una sola transaccion.
+    /// Nunca queda el servicio borrado con asignaciones vivas (ni al reves), y la traza de auditoria solo
+    /// existe si el borrado efectivamente se commiteo. Importante: usamos <c>StageBusinessEvent</c> y NO
+    /// <c>LogBusinessEventAsync</c>; este ultimo hace AddAsync + SaveChanges inmediato (Repository.cs) y
+    /// flusheaba la baja de asignaciones en una transaccion separada ANTES del borrado del servicio.</para>
+    ///
+    /// <para><b>Auditoria</b>: registra la cascada como <c>PassengerUnassignedFromServiceByDelete</c> (si hay
+    /// IAuditService inyectado), con el conteo de filas borradas. details sin numero de documento.</para>
+    /// </summary>
+    private async Task CleanupAssignmentsForDeletedServiceAsync(
+        string assignmentServiceType, int serviceId, int reservaId, CancellationToken ct)
+    {
+        var orphanAssignments = await _db.PassengerServiceAssignments
+            .Where(a => a.ServiceType == assignmentServiceType && a.ServiceId == serviceId)
+            .ToListAsync(ct);
+
+        if (orphanAssignments.Count == 0)
+            return;
+
+        _db.PassengerServiceAssignments.RemoveRange(orphanAssignments);
+
+        // Auditoria de la cascada. Un solo evento por servicio con el conteo, no uno por pasajero, para no
+        // inundar el log al borrar un servicio con muchos pasajeros. Sin numero de documento (misma regla
+        // que el gate). Se STAGEA (no se guarda) para que entre en el mismo SaveChanges que el borrado.
+        if (_auditService is not null)
+        {
+            var (userId, userName) = GetActor();
+            var details = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                serviceType = assignmentServiceType,
+                serviceId,
+                reservaId,
+                removedAssignmentCount = orphanAssignments.Count
+            });
+            _auditService.StageBusinessEvent(
+                AuditActions.PassengerUnassignedFromServiceByDelete,
+                AuditActions.PassengerServiceAssignmentEntityName,
+                serviceId.ToString(),
+                details,
+                userId ?? string.Empty,
+                userName);
+        }
     }
 
     /// <summary>
@@ -519,6 +661,15 @@ public partial class BookingService : IBookingService
             _db, reservaId, $"Vuelo {ServiceDisplayName.ForFlight(flight.ProductName, flight.AirlineCode, flight.FlightNumber)}", flight.Status, ct);
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
 
+        // ADR-031 (bypass B1): el aereo RESUELVE por TicketIssuedAt (que el alta no setea), asi que este
+        // gate es defensivo hoy. Se cablea igual para que ninguna ruta de alta que en el futuro deje el
+        // vuelo resuelto se cuele sin nombre + documento. La emision real tiene su gate efectivo.
+        // El alta nace sin resolver previo -> wasResolved=false.
+        // serviceId: 0 -> el alta no tiene Id propio aun, no puede tener asignaciones; set = toda la reserva.
+        await EnsureNominalCoverageBeforeResolvingAsync(
+            reservaId, serviceWasResolved: false, ServiceResolutionRules.IsResolved(flight),
+            PassengerNominalRules.ServiceKind.Flight, AssignmentServiceType.Flight, serviceId: 0, ct);
+
         await _flightRepo.AddAsync(flight, ct);
 
         if (flight.SupplierId > 0)
@@ -563,6 +714,8 @@ public partial class BookingService : IBookingService
 
         var oldSupplierId = flight.SupplierId;
         var oldStatus = flight.Status;
+        // ADR-031: estado de resolucion ANTES de la edicion (para gatear solo la transicion a resuelto).
+        var flightWasResolved = ServiceResolutionRules.IsResolved(flight);
         // ADR-027 (hallazgo #10): precio/costo ANTES del map para detectar "el operador confirmo con cambios".
         var oldSalePrice = flight.SalePrice;
         var oldNetCost = flight.NetCost;
@@ -622,6 +775,12 @@ public partial class BookingService : IBookingService
         // Guard 2: no degradar de confirmado a no-confirmado si hay pagos al proveedor
         var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, reservaId, label, oldStatus, flight.Status, ct);
         if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
+
+        // ADR-031 (bypass B1): el aereo RESUELVE por TicketIssuedAt (que la edicion no setea), gate
+        // defensivo hoy. Cableado para que ninguna ruta de edicion futura deje el vuelo resuelto sin nombres.
+        await EnsureNominalCoverageBeforeResolvingAsync(
+            reservaId, flightWasResolved, ServiceResolutionRules.IsResolved(flight),
+            PassengerNominalRules.ServiceKind.Flight, AssignmentServiceType.Flight, flight.Id, ct);
 
         await _flightRepo.UpdateAsync(flight, ct);
         if (oldSupplierId > 0 && oldSupplierId == flight.SupplierId)
@@ -688,6 +847,9 @@ public partial class BookingService : IBookingService
             || TravelApi.Domain.Reservations.ServiceResolutionRules.IsResolved(flight);
         await EnsureCanRemoveServiceAsync(reservaId, flightConfirmed, ct);
 
+        // ADR-031 v2.1 (M1): limpiar las asignaciones de este servicio en la MISMA transaccion que el
+        // borrado. RemoveRange aca + el SaveChanges de DeleteAsync (mismo _db) las agrupan juntas.
+        await CleanupAssignmentsForDeletedServiceAsync(AssignmentServiceType.Flight, flight.Id, reservaId, ct);
         await _flightRepo.DeleteAsync(flight, ct);
         if (flight.SupplierId > 0)
         {
@@ -799,6 +961,14 @@ public partial class BookingService : IBookingService
             _db, reservaId, $"Hotel {hotel.HotelName ?? "sin nombre"}", hotel.Status, ct);
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
 
+        // ADR-031 (bypass B1): el alta puede dejar el hotel ya "Confirmado" (request con status resuelto
+        // y reserva fuera de Presupuesto) -> exigir el titular ANTES de persistir, para que el motor
+        // automatico no auto-confirme la reserva sin nombres.
+        // serviceId: 0 -> alta sin Id propio aun; set = toda la reserva.
+        await EnsureNominalCoverageBeforeResolvingAsync(
+            reservaId, serviceWasResolved: false, ServiceResolutionRules.IsResolved(hotel),
+            PassengerNominalRules.ServiceKind.Hotel, AssignmentServiceType.Hotel, serviceId: 0, ct);
+
         await _hotelRepo.AddAsync(hotel, ct);
 
         if (hotel.SupplierId > 0)
@@ -844,6 +1014,8 @@ public partial class BookingService : IBookingService
 
         var oldSupplierId = hotel.SupplierId;
         var oldStatus = hotel.Status;
+        // ADR-031: estado de resolucion ANTES de la edicion (para gatear solo la transicion a resuelto).
+        var hotelWasResolved = ServiceResolutionRules.IsResolved(hotel);
         // ADR-027 (hallazgo #10): precio/costo ANTES del map para detectar "el operador confirmo con cambios".
         var oldSalePrice = hotel.SalePrice;
         var oldNetCost = hotel.NetCost;
@@ -911,6 +1083,12 @@ public partial class BookingService : IBookingService
         var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, reservaId, label, oldStatus, hotel.Status, ct);
         if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
 
+        // ADR-031 (bypass B1): la edicion puede dejar el hotel resuelto (transicion no-resuelto ->
+        // resuelto) -> exigir el titular ANTES de persistir.
+        await EnsureNominalCoverageBeforeResolvingAsync(
+            reservaId, hotelWasResolved, ServiceResolutionRules.IsResolved(hotel),
+            PassengerNominalRules.ServiceKind.Hotel, AssignmentServiceType.Hotel, hotel.Id, ct);
+
         await _hotelRepo.UpdateAsync(hotel, ct);
         if (oldSupplierId > 0 && oldSupplierId == hotel.SupplierId)
         {
@@ -963,6 +1141,8 @@ public partial class BookingService : IBookingService
             || TravelApi.Domain.Reservations.ServiceResolutionRules.IsResolved(hotel);
         await EnsureCanRemoveServiceAsync(reservaId, hotelConfirmed, ct);
 
+        // ADR-031 v2.1 (M1): limpiar asignaciones en la misma transaccion que el borrado.
+        await CleanupAssignmentsForDeletedServiceAsync(AssignmentServiceType.Hotel, hotel.Id, reservaId, ct);
         await _hotelRepo.DeleteAsync(hotel, ct);
         if (hotel.SupplierId > 0)
         {
@@ -1071,6 +1251,13 @@ public partial class BookingService : IBookingService
             _db, reservaId, $"Paquete {package.PackageName ?? "sin nombre"}", package.Status, ct);
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
 
+        // ADR-031 (bypass B1): el alta puede dejar el paquete resuelto -> exigir el nombre de TODOS
+        // los declarados ANTES de persistir.
+        // serviceId: 0 -> alta sin Id propio aun; set = toda la reserva.
+        await EnsureNominalCoverageBeforeResolvingAsync(
+            reservaId, serviceWasResolved: false, ServiceResolutionRules.IsResolved(package),
+            PassengerNominalRules.ServiceKind.Package, AssignmentServiceType.Package, serviceId: 0, ct);
+
         await _packageRepo.AddAsync(package, ct);
 
         if (package.SupplierId > 0)
@@ -1117,6 +1304,8 @@ public partial class BookingService : IBookingService
         var oldSalePrice = package.SalePrice;
         var oldSupplierId = package.SupplierId;
         var oldStatus = package.Status;
+        // ADR-031: estado de resolucion ANTES de la edicion (para gatear solo la transicion a resuelto).
+        var packageWasResolved = ServiceResolutionRules.IsResolved(package);
         var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
 
         _mapper.Map(req, package);
@@ -1150,6 +1339,12 @@ public partial class BookingService : IBookingService
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
         var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, reservaId, label, oldStatus, package.Status, ct);
         if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
+
+        // ADR-031 (bypass B1): la edicion puede dejar el paquete resuelto -> exigir el nombre de TODOS
+        // los declarados ANTES de persistir.
+        await EnsureNominalCoverageBeforeResolvingAsync(
+            reservaId, packageWasResolved, ServiceResolutionRules.IsResolved(package),
+            PassengerNominalRules.ServiceKind.Package, AssignmentServiceType.Package, package.Id, ct);
 
         await _packageRepo.UpdateAsync(package, ct);
         if (oldSupplierId > 0 && oldSupplierId == package.SupplierId)
@@ -1202,6 +1397,8 @@ public partial class BookingService : IBookingService
             || TravelApi.Domain.Reservations.ServiceResolutionRules.IsResolved(package);
         await EnsureCanRemoveServiceAsync(reservaId, packageConfirmed, ct);
 
+        // ADR-031 v2.1 (M1): limpiar asignaciones en la misma transaccion que el borrado.
+        await CleanupAssignmentsForDeletedServiceAsync(AssignmentServiceType.Package, package.Id, reservaId, ct);
         await _packageRepo.DeleteAsync(package, ct);
         if (package.SupplierId > 0)
         {
@@ -1316,6 +1513,12 @@ public partial class BookingService : IBookingService
             _db, reservaId, $"Transfer {transfer.VehicleType ?? ""}".Trim(), transfer.Status, ct);
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
 
+        // ADR-031 (bypass B1): el alta puede dejar el traslado resuelto -> exigir el titular ANTES de persistir.
+        // serviceId: 0 -> alta sin Id propio aun; set = toda la reserva.
+        await EnsureNominalCoverageBeforeResolvingAsync(
+            reservaId, serviceWasResolved: false, ServiceResolutionRules.IsResolved(transfer),
+            PassengerNominalRules.ServiceKind.Transfer, AssignmentServiceType.Transfer, serviceId: 0, ct);
+
         await _transferRepo.AddAsync(transfer, ct);
 
         if (transfer.SupplierId > 0)
@@ -1362,6 +1565,8 @@ public partial class BookingService : IBookingService
         var oldSalePrice = transfer.SalePrice;
         var oldSupplierId = transfer.SupplierId;
         var oldStatus = transfer.Status;
+        // ADR-031: estado de resolucion ANTES de la edicion (para gatear solo la transicion a resuelto).
+        var transferWasResolved = ServiceResolutionRules.IsResolved(transfer);
         var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
 
         _mapper.Map(req, transfer);
@@ -1406,6 +1611,11 @@ public partial class BookingService : IBookingService
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
         var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, reservaId, label, oldStatus, transfer.Status, ct);
         if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
+
+        // ADR-031 (bypass B1): la edicion puede dejar el traslado resuelto -> exigir el titular ANTES de persistir.
+        await EnsureNominalCoverageBeforeResolvingAsync(
+            reservaId, transferWasResolved, ServiceResolutionRules.IsResolved(transfer),
+            PassengerNominalRules.ServiceKind.Transfer, AssignmentServiceType.Transfer, transfer.Id, ct);
 
         await _transferRepo.UpdateAsync(transfer, ct);
         if (oldSupplierId > 0 && oldSupplierId == transfer.SupplierId)
@@ -1458,6 +1668,8 @@ public partial class BookingService : IBookingService
             || TravelApi.Domain.Reservations.ServiceResolutionRules.IsResolved(transfer);
         await EnsureCanRemoveServiceAsync(reservaId, transferConfirmed, ct);
 
+        // ADR-031 v2.1 (M1): limpiar asignaciones en la misma transaccion que el borrado.
+        await CleanupAssignmentsForDeletedServiceAsync(AssignmentServiceType.Transfer, transfer.Id, reservaId, ct);
         await _transferRepo.DeleteAsync(transfer, ct);
         if (transfer.SupplierId > 0)
         {
@@ -1596,6 +1808,13 @@ public partial class BookingService : IBookingService
             _db, reservaId, $"Asistencia {assistance.PlanType ?? "seguro"}", assistance.Status, ct);
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
 
+        // ADR-031 (bypass B1): el alta puede dejar la asistencia resuelta -> exigir nombre + documento +
+        // fecha de nacimiento de TODOS los declarados ANTES de persistir (la prima depende de la edad).
+        // serviceId: 0 -> alta sin Id propio aun; set = toda la reserva.
+        await EnsureNominalCoverageBeforeResolvingAsync(
+            reservaId, serviceWasResolved: false, ServiceResolutionRules.IsResolved(assistance),
+            PassengerNominalRules.ServiceKind.Assistance, AssignmentServiceType.Assistance, serviceId: 0, ct);
+
         await _assistanceRepo.AddAsync(assistance, ct);
 
         if (assistance.SupplierId > 0)
@@ -1641,6 +1860,8 @@ public partial class BookingService : IBookingService
 
         var oldSupplierId = assistance.SupplierId;
         var oldStatus = assistance.Status;
+        // ADR-031: estado de resolucion ANTES de la edicion (para gatear solo la transicion a resuelto).
+        var assistanceWasResolved = ServiceResolutionRules.IsResolved(assistance);
         // ADR-027 (hallazgo #10): precio/costo ANTES del map para detectar "el operador confirmo con cambios".
         var oldSalePrice = assistance.SalePrice;
         var oldNetCost = assistance.NetCost;
@@ -1681,6 +1902,12 @@ public partial class BookingService : IBookingService
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
         var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, reservaId, label, oldStatus, assistance.Status, ct);
         if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
+
+        // ADR-031 (bypass B1): la edicion puede dejar la asistencia resuelta -> exigir nombre +
+        // documento + fecha de nacimiento de TODOS los declarados ANTES de persistir.
+        await EnsureNominalCoverageBeforeResolvingAsync(
+            reservaId, assistanceWasResolved, ServiceResolutionRules.IsResolved(assistance),
+            PassengerNominalRules.ServiceKind.Assistance, AssignmentServiceType.Assistance, assistance.Id, ct);
 
         await _assistanceRepo.UpdateAsync(assistance, ct);
         if (oldSupplierId > 0 && oldSupplierId == assistance.SupplierId)
@@ -1733,6 +1960,8 @@ public partial class BookingService : IBookingService
             || TravelApi.Domain.Reservations.ServiceResolutionRules.IsResolved(assistance);
         await EnsureCanRemoveServiceAsync(reservaId, assistanceConfirmed, ct);
 
+        // ADR-031 v2.1 (M1): limpiar asignaciones en la misma transaccion que el borrado.
+        await CleanupAssignmentsForDeletedServiceAsync(AssignmentServiceType.Assistance, assistance.Id, reservaId, ct);
         await _assistanceRepo.DeleteAsync(assistance, ct);
         if (assistance.SupplierId > 0)
         {
@@ -1774,7 +2003,12 @@ public partial class BookingService : IBookingService
         var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, hotel.ReservaId, label, oldStatus, newStatus, ct);
         if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
 
+        var hotelWasResolved = ServiceResolutionRules.IsResolved(hotel);
         hotel.Status = newStatus;
+        // ADR-031: si esta operacion RESUELVE el hotel (no lo estaba antes), exigir el titular con nombre.
+        await EnsureNominalCoverageBeforeResolvingAsync(
+            hotel.ReservaId, hotelWasResolved, ServiceResolutionRules.IsResolved(hotel),
+            PassengerNominalRules.ServiceKind.Hotel, AssignmentServiceType.Hotel, hotel.Id, ct);
         StampServiceCancellation(
             wasCancelled: WorkflowStatusHelper.MapGenericStatus(oldStatus ?? string.Empty) == WorkflowStatuses.Cancelado,
             isCancelled: WorkflowStatusHelper.MapGenericStatus(newStatus) == WorkflowStatuses.Cancelado,
@@ -1816,7 +2050,12 @@ public partial class BookingService : IBookingService
         var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, transfer.ReservaId, label, oldStatus, newStatus, ct);
         if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
 
+        var transferWasResolved = ServiceResolutionRules.IsResolved(transfer);
         transfer.Status = newStatus;
+        // ADR-031: si esta operacion RESUELVE el traslado (no lo estaba antes), exigir el titular con nombre.
+        await EnsureNominalCoverageBeforeResolvingAsync(
+            transfer.ReservaId, transferWasResolved, ServiceResolutionRules.IsResolved(transfer),
+            PassengerNominalRules.ServiceKind.Transfer, AssignmentServiceType.Transfer, transfer.Id, ct);
         StampServiceCancellation(
             wasCancelled: WorkflowStatusHelper.MapGenericStatus(oldStatus ?? string.Empty) == WorkflowStatuses.Cancelado,
             isCancelled: WorkflowStatusHelper.MapGenericStatus(newStatus) == WorkflowStatuses.Cancelado,
@@ -1854,7 +2093,12 @@ public partial class BookingService : IBookingService
         var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, package.ReservaId, label, oldStatus, newStatus, ct);
         if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
 
+        var packageWasResolved = ServiceResolutionRules.IsResolved(package);
         package.Status = newStatus;
+        // ADR-031: si esta operacion RESUELVE el paquete (no lo estaba antes), exigir el nombre de TODOS.
+        await EnsureNominalCoverageBeforeResolvingAsync(
+            package.ReservaId, packageWasResolved, ServiceResolutionRules.IsResolved(package),
+            PassengerNominalRules.ServiceKind.Package, AssignmentServiceType.Package, package.Id, ct);
         StampServiceCancellation(
             wasCancelled: WorkflowStatusHelper.MapGenericStatus(oldStatus ?? string.Empty) == WorkflowStatuses.Cancelado,
             isCancelled: WorkflowStatusHelper.MapGenericStatus(newStatus) == WorkflowStatuses.Cancelado,
@@ -1893,7 +2137,15 @@ public partial class BookingService : IBookingService
         var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, flight.ReservaId, label, oldStatus, newStatus, ct);
         if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
 
+        var flightWasResolvedOnStatus = ServiceResolutionRules.IsResolved(flight);
         flight.Status = newStatus;
+        // ADR-031: el aereo RESUELVE por TicketIssuedAt (emitido), no por status — confirmar el PNR (HK)
+        // no resuelve, asi que hoy este gate es defensivo (no-op). Se cablea igual para que, si en el
+        // futuro algun status de vuelo resolviera por esta via, la cobertura nominal se exija ANTES de
+        // persistir. La emision real (MarkFlightTicketIssuedAsync) tiene su propio gate efectivo.
+        await EnsureNominalCoverageBeforeResolvingAsync(
+            flight.ReservaId, flightWasResolvedOnStatus, ServiceResolutionRules.IsResolved(flight),
+            PassengerNominalRules.ServiceKind.Flight, AssignmentServiceType.Flight, flight.Id, ct);
         // El aereo mapea por codigo IATA (UN/UC/HX/NO = cancelado), no por texto generico.
         StampServiceCancellation(
             wasCancelled: WorkflowStatusHelper.MapFlightStatus(oldStatus ?? string.Empty) == WorkflowStatuses.Cancelado,
@@ -1929,11 +2181,18 @@ public partial class BookingService : IBookingService
 
         // ADR-020 decision #8: marcar emitido RESUELVE el segmento (es la realidad del operador),
         // no es una edicion de la agencia -> sin candado (ver detalle en UpdateHotelStatusAsync).
+        var flightWasResolved = ServiceResolutionRules.IsResolved(flight);
         var (userId, userName) = GetActor();
         flight.TicketIssuedAt = DateTime.UtcNow;
         flight.TicketIssuedByUserId = userId;
         flight.TicketIssuedByUserName = userName;
         if (!string.IsNullOrWhiteSpace(ticketNumber)) flight.TicketNumber = ticketNumber.Trim();
+
+        // ADR-031: emitir el ticket RESUELVE el aereo. Exigir nombre + documento de TODOS los pasajeros
+        // declarados ANTES de persistir (un ticket sin nombre/documento es inservible y caro de corregir).
+        await EnsureNominalCoverageBeforeResolvingAsync(
+            flight.ReservaId, flightWasResolved, ServiceResolutionRules.IsResolved(flight),
+            PassengerNominalRules.ServiceKind.Flight, AssignmentServiceType.Flight, flight.Id, ct);
 
         await _flightRepo.UpdateAsync(flight, ct);
         await _reservaService.UpdateBalanceAsync(flight.ReservaId);
@@ -1958,11 +2217,18 @@ public partial class BookingService : IBookingService
 
         // ADR-020 decision #8: marcar "no requiere confirmacion" RESUELVE el traslado (realidad del
         // operador), no es una edicion de la agencia -> sin candado (ver detalle en UpdateHotelStatusAsync).
+        var transferWasResolved = ServiceResolutionRules.IsResolved(transfer);
         var (userId, userName) = GetActor();
         transfer.NoConfirmationRequired = true;
         transfer.NoConfirmationMarkedAt = DateTime.UtcNow;
         transfer.NoConfirmationMarkedByUserId = userId;
         transfer.NoConfirmationMarkedByUserName = userName;
+
+        // ADR-031: la marca "no requiere confirmacion" RESUELVE el traslado (si no lo estaba). Exigir el
+        // titular con nombre antes de persistir (mismo criterio que confirmar el traslado por status).
+        await EnsureNominalCoverageBeforeResolvingAsync(
+            transfer.ReservaId, transferWasResolved, ServiceResolutionRules.IsResolved(transfer),
+            PassengerNominalRules.ServiceKind.Transfer, AssignmentServiceType.Transfer, transfer.Id, ct);
 
         await _transferRepo.UpdateAsync(transfer, ct);
         await _reservaService.UpdateBalanceAsync(transfer.ReservaId);
@@ -2028,7 +2294,13 @@ public partial class BookingService : IBookingService
         var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, assistance.ReservaId, label, oldStatus, newStatus, ct);
         if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
 
+        var assistanceWasResolved = ServiceResolutionRules.IsResolved(assistance);
         assistance.Status = newStatus;
+        // ADR-031: si esta operacion RESUELVE la asistencia (no lo estaba antes), exigir nombre +
+        // documento + fecha de nacimiento de TODOS los declarados (la prima depende de la edad).
+        await EnsureNominalCoverageBeforeResolvingAsync(
+            assistance.ReservaId, assistanceWasResolved, ServiceResolutionRules.IsResolved(assistance),
+            PassengerNominalRules.ServiceKind.Assistance, AssignmentServiceType.Assistance, assistance.Id, ct);
         StampServiceCancellation(
             wasCancelled: WorkflowStatusHelper.MapGenericStatus(oldStatus ?? string.Empty) == WorkflowStatuses.Cancelado,
             isCancelled: WorkflowStatusHelper.MapGenericStatus(newStatus) == WorkflowStatuses.Cancelado,

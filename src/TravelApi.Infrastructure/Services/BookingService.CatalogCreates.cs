@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using TravelApi.Application.DTOs;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Helpers;
+using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Services.Reservations;
 
 namespace TravelApi.Infrastructure.Services;
@@ -150,6 +151,12 @@ public partial class BookingService
                 _db, reservaId, $"Hotel {hotel.HotelName ?? "sin nombre"}", hotel.Status, ct);
             if (statusBlock != null) throw new InvalidOperationException(statusBlock);
 
+            // ADR-031 (bypass B1, path catalogo): el alta puede dejar el hotel resuelto -> exigir el
+            // titular ANTES de persistir, igual que el path sin catalogo (mismo envoltorio unico).
+            await EnsureNominalCoverageBeforeResolvingAsync(
+                reservaId, serviceWasResolved: false, ServiceResolutionRules.IsResolved(hotel),
+                PassengerNominalRules.ServiceKind.Hotel, AssignmentServiceType.Hotel, serviceId: 0, ct);
+
             await _hotelRepo.AddAsync(hotel, ct);
             if (hotel.SupplierId > 0) await _supplierService.UpdateBalanceAsync(hotel.SupplierId, ct);
             await RecalculateReservationScheduleAsync(reservaId, ct);
@@ -253,6 +260,12 @@ public partial class BookingService
                 _db, reservaId, $"Vuelo {ServiceDisplayName.ForFlight(flight.ProductName, flight.AirlineCode, flight.FlightNumber)}", flight.Status, ct);
             if (statusBlock != null) throw new InvalidOperationException(statusBlock);
 
+            // ADR-031 (bypass B1, path catalogo): gate defensivo del aereo (resuelve por TicketIssuedAt,
+            // que el alta no setea). Mismo envoltorio unico que el resto.
+            await EnsureNominalCoverageBeforeResolvingAsync(
+                reservaId, serviceWasResolved: false, ServiceResolutionRules.IsResolved(flight),
+                PassengerNominalRules.ServiceKind.Flight, AssignmentServiceType.Flight, serviceId: 0, ct);
+
             await _flightRepo.AddAsync(flight, ct);
             if (flight.SupplierId > 0) await _supplierService.UpdateBalanceAsync(flight.SupplierId, ct);
             await RecalculateReservationScheduleAsync(reservaId, ct);
@@ -330,6 +343,12 @@ public partial class BookingService
                 _db, reservaId, $"Transfer {transfer.VehicleType ?? ""}".Trim(), transfer.Status, ct);
             if (statusBlock != null) throw new InvalidOperationException(statusBlock);
 
+            // ADR-031 (bypass B1, path catalogo): el alta puede dejar el traslado resuelto -> exigir el
+            // titular ANTES de persistir.
+            await EnsureNominalCoverageBeforeResolvingAsync(
+                reservaId, serviceWasResolved: false, ServiceResolutionRules.IsResolved(transfer),
+                PassengerNominalRules.ServiceKind.Transfer, AssignmentServiceType.Transfer, serviceId: 0, ct);
+
             await _transferRepo.AddAsync(transfer, ct);
             if (transfer.SupplierId > 0) await _supplierService.UpdateBalanceAsync(transfer.SupplierId, ct);
             await RecalculateReservationScheduleAsync(reservaId, ct);
@@ -402,6 +421,12 @@ public partial class BookingService
             var statusBlock = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(
                 _db, reservaId, $"Paquete {package.PackageName ?? "sin nombre"}", package.Status, ct);
             if (statusBlock != null) throw new InvalidOperationException(statusBlock);
+
+            // ADR-031 (bypass B1, path catalogo): el alta puede dejar el paquete resuelto -> exigir el
+            // nombre de TODOS los declarados ANTES de persistir.
+            await EnsureNominalCoverageBeforeResolvingAsync(
+                reservaId, serviceWasResolved: false, ServiceResolutionRules.IsResolved(package),
+                PassengerNominalRules.ServiceKind.Package, AssignmentServiceType.Package, serviceId: 0, ct);
 
             await _packageRepo.AddAsync(package, ct);
             if (package.SupplierId > 0) await _supplierService.UpdateBalanceAsync(package.SupplierId, ct);
@@ -478,6 +503,12 @@ public partial class BookingService
             var statusBlock = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(
                 _db, reservaId, $"Asistencia {assistance.PlanType ?? "seguro"}", assistance.Status, ct);
             if (statusBlock != null) throw new InvalidOperationException(statusBlock);
+
+            // ADR-031 (bypass B1, path catalogo): el alta puede dejar la asistencia resuelta -> exigir
+            // nombre + documento + fecha de nacimiento de TODOS los declarados ANTES de persistir.
+            await EnsureNominalCoverageBeforeResolvingAsync(
+                reservaId, serviceWasResolved: false, ServiceResolutionRules.IsResolved(assistance),
+                PassengerNominalRules.ServiceKind.Assistance, AssignmentServiceType.Assistance, serviceId: 0, ct);
 
             await _assistanceRepo.AddAsync(assistance, ct);
             if (assistance.SupplierId > 0) await _supplierService.UpdateBalanceAsync(assistance.SupplierId, ct);

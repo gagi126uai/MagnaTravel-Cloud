@@ -25,9 +25,7 @@ import { MobileRecordCard, MobileRecordList } from "../../../components/ui/Mobil
 import { getApiErrorMessage } from "../../../lib/errors";
 import { getPublicId, getRelatedPublicId } from "../../../lib/publicIds";
 import { CapacityWarning } from "../components/CapacityWarning";
-import { ConfirmReservaModal } from "../components/ConfirmReservaModal";
 import { EditReservaDatesModal } from "../components/EditReservaDatesModal";
-import { PassengerAssignmentsPanel } from "../components/PassengerAssignmentsPanel";
 import { PassengerList } from "../components/PassengerList";
 import { ReservaHeader } from "../components/ReservaHeader";
 import { ReservaLockBanner } from "../components/ReservaLockBanner";
@@ -45,6 +43,7 @@ import { useOperationalFlags } from "../../../contexts/OperationalFlagsContext";
 import { useAlerts } from "../../../contexts/AlertsContext";
 import CancelReservaModal from "../../cancellations/components/CancelReservaModal";
 import { hasPermission, isAdmin } from "../../../auth";
+import { calcularSugerenciaComposicion } from "../lib/pasajeroHint";
 
 // Mapa de TipoComprobante AFIP a etiqueta legible.
 //  Facturas: 1=A, 6=B, 11=C, 51=M.
@@ -329,7 +328,7 @@ function PassengerCountsWidget({ initial, expectedCapacity = 0, onSave }) {
   return (
     <div className="space-y-6">
       <div className="text-sm text-slate-500 dark:text-slate-400">
-        En estado Presupuesto solo se cargan cantidades. Al confirmar la reserva podras cargar cada pasajero con nombre y documento.
+        Acá cargás cuántos viajan. Los nombres y documentos se agregan en la solapa Pasajeros — o directamente al emitir cada servicio.
       </div>
       <div className="grid grid-cols-3 gap-4">
         <div>
@@ -414,31 +413,74 @@ export default function ReservaDetailPage() {
   // Ficha de emisión de factura en línea (2026-06-13, guia-ux-gaston.md): reemplaza CreateInvoiceModal.
   // Solo una ficha abierta a la vez: si está abierta la factura, se oculta el botón de cobro y viceversa.
   const [showFacturaInline, setShowFacturaInline] = useState(false);
-  // ADR-020: targetStatus es "InManagement" (Budget→InManagement, con modal de pasajeros).
-  const [confirmReservaModal, setConfirmReservaModal] = useState({ isOpen: false, readiness: null, targetStatus: "InManagement" });
+  // ADR-031: el flujo Budget→InManagement ya no pasa por un modal centralizado.
+  // El widget de cantidades avanza la reserva directo (sin confirmación extra).
+  // confirmReservaModal fue eliminado — ya no hay seteo en isOpen:true en ningún camino.
   const [showRevertModal, setShowRevertModal] = useState(false);
   // ADR-020 F4: modal de solicitar autorizacion para editar una reserva bloqueada.
   const [showEditAuthModal, setShowEditAuthModal] = useState(false);
   // ADR-020: modal para marcar una cotizacion/presupuesto como Perdida.
   const [showMarkLostModal, setShowMarkLostModal] = useState(false);
   const [showEditDatesModal, setShowEditDatesModal] = useState(false);
+
+  // ADR-031 v2.1 — Pieza C: sugerencia de composición de pasajeros a partir de los servicios.
+  // Cargamos el TransitionReadinessDto cuando el usuario abre la solapa Pasajeros.
+  // Solo cuando la reserva existe y tiene servicios cargados (sin servicios no hay sugerencia útil).
+  const [readiness, setReadiness] = useState(null);
+
+  useEffect(() => {
+    // Solo cargamos el readiness al abrir la tab de pasajeros y si hay una reserva cargada.
+    if (activeTab !== "passengers" || !publicId || !reserva) return;
+
+    // Usamos "to=InManagement" porque ese es el destino desde Budget.
+    // Lo que nos interesa del DTO son los campos expectedAdults/Children/Infants.
+    api.get(`/reservas/${publicId}/transition-readiness?to=InManagement`)
+        .then(res => setReadiness(res.data))
+        .catch(() => setReadiness(null)); // Si falla, no mostramos franja (best-effort)
+  // Corremos el efecto cuando: la tab activa cambia, o la reserva recarga (publicId + reserva).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, publicId, reserva?.status]);
+
+  // Calculamos la sugerencia de composición a partir del readiness y la reserva actual.
+  // calcularSugerenciaComposicion devuelve null si ya coincide o no hay datos (no molesta).
+  const sugerenciaComposicion = calcularSugerenciaComposicion(readiness, reserva);
+
   const [confirmConfig, setConfirmConfig] = useState({
     isOpen: false,
     title: "",
     message: "",
     onConfirm: null,
     type: "warning",
+    // isLoading evita doble clic y muestra spinner en el boton mientras espera la respuesta.
+    isLoading: false,
   });
 
+  /**
+   * Abre el ConfirmModal con el titulo, mensaje, tipo y accion indicados.
+   *
+   * El onConfirm puede ser async: esperamos que termine ANTES de cerrar el modal.
+   * Esto evita que el modal desaparezca antes de que la operacion termine, y evita
+   * que el usuario haga doble clic mientras la accion esta en curso.
+   * Si el handler falla, el error lo maneja el propio handler (showError); el modal
+   * se cierra igual para no quedar trabado.
+   */
   const askConfirmation = (config) => {
     setConfirmConfig({
       isOpen: true,
       title: config.title || "Confirmar accion",
       message: config.message || "Estas seguro?",
       type: config.type || "warning",
-      onConfirm: () => {
-        config.onConfirm();
-        setConfirmConfig((prev) => ({ ...prev, isOpen: false }));
+      isLoading: false,
+      onConfirm: async () => {
+        // Mostramos spinner en el boton "Confirmar" para bloquear doble clic.
+        setConfirmConfig((prev) => ({ ...prev, isLoading: true }));
+        try {
+          await config.onConfirm();
+        } finally {
+          // Cerramos el modal DESPUES de que la accion termino (ok o error).
+          // El error ya lo muestra el handler con showError; no lo re-mostramos aca.
+          setConfirmConfig((prev) => ({ ...prev, isOpen: false, isLoading: false }));
+        }
       },
     });
   };
@@ -552,28 +594,43 @@ export default function ReservaDetailPage() {
   };
 
   /**
-   * Flujo de "el cliente acepto" que abre el modal de pasajeros (readiness).
+   * Flujo "El cliente acepto": pasa DIRECTO a En gestion sin abrir modal de nombres.
    *
-   * ADR-020: Budget → InManagement. El usuario hace click en "El cliente acepto"
-   * y se consulta readiness para saber si hay pasajeros pendientes de cargar.
-   * Si no hay nada pendiente, la transicion es inmediata (sin modal).
+   * ADR-031 (2026-06-15): el modal de pasajeros FUE ELIMINADO del flujo de avance.
+   * El único requisito para avanzar es que haya al menos 1 pasajero declarado
+   * (suma de adultCount + childCount + infantCount >= 1). Los nombres se cargan
+   * después, en la solapa Pasajeros o mediante el mini-formulario inline al emitir.
+   *
+   * Si falta la cantidad (total = 0), el botón ya está apagado en ReservaHeader
+   * y el usuario no puede hacer click (validación defensiva también acá).
+   *
+   * NOTA: el endpoint /transition-readiness sigue existiendo en el backend y
+   * el backend valida que la cantidad sea >= 1. Si hay otros bloqueos que el
+   * backend retorna (reglas no-pax), los mostramos con showError.
    */
   const handleConfirmReservation = async (targetStatus = "InManagement") => {
-    try {
-      // Consultamos readiness para saber si hay pasajeros faltantes o reglas no-pax.
-      const readiness = await api.get(`/reservas/${publicId}/transition-readiness?to=${targetStatus}`);
-      const expected = readiness?.expectedPassengerCount || 0;
-      const blockingNonPax = (readiness?.blockingReasons || []).filter(r => !r.toLowerCase().includes("pasajero"));
+    // Validación defensiva en el front: la suma debe ser >= 1.
+    // ReservaHeader ya bloquea el botón si es 0, pero re-verificamos.
+    const totalPax = (reserva?.adultCount || 0) + (reserva?.childCount || 0) + (reserva?.infantCount || 0);
+    if (totalPax === 0) {
+      showError("Tiene que haber al menos 1 pasajero declarado antes de continuar.");
+      return;
+    }
 
-      if (readiness?.allowed && expected === 0 && blockingNonPax.length === 0) {
-        // Camino directo: nada que cargar, transicion inmediata.
-        await handleStatusChange(targetStatus);
-        return;
-      }
-      // Modal forzado: hay pasajeros faltantes o reglas no-pax que mostrar.
-      setConfirmReservaModal({ isOpen: true, readiness, targetStatus });
+    try {
+      // Primero persistimos la composición declarada (si el backend lo exige).
+      // Esto garantiza que adultCount/childCount/infantCount estén guardados antes de avanzar.
+      await api.patch(`/reservas/${publicId}/passenger-counts`, {
+        adultCount: reserva?.adultCount || 0,
+        childCount: reserva?.childCount || 0,
+        infantCount: reserva?.infantCount || 0,
+      });
+
+      // Transicion directa: Budget → InManagement.
+      // El modal de nombres YA NO se abre (ADR-031: los nombres se cargan después).
+      await handleStatusChange(targetStatus);
     } catch (error) {
-      showError(getApiErrorMessage(error, "No se pudo verificar el estado de la reserva."));
+      showError(getApiErrorMessage(error, "No se pudo avanzar la reserva. Revisá los datos e intentá de nuevo."));
     }
   };
 
@@ -653,6 +710,10 @@ export default function ReservaDetailPage() {
         onRequestEdit={() => setShowEditAuthModal(true)}
         onMarkLost={() => setShowMarkLostModal(true)}
         serviciosCancelados={serviciosCancelados}
+        totalPasajerosDeclarados={
+          // P2 (ADR-031): ReservaHeader lo usa para deshabilitar "El cliente aceptó" cuando no hay pax.
+          (reserva?.adultCount || 0) + (reserva?.childCount || 0) + (reserva?.infantCount || 0)
+        }
       />
 
       <ReservaSummaryStrip reserva={reserva} />
@@ -806,9 +867,42 @@ export default function ReservaDetailPage() {
       {reserva.status === "Budget" ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
           <strong className="font-bold">Presupuesto.</strong>{" "}
-          Cuando el cliente confirme, usa "El cliente acepto" para pasar a En gestion y cargar los pasajeros nominales.
+          Cuando el cliente confirme, usá "El cliente aceptó" para pasar a En gestión. Los nombres de los pasajeros se cargan después.
         </div>
       ) : null}
+
+      {/* Franja B (ADR-031, 2026-06-15): recordatorio de pasajeros en estado En gestión.
+          Aparece solo cuando la reserva está en InManagement Y hay pasajeros declarados
+          pero no todos tienen nombre cargado.
+          Desaparece automáticamente cuando todos los slots tienen nombre (cargados === total). */}
+      {(() => {
+        if (reserva.status !== "InManagement") return null;
+        const total = (reserva.adultCount || 0) + (reserva.childCount || 0) + (reserva.infantCount || 0);
+        if (total === 0) return null;
+        const cargados = (reserva.passengers || []).filter(p => p?.fullName?.trim()).length;
+        if (cargados >= total) return null; // todos tienen nombre → se oculta
+
+        return (
+          <div
+            className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800/40 dark:bg-amber-950/20 dark:text-amber-200"
+            data-testid="banner-pasajeros-recordatorio"
+            role="status"
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+              <span>
+                <strong className="font-bold">Cargá los nombres de los pasajeros antes de emitir cada servicio.</strong>
+              </span>
+              {/* Contador "X de N" sincronizado con PassengerList (P10) */}
+              <span
+                className="inline-block rounded-full bg-amber-200 px-2 py-0.5 text-xs font-bold text-amber-800 dark:bg-amber-900/50 dark:text-amber-300"
+                data-testid="contador-nombres-banner"
+              >
+                {cargados} de {total} nombres cargados
+              </span>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Banner "A liquidar": aparece cuando la reserva fue apartada manualmente para liquidar con el operador.
           No requiere flag — es un estado del ciclo ADR-020. */}
@@ -864,7 +958,16 @@ export default function ReservaDetailPage() {
               // cuando la reserva paso a En gestion (el cliente confirmo).
               isEarlyStage
                 ? null
-                : { id: "passengers", label: `Pasajeros (${reserva.passengers?.length || 0})`, icon: Users },
+                : (() => {
+                    // ADR-031: el tab muestra "X de N" cuando hay nombres faltantes (P10).
+                    // Si todos tienen nombre, muestra la cantidad total normal.
+                    const totalDeclaradoPax = (reserva.adultCount || 0) + (reserva.childCount || 0) + (reserva.infantCount || 0);
+                    const cargadosPax = (reserva.passengers || []).filter(p => p?.fullName?.trim()).length;
+                    const labelPax = totalDeclaradoPax > 0 && cargadosPax < totalDeclaradoPax
+                        ? `Pasajeros (${cargadosPax}/${totalDeclaradoPax})`
+                        : `Pasajeros (${reserva.passengers?.length || 0})`;
+                    return { id: "passengers", label: labelPax, icon: Users };
+                  })(),
               { id: "history", label: "Historial", icon: Clock },
               isEarlyStage ? null : { id: "account", label: "Estado de Cuenta", icon: CreditCard },
               isEarlyStage ? null : { id: "voucher", label: "Vouchers", icon: FileText },
@@ -895,6 +998,8 @@ export default function ReservaDetailPage() {
                 serviceCollectionErrors={serviceCollectionErrors}
                 reservaId={publicId}
                 reservaStatus={reserva?.status}
+                // ADR-031: pasamos el objeto reserva completo para el hint de pasajeros
+                reserva={reserva}
                 isCatalogFindOrCreateEnabled={isCatalogFindOrCreateEnabled}
                 isServiceDeadlineAlertsEnabled={isServiceDeadlineAlertsEnabled}
                 windowDays={windowDays}
@@ -952,6 +1057,15 @@ export default function ReservaDetailPage() {
                     // el nuevo estado de los servicios y el contador "N de M".
                     fetchReserva({ showLoading: false, preserveOnError: true });
                 }}
+                // ADR-031: cuando el vendedor guarda un pasajero desde el mini-formulario
+                // inline (pantalla D o E), recargamos la reserva para actualizar el hint
+                // y el contador de nombres en la franja recordatoria.
+                onPasajeroGuardado={() => {
+                    fetchReserva({ showLoading: false, preserveOnError: true });
+                }}
+                // ADR-031 v2.1 — Pieza A: pasajeros con nombre para el control "Para: Todos".
+                // Filtramos la lista de pasajeros de la reserva por los que ya tienen fullName.
+                pasajerosConNombre={(reserva?.passengers || []).filter(p => p?.fullName?.trim())}
               />
 
               {/* Ficha de carga en línea (ADR-017): solo aparece con EnableCatalogFindOrCreate ON.
@@ -973,13 +1087,21 @@ export default function ReservaDetailPage() {
                   }}
                 />
               )}
-              <PassengerAssignmentsPanel reserva={reserva} isBudget={isEarlyStage} />
+              {/* ADR-031 (2026-06-15): PassengerAssignmentsPanel eliminado.
+                  La asignación es AUTOMÁTICA — todos los pasajeros van a todos los servicios.
+                  No hay paso manual de "elegir a mano quién va en cada servicio" (P7). */}
             </div>
           ) : null}
 
           {activeTab === "passengers" && !isEarlyStage ? (
             <PassengerList
-              passengers={reserva.passengers}
+              reserva={reserva}
+              reservaId={publicId}
+              onPasajeroGuardado={() => {
+                // Recargar la reserva para actualizar el snapshot de pasajeros
+                // y que el contador y los hints queden al día.
+                fetchReserva({ showLoading: false, preserveOnError: true });
+              }}
               onAddPassenger={() => {
                 setEditingPassenger(null);
                 setShowPassengerForm(true);
@@ -987,6 +1109,14 @@ export default function ReservaDetailPage() {
               onEditPassenger={(passenger) => {
                 setEditingPassenger(passenger);
                 setShowPassengerForm(true);
+              }}
+              // ADR-031 v2.1 — Pieza C: sugerencia de composición desde los servicios.
+              // sugerenciaComposicion es null cuando ya coincide con lo actual (franja no aparece).
+              sugerenciaComposicion={sugerenciaComposicion}
+              onUsarSugerencia={(counts) => {
+                // El vendedor apretó [Usar]: actualizamos los casilleros con la sugerencia.
+                // Usamos el mismo handler que el widget de cantidades de ReservaHeader.
+                handleSavePassengerCounts(counts);
               }}
               onDeletePassenger={(passengerId) =>
                 askConfirmation({
@@ -1332,22 +1462,15 @@ export default function ReservaDetailPage() {
         message={confirmConfig.message}
         type={confirmConfig.type}
         onConfirm={confirmConfig.onConfirm}
-        onClose={() => setConfirmConfig((prev) => ({ ...prev, isOpen: false }))}
+        isLoading={confirmConfig.isLoading}
+        onClose={() => {
+          // Solo permitimos cerrar el modal si no hay una operacion en curso.
+          // Si isLoading=true, el usuario ya confirmo y estamos esperando al servidor.
+          if (!confirmConfig.isLoading) {
+            setConfirmConfig((prev) => ({ ...prev, isOpen: false }));
+          }
+        }}
       />
-
-      {confirmReservaModal.isOpen && (
-        <ConfirmReservaModal
-          reserva={reserva}
-          readiness={confirmReservaModal.readiness}
-          // ADR-020: Budget → InManagement (el cliente acepto).
-          targetStatus={confirmReservaModal.targetStatus || "InManagement"}
-          onClose={() => setConfirmReservaModal({ isOpen: false, readiness: null, targetStatus: "InManagement" })}
-          onConfirmed={() => {
-            setConfirmReservaModal({ isOpen: false, readiness: null, targetStatus: "InManagement" });
-            fetchReserva({ showLoading: false, preserveOnError: true });
-          }}
-        />
-      )}
 
       {showRevertModal && (
         <RevertStatusModal

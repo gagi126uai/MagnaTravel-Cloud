@@ -5,6 +5,7 @@ import { api, hasSessionCookieHint } from "./api";
 import { clearAuthState, setAuthLoading, setCurrentUser, useAuthState, hasPermission, isAdmin } from "./auth";
 import { usePermissions } from "./hooks/usePermissions";
 import Layout from "./components/Layout";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import DashboardPage from "./pages/DashboardPage";
 import LoginPage from "./pages/LoginPage";
 import CustomersPage from "./features/customers/pages/CustomersPage";
@@ -169,7 +170,21 @@ export default function App() {
   }, [handleLogout, navigate, user]);
 
   return (
-    <>
+    /*
+      ErrorBoundary EXTERNO (variant="fullscreen"): red de ultimo recurso.
+      Envuelve todo el arbol (router + Toaster). Si crashea algo fuera del Layout
+      (ej: el propio router, providers de contexto, pantallas publicas/embed),
+      el usuario ve la pantalla de error completa en lugar de pantalla negra.
+
+      El Toaster va aqui dentro para que los toasts no queden activos cuando
+      ya se muestra el fallback de error.
+
+      ErrorBoundary INTERNO (variant="inline", mas abajo en <Layout>): si una
+      pantalla privada crashea, el cartel de error se muestra dentro del layout,
+      conservando sidebar y topbar. El boundary externo nunca llega a activarse
+      en ese caso porque el interno ya atrapó el error.
+    */
+    <ErrorBoundary variant="fullscreen">
       <Toaster richColors position="top-right" />
       <Routes>
         <Route
@@ -209,6 +224,14 @@ export default function App() {
               <OperationalFlagsProvider>
               <AlertsProvider>
                 <Layout onLogout={handleLogout} isAdmin={adminUser}>
+                  {/*
+                    ErrorBoundary INTERNO (variant="inline"): si cualquier pantalla
+                    privada lanza durante el render, el cartel de error aparece en
+                    el area de contenido, manteniendo sidebar y topbar visibles.
+                    Esto es mucho mejor UX que perder todo el layout por un crash
+                    en una sola pagina.
+                  */}
+                  <ErrorBoundary>
                   <Routes>
                     <Route path="/" element={<Navigate to="/dashboard" replace />} />
                     <Route path="/dashboard" element={<DashboardPage />} />
@@ -303,14 +326,16 @@ export default function App() {
                       path="/admin"
                       element={isAdmin() ? <AdminHubPage /> : <Navigate to="/dashboard" replace />}
                     />
-                  </Routes>                </Layout>
+                  </Routes>
+                  </ErrorBoundary>
+                </Layout>
               </AlertsProvider>
               </OperationalFlagsProvider>
             </PrivateRoute>
           }
         />
       </Routes>
-    </>
+    </ErrorBoundary>
   );
 }
 

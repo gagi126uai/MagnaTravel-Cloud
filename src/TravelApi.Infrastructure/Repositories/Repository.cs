@@ -42,6 +42,15 @@ public class Repository<T> : IRepository<T> where T : class
         await _db.SaveChangesAsync(ct);
     }
 
+    public virtual void Stage(T entity)
+    {
+        // Solo trackea el alta (Added) en el contexto; el SaveChanges lo hace el caller cuando
+        // quiere agrupar este alta con otras mutaciones en una sola transaccion. No usamos la
+        // sobrecarga async de Add porque AddAsync(...) solo aporta valor para generadores de valor
+        // del lado de la base (HiLo); aca no aplica y Add sincrono evita un await innecesario.
+        _dbSet.Add(entity);
+    }
+
     public virtual async Task UpdateAsync(T entity, CancellationToken ct = default)
     {
         _dbSet.Update(entity);

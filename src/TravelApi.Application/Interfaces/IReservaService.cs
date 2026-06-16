@@ -37,6 +37,25 @@ public interface IReservaService
     Task<PassengerServiceAssignmentDto> CreateAssignmentAsync(string reservaPublicIdOrLegacyId, CreatePassengerAssignmentRequest request, CancellationToken ct = default);
     Task RemoveAssignmentAsync(string assignmentPublicIdOrLegacyId, CancellationToken ct = default);
 
+    /// <summary>
+    /// ADR-031 v2.1: cobertura nominal POR SERVICIO (set de pasajeros + nombres faltantes), para que el
+    /// mini-form del front sepa a quien pedirle los datos. Misma resolucion del set y misma regla por tipo
+    /// que el gate del backend. Respuesta sin numero de documento.
+    /// </summary>
+    Task<ServiceNominalCoverageDto> GetServiceNominalCoverageAsync(
+        string reservaPublicIdOrLegacyId, string serviceType, string servicePublicIdOrLegacyId, CancellationToken ct = default);
+
+    /// <summary>
+    /// ADR-031 v2.1: REEMPLAZO TOTAL ATOMICO del set de pasajeros de un servicio. Borra las asignaciones
+    /// actuales del servicio y deja EXACTAMENTE las del request, todo en una sola unidad de trabajo (un
+    /// solo SaveChanges) + auditoria en la misma transaccion. Normaliza "todos" a CERO asignaciones
+    /// (invariante "todos = sin asignaciones"). Idempotente. Devuelve el <see cref="ServiceNominalCoverageDto"/>
+    /// resultante (mismo shape que el GET) para que el front no re-pida. Sin numero de documento.
+    /// </summary>
+    Task<ServiceNominalCoverageDto> ReplaceServiceAssignmentsAsync(
+        string reservaPublicIdOrLegacyId, string serviceType, string servicePublicIdOrLegacyId,
+        ReplaceServiceAssignmentsRequest request, CancellationToken ct = default);
+
     Task<IEnumerable<PaymentDto>> GetReservaPaymentsAsync(string reservaPublicIdOrLegacyId, CancellationToken ct = default);
     Task<PaymentDto> AddPaymentAsync(string reservaPublicIdOrLegacyId, ReservationPaymentUpsertRequest payment, CancellationToken ct = default);
     Task<PaymentDto> UpdatePaymentAsync(string reservaPublicIdOrLegacyId, string paymentPublicIdOrLegacyId, ReservationPaymentUpsertRequest updatedPayment, CancellationToken ct = default);

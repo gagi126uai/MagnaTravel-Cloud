@@ -409,6 +409,67 @@ public class ReservasController : ControllerBase
         }
     }
 
+    // ADR-031 v2.1: cobertura nominal POR SERVICIO. El front la usa para el mini-form de nombres: que
+    // pasajeros integran el SET del servicio (X de N) y que datos faltan, segun el tipo. Mismo gate de
+    // ownership/permiso que GetAssignments — expone nombres (sensibles) pero NUNCA numeros de documento.
+    [HttpGet("{publicIdOrLegacyId}/services/{serviceType}/{servicePublicIdOrLegacyId}/nominal-coverage")]
+    [RequirePermission(Permissions.ReservasView)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<ActionResult<ServiceNominalCoverageDto>> GetServiceNominalCoverage(
+        string publicIdOrLegacyId, string serviceType, string servicePublicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var dto = await _reservaService.GetServiceNominalCoverageAsync(
+                publicIdOrLegacyId, serviceType, servicePublicIdOrLegacyId, cancellationToken);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    // ADR-031 v2.1: REEMPLAZO TOTAL ATOMICO del set de pasajeros de un servicio. El front antes hacia
+    // "borrar todas las asignaciones + crear N" en llamadas separadas; si fallaba a la mitad el set quedaba
+    // inconsistente. Este endpoint hace todo en UNA transaccion (o entra todo o no entra nada) y devuelve el
+    // ServiceNominalCoverageDto resultante (mismo shape que el GET) para que el front no re-pida. Mismo gate
+    // de edicion + ownership que CreateAssignment (ReservasEdit + RequireOwnership de la Reserva).
+    [HttpPut("{publicIdOrLegacyId}/services/{serviceType}/{servicePublicIdOrLegacyId}/assignments")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<ActionResult<ServiceNominalCoverageDto>> ReplaceServiceAssignments(
+        string publicIdOrLegacyId, string serviceType, string servicePublicIdOrLegacyId,
+        [FromBody] ReplaceServiceAssignmentsRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var dto = await _reservaService.ReplaceServiceAssignmentsAsync(
+                publicIdOrLegacyId, serviceType, servicePublicIdOrLegacyId, request, cancellationToken);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
     // ============= /Phase 2.1 =============
 
     // ============= Phase 2.4 — Revert status con autorizacion =============
