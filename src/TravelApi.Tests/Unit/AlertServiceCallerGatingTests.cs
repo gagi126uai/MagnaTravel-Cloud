@@ -87,8 +87,11 @@ public class AlertServiceCallerGatingTests
         await using var context = await SeedContextAsync();
         var service = new AlertService(context, SettingsMock().Object, NullLogger<AlertService>.Instance);
 
+        // El controller siempre arma el admin con CanSeeCost=true (AlertsController: canSeeCost = isAdmin || ...).
+        // SupplierDebts (deuda al operador = COSTO) ahora se gatea por CanSeeCost, asi que el caller de test
+        // debe reflejar ese contrato real.
         dynamic result = await service.GetAlertsAsync(
-            new AlertCallerContext("admin-test", IsAdmin: true), CancellationToken.None);
+            new AlertCallerContext("admin-test", IsAdmin: true, CanSeeCost: true), CancellationToken.None);
 
         Assert.Single((IEnumerable)result.UrgentTrips);
         Assert.Single((IEnumerable)result.SupplierDebts);
@@ -104,7 +107,7 @@ public class AlertServiceCallerGatingTests
         var service = new AlertService(context, SettingsMock().Object, NullLogger<AlertService>.Instance);
 
         object adminPayload = await service.GetAlertsAsync(
-            new AlertCallerContext("admin-test", IsAdmin: true), CancellationToken.None);
+            new AlertCallerContext("admin-test", IsAdmin: true, CanSeeCost: true), CancellationToken.None);
         object sellerPayload = await service.GetAlertsAsync(
             new AlertCallerContext("vendedor-test", IsAdmin: false), CancellationToken.None);
 

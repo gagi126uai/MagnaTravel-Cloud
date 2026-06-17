@@ -7,7 +7,9 @@ export function AlertsProvider({ children }) {
     // La API /alerts responde camelCase (AlertsResponse.cs serializa por defecto así).
     // F3: quitamos el gate isAdmin() — ahora los vendedores también consultan /alerts.
     // El servidor filtra por vendedor/permiso y con flags OFF devuelve vacío.
-    // UrgentTrips/SupplierDebts siguen siendo solo-admin en el backend (sin cambio).
+    // (2026-06-17) UrgentTrips ("viajó/terminó y debe") ahora se filtra por DUEÑO: el vendedor ve
+    // solo sus reservas, el admin ve todas. SupplierDebts (deuda al operador = costo) la ve solo
+    // quien tiene permiso de ver costos. El gating vive en el backend; el front no decide nada.
     // F2 (Próximos Inicios): serviceDeadlines renombrado a upcomingStarts + windowDays.
     // El servidor devuelve upcomingStarts[] (uno por reserva) y upcomingStartsWindowDays (int|null).
     const [alerts, setAlerts] = useState({

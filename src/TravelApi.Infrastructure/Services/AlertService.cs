@@ -46,16 +46,17 @@ public class AlertService : IAlertService
     {
         var settings = await _operationalFinanceSettingsService.GetEntityAsync(cancellationToken);
 
-        // --- Buckets financieros (admin-only, Fuga 2 ADR-017 §2.7 F1b) ---
-        // UrgentTrips y SupplierDebts son informacion financiera de TODA la agencia (deudas a
-        // proveedores, saldos de clientes). El gating "solo admin" vive en el SERVER: un no-admin
-        // los recibe vacios. Estos buckets siguen usando UtcNow.Date como "hoy" (no se tocan).
-        IReadOnlyList<object> urgentTrips = Array.Empty<object>();
-        IReadOnlyList<object> supplierDebts = Array.Empty<object>();
-        if (caller.IsAdmin)
-        {
-            (urgentTrips, supplierDebts) = await ComputeFinancialBucketsAsync(settings, cancellationToken);
-        }
+        // --- Buckets financieros (privacidad 2026-06-17): deuda de clientes vs deuda a proveedores ---
+        // Antes (Fuga 2 ADR-017 §2.7 F1b) los DOS eran admin-only, todo-o-nada, sin camino por-vendedor.
+        // Ahora cada uno respeta su propia regla (guia-ux-gaston.md, sin flag — fix de privacidad):
+        //   - UrgentTrips ("viajo/termino y debe") = deuda del CLIENTE -> scope por DUEÑO: admin ve todas,
+        //     el vendedor SOLO las de SUS reservas, no-admin sin identidad -> vacio (fail-closed). El monto
+        //     que el cliente debe NO es costo: se muestra sin permiso de costo (regla 2026-06-09).
+        //   - SupplierDebts ("le debemos al operador") = COSTO -> solo con cobranzas.see_cost (regla
+        //     2026-06-05: sin ese permiso no se ven montos de costo/deuda en NINGUNA pantalla, avisos
+        //     incluidos). Es deuda de la agencia entera, no se scopea por vendedor.
+        // El gating sigue viviendo en el SERVER; el metodo aplica cada borde inline.
+        var (urgentTrips, supplierDebts) = await ComputeFinancialBucketsAsync(caller, settings, cancellationToken);
         var financialCount = urgentTrips.Count + supplierDebts.Count;
 
         // --- Buckets gateados (cada uno detras de su flag) ---
@@ -137,11 +138,12 @@ public class AlertService : IAlertService
     }
 
     /// <summary>
-    /// Buckets financieros historicos (viajes urgentes con saldo + deudas a proveedores). Codigo movido
-    /// tal cual del metodo principal: mismo criterio y mismo "hoy" (UtcNow.Date) que antes de F1.4.
+    /// Buckets financieros (viajes urgentes con saldo del cliente + deudas a proveedores). Mismo criterio y
+    /// mismo "hoy" (UtcNow.Date) de siempre; lo NUEVO (2026-06-17) es el gating por caller: UrgentTrips con
+    /// scope por dueño, SupplierDebts detras del permiso de ver costos. Ver el comentario del call-site.
     /// </summary>
     private async Task<(IReadOnlyList<object> UrgentTrips, IReadOnlyList<object> SupplierDebts)>
-        ComputeFinancialBucketsAsync(OperationalFinanceSettings settings, CancellationToken cancellationToken)
+        ComputeFinancialBucketsAsync(AlertCallerContext caller, OperationalFinanceSettings settings, CancellationToken cancellationToken)
     {
         var today = DateTime.UtcNow.Date;
         var threshold = today.AddDays(Math.Max(settings.UpcomingUnpaidReservationAlertDays, 1));
@@ -159,51 +161,69 @@ public class AlertService : IAlertService
         //      deuda de una reserva finalizada quedaba INVISIBLE en alertas; ahora es deuda post-viaje real y
         //      sin tope de ventana (igual que el caso B). El front distingue el rotulo por el Status que ya
         //      viaja en la proyeccion ("terminado y debe" vs "en viaje y debe"); sin cambio de contrato.
-        var urgentTrips = await _context.Reservas
-            .Where(f => f.Balance > 0 &&
-                        (
-                            // (A) Inminente (cualquier estado activo, ventana futura).
-                            ((f.Status == EstadoReserva.InManagement ||
-                              f.Status == EstadoReserva.Confirmed ||
-                              f.Status == EstadoReserva.Traveling) &&
-                             f.StartDate >= today &&
-                             f.StartDate <= threshold)
-                            ||
-                            // (B) En viaje y debe (sin tope de ventana, viaje no terminado).
-                            (f.Status == EstadoReserva.Traveling &&
-                             (f.EndDate == null || f.EndDate >= today))
-                            ||
-                            // (C) Terminado y debe (sin tope de ventana).
-                            (f.Status == EstadoReserva.Closed)
-                        ))
-            .Select(f => new
-            {
-                f.PublicId,
-                f.NumeroReserva,
-                f.Name,
-                f.StartDate,
-                f.Balance,
-                // El front (PaymentsHomePage) ya recibe Status; hoy muestra un rotulo fijo "Urgente",
-                // pero al venir Status="Traveling" puede distinguir el caso "en viaje con saldo
-                // pendiente" sin cambios de contrato (campo ya presente, mismo shape).
-                f.Status,
-                PayerName = f.Payer != null ? f.Payer.FullName : "Sin Cliente"
-            })
-            .OrderBy(f => f.StartDate)
-            .ToListAsync(cancellationToken);
+        //
+        // Visibilidad por DUEÑO (privacidad 2026-06-17, mismo borde que UpcomingStarts/CostsToConfirm):
+        // admin ve todas; el vendedor SOLO sus reservas. Un no-admin SIN identidad (UserId null) corta a
+        // vacio ANTES de tocar la query: sin esta guarda el predicado "ResponsibleUserId == caller.UserId"
+        // se traduce a SQL como "ResponsibleUserId IS NULL" y filtraria todas las reservas sin dueño (leak).
+        // El monto que el cliente debe NO es costo: se muestra sin permiso de costo (regla 2026-06-09).
+        IReadOnlyList<object> urgentTrips = Array.Empty<object>();
+        if (caller.IsAdmin || !string.IsNullOrEmpty(caller.UserId))
+        {
+            urgentTrips = await _context.Reservas
+                .Where(f => f.Balance > 0 &&
+                            (caller.IsAdmin || f.ResponsibleUserId == caller.UserId) &&
+                            (
+                                // (A) Inminente (cualquier estado activo, ventana futura).
+                                ((f.Status == EstadoReserva.InManagement ||
+                                  f.Status == EstadoReserva.Confirmed ||
+                                  f.Status == EstadoReserva.Traveling) &&
+                                 f.StartDate >= today &&
+                                 f.StartDate <= threshold)
+                                ||
+                                // (B) En viaje y debe (sin tope de ventana, viaje no terminado).
+                                (f.Status == EstadoReserva.Traveling &&
+                                 (f.EndDate == null || f.EndDate >= today))
+                                ||
+                                // (C) Terminado y debe (sin tope de ventana).
+                                (f.Status == EstadoReserva.Closed)
+                            ))
+                .Select(f => new
+                {
+                    f.PublicId,
+                    f.NumeroReserva,
+                    f.Name,
+                    f.StartDate,
+                    f.Balance,
+                    // El front (PaymentsHomePage) ya recibe Status; hoy muestra un rotulo fijo "Urgente",
+                    // pero al venir Status="Traveling" puede distinguir el caso "en viaje con saldo
+                    // pendiente" sin cambios de contrato (campo ya presente, mismo shape).
+                    f.Status,
+                    PayerName = f.Payer != null ? f.Payer.FullName : "Sin Cliente"
+                })
+                .OrderBy(f => f.StartDate)
+                .ToListAsync(cancellationToken);
+        }
 
-        var supplierDebts = await _context.Suppliers
-            .Where(s => s.CurrentBalance > 100 && s.IsActive)
-            .Select(s => new
-            {
-                s.PublicId,
-                s.Name,
-                s.CurrentBalance,
-                s.Phone
-            })
-            .OrderByDescending(s => s.CurrentBalance)
-            .Take(10)
-            .ToListAsync(cancellationToken);
+        // SupplierDebts = COSTO (deuda al operador): solo quien tiene cobranzas.see_cost (regla 2026-06-05;
+        // el admin siempre lo tiene, lo resuelve el controller). Es deuda agregada de la agencia entera, no
+        // se scopea por vendedor — el gate aca es el permiso de ver costos, no el dueño.
+        IReadOnlyList<object> supplierDebts = Array.Empty<object>();
+        if (caller.CanSeeCost)
+        {
+            supplierDebts = await _context.Suppliers
+                .Where(s => s.CurrentBalance > 100 && s.IsActive)
+                .Select(s => new
+                {
+                    s.PublicId,
+                    s.Name,
+                    s.CurrentBalance,
+                    s.Phone
+                })
+                .OrderByDescending(s => s.CurrentBalance)
+                .Take(10)
+                .ToListAsync(cancellationToken);
+        }
 
         return (urgentTrips, supplierDebts);
     }
