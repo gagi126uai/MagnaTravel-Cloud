@@ -1041,19 +1041,11 @@ public class PaymentService : IPaymentService
     /// </summary>
     private async Task ReverseLivePaymentLedgerEntryAsync(int paymentId, CancellationToken cancellationToken)
     {
-        var live = await _dbContext.CashLedgerEntries
-            .FirstOrDefaultAsync(
-                e => e.PaymentId == paymentId && !e.IsReversal && !e.IsReversed,
-                cancellationToken);
-        if (live is null) return;
-
+        // ADR-022 §4.5: la mecanica de la reversa vive en CashLedgerPaymentReversal (punto unico, compartido
+        // con el path legacy ReservaService.DeletePaymentAsync). Aca solo resolvemos el actor y delegamos.
         var (userId, userName) = ResolveLedgerActor();
-        // 1) sacar el viejo del indice de vigentes ANTES de insertar nada nuevo.
-        live.IsReversed = true;
-        // 2) insertar la reversa (Direction invertida, ReversedEntryId al viejo).
-        var reversal = TravelApi.Domain.Helpers.CashLedgerEntryFactory.Reverse(
-            live, DateTime.UtcNow, userId, userName);
-        _dbContext.CashLedgerEntries.Add(reversal);
+        await TravelApi.Infrastructure.Reservations.CashLedgerPaymentReversal.ReverseLivePaymentEntryAsync(
+            _dbContext, paymentId, userId, userName, cancellationToken);
     }
 
     /// <summary>

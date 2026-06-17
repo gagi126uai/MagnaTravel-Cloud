@@ -2646,6 +2646,21 @@ public class ReservaService : IReservaService
         payment.Reference = updatedPayment.Reference;
         payment.Notes = updatedPayment.Notes;
 
+        // ADR-022 §4.5 (fix 2026-06-17): re-sincronizar el Libro de Caja con el cobro editado. Igual que
+        // PaymentService.UpdatePaymentAsync (camino canonico): se REVIERTE el asiento viejo y se inserta uno
+        // nuevo (foto fresca: monto/metodo/fecha actuales), en la MISMA transaccion que la edicion. Antes este
+        // path legacy NO tocaba la caja -> el asiento conservaba el monto viejo y la caja quedaba descuadrada.
+        // El neto del libro queda: viejo (+) -> reversa (-) -> nuevo (+) = nuevo monto, sin reescribir historia.
+        // Un puente/saldo a favor ya fue bloqueado arriba (AffectsCash=false igual no entra aca).
+        if (payment.AffectsCash)
+        {
+            await CashLedgerPaymentReversal.ReverseLivePaymentEntryAsync(
+                _context, payment.Id, GetCurrentUserIdOrNull(), GetCurrentUserNameOrNull());
+            _context.CashLedgerEntries.Add(
+                TravelApi.Domain.Helpers.CashLedgerEntryFactory.ForPayment(
+                    payment, GetCurrentUserIdOrNull(), GetCurrentUserNameOrNull()));
+        }
+
         await _context.SaveChangesAsync();
         await UpdateBalanceAsync(reservaId);
         return _mapper.Map<PaymentDto>(payment);
@@ -2714,6 +2729,18 @@ public class ReservaService : IReservaService
 
         payment.IsDeleted = true;
         payment.DeletedAt = DateTime.UtcNow;
+
+        // ADR-022 §4.5 (fix 2026-06-17): el camino canonico (PaymentService.DeletePaymentCoreAsync) escribe
+        // el contra-asiento de caja al dar de baja un cobro; este camino legacy anidado NO lo hacia -> al
+        // borrar por aca un cobro que movio caja, el asiento de ingreso quedaba vivo y la caja se inflaba.
+        // Mismo helper, en la MISMA transaccion (antes del SaveChanges): si el cobro afecta caja, se revierte
+        // su asiento vigente (no-op si no tiene asiento, p.ej. legacy sin backfill). Un puente/saldo a favor
+        // tiene AffectsCash=false, asi que no entra aca (ademas ya fue bloqueado/limpiado arriba).
+        if (payment.AffectsCash)
+        {
+            await CashLedgerPaymentReversal.ReverseLivePaymentEntryAsync(
+                _context, payment.Id, GetCurrentUserIdOrNull(), GetCurrentUserNameOrNull());
+        }
 
         await _context.SaveChangesAsync();
         await UpdateBalanceAsync(reservaId);
