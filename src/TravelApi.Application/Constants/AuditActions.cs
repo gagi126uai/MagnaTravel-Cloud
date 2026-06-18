@@ -160,6 +160,16 @@ public static class AuditActions
     /// </summary>
     public const string BookingCancellationClosed = "BookingCancellationClosed";
 
+    /// <summary>
+    /// ADR-033 (2026-06-18): la RESERVA se cerro (<c>PendingOperatorRefund</c> -> <c>Cancelled</c>)
+    /// porque el OPERADOR reembolso el total esperado (todas las lineas con <c>RefundCap</c> &gt; 0 quedaron
+    /// <c>Settled</c>), SIN esperar a que el cliente consuma su saldo a favor. Es una via de cierre distinta
+    /// a <see cref="BookingCancellationClosed"/>: aca el BC SIGUE en <c>ClientCreditApplied</c> (el cliente
+    /// todavia tiene credito vivo en su bolsillo); lo unico que se cierra es la reserva. El credito del
+    /// cliente NO se toca (ADR-033 desacoplo deuda/credito del estado de la reserva).
+    /// </summary>
+    public const string BookingCancellationClosedByOperatorRefund = "BookingCancellationClosedByOperatorRefund";
+
     // ===== Entity names (helpers) =====
 
     /// <summary>
