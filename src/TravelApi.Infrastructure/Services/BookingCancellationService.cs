@@ -3958,8 +3958,17 @@ public class BookingCancellationService
     /// (<c>PenaltyStatus=Estimated</c>, <c>PenaltyAmount=null</c>), asi que no se descuenta aca. Cuando el
     /// operador confirma la penalidad (ADR-014), el flujo de confirmacion ajusta el cap restando el monto
     /// confirmado. Restamos <c>PenaltyAmount</c> solo si ya viene cargado (defensivo).</para>
+    ///
+    /// <para><b>Cancelaciones parciales sucesivas</b> (bug-fix): este metodo recibe SOLO la(s) linea(s) que se
+    /// cancelan en esta llamada. En el path parcial cada servicio se cancela por separado, asi que antes de
+    /// repartir descontamos del pool lo que YA reservaron las lineas Partial persistidas del mismo
+    /// operador/moneda en BCs no abortados de esta reserva. Sin esto, dos cancelaciones parciales del mismo
+    /// operador reclamaban cada una el pool entero y la suma de caps superaba lo pagado al operador.</para>
     /// </summary>
-    private async Task AssignRefundCapsAsync(
+    // internal (no private) para que los tests unit puedan ejercitar el reparto del cap directamente,
+    // incluida la deduccion del pool ya consumido por lineas Partial previas (el camino end-to-end de
+    // CancelServiceAsync no puede producir 2 lineas Partial sucesivas por el gap SEC-B1/B1b documentado).
+    internal async Task AssignRefundCapsAsync(
         int reservaId,
         List<BookingCancellationLine> lines,
         List<decimal> lineNetCosts,
@@ -3990,6 +3999,36 @@ public class BookingCancellationService
 
             var key = (payment.SupplierId, currency);
             pool[key] = pool.TryGetValue(key, out var acc) ? acc + amount : amount;
+        }
+
+        // BUG-FIX (cancelaciones parciales sucesivas del mismo operador): el pool de arriba junta TODO lo
+        // pagado al operador en la reserva, pero esta llamada solo trae la(s) linea(s) NUEVA(s) que se estan
+        // cancelando ahora. En el path PARCIAL cada servicio se cancela en una llamada separada: si no
+        // descontamos lo que YA reservaron las lineas Partial previas del mismo operador/moneda, cada
+        // cancelacion reclama el pool entero y la suma de RefundCap termina superando lo realmente pagado al
+        // operador (el cliente quedaria acreditado de mas en OperatorRefundService).
+        //
+        // Por eso descontamos del pool el "capBeforePenalty" que ya consumieron las lineas EXISTENTES (las
+        // persistidas en BCs no abortados de esta reserva). Para una linea ya guardada, ese consumo es su
+        // RefundCap MAS su penalidad (la penalidad se descontó del cap neto pero igual reservó pool; ver el
+        // reparto de abajo, que consume capBeforePenalty y no el cap neto). El path TOTAL no llega aca con
+        // lineas previas (arma todas juntas), asi que para Full esto es no-op.
+        var existingLineConsumption = await _db.BookingCancellationLines
+            .Where(l => l.BookingCancellation.ReservaId == reservaId
+                     && l.BookingCancellation.Status != BookingCancellationStatus.Aborted
+                     && supplierIds.Contains(l.SupplierId))
+            .Select(l => new { l.SupplierId, l.Currency, l.RefundCap, l.PenaltyAmount })
+            .ToListAsync(ct);
+
+        foreach (var existing in existingLineConsumption)
+        {
+            // capBeforePenalty reconstruido: lo que la linea persistida le saco al pool del operador/moneda.
+            decimal alreadyConsumed = existing.RefundCap + (existing.PenaltyAmount ?? 0m);
+            if (alreadyConsumed <= 0m) continue;
+
+            var key = (existing.SupplierId, existing.Currency);
+            if (pool.TryGetValue(key, out var available))
+                pool[key] = Math.Max(0m, available - alreadyConsumed);
         }
 
         // Repartir el pool de cada operador entre sus lineas, topeando cada linea por su NetCost. El orden de

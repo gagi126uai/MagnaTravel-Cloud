@@ -782,6 +782,284 @@ public class Adr025PartialAndMultiOperatorCancellationTests
     }
 
     // ============================================================
+    // BUG-FIX: cancelaciones parciales SUCESIVAS del mismo operador no inflan el RefundCap
+    //
+    // El pool pagado al operador se reparte por (operador, moneda). Cuando cada servicio se cancela en una
+    // llamada separada (parcial), el armado de la linea nueva debe DESCONTAR del pool lo que ya reservaron
+    // las lineas Partial PERSISTIDAS del mismo operador/moneda. Antes no lo hacia y la suma de caps superaba
+    // lo pagado al operador -> el cliente podia quedar acreditado de mas en OperatorRefundService.
+    //
+    // Ejercitamos AssignRefundCapsAsync (internal) directamente: el camino end-to-end CancelServiceAsync no
+    // puede producir 2 lineas Partial sucesivas por el gap SEC-B1/B1b documentado en esta misma clase.
+    // ============================================================
+
+    [Fact]
+    public async Task AssignRefundCaps_SecondPartialSameOperator_SubtractsPoolConsumedByExistingLine()
+    {
+        using var ctx = NewDbContext();
+        // Pagado al operador A = 50.000 (todo imputado a la reserva). Dos servicios del MISMO operador, cada
+        // uno cuesta 50.000. Sin el fix, cada cancelacion parcial reclamaria 50.000 -> suma de caps 100.000
+        // (el doble de lo pagado). Con el fix, la segunda solo puede tomar lo que quedo (0).
+        var (reserva, _, supplierA, _, _, _) = await SeedAsync(ctx, paidToSupplierA: 0m);
+        await SeedPaymentImputedToReservaAsync(ctx, supplierA.Id, reserva.Id, amount: 50_000m);
+        var invoice = await SeedLiveInvoiceAsync(ctx, reserva.Id, numero: 100);
+
+        var service = BuildService(ctx);
+
+        // Primera cancelacion parcial (ya persistida): linea Partial de A que reservo 50.000 del pool.
+        var firstBc = new BookingCancellation
+        {
+            ReservaId = reserva.Id,
+            CustomerId = reserva.PayerId!.Value,
+            SupplierId = supplierA.Id,
+            OriginatingInvoiceId = invoice.Id,
+            Status = BookingCancellationStatus.Drafted,
+            Reason = "Primer servicio parcial",
+            DraftedByUserId = "vendedor-1",
+            AmountPaidAtCancellation = 0m,
+            EstimatedRefundAmount = 0m,
+            ReceivedRefundAmount = 0m,
+            FiscalSnapshot = new FiscalSnapshot { Source = ExchangeRateSource.Unset, FetchedAt = default },
+        };
+        firstBc.Lines.Add(new BookingCancellationLine
+        {
+            SupplierId = supplierA.Id,
+            ServiceTable = CancellableServiceTable.Hotel,
+            ServiceId = 9001,
+            Scope = BookingCancellationLineScope.Partial,
+            Currency = "ARS",
+            LineSaleAmount = 80_000m,
+            RefundCap = 50_000m, // ya consumio todo el pool del operador A
+        });
+        ctx.BookingCancellations.Add(firstBc);
+        await ctx.SaveChangesAsync();
+
+        // Segunda cancelacion parcial (linea nueva, todavia no persistida) del MISMO operador/moneda.
+        var newLine = new BookingCancellationLine
+        {
+            SupplierId = supplierA.Id,
+            ServiceTable = CancellableServiceTable.Transfer,
+            ServiceId = 9002,
+            Scope = BookingCancellationLineScope.Partial,
+            Currency = "ARS",
+            LineSaleAmount = 70_000m,
+        };
+        var lines = new System.Collections.Generic.List<BookingCancellationLine> { newLine };
+        var netCosts = new System.Collections.Generic.List<decimal> { 50_000m };
+
+        await service.AssignRefundCapsAsync(reserva.Id, lines, netCosts, CancellationToken.None);
+
+        // El pool (50.000) ya estaba agotado por la primera linea -> la segunda no puede devolver nada.
+        Assert.Equal(0m, newLine.RefundCap);
+
+        // Invariante central del bug: la suma de caps de A nunca supera lo pagado (50.000).
+        decimal totalCapsOperatorA = firstBc.Lines.First().RefundCap + newLine.RefundCap;
+        Assert.True(totalCapsOperatorA <= 50_000m, $"Suma de caps {totalCapsOperatorA} supera lo pagado al operador.");
+    }
+
+    [Fact]
+    public async Task AssignRefundCaps_SecondPartial_PartialPoolRemaining_AssignsOnlyLeftover()
+    {
+        using var ctx = NewDbContext();
+        // Pagado al operador A = 50.000. La primera linea solo reservo 30.000 (su costo era menor); quedan
+        // 20.000 en el pool para la segunda, aunque el costo de la segunda permita mas.
+        var (reserva, _, supplierA, _, _, _) = await SeedAsync(ctx, paidToSupplierA: 0m);
+        await SeedPaymentImputedToReservaAsync(ctx, supplierA.Id, reserva.Id, amount: 50_000m);
+        var invoice = await SeedLiveInvoiceAsync(ctx, reserva.Id, numero: 101);
+
+        var service = BuildService(ctx);
+
+        var firstBc = new BookingCancellation
+        {
+            ReservaId = reserva.Id,
+            CustomerId = reserva.PayerId!.Value,
+            SupplierId = supplierA.Id,
+            OriginatingInvoiceId = invoice.Id,
+            Status = BookingCancellationStatus.Drafted,
+            Reason = "Primer servicio parcial (costo bajo)",
+            DraftedByUserId = "vendedor-1",
+            AmountPaidAtCancellation = 0m,
+            EstimatedRefundAmount = 0m,
+            ReceivedRefundAmount = 0m,
+            FiscalSnapshot = new FiscalSnapshot { Source = ExchangeRateSource.Unset, FetchedAt = default },
+        };
+        firstBc.Lines.Add(new BookingCancellationLine
+        {
+            SupplierId = supplierA.Id,
+            ServiceTable = CancellableServiceTable.Hotel,
+            ServiceId = 9101,
+            Scope = BookingCancellationLineScope.Partial,
+            Currency = "ARS",
+            LineSaleAmount = 40_000m,
+            RefundCap = 30_000m, // reservo 30.000 del pool de 50.000
+        });
+        ctx.BookingCancellations.Add(firstBc);
+        await ctx.SaveChangesAsync();
+
+        var newLine = new BookingCancellationLine
+        {
+            SupplierId = supplierA.Id,
+            ServiceTable = CancellableServiceTable.Transfer,
+            ServiceId = 9102,
+            Scope = BookingCancellationLineScope.Partial,
+            Currency = "ARS",
+            LineSaleAmount = 90_000m,
+        };
+        var lines = new System.Collections.Generic.List<BookingCancellationLine> { newLine };
+        var netCosts = new System.Collections.Generic.List<decimal> { 60_000m }; // costo permite mas, pero el pool no
+
+        await service.AssignRefundCapsAsync(reserva.Id, lines, netCosts, CancellationToken.None);
+
+        Assert.Equal(20_000m, newLine.RefundCap); // solo lo que quedo del pool (50.000 - 30.000)
+        Assert.True(30_000m + newLine.RefundCap <= 50_000m);
+    }
+
+    [Fact]
+    public async Task AssignRefundCaps_FirstPartialOfOperator_NoPreviousLines_CapUnchanged()
+    {
+        using var ctx = NewDbContext();
+        // Operador A SIN cancelaciones previas: el caso simple no debe cambiar. Pagado 50.000, costo 50.000
+        // -> cap 50.000 (igual que antes del fix).
+        var (reserva, _, supplierA, _, _, _) = await SeedAsync(ctx, paidToSupplierA: 0m);
+        await SeedPaymentImputedToReservaAsync(ctx, supplierA.Id, reserva.Id, amount: 50_000m);
+
+        var service = BuildService(ctx);
+
+        var newLine = new BookingCancellationLine
+        {
+            SupplierId = supplierA.Id,
+            ServiceTable = CancellableServiceTable.Hotel,
+            ServiceId = 9201,
+            Scope = BookingCancellationLineScope.Partial,
+            Currency = "ARS",
+            LineSaleAmount = 80_000m,
+        };
+        var lines = new System.Collections.Generic.List<BookingCancellationLine> { newLine };
+        var netCosts = new System.Collections.Generic.List<decimal> { 50_000m };
+
+        await service.AssignRefundCapsAsync(reserva.Id, lines, netCosts, CancellationToken.None);
+
+        Assert.Equal(50_000m, newLine.RefundCap); // sin lineas previas, el cap es el normal
+    }
+
+    [Fact]
+    public async Task AssignRefundCaps_DifferentOperators_DoNotAffectEachOther()
+    {
+        using var ctx = NewDbContext();
+        // Operador B tiene una linea previa que consumio su pool; eso NO debe tocar el cap del operador A.
+        var (reserva, _, supplierA, supplierB, _, _) = await SeedAsync(ctx, paidToSupplierA: 0m);
+        await SeedPaymentImputedToReservaAsync(ctx, supplierA.Id, reserva.Id, amount: 50_000m);
+        await SeedPaymentImputedToReservaAsync(ctx, supplierB.Id, reserva.Id, amount: 40_000m);
+        var invoice = await SeedLiveInvoiceAsync(ctx, reserva.Id, numero: 103);
+
+        var service = BuildService(ctx);
+
+        // Linea previa del operador B (consume su propio pool, no el de A).
+        var bcB = new BookingCancellation
+        {
+            ReservaId = reserva.Id,
+            CustomerId = reserva.PayerId!.Value,
+            SupplierId = supplierB.Id,
+            OriginatingInvoiceId = invoice.Id,
+            Status = BookingCancellationStatus.Drafted,
+            Reason = "Parcial del operador B",
+            DraftedByUserId = "vendedor-1",
+            AmountPaidAtCancellation = 0m,
+            EstimatedRefundAmount = 0m,
+            ReceivedRefundAmount = 0m,
+            FiscalSnapshot = new FiscalSnapshot { Source = ExchangeRateSource.Unset, FetchedAt = default },
+        };
+        bcB.Lines.Add(new BookingCancellationLine
+        {
+            SupplierId = supplierB.Id,
+            ServiceTable = CancellableServiceTable.Transfer,
+            ServiceId = 9301,
+            Scope = BookingCancellationLineScope.Partial,
+            Currency = "ARS",
+            LineSaleAmount = 30_000m,
+            RefundCap = 40_000m, // consumio todo el pool de B
+        });
+        ctx.BookingCancellations.Add(bcB);
+        await ctx.SaveChangesAsync();
+
+        // Nueva linea del operador A: su cap debe ser pleno (la linea previa era de B).
+        var newLineA = new BookingCancellationLine
+        {
+            SupplierId = supplierA.Id,
+            ServiceTable = CancellableServiceTable.Hotel,
+            ServiceId = 9302,
+            Scope = BookingCancellationLineScope.Partial,
+            Currency = "ARS",
+            LineSaleAmount = 80_000m,
+        };
+        var lines = new System.Collections.Generic.List<BookingCancellationLine> { newLineA };
+        var netCosts = new System.Collections.Generic.List<decimal> { 50_000m };
+
+        await service.AssignRefundCapsAsync(reserva.Id, lines, netCosts, CancellationToken.None);
+
+        Assert.Equal(50_000m, newLineA.RefundCap); // el consumo de B no afecta a A
+    }
+
+    [Fact]
+    public async Task AssignRefundCaps_ExistingLineWithConfirmedPenalty_DeductsCapPlusPenaltyFromPool()
+    {
+        using var ctx = NewDbContext();
+        // La linea previa tiene RefundCap neto 20.000 + penalidad confirmada 10.000: del pool reservo 30.000
+        // (capBeforePenalty), no solo el cap neto. La segunda linea debe ver el pool reducido en 30.000.
+        var (reserva, _, supplierA, _, _, _) = await SeedAsync(ctx, paidToSupplierA: 0m);
+        await SeedPaymentImputedToReservaAsync(ctx, supplierA.Id, reserva.Id, amount: 50_000m);
+        var invoice = await SeedLiveInvoiceAsync(ctx, reserva.Id, numero: 104);
+
+        var service = BuildService(ctx);
+
+        var firstBc = new BookingCancellation
+        {
+            ReservaId = reserva.Id,
+            CustomerId = reserva.PayerId!.Value,
+            SupplierId = supplierA.Id,
+            OriginatingInvoiceId = invoice.Id,
+            Status = BookingCancellationStatus.Drafted,
+            Reason = "Parcial con penalidad confirmada",
+            DraftedByUserId = "vendedor-1",
+            AmountPaidAtCancellation = 0m,
+            EstimatedRefundAmount = 0m,
+            ReceivedRefundAmount = 0m,
+            FiscalSnapshot = new FiscalSnapshot { Source = ExchangeRateSource.Unset, FetchedAt = default },
+        };
+        firstBc.Lines.Add(new BookingCancellationLine
+        {
+            SupplierId = supplierA.Id,
+            ServiceTable = CancellableServiceTable.Hotel,
+            ServiceId = 9401,
+            Scope = BookingCancellationLineScope.Partial,
+            Currency = "ARS",
+            LineSaleAmount = 40_000m,
+            RefundCap = 20_000m,          // cap NETO (despues de penalidad)
+            PenaltyAmount = 10_000m,       // la penalidad tambien retuvo pool
+            PenaltyStatus = PenaltyStatus.Confirmed,
+        });
+        ctx.BookingCancellations.Add(firstBc);
+        await ctx.SaveChangesAsync();
+
+        var newLine = new BookingCancellationLine
+        {
+            SupplierId = supplierA.Id,
+            ServiceTable = CancellableServiceTable.Transfer,
+            ServiceId = 9402,
+            Scope = BookingCancellationLineScope.Partial,
+            Currency = "ARS",
+            LineSaleAmount = 90_000m,
+        };
+        var lines = new System.Collections.Generic.List<BookingCancellationLine> { newLine };
+        var netCosts = new System.Collections.Generic.List<decimal> { 60_000m };
+
+        await service.AssignRefundCapsAsync(reserva.Id, lines, netCosts, CancellationToken.None);
+
+        // Pool 50.000 - consumido 30.000 (20.000 cap + 10.000 penalidad) = 20.000 disponible.
+        Assert.Equal(20_000m, newLine.RefundCap);
+    }
+
+    // ============================================================
     // Helpers locales de los tests nuevos
     // ============================================================
 
