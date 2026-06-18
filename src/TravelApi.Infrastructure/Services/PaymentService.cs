@@ -688,20 +688,75 @@ public class PaymentService : IPaymentService
             return _mapper.Map<PaymentReceiptDto>(payment.Receipt);
         }
 
-        var receipt = new PaymentReceipt
-        {
-            PaymentId = payment.Id,
-            ReservaId = payment.ReservaId ?? throw new InvalidOperationException("El pago no esta vinculado a una reserva."),
-            Amount = payment.Amount,
-            IssuedAt = DateTime.UtcNow,
-            Status = PaymentReceiptStatuses.Issued,
-            ReceiptNumber = await GenerateReceiptNumberAsync(cancellationToken)
-        };
+        var reservaIdForReceipt = payment.ReservaId
+            ?? throw new InvalidOperationException("El pago no esta vinculado a una reserva.");
 
-        _dbContext.PaymentReceipts.Add(receipt);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        var receipt = await CreateReceiptWithCorrelativeNumberAsync(
+            payment.Id, reservaIdForReceipt, payment.Amount, cancellationToken);
 
         return _mapper.Map<PaymentReceiptDto>(receipt);
+    }
+
+    /// <summary>
+    /// Crea y persiste el recibo interno con su numero correlativo, protegido contra numeros DUPLICADOS
+    /// bajo concurrencia (dos cobros que emiten recibo a la vez, o un doble-click). El numero se calcula
+    /// fuera de transaccion (CountAsync + 1), asi que sin esta proteccion dos emisiones simultaneas leerian
+    /// el mismo Count y generarian el MISMO numero.
+    ///
+    /// La garantia real la da el indice UNIQUE en PaymentReceipt.ReceiptNumber (ver AppDbContext + migracion
+    /// Adr034_M1): si dos inserts compiten por el mismo numero, Postgres rechaza al segundo con
+    /// DbUpdateException. Aca lo atrapamos, recomputamos el numero y reintentamos. Mismo patron que
+    /// AlertService.UpsertDismissalAsync.
+    ///
+    /// Nota: el provider InMemory de los tests NO aplica el UNIQUE, por lo que el camino de colision real
+    /// solo se ejercita contra Postgres (integracion). Los unit tests validan el formato y que el reintento
+    /// recomputa el numero (forzando un choque simulado en GenerateReceiptNumberAsync via override de prueba).
+    /// </summary>
+    private async Task<PaymentReceipt> CreateReceiptWithCorrelativeNumberAsync(
+        int paymentId, int reservaId, decimal amount, CancellationToken cancellationToken)
+    {
+        // Hasta 5 intentos: cada colision de numero consume un intento. 5 es holgado para el peor caso
+        // realista de esta agencia (un punado de cajeros emitiendo a la vez); si se agotaran, propagamos
+        // la DbUpdateException original en vez de devolver un recibo con numero potencialmente duplicado.
+        const int maxAttempts = 5;
+
+        for (var attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            var receipt = new PaymentReceipt
+            {
+                PaymentId = paymentId,
+                ReservaId = reservaId,
+                Amount = amount,
+                IssuedAt = DateTime.UtcNow,
+                Status = PaymentReceiptStatuses.Issued,
+                ReceiptNumber = await GenerateReceiptNumberAsync(cancellationToken)
+            };
+
+            _dbContext.PaymentReceipts.Add(receipt);
+
+            try
+            {
+                await _dbContext.SaveChangesAsync(cancellationToken);
+                return receipt;
+            }
+            catch (DbUpdateException) when (attempt < maxAttempts)
+            {
+                // Carrera: otro recibo gano el mismo numero correlativo y el UNIQUE de Postgres nos
+                // rechazo. Sacamos el receipt fallido del tracker, recomputamos el numero (el CountAsync
+                // ahora ve la fila del ganador) y reintentamos.
+                _dbContext.Entry(receipt).State = EntityState.Detached;
+
+                _logger.LogWarning(
+                    "Colision de numero de recibo para el pago {PaymentId} (intento {Attempt}). Recomputando y reintentando.",
+                    paymentId, attempt);
+            }
+        }
+
+        // Inalcanzable: el ultimo intento NO esta cubierto por el filtro `when (attempt < maxAttempts)`,
+        // asi que su DbUpdateException se propaga desde dentro del loop. Esta linea solo existe para que
+        // el compilador acepte que el metodo siempre retorna o lanza.
+        throw new InvalidOperationException(
+            "No se pudo generar un numero de recibo unico tras varios intentos.");
     }
 
     public async Task<byte[]> GetReceiptPdfAsync(string paymentPublicIdOrLegacyId, CancellationToken cancellationToken)
@@ -980,7 +1035,16 @@ public class PaymentService : IPaymentService
         return resolved ?? throw new KeyNotFoundException($"{typeof(TEntity).Name} no encontrado.");
     }
 
-    private async Task<string> GenerateReceiptNumberAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Calcula el proximo numero correlativo de recibo: "RCP-{anio}-{secuencia:6 digitos}". La secuencia es
+    /// el conteo GLOBAL de recibos + 1 (no se reinicia por anio; el anio del prefijo es solo etiqueta, por eso
+    /// el numero nunca se repite aunque cambie el anio). Este calculo NO es atomico por si solo — la unicidad
+    /// la garantiza el indice UNIQUE de ReceiptNumber + el reintento en CreateReceiptWithCorrelativeNumberAsync.
+    ///
+    /// virtual: los unit tests lo overridean para simular una colision en el primer intento (InMemory no
+    /// aplica el UNIQUE, asi que no hay otra forma de ejercitar el camino de reintento sin Postgres).
+    /// </summary>
+    protected virtual async Task<string> GenerateReceiptNumberAsync(CancellationToken cancellationToken)
     {
         var next = await _dbContext.PaymentReceipts.CountAsync(cancellationToken) + 1;
         return $"RCP-{DateTime.UtcNow:yyyy}-{next:D6}";

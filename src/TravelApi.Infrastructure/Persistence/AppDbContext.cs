@@ -1319,6 +1319,16 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(r => r.ReceiptNumber).HasMaxLength(50).IsRequired();
             entity.Property(r => r.Status).HasMaxLength(30).IsRequired();
 
+            // Bug concurrencia (2026-06-18): el numero de recibo se calculaba con CountAsync()+1, asi que dos
+            // emisiones simultaneas podian generar el MISMO numero correlativo. Este UNIQUE es la garantia real
+            // de no-duplicados (PaymentService reintenta al chocar). El numero ya es global y unico por si mismo
+            // (el anio del prefijo "RCP-{anio}-{n}" es solo etiqueta; la secuencia n no se reinicia por anio),
+            // por eso el indice va sobre la COLUMNA SOLA y no sobre un compuesto (anio, n).
+            // OJO: la migracion que lo crea FALLA si ya hay numeros duplicados en la base (ver migracion).
+            // Los recibos Voided se PRESERVAN con su numero (no hay soft-delete), por eso NO es un indice
+            // filtrado: el numero debe seguir siendo unico aunque el recibo este anulado.
+            entity.HasIndex(r => r.ReceiptNumber).IsUnique();
+
             entity.HasOne(r => r.Reserva)
                   .WithMany()
                   .HasForeignKey(r => r.ReservaId)
