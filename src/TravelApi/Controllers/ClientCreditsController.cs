@@ -142,4 +142,59 @@ public class ClientCreditsController : ControllerBase
             return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
         }
     }
+
+    /// <summary>
+    /// FC4 reversa (2026-06-18): DESHACE un retiro de tipo <c>AppliedToNewBooking</c> (saldo a favor que se
+    /// aplico como pago de OTRA reserva). La plata vuelve al bolsillo del cliente y el pago puente de la reserva
+    /// destino queda anulado (su deuda vuelve al nivel previo).
+    ///
+    /// <para><b>Permiso</b>: <c>cobranzas.edit</c> (mismo nivel que aplicar — es una operacion de cobranza que
+    /// mueve la deuda de una reserva). La ownership de la reserva DESTINO la valida el service (la muta) y
+    /// devuelve 403 si la reserva esta a cargo de otro vendedor y el usuario no ve todas las cobranzas. NO se usa
+    /// <c>RequireOwnership</c> por atributo porque el id de ruta es el del withdrawal (que puede colgar de un
+    /// bolsillo de SOBREPAGO sin BookingCancellation, caso que el resolver de ClientCreditEntry rechaza de mas).</para>
+    /// </summary>
+    [HttpPost("/api/client-credit-withdrawals/{withdrawalPublicId:guid}/reverse")]
+    [RequirePermission(Permissions.CobranzasEdit)]
+    public async Task<ActionResult<ClientCreditWithdrawalDto>> ReverseAppliedCredit(
+        Guid withdrawalPublicId,
+        CancellationToken cancellationToken)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
+        var userName = User.FindFirst("FullName")?.Value ?? User.FindFirst(ClaimTypes.Name)?.Value;
+
+        try
+        {
+            var dto = await _creditService.ReverseAppliedCreditAsync(withdrawalPublicId, userId, userName, cancellationToken);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // La reserva destino no esta a cargo del usuario actual (y este no ve todas las cobranzas).
+            // Mismo mapeo a 403 que el Withdraw (fix I1).
+            return new ObjectResult(PermissionDeniedProblemFactory.OwnershipRequired(OwnedEntity.Reserva.ToString()))
+            {
+                StatusCode = StatusCodes.Status403Forbidden
+            };
+        }
+        catch (System.ComponentModel.DataAnnotations.ValidationException ex)
+        {
+            // El service tira esto cuando el withdrawal no es AppliedToNewBooking (request mal dirigido).
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Flag off o estado inconsistente (puente sin reserva destino).
+            return Conflict(new { message = ex.Message });
+        }
+        // BusinessInvariantViolationException (INV-098: ya revertido / tope superado) -> 409 via GlobalExceptionHandler.
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+        }
+    }
 }

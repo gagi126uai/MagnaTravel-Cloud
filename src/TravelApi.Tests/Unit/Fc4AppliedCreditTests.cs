@@ -314,6 +314,154 @@ public class Fc4AppliedCreditTests
         Assert.Contains("saldo a favor aplicado", ex.Message);
     }
 
+    // =====================================================================================================
+    // FC4 REVERSA (2026-06-18): deshacer una aplicacion de saldo a favor a otra reserva.
+    // =====================================================================================================
+
+    /// <summary>
+    /// (r1) Camino feliz: aplicar saldo y luego revertir -> el bolsillo recupera el monto, el puente queda
+    /// soft-deleted y la deuda de la reserva destino vuelve a su nivel previo.
+    /// </summary>
+    [Fact]
+    public async Task ReverseApplied_ReturnsPocket_SoftDeletesBridge_RestoresTargetDebt()
+    {
+        await using var context = CreateContext();
+        var seed = await SeedAsync(context, creditCurrency: "ARS", creditAmount: 500m,
+            targetCurrency: "ARS", targetSalePrice: 1000m);
+
+        // Aplicar 200: bolsillo 500 -> 300, deuda destino 1000 -> 800.
+        var applied = await CreateService(context).WithdrawAsync(
+            seed.entryPublicId, ApplyRequest(200m, seed.targetReservaPublicId),
+            userId: "user1", userName: "Cajero", ct: CancellationToken.None);
+
+        // Revertir esa aplicacion.
+        var reversed = await CreateService(context).ReverseAppliedCreditAsync(
+            applied.PublicId, userId: "user1", userName: "Cajero", ct: CancellationToken.None);
+
+        Assert.Equal(applied.PublicId, reversed.PublicId);
+
+        // Bolsillo recupero los 200 -> vuelve a 500.
+        var entry = await context.ClientCreditEntries.AsNoTracking().FirstAsync(e => e.PublicId == seed.entryPublicId);
+        Assert.Equal(500m, entry.RemainingBalance);
+        Assert.False(entry.IsFullyConsumed);
+
+        // Puente quedo soft-deleted (sigue existiendo, pero IsDeleted=true).
+        var withdrawal = await context.ClientCreditWithdrawals.AsNoTracking().FirstAsync();
+        var bridge = await context.Payments.IgnoreQueryFilters().AsNoTracking()
+            .FirstAsync(p => p.AppliedFromCreditWithdrawalId == withdrawal.Id);
+        Assert.True(bridge.IsDeleted);
+        Assert.NotNull(bridge.DeletedAt);
+
+        // Deuda destino volvio a 1000 (el puente ya no la baja).
+        var line = await context.ReservaMoneyByCurrency.AsNoTracking()
+            .FirstAsync(r => r.ReservaId == seed.targetReservaId && r.Currency == "ARS");
+        Assert.Equal(1000m, line.Balance);
+    }
+
+    /// <summary>
+    /// (r2) Anti doble-reversa: revertir dos veces el mismo withdrawal -> la segunda rechaza INV-098 y no
+    /// vuelve a tocar el bolsillo (no infla el saldo por encima de lo acreditado).
+    /// </summary>
+    [Fact]
+    public async Task ReverseApplied_Twice_RejectsInv098_AndDoesNotInflatePocket()
+    {
+        await using var context = CreateContext();
+        var seed = await SeedAsync(context, creditCurrency: "ARS", creditAmount: 500m,
+            targetCurrency: "ARS", targetSalePrice: 1000m);
+
+        var applied = await CreateService(context).WithdrawAsync(
+            seed.entryPublicId, ApplyRequest(200m, seed.targetReservaPublicId),
+            userId: "user1", userName: "Cajero", ct: CancellationToken.None);
+
+        // Primera reversa OK.
+        await CreateService(context).ReverseAppliedCreditAsync(
+            applied.PublicId, userId: "user1", userName: "Cajero", ct: CancellationToken.None);
+
+        // Segunda reversa: rechaza.
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            CreateService(context).ReverseAppliedCreditAsync(
+                applied.PublicId, userId: "user1", userName: "Cajero", ct: CancellationToken.None));
+        Assert.Equal("INV-098", ex.InvariantCode);
+
+        // El bolsillo quedo en 500 (acreditado original), no en 700.
+        var entry = await context.ClientCreditEntries.AsNoTracking().FirstAsync(e => e.PublicId == seed.entryPublicId);
+        Assert.Equal(500m, entry.RemainingBalance);
+    }
+
+    /// <summary>
+    /// (r3) Solo se revierte AppliedToNewBooking: intentar revertir un KeptAsCredit (u otro kind) -> 400 via
+    /// ValidationException. Verifica que la reversa no se cuela en flujos que tienen su propia anulacion.
+    /// </summary>
+    [Fact]
+    public async Task ReverseApplied_OnWrongKind_RejectsValidation()
+    {
+        await using var context = CreateContext();
+        var seed = await SeedAsync(context, creditCurrency: "ARS", creditAmount: 500m,
+            targetCurrency: "ARS", targetSalePrice: 1000m);
+
+        // KeptAsCredit (Amount=0): no consume, no toca otra reserva.
+        var kept = await CreateService(context).WithdrawAsync(
+            seed.entryPublicId,
+            new WithdrawClientCreditRequest(
+                Kind: WithdrawalKind.KeptAsCredit, Amount: 0m, PaymentMethodOverride: null,
+                AppliedToReservaPublicId: null, ApprovalRequestPublicId: null, Reference: null),
+            userId: "user1", userName: "Cajero", ct: CancellationToken.None);
+
+        await Assert.ThrowsAsync<System.ComponentModel.DataAnnotations.ValidationException>(() =>
+            CreateService(context).ReverseAppliedCreditAsync(
+                kept.PublicId, userId: "user1", userName: "Cajero", ct: CancellationToken.None));
+    }
+
+    /// <summary>
+    /// (r4) Idempotencia / not found: revertir un withdrawal inexistente -> KeyNotFoundException (404).
+    /// </summary>
+    [Fact]
+    public async Task ReverseApplied_UnknownWithdrawal_NotFound()
+    {
+        await using var context = CreateContext();
+
+        await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+            CreateService(context).ReverseAppliedCreditAsync(
+                Guid.NewGuid(), userId: "user1", userName: "Cajero", ct: CancellationToken.None));
+    }
+
+    /// <summary>
+    /// (r5) Reversa parcial-luego-reaplica: aplicar, revertir, y volver a aplicar el mismo monto -> el bolsillo
+    /// y la deuda destino quedan consistentes. Verifica que la reversa deja el saldo en un estado reusable.
+    /// </summary>
+    [Fact]
+    public async Task ReverseApplied_ThenReapply_LeavesConsistentState()
+    {
+        await using var context = CreateContext();
+        var seed = await SeedAsync(context, creditCurrency: "ARS", creditAmount: 500m,
+            targetCurrency: "ARS", targetSalePrice: 1000m);
+
+        var applied = await CreateService(context).WithdrawAsync(
+            seed.entryPublicId, ApplyRequest(200m, seed.targetReservaPublicId),
+            userId: "user1", userName: "Cajero", ct: CancellationToken.None);
+
+        await CreateService(context).ReverseAppliedCreditAsync(
+            applied.PublicId, userId: "user1", userName: "Cajero", ct: CancellationToken.None);
+
+        // Re-aplicar 200 de nuevo: el bolsillo (de vuelta en 500) lo permite.
+        await CreateService(context).WithdrawAsync(
+            seed.entryPublicId, ApplyRequest(200m, seed.targetReservaPublicId),
+            userId: "user1", userName: "Cajero", ct: CancellationToken.None);
+
+        // Bolsillo 500 -> 300 otra vez.
+        var entry = await context.ClientCreditEntries.AsNoTracking().FirstAsync(e => e.PublicId == seed.entryPublicId);
+        Assert.Equal(300m, entry.RemainingBalance);
+
+        // Deuda destino baja a 800 con el puente NUEVO (vivo); el viejo quedo soft-deleted.
+        var line = await context.ReservaMoneyByCurrency.AsNoTracking()
+            .FirstAsync(r => r.ReservaId == seed.targetReservaId && r.Currency == "ARS");
+        Assert.Equal(800m, line.Balance);
+
+        var liveBridges = await context.Payments.IgnoreQueryFilters().AsNoTracking()
+            .CountAsync(p => p.AppliedFromCreditWithdrawalId != null && !p.IsDeleted);
+        Assert.Equal(1, liveBridges);
+    }
+
     // ----- builders -----
 
     private PaymentService BuildPaymentService(AppDbContext context)

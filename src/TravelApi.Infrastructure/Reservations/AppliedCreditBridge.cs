@@ -1,6 +1,10 @@
 using System;
 using System.Linq.Expressions;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
 using TravelApi.Domain.Entities;
+using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Infrastructure.Reservations;
 
@@ -70,4 +74,112 @@ public static class AppliedCreditBridge
     public static Expression<Func<Payment, bool>> IsInternalBridgePredicate =>
         p => (p.Method == OverpaymentCreditCleanup.BridgeMethod && !p.AffectsCash && p.OriginalPaymentId != null)
           || (p.Method == BridgeMethod && !p.AffectsCash && p.AppliedFromCreditWithdrawalId != null);
+
+    // =====================================================================================================
+    // FC4 REVERSA (2026-06-18): deshacer la aplicacion de un saldo a favor a otra reserva.
+    //
+    // El caso normal (HandleAppliedToNewBookingAsync) saca plata del bolsillo y la pone como pago-puente en
+    // la reserva destino. Si se hizo por error, ESTO lo deshace: vuelve la plata al bolsillo y soft-deletea
+    // el puente. Mismo patron y misma filosofia "sin SaveChanges" que OverpaymentCreditCleanup: el caller
+    // (ClientCreditService.ReverseAppliedCreditAsync) atomiza dentro de su transaccion envolvente.
+    // =====================================================================================================
+
+    /// <summary>
+    /// FC4 reversa: encuentra el <see cref="Payment"/> puente VIVO (no soft-deleted) de un withdrawal de
+    /// aplicacion. Devuelve <c>null</c> si no hay puente vivo (caso tipico: ya se reverso antes -> el puente
+    /// quedo soft-deleted). El predicado replica EXACTAMENTE <see cref="IsAppliedCreditBridge"/> pero en
+    /// forma traducible a SQL (compara solo columnas escalares) y filtrando por el withdrawal.
+    /// </summary>
+    public static Task<Payment?> FindLiveBridgeAsync(
+        AppDbContext db,
+        int withdrawalId,
+        CancellationToken ct = default)
+    {
+        return db.Payments
+            .FirstOrDefaultAsync(p =>
+                p.AppliedFromCreditWithdrawalId == withdrawalId &&
+                p.Method == BridgeMethod &&
+                !p.AffectsCash &&
+                !p.IsDeleted, ct);
+    }
+
+    /// <summary>
+    /// FC4 reversa: devuelve el motivo de BLOQUEO (mensaje de negocio en espanol) si NO se puede revertir esta
+    /// aplicacion de saldo a favor, o <c>null</c> si la reversa es segura. El caller DEBE chequear esto y
+    /// abortar antes de mutar nada.
+    ///
+    /// <para><b>Guardas de integridad</b> (es plata):
+    /// <list type="bullet">
+    ///   <item><b>Anti doble-reversa / idempotencia</b>: si el puente ya esta soft-deleted (o nunca existio),
+    ///         no hay nada que revertir. La presencia de un puente VIVO es la unica fuente de verdad de "esta
+    ///         aplicacion sigue activa": <see cref="ClientCreditWithdrawal"/> no tiene flag de reversado.</item>
+    ///   <item><b>Tope superior del bolsillo</b>: re-incrementar <c>RemainingBalance</c> no puede superar el
+    ///         <c>CreditedAmount</c> original del entry (respeta el CHECK <c>chk_remaining_non_negative</c> y su
+    ///         tope superior). Si ya esta intacto (Remaining == Credited) hay una incoherencia previa -> bloquea.</item>
+    /// </list></para>
+    ///
+    /// <para>El <paramref name="entry"/> y el <paramref name="liveBridge"/> ya cargados los pasa el caller para
+    /// no re-consultar. Si <paramref name="liveBridge"/> es null -> ya reversado / sin puente.</para>
+    /// </summary>
+    public static string? GetReverseBlockReason(
+        ClientCreditEntry entry,
+        Payment? liveBridge)
+    {
+        // Anti doble-reversa: sin puente vivo, no hay aplicacion activa que deshacer.
+        if (liveBridge is null)
+        {
+            return "Esta aplicacion de saldo a favor ya fue revertida o no tiene un pago puente activo. " +
+                   "No hay nada que deshacer.";
+        }
+
+        // Tope superior: la plata que vuelve al bolsillo (monto del puente) no puede dejar el saldo restante
+        // por encima del monto originalmente acreditado. Si esto se violara, hay una incoherencia previa
+        // (doble acreditacion) y no compensamos a ciegas.
+        var remainingAfter = entry.RemainingBalance + liveBridge.Amount;
+        if (remainingAfter > entry.CreditedAmount)
+        {
+            return "No se puede revertir: el monto a devolver al saldo a favor superaria el total acreditado " +
+                   "originalmente. Revisar manualmente, hay una inconsistencia en el saldo.";
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// FC4 reversa: ejecuta la reversa sobre las entidades ya cargadas (sin <c>SaveChanges</c>; el caller
+    /// atomiza). Devuelve el monto re-incrementado (= monto del puente) para que el caller lo audite.
+    ///
+    /// <para><b>Precondicion</b>: el caller DEBE haber chequeado <see cref="GetReverseBlockReason"/> y abortado
+    /// si devolvio motivo. Aca asumimos que el puente esta vivo y el tope no se viola.</para>
+    ///
+    /// <para><b>Que hace</b>:
+    /// <list type="number">
+    ///   <item>Soft-deletea el puente (<c>IsDeleted=true</c>, <c>DeletedAt=now</c>). Asi
+    ///         <c>AccumulatePayments</c> deja de contarlo y la deuda de la reserva destino vuelve a su nivel.</item>
+    ///   <item>Re-incrementa <c>RemainingBalance</c> del entry por el monto del puente (la plata vuelve al
+    ///         bolsillo) y limpia <c>IsFullyConsumed</c> (el saldo deja de estar agotado).</item>
+    /// </list></para>
+    /// </summary>
+    public static decimal ReverseArtifacts(
+        ClientCreditEntry entry,
+        Payment liveBridge)
+    {
+        var amountReturnedToPocket = liveBridge.Amount;
+
+        // 1) Soft-delete del puente (mismo trato que el sistema le da a los puentes: NUNCA por el path manual
+        //    bloqueado, sino directo sobre la entidad — igual que OverpaymentCreditCleanup).
+        liveBridge.IsDeleted = true;
+        liveBridge.DeletedAt = DateTime.UtcNow;
+
+        // 2) La plata vuelve al bolsillo del cliente.
+        entry.RemainingBalance += amountReturnedToPocket;
+
+        // Si volvio a haber saldo, el bolsillo ya no esta agotado.
+        if (entry.RemainingBalance > 0m)
+        {
+            entry.IsFullyConsumed = false;
+        }
+
+        return amountReturnedToPocket;
+    }
 }

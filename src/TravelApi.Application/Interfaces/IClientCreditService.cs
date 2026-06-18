@@ -127,6 +127,31 @@ public interface IClientCreditService
         CancellationToken ct);
 
     /// <summary>
+    /// FC4 reversa (2026-06-18): DESHACE un withdrawal de tipo <c>AppliedToNewBooking</c> (saldo a favor que se
+    /// aplico como pago de OTRA reserva). Es la operacion inversa de <see cref="WithdrawAsync"/> para ese kind:
+    /// la plata vuelve al bolsillo del cliente (re-incrementa <c>RemainingBalance</c>) y el <see cref="Payment"/>
+    /// puente de la reserva destino queda soft-deleted (su deuda vuelve al nivel previo). Atomico (transaccion
+    /// envolvente si el provider es relacional, igual que <see cref="WithdrawAsync"/>).
+    ///
+    /// <para><b>Por que existe</b>: antes no habia camino por codigo para corregir una aplicacion hecha por
+    /// error; el puente esta blindado contra borrado/edicion manual, asi que la unica salida era tocar la base a
+    /// mano (riesgo de descuadre). Esta operacion lo hace de forma segura y auditada.</para>
+    ///
+    /// <para><b>Guardas</b> (es plata): idempotente / anti doble-reversa (no revierte dos veces el mismo
+    /// withdrawal — se apoya en que el puente quede vivo); no deja el saldo restante por encima del monto
+    /// acreditado original; coherencia de moneda implicita (el puente lleva la moneda del bolsillo). Respeta el
+    /// mismo feature flag que <see cref="WithdrawAsync"/>.</para>
+    /// </summary>
+    /// <exception cref="KeyNotFoundException">El withdrawal no existe.</exception>
+    /// <exception cref="System.ComponentModel.DataAnnotations.ValidationException">El withdrawal no es de kind AppliedToNewBooking.</exception>
+    /// <exception cref="TravelApi.Domain.Exceptions.BusinessInvariantViolationException">No se puede revertir (ya revertido, tope superado, etc.).</exception>
+    Task<ClientCreditWithdrawalDto> ReverseAppliedCreditAsync(
+        Guid withdrawalPublicId,
+        string userId,
+        string? userName,
+        CancellationToken ct);
+
+    /// <summary>
     /// FC1.2.3: obtiene un <see cref="ClientCreditEntry"/> con sus retiros
     /// (timeline) por PublicId. Null si no existe.
     /// </summary>

@@ -436,6 +436,144 @@ public class ClientCreditService : IClientCreditService
     }
 
     // =========================================================================
+    // ReverseAppliedCreditAsync (FC4 reversa — entrada publica del controller)
+    // =========================================================================
+
+    /// <summary>
+    /// FC4 reversa (2026-06-18): deshace un withdrawal <c>AppliedToNewBooking</c>. Ver el contrato completo en
+    /// <see cref="IClientCreditService.ReverseAppliedCreditAsync"/>. Espejo del WithdrawAsync(AppliedToNewBooking):
+    /// vuelve la plata al bolsillo, soft-deletea el puente y recalcula la deuda de la reserva destino, todo
+    /// atomico.
+    /// </summary>
+    public async Task<ClientCreditWithdrawalDto> ReverseAppliedCreditAsync(
+        Guid withdrawalPublicId,
+        string userId,
+        string? userName,
+        CancellationToken ct)
+    {
+        // 0) Mismo gate de feature flag que WithdrawAsync: si el modulo no esta habilitado, la reversa tampoco
+        //    opera. NO tocamos el flag, solo somos consistentes con el resto del modulo.
+        await EnsureFeatureFlagOnAsync(ct);
+
+        // 1) Cargar el withdrawal + su entry (con customer) tracked: vamos a re-incrementar el saldo del entry.
+        var withdrawal = await _db.ClientCreditWithdrawals
+            .Include(w => w.Entry).ThenInclude(e => e.Customer)
+            .FirstOrDefaultAsync(w => w.PublicId == withdrawalPublicId, ct)
+            ?? throw new KeyNotFoundException(
+                $"ClientCreditWithdrawal {withdrawalPublicId} no encontrado.");
+
+        // 2) Solo se revierte una APLICACION a otra reserva. Los otros kinds (efectivo, transferencia,
+        //    KeptAsCredit, ReversedToOperator) tienen sus propios flujos de anulacion; no se mezclan aca.
+        //    ValidationException -> el controller la traduce a 400 (request mal dirigido), no a 409.
+        if (withdrawal.Kind != WithdrawalKind.AppliedToNewBooking)
+        {
+            throw new System.ComponentModel.DataAnnotations.ValidationException(
+                $"Solo se puede revertir una aplicacion de saldo a favor a otra reserva " +
+                $"(kind AppliedToNewBooking). Este retiro es {withdrawal.Kind}.");
+        }
+
+        var entry = withdrawal.Entry;
+
+        // 3) Encontrar el puente VIVO atado a este withdrawal. Su existencia es la fuente de verdad de "esta
+        //    aplicacion sigue activa" (el withdrawal no tiene flag de reversado).
+        var liveBridge = await AppliedCreditBridge.FindLiveBridgeAsync(_db, withdrawal.Id, ct);
+
+        // 4) Guardas de integridad (anti doble-reversa + tope superior del bolsillo). Si bloquea, abortamos
+        //    SIN mutar nada. BusinessInvariantViolationException -> 409 via el controller.
+        var blockReason = AppliedCreditBridge.GetReverseBlockReason(entry, liveBridge);
+        if (blockReason is not null)
+        {
+            throw new BusinessInvariantViolationException(blockReason, invariantCode: "INV-098");
+        }
+
+        // liveBridge no es null aca (GetReverseBlockReason bloquea si lo fuera). Guardamos la reserva destino
+        // para recalcular su deuda despues del soft-delete del puente.
+        var targetReservaId = liveBridge!.ReservaId
+            ?? throw new InvalidOperationException(
+                "El pago puente de saldo a favor aplicado no tiene reserva destino. Estado inconsistente.");
+
+        // 4b) Ownership de la reserva DESTINO (mismo principio que el fix I1 del WithdrawAsync). La reversa
+        //     MUTA la deuda de esa reserva, asi que un vendedor con scope acotado solo puede revertir sobre una
+        //     reserva a su cargo (a menos que vea todas las cobranzas). Sin HttpContext (tests/legacy) no se
+        //     filtra. UnauthorizedAccessException -> el controller la traduce a 403.
+        var ownerScope = await GetTargetReservaOwnerScopeOrNullAsync(ct);
+        if (ownerScope is not null)
+        {
+            var targetResponsible = await _db.Reservas
+                .AsNoTracking()
+                .Where(r => r.Id == targetReservaId)
+                .Select(r => r.ResponsibleUserId)
+                .FirstOrDefaultAsync(ct);
+
+            if (!string.Equals(targetResponsible, ownerScope, StringComparison.Ordinal))
+            {
+                throw new UnauthorizedAccessException(
+                    "La reserva destino no esta asignada al usuario actual. No se puede revertir una " +
+                    "aplicacion de saldo sobre una reserva a cargo de otro vendedor.");
+            }
+        }
+
+        // 5) Persistencia atomica. Igual criterio que WithdrawAsync: solo contra provider RELACIONAL usamos
+        //    transaccion envolvente (InMemory en los tests no soporta transacciones -> ramificamos por
+        //    IsRelational y corremos el mismo cuerpo sin transaccion).
+        if (_db.Database.IsRelational())
+        {
+            var strategy = _db.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async () =>
+            {
+                await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+                await ApplyReverseAsync();
+                await transaction.CommitAsync(ct);
+            });
+        }
+        else
+        {
+            await ApplyReverseAsync();
+        }
+
+        return MapWithdrawal(withdrawal, entry.PublicId);
+
+        // Cuerpo comun de la reversa (local function para reusarlo dentro/fuera de la transaccion sin duplicar).
+        async Task ApplyReverseAsync()
+        {
+            // 5a) Soft-delete del puente + re-incremento del bolsillo (sin SaveChanges; lo hace el helper).
+            var amountReturnedToPocket = AppliedCreditBridge.ReverseArtifacts(entry, liveBridge);
+
+            // 5b) PRIMER SaveChanges: persiste el soft-delete del puente + el re-incremento del saldo del entry,
+            //     antes de tocar la reserva destino y antes de cualquier audit. Si falla, no quedo nada a medias.
+            await _db.SaveChangesAsync(ct);
+
+            // 5c) Recalcular la deuda de la reserva destino. Con el puente soft-deleted, ReservaMoneyCalculator
+            //     deja de contarlo y la deuda vuelve a su nivel previo. Corre DENTRO de la transaccion envolvente.
+            await ReservaMoneyPersister.PersistAsync(_db, targetReservaId, ct);
+
+            // 5d) Audit de la reversa (DESPUES del SaveChanges del efecto, mismo principio anti-huerfano que
+            //     WithdrawAsync paso 6). Deja rastro de cuanto volvio al bolsillo y de que reserva salio.
+            await _auditService.LogBusinessEventAsync(
+                action: AuditActions.ClientCreditApplicationReversed,
+                entityName: AuditActions.ClientCreditWithdrawalEntityName,
+                entityId: withdrawal.PublicId.ToString(),
+                details: JsonSerializer.Serialize(new
+                {
+                    withdrawalPublicId = withdrawal.PublicId,
+                    entryPublicId = entry.PublicId,
+                    customerPublicId = entry.Customer.PublicId,
+                    targetReservaId,
+                    amountReturnedToPocket,
+                    currency = entry.Currency,
+                    remainingBalanceAfter = entry.RemainingBalance,
+                }),
+                userId: userId,
+                userName: userName,
+                ct: ct);
+
+            _logger.LogInformation(
+                "metric:client_credit_application_reversed | WithdrawalPublicId={WithdrawalPublicId} EntryPublicId={EntryPublicId} Amount={Amount} TargetReservaId={TargetReservaId}",
+                withdrawal.PublicId, entry.PublicId, amountReturnedToPocket, targetReservaId);
+        }
+    }
+
+    // =========================================================================
     // Handlers por kind
     // =========================================================================
 

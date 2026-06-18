@@ -153,6 +153,16 @@ public static class AuditActions
     public const string ClientCreditAppliedToBooking = "ClientCreditAppliedToBooking";
 
     /// <summary>
+    /// FC4 reversa (2026-06-18): se DESHIZO la aplicacion de un saldo a favor a otra reserva (el caso inverso de
+    /// <see cref="ClientCreditAppliedToBooking"/>). El saldo vuelve al bolsillo del cliente (se RE-INCREMENTA el
+    /// <c>RemainingBalance</c> del <see cref="ClientCreditEntry"/>) y el <see cref="Payment"/> puente positivo de
+    /// la reserva destino queda soft-deleted (la deuda de esa reserva vuelve a su nivel previo). Se usa cuando la
+    /// aplicacion fue por error. El detail JSON lleva el withdrawal revertido, el bolsillo, el cliente, la reserva
+    /// destino, el monto devuelto al bolsillo y la moneda — NUNCA datos sensibles.
+    /// </summary>
+    public const string ClientCreditApplicationReversed = "ClientCreditApplicationReversed";
+
+    /// <summary>
     /// FC1.2.3 (2026-05-18): cuando el ultimo withdraw deja el BC sin saldos
     /// pendientes (todos los entries en RemainingBalance=0), el BC pasa a
     /// <c>Closed</c> y la Reserva a <c>Cancelled</c>. El audit deja trazabilidad
