@@ -2621,6 +2621,14 @@ public class ReservaService : IReservaService
         await _context.SaveChangesAsync();
         await UpdateBalanceAsync(reservaId);
 
+        // fix bug #6 (2026-06-17): EL AGUJERO de sobrepago. Este path anidado (POST /api/reservas/{id}/payments)
+        // no convertia el excedente en saldo a favor del cliente, asi que un cobro de mas dejaba un saldo
+        // NEGATIVO atrapado en la reserva, invisible al bolsillo del cliente y a "aplicar saldo a favor a otra
+        // reserva" (FC4). Ahora delega en el MISMO helper que el camino canonico (CreatePaymentAsync) — sin
+        // duplicar la regla. El actor sale de los helpers existentes de ReservaService (GetCurrentUser*OrNull).
+        await OverpaymentCreditConverter.ConvertAsync(
+            _context, payment, GetCurrentUserIdOrNull(), GetCurrentUserNameOrNull(), _logger);
+
         return _mapper.Map<PaymentDto>(payment);
     }
 

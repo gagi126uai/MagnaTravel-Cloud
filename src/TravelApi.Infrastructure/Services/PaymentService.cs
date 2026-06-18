@@ -937,7 +937,24 @@ public class PaymentService : IPaymentService
         await _dbContext.SaveChangesAsync(cancellationToken);
 
         if (payment.ReservaId.HasValue)
+        {
             await RecalculateReservaBalanceAsync(payment.ReservaId.Value, cancellationToken);
+
+            // fix bug #9 (2026-06-17): al ANULAR el cobro, OverpaymentCreditCleanup limpio el saldo a favor
+            // (credito + puente) que ese cobro habia generado. Al RESTAURARLO hay que reconstruirlo, si no
+            // queda asimetrico: la reserva vuelve a quedar sobre-pagada con el excedente atrapado, invisible
+            // al bolsillo del cliente y a FC4. La conversion es idempotente (solo actua si hay Balance < 0),
+            // asi que re-restaurar no duplica el credito.
+            //
+            // DECISION (conservadora): NO se revalida EnsureCollectable aca. Restaurar es una operacion
+            // ADMINISTRATIVA de deshacer una anulacion, no un cobro nuevo: el cobro ya existio y fue legitimo.
+            // Gatearla por estado bloquearia deshacer una anulacion equivocada cuando la reserva ya paso a un
+            // estado terminal (Cancelada/Perdida), que es justo cuando mas se necesita poder revertir. El alta
+            // de cobro nuevo (CreatePaymentAsync / AddPaymentAsync) si exige EnsureCollectable; restaurar no.
+            var (creditActorUserId, creditActorUserName) = ResolveLedgerActor();
+            await ConvertOverpaymentToClientCreditAsync(
+                payment, creditActorUserId, creditActorUserName, cancellationToken);
+        }
 
         return payment.PublicId;
     }
@@ -1068,87 +1085,11 @@ public class PaymentService : IPaymentService
         string? actorUserName,
         CancellationToken cancellationToken)
     {
-        if (payment.ReservaId is null) return;
-        var reservaId = payment.ReservaId.Value;
-
-        // La moneda del SALDO al que se imputo el pago: la imputada si cruzo, si no la real del pago.
-        var saldoCurrency = Monedas.Normalizar(payment.ImputedCurrency ?? payment.Currency);
-
-        // Saldo de esa moneda DESPUES del recalculo. Balance < 0 = la reserva esta sobre-pagada (a favor
-        // del cliente) en esa moneda. El excedente es el valor absoluto.
-        var row = await _dbContext.ReservaMoneyByCurrency
-            .FirstOrDefaultAsync(
-                m => m.ReservaId == reservaId && m.Currency == saldoCurrency,
-                cancellationToken);
-        if (row is null || row.Balance >= 0m) return;
-
-        var overpaid = EconomicRulesHelper.RoundCurrency(-row.Balance);
-        if (overpaid <= 0m) return;
-
-        var reserva = await _dbContext.Reservas
-            .FirstOrDefaultAsync(r => r.Id == reservaId, cancellationToken);
-        if (reserva?.PayerId is null)
-        {
-            // Sin pagador no hay bolsillo de cliente. Se deja el saldo a favor en la reserva (no se rompe).
-            _logger.LogWarning(
-                "Sobrepago detectado en reserva {ReservaId} ({Currency} {Overpaid}) pero la reserva no tiene pagador; no se convierte a saldo a favor.",
-                reservaId, saldoCurrency, overpaid);
-            return;
-        }
-
-        // Crear el bolsillo de saldo a favor del cliente por el excedente, en la moneda del saldo.
-        var credit = new ClientCreditEntry
-        {
-            CustomerId = reserva.PayerId.Value,
-            // Origen SOBREPAGO: FKs de cancelacion en null (es el discriminador de la guarda B5).
-            OperatorRefundAllocationId = null,
-            BookingCancellationId = null,
-            Currency = saldoCurrency,
-            CreditedAmount = overpaid,
-            RemainingBalance = overpaid,
-            IsFullyConsumed = false,
-            CreatedAt = DateTime.UtcNow,
-            // Trazabilidad del sobrepago: que cobro y que reserva lo generaron + actor.
-            SourcePaymentId = payment.Id,
-            SourceReservaId = reservaId,
-            CreatedByUserId = actorUserId,
-            CreatedByUserName = actorUserName,
-        };
-        _dbContext.ClientCreditEntries.Add(credit);
-
-        // El excedente se SACA del saldo de la reserva con un Payment "puente" NEGATIVO y AffectsCash=false
-        // (NO mueve caja, NO genera asiento): el calculator suma los pagos vivos para TotalPaid, asi que un
-        // monto negativo baja lo "pagado a la reserva" por el excedente y la deja en 0 en esa moneda. La
-        // plata YA entro a caja (asiento del cobro original); este puente solo TRASLADA la posicion del
-        // excedente al bolsillo del cliente, no es un hecho de caja. AffectsCash=false => el guard del
-        // asiento (RegisterPayment) nunca lo asienta.
-        var bridge = new Payment
-        {
-            ReservaId = reservaId,
-            Amount = -overpaid,
-            Currency = saldoCurrency,
-            Method = OverpaymentCreditCleanup.BridgeMethod,
-            Notes = $"Sobrepago trasladado a saldo a favor del cliente (cobro {payment.PublicId}).",
-            PaidAt = DateTime.UtcNow,
-            Status = "Paid",
-            EntryType = PaymentEntryTypes.Payment,
-            AffectsCash = false,
-            // ADR-022 §4.9 (fix S1): atamos el puente al cobro fuente por OriginalPaymentId. Es la FK real que
-            // luego usa OverpaymentCreditCleanup para encontrarlo al anular/editar el cobro, sin parsear Notes.
-            OriginalPaymentId = payment.Id,
-            CreatedByUserId = actorUserId,
-            CreatedByUserName = actorUserName,
-        };
-        _dbContext.Payments.Add(bridge);
-
-        await _dbContext.SaveChangesAsync(cancellationToken);
-
-        // Recalcular: el Payment puente (AffectsCash=false pero imputado) deja la reserva en 0 en esa moneda.
-        await RecalculateReservaBalanceAsync(reservaId, cancellationToken);
-
-        _logger.LogInformation(
-            "Sobrepago convertido a saldo a favor. ReservaId={ReservaId} CustomerId={CustomerId} {Currency} {Overpaid} CreditPublicId={CreditPublicId}",
-            reservaId, reserva.PayerId.Value, saldoCurrency, overpaid, credit.PublicId);
+        // fix bugs #6/#9 (2026-06-17): la mecanica de la conversion vive en OverpaymentCreditConverter
+        // (punto unico, compartido con el path legacy ReservaService.AddPaymentAsync y con
+        // RestorePaymentAsync). Aca solo delegamos para que el camino canonico quede byte-identico.
+        await OverpaymentCreditConverter.ConvertAsync(
+            _dbContext, payment, actorUserId, actorUserName, _logger, cancellationToken);
     }
 
     private static IQueryable<Payment> ApplyPaymentSearch(IQueryable<Payment> query, string? search)
