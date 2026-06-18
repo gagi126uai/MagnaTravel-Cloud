@@ -66,16 +66,6 @@ public class InvoiceService : IInvoiceService
         EstadoReserva.ToSettle
     };
 
-    // ADR-020: estados desde los que NO se puede emitir factura (anti-facturar antes de Confirmada).
-    // Reemplaza al viejo guard "== Sold" gateado por flag.
-    private static readonly string[] NonInvoiceableStatuses =
-    {
-        EstadoReserva.Quotation,
-        EstadoReserva.Budget,
-        EstadoReserva.InManagement,
-        EstadoReserva.Lost
-    };
-
     public InvoiceService(
         AppDbContext context,
         IEntityReferenceResolver entityReferenceResolver,
@@ -314,16 +304,20 @@ public class InvoiceService : IInvoiceService
             .FirstOrDefaultAsync(r => r.Id == reservaId, ct)
             ?? throw new InvalidOperationException("Reserva no encontrada.");
 
-        // ADR-020 (2026-06-07, guard fiscal C1): solo se factura desde Confirmada en adelante. Una
-        // reserva en Cotizacion / Presupuesto / En gestion (o Perdida) todavia no tiene los servicios
-        // resueltos; emitir un CAE ahi seria facturar algo que el operador podria rechazar -> riesgo
-        // fiscal. Ultima linea de defensa server-side ante un POST directo; el frontend tampoco debe
-        // ofrecer "Emitir" en esos estados.
-        if (NonInvoiceableStatuses.Contains(reserva.Status))
+        // ADR-020 (2026-06-07, guard fiscal C1) + fix 2026-06-17 (auditoria de logica): la FACTURA de
+        // venta normal solo se emite desde un estado FACTURABLE (Confirmada / En viaje / A liquidar). Es
+        // una ALLOW-LIST, no una deny-list: la version vieja (NonInvoiceableStatuses) frenaba Cotizacion/
+        // Presupuesto/En gestion/Perdido pero DEJABA PASAR Cancelada y Finalizada -> se podia emitir un CAE
+        // real sobre una venta ANULADA. Ahora cualquier estado fuera de la allow-list rechaza la factura.
+        //
+        // EXCEPCION: las NC/ND (IsCreditNote/IsDebitNote) SI se permiten sobre reservas canceladas/cerradas
+        // -> son justamente las que corrigen/anulan una factura ya emitida de una reserva cancelada.
+        if (!request.IsCreditNote && !request.IsDebitNote
+            && !ActiveInvoicingStatuses.Contains(reserva.Status))
         {
             throw new InvalidOperationException(
-                "No se puede facturar una reserva que todavia no esta Confirmada (esta en " +
-                $"'{reserva.Status}'). Confirma los servicios con el operador antes de facturar.");
+                $"No se puede facturar una reserva en estado '{reserva.Status}'. " +
+                "Solo se emite factura desde Confirmada en adelante (con los servicios resueltos).");
         }
 
         // B1.15 (2026-05-11, fiscal critico): guard anti-doble-emision concurrente.
