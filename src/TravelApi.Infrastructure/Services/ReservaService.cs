@@ -3461,7 +3461,9 @@ public class ReservaService : IReservaService
     /// </summary>
     private static void EnsureCanCloseAndStampClosedAt(Reserva file)
     {
-        if (file.Balance > 0)
+        // Saldo pendiente CON tolerancia de redondeo: un resto de centavo (tipico en cobro cruzado de
+        // moneda) no debe trabar el cierre. Antes "Balance > 0" exacto frenaba el cierre por 1 centavo.
+        if (!EconomicRulesHelper.IsEconomicallySettled(file))
             throw new InvalidOperationException($"No se puede cerrar la reserva porque tiene un saldo pendiente de {file.Balance:N2}.");
         file.ClosedAt = DateTime.UtcNow;
     }
@@ -3726,10 +3728,14 @@ public class ReservaService : IReservaService
         dto.CanEmitAfipInvoice = afip.CanEmit || afip.RequiresOverride;
         dto.EconomicBlockReason = EconomicRulesHelper.GetCombinedEconomicBlockReason(reserva, settings);
         dto.IsInProgress = ComputeIsInProgress(dto.Status, dto.StartDate, dto.EndDate);
-        dto.IsFullyPaid = dto.Balance == 0m;
+        // Saldado = sin deuda CON tolerancia de redondeo (un sobrepago / saldo a favor o un centavo de
+        // cobro cruzado NO es deuda). Mismo criterio canonico que IsEconomicallySettled, que ya se calculo
+        // arriba. Antes era "Balance == 0m" exacto: una reserva pagada de mas (Balance < 0) o con un resto
+        // de centavo mostraba "no pagada / con deuda" — el bug "pagada y figura que debe".
+        dto.IsFullyPaid = dto.IsEconomicallySettled;
         dto.HasOverdueDebt = dto.EndDate.HasValue
             && dto.EndDate.Value.Date < DateTime.UtcNow.Date
-            && dto.Balance > 0m;
+            && !dto.IsEconomicallySettled;
     }
 
     private static void ApplyEconomicFlags(ReservaListDto dto, OperationalFinanceSettings settings)
@@ -3742,10 +3748,14 @@ public class ReservaService : IReservaService
         dto.CanEmitAfipInvoice = afip.CanEmit || afip.RequiresOverride;
         dto.EconomicBlockReason = EconomicRulesHelper.GetCombinedEconomicBlockReason(reserva, settings);
         dto.IsInProgress = ComputeIsInProgress(dto.Status, dto.StartDate, dto.EndDate);
-        dto.IsFullyPaid = dto.Balance == 0m;
+        // Saldado = sin deuda CON tolerancia de redondeo (un sobrepago / saldo a favor o un centavo de
+        // cobro cruzado NO es deuda). Mismo criterio canonico que IsEconomicallySettled, que ya se calculo
+        // arriba. Antes era "Balance == 0m" exacto: una reserva pagada de mas (Balance < 0) o con un resto
+        // de centavo mostraba "no pagada / con deuda" — el bug "pagada y figura que debe".
+        dto.IsFullyPaid = dto.IsEconomicallySettled;
         dto.HasOverdueDebt = dto.EndDate.HasValue
             && dto.EndDate.Value.Date < DateTime.UtcNow.Date
-            && dto.Balance > 0m;
+            && !dto.IsEconomicallySettled;
     }
 
     private static bool ComputeIsInProgress(string status, DateTime? startDate, DateTime? endDate)
