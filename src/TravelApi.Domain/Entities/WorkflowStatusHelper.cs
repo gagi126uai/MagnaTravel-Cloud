@@ -28,9 +28,14 @@ public static class WorkflowStatusHelper
         if (string.IsNullOrWhiteSpace(status)) return WorkflowStatuses.Solicitado;
         var lower = status.Trim().ToLowerInvariant();
 
-        if (lower.Contains("cancel")) return WorkflowStatuses.Cancelado;
-        if (lower.Contains("confirm") || lower.Contains("emit")) return WorkflowStatuses.Confirmado;
-        
+        // Anclado al INICIO (StartsWith), NO Contains: textos como "A confirmar", "sin emitir",
+        // "desconfirmado" o "no confirmado" CONTIENEN la palabra pero significan lo CONTRARIO. Con
+        // Contains se leian como Confirmado y podian auto-confirmar (o no cancelar) un servicio que en
+        // realidad no lo estaba. StartsWith sigue matcheando las familias reales (Cancelado/Cancelada,
+        // Confirmado/Confirmada, Emitido/Emitida) sin esos falsos positivos. Cancel primero (gana sobre confirm).
+        if (lower.StartsWith("cancel")) return WorkflowStatuses.Cancelado;
+        if (lower.StartsWith("confirm") || lower.StartsWith("emit")) return WorkflowStatuses.Confirmado;
+
         return WorkflowStatuses.Solicitado;
     }
 

@@ -69,6 +69,20 @@ public class WorkflowStatusHelperTests
         Assert.False(WorkflowStatusHelper.CountsForSupplierDebtByType(type, status));
     }
 
+    [Theory]
+    [InlineData("Hotel", "A confirmar")]
+    [InlineData("Hotel", "Sin emitir")]
+    [InlineData("Hotel", "Desconfirmado")]
+    [InlineData("Hotel", "No confirmado")]
+    [InlineData("Hotel", "Pendiente de emitir")]
+    public void SupplierDebt_Generico_TextoEnganoso_NoCuentaComoConfirmado(string type, string status)
+    {
+        // Fix 2026-06-17 (StartsWith en vez de Contains): estos textos CONTIENEN "confirm"/"emit"
+        // pero significan lo contrario; antes se leian como Confirmado y generaban deuda indebida /
+        // podian auto-confirmar la reserva. Ahora NO cuentan como confirmado.
+        Assert.False(WorkflowStatusHelper.CountsForSupplierDebtByType(type, status));
+    }
+
     [Fact]
     public void SupplierDebt_Generico_CancelTienePrecedencia()
     {
