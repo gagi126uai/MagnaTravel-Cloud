@@ -1201,6 +1201,13 @@ public class ReservaService : IReservaService
             OccurredAt = DateTime.UtcNow
         });
 
+        // CRM leads (fix de fondo 2026-06-18): un revert puede llevar la reserva a un estado FIRME — el
+        // caso real es reabrir una Cancelada de vuelta a En gestion. Si esa reserva nacio de un lead, ese
+        // lead debe quedar Ganado igual que por cualquier otra entrada a firme. Idempotente: si el revert
+        // va a un estado no-firme (ej. InManagement -> Budget, Lost -> Budget) o el lead ya estaba
+        // Ganado/Perdido, es un no-op. Se persiste junto con la transicion en el SaveChanges de abajo.
+        await MarkSourceLeadAsWonIfReservaIsFirmAsync(reserva);
+
         await _context.SaveChangesAsync(ct);
         return await GetReservaByIdAsync(id);
     }
@@ -2851,9 +2858,11 @@ public class ReservaService : IReservaService
 
         // CRM leads (auditoria ERP 2026-06-13, decision del dueño): el lead de origen pasa a Ganado
         // recien cuando la reserva linkeada llega a un estado EN FIRME (el cliente acepto el presupuesto),
-        // no al crear la reserva. Esta es la unica entrada MANUAL al set en firme (Budget -> InManagement);
-        // los estados firmes posteriores (Confirmed/Traveling/ToSettle) se alcanzan desde uno ya firme, asi
-        // que evaluar aca cubre el evento real. Idempotente: si el lead ya estaba Ganado/Perdido, no se toca.
+        // no al crear la reserva. Este es el camino MANUAL (Budget -> InManagement). NO es el unico: el
+        // mismo disparo vive ahora en SourceLeadWonHook y se invoca desde el motor de estados
+        // (auto-confirmacion + reconciliacion), el job de lifecycle y el revert de una Cancelada (fix de
+        // fondo 2026-06-18, que cubria solo este punto). Idempotente: si el lead ya estaba Ganado/Perdido,
+        // no se toca, por eso es seguro que varios caminos lo llamen.
         if (isRealChange)
         {
             await MarkSourceLeadAsWonIfReservaIsFirmAsync(file);
@@ -2864,35 +2873,17 @@ public class ReservaService : IReservaService
     }
 
     /// <summary>
-    /// CRM leads (auditoria ERP 2026-06-13): si la <paramref name="file"/> esta en un estado de VENTA
-    /// OPERATIVA VIVA (<see cref="EstadoReserva.ActiveCollectionStatuses"/> = {InManagement, Confirmed,
-    /// Traveling, ToSettle}, SIN Closed) y nacio de un lead, marca ese lead como Ganado. Es la regla "el lead
-    /// se gana cuando el cliente ACEPTA el presupuesto" (= la reserva avanza a en firme), reemplazando el
-    /// viejo disparo al crear la reserva.
+    /// CRM leads: marca el lead de origen como Ganado si la <paramref name="file"/> esta en venta operativa
+    /// viva. Delega en la regla UNICA <see cref="SourceLeadWonHook"/> (compartida con el motor de estados, el
+    /// job de lifecycle y el revert) para que TODA entrada a un estado firme dispare el mismo criterio.
     ///
-    /// <para>ADR-033 (2026-06-16, B1/C9 — fix de regresion): este chequeo usa a proposito
-    /// <see cref="EstadoReserva.ActiveCollectionStatuses"/> (operativo vivo, SIN Closed) y NO la lista de
-    /// deuda <see cref="FinancePositionService.ReceivableDebtStatuses"/> (que ahora incluye Closed). Cerrar
-    /// una reserva NO es un evento de "venta nueva concretada" y NO debe marcar el lead como Ganado. "Venta
-    /// viva" (lead-won) y "tiene deuda cobrable" (AR/cobranza) son ejes distintos: el split de ADR-033 los
-    /// separo justamente para que el agregado de Closed a la lista de deuda no arrastrara este disparo.</para>
-    ///
-    /// <para>Idempotente y seguro: <see cref="LeadService.MarkLeadAsWonForSale"/> no reabre un lead Perdido
-    /// y no re-procesa uno ya Ganado. NO hace SaveChanges: el caller persiste el lead trackeado junto con la
-    /// transicion (todo o nada). Si la reserva no tiene <c>SourceLeadId</c>, es un no-op.</para>
+    /// <para>2026-06-18 (fix de fondo): antes esta logica era privada de ReservaService y solo corria en la
+    /// transicion MANUAL Budget -&gt; InManagement, dejando sin marcar los leads cuya reserva llegaba a firme
+    /// por auto-confirmacion, el job o el revert. Se movio el cuerpo a <see cref="SourceLeadWonHook"/> y este
+    /// metodo quedo como un fino envoltorio para no tocar los call-sites internos (UpdateStatusAsync).</para>
     /// </summary>
-    private async Task MarkSourceLeadAsWonIfReservaIsFirmAsync(Reserva file)
-    {
-        if (file.SourceLeadId == null) return;
-        if (!EstadoReserva.ActiveCollectionStatuses.Contains(file.Status)) return;
-
-        // Cargamos la entidad trackeada (no AsNoTracking): le vamos a cambiar el Status y necesitamos que
-        // EF lo persista en el SaveChanges del caller.
-        var sourceLead = await _context.Leads.FindAsync(file.SourceLeadId.Value);
-        if (sourceLead == null) return;
-
-        LeadService.MarkLeadAsWonForSale(sourceLead);
-    }
+    private Task MarkSourceLeadAsWonIfReservaIsFirmAsync(Reserva file)
+        => SourceLeadWonHook.MarkSourceLeadAsWonIfReservaIsFirmAsync(_context, file);
 
     // ============================================================
     // ADR-020: una sola funcion de transicion manual (murio la bifurcacion clasico/nuevo). Valida

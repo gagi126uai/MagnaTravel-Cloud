@@ -1,0 +1,328 @@
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using AutoMapper;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
+using TravelApi.Application.Contracts.Reservations;
+using TravelApi.Application.DTOs;
+using TravelApi.Application.Interfaces;
+using TravelApi.Domain.Entities;
+using TravelApi.Infrastructure.Identity;
+using TravelApi.Infrastructure.Persistence;
+using TravelApi.Infrastructure.Services;
+using TravelApi.Infrastructure.Services.Reservations;
+using Xunit;
+
+namespace TravelApi.Tests.Unit;
+
+/// <summary>
+/// Fix de fondo (2026-06-18): el lead de origen debe pasar a Ganado en TODA entrada de la reserva a un
+/// estado firme (venta operativa viva), no solo en la transicion MANUAL Budget -> InManagement.
+///
+/// <para>Antes, el disparo vivia unicamente en <c>ReservaService.UpdateStatusAsync</c>. Las reservas que
+/// llegaban a firme por auto-confirmacion (motor), por el job de lifecycle o por el revert de una Cancelada
+/// dejaban su lead sin marcar -> conversion de CRM subreportada. Estos tests cubren cada chokepoint y la
+/// idempotencia/no-rotura del helper centralizado <see cref="SourceLeadWonHook"/>.</para>
+/// </summary>
+public class SourceLeadWonHookTests
+{
+    private static AppDbContext NewContext() =>
+        new(new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning))
+            .Options);
+
+    private static ReservaAutoStateService NewEngine(AppDbContext context) =>
+        new(context, NullLogger<ReservaAutoStateService>.Instance);
+
+    private static UserManager<ApplicationUser> BuildUserManager()
+    {
+        var store = new Mock<IUserStore<ApplicationUser>>();
+        store.Setup(s => s.FindByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+             .ReturnsAsync((ApplicationUser?)null);
+        return new UserManager<ApplicationUser>(
+            store.Object, null!, null!,
+            Array.Empty<IUserValidator<ApplicationUser>>(),
+            Array.Empty<IPasswordValidator<ApplicationUser>>(),
+            null!, null!, null!, null!);
+    }
+
+    // ReservaService cableado CON el motor de estados, para ejercitar el chokepoint de auto-confirmacion
+    // (UpdateBalanceAsync -> motor). El mapper minimo solo se usa en GetReservaByIdAsync (post-revert).
+    private static ReservaService NewReservaServiceWithEngine(AppDbContext context)
+    {
+        var settings = new Mock<IOperationalFinanceSettingsService>();
+        settings.Setup(s => s.GetEntityAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new OperationalFinanceSettings());
+
+        var mapper = new Mock<IMapper>();
+        mapper.Setup(m => m.Map<ReservaDto>(It.IsAny<Reserva>()))
+              .Returns((Reserva r) => new ReservaDto
+              {
+                  PublicId = r.PublicId, NumeroReserva = r.NumeroReserva, Name = r.Name, Status = r.Status
+              });
+
+        return new ReservaService(context, mapper.Object, settings.Object,
+            BuildUserManager(), NullLogger<ReservaService>.Instance,
+            permissionResolver: null, httpContextAccessor: null,
+            autoStateService: NewEngine(context));
+    }
+
+    private static ReservaLifecycleAutomationService NewLifecycleJob(AppDbContext context)
+    {
+        var settings = new Mock<IOperationalFinanceSettingsService>();
+        settings.Setup(s => s.GetEntityAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new OperationalFinanceSettings());
+
+        return new ReservaLifecycleAutomationService(
+            context,
+            NullLogger<ReservaLifecycleAutomationService>.Instance,
+            settings.Object,
+            NewEngine(context));
+    }
+
+    // ===================== (1) Auto-confirmacion del motor =====================
+
+    [Fact]
+    public async Task AutoConfirmation_ReservaWithLeadReachesConfirmed_MarksLeadWon()
+    {
+        // Una reserva En gestion con todos sus servicios resueltos -> el motor la confirma sola
+        // (InManagement -> Confirmed). Como Confirmed es estado firme, el lead de origen debe quedar Ganado.
+        await using var ctx = NewContext();
+        var lead = new Lead { FullName = "Ana", Phone = "1122334455", Status = LeadStatus.Contacted };
+        ctx.Leads.Add(lead);
+
+        var reserva = new Reserva
+        {
+            Name = "Viaje Ana",
+            NumeroReserva = "RES-00001",
+            Status = EstadoReserva.InManagement,
+            SourceLeadId = lead.Id,
+        };
+        // Servicio resuelto (Confirmado) -> todos los vivos resueltos -> el motor confirma.
+        reserva.HotelBookings.Add(new HotelBooking { Status = "Confirmado", Currency = "ARS", SalePrice = 1000m });
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        var engine = NewEngine(ctx);
+        var changed = await engine.EvaluateAndApplyAsync(reserva.Id);
+
+        Assert.True(changed); // hubo transicion de estado real
+        var refreshedReserva = await ctx.Reservas.FindAsync(reserva.Id);
+        Assert.Equal(EstadoReserva.Confirmed, refreshedReserva!.Status);
+
+        var refreshedLead = await ctx.Leads.FindAsync(lead.Id);
+        Assert.Equal(LeadStatus.Won, refreshedLead!.Status);
+        Assert.NotNull(refreshedLead.ClosedAt);
+    }
+
+    [Fact]
+    public async Task AutoConfirmation_ViaUpdateBalance_MarksLeadWon()
+    {
+        // Mismo evento pero por el chokepoint REAL en vivo: UpdateBalanceAsync recalcula el saldo y corre el
+        // motor. Prueba que el cableado (no solo el motor aislado) marca el lead.
+        await using var ctx = NewContext();
+        var lead = new Lead { FullName = "Nora", Phone = "1100110011", Status = LeadStatus.Contacted };
+        ctx.Leads.Add(lead);
+
+        var reserva = new Reserva
+        {
+            Name = "Viaje Nora",
+            NumeroReserva = "RES-00010",
+            Status = EstadoReserva.InManagement,
+            SourceLeadId = lead.Id,
+        };
+        reserva.HotelBookings.Add(new HotelBooking { Status = "Confirmado", Currency = "ARS", SalePrice = 1000m });
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        var service = NewReservaServiceWithEngine(ctx);
+        await service.UpdateBalanceAsync(reserva.Id);
+
+        var refreshedReserva = await ctx.Reservas.FindAsync(reserva.Id);
+        Assert.Equal(EstadoReserva.Confirmed, refreshedReserva!.Status);
+
+        var refreshedLead = await ctx.Leads.FindAsync(lead.Id);
+        Assert.Equal(LeadStatus.Won, refreshedLead!.Status);
+    }
+
+    [Fact]
+    public async Task Reconciliation_ReservaWithLeadGetsConfirmed_MarksLeadWon()
+    {
+        // La reconciliacion nocturna corre el mismo motor (suppressNotifications). Una reserva En gestion ya
+        // toda resuelta que esquivo el chokepoint queda Confirmed y su lead Ganado.
+        await using var ctx = NewContext();
+        var lead = new Lead { FullName = "Tito", Phone = "1100220033", Status = LeadStatus.New };
+        ctx.Leads.Add(lead);
+
+        var reserva = new Reserva
+        {
+            Name = "Viaje Tito",
+            NumeroReserva = "RES-00020",
+            Status = EstadoReserva.InManagement,
+            SourceLeadId = lead.Id,
+        };
+        reserva.HotelBookings.Add(new HotelBooking { Status = "Confirmado", Currency = "ARS", SalePrice = 1000m });
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        var job = NewLifecycleJob(ctx);
+        await job.ReconcileAutoStatesAsync(CancellationToken.None);
+
+        var refreshedLead = await ctx.Leads.FindAsync(lead.Id);
+        Assert.Equal(LeadStatus.Won, refreshedLead!.Status);
+    }
+
+    // ===================== (2) Job de lifecycle (Confirmed -> Traveling) =====================
+
+    [Fact]
+    public async Task LifecycleJob_ConfirmedToTraveling_MarksLeadWon()
+    {
+        // Caso defensivo: una reserva llega a Traveling por el job (StartDate alcanzada) con un lead que
+        // todavia no estaba Ganado. El hook en el job lo cubre.
+        await using var ctx = NewContext();
+        var lead = new Lead { FullName = "Bruno", Phone = "1100330044", Status = LeadStatus.Contacted };
+        ctx.Leads.Add(lead);
+
+        var reserva = new Reserva
+        {
+            Name = "Viaje Bruno",
+            NumeroReserva = "RES-00030",
+            Status = EstadoReserva.Confirmed,
+            SourceLeadId = lead.Id,
+            StartDate = DateTime.UtcNow.Date.AddDays(-1), // el viaje ya arranco -> promueve a Traveling
+            AdultCount = 1,
+        };
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        var job = NewLifecycleJob(ctx);
+        await job.AutoTransitionConfirmedToTravelingAsync(CancellationToken.None);
+
+        var refreshedReserva = await ctx.Reservas.FindAsync(reserva.Id);
+        Assert.Equal(EstadoReserva.Traveling, refreshedReserva!.Status);
+
+        var refreshedLead = await ctx.Leads.FindAsync(lead.Id);
+        Assert.Equal(LeadStatus.Won, refreshedLead!.Status);
+    }
+
+    // ===================== (2) Revert de una Cancelada a En gestion =====================
+
+    [Fact]
+    public async Task RevertCancelledToInManagement_MarksLeadWon()
+    {
+        // Reabrir una Cancelada (sin huella fiscal/plata) la lleva a En gestion = estado firme. Si nacio de
+        // un lead, ese lead debe quedar Ganado.
+        await using var ctx = NewContext();
+        var lead = new Lead { FullName = "Carla", Phone = "1100440055", Status = LeadStatus.Contacted };
+        ctx.Leads.Add(lead);
+
+        var reserva = new Reserva
+        {
+            Name = "Viaje Carla",
+            NumeroReserva = "RES-00040",
+            Status = EstadoReserva.Cancelled,
+            SourceLeadId = lead.Id,
+        };
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        var service = NewReservaServiceWithEngine(ctx);
+        await service.RevertStatusAsync(
+            reserva.PublicId.ToString(),
+            new RevertStatusRequest(EstadoReserva.InManagement, AuthorizedBySuperiorUserId: null, Reason: "Cliente retoma el viaje"),
+            actorUserId: "admin1", actorUserName: "Admin", actorIsAdmin: true, ct: CancellationToken.None);
+
+        var refreshedReserva = await ctx.Reservas.FindAsync(reserva.Id);
+        Assert.Equal(EstadoReserva.InManagement, refreshedReserva!.Status);
+
+        var refreshedLead = await ctx.Leads.FindAsync(lead.Id);
+        Assert.Equal(LeadStatus.Won, refreshedLead!.Status);
+        Assert.NotNull(refreshedLead.ClosedAt);
+    }
+
+    // ===================== (3) Idempotencia / seguridad =====================
+
+    [Fact]
+    public async Task AutoConfirmation_LeadAlreadyWon_DoesNotMoveClosedAt()
+    {
+        // Idempotencia: si el lead ya estaba Ganado, la auto-confirmacion NO re-sella ClosedAt (conserva la
+        // fecha del primer Ganado). Asi llamar al hook de mas en cada avance no corre la fecha.
+        await using var ctx = NewContext();
+        var firstWonAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var lead = new Lead { FullName = "Diego", Phone = "1100550066", Status = LeadStatus.Won, ClosedAt = firstWonAt };
+        ctx.Leads.Add(lead);
+
+        var reserva = new Reserva
+        {
+            Name = "Viaje Diego",
+            NumeroReserva = "RES-00050",
+            Status = EstadoReserva.InManagement,
+            SourceLeadId = lead.Id,
+        };
+        reserva.HotelBookings.Add(new HotelBooking { Status = "Confirmado", Currency = "ARS", SalePrice = 1000m });
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        await NewEngine(ctx).EvaluateAndApplyAsync(reserva.Id);
+
+        var refreshedLead = await ctx.Leads.FindAsync(lead.Id);
+        Assert.Equal(LeadStatus.Won, refreshedLead!.Status);
+        Assert.Equal(firstWonAt, refreshedLead.ClosedAt); // NO se corrio la fecha
+    }
+
+    [Fact]
+    public async Task AutoConfirmation_LeadIsLost_DoesNotReopen()
+    {
+        // Seguridad: un lead Perdido NO se reabre aunque la reserva linkeada se auto-confirme.
+        await using var ctx = NewContext();
+        var closedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        var lead = new Lead { FullName = "Eva", Phone = "1100660077", Status = LeadStatus.Lost, ClosedAt = closedAt };
+        ctx.Leads.Add(lead);
+
+        var reserva = new Reserva
+        {
+            Name = "Viaje Eva",
+            NumeroReserva = "RES-00060",
+            Status = EstadoReserva.InManagement,
+            SourceLeadId = lead.Id,
+        };
+        reserva.HotelBookings.Add(new HotelBooking { Status = "Confirmado", Currency = "ARS", SalePrice = 1000m });
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        await NewEngine(ctx).EvaluateAndApplyAsync(reserva.Id);
+
+        var refreshedLead = await ctx.Leads.FindAsync(lead.Id);
+        Assert.Equal(LeadStatus.Lost, refreshedLead!.Status); // sigue Perdido
+        Assert.Equal(closedAt, refreshedLead.ClosedAt);
+    }
+
+    // ===================== (4) Reserva sin SourceLeadId =====================
+
+    [Fact]
+    public async Task AutoConfirmation_ReservaWithoutSourceLead_DoesNotThrow()
+    {
+        // Sin lead de origen, el hook es un no-op: la auto-confirmacion procede normal y nada se rompe.
+        await using var ctx = NewContext();
+        var reserva = new Reserva
+        {
+            Name = "Reserva suelta",
+            NumeroReserva = "RES-00070",
+            Status = EstadoReserva.InManagement,
+            SourceLeadId = null,
+        };
+        reserva.HotelBookings.Add(new HotelBooking { Status = "Confirmado", Currency = "ARS", SalePrice = 1000m });
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        var changed = await NewEngine(ctx).EvaluateAndApplyAsync(reserva.Id);
+
+        Assert.True(changed);
+        var refreshedReserva = await ctx.Reservas.FindAsync(reserva.Id);
+        Assert.Equal(EstadoReserva.Confirmed, refreshedReserva!.Status);
+    }
+}

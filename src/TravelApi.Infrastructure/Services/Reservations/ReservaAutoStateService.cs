@@ -99,9 +99,23 @@ public class ReservaAutoStateService
             }
         }
 
-        if (anyChange)
+        // CRM leads (fix de fondo 2026-06-18): el motor es el chokepoint de TODA entrada automatica a un
+        // estado firme — la auto-confirmacion en vivo (InManagement -> Confirmed, disparada desde
+        // ReservaService.UpdateBalanceAsync) y la reconciliacion nocturna del job pasan ambas por aca. Si la
+        // reserva quedo en venta operativa viva y nacio de un lead, ese lead pasa a Ganado. Se evalua SIEMPRE
+        // (no solo en la rama Forward) porque una reserva ya Confirmed/Traveling que no transiciono igual debe
+        // tener su lead Ganado; el hook es idempotente (no re-sella un lead ya Ganado/Perdido). Va ANTES del
+        // SaveChanges para persistir el lead en la misma transaccion que el cambio del motor (todo o nada).
+        bool leadMarkedWon = await SourceLeadWonHook.MarkSourceLeadAsWonIfReservaIsFirmAsync(_context, reserva, ct);
+
+        // Persistimos si el motor cambio el estado O si el hook acabo de marcar el lead como Ganado. Usamos
+        // el bool preciso del hook (no ChangeTracker.HasChanges() global) para no flushear cambios ajenos que
+        // el contexto compartido pudiera tener pendientes en los flujos de plata.
+        if (anyChange || leadMarkedWon)
             await _context.SaveChangesAsync(ct);
 
+        // El return sigue siendo "hubo cambio de ESTADO" (lo que cuenta la reconciliacion como reserva curada):
+        // marcar un lead no es curar un estado, asi que no infla ese contador.
         return anyChange;
     }
 

@@ -303,6 +303,14 @@ public class ReservaLifecycleAutomationService
             if (transition.StampClosedAt)
                 reserva.ClosedAt = now;
 
+            // CRM leads (fix de fondo 2026-06-18): si el job deja la reserva en un estado FIRME (el caso real
+            // es Confirmed -> Traveling) y nacio de un lead, ese lead debe quedar Ganado. Normalmente ya lo
+            // estara (llego a Confirmed via el motor, que tambien dispara el hook), pero lo evaluamos aca por
+            // si alguna reserva alcanzo Traveling sin haber pasado por ese disparo. Idempotente: no toca un
+            // lead ya Ganado/Perdido, y el cierre Traveling -> Closed (no firme) es no-op. Sin SaveChanges
+            // propio: se persiste en el SaveChanges unico al final de la tanda.
+            await Reservations.SourceLeadWonHook.MarkSourceLeadAsWonIfReservaIsFirmAsync(_db, reserva, ct);
+
             // FIX 5 (A1): rastro auditable solo para transiciones de la cadena nueva.
             if (transition.WriteForwardLog)
             {
