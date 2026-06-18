@@ -124,6 +124,22 @@ public class QuoteServiceConvertCatalogTests
     }
 
     [Fact]
+    public async Task ConvertToFile_FlightItem_StartsAsRequested_NotConfirmed()
+    {
+        // Decision 2026-06-17: un vuelo que nace de convertir una cotizacion arranca "NN" (solicitado),
+        // no "HK" (confirmado por la aerolinea). Sin TicketIssuedAt: no resuelve, no confirma la reserva.
+        await using var context = CreateContext();
+        var quoteId = await SeedQuoteWithItemAsync(context, "vuelo", rateId: null, itemSupplierId: null);
+        var service = CreateService(context, flagOn: false);
+
+        var reservaId = await service.ConvertToFileAsync(quoteId, CancellationToken.None);
+
+        var flight = await context.Set<FlightSegment>().SingleAsync(f => f.ReservaId == reservaId);
+        Assert.Equal("NN", flight.Status);
+        Assert.Null(flight.TicketIssuedAt);
+    }
+
+    [Fact]
     public async Task ConvertToFile_FlagOff_HotelWithRate_NoUpsert()
     {
         await using var context = CreateContext();

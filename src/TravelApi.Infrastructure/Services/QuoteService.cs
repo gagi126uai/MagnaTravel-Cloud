@@ -432,7 +432,12 @@ public class QuoteService : IQuoteService
                     // Ronda 7 (guia UX): Cabina es OPCIONAL — si la tarifa no la tiene, queda null.
                     // El server nunca fabrica un valor que el vendedor no eligio (antes coalescia "Economy").
                     CabinClass = BookingService.NormalizeOptionalText(rate?.CabinClass),
-                    Status = "HK",
+                    // ADR-020 + decision 2026-06-17: un vuelo que nace de convertir una cotizacion arranca
+                    // SIN confirmar ("NN" = solicitado), igual que cualquier vuelo nuevo (FlightSegment default).
+                    // Antes nacia "HK" (confirmado por la aerolinea), mostrando un PNR confirmado que nadie
+                    // confirmo y marcandolo no-borrable indebidamente. No resolvia igual (sin TicketIssuedAt no
+                    // confirma la reserva ni cobra), pero el estado inicial era enganoso.
+                    Status = "NN",
                     NetCost = item.TotalCost,
                     SalePrice = item.TotalPrice,
                     // Trazabilidad: moneda en que se cotizo (del tarifario, si el item tiene tarifa).

@@ -209,6 +209,45 @@ public class ReservaService : IReservaService
             entityType: "Passenger", entityId: passengerId, summary: null, ct: ct);
     }
 
+    /// <summary>
+    /// Decision 2026-06-17 (pasajeros bajo candado): true si el update CAMBIA un dato de IDENTIDAD que YA
+    /// estaba cargado (nombre/tipo y numero de documento/fecha de nacimiento/nacionalidad/genero no vacio y
+    /// distinto al nuevo, o un dato cargado que se limpia). COMPLETAR un campo de identidad que estaba VACIO
+    /// NO cuenta como cambio (es completar, no alterar) y por eso no dispara el candado de estado. Los campos
+    /// de contacto (email/telefono/notas) y el vencimiento de pasaporte NO son identidad: se editan libres
+    /// (mismo criterio que el guard fiscal de UpdatePassengerAsync). Si el pasajero no existe, devuelve false
+    /// y deja que el metodo interno tire el NotFound.
+    /// </summary>
+    private async Task<bool> PassengerEditChangesExistingIdentityAsync(int passengerId, Passenger incoming, CancellationToken ct)
+    {
+        var current = await _context.Passengers.AsNoTracking()
+            .Where(p => p.Id == passengerId)
+            .Select(p => new { p.FullName, p.DocumentType, p.DocumentNumber, p.BirthDate, p.Nationality, p.Gender })
+            .FirstOrDefaultAsync(ct);
+        if (current is null) return false;
+
+        return ChangesExistingText(current.FullName, incoming.FullName)
+            || ChangesExistingText(current.DocumentType, incoming.DocumentType)
+            || ChangesExistingText(current.DocumentNumber, incoming.DocumentNumber)
+            || ChangesExistingDate(current.BirthDate, incoming.BirthDate)
+            || ChangesExistingText(current.Nationality, incoming.Nationality)
+            || ChangesExistingText(current.Gender, incoming.Gender);
+    }
+
+    /// <summary>"Cambia un valor ya cargado" = el actual NO esta vacio y el nuevo es distinto (incluye
+    /// limpiarlo). Si el actual esta vacio, completar (o dejar vacio) NO es cambio.</summary>
+    private static bool ChangesExistingText(string? current, string? incoming)
+        => !string.IsNullOrWhiteSpace(current)
+           && !string.Equals(current ?? string.Empty, incoming ?? string.Empty, StringComparison.Ordinal);
+
+    /// <summary>Idem para la fecha de nacimiento: comparada por DIA (Kind/hora no cuentan).</summary>
+    private static bool ChangesExistingDate(DateTime? current, DateTime? incoming)
+    {
+        if (!current.HasValue) return false;                 // estaba vacia -> completar no es cambio
+        if (!incoming.HasValue) return true;                 // tenia valor y lo limpian -> cambio
+        return current.Value.Date != incoming.Value.Date;
+    }
+
     public async Task<IEnumerable<PassengerDto>> GetPassengersAsync(string reservaPublicIdOrLegacyId, CancellationToken ct = default)
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
@@ -218,16 +257,28 @@ public class ReservaService : IReservaService
     public async Task<PassengerDto> AddPassengerAsync(string reservaPublicIdOrLegacyId, PassengerUpsertRequest passenger, CancellationToken ct = default)
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
-        await EnsureReservaEditableAsync(reservaId, ReservaEditAuthorizationOperations.PassengerAdded,
-            entityType: "Passenger", entityId: null, summary: null, ct: ct);
+        // ADR-020 F4 + decision 2026-06-17 (pasajeros bajo candado): AGREGAR un pasajero es COMPLETAR el
+        // roster nominal que el propio sistema EXIGE para emitir (aereo=nombre+doc, asistencia=+nacimiento).
+        // Bloquearlo por el candado de ESTADO dejaba un callejon sin salida (te pide el dato y no te deja
+        // cargarlo). Ya NO pide autorizacion por estado. El candado FISCAL sigue: la capacidad por reserva
+        // (declaredPax) acota el alta a los cupos declarados y el alta no altera comprobantes ya emitidos.
         return await AddPassengerAsync(reservaId, MapPassenger(passenger));
     }
 
     public async Task<PassengerDto> UpdatePassengerAsync(string passengerPublicIdOrLegacyId, PassengerUpsertRequest updated, CancellationToken ct = default)
     {
         var passengerId = await ResolveRequiredIdAsync<Passenger>(passengerPublicIdOrLegacyId, ct);
-        await EnsurePassengerEditableAsync(passengerId, ReservaEditAuthorizationOperations.PassengerEdited, ct);
-        return await UpdatePassengerAsync(passengerId, MapPassenger(updated));
+        var mapped = MapPassenger(updated);
+        // ADR-020 F4 + decision 2026-06-17 (pasajeros bajo candado): COMPLETAR un dato de identidad que
+        // estaba VACIO no pide autorizacion (es completar, lo que el sistema exige para emitir); CAMBIAR un
+        // dato de identidad YA cargado (o limpiarlo) SI pide autorizacion por el candado de estado. El
+        // candado FISCAL (voucher emitido / CAE) lo aplica aparte el UpdatePassengerAsync interno cuando
+        // cambian datos personales, este o no este bajo candado de estado.
+        if (await PassengerEditChangesExistingIdentityAsync(passengerId, mapped, ct))
+        {
+            await EnsurePassengerEditableAsync(passengerId, ReservaEditAuthorizationOperations.PassengerEdited, ct);
+        }
+        return await UpdatePassengerAsync(passengerId, mapped);
     }
 
     public async Task RemovePassengerAsync(string passengerPublicIdOrLegacyId, CancellationToken ct = default)
