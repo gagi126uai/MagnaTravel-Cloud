@@ -18,6 +18,7 @@ using TravelApi.Application.Mappings;
 using TravelApi.Controllers;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Exceptions;
+using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Reservations;
@@ -441,13 +442,15 @@ public class Adr032CollectableStateRuleTests
     }
 
     // =====================================================================================================
-    // ADR-033 (E3/A2) — editar/borrar un cobro SIN atadura fiscal AHORA funciona en terminal (el gate de
-    // ESTADO se elimino). Con recibo/CAE sigue bloqueado por lo FISCAL (cubierto en otros tests). Anular en
-    // terminal funciona y deja rastro.
+    // ADR-033 (E3/A2) habia liberado editar/borrar en terminal sin atadura fiscal. ADR-035 (2026-06-19,
+    // Decision punto 3) REINTRODUJO un gate ACOTADO a los TERMINALES: editar/borrar un cobro NO se permite en
+    // {Closed, Cancelled, Lost, PendingOperatorRefund} — ahi la correccion es ANULAR con rastro
+    // (AnnulPaymentAsync, cubierto mas abajo). Los tests de abajo reflejan la regla NUEVA (409 en terminal).
+    // El guard fiscal y la anulacion siguen igual.
     // =====================================================================================================
 
     [Fact]
-    public async Task UpdatePayment_OnTerminal_WithoutFiscalLink_NowSucceeds()
+    public async Task UpdatePayment_OnTerminal_RejectedByStateGate_Adr035()
     {
         await using var context = CreateContext();
         // Creamos el cobro mientras la reserva es cobrable, luego la pasamos a terminal (sin recibo/CAE).
@@ -459,19 +462,19 @@ public class Adr032CollectableStateRuleTests
 
         await MoveReservaToStatusAsync(context, reserva.Id, EstadoReserva.Cancelled);
 
-        // ADR-033: ya NO se rechaza por estado. Sin recibo ni factura, el cobro se puede corregir.
-        await paymentService.UpdatePaymentAsync(
-            p.PublicId.ToString(),
-            new UpdatePaymentRequest { Amount = 400m, Method = "Cash" },
-            CancellationToken.None);
+        // ADR-035: en terminal NO se edita el cobro (la salida es anularlo). 409 (InvalidOperationException).
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            paymentService.UpdatePaymentAsync(
+                p.PublicId.ToString(),
+                new UpdatePaymentRequest { Amount = 400m, Method = "Cash" },
+                CancellationToken.None));
 
         var payment = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(x => x.PublicId == p.PublicId);
-        Assert.Equal(400m, payment.Amount);
-        Assert.Equal("Cash", payment.Method);
+        Assert.Equal(300m, payment.Amount); // sin cambios
     }
 
     [Fact]
-    public async Task DeletePayment_OnTerminal_WithoutFiscalLink_NowSucceeds()
+    public async Task DeletePayment_OnTerminal_RejectedByStateGate_Adr035()
     {
         await using var context = CreateContext();
         var reserva = await SeedReservaAsync(context, EstadoReserva.Confirmed);
@@ -482,16 +485,20 @@ public class Adr032CollectableStateRuleTests
 
         await MoveReservaToStatusAsync(context, reserva.Id, EstadoReserva.Closed);
 
-        // ADR-033: el DELETE libre ya no se gatea por estado. Sin atadura fiscal, se borra.
-        await paymentService.DeletePaymentAsync(p.PublicId.ToString(), CancellationToken.None);
+        // ADR-035: en terminal NO se borra el cobro (la salida es anularlo). 409 (InvalidOperationException).
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            paymentService.DeletePaymentAsync(p.PublicId.ToString(), CancellationToken.None));
 
         var payment = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(x => x.PublicId == p.PublicId);
-        Assert.True(payment.IsDeleted);
+        Assert.False(payment.IsDeleted); // sigue vivo
     }
 
     [Fact]
-    public async Task NestedDeletePayment_OnTerminal_WithoutFiscalLink_NowSucceeds()
+    public async Task NestedDeletePayment_OnTerminal_RejectedByStateGate_Adr035()
     {
+        // ADR-035 (2026-06-19): el path LEGACY anidado (ReservaService.DeletePaymentAsync int-overload, via
+        // ReservasController DELETE /api/reservas/{id}/payments/{paymentId}) AHORA tambien gatea por estado,
+        // igual que el camino canonico. Antes (ADR-033) este path borraba libre en terminal — el agujero.
         await using var context = CreateContext();
         var reserva = await SeedReservaAsync(context, EstadoReserva.Confirmed);
         var reservaService = BuildReservaService(context);
@@ -500,11 +507,142 @@ public class Adr032CollectableStateRuleTests
 
         await MoveReservaToStatusAsync(context, reserva.Id, EstadoReserva.Cancelled);
 
-        // ADR-033: el path legacy anidado tampoco gatea por estado. Sin atadura fiscal, se borra.
-        await reservaService.DeletePaymentAsync(reserva.Id, paymentId);
+        // En terminal NO se borra el cobro (sin recibo/CAE): la salida con rastro es anularlo.
+        // 409 (InvalidOperationException), mismo bloqueo que el camino canonico (PaymentService).
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            reservaService.DeletePaymentAsync(reserva.Id, paymentId));
 
         var payment = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(x => x.Id == paymentId);
-        Assert.True(payment.IsDeleted);
+        Assert.False(payment.IsDeleted); // sigue vivo
+    }
+
+    [Fact]
+    public async Task NestedUpdatePayment_OnTerminal_RejectedByStateGate_Adr035()
+    {
+        // ADR-035 (2026-06-19): equivalente del de arriba para EDITAR por el path legacy anidado
+        // (ReservaService.UpdatePaymentAsync int-overload, via ReservasController PUT
+        // /api/reservas/{id}/payments/{paymentId}). En terminal NO se edita; la salida es anular.
+        await using var context = CreateContext();
+        var reserva = await SeedReservaAsync(context, EstadoReserva.Confirmed);
+        var reservaService = BuildReservaService(context);
+        var p = await reservaService.AddPaymentAsync(reserva.Id, new Payment { Amount = 300m, Method = "Cash" });
+        var paymentId = await context.Payments.Where(x => x.PublicId == p.PublicId).Select(x => x.Id).FirstAsync();
+
+        await MoveReservaToStatusAsync(context, reserva.Id, EstadoReserva.Closed);
+
+        // En terminal NO se edita el cobro: 409 (InvalidOperationException), mismo bloqueo que el canonico.
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            reservaService.UpdatePaymentAsync(
+                reserva.Id, paymentId, new Payment { Amount = 400m, Method = "Transfer" }));
+
+        var payment = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(x => x.Id == paymentId);
+        Assert.Equal(300m, payment.Amount); // sin cambios
+    }
+
+    // =====================================================================================================
+    // ADR-035 (2026-06-19) — CRUCE DE COHERENCIA EFECTIVO: CanEditOrDeletePayment vs el enforcement REAL de
+    // los DOS caminos (canonico PaymentService y legacy anidado ReservaService int-overloads). El test
+    // ReservaCapabilitiesCrossCheckTests.CanEditOrDeletePayment_MatchesNonTerminalStates_Exactly cruza la
+    // politica contra su PROPIO conjunto de terminales; este la cruza contra lo que los servicios HACEN, que
+    // es lo que protege la plata. Sin esto, un camino podia desincronizarse en silencio (el agujero que
+    // motivo este fix: el legacy no gateaba).
+    // =====================================================================================================
+
+    [Theory]
+    [InlineData(EstadoReserva.Closed)]
+    [InlineData(EstadoReserva.Cancelled)]
+    [InlineData(EstadoReserva.Lost)]
+    [InlineData(EstadoReserva.PendingOperatorRefund)]
+    public async Task EditOrDeletePayment_OnTerminal_BothPathsRejectLikeThePolicy_Adr035(string terminalStatus)
+    {
+        // Precondicion del cruce: la politica dice que en este estado NO se edita/borra. Si esto cambiara,
+        // el InlineData esta mal y el test deja de tener sentido.
+        Assert.False(
+            ReservaCapabilityPolicy
+                .For(new ReservaCapabilityContext(terminalStatus, 0m, false, false, false, false))
+                .CanEditOrDeletePayment.Allowed,
+            $"La politica deberia bloquear editar/borrar en {terminalStatus}.");
+
+        // --- Camino CANONICO (PaymentService /api/payments/{id}) ---
+        await using (var context = CreateContext())
+        {
+            var reserva = await SeedReservaAsync(context, EstadoReserva.Confirmed);
+            var paymentService = BuildPaymentService(context);
+            var p = await paymentService.CreatePaymentAsync(
+                new CreatePaymentRequest { ReservaId = reserva.PublicId.ToString(), Amount = 300m, Method = "Transfer" },
+                CancellationToken.None);
+            await MoveReservaToStatusAsync(context, reserva.Id, terminalStatus);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                paymentService.UpdatePaymentAsync(
+                    p.PublicId.ToString(),
+                    new UpdatePaymentRequest { Amount = 400m, Method = "Cash" },
+                    CancellationToken.None));
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                paymentService.DeletePaymentAsync(p.PublicId.ToString(), CancellationToken.None));
+        }
+
+        // --- Camino LEGACY anidado (ReservaService int-overloads, /api/reservas/{id}/payments/{paymentId}) ---
+        await using (var context = CreateContext())
+        {
+            var reserva = await SeedReservaAsync(context, EstadoReserva.Confirmed);
+            var reservaService = BuildReservaService(context);
+            var p = await reservaService.AddPaymentAsync(reserva.Id, new Payment { Amount = 300m, Method = "Cash" });
+            var paymentId = await context.Payments.Where(x => x.PublicId == p.PublicId).Select(x => x.Id).FirstAsync();
+            await MoveReservaToStatusAsync(context, reserva.Id, terminalStatus);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                reservaService.UpdatePaymentAsync(
+                    reserva.Id, paymentId, new Payment { Amount = 400m, Method = "Transfer" }));
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                reservaService.DeletePaymentAsync(reserva.Id, paymentId));
+        }
+    }
+
+    [Fact]
+    public async Task EditOrDeletePayment_OnFirmState_BothPathsAllowLikeThePolicy_Adr035()
+    {
+        // Contracara: en un estado firme NO-terminal (Confirmed) la politica habilita editar/borrar y AMBOS
+        // caminos efectivamente lo permiten (sin atadura fiscal). Asi el cruce verifica los dos sentidos.
+        Assert.True(
+            ReservaCapabilityPolicy
+                .For(new ReservaCapabilityContext(EstadoReserva.Confirmed, 300m, false, false, false, false))
+                .CanEditOrDeletePayment.Allowed);
+
+        // --- Camino CANONICO ---
+        await using (var context = CreateContext())
+        {
+            var reserva = await SeedReservaAsync(context, EstadoReserva.Confirmed);
+            var paymentService = BuildPaymentService(context);
+            var p = await paymentService.CreatePaymentAsync(
+                new CreatePaymentRequest { ReservaId = reserva.PublicId.ToString(), Amount = 300m, Method = "Transfer" },
+                CancellationToken.None);
+
+            await paymentService.UpdatePaymentAsync(
+                p.PublicId.ToString(),
+                new UpdatePaymentRequest { Amount = 400m, Method = "Cash" },
+                CancellationToken.None);
+            await paymentService.DeletePaymentAsync(p.PublicId.ToString(), CancellationToken.None);
+
+            var payment = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(x => x.PublicId == p.PublicId);
+            Assert.True(payment.IsDeleted);
+        }
+
+        // --- Camino LEGACY anidado ---
+        await using (var context = CreateContext())
+        {
+            var reserva = await SeedReservaAsync(context, EstadoReserva.Confirmed);
+            var reservaService = BuildReservaService(context);
+            var p = await reservaService.AddPaymentAsync(reserva.Id, new Payment { Amount = 300m, Method = "Cash" });
+            var paymentId = await context.Payments.Where(x => x.PublicId == p.PublicId).Select(x => x.Id).FirstAsync();
+
+            await reservaService.UpdatePaymentAsync(
+                reserva.Id, paymentId, new Payment { Amount = 400m, Method = "Transfer" });
+            await reservaService.DeletePaymentAsync(reserva.Id, paymentId);
+
+            var payment = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(x => x.Id == paymentId);
+            Assert.True(payment.IsDeleted);
+        }
     }
 
     [Fact]

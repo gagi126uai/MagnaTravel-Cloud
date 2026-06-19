@@ -11,6 +11,7 @@ using TravelApi.Application.DTOs;
 using TravelApi.Application.Exceptions;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Reservations;
 using TravelApi.Infrastructure.Services.Reservations;
@@ -66,6 +67,57 @@ public class PaymentService : IPaymentService
         _approvalPolicyService = approvalPolicyService;
         _auditService = auditService;
         QuestPDF.Settings.License = LicenseType.Community;
+    }
+
+    /// <summary>
+    /// ADR-035 (2026-06-19): arma el contexto de capacidades para los gates de PAGO (registrar / editar /
+    /// borrar). Estas dos capacidades solo consultan <see cref="Reserva.Status"/> y <see cref="Reserva.Balance"/>,
+    /// por eso aca se construye un contexto LIVIANO sin tocar la base de datos: las banderas fiscales/voucher/
+    /// candado quedan en false porque no influyen en CanRegisterPayment ni CanEditOrDeletePayment (la
+    /// inmutabilidad fiscal del cobro la enforza despues MutationGuards, la defensa final). El armado COMPLETO
+    /// del contexto (con CAE/voucher/candado reales) vive en ReservaService al construir el DTO de la reserva.
+    /// </summary>
+    private static ReservaCapabilityContext BuildCapabilityContext(Reserva reserva)
+        => new(
+            Status: reserva.Status,
+            Balance: reserva.Balance,
+            HasLiveCae: false,
+            HasLiveVoucher: false,
+            HasLiveEditAuth: false,
+            HasAnyPayment: false);
+
+    /// <summary>
+    /// ADR-035 (2026-06-19): PRIMERA COMPUERTA de editar/borrar cobro. Resuelve el estado de la reserva del
+    /// pago y consulta <see cref="ReservaCapabilities.CanEditOrDeletePayment"/>: en los estados terminales
+    /// {Closed, Cancelled, Lost, PendingOperatorRefund} corta con 409 ("para corregir, anula el cobro"). En
+    /// los demas no hace nada (los guards fiscales/de puente siguen despues). Un pago sin reserva asociada
+    /// (caso raro) no se bloquea por esta compuerta.
+    /// </summary>
+    private async Task EnsurePaymentEditableByStateAsync(Payment payment, CancellationToken cancellationToken)
+    {
+        if (payment.ReservaId is not int reservaId)
+            return;
+
+        var status = await _dbContext.Reservas
+            .AsNoTracking()
+            .Where(r => r.Id == reservaId)
+            .Select(r => r.Status)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (string.IsNullOrWhiteSpace(status))
+            return;
+
+        // Balance no influye en CanEditOrDeletePayment (solo el estado); va 0 por simplicidad.
+        var capability = ReservaCapabilityPolicy
+            .For(new ReservaCapabilityContext(status, Balance: 0m, false, false, false, false))
+            .CanEditOrDeletePayment;
+        if (!capability.Allowed)
+        {
+            _logger.LogWarning(
+                "Payment edit/delete rejected by state gate. PaymentId={PaymentId} ReservaId={ReservaId} Status={Status}.",
+                payment.Id, reservaId, status);
+            throw new InvalidOperationException(capability.Reason);
+        }
     }
 
     /// <summary>
@@ -223,7 +275,85 @@ public class PaymentService : IPaymentService
         });
 
         workItemsQuery = ApplyCollectionWorkItemOrdering(workItemsQuery, query);
-        return await workItemsQuery.ToPagedResponseAsync(query, cancellationToken);
+        var paged = await workItemsQuery.ToPagedResponseAsync(query, cancellationToken);
+
+        // ADR-035 (2026-06-19): la worklist necesita la moneda de cada reserva para que el modal de cobro NO
+        // mande el pago sin moneda (un cobro sobre una reserva en USD se registraria en ARS y corromperia el
+        // libro multimoneda). Llenamos MonedaPrincipal + PorMoneda en BATCH (una sola query por la pagina),
+        // leyendo la misma tabla materializada que usa el listado de reservas. Sin N+1.
+        await FillCurrencyForWorklistAsync(paged.Items, cancellationToken);
+        return paged;
+    }
+
+    /// <summary>
+    /// ADR-035 (2026-06-19): llena <c>MonedaPrincipal</c> y <c>PorMoneda</c> de cada fila de la worklist de
+    /// cobranza. Lee el detalle de saldo por moneda desde la tabla materializada <c>ReservaMoneyByCurrency</c>
+    /// en UNA sola query por los PublicId de la pagina (mismo patron que el listado de reservas: sin N+1, sin
+    /// traer las colecciones de cada reserva). La moneda principal sale del helper de dominio compartido
+    /// <see cref="ReservaPrimaryCurrency"/>, la MISMA regla que el detalle de la reserva.
+    ///
+    /// <para>La worklist de cobranza no expone costos, asi que <c>TotalCost</c> por moneda llega en 0
+    /// (no se proyecta el costo real de la tabla).</para>
+    /// </summary>
+    private async Task FillCurrencyForWorklistAsync(
+        IReadOnlyList<CollectionWorkItemDto> items, CancellationToken cancellationToken)
+    {
+        if (items.Count == 0) return;
+
+        var publicIds = items.Select(i => i.ReservaPublicId).ToList();
+
+        // Una fila por (reserva, moneda). Join explicito contra Reservas (no nav implicita) para resolver el
+        // PublicId con el que matchear el DTO y correr igual en Postgres e InMemory.
+        var rows = await (
+            from row in _dbContext.ReservaMoneyByCurrency.AsNoTracking()
+            join reservaPadre in _dbContext.Reservas.AsNoTracking() on row.ReservaId equals reservaPadre.Id
+            where publicIds.Contains(reservaPadre.PublicId)
+            select new
+            {
+                ReservaPublicId = reservaPadre.PublicId,
+                row.Currency,
+                row.TotalSale,
+                row.ConfirmedSale,
+                row.TotalPaid,
+                row.Balance
+            }).ToListAsync(cancellationToken);
+
+        var byReserva = rows
+            .GroupBy(row => row.ReservaPublicId)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        foreach (var item in items)
+        {
+            if (!byReserva.TryGetValue(item.ReservaPublicId, out var reservaRows))
+            {
+                // Sin filas hijas (reserva legacy sin backfill): dejamos PorMoneda vacio y MonedaPrincipal null.
+                // El front cae a su default historico (ARS), igual que hoy. No inventamos una moneda aca.
+                continue;
+            }
+
+            // Orden alfabetico estable por moneda: es el mismo orden que usa el detalle de la reserva antes de
+            // resolver la moneda principal, asi el desempate del helper es identico en ambos lugares.
+            var ordered = reservaRows
+                .OrderBy(row => row.Currency, StringComparer.Ordinal)
+                .ToList();
+
+            item.PorMoneda = ordered
+                .Select(row => new ReservaMoneyLineDto
+                {
+                    Currency = row.Currency,
+                    TotalSale = row.TotalSale,
+                    ConfirmedSale = row.ConfirmedSale,
+                    TotalCost = 0m, // la worklist de cobranza no expone costos
+                    TotalPaid = row.TotalPaid,
+                    Balance = row.Balance
+                })
+                .ToList();
+
+            var lines = ordered
+                .Select(row => (row.Currency, row.Balance))
+                .ToList();
+            item.MonedaPrincipal = ReservaPrimaryCurrency.Resolve(lines);
+        }
     }
 
     public async Task<PagedResponse<PaymentDto>> GetAllPaymentsAsync(PaymentsListQuery query, CancellationToken cancellationToken)
@@ -518,6 +648,15 @@ public class PaymentService : IPaymentService
             // Sentinel "__no_user__" o user distinto: rechazo. Controller traduce a 403.
             throw new UnauthorizedAccessException("La reserva no esta asignada al usuario actual.");
         }
+
+        // ADR-035 (2026-06-19): PRIMERA COMPUERTA de capacidades. La politica de dominio decide si el estado
+        // admite registrar cobro (estado cobrable + deuda). Es la MISMA regla que el front lee para apagar el
+        // boton "registrar cobro" con motivo, asi front y back no divergen. NO reemplaza al guard fino de abajo:
+        // EnsureCollectable() sigue siendo la defensa final (Balance>0 con el saldo fresco). InvalidOperationException
+        // -> 409 en PaymentsController.CreatePayment.
+        var paymentCapability = ReservaCapabilityPolicy.For(BuildCapabilityContext(reserva)).CanRegisterPayment;
+        if (!paymentCapability.Allowed)
+            throw new InvalidOperationException(paymentCapability.Reason);
 
         // ADR-032 (2026-06-15): regla UNICA de estado cobrable. Antes esto solo bloqueaba Budget y dejaba
         // cobrar en Quotation/Lost/Cancelled/Closed/PendingOperatorRefund/Archived (todos fuera de
@@ -1219,12 +1358,14 @@ public class PaymentService : IPaymentService
             throw new InvalidOperationException(AppliedCreditBridge.DirectBridgeMutationBlockReason);
         }
 
-        // ADR-033 (2026-06-16, E3/A2): el gate de ESTADO operativo para editar un cobro se ELIMINO. Editar
-        // libremente lo restringe la INMUTABILIDAD FISCAL del cobro (recibo emitido / CAE vivo) y los guards
-        // de puente — NO el estado de la reserva. Un cobro sin atadura fiscal se puede corregir este la
-        // reserva donde este (incluida una Finalizada con deuda); un cobro fiscalmente sellado se ANULA con
-        // rastro (AnnulPaymentAsync), esta donde este. Los guards de puente (arriba) y fiscales (abajo)
-        // siguen vigentes; aca solo desaparece la pregunta por el estado operativo.
+        // ADR-033 (2026-06-16, E3/A2): habia quitado TODO gate de estado para editar (editar libremente lo
+        // restringian solo los guards fiscal/puente). ADR-035 (2026-06-19) reintroduce un gate ACOTADO a los
+        // estados TERMINALES: en {Closed, Cancelled, Lost, PendingOperatorRefund} editar/borrar NO se permite;
+        // ahi la correccion es ANULAR con rastro (AnnulPaymentAsync, que NO pasa por esta compuerta a
+        // proposito). Sigue permitido editar en los estados vivos (En gestion/Confirmada/...), asi que NO se
+        // reabre la cobrabilidad de alta de ADR-033. Es la PRIMERA COMPUERTA; los guards fiscales/de puente de
+        // abajo siguen siendo la defensa final. InvalidOperationException -> 409.
+        await EnsurePaymentEditableByStateAsync(payment, cancellationToken);
 
         // B1.15 Fase 0' (CODE-01): inmutabilidad post-recibo / post-CAE. Editar
         // el monto/metodo/referencia de un pago con recibo emitido o ligado a
@@ -1339,12 +1480,13 @@ public class PaymentService : IPaymentService
 
         EnsureNotBridge(payment, "DeletePaymentAsync");
 
-        // ADR-033 (2026-06-16, E3/A2): el gate de ESTADO operativo para borrar un cobro se ELIMINO. El DELETE
-        // "libre" lo restringe la inmutabilidad fiscal (guard fiscal dentro de DeletePaymentCoreAsync) y los
-        // guards de puente (arriba) — NO el estado de la reserva. Un cobro fiscalmente sellado sigue
-        // bloqueado para DELETE y su salida es AnnulPaymentAsync (que SI opera en terminal, deja rastro y
-        // reusa el mismo mecanismo de reversa). DeletePaymentCoreAsync nunca miro el estado: por eso ANNUL lo
-        // reusaba sin este gate; ahora DELETE tampoco lo mira.
+        // ADR-033 (2026-06-16, E3/A2): habia quitado el gate de estado para borrar. ADR-035 (2026-06-19) lo
+        // reintroduce ACOTADO a los TERMINALES {Closed, Cancelled, Lost, PendingOperatorRefund}: en esos
+        // estados un cobro NO se borra, se ANULA con rastro (AnnulPaymentAsync, que NO pasa por esta compuerta
+        // a proposito — sigue siendo la salida valida en terminal y deja PaymentAnnulled). En los estados
+        // vivos el DELETE sigue permitido y lo restringen los guards fiscal (dentro de DeletePaymentCoreAsync)
+        // y de puente (arriba). PRIMERA COMPUERTA; defensa final intacta. InvalidOperationException -> 409.
+        await EnsurePaymentEditableByStateAsync(payment, cancellationToken);
 
         await DeletePaymentCoreAsync(payment, cancellationToken);
     }

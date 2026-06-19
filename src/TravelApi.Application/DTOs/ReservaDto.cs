@@ -59,6 +59,42 @@ public class ReservaPendingChangeDto
     public bool ValuesMasked { get; set; }
 }
 
+/// <summary>
+/// ADR-035 (2026-06-19): UNA capacidad expuesta al frontend. <see cref="Allowed"/> dice si la accion se
+/// puede ahora; <see cref="Reason"/> es el texto legible (en español, sin montos ni costos) que el front
+/// muestra como tooltip/cartel cuando el boton va apagado. El front NO vuelve a evaluar el estado por su
+/// cuenta: lee esto. Espejo del <c>Cap</c> de dominio.
+/// </summary>
+public class CapabilityDto
+{
+    public bool Allowed { get; set; }
+    public string? Reason { get; set; }
+}
+
+/// <summary>
+/// ADR-035 (2026-06-19): bloque de capacidades de la reserva. El front renderiza cada boton de accion
+/// SIEMPRE visible, deshabilitado cuando <c>Allowed=false</c>, con el motivo como tooltip. Es la fuente
+/// unica de "que se puede hacer en este estado" (la calcula el backend con ReservaCapabilityPolicy). Las
+/// listas de transiciones permiten al front armar el menu de cambio de estado sin replicar la matriz.
+/// </summary>
+public class ReservaCapabilitiesDto
+{
+    public CapabilityDto CanInvoiceSale { get; set; } = new();
+    public CapabilityDto CanEmitCreditDebitNote { get; set; } = new();
+    public CapabilityDto CanRegisterPayment { get; set; } = new();
+    public CapabilityDto CanEditOrDeletePayment { get; set; } = new();
+    public CapabilityDto CanEditServices { get; set; } = new();
+    public CapabilityDto CanCancel { get; set; } = new();
+    public CapabilityDto CanAdvance { get; set; } = new();
+    public CapabilityDto CanEmitVoucher { get; set; } = new();
+
+    /// <summary>Estados a los que se puede avanzar manualmente (matriz forward del dominio).</summary>
+    public List<string> AllowedForward { get; set; } = new();
+
+    /// <summary>Estados a los que se puede revertir manualmente (matriz revert del dominio).</summary>
+    public List<string> AllowedRevert { get; set; } = new();
+}
+
 public class ReservaDto
 {
     public Guid PublicId { get; set; }
@@ -197,4 +233,28 @@ public class ReservaDto
     /// Se calcula desde <see cref="PorMoneda"/>. Eje independiente del estado operativo y de la facturacion.
     /// </summary>
     public string CollectionStatus { get; set; } = ReservaCollectionStatus.Settled;
+
+    /// <summary>
+    /// ADR-035 (2026-06-19): que se puede hacer con esta reserva en su estado actual, y por que no cuando no
+    /// se puede. El front lo usa para apagar botones con motivo (siempre visibles, deshabilitados). Es la
+    /// fuente unica de capacidades (no se replica la regla de estado en el cliente). Calculado por la politica
+    /// de dominio ReservaCapabilityPolicy; aditivo (no rompe consumidores actuales).
+    /// </summary>
+    public ReservaCapabilitiesDto Capabilities { get; set; } = new();
+
+    /// <summary>
+    /// ADR-035 (2026-06-19): true si la reserva tiene una factura AFIP con CAE vivo, por lo que NO se puede
+    /// cancelar directamente: primero hay que anular la factura con una Nota de Credito. El front lo usa para
+    /// explicar por que el flujo de cancelacion pide pasar por la NC. Derivado de "tiene CAE vivo".
+    /// </summary>
+    public bool RequiresInvoiceAnnulmentToCancel { get; set; }
+
+    /// <summary>
+    /// ADR-035 Decision 2 / C5 (2026-06-19): moneda PRINCIPAL de la reserva, la que el cobro ofrece
+    /// PRESELECCIONADA. La decide el backend (ReservaMoneyCalculator / armado del DTO), NUNCA el front:
+    /// criterio = la moneda con MAYOR saldo pendiente; si empatan o hay una sola, esa (desempate por el orden
+    /// del DTO, alfabetico estable). Vacio si la reserva no tiene plata cargada. El front la usa como default
+    /// del formulario de cobro (con link "pagar en otra moneda" para el caso menos comun).
+    /// </summary>
+    public string? MonedaPrincipal { get; set; }
 }

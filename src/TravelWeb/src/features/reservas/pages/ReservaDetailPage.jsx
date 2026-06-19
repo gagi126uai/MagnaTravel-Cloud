@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Clock, CreditCard, Download, Eye, ExternalLink, FileText, History, Paperclip, Receipt, Users, Trash2, Edit2, Plus, RefreshCw, Check } from "lucide-react";
+import { Clock, CreditCard, Download, Eye, ExternalLink, FileText, History, Paperclip, Receipt, Users, Trash2, Edit2, Plus, RefreshCw, Check, Ban } from "lucide-react";
 import { api } from "../../../api";
 import { showConfirm, showError, showSuccess } from "../../../alerts";
 import ReservaTimeline from "../../../components/ReservaTimeline";
@@ -41,7 +41,7 @@ import { isStatusLocked } from "../components/ReservaStatusBadge";
 import { useReservaDetail } from "../hooks/useReservaDetail";
 import { useOperationalFlags } from "../../../contexts/OperationalFlagsContext";
 import { useAlerts } from "../../../contexts/AlertsContext";
-import CancelReservaModal from "../../cancellations/components/CancelReservaModal";
+import { CancelarReservaInline } from "../../cancellations/components/CancelarReservaInline";
 import { hasPermission, isAdmin } from "../../../auth";
 import { calcularSugerenciaComposicion } from "../lib/pasajeroHint";
 
@@ -397,7 +397,8 @@ export default function ReservaDetailPage() {
   // Con hasPermission("reservas.cancel"), isAdmin() retorna true para admins (bypass).
   const canCancelReserva = hasPermission("reservas.cancel");
 
-  const [showCancelModal, setShowCancelModal] = useState(false);
+  // showCancelInline: panel en linea ADR-035 (nuevo, reemplaza al modal en la solapa account)
+  const [showCancelInline, setShowCancelInline] = useState(false);
 
   // ADR-027: estado de carga del botón "Dar OK" (acknowledge-changes).
   // Evita doble click y da feedback visual al usuario mientras espera la respuesta del backend.
@@ -714,7 +715,21 @@ export default function ReservaDetailPage() {
           })
         }
         canCancelReserva={canCancelReserva}
-        onCancelReserva={() => setShowCancelModal(true)}
+        onCancelReserva={() => {
+          // ADR-035 fix #1: el panel CancelarReservaInline solo se renderiza en la solapa "account".
+          // Si el usuario esta en otra solapa (servicios, historial, etc.) el panel no aparece.
+          // Solucion: navegar a "account" ANTES de activar el panel; el scroll es automatico
+          // porque el panel se monta debajo de la barra de acciones visible en esa solapa.
+          setActiveTab("account");
+          setShowCancelInline(true);
+        }}
+        onReopenToSettle={() => {
+          // ADR-035 Decision 4-bis: "Reabrir para facturar" (Closed → ToSettle).
+          // El modal de revert se configura con forceReason=true (motivo obligatorio para todos)
+          // y lockedTarget="ToSettle" (el select de destino va pre-seleccionado y bloqueado).
+          // El titulo y el boton del modal cambian segun estas props (ver RevertStatusModal).
+          setShowRevertModal(true);
+        }}
         onRequestEdit={() => setShowEditAuthModal(true)}
         onMarkLost={() => setShowMarkLostModal(true)}
         serviciosCancelados={serviciosCancelados}
@@ -1164,30 +1179,96 @@ export default function ReservaDetailPage() {
           {activeTab === "account" ? (
             <div className="animate-in fade-in space-y-6 duration-500">
 
-              {/* Barra de acciones: "Registrar cobro" y "Emitir factura".
-                  Se oculta completa cuando alguna ficha inline está abierta (no se
-                  permiten dos fichas simultáneas para evitar confusión). */}
-              {!showCobroInline && !showFacturaInline && (
-                <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/50">
-                  <button
-                    onClick={() => {
-                      setCobroAEditar(null);
-                      setShowCobroInline(true);
-                    }}
-                    className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white transition-all hover:bg-emerald-700"
-                    data-testid="btn-registrar-cobro"
-                  >
-                    <Plus className="w-4 h-4" /> Registrar cobro
-                  </button>
-                  <button
-                    onClick={() => setShowFacturaInline(true)}
-                    className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white transition-all hover:bg-indigo-700"
-                    data-testid="btn-emitir-factura"
-                  >
-                    <FileText className="w-4 h-4" /> Emitir factura
-                  </button>
-                </div>
-              )}
+              {/* Barra de acciones: "Registrar cobro", "Emitir factura" y "Cancelar reserva".
+                  ADR-035: los botones se muestran SIEMPRE (apagados si la accion no aplica).
+                  Solo una ficha inline abierta a la vez (cobro, factura o cancelacion). */}
+              {!showCobroInline && !showFacturaInline && !showCancelInline && (() => {
+                // Leemos capabilities del DTO para apagar botones con motivo (ADR-035).
+                // Degradacion elegante: si no hay capabilities, todos los botones van habilitados.
+                const capRegPago = reserva.capabilities?.canRegisterPayment;
+                const capFactura = reserva.capabilities?.canInvoiceSale;
+                const capCancelar = reserva.capabilities?.canCancel;
+
+                const registroPagoHabilitado = !capRegPago || capRegPago.allowed;
+                const facturaHabilitada = !capFactura || capFactura.allowed;
+                // Cancelar ademas requiere permiso de usuario (igual que antes)
+                const cancelarHabilitado = canCancelReserva && (!capCancelar || capCancelar.allowed);
+
+                return (
+                  <div className="flex flex-wrap items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/50">
+
+                    {/* Registrar cobro */}
+                    <div className="flex flex-col items-start gap-0.5">
+                      <button
+                        onClick={() => {
+                          if (!registroPagoHabilitado) return;
+                          setCobroAEditar(null);
+                          setShowCobroInline(true);
+                        }}
+                        disabled={!registroPagoHabilitado}
+                        className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-bold transition-all ${
+                          registroPagoHabilitado
+                            ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                            : 'bg-slate-200 text-slate-400 dark:bg-slate-700 dark:text-slate-500 cursor-not-allowed'
+                        }`}
+                        data-testid="btn-registrar-cobro"
+                      >
+                        <Plus className="w-4 h-4" /> Registrar cobro
+                      </button>
+                      {/* Motivo de bloqueo en texto chico ambar (ADR-035, nunca tooltip) */}
+                      {!registroPagoHabilitado && capRegPago?.reason && (
+                        <p className="text-xs text-amber-600 dark:text-amber-400 font-medium px-1" data-testid="btn-registrar-cobro-reason">
+                          {capRegPago.reason}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Emitir factura */}
+                    <div className="flex flex-col items-start gap-0.5">
+                      <button
+                        onClick={() => { if (facturaHabilitada) setShowFacturaInline(true); }}
+                        disabled={!facturaHabilitada}
+                        className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-bold transition-all ${
+                          facturaHabilitada
+                            ? 'bg-indigo-600 text-white hover:bg-indigo-700'
+                            : 'bg-slate-200 text-slate-400 dark:bg-slate-700 dark:text-slate-500 cursor-not-allowed'
+                        }`}
+                        data-testid="btn-emitir-factura"
+                      >
+                        <FileText className="w-4 h-4" /> Emitir factura
+                      </button>
+                      {!facturaHabilitada && capFactura?.reason && (
+                        <p className="text-xs text-amber-600 dark:text-amber-400 font-medium px-1" data-testid="btn-emitir-factura-reason">
+                          {capFactura.reason}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Cancelar reserva — visible solo si el usuario tiene permiso reservas.cancel */}
+                    {canCancelReserva && (
+                      <div className="flex flex-col items-start gap-0.5">
+                        <button
+                          onClick={() => { if (cancelarHabilitado) setShowCancelInline(true); }}
+                          disabled={!cancelarHabilitado}
+                          className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-bold transition-all ${
+                            cancelarHabilitado
+                              ? 'bg-rose-600 text-white hover:bg-rose-700'
+                              : 'bg-slate-200 text-slate-400 dark:bg-slate-700 dark:text-slate-500 cursor-not-allowed'
+                          }`}
+                          data-testid="btn-cancelar-reserva-account"
+                        >
+                          <Ban className="w-4 h-4" /> Cancelar reserva
+                        </button>
+                        {!cancelarHabilitado && capCancelar?.reason && (
+                          <p className="text-xs text-amber-600 dark:text-amber-400 font-medium px-1" data-testid="btn-cancelar-reserva-reason">
+                            {capCancelar.reason}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Ficha inline de cobro: se despliega aquí, debajo de la barra de acciones */}
               {showCobroInline && (
@@ -1221,6 +1302,21 @@ export default function ReservaDetailPage() {
                     fetchReserva({ showLoading: false, preserveOnError: true });
                   }}
                   onCancelar={() => setShowFacturaInline(false)}
+                />
+              )}
+
+              {/* Panel inline de cancelacion (ADR-035, 2026-06-19).
+                  Reemplaza al modal flotante para el flujo de cancelacion en la solapa Estado de Cuenta.
+                  Solo una ficha inline abierta a la vez: si este esta abierto, la barra de acciones
+                  (cobro/factura) se oculta (condicion !showCancelInline ya esta en la barra arriba). */}
+              {showCancelInline && reserva && (
+                <CancelarReservaInline
+                  reserva={reserva}
+                  onCancelado={() => {
+                    setShowCancelInline(false);
+                    fetchReserva({ showLoading: false, preserveOnError: true });
+                  }}
+                  onCerrar={() => setShowCancelInline(false)}
                 />
               )}
 
@@ -1501,6 +1597,8 @@ export default function ReservaDetailPage() {
       />
 
       {showRevertModal && (
+        // ADR-035 fix #2: forceReason obliga el motivo tambien a admins;
+        // lockedTarget="ToSettle" pre-selecciona el destino y oculta el selector.
         <RevertStatusModal
           reserva={reserva}
           onClose={() => setShowRevertModal(false)}
@@ -1508,6 +1606,8 @@ export default function ReservaDetailPage() {
             setShowRevertModal(false);
             fetchReserva({ showLoading: false, preserveOnError: true });
           }}
+          forceReason
+          lockedTarget="ToSettle"
         />
       )}
 
@@ -1517,23 +1617,6 @@ export default function ReservaDetailPage() {
         onClose={() => setShowEditDatesModal(false)}
         onSave={handleSaveReservaDates}
       />
-
-      {/* Modal de cancelacion de reserva.
-          Se monta siempre pero permanece cerrado (isOpen=false) hasta que el agente
-          hace click en el boton "Cancelar reserva" del header. Patron identico al
-          modal de ConfirmReserva. */}
-      {reserva && (
-        <CancelReservaModal
-          reserva={reserva}
-          isOpen={showCancelModal}
-          onClose={() => setShowCancelModal(false)}
-          onCancelled={() => {
-            setShowCancelModal(false);
-            // Recargamos la reserva para reflejar el nuevo estado (Cancelled).
-            fetchReserva({ showLoading: false, preserveOnError: true });
-          }}
-        />
-      )}
 
       {/* ADR-020 F4: modal para solicitar autorizacion de edicion en reservas bloqueadas. */}
       {showEditAuthModal && (

@@ -30,12 +30,18 @@ function formatTripDate(value) {
  *   Cualquier etapa activa → [Cancelar] (con proceso fiscal)
  *   Quotation/Budget → [Perdido] (discreto, no hubo compra)
  *
+ * ADR-035 (2026-06-19): los botones se muestran SIEMPRE (nunca se esconden por estado).
+ * Si la accion no esta permitida, el boton aparece apagado (disabled) y DEBAJO se muestra
+ * el motivo en texto chico ambar. La fuente de verdad es `reserva.capabilities`.
+ * Degradacion elegante: si capabilities no viene (DTO viejo), mantiene la logica local.
+ *
  * Props:
- * - reserva: objeto de la reserva cargada
+ * - reserva: objeto de la reserva cargada (incluye capabilities si es DTO ADR-035)
  * - canCancelReserva: si el usuario tiene el permiso reservas.cancel
- * - onCancelReserva: callback para abrir el flujo de cancelacion
+ * - onCancelReserva: callback para abrir el flujo de cancelacion en linea
  * - onRequestEdit: callback para abrir el modal de autorizacion de edicion (cuando hay candado)
  * - onMarkLost: callback para abrir el modal "Marcar como perdida"
+ * - onReopenToSettle: callback para reabrir la reserva a "A liquidar" (ADR-035, Closed→ToSettle)
  * - Los callbacks onStatusChange, onDelete, onArchive, onRevert, onEditDates son manejados por el padre
  * - serviciosCancelados: { cancelados: number, totalConProveedor: number } — para el contador "N de M".
  *   El padre lo calcula con calculateServiciosCanceladosResumen(allServices).
@@ -53,6 +59,7 @@ export function ReservaHeader({
     onCancelReserva,
     onRequestEdit,
     onMarkLost,
+    onReopenToSettle,
     serviciosCancelados = null,
     totalPasajerosDeclarados = null,
 }) {
@@ -65,27 +72,62 @@ export function ReservaHeader({
     const archiveBlockReason = getReservaArchiveBlockReason(reserva);
     const canArchive = !archiveBlockReason;
 
-    // Reversion: permitida desde estados post-gestion hacia atras.
-    // Closed puede revertir a Traveling; Lost puede revertir a su origen.
-    const canRevert = ['Budget', 'InManagement', 'Confirmed', 'Traveling', 'ToSettle', 'Closed', 'Lost'].includes(reserva.status);
-
     // Las fechas se pueden editar en estados activos (no archivada/cancelada/perdida).
     const canEditDates = !isArchived && reserva.status !== 'Cancelled' && reserva.status !== 'Lost';
 
-    // Boton "Cancelar reserva": visible solo en estados operativos con implicancias fiscales.
-    // Quotation/Budget/Lost/InManagement sin pagos → preferiria usar "eliminar" o "perder".
-    // El backend re-valida el permiso; esto es solo UI.
-    const CANCELLABLE_STATUSES = ['InManagement', 'Confirmed', 'Traveling', 'ToSettle'];
-    const showCancelButton = canCancelReserva
-        && onCancelReserva
-        && CANCELLABLE_STATUSES.includes(reserva.status)
-        && !isArchived;
+    // ─── ADR-035: leer capabilities del DTO ──────────────────────────────────────
+    // Si el backend no manda capabilities (DTO viejo), se cae en undefined y cada botón
+    // usa su lógica local como fallback (degradación elegante).
+    const capabilities = reserva.capabilities;
 
+    // Helper local: extrae { allowed, reason } de un campo de capabilities.
+    // Si no hay capabilities, devuelve { allowed: true, reason: null } para no bloquear.
+    function getCapability(field) {
+        if (!capabilities || !capabilities[field]) return { allowed: true, reason: null };
+        return capabilities[field];
+    }
+
+    // ─── Boton Cancelar ───────────────────────────────────────────────────────────
+    // ADR-035: siempre visible si hay permiso de usuario; apagado con motivo si capabilities.canCancel.allowed=false.
+    // Fallback (sin capabilities): solo en estados operativos (igual que antes).
+    const CANCELLABLE_STATUSES_FALLBACK = ['InManagement', 'Confirmed', 'Traveling', 'ToSettle'];
+    const cancelCapability = getCapability('canCancel');
+    // Mostramos el boton si el usuario tiene permiso Y hay callback. La habilitacion la decide capabilities.
+    const showCancelButton = canCancelReserva && onCancelReserva && !isArchived && (
+        capabilities
+            // Con capabilities: mostrar si la lista forward lo incluye O si canCancel.allowed es true.
+            // Pero en ADR-035 se muestra SIEMPRE (apagado si no allowed). Solo ocultamos si no hay permiso de usuario.
+            ? true
+            // Sin capabilities: solo en estados operativos (fallback legacy).
+            : CANCELLABLE_STATUSES_FALLBACK.includes(reserva.status)
+    );
+
+    // ─── Boton "Perdido" ─────────────────────────────────────────────────────────
     // "Perdido": solo desde Quotation o Budget (cuando el cliente no compro).
     // En etapas mas avanzadas se usa "Cancelar" (hay implicancias fiscales).
     const showMarkLostButton = ['Quotation', 'Budget'].includes(reserva.status)
         && !isArchived
         && onMarkLost;
+
+    // ─── Reversion de estado ──────────────────────────────────────────────────────
+    // ADR-035: si hay capabilities, la lista allowedRevert determina si se puede revertir.
+    // Fallback (sin capabilities): lista hardcodeada de estados que permiten reversion.
+    const canRevertLocal = ['Budget', 'InManagement', 'Confirmed', 'Traveling', 'ToSettle', 'Closed', 'Lost'].includes(reserva.status);
+    const canRevert = capabilities
+        ? (Array.isArray(capabilities.allowedRevert) && capabilities.allowedRevert.length > 0)
+        : canRevertLocal;
+
+    // ─── Boton "Reabrir para facturar" (ADR-035, Decision 4-bis) ─────────────────
+    // Disponible cuando la reserva esta Finalizada (Closed) y el backend permite Closed→ToSettle.
+    // Con capabilities: buscamos ToSettle en la lista allowedRevert (la transicion que habilita ADR-035).
+    // Sin capabilities: solo local (Closed + callback disponible).
+    const puedeReabrirConCapabilities = capabilities
+        && Array.isArray(capabilities.allowedRevert)
+        && capabilities.allowedRevert.includes('ToSettle');
+    const puedeReabrirFallback = reserva.status === 'Closed';
+    const showReopenButton = onReopenToSettle && !isArchived && (
+        capabilities ? puedeReabrirConCapabilities : puedeReabrirFallback
+    );
 
     const startLabel = formatTripDate(reserva.startDate);
     const endLabel = formatTripDate(reserva.endDate);
@@ -322,38 +364,75 @@ export function ReservaHeader({
                                 data-testid="reserva-action-mark-lost"
                                 aria-label="Perdida"
                                 className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 rounded-xl transition-colors text-sm font-semibold"
-                                title="Marcar como Perdida (el cliente no compro)"
                             >
                                 <XCircle className="w-4 h-4" />
                                 Perdida
                             </button>
                         )}
 
-                        {/* Boton "Cancelar reserva": proceso fiscal, solo en estados operativos.
-                            El title mantiene la advertencia AFIP porque el texto corto "Cancelar" no la comunica. */}
-                        {showCancelButton && (
-                            <button
-                                onClick={onCancelReserva}
-                                data-testid="reserva-action-cancel"
-                                aria-label="Cancelar reserva"
-                                className="inline-flex items-center gap-1.5 px-3 py-2 bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-900/20 dark:text-rose-300 rounded-xl transition-colors text-sm font-semibold"
-                                title="Cancelar reserva (emite nota de credito en AFIP/ARCA)"
-                            >
-                                <Ban className="w-4 h-4" />
-                                Cancelar
-                            </button>
-                        )}
+                        {/* ── Boton "Cancelar reserva" (ADR-035) ────────────────────────────────────
+                            SIEMPRE VISIBLE si el usuario tiene permiso; si la accion no esta
+                            permitida por capabilities, va apagado (disabled) y el motivo aparece
+                            DEBAJO en texto chico ambar (NO en title/tooltip). */}
+                        {showCancelButton && (() => {
+                            const cancelAllowed = cancelCapability.allowed;
+                            const cancelReason = cancelCapability.reason;
 
-                        {/* Reversion de estado: disponible en varios estados */}
+                            return (
+                                <div className="flex flex-col items-start gap-0.5">
+                                    <button
+                                        onClick={cancelAllowed ? onCancelReserva : undefined}
+                                        disabled={!cancelAllowed}
+                                        data-testid="reserva-action-cancel"
+                                        aria-label="Cancelar reserva"
+                                        className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl transition-colors text-sm font-semibold ${
+                                            cancelAllowed
+                                                ? 'bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-900/20 dark:text-rose-300'
+                                                : 'bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-600 cursor-not-allowed'
+                                        }`}
+                                    >
+                                        <Ban className="w-4 h-4" />
+                                        Cancelar
+                                    </button>
+                                    {/* Motivo visible debajo del boton (nunca tooltip) — spec ADR-035 */}
+                                    {!cancelAllowed && cancelReason && (
+                                        <p
+                                            className="text-xs text-amber-600 dark:text-amber-400 font-medium px-1"
+                                            data-testid="reserva-action-cancel-reason"
+                                        >
+                                            {cancelReason}
+                                        </p>
+                                    )}
+                                </div>
+                            );
+                        })()}
+
+                        {/* ── Reversion de estado ────────────────────────────────────────────────────
+                            Disponible en varios estados. Con capabilities se lee allowedRevert.
+                            Sin capabilities: fallback a la lista hardcodeada. */}
                         {canRevert && onRevert && (
                             <button
                                 onClick={onRevert}
                                 aria-label="Volver atrás"
                                 className="inline-flex items-center gap-1.5 px-3 py-2 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-900/20 dark:text-amber-300 rounded-xl transition-colors text-sm font-semibold"
-                                title="Revertir estado (requiere autorizacion si la reserva tiene candado)"
                             >
                                 <Undo2 className="w-4 h-4" />
                                 Volver atrás
+                            </button>
+                        )}
+
+                        {/* ── Boton "Reabrir para facturar" (ADR-035, Decision 4-bis) ────────────────
+                            Visible cuando la reserva puede volver de Closed a ToSettle.
+                            Nombre exacto confirmado por Gaston (guia-ux-gaston.md sección ADR-035). */}
+                        {showReopenButton && (
+                            <button
+                                onClick={onReopenToSettle}
+                                data-testid="reserva-action-reopen-to-settle"
+                                aria-label="Reabrir para facturar"
+                                className="inline-flex items-center gap-1.5 px-3 py-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-900/20 dark:text-indigo-300 rounded-xl transition-colors text-sm font-semibold"
+                            >
+                                <RefreshCw className="w-4 h-4" />
+                                Reabrir para facturar
                             </button>
                         )}
 
@@ -369,18 +448,27 @@ export function ReservaHeader({
                             </button>
                         )}
 
-                        {/* Archivar: el title conserva el motivo de bloqueo cuando está deshabilitado,
-                            porque "Archivar" solo no explica por qué no se puede. */}
-                        <button
-                            onClick={canArchive ? onArchive : undefined}
-                            disabled={!canArchive}
-                            aria-label="Archivar reserva"
-                            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl transition-colors text-sm font-semibold ${canArchive ? 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700' : 'bg-slate-50 text-slate-300 dark:bg-slate-900 dark:text-slate-700 cursor-not-allowed'}`}
-                            title={archiveBlockReason || "Archivar"}
-                        >
-                            <Archive className="w-4 h-4" />
-                            Archivar
-                        </button>
+                        {/* Archivar: cuando no se puede, muestra el motivo DEBAJO en texto ambar (ADR-035). */}
+                        <div className="flex flex-col items-start gap-0.5">
+                            <button
+                                onClick={canArchive ? onArchive : undefined}
+                                disabled={!canArchive}
+                                aria-label="Archivar reserva"
+                                className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl transition-colors text-sm font-semibold ${canArchive ? 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700' : 'bg-slate-50 text-slate-300 dark:bg-slate-900 dark:text-slate-700 cursor-not-allowed'}`}
+                            >
+                                <Archive className="w-4 h-4" />
+                                Archivar
+                            </button>
+                            {/* Motivo de bloqueo debajo del boton (ADR-035: nunca en title/tooltip) */}
+                            {!canArchive && archiveBlockReason && (
+                                <p
+                                    className="text-xs text-amber-600 dark:text-amber-400 font-medium px-1"
+                                    data-testid="reserva-action-archive-reason"
+                                >
+                                    {archiveBlockReason}
+                                </p>
+                            )}
+                        </div>
                     </div>
                 </div>
             )}

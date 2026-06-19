@@ -59,12 +59,12 @@ public class InvoiceService : IInvoiceService
     //  - Quotation/Budget/InManagement/Lost: NO facturables. En particular En gestion (InManagement)
     //    todavia tiene servicios sin resolver; facturar ahi seria emitir CAE por algo que el operador
     //    podria rechazar (riesgo fiscal). El guard server-side en CreateAsync lo refuerza.
+    // ADR-035 (2026-06-19): FUENTE UNICA. La allow-list de facturacion vive ahora en la politica de dominio
+    // (ReservaCapabilityPolicy.InvoiceableStatuses = {Confirmed, Traveling, ToSettle}); aca solo la
+    // referenciamos para las queries LINQ-to-SQL de la bandeja/summary (que necesitan un array materializado;
+    // la politica no se traduce a SQL). El guard de CreateAsync delega en CanInvoiceSale (misma fuente).
     private static readonly string[] ActiveInvoicingStatuses =
-    {
-        EstadoReserva.Confirmed,
-        EstadoReserva.Traveling,
-        EstadoReserva.ToSettle
-    };
+        ReservaCapabilityPolicy.InvoiceableStatuses;
 
     public InvoiceService(
         AppDbContext context,
@@ -312,12 +312,20 @@ public class InvoiceService : IInvoiceService
         //
         // EXCEPCION: las NC/ND (IsCreditNote/IsDebitNote) SI se permiten sobre reservas canceladas/cerradas
         // -> son justamente las que corrigen/anulan una factura ya emitida de una reserva cancelada.
-        if (!request.IsCreditNote && !request.IsDebitNote
-            && !ActiveInvoicingStatuses.Contains(reserva.Status))
+        // ADR-035 (2026-06-19): la allow-list se consulta via la politica de dominio (CanInvoiceSale), fuente
+        // unica compartida con el front. El conjunto de estados NO cambia ({Confirmed, Traveling, ToSettle}).
+        // La excepcion NC/ND se mantiene: las notas SI se permiten sobre reservas canceladas/cerradas.
+        if (!request.IsCreditNote && !request.IsDebitNote)
         {
-            throw new InvalidOperationException(
-                $"No se puede facturar una reserva en estado '{reserva.Status}'. " +
-                "Solo se emite factura desde Confirmada en adelante (con los servicios resueltos).");
+            var invoiceCapability = ReservaCapabilityPolicy
+                .For(new ReservaCapabilityContext(reserva.Status, reserva.Balance, false, false, false, false))
+                .CanInvoiceSale;
+            if (!invoiceCapability.Allowed)
+            {
+                throw new InvalidOperationException(
+                    $"No se puede facturar una reserva en estado '{reserva.Status}'. " +
+                    "Solo se emite factura desde Confirmada en adelante (con los servicios resueltos).");
+            }
         }
 
         // B1.15 (2026-05-11, fiscal critico): guard anti-doble-emision concurrente.

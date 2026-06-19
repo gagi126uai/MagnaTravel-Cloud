@@ -918,46 +918,16 @@ public class ReservaService : IReservaService
     //    Status por fuera de estas matrices.
     // ============================================================
 
-    /// <summary>
-    /// Matriz FORWARD unica (transiciones manuales via UpdateStatusAsync). Confirmed como destino
-    /// esta AUSENTE adrede: solo el motor automatico lleva InManagement -> Confirmed.
-    ///
-    /// <para>Cancelled aparece desde {InManagement, Confirmed, Traveling, ToSettle} (B5: cancelacion
-    /// manual sin factura viva). Desde Quotation/Budget la salida es Lost, no Cancelled.</para>
-    /// </summary>
-    private static readonly Dictionary<string, string[]> AllowedForwardTransitions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        [EstadoReserva.Quotation] = new[] { EstadoReserva.Budget, EstadoReserva.Lost },
-        [EstadoReserva.Budget] = new[] { EstadoReserva.InManagement, EstadoReserva.Lost },
-        [EstadoReserva.InManagement] = new[] { EstadoReserva.Cancelled },
-        [EstadoReserva.Confirmed] = new[] { EstadoReserva.Traveling, EstadoReserva.Cancelled },
-        // Traveling: Closed = cierre por default, ToSettle = desvio opcional (apartar para liquidar).
-        [EstadoReserva.Traveling] = new[] { EstadoReserva.Closed, EstadoReserva.ToSettle, EstadoReserva.Cancelled },
-        [EstadoReserva.ToSettle] = new[] { EstadoReserva.Closed, EstadoReserva.Cancelled },
-    };
+    // ADR-035 C6 (2026-06-19): las matrices forward/revert se MOVIERON al dominio
+    // (TravelApi.Domain.Reservations.ReservaStatusTransitions) para ser FUENTE UNICA compartida con
+    // ReservaCapabilities (la fachada de lectura que el frontend consulta). Aca quedan como alias estaticos
+    // para no tocar los call-sites (UpdateStatusAsync, RevertStatusAsync, GetRevertOptionsAsync). El gate de
+    // escritura sigue siendo la defensa final; la fachada de lectura solo LEE estas mismas tablas.
+    private static readonly IReadOnlyDictionary<string, string[]> AllowedForwardTransitions =
+        TravelApi.Domain.Reservations.ReservaStatusTransitions.Forward;
 
-    /// <summary>
-    /// Matriz REVERT unica (transiciones hacia atras manuales, con la autorizacion de supervisor
-    /// existente). Confirmed -> InManagement NO esta: la regresion es automatica (motor).
-    ///
-    /// <para><c>Lost</c> revierte a {Quotation, Budget}, pero el target REAL es deterministico: el
-    /// <c>FromStatus</c> de la ultima transicion a Lost (ver <see cref="ResolveLostRevertTargetAsync"/>).
-    /// Ambos se listan aca solo para que el guard de matriz acepte el target correcto.</para>
-    /// </summary>
-    private static readonly Dictionary<string, string[]> AllowedRevertTransitions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        [EstadoReserva.Budget] = new[] { EstadoReserva.Quotation },
-        [EstadoReserva.InManagement] = new[] { EstadoReserva.Budget },
-        [EstadoReserva.Lost] = new[] { EstadoReserva.Quotation, EstadoReserva.Budget },
-        [EstadoReserva.Traveling] = new[] { EstadoReserva.Confirmed },
-        [EstadoReserva.ToSettle] = new[] { EstadoReserva.Traveling },
-        [EstadoReserva.Closed] = new[] { EstadoReserva.Traveling },
-        // ADR-033 (2026-06-16, E4/B4): una Cancelada se puede REABRIR a En gestion SOLO si la cancelacion no
-        // dejo huella fiscal ni de plata (sin NC, sin saldo a favor, sin refund del operador). El gate duro
-        // que verifica eso vive en RevertStatusAsync (query D2); aca solo se declara el destino legal.
-        // Simetrico con Lost (que tambien revierte si no hubo movimiento).
-        [EstadoReserva.Cancelled] = new[] { EstadoReserva.InManagement },
-    };
+    private static readonly IReadOnlyDictionary<string, string[]> AllowedRevertTransitions =
+        TravelApi.Domain.Reservations.ReservaStatusTransitions.Revert;
 
     /// <summary>
     /// ADR-020 (B1): el revert de <c>Lost</c> vuelve al estado desde el que se perdio. Lo deduce del
@@ -1800,7 +1770,75 @@ public class ReservaService : IReservaService
         dto.ServiceCancellationBlockReason =
             await MutationGuards.GetReservaCancellationBlockReasonAsync(_context, file.Id, CancellationToken.None);
 
+        // ADR-035 (2026-06-19): bloque de CAPACIDADES (fuente unica que el front lee para apagar botones con
+        // motivo) y MONEDA PRINCIPAL del cobro. Se calculan al final, con la plata ya armada (PorMoneda) y los
+        // comprobantes ya incluidos (file.Invoices). "CAE vivo" = factura con CAE asignado, resultado "A" y no
+        // anulada (mismo criterio que el cuadre de arriba): es lo que obliga a anular con NC antes de cancelar.
+        var hasLiveCae = file.Invoices.Any(i =>
+            !string.IsNullOrEmpty(i.CAE)
+            && i.Resultado == "A"
+            && i.AnnulmentStatus != AnnulmentStatus.Succeeded);
+
+        var capabilityContext = new ReservaCapabilityContext(
+            Status: file.Status,
+            Balance: file.Balance,
+            HasLiveCae: hasLiveCae,
+            // HasLiveVoucher / HasAnyPayment no influyen en ninguna capacidad de la politica hoy; se pasan en
+            // false para no agregar Includes al detalle (no hot path, pero evitamos queries inutiles). Si una
+            // capacidad futura los necesitara, se cargan aca.
+            HasLiveVoucher: false,
+            HasLiveEditAuth: dto.HasLiveEditAuthorization,
+            HasAnyPayment: false);
+        dto.Capabilities = MapCapabilities(ReservaCapabilityPolicy.For(capabilityContext));
+
+        // Derivado de "tiene CAE vivo": el front explica por que cancelar exige pasar por la NC primero.
+        dto.RequiresInvoiceAnnulmentToCancel = hasLiveCae;
+
+        // ADR-035 Decision 2 / C5: la moneda principal (default del cobro) la decide el backend, nunca el front.
+        dto.MonedaPrincipal = ResolvePrimaryCurrency(dto.PorMoneda);
+
         return dto;
+    }
+
+    /// <summary>
+    /// ADR-035 Decision 2 / C5 (2026-06-19): elige la moneda PRINCIPAL de la reserva para preseleccionar en
+    /// el cobro. La regla vive en el dominio (<see cref="ReservaPrimaryCurrency"/>) y la reusa tambien la
+    /// worklist de cobranza; aca solo adaptamos el DTO al par (moneda, saldo) que espera el helper.
+    ///
+    /// <para>Vive en el armado del DTO a proposito: el front NUNCA decide la moneda principal, solo consume
+    /// este valor (ADR-035 §7). Es la unica fuente del default de cobro.</para>
+    /// </summary>
+    private static string? ResolvePrimaryCurrency(List<ReservaMoneyLineDto> porMoneda)
+    {
+        if (porMoneda is null || porMoneda.Count == 0)
+            return null;
+
+        var lines = porMoneda
+            .Select(line => (line.Currency, line.Balance))
+            .ToList();
+        return ReservaPrimaryCurrency.Resolve(lines);
+    }
+
+    /// <summary>
+    /// ADR-035 (2026-06-19): mapea el resultado de la politica de dominio (<see cref="ReservaCapabilities"/>)
+    /// al DTO que viaja al frontend. Traduccion 1:1; no agrega logica.
+    /// </summary>
+    private static ReservaCapabilitiesDto MapCapabilities(ReservaCapabilities caps)
+    {
+        static CapabilityDto Map(Cap cap) => new() { Allowed = cap.Allowed, Reason = cap.Reason };
+        return new ReservaCapabilitiesDto
+        {
+            CanInvoiceSale = Map(caps.CanInvoiceSale),
+            CanEmitCreditDebitNote = Map(caps.CanEmitCreditDebitNote),
+            CanRegisterPayment = Map(caps.CanRegisterPayment),
+            CanEditOrDeletePayment = Map(caps.CanEditOrDeletePayment),
+            CanEditServices = Map(caps.CanEditServices),
+            CanCancel = Map(caps.CanCancel),
+            CanAdvance = Map(caps.CanAdvance),
+            CanEmitVoucher = Map(caps.CanEmitVoucher),
+            AllowedForward = caps.AllowedForward.ToList(),
+            AllowedRevert = caps.AllowedRevert.ToList(),
+        };
     }
 
     /// <summary>
@@ -2609,6 +2647,15 @@ public class ReservaService : IReservaService
         var file = await _context.Reservas.FindAsync(reservaId);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
 
+        // ADR-035 (2026-06-19): PRIMERA COMPUERTA tambien en el camino legacy anidado, igual que en
+        // PaymentService.CreatePaymentAsync. La politica de dominio decide si el estado admite cobro (misma
+        // regla que el front lee). El guard fino EnsureCollectable() (abajo) sigue siendo la defensa final.
+        var paymentCapability = ReservaCapabilityPolicy
+            .For(new ReservaCapabilityContext(file.Status, file.Balance, false, false, false, false))
+            .CanRegisterPayment;
+        if (!paymentCapability.Allowed)
+            throw new InvalidOperationException(paymentCapability.Reason);
+
         // ADR-032 (2026-06-15): EL AGUJERO. Este path anidado (POST /api/reservas/{id}/payments) NO
         // chequeaba el estado de la reserva, dejando cobrar en Cancelada/Perdida/etc. Ahora aplica la
         // MISMA regla unica que PaymentService.CreatePaymentAsync. InvalidOperationException -> 409 en
@@ -2648,6 +2695,24 @@ public class ReservaService : IReservaService
 
         var file = await _context.Reservas.FindAsync(reservaId);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
+
+        // ADR-035 (2026-06-19): PRIMERA COMPUERTA tambien en el camino legacy anidado, igual que en
+        // PaymentService.UpdatePaymentAsync. En estado terminal {Closed, Cancelled, Lost, PendingOperatorRefund}
+        // el cobro NO se edita: la salida con rastro es anular el cobro (AnnulPaymentAsync, que NO pasa por esta
+        // compuerta). Antes este path quedaba sin gate de estado y dejaba editar un cobro (sin recibo/CAE) en una
+        // reserva terminal, evadiendo la regla que el front muestra como "boton apagado: anula el cobro".
+        // El Balance no influye en CanEditOrDeletePayment (solo el estado); las banderas fiscales/voucher/candado
+        // las enforza despues MutationGuards (la defensa final), por eso aca van en false.
+        var editCapability = ReservaCapabilityPolicy
+            .For(new ReservaCapabilityContext(file.Status, file.Balance, false, false, false, false))
+            .CanEditOrDeletePayment;
+        if (!editCapability.Allowed)
+        {
+            _logger.LogWarning(
+                "UpdatePaymentAsync (legacy via reserva) rejected by state gate. PaymentId={PaymentId} ReservaId={ReservaId} Status={Status}.",
+                paymentId, reservaId, file.Status);
+            throw new InvalidOperationException(editCapability.Reason);
+        }
 
         if (updatedPayment.Amount <= 0) throw new ArgumentException("El monto debe ser mayor a 0");
 
@@ -2741,6 +2806,24 @@ public class ReservaService : IReservaService
 
         var file = await _context.Reservas.FindAsync(reservaId);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
+
+        // ADR-035 (2026-06-19): PRIMERA COMPUERTA tambien en el camino legacy anidado, igual que en
+        // PaymentService.DeletePaymentAsync. En estado terminal {Closed, Cancelled, Lost, PendingOperatorRefund}
+        // el cobro NO se borra: la salida con rastro es anular el cobro (AnnulPaymentAsync, que NO pasa por esta
+        // compuerta). Antes este path quedaba sin gate de estado y dejaba borrar un cobro (sin recibo/CAE) en una
+        // reserva terminal, evadiendo la regla que el front muestra como "boton apagado: anula el cobro".
+        // El Balance no influye en CanEditOrDeletePayment (solo el estado); las banderas fiscales/voucher/candado
+        // las enforza despues DeleteGuards (la defensa final), por eso aca van en false.
+        var deleteCapability = ReservaCapabilityPolicy
+            .For(new ReservaCapabilityContext(file.Status, file.Balance, false, false, false, false))
+            .CanEditOrDeletePayment;
+        if (!deleteCapability.Allowed)
+        {
+            _logger.LogWarning(
+                "DeletePaymentAsync (legacy via reserva) rejected by state gate. PaymentId={PaymentId} ReservaId={ReservaId} Status={Status}.",
+                paymentId, reservaId, file.Status);
+            throw new InvalidOperationException(deleteCapability.Reason);
+        }
 
         // ADR-022 §4.9 (fix S1-bis): mismo candado que PaymentService.DeletePaymentAsync para el path legacy
         // nested. El Payment puente del saldo a favor no se borra a mano (deja credito fantasma + deuda inflada).

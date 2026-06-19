@@ -152,6 +152,8 @@ public class VoucherService : IVoucherService
         var reservaId = await ResolveReservaIdAsync(reservaPublicIdOrLegacyId, cancellationToken);
         var reserva = await LoadReservaWithPassengersAsync(reservaId, cancellationToken);
 
+        // ADR-035 Decision 3: voucher solo desde Confirmada en adelante (gate UNICO, ver helper).
+        EnsureReservaAllowsVoucher(reserva);
         EnsureReservaHasPassengers(reserva);
 
         var passengers = await ResolvePassengerAssignmentsAsync(reserva, request.Scope, request.PassengerIds, cancellationToken);
@@ -210,6 +212,8 @@ public class VoucherService : IVoucherService
         var reservaId = await ResolveReservaIdAsync(reservaPublicIdOrLegacyId, cancellationToken);
         var reserva = await LoadReservaWithPassengersAsync(reservaId, cancellationToken);
 
+        // ADR-035 Decision 3: voucher (tambien el externo subido) solo desde Confirmada en adelante.
+        EnsureReservaAllowsVoucher(reserva);
         EnsureReservaHasPassengers(reserva);
 
         var passengers = await ResolvePassengerAssignmentsAsync(reserva, request.Scope, request.PassengerIds, cancellationToken);
@@ -883,6 +887,26 @@ public class VoucherService : IVoucherService
     /// de "servicios sin resolver" (GetUnresolvedLiveServiceLabels, 2026-06-12) sigue bloqueando emitir
     /// un voucher de algo todavia no resuelto.</para>
     /// </summary>
+    /// <summary>
+    /// ADR-035 Decision 3 (2026-06-19): UN UNICO gate de estado de la Reserva para crear/subir voucher. El
+    /// voucher solo se emite desde Confirmada en adelante {Confirmed, Traveling, ToSettle, Closed}; InManagement
+    /// y los pre-venta/terminales NO. Antes VoucherService NO miraba Reserva.Status (solo el ciclo del propio
+    /// voucher), asi que se podia iniciar un voucher en cualquier estado — contradecia la decision del dueño.
+    ///
+    /// <para>Usa la MISMA fuente que la capacidad <c>CanEmitVoucher</c> de la politica
+    /// (<see cref="ReservaCapabilityPolicy.VoucherStatuses"/>), para que el boton apagado del front y el gate
+    /// del back coincidan. Se invoca desde TODAS las entradas de alta de voucher (generar / subir externo);
+    /// no se duplica la condicion inline en cada metodo.</para>
+    /// </summary>
+    private static void EnsureReservaAllowsVoucher(Reserva reserva)
+    {
+        var capability = ReservaCapabilityPolicy
+            .For(new ReservaCapabilityContext(reserva.Status, reserva.Balance, false, false, false, false))
+            .CanEmitVoucher;
+        if (!capability.Allowed)
+            throw new InvalidOperationException(capability.Reason);
+    }
+
     private static void EnsureReservaHasPassengers(Reserva reserva)
     {
         // v2.1: GetLeadPassenger ahora recibe un SET (lista de pasajeros). Para este guard UNIVERSAL de

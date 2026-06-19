@@ -24,6 +24,23 @@ public class CollectionWorkItemDto
     public string UrgencyStatus { get; set; } = string.Empty;
     public bool BlocksOperational { get; set; }
     public bool BlocksVoucher { get; set; }
+
+    /// <summary>
+    /// ADR-035 (2026-06-19): moneda PRINCIPAL de la reserva (la de mayor saldo pendiente; mismo criterio y
+    /// desempate que el detalle de la reserva, via <c>ReservaPrimaryCurrency</c>). El modal de cobro de la
+    /// worklist la usa como moneda por defecto, asi un cobro sobre una reserva en USD NO se registra en ARS.
+    /// Null si la reserva no tiene detalle por moneda materializado (legacy sin backfill); en ese caso el
+    /// front cae al default historico (ARS).
+    /// </summary>
+    public string? MonedaPrincipal { get; set; }
+
+    /// <summary>
+    /// ADR-021/035 (2026-06-19): detalle de saldo SEPARADO por moneda (una linea por moneda con saldo). Permite
+    /// que el modal de la worklist ofrezca "cobrar en otra moneda" igual que el cobro inline de la reserva, sin
+    /// pegarle otra vez al backend. Se llena en batch desde la tabla materializada <c>ReservaMoneyByCurrency</c>
+    /// (sin N+1). El costo (<c>TotalCost</c>) llega siempre en 0: la worklist de cobranza no expone costos.
+    /// </summary>
+    public List<ReservaMoneyLineDto> PorMoneda { get; set; } = new();
 }
 
 public class CashSummaryDto

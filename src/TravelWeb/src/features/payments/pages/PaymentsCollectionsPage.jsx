@@ -98,11 +98,18 @@ export default function PaymentsCollectionsPage() {
         </>
       )}
 
+      {/*
+        ADR-035: le pasamos monedaPrincipal y porMoneda del item de la worklist.
+        El CollectionsTab ya llama onPay(item) con el objeto completo; selectedItem
+        tiene todos los campos del CollectionWorkItemDto (camelCase por la API).
+      */}
       <PaymentModal
         isOpen={Boolean(selectedItem)}
         onClose={() => setSelectedItem(null)}
         reservaId={selectedItem?.reservaPublicId}
         maxAmount={selectedItem?.balance}
+        monedaPrincipal={selectedItem?.monedaPrincipal}
+        porMoneda={selectedItem?.porMoneda}
         onSuccess={async () => {
           setSelectedItem(null);
           await loadData();

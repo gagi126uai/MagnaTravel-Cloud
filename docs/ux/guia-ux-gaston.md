@@ -360,3 +360,30 @@ Ronda 2:
 - **(2026-06-13) "Confirmada con cambios".** Etiqueta "Con cambios" al lado del estado + franja amarilla que **muestra qué cambió** + botón "Dar OK". El OK lo da **solo un administrador**.
 - **(2026-06-13) Saldo a favor del cliente.** El cartel de saldo cambia a "A FAVOR EN $" en verde + **botón "Usar saldo a favor"** que abre el flujo de uso (aplicar a otra reserva / devolver). Un renglón por moneda.
 - **(2026-06-13) Crear presupuesto desde lead.** Botón en la ficha del lead (ya existe) + **agregar botón rápido en la LISTA de leads**. El lead se marca **Ganado cuando el cliente ACEPTA el presupuesto** (la reserva pasa a firme), NO al crear el presupuesto.
+
+## Botones por estado, cobro en moneda real, cancelar en línea y reabrir para facturar (ADR-035, 2026-06-19)
+
+> Sesión de 8 preguntas con dibujos sobre el detalle de la reserva (solapa Estado de Cuenta y
+> acciones de cabecera). Gastón eligió todas las opciones A. El backend ya expone, por reserva:
+> `Capabilities` (un `{ allowed, reason }` por cada acción), `RequiresInvoiceAnnulmentToCancel`
+> (sí/no hay factura emitida que anular), `MonedaPrincipal` (la moneda donde está el grueso del
+> saldo) y `porMoneda` (un saldo por cada moneda que la reserva realmente usa).
+
+**A) Botón apagado: el motivo va DEBAJO, como texto chico (P1 = A). NUNCA tooltip.**
+- **(2026-06-19) Cuando una acción no se puede hacer, el botón se muestra APAGADO (gris, no se puede tocar) y debajo aparece el motivo en texto chico**, igual que hoy aparece "Tiene que haber al menos 1 pasajero" debajo de "El cliente aceptó". El motivo es la frase que manda el backend en `Capabilities.<acción>.reason`. Refuerza la regla 2026-06-08 (nada de tooltip / "apoyar el mouse para enterarse"): el motivo siempre a la vista.
+- **(2026-06-19) El botón se muestra SIEMPRE (apagado), no se esconde.** Es un cambio respecto del código viejo, que ocultaba botones según el estado. Ahora cada acción de la reserva (Registrar cobro, Emitir factura, Cancelar, Volver atrás, etc.) se ve siempre; si no corresponde, está apagada con su motivo debajo. Así el vendedor entiende por qué no puede, en vez de no encontrar el botón.
+
+**B) Cobro: arranca en una sola moneda, con link "pagar en otra moneda" (P2/P3/P4 = A).**
+- **(2026-06-19) La ficha de cobro arranca mostrando UNA sola línea con la moneda principal:** "Cobrás en US$ — saldo US$ X" (la moneda y el saldo salen de `MonedaPrincipal` y de `porMoneda`). Debajo, un **link chico "pagar en otra moneda"**. Mientras el vendedor no lo toca, cobra en la moneda principal sin ver ningún selector (caso normal, lo más común).
+- **(2026-06-19) Al tocar "pagar en otra moneda", AHÍ MISMO (sin ventana) aparecen** los selectores de "Moneda del cobro" e "Imputar a"; y si el cobro cruza de moneda, además el recuadro de tipo de cambio (lo de siempre: TC + fuente + fecha, los tres obligatorios). Todo en línea, debajo, dentro de la misma ficha. Nada de ventana flotante.
+- **(2026-06-19) El saldo muestra SOLO las monedas que la reserva realmente usa.** Si la reserva solo tiene pesos, no aparece "US$ 0" fantasma; si solo tiene dólares, no aparece "$ 0". Solo se listan las monedas con saldo real (`porMoneda`).
+
+**C) Cancelar toda la reserva: pasa a EN LÍNEA, con cartel según haya o no factura (P5/P6/P7 = A).**
+- **(2026-06-19) Cancelar TODA la reserva deja de ser ventana flotante y se carga EN LÍNEA**, debajo, igual que el cobro y la carga de servicios (coherente con "el modal me parece horrible"). El modal de cancelación muere como ventana.
+- **(2026-06-19) Si la reserva NO tiene factura emitida** (`RequiresInvoiceAnnulmentToCancel = false`): cartel **VERDE** "Esta reserva no tiene factura emitida, se cancela directo, sin nota de crédito." + **motivo obligatorio**.
+- **(2026-06-19) Si la reserva SÍ tiene factura emitida** (`RequiresInvoiceAnnulmentToCancel = true`): cartel **ÁMBAR** "Esta reserva tiene factura emitida, al cancelar se emite la nota de crédito en AFIP/ARCA para anularla." + **motivo obligatorio**.
+- El motivo obligatorio sigue las reglas que ya tenía la cancelación (mínimo de caracteres, etc.); lo nuevo es el cartel de color según haya factura y que todo va en línea.
+
+**D) Reabrir una reserva Finalizada para facturar (P8 = A).**
+- **(2026-06-19) Botón "Reabrir para facturar"** (nombre confirmado por Gastón) entre las acciones de cabecera de la reserva, **arriba, junto a "Volver atrás" y "Archivar"**. Aparece solo cuando la acción está disponible (lo dice `Capabilities`); si no, va apagado con su motivo debajo (regla A).
+- **(2026-06-19) Al tocarlo pide MOTIVO OBLIGATORIO** antes de reabrir. Es una acción sensible (devuelve una reserva ya cerrada al circuito de facturación), por eso siempre queda registrado el motivo.
