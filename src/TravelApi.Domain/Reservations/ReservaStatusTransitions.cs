@@ -31,9 +31,15 @@ public static class ReservaStatusTransitions
     /// Matriz FORWARD unica (transiciones manuales via <c>UpdateStatusAsync</c>). Confirmed como destino
     /// esta AUSENTE adrede: solo el motor automatico lleva InManagement -&gt; Confirmed.
     ///
-    /// <para>Cancelled aparece desde {InManagement, Confirmed, Traveling, ToSettle} (cancelacion manual sin
-    /// factura viva). Desde Quotation/Budget la salida es Lost, no Cancelled. Closed NO tiene salida forward
-    /// (no se puede cancelar una Finalizada — Decision 4 del dueño, ADR-035).</para>
+    /// <para>Cancelled aparece desde {InManagement, Confirmed, ToSettle} (cancelacion manual sin factura
+    /// viva). Desde Quotation/Budget la salida es Lost, no Cancelled. Closed NO tiene salida forward (no se
+    /// puede cancelar una Finalizada — Decision 4 del dueño, ADR-035).</para>
+    ///
+    /// <para><b>ADR-035 (2026-06-19): Traveling YA NO se cancela</b> (decision del dueño). Una reserva "En
+    /// viaje" significa que el servicio ya empezo/se presto: cancelarla no tiene sentido operativo; si hay
+    /// algo que corregir se hace por nota de credito/ajuste, no cancelando. Por eso se quito Cancelled de los
+    /// destinos forward de Traveling (quedan {Closed, ToSettle}). Confirmed e InManagement SIGUEN pudiendo
+    /// cancelar.</para>
     /// </summary>
     public static readonly IReadOnlyDictionary<string, string[]> Forward =
         new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
@@ -43,7 +49,8 @@ public static class ReservaStatusTransitions
             [EstadoReserva.InManagement] = new[] { EstadoReserva.Cancelled },
             [EstadoReserva.Confirmed] = new[] { EstadoReserva.Traveling, EstadoReserva.Cancelled },
             // Traveling: Closed = cierre por default, ToSettle = desvio opcional (apartar para liquidar).
-            [EstadoReserva.Traveling] = new[] { EstadoReserva.Closed, EstadoReserva.ToSettle, EstadoReserva.Cancelled },
+            // ADR-035: SIN Cancelled — una reserva en viaje no se cancela (se corrige por NC/ajuste).
+            [EstadoReserva.Traveling] = new[] { EstadoReserva.Closed, EstadoReserva.ToSettle },
             [EstadoReserva.ToSettle] = new[] { EstadoReserva.Closed, EstadoReserva.Cancelled },
         };
 

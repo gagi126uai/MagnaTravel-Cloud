@@ -135,7 +135,8 @@ public class ReservaCapabilitiesTests
     [InlineData(EstadoReserva.Budget, true)]
     [InlineData(EstadoReserva.InManagement, true)]
     [InlineData(EstadoReserva.Confirmed, true)]
-    [InlineData(EstadoReserva.Traveling, true)]
+    // ADR-035: En viaje YA NO se cancela (se corrige por NC/ajuste).
+    [InlineData(EstadoReserva.Traveling, false)]
     [InlineData(EstadoReserva.ToSettle, true)]
     public void CanCancel_MatchesMatrix(string status, bool expected)
     {
@@ -211,11 +212,13 @@ public class ReservaCapabilitiesTests
     }
 
     [Fact]
-    public void AllowedForward_Traveling_HasClosedAndToSettleAndCancelled()
+    public void AllowedForward_Traveling_HasClosedAndToSettle_ButNotCancelled()
     {
+        // ADR-035 (2026-06-19): En viaje YA NO se cancela (se corrige por NC/ajuste). Cancelled salio de los
+        // destinos forward de Traveling; quedan Closed (cierre) y ToSettle (apartar para liquidar).
         var caps = ReservaCapabilityPolicy.For(Ctx(EstadoReserva.Traveling, balance: 0m));
         Assert.Contains(EstadoReserva.Closed, caps.AllowedForward);
         Assert.Contains(EstadoReserva.ToSettle, caps.AllowedForward);
-        Assert.Contains(EstadoReserva.Cancelled, caps.AllowedForward);
+        Assert.DoesNotContain(EstadoReserva.Cancelled, caps.AllowedForward);
     }
 }

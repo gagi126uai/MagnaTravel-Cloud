@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Helpers;
+using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Infrastructure.Services;
@@ -38,6 +39,80 @@ public static class ReservaCapacityRules
     {
         EstadoReserva.Traveling, EstadoReserva.Closed
     };
+
+    /// <summary>
+    /// ADR-035 (2026-06-19): PRIMERA COMPUERTA de TODA mutacion de servicios — candado por ESTADO de la
+    /// reserva. Cierra la incoherencia de fondo: hoy una reserva Perdida/Cancelada/Esperando-reembolso o
+    /// Finalizada dejaba agregar/editar/borrar/cancelar servicios y marcar "Solicitado".
+    ///
+    /// <para>Modelo coherente del dueño (3 grupos):</para>
+    /// <list type="bullet">
+    ///   <item><b>EN ARMADO</b> (Quotation, Budget, InManagement): editar servicios libre.</item>
+    ///   <item><b>EN FIRME</b> (Confirmed, Traveling, ToSettle): editar servicios SOLO con autorizacion viva
+    ///     (el candado <c>ReservaLockGuard</c>, que corre DESPUES de esta compuerta).</item>
+    ///   <item><b>CERRADOS</b> (Closed, Lost, Cancelled, PendingOperatorRefund): servicios SOLO LECTURA —
+    ///     bloqueado de raiz. NINGUNA autorizacion lo desbloquea. Para tocar una Finalizada hay que reabrirla
+    ///     a "A liquidar" primero (RevertStatusAsync).</item>
+    /// </list>
+    ///
+    /// <para>Decide con la FUENTE UNICA <see cref="ReservaCapabilityPolicy"/> (el mismo
+    /// <c>CanEditServices</c> que el frontend usa para apagar botones), asi back y front nunca divergen.
+    /// El motivo es texto de estado, sin montos ni costos (respeta el enmascarado see_cost).</para>
+    ///
+    /// <para><b>Orden de compuertas</b>: esta corre PRIMERO. Recien despues el candado de autorizacion
+    /// (<c>ReservaLockGuard</c>) y los guards fiscales (CAE/voucher/recibo), que quedan INTACTOS. La
+    /// diferencia: para los CERRADOS no hay autorizacion que valga (hard block); para EN FIRME sigue
+    /// valiendo el candado como hoy.</para>
+    ///
+    /// <para>Reserva inexistente: no-op (deja que el flujo propio devuelva su 404, no inventa bloqueo).</para>
+    /// </summary>
+    public static async Task EnsureServicesEditableByStateAsync(
+        AppDbContext db,
+        int reservaId,
+        CancellationToken ct = default)
+    {
+        var status = await db.Reservas.AsNoTracking()
+            .Where(r => r.Id == reservaId)
+            .Select(r => r.Status)
+            .FirstOrDefaultAsync(ct);
+
+        // Reserva inexistente: no bloqueamos aca; el metodo de negocio devolvera su NotFound.
+        if (string.IsNullOrWhiteSpace(status)) return;
+
+        // Misma logica que ve el front (CanEditServices). Construimos un contexto minimo: solo el estado
+        // importa para esta capacidad, asi que el resto de los campos van en su valor neutro.
+        var capabilities = ReservaCapabilityPolicy.For(new ReservaCapabilityContext(
+            Status: status,
+            Balance: 0m,
+            HasLiveCae: false,
+            HasLiveVoucher: false,
+            HasLiveEditAuth: false,
+            HasAnyPayment: false));
+
+        if (capabilities.CanEditServices.Allowed) return;
+
+        // Estado de solo lectura: motivo legible segun el grupo terminal (sin datos sensibles).
+        throw new InvalidOperationException(ReadOnlyServicesMessageFor(status));
+    }
+
+    /// <summary>
+    /// Motivo legible (español, sin montos/costos) para el bloqueo de servicios por estado de solo lectura.
+    /// Diferencia el estado para que el vendedor entienda QUE pasa y, en el caso de Finalizada, COMO seguir
+    /// (reabrir a "A liquidar"). Cualquier estado terminal no listado cae al mensaje generico.
+    /// </summary>
+    private static string ReadOnlyServicesMessageFor(string status)
+    {
+        if (string.Equals(status, EstadoReserva.Closed, StringComparison.OrdinalIgnoreCase))
+            return "La reserva esta finalizada: los servicios son de solo lectura. " +
+                   "Para tocarla, reabrila a \"A liquidar\" primero.";
+        if (string.Equals(status, EstadoReserva.Cancelled, StringComparison.OrdinalIgnoreCase))
+            return "La reserva esta cancelada: los servicios son de solo lectura.";
+        if (string.Equals(status, EstadoReserva.Lost, StringComparison.OrdinalIgnoreCase))
+            return "La reserva esta marcada como perdida: los servicios son de solo lectura.";
+        if (string.Equals(status, EstadoReserva.PendingOperatorRefund, StringComparison.OrdinalIgnoreCase))
+            return "La reserva esta esperando el reembolso del operador: los servicios son de solo lectura.";
+        return "En el estado actual de la reserva, los servicios son de solo lectura.";
+    }
 
     /// <summary>
     /// Bloquea agregar o modificar un servicio con Status no-confirmado si la

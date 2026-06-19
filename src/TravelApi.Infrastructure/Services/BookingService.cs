@@ -107,6 +107,15 @@ public partial class BookingService : IBookingService
     /// <see cref="InvalidOperationException"/> (-> 409 Conflict); si la hay, registra el cambio.
     /// El registro se persiste junto con la mutacion (mismo AppDbContext scoped por request).
     /// </summary>
+    /// <summary>
+    /// ADR-035 (2026-06-19): PRIMERA COMPUERTA de toda mutacion de servicio tipado — candado por ESTADO.
+    /// Si la reserva esta en un estado de solo lectura (Closed/Lost/Cancelled/PendingOperatorRefund),
+    /// lanza <see cref="InvalidOperationException"/> (-> 409) ANTES del candado de autorizacion y de los
+    /// guards fiscales. Delega en la fuente unica <see cref="ReservaCapacityRules.EnsureServicesEditableByStateAsync"/>.
+    /// </summary>
+    private Task GuardServicesEditableByStateAsync(int reservaId, CancellationToken ct)
+        => ReservaCapacityRules.EnsureServicesEditableByStateAsync(_db, reservaId, ct);
+
     private Task GuardReservaLockAsync(int reservaId, string operation, string entityType, int? entityId, string? summary, CancellationToken ct)
     {
         var user = _httpContextAccessor?.HttpContext?.User;
@@ -512,6 +521,8 @@ public partial class BookingService : IBookingService
     public async Task<FlightSegmentDto> CreateFlightAsync(string reservaPublicIdOrLegacyId, CreateFlightRequest req, CancellationToken ct)
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        // ADR-035: candado por ESTADO primero (terminal/solo-lectura), antes del candado de autorizacion.
+        await GuardServicesEditableByStateAsync(reservaId, ct);
         await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceAdded, "FlightSegment", null, "Aereo", ct);
         return await CreateFlightAsync(reservaId, req, ct);
     }
@@ -692,6 +703,8 @@ public partial class BookingService : IBookingService
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var flightId = await ResolveRequiredIdAsync<FlightSegment>(publicIdOrLegacyId, ct);
+        // ADR-035: candado por ESTADO primero (terminal/solo-lectura), antes del candado de autorizacion.
+        await GuardServicesEditableByStateAsync(reservaId, ct);
         await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceEdited, "FlightSegment", flightId, "Aereo", ct);
         return await UpdateFlightAsync(reservaId, flightId, req, ct);
     }
@@ -833,6 +846,8 @@ public partial class BookingService : IBookingService
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var flightId = await ResolveRequiredIdAsync<FlightSegment>(publicIdOrLegacyId, ct);
+        // ADR-035: candado por ESTADO primero (terminal/solo-lectura), antes del candado de autorizacion.
+        await GuardServicesEditableByStateAsync(reservaId, ct);
         await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceDeleted, "FlightSegment", flightId, "Aereo", ct);
         await DeleteFlightAsync(reservaId, flightId, ct);
     }
@@ -912,6 +927,8 @@ public partial class BookingService : IBookingService
     public async Task<HotelBookingDto> CreateHotelAsync(string reservaPublicIdOrLegacyId, CreateHotelRequest req, CancellationToken ct)
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        // ADR-035: candado por ESTADO primero (terminal/solo-lectura), antes del candado de autorizacion.
+        await GuardServicesEditableByStateAsync(reservaId, ct);
         await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceAdded, "HotelBooking", null, "Hotel", ct);
         return await CreateHotelAsync(reservaId, req, ct);
     }
@@ -991,6 +1008,8 @@ public partial class BookingService : IBookingService
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var hotelId = await ResolveRequiredIdAsync<HotelBooking>(publicIdOrLegacyId, ct);
+        // ADR-035: candado por ESTADO primero (terminal/solo-lectura), antes del candado de autorizacion.
+        await GuardServicesEditableByStateAsync(reservaId, ct);
         await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceEdited, "HotelBooking", hotelId, "Hotel", ct);
         return await UpdateHotelAsync(reservaId, hotelId, req, ct);
     }
@@ -1127,6 +1146,8 @@ public partial class BookingService : IBookingService
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var hotelId = await ResolveRequiredIdAsync<HotelBooking>(publicIdOrLegacyId, ct);
+        // ADR-035: candado por ESTADO primero (terminal/solo-lectura), antes del candado de autorizacion.
+        await GuardServicesEditableByStateAsync(reservaId, ct);
         await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceDeleted, "HotelBooking", hotelId, "Hotel", ct);
         await DeleteHotelAsync(reservaId, hotelId, ct);
     }
@@ -1203,6 +1224,8 @@ public partial class BookingService : IBookingService
     public async Task<PackageBookingDto> CreatePackageAsync(string reservaPublicIdOrLegacyId, CreatePackageRequest req, CancellationToken ct)
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        // ADR-035: candado por ESTADO primero (terminal/solo-lectura), antes del candado de autorizacion.
+        await GuardServicesEditableByStateAsync(reservaId, ct);
         await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceAdded, "PackageBooking", null, "Paquete", ct);
         return await CreatePackageAsync(reservaId, req, ct);
     }
@@ -1279,6 +1302,8 @@ public partial class BookingService : IBookingService
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var packageId = await ResolveRequiredIdAsync<PackageBooking>(publicIdOrLegacyId, ct);
+        // ADR-035: candado por ESTADO primero (terminal/solo-lectura), antes del candado de autorizacion.
+        await GuardServicesEditableByStateAsync(reservaId, ct);
         await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceEdited, "PackageBooking", packageId, "Paquete", ct);
         return await UpdatePackageAsync(reservaId, packageId, req, ct);
     }
@@ -1383,6 +1408,8 @@ public partial class BookingService : IBookingService
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var packageId = await ResolveRequiredIdAsync<PackageBooking>(publicIdOrLegacyId, ct);
+        // ADR-035: candado por ESTADO primero (terminal/solo-lectura), antes del candado de autorizacion.
+        await GuardServicesEditableByStateAsync(reservaId, ct);
         await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceDeleted, "PackageBooking", packageId, "Paquete", ct);
         await DeletePackageAsync(reservaId, packageId, ct);
     }
@@ -1459,6 +1486,8 @@ public partial class BookingService : IBookingService
     public async Task<TransferBookingDto> CreateTransferAsync(string reservaPublicIdOrLegacyId, CreateTransferRequest req, CancellationToken ct)
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        // ADR-035: candado por ESTADO primero (terminal/solo-lectura), antes del candado de autorizacion.
+        await GuardServicesEditableByStateAsync(reservaId, ct);
         await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceAdded, "TransferBooking", null, "Traslado", ct);
         return await CreateTransferAsync(reservaId, req, ct);
     }
@@ -1540,6 +1569,8 @@ public partial class BookingService : IBookingService
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var transferId = await ResolveRequiredIdAsync<TransferBooking>(publicIdOrLegacyId, ct);
+        // ADR-035: candado por ESTADO primero (terminal/solo-lectura), antes del candado de autorizacion.
+        await GuardServicesEditableByStateAsync(reservaId, ct);
         await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceEdited, "TransferBooking", transferId, "Traslado", ct);
         return await UpdateTransferAsync(reservaId, transferId, req, ct);
     }
@@ -1654,6 +1685,8 @@ public partial class BookingService : IBookingService
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var transferId = await ResolveRequiredIdAsync<TransferBooking>(publicIdOrLegacyId, ct);
+        // ADR-035: candado por ESTADO primero (terminal/solo-lectura), antes del candado de autorizacion.
+        await GuardServicesEditableByStateAsync(reservaId, ct);
         await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceDeleted, "TransferBooking", transferId, "Traslado", ct);
         await DeleteTransferAsync(reservaId, transferId, ct);
     }
@@ -1765,6 +1798,8 @@ public partial class BookingService : IBookingService
     public async Task<AssistanceBookingDto> CreateAssistanceAsync(string reservaPublicIdOrLegacyId, CreateAssistanceRequest req, CancellationToken ct)
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        // ADR-035: candado por ESTADO primero (terminal/solo-lectura), antes del candado de autorizacion.
+        await GuardServicesEditableByStateAsync(reservaId, ct);
         await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceAdded, "AssistanceBooking", null, "Asistencia", ct);
         return await CreateAssistanceAsync(reservaId, req, ct);
     }
@@ -1836,6 +1871,8 @@ public partial class BookingService : IBookingService
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var assistanceId = await ResolveRequiredIdAsync<AssistanceBooking>(publicIdOrLegacyId, ct);
+        // ADR-035: candado por ESTADO primero (terminal/solo-lectura), antes del candado de autorizacion.
+        await GuardServicesEditableByStateAsync(reservaId, ct);
         await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceEdited, "AssistanceBooking", assistanceId, "Asistencia", ct);
         return await UpdateAssistanceAsync(reservaId, assistanceId, req, ct);
     }
@@ -1946,6 +1983,8 @@ public partial class BookingService : IBookingService
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
         var assistanceId = await ResolveRequiredIdAsync<AssistanceBooking>(publicIdOrLegacyId, ct);
+        // ADR-035: candado por ESTADO primero (terminal/solo-lectura), antes del candado de autorizacion.
+        await GuardServicesEditableByStateAsync(reservaId, ct);
         await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceDeleted, "AssistanceBooking", assistanceId, "Asistencia", ct);
         await DeleteAssistanceAsync(reservaId, assistanceId, ct);
     }
@@ -1986,6 +2025,11 @@ public partial class BookingService : IBookingService
         var hotelId = await ResolveRequiredIdAsync<HotelBooking>(publicIdOrLegacyId, ct);
         var hotel = await _hotelRepo.GetByIdAsync(hotelId, ct)
             ?? throw new KeyNotFoundException("Hotel no encontrado");
+
+        // ADR-035: candado por ESTADO primero. Si la reserva esta en solo-lectura
+        // (Closed/Lost/Cancelled/PendingOperatorRefund) ni siquiera se puede cambiar el status del
+        // servicio (incluido forzar "Solicitado"); se rechaza de raiz, sin autorizacion que valga.
+        await GuardServicesEditableByStateAsync(hotel.ReservaId, ct);
 
         // ADR-020 decision #8 (2026-06-08): cambiar el ESTADO/RESOLUCION de un servicio NO pide
         // candado, aunque la reserva este confirmada. Esto refleja lo que hizo el OPERADOR afuera
@@ -2038,6 +2082,9 @@ public partial class BookingService : IBookingService
         var transfer = await _transferRepo.GetByIdAsync(transferId, ct)
             ?? throw new KeyNotFoundException("Transfer no encontrado");
 
+        // ADR-035: candado por ESTADO primero (terminal/solo-lectura), antes de tocar el status del servicio.
+        await GuardServicesEditableByStateAsync(transfer.ReservaId, ct);
+
         // ADR-020 decision #8: cambiar el estado/resolucion del traslado refleja lo que hizo el
         // operador afuera -> sin candado (ver detalle en UpdateHotelStatusAsync).
         var oldStatus = transfer.Status;
@@ -2081,6 +2128,9 @@ public partial class BookingService : IBookingService
         var package = await _packageRepo.GetByIdAsync(packageId, ct)
             ?? throw new KeyNotFoundException("Paquete no encontrado");
 
+        // ADR-035: candado por ESTADO primero (terminal/solo-lectura), antes de tocar el status del servicio.
+        await GuardServicesEditableByStateAsync(package.ReservaId, ct);
+
         // ADR-020 decision #8: cambiar el estado/resolucion del paquete refleja lo que hizo el
         // operador afuera -> sin candado (ver detalle en UpdateHotelStatusAsync).
         var oldStatus = package.Status;
@@ -2123,6 +2173,10 @@ public partial class BookingService : IBookingService
         var flightId = await ResolveRequiredIdAsync<FlightSegment>(publicIdOrLegacyId, ct);
         var flight = await _flightRepo.GetByIdAsync(flightId, ct)
             ?? throw new KeyNotFoundException("Vuelo no encontrado");
+
+        // ADR-035: candado por ESTADO primero (terminal/solo-lectura), antes de tocar el status del servicio
+        // (incluido el forzado de "Solicitado" mas abajo).
+        await GuardServicesEditableByStateAsync(flight.ReservaId, ct);
 
         // ADR-020 decision #8: cambiar el estado/resolucion del aereo refleja lo que hizo el
         // operador afuera -> sin candado (ver detalle en UpdateHotelStatusAsync).
@@ -2179,6 +2233,10 @@ public partial class BookingService : IBookingService
         var flight = await _flightRepo.GetByIdAsync(flightId, ct) ?? throw new KeyNotFoundException("Vuelo no encontrado");
         if (flight.ReservaId != reservaId) throw new KeyNotFoundException("Vuelo no encontrado");
 
+        // ADR-035: candado por ESTADO primero. Emitir el ticket es una mutacion de servicio: en una reserva
+        // de solo-lectura (terminal) se rechaza de raiz, sin autorizacion que valga.
+        await GuardServicesEditableByStateAsync(flight.ReservaId, ct);
+
         // ADR-020 decision #8: marcar emitido RESUELVE el segmento (es la realidad del operador),
         // no es una edicion de la agencia -> sin candado (ver detalle en UpdateHotelStatusAsync).
         var flightWasResolved = ServiceResolutionRules.IsResolved(flight);
@@ -2214,6 +2272,10 @@ public partial class BookingService : IBookingService
         var transferId = await ResolveRequiredIdAsync<TransferBooking>(publicIdOrLegacyId, ct);
         var transfer = await _transferRepo.GetByIdAsync(transferId, ct) ?? throw new KeyNotFoundException("Traslado no encontrado");
         if (transfer.ReservaId != reservaId) throw new KeyNotFoundException("Traslado no encontrado");
+
+        // ADR-035: candado por ESTADO primero. Marcar "no requiere confirmacion" es una mutacion de servicio:
+        // en una reserva de solo-lectura (terminal) se rechaza de raiz, sin autorizacion que valga.
+        await GuardServicesEditableByStateAsync(transfer.ReservaId, ct);
 
         // ADR-020 decision #8: marcar "no requiere confirmacion" RESUELVE el traslado (realidad del
         // operador), no es una edicion de la agencia -> sin candado (ver detalle en UpdateHotelStatusAsync).
@@ -2281,6 +2343,9 @@ public partial class BookingService : IBookingService
         var assistanceId = await ResolveRequiredIdAsync<AssistanceBooking>(publicIdOrLegacyId, ct);
         var assistance = await _assistanceRepo.GetByIdAsync(assistanceId, ct)
             ?? throw new KeyNotFoundException("Asistencia no encontrada");
+
+        // ADR-035: candado por ESTADO primero (terminal/solo-lectura), antes de tocar el status del servicio.
+        await GuardServicesEditableByStateAsync(assistance.ReservaId, ct);
 
         // ADR-020 decision #8: cambiar el estado/resolucion de la asistencia refleja lo que hizo el
         // operador afuera -> sin candado (ver detalle en UpdateHotelStatusAsync).

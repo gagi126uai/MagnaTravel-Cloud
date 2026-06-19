@@ -242,15 +242,14 @@ public class ReservaServiceCancellationTests
     }
 
     /// <summary>
-    /// Comportamiento ACTUAL: cancelar desde Traveling no esta bloqueado en
-    /// ReservaService (la unica validacion en UpdateStatusAsync para Cancelled
-    /// es que el estado destino este en validStatuses). Esto puede ser un gap
-    /// de dominio: una reserva "En viaje" probablemente no deberia poder
-    /// cancelarse sin pasar antes por reversion. Lo dejamos clavado aqui:
-    /// si el equipo decide bloquearlo, el test fallara y pedira actualizacion.
+    /// ADR-035 (2026-06-19): el equipo decidio BLOQUEAR la cancelacion desde Traveling. Una reserva "En
+    /// viaje" significa que el servicio ya empezo/se presto: no se cancela, se corrige por nota de
+    /// credito/ajuste. Se quito Traveling -&gt; Cancelled de la matriz forward (ReservaStatusTransitions),
+    /// asi que el cambio manual ahora es rechazado. (Este test antes fijaba el comportamiento previo y
+    /// anticipaba justamente este cambio.) Confirmed e InManagement siguen pudiendo cancelar.
     /// </summary>
     [Fact]
-    public async Task UpdateStatusAsync_CancelFromTraveling_IsCurrentlyAllowed()
+    public async Task UpdateStatusAsync_CancelFromTraveling_IsRejected()
     {
         await using var context = new AppDbContext(_dbOptions);
         context.Reservas.Add(new Reserva
@@ -264,8 +263,11 @@ public class ReservaServiceCancellationTests
 
         var service = BuildService(context);
 
-        var result = await service.UpdateStatusAsync(1, EstadoReserva.Cancelled);
-        Assert.Equal(EstadoReserva.Cancelled, result.Status);
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.UpdateStatusAsync(1, EstadoReserva.Cancelled));
+
+        var dbReserva = await context.Reservas.AsNoTracking().FirstAsync(r => r.Id == 1);
+        Assert.Equal(EstadoReserva.Traveling, dbReserva.Status);
     }
 
     /// <summary>

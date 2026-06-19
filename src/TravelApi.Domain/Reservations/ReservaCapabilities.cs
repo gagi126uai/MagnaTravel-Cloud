@@ -99,6 +99,13 @@ public static class ReservaCapabilityPolicy
     public const string ClosedNotCancellableReason =
         "Una reserva Finalizada no se puede cancelar.";
 
+    /// <summary>
+    /// ADR-035 (2026-06-19): una reserva En viaje (Traveling) ya NO se cancela (decision del dueño). El
+    /// servicio ya empezo/se presto; las correcciones van por nota de credito o ajuste, no por cancelacion.
+    /// </summary>
+    public const string TravelingNotCancellableReason =
+        "La reserva esta en viaje: no se cancela; corregí por nota de crédito/ajuste.";
+
     /// <summary>No hay accion de cancelacion valida en este estado (pre-venta o ya terminal).</summary>
     public const string NotCancellableStatusReason =
         "No se puede cancelar la reserva en este estado.";
@@ -253,13 +260,19 @@ public static class ReservaCapabilityPolicy
     }
 
     /// <summary>
-    /// Cancelar la reserva: NO en {Closed, Lost, Cancelled, PendingOperatorRefund}. Closed tiene su propio
-    /// motivo (Decision 4: una Finalizada no se cancela). El resto comparte el motivo generico de estado.
+    /// Cancelar la reserva: NO en {Traveling, Closed, Lost, Cancelled, PendingOperatorRefund}. Traveling y
+    /// Closed tienen su propio motivo (Decision 4 / ADR-035: una Finalizada no se cancela; una En viaje
+    /// tampoco — se corrige por NC/ajuste). El resto comparte el motivo generico de estado. Confirmed e
+    /// InManagement SI permiten cancelar (es el flujo normal de cancelacion antes/durante la gestion firme).
     /// </summary>
     private static Cap EvaluateCancel(ReservaCapabilityContext ctx)
     {
         if (EqualsStatus(ctx.Status, EstadoReserva.Closed))
             return Cap.No(ClosedNotCancellableReason);
+        // ADR-035: En viaje deja de ser cancelable. Antes Traveling -> Cancelled estaba en la matriz forward;
+        // se quito (ReservaStatusTransitions) y aca se refleja con un motivo propio para el front.
+        if (EqualsStatus(ctx.Status, EstadoReserva.Traveling))
+            return Cap.No(TravelingNotCancellableReason);
         if (EqualsStatus(ctx.Status, EstadoReserva.Lost)
             || EqualsStatus(ctx.Status, EstadoReserva.Cancelled)
             || EqualsStatus(ctx.Status, EstadoReserva.PendingOperatorRefund))

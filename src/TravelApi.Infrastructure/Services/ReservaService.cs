@@ -136,6 +136,9 @@ public class ReservaService : IReservaService
     public async Task<ReservationServiceMutationResult> AddServiceAsync(string reservaPublicIdOrLegacyId, AddServiceRequest request, CancellationToken ct = default)
     {
         var reservaId = await ResolveRequiredIdAsync<Reserva>(reservaPublicIdOrLegacyId, ct);
+        // ADR-035: candado por ESTADO primero. En una reserva de solo-lectura
+        // (Closed/Lost/Cancelled/PendingOperatorRefund) no se agrega servicio, sin autorizacion que valga.
+        await ReservaCapacityRules.EnsureServicesEditableByStateAsync(_context, reservaId, ct);
         // ADR-020 F4: agregar un servicio a una reserva confirmada requiere autorizacion (y ademas
         // dispara regresion a En gestion: la autorizacion es el paso previo consciente).
         await EnsureReservaEditableAsync(reservaId, ReservaEditAuthorizationOperations.ServiceAdded,
@@ -191,6 +194,9 @@ public class ReservaService : IReservaService
             .Select(s => s.ReservaId)
             .FirstOrDefaultAsync(ct);
         if (reservaId is null) return;
+        // ADR-035: candado por ESTADO primero (antes del candado de autorizacion). En una reserva de
+        // solo-lectura (terminal) no se edita ni se borra el servicio generico, sin autorizacion que valga.
+        await ReservaCapacityRules.EnsureServicesEditableByStateAsync(_context, reservaId.Value, ct);
         await EnsureReservaEditableAsync(reservaId.Value, operation,
             entityType: "ServicioReserva", entityId: serviceId, summary: summary, ct: ct);
     }
@@ -2984,8 +2990,9 @@ public class ReservaService : IReservaService
     ///  - Confirmed -&gt; Traveling: capacidad + economico (los servicios ya estan resueltos: lo
     ///    garantizo el motor para llegar a Confirmed).
     ///  - {Traveling, ToSettle} -&gt; Closed: bloquea saldo pendiente + estampa ClosedAt.
-    ///  - {InManagement, Confirmed, Traveling, ToSettle} -&gt; Cancelled (B5): el gate "sin factura viva"
-    ///    + permisos corre en el wrapper publico; la matriz garantiza los estados de origen validos.
+    ///  - {InManagement, Confirmed, ToSettle} -&gt; Cancelled (B5): el gate "sin factura viva" + permisos
+    ///    corre en el wrapper publico; la matriz garantiza los estados de origen validos. ADR-035 (2026-06-19):
+    ///    Traveling YA NO cancela (una reserva en viaje se corrige por NC/ajuste, no se cancela).
     ///
     /// Confirmed como destino NO esta en la matriz: solo el motor automatico lleva a Confirmed (INV-020-02).
     /// </summary>
