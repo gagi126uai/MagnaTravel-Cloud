@@ -142,6 +142,11 @@ export function PassengerList({
     // Viene del padre (ReservaDetailPage) que ya tiene el TransitionReadinessDto procesado.
     sugerenciaComposicion = null,
     onUsarSugerencia = null,
+    // ADR-035 feedback 2026-06-19: gate de solo-lectura.
+    // Cuando es false (estado terminal: Lost, Cancelled, Closed), los botones de
+    // agregar/editar/borrar pasajero se ocultan. El padre lo extrae de capabilities.canEditPassengers.
+    // Degradación elegante: si no se pasa, se permite editar (mismo comportamiento previo).
+    canEditPassengers = true,
 }) {
     // Slot que tiene el mini-formulario inline abierto.
     // null = ninguno; guardamos el índice del slot.
@@ -187,12 +192,17 @@ export function PassengerList({
                     )}
                 </div>
 
-                <button
-                    onClick={onAddPassenger}
-                    className="w-full sm:w-auto flex items-center justify-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors shadow-sm"
-                >
-                    <Plus className="w-4 h-4" /> Agregar Pasajero
-                </button>
+                {/* "Agregar Pasajero" se oculta en estados terminales donde canEditPassengers=false.
+                    Feedback 2026-06-19: en Perdida/Cancelada/Finalizada no se pueden agregar pasajeros. */}
+                {canEditPassengers && (
+                    <button
+                        onClick={onAddPassenger}
+                        className="w-full sm:w-auto flex items-center justify-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors shadow-sm"
+                        data-testid="btn-agregar-pasajero"
+                    >
+                        <Plus className="w-4 h-4" /> Agregar Pasajero
+                    </button>
+                )}
             </div>
 
             {/* Franja de sugerencia de composición (Pieza C — ADR-031 v2.1).
@@ -266,51 +276,54 @@ export function PassengerList({
                                         )}
                                     </div>
 
-                                    {/* Acciones */}
+                                    {/* Acciones de pasajero.
+                                        canEditPassengers=false → se ocultan todos los botones (solo lectura).
+                                        Feedback 2026-06-19: en estados terminales la lista es informativa. */}
                                     <div className="flex items-center gap-1 flex-shrink-0">
-                                        {tieneNombre ? (
-                                            // Pasajero con nombre: Editar + Eliminar
-                                            <>
+                                        {canEditPassengers ? (
+                                            tieneNombre ? (
+                                                // Pasajero con nombre: Editar + Eliminar
+                                                <>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => onEditPassenger(slot.pasajero)}
+                                                        aria-label="Editar pasajero"
+                                                        className="p-2 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/40 rounded-lg transition-colors"
+                                                        title="Editar"
+                                                    >
+                                                        <Edit2 className="w-4 h-4" />
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => onDeletePassenger(getPublicId(slot.pasajero))}
+                                                        aria-label="Eliminar pasajero"
+                                                        className="p-2 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/40 rounded-lg transition-colors"
+                                                        title="Eliminar"
+                                                    >
+                                                        <Trash2 className="w-4 h-4" />
+                                                    </button>
+                                                </>
+                                            ) : (
+                                                // Slot sin nombre: botón [Cargar] que abre el inline form
                                                 <button
                                                     type="button"
-                                                    onClick={() => onEditPassenger(slot.pasajero)}
-                                                    aria-label="Editar pasajero"
-                                                    className="p-2 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/40 rounded-lg transition-colors"
-                                                    title="Editar"
+                                                    onClick={() => setSlotAbierto(esteSlotAbierto ? null : index)}
+                                                    aria-label={`Cargar datos de ${slot.etiqueta}`}
+                                                    aria-expanded={esteSlotAbierto}
+                                                    data-testid={`btn-cargar-pasajero-${index}`}
+                                                    className="inline-flex items-center gap-1.5 rounded-lg border border-amber-400 bg-amber-100 px-3 py-1.5 text-xs font-bold text-amber-700 transition-colors hover:bg-amber-200 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300 dark:hover:bg-amber-900/50"
                                                 >
-                                                    <Edit2 className="w-4 h-4" />
+                                                    <Plus className="w-3.5 h-3.5" />
+                                                    Cargar
                                                 </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => onDeletePassenger(getPublicId(slot.pasajero))}
-                                                    aria-label="Eliminar pasajero"
-                                                    className="p-2 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/40 rounded-lg transition-colors"
-                                                    title="Eliminar"
-                                                >
-                                                    <Trash2 className="w-4 h-4" />
-                                                </button>
-                                            </>
-                                        ) : (
-                                            // Slot sin nombre: botón [Cargar] que abre el inline form
-                                            <button
-                                                type="button"
-                                                onClick={() => setSlotAbierto(esteSlotAbierto ? null : index)}
-                                                aria-label={`Cargar datos de ${slot.etiqueta}`}
-                                                aria-expanded={esteSlotAbierto}
-                                                data-testid={`btn-cargar-pasajero-${index}`}
-                                                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-400 bg-amber-100 px-3 py-1.5 text-xs font-bold text-amber-700 transition-colors hover:bg-amber-200 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300 dark:hover:bg-amber-900/50"
-                                            >
-                                                <Plus className="w-3.5 h-3.5" />
-                                                Cargar
-                                            </button>
-                                        )}
+                                            )
+                                        ) : null /* estado terminal: solo lectura, sin botones */}
                                     </div>
                                 </div>
 
-                                {/* Mini-formulario inline: solo se despliega para el slot abierto.
-                                    Conforme a la guía UX 2026-06-15: NUNCA en ventana flotante,
-                                    siempre en línea dentro de la página. */}
-                                {esteSlotAbierto && !tieneNombre && (
+                                {/* Mini-formulario inline: solo se despliega para el slot abierto
+                                    Y cuando canEditPassengers=true (no en solo lectura terminal). */}
+                                {esteSlotAbierto && !tieneNombre && canEditPassengers && (
                                     <div className="mt-1 ml-4">
                                         <PasajeroInlineForm
                                             reservaId={reservaId}

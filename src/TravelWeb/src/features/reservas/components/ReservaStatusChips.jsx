@@ -1,21 +1,21 @@
 import React from 'react';
 
 /**
- * Chips derivados que complementan al badge de estado principal. No son estados
- * de la maquina — son indicadores visuales calculados sobre el estado +
- * propiedades financieras/temporales de la reserva.
+ * Indicadores de ESTADO DE PAGO de la reserva. Son chips complementarios, NO el estado operativo.
  *
- * - "Pagada" (verde): reserva en Confirmed con Balance == 0. Le dice al
- *   operador "no hay nada por cobrar, esta lista para viajar".
- * - "Saldo pendiente" (amarillo): reserva en Confirmed con Balance > 0.
- * - "En curso" (verde solido pulse): reserva en Traveling cuyas fechas
- *   indican que el viaje esta pasando AHORA.
- * - "Vencida con deuda" (rojo pulse): reserva en Traveling (o ToSettle con flag ON)
- *   cuyo viaje ya termino pero tiene saldo pendiente. No se cierra automaticamente;
- *   alerta fuerte para que el operador la cobre o la de de baja.
- *   Con el ciclo extendido (flag ON), una reserva puede pasar de Traveling a ToSettle
- *   aunque tenga deuda — el chip sigue apareciendo en ToSettle para que no se pierda
- *   la alerta visual.
+ * Feedback 2026-06-19 (cambio 6): diferenciamos visualmente "estado operativo de la reserva"
+ * (el badge grande: Presupuesto, En gestión, Confirmada, etc.) de "estado de pago"
+ * (estos chips: Pagada, Saldo pendiente, Vencida con deuda).
+ * Para eso:
+ *   - Los chips son más pequeños (text-[10px] en vez de text-xs)
+ *   - Llevan el prefijo "Pago:" en gris claro para que el usuario entienda que es un eje diferente
+ *   - No se mezclan visualmente con el badge de estado operativo
+ *
+ * Valores posibles:
+ * - "Pagada" (verde): reserva Confirmed con Balance == 0.
+ * - "Saldo pendiente" (amarillo): reserva Confirmed con Balance > 0.
+ * - "En curso" (verde pulse): el viaje está pasando ahora mismo.
+ * - "Vencida con deuda" (rojo pulse): el viaje terminó pero queda saldo pendiente.
  *
  * Los flags `isFullyPaid`, `hasOverdueDebt`, `isInProgress` los provee el backend
  * en ReservaDto/ReservaListDto.
@@ -51,8 +51,8 @@ export function ReservaStatusChips({ reserva }) {
             title: 'El viaje ya termino pero quedo saldo pendiente. La reserva no se cerro automaticamente.',
         });
     } else if (reserva.isInProgress) {
-        // Solo mostrar "En curso" si NO esta vencida con deuda (en ese caso
-        // mostramos la alerta mas fuerte).
+        // Solo mostrar "En curso" si NO está vencida con deuda (en ese caso
+        // mostramos la alerta más fuerte).
         chips.push({
             key: 'in-progress',
             label: '• En curso',
@@ -64,16 +64,22 @@ export function ReservaStatusChips({ reserva }) {
     if (chips.length === 0) return null;
 
     return (
-        <>
+        // Contenedor con label "Pago:" para que quede claro que estos chips son del eje de cobro,
+        // no del estado operativo de la reserva. Así no parece "dos estados a la vez".
+        <span className="inline-flex items-center gap-1.5" data-testid="reserva-payment-chips">
+            <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                Pago:
+            </span>
             {chips.map((chip) => (
                 <span
                     key={chip.key}
-                    className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider border ${chip.className}`}
+                    data-testid={`chip-pago-${chip.key}`}
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${chip.className}`}
                     title={chip.title}
                 >
                     {chip.label}
                 </span>
             ))}
-        </>
+        </span>
     );
 }

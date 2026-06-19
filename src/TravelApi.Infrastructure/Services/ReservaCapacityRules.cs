@@ -96,22 +96,123 @@ public static class ReservaCapacityRules
     }
 
     /// <summary>
+    /// ADR-035 (2026-06-19): PRIMERA COMPUERTA de TODA mutacion de PASAJEROS (agregar / completar datos /
+    /// cambiar identidad / borrar) — candado por ESTADO de la reserva, MISMO patron que los servicios.
+    ///
+    /// <para>Cierra la incoherencia detectada: en una reserva CERRADA (Closed/Lost/Cancelled/
+    /// PendingOperatorRefund) todavia se podian tocar pasajeros. Ahora es solo lectura DURA: en los terminales
+    /// no se puede ni completar un dato faltante, ni agregar, ni borrar un pasajero. NINGUNA autorizacion lo
+    /// desbloquea.</para>
+    ///
+    /// <para>Esto NO cambia la regla de ADR-031 para los estados vivos: en EN ARMADO y EN FIRME, completar un
+    /// dato faltante de un pasajero sigue sin pedir autorizacion (lo evalua el servicio aparte). Esta compuerta
+    /// SOLO impone el hard block en los terminales — corre PRIMERO, antes del candado de autorizacion y de los
+    /// guards fiscales, que quedan intactos.</para>
+    ///
+    /// <para>Reserva inexistente: no-op (deja que el flujo propio devuelva su 404).</para>
+    /// </summary>
+    public static Task EnsurePassengersEditableByStateAsync(
+        AppDbContext db,
+        int reservaId,
+        CancellationToken ct = default)
+        => EnsureEditableByStateAsync(db, reservaId, ReservaEditableArea.Passengers, ct);
+
+    /// <summary>
+    /// ADR-035 (2026-06-19): PRIMERA COMPUERTA para editar DATOS DE CABECERA de la reserva (fechas de salida/
+    /// regreso y demas datos generales) — candado por ESTADO, MISMO patron que los servicios. En los terminales
+    /// es solo lectura dura. El candado de autorizacion (Confirmed+) y los guards fiscales (factura/voucher con
+    /// periodo declarado) se siguen aplicando aparte, DESPUES de esta compuerta.
+    /// </summary>
+    public static Task EnsureReservaDataEditableByStateAsync(
+        AppDbContext db,
+        int reservaId,
+        CancellationToken ct = default)
+        => EnsureEditableByStateAsync(db, reservaId, ReservaEditableArea.ReservaData, ct);
+
+    /// <summary>
+    /// Las tres areas que comparten el MISMO candado por estado (3 grupos del dueño). Se usan para elegir la
+    /// capacidad a evaluar y el texto del motivo, sin duplicar la logica de la compuerta.
+    /// </summary>
+    private enum ReservaEditableArea
+    {
+        Services,
+        Passengers,
+        ReservaData
+    }
+
+    /// <summary>
+    /// Nucleo compartido de la compuerta por estado para servicios, pasajeros y datos de cabecera. Evalua la
+    /// FUENTE UNICA <see cref="ReservaCapabilityPolicy"/> (el mismo predicado que apaga botones en el front) y,
+    /// si la accion no esta permitida en el estado actual, lanza <see cref="InvalidOperationException"/> (-&gt;
+    /// 409) con un motivo legible (sin montos ni costos, respeta el enmascarado see_cost).
+    /// </summary>
+    private static async Task EnsureEditableByStateAsync(
+        AppDbContext db,
+        int reservaId,
+        ReservaEditableArea area,
+        CancellationToken ct)
+    {
+        var status = await db.Reservas.AsNoTracking()
+            .Where(r => r.Id == reservaId)
+            .Select(r => r.Status)
+            .FirstOrDefaultAsync(ct);
+
+        // Reserva inexistente: no bloqueamos aca; el metodo de negocio devolvera su NotFound.
+        if (string.IsNullOrWhiteSpace(status)) return;
+
+        // Solo el estado importa para estas capacidades; el resto del contexto va en su valor neutro.
+        var capabilities = ReservaCapabilityPolicy.For(new ReservaCapabilityContext(
+            Status: status,
+            Balance: 0m,
+            HasLiveCae: false,
+            HasLiveVoucher: false,
+            HasLiveEditAuth: false,
+            HasAnyPayment: false));
+
+        var allowed = area switch
+        {
+            ReservaEditableArea.Services => capabilities.CanEditServices.Allowed,
+            ReservaEditableArea.Passengers => capabilities.CanEditPassengers.Allowed,
+            ReservaEditableArea.ReservaData => capabilities.CanEditReservaData.Allowed,
+            _ => true
+        };
+        if (allowed) return;
+
+        throw new InvalidOperationException(ReadOnlyMessageFor(status, area));
+    }
+
+    /// <summary>
     /// Motivo legible (español, sin montos/costos) para el bloqueo de servicios por estado de solo lectura.
     /// Diferencia el estado para que el vendedor entienda QUE pasa y, en el caso de Finalizada, COMO seguir
     /// (reabrir a "A liquidar"). Cualquier estado terminal no listado cae al mensaje generico.
     /// </summary>
     private static string ReadOnlyServicesMessageFor(string status)
+        => ReadOnlyMessageFor(status, ReservaEditableArea.Services);
+
+    /// <summary>
+    /// Motivo legible por estado terminal y por area. El "que" cambia (servicios / pasajeros / datos), pero la
+    /// guia es la misma que en servicios: para una Finalizada (Closed) se indica reabrir a "A liquidar". Sin
+    /// montos ni costos (respeta el enmascarado see_cost).
+    /// </summary>
+    private static string ReadOnlyMessageFor(string status, ReservaEditableArea area)
     {
+        var what = area switch
+        {
+            ReservaEditableArea.Passengers => "los pasajeros",
+            ReservaEditableArea.ReservaData => "los datos de la reserva",
+            _ => "los servicios"
+        };
+
         if (string.Equals(status, EstadoReserva.Closed, StringComparison.OrdinalIgnoreCase))
-            return "La reserva esta finalizada: los servicios son de solo lectura. " +
+            return $"La reserva esta finalizada: {what} son de solo lectura. " +
                    "Para tocarla, reabrila a \"A liquidar\" primero.";
         if (string.Equals(status, EstadoReserva.Cancelled, StringComparison.OrdinalIgnoreCase))
-            return "La reserva esta cancelada: los servicios son de solo lectura.";
+            return $"La reserva esta cancelada: {what} son de solo lectura.";
         if (string.Equals(status, EstadoReserva.Lost, StringComparison.OrdinalIgnoreCase))
-            return "La reserva esta marcada como perdida: los servicios son de solo lectura.";
+            return $"La reserva esta marcada como perdida: {what} son de solo lectura.";
         if (string.Equals(status, EstadoReserva.PendingOperatorRefund, StringComparison.OrdinalIgnoreCase))
-            return "La reserva esta esperando el reembolso del operador: los servicios son de solo lectura.";
-        return "En el estado actual de la reserva, los servicios son de solo lectura.";
+            return $"La reserva esta esperando el reembolso del operador: {what} son de solo lectura.";
+        return $"En el estado actual de la reserva, {what} son de solo lectura.";
     }
 
     /// <summary>

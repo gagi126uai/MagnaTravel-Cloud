@@ -84,6 +84,20 @@ public class ReservaCapabilitiesDto
     public CapabilityDto CanRegisterPayment { get; set; } = new();
     public CapabilityDto CanEditOrDeletePayment { get; set; } = new();
     public CapabilityDto CanEditServices { get; set; } = new();
+
+    /// <summary>
+    /// ADR-035 (2026-06-19): si se pueden tocar los PASAJEROS (agregar/completar/cambiar/borrar) en el estado
+    /// actual. El front apaga los botones de pasajeros cuando es false. En estados terminales = false (solo
+    /// lectura dura, ni completar datos). El candado de autorizacion en estados firmes se aplica aparte.
+    /// </summary>
+    public CapabilityDto CanEditPassengers { get; set; } = new();
+
+    /// <summary>
+    /// ADR-035 (2026-06-19): si se pueden editar las FECHAS / datos de cabecera de la reserva en el estado
+    /// actual. El front apaga el boton "Editar fechas" cuando es false. En estados terminales = false.
+    /// </summary>
+    public CapabilityDto CanEditReservaData { get; set; } = new();
+
     public CapabilityDto CanCancel { get; set; } = new();
     public CapabilityDto CanAdvance { get; set; } = new();
     public CapabilityDto CanEmitVoucher { get; set; } = new();

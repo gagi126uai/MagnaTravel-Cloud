@@ -197,10 +197,21 @@ export function esServicioConfirmadoPorOperador(svc) {
  *     esta vacio o es el valor por defecto, el badge dice "Solicitado" (ya se pidio).
  *   - "Confirmado" y "Cancelado" siempre se muestran tal cual (llegan del backend).
  *
+ * Feedback 2026-06-19 (cambio 5): cuando la reserva entera está en estado terminal
+ * Lost o Cancelled, los servicios muestran "Anulado" o "Cancelado" respectivamente
+ * sin importar el workflowStatus real — es SOLO presentación, no muta datos.
+ * Así la vista queda coherente con el estado de la reserva.
+ *
  * @param {string|null} workflowStatus - Estado workflow del servicio (puede ser null/undefined)
  * @param {string} reservaStatus - Estado de la reserva (ej. "Quotation", "Budget", "InManagement")
  */
 function etiquetaEstadoServicio(workflowStatus, reservaStatus) {
+    // Override visual para reservas terminales (cambio 5 — display-derived, no muta backend).
+    // Lost → todos los servicios muestran "Anulado" (la reserva se perdió, no hubo servicio real).
+    // Cancelled → todos muestran "Cancelado" (la reserva fue cancelada formalmente).
+    if (reservaStatus === 'Lost') return 'Anulado';
+    if (reservaStatus === 'Cancelled') return 'Cancelado';
+
     // "Confirmado", "Cancelado" y otros estados concretos del operador
     // (ej. "Emitido", "HK") se muestran tal cual.
     if (workflowStatus && workflowStatus !== 'Solicitado') {
@@ -217,11 +228,14 @@ function etiquetaEstadoServicio(workflowStatus, reservaStatus) {
  * Color del badge segun la ETIQUETA visible (no solo el workflowStatus).
  * "En espera" (cotizacion/presupuesto, nada pedido aun) va gris neutro, distinto
  * del ambar de "Solicitado" (ya pedido al operador, esperando confirmacion).
+ * "Anulado" (reserva Lost) va en gris sobrio (la reserva no prosperó).
  */
 function claseColorEstadoServicio(workflowStatus, reservaStatus) {
     const etiqueta = etiquetaEstadoServicio(workflowStatus, reservaStatus);
     if (etiqueta === 'Confirmado') return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400';
     if (etiqueta === 'Cancelado') return 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400';
+    // "Anulado" (Lost): gris sobrio — la reserva no prosperó, no queremos un color de alerta.
+    if (etiqueta === 'Anulado') return 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-500';
     if (etiqueta === 'En espera') return 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400';
     return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400';
 }

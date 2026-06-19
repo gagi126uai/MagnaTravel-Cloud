@@ -878,8 +878,53 @@ export default function ReservaDetailPage() {
         </div>
       )}
 
-      {/* Banner early-stage: Cotizacion y Presupuesto — la reserva no es operativa todavia.
-          El texto orienta al vendedor sobre el siguiente paso. */}
+      {/* ─── Carteles de estado ────────────────────────────────────────────────────
+          Feedback 2026-06-19: UN SOLO cartel que explica el estado actual.
+          Los estados terminales (Lost/Cancelled/Closed/PendingOperatorRefund) tienen un
+          cartel de solo-lectura. Los estados activos orientan al vendedor.
+          Los botones deshabilitados NO repiten el motivo — el cartel lo dice todo. */}
+
+      {/* Estados terminales: solo lectura */}
+      {reserva.status === "Lost" ? (
+        <div
+          className="rounded-xl border border-slate-200 bg-slate-100 p-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-400"
+          data-testid="banner-estado-terminal"
+          role="status"
+        >
+          <strong className="font-bold">Reserva perdida</strong> — solo lectura.
+        </div>
+      ) : reserva.status === "Cancelled" ? (
+        <div
+          className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
+          data-testid="banner-estado-terminal"
+          role="status"
+        >
+          <strong className="font-bold">Reserva cancelada</strong> — solo lectura.
+        </div>
+      ) : reserva.status === "Closed" ? (
+        <div
+          className="rounded-xl border border-slate-200 bg-slate-100 p-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-400"
+          data-testid="banner-estado-terminal"
+          role="status"
+        >
+          <strong className="font-bold">Reserva finalizada</strong> — solo lectura.
+          {/* Solo mostramos el tip de "Reabrir" si la reserva no tiene factura viva.
+              Si tiene factura ya, no hay nada que facturar reabriéndola. */}
+          {!reserva.requiresInvoiceAnnulmentToCancel && (
+            <> Reabrila a "A liquidar" para facturar.</>
+          )}
+        </div>
+      ) : reserva.status === "PendingOperatorRefund" ? (
+        <div
+          className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
+          data-testid="banner-estado-terminal"
+          role="status"
+        >
+          <strong className="font-bold">Cancelada, esperando el reembolso del operador</strong> — solo lectura.
+        </div>
+      ) : null}
+
+      {/* Estados activos: orientan al vendedor sobre el siguiente paso */}
       {reserva.status === "Quotation" ? (
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/30 dark:text-slate-300">
           <strong className="font-bold">Cotizacion.</strong>{" "}
@@ -1140,6 +1185,10 @@ export default function ReservaDetailPage() {
             <PassengerList
               reserva={reserva}
               reservaId={publicId}
+              // ADR-035 feedback 2026-06-19: en estados terminales (Lost/Cancelled/Closed)
+              // los botones de pasajeros se ocultan. La capability viene del backend.
+              // Degradación elegante: si no hay capabilities, se permite editar (comportamiento previo).
+              canEditPassengers={reserva?.capabilities?.canEditPassengers?.allowed ?? true}
               onPasajeroGuardado={() => {
                 // Recargar la reserva para actualizar el snapshot de pasajeros
                 // y que el contador y los hints queden al día.

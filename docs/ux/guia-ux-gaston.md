@@ -369,9 +369,32 @@ Ronda 2:
 > (sí/no hay factura emitida que anular), `MonedaPrincipal` (la moneda donde está el grueso del
 > saldo) y `porMoneda` (un saldo por cada moneda que la reserva realmente usa).
 
-**A) Botón apagado: el motivo va DEBAJO, como texto chico (P1 = A). NUNCA tooltip.**
-- **(2026-06-19) Cuando una acción no se puede hacer, el botón se muestra APAGADO (gris, no se puede tocar) y debajo aparece el motivo en texto chico**, igual que hoy aparece "Tiene que haber al menos 1 pasajero" debajo de "El cliente aceptó". El motivo es la frase que manda el backend en `Capabilities.<acción>.reason`. Refuerza la regla 2026-06-08 (nada de tooltip / "apoyar el mouse para enterarse"): el motivo siempre a la vista.
-- **(2026-06-19) El botón se muestra SIEMPRE (apagado), no se esconde.** Es un cambio respecto del código viejo, que ocultaba botones según el estado. Ahora cada acción de la reserva (Registrar cobro, Emitir factura, Cancelar, Volver atrás, etc.) se ve siempre; si no corresponde, está apagada con su motivo debajo. Así el vendedor entiende por qué no puede, en vez de no encontrar el botón.
+**A) Botones apagados: SOLO gris, sin texto de motivo debajo (actualizado 2026-06-19 feedback).**
+- **(Feedback 2026-06-19 — reemplaza la regla anterior)** Cuando una acción no se puede hacer, el botón va **GRIS** (apagado, no se puede tocar). **NO hay texto de motivo debajo de cada botón.** En cambio, hay **UN ÚNICO CARTEL** arriba que explica el estado de la reserva para los estados terminales.
+- Carteles por estado terminal (van en la franja de arriba de la pantalla de reserva):
+  - **Perdida:** "Reserva perdida — solo lectura."
+  - **Cancelada:** "Reserva cancelada — solo lectura."
+  - **Finalizada:** "Reserva finalizada — solo lectura. Reabrila a 'A liquidar' para facturar." (solo si NO tiene factura con CAE vivo)
+  - **Esperando reembolso:** "Cancelada, esperando el reembolso del operador — solo lectura."
+- Los estados activos (Budget, InManagement, etc.) conservan sus carteles orientativos de siempre.
+- El texto "Tiene que haber al menos 1 pasajero" debajo de "El cliente aceptó" **sí se mantiene** — es un requisito previo de acción, no un motivo de bloqueo de estado.
+
+**A-bis) Botón primario de avance integrado en la fila (feedback 2026-06-19).**
+- El botón primario de avance (ej. "El cliente aceptó", "Pasar a presupuesto") **va en la misma fila** que el resto de los botones de acción. NO flota suelto arriba como un bloque independiente.
+- Todos los botones tienen la misma altura y alineación.
+
+**A-ter) Solo lectura de pasajeros y fechas en estados terminales (feedback 2026-06-19).**
+- En estados terminales (Lost/Cancelled/Closed/AwaitingRefund): el botón "Editar fechas" desaparece, y los botones de agregar/editar/borrar pasajero también desaparecen. La lista de pasajeros es informativa.
+- Se controla con `capabilities.canEditPassengers.allowed` y `capabilities.canEditReservaData.allowed` del backend.
+
+**A-cuater) Servicios en estado coherente con la reserva (feedback 2026-06-19).**
+- Si la reserva es **Perdida (Lost)**, todos los servicios muestran "Anulado" en su badge de estado.
+- Si la reserva es **Cancelada (Cancelled)**, todos los servicios muestran "Cancelado".
+- Esto es SOLO presentación (display-derived): no se mutan los datos del backend.
+
+**A-quinque) Diferenciar estado operativo de estado de pago (feedback 2026-06-19).**
+- El badge de estado operativo (Presupuesto, En gestión, Confirmada…) es EL ESTADO de la reserva.
+- Los chips de pago (Pagada, Saldo pendiente, Vencida con deuda) son secundarios: más chicos y llevan el prefijo "Pago:" en gris para que no parezcan un segundo estado operativo.
 
 **B) Cobro: arranca en una sola moneda, con link "pagar en otra moneda" (P2/P3/P4 = A).**
 - **(2026-06-19) La ficha de cobro arranca mostrando UNA sola línea con la moneda principal:** "Cobrás en US$ — saldo US$ X" (la moneda y el saldo salen de `MonedaPrincipal` y de `porMoneda`). Debajo, un **link chico "pagar en otra moneda"**. Mientras el vendedor no lo toca, cobra en la moneda principal sin ver ningún selector (caso normal, lo más común).
@@ -385,5 +408,6 @@ Ronda 2:
 - El motivo obligatorio sigue las reglas que ya tenía la cancelación (mínimo de caracteres, etc.); lo nuevo es el cartel de color según haya factura y que todo va en línea.
 
 **D) Reabrir una reserva Finalizada para facturar (P8 = A).**
-- **(2026-06-19) Botón "Reabrir para facturar"** (nombre confirmado por Gastón) entre las acciones de cabecera de la reserva, **arriba, junto a "Volver atrás" y "Archivar"**. Aparece solo cuando la acción está disponible (lo dice `Capabilities`); si no, va apagado con su motivo debajo (regla A).
+- **(2026-06-19) Botón "Reabrir para facturar"** (nombre confirmado por Gastón) entre las acciones de cabecera de la reserva, **en la fila de acciones (junto a "Volver atrás" y "Archivar")**.
+- **(Feedback 2026-06-19) SOLO aparece cuando la reserva está Finalizada Y NO tiene factura con CAE vivo** (`requiresInvoiceAnnulmentToCancel = false`). Si ya tiene factura emitida, no tiene sentido reabrir para facturar.
 - **(2026-06-19) Al tocarlo pide MOTIVO OBLIGATORIO** antes de reabrir. Es una acción sensible (devuelve una reserva ya cerrada al circuito de facturación), por eso siempre queda registrado el motivo.

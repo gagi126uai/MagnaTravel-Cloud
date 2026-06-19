@@ -51,6 +51,8 @@ public sealed record ReservaCapabilities(
     Cap CanRegisterPayment,
     Cap CanEditOrDeletePayment,
     Cap CanEditServices,
+    Cap CanEditPassengers,
+    Cap CanEditReservaData,
     Cap CanCancel,
     Cap CanAdvance,
     Cap CanEmitVoucher,
@@ -184,6 +186,8 @@ public static class ReservaCapabilityPolicy
             CanRegisterPayment: EvaluateRegisterPayment(ctx),
             CanEditOrDeletePayment: EvaluateEditOrDeletePayment(ctx),
             CanEditServices: EvaluateEditServices(ctx),
+            CanEditPassengers: EvaluateEditPassengers(ctx),
+            CanEditReservaData: EvaluateEditReservaData(ctx),
             CanCancel: EvaluateCancel(ctx),
             CanAdvance: EvaluateAdvance(ctx),
             CanEmitVoucher: EvaluateVoucher(ctx),
@@ -256,6 +260,36 @@ public static class ReservaCapabilityPolicy
     {
         if (!ContainsStatus(ServiceEditableStatuses, ctx.Status))
             return Cap.No("No se pueden editar los servicios en este estado de la reserva.");
+        return Cap.Yes;
+    }
+
+    /// <summary>
+    /// ADR-035 (2026-06-19): editar PASAJEROS (agregar / completar datos / cambiar identidad / borrar) sigue
+    /// la MISMA matriz por estado que los servicios: valido en los estados vivos del ciclo (EN ARMADO y EN
+    /// FIRME), bloqueado de raiz en los terminales (Closed/Cancelled/Lost/PendingOperatorRefund), donde el
+    /// roster es solo lectura dura.
+    ///
+    /// <para>Importante: esta capacidad NO toca la regla de ADR-031 (completar un dato faltante de un pasajero
+    /// no pide autorizacion en estados firmes). Eso se sigue evaluando aparte en el servicio. Lo unico que
+    /// suma ADR-035 es el HARD BLOCK en terminales: ahi no se puede ni completar, ni agregar, ni borrar.</para>
+    /// </summary>
+    private static Cap EvaluateEditPassengers(ReservaCapabilityContext ctx)
+    {
+        if (!ContainsStatus(ServiceEditableStatuses, ctx.Status))
+            return Cap.No("No se pueden editar los pasajeros en este estado de la reserva.");
+        return Cap.Yes;
+    }
+
+    /// <summary>
+    /// ADR-035 (2026-06-19): editar DATOS DE CABECERA de la reserva (fechas de salida/regreso y demas datos
+    /// generales) sigue la MISMA matriz por estado que los servicios: valido en los estados vivos del ciclo,
+    /// bloqueado en los terminales. El candado de autorizacion (Confirmed+) y los guards fiscales (factura /
+    /// voucher con periodo declarado) se siguen aplicando aparte, DESPUES de esta compuerta.
+    /// </summary>
+    private static Cap EvaluateEditReservaData(ReservaCapabilityContext ctx)
+    {
+        if (!ContainsStatus(ServiceEditableStatuses, ctx.Status))
+            return Cap.No("No se pueden editar los datos de la reserva en este estado.");
         return Cap.Yes;
     }
 

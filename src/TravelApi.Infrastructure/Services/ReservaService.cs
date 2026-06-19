@@ -333,6 +333,12 @@ public class ReservaService : IReservaService
         var reserva = await _context.Reservas.FirstOrDefaultAsync(r => r.Id == reservaId, ct)
             ?? throw new KeyNotFoundException("Reserva no encontrada");
 
+        // ADR-035 (2026-06-19): PRIMERA COMPUERTA — en una reserva CERRADA (Closed/Lost/Cancelled/
+        // PendingOperatorRefund) las fechas/datos de cabecera son solo lectura DURA: ninguna autorizacion las
+        // desbloquea. Corre ANTES del candado de autorizacion (EnsureReservaEditableAsync) y del guard fiscal
+        // (factura/voucher), que quedan intactos para los estados vivos.
+        await ReservaCapacityRules.EnsureReservaDataEditableByStateAsync(_context, reservaId, ct);
+
         // ADR-020 F4: cambiar fechas de una reserva confirmada requiere autorizacion (candado).
         await EnsureReservaEditableAsync(reservaId, ReservaEditAuthorizationOperations.ReservaDataEdited,
             entityType: "Reserva", entityId: reservaId, summary: "Fechas de la reserva", ct: ct);
@@ -1839,6 +1845,8 @@ public class ReservaService : IReservaService
             CanRegisterPayment = Map(caps.CanRegisterPayment),
             CanEditOrDeletePayment = Map(caps.CanEditOrDeletePayment),
             CanEditServices = Map(caps.CanEditServices),
+            CanEditPassengers = Map(caps.CanEditPassengers),
+            CanEditReservaData = Map(caps.CanEditReservaData),
             CanCancel = Map(caps.CanCancel),
             CanAdvance = Map(caps.CanAdvance),
             CanEmitVoucher = Map(caps.CanEmitVoucher),
@@ -2484,6 +2492,13 @@ public class ReservaService : IReservaService
 
     public async Task<PassengerDto> AddPassengerAsync(int reservaId, Passenger passenger)
     {
+        // ADR-035 (2026-06-19): PRIMERA COMPUERTA — en una reserva CERRADA (Closed/Lost/Cancelled/
+        // PendingOperatorRefund) los pasajeros son solo lectura DURA: no se puede ni agregar uno. Corre antes
+        // de cualquier guard fiscal/de capacidad. En estados vivos (EN ARMADO / EN FIRME) no bloquea: ahi sigue
+        // valiendo la regla de ADR-031 (agregar/completar no pide autorizacion). Este es el chokepoint: las dos
+        // sobrecargas string delegan aca, asi que con gatear el int overload alcanza para todos los caminos.
+        await ReservaCapacityRules.EnsurePassengersEditableByStateAsync(_context, reservaId);
+
         var file = await _context.Reservas
             .Include(r => r.Passengers)
             .FirstOrDefaultAsync(r => r.Id == reservaId);
@@ -2544,6 +2559,11 @@ public class ReservaService : IReservaService
     {
         var passenger = await _context.Passengers.FindAsync(passengerId);
         if (passenger == null) throw new KeyNotFoundException("Pasajero no encontrado");
+
+        // ADR-035 (2026-06-19): PRIMERA COMPUERTA — en una reserva CERRADA el pasajero es solo lectura DURA: no
+        // se puede ni completar un dato faltante. Corre antes del candado fiscal de "datos personales". En
+        // estados vivos no bloquea (ahi rige ADR-031). Chokepoint: la sobrecarga string delega aca.
+        await ReservaCapacityRules.EnsurePassengersEditableByStateAsync(_context, passenger.ReservaId);
 
         if (string.IsNullOrWhiteSpace(updated.FullName)) throw new ArgumentException("El nombre del pasajero es obligatorio");
         if (updated.FullName.Length < 3) throw new ArgumentException("El nombre debe tener al menos 3 caracteres");
@@ -2608,6 +2628,11 @@ public class ReservaService : IReservaService
     {
         var passenger = await _context.Passengers.FindAsync(passengerId);
         if (passenger == null) throw new KeyNotFoundException("Pasajero no encontrado");
+
+        // ADR-035 (2026-06-19): PRIMERA COMPUERTA — en una reserva CERRADA el roster es solo lectura DURA: no
+        // se puede borrar un pasajero. Corre antes del guard fiscal de borrado. Chokepoint: la sobrecarga
+        // string (con su candado de autorizacion) delega aca, asi que cubre ambos caminos.
+        await ReservaCapacityRules.EnsurePassengersEditableByStateAsync(_context, passenger.ReservaId);
 
         var blockReason = await DeleteGuards.GetPassengerDeleteBlockReasonAsync(_context, passengerId);
         if (blockReason != null)

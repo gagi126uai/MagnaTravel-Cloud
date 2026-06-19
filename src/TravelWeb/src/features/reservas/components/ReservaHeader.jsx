@@ -30,10 +30,12 @@ function formatTripDate(value) {
  *   Cualquier etapa activa → [Cancelar] (con proceso fiscal)
  *   Quotation/Budget → [Perdido] (discreto, no hubo compra)
  *
- * ADR-035 (2026-06-19): los botones se muestran SIEMPRE (nunca se esconden por estado).
- * Si la accion no esta permitida, el boton aparece apagado (disabled) y DEBAJO se muestra
- * el motivo en texto chico ambar. La fuente de verdad es `reserva.capabilities`.
- * Degradacion elegante: si capabilities no viene (DTO viejo), mantiene la logica local.
+ * Feedback visual 2026-06-19 (dueño):
+ *   - El boton primario de avance se integra en la fila de acciones (no flota suelto arriba).
+ *   - Los botones deshabilitados van GRISES, sin texto de motivo debajo de cada uno.
+ *   - "Editar fechas": visible solo cuando canEditReservaData.allowed === true.
+ *   - "Reabrir para facturar": solo en Closed + sin factura (requiresInvoiceAnnulmentToCancel=false).
+ *   - Un ÚNICO cartel de estado (en ReservaDetailPage) explica la restriccion global del estado.
  *
  * Props:
  * - reserva: objeto de la reserva cargada (incluye capabilities si es DTO ADR-035)
@@ -72,9 +74,6 @@ export function ReservaHeader({
     const archiveBlockReason = getReservaArchiveBlockReason(reserva);
     const canArchive = !archiveBlockReason;
 
-    // Las fechas se pueden editar en estados activos (no archivada/cancelada/perdida).
-    const canEditDates = !isArchived && reserva.status !== 'Cancelled' && reserva.status !== 'Lost';
-
     // ─── ADR-035: leer capabilities del DTO ──────────────────────────────────────
     // Si el backend no manda capabilities (DTO viejo), se cae en undefined y cada botón
     // usa su lógica local como fallback (degradación elegante).
@@ -87,47 +86,56 @@ export function ReservaHeader({
         return capabilities[field];
     }
 
+    // ─── Botón "Editar fechas" ────────────────────────────────────────────────────
+    // Feedback 2026-06-19: se oculta cuando canEditReservaData.allowed === false.
+    // En estados terminales (Lost, Cancelled, Closed) el backend manda allowed=false.
+    // Fallback (sin capabilities): lógica local por estado.
+    const editReservaDataCap = getCapability('canEditReservaData');
+    const canEditDates = editReservaDataCap.allowed
+        // Fallback defensivo si el campo no vino: estados activos clásicos
+        && !isArchived
+        && reserva.status !== 'Cancelled'
+        && reserva.status !== 'Lost'
+        && reserva.status !== 'Closed';
+
     // ─── Boton Cancelar ───────────────────────────────────────────────────────────
-    // ADR-035: siempre visible si hay permiso de usuario; apagado con motivo si capabilities.canCancel.allowed=false.
-    // Fallback (sin capabilities): solo en estados operativos (igual que antes).
+    // ADR-035: siempre visible si hay permiso de usuario; apagado (gris) si capabilities.canCancel.allowed=false.
+    // Feedback 2026-06-19: SIN texto de motivo debajo, solo gris.
     const CANCELLABLE_STATUSES_FALLBACK = ['InManagement', 'Confirmed', 'Traveling', 'ToSettle'];
     const cancelCapability = getCapability('canCancel');
-    // Mostramos el boton si el usuario tiene permiso Y hay callback. La habilitacion la decide capabilities.
     const showCancelButton = canCancelReserva && onCancelReserva && !isArchived && (
         capabilities
-            // Con capabilities: mostrar si la lista forward lo incluye O si canCancel.allowed es true.
-            // Pero en ADR-035 se muestra SIEMPRE (apagado si no allowed). Solo ocultamos si no hay permiso de usuario.
             ? true
-            // Sin capabilities: solo en estados operativos (fallback legacy).
             : CANCELLABLE_STATUSES_FALLBACK.includes(reserva.status)
     );
 
     // ─── Boton "Perdido" ─────────────────────────────────────────────────────────
     // "Perdido": solo desde Quotation o Budget (cuando el cliente no compro).
-    // En etapas mas avanzadas se usa "Cancelar" (hay implicancias fiscales).
     const showMarkLostButton = ['Quotation', 'Budget'].includes(reserva.status)
         && !isArchived
         && onMarkLost;
 
     // ─── Reversion de estado ──────────────────────────────────────────────────────
-    // ADR-035: si hay capabilities, la lista allowedRevert determina si se puede revertir.
-    // Fallback (sin capabilities): lista hardcodeada de estados que permiten reversion.
     const canRevertLocal = ['Budget', 'InManagement', 'Confirmed', 'Traveling', 'ToSettle', 'Closed', 'Lost'].includes(reserva.status);
     const canRevert = capabilities
         ? (Array.isArray(capabilities.allowedRevert) && capabilities.allowedRevert.length > 0)
         : canRevertLocal;
 
-    // ─── Boton "Reabrir para facturar" (ADR-035, Decision 4-bis) ─────────────────
-    // Disponible cuando la reserva esta Finalizada (Closed) y el backend permite Closed→ToSettle.
-    // Con capabilities: buscamos ToSettle en la lista allowedRevert (la transicion que habilita ADR-035).
-    // Sin capabilities: solo local (Closed + callback disponible).
+    // ─── Boton "Reabrir para facturar" ───────────────────────────────────────────
+    // Feedback 2026-06-19: solo aparece cuando la reserva NO tiene factura con CAE vivo.
+    // Si ya tiene factura (requiresInvoiceAnnulmentToCancel=true), reabrir para facturar
+    // no tiene sentido: la reserva ya está facturada y no habría nada nuevo que facturar.
+    // Con capabilities: buscamos ToSettle en allowedRevert.
+    // Sin capabilities: fallback a Closed.
+    const tieneFacturaViva = reserva.requiresInvoiceAnnulmentToCancel === true;
     const puedeReabrirConCapabilities = capabilities
         && Array.isArray(capabilities.allowedRevert)
         && capabilities.allowedRevert.includes('ToSettle');
     const puedeReabrirFallback = reserva.status === 'Closed';
-    const showReopenButton = onReopenToSettle && !isArchived && (
-        capabilities ? puedeReabrirConCapabilities : puedeReabrirFallback
-    );
+    const showReopenButton = onReopenToSettle
+        && !isArchived
+        && !tieneFacturaViva
+        && (capabilities ? puedeReabrirConCapabilities : puedeReabrirFallback);
 
     const startLabel = formatTripDate(reserva.startDate);
     const endLabel = formatTripDate(reserva.endDate);
@@ -184,12 +192,14 @@ export function ReservaHeader({
                             </span>
                         )}
                     </div>
+                    {/* Chips de pago (Pagada / Saldo pendiente / En curso / Vencida).
+                        Se muestran con tamaño más pequeño para que no compitan visualmente
+                        con el badge de estado operativo de arriba (cambio 6 feedback 2026-06-19). */}
                     <ReservaStatusChips reserva={reserva} />
                 </div>
 
                 {/* Contador "N de M servicios cancelados" (ADR-025 DT.3.1 decision #1).
                     Solo aparece cuando hay AL MENOS UN servicio cancelado.
-                    Es informativo: no cambia el estado ni el color de la reserva.
                     El dato viene del padre, calculado con calculateServiciosCanceladosResumen(allServices). */}
                 {serviciosCancelados && serviciosCancelados.cancelados > 0 && (
                     <p
@@ -222,10 +232,14 @@ export function ReservaHeader({
                             {endLabel || "sin cargar"}
                         </span>
                     </div>
+                    {/* "Editar fechas": visible solo cuando canEditReservaData.allowed === true.
+                        Feedback 2026-06-19: en estados terminales (Lost/Cancelled/Closed) se oculta,
+                        no se deshabilita, porque la reserva está en solo-lectura visual completa. */}
                     {canEditDates && onEditDates && (
                         <button
                             onClick={onEditDates}
                             type="button"
+                            data-testid="reserva-action-edit-dates"
                             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
                             title="Editar fechas del viaje"
                         >
@@ -243,14 +257,20 @@ export function ReservaHeader({
                     <span className="text-sm font-medium text-slate-600 dark:text-slate-400">Solo lectura — Reserva archivada</span>
                 </div>
             ) : (
-                <div className="flex flex-wrap gap-3">
-                    {/* =====================================================
-                        BOTONES DE AVANCE DE ETAPA — ciclo unico (ADR-020)
+                /*
+                  Feedback 2026-06-19: todos los botones van en UNA SOLA FILA (flex-wrap).
+                  El botón primario de avance de etapa (ej. "El cliente aceptó") va PRIMERO,
+                  con color lleno (primario). Las acciones secundarias (Cancelar, Volver, etc.)
+                  van después, separadas por un border-l en sm: hacia arriba.
+                  NO hay bloques flotantes sueltos arriba de la fila.
+                  Los botones deshabilitados van grises sobrios SIN texto de motivo debajo.
+                */
+                <div className="flex flex-wrap items-center gap-2">
 
+                    {/* =====================================================
+                        BOTON PRIMARIO DE AVANCE — va PRIMERO en la fila
                         Quotation → [Pasar a presupuesto]
                         Budget    → [El cliente acepto]
-                        InManagement: Confirmada es AUTOMATICA (no hay boton)
-                        Confirmed: En viaje es AUTOMATICA (no hay boton)
                         Traveling → [Cerrar reserva] + [Apartar para liquidar]
                         ToSettle  → [Finalizar / Marcar liquidada]
                     ===================================================== */}
@@ -259,7 +279,7 @@ export function ReservaHeader({
                         <button
                             onClick={() => onStatusChange('Budget')}
                             data-testid="reserva-action-to-budget"
-                            className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg shadow-blue-200 dark:shadow-none transition-all active:scale-95"
+                            className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold text-sm shadow-sm transition-all active:scale-95"
                             title="Pasar a Presupuesto — el borrador pasa a documento formal para el cliente"
                         >
                             Pasar a presupuesto
@@ -268,23 +288,20 @@ export function ReservaHeader({
 
                     {reserva.status === 'Budget' && (() => {
                         // P2 (ADR-031): el botón se apaga cuando no hay ningún pasajero declarado.
-                        // El backend también valida (suma >= 1 en /transition-readiness),
-                        // pero bloqueamos en la UI para dar feedback inmediato antes de enviar nada.
-                        //
                         // totalPasajerosDeclarados viene del padre (suma adultCount + childCount + infantCount).
                         // Si el padre no lo pasa (null), asumimos que puede avanzar (graceful degradation).
                         const sinPasajeros = totalPasajerosDeclarados !== null && totalPasajerosDeclarados === 0;
                         return (
-                            <div className="flex flex-col items-start gap-1">
+                            <>
                                 <button
                                     onClick={() => onStatusChange('InManagement')}
                                     disabled={sinPasajeros}
                                     data-testid="reserva-action-client-accepted"
                                     data-disabled-reason={sinPasajeros ? "sin-pasajeros" : undefined}
-                                    className={`px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg transition-all active:scale-95 ${
+                                    className={`px-5 py-2.5 rounded-xl font-bold text-sm shadow-sm transition-all active:scale-95 ${
                                         sinPasajeros
                                             ? 'bg-slate-300 dark:bg-slate-700 text-slate-500 dark:text-slate-400 cursor-not-allowed shadow-none'
-                                            : 'bg-cyan-600 hover:bg-cyan-700 text-white shadow-cyan-200 dark:shadow-none'
+                                            : 'bg-cyan-600 hover:bg-cyan-700 text-white'
                                     }`}
                                     title={
                                         sinPasajeros
@@ -295,8 +312,9 @@ export function ReservaHeader({
                                     El cliente acepto
                                 </button>
                                 {/* Cartelito informativo: solo cuando no hay pasajeros.
-                                    No reemplaza el disabled — es ayuda adicional para que el usuario
-                                    sepa exactamente qué tiene que hacer antes de poder avanzar. */}
+                                    Feedback 2026-06-19: este cartelito bajo el BOTÓN PRIMARIO está
+                                    permitido porque explica un requisito previo (no un bloqueo del estado).
+                                    Los carteles de motivo de OTROS botones (Cancelar, Archivar) sí se eliminaron. */}
                                 {sinPasajeros && (
                                     <p
                                         className="text-xs text-amber-600 dark:text-amber-400 font-medium"
@@ -305,31 +323,26 @@ export function ReservaHeader({
                                         Tiene que haber al menos 1 pasajero
                                     </p>
                                 )}
-                            </div>
+                            </>
                         );
                     })()}
 
-                    {/* En gestion: Confirmada es automatica al resolverse todos los servicios.
-                        No hay boton manual de "Confirmar". */}
-
-                    {/* Confirmada: En viaje tambien es automatica (job diario por fecha de salida).
-                        No hay boton manual para evitar que el vendedor adelante el estado. */}
+                    {/* En gestion: Confirmada es automatica al resolverse todos los servicios. */}
+                    {/* Confirmada: En viaje tambien es automatica (job diario por fecha de salida). */}
 
                     {reserva.status === 'Traveling' && (
                         <>
-                            {/* Cierre directo: solo disponible cuando el viaje ya termino */}
                             {endHasPast && (
                                 <button
                                     onClick={() => onStatusChange('Closed')}
                                     disabled={!canClose}
                                     data-testid="reserva-action-finalize-direct"
-                                    className={`px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg transition-all active:scale-95 ${canClose ? 'bg-slate-900 dark:bg-white dark:text-slate-900 text-white' : 'bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed shadow-none'}`}
+                                    className={`px-5 py-2.5 rounded-xl font-bold text-sm shadow-sm transition-all active:scale-95 ${canClose ? 'bg-slate-900 dark:bg-white dark:text-slate-900 text-white' : 'bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed shadow-none'}`}
                                     title={closeTooltip}
                                 >
                                     Cerrar reserva
                                 </button>
                             )}
-                            {/* Desvio opcional: apartar para liquidar con el operador */}
                             <button
                                 onClick={() => onStatusChange('ToSettle')}
                                 data-testid="reserva-action-tosettle"
@@ -346,16 +359,17 @@ export function ReservaHeader({
                             onClick={() => onStatusChange('Closed')}
                             disabled={!canClose}
                             data-testid="reserva-action-finalize"
-                            className={`px-5 py-2.5 rounded-xl font-bold text-sm shadow-lg transition-all active:scale-95 ${canClose ? 'bg-slate-900 dark:bg-white dark:text-slate-900 text-white' : 'bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed shadow-none'}`}
+                            className={`px-5 py-2.5 rounded-xl font-bold text-sm shadow-sm transition-all active:scale-95 ${canClose ? 'bg-slate-900 dark:bg-white dark:text-slate-900 text-white' : 'bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed shadow-none'}`}
                             title={closeTooltip}
                         >
                             Finalizar / Marcar liquidada
                         </button>
                     )}
 
-                    {/* ACCIONES SECUNDARIAS — cada botón muestra icono + palabra siempre visible (spec UX 2026-06-08).
-                        El separador border-l solo se muestra en sm: hacia arriba para que no quede raro al envolver en mobile. */}
-                    <div className="flex flex-wrap gap-2 ml-2 pl-4 sm:border-l border-slate-200 dark:border-slate-800">
+                    {/* ACCIONES SECUNDARIAS — Separador visual en sm: hacia arriba.
+                        Feedback 2026-06-19: botones deshabilitados = solo gris, sin texto debajo.
+                        Todos los botones tienen la misma altura/padding que las acciones primarias. */}
+                    <div className="flex flex-wrap gap-2 sm:border-l sm:border-slate-200 sm:dark:border-slate-800 sm:pl-4">
 
                         {/* Boton "Perdida": discreto, solo desde Cotizacion/Presupuesto */}
                         {showMarkLostButton && (
@@ -363,7 +377,7 @@ export function ReservaHeader({
                                 onClick={onMarkLost}
                                 data-testid="reserva-action-mark-lost"
                                 aria-label="Perdida"
-                                className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 rounded-xl transition-colors text-sm font-semibold"
+                                className="inline-flex items-center gap-1.5 px-3 py-2.5 bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 rounded-xl transition-colors text-sm font-semibold"
                             >
                                 <XCircle className="w-4 h-4" />
                                 Perdida
@@ -371,65 +385,48 @@ export function ReservaHeader({
                         )}
 
                         {/* ── Boton "Cancelar reserva" (ADR-035) ────────────────────────────────────
-                            SIEMPRE VISIBLE si el usuario tiene permiso; si la accion no esta
-                            permitida por capabilities, va apagado (disabled) y el motivo aparece
-                            DEBAJO en texto chico ambar (NO en title/tooltip). */}
-                        {showCancelButton && (() => {
-                            const cancelAllowed = cancelCapability.allowed;
-                            const cancelReason = cancelCapability.reason;
+                            SIEMPRE VISIBLE si el usuario tiene permiso.
+                            Feedback 2026-06-19: si no está permitido, solo gris (sin texto debajo).
+                            El cartel único en ReservaDetailPage explica el motivo global. */}
+                        {showCancelButton && (
+                            <button
+                                onClick={cancelCapability.allowed ? onCancelReserva : undefined}
+                                disabled={!cancelCapability.allowed}
+                                data-testid="reserva-action-cancel"
+                                aria-label="Cancelar reserva"
+                                className={`inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl transition-colors text-sm font-semibold ${
+                                    cancelCapability.allowed
+                                        ? 'bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-900/20 dark:text-rose-300'
+                                        : 'bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-600 cursor-not-allowed'
+                                }`}
+                            >
+                                <Ban className="w-4 h-4" />
+                                Cancelar
+                            </button>
+                        )}
 
-                            return (
-                                <div className="flex flex-col items-start gap-0.5">
-                                    <button
-                                        onClick={cancelAllowed ? onCancelReserva : undefined}
-                                        disabled={!cancelAllowed}
-                                        data-testid="reserva-action-cancel"
-                                        aria-label="Cancelar reserva"
-                                        className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl transition-colors text-sm font-semibold ${
-                                            cancelAllowed
-                                                ? 'bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-900/20 dark:text-rose-300'
-                                                : 'bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-600 cursor-not-allowed'
-                                        }`}
-                                    >
-                                        <Ban className="w-4 h-4" />
-                                        Cancelar
-                                    </button>
-                                    {/* Motivo visible debajo del boton (nunca tooltip) — spec ADR-035 */}
-                                    {!cancelAllowed && cancelReason && (
-                                        <p
-                                            className="text-xs text-amber-600 dark:text-amber-400 font-medium px-1"
-                                            data-testid="reserva-action-cancel-reason"
-                                        >
-                                            {cancelReason}
-                                        </p>
-                                    )}
-                                </div>
-                            );
-                        })()}
-
-                        {/* ── Reversion de estado ────────────────────────────────────────────────────
-                            Disponible en varios estados. Con capabilities se lee allowedRevert.
-                            Sin capabilities: fallback a la lista hardcodeada. */}
+                        {/* ── Reversion de estado ──────────────────────────────────────────────── */}
                         {canRevert && onRevert && (
                             <button
                                 onClick={onRevert}
                                 aria-label="Volver atrás"
-                                className="inline-flex items-center gap-1.5 px-3 py-2 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-900/20 dark:text-amber-300 rounded-xl transition-colors text-sm font-semibold"
+                                className="inline-flex items-center gap-1.5 px-3 py-2.5 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-900/20 dark:text-amber-300 rounded-xl transition-colors text-sm font-semibold"
                             >
                                 <Undo2 className="w-4 h-4" />
                                 Volver atrás
                             </button>
                         )}
 
-                        {/* ── Boton "Reabrir para facturar" (ADR-035, Decision 4-bis) ────────────────
-                            Visible cuando la reserva puede volver de Closed a ToSettle.
-                            Nombre exacto confirmado por Gaston (guia-ux-gaston.md sección ADR-035). */}
+                        {/* ── Boton "Reabrir para facturar" ───────────────────────────────────────
+                            Feedback 2026-06-19: solo se muestra cuando la reserva NO tiene factura
+                            con CAE vivo (requiresInvoiceAnnulmentToCancel=false).
+                            Si ya tiene factura, reabrir para facturar no tiene sentido. */}
                         {showReopenButton && (
                             <button
                                 onClick={onReopenToSettle}
                                 data-testid="reserva-action-reopen-to-settle"
                                 aria-label="Reabrir para facturar"
-                                className="inline-flex items-center gap-1.5 px-3 py-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-900/20 dark:text-indigo-300 rounded-xl transition-colors text-sm font-semibold"
+                                className="inline-flex items-center gap-1.5 px-3 py-2.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-900/20 dark:text-indigo-300 rounded-xl transition-colors text-sm font-semibold"
                             >
                                 <RefreshCw className="w-4 h-4" />
                                 Reabrir para facturar
@@ -441,34 +438,25 @@ export function ReservaHeader({
                             <button
                                 onClick={onDelete}
                                 aria-label="Eliminar reserva"
-                                className="inline-flex items-center gap-1.5 px-3 py-2 bg-rose-50 text-rose-600 hover:bg-rose-100 dark:bg-rose-900/20 dark:text-rose-400 rounded-xl transition-colors text-sm font-semibold"
+                                className="inline-flex items-center gap-1.5 px-3 py-2.5 bg-rose-50 text-rose-600 hover:bg-rose-100 dark:bg-rose-900/20 dark:text-rose-400 rounded-xl transition-colors text-sm font-semibold"
                             >
                                 <Trash2 className="w-4 h-4" />
                                 Eliminar
                             </button>
                         )}
 
-                        {/* Archivar: cuando no se puede, muestra el motivo DEBAJO en texto ambar (ADR-035). */}
-                        <div className="flex flex-col items-start gap-0.5">
-                            <button
-                                onClick={canArchive ? onArchive : undefined}
-                                disabled={!canArchive}
-                                aria-label="Archivar reserva"
-                                className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl transition-colors text-sm font-semibold ${canArchive ? 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700' : 'bg-slate-50 text-slate-300 dark:bg-slate-900 dark:text-slate-700 cursor-not-allowed'}`}
-                            >
-                                <Archive className="w-4 h-4" />
-                                Archivar
-                            </button>
-                            {/* Motivo de bloqueo debajo del boton (ADR-035: nunca en title/tooltip) */}
-                            {!canArchive && archiveBlockReason && (
-                                <p
-                                    className="text-xs text-amber-600 dark:text-amber-400 font-medium px-1"
-                                    data-testid="reserva-action-archive-reason"
-                                >
-                                    {archiveBlockReason}
-                                </p>
-                            )}
-                        </div>
+                        {/* Archivar: botón siempre gris cuando no puede.
+                            Feedback 2026-06-19: SIN texto de motivo debajo.
+                            El cartel único en ReservaDetailPage explica el estado global. */}
+                        <button
+                            onClick={canArchive ? onArchive : undefined}
+                            disabled={!canArchive}
+                            aria-label="Archivar reserva"
+                            className={`inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl transition-colors text-sm font-semibold ${canArchive ? 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700' : 'bg-slate-50 text-slate-300 dark:bg-slate-900 dark:text-slate-700 cursor-not-allowed'}`}
+                        >
+                            <Archive className="w-4 h-4" />
+                            Archivar
+                        </button>
                     </div>
                 </div>
             )}
