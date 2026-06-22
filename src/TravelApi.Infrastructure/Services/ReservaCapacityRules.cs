@@ -417,6 +417,36 @@ public static class ReservaCapacityRules
     }
 
     /// <summary>
+    /// ADR-036 (2026-06-22): true si la reserva tiene AL MENOS un servicio cargado de CUALQUIER tipo.
+    /// "Servicio" = vuelo, hotel, transfer, paquete, asistencia o servicio generico (la coleccion Servicios).
+    /// Una reserva de solo ida tiene al menos el aereo, asi que NO cuenta como vacia.
+    ///
+    /// <para>Esta es la fuente unica de la definicion de "reserva vacia" para el lifecycle: la usa el job
+    /// para (A) no promover a "En viaje" una reserva sin servicios y (B) sanear las que ya quedaron
+    /// atascadas en "En viaje" vacias. Mismo conjunto de colecciones que computa
+    /// <see cref="ReservaScheduleCalculator"/> para las fechas.</para>
+    ///
+    /// <para><b>DECISION CONSCIENTE — cuenta servicios SIN mirar su estado</b>: un servicio cancelado o
+    /// anulado SIGUE contando como "tiene servicios" (la query solo mira existencia de fila, no
+    /// <c>Status</c>). Es deliberado: mantiene la coherencia fechas&lt;-&gt;emptiness con
+    /// <see cref="ReservaScheduleCalculator"/> (que tambien computa las fechas sobre todas las filas, sin
+    /// filtrar por estado). Asi "una reserva sin fechas" y "una reserva vacia" significan lo mismo. NO cambiar
+    /// a filtrar por estado sin revisar tambien el calculo de fechas, o ambos quedarian descalibrados.</para>
+    ///
+    /// <para>Corta apenas encuentra el primer servicio (||): la mayoria de las reservas reales tienen
+    /// algun servicio, asi que normalmente alcanza con la primera o segunda consulta.</para>
+    /// </summary>
+    public static async Task<bool> HasAnyServiceAsync(AppDbContext db, int reservaId, CancellationToken ct = default)
+    {
+        return await db.FlightSegments.AnyAsync(f => f.ReservaId == reservaId, ct)
+            || await db.HotelBookings.AnyAsync(h => h.ReservaId == reservaId, ct)
+            || await db.TransferBookings.AnyAsync(t => t.ReservaId == reservaId, ct)
+            || await db.PackageBookings.AnyAsync(p => p.ReservaId == reservaId, ct)
+            || await db.AssistanceBookings.AnyAsync(a => a.ReservaId == reservaId, ct)
+            || await db.Servicios.AnyAsync(s => s.ReservaId == reservaId, ct);
+    }
+
+    /// <summary>
     /// Devuelve la capacidad esperada de un servicio especifico (Hotel/Transfer/Package).
     /// Devuelve null si el tipo no declara capacidad (Flight/Generic).
     /// Devuelve 0 si la entidad no fue encontrada (caller debe manejar).

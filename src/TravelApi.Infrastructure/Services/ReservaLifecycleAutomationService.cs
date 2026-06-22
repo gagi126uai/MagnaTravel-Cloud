@@ -81,6 +81,12 @@ public class ReservaLifecycleAutomationService
         var reconciled = await ReconcileAutoStatesAsync(ct);
 
         var repaired = await AutoRepairTravelingDatesAsync(ct);
+
+        // ADR-036 (saneamiento): cerrar las reservas que ya quedaron En viaje SIN servicios. Corre junto al
+        // resto del housekeeping de Traveling y antes del cierre por fin de viaje (una vacia no tiene EndDate,
+        // asi que el cierre normal no la alcanzaria; este barrido la cierra por estar vacia).
+        var emptyTravelingClosed = await AutoCloseEmptyTravelingAsync(ct);
+
         var promoted = await AutoTransitionConfirmedToTravelingAsync(ct);
 
         // ADR-020: cierre por fin de viaje Traveling -> Closed (EndDate pasada + Balance <= 0). El
@@ -89,9 +95,10 @@ public class ReservaLifecycleAutomationService
         var closed = await AutoTransitionTravelingToClosedAsync(ct);
 
         _logger.LogInformation(
-            "Lifecycle automation finished. Reconciled (motor): {Reconciled}. Repaired: {Repaired}. Confirmed->Traveling: {Promoted}. Avanzadas a fin de viaje: {Closed}.",
-            reconciled, repaired, promoted, closed);
-        return new LifecycleRunResult(promoted, closed, repaired, reconciled);
+            "Lifecycle automation finished. Reconciled (motor): {Reconciled}. Repaired: {Repaired}. En viaje vacias cerradas (saneamiento): {EmptyTravelingClosed}. Confirmed->Traveling: {Promoted}. Avanzadas a fin de viaje: {Closed}.",
+            reconciled, repaired, emptyTravelingClosed, promoted, closed);
+        // El saneamiento cuenta como cierres: se suma al count Closed del resultado.
+        return new LifecycleRunResult(promoted, closed + emptyTravelingClosed, repaired, reconciled);
     }
 
     /// <summary>
@@ -206,6 +213,20 @@ public class ReservaLifecycleAutomationService
                 continue;
             }
 
+            // ADR-036 (2026-06-22): una reserva NO puede pasar a "En viaje" sin servicios cargados. Si quedo
+            // Confirmed sin un solo servicio de ningun tipo, el job NO la promueve: se cuenta como bloqueada,
+            // se loguea y se reintenta cuando alguien le cargue algun servicio. (En la practica una reserva
+            // sin servicios no deberia llegar a Confirmed —el motor exige servicios resueltos—, pero esto
+            // blinda el lifecycle contra reservas viejas o datos inconsistentes.)
+            if (!await ReservaCapacityRules.HasAnyServiceAsync(_db, reserva.Id, ct))
+            {
+                blocked++;
+                _logger.LogInformation(
+                    "Reserva {ReservaId} ({NumeroReserva}) NO promovida automaticamente Confirmed->Traveling: no tiene ningun servicio cargado. Se reintenta cuando se cargue al menos un servicio.",
+                    reserva.Id, reserva.NumeroReserva);
+                continue;
+            }
+
             // ADR-036: candado DURO de pago del cliente. Si todavia debe, no viaja: se cuenta como bloqueado,
             // se loguea (sin montos) y se reintenta en la proxima corrida. Nunca excepcion en el job.
             if (!ReservationEconomicPolicy.IsClientFullyPaid(reserva.Balance))
@@ -229,7 +250,7 @@ public class ReservaLifecycleAutomationService
         var promoted = await ApplyTransitionsAsync(planned, "AutoTransitionConfirmedToTraveling", ct);
 
         _logger.LogInformation(
-            "Auto-promoted {Promoted} Reserva(s) Confirmed->Traveling. Skipped {Blocked} por inconsistencia de capacidad o servicios sin confirmar.",
+            "Auto-promoted {Promoted} Reserva(s) Confirmed->Traveling. Skipped {Blocked} por inconsistencia de capacidad, sin servicios cargados o saldo del cliente pendiente.",
             promoted, blocked);
 
         return promoted;
@@ -267,6 +288,154 @@ public class ReservaLifecycleAutomationService
             _logger.LogInformation("Auto-closed {Count} Reserva(s) Traveling->Closed.", saved);
         return saved;
     }
+
+    /// <summary>
+    /// ADR-036 (2026-06-22, saneamiento de una sola vez): cierra Traveling -&gt; Closed las reservas que YA
+    /// quedaron atascadas en "En viaje" SIN ningun servicio cargado. El dueño eligio cerrarlas (no devolverlas
+    /// a un estado anterior): son reservas vacias que nunca debieron viajar, y con el guard nuevo
+    /// (<see cref="AutoTransitionConfirmedToTravelingAsync"/>) ya no se generan mas.
+    ///
+    /// <para>Reusa <see cref="ApplyTransitionsAsync"/> para heredar el rastro auditable
+    /// (<see cref="ReservaStatusChangeLog"/> con actor "sistema") y el re-chequeo de concurrencia, igual que
+    /// el cierre normal por fin de viaje. La diferencia es el motivo del log (saneamiento) y el filtro:
+    /// estado Traveling + cero servicios, SIN mirar EndDate ni Balance (una reserva vacia no tiene plata
+    /// operativa real ni fechas de servicios).</para>
+    ///
+    /// <para>Limite defensivo .Take(500), mismo patron que <see cref="AutoRepairTravelingDatesAsync"/>: si por
+    /// alguna razon hubiera muchas, la proxima corrida levanta el resto. Como el guard nuevo evita que se
+    /// creen nuevas, este barrido se vacia solo una vez aplicado. Se ordena por Id antes del Take para que el
+    /// barrido sea determinista (la misma corrida levanta siempre el mismo lote).</para>
+    ///
+    /// <para><b>GUARD DE PLATA (review de seguridad ADR-036, 2026-06-22)</b>: el cierre es IRREVERSIBLE y el
+    /// filtro "cero servicios" NO ve la plata — los cobros del cliente (<see cref="Payment"/>) y las facturas
+    /// con CAE (<see cref="Invoice"/>) se cuelgan de la RESERVA (ReservaId), no de los servicios. Una reserva
+    /// vacia PERO con plata viva (un cobro, una factura con CAE, o Balance != 0 — ej. un saldo a favor por un
+    /// pago sin venta) es un PROBLEMA de plata, no una reserva descartable. Cerrarla lo escondería. Por eso una
+    /// vacia con cualquiera de esas tres condiciones NO se cierra: se loguea para revision manual (sin montos,
+    /// respetando el enmascarado see_cost) y se saltea. Solo se cierran las vacias-de-verdad, sin plata.</para>
+    /// </summary>
+    public async Task<int> AutoCloseEmptyTravelingAsync(CancellationToken ct = default)
+    {
+        var travelingIds = await _db.Reservas
+            .Where(r => r.Status == EstadoReserva.Traveling)
+            .OrderBy(r => r.Id) // barrido determinista: la misma corrida levanta siempre el mismo lote
+            .Select(r => r.Id)
+            .Take(500)
+            .ToListAsync(ct);
+
+        var planned = new List<PlannedTransition>();
+        // IDs salteados por tener plata viva: se loguean al final para que un humano los revise (no se cierran).
+        var skippedForLiveMoney = new List<(int Id, string NumeroReserva)>();
+
+        foreach (var reservaId in travelingIds)
+        {
+            // Solo las VACIAS (cero servicios de todo tipo). Las que tienen aunque sea un servicio NO se tocan.
+            if (await ReservaCapacityRules.HasAnyServiceAsync(_db, reservaId, ct))
+                continue;
+
+            // GUARD DE PLATA: aunque este vacia de servicios, si tiene plata viva NO se cierra (ver doc).
+            if (await HasLiveMoneyAsync(reservaId, ct))
+            {
+                var numero = await _db.Reservas.AsNoTracking()
+                    .Where(r => r.Id == reservaId)
+                    .Select(r => r.NumeroReserva)
+                    .FirstOrDefaultAsync(ct) ?? "(sin numero)";
+                skippedForLiveMoney.Add((reservaId, numero));
+                continue;
+            }
+
+            // Necesitamos la entidad rastreada para que ApplyTransitionsAsync mute Status/ClosedAt y persista.
+            // Defensivo: entre la lista de IDs y este re-fetch alguien pudo borrar la reserva -> saltear.
+            var reserva = await _db.Reservas.FirstOrDefaultAsync(r => r.Id == reservaId, ct);
+            if (reserva is null) continue;
+
+            planned.Add(new PlannedTransition(
+                Reserva: reserva,
+                FromStatus: EstadoReserva.Traveling,
+                ToStatus: EstadoReserva.Closed,
+                StampClosedAt: true,
+                WriteForwardLog: true,
+                Reason: "Cierre de reserva en viaje sin servicios (saneamiento ADR-036)"));
+        }
+
+        // Aviso de revision manual de las vacias-con-plata: sin montos (solo Id + NumeroReserva).
+        if (skippedForLiveMoney.Count > 0)
+        {
+            var detalle = string.Join(", ",
+                skippedForLiveMoney.Select(x => $"{x.Id} ({x.NumeroReserva})"));
+            _logger.LogWarning(
+                "Saneamiento ADR-036: {Count} reserva(s) En viaje SIN servicios pero CON plata viva (cobro, factura con CAE o saldo distinto de cero) NO se cerraron. Requieren revision manual: {Reservas}.",
+                skippedForLiveMoney.Count, detalle);
+        }
+
+        var closed = await ApplyTransitionsAsync(planned, "AutoCloseEmptyTraveling", ct);
+        if (closed > 0)
+        {
+            // Logueamos la LISTA de IDs cerrados (no solo el count) para que el cierre irreversible sea auditable.
+            var closedIds = string.Join(", ", planned.Select(p => p.Reserva.Id));
+            _logger.LogWarning(
+                "Saneamiento ADR-036: cerradas {Count} reserva(s) que estaban En viaje sin ningun servicio cargado. IDs: {ClosedIds}.",
+                closed, closedIds);
+        }
+
+        // Tope del .Take alcanzado: hubo cierre masivo y quedo remanente para la proxima corrida. Lo avisamos
+        // explicito para que no pase desapercibido (un barrido de 500 de una vez no deberia ser normal).
+        if (travelingIds.Count == 500)
+        {
+            _logger.LogWarning(
+                "Saneamiento ADR-036: se proceso el tope de 500 reservas En viaje en esta corrida. Puede haber remanente: la proxima corrida levanta el resto.");
+        }
+
+        return closed;
+    }
+
+    /// <summary>
+    /// Guard de plata del saneamiento (review de seguridad ADR-036): true si la reserva tiene CUALQUIER rastro
+    /// de plata viva colgando de ELLA (no de sus servicios), lo que impide cerrarla a ciegas. Tres condiciones,
+    /// con OR-corto:
+    /// <list type="number">
+    ///   <item><b>Balance != 0</b> con la tolerancia de moneda de <see cref="ReservationEconomicPolicy"/> (NO
+    ///     compara decimales crudos): cubre deuda Y saldo a favor (ej. un pago sin venta).</item>
+    ///   <item><b>Algun <see cref="Payment"/> vivo</b> (no soft-deleted) de la reserva: mismo criterio
+    ///     (<c>!IsDeleted</c>) que usa el read-model de capacidades para "tiene cobros vivos".</item>
+    ///   <item><b>Alguna <see cref="Invoice"/> con CAE vivo</b>: factura (no NC) con CAE asignado y
+    ///     AnnulmentStatus != Succeeded — MISMO criterio que los guards de mutacion
+    ///     (<c>MutationGuards</c>) usan para "factura viva". Los tipos de NC se excluyen inline porque EF Core
+    ///     no traduce el helper <c>InvoiceComprobanteHelpers.IsCreditNote</c> a SQL.</item>
+    /// </list>
+    /// </summary>
+    private async Task<bool> HasLiveMoneyAsync(int reservaId, CancellationToken ct)
+    {
+        // (1) Balance distinto de cero (deuda o saldo a favor), con redondeo de moneda — no decimales crudos.
+        var balance = await _db.Reservas.AsNoTracking()
+            .Where(r => r.Id == reservaId)
+            .Select(r => r.Balance)
+            .FirstOrDefaultAsync(ct);
+        if (ReservationEconomicPolicy.RoundCurrency(balance) != 0m)
+            return true;
+
+        // (2) Algun cobro vivo (real o puente) de la reserva. !IsDeleted = mismo criterio que el read-model.
+        var hasLivePayment = await _db.Payments.AsNoTracking()
+            .AnyAsync(p => p.ReservaId == reservaId && !p.IsDeleted, ct);
+        if (hasLivePayment)
+            return true;
+
+        // (3) Alguna factura con CAE vivo (no NC). Mismo criterio que los guards de mutacion fiscal.
+        var hasLiveCae = await _db.Invoices.AsNoTracking()
+            .AnyAsync(i => i.ReservaId == reservaId
+                && !LiveInvoiceCreditNoteTypes.Contains(i.TipoComprobante) // excluye NC (resta, no mantiene viva)
+                && !string.IsNullOrEmpty(i.CAE)
+                && i.AnnulmentStatus != AnnulmentStatus.Succeeded, ct);
+        return hasLiveCae;
+    }
+
+    /// <summary>
+    /// cbteTipo de las Notas de Credito de AFIP (3=A, 8=B, 13=C, 53=M). Espejo de
+    /// <c>MutationGuards.LiveInvoiceCreditNoteTypes</c>: se excluyen del conteo de "facturas vivas" porque una
+    /// NC RESTA y no debe, por si sola, frenar el cierre. Como array literal porque EF Core no traduce el helper
+    /// <c>InvoiceComprobanteHelpers.IsCreditNote</c> a SQL. Mantener sincronizado con el de MutationGuards.
+    /// </summary>
+    private static readonly int[] LiveInvoiceCreditNoteTypes = { 3, 8, 13, 53 };
 
     /// <summary>
     /// Aplica una tanda de transiciones de estado del job y persiste una sola vez.

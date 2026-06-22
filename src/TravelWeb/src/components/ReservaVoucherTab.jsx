@@ -181,7 +181,17 @@ function Modal({ isOpen, onClose, title, children }) {
   );
 }
 
-export function ReservaVoucherTab({ reservaId, reserva }) {
+/**
+ * Pestaña de documentación (vouchers) de una reserva.
+ *
+ * Props:
+ *  - reservaId: string — publicId de la reserva.
+ *  - reserva: object — DTO de la reserva (para leer pasajeros y saldo).
+ *  - soloLectura: boolean — cuando true, se ocultan todos los botones de escritura
+ *    (Añadir, Emitir, Aprobar, Rechazar, Editar, Anular). Solo quedan Ver y Descargar.
+ *    Debe derivarse de esEstadoCongelado(reserva) en el componente padre.
+ */
+export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false }) {
   const { user } = useAuthState();
   const passengers = useMemo(() => (Array.isArray(reserva?.passengers) ? reserva.passengers : []), [reserva]);
   const [vouchers, setVouchers] = useState([]);
@@ -588,17 +598,20 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
             Gestiona vouchers generados por el sistema y archivos cargados externamente.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            resetAddModal();
-            setIsAddModalOpen(true);
-          }}
-          className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-black text-white shadow-sm transition hover:bg-indigo-700"
-        >
-          <Plus className="h-4 w-4" />
-          Añadir Documento
-        </button>
+        {/* "Añadir Documento" es escritura: se oculta en solo lectura (estado congelado) */}
+        {!soloLectura && (
+          <button
+            type="button"
+            onClick={() => {
+              resetAddModal();
+              setIsAddModalOpen(true);
+            }}
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-black text-white shadow-sm transition hover:bg-indigo-700"
+          >
+            <Plus className="h-4 w-4" />
+            Añadir Documento
+          </button>
+        )}
       </div>
 
       {/* LISTA PRINCIPAL (GESTIÓN DOCUMENTAL) */}
@@ -651,6 +664,8 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
                 ? "Los documentos anulados se mostraran aca cuando existan."
                 : revokedVouchers.length > 0
                 ? "Revisa la solapa Anulados para ver documentos historicos."
+                : soloLectura
+                ? "Esta reserva esta en solo lectura: no se agregan documentos nuevos."
                 : "Añade uno usando el botón superior derecho."}
             </p>
           </div>
@@ -741,9 +756,13 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
                       Descargar
                     </button>
 
+                    {/* Botones de escritura: Editar, Emitir, Aprobar, Rechazar, Anular.
+                        En soloLectura (estado congelado) NO se muestran.
+                        Solo Ver y Descargar quedan disponibles siempre. */}
+
                     {/* Botón Editar: solo para vouchers externos no revocados.
                         Los vouchers generados por el sistema no tienen externalOrigin. */}
-                    {voucher.externalOrigin && voucher.status !== "Revoked" ? (
+                    {!soloLectura && voucher.externalOrigin && voucher.status !== "Revoked" ? (
                       <button
                         type="button"
                         data-testid="voucher-edit-external-button"
@@ -755,7 +774,7 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
                       </button>
                     ) : null}
 
-                    {voucher.status === "Draft" ? (
+                    {!soloLectura && voucher.status === "Draft" ? (
                       <button
                         type="button"
                         onClick={() => promptIssue(voucher)}
@@ -766,8 +785,8 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
                         Emitir
                       </button>
                     ) : null}
-                    
-                    {voucher.status === "PendingAuthorization" && (isAdmin() || user?.id === voucher.authorizedBySuperiorUserId) ? (
+
+                    {!soloLectura && voucher.status === "PendingAuthorization" && (isAdmin() || user?.id === voucher.authorizedBySuperiorUserId) ? (
                       <>
                         <button
                           type="button"
@@ -794,7 +813,7 @@ export function ReservaVoucherTab({ reservaId, reserva }) {
                       </>
                     ) : null}
 
-                    {voucher.status !== "Revoked" && hasPermission("vouchers.revoke") ? (
+                    {!soloLectura && voucher.status !== "Revoked" && hasPermission("vouchers.revoke") ? (
                       <button
                         type="button"
                         onClick={() => {

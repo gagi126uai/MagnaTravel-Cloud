@@ -45,6 +45,29 @@ import { CancelarReservaInline } from "../../cancellations/components/CancelarRe
 import { hasPermission, isAdmin } from "../../../auth";
 import { calcularSugerenciaComposicion } from "../lib/pasajeroHint";
 
+/**
+ * Determina si la reserva está en un estado "congelado" donde solo se permite
+ * ver/imprimir documentos ya emitidos, pero NO crear, anular ni editar.
+ *
+ * Criterio unificado (decisión UX 2026-06-22):
+ *  - En viaje (Traveling): el viaje ya arrancó, nada cambia.
+ *  - Perdida (Lost): cerrada sin cobro, es histórico.
+ *  - Anulada (Cancelled): proceso de anulación completado.
+ *  - Facturada total (FullyInvoiced): ya no se emiten más comprobantes de venta.
+ *
+ * Se usa en las zonas de recibos de cobro (Zona A) y de vouchers (Zona C).
+ * La Zona B (PDF de factura AFIP) siempre queda visible — no la toca este helper.
+ */
+function esEstadoCongelado(reserva) {
+  if (!reserva) return false;
+  return (
+    reserva.status === "Traveling" ||
+    reserva.status === "Lost" ||
+    reserva.status === "Cancelled" ||
+    reserva.invoicingStatus === "FullyInvoiced"
+  );
+}
+
 // Mapa de TipoComprobante AFIP a etiqueta legible.
 //  Facturas: 1=A, 6=B, 11=C, 51=M.
 //  Notas de Débito: 2=A, 7=B, 12=C, 52=M.
@@ -195,18 +218,32 @@ function canIssuePaymentReceipt(payment) {
   return entryType === "Payment" && Number(payment?.amount || payment?.Amount || 0) > 0 && !receipt;
 }
 
-function PaymentReceiptActions({ payment, onView, onIssue, onVoid }) {
+/**
+ * Acciones del comprobante de pago (recibo) de un cobro individual.
+ *
+ * Regla de estados congelados: en estados congelados (Traveling, Lost, Cancelled,
+ * FullyInvoiced) solo se puede VER un comprobante ya emitido. Las acciones de escritura
+ * (Emitir, Anular) y el texto informativo "Sin comprobante" desaparecen.
+ * Decisión de UX 2026-06-22: "ver/imprimir un papel ya hecho" sí; "crear/anular" no.
+ *
+ * Props:
+ *  - congelado: boolean — derivado de esEstadoCongelado(reserva) en el componente padre.
+ */
+function PaymentReceiptActions({ payment, onView, onIssue, onVoid, congelado }) {
   const receipt = getPaymentReceipt(payment);
 
   if (receipt) {
     const isVoided = receipt.status === "Voided";
     return (
       <div className="flex flex-wrap items-center gap-2">
+        {/* El chip con el número de recibo (o "Comprobante anulado") se muestra siempre:
+            es trazabilidad de un documento ya emitido, no una acción. */}
         <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase ${isVoided ? "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400" : "bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300"}`}>
           {isVoided ? "Comprobante anulado" : receipt.receiptNumber}
         </span>
         {!isVoided ? (
           <>
+            {/* "Ver PDF" es lectura → siempre visible, incluso en congelado */}
             <button
               type="button"
               onClick={() => onView(payment)}
@@ -216,7 +253,8 @@ function PaymentReceiptActions({ payment, onView, onIssue, onVoid }) {
               <ExternalLink className="h-3.5 w-3.5" />
               Ver PDF
             </button>
-            {typeof onVoid === "function" && (
+            {/* "Anular comprobante" es escritura → solo en estados no congelados */}
+            {!congelado && typeof onVoid === "function" && (
               <button
                 type="button"
                 onClick={() => onVoid(payment)}
@@ -231,6 +269,9 @@ function PaymentReceiptActions({ payment, onView, onIssue, onVoid }) {
       </div>
     );
   }
+
+  // En congelado: si no hay recibo, no se ofrece emitir ni se muestra "Sin comprobante"
+  if (congelado) return null;
 
   if (canIssuePaymentReceipt(payment)) {
     return (
@@ -648,6 +689,11 @@ export default function ReservaDetailPage() {
   // "isEarlyStage" reemplaza al antiguo "isBudget" que solo chequeaba Budget.
   const isEarlyStage = reserva?.status === "Quotation" || reserva?.status === "Budget";
 
+  // "congelado": estado donde solo se puede ver/imprimir documentos ya emitidos.
+  // Las acciones de escritura (emitir, anular, editar cobro) se ocultan.
+  // Decisión UX 2026-06-22: un solo criterio aplicado en las zonas A y C.
+  const congelado = esEstadoCongelado(reserva);
+
   // Contador "N de M servicios cancelados" para el ReservaHeader (ADR-025).
   // Se recalcula solo cuando cambia allServices (memoizado para no correr en cada render).
   const serviciosCancelados = useMemo(
@@ -739,9 +785,14 @@ export default function ReservaDetailPage() {
             Se activa desde lastRegressionReason del DTO (B2 del reviewer).
           - Modo destrabada (verde): cuando hasLiveEditAuthorization=true — hay autorizacion vigente (N3).
           - Modo candado (ambar): reserva bloqueada sin autorizacion activa (decision #1).
-          Prioridad: regresion > destrabada > candado. */}
+          Prioridad: regresion > destrabada > candado.
+
+          Cambio UX 2026-06-22: "Pedí autorización" solo aparece en Confirmada.
+          En Traveling y Closed el vendedor solo ve el cartel de solo-lectura (arriba).
+          NO se toca isStatusLocked: sigue bloqueando edicion en Traveling/Closed,
+          pero esos estados no llegan al banner (isLocked=false les llega). */}
       <ReservaLockBanner
-        isLocked={isStatusLocked(reserva.status)}
+        isLocked={reserva.status === "Confirmed"}
         onRequestEdit={() => setShowEditAuthModal(true)}
         hasRegressionWarning={
           // B2: franja naranja cuando la reserva esta en InManagement Y tiene motivo de regresion del backend.
@@ -1236,7 +1287,8 @@ export default function ReservaDetailPage() {
 
           {activeTab === "history" ? <ReservaTimeline reservaId={publicId} /> : null}
           {activeTab === "attachments" ? <ReservaDocumentsTab reservaId={publicId} /> : null}
-          {activeTab === "voucher" ? <ReservaVoucherTab reservaId={publicId} reserva={reserva} /> : null}
+          {/* soloLectura: en estados congelados no se puede emitir ni anular vouchers */}
+          {activeTab === "voucher" ? <ReservaVoucherTab reservaId={publicId} reserva={reserva} soloLectura={congelado} /> : null}
 
           {activeTab === "account" ? (
             <div className="animate-in fade-in space-y-6 duration-500">
@@ -1403,7 +1455,9 @@ export default function ReservaDetailPage() {
                         <DataGridHeaderCell>Notas</DataGridHeaderCell>
                         <DataGridHeaderCell>Comprobante</DataGridHeaderCell>
                         <DataGridHeaderCell align="right">Importe</DataGridHeaderCell>
-                        <DataGridHeaderCell align="right">Acciones</DataGridHeaderCell>
+                        {/* Columna Acciones (editar/eliminar cobro): se oculta en congelado
+                            porque mover plata ya no aplica en estados terminales. */}
+                        {!congelado && <DataGridHeaderCell align="right">Acciones</DataGridHeaderCell>}
                       </DataGridHeaderRow>
                     </DataGridHeader>
                     <DataGridBody>
@@ -1434,13 +1488,15 @@ export default function ReservaDetailPage() {
                                 </div>
                               </DataGridCell>
                               <DataGridCell>
-                                <PaymentReceiptActions payment={payment} onView={handleViewReceiptPdf} onIssue={handleIssueReceipt} onVoid={handleVoidReceipt} />
+                                {/* congelado llega desde esEstadoCongelado(reserva) calculado arriba */}
+                                <PaymentReceiptActions payment={payment} onView={handleViewReceiptPdf} onIssue={handleIssueReceipt} onVoid={handleVoidReceipt} congelado={congelado} />
                               </DataGridCell>
                               <DataGridCell align="right" className="font-black text-emerald-600">
                                 {/* Importe formateado con la moneda real del cobro */}
                                 {payment.amount?.toLocaleString("es-AR", { style: "currency", currency: monedaCobro })}
                               </DataGridCell>
-                              <DataGridCell align="right">
+                              {/* Botones Editar/Eliminar cobro: solo si no está congelado (mueven plata) */}
+                              {!congelado && <DataGridCell align="right">
                                 <div className="flex justify-end gap-1">
                                   <button
                                     onClick={() => {
@@ -1469,12 +1525,13 @@ export default function ReservaDetailPage() {
                                     <Trash2 className="w-3.5 h-3.5" />
                                   </button>
                                 </div>
-                              </DataGridCell>
+                              </DataGridCell>}
                             </DataGridRow>
                           );
                         })
                       ) : (
-                        <DataGridEmptyState colSpan={7} title="No hay cobros registrados." />
+                        // colSpan varía: 7 columnas con acciones, 6 sin ellas (congelado)
+                        <DataGridEmptyState colSpan={congelado ? 6 : 7} title="No hay cobros registrados." />
                       )}
                     </DataGridBody>
                   </DataGrid>
@@ -1526,7 +1583,8 @@ export default function ReservaDetailPage() {
                                 </div>
                                 <div className="text-xs text-slate-500 dark:text-slate-400">{payment.notes || "Sin notas"}</div>
                                 <div>
-                                  <PaymentReceiptActions payment={payment} onView={handleViewReceiptPdf} onIssue={handleIssueReceipt} onVoid={handleVoidReceipt} />
+                                  {/* congelado: misma regla que en desktop — solo Ver PDF visible */}
+                                  <PaymentReceiptActions payment={payment} onView={handleViewReceiptPdf} onIssue={handleIssueReceipt} onVoid={handleVoidReceipt} congelado={congelado} />
                                 </div>
                               </>
                             }

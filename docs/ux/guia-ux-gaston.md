@@ -492,3 +492,24 @@ Ronda 2:
 - **(2026-06-21)** El **chip rojo "Debe — no viaja"** y el **cartel de arriba** del mismo tema (ADR-036 punto 7) ahora se muestran **SOLO cuando `isWithinUnpaidAlertWindow` es true** — es decir, cuando la salida está dentro de la ventana de días configurada en "Alertas por reservas próximas con deuda" Y hay deuda del cliente. **Ya NO se muestra para toda reserva Confirmada con deuda.**
 - **(2026-06-21)** Esto completa lo que ADR-036 dejó pendiente: aquella regla se apoyaba en la config existente de días de aviso, pero el dato no llegaba al front. Ahora `isWithinUnpaidAlertWindow` lo trae resuelto del backend (que ya cruza la config con la fecha de salida). El front solo lo lee.
 - **(2026-06-21)** Sigue valiendo todo lo demás de ADR-036 punto 7: el chip lleva el prefijo "Pago:" en gris (no es estado operativo), no muestra montos de costo ni deuda al operador (puede mostrar lo que el cliente debe), y la reserva sigue sin pasar a "En viaje" hasta cobrarse el total. Lo único que cambia es **CUÁNDO se muestra el aviso**: dentro de la ventana, no siempre.
+
+## Estados congelados: ver/reimprimir comprobantes, sacar "pedir autorización" en viaje, no viajar vacío (2026-06-22)
+
+> **Origen:** revisión de Gastón viendo el sistema desplegado tras ADR-036/037, juzgada contra
+> estándares ERP (SAP/Oracle/Dynamics/Odoo/NetSuite) y criterio de agencia. Tres decisiones
+> cerradas por Gastón el 2026-06-22 (respondió por opciones). NO reabrir.
+
+**1) En estados congelados, los comprobantes se pueden VER y REIMPRIMIR (pero NO emitir nuevos).**
+- **(2026-06-22 — RESPUESTA DE GASTON: "Solo ver y reimprimir")** En "En viaje", "Perdida", "Anulada" y cuando la venta está **totalmente facturada**, la pantalla de solo-lectura **debe seguir permitiendo las operaciones de DOCUMENTO** sobre lo ya emitido: **ver y reimprimir/descargar** vouchers, ver/descargar el **PDF de la factura**, y ver/descargar el **PDF de un recibo ya emitido**. Estas acciones NO cambian la venta ni mueven plata.
+- **(2026-06-22)** Lo que SÍ queda apagado en esos estados congelados: **emitir un recibo nuevo** ("Emitir comprobante"), **anular un comprobante** ("Anular comprobante"), registrar cobros, editar, facturar nuevo (lo de facturar sigue su propia regla de ADR-037). O sea: ver/reimprimir SÍ; emitir/anular/cobrar NO.
+- **(2026-06-22)** Motivo (verificado en código y con experto ERP): el motor por dentro YA permitía estas reimpresiones; el "bloqueo total" que se veía era de la **pantalla**, que escondía todo por mostrar la reserva como solo-lectura. Es el patrón ERP correcto (reimprimir documentos posteados es siempre posible); solo faltaba exponerlo en la UI.
+- **(2026-06-22)** Aplica igual a los tres "lugares de comprobante": solapa **Estado de Cuenta** (recibos de pago + PDF factura) y solapa **Vouchers** (reimpresión de voucher). En todos: botones de **Ver/Descargar/Reimprimir** visibles; botones de **Emitir/Anular** ocultos en estado congelado.
+
+**2) El botón "pedir autorización para editar" NO aparece en "En viaje" (ni en estados inmutables por diseño).**
+- **(2026-06-22)** En "En viaje" la reserva es inmutable **aun con autorización** (no es un candado destrababl). Por eso el affordance "Pedí autorización" **se saca** ahí: prometía algo que no existe.
+- **(2026-06-22)** Regla general: el botón "Pedí autorización" / la franja ámbar de candado **solo se muestra en "Confirmada"** (estado bloqueado-pero-destrabable-con-permiso). En "En viaje" y "Finalizada" (inmutables por diseño) NO se ofrece destrabar; va el cartel chico de solo-lectura y nada más. Confirmado por experto ERP: ocultar affordances de "override" cuando el estado es inmutable por diseño es buena práctica.
+
+**3) Una reserva NO puede estar "En viaje" sin servicios (no se viaja vacío).**
+- **(2026-06-22 — RESPUESTA DE GASTON: "Cerrarlas + impedir nuevas")** Invariante de negocio: una reserva sin ningún servicio cargado **no puede pasar a "En viaje"** (el sistema lo impide de ahora en más). Una reserva vacía no tiene viaje que cumplir.
+- **(2026-06-22)** Las reservas que ya quedaron atascadas en "En viaje" vacías (datos viejos) se **cierran** (saneamiento una sola vez, con registro de auditoría). Esto es backend; no cambia ninguna pantalla, solo limpia datos inconsistentes.
+- **(2026-06-22)** Viajes de **solo ida** NO son "vacíos": tienen al menos un servicio (p. ej. el aéreo de ida). El fin del viaje se deriva de la fecha del último servicio cargado (ya está implementado), así que un solo-ida cierra solo sin necesitar fecha de regreso. No se toca.

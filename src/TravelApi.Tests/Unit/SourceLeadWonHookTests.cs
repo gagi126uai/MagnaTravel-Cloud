@@ -200,6 +200,8 @@ public class SourceLeadWonHookTests
             AdultCount = 1,
             Balance = 0m, // ADR-036: candado de pago — el cliente debe estar saldado para viajar
         };
+        // ADR-036 (2026-06-22): guard de "reserva vacia" — necesita al menos un servicio para promover.
+        reserva.HotelBookings.Add(new HotelBooking { Status = "Confirmado", Currency = "ARS", SalePrice = 1000m });
         ctx.Reservas.Add(reserva);
         await ctx.SaveChangesAsync();
 
@@ -231,6 +233,9 @@ public class SourceLeadWonHookTests
             AdultCount = 1,
             Balance = 500m, // el cliente todavia debe
         };
+        // ADR-036 (2026-06-22): la reserva tiene al menos un servicio para que el guard de "vacia" no la
+        // bloquee antes — asi este test aisla el candado de PAGO (la unica razon de no promover debe ser la deuda).
+        reserva.HotelBookings.Add(new HotelBooking { Status = "Confirmado", Currency = "ARS", SalePrice = 1000m });
         ctx.Reservas.Add(reserva);
         await ctx.SaveChangesAsync();
 
@@ -257,6 +262,8 @@ public class SourceLeadWonHookTests
             AdultCount = 1,
             Balance = 0m, // saldado
         };
+        // ADR-036 (2026-06-22): con al menos un servicio cargado, el guard de "vacia" no bloquea -> promueve.
+        reserva.HotelBookings.Add(new HotelBooking { Status = "Confirmado", Currency = "ARS", SalePrice = 1000m });
         ctx.Reservas.Add(reserva);
         await ctx.SaveChangesAsync();
 
@@ -266,6 +273,238 @@ public class SourceLeadWonHookTests
         Assert.Equal(1, promoted);
         var refreshed = await ctx.Reservas.FindAsync(reserva.Id);
         Assert.Equal(EstadoReserva.Traveling, refreshed!.Status);
+    }
+
+    // ===================== ADR-036 (2026-06-22): guard de "reserva vacia" en el job (A) =====================
+
+    [Fact]
+    public async Task LifecycleJob_ConfirmedToTraveling_NoServices_DoesNotPromote_AndLogsBlock()
+    {
+        // ADR-036 (A): una reserva Confirmed, con StartDate alcanzada y cliente SALDADO, pero SIN ningun
+        // servicio cargado, NO debe pasar a "En viaje". Queda Confirmed y se cuenta como bloqueada.
+        await using var ctx = NewContext();
+        var reserva = new Reserva
+        {
+            Name = "Viaje sin servicios",
+            NumeroReserva = "RES-00033",
+            Status = EstadoReserva.Confirmed,
+            StartDate = DateTime.UtcNow.Date.AddDays(-1),
+            AdultCount = 1,
+            Balance = 0m, // saldado: la UNICA razon de no promover debe ser la falta de servicios
+        };
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        var job = NewLifecycleJob(ctx);
+        var promoted = await job.AutoTransitionConfirmedToTravelingAsync(CancellationToken.None);
+
+        Assert.Equal(0, promoted);
+        var refreshed = await ctx.Reservas.FindAsync(reserva.Id);
+        Assert.Equal(EstadoReserva.Confirmed, refreshed!.Status); // sigue Confirmada, no viajo
+        // No se escribio log de avance (no hubo transicion).
+        Assert.Empty(ctx.ReservaStatusChangeLogs.Where(l => l.ReservaId == reserva.Id));
+    }
+
+    // ===================== ADR-036 (2026-06-22): saneamiento de "En viaje vacias" (B) =====================
+
+    [Fact]
+    public async Task LifecycleJob_AutoCloseEmptyTraveling_EmptyReserva_ClosesWithAudit()
+    {
+        // ADR-036 (B): una reserva que YA quedo En viaje sin ningun servicio se cierra (Traveling -> Closed),
+        // con ClosedAt sellado y log de auditoria del actor "sistema".
+        await using var ctx = NewContext();
+        var reserva = new Reserva
+        {
+            Name = "En viaje vacia",
+            NumeroReserva = "RES-00034",
+            Status = EstadoReserva.Traveling,
+            ClosedAt = null,
+        };
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        var job = NewLifecycleJob(ctx);
+        var closed = await job.AutoCloseEmptyTravelingAsync(CancellationToken.None);
+
+        Assert.Equal(1, closed);
+        var refreshed = await ctx.Reservas.FindAsync(reserva.Id);
+        Assert.Equal(EstadoReserva.Closed, refreshed!.Status);
+        Assert.NotNull(refreshed.ClosedAt); // ClosedAt sellado
+
+        var log = Assert.Single(ctx.ReservaStatusChangeLogs.Where(l => l.ReservaId == reserva.Id));
+        Assert.Equal(EstadoReserva.Traveling, log.FromStatus);
+        Assert.Equal(EstadoReserva.Closed, log.ToStatus);
+        Assert.Equal("system:lifecycle", log.ByUserId);
+    }
+
+    [Fact]
+    public async Task LifecycleJob_AutoCloseEmptyTraveling_ReservaWithServices_NotTouched()
+    {
+        // ADR-036 (B): una reserva En viaje CON al menos un servicio NO se toca por el saneamiento.
+        await using var ctx = NewContext();
+        var reserva = new Reserva
+        {
+            Name = "En viaje con servicio",
+            NumeroReserva = "RES-00035",
+            Status = EstadoReserva.Traveling,
+        };
+        reserva.HotelBookings.Add(new HotelBooking { Status = "Confirmado", Currency = "ARS", SalePrice = 1000m });
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        var job = NewLifecycleJob(ctx);
+        var closed = await job.AutoCloseEmptyTravelingAsync(CancellationToken.None);
+
+        Assert.Equal(0, closed);
+        var refreshed = await ctx.Reservas.FindAsync(reserva.Id);
+        Assert.Equal(EstadoReserva.Traveling, refreshed!.Status); // intacta
+    }
+
+    // ===== ADR-036 (review de seguridad 2026-06-22): guard de PLATA en el saneamiento de "En viaje vacias" =====
+
+    [Fact]
+    public async Task LifecycleJob_AutoCloseEmptyTraveling_EmptyButHasPayment_DoesNotClose()
+    {
+        // Guard de plata (1/3): una reserva En viaje SIN servicios pero CON un cobro vivo NO se cierra: el cobro
+        // se cuelga de la RESERVA, no de los servicios. Cerrarla esconderia un problema de plata. Queda En viaje
+        // para revision manual.
+        await using var ctx = NewContext();
+        var reserva = new Reserva
+        {
+            Name = "Vacia con cobro",
+            NumeroReserva = "RES-00036",
+            Status = EstadoReserva.Traveling,
+            Balance = 0m, // el balance esta en cero: la UNICA razon de no cerrar debe ser el cobro vivo
+        };
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        ctx.Payments.Add(new Payment { ReservaId = reserva.Id, Amount = 1000m, IsDeleted = false });
+        await ctx.SaveChangesAsync();
+
+        var job = NewLifecycleJob(ctx);
+        var closed = await job.AutoCloseEmptyTravelingAsync(CancellationToken.None);
+
+        Assert.Equal(0, closed);
+        var refreshed = await ctx.Reservas.FindAsync(reserva.Id);
+        Assert.Equal(EstadoReserva.Traveling, refreshed!.Status); // no se cerro
+        // No se escribio log de avance (no hubo transicion de cierre).
+        Assert.Empty(ctx.ReservaStatusChangeLogs.Where(l => l.ReservaId == reserva.Id));
+    }
+
+    [Fact]
+    public async Task LifecycleJob_AutoCloseEmptyTraveling_EmptyButHasLiveCaeInvoice_DoesNotClose()
+    {
+        // Guard de plata (2/3): una reserva En viaje SIN servicios pero CON una factura con CAE vivo (no NC, no
+        // anulada) NO se cierra. La factura se cuelga de la reserva: cerrarla a ciegas esconderia un comprobante
+        // fiscal vivo sin servicio detras.
+        await using var ctx = NewContext();
+        var reserva = new Reserva
+        {
+            Name = "Vacia con factura CAE",
+            NumeroReserva = "RES-00037",
+            Status = EstadoReserva.Traveling,
+            Balance = 0m,
+        };
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        // Factura B (TipoComprobante 6, no NC) con CAE asignado y sin anular -> CAE vivo.
+        ctx.Invoices.Add(new Invoice
+        {
+            ReservaId = reserva.Id,
+            TipoComprobante = 6,
+            CAE = "75123456789012",
+            Resultado = "A",
+            AnnulmentStatus = AnnulmentStatus.None,
+        });
+        await ctx.SaveChangesAsync();
+
+        var job = NewLifecycleJob(ctx);
+        var closed = await job.AutoCloseEmptyTravelingAsync(CancellationToken.None);
+
+        Assert.Equal(0, closed);
+        var refreshed = await ctx.Reservas.FindAsync(reserva.Id);
+        Assert.Equal(EstadoReserva.Traveling, refreshed!.Status); // no se cerro
+    }
+
+    [Fact]
+    public async Task LifecycleJob_AutoCloseEmptyTraveling_EmptyButBalanceNotZero_DoesNotClose()
+    {
+        // Guard de plata (3/3): una reserva En viaje SIN servicios pero con Balance != 0 (ej. saldo a FAVOR del
+        // cliente por un pago sin venta) NO se cierra. El saldo vivo es plata que hay que resolver antes.
+        await using var ctx = NewContext();
+        var reserva = new Reserva
+        {
+            Name = "Vacia con saldo a favor",
+            NumeroReserva = "RES-00038",
+            Status = EstadoReserva.Traveling,
+            Balance = -500m, // saldo a favor (pago sin venta): Balance != 0 con tolerancia de moneda
+        };
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        var job = NewLifecycleJob(ctx);
+        var closed = await job.AutoCloseEmptyTravelingAsync(CancellationToken.None);
+
+        Assert.Equal(0, closed);
+        var refreshed = await ctx.Reservas.FindAsync(reserva.Id);
+        Assert.Equal(EstadoReserva.Traveling, refreshed!.Status); // no se cerro
+    }
+
+    [Fact]
+    public async Task LifecycleJob_AutoCloseEmptyTraveling_EmptyAndNoMoney_Closes()
+    {
+        // Caso feliz (confirmacion explicita del guard de plata): una reserva En viaje SIN servicios y SIN nada
+        // de plata (Balance cero, sin cobros, sin facturas) SI se cierra. Es la unica que el saneamiento toca.
+        await using var ctx = NewContext();
+        var reserva = new Reserva
+        {
+            Name = "Vacia sin plata",
+            NumeroReserva = "RES-00039",
+            Status = EstadoReserva.Traveling,
+            Balance = 0m,
+            ClosedAt = null,
+        };
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        var job = NewLifecycleJob(ctx);
+        var closed = await job.AutoCloseEmptyTravelingAsync(CancellationToken.None);
+
+        Assert.Equal(1, closed);
+        var refreshed = await ctx.Reservas.FindAsync(reserva.Id);
+        Assert.Equal(EstadoReserva.Closed, refreshed!.Status); // cerrada
+        Assert.NotNull(refreshed.ClosedAt);
+    }
+
+    [Fact]
+    public async Task LifecycleJob_AutoCloseEmptyTraveling_MixedBatch_ClosesOnlyTrulyEmptyOnes()
+    {
+        // Barrido mixto en una sola corrida: de cuatro reservas En viaje vacias, solo se cierran las dos
+        // "vacias-de-verdad" (sin plata). Las dos con plata (cobro / saldo a favor) quedan En viaje. El count
+        // refleja exactamente las cerradas.
+        await using var ctx = NewContext();
+
+        var vacia1 = new Reserva { Name = "Vacia 1", NumeroReserva = "RES-00040", Status = EstadoReserva.Traveling, Balance = 0m };
+        var conCobro = new Reserva { Name = "Con cobro", NumeroReserva = "RES-00041", Status = EstadoReserva.Traveling, Balance = 0m };
+        var vacia2 = new Reserva { Name = "Vacia 2", NumeroReserva = "RES-00042", Status = EstadoReserva.Traveling, Balance = 0m };
+        var conSaldo = new Reserva { Name = "Con saldo a favor", NumeroReserva = "RES-00043", Status = EstadoReserva.Traveling, Balance = -300m };
+        ctx.Reservas.AddRange(vacia1, conCobro, vacia2, conSaldo);
+        await ctx.SaveChangesAsync();
+
+        ctx.Payments.Add(new Payment { ReservaId = conCobro.Id, Amount = 1000m, IsDeleted = false });
+        await ctx.SaveChangesAsync();
+
+        var job = NewLifecycleJob(ctx);
+        var closed = await job.AutoCloseEmptyTravelingAsync(CancellationToken.None);
+
+        Assert.Equal(2, closed); // solo las dos vacias-de-verdad
+
+        Assert.Equal(EstadoReserva.Closed, (await ctx.Reservas.FindAsync(vacia1.Id))!.Status);
+        Assert.Equal(EstadoReserva.Closed, (await ctx.Reservas.FindAsync(vacia2.Id))!.Status);
+        Assert.Equal(EstadoReserva.Traveling, (await ctx.Reservas.FindAsync(conCobro.Id))!.Status);
+        Assert.Equal(EstadoReserva.Traveling, (await ctx.Reservas.FindAsync(conSaldo.Id))!.Status);
     }
 
     // ===================== (2) Revert de una Cancelada a En gestion =====================
