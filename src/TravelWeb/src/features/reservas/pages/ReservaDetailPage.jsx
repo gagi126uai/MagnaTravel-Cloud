@@ -53,6 +53,8 @@ import { calcularSugerenciaComposicion } from "../lib/pasajeroHint";
  *  - En viaje (Traveling): el viaje ya arrancó, nada cambia.
  *  - Perdida (Lost): cerrada sin cobro, es histórico.
  *  - Anulada (Cancelled): proceso de anulación completado.
+ *  - Esperando reembolso del operador (PendingOperatorRefund): anulada, en solo lectura
+ *    hasta que llegue el reembolso (decisión de Gastón 2026-06-22: igual que congelada).
  *  - Facturada total (FullyInvoiced): ya no se emiten más comprobantes de venta.
  *
  * Se usa en las zonas de recibos de cobro (Zona A) y de vouchers (Zona C).
@@ -64,6 +66,7 @@ function esEstadoCongelado(reserva) {
     reserva.status === "Traveling" ||
     reserva.status === "Lost" ||
     reserva.status === "Cancelled" ||
+    reserva.status === "PendingOperatorRefund" ||
     reserva.invoicingStatus === "FullyInvoiced"
   );
 }

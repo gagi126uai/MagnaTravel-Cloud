@@ -33,6 +33,7 @@ function esEstadoCongelado(reserva) {
     reserva.status === "Traveling" ||
     reserva.status === "Lost" ||
     reserva.status === "Cancelled" ||
+    reserva.status === "PendingOperatorRefund" ||
     reserva.invoicingStatus === "FullyInvoiced"
   );
 }
@@ -49,6 +50,10 @@ test("congelado: Lost → true (cerrada sin cobro)", () => {
 
 test("congelado: Cancelled → true (anulada formalmente)", () => {
   assert.equal(esEstadoCongelado({ status: "Cancelled", invoicingStatus: "NotInvoiced" }), true);
+});
+
+test("congelado: PendingOperatorRefund → true (anulada esperando reembolso, decisión 2026-06-22)", () => {
+  assert.equal(esEstadoCongelado({ status: "PendingOperatorRefund", invoicingStatus: "NotInvoiced" }), true);
 });
 
 test("congelado: FullyInvoiced → true sin importar el status operativo", () => {
