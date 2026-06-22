@@ -49,6 +49,42 @@ public class Adr036PrepaidPureTests
         Assert.Equal(new[] { EstadoReserva.Traveling }, targets);
     }
 
+    // ===================== ADR-036 "En viaje es inmutable": Traveling NO revierte =====================
+
+    [Fact]
+    public void Revert_Traveling_HasNoRow()
+    {
+        // ADR-036: se elimino la fila [Traveling] = { Confirmed }. "En viaje" no vuelve atras (es inmutable):
+        // ni el front lo ofrece (AllowedRevert vacio) ni RevertStatusAsync lo acepta (no esta en la matriz).
+        Assert.False(ReservaStatusTransitions.Revert.ContainsKey(EstadoReserva.Traveling));
+    }
+
+    [Fact]
+    public void AllowedRevert_Traveling_IsEmpty()
+    {
+        // La politica de capacidades deriva AllowedRevert de la matriz: sin fila, queda vacio -> el boton
+        // "Volver atras" se oculta solo en el front.
+        var caps = ReservaCapabilityPolicy.For(new ReservaCapabilityContext(
+            EstadoReserva.Traveling, Balance: 0m, false, false, false, false));
+        Assert.Empty(caps.AllowedRevert);
+    }
+
+    [Fact]
+    public void Forward_NoStateGoesFromTravelingToConfirmed()
+    {
+        // Refuerzo del invariante: ninguna salida forward de Traveling es Confirmed tampoco (la unica es Closed).
+        Assert.True(ReservaStatusTransitions.Forward.TryGetValue(EstadoReserva.Traveling, out var forward));
+        Assert.DoesNotContain(EstadoReserva.Confirmed, forward);
+    }
+
+    [Fact]
+    public void Revert_Closed_StillGoesToTraveling_Unchanged()
+    {
+        // Closed -> Traveling (deshacer cierre prematuro) NO se toco: sigue siendo el unico camino hacia Traveling.
+        Assert.True(ReservaStatusTransitions.Revert.TryGetValue(EstadoReserva.Closed, out var targets));
+        Assert.Contains(EstadoReserva.Traveling, targets);
+    }
+
     // ===================== Candado de pago del cliente para "En viaje" =====================
 
     [Theory]

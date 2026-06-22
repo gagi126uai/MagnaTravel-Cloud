@@ -15,6 +15,13 @@ public class ReservaMoneyLineDto
     public decimal TotalCost { get; set; }
     public decimal TotalPaid { get; set; }
     public decimal Balance { get; set; }
+
+    /// <summary>
+    /// Margen/ganancia de esta moneda = ConfirmedSale - TotalCost (venta confirmada menos costo).
+    /// DATO SENSIBLE: contiene el costo por resta (costo = venta - margen). Se enmascara a 0 con el MISMO
+    /// criterio y en el MISMO lugar que <see cref="TotalCost"/> (sin <c>cobranzas.see_cost</c> ni Admin).
+    /// </summary>
+    public decimal Margin { get; set; }
 }
 
 /// <summary>
@@ -138,6 +145,16 @@ public class ReservaDto
     public decimal TotalSale { get; set; }
     public decimal TotalPaid { get; set; }
     public decimal Balance { get; set; }
+
+    /// <summary>
+    /// Margen/ganancia escalar de la reserva = ConfirmedSale - TotalCost (sobre lo confirmado, coherente con
+    /// Balance). En multimoneda mezcla monedas (igual que los demas escalares); el margen real por moneda esta
+    /// en <see cref="PorMoneda"/> (cada line.Margin). Solo en el DETALLE (no en el listado), decision del diseño.
+    ///
+    /// <para>DATO SENSIBLE: contiene el costo por resta (costo = venta - margen). Se enmascara a 0 en el MISMO
+    /// <c>if (!seeCost)</c> que <see cref="TotalCost"/> — NUNCA se devuelve TotalCost==0 con Margin con valor.</para>
+    /// </summary>
+    public decimal TotalMargin { get; set; }
 
     /// <summary>
     /// ADR-020 (decision #6): venta CONFIRMADA (solo servicios resueltos). Es la base del saldo

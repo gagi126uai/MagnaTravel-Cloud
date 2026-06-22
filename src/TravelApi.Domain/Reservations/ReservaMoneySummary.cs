@@ -48,6 +48,16 @@ public sealed class ReservaMoneySummary
     public decimal TotalPaid { get; }
 
     /// <summary>
+    /// Margen escalar = <see cref="ConfirmedSale"/> - <see cref="TotalCost"/> (suma cruda de todas las monedas).
+    /// En multimoneda mezcla monedas (pierde sentido contable), igual que los demas escalares; el margen REAL
+    /// por moneda vive en cada <see cref="ReservaMoneyLine.Margin"/>. En mono-moneda es el margen exacto.
+    ///
+    /// <para><b>DATO SENSIBLE</b>: contiene el costo por resta. Se enmascara junto con <see cref="TotalCost"/>
+    /// en el boundary de presentacion (ver ApplyCostMaskingAsync). El value object lo expone crudo.</para>
+    /// </summary>
+    public decimal TotalMargin { get; }
+
+    /// <summary>
     /// SURROGATE / SEMAFORO de saldo pendiente (ADR-021 §2.4), NO un monto adeudado.
     ///
     /// <para><b>Mono-moneda</b>: es identico al saldo de siempre (<c>ConfirmedSale - TotalPaid</c>,
@@ -82,6 +92,8 @@ public sealed class ReservaMoneySummary
         ConfirmedSale = confirmedSale;
         TotalCost = totalCost;
         TotalPaid = totalPaid;
+        // Margen escalar = venta confirmada - costo (suma cruda). Coherente con los demas escalares de compat.
+        TotalMargin = confirmedSale - totalCost;
         Balance = ComputeSurrogateBalance(porMoneda);
     }
 

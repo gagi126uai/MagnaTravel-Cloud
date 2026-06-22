@@ -19,6 +19,13 @@ public interface IReservaService
     Task<(ReservaListPageDto Page, string Scope)> GetReservasWithScopeAsync(ReservaListQuery query, CancellationToken cancellationToken);
 
     Task<ReservaDto> GetReservaByIdAsync(string publicIdOrLegacyId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// "Estado de Cuenta" de la reserva como LIBRO MAYOR (extracto estilo banco): una linea cronologica por
+    /// cada comprobante/cobro VIVO, con saldo corriente, SEPARADO por moneda. Read-model derivado (sin
+    /// persistencia). Solo venta/cobranza: NO incluye costo ni margen (no pasa por enmascarado de costo).
+    /// </summary>
+    Task<ReservaAccountStatementDto> GetAccountStatementAsync(string publicIdOrLegacyId, CancellationToken cancellationToken);
     Task<ReservaDto> CreateReservaAsync(CreateReservaRequest request, string? createdByUserId, CancellationToken cancellationToken);
 
     Task<ReservationServiceMutationResult> AddServiceAsync(string reservaPublicIdOrLegacyId, AddServiceRequest request, CancellationToken ct = default);

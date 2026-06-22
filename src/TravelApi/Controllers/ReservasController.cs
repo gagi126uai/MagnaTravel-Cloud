@@ -86,6 +86,38 @@ public class ReservasController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// "Estado de Cuenta" de la reserva como LIBRO MAYOR (extracto estilo banco): cada factura/ND SUMA, cada
+    /// cobro/NC RESTA, con saldo corriente, SEPARADO por moneda. Mismos permisos/ownership que el GET de
+    /// detalle (es la misma informacion de venta/cobranza, vista como extracto). Solo venta/cobranza: no
+    /// expone costo ni margen.
+    /// </summary>
+    [HttpGet("{publicIdOrLegacyId}/account-statement")]
+    [RequirePermission(Permissions.ReservasView)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<IActionResult> GetReservaAccountStatement(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var dto = await _reservaService.GetAccountStatementAsync(publicIdOrLegacyId, cancellationToken);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error getting account statement for reserva {ReservaId}", publicIdOrLegacyId);
+            if (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+            }
+
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo obtener el estado de cuenta.");
+        }
+    }
+
     [HttpGet("{publicIdOrLegacyId}/timeline")]
     [RequirePermission(Permissions.ReservasView)]
     [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]

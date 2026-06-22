@@ -71,6 +71,14 @@ public static class ReservaStatusTransitions
     /// Nota de Credito/Debito (flujo ya permitido sin reabrir el estado). Tambien murio la fila de ToSettle.
     /// El hard-block CAE de <c>RevertStatusAsync</c> sigue vigente: una reserva con factura viva no se reabre
     /// por aca.</para>
+    ///
+    /// <para><b>ADR-036 (2026-06-21, "En viaje es inmutable"): Traveling YA NO revierte a Confirmed.</b> Se
+    /// elimino la fila <c>[Traveling] = { Confirmed }</c>. Una reserva "En viaje" significa que el servicio ya
+    /// empezo/se presto: "volver atras" a Confirmed no tiene sentido operativo (el viaje esta en curso). Como
+    /// Traveling queda sin destino de revert, el front oculta solo el boton "Volver atras" (AllowedRevert vacio)
+    /// y <c>RevertStatusAsync</c> rechaza el intento por el guard de matriz. El UNICO movimiento de Traveling
+    /// hacia "atras" que sigue existiendo es deshacer un cierre prematuro: Closed -&gt; Traveling (que sigue mas
+    /// abajo). Para corregir plata/comprobantes de una reserva en viaje se usa NC/ND/ajuste, no el revert.</para>
     /// </summary>
     public static readonly IReadOnlyDictionary<string, string[]> Revert =
         new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
@@ -78,7 +86,8 @@ public static class ReservaStatusTransitions
             [EstadoReserva.Budget] = new[] { EstadoReserva.Quotation },
             [EstadoReserva.InManagement] = new[] { EstadoReserva.Budget },
             [EstadoReserva.Lost] = new[] { EstadoReserva.Quotation, EstadoReserva.Budget },
-            [EstadoReserva.Traveling] = new[] { EstadoReserva.Confirmed },
+            // ADR-036: Traveling NO tiene revert (en viaje es inmutable). La fila [Traveling] = { Confirmed } se
+            // elimino a proposito: AllowedRevert de Traveling queda vacio y el revert manual lo rechaza la matriz.
             // ADR-036: Closed revierte SOLO a Traveling (revert de cierre prematuro). NO mas Closed -> ToSettle
             // (reapertura para facturar tarde eliminada): corregir una factura de una Finalizada es por NC/ND,
             // sin reabrir el estado. La fila ToSettle -> Traveling tambien desaparecio (estado eliminado).

@@ -42,6 +42,21 @@ public sealed class ReservaMoneyLine
     /// </summary>
     public decimal Balance { get; }
 
+    /// <summary>
+    /// Margen (ganancia) de ESTA moneda = <see cref="ConfirmedSale"/> - <see cref="TotalCost"/>.
+    ///
+    /// <para>Se calcula sobre la venta CONFIRMADA (no sobre TotalSale) para ser coherente con el
+    /// <see cref="Balance"/>: ambos miran lo exigible/resuelto, no lo meramente cotizado. Nunca se
+    /// mezclan monedas: el margen de USD se calcula con costo USD, el de ARS con costo ARS.</para>
+    ///
+    /// <para><b>DATO SENSIBLE</b>: el margen CONTIENE el costo (venta - costo). Quien lo conozca puede
+    /// despejar el costo por resta (costo = venta - margen). Por eso, al exponerlo en un DTO, se enmascara
+    /// SIEMPRE en el MISMO lugar y bajo la MISMA condicion que <see cref="TotalCost"/> (ver
+    /// ApplyCostMaskingAsync en ReservaService). El value object lo expone crudo; el enmascarado es del
+    /// boundary de presentacion.</para>
+    /// </summary>
+    public decimal Margin { get; }
+
     public ReservaMoneyLine(string currency, decimal totalSale, decimal confirmedSale, decimal totalCost, decimal totalPaid)
     {
         Currency = currency;
@@ -50,5 +65,7 @@ public sealed class ReservaMoneyLine
         TotalCost = totalCost;
         TotalPaid = totalPaid;
         Balance = confirmedSale - totalPaid;
+        // Margen = venta confirmada - costo. Coherente con Balance (ambos sobre lo confirmado/exigible).
+        Margin = confirmedSale - totalCost;
     }
 }

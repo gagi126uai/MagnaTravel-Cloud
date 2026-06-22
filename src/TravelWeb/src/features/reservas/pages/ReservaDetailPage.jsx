@@ -1155,6 +1155,11 @@ export default function ReservaDetailPage() {
                 reservaStatus={reserva?.status}
                 // ADR-031: pasamos el objeto reserva completo para el hint de pasajeros
                 reserva={reserva}
+                // Guía UX 2026-06-22: las capabilities gobiernan qué botones de escritura
+                // se muestran en la lista de servicios. El backend ya apaga canEditServices
+                // y canCancel en estados de solo lectura (Traveling/Closed/Lost/Cancelled/PendingOperatorRefund).
+                // Si reserva aún no cargó (null), pasamos null → degradación elegante (muestra botones).
+                capabilities={reserva?.capabilities ?? null}
                 isCatalogFindOrCreateEnabled={isCatalogFindOrCreateEnabled}
                 isServiceDeadlineAlertsEnabled={isServiceDeadlineAlertsEnabled}
                 windowDays={windowDays}

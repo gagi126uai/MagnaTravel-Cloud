@@ -115,15 +115,24 @@ export function ReservaHeader({
         && reserva.status !== 'Lost'
         && reserva.status !== 'Closed';
 
+    // ─── Guarda "En viaje" = inmutable ───────────────────────────────────────────
+    // Guía UX 2026-06-22: en Traveling la reserva es inmutable por diseño (no por candado
+    // destrababl). Los botones "Volver atrás", "Archivar" y "Anular" no se muestran.
+    // Experto ERP confirmado: un documento in-transit no se des-confirma con un botón libre.
+    // Nota: el backend ya devuelve canCancel.allowed=false y allowedRevert=[] para Traveling,
+    // pero agregamos una guarda defensiva en el front para el caso de DTO viejo.
+    const esTraveling = reserva.status === 'Traveling';
+
     // ─── Boton "Anular reserva" (antes "Cancelar") ────────────────────────────────
     // ADR-035: siempre visible si hay permiso de usuario; apagado (gris) si capabilities.canCancel.allowed=false.
     // ADR-036: el boton dice "Anular" porque en este producto "anular" = deshacer el viaje.
     // "Cancelar" significa saldar una deuda — se reserva para botones de descarte de formularios.
     // Feedback 2026-06-19: SIN texto de motivo debajo, solo gris.
     // ADR-036: ToSettle eliminado del fallback (ya no existe ese estado en la UI).
-    const CANCELLABLE_STATUSES_FALLBACK = ['InManagement', 'Confirmed', 'Traveling'];
+    // Guía UX 2026-06-22: ocultar en Traveling (en viaje no se anula).
+    const CANCELLABLE_STATUSES_FALLBACK = ['InManagement', 'Confirmed'];
     const cancelCapability = getCapability('canCancel');
-    const showCancelButton = canCancelReserva && onCancelReserva && !isArchived && (
+    const showCancelButton = !esTraveling && canCancelReserva && onCancelReserva && !isArchived && (
         capabilities
             ? true
             : CANCELLABLE_STATUSES_FALLBACK.includes(reserva.status)
@@ -137,10 +146,14 @@ export function ReservaHeader({
 
     // ─── Reversion de estado ──────────────────────────────────────────────────────
     // ADR-036: ToSettle eliminado del fallback de reversion.
-    const canRevertLocal = ['Budget', 'InManagement', 'Confirmed', 'Traveling', 'Closed', 'Lost'].includes(reserva.status);
-    const canRevert = capabilities
-        ? (Array.isArray(capabilities.allowedRevert) && capabilities.allowedRevert.length > 0)
-        : canRevertLocal;
+    // Guía UX 2026-06-22: guarda defensiva para Traveling — el backend ya devuelve
+    // allowedRevert=[], pero si por algún bug mandara algo, lo ignoramos igual.
+    const canRevertLocal = ['Budget', 'InManagement', 'Confirmed', 'Closed', 'Lost'].includes(reserva.status);
+    const canRevert = !esTraveling && (
+        capabilities
+            ? (Array.isArray(capabilities.allowedRevert) && capabilities.allowedRevert.length > 0)
+            : canRevertLocal
+    );
 
     // ADR-037: el botón "Reabrir para facturar" fue eliminado. La facturación se desacopló
     // del estado de la reserva: se factura directo desde Finalizada (sin reabrir). El botón
@@ -427,16 +440,20 @@ export function ReservaHeader({
 
                         {/* Archivar: botón siempre gris cuando no puede.
                             Feedback 2026-06-19: SIN texto de motivo debajo.
-                            El cartel único en ReservaDetailPage explica el estado global. */}
-                        <button
-                            onClick={canArchive ? onArchive : undefined}
-                            disabled={!canArchive}
-                            aria-label="Archivar reserva"
-                            className={`inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl transition-colors text-sm font-semibold ${canArchive ? 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700' : 'bg-slate-50 text-slate-300 dark:bg-slate-900 dark:text-slate-700 cursor-not-allowed'}`}
-                        >
-                            <Archive className="w-4 h-4" />
-                            Archivar
-                        </button>
+                            El cartel único en ReservaDetailPage explica el estado global.
+                            Guía UX 2026-06-22: ocultar en Traveling — archivar es para estados
+                            terminales (Finalizada/Perdida/Anulada), no para algo en curso. */}
+                        {!esTraveling && (
+                            <button
+                                onClick={canArchive ? onArchive : undefined}
+                                disabled={!canArchive}
+                                aria-label="Archivar reserva"
+                                className={`inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl transition-colors text-sm font-semibold ${canArchive ? 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700' : 'bg-slate-50 text-slate-300 dark:bg-slate-900 dark:text-slate-700 cursor-not-allowed'}`}
+                            >
+                                <Archive className="w-4 h-4" />
+                                Archivar
+                            </button>
+                        )}
                     </div>
                 </div>
             )}

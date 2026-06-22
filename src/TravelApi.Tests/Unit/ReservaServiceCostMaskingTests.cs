@@ -335,4 +335,103 @@ public class ReservaServiceCostMaskingTests
         Assert.Equal(600m, porMoneda.Single(l => l.Currency == Monedas.ARS).TotalCost);
         Assert.Equal(150m, porMoneda.Single(l => l.Currency == Monedas.USD).TotalCost);
     }
+
+    // ============================================================================================
+    // DISEÑO 2 (margen venta - costo) — el margen FILTRA el costo por resta, asi que se enmascara
+    // EXACTAMENTE igual que TotalCost. Estos tests pinean que jamas queda TotalCost==0 con Margin
+    // con valor (la fuga critica que el diseño marca como bloqueante de seguridad).
+    // ============================================================================================
+
+    [Fact]
+    public async Task Detail_margin_visible_with_see_cost()
+    {
+        await using var ctx = new AppDbContext(_dbOptions);
+        await SeedReservaWithCosts(ctx); // venta confirmada 800, costo 500 -> margen 300
+        var accessor = BuildContextAccessor("colab-1", "Colaborador");
+        var resolver = BuildResolver("colab-1", Permissions.CobranzasSeeCost);
+        var service = BuildService(ctx, accessor, resolver);
+
+        var dto = await service.GetReservaByIdAsync("1", CancellationToken.None);
+
+        // Margen escalar = ConfirmedSale (800) - TotalCost (500) = 300.
+        Assert.Equal(300m, dto.TotalMargin);
+        // Por moneda (mono-moneda ARS): mismo margen.
+        Assert.Equal(300m, dto.PorMoneda.Single().Margin);
+    }
+
+    [Fact]
+    public async Task Detail_margin_masked_to_zero_without_see_cost_AND_TotalCost_also_zero()
+    {
+        await using var ctx = new AppDbContext(_dbOptions);
+        await SeedReservaWithCosts(ctx);
+        var accessor = BuildContextAccessor("vendedor-1", "Vendedor");
+        var resolver = BuildResolver("vendedor-1"); // sin see_cost
+        var service = BuildService(ctx, accessor, resolver);
+
+        var dto = await service.GetReservaByIdAsync("1", CancellationToken.None);
+
+        // BLOQUEANTE DE SEGURIDAD: margen Y costo en 0 a la vez. NUNCA TotalCost==0 con Margin con valor.
+        Assert.Equal(0m, dto.TotalMargin);
+        Assert.Equal(0m, dto.TotalCost);
+        var line = dto.PorMoneda.Single();
+        Assert.Equal(0m, line.Margin);
+        Assert.Equal(0m, line.TotalCost);
+        // La venta confirmada NO se enmascara (no es costo).
+        Assert.Equal(800m, line.ConfirmedSale);
+    }
+
+    [Fact]
+    public async Task Detail_admin_sees_margin()
+    {
+        await using var ctx = new AppDbContext(_dbOptions);
+        await SeedReservaWithCosts(ctx);
+        var accessor = BuildContextAccessor("admin-1", "Admin");
+        var resolver = BuildResolver("admin-1"); // sin permisos explicitos
+        var service = BuildService(ctx, accessor, resolver);
+
+        var dto = await service.GetReservaByIdAsync("1", CancellationToken.None);
+
+        Assert.Equal(300m, dto.TotalMargin);
+        Assert.Equal(300m, dto.PorMoneda.Single().Margin);
+    }
+
+    [Fact]
+    public async Task Detail_multicurrency_margin_per_currency_with_see_cost()
+    {
+        await using var ctx = new AppDbContext(_dbOptions);
+        await SeedMultiCurrencyReservaWithCosts(ctx); // ARS 1000/600 -> 400 ; USD 200/150 -> 50
+        var accessor = BuildContextAccessor("colab-1", "Colaborador");
+        var resolver = BuildResolver("colab-1", Permissions.CobranzasSeeCost);
+        var service = BuildService(ctx, accessor, resolver);
+
+        var dto = await service.GetReservaByIdAsync("1", CancellationToken.None);
+
+        var ars = dto.PorMoneda.Single(l => l.Currency == Monedas.ARS);
+        var usd = dto.PorMoneda.Single(l => l.Currency == Monedas.USD);
+        Assert.Equal(400m, ars.Margin); // 1000 - 600
+        Assert.Equal(50m, usd.Margin);  // 200 - 150
+    }
+
+    [Fact]
+    public async Task Detail_multicurrency_margin_masked_per_currency_without_see_cost()
+    {
+        await using var ctx = new AppDbContext(_dbOptions);
+        await SeedMultiCurrencyReservaWithCosts(ctx);
+        var accessor = BuildContextAccessor("vendedor-1", "Vendedor");
+        var resolver = BuildResolver("vendedor-1"); // sin see_cost
+        var service = BuildService(ctx, accessor, resolver);
+
+        var dto = await service.GetReservaByIdAsync("1", CancellationToken.None);
+
+        // CRITICO: en multimoneda, el margen de CADA moneda en 0 (no filtrar el de una moneda).
+        Assert.Equal(2, dto.PorMoneda.Count);
+        Assert.All(dto.PorMoneda, line =>
+        {
+            Assert.Equal(0m, line.Margin);
+            Assert.Equal(0m, line.TotalCost);
+        });
+        // El escalar tambien.
+        Assert.Equal(0m, dto.TotalMargin);
+        Assert.Equal(0m, dto.TotalCost);
+    }
 }

@@ -127,6 +127,214 @@ public class ReservaService : IReservaService
         return await GetReservaByIdAsync(id);
     }
 
+    /// <summary>
+    /// "Estado de Cuenta" de la reserva como LIBRO MAYOR (extracto estilo banco). Read-model DERIVADO: arma
+    /// una linea por cada comprobante/cobro VIVO, calcula el saldo corriente por moneda y lo devuelve.
+    ///
+    /// <para>La cuenta (orden, signos, saldo corriente) vive en <see cref="ReservaAccountStatementBuilder"/>
+    /// (puro, probado sin EF). Aca solo cargamos los mismos Includes de comprobantes+cobros que usa el
+    /// detalle y traducimos cada entidad VIVA a una linea plana, reusando los clasificadores canonicos.</para>
+    ///
+    /// <para><b>SEGURIDAD</b>: el extracto es venta/cobranza PURA. Ningun campo de costo ni margen entra en
+    /// las lineas, por eso este metodo NO llama a <c>ApplyCostMaskingAsync</c>: no hay nada que enmascarar.</para>
+    /// </summary>
+    public async Task<ReservaAccountStatementDto> GetAccountStatementAsync(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        var id = await ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, cancellationToken);
+
+        // Mismos Includes que el detalle para Invoices+Payments (con el Receipt para el nº de recibo). AsNoTracking:
+        // es solo lectura. No cargamos servicios/pasajeros: el extracto solo mira comprobantes y cobros.
+        var file = await _context.Reservas
+            .AsNoTracking()
+            .Include(f => f.Invoices)
+            .Include(f => f.Payments).ThenInclude(p => p.Receipt)
+            .FirstOrDefaultAsync(f => f.Id == id, cancellationToken);
+
+        if (file == null)
+        {
+            throw new KeyNotFoundException($"File with ID {id} not found locally");
+        }
+
+        var inputLines = new List<AccountStatementInputLine>();
+        AddInvoiceLines(file, inputLines);
+        AddPaymentLines(file, inputLines);
+
+        var statement = ReservaAccountStatementBuilder.Build(inputLines);
+
+        return new ReservaAccountStatementDto
+        {
+            ReservaPublicId = file.PublicId,
+            Currencies = statement.Currencies
+                .Select(block => new AccountStatementCurrencyBlockDto
+                {
+                    Currency = block.Currency,
+                    ClosingBalance = block.ClosingBalance,
+                    Lines = block.Lines
+                        .Select(line => new AccountStatementLineDto
+                        {
+                            Date = line.Date,
+                            Kind = line.Kind,
+                            Description = line.Description,
+                            DocumentRef = line.DocumentRef,
+                            Currency = line.Currency,
+                            Charge = line.Charge,
+                            Credit = line.Credit,
+                            RunningBalance = line.RunningBalance,
+                        })
+                        .ToList(),
+                })
+                .ToList(),
+        };
+    }
+
+    /// <summary>
+    /// Traduce las facturas/ND/NC VIVAS de la reserva a lineas del extracto. VIVA = resultado "A" (aprobada)
+    /// y no anulada (mismo criterio que el cuadre de facturacion). Factura/ND son CARGO (suman la deuda); NC
+    /// es ABONO (la resta). Tipo desconocido (dato sucio) se omite, igual que en el cuadre.
+    ///
+    /// <para>La fecha de cada linea es la de EMISION FISCAL (<c>Invoice.IssuedAt</c>, la fecha que ARCA aprobo
+    /// el CAE), con fallback a <c>CreatedAt</c> para comprobantes legacy sin IssuedAt: asi el orden cronologico
+    /// del libro mayor respeta la fecha del comprobante AFIP y no el timestamp de fila.</para>
+    /// </summary>
+    private static void AddInvoiceLines(Reserva file, List<AccountStatementInputLine> lines)
+    {
+        if (file.Invoices == null) return;
+
+        foreach (var invoice in file.Invoices)
+        {
+            // Mismo filtro de "comprobante vivo" del cuadre: aprobado y no anulado.
+            bool isLive = invoice.Resultado == "A" && invoice.AnnulmentStatus != AnnulmentStatus.Succeeded;
+            if (!isLive) continue;
+
+            var category = InvoiceComprobanteHelpers.Categorize(invoice.TipoComprobante);
+
+            // Moneda del comprobante: Invoice.MonId viene en codigo ARCA ("PES"/"DOL"); el extracto agrupa por
+            // ISO ("ARS"/"USD"). Hoy todo se factura en pesos, pero dejamos la traduccion correcta. Si el codigo
+            // no se reconoce (dato legacy raro), cae a ARS (regla legacy de Monedas.Normalizar).
+            string currency = Domain.Helpers.ArcaCurrencyMapper.ToIso(invoice.MonId) ?? Monedas.ARS;
+
+            // Referencia legible del comprobante: "PuntoDeVenta-NumeroComprobante" (ej. "0001-00000123").
+            string documentRef = $"{invoice.PuntoDeVenta:D4}-{invoice.NumeroComprobante:D8}";
+
+            // Fecha del movimiento en el extracto = fecha de EMISION FISCAL del comprobante, no el timestamp
+            // de fila. Invoice.IssuedAt es la fecha que ARCA aprobo el CAE (en la reconciliacion se parsea del
+            // nodo <CbteFch> del comprobante AFIP), asi que es la fecha correcta para ORDENAR el libro mayor.
+            // Fallback a CreatedAt para comprobantes legacy/historicos que se backfillearon sin IssuedAt (la
+            // columna es nullable): preferimos la fiscal cuando existe y degradamos al timestamp de fila si no.
+            DateTime movementDate = invoice.IssuedAt ?? invoice.CreatedAt;
+
+            switch (category)
+            {
+                case InvoiceComprobanteCategory.Invoice:
+                    lines.Add(new AccountStatementInputLine(
+                        Date: movementDate,
+                        Kind: AccountStatementLineKinds.Invoice,
+                        Description: "Factura",
+                        DocumentRef: documentRef,
+                        Currency: currency,
+                        Charge: invoice.ImporteTotal,
+                        Credit: 0m));
+                    break;
+
+                case InvoiceComprobanteCategory.DebitNote:
+                    lines.Add(new AccountStatementInputLine(
+                        Date: movementDate,
+                        Kind: AccountStatementLineKinds.DebitNote,
+                        Description: "Nota de débito",
+                        DocumentRef: documentRef,
+                        Currency: currency,
+                        Charge: invoice.ImporteTotal,
+                        Credit: 0m));
+                    break;
+
+                case InvoiceComprobanteCategory.CreditNote:
+                    lines.Add(new AccountStatementInputLine(
+                        Date: movementDate,
+                        Kind: AccountStatementLineKinds.CreditNote,
+                        Description: "Nota de crédito",
+                        DocumentRef: documentRef,
+                        Currency: currency,
+                        Charge: 0m,
+                        Credit: invoice.ImporteTotal));
+                    break;
+
+                default:
+                    // Tipo desconocido (dato sucio): no lo mostramos, igual que el cuadre no lo cuenta.
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Traduce los cobros VIVOS de la reserva a lineas del extracto (siempre ABONO: bajan la deuda). VIVO =
+    /// no cancelado y no soft-deleted (mismo filtro que <see cref="ReservaMoneyCalculator"/>).
+    ///
+    /// <para>El abono cae en la moneda a la que el pago se IMPUTA (<c>ImputedCurrency ?? Currency</c>) por su
+    /// monto imputado (<c>ImputedAmount ?? Amount</c>), exactamente como lo computa ReservaMoneyCalculator —
+    /// asi el saldo de cierre del bloque cuadra con PorMoneda[moneda].Balance. Si el cobro fue CRUZADO (entro
+    /// en otra moneda), la descripcion lo aclara para que el extracto no confunda.</para>
+    ///
+    /// <para>Incluye los cobros PUENTE (AffectsCash=false: sobrepago a saldo a favor / saldo a favor aplicado):
+    /// no movieron caja pero BAJAN la deuda, asi que el extracto DEBE mostrarlos o no cuadraria con el Balance.
+    /// La descripcion los marca como "Saldo a favor aplicado".</para>
+    /// </summary>
+    private static void AddPaymentLines(Reserva file, List<AccountStatementInputLine> lines)
+    {
+        if (file.Payments == null) return;
+
+        foreach (var payment in file.Payments)
+        {
+            // Mismo filtro de "pago vivo" del calculator: ni cancelado ni borrado.
+            bool isLive = payment.Status != "Cancelled" && !payment.IsDeleted;
+            if (!isLive) continue;
+
+            // Moneda y monto imputados (lo que efectivamente baja del saldo de esa moneda). Coincide con la
+            // forma en que ReservaMoneyCalculator imputa los pagos, para que los saldos cuadren.
+            string imputedCurrency = Monedas.Normalizar(payment.ImputedCurrency ?? payment.Currency);
+            decimal imputedAmount = payment.ImputedAmount ?? payment.Amount;
+
+            string description = BuildPaymentDescription(payment, imputedCurrency);
+
+            lines.Add(new AccountStatementInputLine(
+                Date: payment.PaidAt,
+                Kind: AccountStatementLineKinds.Payment,
+                Description: description,
+                DocumentRef: payment.Receipt?.ReceiptNumber,
+                Currency: imputedCurrency,
+                Charge: 0m,
+                Credit: imputedAmount));
+        }
+    }
+
+    /// <summary>
+    /// Arma el texto legible de un cobro para el extracto: nº de recibo si existe, si no el metodo. Para un
+    /// cobro PUENTE (no movio caja) dice "Saldo a favor aplicado". Para un cobro CRUZADO (entro en otra moneda)
+    /// aclara la moneda real que se recibio, para que no parezca que entro en la moneda del saldo.
+    /// </summary>
+    private static string BuildPaymentDescription(Payment payment, string imputedCurrency)
+    {
+        // Puente: no movio caja (sobrepago a saldo a favor / saldo a favor aplicado a esta reserva).
+        if (!payment.AffectsCash)
+        {
+            return "Saldo a favor aplicado";
+        }
+
+        // Base: nº de recibo si lo hay; si no, el metodo de cobro (Efectivo/Transferencia/...).
+        string baseText = !string.IsNullOrWhiteSpace(payment.Receipt?.ReceiptNumber)
+            ? $"Cobro recibo {payment.Receipt!.ReceiptNumber}"
+            : $"Cobro ({payment.Method})";
+
+        // Cobro CRUZADO: entro en una moneda y se imputo a otra. Aclaramos la moneda REAL que se recibio
+        // (Amount + Currency) para que la linea no confunda (el monto que se muestra es el imputado).
+        string realCurrency = Monedas.Normalizar(payment.Currency);
+        if (!string.Equals(realCurrency, imputedCurrency, StringComparison.Ordinal))
+        {
+            return $"{baseText} — recibido en {realCurrency}";
+        }
+
+        return baseText;
+    }
+
     public async Task<ReservaDto> CreateReservaAsync(CreateReservaRequest request, string? createdByUserId, CancellationToken cancellationToken)
     {
         var reserva = await CreateReservaAsync(request, createdByUserId);
@@ -1619,6 +1827,10 @@ public class ReservaService : IReservaService
                     Currency = row.Currency,
                     TotalSale = row.TotalSale,
                     ConfirmedSale = row.ConfirmedSale,
+                    // NO setear Margin aqui sin guard seeCost: el margen filtra el costo por resta (venta - costo),
+                    // asi que exponerlo a un caller sin cobranzas.see_cost reabriria la fuga que el masking cierra.
+                    // El listado hoy es seguro porque deja Margin en su default (0); este comentario evita que un
+                    // cambio futuro lo setee sin pasar por el enmascarado. Idem TotalCost: ya va gateado por seeCost.
                     TotalCost = seeCost ? row.TotalCost : 0m,
                     TotalPaid = row.TotalPaid,
                     Balance = row.Balance
@@ -1769,9 +1981,15 @@ public class ReservaService : IReservaService
                 ConfirmedSale = line.ConfirmedSale,
                 TotalCost = line.TotalCost,
                 TotalPaid = line.TotalPaid,
-                Balance = line.Balance
+                Balance = line.Balance,
+                // Margen por moneda (venta confirmada - costo). Se carga CRUDO aca; el enmascarado por permiso
+                // lo hace ApplyCostMaskingAsync junto al TotalCost (es dato de costo por resta).
+                Margin = line.Margin
             })
             .ToList();
+
+        // Margen escalar de la reserva (venta confirmada - costo). Crudo aca; se enmascara junto al TotalCost.
+        dto.TotalMargin = moneySummary.TotalMargin;
 
         // ADR-033 (E7/A5): estado de cobro derivado del saldo POR MONEDA (no del escalar, que mezcla ARS+USD).
         dto.CollectionStatus = ReservaCollectionStatus.Derive(dto.PorMoneda.Select(line => line.Balance));
@@ -2014,6 +2232,9 @@ public class ReservaService : IReservaService
 
         // Reserva-level totals.
         dto.TotalCost = 0m;
+        // BLOQUEANTE DE SEGURIDAD: el margen (venta - costo) FILTRA el costo por resta. Se enmascara en el
+        // MISMO if que TotalCost y al lado de el: jamas puede quedar TotalCost==0 con TotalMargin con valor.
+        dto.TotalMargin = 0m;
 
         // ADR-021 Capa 5: el TotalCost de CADA linea por moneda es costo/inversion -> se enmascara
         // igual que el escalar. Critico: NO dejar visible el costo de una moneda y ocultar el de otra.
@@ -2022,6 +2243,8 @@ public class ReservaService : IReservaService
             foreach (var line in dto.PorMoneda)
             {
                 line.TotalCost = 0m;
+                // Mismo motivo que el escalar: el margen por moneda revela el costo por resta -> a 0 aca mismo.
+                line.Margin = 0m;
             }
         }
 

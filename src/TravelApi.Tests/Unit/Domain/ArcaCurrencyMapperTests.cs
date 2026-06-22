@@ -48,6 +48,38 @@ public class ArcaCurrencyMapperTests
         Assert.Null(result);
     }
 
+    // ============== ToIso: inversa ARCA -> ISO (la usa el extracto/Estado de Cuenta) ==============
+    // Cubre el cruce que hace AddInvoiceLines: Invoice.MonId viene en codigo ARCA ("PES"/"DOL") y el
+    // libro mayor agrupa por ISO ("ARS"/"USD"). Si manana se renombra un codigo o se suma una moneda,
+    // este test rojo lo atrapa antes de que una factura caiga en el bloque de moneda equivocado.
+
+    [Theory]
+    // PES -> ARS (case-insensitive: el snapshot fiscal podria venir en minuscula).
+    [InlineData("PES", "ARS")]
+    [InlineData("pes", "ARS")]
+    [InlineData("Pes", "ARS")]
+    // DOL -> USD.
+    [InlineData("DOL", "USD")]
+    [InlineData("dol", "USD")]
+    [InlineData("Dol", "USD")]
+    public void ToIso_KnownArcaCode_ReturnsIso(string arcaCode, string expectedIso)
+    {
+        Assert.Equal(expectedIso, ArcaCurrencyMapper.ToIso(arcaCode));
+    }
+
+    [Theory]
+    [InlineData(null)]    // sin MonId (factura legacy): el caller decide el fallback (ARS).
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("ARS")]   // ISO, NO codigo ARCA: ToIso espera "PES", no "ARS" -> no reconoce.
+    [InlineData("USD")]   // idem: ISO en vez del codigo ARCA "DOL".
+    [InlineData("EUR")]   // moneda no soportada.
+    [InlineData("XYZ")]   // basura.
+    public void ToIso_UnknownOrInvalid_ReturnsNull(string? arcaCode)
+    {
+        Assert.Null(ArcaCurrencyMapper.ToIso(arcaCode));
+    }
+
     // ============== IsSupported: azucar de lectura para los guards ==============
 
     [Theory]

@@ -814,6 +814,12 @@ export function ServiceList({
     // (adultCount/childCount/infantCount y la lista de passengers ya cargados).
     // Si no se pasa, los botones de resolución/emisión no quedan gateados por pasajeros.
     reserva = null,
+    // capabilities: CapabilityDto del backend { canEditServices, canCancel, ... }.
+    // Cada campo es { allowed: boolean, reason: string | null }.
+    // Si no llega (DTO viejo), degradamos mostrando los botones (comportamiento anterior).
+    // Guía UX 2026-06-22: los botones de escritura se ocultan en solo lectura, y la fuente
+    // de verdad es el backend (no re-derivamos el estado en el front).
+    capabilities = null,
     isCatalogFindOrCreateEnabled = false,
     isServiceDeadlineAlertsEnabled = false,
     windowDays = null,
@@ -835,6 +841,16 @@ export function ServiceList({
     // El padre filtra reserva.passengers por los que tienen fullName.
     pasajerosConNombre = [],
 }) {
+    // ── Guía UX 2026-06-22: botones de escritura ──────────────────────────────────
+    // "Agregar / Editar" se ocultan cuando canEditServices.allowed === false.
+    // "Cancelar / Cancelar varios" se ocultan cuando canCancel.allowed === false.
+    // Si no hay capabilities (DTO viejo), degradamos mostrando los botones (fallback seguro).
+    const puedeEditarServicios = capabilities
+        ? (capabilities.canEditServices?.allowed !== false)
+        : true;
+    const puedeCancelarServicios = capabilities
+        ? (capabilities.canCancel?.allowed !== false)
+        : true;
     // Gate de costo: con flag OFF se usa isAdmin() (comportamiento original).
     // Con flag ON se usa hasPermission("cobranzas.see_cost") — admin pasa igual (bypass en hasPermission).
     const mostrarCosto = isCatalogFindOrCreateEnabled
@@ -953,9 +969,10 @@ export function ServiceList({
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
                 <h3 className="text-lg font-medium text-gray-900 dark:text-white">Servicios Contratados</h3>
                 <div className="flex flex-wrap gap-2 w-full sm:w-auto justify-end">
-                    {/* Botón "Cancelar varios": solo con permiso reservas.cancel y cuando hay cancelables.
-                        La sección inline muestra el bloqueo fiscal si aplica; no lo ocultamos antes. */}
-                    {canCancelServices && serviciosCancelables.length > 0 && !showCancelarVarios && (
+                    {/* Botón "Cancelar varios": solo con permiso reservas.cancel, cuando hay cancelables
+                        Y cuando el backend habilita cancelar (puedeCancelarServicios).
+                        Guía UX 2026-06-22: ocultar en solo lectura según capability del backend. */}
+                    {canCancelServices && puedeCancelarServicios && serviciosCancelables.length > 0 && !showCancelarVarios && (
                         <button
                             type="button"
                             onClick={() => setShowCancelarVarios(true)}
@@ -966,12 +983,16 @@ export function ServiceList({
                             Cancelar varios
                         </button>
                     )}
-                    <button
-                        onClick={onAddService}
-                        className="flex items-center justify-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors shadow-sm text-sm"
-                    >
-                        <Plus className="w-4 h-4" /> Agregar Servicio
-                    </button>
+                    {/* "Agregar Servicio": oculto en solo lectura (canEditServices.allowed === false).
+                        Guía UX 2026-06-22: en Traveling / Finalizada / Perdida / Anulada no se puede agregar. */}
+                    {puedeEditarServicios && (
+                        <button
+                            onClick={onAddService}
+                            className="flex items-center justify-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors shadow-sm text-sm"
+                        >
+                            <Plus className="w-4 h-4" /> Agregar Servicio
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -1261,10 +1282,11 @@ export function ServiceList({
                                                     })()}
                                                     {/* Control "Para: Todos" (ADR-031 v2.1 — Pieza A).
                                                         Aparece en desktop antes de los botones Editar/Borrar.
-                                                        Al tocarlo, despliega el panel de tildes en línea.
-                                                        D2: NO se muestra si el servicio está cancelado
-                                                        (evita llamadas inútiles y UI confusa). */}
-                                                    {(svc.workflowStatus || svc.status) !== 'Cancelado' && (
+                                                        Al tocarlo, despliega el panel de tildes en línea (PUT = escritura).
+                                                        D2: NO se muestra si el servicio está cancelado.
+                                                        Solo lectura: oculto cuando canEditServices.allowed === false
+                                                        (mismo gate que Editar/Agregar — el PUT de asignaciones es escritura). */}
+                                                    {puedeEditarServicios && (svc.workflowStatus || svc.status) !== 'Cancelado' && (
                                                         <ControlAsignacionServicio
                                                             reservaId={reservaId}
                                                             serviceType={serviceType}
@@ -1279,20 +1301,33 @@ export function ServiceList({
 
                                                     {/* Desktop: icono + palabra siempre visible (spec UX 2026-06-08).
                                                         textoTacho es dinámico: "Cancelar" si el operador ya confirmó, "Borrar" si no.
-                                                        aria-label y texto visible dicen lo mismo para coherencia con lectores de pantalla. */}
+                                                        aria-label y texto visible dicen lo mismo para coherencia con lectores de pantalla.
+                                                        Guía UX 2026-06-22: en solo lectura (Traveling/Finalizada/etc.) se ocultan
+                                                        ambos botones; quedan visibles los datos del servicio y el badge de estado. */}
                                                     <div className="flex justify-end gap-1 transition-opacity">
-                                                        <button
-                                                            onClick={() => onEditService(svc)}
-                                                            data-testid={`btn-edit-service-${getReservationServicePublicId(svc)}`}
-                                                            aria-label="Editar servicio"
-                                                            className="inline-flex items-center gap-1 p-1.5 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded text-xs font-semibold"
-                                                        >
-                                                            <Edit2 className="w-4 h-4" />
-                                                            Editar
-                                                        </button>
-                                                        {/* Papelera: abre el modal que decide borrar vs cancelar según decisión #9 */}
-                                                        {(() => {
-                                                            const textoTacho = esServicioConfirmadoPorOperador(svc) ? 'Cancelar' : 'Borrar';
+                                                        {puedeEditarServicios && (
+                                                            <button
+                                                                onClick={() => onEditService(svc)}
+                                                                data-testid={`btn-edit-service-${getReservationServicePublicId(svc)}`}
+                                                                aria-label="Editar servicio"
+                                                                className="inline-flex items-center gap-1 p-1.5 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded text-xs font-semibold"
+                                                            >
+                                                                <Edit2 className="w-4 h-4" />
+                                                                Editar
+                                                            </button>
+                                                        )}
+                                                        {/* Papelera: abre el modal que decide borrar vs cancelar según decisión #9.
+                                                            Se oculta si no puede cancelar (solo lectura) o no puede editar (borrar
+                                                            = editar en servicios no confirmados). */}
+                                                        {(puedeEditarServicios || puedeCancelarServicios) && (() => {
+                                                            const esConfirmado = esServicioConfirmadoPorOperador(svc);
+                                                            // Si está confirmado → cancelar (requiere puedeCancelarServicios)
+                                                            // Si no está confirmado → borrar (requiere puedeEditarServicios)
+                                                            const mostrarBotonDestructivo = esConfirmado
+                                                                ? puedeCancelarServicios
+                                                                : puedeEditarServicios;
+                                                            if (!mostrarBotonDestructivo) return null;
+                                                            const textoTacho = esConfirmado ? 'Cancelar' : 'Borrar';
                                                             return (
                                                                 <button
                                                                     onClick={() => handleTrashClick(svc)}
@@ -1581,30 +1616,39 @@ export function ServiceList({
                                                 );
                                             })()}
                                             {/* Mobile: mismo patrón icono + palabra (spec UX 2026-06-08).
-                                                textoTachoMobile sincronizado con la lógica desktop para no bifurcar. */}
-                                            {(() => {
-                                                const textoTachoMobile = esServicioConfirmadoPorOperador(svc) ? 'Cancelar' : 'Borrar';
+                                                textoTachoMobile sincronizado con la lógica desktop para no bifurcar.
+                                                Guía UX 2026-06-22: ocultar botones de escritura en solo lectura. */}
+                                            {(puedeEditarServicios || puedeCancelarServicios) && (() => {
+                                                const esConfirmadoMobile = esServicioConfirmadoPorOperador(svc);
+                                                const mostrarDestructivoMobile = esConfirmadoMobile
+                                                    ? puedeCancelarServicios
+                                                    : puedeEditarServicios;
+                                                const textoTachoMobile = esConfirmadoMobile ? 'Cancelar' : 'Borrar';
                                                 return (
                                                     <div className="flex items-center gap-2">
-                                                        <button
-                                                            onClick={() => onEditService(svc)}
-                                                            data-testid={`btn-edit-service-mobile-${getReservationServicePublicId(svc)}`}
-                                                            aria-label="Editar servicio"
-                                                            className="inline-flex items-center gap-1 p-2 text-slate-500 rounded-lg bg-slate-50 dark:bg-slate-800 text-xs font-semibold"
-                                                        >
-                                                            <Edit2 className="w-3.5 h-3.5" />
-                                                            Editar
-                                                        </button>
+                                                        {puedeEditarServicios && (
+                                                            <button
+                                                                onClick={() => onEditService(svc)}
+                                                                data-testid={`btn-edit-service-mobile-${getReservationServicePublicId(svc)}`}
+                                                                aria-label="Editar servicio"
+                                                                className="inline-flex items-center gap-1 p-2 text-slate-500 rounded-lg bg-slate-50 dark:bg-slate-800 text-xs font-semibold"
+                                                            >
+                                                                <Edit2 className="w-3.5 h-3.5" />
+                                                                Editar
+                                                            </button>
+                                                        )}
                                                         {/* Papelera mobile: mismo modal borrar vs cancelar */}
-                                                        <button
-                                                            onClick={() => handleTrashClick(svc)}
-                                                            data-testid={`btn-delete-service-mobile-${getReservationServicePublicId(svc)}`}
-                                                            aria-label={`${textoTachoMobile} servicio`}
-                                                            className="inline-flex items-center gap-1 p-2 text-red-500 rounded-lg bg-red-50 dark:bg-red-900/20 text-xs font-semibold"
-                                                        >
-                                                            <Trash2 className="w-3.5 h-3.5" />
-                                                            {textoTachoMobile}
-                                                        </button>
+                                                        {mostrarDestructivoMobile && (
+                                                            <button
+                                                                onClick={() => handleTrashClick(svc)}
+                                                                data-testid={`btn-delete-service-mobile-${getReservationServicePublicId(svc)}`}
+                                                                aria-label={`${textoTachoMobile} servicio`}
+                                                                className="inline-flex items-center gap-1 p-2 text-red-500 rounded-lg bg-red-50 dark:bg-red-900/20 text-xs font-semibold"
+                                                            >
+                                                                <Trash2 className="w-3.5 h-3.5" />
+                                                                {textoTachoMobile}
+                                                            </button>
+                                                        )}
                                                     </div>
                                                 );
                                             })()}
@@ -1614,9 +1658,9 @@ export function ServiceList({
                                     {/* Control "Para: Todos" en mobile (ADR-031 v2.1 — Pieza A).
                                         Va debajo del nombre del servicio, en línea propia, arriba de los botones.
                                         El panel de tildes se abre a ancho completo debajo del control.
-                                        D2: NO se muestra si el servicio está cancelado
-                                        (evita llamadas inútiles y UI confusa). */}
-                                    {(svc.workflowStatus || svc.status) !== 'Cancelado' && (
+                                        D2: NO se muestra si el servicio está cancelado.
+                                        Solo lectura: mismo gate que el control desktop (canEditServices). */}
+                                    {puedeEditarServicios && (svc.workflowStatus || svc.status) !== 'Cancelado' && (
                                         <div className="mt-2">
                                             <ControlAsignacionServicio
                                                 reservaId={reservaId}

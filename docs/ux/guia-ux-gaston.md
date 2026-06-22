@@ -513,3 +513,24 @@ Ronda 2:
 - **(2026-06-22 — RESPUESTA DE GASTON: "Cerrarlas + impedir nuevas")** Invariante de negocio: una reserva sin ningún servicio cargado **no puede pasar a "En viaje"** (el sistema lo impide de ahora en más). Una reserva vacía no tiene viaje que cumplir.
 - **(2026-06-22)** Las reservas que ya quedaron atascadas en "En viaje" vacías (datos viejos) se **cierran** (saneamiento una sola vez, con registro de auditoría). Esto es backend; no cambia ninguna pantalla, solo limpia datos inconsistentes.
 - **(2026-06-22)** Viajes de **solo ida** NO son "vacíos": tienen al menos un servicio (p. ej. el aéreo de ida). El fin del viaje se deriva de la fecha del último servicio cargado (ya está implementado), así que un solo-ida cierra solo sin necesitar fecha de regreso. No se toca.
+
+## Limpieza de "En viaje" (solo lectura de verdad) + chip de 3 ejes + Estado de Cuenta como resumen con saldo (2026-06-22, 2da tanda)
+
+> **Origen:** Gastón mandó una captura de una reserva "En viaje" (paga + facturada total) donde la pantalla decía "solo lectura" pero seguía mostrando botones de escritura, un chip mal rotulado, y un "Volver atrás". Además planteó que el "Estado de Cuenta" no está como un ERP serio. Todo juzgado con experto ERP. Decisiones de Gastón 2026-06-22. NO reabrir.
+
+**1) "En viaje" (y estados de solo lectura) = botonera realmente limpia.**
+- **(2026-06-22)** En la solapa **Servicios**, cuando la reserva está en solo lectura (En viaje / Finalizada / Perdida / Anulada / Esperando reembolso), se OCULTAN los botones de escritura: **"Agregar Servicio", "Cancelar varios"**, y por cada servicio **"Editar" y "Cancelar"**. Quedan visibles los datos y lo de solo-lectura (ver/estado). Se gobierna por las capabilities del backend (canEditServices / canCancel), no por re-derivar en el front.
+- **(2026-06-22)** En la **cabecera**, en "En viaje": se SACAN **"Volver atrás"** (revertir estado), **"Archivar"** y **"Anular"** (gris). Confirmado por experto ERP: un documento in-transit no se "des-confirma" con un botón libre, no se archiva en curso, y en viaje no se anula. Si alguna vez hay que revertir por error, va por un camino controlado (permiso + motivo + auditoría), NO un botón normal. (Backend: verificar/ tapar que el candado de factura viva apague el revert.)
+- **(2026-06-22)** Queda en "En viaje" solo lo que se puede hacer de verdad: ver/reimprimir documentos, **"Cerrar reserva"** cuando el viaje terminó, y facturar si falta (ADR-037). Más el cartel chico de solo-lectura.
+
+**2) El chip de plata separa TRES ejes — nunca los mezcla.**
+- **(2026-06-22)** Un rótulo = un solo eje. Se separan: **Pago:** (Pendiente / Parcial / **Pagada**) · **Factura:** (Sin facturar / en parte / **Facturada total**). Lo que hoy es "Pago: En curso" está MAL (mezcla pago con viaje): "En curso/En viaje" es eje VIAJE, no PAGO. Una reserva paga que viaja muestra **Pago: Pagada**.
+- **(2026-06-22 — refinamiento por review)** El eje **Viaje** NO repite el cartel/badge grande de estado: si el badge ya dice "EN VIAJE", NO se pone un chip "Viaje: En viaje" (redundante). El eje Viaje **solo** se muestra para el caso de ALERTA que el badge no comunica: **"Vencida con deuda"** (el viaje terminó pero quedó saldo). Una reserva en viaje paga y facturada muestra solo **Pago: Pagada · Factura: Facturada total** (sin chip de viaje, porque el badge ya dice EN VIAJE).
+
+**3) "Estado de Cuenta" = resumen de cuenta con SALDO CORRIENTE (no dos listas sueltas).**
+- **(2026-06-22 — RESPUESTA DE GASTON)** La solapa se convierte en un **resumen tipo extracto bancario**: una sola **línea de tiempo cronológica** donde cada **factura / nota de débito SUMA** (cargo) y cada **cobro / nota de crédito RESTA** (abono), mostrando el **saldo después de cada movimiento** y el saldo final. Respeta multimoneda (saldo corriente por moneda, nunca sumando monedas distintas).
+- **(2026-06-22)** Se agrega en la cabecera el **eje de facturación** (cuánto facturado vs cuánto falta facturar — el dato ya existe en el backend) separado del eje de cobranza.
+- **(2026-06-22)** Se muestra el **saldo a favor del cliente** desde la reserva y un **enlace a la cuenta corriente del cliente** (la pantalla a nivel cliente ya existe).
+- **(2026-06-22 — RESPUESTA DE GASTON: vencimientos = NO)** NO se agregan cuotas/vencimientos con fecha. Sigue valiendo la regla del candado: si no pagó todo, no viaja. (Se puede agregar más adelante si hace falta.)
+- **(2026-06-22 — RESPUESTA DE GASTON: margen = SÍ)** Para quien tiene permiso de costos, además del **costo/inversión** se muestra el **margen (ganancia = venta − costo)**. A quien NO ve costos, no se le muestra ni costo ni margen (regla de costos intacta).
+- **(2026-06-22)** Se mantiene lo que ya estaba bien: saldo separado por moneda, NC/ND ligadas a su factura origen, ocultar costo sin permiso, saldo a favor reutilizable del cliente.

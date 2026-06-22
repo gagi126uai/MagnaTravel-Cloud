@@ -59,6 +59,40 @@ public static class ArcaCurrencyMapper
     }
 
     /// <summary>
+    /// INVERSA de <see cref="TryMap"/>: traduce un codigo del catalogo ARCA ("PES", "DOL") al codigo ISO 4217
+    /// del negocio ("ARS", "USD"). Devuelve <c>null</c> si el codigo ARCA no es uno de los soportados.
+    ///
+    /// <para><b>Por que existe</b>: <c>Invoice.MonId</c> guarda la moneda en formato ARCA ("PES"/"DOL"), pero
+    /// el dominio de reservas (saldo, extracto, PorMoneda) habla ISO ("ARS"/"USD"). Para agrupar una factura
+    /// en el bloque de su moneda dentro del extracto hace falta cruzar de ARCA a ISO. Sin este metodo, el
+    /// llamador tendria que duplicar el mapeo inline (justo el drift que esta clase evita).</para>
+    ///
+    /// <para>OrdinalIgnoreCase: tolera "pes"/"PES" sin falsos negativos. Para datos legacy sin MonId (raro),
+    /// el llamador decide el fallback (normalmente ARS, regla legacy de <c>Monedas.Normalizar</c>).</para>
+    /// </summary>
+    /// <param name="arcaCurrencyCode">Codigo en formato ARCA ("PES", "DOL"). Puede venir en cualquier capitalizacion.</param>
+    /// <returns>Codigo ISO 4217 ("ARS", "USD") o <c>null</c> si el codigo ARCA no se reconoce.</returns>
+    public static string? ToIso(string? arcaCurrencyCode)
+    {
+        if (string.IsNullOrWhiteSpace(arcaCurrencyCode))
+        {
+            return null;
+        }
+
+        if (string.Equals(arcaCurrencyCode, "PES", System.StringComparison.OrdinalIgnoreCase))
+        {
+            return "ARS";
+        }
+
+        if (string.Equals(arcaCurrencyCode, "DOL", System.StringComparison.OrdinalIgnoreCase))
+        {
+            return "USD";
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Azucar de lectura para los guards: <c>true</c> si <see cref="TryMap"/> sabe convertir la
     /// moneda a un codigo ARCA. Asi el caller que solo quiere validar (no necesita el codigo)
     /// se lee mas claro: <c>if (!ArcaCurrencyMapper.IsSupported(currency)) abortar();</c>
