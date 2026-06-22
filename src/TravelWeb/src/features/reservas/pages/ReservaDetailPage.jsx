@@ -1664,11 +1664,10 @@ export default function ReservaDetailPage() {
       />
 
       {showRevertModal && (
-        // ADR-036: "Reabrir para facturar" ya NO manda a "A liquidar".
-        // forceReason=true: el motivo es obligatorio para todos (accion fiscal sensible, queda auditada).
-        // lockedTarget ya no es "ToSettle" (ese estado fue eliminado); el backend expone las opciones
-        // disponibles en allowedTargets y el usuario puede seleccionar la que corresponda,
-        // o el modal auto-selecciona si solo hay una opcion.
+        // Modal genérico de "Volver atrás" / revertir estado (ADR-037: ya no existe "Reabrir
+        // para facturar"). forceReason=true: el motivo es obligatorio para todos (acción sensible,
+        // queda auditada). El backend expone los destinos válidos en allowedRevert; el modal
+        // auto-selecciona si solo hay una opción.
         <RevertStatusModal
           reserva={reserva}
           onClose={() => setShowRevertModal(false)}

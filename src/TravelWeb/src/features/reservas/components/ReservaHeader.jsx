@@ -32,14 +32,17 @@ function formatTripDate(value) {
  *   - "Apartar para liquidar" (Traveling→ToSettle) ELIMINADO: ya no existe "A liquidar".
  *   - "Finalizar / Marcar liquidada" (ToSettle→Closed) ELIMINADO: idem.
  *   - El boton que antes decia "Cancelar" ahora dice "Anular" (anular = deshacer el viaje).
- *   - "Reabrir para facturar" destraba la Finalizada SIN cambiarla de estado (ya no manda a ToSettle).
  *   - Si el backend indica que no se puede eliminar (capability=false), el boton "Eliminar" no aparece.
+ *
+ * ADR-037 (2026-06-21):
+ *   - "Reabrir para facturar" ELIMINADO: la facturacion se desacoplo del estado. Se factura
+ *     directo desde Finalizada (boton "Emitir factura" en la solapa Cuenta, gobernado por la
+ *     capability canInvoiceSale). Ya no se reabre ni se destraba nada.
  *
  * Feedback visual 2026-06-19 (dueño):
  *   - El boton primario de avance se integra en la fila de acciones (no flota suelto arriba).
  *   - Los botones deshabilitados van GRISES, sin texto de motivo debajo de cada uno.
  *   - "Editar fechas": visible solo cuando canEditReservaData.allowed === true.
- *   - "Reabrir para facturar": solo en Closed + sin factura (requiresInvoiceAnnulmentToCancel=false).
  *   - Un ÚNICO cartel de estado (en ReservaDetailPage) explica la restriccion global del estado.
  *
  * Props:
@@ -48,7 +51,6 @@ function formatTripDate(value) {
  * - onCancelReserva: callback para abrir el flujo de anulacion en linea
  * - onRequestEdit: callback para abrir el modal de autorizacion de edicion (cuando hay candado)
  * - onMarkLost: callback para abrir el modal "Marcar como perdida"
- * - onReopenToSettle: callback para reabrir la reserva Finalizada para facturar (ADR-036)
  * - Los callbacks onStatusChange, onDelete, onArchive, onRevert, onEditDates son manejados por el padre
  * - serviciosCancelados: { cancelados: number, totalConProveedor: number } — para el contador "N de M".
  *   El padre lo calcula con calculateServiciosCanceladosResumen(allServices).
