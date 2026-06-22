@@ -1316,82 +1316,48 @@ export default function ReservaDetailPage() {
                 // Cancelar ademas requiere permiso de usuario (igual que antes)
                 const cancelarHabilitado = canCancelReserva && (!capCancelar || capCancelar.allowed);
 
-                return (
-                  <div className="flex flex-wrap items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/50">
+                // Mostramos cada acción SOLO si está disponible. En estados de solo lectura
+                // (En viaje, Finalizada, etc.) el backend apaga la capability → el botón NO
+                // aparece. Nada de botón gris con un mensajito rojo debajo: el cartel de
+                // solo-lectura de arriba ya explica el porqué (decisión Gaston 2026-06-22,
+                // coherente con "un solo cartel arriba, nunca motivos pegados a cada botón").
+                const mostrarFactura = reserva.invoicingStatus !== 'FullyInvoiced' && facturaHabilitada;
+                const mostrarCancelar = canCancelReserva && cancelarHabilitado;
+                if (!registroPagoHabilitado && !mostrarFactura && !mostrarCancelar) return null;
 
-                    {/* Registrar cobro */}
-                    <div className="flex flex-col items-start gap-0.5">
+                return (
+                  <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/50">
+
+                    {registroPagoHabilitado && (
                       <button
-                        onClick={() => {
-                          if (!registroPagoHabilitado) return;
-                          setCobroAEditar(null);
-                          setShowCobroInline(true);
-                        }}
-                        disabled={!registroPagoHabilitado}
-                        className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-bold transition-all ${
-                          registroPagoHabilitado
-                            ? 'bg-emerald-600 text-white hover:bg-emerald-700'
-                            : 'bg-slate-200 text-slate-400 dark:bg-slate-700 dark:text-slate-500 cursor-not-allowed'
-                        }`}
+                        onClick={() => { setCobroAEditar(null); setShowCobroInline(true); }}
+                        className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white transition-all hover:bg-emerald-700"
                         data-testid="btn-registrar-cobro"
                       >
                         <Plus className="w-4 h-4" /> Registrar cobro
                       </button>
-                      {/* Motivo de bloqueo en texto chico ambar (ADR-035, nunca tooltip) */}
-                      {!registroPagoHabilitado && capRegPago?.reason && (
-                        <p className="text-xs text-amber-600 dark:text-amber-400 font-medium px-1" data-testid="btn-registrar-cobro-reason">
-                          {capRegPago.reason}
-                        </p>
-                      )}
-                    </div>
-
-                    {/* Emitir factura — ADR-037: la facturación se desacopló del estado, el botón
-                        se gobierna por la capability canInvoiceSale (habilitado en Confirmada/En viaje/
-                        Finalizada, sin reabrir nada). Decisión Gaston 2026-06-21: si la reserva ya está
-                        facturada del todo, NO se muestra (para corregir es con nota de crédito/débito). */}
-                    {reserva.invoicingStatus !== 'FullyInvoiced' && (
-                      <div className="flex flex-col items-start gap-0.5">
-                        <button
-                          onClick={() => { if (facturaHabilitada) setShowFacturaInline(true); }}
-                          disabled={!facturaHabilitada}
-                          className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-bold transition-all ${
-                            facturaHabilitada
-                              ? 'bg-indigo-600 text-white hover:bg-indigo-700'
-                              : 'bg-slate-200 text-slate-400 dark:bg-slate-700 dark:text-slate-500 cursor-not-allowed'
-                          }`}
-                          data-testid="btn-emitir-factura"
-                        >
-                          <FileText className="w-4 h-4" /> Emitir factura
-                        </button>
-                        {!facturaHabilitada && capFactura?.reason && (
-                          <p className="text-xs text-amber-600 dark:text-amber-400 font-medium px-1" data-testid="btn-emitir-factura-reason">
-                            {capFactura.reason}
-                          </p>
-                        )}
-                      </div>
                     )}
 
-                    {/* Cancelar reserva — visible solo si el usuario tiene permiso reservas.cancel */}
-                    {canCancelReserva && (
-                      <div className="flex flex-col items-start gap-0.5">
-                        <button
-                          onClick={() => { if (cancelarHabilitado) setShowCancelInline(true); }}
-                          disabled={!cancelarHabilitado}
-                          className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-bold transition-all ${
-                            cancelarHabilitado
-                              ? 'bg-rose-600 text-white hover:bg-rose-700'
-                              : 'bg-slate-200 text-slate-400 dark:bg-slate-700 dark:text-slate-500 cursor-not-allowed'
-                          }`}
-                          data-testid="btn-cancelar-reserva-account"
-                        >
-                          <Ban className="w-4 h-4" /> Cancelar reserva
-                        </button>
-                        {!cancelarHabilitado && capCancelar?.reason && (
-                          <p className="text-xs text-amber-600 dark:text-amber-400 font-medium px-1" data-testid="btn-cancelar-reserva-reason">
-                            {capCancelar.reason}
-                          </p>
-                        )}
-                      </div>
+                    {/* Emitir factura — ADR-037: facturación desacoplada del estado (habilitada en
+                        Confirmada/En viaje/Finalizada). Si ya está facturada del todo, no se muestra. */}
+                    {mostrarFactura && (
+                      <button
+                        onClick={() => setShowFacturaInline(true)}
+                        className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white transition-all hover:bg-indigo-700"
+                        data-testid="btn-emitir-factura"
+                      >
+                        <FileText className="w-4 h-4" /> Emitir factura
+                      </button>
+                    )}
+
+                    {mostrarCancelar && (
+                      <button
+                        onClick={() => setShowCancelInline(true)}
+                        className="flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-sm font-bold text-white transition-all hover:bg-rose-700"
+                        data-testid="btn-cancelar-reserva-account"
+                      >
+                        <Ban className="w-4 h-4" /> Cancelar reserva
+                      </button>
                     )}
                   </div>
                 );
