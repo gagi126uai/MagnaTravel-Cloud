@@ -74,6 +74,25 @@ export function ReservaHeader({
     const isArchived = reserva.status === 'Archived';
     const locked = isStatusLocked(reserva.status);
 
+    // ─── ADR-035: leer capabilities del DTO ──────────────────────────────────────
+    // Si el backend no manda capabilities (DTO viejo), se cae en undefined y cada botón
+    // usa su lógica local como fallback (degradación elegante).
+    //
+    // IMPORTANTE (fix TDZ 2026-06-22): este const y el helper getCapability van ANTES de
+    // la primera llamada a getCapability (canDelete, abajo). Aunque la function declaration
+    // está hoisteada y se puede llamar antes, su cuerpo lee `capabilities`, que es un const:
+    // usarlo antes de su línea de declaración lanza un TDZ ("Cannot access 'capabilities'
+    // before initialization") que en el bundle de producción dejaba la pantalla en blanco al
+    // abrir cualquier reserva. Declarar antes de usar lo resuelve de raíz.
+    const capabilities = reserva.capabilities;
+
+    // Helper local: extrae { allowed, reason } de un campo de capabilities.
+    // Si no hay capabilities, devuelve { allowed: true, reason: null } para no bloquear.
+    function getCapability(field) {
+        if (!capabilities || !capabilities[field]) return { allowed: true, reason: null };
+        return capabilities[field];
+    }
+
     // Solo se puede eliminar en Quotation/Budget (sin pagos, sin servicios resueltos).
     // ADR-036 (punto 5): si el backend manda canDelete.allowed === false (reserva con plata viva),
     // el boton "Eliminar" no aparece aunque la reserva sea temprana — solo se ofrece "Anular".
@@ -83,18 +102,6 @@ export function ReservaHeader({
 
     const archiveBlockReason = getReservaArchiveBlockReason(reserva);
     const canArchive = !archiveBlockReason;
-
-    // ─── ADR-035: leer capabilities del DTO ──────────────────────────────────────
-    // Si el backend no manda capabilities (DTO viejo), se cae en undefined y cada botón
-    // usa su lógica local como fallback (degradación elegante).
-    const capabilities = reserva.capabilities;
-
-    // Helper local: extrae { allowed, reason } de un campo de capabilities.
-    // Si no hay capabilities, devuelve { allowed: true, reason: null } para no bloquear.
-    function getCapability(field) {
-        if (!capabilities || !capabilities[field]) return { allowed: true, reason: null };
-        return capabilities[field];
-    }
 
     // ─── Botón "Editar fechas" ────────────────────────────────────────────────────
     // Feedback 2026-06-19: se oculta cuando canEditReservaData.allowed === false.
