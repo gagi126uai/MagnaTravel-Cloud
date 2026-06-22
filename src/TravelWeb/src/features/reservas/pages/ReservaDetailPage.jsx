@@ -723,14 +723,6 @@ export default function ReservaDetailPage() {
           setActiveTab("account");
           setShowCancelInline(true);
         }}
-        onReopenToSettle={() => {
-          // ADR-036: "Reabrir para facturar" ya NO manda a "A liquidar" (ese estado fue eliminado).
-          // Ahora destraba la reserva Finalizada para facturar SIN cambiarla de estado.
-          // El modal se abre con forceReason=true (motivo obligatorio, es accion fiscal sensible).
-          // lockedTarget queda vacío: el backend decide qué desbloqueamiento aplica.
-          // Ver RevertStatusModal para la logica de como procesa esto con el endpoint /revert-status.
-          setShowRevertModal(true);
-        }}
         onRequestEdit={() => setShowEditAuthModal(true)}
         onMarkLost={() => setShowMarkLostModal(true)}
         serviciosCancelados={serviciosCancelados}
@@ -924,11 +916,8 @@ export default function ReservaDetailPage() {
           role="status"
         >
           <strong className="font-bold">Reserva finalizada</strong> — solo lectura.
-          {/* ADR-036: el tip ya no dice "A liquidar". Dice "Reabrila para facturar." (sin destino de estado).
-              Solo se muestra si la reserva no tiene factura con CAE vivo (sin factura → tiene sentido reabrir). */}
-          {!reserva.requiresInvoiceAnnulmentToCancel && (
-            <> Reabrila para facturar.</>
-          )}
+          {/* ADR-037: ya no hay "Reabrila para facturar". La facturación se desacopló del estado:
+              se factura directo desde Finalizada (botón "Emitir factura" en la solapa Cuenta). */}
         </div>
       ) : reserva.status === "PendingOperatorRefund" ? (
         <div
@@ -989,17 +978,13 @@ export default function ReservaDetailPage() {
       })()}
 
       {/* ── "Debe — no viaja": cartel arriba para reservas Confirmadas con saldo pendiente (ADR-036, punto 7) ──
-          Aparece cuando la reserva está Confirmada y el cliente todavía debe.
-          El backend no permite que pase a "En viaje" hasta que esté 100% pagada.
+          Aparece cuando la reserva está Confirmada, el cliente todavía debe Y la salida está dentro de la
+          ventana de aviso configurada. El backend no permite que pase a "En viaje" hasta que esté 100% pagada.
           NO muestra montos de costo ni deuda al operador — solo que el cliente debe.
 
-          NOTA PARCIAL: la spec pide filtrar por la ventana de días de "Alertas por reservas próximas con deuda"
-          (enableUpcomingUnpaidReservationNotifications + upcomingUnpaidReservationAlertDays).
-          Esos valores NO están en el ReservaDto ni en el OperationalFlagsContext.
-          Por ahora el cartel aparece para TODA reserva Confirmed con saldo pendiente.
-          Para el filtro de ventana, el backend debe exponer isWithinUnpaidAlertWindow en el ReservaDto.
-          Pendiente: coordinar con backend. */}
-      {reserva.status === "Confirmed" && !reserva.isFullyPaid ? (
+          ADR-037: el backend ya expone `isWithinUnpaidAlertWindow` (calculado contra StartDate y la config
+          existente upcomingUnpaidReservationAlertDays). El cartel respeta esa ventana: fuera de ella no aparece. */}
+      {reserva.status === "Confirmed" && !reserva.isFullyPaid && reserva.isWithinUnpaidAlertWindow ? (
         <div
           className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
           data-testid="banner-debe-no-viaja"
@@ -1300,26 +1285,31 @@ export default function ReservaDetailPage() {
                       )}
                     </div>
 
-                    {/* Emitir factura */}
-                    <div className="flex flex-col items-start gap-0.5">
-                      <button
-                        onClick={() => { if (facturaHabilitada) setShowFacturaInline(true); }}
-                        disabled={!facturaHabilitada}
-                        className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-bold transition-all ${
-                          facturaHabilitada
-                            ? 'bg-indigo-600 text-white hover:bg-indigo-700'
-                            : 'bg-slate-200 text-slate-400 dark:bg-slate-700 dark:text-slate-500 cursor-not-allowed'
-                        }`}
-                        data-testid="btn-emitir-factura"
-                      >
-                        <FileText className="w-4 h-4" /> Emitir factura
-                      </button>
-                      {!facturaHabilitada && capFactura?.reason && (
-                        <p className="text-xs text-amber-600 dark:text-amber-400 font-medium px-1" data-testid="btn-emitir-factura-reason">
-                          {capFactura.reason}
-                        </p>
-                      )}
-                    </div>
+                    {/* Emitir factura — ADR-037: la facturación se desacopló del estado, el botón
+                        se gobierna por la capability canInvoiceSale (habilitado en Confirmada/En viaje/
+                        Finalizada, sin reabrir nada). Decisión Gaston 2026-06-21: si la reserva ya está
+                        facturada del todo, NO se muestra (para corregir es con nota de crédito/débito). */}
+                    {reserva.invoicingStatus !== 'FullyInvoiced' && (
+                      <div className="flex flex-col items-start gap-0.5">
+                        <button
+                          onClick={() => { if (facturaHabilitada) setShowFacturaInline(true); }}
+                          disabled={!facturaHabilitada}
+                          className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-bold transition-all ${
+                            facturaHabilitada
+                              ? 'bg-indigo-600 text-white hover:bg-indigo-700'
+                              : 'bg-slate-200 text-slate-400 dark:bg-slate-700 dark:text-slate-500 cursor-not-allowed'
+                          }`}
+                          data-testid="btn-emitir-factura"
+                        >
+                          <FileText className="w-4 h-4" /> Emitir factura
+                        </button>
+                        {!facturaHabilitada && capFactura?.reason && (
+                          <p className="text-xs text-amber-600 dark:text-amber-400 font-medium px-1" data-testid="btn-emitir-factura-reason">
+                            {capFactura.reason}
+                          </p>
+                        )}
+                      </div>
+                    )}
 
                     {/* Cancelar reserva — visible solo si el usuario tiene permiso reservas.cancel */}
                     {canCancelReserva && (

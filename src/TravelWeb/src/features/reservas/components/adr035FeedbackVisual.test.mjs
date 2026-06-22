@@ -77,28 +77,19 @@ test("C1 cartel terminal: ToSettle (legacy) → null (estado eliminado en ADR-03
     assert.equal(resolverCartelEstadoTerminal('ToSettle'), null);
 });
 
-// ─── Cambio 1 bis: tip "Reabrila" en Closed solo sin factura ─────────────────
+// ─── Cambio 1 bis: ADR-037 eliminó el tip "Reabrila para facturar" ───────────
 
 /**
- * El tip de reabrir en el cartel Closed solo se muestra cuando la reserva NO tiene
- * factura con CAE vivo. Si ya tiene factura, no tiene sentido reabrir para facturar.
+ * ADR-037: la facturación se desacopló del estado. El cartel de Finalizada YA NO muestra
+ * el tip "Reabrila para facturar" (se factura directo desde Finalizada, sin reabrir).
+ * El cartel queda simplemente "Reserva finalizada — solo lectura."
  */
-function debesMostrarTipReabrir(reservaStatus, requiresInvoiceAnnulmentToCancel) {
-    // Solo en Closed y sin factura viva
-    return reservaStatus === 'Closed' && !requiresInvoiceAnnulmentToCancel;
+function tipReabrirFinalizada() {
+    return null; // ADR-037: no hay tip de reabrir.
 }
 
-test("C1 tip reabrir: Closed sin factura → muestra el tip", () => {
-    assert.equal(debesMostrarTipReabrir('Closed', false), true);
-});
-
-test("C1 tip reabrir: Closed con factura → NO muestra el tip", () => {
-    // Si ya tiene factura, reabrir para facturar no tiene sentido.
-    assert.equal(debesMostrarTipReabrir('Closed', true), false);
-});
-
-test("C1 tip reabrir: Cancelled sin factura → NO muestra el tip (solo aplica a Closed)", () => {
-    assert.equal(debesMostrarTipReabrir('Cancelled', false), false);
+test("ADR-037 cartel Finalizada: ya NO hay tip 'Reabrila para facturar'", () => {
+    assert.equal(tipReabrirFinalizada(), null);
 });
 
 // ─── Cambio 3: gate canEditPassengers ────────────────────────────────────────
@@ -144,104 +135,37 @@ test("C3 pasajeros: reserva Lost → canEditPassengers=false (solo lectura)", ()
     assert.equal(resolverCanEditPassengers(capabilities), false);
 });
 
-// ─── Cambio 4: "Reabrir para facturar" solo sin factura (ADR-036: ya no usa ToSettle) ───────
+// ─── Cambio 4: ADR-037 eliminó el botón "Reabrir para facturar" ──────────────
 
 /**
- * Replica de la condición showReopenButton de ReservaHeader (actualizada para ADR-036).
- * Solo se muestra si hay callback, no está archivada, NO tiene factura viva.
+ * ADR-037 (2026-06-21): la facturación se desacopló del estado de la reserva. El botón
+ * "Reabrir para facturar" fue ELIMINADO del encabezado: ahora se factura directo desde
+ * Finalizada (y Confirmada/En viaje) sin reabrir ni destrabar nada. El botón "Emitir factura"
+ * se gobierna por la capability `canInvoiceSale` del backend.
  *
- * ADR-036: ya NO se busca 'ToSettle' en allowedRevert (ese estado fue eliminado).
- * Ahora se verifica canReopenForInvoicing (campo nuevo del backend) o que allowedRevert
- * incluya 'Closed' (la reserva ya está cerrada y puede desbloquearse).
+ * Réplica de la nueva regla de visibilidad del botón "Emitir factura" en la solapa Cuenta:
+ * visible salvo que la reserva ya esté facturada del todo (decisión Gaston 3A); habilitado
+ * según la capability (no por estado hardcodeado en el front).
  */
-function puedeReopenParaFacturar({ capabilities, reservaStatus, tieneFacturaViva, isArchived, hasCallback }) {
-    if (!hasCallback || isArchived || tieneFacturaViva) return false;
-
-    if (capabilities !== null && capabilities !== undefined) {
-        // ADR-036: primero campo dedicado; fallback a allowedRevert que incluya 'Closed'.
-        return capabilities.canReopenForInvoicing?.allowed === true
-            || (Array.isArray(capabilities.allowedRevert) && capabilities.allowedRevert.includes('Closed'));
-    }
-    // Sin capabilities: fallback a solo Closed
-    return reservaStatus === 'Closed';
+function muestraEmitirFactura({ invoicingStatus, capInvoiceAllowed }) {
+    if (invoicingStatus === 'FullyInvoiced') return { visible: false, enabled: false };
+    // visible siempre (apagado si la capability no lo permite, patrón ADR-035)
+    return { visible: true, enabled: capInvoiceAllowed !== false };
 }
 
-test("C4 reabrir: Closed sin factura + canReopenForInvoicing.allowed=true → SÍ aparece (ADR-036)", () => {
-    const visible = puedeReopenParaFacturar({
-        capabilities: { canReopenForInvoicing: { allowed: true } },
-        reservaStatus: 'Closed',
-        tieneFacturaViva: false,
-        isArchived: false,
-        hasCallback: true,
-    });
-    assert.equal(visible, true);
+test("C4 facturar: Finalizada ya facturada del todo → botón 'Emitir factura' oculto (ADR-037)", () => {
+    const r = muestraEmitirFactura({ invoicingStatus: 'FullyInvoiced', capInvoiceAllowed: true });
+    assert.equal(r.visible, false);
 });
 
-test("C4 reabrir: Closed sin factura + allowedRevert incluye 'Closed' → SÍ aparece (fallback ADR-036)", () => {
-    const visible = puedeReopenParaFacturar({
-        capabilities: { allowedRevert: ['Closed'] },
-        reservaStatus: 'Closed',
-        tieneFacturaViva: false,
-        isArchived: false,
-        hasCallback: true,
-    });
-    assert.equal(visible, true);
+test("C4 facturar: Finalizada sin facturar + capability allowed → botón visible y habilitado", () => {
+    const r = muestraEmitirFactura({ invoicingStatus: 'NotInvoiced', capInvoiceAllowed: true });
+    assert.deepEqual(r, { visible: true, enabled: true });
 });
 
-test("C4 reabrir: Closed CON factura viva → NO aparece (ya está facturada)", () => {
-    // Si tiene factura con CAE, reabrir para facturar no aporta nada.
-    const visible = puedeReopenParaFacturar({
-        capabilities: { canReopenForInvoicing: { allowed: true } },
-        reservaStatus: 'Closed',
-        tieneFacturaViva: true,  // ← bloqueante
-        isArchived: false,
-        hasCallback: true,
-    });
-    assert.equal(visible, false, "con factura viva no tiene sentido reabrir para facturar");
-});
-
-test("C4 reabrir: sin capabilities + Closed sin factura → SÍ aparece (fallback)", () => {
-    const visible = puedeReopenParaFacturar({
-        capabilities: null,
-        reservaStatus: 'Closed',
-        tieneFacturaViva: false,
-        isArchived: false,
-        hasCallback: true,
-    });
-    assert.equal(visible, true, "fallback a solo Closed");
-});
-
-test("C4 reabrir: sin capabilities + Confirmed sin factura → NO aparece (fallback: solo Closed)", () => {
-    const visible = puedeReopenParaFacturar({
-        capabilities: null,
-        reservaStatus: 'Confirmed',
-        tieneFacturaViva: false,
-        isArchived: false,
-        hasCallback: true,
-    });
-    assert.equal(visible, false);
-});
-
-test("C4 reabrir: Archived → NO aparece", () => {
-    const visible = puedeReopenParaFacturar({
-        capabilities: { canReopenForInvoicing: { allowed: true } },
-        reservaStatus: 'Archived',
-        tieneFacturaViva: false,
-        isArchived: true,  // ← bloqueante
-        hasCallback: true,
-    });
-    assert.equal(visible, false);
-});
-
-test("C4 reabrir: sin callback → NO aparece", () => {
-    const visible = puedeReopenParaFacturar({
-        capabilities: { canReopenForInvoicing: { allowed: true } },
-        reservaStatus: 'Closed',
-        tieneFacturaViva: false,
-        isArchived: false,
-        hasCallback: false,  // ← sin prop onReopenToSettle
-    });
-    assert.equal(visible, false);
+test("C4 facturar: parcial + capability denegada → visible pero apagado (patrón ADR-035)", () => {
+    const r = muestraEmitirFactura({ invoicingStatus: 'PartiallyInvoiced', capInvoiceAllowed: false });
+    assert.deepEqual(r, { visible: true, enabled: false });
 });
 
 // ─── Cambio 5: estado de servicios en reservas terminales ────────────────────

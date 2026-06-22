@@ -374,7 +374,7 @@ Ronda 2:
 - Carteles por estado terminal (van en la franja de arriba de la pantalla de reserva):
   - **Perdida:** "Reserva perdida — solo lectura."
   - **Cancelada:** "Reserva cancelada — solo lectura."
-  - **Finalizada:** "Reserva finalizada — solo lectura. Reabrila para facturar." (solo si NO tiene factura con CAE vivo). **⚠️ ACTUALIZADO por ADR-036 (2026-06-21):** el texto ya NO dice "Reabrila a 'A liquidar'" porque el estado "A liquidar" se eliminó. Ver sección ADR-036 más abajo.
+  - **Finalizada:** ~~"Reserva finalizada — solo lectura. Reabrila para facturar."~~ **⚠️ SUPERSEDIDO por ADR-037 (2026-06-21):** el cartel ahora dice solo **"Reserva finalizada — solo lectura."** y se factura DIRECTO desde Finalizada (ya no se reabre ni se destraba). Ver sección ADR-037 al final.
   - **Esperando reembolso:** "Cancelada, esperando el reembolso del operador — solo lectura."
 - Los estados activos (Budget, InManagement, etc.) conservan sus carteles orientativos de siempre.
 - El texto "Tiene que haber al menos 1 pasajero" debajo de "El cliente aceptó" **sí se mantiene** — es un requisito previo de acción, no un motivo de bloqueo de estado.
@@ -454,7 +454,7 @@ Ronda 2:
 - **(2026-06-21, P4=B — regla de costos)** La etiqueta **NUNCA muestra montos**. Es solo el estado pagado/impago, sin cifras. Así puede mostrarse también a quien no tiene permiso de ver costos (`cobranzas.see_cost`) sin filtrar plata, consistente con la regla general 2026-06-05 ("sin permiso de ver costos, no se muestran montos en ninguna pantalla"). La etiqueta de estado SÍ se ve para todos; los montos de deuda al operador siguen tapados donde corresponda.
 - **(2026-06-21)** Esta etiqueta se conecta con una feature que viene después (un casillero "pagado al operador" por servicio); por ahora se diseña SOLO la etiqueta de estado, leyendo lo que el backend ya expone por servicio.
 
-**6) Reabrir una Finalizada para facturar = se DESTRABA, NO cambia de estado (P1=B).**
+**6) Reabrir una Finalizada para facturar = se DESTRABA, NO cambia de estado (P1=B). ⚠️ SUPERSEDIDO por ADR-037 (2026-06-21): ya NO se reabre ni se destraba — se factura DIRECTO desde Finalizada. Ver la sección ADR-037 al final.**
 - **(2026-06-21, P1=B)** El botón "Reabrir para facturar" (de ADR-035) ahora **destraba la reserva Finalizada para poder facturar, SIN cambiarla de estado**: se queda "Finalizada" pero abierta para emitir la factura, igual que cuando un administrador destraba una Confirmada bajo candado. **NO pasa a "A liquidar"** (ese estado ya no existe, punto 0).
 - **(2026-06-21, P1=B)** El cartel de Finalizada queda: **"Reserva finalizada — solo lectura. Reabrila para facturar."** (sin la palabra "A liquidar"). Sigue valiendo: solo aparece la opción si NO tiene factura con CAE vivo, y pide motivo obligatorio al destrabar.
 - **⚠️ CONTRADICCIÓN RESUELTA CON LA DECISIÓN MÁS NUEVA:** la guía de ADR-035 (2026-06-19) mandaba "Reabrir para facturar" → estado "A liquidar". La decisión de Gastón de hoy (P1=B + decisión base 1) **reemplaza** eso: ya no hay estado "A liquidar" y la reserva se destraba sin moverse de Finalizada. Vale ADR-036. (Nota de Gastón: en paralelo un experto ERP está estudiando desacoplar facturación/cobranza del ciclo de estados; por ahora se construye esta opción de "destrabar".)
@@ -467,3 +467,28 @@ Ronda 2:
 **8) Servicios de una reserva deshecha = "Anulado" (decisión base 6-servicios + P6=A).**
 - **(2026-06-21, P6=A)** Cuando la reserva quedó deshecha, **todos sus servicios muestran "Anulado"** en su badge de estado, tanto si la reserva está **Perdida** como si está **Anulada (Cancelled)**. Un solo verbo, coherente con que la reserva se "Anula".
 - **(2026-06-21)** Esto **reemplaza** la regla A-cuater de ADR-035 (2026-06-19), que mostraba "Anulado" para Perdida y "Cancelado" para Cancelled. Ahora ambas muestran **"Anulado"**. Sigue siendo SOLO presentación (no muta los datos del backend).
+
+## Facturación desacoplada del estado: chip de facturación, se factura directo, "Debe — no viaja" con ventana (ADR-037, 2026-06-21)
+
+> Después del trabajo de backend de ADR-037 ("Desacople de facturación", estilo SAP/Odoo),
+> la facturación dejó de depender del estado de la reserva. El backend ya expone, por reserva:
+> `invoicingStatus` (NotInvoiced / PartiallyInvoiced / FullyInvoiced), la capacidad de "Facturar"
+> habilitada en Confirmada, En viaje y Finalizada, y `isWithinUnpaidAlertWindow` (bool) para el
+> aviso "Debe — no viaja". Esta sección SUPERSEDE el P1=B de ADR-036 (ver punto 2).
+
+**1) Chip de FACTURACIÓN al lado del chip de COBRO (mismo tratamiento de "plata", no es estado operativo).**
+- **(2026-06-21)** Se agrega un **chip informativo de facturación** que sale de `invoicingStatus`. Va **al lado del chip de cobro** ("Pago:"), con el **mismo tratamiento secundario**: chico, con prefijo gris (igual que "Pago:"), para que NO parezca un segundo estado operativo de la reserva (regla ADR-035 A-quinque). El estado operativo sigue siendo SOLO el badge grande.
+- **(2026-06-21)** Va en la **ficha de la reserva** (en la cabecera, pegado a los chips de pago) **y en el listado** (en la celda donde hoy se ve "Debe: $X / Saldado").
+- **(2026-06-21)** El chip aparece SOLO cuando hay algo que decir de facturación. **No se muestra "Sin facturar" en estados donde todavía no aplica facturar** (Cotización / Presupuesto / En gestión sin servicios confirmados): ahí no hay nada que facturar y meter un chip "Sin facturar" sería ruido. _(El texto exacto del chip y el detalle fino de cuándo aparece "Sin facturar" están como PREGUNTA a Gastón — ver bloque de preguntas; hasta su respuesta, el wording queda BLOQUEADO.)_
+
+**2) Se factura DIRECTO desde Finalizada — muere "Reabrir para facturar" (SUPERSEDE P1=B de ADR-036).**
+- **(2026-06-21)** Como la facturación se desacopló del estado, **ya no hace falta reabrir ni destrabar nada para facturar**. El backend habilita "Facturar" en **Confirmada, En viaje y Finalizada**.
+- **(2026-06-21)** Se **elimina el botón "Reabrir para facturar"** de la cabecera de la reserva (el de ADR-035/036). Ya no se reabre ni se destraba.
+- **(2026-06-21)** En una reserva **Finalizada**, el botón **"Facturar" aparece habilitado** (la capacidad la da el backend). El usuario factura y listo, sin pasar por ningún estado intermedio.
+- **(2026-06-21)** El **cartel de Finalizada** deja de invitar a reabrir. Pasa a decir: **"Reserva finalizada — solo lectura."** (se le saca "Reabrila para facturar"), porque facturar ya no es "reabrir": es una acción normal disponible. _(El cartel de "solo lectura" se mantiene para el resto de las acciones; lo único que cambia es que ya no menciona reabrir.)_
+- **⚠️ SUPERSEDE el P1=B de ADR-036 (2026-06-21):** aquella decisión decía "Reabrir para facturar destraba la Finalizada sin cambiarla de estado". Con ADR-037 **ya no hay reabrir ni destrabar para facturar**: se factura directo desde Finalizada. El experto ERP que ADR-036 mencionaba "estudiando desacoplar facturación del ciclo de estados" entregó justamente esto. Vale ADR-037.
+
+**3) "Debe — no viaja" SOLO dentro de la ventana de días (ajuste del front de ADR-036).**
+- **(2026-06-21)** El **chip rojo "Debe — no viaja"** y el **cartel de arriba** del mismo tema (ADR-036 punto 7) ahora se muestran **SOLO cuando `isWithinUnpaidAlertWindow` es true** — es decir, cuando la salida está dentro de la ventana de días configurada en "Alertas por reservas próximas con deuda" Y hay deuda del cliente. **Ya NO se muestra para toda reserva Confirmada con deuda.**
+- **(2026-06-21)** Esto completa lo que ADR-036 dejó pendiente: aquella regla se apoyaba en la config existente de días de aviso, pero el dato no llegaba al front. Ahora `isWithinUnpaidAlertWindow` lo trae resuelto del backend (que ya cruza la config con la fecha de salida). El front solo lo lee.
+- **(2026-06-21)** Sigue valiendo todo lo demás de ADR-036 punto 7: el chip lleva el prefijo "Pago:" en gris (no es estado operativo), no muestra montos de costo ni deuda al operador (puede mostrar lo que el cliente debe), y la reserva sigue sin pasar a "En viaje" hasta cobrarse el total. Lo único que cambia es **CUÁNDO se muestra el aviso**: dentro de la ventana, no siempre.

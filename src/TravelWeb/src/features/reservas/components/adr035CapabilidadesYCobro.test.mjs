@@ -56,30 +56,12 @@ function getCapability(capabilities, field) {
 }
 
 /**
- * Replica de la lógica del botón "Reabrir para facturar".
- * Con capabilities: mira allowedRevert (siempre, aunque no tenga el campo).
- * Sin capabilities: fallback — solo si está Closed.
- *
- * Nota: si capabilities EXISTE pero no tiene allowedRevert, el botón NO aparece
- * (el backend actualizado debería siempre mandar allowedRevert; si falta, no
- * inferimos la transición desde el estado — evitamos asumir).
- */
-function puedeReopenToSettle(capabilities, reservaStatus) {
-    if (capabilities !== null && capabilities !== undefined) {
-        // Con capabilities (DTO ADR-035): solo miramos allowedRevert
-        return Array.isArray(capabilities.allowedRevert)
-            && capabilities.allowedRevert.includes('ToSettle');
-    }
-    // Sin capabilities (DTO viejo): fallback a solo Closed
-    return reservaStatus === 'Closed';
-}
-
-/**
  * Replica de la condición para mostrar el botón cancelar con capabilities.
  * Con capabilities: siempre visible (allowed/disbled según capability).
  * Sin capabilities: solo en estados operativos (fallback legacy).
+ * ADR-036: ToSettle eliminado del fallback.
  */
-const CANCELLABLE_STATUSES_FALLBACK = ['InManagement', 'Confirmed', 'Traveling', 'ToSettle'];
+const CANCELLABLE_STATUSES_FALLBACK = ['InManagement', 'Confirmed', 'Traveling'];
 
 function puedeVerBotonCancelar({ canCancelReserva, isArchived, capabilities, reservaStatus }) {
     if (!canCancelReserva || isArchived) return false;
@@ -293,39 +275,12 @@ test("C cartel: reserva=null → verde (no rompe)", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// D) Tests: botón "Reabrir para facturar" (Closed → ToSettle)
+// D) ADR-037: el botón "Reabrir para facturar" fue ELIMINADO
 // ─────────────────────────────────────────────────────────────────────────────
-
-test("D reabrir: capabilities.allowedRevert incluye ToSettle → puede reabrir", () => {
-    const capabilities = { allowedRevert: ['Traveling', 'ToSettle'] };
-    assert.equal(puedeReopenToSettle(capabilities, 'Closed'), true);
-});
-
-test("D reabrir: capabilities.allowedRevert NO incluye ToSettle → NO puede reabrir", () => {
-    // Ej: reserva Traveling solo puede volver a InManagement
-    const capabilities = { allowedRevert: ['InManagement'] };
-    assert.equal(puedeReopenToSettle(capabilities, 'Traveling'), false);
-});
-
-test("D reabrir: capabilities sin allowedRevert → NO puede reabrir (array vacío = no hay opciones)", () => {
-    const capabilities = { allowedRevert: [] };
-    assert.equal(puedeReopenToSettle(capabilities, 'Closed'), false);
-});
-
-test("D reabrir: sin capabilities + status=Closed → puede reabrir (fallback legacy)", () => {
-    // Sin el DTO nuevo, usamos el estado local para mostrar el botón en Closed.
-    assert.equal(puedeReopenToSettle(null, 'Closed'), true);
-});
-
-test("D reabrir: sin capabilities + status=Confirmed → NO puede reabrir (fallback: solo Closed)", () => {
-    assert.equal(puedeReopenToSettle(null, 'Confirmed'), false);
-});
-
-test("D reabrir: capabilities definido pero sin campo allowedRevert → NO puede reabrir", () => {
-    // capabilities existe pero no tiene la lista (DTO parcialmente actualizado)
-    const capabilities = { canCancel: { allowed: true } };
-    assert.equal(puedeReopenToSettle(capabilities, 'Closed'), false);
-});
+// La facturación se desacopló del estado: ya no se reabre nada, se factura directo
+// desde Finalizada. La cobertura del nuevo botón "Emitir factura" (gobernado por la
+// capability canInvoiceSale y oculto cuando ya está facturada del todo) vive en
+// adr035FeedbackVisual.test.mjs (sección "Cambio 4") y en adr037Facturacion.test.mjs.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fix #1: cambio de tab antes de abrir el panel inline de cancelacion
@@ -372,7 +327,9 @@ test("Fix#1 cancelar: click desde solapa 'account' → sigue en 'account' y abre
 /**
  * Replica la lógica de canSubmit de RevertStatusModal con forceReason.
  * - isAdmin: true si el actor es admin.
- * - forceReason: true cuando se usa desde "Reabrir para facturar".
+ * - forceReason: true cuando el modal de revertir estado exige motivo obligatorio
+ *   (acción sensible que queda auditada). ADR-037: ya no hay "Reabrir para facturar";
+ *   este gate aplica al flujo genérico de "Volver atrás" / revertir estado.
  * - reasonOk: true si el motivo tiene >= 10 caracteres.
  * - targetStatus: el destino (pre-seleccionado cuando lockedTarget está seteado).
  */
@@ -392,11 +349,11 @@ test("Fix#2 reabrir: admin SIN forceReason → puede confirmar sin motivo (compo
     assert.equal(canSubmit, true, "sin forceReason, el admin puede confirmar sin motivo");
 });
 
-test("Fix#2 reabrir: admin CON forceReason + motivo vacío → NO puede confirmar", () => {
-    // Regla ADR-035: 'Reabrir para facturar' siempre exige motivo, incluido admin.
+test("Fix#2 revertir: admin CON forceReason + motivo vacío → NO puede confirmar", () => {
+    // Regla ADR-035: revertir estado con forceReason siempre exige motivo, incluido admin.
     const canSubmit = calcularCanSubmitRevert({
         isAdmin: true, requiresAuth: false, forceReason: true,
-        reasonOk: false, targetStatus: "ToSettle", supervisorId: "",
+        reasonOk: false, targetStatus: "Confirmed", supervisorId: "",
     });
     assert.equal(canSubmit, false, "con forceReason, admin no puede confirmar sin motivo");
 });
@@ -404,7 +361,7 @@ test("Fix#2 reabrir: admin CON forceReason + motivo vacío → NO puede confirma
 test("Fix#2 reabrir: admin CON forceReason + motivo completo → puede confirmar", () => {
     const canSubmit = calcularCanSubmitRevert({
         isAdmin: true, requiresAuth: false, forceReason: true,
-        reasonOk: true, targetStatus: "ToSettle", supervisorId: "",
+        reasonOk: true, targetStatus: "Confirmed", supervisorId: "",
     });
     assert.equal(canSubmit, true, "admin con forceReason y motivo válido puede confirmar");
 });
@@ -412,7 +369,7 @@ test("Fix#2 reabrir: admin CON forceReason + motivo completo → puede confirmar
 test("Fix#2 reabrir: no-admin CON forceReason + motivo + supervisor → puede confirmar", () => {
     const canSubmit = calcularCanSubmitRevert({
         isAdmin: false, requiresAuth: true, forceReason: true,
-        reasonOk: true, targetStatus: "ToSettle", supervisorId: "user-123",
+        reasonOk: true, targetStatus: "Confirmed", supervisorId: "user-123",
     });
     assert.equal(canSubmit, true);
 });
@@ -420,7 +377,7 @@ test("Fix#2 reabrir: no-admin CON forceReason + motivo + supervisor → puede co
 test("Fix#2 reabrir: no-admin CON forceReason sin supervisor → NO puede confirmar", () => {
     const canSubmit = calcularCanSubmitRevert({
         isAdmin: false, requiresAuth: true, forceReason: true,
-        reasonOk: true, targetStatus: "ToSettle", supervisorId: "",
+        reasonOk: true, targetStatus: "Confirmed", supervisorId: "",
     });
     assert.equal(canSubmit, false, "no-admin siempre necesita supervisor, independientemente de forceReason");
 });

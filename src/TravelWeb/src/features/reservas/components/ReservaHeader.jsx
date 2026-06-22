@@ -66,7 +66,6 @@ export function ReservaHeader({
     onCancelReserva,
     onRequestEdit,
     onMarkLost,
-    onReopenToSettle,
     serviciosCancelados = null,
     totalPasajerosDeclarados = null,
 }) {
@@ -134,28 +133,9 @@ export function ReservaHeader({
         ? (Array.isArray(capabilities.allowedRevert) && capabilities.allowedRevert.length > 0)
         : canRevertLocal;
 
-    // ─── Boton "Reabrir para facturar" ───────────────────────────────────────────
-    // ADR-036 (2026-06-21): ya NO manda la reserva a "A liquidar". Ahora la destraba
-    // para facturar SIN cambiar de estado (se queda Finalizada pero habilitada para emitir).
-    // Solo aparece cuando la reserva NO tiene factura con CAE vivo (sin factura → tiene sentido reabrir).
-    // Si ya tiene factura emitida (requiresInvoiceAnnulmentToCancel=true), no se muestra.
-    //
-    // Con capabilities: buscamos canReopenForInvoicing (campo nuevo del backend ADR-036).
-    //   Fallback: si el backend no manda ese campo, buscamos allowedRevert que incluya 'Closed'
-    //   (la reserva ya está cerrada y puede desbloquearse).
-    // Sin capabilities: fallback a Closed.
-    const tieneFacturaViva = reserva.requiresInvoiceAnnulmentToCancel === true;
-    const puedeReabrirConCapabilities = capabilities && (
-        // Primero: campo dedicado del backend ADR-036
-        capabilities.canReopenForInvoicing?.allowed === true
-        // Fallback: allowedRevert incluye 'Closed' (que es el estado actual al querer reabrir)
-        || (Array.isArray(capabilities.allowedRevert) && capabilities.allowedRevert.includes('Closed'))
-    );
-    const puedeReabrirFallback = reserva.status === 'Closed';
-    const showReopenButton = onReopenToSettle
-        && !isArchived
-        && !tieneFacturaViva
-        && (capabilities ? puedeReabrirConCapabilities : puedeReabrirFallback);
+    // ADR-037: el botón "Reabrir para facturar" fue eliminado. La facturación se desacopló
+    // del estado de la reserva: se factura directo desde Finalizada (sin reabrir). El botón
+    // "Facturar" se gobierna por la capability del backend (canInvoiceSale), no por el estado.
 
     const startLabel = formatTripDate(reserva.startDate);
     const endLabel = formatTripDate(reserva.endDate);
@@ -419,21 +399,10 @@ export function ReservaHeader({
                             </button>
                         )}
 
-                        {/* ── Boton "Reabrir para facturar" ───────────────────────────────────────
-                            ADR-036: ya NO manda a "A liquidar". Destraba la Finalizada para
-                            poder emitir la factura SIN cambiar el estado de la reserva.
-                            Solo se muestra cuando la reserva NO tiene factura con CAE vivo. */}
-                        {showReopenButton && (
-                            <button
-                                onClick={onReopenToSettle}
-                                data-testid="reserva-action-reopen-for-invoicing"
-                                aria-label="Reabrir para facturar"
-                                className="inline-flex items-center gap-1.5 px-3 py-2.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-900/20 dark:text-indigo-300 rounded-xl transition-colors text-sm font-semibold"
-                            >
-                                <RefreshCw className="w-4 h-4" />
-                                Reabrir para facturar
-                            </button>
-                        )}
+                        {/* ADR-037: el botón "Reabrir para facturar" fue ELIMINADO.
+                            La facturación se desacopló del estado: ahora se factura directo desde
+                            Finalizada (y desde Confirmada/En viaje) sin reabrir ni destrabar nada.
+                            El botón "Facturar" se habilita por capability del backend. */}
 
                         {/* Eliminar: solo en etapas tempranas sin pagos */}
                         {canDelete && (
