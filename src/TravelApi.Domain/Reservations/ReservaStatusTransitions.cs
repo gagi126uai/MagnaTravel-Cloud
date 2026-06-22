@@ -82,6 +82,9 @@ public static class ReservaStatusTransitions
             // ADR-036: Closed revierte SOLO a Traveling (revert de cierre prematuro). NO mas Closed -> ToSettle
             // (reapertura para facturar tarde eliminada): corregir una factura de una Finalizada es por NC/ND,
             // sin reabrir el estado. La fila ToSettle -> Traveling tambien desaparecio (estado eliminado).
+            // ADR-037 (2026-06-21): este revert es EXCLUSIVAMENTE para "deshacer un cierre prematuro" (se cerro
+            // por error y el viaje sigue en curso), NUNCA para facturar. Facturar tarde ya NO necesita reabrir:
+            // se factura directo desde Closed (CanInvoiceSale = Allowed en Closed, ADR-037).
             [EstadoReserva.Closed] = new[] { EstadoReserva.Traveling },
             // ADR-033 (2026-06-16): una Cancelada se puede REABRIR a En gestion SOLO si la cancelacion no dejo
             // huella fiscal ni de plata. El gate duro vive en RevertStatusAsync (query D2); aca solo se declara

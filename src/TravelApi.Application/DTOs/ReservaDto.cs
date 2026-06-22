@@ -249,6 +249,25 @@ public class ReservaDto
     public string CollectionStatus { get; set; } = ReservaCollectionStatus.Settled;
 
     /// <summary>
+    /// ADR-037 (2026-06-21): ESTADO DE FACTURACION derivado del cuadre VENDIDO vs FACTURADO NETO (no
+    /// persistido, no es columna). Carril SEPARADO de <see cref="CollectionStatus"/> (cobro) y del estado
+    /// operativo. Valores: "NotInvoiced" (sin facturar), "PartiallyInvoiced" (facturada en parte),
+    /// "FullyInvoiced" (facturada total o de mas). Por MONTO (decision H1): "total" = facturadoNeto &gt;= vendido.
+    /// Escalar v1 (decision H4): deriva de <see cref="FacturadoNeto"/>/<see cref="TotalSale"/> escalares.
+    /// Lo calcula <c>ReservaInvoicingStatus.Derive</c> en el backend (fuente unica).
+    /// </summary>
+    public string InvoicingStatus { get; set; } = ReservaInvoicingStatus.NotInvoiced;
+
+    /// <summary>
+    /// ADR-037 (2026-06-21): true si la reserva entra en el aviso "Debe — no viaja" (ADR-036): el cliente
+    /// tiene deuda (saldo pendiente &gt; 0) Y la fecha de salida (<see cref="StartDate"/>) cae dentro de la
+    /// ventana configurada (<c>UpcomingUnpaidReservationAlertDays</c>) Y las notificaciones de este tipo
+    /// estan habilitadas (<c>EnableUpcomingUnpaidReservationNotifications</c>). El front lo usa para mostrar
+    /// el aviso sin recalcular la ventana. Calculado server-side (fuente unica con el job nocturno).
+    /// </summary>
+    public bool IsWithinUnpaidAlertWindow { get; set; }
+
+    /// <summary>
     /// ADR-035 (2026-06-19): que se puede hacer con esta reserva en su estado actual, y por que no cuando no
     /// se puede. El front lo usa para apagar botones con motivo (siempre visibles, deshabilitados). Es la
     /// fuente unica de capacidades (no se replica la regla de estado en el cliente). Calculado por la politica

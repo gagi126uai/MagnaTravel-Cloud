@@ -37,16 +37,18 @@ public class ReservaCapabilitiesTests
         string status, decimal balance = 100m, bool hasLiveCae = false, bool hasAnyPayment = false)
         => new(status, balance, HasLiveCae: hasLiveCae, HasLiveVoucher: false, HasLiveEditAuth: false, HasAnyPayment: hasAnyPayment);
 
-    // ===================== Factura de venta: SOLO {Confirmed} (ADR-036) =====================
+    // ============= Factura de venta: {Confirmed, Traveling, Closed} (ADR-037, desacople) =============
 
     [Theory]
     [InlineData(EstadoReserva.Confirmed, true)]
-    // ADR-036: en viaje NO se factura (la factura de venta se emite antes de viajar).
-    [InlineData(EstadoReserva.Traveling, false)]
+    // ADR-037: la factura se desacopla del estado. En viaje SI se factura; en Finalizada tambien (sin reabrir).
+    [InlineData(EstadoReserva.Traveling, true)]
+    [InlineData(EstadoReserva.Closed, true)]
+    // Pre-venta: NO facturable (servicios sin resolver / sin confirmar).
     [InlineData(EstadoReserva.Quotation, false)]
     [InlineData(EstadoReserva.Budget, false)]
     [InlineData(EstadoReserva.InManagement, false)]
-    [InlineData(EstadoReserva.Closed, false)]
+    // Anulados: NO facturable (la venta no existe).
     [InlineData(EstadoReserva.Lost, false)]
     [InlineData(EstadoReserva.Cancelled, false)]
     [InlineData(EstadoReserva.PendingOperatorRefund, false)]

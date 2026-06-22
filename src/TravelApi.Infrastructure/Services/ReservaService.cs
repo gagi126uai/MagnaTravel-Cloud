@@ -1558,6 +1558,11 @@ public class ReservaService : IReservaService
         // trae todas las colecciones de cada reserva). El TotalCost por moneda se enmascara igual que el escalar.
         await FillPorMonedaForListAsync(paged.Items, seeCost, cancellationToken);
 
+        // ADR-037 Capa carril de facturacion: estado de facturacion derivado por fila, en UNA query agrupada
+        // por reserva (sin N+1). El facturado neto no es costo: no se enmascara por ver-costos (es lo mismo
+        // que ya se muestra en el cuadre del detalle).
+        await FillInvoicingStatusForListAsync(paged.Items, cancellationToken);
+
         var page = ReservaListPageDto.Create(paged.Items, paged.Page, paged.PageSize, paged.TotalCount, summary);
         return (page, ownerFilterUserId);
     }
@@ -1624,6 +1629,56 @@ public class ReservaService : IReservaService
 
             // ADR-033 (E7/A5): estado de cobro derivado del saldo POR MONEDA de las filas hijas.
             item.CollectionStatus = ReservaCollectionStatus.Derive(item.PorMoneda.Select(line => line.Balance));
+        }
+    }
+
+    /// <summary>
+    /// ADR-037 (2026-06-21): llena <c>InvoicingStatus</c> de cada fila del listado con el carril de
+    /// facturacion DERIVADO (mismo que el detalle). Para no recalcular el cuadre por reserva (N+1), suma el
+    /// FACTURADO NETO de toda la pagina en UNA query agrupada por reserva (facturas + ND - NC, solo
+    /// comprobantes VIVOS: CAE aprobado <c>Resultado == "A"</c> y no anulados <c>AnnulmentStatus != Succeeded</c>,
+    /// misma definicion de "vivo" que <c>ReservaInvoicingCuadreCalculator</c>) y deriva el estado por reserva.
+    ///
+    /// <para>Las reservas sin comprobantes vivos no aparecen en el agregado: quedan en "NotInvoiced" (el
+    /// default del DTO), que es lo correcto. El <c>vendido</c> sale del escalar <c>TotalSale</c> que cada
+    /// fila ya trae (consistente con la limitacion escalar v1 del carril).</para>
+    /// </summary>
+    private async Task FillInvoicingStatusForListAsync(
+        IReadOnlyList<ReservaListDto> items, CancellationToken cancellationToken)
+    {
+        if (items.Count == 0) return;
+
+        var publicIds = items.Select(i => i.PublicId).ToList();
+
+        // Tipos de NOTA DE CREDITO (restan en el cuadre). Mismo conjunto que la bandeja de facturacion
+        // (InvoiceService) y que InvoiceComprobanteHelpers: A=3, B=8, C=13, M=53. El resto (facturas y ND) suma.
+        var creditNoteTipos = new[] { 3, 8, 13, 53 };
+
+        // Una fila por reserva con su facturado neto. Join explicito contra Reservas (no nav implicita) para
+        // resolver el PublicId con el que matchear el DTO y correr igual en Postgres e InMemory.
+        var facturadoByReserva = await (
+            from invoice in _context.Invoices.AsNoTracking()
+            join reservaPadre in _context.Reservas.AsNoTracking() on invoice.ReservaId equals reservaPadre.Id
+            where publicIds.Contains(reservaPadre.PublicId)
+                  && invoice.Resultado == "A"
+                  && invoice.AnnulmentStatus != AnnulmentStatus.Succeeded
+            group invoice by reservaPadre.PublicId into byReserva
+            select new
+            {
+                ReservaPublicId = byReserva.Key,
+                FacturadoNeto = byReserva.Sum(invoice =>
+                    creditNoteTipos.Contains(invoice.TipoComprobante)
+                        ? -invoice.ImporteTotal
+                        : invoice.ImporteTotal)
+            }).ToListAsync(cancellationToken);
+
+        var netoByReserva = facturadoByReserva
+            .ToDictionary(row => row.ReservaPublicId, row => row.FacturadoNeto);
+
+        foreach (var item in items)
+        {
+            var facturadoNeto = netoByReserva.TryGetValue(item.PublicId, out var neto) ? neto : 0m;
+            item.InvoicingStatus = ReservaInvoicingStatus.Derive(item.TotalSale, facturadoNeto);
         }
     }
 
@@ -1733,6 +1788,22 @@ public class ReservaService : IReservaService
                 IsLive: i.Resultado == "A" && i.AnnulmentStatus != AnnulmentStatus.Succeeded)));
         dto.FacturadoNeto = cuadre.FacturadoNeto;
         dto.DisponibleParaFacturar = cuadre.Disponible;
+
+        // ADR-037 (carril de facturacion DERIVADO): estado de facturacion calculado del cuadre escalar
+        // (vendido vs facturado neto). Eje independiente del cobro y del estado operativo. Fuente unica:
+        // ReservaInvoicingStatus.Derive (probado, un solo lugar), espejo de CollectionStatus.
+        dto.InvoicingStatus = ReservaInvoicingStatus.Derive(file.TotalSale, cuadre.FacturadoNeto);
+
+        // ADR-037 (flag del aviso "Debe — no viaja", ADR-036): hay deuda del cliente y la salida cae en la
+        // ventana configurada, con la notificacion habilitada. Reusa la MISMA config y la MISMA regla de
+        // ventana que el job nocturno (ReservaUnpaidAlertWindow, fuente unica). "settings" ya se leyo arriba
+        // (una sola lectura por request).
+        dto.IsWithinUnpaidAlertWindow = ReservaUnpaidAlertWindow.IsWithin(
+            notificationsEnabled: settings.EnableUpcomingUnpaidReservationNotifications,
+            alertDays: settings.UpcomingUnpaidReservationAlertDays,
+            balance: file.Balance,
+            startDate: file.StartDate,
+            today: DateTime.UtcNow.Date);
 
         // Sugerencia de fechas computadas desde los servicios cargados — la UI las
         // usa para pre-rellenar inputs cuando StartDate/EndDate estan en null.

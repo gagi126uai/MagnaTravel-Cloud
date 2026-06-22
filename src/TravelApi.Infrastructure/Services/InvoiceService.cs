@@ -54,14 +54,14 @@ public class InvoiceService : IInvoiceService
     // ya existente y no hay recursion. Ver GetBcBridge() mas abajo.
     private readonly IServiceProvider _serviceProvider;
     // Estados de Reserva que se consideran "facturables" en la bandeja/summary de facturacion.
-    // ADR-020 (2026-06-07, decision Q1 conservadora): SOLO se factura desde Confirmada en adelante.
-    //  - Confirmed: facturable (el operador ya confirmo). La factura de venta se emite ANTES de viajar.
-    //  - Quotation/Budget/InManagement/Lost: NO facturables. En particular En gestion (InManagement)
-    //    todavia tiene servicios sin resolver; facturar ahi seria emitir CAE por algo que el operador
-    //    podria rechazar (riesgo fiscal). El guard server-side en CreateAsync lo refuerza.
-    // ADR-036 (2026-06-21, prepago puro): la allow-list quedo en SOLO {Confirmed}. En viaje (Traveling) ya
-    // NO se factura (Decision 2: el viaje empezo) y ToSettle murio. Corregir una factura de una reserva
-    // finalizada se hace por NC/ND, no facturando tarde.
+    // ADR-037 (2026-06-21, desacople de facturacion estilo ERP): {Confirmed, Traveling, Closed}. La factura de
+    // venta se DESACOPLA del estado: se emite en cualquier estado firme no-anulado, no solo "antes de viajar".
+    //  - Confirmed/Traveling/Closed: facturables (el operador ya confirmo; la venta esta firme). Que la bandeja
+    //    incluya tambien Traveling y Closed es DELIBERADO: una reserva que ya viajo o se finalizo sin factura
+    //    tiene que seguir apareciendo como "pendiente de facturar" (antes desaparecia de la bandeja al avanzar).
+    //  - Quotation/Budget/InManagement: NO facturables. En particular En gestion (InManagement) todavia tiene
+    //    servicios sin resolver; facturar ahi seria emitir CAE por algo que el operador podria rechazar.
+    //  - Cancelled/Lost/PendingOperatorRefund: anulados, no facturables (la venta no existe).
     // FUENTE UNICA: la allow-list vive en la politica de dominio (ReservaCapabilityPolicy.InvoiceableStatuses);
     // aca solo la referenciamos para las queries LINQ-to-SQL de la bandeja/summary (que necesitan un array
     // materializado; la politica no se traduce a SQL). El guard de CreateAsync delega en CanInvoiceSale.
@@ -307,17 +307,19 @@ public class InvoiceService : IInvoiceService
             ?? throw new InvalidOperationException("Reserva no encontrada.");
 
         // ADR-020 (2026-06-07, guard fiscal C1) + fix 2026-06-17 (auditoria de logica): la FACTURA de
-        // venta normal solo se emite desde un estado FACTURABLE (Confirmada / En viaje / A liquidar). Es
-        // una ALLOW-LIST, no una deny-list: la version vieja (NonInvoiceableStatuses) frenaba Cotizacion/
-        // Presupuesto/En gestion/Perdido pero DEJABA PASAR Cancelada y Finalizada -> se podia emitir un CAE
-        // real sobre una venta ANULADA. Ahora cualquier estado fuera de la allow-list rechaza la factura.
+        // venta normal solo se emite desde un estado FACTURABLE. Es una ALLOW-LIST, no una deny-list: la
+        // version vieja (NonInvoiceableStatuses) frenaba Cotizacion/Presupuesto/En gestion/Perdido pero
+        // DEJABA PASAR Cancelada -> se podia emitir un CAE real sobre una venta ANULADA. Ahora cualquier
+        // estado fuera de la allow-list rechaza la factura.
         //
         // EXCEPCION: las NC/ND (IsCreditNote/IsDebitNote) SI se permiten sobre reservas canceladas/cerradas
         // -> son justamente las que corrigen/anulan una factura ya emitida de una reserva cancelada.
         // ADR-035 (2026-06-19): la allow-list se consulta via la politica de dominio (CanInvoiceSale), fuente
-        // unica compartida con el front. ADR-036 (2026-06-21): el conjunto quedo en {Confirmed} (la factura de
-        // venta se emite ANTES de viajar; en viaje no se factura). La excepcion NC/ND se mantiene: las notas SI
-        // se permiten sobre reservas canceladas/cerradas (corrigen/anulan una factura ya emitida).
+        // unica compartida con el front.
+        // ADR-037 (2026-06-21, desacople de facturacion): el conjunto quedo en {Confirmed, Traveling, Closed}.
+        // La factura de venta se DESACOPLA del estado: se emite en cualquier estado firme no-anulado (ya no
+        // existe el "reabrir para facturar" — se factura directo desde Finalizada/Closed). La excepcion NC/ND
+        // se mantiene: las notas SI se permiten sobre reservas canceladas (corrigen/anulan una factura emitida).
         if (!request.IsCreditNote && !request.IsDebitNote)
         {
             var invoiceCapability = ReservaCapabilityPolicy
@@ -327,7 +329,7 @@ public class InvoiceService : IInvoiceService
             {
                 throw new InvalidOperationException(
                     $"No se puede facturar una reserva en estado '{reserva.Status}'. " +
-                    "Solo se emite factura desde Confirmada en adelante (con los servicios resueltos).");
+                    "La factura de venta se emite desde Confirmada en adelante, salvo en reservas anuladas.");
             }
         }
 

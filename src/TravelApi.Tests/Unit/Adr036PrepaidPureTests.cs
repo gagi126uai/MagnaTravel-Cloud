@@ -8,7 +8,11 @@ namespace TravelApi.Tests.Unit;
 /// ADR-036 (2026-06-21, "prepago puro"): cobertura PURA de dominio de las reglas nuevas:
 ///   - ToSettle desaparecio de la matriz de transiciones (Forward/Revert).
 ///   - El candado de pago del cliente para "En viaje" (IsClientFullyPaid) es incondicional.
-///   - "En viaje" (Traveling) es solo lectura / no cobrable / no facturable (via la politica de capacidades).
+///   - "En viaje" (Traveling) es solo lectura / no cobrable (via la politica de capacidades).
+///
+/// <para>NOTA ADR-037 (2026-06-21): la regla "en viaje no se FACTURA" de ADR-036 fue REVERTIDA por el
+/// desacople de facturacion. La factura de venta ahora SI se emite en viaje (ver Traveling_CanInvoiceSale_ADR037);
+/// lo que sigue bloqueado en viaje es editar/cobrar, no facturar.</para>
 /// </summary>
 public class Adr036PrepaidPureTests
 {
@@ -75,12 +79,36 @@ public class Adr036PrepaidPureTests
     }
 
     [Fact]
-    public void Traveling_CannotRegisterPaymentNorInvoice()
+    public void Traveling_CannotRegisterPayment()
     {
+        // ADR-036: en viaje NO se cobra (el viaje ya empezo). ADR-037 NO toca esto: el cobro sigue bloqueado
+        // en Traveling. Lo que ADR-037 abrio en Traveling es SOLO emitir la factura de venta (ver test aparte).
         var caps = ReservaCapabilityPolicy.For(Traveling(100m));
         Assert.False(caps.CanRegisterPayment.Allowed);
         Assert.Equal(ReservaCapabilityPolicy.TravelingNotChargeableReason, caps.CanRegisterPayment.Reason);
-        Assert.False(caps.CanInvoiceSale.Allowed);
+    }
+
+    [Fact]
+    public void Traveling_CanInvoiceSale_ADR037()
+    {
+        // ADR-037 (desacople de facturacion): en viaje SI se factura (la factura se desacopla del estado).
+        // Esto REVIERTE la restriccion de ADR-036 ("en viaje no se factura"). Permitir la factura NO reabre
+        // la edicion ni el cobro en viaje (ver Traveling_IsReadOnly_* y Traveling_CannotRegisterPayment).
+        var caps = ReservaCapabilityPolicy.For(Traveling(100m));
+        Assert.True(caps.CanInvoiceSale.Allowed);
+    }
+
+    [Fact]
+    public void Traveling_InvoiceAllowed_ButEditAndCollectionStillBlocked_ADR037()
+    {
+        // Coherencia ADR-037 vs ADR-036: permitir FACTURAR en viaje NO reabre editar/cobrar. La factura no
+        // muta la reserva; el resto sigue solo-lectura. Este test bloquea esa tension explicitamente.
+        var caps = ReservaCapabilityPolicy.For(Traveling(100m));
+        Assert.True(caps.CanInvoiceSale.Allowed);       // ADR-037: SI factura
+        Assert.False(caps.CanEditServices.Allowed);      // ADR-036: NO edita servicios
+        Assert.False(caps.CanEditPassengers.Allowed);    // ADR-036: NO edita pasajeros
+        Assert.False(caps.CanEditReservaData.Allowed);   // ADR-036: NO edita datos
+        Assert.False(caps.CanRegisterPayment.Allowed);   // ADR-036: NO cobra
     }
 
     [Fact]

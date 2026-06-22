@@ -43,4 +43,11 @@ public class ReservaListDto
     /// <see cref="ReservaCollectionStatus"/>). Mismo criterio que el detalle. Se llena junto con PorMoneda.
     /// </summary>
     public string CollectionStatus { get; set; } = ReservaCollectionStatus.Settled;
+
+    /// <summary>
+    /// ADR-037 (2026-06-21): estado de FACTURACION derivado del cuadre VENDIDO vs FACTURADO NETO (ver
+    /// <see cref="ReservaInvoicingStatus"/>). Mismo carril/criterio que el detalle, para que la fila del
+    /// listado muestre el mismo chip que la ficha. Se llena en una query batcheada por pagina (sin N+1).
+    /// </summary>
+    public string InvoicingStatus { get; set; } = ReservaInvoicingStatus.NotInvoiced;
 }

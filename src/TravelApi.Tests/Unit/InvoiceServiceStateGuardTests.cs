@@ -20,9 +20,14 @@ using Xunit;
 namespace TravelApi.Tests.Unit;
 
 /// <summary>
-/// Fix 2026-06-17 (auditoria de logica): la FACTURA de venta normal solo se emite desde un estado
-/// FACTURABLE (Confirmada/En viaje/A liquidar). Antes la deny-list dejaba pasar Cancelada y Finalizada
-/// -> se podia emitir un CAE real sobre una venta anulada. Las NC/ND SIGUEN permitidas sobre canceladas.
+/// Fix 2026-06-17 (auditoria de logica) + ADR-037 (2026-06-21, desacople de facturacion): la FACTURA de
+/// venta normal solo se emite desde un estado FACTURABLE. ADR-037 desacoplo la factura del estado: el
+/// conjunto facturable es {Confirmed, Traveling, Closed} (la venta firme no-anulada). Los anulados
+/// (Cancelled/Lost/PendingOperatorRefund) y la pre-venta (Quotation/Budget/InManagement) siguen rechazados.
+/// Las NC/ND SIGUEN permitidas sobre canceladas.
+///
+/// <para>Este test es el GATE de coherencia capacidades-CreateAsync: CanInvoiceSale.Allowed para un estado
+/// debe equivaler a que CreateAsync NO rechace por estado en ese estado.</para>
 /// </summary>
 public class InvoiceServiceStateGuardTests
 {
@@ -96,12 +101,14 @@ public class InvoiceServiceStateGuardTests
     };
 
     [Theory]
+    // Anulados: la venta no existe, NO facturable.
     [InlineData(EstadoReserva.Cancelled)]
-    [InlineData(EstadoReserva.Closed)]
+    [InlineData(EstadoReserva.Lost)]
+    [InlineData(EstadoReserva.PendingOperatorRefund)]
+    // Pre-venta: servicios sin resolver / sin confirmar, NO facturable.
     [InlineData(EstadoReserva.Quotation)]
+    [InlineData(EstadoReserva.Budget)]
     [InlineData(EstadoReserva.InManagement)]
-    // ADR-036 (2026-06-21): en viaje NO se factura (la factura de venta se emite antes de viajar).
-    [InlineData(EstadoReserva.Traveling)]
     public async Task NormalInvoice_OnNonInvoiceableStatus_IsRejected(string status)
     {
         using var context = new AppDbContext(_dbOptions);
@@ -115,6 +122,10 @@ public class InvoiceServiceStateGuardTests
 
     [Theory]
     [InlineData(EstadoReserva.Confirmed)]
+    // ADR-037 (2026-06-21, desacople de facturacion): la factura se desacopla del estado. En viaje SI se
+    // factura; en Finalizada (Closed) tambien, sin reabrir (se elimino el "reabrir para facturar").
+    [InlineData(EstadoReserva.Traveling)]
+    [InlineData(EstadoReserva.Closed)]
     public async Task NormalInvoice_OnInvoiceableStatus_PassesStateGuard(string status)
     {
         using var context = new AppDbContext(_dbOptions);

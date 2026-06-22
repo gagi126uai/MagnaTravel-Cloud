@@ -85,9 +85,14 @@ public static class ReservaCapabilityPolicy
     /// <summary>Es venta firme pero sin saldo pendiente: no hay nada para cobrar.</summary>
     public const string NoPendingBalanceReason = Reserva.NoPendingBalanceForChargeMessage;
 
-    /// <summary>La factura de venta solo se emite desde Confirmada en adelante (servicios resueltos).</summary>
+    /// <summary>
+    /// ADR-037 (2026-06-21, desacople de facturacion): la factura de venta se emite desde Confirmada en
+    /// adelante (Confirmed/Traveling/Closed), SALVO en reservas anuladas (Cancelled/Lost/PendingOperatorRefund)
+    /// y antes de la confirmacion (Quotation/Budget/InManagement). Motivo legible para el front.
+    /// </summary>
     public const string NotInvoiceableStatusReason =
-        "No se puede facturar en este estado. La factura de venta se emite desde Confirmada en adelante.";
+        "No se puede facturar en este estado. La factura de venta se emite desde Confirmada en adelante, " +
+        "salvo en reservas anuladas.";
 
     /// <summary>Editar/borrar un cobro en una reserva terminal: hay que anularlo (queda registrado).</summary>
     public const string PaymentEditOnTerminalReason =
@@ -136,18 +141,31 @@ public static class ReservaCapabilityPolicy
     // =====================================================================================================
 
     /// <summary>
-    /// Estados desde los que se emite la FACTURA de venta (allow-list, NO se amplia). Coincide con
-    /// <c>InvoiceService.ActiveInvoicingStatuses</c>.
+    /// Estados desde los que se emite la FACTURA de venta (allow-list). Coincide con
+    /// <c>InvoiceService.ActiveInvoicingStatuses</c> (fuente unica).
     ///
-    /// <para>ADR-036 (2026-06-21, prepago puro): la factura de venta se emite SOLO en <c>Confirmed</c>
-    /// (Confirmada), ANTES de viajar. Se quito Traveling (Decision 2: en viaje NO se factura — el viaje ya
-    /// empezo) y ToSettle (estado eliminado). NO incluye InManagement (servicios sin resolver) ni Budget.
-    /// La NC/ND es excepcion aparte (ver CanEmitCreditDebitNote): corregir/anular una factura de una reserva
-    /// ya finalizada se hace con nota, sin reabrir el estado.</para>
+    /// <para><b>ADR-037 (2026-06-21, desacople de facturacion estilo ERP): {Confirmed, Traveling, Closed}.</b>
+    /// La factura de venta se DESACOPLA del estado: se puede emitir en cualquier estado firme no-anulado, no
+    /// solo "antes de viajar". Esto REVIERTE la restriccion de ADR-036 (que la habia dejado en SOLO Confirmed)
+    /// y ELIMINA el "reabrir para facturar": ahora se factura directo desde Closed (Finalizada). Decision del
+    /// dueño H2=A (conservador): NO se incluye InManagement (servicios sin resolver: facturar ahi seria emitir
+    /// CAE por algo que el operador podria rechazar), ni Quotation/Budget (pre-venta), ni los estados ANULADOS
+    /// (Cancelled/Lost/PendingOperatorRefund: una venta anulada no se factura).</para>
+    ///
+    /// <para><b>Tension con ADR-036 ("en viaje no se factura") resuelta</b>: permitir factura en Traveling NO
+    /// reabre la edicion de servicios/pasajeros/cobro en viaje. Emitir factura NO muta la reserva. El bloqueo
+    /// de edicion en Traveling lo siguen enforzando <see cref="ServiceEditableStatuses"/> (sin Traveling) y
+    /// <see cref="EvaluateRegisterPayment"/> (bloquea Traveling). Lo unico que ADR-037 abre en Traveling es
+    /// emitir el comprobante fiscal de una venta firme.</para>
+    ///
+    /// <para>La NC/ND es excepcion aparte (ver CanEmitCreditDebitNote): corregir/anular una factura de una
+    /// reserva ya finalizada o cancelada se hace con nota, sin reabrir el estado.</para>
     /// </summary>
     public static readonly string[] InvoiceableStatuses =
     {
         EstadoReserva.Confirmed,
+        EstadoReserva.Traveling,
+        EstadoReserva.Closed,
     };
 
     /// <summary>
@@ -226,8 +244,8 @@ public static class ReservaCapabilityPolicy
     // =====================================================================================================
 
     /// <summary>
-    /// Factura de venta: SOLO en {Confirmed} (ADR-036: antes de viajar; allow-list, no se amplia).
-    /// Traveling da No (en viaje no se factura).
+    /// Factura de venta: en {Confirmed, Traveling, Closed} (ADR-037: desacoplada del estado, se emite en
+    /// cualquier estado firme no-anulado). Fuera de la allow-list (pre-venta o anulados) da No.
     /// </summary>
     private static Cap EvaluateInvoiceSale(ReservaCapabilityContext ctx)
     {

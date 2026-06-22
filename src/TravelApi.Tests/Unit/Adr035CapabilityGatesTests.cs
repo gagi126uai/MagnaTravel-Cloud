@@ -264,13 +264,14 @@ public class Adr035CapabilityGatesTests
     }
 
     [Fact]
-    public void Invoice_Capability_DisabledInTraveling_ADR036()
+    public void Invoice_Capability_EnabledInTraveling_ADR037()
     {
-        // ADR-036: en viaje NO se factura (la factura de venta se emite en Confirmada, antes de viajar).
+        // ADR-037 (desacople de facturacion): en viaje SI se factura. REVIERTE la restriccion de ADR-036.
+        // La factura se desacopla del estado; permitirla en viaje NO reabre edicion ni cobro.
         var caps = TravelApi.Domain.Reservations.ReservaCapabilityPolicy.For(
             new TravelApi.Domain.Reservations.ReservaCapabilityContext(
                 EstadoReserva.Traveling, Balance: 0m, false, false, false, false));
-        Assert.False(caps.CanInvoiceSale.Allowed);
+        Assert.True(caps.CanInvoiceSale.Allowed);
     }
 
     // =====================================================================================================

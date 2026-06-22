@@ -179,11 +179,11 @@ public class FaseDStateSetTests
     }
 
     [Fact]
-    public async Task InvoicingWorklist_OnlyConfirmed_NotTravelingNorResidualToSettle()
+    public async Task InvoicingWorklist_IncludesConfirmedAndTraveling_NotResidualToSettle_Adr037()
     {
         using var context = new AppDbContext(NewDbOptions());
-        // ADR-036: la factura de venta es SOLO en Confirmed. Traveling ya NO factura (en viaje no se factura);
-        // un literal "ToSettle" residual tampoco. Las tres estan saldadas con venta sin facturar.
+        // ADR-037 (desacople de facturacion): la bandeja toma {Confirmed, Traveling, Closed}. Traveling AHORA
+        // aparece (en viaje se puede facturar). Un literal "ToSettle" residual sigue afuera (estado eliminado).
         context.Reservas.Add(ReservaReadyToInvoice(1, EstadoReserva.Confirmed));
         context.Reservas.Add(ReservaReadyToInvoice(2, EstadoReserva.Traveling));
         context.Reservas.Add(ReservaReadyToInvoice(3, "ToSettle"));
@@ -194,18 +194,18 @@ public class FaseDStateSetTests
         var page = await service.GetInvoicingWorklistAsync(new InvoicingWorklistQuery(), CancellationToken.None);
         var numerosEnBandeja = page.Items.Select(item => item.NumeroReserva).ToList();
 
-        // Solo Confirmed aparece; Traveling y el residual ToSettle quedan afuera.
+        // Confirmed y Traveling aparecen (ADR-037); el residual ToSettle queda afuera.
         Assert.Contains("R-1", numerosEnBandeja);
-        Assert.DoesNotContain("R-2", numerosEnBandeja);
+        Assert.Contains("R-2", numerosEnBandeja);
         Assert.DoesNotContain("R-3", numerosEnBandeja);
     }
 
     [Fact]
-    public async Task InvoicingWorklist_HistoricStates_OnlyConfirmedFacturable_Adr036()
+    public async Task InvoicingWorklist_HistoricStates_FirmNonAnnulledFacturable_Adr037()
     {
         using var context = new AppDbContext(NewDbOptions());
-        // ADR-036: facturable SOLO Confirmed. NO facturables: Traveling (en viaje no se factura), Budget,
-        // Closed, Cancelled.
+        // ADR-037 (desacople de facturacion): facturable = {Confirmed, Traveling, Closed} (venta firme
+        // no-anulada). NO facturables: Budget (pre-venta) y Cancelled (anulada).
         context.Reservas.Add(ReservaReadyToInvoice(1, EstadoReserva.Confirmed));
         context.Reservas.Add(ReservaReadyToInvoice(2, EstadoReserva.Traveling));
         context.Reservas.Add(ReservaReadyToInvoice(3, EstadoReserva.Budget));
@@ -218,11 +218,11 @@ public class FaseDStateSetTests
         var page = await service.GetInvoicingWorklistAsync(new InvoicingWorklistQuery(), CancellationToken.None);
         var numerosEnBandeja = page.Items.Select(item => item.NumeroReserva).ToList();
 
-        // Solo Confirmed en la bandeja. El resto afuera (incluido Traveling).
+        // Confirmed + Traveling + Closed en la bandeja (ADR-037). Budget y Cancelled afuera.
         Assert.Contains("R-1", numerosEnBandeja);
-        Assert.DoesNotContain("R-2", numerosEnBandeja);
+        Assert.Contains("R-2", numerosEnBandeja);
         Assert.DoesNotContain("R-3", numerosEnBandeja);
-        Assert.DoesNotContain("R-4", numerosEnBandeja);
+        Assert.Contains("R-4", numerosEnBandeja);
         Assert.DoesNotContain("R-5", numerosEnBandeja);
     }
 
