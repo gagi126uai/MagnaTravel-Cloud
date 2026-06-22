@@ -42,12 +42,13 @@ public static class SellerCommissionCalculator
     /// Estados de reserva en los que una comision PUEDE devengar (reserva viva). Fuera de estos
     /// (Cancelada, Perdida, etc.) nunca se devenga: el dueño pidio tope cero en cancelacion.
     /// </summary>
+    // ADR-036 (2026-06-21): se quito ToSettle (estado eliminado). La comision devenga en
+    // {InManagement, Confirmed, Traveling, Closed}.
     private static readonly HashSet<string> AccruableStatuses = new(StringComparer.Ordinal)
     {
         EstadoReserva.InManagement,
         EstadoReserva.Confirmed,
         EstadoReserva.Traveling,
-        EstadoReserva.ToSettle,
         EstadoReserva.Closed,
     };
 

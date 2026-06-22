@@ -31,15 +31,19 @@ public static class ReservaStatusTransitions
     /// Matriz FORWARD unica (transiciones manuales via <c>UpdateStatusAsync</c>). Confirmed como destino
     /// esta AUSENTE adrede: solo el motor automatico lleva InManagement -&gt; Confirmed.
     ///
-    /// <para>Cancelled aparece desde {InManagement, Confirmed, ToSettle} (cancelacion manual sin factura
-    /// viva). Desde Quotation/Budget la salida es Lost, no Cancelled. Closed NO tiene salida forward (no se
-    /// puede cancelar una Finalizada — Decision 4 del dueño, ADR-035).</para>
+    /// <para>Cancelled aparece desde {InManagement, Confirmed} (cancelacion manual sin factura viva). Desde
+    /// Quotation/Budget la salida es Lost, no Cancelled. Closed NO tiene salida forward (no se puede cancelar
+    /// una Finalizada — Decision 4 del dueño, ADR-035).</para>
     ///
     /// <para><b>ADR-035 (2026-06-19): Traveling YA NO se cancela</b> (decision del dueño). Una reserva "En
     /// viaje" significa que el servicio ya empezo/se presto: cancelarla no tiene sentido operativo; si hay
-    /// algo que corregir se hace por nota de credito/ajuste, no cancelando. Por eso se quito Cancelled de los
-    /// destinos forward de Traveling (quedan {Closed, ToSettle}). Confirmed e InManagement SIGUEN pudiendo
-    /// cancelar.</para>
+    /// algo que corregir se hace por nota de credito/ajuste, no cancelando. Confirmed e InManagement SIGUEN
+    /// pudiendo cancelar.</para>
+    ///
+    /// <para><b>ADR-036 (2026-06-21, prepago puro): murio ToSettle.</b> La fila de ToSettle se elimino y
+    /// Traveling pierde a ToSettle como destino: ahora la unica salida forward de Traveling es Closed (el
+    /// cierre por fin de viaje). No hay etapa de liquidacion posterior — el operador ya cobro el 100% antes
+    /// del viaje.</para>
     /// </summary>
     public static readonly IReadOnlyDictionary<string, string[]> Forward =
         new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
@@ -48,10 +52,9 @@ public static class ReservaStatusTransitions
             [EstadoReserva.Budget] = new[] { EstadoReserva.InManagement, EstadoReserva.Lost },
             [EstadoReserva.InManagement] = new[] { EstadoReserva.Cancelled },
             [EstadoReserva.Confirmed] = new[] { EstadoReserva.Traveling, EstadoReserva.Cancelled },
-            // Traveling: Closed = cierre por default, ToSettle = desvio opcional (apartar para liquidar).
-            // ADR-035: SIN Cancelled — una reserva en viaje no se cancela (se corrige por NC/ajuste).
-            [EstadoReserva.Traveling] = new[] { EstadoReserva.Closed, EstadoReserva.ToSettle },
-            [EstadoReserva.ToSettle] = new[] { EstadoReserva.Closed, EstadoReserva.Cancelled },
+            // ADR-036: la unica salida de Traveling es Closed (cierre por fin de viaje). SIN ToSettle
+            // (estado eliminado) y SIN Cancelled (ADR-035: en viaje no se cancela, se corrige por NC/ajuste).
+            [EstadoReserva.Traveling] = new[] { EstadoReserva.Closed },
         };
 
     /// <summary>
@@ -62,10 +65,12 @@ public static class ReservaStatusTransitions
     /// <c>FromStatus</c> de la ultima transicion a Lost. Ambos se listan aca solo para que el guard de
     /// matriz acepte el target correcto.</para>
     ///
-    /// <para>ADR-035 Decision 4-bis: <c>Closed</c> revierte a {Traveling, ToSettle}. El destino ToSettle
-    /// es la reapertura "para liquidar/facturar tarde" de una venta ya finalizada (Closed -&gt; ToSettle).
-    /// El saldo NO se recalcula al reabrir; pasa por <c>RevertStatusAsync</c> (actor + razon obligatoria +
-    /// autorizacion de supervisor), igual que el resto de los revert sensibles.</para>
+    /// <para><b>ADR-036 (2026-06-21, prepago puro): <c>Closed</c> revierte SOLO a {Traveling}</b> (revert de
+    /// cierre prematuro). Se ELIMINO el destino Closed -&gt; ToSettle (la "reapertura para facturar tarde"):
+    /// ya no se reabre una Finalizada. Si hay que corregir una factura de una reserva finalizada, se hace por
+    /// Nota de Credito/Debito (flujo ya permitido sin reabrir el estado). Tambien murio la fila de ToSettle.
+    /// El hard-block CAE de <c>RevertStatusAsync</c> sigue vigente: una reserva con factura viva no se reabre
+    /// por aca.</para>
     /// </summary>
     public static readonly IReadOnlyDictionary<string, string[]> Revert =
         new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
@@ -74,13 +79,10 @@ public static class ReservaStatusTransitions
             [EstadoReserva.InManagement] = new[] { EstadoReserva.Budget },
             [EstadoReserva.Lost] = new[] { EstadoReserva.Quotation, EstadoReserva.Budget },
             [EstadoReserva.Traveling] = new[] { EstadoReserva.Confirmed },
-            [EstadoReserva.ToSettle] = new[] { EstadoReserva.Traveling },
-            // ADR-035 Decision 4-bis (2026-06-19): se AGREGA ToSettle a los destinos de Closed (antes solo
-            // {Traveling}). Reabrir una Finalizada a "A liquidar" habilita FACTURAR TARDE (Decision 5) sin
-            // tocar importes: pasa por RevertStatusAsync (actor + razon obligatoria + autorizacion de
-            // supervisor) y NO recalcula el saldo (queda como estaba en Closed). El hard-block CAE de
-            // RevertStatusAsync sigue vigente: una reserva con factura viva no se reabre por aca.
-            [EstadoReserva.Closed] = new[] { EstadoReserva.Traveling, EstadoReserva.ToSettle },
+            // ADR-036: Closed revierte SOLO a Traveling (revert de cierre prematuro). NO mas Closed -> ToSettle
+            // (reapertura para facturar tarde eliminada): corregir una factura de una Finalizada es por NC/ND,
+            // sin reabrir el estado. La fila ToSettle -> Traveling tambien desaparecio (estado eliminado).
+            [EstadoReserva.Closed] = new[] { EstadoReserva.Traveling },
             // ADR-033 (2026-06-16): una Cancelada se puede REABRIR a En gestion SOLO si la cancelacion no dejo
             // huella fiscal ni de plata. El gate duro vive en RevertStatusAsync (query D2); aca solo se declara
             // el destino legal. Simetrico con Lost.

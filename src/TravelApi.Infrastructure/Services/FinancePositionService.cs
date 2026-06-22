@@ -21,6 +21,11 @@ public class FinancePositionService : IFinancePositionService
     // cobranza / saldo del cliente / dashboard / alertas. Las queries ya filtran Balance > 0 por moneda, asi
     // que una Closed saldada (Balance 0) NO aparece; solo aparece Closed con deuda.
     //
+    // ADR-036 (2026-06-21, prepago puro): SaleFirmStatuses dejo de incluir Traveling. En el modelo prepago una
+    // reserva no puede entrar a "En viaje" debiendo (candado duro de pago del cliente), asi que una Traveling
+    // con deuda no deberia existir; no se la trata como cuenta por cobrar viva. Quedan {InManagement, Confirmed,
+    // Closed}. ToSettle murio.
+    //
     // ATENCION (B1): este concepto es DISTINTO de "venta operativa viva" (lead ganado), que sigue usando
     // EstadoReserva.ActiveCollectionStatuses (SIN Closed) en ReservaService.MarkSourceLeadAsWonIfReservaIsFirmAsync.
     // Cerrar una reserva NO debe marcar su lead como Ganado. PROHIBIDO mezclar los dos conceptos en una sola

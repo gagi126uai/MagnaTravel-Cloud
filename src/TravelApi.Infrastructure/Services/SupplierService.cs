@@ -228,10 +228,9 @@ public class SupplierService : ISupplierService
     /// <summary>
     /// Cuenta cuantas RESERVAS DISTINTAS tienen al menos un booking tipado
     /// (HotelBooking/TransferBooking/PackageBooking/FlightSegment) referenciando
-    /// al supplier indicado, filtrando por reservas en estado "activo" segun la
-    /// regla de C29 (Budget, Confirmed, Traveling) + Fase D (Sold, ToSettle).
-    /// Closed/Cancelled NO cuentan. Con el flag EnableSoldToSettleStates OFF nunca
-    /// hay filas Sold/ToSettle, asi que el conjunto efectivo es identico al historico.
+    /// al supplier indicado, filtrando por reservas en estado "activo" (vivas):
+    /// Quotation/Budget/InManagement/Confirmed/Traveling. Closed/Cancelled/Lost NO cuentan.
+    /// ADR-036 (2026-06-21): se quito ToSettle (estado eliminado).
     ///
     /// El servicio legacy ServicioReserva queda fuera a proposito (SupplierId
     /// nullable, esta deprecado).
@@ -272,7 +271,8 @@ public class SupplierService : ISupplierService
         // OJO: este conjunto NO es el mismo que ValidReservationStatuses (incluye las etapas
         // comerciales tempranas y NO incluye Closed). Es el conteo de reservas "vivas" asociadas al
         // proveedor. ADR-020 (2026-06-07): Quotation/Budget/InManagement reemplazan al viejo par
-        // Budget/Sold; ToSettle se mantiene. Closed/Cancelled/Lost no cuentan.
+        // Budget/Sold. ADR-036 (2026-06-21): se quito ToSettle (estado eliminado). Closed/Cancelled/Lost
+        // no cuentan.
         return await _dbContext.Reservas
             .AsNoTracking()
             .Where(reserva =>
@@ -280,8 +280,7 @@ public class SupplierService : ISupplierService
                     || reserva.Status == EstadoReserva.Budget
                     || reserva.Status == EstadoReserva.InManagement
                     || reserva.Status == EstadoReserva.Confirmed
-                    || reserva.Status == EstadoReserva.Traveling
-                    || reserva.Status == EstadoReserva.ToSettle)
+                    || reserva.Status == EstadoReserva.Traveling)
                 && bookedReservaIds.Contains(reserva.Id))
             .Select(reserva => reserva.Id)
             .Distinct()

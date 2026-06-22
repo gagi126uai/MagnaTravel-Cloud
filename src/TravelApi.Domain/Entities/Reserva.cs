@@ -19,12 +19,12 @@ namespace TravelApi.Domain.Entities;
 ///  - Confirmed (Confirmada): TODOS los servicios estan resueltos (aereo emitido, hotel confirmado,
 ///    etc.). Solo se ALCANZA y se ABANDONA-hacia-InManagement por el motor automatico
 ///    (ReservaAutoStateService) — NUNCA por transicion manual. La reserva queda bajo candado.
-///  - Traveling (En viaje): el cliente ya esta viajando.
-///  - ToSettle (A liquidar): DESVIO MANUAL OPCIONAL post-viaje para liquidar con el operador.
+///  - Traveling (En viaje): el cliente ya esta viajando. ADR-036: SOLO LECTURA total (no se edita, ni se
+///    cobra, ni se factura) — para llegar aca el cliente quedo saldado (prepago puro).
 ///  - Closed (Finalizada): cierre administrativo completo (saldo a favor o cero).
 ///  - Lost (Perdido): cotizacion/presupuesto que el cliente NO compro. Queda en historial.
 ///  - Cancelled (Cancelada): cancelada (flujo ADR-002 con factura viva, o transicion manual
-///    sin factura viva desde {InManagement, Confirmed, Traveling, ToSettle}).
+///    sin factura viva ni cobros vivos desde {InManagement, Confirmed}).
 ///  - PendingOperatorRefund: ver abajo.
 ///
 /// <para>Estado lateral legacy: "Archived" (soft-delete de reservas viejas) se referencia
@@ -50,11 +50,11 @@ public static class EstadoReserva
     public const string Confirmed = "Confirmed";
     public const string Traveling = "Traveling";
 
-    /// <summary>
-    /// "A liquidar": DESVIO MANUAL OPCIONAL post-viaje para liquidar con el operador antes de
-    /// finalizar. El job de lifecycle NUNCA mete ni saca a nadie de aca; entra/sale solo a mano.
-    /// </summary>
-    public const string ToSettle = "ToSettle";
+    // ADR-036 (2026-06-21): el estado "A liquidar" (ToSettle) MURIO. El modelo es "prepago puro": el
+    // cliente paga el 100% y el operador cobra el 100% ANTES del viaje, asi que ya no existe la etapa
+    // de liquidacion posterior. Las reservas que quedaron en ToSettle se re-mapean en la migracion
+    // Adr036_M1 a Closed (si estaban saldadas) o Traveling (si tenian saldo). La const se elimino de
+    // este enum; cualquier referencia residual debe migrar a Closed/Traveling segun corresponda.
 
     public const string Closed = "Closed";
 
@@ -78,9 +78,15 @@ public static class EstadoReserva
 
     /// <summary>
     /// Estados "cobrables": la reserva tiene una venta cerrada con saldo que se le puede pedir al cliente
-    /// (o aplicarle un saldo a favor). ADR-020: InManagement (En gestion) reemplaza al viejo Sold; ToSettle
-    /// (post-viaje) con saldo pendiente sigue siendo cobrable. Quotation/Budget/Lost/Cancelled NO entran
-    /// (todavia no hay —o ya no hay— venta vigente).
+    /// (o aplicarle un saldo a favor). ADR-020: InManagement (En gestion) reemplaza al viejo Sold.
+    /// Quotation/Budget/Lost/Cancelled NO entran (todavia no hay —o ya no hay— venta vigente).
+    ///
+    /// <para>ADR-036 (2026-06-21, prepago puro): se quito <c>ToSettle</c> (el estado murio). Ademas
+    /// <c>Traveling</c> (En viaje) queda como SOLO LECTURA total: en viaje no se cobra (el viaje ya
+    /// empezo, el cobro debio cerrarse para llegar a Traveling). Por eso Traveling ya NO esta en esta
+    /// lista — cobrar arranca y termina antes del viaje. La asimetria con
+    /// <see cref="SaleFirmStatuses"/> (que tampoco trae Traveling) es intencional y esta cubierta por
+    /// el test cruzado de coherencia.</para>
     ///
     /// <para>FC4 (2026-06-14): se MOVIO aca desde <c>PaymentService.ActiveCollectionStatuses</c> (que era
     /// privado) para que el saldo a favor aplicado (<c>ClientCreditService.HandleAppliedToNewBookingAsync</c>)
@@ -90,9 +96,7 @@ public static class EstadoReserva
     public static readonly string[] ActiveCollectionStatuses =
     {
         InManagement,
-        Confirmed,
-        Traveling,
-        ToSettle
+        Confirmed
     };
 
     /// <summary>
@@ -102,9 +106,17 @@ public static class EstadoReserva
     /// finalizada esta operativamente terminada (el viaje paso) pero puede seguir financieramente abierta
     /// (deuda viva). Esta lista es la base de:
     ///   - la cobrabilidad por deuda real (ver <see cref="Reserva.IsCollectable"/>): cobrar se permite en
-    ///     {InManagement, Confirmed, Traveling, ToSettle, Closed} cuando hay deuda;
+    ///     {InManagement, Confirmed, Closed} cuando hay deuda;
     ///   - el concepto "tiene cuenta por cobrar" que usan AR / cobranza / saldo del cliente / alertas
     ///     (FinancePositionService.ReceivableDebtStatuses, que expone exactamente esta lista).
+    ///
+    /// <para>ADR-036 (2026-06-21, prepago puro): se quito <c>ToSettle</c> (estado eliminado) y tambien
+    /// <c>Traveling</c>. Decision del dueño: "En viaje" es SOLO LECTURA total — no se cobra ni se factura
+    /// en viaje, porque para llegar a Traveling el cliente ya tuvo que quedar saldado (Balance &lt;= 0). Por
+    /// eso Traveling no es "firme cobrable": no hay nada que cobrarle. Una reserva Traveling con deuda no
+    /// deberia existir (el gate de pase a Traveling la frena); si por dato historico existiera, no se la
+    /// trata como cuenta por cobrar viva. Esta exclusion es INTENCIONAL (camino estricto) y esta cubierta
+    /// por el test cruzado de coherencia capacidades vs EnsureCollectable.</para>
     ///
     /// <para>Quotation/Budget/Lost (pre-venta o descartado-sin-venta) NUNCA son firmes. Cancelled y
     /// PendingOperatorRefund quedan FUERA a proposito: su plata se resuelve por el circuito de cancelacion
@@ -118,8 +130,6 @@ public static class EstadoReserva
     {
         InManagement,
         Confirmed,
-        Traveling,
-        ToSettle,
         Closed
     };
 
@@ -289,7 +299,7 @@ public class Reserva : IHasPublicId
 
     /// <summary>
     /// ADR-027: true cuando se edito el precio/costo de un servicio (SalePrice o NetCost) de esta
-    /// reserva estando en un estado VIVO (InManagement/Confirmed/Traveling/ToSettle) y todavia nadie
+    /// reserva estando en un estado VIVO (InManagement/Confirmed/Traveling; ADR-036 quito ToSettle) y todavia nadie
     /// dio el OK. La pone el trigger de edicion; la limpia el endpoint acknowledge-changes. El front
     /// muestra la marca "confirmada con cambios" y el bucket de alertas la lista mientras este en true.
     /// </summary>

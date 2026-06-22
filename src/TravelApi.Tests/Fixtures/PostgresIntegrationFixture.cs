@@ -172,10 +172,10 @@ public sealed class PostgresIntegrationFixture : IAsyncLifetime
             """);
 
         // (e) INV-100: TravelFiles.Status restringido a la whitelist.
-        //     ADR-020 (2026-06-07): ciclo unico de 11 valores (murio "Sold", nacieron "Quotation",
-        //     "InManagement", "Lost"). Debe quedar alineado con la migracion Adr020_M1; el test
-        //     EstadoReservaCoverageTests valida por reflexion que TODO const de EstadoReserva pase
-        //     este CHECK, asi que cualquier estado nuevo va aca tambien.
+        //     ADR-020 (2026-06-07): ciclo unico (murio "Sold", nacieron "Quotation", "InManagement", "Lost").
+        //     ADR-036 (2026-06-21, prepago puro): bajo a 10 valores (murio "ToSettle"). Debe quedar alineado
+        //     con la migracion Adr036_M1; el test EstadoReservaCoverageTests valida por reflexion que TODO
+        //     const de EstadoReserva pase este CHECK, asi que cualquier estado nuevo va aca tambien.
         await ctx.Database.ExecuteSqlRawAsync("""
             ALTER TABLE "TravelFiles"
               DROP CONSTRAINT IF EXISTS chk_TravelFiles_status_valid;
@@ -187,7 +187,6 @@ public sealed class PostgresIntegrationFixture : IAsyncLifetime
                 'InManagement',
                 'Confirmed',
                 'Traveling',
-                'ToSettle',
                 'Closed',
                 'Lost',
                 'Cancelled',

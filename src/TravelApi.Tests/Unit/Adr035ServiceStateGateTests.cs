@@ -179,12 +179,15 @@ public class Adr035ServiceStateGateTests
     // GRUPO CERRADOS: hard block. NINGUNA autorizacion viva lo desbloquea.
     // =====================================================================================================
 
+    // ADR-036 (2026-06-21): "En viaje" (Traveling) se suma a los estados de solo lectura dura (el viaje ya
+    // empezo: ni con autorizacion se editan servicios). ToSettle murio.
     public static readonly object[][] ReadOnlyStates =
     {
         new object[] { EstadoReserva.Lost },
         new object[] { EstadoReserva.Cancelled },
         new object[] { EstadoReserva.PendingOperatorRefund },
         new object[] { EstadoReserva.Closed },
+        new object[] { EstadoReserva.Traveling },
     };
 
     [Theory]
@@ -259,9 +262,10 @@ public class Adr035ServiceStateGateTests
     }
 
     [Fact]
-    public async Task ReadOnlyMessage_ForClosed_PointsToReopenAsToSettle()
+    public async Task ReadOnlyMessage_ForClosed_MentionsFinalizedReadOnly_ADR036()
     {
-        // Verifica que el motivo de Finalizada guie a reabrir a "A liquidar" (sin montos/costos).
+        // ADR-036 (2026-06-21): el motivo de Finalizada YA NO sugiere "reabrir a A liquidar" (ese camino murio
+        // con ToSettle). Solo dice que esta finalizada y es solo lectura (sin montos/costos).
         await using var ctx = NewContext();
         await SeedReservaWithHotelAsync(ctx, EstadoReserva.Closed);
 
@@ -269,7 +273,7 @@ public class Adr035ServiceStateGateTests
             () => NewBookingService(ctx).DeleteHotelAsync("1", "10", CancellationToken.None));
 
         Assert.Contains("finalizada", ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("A liquidar", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("A liquidar", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     // =====================================================================================================
@@ -315,14 +319,13 @@ public class Adr035ServiceStateGateTests
     }
 
     // =====================================================================================================
-    // GRUPO EN FIRME: el candado de autorizacion sigue mandando (no se rompe lo de ADR-020).
-    // El gate de estado deja pasar (Confirmed/Traveling/ToSettle son editables conceptualmente).
+    // GRUPO EN FIRME EDITABLE: el candado de autorizacion sigue mandando (no se rompe lo de ADR-020).
+    // El gate de estado deja pasar. ADR-036 (2026-06-21): el unico estado firme EDITABLE es Confirmed
+    // (Traveling paso a SOLO LECTURA dura; ToSettle murio).
     // =====================================================================================================
 
     [Theory]
     [InlineData(EstadoReserva.Confirmed)]
-    [InlineData(EstadoReserva.Traveling)]
-    [InlineData(EstadoReserva.ToSettle)]
     public async Task EditService_OnFirmState_WithoutAuthorization_RejectedByLock(string status)
     {
         await using var ctx = NewContext();
@@ -335,10 +338,23 @@ public class Adr035ServiceStateGateTests
         Assert.Equal("Hotel Test", (await ctx.HotelBookings.FindAsync(10))!.HotelName);
     }
 
+    [Fact]
+    public async Task EditService_OnTraveling_RejectedByStateGate_EvenWithLiveAuthorization()
+    {
+        // ADR-036: En viaje es SOLO LECTURA dura. Ni con autorizacion viva se edita: rechaza el gate de
+        // ESTADO (mensaje "solo lectura"), no el candado de autorizacion.
+        await using var ctx = NewContext();
+        await SeedReservaWithHotelAsync(ctx, EstadoReserva.Traveling);
+        AddLiveAuthorization(ctx);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => NewBookingService(ctx).UpdateHotelAsync("1", "10", SampleHotelEdit(), CancellationToken.None));
+        Assert.Contains("solo lectura", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("Hotel Test", (await ctx.HotelBookings.FindAsync(10))!.HotelName);
+    }
+
     [Theory]
     [InlineData(EstadoReserva.Confirmed)]
-    [InlineData(EstadoReserva.Traveling)]
-    [InlineData(EstadoReserva.ToSettle)]
     public async Task EditService_OnFirmState_WithLiveAuthorization_PassesStateGateAndLock(string status)
     {
         await using var ctx = NewContext();
@@ -425,9 +441,9 @@ public class Adr035ServiceStateGateTests
     {
         Assert.True(ReservaStatusTransitions.Forward.TryGetValue(EstadoReserva.Traveling, out var targets));
         Assert.DoesNotContain(EstadoReserva.Cancelled, targets!, StringComparer.OrdinalIgnoreCase);
-        // El cierre y el desvio a liquidar siguen disponibles.
+        // ADR-036: la unica salida es Closed (ToSettle murio).
         Assert.Contains(EstadoReserva.Closed, targets!, StringComparer.OrdinalIgnoreCase);
-        Assert.Contains(EstadoReserva.ToSettle, targets!, StringComparer.OrdinalIgnoreCase);
+        Assert.Single(targets!);
     }
 
     [Fact]
@@ -478,10 +494,12 @@ public class Adr035ServiceStateGateTests
     public void CanEditServices_MatchesThreeGroups()
     {
         // Fija la matriz pura de la capacidad CanEditServices por estado (fuente del gate).
+        // ADR-036 (2026-06-21): editable = {Quotation, Budget, InManagement, Confirmed}. Traveling paso a
+        // SOLO LECTURA; ToSettle murio.
         foreach (var editable in new[]
                  {
                      EstadoReserva.Quotation, EstadoReserva.Budget, EstadoReserva.InManagement,
-                     EstadoReserva.Confirmed, EstadoReserva.Traveling, EstadoReserva.ToSettle
+                     EstadoReserva.Confirmed
                  })
         {
             var caps = ReservaCapabilityPolicy.For(new ReservaCapabilityContext(
@@ -491,7 +509,7 @@ public class Adr035ServiceStateGateTests
 
         foreach (var readOnly in new[]
                  {
-                     EstadoReserva.Closed, EstadoReserva.Lost,
+                     EstadoReserva.Traveling, EstadoReserva.Closed, EstadoReserva.Lost,
                      EstadoReserva.Cancelled, EstadoReserva.PendingOperatorRefund
                  })
         {

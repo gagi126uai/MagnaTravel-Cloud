@@ -1,22 +1,21 @@
 /**
- * Panel EN LÍNEA para cancelar una reserva.
+ * Panel EN LÍNEA para anular una reserva.
  *
- * ADR-035 (2026-06-19): la cancelación deja de ser un modal flotante (overlay oscuro) y
- * pasa a un panel inline con la misma visual que RegistrarCobroInline y EmitirFacturaInline.
- * Se despliega en la solapa Estado de Cuenta, debajo de la barra de acciones.
+ * ADR-035 (2026-06-19): la accion deja de ser un modal flotante y pasa a un panel inline
+ * igual que RegistrarCobroInline y EmitirFacturaInline.
  *
- * El cartel de color (verde / ámbar) informa si la cancelación NECESITA emitir una nota de
- * crédito en AFIP/ARCA para anular la factura, usando el campo `requiresInvoiceAnnulmentToCancel`
- * del DTO de la reserva (campo ADR-035, 2026-06-19).
+ * ADR-036 (2026-06-21): el panel pasa a llamarse "Anular reserva" (en vez de "Cancelar").
+ * En este producto "Cancelar" = saldar una deuda; "Anular" = deshacer el viaje.
+ * El estado interno del backend sigue siendo "Cancelled", pero el usuario ve "Anular/Anulada".
  *
- * La lógica de negocio (draft + confirm, payload fiscal) es EXACTAMENTE la misma del modal
- * viejo (CancelReservaModal.jsx). Solo cambió el contenedor visual.
+ * El cartel de color (verde / ámbar) informa si la anulacion NECESITA emitir una nota de
+ * crédito en AFIP/ARCA, usando el campo `requiresInvoiceAnnulmentToCancel` del DTO.
  *
  * Props:
  *   - reserva: objeto de la reserva (necesita publicId, numeroReserva, customerName,
  *              requiresInvoiceAnnulmentToCancel).
- *   - onCancelado: callback luego de confirmar exitosamente.
- *   - onCerrar: callback cuando el usuario cierra el panel sin cancelar.
+ *   - onCancelado: callback luego de confirmar exitosamente (nombre legacy mantenido por compatibilidad).
+ *   - onCerrar: callback cuando el usuario cierra el panel sin anular.
  */
 
 import { useState, useEffect } from "react";
@@ -131,7 +130,8 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar }) {
 
         try {
             await cancellationsApi.confirm(draft.publicId, payload);
-            showSuccess("Reserva cancelada. La nota de crédito se está generando.", "Cancelación confirmada");
+            // ADR-036: el mensaje visible dice "anulada" (no "cancelada").
+            showSuccess("Reserva anulada. La nota de crédito se está generando.", "Anulación confirmada");
             onCancelado();
         } catch (error) {
             if (error?.status === 409) {
@@ -175,7 +175,8 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar }) {
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                     <Ban className="w-4 h-4 text-rose-600" aria-hidden="true" />
-                    <h4 className="text-sm font-bold text-slate-900 dark:text-white">Cancelar reserva</h4>
+                    {/* ADR-036: "Anular reserva" en vez de "Cancelar reserva" */}
+                    <h4 className="text-sm font-bold text-slate-900 dark:text-white">Anular reserva</h4>
                     <span className="text-xs text-slate-500 dark:text-slate-400">
                         #{reserva.numeroReserva} — {reserva.customerName}
                     </span>
@@ -185,7 +186,7 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar }) {
                     onClick={onCerrar}
                     disabled={processing}
                     className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded p-1 disabled:opacity-40"
-                    aria-label="Cerrar sin cancelar la reserva"
+                    aria-label="Cerrar sin anular la reserva"
                 >
                     <X className="w-4 h-4" />
                 </button>
@@ -234,7 +235,8 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar }) {
                     className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5"
                     htmlFor="cancelar-inline-reason"
                 >
-                    Motivo de la cancelación <span className="text-rose-500" aria-hidden="true">*</span>
+                    {/* ADR-036: "de la anulación" en vez de "de la cancelación" */}
+                    Motivo de la anulación <span className="text-rose-500" aria-hidden="true">*</span>
                 </label>
                 <textarea
                     id="cancelar-inline-reason"
@@ -276,7 +278,8 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar }) {
                     className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-bold text-white hover:bg-rose-700 transition-colors disabled:opacity-50 flex items-center gap-2"
                 >
                     {processing && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-                    {processing ? "Cancelando..." : "Cancelar reserva"}
+                    {/* ADR-036: "Anular reserva" en vez de "Cancelar reserva" */}
+                    {processing ? "Anulando..." : "Anular reserva"}
                 </button>
             </div>
         </div>

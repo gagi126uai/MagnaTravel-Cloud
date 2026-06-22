@@ -197,20 +197,20 @@ export function esServicioConfirmadoPorOperador(svc) {
  *     esta vacio o es el valor por defecto, el badge dice "Solicitado" (ya se pidio).
  *   - "Confirmado" y "Cancelado" siempre se muestran tal cual (llegan del backend).
  *
- * Feedback 2026-06-19 (cambio 5): cuando la reserva entera está en estado terminal
- * Lost o Cancelled, los servicios muestran "Anulado" o "Cancelado" respectivamente
- * sin importar el workflowStatus real — es SOLO presentación, no muta datos.
- * Así la vista queda coherente con el estado de la reserva.
+ * ADR-036 (2026-06-21): cuando la reserva entera está deshecha (Lost o Cancelled),
+ * TODOS sus servicios muestran "Anulado" — es SOLO presentación, no muta datos.
+ * ADR-035 usaba "Cancelado" para Cancelled; ADR-036 unifica ambas en "Anulado"
+ * porque en ambos casos la reserva quedó deshecha. La distincion entre Lost/Cancelled
+ * la maneja el cartel de estado de la reserva, no los servicios.
  *
  * @param {string|null} workflowStatus - Estado workflow del servicio (puede ser null/undefined)
  * @param {string} reservaStatus - Estado de la reserva (ej. "Quotation", "Budget", "InManagement")
  */
 function etiquetaEstadoServicio(workflowStatus, reservaStatus) {
-    // Override visual para reservas terminales (cambio 5 — display-derived, no muta backend).
-    // Lost → todos los servicios muestran "Anulado" (la reserva se perdió, no hubo servicio real).
-    // Cancelled → todos muestran "Cancelado" (la reserva fue cancelada formalmente).
+    // Override visual para reservas terminales (display-derived — no muta datos del backend).
+    // ADR-036: Lost Y Cancelled → "Anulado" (ambas = reserva deshecha, unificamos el termino).
     if (reservaStatus === 'Lost') return 'Anulado';
-    if (reservaStatus === 'Cancelled') return 'Cancelado';
+    if (reservaStatus === 'Cancelled') return 'Anulado';
 
     // "Confirmado", "Cancelado" y otros estados concretos del operador
     // (ej. "Emitido", "HK") se muestran tal cual.

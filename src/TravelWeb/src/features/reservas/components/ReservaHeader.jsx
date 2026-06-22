@@ -25,10 +25,15 @@ function formatTripDate(value) {
  *   InManagement → (automatico al resolverse todos los servicios) → Confirmed
  *   Confirmed (candado) → (automatico al llegar la fecha de salida) → Traveling
  *   Traveling → [Cerrar reserva] → Closed
- *   Traveling → [Apartar para liquidar] → ToSettle (desvio opcional)
- *   ToSettle  → [Finalizar] → Closed
- *   Cualquier etapa activa → [Cancelar] (con proceso fiscal)
+ *   Cualquier etapa activa → [Anular] (con proceso fiscal)
  *   Quotation/Budget → [Perdido] (discreto, no hubo compra)
+ *
+ * ADR-036 (2026-06-21):
+ *   - "Apartar para liquidar" (Traveling→ToSettle) ELIMINADO: ya no existe "A liquidar".
+ *   - "Finalizar / Marcar liquidada" (ToSettle→Closed) ELIMINADO: idem.
+ *   - El boton que antes decia "Cancelar" ahora dice "Anular" (anular = deshacer el viaje).
+ *   - "Reabrir para facturar" destraba la Finalizada SIN cambiarla de estado (ya no manda a ToSettle).
+ *   - Si el backend indica que no se puede eliminar (capability=false), el boton "Eliminar" no aparece.
  *
  * Feedback visual 2026-06-19 (dueño):
  *   - El boton primario de avance se integra en la fila de acciones (no flota suelto arriba).
@@ -40,10 +45,10 @@ function formatTripDate(value) {
  * Props:
  * - reserva: objeto de la reserva cargada (incluye capabilities si es DTO ADR-035)
  * - canCancelReserva: si el usuario tiene el permiso reservas.cancel
- * - onCancelReserva: callback para abrir el flujo de cancelacion en linea
+ * - onCancelReserva: callback para abrir el flujo de anulacion en linea
  * - onRequestEdit: callback para abrir el modal de autorizacion de edicion (cuando hay candado)
  * - onMarkLost: callback para abrir el modal "Marcar como perdida"
- * - onReopenToSettle: callback para reabrir la reserva a "A liquidar" (ADR-035, Closed→ToSettle)
+ * - onReopenToSettle: callback para reabrir la reserva Finalizada para facturar (ADR-036)
  * - Los callbacks onStatusChange, onDelete, onArchive, onRevert, onEditDates son manejados por el padre
  * - serviciosCancelados: { cancelados: number, totalConProveedor: number } — para el contador "N de M".
  *   El padre lo calcula con calculateServiciosCanceladosResumen(allServices).
@@ -69,7 +74,11 @@ export function ReservaHeader({
     const locked = isStatusLocked(reserva.status);
 
     // Solo se puede eliminar en Quotation/Budget (sin pagos, sin servicios resueltos).
-    const canDelete = (reserva.status === 'Quotation' || reserva.status === 'Budget');
+    // ADR-036 (punto 5): si el backend manda canDelete.allowed === false (reserva con plata viva),
+    // el boton "Eliminar" no aparece aunque la reserva sea temprana — solo se ofrece "Anular".
+    const deleteCapability = getCapability('canDelete');
+    const canDelete = (reserva.status === 'Quotation' || reserva.status === 'Budget')
+        && deleteCapability.allowed;
 
     const archiveBlockReason = getReservaArchiveBlockReason(reserva);
     const canArchive = !archiveBlockReason;
@@ -98,10 +107,13 @@ export function ReservaHeader({
         && reserva.status !== 'Lost'
         && reserva.status !== 'Closed';
 
-    // ─── Boton Cancelar ───────────────────────────────────────────────────────────
+    // ─── Boton "Anular reserva" (antes "Cancelar") ────────────────────────────────
     // ADR-035: siempre visible si hay permiso de usuario; apagado (gris) si capabilities.canCancel.allowed=false.
+    // ADR-036: el boton dice "Anular" porque en este producto "anular" = deshacer el viaje.
+    // "Cancelar" significa saldar una deuda — se reserva para botones de descarte de formularios.
     // Feedback 2026-06-19: SIN texto de motivo debajo, solo gris.
-    const CANCELLABLE_STATUSES_FALLBACK = ['InManagement', 'Confirmed', 'Traveling', 'ToSettle'];
+    // ADR-036: ToSettle eliminado del fallback (ya no existe ese estado en la UI).
+    const CANCELLABLE_STATUSES_FALLBACK = ['InManagement', 'Confirmed', 'Traveling'];
     const cancelCapability = getCapability('canCancel');
     const showCancelButton = canCancelReserva && onCancelReserva && !isArchived && (
         capabilities
@@ -116,21 +128,29 @@ export function ReservaHeader({
         && onMarkLost;
 
     // ─── Reversion de estado ──────────────────────────────────────────────────────
-    const canRevertLocal = ['Budget', 'InManagement', 'Confirmed', 'Traveling', 'ToSettle', 'Closed', 'Lost'].includes(reserva.status);
+    // ADR-036: ToSettle eliminado del fallback de reversion.
+    const canRevertLocal = ['Budget', 'InManagement', 'Confirmed', 'Traveling', 'Closed', 'Lost'].includes(reserva.status);
     const canRevert = capabilities
         ? (Array.isArray(capabilities.allowedRevert) && capabilities.allowedRevert.length > 0)
         : canRevertLocal;
 
     // ─── Boton "Reabrir para facturar" ───────────────────────────────────────────
-    // Feedback 2026-06-19: solo aparece cuando la reserva NO tiene factura con CAE vivo.
-    // Si ya tiene factura (requiresInvoiceAnnulmentToCancel=true), reabrir para facturar
-    // no tiene sentido: la reserva ya está facturada y no habría nada nuevo que facturar.
-    // Con capabilities: buscamos ToSettle en allowedRevert.
+    // ADR-036 (2026-06-21): ya NO manda la reserva a "A liquidar". Ahora la destraba
+    // para facturar SIN cambiar de estado (se queda Finalizada pero habilitada para emitir).
+    // Solo aparece cuando la reserva NO tiene factura con CAE vivo (sin factura → tiene sentido reabrir).
+    // Si ya tiene factura emitida (requiresInvoiceAnnulmentToCancel=true), no se muestra.
+    //
+    // Con capabilities: buscamos canReopenForInvoicing (campo nuevo del backend ADR-036).
+    //   Fallback: si el backend no manda ese campo, buscamos allowedRevert que incluya 'Closed'
+    //   (la reserva ya está cerrada y puede desbloquearse).
     // Sin capabilities: fallback a Closed.
     const tieneFacturaViva = reserva.requiresInvoiceAnnulmentToCancel === true;
-    const puedeReabrirConCapabilities = capabilities
-        && Array.isArray(capabilities.allowedRevert)
-        && capabilities.allowedRevert.includes('ToSettle');
+    const puedeReabrirConCapabilities = capabilities && (
+        // Primero: campo dedicado del backend ADR-036
+        capabilities.canReopenForInvoicing?.allowed === true
+        // Fallback: allowedRevert incluye 'Closed' (que es el estado actual al querer reabrir)
+        || (Array.isArray(capabilities.allowedRevert) && capabilities.allowedRevert.includes('Closed'))
+    );
     const puedeReabrirFallback = reserva.status === 'Closed';
     const showReopenButton = onReopenToSettle
         && !isArchived
@@ -271,8 +291,9 @@ export function ReservaHeader({
                         BOTON PRIMARIO DE AVANCE — va PRIMERO en la fila
                         Quotation → [Pasar a presupuesto]
                         Budget    → [El cliente acepto]
-                        Traveling → [Cerrar reserva] + [Apartar para liquidar]
-                        ToSettle  → [Finalizar / Marcar liquidada]
+                        Traveling → [Cerrar reserva]
+                        ADR-036: "Apartar para liquidar" y "Finalizar/Marcar liquidada"
+                                  eliminados (ya no existe "A liquidar").
                     ===================================================== */}
 
                     {reserva.status === 'Quotation' && (
@@ -330,39 +351,18 @@ export function ReservaHeader({
                     {/* En gestion: Confirmada es automatica al resolverse todos los servicios. */}
                     {/* Confirmada: En viaje tambien es automatica (job diario por fecha de salida). */}
 
-                    {reserva.status === 'Traveling' && (
-                        <>
-                            {endHasPast && (
-                                <button
-                                    onClick={() => onStatusChange('Closed')}
-                                    disabled={!canClose}
-                                    data-testid="reserva-action-finalize-direct"
-                                    className={`px-5 py-2.5 rounded-xl font-bold text-sm shadow-sm transition-all active:scale-95 ${canClose ? 'bg-slate-900 dark:bg-white dark:text-slate-900 text-white' : 'bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed shadow-none'}`}
-                                    title={closeTooltip}
-                                >
-                                    Cerrar reserva
-                                </button>
-                            )}
-                            <button
-                                onClick={() => onStatusChange('ToSettle')}
-                                data-testid="reserva-action-tosettle"
-                                className="bg-white text-emerald-700 border border-emerald-300 hover:bg-emerald-50 dark:bg-slate-900 dark:text-emerald-300 dark:border-emerald-700 dark:hover:bg-emerald-900/20 px-5 py-2.5 rounded-xl font-bold text-sm shadow-sm transition-all active:scale-95"
-                                title="Apartar para liquidar con el operador (opcional). Queda en la bandeja A liquidar."
-                            >
-                                Apartar para liquidar
-                            </button>
-                        </>
-                    )}
-
-                    {reserva.status === 'ToSettle' && (
+                    {/* ADR-036: solo el boton "Cerrar reserva" en Traveling.
+                        "Apartar para liquidar" y "Finalizar / Marcar liquidada" fueron eliminados
+                        porque "A liquidar" ya no existe como estado. */}
+                    {reserva.status === 'Traveling' && endHasPast && (
                         <button
                             onClick={() => onStatusChange('Closed')}
                             disabled={!canClose}
-                            data-testid="reserva-action-finalize"
+                            data-testid="reserva-action-finalize-direct"
                             className={`px-5 py-2.5 rounded-xl font-bold text-sm shadow-sm transition-all active:scale-95 ${canClose ? 'bg-slate-900 dark:bg-white dark:text-slate-900 text-white' : 'bg-slate-300 dark:bg-slate-700 text-slate-500 cursor-not-allowed shadow-none'}`}
                             title={closeTooltip}
                         >
-                            Finalizar / Marcar liquidada
+                            Cerrar reserva
                         </button>
                     )}
 
@@ -384,7 +384,9 @@ export function ReservaHeader({
                             </button>
                         )}
 
-                        {/* ── Boton "Cancelar reserva" (ADR-035) ────────────────────────────────────
+                        {/* ── Boton "Anular reserva" (antes "Cancelar") ─────────────────────────────
+                            ADR-036: "Anular" = deshacer el viaje con proceso fiscal.
+                            "Cancelar" en este producto significa saldar una deuda — NO se usa acá.
                             SIEMPRE VISIBLE si el usuario tiene permiso.
                             Feedback 2026-06-19: si no está permitido, solo gris (sin texto debajo).
                             El cartel único en ReservaDetailPage explica el motivo global. */}
@@ -393,7 +395,7 @@ export function ReservaHeader({
                                 onClick={cancelCapability.allowed ? onCancelReserva : undefined}
                                 disabled={!cancelCapability.allowed}
                                 data-testid="reserva-action-cancel"
-                                aria-label="Cancelar reserva"
+                                aria-label="Anular reserva"
                                 className={`inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl transition-colors text-sm font-semibold ${
                                     cancelCapability.allowed
                                         ? 'bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-900/20 dark:text-rose-300'
@@ -401,7 +403,7 @@ export function ReservaHeader({
                                 }`}
                             >
                                 <Ban className="w-4 h-4" />
-                                Cancelar
+                                Anular
                             </button>
                         )}
 
@@ -418,13 +420,13 @@ export function ReservaHeader({
                         )}
 
                         {/* ── Boton "Reabrir para facturar" ───────────────────────────────────────
-                            Feedback 2026-06-19: solo se muestra cuando la reserva NO tiene factura
-                            con CAE vivo (requiresInvoiceAnnulmentToCancel=false).
-                            Si ya tiene factura, reabrir para facturar no tiene sentido. */}
+                            ADR-036: ya NO manda a "A liquidar". Destraba la Finalizada para
+                            poder emitir la factura SIN cambiar el estado de la reserva.
+                            Solo se muestra cuando la reserva NO tiene factura con CAE vivo. */}
                         {showReopenButton && (
                             <button
                                 onClick={onReopenToSettle}
-                                data-testid="reserva-action-reopen-to-settle"
+                                data-testid="reserva-action-reopen-for-invoicing"
                                 aria-label="Reabrir para facturar"
                                 className="inline-flex items-center gap-1.5 px-3 py-2.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:bg-indigo-900/20 dark:text-indigo-300 rounded-xl transition-colors text-sm font-semibold"
                             >

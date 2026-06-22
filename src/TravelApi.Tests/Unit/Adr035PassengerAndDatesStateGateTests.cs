@@ -108,12 +108,15 @@ public class Adr035PassengerAndDatesStateGateTests
     private static PassengerUpsertRequest PassengerReq(string fullName, string? documentNumber) =>
         new(fullName, "DNI", documentNumber, null, null, null, null, null, null, null);
 
+    // ADR-036 (2026-06-21): "En viaje" (Traveling) se suma a los estados de solo lectura dura — pasajeros y
+    // fechas son solo lectura aun con autorizacion viva. ToSettle murio.
     public static readonly object[][] ReadOnlyStates =
     {
         new object[] { EstadoReserva.Lost },
         new object[] { EstadoReserva.Cancelled },
         new object[] { EstadoReserva.PendingOperatorRefund },
         new object[] { EstadoReserva.Closed },
+        new object[] { EstadoReserva.Traveling },
     };
 
     public static readonly object[][] EarlyStages =
@@ -198,8 +201,10 @@ public class Adr035PassengerAndDatesStateGateTests
     }
 
     [Fact]
-    public async Task ReadOnlyMessage_Passengers_ForClosed_PointsToReopenAsToSettle()
+    public async Task ReadOnlyMessage_Passengers_ForClosed_MentionsFinalizedReadOnly_ADR036()
     {
+        // ADR-036 (2026-06-21): el mensaje de Finalizada ya NO sugiere "reabrir a A liquidar" (ese camino
+        // murio con ToSettle). Solo dice que esta finalizada y es solo lectura.
         await using var ctx = NewContext();
         SeedReserva(ctx, EstadoReserva.Closed);
         await ctx.SaveChangesAsync();
@@ -209,7 +214,7 @@ public class Adr035PassengerAndDatesStateGateTests
 
         Assert.Contains("pasajeros", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("finalizada", ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("A liquidar", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("A liquidar", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -290,13 +295,13 @@ public class Adr035PassengerAndDatesStateGateTests
     }
 
     // =====================================================================================================
-    // GRUPO EN FIRME: la compuerta de estado deja pasar; el candado de autorizacion sigue mandando como hoy.
+    // GRUPO EN FIRME EDITABLE: la compuerta de estado deja pasar; el candado de autorizacion sigue mandando.
+    // ADR-036 (2026-06-21): el unico estado firme EDITABLE es Confirmed (Traveling paso a SOLO LECTURA; los
+    // casos de Traveling viven ahora en el grupo CERRADOS/read-only de arriba). ToSettle murio.
     // =====================================================================================================
 
     [Theory]
     [InlineData(EstadoReserva.Confirmed)]
-    [InlineData(EstadoReserva.Traveling)]
-    [InlineData(EstadoReserva.ToSettle)]
     public async Task AddPassenger_OnFirmState_Allowed_NoAuthorizationNeeded(string status)
     {
         await using var ctx = NewContext();
@@ -311,8 +316,6 @@ public class Adr035PassengerAndDatesStateGateTests
 
     [Theory]
     [InlineData(EstadoReserva.Confirmed)]
-    [InlineData(EstadoReserva.Traveling)]
-    [InlineData(EstadoReserva.ToSettle)]
     public async Task CompletePassengerMissingData_OnFirmState_Allowed_NoAuthorizationNeeded(string status)
     {
         await using var ctx = NewContext();
@@ -328,8 +331,6 @@ public class Adr035PassengerAndDatesStateGateTests
 
     [Theory]
     [InlineData(EstadoReserva.Confirmed)]
-    [InlineData(EstadoReserva.Traveling)]
-    [InlineData(EstadoReserva.ToSettle)]
     public async Task ChangePassengerIdentity_OnFirmState_WithoutAuthorization_Throws_LikeToday(string status)
     {
         await using var ctx = NewContext();
@@ -347,8 +348,6 @@ public class Adr035PassengerAndDatesStateGateTests
 
     [Theory]
     [InlineData(EstadoReserva.Confirmed)]
-    [InlineData(EstadoReserva.Traveling)]
-    [InlineData(EstadoReserva.ToSettle)]
     public async Task UpdateDates_OnFirmState_WithoutAuthorization_Throws_LikeToday(string status)
     {
         await using var ctx = NewContext();

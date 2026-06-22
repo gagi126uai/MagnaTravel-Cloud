@@ -35,7 +35,7 @@ import {
     getServiceMutationEndpoint
 } from "../features/reservas/lib/reservationServiceModel";
 // isStatusLocked es la fuente canonica del candado (ADR-020).
-// Centraliza los 4 estados bloqueados: Confirmed, Traveling, ToSettle, Closed.
+// ADR-036: ahora son 3 estados bloqueados: Confirmed, Traveling, Closed (ToSettle fue eliminado).
 // Usarla aqui evita que el modal y el header diverjan si cambian los estados.
 import { isStatusLocked } from "../features/reservas/components/ReservaStatusBadge";
 import RoomingPlanner from "./RoomingPlanner";
@@ -1992,9 +1992,8 @@ export default function ServiceFormModal({ isOpen, onClose, reservaId, reservaSt
     const [manualHotelPricing, setManualHotelPricing] = useState({ netCost: false, salePrice: false });
 
     const isGenericEdit = serviceToEdit?.recordKind === SERVICE_RECORD_KIND.GENERIC;
-    // Candado canonico: usa el helper de ReservaStatusBadge que cubre los 4 estados
-    // bloqueados (Confirmed, Traveling, ToSettle, Closed). El set local anterior
-    // solo cubria Traveling y Closed, dejando afuera Confirmed y ToSettle — agujero B1.
+    // Candado canonico: usa el helper de ReservaStatusBadge (3 estados: Confirmed, Traveling, Closed).
+    // ADR-036: ToSettle fue eliminado. El set canónico está en LOCKED_STATUSES de ReservaStatusBadge.
     const isLocked = isStatusLocked(reservaStatus);
     // En Cotizacion y Presupuesto el agente NO elige el estado del servicio — siempre queda en
     // "Solicitado" hasta que la reserva pase a InManagement (regla de negocio ADR-020: en

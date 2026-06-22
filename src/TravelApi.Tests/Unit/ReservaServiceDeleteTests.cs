@@ -331,8 +331,9 @@ public class ReservaServiceDeleteTests
     [Fact]
     public async Task RemovePassengerAsync_OnTraveling_StillBlockedByStateGuard()
     {
-        // Regression: el guard pre-existente de estado Operativo/Cerrado sigue activo
-        // y prevalece sobre cualquier check fiscal.
+        // Regression: borrar un pasajero en una reserva "En viaje" sigue bloqueado. ADR-036 (2026-06-21):
+        // ahora lo bloquea la PRIMERA COMPUERTA por estado (Traveling = solo lectura dura), que corre antes
+        // que el guard fiscal; el mensaje es de solo lectura ("en viaje").
         await using var context = new AppDbContext(_dbOptions);
         await SeedReservaAsync(context, EstadoReserva.Traveling);
         context.Passengers.Add(new Passenger { Id = 203, ReservaId = 1, FullName = "Pax en viaje" });
@@ -341,7 +342,7 @@ public class ReservaServiceDeleteTests
         var service = BuildService(context);
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => service.RemovePassengerAsync(203));
-        Assert.Contains("Operativo", ex.Message);
+        Assert.Contains("solo lectura", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

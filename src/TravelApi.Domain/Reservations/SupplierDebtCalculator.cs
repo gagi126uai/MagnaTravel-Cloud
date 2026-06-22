@@ -23,15 +23,16 @@ public static class SupplierDebtCalculator
     // SupplierService.ValidReservationStatuses y SupplierDebtPersister.ValidReservationStatuses: si una de
     // las dos cambiaba, el numero de deuda salia distinto segun el camino (servicio del proveedor vs
     // persister generico) y mentia en silencio. Centralizada aca, ambos consumen el mismo array.
-    // ADR-020: InManagement (En gestion) reemplazo al viejo Sold; ToSettle es la etapa de liquidar con el
-    // operador. La deuda real ademas filtra por servicio confirmado (CountsForSupplierDebtByType); este
-    // conjunto solo define que RESERVAS son "vivas" para el proveedor.
+    // ADR-020: InManagement (En gestion) reemplazo al viejo Sold. La deuda real ademas filtra por servicio
+    // confirmado (CountsForSupplierDebtByType); este conjunto solo define que RESERVAS son "vivas" para el
+    // proveedor. ADR-036 (2026-06-21, prepago puro): se quito ToSettle (estado eliminado). Traveling SIGUE
+    // contando: aunque el cliente ya quedo saldado para viajar, la deuda CON EL OPERADOR puede seguir viva
+    // (el casillero "pagado al operador" por servicio es trabajo aparte; ver ADR-036). Closed se mantiene.
     public static readonly string[] ValidReservationStatuses =
     {
         EstadoReserva.InManagement,
         EstadoReserva.Confirmed,
         EstadoReserva.Traveling,
-        EstadoReserva.ToSettle,
         EstadoReserva.Closed
     };
 

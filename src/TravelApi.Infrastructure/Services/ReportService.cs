@@ -605,8 +605,9 @@ public class ReportService : IReportService
         // positivo de las reservas vigentes (no Closed/Cancelled/Budget) por cliente + moneda: un cliente
         // que debe en dos monedas produce DOS filas, NUNCA una fila con monto mezclado.
         //
-        // ADR-023 T1.3: la deuda exigible son SOLO las reservas en firme (InManagement/Confirmed/Traveling/
-        // ToSettle), misma lista canonica que el AR de tesoreria y la cuenta del cliente. Antes esta query
+        // ADR-023 T1.3: la deuda exigible son SOLO las reservas en firme (InManagement/Confirmed/Closed;
+        // ADR-036 quito Traveling y ToSettle), misma lista canonica (FinancePositionService.ReceivableDebtStatuses)
+        // que el AR de tesoreria y la cuenta del cliente. Antes esta query
         // excluia Closed/Cancelled/Budget pero seguia contando Quotation/Lost/PendingOperatorRefund (que no son
         // deuda). Por eso el total por cliente puede no coincidir con el escalar legacy Customer.CurrentBalance,
         // que sumaba todo sin filtrar estado.

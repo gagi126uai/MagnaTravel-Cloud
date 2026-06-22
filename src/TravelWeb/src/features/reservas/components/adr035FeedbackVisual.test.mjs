@@ -1,11 +1,17 @@
 /**
- * Tests de lógica pura para el feedback visual de ADR-035 (2026-06-19):
+ * Tests de lógica pura para el feedback visual de ADR-035 (2026-06-19) + ADR-036 (2026-06-21):
  *
- * Cambio 1: cartel único de estado terminal (Lost/Cancelled/Closed/PendingOperatorRefund).
+ * Cambio 1: cartel único de estado terminal (Lost/Cancelled/Closed/PendingOperatorRefund/Traveling).
  * Cambio 3: canEditPassengers gate — botones de pasajeros apagados en terminales.
- * Cambio 4: "Reabrir para facturar" solo en Closed + sin factura.
- * Cambio 5: servicios muestran "Anulado"/"Cancelado" cuando la reserva es terminal.
+ * Cambio 4: "Reabrir para facturar" solo en Closed + sin factura (ADR-036: ya no usa ToSettle).
+ * Cambio 5: servicios muestran "Anulado" cuando la reserva es terminal (Lost o Cancelled — ADR-036).
  * Cambio 6: chips de pago diferenciados del badge de estado operativo.
+ *
+ * ADR-036 (2026-06-21) — cambios sobre ADR-035:
+ *   - "Traveling" pasa a ser solo-lectura (cartel arriba).
+ *   - "ToSettle" eliminado de toda la UI.
+ *   - "Reabrir para facturar" ya no manda a ToSettle; destraba sin cambiar estado.
+ *   - Servicios de Cancelled también muestran "Anulado" (antes era "Cancelado").
  *
  * Cómo correr:
  *   node --test src/features/reservas/components/adr035FeedbackVisual.test.mjs
@@ -19,8 +25,13 @@ import assert from "node:assert/strict";
 /**
  * Replica de la lógica de selección del cartel de estado terminal (ReservaDetailPage.jsx).
  * Devuelve null si no es estado terminal (no debe mostrar cartel de solo-lectura).
+ *
+ * ADR-036: Traveling ahora también tiene cartel de solo-lectura (punto 2).
+ * ToSettle fue eliminado — ya no existe en la UI.
  */
 function resolverCartelEstadoTerminal(reservaStatus) {
+    // ADR-036: Traveling ahora tiene cartel de solo lectura propio (arriba, chico, estilo verde).
+    if (reservaStatus === 'Traveling') return 'traveling';
     if (reservaStatus === 'Lost') return 'lost';
     if (reservaStatus === 'Cancelled') return 'cancelled';
     if (reservaStatus === 'Closed') return 'closed';
@@ -44,6 +55,11 @@ test("C1 cartel terminal: PendingOperatorRefund → muestra cartel 'awaiting-ref
     assert.equal(resolverCartelEstadoTerminal('PendingOperatorRefund'), 'awaiting-refund');
 });
 
+// ADR-036 punto 2: Traveling ahora es solo-lectura con cartel propio.
+test("C1 cartel terminal: Traveling → muestra cartel 'traveling' (ADR-036: solo lectura)", () => {
+    assert.equal(resolverCartelEstadoTerminal('Traveling'), 'traveling');
+});
+
 test("C1 cartel terminal: Budget → null (no es terminal, no muestra cartel de solo-lectura)", () => {
     assert.equal(resolverCartelEstadoTerminal('Budget'), null);
 });
@@ -56,11 +72,8 @@ test("C1 cartel terminal: InManagement → null (no es terminal)", () => {
     assert.equal(resolverCartelEstadoTerminal('InManagement'), null);
 });
 
-test("C1 cartel terminal: Traveling → null (no es terminal)", () => {
-    assert.equal(resolverCartelEstadoTerminal('Traveling'), null);
-});
-
-test("C1 cartel terminal: ToSettle → null (no es terminal)", () => {
+// ADR-036: ToSettle fue eliminado de la UI. Si llegara del backend (legacy), no muestra cartel.
+test("C1 cartel terminal: ToSettle (legacy) → null (estado eliminado en ADR-036)", () => {
     assert.equal(resolverCartelEstadoTerminal('ToSettle'), null);
 });
 
@@ -131,28 +144,42 @@ test("C3 pasajeros: reserva Lost → canEditPassengers=false (solo lectura)", ()
     assert.equal(resolverCanEditPassengers(capabilities), false);
 });
 
-// ─── Cambio 4: "Reabrir para facturar" solo sin factura ─────────────────────
+// ─── Cambio 4: "Reabrir para facturar" solo sin factura (ADR-036: ya no usa ToSettle) ───────
 
 /**
- * Replica de la condición showReopenButton de ReservaHeader.
- * Solo se muestra si hay callback, no está archivada, NO tiene factura viva,
- * y las capabilities permiten la transición ToSettle.
+ * Replica de la condición showReopenButton de ReservaHeader (actualizada para ADR-036).
+ * Solo se muestra si hay callback, no está archivada, NO tiene factura viva.
+ *
+ * ADR-036: ya NO se busca 'ToSettle' en allowedRevert (ese estado fue eliminado).
+ * Ahora se verifica canReopenForInvoicing (campo nuevo del backend) o que allowedRevert
+ * incluya 'Closed' (la reserva ya está cerrada y puede desbloquearse).
  */
-function puedeReopenToSettle({ capabilities, reservaStatus, tieneFacturaViva, isArchived, hasCallback }) {
+function puedeReopenParaFacturar({ capabilities, reservaStatus, tieneFacturaViva, isArchived, hasCallback }) {
     if (!hasCallback || isArchived || tieneFacturaViva) return false;
 
     if (capabilities !== null && capabilities !== undefined) {
-        // Con capabilities: solo si allowedRevert incluye ToSettle
-        return Array.isArray(capabilities.allowedRevert)
-            && capabilities.allowedRevert.includes('ToSettle');
+        // ADR-036: primero campo dedicado; fallback a allowedRevert que incluya 'Closed'.
+        return capabilities.canReopenForInvoicing?.allowed === true
+            || (Array.isArray(capabilities.allowedRevert) && capabilities.allowedRevert.includes('Closed'));
     }
     // Sin capabilities: fallback a solo Closed
     return reservaStatus === 'Closed';
 }
 
-test("C4 reabrir: Closed sin factura + allowedRevert incluye ToSettle → SÍ aparece", () => {
-    const visible = puedeReopenToSettle({
-        capabilities: { allowedRevert: ['ToSettle'] },
+test("C4 reabrir: Closed sin factura + canReopenForInvoicing.allowed=true → SÍ aparece (ADR-036)", () => {
+    const visible = puedeReopenParaFacturar({
+        capabilities: { canReopenForInvoicing: { allowed: true } },
+        reservaStatus: 'Closed',
+        tieneFacturaViva: false,
+        isArchived: false,
+        hasCallback: true,
+    });
+    assert.equal(visible, true);
+});
+
+test("C4 reabrir: Closed sin factura + allowedRevert incluye 'Closed' → SÍ aparece (fallback ADR-036)", () => {
+    const visible = puedeReopenParaFacturar({
+        capabilities: { allowedRevert: ['Closed'] },
         reservaStatus: 'Closed',
         tieneFacturaViva: false,
         isArchived: false,
@@ -162,9 +189,9 @@ test("C4 reabrir: Closed sin factura + allowedRevert incluye ToSettle → SÍ ap
 });
 
 test("C4 reabrir: Closed CON factura viva → NO aparece (ya está facturada)", () => {
-    // Regla 2026-06-19: si tiene factura con CAE, reabrir no aporta nada.
-    const visible = puedeReopenToSettle({
-        capabilities: { allowedRevert: ['ToSettle'] },
+    // Si tiene factura con CAE, reabrir para facturar no aporta nada.
+    const visible = puedeReopenParaFacturar({
+        capabilities: { canReopenForInvoicing: { allowed: true } },
         reservaStatus: 'Closed',
         tieneFacturaViva: true,  // ← bloqueante
         isArchived: false,
@@ -174,7 +201,7 @@ test("C4 reabrir: Closed CON factura viva → NO aparece (ya está facturada)", 
 });
 
 test("C4 reabrir: sin capabilities + Closed sin factura → SÍ aparece (fallback)", () => {
-    const visible = puedeReopenToSettle({
+    const visible = puedeReopenParaFacturar({
         capabilities: null,
         reservaStatus: 'Closed',
         tieneFacturaViva: false,
@@ -185,7 +212,7 @@ test("C4 reabrir: sin capabilities + Closed sin factura → SÍ aparece (fallbac
 });
 
 test("C4 reabrir: sin capabilities + Confirmed sin factura → NO aparece (fallback: solo Closed)", () => {
-    const visible = puedeReopenToSettle({
+    const visible = puedeReopenParaFacturar({
         capabilities: null,
         reservaStatus: 'Confirmed',
         tieneFacturaViva: false,
@@ -195,9 +222,9 @@ test("C4 reabrir: sin capabilities + Confirmed sin factura → NO aparece (fallb
     assert.equal(visible, false);
 });
 
-test("C4 reabrir: Archived → NO aparece aunque tenga ToSettle", () => {
-    const visible = puedeReopenToSettle({
-        capabilities: { allowedRevert: ['ToSettle'] },
+test("C4 reabrir: Archived → NO aparece", () => {
+    const visible = puedeReopenParaFacturar({
+        capabilities: { canReopenForInvoicing: { allowed: true } },
         reservaStatus: 'Archived',
         tieneFacturaViva: false,
         isArchived: true,  // ← bloqueante
@@ -207,8 +234,8 @@ test("C4 reabrir: Archived → NO aparece aunque tenga ToSettle", () => {
 });
 
 test("C4 reabrir: sin callback → NO aparece", () => {
-    const visible = puedeReopenToSettle({
-        capabilities: { allowedRevert: ['ToSettle'] },
+    const visible = puedeReopenParaFacturar({
+        capabilities: { canReopenForInvoicing: { allowed: true } },
         reservaStatus: 'Closed',
         tieneFacturaViva: false,
         isArchived: false,
@@ -220,14 +247,16 @@ test("C4 reabrir: sin callback → NO aparece", () => {
 // ─── Cambio 5: estado de servicios en reservas terminales ────────────────────
 
 /**
- * Replica de etiquetaEstadoServicio de ServiceList.jsx (cambio 5).
- * Cuando la reserva entera es Lost o Cancelled, todos los servicios muestran
- * un estado coherente con la reserva — solo visual, no muta el backend.
+ * Replica de etiquetaEstadoServicio de ServiceList.jsx (cambio 5, actualizado ADR-036).
+ *
+ * ADR-036: cuando la reserva es Lost O Cancelled, todos los servicios muestran "Anulado".
+ * ADR-035 usaba "Cancelado" para Cancelled; ADR-036 unifica: ambas = "Anulado".
+ * Es solo presentación — no muta el backend.
  */
 function etiquetaEstadoServicio(workflowStatus, reservaStatus) {
-    // Override visual para reservas terminales (cambio 5 — display-derived, no muta backend).
+    // ADR-036: Lost Y Cancelled → "Anulado" (unificamos el termino para reservas deshechas).
     if (reservaStatus === 'Lost') return 'Anulado';
-    if (reservaStatus === 'Cancelled') return 'Cancelado';
+    if (reservaStatus === 'Cancelled') return 'Anulado';
 
     if (workflowStatus && workflowStatus !== 'Solicitado') {
         return workflowStatus;
@@ -237,12 +266,10 @@ function etiquetaEstadoServicio(workflowStatus, reservaStatus) {
 }
 
 test("C5 servicios: reserva Lost + workflowStatus Solicitado → muestra 'Anulado'", () => {
-    // Antes mostraba "Solicitado" aunque la reserva esté perdida — incoherente.
     assert.equal(etiquetaEstadoServicio('Solicitado', 'Lost'), 'Anulado');
 });
 
 test("C5 servicios: reserva Lost + workflowStatus Confirmado → muestra 'Anulado' (override)", () => {
-    // Incluso si el servicio estaba confirmado, en una Lost mostramos Anulado.
     assert.equal(etiquetaEstadoServicio('Confirmado', 'Lost'), 'Anulado');
 });
 
@@ -250,12 +277,13 @@ test("C5 servicios: reserva Lost + workflowStatus null → muestra 'Anulado'", (
     assert.equal(etiquetaEstadoServicio(null, 'Lost'), 'Anulado');
 });
 
-test("C5 servicios: reserva Cancelled + workflowStatus Solicitado → muestra 'Cancelado'", () => {
-    assert.equal(etiquetaEstadoServicio('Solicitado', 'Cancelled'), 'Cancelado');
+// ADR-036: Cancelled también muestra "Anulado" (antes era "Cancelado" — ADR-035 cambio 5).
+test("C5 servicios ADR-036: reserva Cancelled + workflowStatus Solicitado → muestra 'Anulado' (ya no 'Cancelado')", () => {
+    assert.equal(etiquetaEstadoServicio('Solicitado', 'Cancelled'), 'Anulado');
 });
 
-test("C5 servicios: reserva Cancelled + workflowStatus Emitido → muestra 'Cancelado' (override)", () => {
-    assert.equal(etiquetaEstadoServicio('Emitido', 'Cancelled'), 'Cancelado');
+test("C5 servicios ADR-036: reserva Cancelled + workflowStatus Emitido → muestra 'Anulado' (override)", () => {
+    assert.equal(etiquetaEstadoServicio('Emitido', 'Cancelled'), 'Anulado');
 });
 
 test("C5 servicios: reserva Confirmed + workflowStatus Solicitado → muestra 'Solicitado' (no hay override)", () => {
@@ -317,4 +345,98 @@ test("C2 motivo: botón Archivar deshabilitado → solo gris, sin texto debajo",
     // En el componente nuevo, archiveBlockReason existe pero no hay <p> con él.
     const seRenderizaReason = false; // por diseño (feedback 2026-06-19)
     assert.equal(seRenderizaReason, false);
+});
+
+// ─── ADR-036: chip "Debe — no viaja" (ReservaStatusChips) ────────────────────
+
+/**
+ * Replica de la lógica de chips de ReservaStatusChips.jsx para Confirmed.
+ * ADR-036: "Saldo pendiente" → "Debe — no viaja" (chip rojo).
+ */
+function resolverChipPago(reserva) {
+    if (reserva.status !== 'Confirmed') return null;
+    if (reserva.isFullyPaid) return 'paid';
+    // ADR-036: si el cliente debe, el chip dice "Debe — no viaja"
+    return 'debe-no-viaja';
+}
+
+test("ADR-036 chip: Confirmed + isFullyPaid=true → chip 'paid' (Pagada)", () => {
+    assert.equal(resolverChipPago({ status: 'Confirmed', isFullyPaid: true }), 'paid');
+});
+
+test("ADR-036 chip: Confirmed + isFullyPaid=false → chip 'debe-no-viaja' (ADR-036, antes era 'unpaid')", () => {
+    assert.equal(resolverChipPago({ status: 'Confirmed', isFullyPaid: false }), 'debe-no-viaja');
+});
+
+test("ADR-036 chip: Budget + isFullyPaid=false → null (solo aplica a Confirmed)", () => {
+    assert.equal(resolverChipPago({ status: 'Budget', isFullyPaid: false }), null);
+});
+
+test("ADR-036 chip: Traveling + isFullyPaid=false → null (Traveling no muestra chip Confirmed)", () => {
+    assert.equal(resolverChipPago({ status: 'Traveling', isFullyPaid: false }), null);
+});
+
+// ─── ADR-036: LOCKED_STATUSES sin ToSettle ────────────────────────────────────
+
+/**
+ * Replica del set LOCKED_STATUSES de ReservaStatusBadge.jsx.
+ * ADR-036: ToSettle fue eliminado. Ahora son 3 estados bloqueados.
+ */
+const LOCKED_STATUSES_ADR036 = new Set(['Confirmed', 'Traveling', 'Closed']);
+function isStatusLocked(status) {
+    return LOCKED_STATUSES_ADR036.has(status);
+}
+
+test("ADR-036 candado: Confirmed → bloqueado", () => {
+    assert.equal(isStatusLocked('Confirmed'), true);
+});
+
+test("ADR-036 candado: Traveling → bloqueado", () => {
+    assert.equal(isStatusLocked('Traveling'), true);
+});
+
+test("ADR-036 candado: Closed → bloqueado", () => {
+    assert.equal(isStatusLocked('Closed'), true);
+});
+
+test("ADR-036 candado: ToSettle → ya NO bloqueado (estado eliminado)", () => {
+    assert.equal(isStatusLocked('ToSettle'), false);
+});
+
+test("ADR-036 candado: InManagement → no bloqueado", () => {
+    assert.equal(isStatusLocked('InManagement'), false);
+});
+
+test("ADR-036 candado: Budget → no bloqueado", () => {
+    assert.equal(isStatusLocked('Budget'), false);
+});
+
+// ─── ADR-036: label "Anulada" para Cancelled ─────────────────────────────────
+
+/**
+ * Replica del statusConfig de ReservaStatusBadge.jsx para verificar el label de Cancelled.
+ * ADR-036: Cancelled.label cambió de "Cancelada" a "Anulada".
+ */
+const STATUS_LABELS_ADR036 = {
+    Quotation: 'Cotizacion',
+    Budget: 'Presupuesto',
+    InManagement: 'En gestion',
+    Confirmed: 'Confirmada',
+    Traveling: 'En viaje',
+    Closed: 'Finalizada',
+    Lost: 'Perdido',
+    Cancelled: 'Anulada',  // ADR-036: antes era "Cancelada"
+    Archived: 'Archivada',
+};
+
+test("ADR-036 label: Cancelled → 'Anulada' (ya no 'Cancelada')", () => {
+    assert.equal(STATUS_LABELS_ADR036.Cancelled, 'Anulada');
+});
+
+test("ADR-036 label: ToSettle → no existe en el config (fue eliminado)", () => {
+    assert.equal(STATUS_LABELS_ADR036.ToSettle, undefined);
+});
+
+test("ADR-036 label: Lost → sigue siendo 'Perdido' (no cambió)", () => {
+    assert.equal(STATUS_LABELS_ADR036.Lost, 'Perdido');
 });

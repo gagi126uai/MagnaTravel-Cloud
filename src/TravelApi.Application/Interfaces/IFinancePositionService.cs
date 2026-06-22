@@ -18,8 +18,8 @@ public interface IFinancePositionService
 {
     /// <summary>
     /// Cuentas por COBRAR por moneda: suma de <c>ReservaMoneyByCurrency.Balance &gt; 0</c> de las reservas
-    /// en estado activo (InManagement / Confirmed / Traveling / ToSettle). Es plata de VENTA (no costo):
-    /// NO se enmascara.
+    /// en estado firme con deuda (InManagement / Confirmed / Closed; ADR-036 quito Traveling y ToSettle). Es
+    /// plata de VENTA (no costo): NO se enmascara.
     /// </summary>
     Task<List<FinanceCurrencyAmount>> GetAccountsReceivableByCurrencyAsync(CancellationToken cancellationToken);
 
@@ -32,7 +32,7 @@ public interface IFinancePositionService
     /// <summary>
     /// ADR-023 T1: saldo a COBRAR del cliente POR MONEDA (deuda exigible), derivado de
     /// ReservaMoneyByCurrency de sus reservas en firme. Misma definicion canonica de "en firme"
-    /// (InManagement / Confirmed / Traveling / ToSettle) que el AR global. NUNCA mezcla monedas.
+    /// (InManagement / Confirmed / Closed; ADR-036 quito Traveling y ToSettle) que el AR global. NUNCA mezcla monedas.
     /// </summary>
     Task<List<FinanceCurrencyAmount>> GetCustomerReceivableByCurrencyAsync(int customerId, CancellationToken cancellationToken);
 

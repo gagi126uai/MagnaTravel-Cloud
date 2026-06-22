@@ -64,15 +64,16 @@ public class Adr020LockGuardTests
 
     // ===================== Guard directo =====================
 
+    // ADR-036 (2026-06-21): el candado de AUTORIZACION quedo SOLO en Confirmed. Traveling y Closed pasaron a
+    // SOLO LECTURA dura (su bloqueo lo impone la politica de capacidades, no este candado); ToSettle murio.
     [Theory]
     [InlineData(EstadoReserva.Confirmed, true)]
-    [InlineData(EstadoReserva.Traveling, true)]
-    [InlineData(EstadoReserva.ToSettle, true)]
-    [InlineData(EstadoReserva.Closed, true)]
+    [InlineData(EstadoReserva.Traveling, false)]
+    [InlineData(EstadoReserva.Closed, false)]
     [InlineData(EstadoReserva.Quotation, false)]
     [InlineData(EstadoReserva.Budget, false)]
     [InlineData(EstadoReserva.InManagement, false)]
-    public void IsLockedStatus_LocksFromConfirmedOnward(string status, bool expectedLocked)
+    public void IsLockedStatus_LocksOnlyConfirmed(string status, bool expectedLocked)
     {
         Assert.Equal(expectedLocked, ReservaLockGuard.IsLockedStatus(status));
     }

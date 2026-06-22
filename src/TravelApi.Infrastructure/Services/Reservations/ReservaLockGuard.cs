@@ -5,30 +5,35 @@ using TravelApi.Infrastructure.Persistence;
 namespace TravelApi.Infrastructure.Services.Reservations;
 
 /// <summary>
-/// ADR-020 F4 (candado): regla unica de "puedo editar esta reserva?".
+/// ADR-020 F4 (candado): regla unica de "puedo editar esta reserva CON autorizacion?".
 ///
-/// <para>Desde que una reserva esta CONFIRMADA en adelante (Confirmed, Traveling, ToSettle,
-/// Closed) queda bajo candado: cada write-path de la reserva (servicios, pasajeros, datos,
-/// adjuntos) exige que exista una <see cref="ReservaEditAuthorization"/> VIVA. En las etapas
-/// comerciales tempranas (Quotation, Budget, InManagement) la edicion es libre.</para>
+/// <para>En el estado CONFIRMADA (Confirmed) la reserva queda bajo candado: cada write-path
+/// (servicios, pasajeros, datos, adjuntos) exige que exista una <see cref="ReservaEditAuthorization"/>
+/// VIVA. En las etapas comerciales tempranas (Quotation, Budget, InManagement) la edicion es libre.</para>
+///
+/// <para><b>ADR-036 (2026-06-21, prepago puro):</b> se quitaron <c>Traveling</c> y <c>ToSettle</c> de este
+/// candado. NO porque pasen a ser editables — al contrario: Traveling es SOLO LECTURA TOTAL (Decision 2) y
+/// Closed tambien. El bloqueo REAL de esos estados NO vive aca sino en la POLITICA DE CAPACIDADES
+/// (<see cref="TravelApi.Domain.Reservations.ReservaCapabilityPolicy"/>.CanEditServices/CanEditPassengers/
+/// CanEditReservaData), que NO los incluye en sus estados editables. Esa politica es la PRIMERA COMPUERTA de
+/// cada write-path (ReservaCapacityRules.Ensure*EditableByStateAsync, BookingService.GuardServicesEditable*):
+/// rechaza Traveling/Closed de raiz, ANTES de este candado. Este candado solo gobierna el unico estado donde
+/// editar-con-autorizacion sigue siendo valido: Confirmed.</para>
 ///
 /// <para>Igual que <c>DeleteGuards</c>, vive en un solo lugar para que ReservaService,
 /// BookingService y los endpoints que tocan la reserva apliquen exactamente la misma regla.
-/// No cubre pagos, facturas ni vouchers: esos tienen sus propios guards y cobrar/facturar una
-/// reserva confirmada es flujo normal.</para>
+/// No cubre pagos, facturas ni vouchers: esos tienen sus propios guards.</para>
 /// </summary>
 public static class ReservaLockGuard
 {
     /// <summary>
-    /// Estados bajo candado. El candado nace en Confirmada y NO se levanta al avanzar (seria
-    /// absurdo que "En viaje" fuera mas editable que "Confirmada").
+    /// Estados bajo candado de AUTORIZACION (editar es valido pero requiere autorizacion viva). ADR-036:
+    /// queda SOLO Confirmed. Traveling y Closed ya no estan aca porque son solo-lectura dura: su bloqueo lo
+    /// impone la politica de capacidades antes de llegar a este candado (ver doc de la clase). ToSettle murio.
     /// </summary>
     private static readonly HashSet<string> LockedStatuses = new(StringComparer.OrdinalIgnoreCase)
     {
         EstadoReserva.Confirmed,
-        EstadoReserva.Traveling,
-        EstadoReserva.ToSettle,
-        EstadoReserva.Closed,
     };
 
     /// <summary>Mensaje unico para el usuario cuando la reserva esta con candado y no hay autorizacion.</summary>

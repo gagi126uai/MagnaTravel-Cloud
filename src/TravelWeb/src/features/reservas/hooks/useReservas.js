@@ -16,13 +16,13 @@ const emptyPage = {
   hasNextPage: false,
   summary: {
     // ADR-020: ciclo unico. Cada campo corresponde a un estado del backend.
+    // ADR-036: toSettleCount eliminado — "A liquidar" ya no existe como estado visible.
     quotationCount: 0,
     budgetCount: 0,
     inManagementCount: 0,
     activeCount: 0,
     reservedCount: 0,
     operativeCount: 0,
-    toSettleCount: 0,
     closedCount: 0,
     lostCount: 0,
     totalSaleActive: 0,
@@ -168,13 +168,13 @@ export function useReservas() {
     databaseUnavailable,
     tabCounts: {
       // ADR-020: todos los estados del ciclo unico, sin flags.
+      // ADR-036: toSettle eliminado — "A liquidar" ya no existe como estado visible en la UI.
       quotation: summary.quotationCount || 0,
       budget: summary.budgetCount || 0,
       inManagement: summary.inManagementCount || 0,
       active: summary.activeCount || 0,
       reserved: summary.reservedCount || 0,
       operative: summary.operativeCount || 0,
-      toSettle: summary.toSettleCount || 0,
       closed: summary.closedCount || 0,
       lost: summary.lostCount || 0,
     },

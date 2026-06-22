@@ -164,8 +164,10 @@ public class Adr023Tanda1SingleBalanceTests
     {
         await using var context = CreateContext();
         context.Customers.Add(new Customer { Id = 1, FullName = "Ana", IsActive = true });
+        // ADR-036 (2026-06-21): la reserva firme con deuda es Confirmed (Traveling ya no es firme cobrable).
+        // El presupuesto (Budget) sigue sin contar.
         context.Reservas.AddRange(
-            new Reserva { Id = 1, NumeroReserva = "F-1", Name = "R1", PayerId = 1, Status = EstadoReserva.Traveling },
+            new Reserva { Id = 1, NumeroReserva = "F-1", Name = "R1", PayerId = 1, Status = EstadoReserva.Confirmed },
             new Reserva { Id = 2, NumeroReserva = "F-2", Name = "R2", PayerId = 1, Status = EstadoReserva.Budget });
         context.ReservaMoneyByCurrency.AddRange(
             new ReservaMoneyByCurrency { ReservaId = 1, Currency = "ARS", Balance = 250m },
@@ -174,7 +176,7 @@ public class Adr023Tanda1SingleBalanceTests
 
         var detail = await BuildCustomers(context).GetCustomerAsync(1, CancellationToken.None);
 
-        Assert.Equal(250m, detail.CurrentBalance); // solo Traveling; el presupuesto NO
+        Assert.Equal(250m, detail.CurrentBalance); // solo la firme (Confirmed); el presupuesto NO
     }
 
     [Fact]

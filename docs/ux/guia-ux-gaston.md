@@ -374,7 +374,7 @@ Ronda 2:
 - Carteles por estado terminal (van en la franja de arriba de la pantalla de reserva):
   - **Perdida:** "Reserva perdida — solo lectura."
   - **Cancelada:** "Reserva cancelada — solo lectura."
-  - **Finalizada:** "Reserva finalizada — solo lectura. Reabrila a 'A liquidar' para facturar." (solo si NO tiene factura con CAE vivo)
+  - **Finalizada:** "Reserva finalizada — solo lectura. Reabrila para facturar." (solo si NO tiene factura con CAE vivo). **⚠️ ACTUALIZADO por ADR-036 (2026-06-21):** el texto ya NO dice "Reabrila a 'A liquidar'" porque el estado "A liquidar" se eliminó. Ver sección ADR-036 más abajo.
   - **Esperando reembolso:** "Cancelada, esperando el reembolso del operador — solo lectura."
 - Los estados activos (Budget, InManagement, etc.) conservan sus carteles orientativos de siempre.
 - El texto "Tiene que haber al menos 1 pasajero" debajo de "El cliente aceptó" **sí se mantiene** — es un requisito previo de acción, no un motivo de bloqueo de estado.
@@ -411,3 +411,59 @@ Ronda 2:
 - **(2026-06-19) Botón "Reabrir para facturar"** (nombre confirmado por Gastón) entre las acciones de cabecera de la reserva, **en la fila de acciones (junto a "Volver atrás" y "Archivar")**.
 - **(Feedback 2026-06-19) SOLO aparece cuando la reserva está Finalizada Y NO tiene factura con CAE vivo** (`requiresInvoiceAnnulmentToCancel = false`). Si ya tiene factura emitida, no tiene sentido reabrir para facturar.
 - **(2026-06-19) Al tocarlo pide MOTIVO OBLIGATORIO** antes de reabrir. Es una acción sensible (devuelve una reserva ya cerrada al circuito de facturación), por eso siempre queda registrado el motivo.
+- **⚠️ ACTUALIZADO por ADR-036 (2026-06-21, P1=B):** la mecánica cambió. "Reabrir para facturar" YA NO manda la reserva al estado "A liquidar" (ese estado se eliminó). Ahora la reserva **se queda en Finalizada pero se DESTRABA para facturar**, igual que cuando se destraba una Confirmada bajo candado: se factura sin cambiar de estado. Ver la sección ADR-036 más abajo para el detalle.
+
+## Prepago puro: anular vs cancelar, estados de solo lectura, aviso de operador y "no viaja si debe" (ADR-036, 2026-06-21)
+
+> Sesión de 6 preguntas con dibujos sobre el ciclo de la reserva, después del trabajo de backend
+> de ADR-036 ("Prepago puro"). Gastón pasó 7 decisiones base (vocabulario Cancelar/Anular, "En viaje"
+> de solo lectura, pantalla muerta de Anulada/Perdida, solo se anula —no se da de baja— una reserva con
+> plata viva, no viaja si el cliente debe, el operador impago es aviso que no traba) y respondió las 6
+> preguntas abiertas. El backend ya expone, por reserva: `Capabilities` (un `{ allowed, reason }` por
+> acción, ADR-035), el motivo por el que no puede pasar a "En viaje" (sin montos de costo), el estado de
+> pago al operador por servicio, y `requiresInvoiceAnnulmentToCancel`.
+
+**0) "A liquidar" deja de existir como estado — sacarlo de TODA la UI (decisión base 1).**
+- **(2026-06-21)** El estado "A liquidar" (ToSettle) se elimina por completo de lo que ve el usuario: se saca la **pestaña "A liquidar"** del listado de reservas, su **chip/badge violeta**, el **contador** de la pestaña, los **filtros** que lo nombran y cualquier **cartel** que lo mencione. No queda ningún rastro de "A liquidar" / "Apartar para liquidar" / "Marcar liquidada" en pantalla.
+- Donde antes un cartel o botón mandaba "a liquidar", ahora la acción es la de ADR-036 que corresponda (ver punto 6 para reabrir-Finalizada).
+
+**1) Vocabulario CANCELAR vs ANULAR — regla dura de palabras (decisión base 2).**
+- **(2026-06-21)** En este producto las dos palabras significan cosas distintas y NO son intercambiables:
+  - **"Cancelar" = el cliente paga el total / saldar.** (Es el sentido de "cancelar una deuda".)
+  - **"Anular" = dejar sin efecto el viaje / deshacer la reserva.**
+- **(2026-06-21)** Donde la UI hoy dice "Cancelar / Cancelada" con el sentido de DESHACER el viaje, debe pasar a decir **"Anular / Anulada"**. El "Cancelar" que solo cierra una ficha o un panel (el botón de descartar) NO se toca: ahí "Cancelar" sigue significando "salir sin guardar".
+- **(2026-06-21)** Es un cambio LUGAR POR LUGAR con criterio, NO un reemplazo ciego de todas las palabras "cancelar".
+
+**2) "En viaje" = solo lectura, con cartel chico arriba (decisión base 3 + P2-bis).**
+- **(2026-06-21)** Cuando la reserva está "En viaje", la pantalla es de solo lectura: no se edita, no se cobra, no se factura, no se anula (el backend ya apaga estas acciones).
+- **(2026-06-21, P2-bis)** Arriba va un **cartel chico** de solo lectura: **"✈️ Reserva en viaje — solo lectura."** (mismo lugar y estilo de los carteles terminales de ADR-035; un solo cartel arriba, nunca mensajitos por botón).
+
+**3) Pantalla muerta de Anulada y Perdida: CON cartel chico de solo lectura, SIN botones ni mensajitos (decisión base 4 + P2).**
+- **(2026-06-21, P2)** En "Anulada" y "Perdida" la pantalla es solo información: **SÍ va el cartel chico de "solo lectura" arriba** (el cartel de estado de ADR-035 se mantiene), pero **se sacan los botones de acción y los mensajitos por botón**. Lo que se elimina son los botones y los textos de motivo pegados a cada botón, NO el cartel de estado de arriba.
+- Carteles (los mismos de ADR-035, se conservan): **"Reserva perdida — solo lectura."** y **"Reserva cancelada — solo lectura."** (este último corresponde al estado interno Cancelled; ver punto 1: la palabra que ve el usuario para deshacer es "Anular/Anulada").
+
+**4) Una reserva con plata viva solo se ANULA — el botón "Eliminar" no aparece (decisión base 5 + P3=A).**
+- **(2026-06-21, P3=A)** En una reserva con plata viva (con pagos / proceso fiscal), **el botón "Eliminar" simplemente NO aparece**; solo se ofrece **"Anular"**. No se pone ninguna línea extra de explicación en el cartel de arriba ("en ningún lado fijo").
+- **(2026-06-21, P3=A)** La explicación de por qué no se puede dar de baja simple aparece **recién al abrir el panel de "Anular"** (dentro del panel, no antes). Mientras la reserva está en pantalla, el vendedor solo ve "Anular" disponible y "Eliminar" ausente, sin texto aclaratorio suelto.
+
+**5) Aviso de operador impago: etiqueta chica al lado de CADA servicio (decisión base 7 + P4=B).**
+- **(2026-06-21, P4=B)** El aviso de pago al operador es una **etiqueta chica al lado de CADA servicio**, NO una franja general arriba. Dos estados:
+  - Operador sin pagar: **"⚠️ Operador impago"** (ámbar).
+  - Operador pagado: **"✔ Operador pagado"** (verde).
+- **(2026-06-21, P4=B)** La etiqueta NO traba nada (el operador impago es solo un aviso, no impide viajar). Es estado, no acción.
+- **(2026-06-21, P4=B — regla de costos)** La etiqueta **NUNCA muestra montos**. Es solo el estado pagado/impago, sin cifras. Así puede mostrarse también a quien no tiene permiso de ver costos (`cobranzas.see_cost`) sin filtrar plata, consistente con la regla general 2026-06-05 ("sin permiso de ver costos, no se muestran montos en ninguna pantalla"). La etiqueta de estado SÍ se ve para todos; los montos de deuda al operador siguen tapados donde corresponda.
+- **(2026-06-21)** Esta etiqueta se conecta con una feature que viene después (un casillero "pagado al operador" por servicio); por ahora se diseña SOLO la etiqueta de estado, leyendo lo que el backend ya expone por servicio.
+
+**6) Reabrir una Finalizada para facturar = se DESTRABA, NO cambia de estado (P1=B).**
+- **(2026-06-21, P1=B)** El botón "Reabrir para facturar" (de ADR-035) ahora **destraba la reserva Finalizada para poder facturar, SIN cambiarla de estado**: se queda "Finalizada" pero abierta para emitir la factura, igual que cuando un administrador destraba una Confirmada bajo candado. **NO pasa a "A liquidar"** (ese estado ya no existe, punto 0).
+- **(2026-06-21, P1=B)** El cartel de Finalizada queda: **"Reserva finalizada — solo lectura. Reabrila para facturar."** (sin la palabra "A liquidar"). Sigue valiendo: solo aparece la opción si NO tiene factura con CAE vivo, y pide motivo obligatorio al destrabar.
+- **⚠️ CONTRADICCIÓN RESUELTA CON LA DECISIÓN MÁS NUEVA:** la guía de ADR-035 (2026-06-19) mandaba "Reabrir para facturar" → estado "A liquidar". La decisión de Gastón de hoy (P1=B + decisión base 1) **reemplaza** eso: ya no hay estado "A liquidar" y la reserva se destraba sin moverse de Finalizada. Vale ADR-036. (Nota de Gastón: en paralelo un experto ERP está estudiando desacoplar facturación/cobranza del ciclo de estados; por ahora se construye esta opción de "destrabar".)
+
+**7) "No viaja porque el cliente debe": cartel arriba + chip rojo de pago, enganchado a la config de aviso de cobro que YA EXISTE (decisión base 6 + P5=B).**
+- **(2026-06-21, P5=B)** Para pasar a "En viaje" el cliente tiene que estar 100% pagado. Si debe, **la reserva se queda en "Confirmada"** (no pasa a "En viaje") hasta que se cobre; cuando se cobra el total, recién ahí pasa a "En viaje".
+- **(2026-06-21, P5=B)** Mientras debe, se muestra: un **cartel chico arriba** explicando que no puede viajar porque hay saldo pendiente, **+ un chip de pago rojo "Debe — no viaja"** (chip de pago secundario, con el prefijo "Pago:" en gris como manda ADR-035, distinto del badge de estado operativo). El cartel y el chip explican el porqué **sin mostrar montos de costo** (puede mostrar lo que el cliente debe, que no es costo; nunca costo ni deuda al operador).
+- **(2026-06-21, P5=B — IMPORTANTE para el implementador)** Este aviso **se engancha con la configuración existente** de "cuántos días antes avisar sobre algo no cobrado al 100%". **NO se inventa un parámetro nuevo.** La config existente es **"Alertas por reservas próximas con deuda"** con su casillero **"Días previos para alertar"**, en Configuración → Operativa/Cobranzas/Facturación (`OperationalFinanceSettingsTab.jsx`; campos `enableUpcomingUnpaidReservationNotifications` y `upcomingUnpaidReservationAlertDays`, endpoint `/settings/operational-finance`). El cartel/chip de "Debe — no viaja" se apoya en ese mismo umbral de días, no en uno nuevo.
+
+**8) Servicios de una reserva deshecha = "Anulado" (decisión base 6-servicios + P6=A).**
+- **(2026-06-21, P6=A)** Cuando la reserva quedó deshecha, **todos sus servicios muestran "Anulado"** en su badge de estado, tanto si la reserva está **Perdida** como si está **Anulada (Cancelled)**. Un solo verbo, coherente con que la reserva se "Anula".
+- **(2026-06-21)** Esto **reemplaza** la regla A-cuater de ADR-035 (2026-06-19), que mostraba "Anulado" para Perdida y "Cancelado" para Cancelled. Ahora ambas muestran **"Anulado"**. Sigue siendo SOLO presentación (no muta los datos del backend).

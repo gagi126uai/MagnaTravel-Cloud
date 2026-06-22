@@ -65,7 +65,8 @@ public class ReservaServiceCancellationTests
         => new(context, _mapperMock.Object, _settingsServiceMock.Object, BuildUserManager(), NullLogger<ReservaService>.Instance);
 
     // ADR-020 (B5): desde Cotizacion/Presupuesto NO existe cancelacion (la salida es Perdido o el
-    // borrado). Cancelled solo es alcanzable desde {InManagement, Confirmed, Traveling, ToSettle}.
+    // borrado). ADR-036 (2026-06-21): Cancelled solo es alcanzable desde {InManagement, Confirmed} (Traveling
+    // ya no cancela; ToSettle murio) y SOLO si no hay plata viva (cobros o factura con CAE).
     [Fact]
     public async Task UpdateStatusAsync_CancelFromBudget_IsRejected()
     {
@@ -172,8 +173,14 @@ public class ReservaServiceCancellationTests
         Assert.Equal(VoucherStatuses.Issued, voucher.Status);
     }
 
+    /// <summary>
+    /// ADR-036 (2026-06-21): una reserva con COBROS VIVOS NO admite baja simple (cancelacion directa). Hay
+    /// que deshacerla por el camino formal de anulacion (NC/ND, ADR-002), que revierte la plata con rastro.
+    /// El guard de escritura en la transicion a Cancelled rechaza con InvalidOperationException; el estado y el
+    /// pago NO cambian. (Antes este test fijaba el comportamiento previo, que dejaba cancelar con pagos vivos.)
+    /// </summary>
     [Fact]
-    public async Task UpdateStatusAsync_Cancel_WithRegisteredPayments_KeepsPaymentsAndDoesNotRefund()
+    public async Task UpdateStatusAsync_CancelWithLivePayments_IsRejected_RoutesToAnnul()
     {
         await using var context = new AppDbContext(_dbOptions);
         context.Reservas.Add(new Reserva
@@ -201,21 +208,76 @@ public class ReservaServiceCancellationTests
 
         var service = BuildService(context);
 
-        var result = await service.UpdateStatusAsync(1, EstadoReserva.Cancelled);
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.UpdateStatusAsync(1, EstadoReserva.Cancelled));
 
-        Assert.Equal(EstadoReserva.Cancelled, result.Status);
-
-        // El pago original sigue en la tabla, NO se borra ni se marca como
-        // soft-deleted. NO se genera ningun pago de reversion (refund/CN
-        // automatico es B2 futuro).
-        var paymentCount = await context.Payments.CountAsync(p => p.ReservaId == 1);
-        Assert.Equal(1, paymentCount);
+        // La reserva sigue Confirmada (no se cancelo) y el pago intacto: nada se deshizo por baja simple.
+        var dbReserva = await context.Reservas.AsNoTracking().FirstAsync(r => r.Id == 1);
+        Assert.Equal(EstadoReserva.Confirmed, dbReserva.Status);
 
         var payment = await context.Payments.AsNoTracking().FirstAsync(p => p.Id == 1);
         Assert.False(payment.IsDeleted);
         Assert.Equal("Paid", payment.Status);
         Assert.Equal(600m, payment.Amount);
-        Assert.Equal(PaymentEntryTypes.Payment, payment.EntryType);
+    }
+
+    /// <summary>
+    /// ADR-036: una reserva con pagos PUENTE (AffectsCash=false: sobrepago a saldo a favor / saldo a favor
+    /// aplicado) tambien cuenta como plata viva — la baja simple se rechaza igual.
+    /// </summary>
+    [Fact]
+    public async Task UpdateStatusAsync_CancelWithBridgePayment_IsRejected()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        context.Reservas.Add(new Reserva
+        {
+            Id = 1,
+            NumeroReserva = "F-2026-0005b",
+            Name = "Reserva con puente",
+            Status = EstadoReserva.Confirmed
+        });
+        context.Payments.Add(new Payment
+        {
+            Id = 1,
+            ReservaId = 1,
+            Amount = 100m,
+            Method = "Bridge",
+            Status = "Paid",
+            EntryType = PaymentEntryTypes.Payment,
+            AffectsCash = false, // pago puente: no movio caja pero es plata viva
+            PaidAt = DateTime.UtcNow
+        });
+        await context.SaveChangesAsync();
+
+        var service = BuildService(context);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.UpdateStatusAsync(1, EstadoReserva.Cancelled));
+
+        var dbReserva = await context.Reservas.AsNoTracking().FirstAsync(r => r.Id == 1);
+        Assert.Equal(EstadoReserva.Confirmed, dbReserva.Status);
+    }
+
+    /// <summary>
+    /// ADR-036: una reserva firme SIN plata viva (sin cobros ni factura con CAE) SI admite baja simple.
+    /// </summary>
+    [Fact]
+    public async Task UpdateStatusAsync_CancelCleanFirmReserva_IsAllowed()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        context.Reservas.Add(new Reserva
+        {
+            Id = 1,
+            NumeroReserva = "F-2026-0005c",
+            Name = "Reserva limpia",
+            Status = EstadoReserva.Confirmed
+        });
+        await context.SaveChangesAsync();
+
+        var service = BuildService(context);
+
+        var result = await service.UpdateStatusAsync(1, EstadoReserva.Cancelled);
+        Assert.Equal(EstadoReserva.Cancelled, result.Status);
     }
 
     /// <summary>

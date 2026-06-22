@@ -179,12 +179,15 @@ public class SourceLeadWonHookTests
     // ===================== (2) Job de lifecycle (Confirmed -> Traveling) =====================
 
     [Fact]
-    public async Task LifecycleJob_ConfirmedToTraveling_MarksLeadWon()
+    public async Task LifecycleJob_ConfirmedToTraveling_PreservesLeadWon_Idempotent()
     {
-        // Caso defensivo: una reserva llega a Traveling por el job (StartDate alcanzada) con un lead que
-        // todavia no estaba Ganado. El hook en el job lo cubre.
+        // ADR-036 (2026-06-21): el lead-won se dispara al ENTRAR en firme (InManagement/Confirmed), NO al pasar
+        // a Traveling (Traveling salio de ActiveCollectionStatuses). Asi que para una reserva que ya llego a
+        // Confirmed su lead ya esta Ganado. El job que la promueve a Traveling NO re-toca el lead: idempotente,
+        // conserva la fecha del primer Ganado. (Antes este test fijaba que el paso a Traveling "rescataba" el
+        // lead-won; ese rescate ya no aplica.)
         await using var ctx = NewContext();
-        var lead = new Lead { FullName = "Bruno", Phone = "1100330044", Status = LeadStatus.Contacted };
+        var lead = new Lead { FullName = "Bruno", Phone = "1100330044", Status = LeadStatus.Won };
         ctx.Leads.Add(lead);
 
         var reserva = new Reserva
@@ -195,6 +198,7 @@ public class SourceLeadWonHookTests
             SourceLeadId = lead.Id,
             StartDate = DateTime.UtcNow.Date.AddDays(-1), // el viaje ya arranco -> promueve a Traveling
             AdultCount = 1,
+            Balance = 0m, // ADR-036: candado de pago — el cliente debe estar saldado para viajar
         };
         ctx.Reservas.Add(reserva);
         await ctx.SaveChangesAsync();
@@ -205,8 +209,63 @@ public class SourceLeadWonHookTests
         var refreshedReserva = await ctx.Reservas.FindAsync(reserva.Id);
         Assert.Equal(EstadoReserva.Traveling, refreshedReserva!.Status);
 
+        // El lead sigue Ganado (no se rompio ni se duplico).
         var refreshedLead = await ctx.Leads.FindAsync(lead.Id);
         Assert.Equal(LeadStatus.Won, refreshedLead!.Status);
+    }
+
+    // ===================== ADR-036: gate de pago del cliente en el job (Confirmed -> Traveling) =====================
+
+    [Fact]
+    public async Task LifecycleJob_ConfirmedToTraveling_ClientNotFullyPaid_DoesNotPromote_NoThrow()
+    {
+        // ADR-036 (2026-06-21): candado DURO de pago del cliente. Si la reserva todavia debe (Balance > 0), el
+        // job NO la promueve a Traveling, NO lanza excepcion, y se reintenta en la proxima corrida.
+        await using var ctx = NewContext();
+        var reserva = new Reserva
+        {
+            Name = "Viaje con deuda",
+            NumeroReserva = "RES-00031",
+            Status = EstadoReserva.Confirmed,
+            StartDate = DateTime.UtcNow.Date.AddDays(-1), // el viaje ya arranco
+            AdultCount = 1,
+            Balance = 500m, // el cliente todavia debe
+        };
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        var job = NewLifecycleJob(ctx);
+        // No debe lanzar: un file con saldo no aborta la corrida.
+        var promoted = await job.AutoTransitionConfirmedToTravelingAsync(CancellationToken.None);
+
+        Assert.Equal(0, promoted);
+        var refreshed = await ctx.Reservas.FindAsync(reserva.Id);
+        Assert.Equal(EstadoReserva.Confirmed, refreshed!.Status); // sigue Confirmada, no viajo
+    }
+
+    [Fact]
+    public async Task LifecycleJob_ConfirmedToTraveling_ClientFullyPaid_Promotes()
+    {
+        // ADR-036: con el cliente saldado (Balance <= 0) el job SI promueve a Traveling.
+        await using var ctx = NewContext();
+        var reserva = new Reserva
+        {
+            Name = "Viaje saldado",
+            NumeroReserva = "RES-00032",
+            Status = EstadoReserva.Confirmed,
+            StartDate = DateTime.UtcNow.Date.AddDays(-1),
+            AdultCount = 1,
+            Balance = 0m, // saldado
+        };
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        var job = NewLifecycleJob(ctx);
+        var promoted = await job.AutoTransitionConfirmedToTravelingAsync(CancellationToken.None);
+
+        Assert.Equal(1, promoted);
+        var refreshed = await ctx.Reservas.FindAsync(reserva.Id);
+        Assert.Equal(EstadoReserva.Traveling, refreshed!.Status);
     }
 
     // ===================== (2) Revert de una Cancelada a En gestion =====================

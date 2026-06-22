@@ -8,8 +8,12 @@ import React from 'react';
  * Ciclo nuevo (ADR-020, ciclo unico sin flags):
  *   Quotation → Budget → InManagement → Confirmed → Traveling → Closed
  *   Lost: cotizacion/presupuesto que no prospero (queda en historial)
- *   ToSettle: apartado para liquidar con el operador (desvio opcional post-viaje)
- *   Cancelled: cancelacion con proceso fiscal
+ *   Cancelled: la reserva fue anulada con proceso fiscal
+ *
+ * ADR-036 (2026-06-21):
+ *   - "ToSettle" (A liquidar) eliminado de la UI. No aparece en ningun badge ni contador.
+ *   - "Cancelada" → ahora se muestra como "Anulada" al usuario (el termino interno del backend
+ *     sigue siendo "Cancelled", pero en la UI "Anular" = deshacer el viaje).
  *
  * "Sold" (Vendida) YA NO EXISTE desde ADR-020. Si llega del backend como legacy,
  * el fallback lo muestra igual pero sin color ni icono especial.
@@ -43,17 +47,11 @@ export const statusConfig = {
         color: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-300 dark:border-amber-800',
         icon: '🔒',
     },
-    // En viaje: el cliente esta viajando.
+    // En viaje: el cliente esta viajando. ADR-036: solo lectura.
     Traveling: {
         label: 'En viaje',
         color: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-800',
         icon: '✈️',
-    },
-    // A liquidar: desvio opcional post-viaje para cerrar cuentas con el operador.
-    ToSettle: {
-        label: 'A liquidar',
-        color: 'bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-900/20 dark:text-violet-300 dark:border-violet-800',
-        icon: '📊',
     },
     // Finalizada: reserva cerrada, ciclo completo.
     Closed: {
@@ -68,9 +66,11 @@ export const statusConfig = {
         color: 'bg-slate-300 text-slate-600 border-slate-400 line-through dark:bg-slate-700 dark:text-slate-400 dark:border-slate-600',
         icon: '❌',
     },
-    // Cancelada: proceso de cancelacion con implicancias fiscales.
+    // Anulada (estado interno: Cancelled): la reserva fue deshecha con proceso fiscal.
+    // ADR-036: el termino visible para el usuario es "Anulada" (anular = deshacer el viaje).
+    // "Cancelar" en este producto significa "saldar una deuda"; por eso NO se usa "Cancelada".
     Cancelled: {
-        label: 'Cancelada',
+        label: 'Anulada',
         color: 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/20 dark:text-rose-300 dark:border-rose-800',
         icon: '🚫',
     },
@@ -86,8 +86,10 @@ export const statusConfig = {
  * Estados que tienen el candado activo (confirmada o posterior).
  * Cuando una reserva esta en uno de estos estados, editar cualquier dato
  * requiere autorizacion explicita (ADR-020 F4).
+ *
+ * ADR-036: "ToSettle" eliminado — ya no existe como estado en la UI.
  */
-export const LOCKED_STATUSES = new Set(['Confirmed', 'Traveling', 'ToSettle', 'Closed']);
+export const LOCKED_STATUSES = new Set(['Confirmed', 'Traveling', 'Closed']);
 
 /** Devuelve true si el status tiene candado activo. */
 export function isStatusLocked(status) {

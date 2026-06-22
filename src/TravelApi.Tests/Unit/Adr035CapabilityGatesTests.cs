@@ -233,49 +233,44 @@ public class Adr035CapabilityGatesTests
     // =====================================================================================================
 
     [Fact]
-    public async Task RevertClosedToToSettle_Allowed_WithReason()
+    public async Task RevertClosedToToSettle_NoLongerAllowed_ADR036()
     {
+        // ADR-036 (2026-06-21): se ELIMINO la reapertura "Closed -> ToSettle para facturar tarde". ToSettle
+        // murio; corregir una factura de una Finalizada es por NC/ND, sin reabrir el estado. El revert a un
+        // estado fuera de la matriz (ToSettle ya no es destino legal de Closed) rebota.
         await using var ctx = new AppDbContext(NewOptions());
         var reserva = await SeedReservaWithDebtAsync(ctx, EstadoReserva.Closed);
         reserva.ClosedAt = DateTime.UtcNow.AddDays(-1);
         await ctx.SaveChangesAsync();
 
         var service = NewReservaService(ctx);
-        var result = await service.RevertStatusAsync(
-            reserva.PublicId.ToString(),
-            new RevertStatusRequest(EstadoReserva.ToSettle, null, "reabrir para facturar tarde"),
-            actorUserId: "admin-1", actorUserName: "Admin", actorIsAdmin: true, CancellationToken.None);
-
-        Assert.Equal(EstadoReserva.ToSettle, result.Status);
-
-        var refreshed = await ctx.Reservas.FindAsync(reserva.Id);
-        Assert.Equal(EstadoReserva.ToSettle, refreshed!.Status);
-        Assert.Null(refreshed.ClosedAt); // se limpio el ClosedAt al reabrir
-    }
-
-    [Fact]
-    public async Task RevertClosedToToSettle_NonAdmin_RequiresSupervisorAndReason()
-    {
-        // El revert sensible exige autorizacion de supervisor para no-admin (no se relaja por ADR-035).
-        await using var ctx = new AppDbContext(NewOptions());
-        var reserva = await SeedReservaWithDebtAsync(ctx, EstadoReserva.Closed);
-        var service = NewReservaService(ctx);
-
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAnyAsync<Exception>(() =>
             service.RevertStatusAsync(
                 reserva.PublicId.ToString(),
-                new RevertStatusRequest(EstadoReserva.ToSettle, AuthorizedBySuperiorUserId: null, "reabrir"),
-                actorUserId: "vendedor-1", actorUserName: "Vendedor", actorIsAdmin: false, CancellationToken.None));
+                new RevertStatusRequest("ToSettle", null, "reabrir para facturar tarde"),
+                actorUserId: "admin-1", actorUserName: "Admin", actorIsAdmin: true, CancellationToken.None));
+
+        var refreshed = await ctx.Reservas.FindAsync(reserva.Id);
+        Assert.Equal(EstadoReserva.Closed, refreshed!.Status); // sigue Finalizada
     }
 
     [Fact]
-    public void Invoice_Capability_EnabledInToSettle()
+    public void RevertClosed_OnlyTravelingIsLegalTarget_ADR036()
     {
-        // Tras reabrir a ToSettle, la politica habilita la factura de venta (allow-list incluye ToSettle).
+        // ADR-036: Closed revierte SOLO a Traveling (revert de cierre prematuro). ToSettle no es destino.
+        Assert.True(TravelApi.Domain.Reservations.ReservaStatusTransitions.Revert
+            .TryGetValue(EstadoReserva.Closed, out var targets));
+        Assert.Equal(new[] { EstadoReserva.Traveling }, targets);
+    }
+
+    [Fact]
+    public void Invoice_Capability_DisabledInTraveling_ADR036()
+    {
+        // ADR-036: en viaje NO se factura (la factura de venta se emite en Confirmada, antes de viajar).
         var caps = TravelApi.Domain.Reservations.ReservaCapabilityPolicy.For(
             new TravelApi.Domain.Reservations.ReservaCapabilityContext(
-                EstadoReserva.ToSettle, Balance: 0m, false, false, false, false));
-        Assert.True(caps.CanInvoiceSale.Allowed);
+                EstadoReserva.Traveling, Balance: 0m, false, false, false, false));
+        Assert.False(caps.CanInvoiceSale.Allowed);
     }
 
     // =====================================================================================================

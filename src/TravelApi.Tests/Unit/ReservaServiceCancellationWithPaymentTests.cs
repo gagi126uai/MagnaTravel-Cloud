@@ -22,7 +22,13 @@ namespace TravelApi.Tests.Unit;
 /// <summary>
 /// B1.15 Fase 2a (Decision 6) — Cancelacion de reservas con cobros/facturas.
 /// Pinea: si el actor NO es Admin, exige reservas.cancel; si la reserva tiene
-/// pagos o facturas, exige ademas reservas.cancel_with_payment.
+/// pagos o facturas, exige ademas reservas.cancel_with_payment (capa AUTHZ).
+///
+/// <para>ADR-036 (2026-06-21): por ENCIMA de la authz hay ahora un guard de INTEGRIDAD — una reserva con
+/// plata viva (cobros o factura con CAE) NO admite baja simple aunque el actor tenga el permiso: hay que
+/// ANULARLA (NC/ND). Por eso los casos "cancela con pagos y permiso completo / admin / sin actor" ahora
+/// esperan InvalidOperationException (el guard de integridad), NO exito. Los casos de 403 (authz) siguen
+/// dando 403 porque la authz corre antes que el guard de integridad.</para>
 /// </summary>
 public class ReservaServiceCancellationWithPaymentTests
 {
@@ -160,8 +166,10 @@ public class ReservaServiceCancellationWithPaymentTests
     }
 
     [Fact]
-    public async Task Cancel_with_payments_and_full_permissions_succeeds()
+    public async Task Cancel_with_payments_and_full_permissions_BlockedByIntegrityGuard_ADR036()
     {
+        // ADR-036: aunque el actor tenga reservas.cancel + cancel_with_payment (pasa la AUTHZ), el guard de
+        // INTEGRIDAD bloquea la baja simple de una reserva con cobros vivos: hay que anularla (NC/ND).
         await using var ctx = new AppDbContext(_dbOptions);
         await SeedReserva(ctx, withPayment: true, withInvoice: false);
         var accessor = BuildContextAccessor("colab-1", "Colaborador");
@@ -170,8 +178,11 @@ public class ReservaServiceCancellationWithPaymentTests
 
         var publicId = (await ctx.Reservas.AsNoTracking().FirstAsync()).PublicId;
 
-        var dto = await service.UpdateStatusAsync(publicId.ToString(), EstadoReserva.Cancelled, "colab-1", CancellationToken.None);
-        Assert.Equal(EstadoReserva.Cancelled, dto.Status);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.UpdateStatusAsync(publicId.ToString(), EstadoReserva.Cancelled, "colab-1", CancellationToken.None));
+
+        var reserva = await ctx.Reservas.AsNoTracking().FirstAsync();
+        Assert.Equal(EstadoReserva.Confirmed, reserva.Status); // no se cancelo
     }
 
     [Fact]
@@ -190,25 +201,30 @@ public class ReservaServiceCancellationWithPaymentTests
     }
 
     [Fact]
-    public async Task Cancel_as_Admin_bypasses_permission_checks()
+    public async Task Cancel_as_Admin_StillBlockedByIntegrityGuard_WhenLiveMoney_ADR036()
     {
+        // ADR-036: el Admin bypassa la AUTHZ (no necesita permisos), pero el guard de INTEGRIDAD no es de
+        // permisos — protege la coherencia fiscal/de plata. Una reserva con cobros + factura viva NO se baja
+        // ni siquiera como Admin: hay que anularla (NC/ND).
         await using var ctx = new AppDbContext(_dbOptions);
         await SeedReserva(ctx, withPayment: true, withInvoice: true);
-        // Admin sin permisos explicitos en el resolver — el service bypassa por rol.
         var accessor = BuildContextAccessor("admin-1", "Admin");
         var resolver = BuildResolver("admin-1");
         var service = BuildService(ctx, accessor, resolver);
 
         var publicId = (await ctx.Reservas.AsNoTracking().FirstAsync()).PublicId;
-        var dto = await service.UpdateStatusAsync(publicId.ToString(), EstadoReserva.Cancelled, "admin-1", CancellationToken.None);
-        Assert.Equal(EstadoReserva.Cancelled, dto.Status);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.UpdateStatusAsync(publicId.ToString(), EstadoReserva.Cancelled, "admin-1", CancellationToken.None));
+
+        var reserva = await ctx.Reservas.AsNoTracking().FirstAsync();
+        Assert.Equal(EstadoReserva.Confirmed, reserva.Status);
     }
 
     [Fact]
-    public async Task Cancel_when_actorUserId_is_null_preserves_legacy_behavior()
+    public async Task Cancel_when_actorUserId_is_null_StillBlockedByIntegrityGuard_WhenLiveMoney_ADR036()
     {
-        // Sin actor concreto (path de tests unitarios sin auth real), no se aplica
-        // el chequeo de cancel/cancel_with_payment. Comportamiento legacy preservado.
+        // ADR-036: sin actor concreto NO se aplica la AUTHZ (cancel/cancel_with_payment), PERO el guard de
+        // INTEGRIDAD (plata viva) corre en el camino COMPARTIDO de transicion, asi que igual bloquea la baja.
         await using var ctx = new AppDbContext(_dbOptions);
         await SeedReserva(ctx, withPayment: true, withInvoice: false);
         var accessor = BuildContextAccessor("ignored");
@@ -216,7 +232,10 @@ public class ReservaServiceCancellationWithPaymentTests
         var service = BuildService(ctx, accessor, resolver);
 
         var publicId = (await ctx.Reservas.AsNoTracking().FirstAsync()).PublicId;
-        var dto = await service.UpdateStatusAsync(publicId.ToString(), EstadoReserva.Cancelled, actorUserId: null, CancellationToken.None);
-        Assert.Equal(EstadoReserva.Cancelled, dto.Status);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.UpdateStatusAsync(publicId.ToString(), EstadoReserva.Cancelled, actorUserId: null, CancellationToken.None));
+
+        var reserva = await ctx.Reservas.AsNoTracking().FirstAsync();
+        Assert.Equal(EstadoReserva.Confirmed, reserva.Status);
     }
 }

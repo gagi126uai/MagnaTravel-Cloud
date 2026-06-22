@@ -45,14 +45,14 @@ public static class ReservaCapacityRules
     /// reserva. Cierra la incoherencia de fondo: hoy una reserva Perdida/Cancelada/Esperando-reembolso o
     /// Finalizada dejaba agregar/editar/borrar/cancelar servicios y marcar "Solicitado".
     ///
-    /// <para>Modelo coherente del dueño (3 grupos):</para>
+    /// <para>Modelo coherente del dueño (ADR-036, prepago puro — 3 grupos):</para>
     /// <list type="bullet">
     ///   <item><b>EN ARMADO</b> (Quotation, Budget, InManagement): editar servicios libre.</item>
-    ///   <item><b>EN FIRME</b> (Confirmed, Traveling, ToSettle): editar servicios SOLO con autorizacion viva
+    ///   <item><b>EN FIRME EDITABLE</b> (Confirmed): editar servicios SOLO con autorizacion viva
     ///     (el candado <c>ReservaLockGuard</c>, que corre DESPUES de esta compuerta).</item>
-    ///   <item><b>CERRADOS</b> (Closed, Lost, Cancelled, PendingOperatorRefund): servicios SOLO LECTURA —
-    ///     bloqueado de raiz. NINGUNA autorizacion lo desbloquea. Para tocar una Finalizada hay que reabrirla
-    ///     a "A liquidar" primero (RevertStatusAsync).</item>
+    ///   <item><b>SOLO LECTURA</b> (Traveling, Closed, Lost, Cancelled, PendingOperatorRefund): servicios SOLO
+    ///     LECTURA — bloqueado de raiz. NINGUNA autorizacion lo desbloquea. ADR-036: "En viaje" (Traveling) se
+    ///     suma a este grupo (el viaje ya empezo: no se edita ni con autorizacion). ToSettle murio.</item>
     /// </list>
     ///
     /// <para>Decide con la FUENTE UNICA <see cref="ReservaCapabilityPolicy"/> (el mismo
@@ -183,16 +183,19 @@ public static class ReservaCapacityRules
 
     /// <summary>
     /// Motivo legible (español, sin montos/costos) para el bloqueo de servicios por estado de solo lectura.
-    /// Diferencia el estado para que el vendedor entienda QUE pasa y, en el caso de Finalizada, COMO seguir
-    /// (reabrir a "A liquidar"). Cualquier estado terminal no listado cae al mensaje generico.
+    /// Diferencia el estado para que el vendedor entienda QUE pasa. Cualquier estado no listado cae al mensaje
+    /// generico.
     /// </summary>
     private static string ReadOnlyServicesMessageFor(string status)
         => ReadOnlyMessageFor(status, ReservaEditableArea.Services);
 
     /// <summary>
-    /// Motivo legible por estado terminal y por area. El "que" cambia (servicios / pasajeros / datos), pero la
-    /// guia es la misma que en servicios: para una Finalizada (Closed) se indica reabrir a "A liquidar". Sin
-    /// montos ni costos (respeta el enmascarado see_cost).
+    /// Motivo legible por estado de solo lectura y por area. El "que" cambia (servicios / pasajeros / datos).
+    /// Sin montos ni costos (respeta el enmascarado see_cost).
+    ///
+    /// <para>ADR-036 (2026-06-21): "En viaje" (Traveling) se suma a los estados de solo lectura (el viaje ya
+    /// empezo). Y el mensaje de Finalizada (Closed) YA NO sugiere "reabrir a A liquidar" — ese camino murio
+    /// con ToSettle. Para corregir una factura de una reserva finalizada se usa NC/ND, sin reabrir el estado.</para>
     /// </summary>
     private static string ReadOnlyMessageFor(string status, ReservaEditableArea area)
     {
@@ -203,9 +206,10 @@ public static class ReservaCapacityRules
             _ => "los servicios"
         };
 
+        if (string.Equals(status, EstadoReserva.Traveling, StringComparison.OrdinalIgnoreCase))
+            return $"La reserva esta en viaje: {what} son de solo lectura (el viaje ya empezo).";
         if (string.Equals(status, EstadoReserva.Closed, StringComparison.OrdinalIgnoreCase))
-            return $"La reserva esta finalizada: {what} son de solo lectura. " +
-                   "Para tocarla, reabrila a \"A liquidar\" primero.";
+            return $"La reserva esta finalizada: {what} son de solo lectura.";
         if (string.Equals(status, EstadoReserva.Cancelled, StringComparison.OrdinalIgnoreCase))
             return $"La reserva esta cancelada: {what} son de solo lectura.";
         if (string.Equals(status, EstadoReserva.Lost, StringComparison.OrdinalIgnoreCase))

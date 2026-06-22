@@ -148,7 +148,6 @@ public class AlertServiceOperationalDeadlinesTests
     [InlineData(EstadoReserva.Confirmed, true)]
     [InlineData(EstadoReserva.Traveling, true)]
     [InlineData(EstadoReserva.Cancelled, false)]
-    [InlineData(EstadoReserva.ToSettle, false)]
     [InlineData(EstadoReserva.Closed, false)]
     [InlineData(EstadoReserva.Lost, false)]
     [InlineData(EstadoReserva.PendingOperatorRefund, false)]

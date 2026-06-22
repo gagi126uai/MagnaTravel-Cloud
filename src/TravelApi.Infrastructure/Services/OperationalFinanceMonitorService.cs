@@ -36,10 +36,10 @@ public class OperationalFinanceMonitorService
         var threshold = today.AddDays(Math.Max(settings.UpcomingUnpaidReservationAlertDays, 1));
 
         // Predicado NEGATIVO (todo lo que NO esta cancelado/cerrado/perdido). ADR-020 (2026-06-07):
-        // este patron ya incluye automaticamente InManagement/Confirmed/Traveling/ToSettle y eso es
-        // CORRECTO -> una reserva en gestion o a liquidar con saldo pendiente y viaje proximo debe
-        // generar el aviso "sale pronto sin pagar". Excluimos Lost igual que Cancelled (nunca tuvo
-        // venta exigible; ademas el gate de -> Lost ya garantiza que no tiene pagos vivos).
+        // este patron ya incluye automaticamente InManagement/Confirmed/Traveling (ADR-036 quito ToSettle) y
+        // eso es CORRECTO -> una reserva en gestion con saldo pendiente y viaje proximo debe generar el aviso
+        // "sale pronto sin pagar". Excluimos Lost igual que Cancelled (nunca tuvo venta exigible; ademas el
+        // gate de -> Lost ya garantiza que no tiene pagos vivos).
         var reservas = await _dbContext.Reservas
             .Include(r => r.Payer)
             .Where(r =>

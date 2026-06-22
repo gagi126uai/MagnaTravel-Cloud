@@ -13,13 +13,13 @@ import { translateStatus } from "./ReservaStatusBadge";
  * - Si NO es Admin: pide supervisor + reason obligatorios.
  * - Si la API devolvio HardBlockers, los muestra en rojo y deshabilita el submit.
  *
- * Props adicionales para el flujo "Reabrir para facturar" (ADR-035 fix #2):
+ * Props adicionales para el flujo "Reabrir para facturar" (ADR-036):
  * - forceReason: cuando es true, el motivo es obligatorio TAMBIÉN para admin (mín. 10 caracteres).
  *   Justificación: reabrir una reserva Finalizada es sensible (vuelve al circuito fiscal);
  *   siempre queda registrado el motivo para auditoria.
- * - lockedTarget: cuando viene con valor (ej. "ToSettle"), pre-selecciona ese target,
- *   oculta el selector y cambia el título/botón al copy propio de la acción.
- *   Sin esta prop el modal se comporta igual que antes.
+ * - lockedTarget: cuando viene con valor, pre-selecciona ese target y oculta el selector.
+ *   ADR-036: ya no se pasa "ToSettle" porque ese estado fue eliminado. Sin lockedTarget,
+ *   el modal muestra todas las opciones del backend (auto-selecciona si solo hay una).
  */
 export function RevertStatusModal({ reserva, onClose, onReverted, forceReason = false, lockedTarget = null }) {
     const [options, setOptions] = useState(null);
@@ -91,9 +91,10 @@ export function RevertStatusModal({ reserva, onClose, onReverted, forceReason = 
                         <Undo2 className="h-5 w-5 text-amber-600" />
                         <div>
                             {/* Cuando lockedTarget viene seteado, el titulo cambia al de la accion especifica.
-                                Sin lockedTarget: titulo generico "Revertir estado". */}
+                                Sin lockedTarget: titulo generico "Revertir estado".
+                                ADR-036: ya no se usa lockedTarget="ToSettle" (ese estado fue eliminado). */}
                             <h3 className="text-lg font-bold text-slate-900 dark:text-white">
-                                {lockedTarget === "ToSettle" ? "Reabrir para facturar" : "Revertir estado de la reserva"}
+                                {lockedTarget ? "Reabrir para facturar" : "Revertir estado de la reserva"}
                             </h3>
                             <p className="text-xs text-muted-foreground">{reserva.numeroReserva} - actualmente {translateStatus(reserva.status)}</p>
                         </div>
@@ -227,8 +228,8 @@ export function RevertStatusModal({ reserva, onClose, onReverted, forceReason = 
                         data-testid="revert-submit-btn"
                     >
                         {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Undo2 className="h-4 w-4" />}
-                        {/* Texto del botón cambia según la accion: "Reabrir" para el flujo ToSettle, "Revertir" para el generico */}
-                        {lockedTarget === "ToSettle" ? "Reabrir" : "Revertir"}
+                        {/* ADR-036: "Reabrir" cuando hay lockedTarget (flujo Reabrir-para-facturar), "Revertir" para el generico */}
+                        {lockedTarget ? "Reabrir" : "Revertir"}
                     </button>
                 </div>
             </div>

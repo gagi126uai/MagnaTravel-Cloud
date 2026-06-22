@@ -13,13 +13,16 @@ namespace TravelApi.Infrastructure.Services.Reservations;
 /// <para><b>Por que un helper compartido y no un metodo privado:</b> antes el disparo vivia solo en la
 /// transicion MANUAL <c>ReservaService.UpdateStatusAsync</c> (Budget -&gt; InManagement). Pero una reserva
 /// puede entrar a un estado firme (<see cref="EstadoReserva.ActiveCollectionStatuses"/> = InManagement,
-/// Confirmed, Traveling, ToSettle) por caminos que NO pasan por esa transicion manual:</para>
+/// Confirmed; ADR-036 quito Traveling y ToSettle de esa lista) por caminos que NO pasan por esa transicion
+/// manual:</para>
 /// <list type="bullet">
 ///   <item>auto-confirmacion del motor (InManagement -&gt; Confirmed) en <c>ReservaAutoStateService</c>;</item>
 ///   <item>la reconciliacion nocturna del job, que tambien corre el motor;</item>
-///   <item>el job de lifecycle (Confirmed -&gt; Traveling);</item>
 ///   <item>el revert de una Cancelada de vuelta a En gestion (<c>ReservaService.RevertStatusAsync</c>).</item>
 /// </list>
+/// <para>ADR-036 (2026-06-21): aunque el pase a Traveling ya NO esta en <c>ActiveCollectionStatuses</c>, el
+/// lead-won NO se pierde: para llegar a Traveling la reserva paso antes por InManagement/Confirmed (que SI
+/// disparan el hook). La idempotencia conserva la fecha del primer Ganado.</para>
 /// <para>Como ninguno de esos llamaba al disparo, habia leads con venta firme que NUNCA se marcaban Ganado
 /// -&gt; la metrica de conversion del CRM quedaba subreportada. Centralizar la regla aca cierra el agujero.</para>
 ///

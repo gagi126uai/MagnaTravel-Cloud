@@ -67,7 +67,7 @@ public class ReservaAutoStateService
         bool anyChange = StampConfirmedAt(reserva, now);
 
         // El motor solo opera en la frontera InManagement <-> Confirmed. En cualquier otro estado
-        // (Quotation, Budget, Traveling, ToSettle, Closed, Lost, Cancelled...) no toca el estado.
+        // (Quotation, Budget, Traveling, Closed, Lost, Cancelled...) no toca el estado. (ADR-036: ToSettle murio.)
         bool isEngineState =
             string.Equals(reserva.Status, EstadoReserva.InManagement, StringComparison.OrdinalIgnoreCase) ||
             string.Equals(reserva.Status, EstadoReserva.Confirmed, StringComparison.OrdinalIgnoreCase);

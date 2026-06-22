@@ -19,16 +19,18 @@ import { ReservaMobileList } from "../components/ReservaMobileList";
  * Pestanas del ciclo de vida unico (ADR-020).
  * Ya no hay flags: "Vendida" murio, este es el ciclo directo y unico.
  *
- * "quotation"   → Cotizaciones (borrador)
- * "budget"      → Presupuestos (enviados al cliente)
+ * ADR-036 (2026-06-21): se elimina "A liquidar" (ToSettle) de toda la UI.
+ * El estado dejó de existir para el usuario.
+ *
+ * "quotation"     → Cotizaciones (borrador)
+ * "budget"        → Presupuestos (enviados al cliente)
  * "in-management" → En gestion (el cliente acepto, se solicitan servicios)
- * "active"      → Activas (En gestion + Confirmadas — vista combinada para el dia a dia)
- * "reserved"    → Confirmadas (todos los servicios resueltos, candado activo)
- * "operative"   → En viaje
- * "to-settle"   → A liquidar (desvio opcional post-viaje)
- * "closed"      → Finalizadas
- * "lost"        → Perdidas (no compraron)
- * "archived"    → Archivadas
+ * "active"        → Activas (En gestion + Confirmadas — vista combinada para el dia a dia)
+ * "reserved"      → Confirmadas (todos los servicios resueltos, candado activo)
+ * "operative"     → En viaje
+ * "closed"        → Finalizadas
+ * "lost"          → Perdidas (no compraron)
+ * "archived"      → Archivadas
  */
 const TABS = [
   { value: "quotation", label: "Cotizaciones" },
@@ -36,7 +38,6 @@ const TABS = [
   { value: "in-management", label: "En gestion" },
   { value: "reserved", label: "Confirmadas" },
   { value: "operative", label: "En viaje" },
-  { value: "to-settle", label: "A liquidar" },
   { value: "closed", label: "Finalizadas" },
   { value: "lost", label: "Perdidas" },
   { value: "archived", label: "Archivadas" },
@@ -48,11 +49,10 @@ export default function ReservasPage() {
 
   /**
    * Mapeo del valor de la tab al key correspondiente en tabCounts del hook.
-   * Los valores con guion ("to-settle", "in-management") necesitan convertirse
-   * a camelCase ("toSettle", "inManagement") para coincidir con las claves del hook.
+   * "in-management" necesita convertirse a camelCase para coincidir con la clave del hook.
+   * ADR-036: "to-settle" eliminado; ya no hay mapeo para ese valor.
    */
   const tabCountKey = (tabValue) => {
-    if (tabValue === "to-settle") return "toSettle";
     if (tabValue === "in-management") return "inManagement";
     return tabValue;
   };

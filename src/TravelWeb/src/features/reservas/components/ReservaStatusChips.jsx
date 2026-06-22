@@ -3,18 +3,25 @@ import React from 'react';
 /**
  * Indicadores de ESTADO DE PAGO de la reserva. Son chips complementarios, NO el estado operativo.
  *
- * Feedback 2026-06-19 (cambio 6): diferenciamos visualmente "estado operativo de la reserva"
- * (el badge grande: Presupuesto, En gestión, Confirmada, etc.) de "estado de pago"
- * (estos chips: Pagada, Saldo pendiente, Vencida con deuda).
- * Para eso:
- *   - Los chips son más pequeños (text-[10px] en vez de text-xs)
- *   - Llevan el prefijo "Pago:" en gris claro para que el usuario entienda que es un eje diferente
- *   - No se mezclan visualmente con el badge de estado operativo
+ * Feedback 2026-06-19 (cambio 6): diferenciamos "estado operativo" (badge grande)
+ * de "estado de pago" (estos chips más chicos con prefijo "Pago:" en gris).
+ *
+ * ADR-036 (2026-06-21): se agrega el chip "Debe — no viaja" (rojo) para reservas Confirmadas
+ * con saldo pendiente del cliente. Es el aviso de que el cliente no puede viajar todavía.
+ * Solo muestra plata del CLIENTE (no costo ni deuda al operador).
+ *
+ * NOTA PARCIAL — ventana de aviso (pendiente backend):
+ * La config "Alertas por reservas próximas con deuda" (enableUpcomingUnpaidReservationNotifications
+ * + upcomingUnpaidReservationAlertDays) existe en /settings/operational-finance, pero ESA config
+ * no está expuesta en el OperationalFlagsContext ni en el ReservaDto.
+ * Por eso el chip "Debe — no viaja" HOY se muestra para TODA reserva Confirmed con saldo pendiente,
+ * sin filtro de ventana de días. Para aplicar el filtro, el backend debe exponer un campo
+ * (ej. isWithinUnpaidAlertWindow: bool) en el ReservaDto — reportado al equipo de backend.
  *
  * Valores posibles:
- * - "Pagada" (verde): reserva Confirmed con Balance == 0.
- * - "Saldo pendiente" (amarillo): reserva Confirmed con Balance > 0.
- * - "En curso" (verde pulse): el viaje está pasando ahora mismo.
+ * - "Pagada" (verde): reserva Confirmed con isFullyPaid = true.
+ * - "Debe — no viaja" (rojo): reserva Confirmed con isFullyPaid = false (ADR-036).
+ * - "En curso" (verde pulse): el viaje está pasando ahora mismo (Traveling).
  * - "Vencida con deuda" (rojo pulse): el viaje terminó pero queda saldo pendiente.
  *
  * Los flags `isFullyPaid`, `hasOverdueDebt`, `isInProgress` los provee el backend
@@ -34,11 +41,14 @@ export function ReservaStatusChips({ reserva }) {
                 title: 'El cliente no debe nada. Lista para viajar.',
             });
         } else {
+            // ADR-036: chip rojo "Debe — no viaja" en vez del chip ambar de "Saldo pendiente".
+            // El cliente tiene deuda y no puede pasar a En viaje hasta saldar.
+            // Prefijo "Pago:" en gris para que no parezca un segundo estado operativo (regla ADR-035 A-quinque).
             chips.push({
-                key: 'unpaid',
-                label: 'Saldo pendiente',
-                className: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800',
-                title: 'El cliente todavia debe parte de la reserva.',
+                key: 'debe-no-viaja',
+                label: 'Debe — no viaja',
+                className: 'bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-300 dark:border-rose-800',
+                title: 'El cliente tiene saldo pendiente. No puede viajar hasta que pague el total.',
             });
         }
     }

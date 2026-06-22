@@ -410,8 +410,8 @@ public class LeadService : ILeadService
 
         // Idempotencia real: si ya estaba Ganado, NO re-sellar ClosedAt. El hook nuevo
         // (MarkSourceLeadAsWonIfReservaIsFirmAsync) corre en CADA transicion a estado firme
-        // (InManagement -> Traveling -> ToSettle); sin este early-return la "fecha de ganado"
-        // se correria hacia adelante en cada avance. Queda la fecha del primer Ganado.
+        // (InManagement -> Confirmed; ADR-036 quito Traveling/ToSettle); sin este early-return la "fecha de
+        // ganado" se correria hacia adelante en cada avance. Queda la fecha del primer Ganado.
         if (lead.Status == LeadStatus.Won)
         {
             return;

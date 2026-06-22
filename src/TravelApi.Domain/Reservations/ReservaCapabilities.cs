@@ -112,6 +112,21 @@ public static class ReservaCapabilityPolicy
     public const string NotCancellableStatusReason =
         "No se puede cancelar la reserva en este estado.";
 
+    /// <summary>
+    /// ADR-036 (2026-06-21): En viaje (Traveling) no se cobra — el viaje ya empezo y para llegar a Traveling
+    /// el cliente debio quedar saldado. El cobro arranca y termina antes del viaje.
+    /// </summary>
+    public const string TravelingNotChargeableReason =
+        "En viaje no se cobra: el viaje ya empezó.";
+
+    /// <summary>
+    /// ADR-036 (2026-06-21): una reserva con cobros vivos o factura con CAE vivo NO admite baja simple
+    /// (cancelacion directa). Hay que ANULARLA por el camino formal (se emite Nota de Credito). Sin datos
+    /// sensibles (ni montos ni nombres).
+    /// </summary>
+    public const string HasLiveMoneyMustAnnulReason =
+        "Esta reserva tiene cobros o factura: para deshacerla hay que anularla (se emite Nota de Crédito).";
+
     /// <summary>No hay ningun avance manual de estado disponible desde el estado actual.</summary>
     public const string NoForwardTransitionReason =
         "No hay un cambio de estado manual disponible desde el estado actual.";
@@ -122,26 +137,32 @@ public static class ReservaCapabilityPolicy
 
     /// <summary>
     /// Estados desde los que se emite la FACTURA de venta (allow-list, NO se amplia). Coincide con
-    /// <c>InvoiceService.ActiveInvoicingStatuses</c>: {Confirmed, Traveling, ToSettle}. NO incluye
-    /// InManagement (servicios sin resolver) ni Budget. La NC/ND es excepcion aparte (ver CanEmitCreditDebitNote).
+    /// <c>InvoiceService.ActiveInvoicingStatuses</c>.
+    ///
+    /// <para>ADR-036 (2026-06-21, prepago puro): la factura de venta se emite SOLO en <c>Confirmed</c>
+    /// (Confirmada), ANTES de viajar. Se quito Traveling (Decision 2: en viaje NO se factura — el viaje ya
+    /// empezo) y ToSettle (estado eliminado). NO incluye InManagement (servicios sin resolver) ni Budget.
+    /// La NC/ND es excepcion aparte (ver CanEmitCreditDebitNote): corregir/anular una factura de una reserva
+    /// ya finalizada se hace con nota, sin reabrir el estado.</para>
     /// </summary>
     public static readonly string[] InvoiceableStatuses =
     {
         EstadoReserva.Confirmed,
-        EstadoReserva.Traveling,
-        EstadoReserva.ToSettle,
     };
 
     /// <summary>
     /// Estados desde los que se puede emitir VOUCHER (Decision 3 del dueño): Confirmed en adelante,
     /// incluido Closed. InManagement NO. Es el MISMO conjunto que enforza
     /// <c>VoucherService.EnsureReservaAllowsVoucher</c> (fuente compartida para que front y back coincidan).
+    ///
+    /// <para>ADR-036 (2026-06-21): se quito ToSettle (estado eliminado). Traveling SE MANTIENE: el voucher es
+    /// el documento que el pasajero necesita para viajar, asi que debe poder emitirse/reimprimirse en viaje.
+    /// Quedan {Confirmed, Traveling, Closed}.</para>
     /// </summary>
     public static readonly string[] VoucherStatuses =
     {
         EstadoReserva.Confirmed,
         EstadoReserva.Traveling,
-        EstadoReserva.ToSettle,
         EstadoReserva.Closed,
     };
 
@@ -159,11 +180,18 @@ public static class ReservaCapabilityPolicy
     };
 
     /// <summary>
-    /// Estados donde EDITAR servicios es una operacion normal del ciclo (no terminal, no candado fiscal duro).
-    /// {Quotation, Budget, InManagement, Confirmed, Traveling, ToSettle}. En los terminales
-    /// (Closed/Cancelled/Lost/PendingOperatorRefund) no se editan servicios. NOTA: el candado real bajo
-    /// estado Confirmed+ (ReservaLockGuard) lo enforza el backend con su autorizacion; esta capacidad solo
-    /// indica que la edicion es CONCEPTUALMENTE valida en el estado (con autorizacion si corresponde).
+    /// Estados donde EDITAR servicios/pasajeros/datos es una operacion normal del ciclo (no solo-lectura).
+    /// {Quotation, Budget, InManagement, Confirmed}. En los terminales (Closed/Cancelled/Lost/
+    /// PendingOperatorRefund) no se editan. NOTA: el candado real bajo estado Confirmed+ (ReservaLockGuard)
+    /// lo enforza el backend con su autorizacion; esta capacidad solo indica que la edicion es
+    /// CONCEPTUALMENTE valida en el estado (con autorizacion si corresponde).
+    ///
+    /// <para>ADR-036 (2026-06-21, prepago puro): se quito ToSettle (estado eliminado) y <b>Traveling</b>
+    /// (Decision 2: "En viaje" es SOLO LECTURA TOTAL, igual que Closed — no se edita ni con autorizacion).
+    /// Este conjunto es la PRIMERA COMPUERTA que consultan todos los write-paths de servicio/pasajero/cabecera
+    /// (ReservaCapacityRules.Ensure*EditableByStateAsync): al quedar Traveling fuera, esas compuertas rechazan
+    /// de raiz cualquier mutacion en viaje, ANTES del candado de autorizacion. Por eso sacar Traveling del
+    /// ReservaLockGuard NO lo deja editable: el bloqueo real vive aca.</para>
     /// </summary>
     private static readonly string[] ServiceEditableStatuses =
     {
@@ -171,8 +199,6 @@ public static class ReservaCapabilityPolicy
         EstadoReserva.Budget,
         EstadoReserva.InManagement,
         EstadoReserva.Confirmed,
-        EstadoReserva.Traveling,
-        EstadoReserva.ToSettle,
     };
 
     /// <summary>
@@ -200,7 +226,8 @@ public static class ReservaCapabilityPolicy
     // =====================================================================================================
 
     /// <summary>
-    /// Factura de venta: SOLO en {Confirmed, Traveling, ToSettle} (allow-list, no se amplia a Budget/InManagement).
+    /// Factura de venta: SOLO en {Confirmed} (ADR-036: antes de viajar; allow-list, no se amplia).
+    /// Traveling da No (en viaje no se factura).
     /// </summary>
     private static Cap EvaluateInvoiceSale(ReservaCapabilityContext ctx)
     {
@@ -236,6 +263,11 @@ public static class ReservaCapabilityPolicy
     /// </summary>
     private static Cap EvaluateRegisterPayment(ReservaCapabilityContext ctx)
     {
+        // ADR-036 (2026-06-21): bloqueo EXPLICITO de Traveling con su propio motivo. En viaje no se cobra
+        // (el viaje ya empezo). Aunque Traveling ya no esta en SaleFirmStatuses (caeria igual por el chequeo
+        // de abajo), damos un mensaje propio para que el front no diga "pasala a En gestion primero".
+        if (EqualsStatus(ctx.Status, EstadoReserva.Traveling))
+            return Cap.No(TravelingNotChargeableReason);
         if (!EstadoReserva.IsSaleFirmStatus(ctx.Status))
             return Cap.No(NotSaleFirmReason);
         if (ctx.Balance <= 0)
@@ -311,6 +343,14 @@ public static class ReservaCapabilityPolicy
             || EqualsStatus(ctx.Status, EstadoReserva.Cancelled)
             || EqualsStatus(ctx.Status, EstadoReserva.PendingOperatorRefund))
             return Cap.No(NotCancellableStatusReason);
+
+        // ADR-036 (2026-06-21): una reserva con PLATA VIVA no admite baja simple. Si ya hay cobros (reales o
+        // puente) o una factura con CAE vivo, deshacerla NO es "cancelar" sino ANULAR por el camino formal
+        // (NC/ND, ADR-002). Aca cerramos el agujero a nivel capacidad (el front apaga el boton "Cancelar" y
+        // enruta a "Anular"); el guard de escritura en la transicion a Cancelled lo refuerza server-side.
+        if (ctx.HasLiveCae || ctx.HasAnyPayment)
+            return Cap.No(HasLiveMoneyMustAnnulReason);
+
         return Cap.Yes;
     }
 

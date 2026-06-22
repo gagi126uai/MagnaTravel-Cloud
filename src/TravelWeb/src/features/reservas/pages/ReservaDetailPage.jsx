@@ -724,10 +724,11 @@ export default function ReservaDetailPage() {
           setShowCancelInline(true);
         }}
         onReopenToSettle={() => {
-          // ADR-035 Decision 4-bis: "Reabrir para facturar" (Closed → ToSettle).
-          // El modal de revert se configura con forceReason=true (motivo obligatorio para todos)
-          // y lockedTarget="ToSettle" (el select de destino va pre-seleccionado y bloqueado).
-          // El titulo y el boton del modal cambian segun estas props (ver RevertStatusModal).
+          // ADR-036: "Reabrir para facturar" ya NO manda a "A liquidar" (ese estado fue eliminado).
+          // Ahora destraba la reserva Finalizada para facturar SIN cambiarla de estado.
+          // El modal se abre con forceReason=true (motivo obligatorio, es accion fiscal sensible).
+          // lockedTarget queda vacío: el backend decide qué desbloqueamiento aplica.
+          // Ver RevertStatusModal para la logica de como procesa esto con el endpoint /revert-status.
           setShowRevertModal(true);
         }}
         onRequestEdit={() => setShowEditAuthModal(true)}
@@ -762,7 +763,8 @@ export default function ReservaDetailPage() {
 
       {/* ADR-027: franja amarilla "Confirmada con cambios".
           Aparece cuando el vendedor edito precio o costo de un servicio en una reserva viva
-          (InManagement/Confirmed/Traveling/ToSettle) y el dueño todavía no revisó el cambio.
+          (InManagement/Confirmed/Traveling) y el dueño todavía no revisó el cambio.
+          ADR-036: ToSettle fue eliminado.
 
           Detalle de pendingChanges[]: si el backend manda la lista, mostramos cada cambio
           con su descripción, campo, valores viejo→nuevo y moneda. Si no viene o viene vacía,
@@ -880,11 +882,23 @@ export default function ReservaDetailPage() {
 
       {/* ─── Carteles de estado ────────────────────────────────────────────────────
           Feedback 2026-06-19: UN SOLO cartel que explica el estado actual.
-          Los estados terminales (Lost/Cancelled/Closed/PendingOperatorRefund) tienen un
-          cartel de solo-lectura. Los estados activos orientan al vendedor.
-          Los botones deshabilitados NO repiten el motivo — el cartel lo dice todo. */}
+          Los estados terminales (Lost/Cancelled/Closed/PendingOperatorRefund/Traveling) tienen
+          un cartel de solo-lectura. Los estados activos orientan al vendedor.
+          Los botones deshabilitados NO repiten el motivo — el cartel lo dice todo.
+          ADR-036: "ToSettle" eliminado (ya no existe ese estado en la UI). */}
 
-      {/* Estados terminales: solo lectura */}
+      {/* ── Estado "En viaje": solo lectura, cartel chico (ADR-036 punto 2) ── */}
+      {reserva.status === "Traveling" ? (
+        <div
+          className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/20 dark:text-emerald-200"
+          data-testid="banner-estado-terminal"
+          role="status"
+        >
+          <strong className="font-bold">✈️ Reserva en viaje</strong> — solo lectura.
+        </div>
+      ) : null}
+
+      {/* ── Estados terminales: solo lectura, sin botones ni mensajitos (ADR-036 puntos 3 y 4) ── */}
       {reserva.status === "Lost" ? (
         <div
           className="rounded-xl border border-slate-200 bg-slate-100 p-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-400"
@@ -894,12 +908,14 @@ export default function ReservaDetailPage() {
           <strong className="font-bold">Reserva perdida</strong> — solo lectura.
         </div>
       ) : reserva.status === "Cancelled" ? (
+        // ADR-036: el estado interno sigue siendo "Cancelled" pero el usuario ve "Anulada".
+        // "Cancelar" en este producto = saldar una deuda; "Anular" = deshacer el viaje.
         <div
           className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
           data-testid="banner-estado-terminal"
           role="status"
         >
-          <strong className="font-bold">Reserva cancelada</strong> — solo lectura.
+          <strong className="font-bold">Reserva anulada</strong> — solo lectura.
         </div>
       ) : reserva.status === "Closed" ? (
         <div
@@ -908,10 +924,10 @@ export default function ReservaDetailPage() {
           role="status"
         >
           <strong className="font-bold">Reserva finalizada</strong> — solo lectura.
-          {/* Solo mostramos el tip de "Reabrir" si la reserva no tiene factura viva.
-              Si tiene factura ya, no hay nada que facturar reabriéndola. */}
+          {/* ADR-036: el tip ya no dice "A liquidar". Dice "Reabrila para facturar." (sin destino de estado).
+              Solo se muestra si la reserva no tiene factura con CAE vivo (sin factura → tiene sentido reabrir). */}
           {!reserva.requiresInvoiceAnnulmentToCancel && (
-            <> Reabrila a "A liquidar" para facturar.</>
+            <> Reabrila para facturar.</>
           )}
         </div>
       ) : reserva.status === "PendingOperatorRefund" ? (
@@ -920,11 +936,11 @@ export default function ReservaDetailPage() {
           data-testid="banner-estado-terminal"
           role="status"
         >
-          <strong className="font-bold">Cancelada, esperando el reembolso del operador</strong> — solo lectura.
+          <strong className="font-bold">Anulada, esperando el reembolso del operador</strong> — solo lectura.
         </div>
       ) : null}
 
-      {/* Estados activos: orientan al vendedor sobre el siguiente paso */}
+      {/* ── Estados activos: orientan al vendedor sobre el siguiente paso ── */}
       {reserva.status === "Quotation" ? (
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/30 dark:text-slate-300">
           <strong className="font-bold">Cotizacion.</strong>{" "}
@@ -972,12 +988,24 @@ export default function ReservaDetailPage() {
         );
       })()}
 
-      {/* Banner "A liquidar": aparece cuando la reserva fue apartada manualmente para liquidar con el operador.
-          No requiere flag — es un estado del ciclo ADR-020. */}
-      {reserva.status === "ToSettle" ? (
-        <div className="rounded-xl border border-violet-200 bg-violet-50 p-4 text-sm text-violet-900 dark:border-violet-900/40 dark:bg-violet-950/30 dark:text-violet-200">
-          <strong className="font-bold">A liquidar.</strong>{" "}
-          Apartada para cerrar cuentas con el operador. Cuando termines, usa "Finalizar" para cerrarla.
+      {/* ── "Debe — no viaja": cartel arriba para reservas Confirmadas con saldo pendiente (ADR-036, punto 7) ──
+          Aparece cuando la reserva está Confirmada y el cliente todavía debe.
+          El backend no permite que pase a "En viaje" hasta que esté 100% pagada.
+          NO muestra montos de costo ni deuda al operador — solo que el cliente debe.
+
+          NOTA PARCIAL: la spec pide filtrar por la ventana de días de "Alertas por reservas próximas con deuda"
+          (enableUpcomingUnpaidReservationNotifications + upcomingUnpaidReservationAlertDays).
+          Esos valores NO están en el ReservaDto ni en el OperationalFlagsContext.
+          Por ahora el cartel aparece para TODA reserva Confirmed con saldo pendiente.
+          Para el filtro de ventana, el backend debe exponer isWithinUnpaidAlertWindow en el ReservaDto.
+          Pendiente: coordinar con backend. */}
+      {reserva.status === "Confirmed" && !reserva.isFullyPaid ? (
+        <div
+          className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
+          data-testid="banner-debe-no-viaja"
+          role="status"
+        >
+          <strong className="font-bold">No puede viajar todavía:</strong> hay saldo pendiente del cliente.
         </div>
       ) : null}
 
@@ -1646,8 +1674,11 @@ export default function ReservaDetailPage() {
       />
 
       {showRevertModal && (
-        // ADR-035 fix #2: forceReason obliga el motivo tambien a admins;
-        // lockedTarget="ToSettle" pre-selecciona el destino y oculta el selector.
+        // ADR-036: "Reabrir para facturar" ya NO manda a "A liquidar".
+        // forceReason=true: el motivo es obligatorio para todos (accion fiscal sensible, queda auditada).
+        // lockedTarget ya no es "ToSettle" (ese estado fue eliminado); el backend expone las opciones
+        // disponibles en allowedTargets y el usuario puede seleccionar la que corresponda,
+        // o el modal auto-selecciona si solo hay una opcion.
         <RevertStatusModal
           reserva={reserva}
           onClose={() => setShowRevertModal(false)}
@@ -1656,7 +1687,6 @@ export default function ReservaDetailPage() {
             fetchReserva({ showLoading: false, preserveOnError: true });
           }}
           forceReason
-          lockedTarget="ToSettle"
         />
       )}
 

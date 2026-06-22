@@ -16,15 +16,13 @@ using Xunit;
 namespace TravelApi.Tests.Unit;
 
 /// <summary>
-/// Fase D del rediseño de la maquina de estados (Sold/ToSettle). Verifica que los
-/// CONJUNTOS de estados "activos/operativos/cobrables" de los servicios transversales
-/// incluyan los dos estados nuevos donde corresponde, y que el patron NEGATIVO de
-/// revenue/AR (que YA los incluye) quede fijado por tests.
+/// Fase D del rediseño de la maquina de estados. Verifica que los CONJUNTOS de estados
+/// "activos/operativos/cobrables" de los servicios transversales tomen los estados correctos.
 ///
-/// Regla maestra: para los 7 estados historicos (Budget, Confirmed, Traveling, Closed,
-/// Cancelled, PendingOperatorRefund, Archived) el comportamiento debe ser byte-identico
-/// al de antes de Fase D. Como con el flag EnableSoldToSettleStates OFF nunca hay filas
-/// en Sold/ToSettle, agregar esos estados es inerte con el flag apagado.
+/// <para>ADR-036 (2026-06-21, prepago puro): el estado ToSettle MURIO. Los tests que validaban su
+/// membresia se reescribieron: ahora fijan la membresia de los estados vigentes (InManagement, Confirmed,
+/// Traveling, Closed segun corresponda) y verifican que un literal "ToSettle" residual NO es tomado por
+/// ningun conjunto. Las reglas ADR-033 (Closed con deuda cuenta como cobrable/AR) se conservan.</para>
 ///
 /// NOTA: InMemory + Moq. NO se corren local (se cuelgan). Los corre el reviewer/QA en VPS.
 /// </summary>
@@ -93,15 +91,16 @@ public class FaseDStateSetTests
     };
 
     // =====================================================================
-    // (a) Sold y ToSettle SON tomados por los conjuntos positivos
+    // (a) Membresia de conjuntos POSITIVOS. ADR-036: ToSettle ya no es tomado por ninguno.
     // =====================================================================
 
     [Fact]
-    public async Task PaymentService_CollectionsSummary_IncludesSoldAndToSettle()
+    public async Task PaymentService_CollectionsSummary_TakesFirmStates_NotResidualToSettle()
     {
         using var context = new AppDbContext(NewDbOptions());
         context.Reservas.Add(ReservaWithBalance(1, EstadoReserva.InManagement));
-        context.Reservas.Add(ReservaWithBalance(2, EstadoReserva.ToSettle));
+        // ADR-036: un literal "ToSettle" residual (estado eliminado) NO debe sumar a la cobranza.
+        context.Reservas.Add(ReservaWithBalance(2, "ToSettle"));
         await context.SaveChangesAsync();
 
         var service = new PaymentService(
@@ -113,17 +112,17 @@ public class FaseDStateSetTests
 
         var summary = await service.GetCollectionsSummaryAsync(CancellationToken.None);
 
-        // Ambas reservas con saldo > 0 deben sumar a la cobranza pendiente.
-        Assert.Equal(200m, summary.PendingAmount);
+        // Solo InManagement (100) suma; el residual ToSettle queda afuera.
+        Assert.Equal(100m, summary.PendingAmount);
     }
 
     [Fact]
-    public async Task AlertService_UrgentTrips_IncludesSold_NotToSettle()
+    public async Task AlertService_UrgentTrips_TakesInManagement_NotResidualToSettle()
     {
         using var context = new AppDbContext(NewDbOptions());
         context.Reservas.Add(ReservaWithBalance(1, EstadoReserva.InManagement));
-        // ToSettle es post-viaje: NO debe figurar como "viaje proximo" aunque tenga saldo.
-        context.Reservas.Add(ReservaWithBalance(2, EstadoReserva.ToSettle));
+        // ADR-036: un literal "ToSettle" residual NO debe figurar como "viaje proximo".
+        context.Reservas.Add(ReservaWithBalance(2, "ToSettle"));
         await context.SaveChangesAsync();
 
         var service = new AlertService(context, SettingsMock().Object, Microsoft.Extensions.Logging.Abstractions.NullLogger<AlertService>.Instance);
@@ -134,18 +133,21 @@ public class FaseDStateSetTests
 
         var urgentStatuses = EnumerateStatuses(result.UrgentTrips);
         Assert.Contains(EstadoReserva.InManagement, urgentStatuses);
-        Assert.DoesNotContain(EstadoReserva.ToSettle, urgentStatuses);
+        Assert.DoesNotContain("ToSettle", urgentStatuses);
     }
 
     [Fact]
-    public async Task SupplierService_AccountServices_IncludesSoldAndToSettle()
+    public async Task SupplierService_AccountServices_TakesTraveling_NotResidualToSettle()
     {
         using var context = new AppDbContext(NewDbOptions());
         const int supplierId = 7;
         context.Reservas.Add(ReservaWithBalance(1, EstadoReserva.InManagement));
-        context.Reservas.Add(ReservaWithBalance(2, EstadoReserva.ToSettle));
+        // ADR-036: Traveling sigue contando para la cuenta del proveedor; el residual ToSettle NO.
+        context.Reservas.Add(ReservaWithBalance(2, EstadoReserva.Traveling));
+        context.Reservas.Add(ReservaWithBalance(3, "ToSettle"));
         context.HotelBookings.Add(HotelFor(10, 1, supplierId));
         context.HotelBookings.Add(HotelFor(11, 2, supplierId));
+        context.HotelBookings.Add(HotelFor(12, 3, supplierId));
         await context.SaveChangesAsync();
 
         var service = new SupplierService(context);
@@ -155,34 +157,36 @@ public class FaseDStateSetTests
             new SupplierAccountServicesQuery(),
             CancellationToken.None);
 
-        // Los dos hoteles (uno en Sold, otro en ToSettle) deben aparecer en la cuenta del proveedor.
+        // InManagement + Traveling cuentan (2); el residual ToSettle queda afuera.
         Assert.Equal(2, page.TotalCount);
     }
 
     [Fact]
-    public async Task TreasuryService_AccountsReceivable_IncludesSoldAndToSettle()
+    public async Task TreasuryService_AccountsReceivable_TakesFirmStates_NotResidualToSettle()
     {
         using var context = new AppDbContext(NewDbOptions());
         context.Reservas.Add(ReservaWithBalance(1, EstadoReserva.InManagement, balance: 300m));
-        context.Reservas.Add(ReservaWithBalance(2, EstadoReserva.ToSettle, balance: 200m));
+        // ADR-036: un literal "ToSettle" residual NO suma a AR.
+        context.Reservas.Add(ReservaWithBalance(2, "ToSettle", balance: 200m));
         await context.SaveChangesAsync();
 
         var service = new TreasuryService(context, Mock.Of<IEntityReferenceResolver>());
 
         var summary = await service.GetSummaryAsync(CancellationToken.None);
 
-        // AR = Sold (300) + ToSettle (200). Q3: criterio por defecto, a confirmar por contador.
-        Assert.Equal(500m, summary.AccountsReceivable);
+        // Solo InManagement (300) suma a AR; el residual ToSettle afuera.
+        Assert.Equal(300m, summary.AccountsReceivable);
     }
 
     [Fact]
-    public async Task InvoicingWorklist_IncludesToSettle_NotSold()
+    public async Task InvoicingWorklist_OnlyConfirmed_NotTravelingNorResidualToSettle()
     {
         using var context = new AppDbContext(NewDbOptions());
-        // Las dos estan economicamente saldadas (Balance 0) y con venta sin facturar (TotalSale 1000),
-        // asi que cualquiera de las dos que sea "facturable" caeria en la bandeja como "lista para emitir".
-        context.Reservas.Add(ReservaReadyToInvoice(1, EstadoReserva.InManagement));
-        context.Reservas.Add(ReservaReadyToInvoice(2, EstadoReserva.ToSettle));
+        // ADR-036: la factura de venta es SOLO en Confirmed. Traveling ya NO factura (en viaje no se factura);
+        // un literal "ToSettle" residual tampoco. Las tres estan saldadas con venta sin facturar.
+        context.Reservas.Add(ReservaReadyToInvoice(1, EstadoReserva.Confirmed));
+        context.Reservas.Add(ReservaReadyToInvoice(2, EstadoReserva.Traveling));
+        context.Reservas.Add(ReservaReadyToInvoice(3, "ToSettle"));
         await context.SaveChangesAsync();
 
         var service = BuildInvoiceService(context);
@@ -190,17 +194,18 @@ public class FaseDStateSetTests
         var page = await service.GetInvoicingWorklistAsync(new InvoicingWorklistQuery(), CancellationToken.None);
         var numerosEnBandeja = page.Items.Select(item => item.NumeroReserva).ToList();
 
-        // ToSettle (A liquidar, post-viaje, operador confirmado): SE factura -> aparece.
-        Assert.Contains("R-2", numerosEnBandeja);
-        // Sold (Vendida, pre-confirmacion del operador): NO se factura -> NO aparece (riesgo fiscal).
-        Assert.DoesNotContain("R-1", numerosEnBandeja);
+        // Solo Confirmed aparece; Traveling y el residual ToSettle quedan afuera.
+        Assert.Contains("R-1", numerosEnBandeja);
+        Assert.DoesNotContain("R-2", numerosEnBandeja);
+        Assert.DoesNotContain("R-3", numerosEnBandeja);
     }
 
     [Fact]
-    public async Task InvoicingWorklist_HistoricStates_Unchanged()
+    public async Task InvoicingWorklist_HistoricStates_OnlyConfirmedFacturable_Adr036()
     {
         using var context = new AppDbContext(NewDbOptions());
-        // Facturables historicos: Confirmed y Traveling. NO facturables: Budget, Closed, Cancelled.
+        // ADR-036: facturable SOLO Confirmed. NO facturables: Traveling (en viaje no se factura), Budget,
+        // Closed, Cancelled.
         context.Reservas.Add(ReservaReadyToInvoice(1, EstadoReserva.Confirmed));
         context.Reservas.Add(ReservaReadyToInvoice(2, EstadoReserva.Traveling));
         context.Reservas.Add(ReservaReadyToInvoice(3, EstadoReserva.Budget));
@@ -213,9 +218,9 @@ public class FaseDStateSetTests
         var page = await service.GetInvoicingWorklistAsync(new InvoicingWorklistQuery(), CancellationToken.None);
         var numerosEnBandeja = page.Items.Select(item => item.NumeroReserva).ToList();
 
-        // Solo Confirmed + Traveling en la bandeja (igual que siempre). El resto afuera.
+        // Solo Confirmed en la bandeja. El resto afuera (incluido Traveling).
         Assert.Contains("R-1", numerosEnBandeja);
-        Assert.Contains("R-2", numerosEnBandeja);
+        Assert.DoesNotContain("R-2", numerosEnBandeja);
         Assert.DoesNotContain("R-3", numerosEnBandeja);
         Assert.DoesNotContain("R-4", numerosEnBandeja);
         Assert.DoesNotContain("R-5", numerosEnBandeja);
@@ -227,13 +232,13 @@ public class FaseDStateSetTests
     // =====================================================================
 
     [Fact]
-    public async Task ReservaSummary_RevenueNegativePattern_CountsSoldAndToSettle()
+    public async Task ReservaSummary_RevenueNegativePattern_CountsFirmStates_NotClosedOrCancelled()
     {
         using var context = new AppDbContext(NewDbOptions());
-        // 4 reservas con TotalSale 1000 c/u. Closed y Cancelled NO cuentan como venta activa;
-        // Sold y ToSettle SI (patron != Closed && != Cancelled && != Archived).
+        // ADR-036: venta activa = InManagement/Confirmed/Traveling (patron != Closed && != Cancelled &&
+        // != Archived). Closed y Cancelled NO cuentan. ToSettle murio.
         context.Reservas.Add(new Reserva { Id = 1, Name = "S", NumeroReserva = "R-1", Status = EstadoReserva.InManagement, TotalSale = 1000m });
-        context.Reservas.Add(new Reserva { Id = 2, Name = "T", NumeroReserva = "R-2", Status = EstadoReserva.ToSettle, TotalSale = 1000m });
+        context.Reservas.Add(new Reserva { Id = 2, Name = "T", NumeroReserva = "R-2", Status = EstadoReserva.Traveling, TotalSale = 1000m });
         context.Reservas.Add(new Reserva { Id = 3, Name = "C", NumeroReserva = "R-3", Status = EstadoReserva.Closed, TotalSale = 1000m });
         context.Reservas.Add(new Reserva { Id = 4, Name = "X", NumeroReserva = "R-4", Status = EstadoReserva.Cancelled, TotalSale = 1000m });
         await context.SaveChangesAsync();
@@ -243,20 +248,21 @@ public class FaseDStateSetTests
         var page = await service.GetReservasAsync(new ReservaListQuery(), CancellationToken.None);
         var summary = page.Summary;
 
-        // Solo Sold + ToSettle aportan a TotalSaleActive (2 x 1000). Closed/Cancelled afuera.
+        // Solo InManagement + Traveling aportan a TotalSaleActive (2 x 1000). Closed/Cancelled afuera.
         Assert.Equal(2000m, summary.TotalSaleActive);
         // Y ambos cuentan como "activas".
         Assert.Equal(2, summary.ActiveCount);
     }
 
     [Fact]
-    public async Task OperationalFinanceMonitor_MonitorsSoldAndToSettle_NotCancelledOrClosed()
+    public async Task OperationalFinanceMonitor_MonitorsLiveStates_NotCancelledOrClosed()
     {
         using var context = new AppDbContext(NewDbOptions());
         // Las 4 tienen saldo pendiente y viaje proximo. El predicado NEGATIVO del monitor
-        // (Status != Cancelled && != Closed) debe TOMAR Sold y ToSettle, y DESCARTAR Cancelled/Closed.
+        // (Status != Cancelled && != Closed) toma InManagement y Traveling, descarta Cancelled/Closed.
+        // ADR-036: ToSettle murio.
         context.Reservas.Add(ReservaWithBalance(1, EstadoReserva.InManagement));
-        context.Reservas.Add(ReservaWithBalance(2, EstadoReserva.ToSettle));
+        context.Reservas.Add(ReservaWithBalance(2, EstadoReserva.Traveling));
         context.Reservas.Add(ReservaWithBalance(3, EstadoReserva.Cancelled));
         context.Reservas.Add(ReservaWithBalance(4, EstadoReserva.Closed));
         await context.SaveChangesAsync();
@@ -279,7 +285,7 @@ public class FaseDStateSetTests
 
         await service.GenerateUpcomingUnpaidReservationNotificationsAsync();
 
-        // Sold y ToSettle caen del lado "monitoreado" del predicado.
+        // InManagement y Traveling caen del lado "monitoreado" del predicado.
         Assert.Contains(1, notifiedReservaIds);
         Assert.Contains(2, notifiedReservaIds);
         // Cancelled y Closed quedan afuera (no se les genera aviso).
@@ -296,7 +302,8 @@ public class FaseDStateSetTests
     {
         using var context = new AppDbContext(NewDbOptions());
         // ADR-033 (A1/A3): cobrables = venta firme con deuda, INCLUIDO Closed. Budget (pre-venta) y Cancelled
-        // (terminal-no-firme) siguen fuera. Antes (ADR-032) Closed quedaba fuera; ahora suma a la cobranza.
+        // (terminal-no-firme) fuera. ADR-036 (2026-06-21): Traveling SALE de la cobranza (en viaje no se
+        // cobra; en prepago puro no deberia llegar a viajar debiendo). Cobrables = {Confirmed, Closed}.
         context.Reservas.Add(ReservaWithBalance(1, EstadoReserva.Confirmed, 100m));
         context.Reservas.Add(ReservaWithBalance(2, EstadoReserva.Traveling, 100m));
         context.Reservas.Add(ReservaWithBalance(3, EstadoReserva.Budget, 100m));
@@ -313,8 +320,8 @@ public class FaseDStateSetTests
 
         var summary = await service.GetCollectionsSummaryAsync(CancellationToken.None);
 
-        // Confirmed + Traveling + Closed = 300. Budget/Cancelled afuera.
-        Assert.Equal(300m, summary.PendingAmount);
+        // ADR-036: Confirmed + Closed = 200. Traveling/Budget/Cancelled afuera.
+        Assert.Equal(200m, summary.PendingAmount);
     }
 
     [Fact]
@@ -346,7 +353,8 @@ public class FaseDStateSetTests
         using var context = new AppDbContext(NewDbOptions());
         context.Reservas.Add(ReservaWithBalance(1, EstadoReserva.Confirmed, 100m));
         context.Reservas.Add(ReservaWithBalance(2, EstadoReserva.Traveling, 100m));
-        // ADR-033 (A3/E2): Closed con deuda AHORA suma a AR (deuda real cobrable). Budget sigue fuera.
+        // ADR-033 (A3/E2): Closed con deuda suma a AR (deuda real cobrable). Budget fuera.
+        // ADR-036 (2026-06-21): Traveling SALE de AR (en viaje no es firme cobrable). AR = {Confirmed, Closed}.
         context.Reservas.Add(ReservaWithBalance(3, EstadoReserva.Budget, 100m));
         context.Reservas.Add(ReservaWithBalance(4, EstadoReserva.Closed, 100m));
         await context.SaveChangesAsync();
@@ -355,8 +363,8 @@ public class FaseDStateSetTests
 
         var summary = await service.GetSummaryAsync(CancellationToken.None);
 
-        // Confirmed + Traveling + Closed = 300. Budget afuera.
-        Assert.Equal(300m, summary.AccountsReceivable);
+        // ADR-036: Confirmed + Closed = 200. Traveling/Budget afuera.
+        Assert.Equal(200m, summary.AccountsReceivable);
     }
 
     [Fact]

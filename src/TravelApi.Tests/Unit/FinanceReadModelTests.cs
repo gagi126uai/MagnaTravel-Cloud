@@ -47,12 +47,14 @@ public class FinanceReadModelTests
                 Balance = 750m,
                 StartDate = DateTime.UtcNow.Date.AddDays(2)
             },
+            // ADR-036 (2026-06-21): la segunda reserva cobrable es Confirmed (Traveling ya no es cobrable: en
+            // viaje no se cobra). Conserva los dos items pendientes que valida el test.
             new Reserva
             {
                 Id = 2,
                 NumeroReserva = "F-2026-1002",
                 Name = "Reserva pendiente",
-                Status = EstadoReserva.Traveling,
+                Status = EstadoReserva.Confirmed,
                 PayerId = 10,
                 TotalSale = 800m,
                 TotalPaid = 0m,

@@ -55,14 +55,16 @@ public class InvoiceService : IInvoiceService
     private readonly IServiceProvider _serviceProvider;
     // Estados de Reserva que se consideran "facturables" en la bandeja/summary de facturacion.
     // ADR-020 (2026-06-07, decision Q1 conservadora): SOLO se factura desde Confirmada en adelante.
-    //  - Confirmed/Traveling/ToSettle: facturables (el operador ya confirmo / el viaje ocurrio).
+    //  - Confirmed: facturable (el operador ya confirmo). La factura de venta se emite ANTES de viajar.
     //  - Quotation/Budget/InManagement/Lost: NO facturables. En particular En gestion (InManagement)
     //    todavia tiene servicios sin resolver; facturar ahi seria emitir CAE por algo que el operador
     //    podria rechazar (riesgo fiscal). El guard server-side en CreateAsync lo refuerza.
-    // ADR-035 (2026-06-19): FUENTE UNICA. La allow-list de facturacion vive ahora en la politica de dominio
-    // (ReservaCapabilityPolicy.InvoiceableStatuses = {Confirmed, Traveling, ToSettle}); aca solo la
-    // referenciamos para las queries LINQ-to-SQL de la bandeja/summary (que necesitan un array materializado;
-    // la politica no se traduce a SQL). El guard de CreateAsync delega en CanInvoiceSale (misma fuente).
+    // ADR-036 (2026-06-21, prepago puro): la allow-list quedo en SOLO {Confirmed}. En viaje (Traveling) ya
+    // NO se factura (Decision 2: el viaje empezo) y ToSettle murio. Corregir una factura de una reserva
+    // finalizada se hace por NC/ND, no facturando tarde.
+    // FUENTE UNICA: la allow-list vive en la politica de dominio (ReservaCapabilityPolicy.InvoiceableStatuses);
+    // aca solo la referenciamos para las queries LINQ-to-SQL de la bandeja/summary (que necesitan un array
+    // materializado; la politica no se traduce a SQL). El guard de CreateAsync delega en CanInvoiceSale.
     private static readonly string[] ActiveInvoicingStatuses =
         ReservaCapabilityPolicy.InvoiceableStatuses;
 
@@ -313,8 +315,9 @@ public class InvoiceService : IInvoiceService
         // EXCEPCION: las NC/ND (IsCreditNote/IsDebitNote) SI se permiten sobre reservas canceladas/cerradas
         // -> son justamente las que corrigen/anulan una factura ya emitida de una reserva cancelada.
         // ADR-035 (2026-06-19): la allow-list se consulta via la politica de dominio (CanInvoiceSale), fuente
-        // unica compartida con el front. El conjunto de estados NO cambia ({Confirmed, Traveling, ToSettle}).
-        // La excepcion NC/ND se mantiene: las notas SI se permiten sobre reservas canceladas/cerradas.
+        // unica compartida con el front. ADR-036 (2026-06-21): el conjunto quedo en {Confirmed} (la factura de
+        // venta se emite ANTES de viajar; en viaje no se factura). La excepcion NC/ND se mantiene: las notas SI
+        // se permiten sobre reservas canceladas/cerradas (corrigen/anulan una factura ya emitida).
         if (!request.IsCreditNote && !request.IsDebitNote)
         {
             var invoiceCapability = ReservaCapabilityPolicy

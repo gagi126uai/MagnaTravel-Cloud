@@ -146,11 +146,11 @@ public class Adr032CollectableStateRuleTests
     // Regla pura de dominio.
     // =====================================================================================================
 
+    // ADR-036 (2026-06-21): ActiveCollectionStatuses = {InManagement, Confirmed}. Traveling salio (en viaje
+    // no se cobra) y ToSettle murio.
     [Theory]
     [InlineData("InManagement")]
     [InlineData("Confirmed")]
-    [InlineData("Traveling")]
-    [InlineData("ToSettle")]
     [InlineData("inmanagement")] // case-insensitive
     public void IsCollectableStatus_ReturnsTrue_ForCollectable(string status)
         => Assert.True(EstadoReserva.IsCollectableStatus(status));
@@ -161,6 +161,8 @@ public class Adr032CollectableStateRuleTests
     [InlineData("Lost")]
     [InlineData("Cancelled")]
     [InlineData("Closed")]
+    [InlineData("Traveling")] // ADR-036: en viaje no se cobra
+    [InlineData("ToSettle")]  // ADR-036: estado eliminado
     [InlineData("PendingOperatorRefund")]
     [InlineData("Archived")]
     [InlineData("")]
@@ -195,11 +197,11 @@ public class Adr032CollectableStateRuleTests
         Assert.True(reserva.IsCollectable());
     }
 
+    // ADR-036 (2026-06-21): SaleFirmStatuses = {InManagement, Confirmed, Closed}. Traveling salio (en viaje
+    // no se cobra; prepago puro) y ToSettle murio.
     [Theory]
     [InlineData("InManagement")]
     [InlineData("Confirmed")]
-    [InlineData("Traveling")]
-    [InlineData("ToSettle")]
     [InlineData("Closed")] // ADR-033: Closed firme
     [InlineData("closed")] // case-insensitive
     public void IsSaleFirmStatus_ReturnsTrue_ForFirm(string status)
@@ -210,6 +212,8 @@ public class Adr032CollectableStateRuleTests
     [InlineData("Budget")]
     [InlineData("Lost")]
     [InlineData("Cancelled")]
+    [InlineData("Traveling")] // ADR-036: en viaje no es firme cobrable
+    [InlineData("ToSettle")]  // ADR-036: estado eliminado
     [InlineData("PendingOperatorRefund")]
     [InlineData("Archived")]
     [InlineData("")]
@@ -221,11 +225,11 @@ public class Adr032CollectableStateRuleTests
     // ALTA — Camino A (PaymentService.CreatePaymentAsync).
     // =====================================================================================================
 
+    // ADR-036 (2026-06-21): cobrable = {InManagement, Confirmed, Closed-con-deuda}. Traveling y ToSettle
+    // salieron de la lista (en viaje no se cobra; ToSettle murio).
     [Theory]
     [InlineData("InManagement")]
     [InlineData("Confirmed")]
-    [InlineData("Traveling")]
-    [InlineData("ToSettle")]
     [InlineData("Closed")] // ADR-033: Finalizada con deuda AHORA es cobrable.
     public async Task CreatePayment_OnCollectable_Succeeds(string status)
     {
@@ -245,6 +249,7 @@ public class Adr032CollectableStateRuleTests
     [InlineData("Budget")]
     [InlineData("Lost")]
     [InlineData("Cancelled")]
+    [InlineData("Traveling")] // ADR-036: en viaje no se cobra
     [InlineData("PendingOperatorRefund")]
     [InlineData("Archived")]
     public async Task CreatePayment_OnNonCollectable_Rejects(string status)
@@ -266,11 +271,10 @@ public class Adr032CollectableStateRuleTests
     // ALTA — Camino B (endpoint anidado, ReservaService.AddPaymentAsync) — EL AGUJERO.
     // =====================================================================================================
 
+    // ADR-036 (2026-06-21): cobrable por el path anidado = {InManagement, Confirmed, Closed-con-deuda}.
     [Theory]
     [InlineData("InManagement")]
     [InlineData("Confirmed")]
-    [InlineData("Traveling")]
-    [InlineData("ToSettle")]
     [InlineData("Closed")] // ADR-033: Finalizada con deuda AHORA es cobrable por el path anidado tambien.
     public async Task NestedAddPayment_OnCollectable_Succeeds(string status)
     {
@@ -288,6 +292,7 @@ public class Adr032CollectableStateRuleTests
     [InlineData("Budget")]
     [InlineData("Lost")]
     [InlineData("Cancelled")]
+    [InlineData("Traveling")] // ADR-036: en viaje no se cobra
     [InlineData("PendingOperatorRefund")]
     [InlineData("Archived")]
     public async Task NestedAddPayment_OnNonCollectable_Rejects(string status)

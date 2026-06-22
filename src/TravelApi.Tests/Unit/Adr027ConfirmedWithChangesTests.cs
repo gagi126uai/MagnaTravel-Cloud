@@ -141,10 +141,10 @@ public class Adr027ConfirmedWithChangesTests
     // ============================= TRIGGER =============================
 
     [Theory]
+    // ADR-036 (2026-06-21): Traveling se quito de este Theory. En viaje los servicios son SOLO LECTURA
+    // (la edicion se bloquea de raiz por estado), asi que ya no es un estado donde se "confirma con cambios".
     [InlineData(EstadoReserva.InManagement)]
     [InlineData(EstadoReserva.Confirmed)]
-    [InlineData(EstadoReserva.Traveling)]
-    [InlineData(EstadoReserva.ToSettle)]
     public async Task EditingSalePrice_OnLiveReserva_MarksUnacknowledgedChanges(string liveStatus)
     {
         await using var context = CreateContext();

@@ -351,10 +351,11 @@ public class Adr022Tanda3Tests
     {
         await using var context = CreateContext();
 
-        // Reservas activas con saldo por moneda + deuda a proveedor por moneda.
+        // Reservas firmes con saldo por moneda + deuda a proveedor por moneda. ADR-036 (2026-06-21): Traveling
+        // ya no es firme cobrable; usamos Closed (firme con deuda, ADR-033) para la segunda moneda.
         context.Reservas.AddRange(
             new Reserva { Id = 1, NumeroReserva = "F-1", Name = "R1", Status = EstadoReserva.Confirmed, Balance = 500m },
-            new Reserva { Id = 2, NumeroReserva = "F-2", Name = "R2", Status = EstadoReserva.Traveling, Balance = 300m });
+            new Reserva { Id = 2, NumeroReserva = "F-2", Name = "R2", Status = EstadoReserva.Closed, Balance = 300m });
         context.ReservaMoneyByCurrency.AddRange(
             new ReservaMoneyByCurrency { ReservaId = 1, Currency = "ARS", Balance = 500m, ConfirmedSale = 500m },
             new ReservaMoneyByCurrency { ReservaId = 2, Currency = "USD", Balance = 300m, ConfirmedSale = 300m });
@@ -415,9 +416,11 @@ public class Adr022Tanda3Tests
 
         var customer = new Customer { Id = 1, FullName = "Ana Gomez" };
         context.Customers.Add(customer);
+        // ADR-036 (2026-06-21): Traveling ya no es firme cobrable; usamos Closed (firme con deuda) para la
+        // segunda moneda y conservar la cobertura multimoneda de la cuenta del cliente.
         context.Reservas.AddRange(
             new Reserva { Id = 1, NumeroReserva = "F-1", Name = "R1", PayerId = 1, Status = EstadoReserva.Confirmed, Balance = 500m },
-            new Reserva { Id = 2, NumeroReserva = "F-2", Name = "R2", PayerId = 1, Status = EstadoReserva.Traveling, Balance = 100m });
+            new Reserva { Id = 2, NumeroReserva = "F-2", Name = "R2", PayerId = 1, Status = EstadoReserva.Closed, Balance = 100m });
         context.ReservaMoneyByCurrency.AddRange(
             new ReservaMoneyByCurrency { ReservaId = 1, Currency = "ARS", Balance = 500m, ConfirmedSale = 500m },
             new ReservaMoneyByCurrency { ReservaId = 2, Currency = "USD", Balance = 100m, ConfirmedSale = 100m });

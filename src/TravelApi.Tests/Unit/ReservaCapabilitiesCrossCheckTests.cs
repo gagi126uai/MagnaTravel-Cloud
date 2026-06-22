@@ -19,6 +19,8 @@ namespace TravelApi.Tests.Unit;
 /// </summary>
 public class ReservaCapabilitiesCrossCheckTests
 {
+    // ADR-036 (2026-06-21): ToSettle eliminado. 9 estados (Quotation..PendingOperatorRefund) + Archived
+    // (lateral legacy, no se modela aca).
     private static readonly string[] AllStatuses =
     {
         EstadoReserva.Quotation,
@@ -26,7 +28,6 @@ public class ReservaCapabilitiesCrossCheckTests
         EstadoReserva.InManagement,
         EstadoReserva.Confirmed,
         EstadoReserva.Traveling,
-        EstadoReserva.ToSettle,
         EstadoReserva.Closed,
         EstadoReserva.Lost,
         EstadoReserva.Cancelled,
@@ -75,6 +76,25 @@ public class ReservaCapabilitiesCrossCheckTests
         {
             return false;
         }
+    }
+
+    /// <summary>
+    /// ADR-036 (2026-06-21): ASIMETRIA INTENCIONAL — "En viaje" (Traveling) NO es cobrable en NINGUNA de las
+    /// dos capas. La politica lo bloquea con su motivo propio ("en viaje no se cobra") y el guard fino
+    /// EnsureCollectable tambien lo rechaza (Traveling salio de SaleFirmStatuses). Ambas capas coinciden en NO:
+    /// no es una desincronizacion, es la decision de prepago puro. Este test deja la asimetria documentada.
+    /// </summary>
+    [Theory]
+    [InlineData(100)]  // con deuda
+    [InlineData(0)]    // saldado
+    public void Traveling_IsNotCollectable_InBothLayers(int balanceInt)
+    {
+        decimal balance = balanceInt;
+        var policyAllows = ReservaCapabilityPolicy.For(Ctx(EstadoReserva.Traveling, balance)).CanRegisterPayment.Allowed;
+        Assert.False(policyAllows);
+
+        var guardAllows = TryEnsureCollectable(new Reserva { Status = EstadoReserva.Traveling, Balance = balance });
+        Assert.False(guardAllows);
     }
 
     // =====================================================================================================

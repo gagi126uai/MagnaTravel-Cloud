@@ -3,9 +3,10 @@ using System.ComponentModel.DataAnnotations;
 namespace TravelApi.Domain.Entities;
 
 /// <summary>
-/// ADR-020 F4 (candado): autorizacion para editar una reserva que esta bajo candado
-/// (Status ∈ {Confirmed, Traveling, ToSettle, Closed}). Desde Confirmada en adelante la
-/// edicion esta bloqueada; cada operacion protegida (editar/borrar/cancelar servicio, datos
+/// ADR-020 F4 (candado): autorizacion para editar una reserva que esta bajo candado de AUTORIZACION.
+/// ADR-036 (2026-06-21): ese candado quedo SOLO en {Confirmed} (Traveling y Closed pasaron a SOLO LECTURA
+/// dura — su bloqueo lo impone la politica de capacidades, no esta autorizacion; ToSettle murio). En
+/// Confirmada la edicion esta bloqueada; cada operacion protegida (editar/borrar/cancelar servicio, datos
 /// de la reserva, pasajeros, agregar servicio) exige que exista una autorizacion VIVA.
 ///
 /// <para>Regla de unicidad: a lo sumo UNA autorizacion viva por reserva. Al crear una nueva

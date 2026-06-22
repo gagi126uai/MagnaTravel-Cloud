@@ -100,6 +100,8 @@ public class InvoiceServiceStateGuardTests
     [InlineData(EstadoReserva.Closed)]
     [InlineData(EstadoReserva.Quotation)]
     [InlineData(EstadoReserva.InManagement)]
+    // ADR-036 (2026-06-21): en viaje NO se factura (la factura de venta se emite antes de viajar).
+    [InlineData(EstadoReserva.Traveling)]
     public async Task NormalInvoice_OnNonInvoiceableStatus_IsRejected(string status)
     {
         using var context = new AppDbContext(_dbOptions);
@@ -113,8 +115,6 @@ public class InvoiceServiceStateGuardTests
 
     [Theory]
     [InlineData(EstadoReserva.Confirmed)]
-    [InlineData(EstadoReserva.Traveling)]
-    [InlineData(EstadoReserva.ToSettle)]
     public async Task NormalInvoice_OnInvoiceableStatus_PassesStateGuard(string status)
     {
         using var context = new AppDbContext(_dbOptions);

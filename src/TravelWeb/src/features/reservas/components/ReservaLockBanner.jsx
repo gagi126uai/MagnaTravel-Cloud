@@ -18,7 +18,7 @@ import { Lock, LockOpen, AlertTriangle } from 'lucide-react';
  *    (Decision #1 y #2 guia UX 2026-06-08).
  *
  * Props:
- * - isLocked: boolean — true cuando el status esta en {Confirmed, Traveling, ToSettle, Closed}
+ * - isLocked: boolean — true cuando el status esta en {Confirmed, Traveling, Closed} (ADR-036: ToSettle eliminado)
  * - onRequestEdit: callback — el vendedor/admin hizo clic en el boton de autorizacion
  * - hasRegressionWarning: boolean — true si volvio sola a En gestion
  * - regressionReason: string|null — motivo de la regresion (del campo lastRegressionReason del DTO)

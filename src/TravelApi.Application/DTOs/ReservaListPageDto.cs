@@ -11,7 +11,8 @@ public class ReservaListSummaryDto
     public int ActiveCount { get; set; }
     public int ReservedCount { get; set; }
     public int OperativeCount { get; set; }
-    public int ToSettleCount { get; set; }
+    // ADR-036 (2026-06-21, prepago puro): ToSettleCount se ELIMINO (el estado "A liquidar" murio). El
+    // frontend que consumia este campo (chip/tab "A liquidar") debe quitarlo en el lote de UI.
     public int ClosedCount { get; set; }
     public int LostCount { get; set; }
     public decimal TotalSaleActive { get; set; }

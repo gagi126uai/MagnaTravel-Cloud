@@ -149,7 +149,7 @@ public class AlertService : IAlertService
         var threshold = today.AddDays(Math.Max(settings.UpcomingUnpaidReservationAlertDays, 1));
 
         // ADR-020 (2026-06-07): "viajes urgentes" = reservas activas con saldo pendiente. InManagement
-        // (En gestion) reemplaza al viejo Sold. NO sumamos ToSettle (post-viaje).
+        // (En gestion) reemplaza al viejo Sold. ADR-036 (2026-06-21): ToSettle murio (estado eliminado).
         //
         // Cubre TRES casos (auditoria de negocio 2026-06-12 item 6 "viajó y debe" + ADR-033 A3 "terminado y debe"):
         //  (A) viaje INMINENTE: salida en [hoy ... hoy + ventana]. El cliente todavia no viajo y debe.
@@ -641,7 +641,7 @@ public class AlertService : IAlertService
 
     /// <summary>
     /// ADR-027 (auditoria ERP, hallazgo #10): bucket "reservas confirmadas con cambios sin revisar".
-    /// Lista UN aviso POR RESERVA viva (InManagement/Confirmed/Traveling/ToSettle) marcada
+    /// Lista UN aviso POR RESERVA viva (InManagement/Confirmed/Traveling) marcada
     /// <c>HasUnacknowledgedChanges</c>=true: el operador confirmo un servicio con otro precio/condicion, el
     /// vendedor lo reflejo editando el servicio, el saldo del cliente ya se ajusto solo y la reserva espera
     /// el OK del dueño.
@@ -661,8 +661,7 @@ public class AlertService : IAlertService
             .Where(r => r.HasUnacknowledgedChanges
                         && (r.Status == EstadoReserva.InManagement
                             || r.Status == EstadoReserva.Confirmed
-                            || r.Status == EstadoReserva.Traveling
-                            || r.Status == EstadoReserva.ToSettle)
+                            || r.Status == EstadoReserva.Traveling)
                         && (caller.IsAdmin || r.ResponsibleUserId == caller.UserId))
             .Select(r => new
             {

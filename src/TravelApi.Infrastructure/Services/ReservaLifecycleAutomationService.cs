@@ -17,13 +17,12 @@ namespace TravelApi.Infrastructure.Services;
 /// - Traveling -&gt; Closed: cuando EndDate &lt; today AND Balance == 0.
 ///
 /// <para>CICLO NUEVO (flag ON):</para>
-/// - Confirmed -&gt; Traveling: cuando StartDate &lt;= today. Solo chequea capacidad (los
-///   servicios sin confirmar ya se garantizaron en Sold-&gt;Confirmed).
+/// - Confirmed -&gt; Traveling: cuando StartDate &lt;= today Y el CLIENTE quedo SALDADO (ADR-036: candado duro
+///   e incondicional). Tambien chequea capacidad. Si el cliente debe, el job NO promueve, loguea y reintenta.
 /// - Traveling -&gt; Closed: cuando EndDate &lt; today AND Balance == 0 (IGUAL que el clasico).
 ///   El cierre por fin de viaje es DIRECTO por default.
-/// - ToSettle ("a liquidar") quedo FUERA del job: es un DESVIO MANUAL OPCIONAL. El job NUNCA
-///   mete a nadie en ToSettle ni lo auto-cierra; entra y sale de ToSettle solo a mano (el
-///   usuario aparca la reserva ahi a proposito y la cierra cuando arregla cuentas con el operador).
+/// - ADR-036 (2026-06-21, prepago puro): ToSettle ("a liquidar") MURIO. Ya no hay desvio de liquidacion: el
+///   operador cobra el 100% antes del viaje. El job solo maneja Confirmed-&gt;Traveling y Traveling-&gt;Closed.
 ///
 /// <para>Concurrencia: el review descarto el concurrency token xmin en Reserva (se activaba con
 /// el flag apagado y exponia caminos viejos a DbUpdateConcurrencyException). Como defensa minima,
@@ -71,9 +70,8 @@ public class ReservaLifecycleAutomationService
     /// Orden importante: primero reparar EndDate desde servicios (sino el
     /// auto-cierre no las puede tocar), despues promote, despues close.
     ///
-    /// El campo Closed del resultado representa "cuantas cerraron por fin de viaje": en ambos
-    /// ciclos son las Traveling-&gt;Closed (EndDate pasada + Balance == 0). ToSettle NO participa
-    /// del job: es un desvio manual opcional.
+    /// El campo Closed del resultado representa "cuantas cerraron por fin de viaje": las
+    /// Traveling-&gt;Closed (EndDate pasada + Balance == 0). ADR-036: ToSettle ya no existe.
     /// </summary>
     public async Task<LifecycleRunResult> RunDailyDetailedAsync(CancellationToken ct = default)
     {
@@ -87,8 +85,7 @@ public class ReservaLifecycleAutomationService
 
         // ADR-020: cierre por fin de viaje Traveling -> Closed (EndDate pasada + Balance <= 0). El
         // <= 0 (no == 0) cubre el saldo a favor: una reserva cuyo cliente pago de mas debe poder
-        // cerrarse igual (coherente con el gate manual, que solo bloquea Balance > 0). ToSettle es
-        // un desvio MANUAL OPCIONAL: el job nunca lo crea ni lo cierra.
+        // cerrarse igual (coherente con el gate manual, que solo bloquea Balance > 0). ADR-036: ToSettle murio.
         var closed = await AutoTransitionTravelingToClosedAsync(ct);
 
         _logger.LogInformation(
@@ -172,10 +169,16 @@ public class ReservaLifecycleAutomationService
     }
 
     /// <summary>
-    /// Promueve Confirmed -&gt; Traveling cuando arranca el viaje (StartDate &lt;= hoy).
-    /// Siempre chequea capacidad. El chequeo de "servicios sin confirmar" depende del flag:
+    /// Promueve Confirmed -&gt; Traveling cuando arranca el viaje (StartDate &lt;= hoy) Y el CLIENTE quedo
+    /// SALDADO. Siempre chequea capacidad. El chequeo de "servicios sin confirmar" depende del flag:
     ///  - flag OFF: lo chequea aca (igual que el flujo manual clasico).
     ///  - flag ON: NO lo chequea (ya se garantizo en Sold-&gt;Confirmed).
+    ///
+    /// <para>ADR-036 (2026-06-21, prepago puro): el job aplica el MISMO candado de pago del cliente que el
+    /// pase manual (<c>ReservationEconomicPolicy.IsClientFullyPaid</c>, INCONDICIONAL — no mira la llave). Si
+    /// el cliente todavia debe, el job NO promueve, lo cuenta como bloqueado y loguea, y reintentara en la
+    /// proxima corrida (cuando llegue el cobro). NO lanza excepcion: un solo file con saldo no debe abortar la
+    /// corrida de todos los demas.</para>
     /// </summary>
     public async Task<int> AutoTransitionConfirmedToTravelingAsync(CancellationToken ct = default)
     {
@@ -203,6 +206,17 @@ public class ReservaLifecycleAutomationService
                 continue;
             }
 
+            // ADR-036: candado DURO de pago del cliente. Si todavia debe, no viaja: se cuenta como bloqueado,
+            // se loguea (sin montos) y se reintenta en la proxima corrida. Nunca excepcion en el job.
+            if (!ReservationEconomicPolicy.IsClientFullyPaid(reserva.Balance))
+            {
+                blocked++;
+                _logger.LogInformation(
+                    "Reserva {ReservaId} ({NumeroReserva}) NO promovida automaticamente Confirmed->Traveling: el cliente todavia tiene saldo pendiente. Se reintenta cuando quede saldada.",
+                    reserva.Id, reserva.NumeroReserva);
+                continue;
+            }
+
             planned.Add(new PlannedTransition(
                 Reserva: reserva,
                 FromStatus: EstadoReserva.Confirmed,
@@ -226,10 +240,9 @@ public class ReservaLifecycleAutomationService
     /// NO hay saldo pendiente (Balance == 0). Las reservas con EndDate vencido pero saldo
     /// pendiente quedan en Traveling y se ven con chip "Vencida con deuda".
     ///
-    /// <para>Este es el cierre por DEFAULT en el ciclo nuevo: ToSettle ("a liquidar") es un desvio
-    /// manual opcional, asi que el fin de viaje cierra directo igual que en el clasico. La unica
-    /// diferencia es el rastro auditable: con flag ON se escribe ReservaStatusChangeLog (como el
-    /// resto de la cadena nueva); con flag OFF no (deuda preexistente, fuera de scope del FIX 5).</para>
+    /// <para>ADR-036 (2026-06-21, prepago puro): el fin de viaje cierra directo Traveling -&gt; Closed (ya no
+    /// existe el desvio ToSettle "a liquidar"). La unica diferencia es el rastro auditable: con flag ON se
+    /// escribe ReservaStatusChangeLog (como el resto de la cadena nueva); con flag OFF no.</para>
     /// </summary>
     public async Task<int> AutoTransitionTravelingToClosedAsync(CancellationToken ct = default)
     {
@@ -358,7 +371,7 @@ public class ReservaLifecycleAutomationService
 /// Repaired = cantidad de reservas Operativas con EndDate=null cuyas fechas
 ///            se reconstruyeron desde los servicios cargados.
 /// Promoted = cantidad de reservas que pasaron Confirmed -> Traveling.
-/// Closed = cantidad que el job cerro Traveling->Closed (EndDate vencido + Balance cero), en AMBOS
-///          ciclos. El job NO mueve a ToSettle (es un desvio manual opcional, fuera del automatico).
+/// Closed = cantidad que el job cerro Traveling->Closed (EndDate vencido + Balance cero).
+///          ADR-036: ToSettle ya no existe.
 /// </summary>
 public record LifecycleRunResult(int Promoted, int Closed, int Repaired, int Reconciled = 0);
