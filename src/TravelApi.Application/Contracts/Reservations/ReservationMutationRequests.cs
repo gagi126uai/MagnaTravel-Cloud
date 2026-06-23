@@ -40,6 +40,28 @@ public record UpdateReservaDatesRequest(
     bool ClearEndDate = false);
 
 /// <summary>
+/// REPROGRAMAR VIAJE (2026-06-23): mueve TODAS las fechas de TODOS los servicios de una reserva
+/// JUNTAS, conservando la duracion y la separacion entre ellas. Es el equivalente a "el operador
+/// corrio el viaje N dias" sin tener que editar servicio por servicio.
+///
+/// <para>Modos de uso (se elige UNO):</para>
+/// <list type="bullet">
+///   <item><b>Por desplazamiento</b> (modo principal): <see cref="DaysShift"/> = cuantos dias mover
+///     (+ adelanta, - atrasa). Ej: +7 = todo el viaje una semana mas tarde.</item>
+///   <item><b>Por nueva fecha de salida</b> (opcional): <see cref="NewStartDate"/> = la fecha de salida
+///     deseada. El service deriva el shift = (NewStartDate - StartDate actual de la reserva), en dias
+///     enteros, y lo aplica igual que el modo por desplazamiento. Requiere que la reserva ya tenga
+///     un StartDate (servicios con fecha); si no, no hay desde donde derivar y se rechaza.</item>
+/// </list>
+///
+/// <para>Solo se permite enviar uno de los dos. <see cref="DaysShift"/> = 0 (y sin NewStartDate) es un
+/// no-op valido (no mueve nada). NO toca precios, costos ni comisiones: las fechas no entran en la plata.</para>
+/// </summary>
+public record RescheduleReservaRequest(
+    int? DaysShift = null,
+    DateTime? NewStartDate = null);
+
+/// <summary>
 /// Request para cambiar el Status de un servicio (Hotel/Transfer/Package/Flight/
 /// ServicioReserva) y opcionalmente el codigo de confirmacion del proveedor.
 /// Usado desde la cuenta corriente del proveedor para permitir al operador

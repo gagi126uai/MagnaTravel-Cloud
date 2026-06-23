@@ -45,6 +45,9 @@ import { UpcomingStartPill, estaEnVentana } from "./UpcomingStartPill";
 import { CostConfirmCell, CostConfirmCellMobile } from "./CostConfirmCell";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import { formatCurrency } from "../../../lib/utils";
+import { useReservaSupplierPaymentStatus } from "../lib/useReservaSupplierPaymentStatus";
+import { buscarEstadoPagoServicio, puedenVerseMontos } from "../lib/supplierPaymentStatusLogic";
+import { OperadorPagoStatusBadge } from "./OperadorPagoStatusBadge";
 
 /**
  * Convierte el recordKind del frontend al serviceType que espera el endpoint de nominal-coverage.
@@ -841,6 +844,17 @@ export function ServiceList({
     // El padre filtra reserva.passengers por los que tienen fullName.
     pasajerosConNombre = [],
 }) {
+    // ── ADR-036 punto 4c: estado de pago al operador por servicio ─────────────────
+    // Cargamos el estado de pago al montar. Si falla, degradamos silenciosamente:
+    // statusDto queda null y los badges simplemente no aparecen (no rompemos la solapa).
+    // El hook ya maneja el ciclo de vida (cancel en cleanup), así que una sola llamada
+    // carga los datos de TODOS los servicios de una vez.
+    const { statusDto: pagoOperadorDto, loading: pagoOperadorLoading } = useReservaSupplierPaymentStatus(reservaId);
+
+    // amountsVisible viene del DTO raíz: el backend ya sabe si el usuario tiene
+    // cobranzas.see_cost y enmascara los montos a 0 cuando no lo tiene.
+    const pagoOperadorAmountsVisible = puedenVerseMontos(pagoOperadorDto);
+
     // ── Guía UX 2026-06-22: botones de escritura ──────────────────────────────────
     // "Agregar / Editar" se ocultan cuando canEditServices.allowed === false.
     // "Cancelar / Cancelar varios" se ocultan cuando canCancel.allowed === false.
@@ -1174,6 +1188,19 @@ export function ServiceList({
                                                             </span>
                                                         )
                                                     )}
+                                                    {/* ADR-036 P4=B: etiqueta de pago al operador por servicio.
+                                                        Estado (pagado/parcial/impago) visible para todos.
+                                                        Montos solo si amountsVisible (cobranzas.see_cost).
+                                                        Si el endpoint falló, pagoOperadorDto es null → badge no aparece. */}
+                                                    <OperadorPagoStatusBadge
+                                                        servicioStatus={buscarEstadoPagoServicio(
+                                                            svc.recordKind,
+                                                            getReservationServicePublicId(svc),
+                                                            pagoOperadorDto
+                                                        )}
+                                                        amountsVisible={pagoOperadorAmountsVisible}
+                                                        loading={pagoOperadorLoading}
+                                                    />
                                                 </div>
                                             </td>
 
@@ -1502,6 +1529,18 @@ export function ServiceList({
                                             )}
                                         </div>
                                     )}
+
+                                    {/* ADR-036 P4=B: etiqueta de pago al operador en mobile.
+                                        Mismo dato que desktop; se ubica debajo del nombre y las pills. */}
+                                    <OperadorPagoStatusBadge
+                                        servicioStatus={buscarEstadoPagoServicio(
+                                            svc.recordKind,
+                                            getReservationServicePublicId(svc),
+                                            pagoOperadorDto
+                                        )}
+                                        amountsVisible={pagoOperadorAmountsVisible}
+                                        loading={pagoOperadorLoading}
+                                    />
 
                                     <div className="flex justify-between items-end">
                                         <div className="text-[11px] text-slate-500 flex flex-col gap-0.5">

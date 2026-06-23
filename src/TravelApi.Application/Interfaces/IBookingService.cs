@@ -1,9 +1,18 @@
+using TravelApi.Application.Contracts.Reservations;
 using TravelApi.Application.DTOs;
 
 namespace TravelApi.Application.Interfaces;
 
 public interface IBookingService
 {
+    // REPROGRAMAR VIAJE (2026-06-23): mueve TODAS las fechas de TODOS los servicios de la reserva
+    // JUNTAS por un desplazamiento de N dias (o derivando el shift de una nueva fecha de salida).
+    // Reusa exactamente los mismos guards que la edicion de un servicio individual: candado por
+    // estado (terminal/solo-lectura), candado de autorizacion (Confirmed) y guard fiscal (CAE/voucher).
+    // No toca precios/costos/comisiones. Recalcula StartDate/EndDate de la reserva al final.
+    Task<RescheduleReservaResult> RescheduleAsync(
+        string reservaPublicIdOrLegacyId, RescheduleReservaRequest req, CancellationToken ct);
+
     Task<IEnumerable<FlightSegmentDto>> GetFlightsAsync(string reservaPublicIdOrLegacyId, CancellationToken ct);
     Task<FlightSegmentDto> GetFlightByIdAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, CancellationToken ct);
     Task<FlightSegmentDto> CreateFlightAsync(string reservaPublicIdOrLegacyId, CreateFlightRequest req, CancellationToken ct);

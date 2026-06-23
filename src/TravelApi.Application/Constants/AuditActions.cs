@@ -299,4 +299,18 @@ public static class AuditActions
 
     /// <summary>ADR-031 v2.1: entityName para los eventos sobre la asignacion pasajero &lt;-&gt; servicio.</summary>
     public const string PassengerServiceAssignmentEntityName = "PassengerServiceAssignment";
+
+    // ===== Reprogramar viaje (2026-06-23) =====
+
+    /// <summary>
+    /// REPROGRAMAR VIAJE (2026-06-23): se desplazaron en bloque las fechas de TODOS los servicios de una
+    /// reserva (el operador "corrio" el viaje N dias). Importa auditarlo porque cambia las fechas de cabecera
+    /// de la reserva (StartDate/EndDate), que mueven el lifecycle (el job que pasa Confirmada -&gt; En viaje
+    /// compara StartDate contra hoy). EntityName=Reserva, EntityId = Reserva.Id (legacy int). El detail JSON
+    /// lleva <c>daysShift</c>, <c>servicesMoved</c> y las nuevas fechas — NUNCA montos ni datos sensibles.
+    /// </summary>
+    public const string ReservaRescheduled = "ReservaRescheduled";
+
+    /// <summary>Reprogramar viaje: entityName para el evento de desplazamiento de fechas.</summary>
+    public const string ReservaEntityName = "Reserva";
 }

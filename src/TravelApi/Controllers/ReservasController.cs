@@ -23,6 +23,7 @@ public class ReservasController : ControllerBase
     private readonly ITimelineService _timelineService;
     private readonly ISupplierService _supplierService;
     private readonly IEntityReferenceResolver _entityReferenceResolver;
+    private readonly IBookingService _bookingService;
     private readonly ILogger<ReservasController> _logger;
 
     public ReservasController(
@@ -31,6 +32,7 @@ public class ReservasController : ControllerBase
         ITimelineService timelineService,
         ISupplierService supplierService,
         IEntityReferenceResolver entityReferenceResolver,
+        IBookingService bookingService,
         ILogger<ReservasController> logger)
     {
         _reservaService = reservaService;
@@ -38,6 +40,7 @@ public class ReservasController : ControllerBase
         _timelineService = timelineService;
         _supplierService = supplierService;
         _entityReferenceResolver = entityReferenceResolver;
+        _bookingService = bookingService;
         _logger = logger;
     }
 
@@ -730,6 +733,39 @@ public class ReservasController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    // REPROGRAMAR VIAJE (2026-06-23): mueve JUNTAS las fechas de todos los servicios de la reserva por un
+    // desplazamiento de N dias (o derivando el shift de una nueva fecha de salida). Misma autorizacion que
+    // editar un servicio: ReservasEdit + ownership de la reserva. Los guards de negocio (estado terminal,
+    // candado de autorizacion en Confirmada, factura/voucher emitidos) los aplica el BookingService y se
+    // mapean a 409. No toca plata. El front muestra el boton segun Capabilities.CanEditServices.
+    [HttpPost("{publicIdOrLegacyId}/reschedule")]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<ActionResult<RescheduleReservaResult>> Reschedule(
+        string publicIdOrLegacyId, [FromBody] RescheduleReservaRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await _bookingService.RescheduleAsync(publicIdOrLegacyId, request, cancellationToken);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (ArgumentException ex)
+        {
+            // Request mal formado (los dos modos, ninguno, o nueva fecha sin salida desde donde derivar).
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Candado por estado / candado de autorizacion / guard fiscal (CAE-voucher) -> 409, mismo
+            // contrato que la edicion de un servicio individual.
             return Conflict(new { message = ex.Message });
         }
     }
