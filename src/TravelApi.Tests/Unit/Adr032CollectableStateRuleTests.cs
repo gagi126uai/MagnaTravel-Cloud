@@ -323,6 +323,8 @@ public class Adr032CollectableStateRuleTests
             service,
             Mock.Of<IVoucherService>(),
             Mock.Of<ITimelineService>(),
+            Mock.Of<ISupplierService>(),
+            Mock.Of<IEntityReferenceResolver>(),
             NullLogger<ReservasController>.Instance);
 
         var result = await controller.AddPayment(

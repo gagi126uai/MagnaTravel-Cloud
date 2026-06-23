@@ -1193,6 +1193,27 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(p => p.ReservaId).HasColumnName("TravelFileId");
             entity.Property(p => p.ServicioReservaId).HasColumnName("ReservationId");
 
+            // ADR-036 4c: referencia polimorfica al servicio imputado (recordKind + publicId del servicio).
+            // ServicePublicId NO es FK (el servicio puede estar en cualquiera de las 6 tablas); la integridad
+            // se valida en SupplierService al registrar. Indice por (Supplier, ServicePublicId) para resolver
+            // rapido "cuanto se le pago al operador por ESTE servicio" sin escanear toda la tabla.
+            entity.Property(p => p.ServiceRecordKind).HasMaxLength(20);
+
+            // Indice por SOLO SupplierId: lo crea EF por convencion para la FK, pero al agregar
+            // el indice compuesto de abajo EF lo considera redundante y lo dropea. Lo declaramos
+            // explicito para que NO se borre: las cuentas corrientes de proveedor filtran por
+            // SupplierId solo (incluyendo pagos con ServicePublicId NULL: anticipos y pagos a nivel
+            // reserva), y el indice parcial de abajo (WHERE ServicePublicId IS NOT NULL) NO puede
+            // servir esas queries porque excluye justamente las filas NULL -> caerian a seq scan.
+            entity.HasIndex(p => p.SupplierId)
+                  .HasDatabaseName("IX_SupplierPayments_SupplierId");
+
+            // Indice PARCIAL adicional (no reemplaza al de arriba): resuelve rapido
+            // "cuanto se le pago al operador por ESTE servicio" filtrando por (Supplier, servicio).
+            entity.HasIndex(p => new { p.SupplierId, p.ServicePublicId })
+                  .HasDatabaseName("IX_SupplierPayment_Supplier_ServicePublicId")
+                  .HasFilter("\"ServicePublicId\" IS NOT NULL");
+
             // B1.15 Fase 0' (CODE-10 / INV-2): query filter para excluir pagos
             // proveedor soft-deleted. Indices auxiliares para cuentas corrientes
             // que ahora deben filtrar `IsDeleted = false` antes de sumar.

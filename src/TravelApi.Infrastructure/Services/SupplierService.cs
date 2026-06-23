@@ -535,8 +535,9 @@ public class SupplierService : ISupplierService
             throw new InvalidOperationException("El pago excede la deuda actual con el proveedor.");
         }
 
-        // ADR-022 §4 P4: la imputacion del pago. O una reserva concreta (validada) o anticipo "a cuenta".
-        var (reservaId, servicioReservaId) = await ResolveSupplierPaymentImputationAsync(
+        // ADR-022 §4 P4 + ADR-036 4c: la imputacion del pago. O una reserva concreta (validada), opcionalmente
+        // imputada a UN servicio de esa reserva, o anticipo "a cuenta".
+        var imputation = await ResolveSupplierPaymentImputationAsync(
             id, request, currency, cancellationToken);
 
         var payment = new SupplierPayment
@@ -552,8 +553,10 @@ public class SupplierService : ISupplierService
             Method = request.Method ?? "Transfer",
             Reference = request.Reference,
             Notes = request.Notes,
-            ReservaId = reservaId,
-            ServicioReservaId = servicioReservaId,
+            ReservaId = imputation.ReservaId,
+            ServicioReservaId = imputation.ServicioReservaId,
+            ServiceRecordKind = imputation.ServiceRecordKind,
+            ServicePublicId = imputation.ServicePublicId,
             PaidAt = DateTime.UtcNow
         };
 
@@ -611,9 +614,10 @@ public class SupplierService : ISupplierService
             throw new InvalidOperationException("La modificacion del pago excede la deuda actual con el proveedor.");
         }
 
-        // ADR-022 §4 P4: re-resolver la imputacion (reserva concreta o anticipo a cuenta), excluyendo el
-        // propio pago de la deuda restante de la reserva (su monto viejo no debe contarse como "ya pagado").
-        var (reservaId, servicioReservaId) = await ResolveSupplierPaymentImputationAsync(
+        // ADR-022 §4 P4 + ADR-036 4c: re-resolver la imputacion (reserva concreta, opcional servicio, o
+        // anticipo a cuenta), excluyendo el propio pago de la deuda restante de la reserva (su monto viejo
+        // no debe contarse como "ya pagado").
+        var imputation = await ResolveSupplierPaymentImputationAsync(
             id, request, currency, cancellationToken, excludePaymentId: payment.Id);
 
         payment.Amount = request.Amount;
@@ -626,8 +630,10 @@ public class SupplierService : ISupplierService
         payment.Method = request.Method ?? payment.Method;
         payment.Reference = request.Reference;
         payment.Notes = request.Notes;
-        payment.ReservaId = reservaId;
-        payment.ServicioReservaId = servicioReservaId;
+        payment.ReservaId = imputation.ReservaId;
+        payment.ServicioReservaId = imputation.ServicioReservaId;
+        payment.ServiceRecordKind = imputation.ServiceRecordKind;
+        payment.ServicePublicId = imputation.ServicePublicId;
 
         // ADR-022 §4.5: editar el monto = reversa del asiento viejo + asiento nuevo (orden estricto:
         // marcar viejo IsReversed ANTES de insertar). El libro conserva viejo (-) -> reversa (+) -> nuevo.
@@ -918,7 +924,10 @@ public class SupplierService : ISupplierService
                 FileName = payment.Reserva != null ? payment.Reserva.Name : null,
                 ReservaPublicId = payment.Reserva != null ? (Guid?)payment.Reserva.PublicId : null,
                 // ADR-022 §4 P4: sin reserva = anticipo "a cuenta" (incluye el legacy con ReservaId null).
-                IsAdvanceToAccount = payment.ReservaId == null
+                IsAdvanceToAccount = payment.ReservaId == null,
+                // ADR-036 4c: si el pago se imputo a un servicio puntual, viaja el par (recordKind, publicId).
+                ServiceRecordKind = payment.ServiceRecordKind,
+                ServicePublicId = payment.ServicePublicId
             });
     }
 
@@ -1070,7 +1079,7 @@ public class SupplierService : ISupplierService
     /// <paramref name="excludePaymentId"/> excluye el propio pago al editar (su monto no debe contarse como
     /// "ya pagado" al validar la deuda restante de la reserva).
     /// </summary>
-    private async Task<(int? ReservaId, int? ServicioReservaId)> ResolveSupplierPaymentImputationAsync(
+    private async Task<SupplierPaymentImputationResult> ResolveSupplierPaymentImputationAsync(
         int supplierId,
         SupplierPaymentRequest request,
         PaymentCurrencyResolver.Resolved currency,
@@ -1086,10 +1095,28 @@ public class SupplierService : ISupplierService
                 "Un pago no puede imputarse a una reserva y marcarse como anticipo a cuenta a la vez.");
         }
 
+        // ADR-036 4c: si se pide imputar a un servicio concreto, OBLIGA a tener reserva (un servicio vive
+        // dentro de una reserva). Validamos el formato del recordKind antes de tocar la base.
+        bool hasService = !string.IsNullOrWhiteSpace(request.ServicePublicId);
+        string? normalizedServiceKind = null;
+        if (hasService)
+        {
+            if (!hasReserva)
+            {
+                throw new ArgumentException(
+                    "Para imputar el pago a un servicio hay que indicar tambien su reserva.");
+            }
+            normalizedServiceKind = ServicePaymentRecordKinds.Normalize(request.ServiceRecordKind);
+            if (normalizedServiceKind is null)
+            {
+                throw new ArgumentException("El tipo de servicio para imputar el pago no es valido.");
+            }
+        }
+
         if (!hasReserva)
         {
             // Anticipo a cuenta (explicito o legacy): sin reserva ni servicio. Vale solo el tope global.
-            return (null, null);
+            return SupplierPaymentImputationResult.AdvanceToAccount;
         }
 
         // ----- Imputado a una reserva concreta: validamos existencia, pertenencia y deuda por moneda -----
@@ -1101,12 +1128,23 @@ public class SupplierService : ISupplierService
             throw new KeyNotFoundException("Reserva no encontrada");
         }
 
+        // Camino legacy del servicio generico (ServicioReservaId): se conserva tal cual estaba.
         int? servicioReservaId = null;
         if (!string.IsNullOrWhiteSpace(request.ServicioReservaId))
         {
             servicioReservaId = await _dbContext.Servicios
                 .AsNoTracking()
                 .ResolveInternalIdAsync(request.ServicioReservaId, cancellationToken);
+        }
+
+        // ADR-036 4c: resolver y validar la referencia polimorfica al servicio (recordKind + publicId).
+        // El servicio debe existir, pertenecer a ESTE proveedor y estar en ESTA reserva. Si no, se rechaza
+        // (no se imputa un pago a un servicio de otro operador / otra reserva).
+        Guid? servicePublicId = null;
+        if (hasService)
+        {
+            servicePublicId = await ResolveServiceForSupplierPaymentAsync(
+                supplierId, reservaId.Value, normalizedServiceKind!, request.ServicePublicId!, cancellationToken);
         }
 
         // La reserva tiene que tener al menos un servicio de ESTE proveedor (no se puede imputar un pago a
@@ -1135,7 +1173,61 @@ public class SupplierService : ISupplierService
                 "El pago excede la deuda de este proveedor en la reserva y la moneda indicadas.");
         }
 
-        return (reservaId, servicioReservaId);
+        return new SupplierPaymentImputationResult(
+            reservaId, servicioReservaId, hasService ? normalizedServiceKind : null, servicePublicId);
+    }
+
+    /// <summary>
+    /// Resultado de resolver la imputacion de un pago a proveedor: a que reserva, que servicio generico
+    /// legacy y (ADR-036 4c) que servicio concreto polimorfico (recordKind + publicId). Todos null = anticipo.
+    /// </summary>
+    private readonly record struct SupplierPaymentImputationResult(
+        int? ReservaId, int? ServicioReservaId, string? ServiceRecordKind, Guid? ServicePublicId)
+    {
+        public static SupplierPaymentImputationResult AdvanceToAccount => new(null, null, null, null);
+    }
+
+    /// <summary>
+    /// ADR-036 4c: resuelve un servicio por (recordKind, publicId) y valida que exista, sea de ESTE proveedor
+    /// y de ESTA reserva. Devuelve el PublicId confirmado del servicio (que es justamente el id polimorfico
+    /// que se persiste en el pago). No devuelve el id interno porque la referencia es por PublicId, no FK.
+    /// Lanza <see cref="InvalidOperationException"/> si el servicio no cumple (el controller lo traduce a 400).
+    /// </summary>
+    private async Task<Guid> ResolveServiceForSupplierPaymentAsync(
+        int supplierId, int reservaId, string recordKind, string servicePublicIdRaw, CancellationToken cancellationToken)
+    {
+        if (!Guid.TryParse(servicePublicIdRaw, out var servicePublicId))
+        {
+            throw new ArgumentException("El identificador del servicio no es valido.");
+        }
+
+        // Cada tipo vive en su propia tabla; consultamos solo la que corresponde al recordKind. La condicion
+        // es siempre la misma: mismo PublicId, mismo proveedor, misma reserva. AsNoTracking (solo validamos).
+        bool exists = recordKind switch
+        {
+            ServicePaymentRecordKinds.Flight => await _dbContext.FlightSegments.AsNoTracking().AnyAsync(
+                s => s.PublicId == servicePublicId && s.SupplierId == supplierId && s.ReservaId == reservaId, cancellationToken),
+            ServicePaymentRecordKinds.Hotel => await _dbContext.HotelBookings.AsNoTracking().AnyAsync(
+                s => s.PublicId == servicePublicId && s.SupplierId == supplierId && s.ReservaId == reservaId, cancellationToken),
+            ServicePaymentRecordKinds.Transfer => await _dbContext.TransferBookings.AsNoTracking().AnyAsync(
+                s => s.PublicId == servicePublicId && s.SupplierId == supplierId && s.ReservaId == reservaId, cancellationToken),
+            ServicePaymentRecordKinds.Package => await _dbContext.PackageBookings.AsNoTracking().AnyAsync(
+                s => s.PublicId == servicePublicId && s.SupplierId == supplierId && s.ReservaId == reservaId, cancellationToken),
+            ServicePaymentRecordKinds.Assistance => await _dbContext.AssistanceBookings.AsNoTracking().AnyAsync(
+                s => s.PublicId == servicePublicId && s.SupplierId == supplierId && s.ReservaId == reservaId, cancellationToken),
+            // El generico guarda SupplierId nullable; exigimos que coincida igual.
+            ServicePaymentRecordKinds.Generic => await _dbContext.Servicios.AsNoTracking().AnyAsync(
+                s => s.PublicId == servicePublicId && s.SupplierId == supplierId && s.ReservaId == reservaId, cancellationToken),
+            _ => false
+        };
+
+        if (!exists)
+        {
+            throw new InvalidOperationException(
+                "El servicio indicado no existe, no es de este proveedor o no pertenece a la reserva.");
+        }
+
+        return servicePublicId;
     }
 
     /// <summary>
@@ -1496,6 +1588,176 @@ public class SupplierService : ISupplierService
         {
             total.Amount = 0m;
         }
+    }
+
+    // ===================================================================================================
+    // ADR-036 punto 4c (2026-06-23): estado "pagado al operador" POR SERVICIO de una reserva.
+    // ===================================================================================================
+
+    /// <summary>
+    /// Estado de pago al operador de todos los servicios de una reserva. Por cada servicio (de las 6 tablas)
+    /// suma los pagos VIVOS al operador imputados a ese servicio puntual (ADR-036 4c) y deriva paid/partial/
+    /// unpaid contra su costo. Los montos respetan el masking see_cost; el estado lo ven todos.
+    /// </summary>
+    public async Task<ReservaSupplierPaymentStatusDto> GetReservaSupplierPaymentStatusAsync(
+        int reservaId, CancellationToken cancellationToken)
+    {
+        var reserva = await _dbContext.Reservas
+            .AsNoTracking()
+            .Where(r => r.Id == reservaId)
+            .Select(r => new { r.PublicId })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (reserva == null)
+        {
+            throw new KeyNotFoundException("Reserva no encontrada");
+        }
+
+        // 1) Todos los servicios de la reserva (6 tablas), con su proveedor, costo, moneda y estado.
+        var serviceRows = await BuildReservaServiceRowsAsync(reservaId, cancellationToken);
+
+        // 2) Pagos vivos al operador imputados a UN servicio de esta reserva. El query filter !IsDeleted ya
+        //    excluye los anulados (self-healing). Sumamos el equivalente imputado por servicio (ImputedAmount
+        //    si el pago cruzo moneda, si no el Amount), igual criterio que el resto de la cuenta del proveedor.
+        var paymentRows = await _dbContext.SupplierPayments
+            .Where(p => p.ReservaId == reservaId && p.ServicePublicId != null)
+            .Select(p => new { p.ServicePublicId, p.Amount, p.ImputedAmount })
+            .ToListAsync(cancellationToken);
+
+        var paidByService = new Dictionary<Guid, decimal>();
+        foreach (var payment in paymentRows)
+        {
+            if (payment.ServicePublicId is not Guid servicePublicId) continue;
+            decimal imputedAmount = payment.ImputedAmount ?? payment.Amount;
+            paidByService.TryGetValue(servicePublicId, out var current);
+            paidByService[servicePublicId] = current + imputedAmount;
+        }
+
+        var dto = new ReservaSupplierPaymentStatusDto
+        {
+            ReservaPublicId = reserva.PublicId,
+            AmountsVisible = await CanSeeSupplierCostFiguresAsync(cancellationToken)
+        };
+
+        foreach (var service in serviceRows)
+        {
+            paidByService.TryGetValue(service.PublicId, out var paid);
+            decimal netCost = EconomicRulesHelper.RoundCurrency(service.NetCost);
+            paid = EconomicRulesHelper.RoundCurrency(paid);
+            decimal outstanding = EconomicRulesHelper.RoundCurrency(netCost - paid);
+
+            // El estado se deriva ANTES de enmascarar (no depende de ver montos): cubierto / algo / nada.
+            string status = DeriveOperatorPaymentStatus(netCost, paid);
+
+            var line = new ServiceSupplierPaymentStatusDto
+            {
+                RecordKind = service.RecordKind,
+                ServicePublicId = service.PublicId,
+                SupplierPublicId = service.SupplierPublicId,
+                SupplierName = service.SupplierName,
+                Currency = Monedas.Normalizar(service.Currency),
+                NetCost = netCost,
+                PaidToOperator = paid,
+                OutstandingToOperator = outstanding,
+                Status = status
+            };
+
+            // Masking see_cost: el estado queda visible, los montos se anulan (decision ADR-036 P4=B).
+            if (!dto.AmountsVisible)
+            {
+                line.NetCost = 0m;
+                line.PaidToOperator = 0m;
+                line.OutstandingToOperator = 0m;
+            }
+
+            dto.Services.Add(line);
+        }
+
+        return dto;
+    }
+
+    /// <summary>
+    /// Deriva el estado de pago al operador de un servicio: <c>paid</c> si lo pagado cubre el costo,
+    /// <c>partial</c> si se pago algo pero no todo, <c>unpaid</c> si no se pago nada. Un servicio sin costo
+    /// (NetCost &lt;= 0) se reporta unpaid (no hay nada que pagar todavia, no se marca como "pagado").
+    /// </summary>
+    private static string DeriveOperatorPaymentStatus(decimal netCost, decimal paid)
+    {
+        if (paid <= 0m) return ServiceSupplierPaymentStatuses.Unpaid;
+        if (netCost <= 0m) return ServiceSupplierPaymentStatuses.Unpaid;
+        if (paid >= netCost) return ServiceSupplierPaymentStatuses.Paid;
+        return ServiceSupplierPaymentStatuses.Partial;
+    }
+
+    /// <summary>Fila minima de un servicio de la reserva para el estado de pago al operador.</summary>
+    private readonly record struct ReservaServicePaymentRow(
+        string RecordKind, Guid PublicId, Guid? SupplierPublicId, string? SupplierName,
+        decimal NetCost, string? Currency, string Status);
+
+    /// <summary>
+    /// Reune todos los servicios de una reserva (6 tablas) con su (recordKind, publicId, proveedor, costo,
+    /// moneda, estado). Mismo patron de union en memoria que <c>BuildSupplierServiceDebtRowsAsync</c>
+    /// (el provider InMemory no traduce Concat sobre proyecciones; el volumen por reserva es chico).
+    /// </summary>
+    private async Task<List<ReservaServicePaymentRow>> BuildReservaServiceRowsAsync(
+        int reservaId, CancellationToken cancellationToken)
+    {
+        var rows = new List<ReservaServicePaymentRow>();
+
+        var flights = await _dbContext.FlightSegments.AsNoTracking()
+            .Where(s => s.ReservaId == reservaId)
+            .Select(s => new { s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status })
+            .ToListAsync(cancellationToken);
+        rows.AddRange(flights.Select(s => new ReservaServicePaymentRow(
+            ServicePaymentRecordKinds.Flight, s.PublicId,
+            s.Supplier != null ? (Guid?)s.Supplier.PublicId : null, s.Supplier != null ? s.Supplier.Name : null,
+            s.NetCost, s.Currency, s.Status)));
+
+        var hotels = await _dbContext.HotelBookings.AsNoTracking()
+            .Where(s => s.ReservaId == reservaId)
+            .Select(s => new { s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status })
+            .ToListAsync(cancellationToken);
+        rows.AddRange(hotels.Select(s => new ReservaServicePaymentRow(
+            ServicePaymentRecordKinds.Hotel, s.PublicId,
+            s.Supplier != null ? (Guid?)s.Supplier.PublicId : null, s.Supplier != null ? s.Supplier.Name : null,
+            s.NetCost, s.Currency, s.Status)));
+
+        var transfers = await _dbContext.TransferBookings.AsNoTracking()
+            .Where(s => s.ReservaId == reservaId)
+            .Select(s => new { s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status })
+            .ToListAsync(cancellationToken);
+        rows.AddRange(transfers.Select(s => new ReservaServicePaymentRow(
+            ServicePaymentRecordKinds.Transfer, s.PublicId,
+            s.Supplier != null ? (Guid?)s.Supplier.PublicId : null, s.Supplier != null ? s.Supplier.Name : null,
+            s.NetCost, s.Currency, s.Status)));
+
+        var packages = await _dbContext.PackageBookings.AsNoTracking()
+            .Where(s => s.ReservaId == reservaId)
+            .Select(s => new { s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status })
+            .ToListAsync(cancellationToken);
+        rows.AddRange(packages.Select(s => new ReservaServicePaymentRow(
+            ServicePaymentRecordKinds.Package, s.PublicId,
+            s.Supplier != null ? (Guid?)s.Supplier.PublicId : null, s.Supplier != null ? s.Supplier.Name : null,
+            s.NetCost, s.Currency, s.Status)));
+
+        var assistances = await _dbContext.AssistanceBookings.AsNoTracking()
+            .Where(s => s.ReservaId == reservaId)
+            .Select(s => new { s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status })
+            .ToListAsync(cancellationToken);
+        rows.AddRange(assistances.Select(s => new ReservaServicePaymentRow(
+            ServicePaymentRecordKinds.Assistance, s.PublicId,
+            s.Supplier != null ? (Guid?)s.Supplier.PublicId : null, s.Supplier != null ? s.Supplier.Name : null,
+            s.NetCost, s.Currency, s.Status)));
+
+        var generics = await _dbContext.Servicios.AsNoTracking()
+            .Where(s => s.ReservaId == reservaId)
+            .Select(s => new { s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status })
+            .ToListAsync(cancellationToken);
+        rows.AddRange(generics.Select(s => new ReservaServicePaymentRow(
+            ServicePaymentRecordKinds.Generic, s.PublicId,
+            s.Supplier != null ? (Guid?)s.Supplier.PublicId : null, s.Supplier != null ? s.Supplier.Name : null,
+            s.NetCost, s.Currency, s.Status)));
+
+        return rows;
     }
 
     /// <summary>

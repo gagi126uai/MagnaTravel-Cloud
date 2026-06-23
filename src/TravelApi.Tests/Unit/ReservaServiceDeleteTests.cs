@@ -255,6 +255,8 @@ public class ReservaServiceDeleteTests
             reservaService.Object,
             Mock.Of<IVoucherService>(),
             Mock.Of<ITimelineService>(),
+            Mock.Of<ISupplierService>(),
+            Mock.Of<IEntityReferenceResolver>(),
             NullLogger<ReservasController>.Instance);
 
         var result = await controller.DeleteReserva("reserva-1", CancellationToken.None);

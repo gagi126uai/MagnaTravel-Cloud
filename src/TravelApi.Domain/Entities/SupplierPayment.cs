@@ -21,6 +21,36 @@ public class SupplierPayment : IHasPublicId
     public int? ServicioReservaId { get; set; }
     public ServicioReserva? ServicioReserva { get; set; }
 
+    // ====================================================================================
+    // ADR-036 punto 4c (2026-06-23): imputacion del pago a UN servicio concreto de la reserva.
+    // Un servicio de la reserva puede vivir en 6 tablas distintas (vuelo/hotel/traslado/paquete/
+    // asistencia + el generico ServicioReserva). Por eso NO alcanza con una sola FK como
+    // ServicioReservaId (que solo apunta al generico): se necesita una referencia POLIMORFICA.
+    // Usamos el MISMO identificador que ya usa el front: (recordKind, publicId). Asi el estado
+    // "pagado al operador" por servicio se deriva sumando los pagos vivos imputados a ese par.
+    //
+    // Es aditivo y opcional: un pago sin servicio (anticipo o pago a nivel reserva) deja ambos en
+    // null = identico al comportamiento previo. NO reemplaza a ServicioReservaId legacy (que sigue
+    // intacto para no romper el camino del servicio generico ya existente).
+    // ====================================================================================
+
+    /// <summary>
+    /// ADR-036 4c: tipo de registro del servicio al que se imputa el pago, en el vocabulario del
+    /// front (<c>ServicePaymentRecordKinds</c>): flight/hotel/transfer/package/assistance/generic.
+    /// <c>null</c> = el pago no se imputa a un servicio puntual (anticipo o pago a nivel reserva).
+    /// Va junto con <see cref="ServicePublicId"/>: o ambos seteados o ambos null.
+    /// </summary>
+    [MaxLength(20)]
+    public string? ServiceRecordKind { get; set; }
+
+    /// <summary>
+    /// ADR-036 4c: <c>PublicId</c> del servicio concreto al que se imputa el pago. Es polimorfico
+    /// (no es una FK de base de datos, porque el servicio puede estar en cualquiera de las 6 tablas);
+    /// la integridad se valida en el servicio de aplicacion al registrar el pago. <c>null</c> si el
+    /// pago no se imputa a un servicio puntual.
+    /// </summary>
+    public Guid? ServicePublicId { get; set; }
+
     [Column(TypeName = "decimal(18,2)")]
     public decimal Amount { get; set; }
 

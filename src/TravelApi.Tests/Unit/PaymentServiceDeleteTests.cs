@@ -389,6 +389,8 @@ public class PaymentServiceDeleteTests
             reservaService.Object,
             Mock.Of<IVoucherService>(),
             Mock.Of<ITimelineService>(),
+            Mock.Of<ISupplierService>(),
+            Mock.Of<IEntityReferenceResolver>(),
             NullLogger<ReservasController>.Instance);
 
         var result = await controller.DeletePayment("reserva-1", "payment-1", CancellationToken.None);

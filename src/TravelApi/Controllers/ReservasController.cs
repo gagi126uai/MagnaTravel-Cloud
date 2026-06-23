@@ -21,17 +21,23 @@ public class ReservasController : ControllerBase
     private readonly IReservaService _reservaService;
     private readonly IVoucherService _voucherService;
     private readonly ITimelineService _timelineService;
+    private readonly ISupplierService _supplierService;
+    private readonly IEntityReferenceResolver _entityReferenceResolver;
     private readonly ILogger<ReservasController> _logger;
 
     public ReservasController(
         IReservaService reservaService,
         IVoucherService voucherService,
         ITimelineService timelineService,
+        ISupplierService supplierService,
+        IEntityReferenceResolver entityReferenceResolver,
         ILogger<ReservasController> logger)
     {
         _reservaService = reservaService;
         _voucherService = voucherService;
         _timelineService = timelineService;
+        _supplierService = supplierService;
+        _entityReferenceResolver = entityReferenceResolver;
         _logger = logger;
     }
 
@@ -115,6 +121,40 @@ public class ReservasController : ControllerBase
             }
 
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo obtener el estado de cuenta.");
+        }
+    }
+
+    /// <summary>
+    /// ADR-036 4c: estado "pagado al operador" de cada servicio de la reserva. Por servicio devuelve el
+    /// estado (pagado/parcial/impago, visible para todos) y los montos (costo/pagado/saldo, solo con
+    /// cobranzas.see_cost). Mismos permisos/ownership que el detalle de la reserva: es informacion de la
+    /// reserva, no de la cuenta global del proveedor. Es solo lectura (registrar el pago al operador va por
+    /// SuppliersController, gateado por tesoreria.supplier_payments).
+    /// </summary>
+    [HttpGet("{publicIdOrLegacyId}/supplier-payment-status")]
+    [RequirePermission(Permissions.ReservasView)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<IActionResult> GetReservaSupplierPaymentStatus(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var reservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, cancellationToken);
+            var dto = await _supplierService.GetReservaSupplierPaymentStatusAsync(reservaId, cancellationToken);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error getting supplier payment status for reserva {ReservaId}", publicIdOrLegacyId);
+            if (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+            }
+
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo obtener el estado de pago al operador.");
         }
     }
 

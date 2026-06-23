@@ -136,6 +136,70 @@ public class SupplierDebtCurrencyAmountDto
     public decimal Amount { get; set; }
 }
 
+// ===================================================================================================
+// ADR-036 punto 4c (2026-06-23): estado "pagado al operador" POR SERVICIO de una reserva.
+// El aviso de pago al operador de ADR-036 era a nivel reserva (no podia trabar el viaje porque no se
+// sabia que servicio estaba pagado). Este contrato expone, por cada servicio de la reserva, cuanto se le
+// pago al operador y si quedo cubierto, para que el front pinte la etiqueta pagado/impago por servicio.
+//
+// Masking: el ESTADO (pagado/parcial/impago) lo ven todos (decision ADR-036 P4=B). Los MONTOS (costo,
+// pagado, saldo) son costo -> sin cobranzas.see_cost se anulan a 0, igual que el resto de la cuenta.
+// ===================================================================================================
+
+/// <summary>
+/// Estado de pago al operador de TODOS los servicios de una reserva. Una entrada por servicio,
+/// identificada con el mismo par (recordKind, servicePublicId) que usa el front.
+/// </summary>
+public class ReservaSupplierPaymentStatusDto
+{
+    public Guid ReservaPublicId { get; set; }
+
+    /// <summary>true si el caller puede ver montos (cobranzas.see_cost). Si false, los montos vienen en 0.</summary>
+    public bool AmountsVisible { get; set; }
+
+    public List<ServiceSupplierPaymentStatusDto> Services { get; set; } = new();
+}
+
+/// <summary>Estado de pago al operador de UN servicio de la reserva.</summary>
+public class ServiceSupplierPaymentStatusDto
+{
+    /// <summary>Tipo de registro del servicio (flight/hotel/transfer/package/assistance/generic).</summary>
+    public string RecordKind { get; set; } = string.Empty;
+
+    /// <summary>PublicId del servicio. El front lo une con su lista de servicios por este id.</summary>
+    public Guid ServicePublicId { get; set; }
+
+    /// <summary>Proveedor/operador del servicio (puede ser null si el servicio no tiene proveedor cargado).</summary>
+    public Guid? SupplierPublicId { get; set; }
+    public string? SupplierName { get; set; }
+
+    /// <summary>Moneda del costo del servicio (la deuda con el operador esta en esta moneda).</summary>
+    public string Currency { get; set; } = "ARS";
+
+    /// <summary>Costo del servicio con el operador. Enmascarado a 0 sin see_cost.</summary>
+    public decimal NetCost { get; set; }
+
+    /// <summary>Suma de pagos vivos al operador imputados a ESTE servicio (equivalente imputado). Enmascarado a 0 sin see_cost.</summary>
+    public decimal PaidToOperator { get; set; }
+
+    /// <summary>Saldo pendiente con el operador por este servicio = NetCost - PaidToOperator. Enmascarado a 0 sin see_cost.</summary>
+    public decimal OutstandingToOperator { get; set; }
+
+    /// <summary>
+    /// Estado derivado, SIEMPRE visible (no se enmascara): "paid" (cubierto), "partial" (algo pagado pero
+    /// no todo) o "unpaid" (nada pagado). Un servicio sin costo/sin proveedor se reporta "unpaid".
+    /// </summary>
+    public string Status { get; set; } = ServiceSupplierPaymentStatuses.Unpaid;
+}
+
+/// <summary>Valores de <see cref="ServiceSupplierPaymentStatusDto.Status"/>.</summary>
+public static class ServiceSupplierPaymentStatuses
+{
+    public const string Paid = "paid";
+    public const string Partial = "partial";
+    public const string Unpaid = "unpaid";
+}
+
 public class SupplierPaymentDto
 {
     public Guid PublicId { get; set; }
@@ -155,4 +219,13 @@ public class SupplierPaymentDto
     /// en vez de un numero de reserva.
     /// </summary>
     public bool IsAdvanceToAccount { get; set; }
+
+    /// <summary>
+    /// ADR-036 4c: si el pago se imputo a UN servicio puntual de la reserva, su tipo de registro
+    /// (flight/hotel/transfer/package/assistance/generic). Null = pago a nivel reserva o anticipo.
+    /// </summary>
+    public string? ServiceRecordKind { get; set; }
+
+    /// <summary>ADR-036 4c: PublicId del servicio imputado. Null = pago a nivel reserva o anticipo.</summary>
+    public Guid? ServicePublicId { get; set; }
 }

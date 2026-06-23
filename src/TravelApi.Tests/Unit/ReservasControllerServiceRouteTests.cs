@@ -139,6 +139,8 @@ public class ReservasControllerServiceRouteTests
             reservaService.Object,
             Mock.Of<IVoucherService>(),
             Mock.Of<ITimelineService>(),
+            Mock.Of<ISupplierService>(),
+            Mock.Of<IEntityReferenceResolver>(),
             NullLogger<ReservasController>.Instance);
     }
 

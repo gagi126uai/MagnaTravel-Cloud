@@ -26,6 +26,14 @@ public interface ISupplierService
     /// total global de la cuenta corriente del proveedor. Los montos respetan el masking see_cost.
     /// </summary>
     Task<SupplierDebtByReservaDto> GetSupplierDebtByReservaAsync(int id, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// ADR-036 4c: estado "pagado al operador" de TODOS los servicios de una reserva. Por cada servicio
+    /// (de las 6 tablas) devuelve su costo, lo pagado al operador imputado a ese servicio, el saldo y el
+    /// estado derivado (paid/partial/unpaid). El estado lo ven todos; los montos respetan see_cost.
+    /// <paramref name="reservaId"/> es el id interno de la reserva (ya resuelto desde el publicId).
+    /// </summary>
+    Task<ReservaSupplierPaymentStatusDto> GetReservaSupplierPaymentStatusAsync(int reservaId, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -51,6 +59,12 @@ public record SupplierPaymentRequest(
     string? ServicioReservaId,
     // ADR-022 §4 P4: anticipo "a cuenta" del proveedor (sin reserva). Mutuamente excluyente con ReservaId.
     bool IsAdvanceToAccount = false,
+    // ADR-036 4c: imputar el pago a UN servicio concreto de la reserva (referencia polimorfica
+    // recordKind + publicId, el mismo identificador que usa el front). Si se manda ServicePublicId hay
+    // que mandar tambien ServiceRecordKind; el servicio debe pertenecer a este proveedor y a la reserva
+    // imputada. Ambos null = pago a nivel reserva (comportamiento previo intacto).
+    string? ServiceRecordKind = null,
+    string? ServicePublicId = null,
     // ADR-021: bloque de moneda/TC del egreso. Todos opcionales -> default ARS no cruzado = identico a hoy.
     string? Currency = null,
     string? ImputedCurrency = null,
