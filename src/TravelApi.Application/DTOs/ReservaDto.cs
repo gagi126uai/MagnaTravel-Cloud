@@ -17,6 +17,26 @@ public class ReservaMoneyLineDto
     public decimal Balance { get; set; }
 
     /// <summary>
+    /// ADR-037 / cuadre de facturacion POR MONEDA (2026-06-22): cuanto se le facturo NETO al cliente en
+    /// ESTA moneda = facturas + notas de debito - notas de credito, solo comprobantes con CAE vivo
+    /// (Resultado "A" y no anulados). El escalar <c>ReservaDto.FacturadoNeto</c> mezcla monedas en
+    /// multimoneda; este es el numero correcto por moneda. NO es dato de costo (es venta/facturacion):
+    /// no se enmascara por ver-costos. Las facturas se agrupan por su moneda ISO (Invoice.MonId via
+    /// ArcaCurrencyMapper.ToIso; sin MonId -> ARS, regla legacy). Una moneda con venta y sin facturas
+    /// queda en 0; una factura en una moneda sin venta vendida produce su propia linea (facturado &gt; 0,
+    /// venta 0). Fuente unica: ReservaInvoicingCuadreCalculator.CalculatePerCurrency.
+    /// </summary>
+    public decimal FacturadoNeto { get; set; }
+
+    /// <summary>
+    /// ADR-037 / cuadre de facturacion POR MONEDA (2026-06-22): cuanto QUEDA por facturar en ESTA moneda
+    /// respecto de lo vendido = <see cref="TotalSale"/> de esta moneda - <see cref="FacturadoNeto"/> de
+    /// esta moneda. Mismo criterio que el escalar <c>ReservaDto.DisponibleParaFacturar</c> (usa TotalSale,
+    /// no ConfirmedSale), para no divergir. Puede ser negativo si en esta moneda se facturo de mas.
+    /// </summary>
+    public decimal DisponibleParaFacturar { get; set; }
+
+    /// <summary>
     /// Margen/ganancia de esta moneda = ConfirmedSale - TotalCost (venta confirmada menos costo).
     /// DATO SENSIBLE: contiene el costo por resta (costo = venta - margen). Se enmascara a 0 con el MISMO
     /// criterio y en el MISMO lugar que <see cref="TotalCost"/> (sin <c>cobranzas.see_cost</c> ni Admin).

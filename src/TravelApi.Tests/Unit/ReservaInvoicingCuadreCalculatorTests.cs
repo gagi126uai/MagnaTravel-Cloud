@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using TravelApi.Domain.Reservations;
 using Xunit;
 
@@ -107,5 +108,89 @@ public class ReservaInvoicingCuadreCalculatorTests
         });
         Assert.Equal(80_000m, r.FacturadoNeto);
         Assert.False(r.Excedido);
+    }
+
+    // ============================================================================================
+    // ADR-037 / cuadre POR MONEDA (2026-06-22): CalculatePerCurrency suma facturas + ND - NC vivas
+    // dentro de cada moneda, sin mezclar. Helper local para lineas vivas con moneda.
+    // ============================================================================================
+
+    private static CuadreInvoiceLineByCurrency LiveCur(string moneda, int tipo, decimal importe)
+        => new(moneda, tipo, importe, IsLive: true);
+
+    [Fact]
+    public void PorMoneda_SinComprobantes_DiccionarioVacio()
+    {
+        var result = ReservaInvoicingCuadreCalculator.CalculatePerCurrency(
+            new List<CuadreInvoiceLineByCurrency>());
+
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void PorMoneda_MonoMoneda_CoincideConElEscalar()
+    {
+        // Invariante: en mono-moneda, la suma por moneda == el FacturadoNeto escalar de hoy.
+        var lines = new[]
+        {
+            LiveCur("ARS", 11, 100_000m), // Factura
+            LiveCur("ARS", 12, 10_000m),  // ND suma
+            LiveCur("ARS", 13, 30_000m),  // NC resta
+        };
+
+        var escalar = ReservaInvoicingCuadreCalculator.Calculate(
+            80_000m,
+            lines.Select(l => new CuadreInvoiceLine(l.TipoComprobante, l.ImporteTotal, l.IsLive)));
+
+        var porMoneda = ReservaInvoicingCuadreCalculator.CalculatePerCurrency(lines);
+
+        Assert.Equal(80_000m, escalar.FacturadoNeto); // 100k + 10k - 30k
+        var ars = Assert.Single(porMoneda);
+        Assert.Equal("ARS", ars.Key);
+        Assert.Equal(escalar.FacturadoNeto, ars.Value);
+    }
+
+    [Fact]
+    public void PorMoneda_Multimoneda_NoMezcla()
+    {
+        // Factura ARS + factura USD: cada una en su moneda, jamas sumadas entre si.
+        var porMoneda = ReservaInvoicingCuadreCalculator.CalculatePerCurrency(new[]
+        {
+            LiveCur("ARS", 11, 50_000m),
+            LiveCur("USD", 11, 300m),
+        });
+
+        Assert.Equal(2, porMoneda.Count);
+        Assert.Equal(50_000m, porMoneda["ARS"]);
+        Assert.Equal(300m, porMoneda["USD"]);
+    }
+
+    [Fact]
+    public void PorMoneda_NC_RestaSoloEnSuMoneda()
+    {
+        // NC en USD baja SOLO el facturado USD; el ARS queda intacto.
+        var porMoneda = ReservaInvoicingCuadreCalculator.CalculatePerCurrency(new[]
+        {
+            LiveCur("ARS", 11, 50_000m),
+            LiveCur("USD", 11, 300m),
+            LiveCur("USD", 13, 100m), // NC USD
+        });
+
+        Assert.Equal(50_000m, porMoneda["ARS"]);
+        Assert.Equal(200m, porMoneda["USD"]); // 300 - 100
+    }
+
+    [Fact]
+    public void PorMoneda_ComprobanteNoVivo_NoSuma_PeroRegistraLaMoneda()
+    {
+        // Un comprobante anulado aporta 0, pero deja registrada su moneda (hubo facturacion en ella).
+        var porMoneda = ReservaInvoicingCuadreCalculator.CalculatePerCurrency(new[]
+        {
+            new CuadreInvoiceLineByCurrency("USD", 11, 300m, IsLive: false),
+        });
+
+        var usd = Assert.Single(porMoneda);
+        Assert.Equal("USD", usd.Key);
+        Assert.Equal(0m, usd.Value);
     }
 }

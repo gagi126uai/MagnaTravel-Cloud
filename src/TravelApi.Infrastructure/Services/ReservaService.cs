@@ -273,6 +273,64 @@ public class ReservaService : IReservaService
     }
 
     /// <summary>
+    /// ADR-037 / cuadre POR MONEDA (2026-06-22): carga <c>FacturadoNeto</c> y <c>DisponibleParaFacturar</c>
+    /// en cada linea de <paramref name="porMoneda"/>. El facturado neto de cada moneda sale del calculator
+    /// (facturas + ND - NC vivas, agrupadas por la moneda ISO del comprobante); el "falta facturar" se arma
+    /// con la VENTA de esa misma moneda (TotalSale), mismo criterio que el escalar.
+    ///
+    /// <para>Bordes: una moneda con venta y sin facturas queda en FacturadoNeto 0 y DisponibleParaFacturar =
+    /// su venta. Una factura en una moneda que NO tiene venta vendida en la reserva (cruce/sobrefacturacion
+    /// raro) no tiene linea en PorMoneda — su facturado quedaria invisible. Para no esconderlo, esos casos se
+    /// loggean como advertencia operativa (sin montos sensibles): es un dato que el contador querria ver.</para>
+    /// </summary>
+    private void PopulateFacturadoPorMoneda(Reserva file, List<ReservaMoneyLineDto> porMoneda)
+    {
+        if (file.Invoices == null || file.Invoices.Count == 0)
+        {
+            // Sin comprobantes: cada moneda queda facturado 0 y falta = su venta. El default del DTO ya es 0,
+            // pero seteamos explicito el DisponibleParaFacturar para que coincida con la venta de la moneda.
+            foreach (var line in porMoneda)
+            {
+                line.FacturadoNeto = 0m;
+                line.DisponibleParaFacturar = line.TotalSale;
+            }
+            return;
+        }
+
+        // Armamos las lineas del calculator desde las facturas, traduciendo MonId (ARCA "PES"/"DOL") a ISO
+        // ("ARS"/"USD"); MonId vacio o no reconocido -> ARS (regla legacy, mismo criterio que el extracto).
+        var invoiceLines = file.Invoices.Select(invoice => new CuadreInvoiceLineByCurrency(
+            Currency: Domain.Helpers.ArcaCurrencyMapper.ToIso(invoice.MonId) ?? Monedas.ARS,
+            TipoComprobante: invoice.TipoComprobante,
+            ImporteTotal: invoice.ImporteTotal,
+            IsLive: invoice.Resultado == "A" && invoice.AnnulmentStatus != AnnulmentStatus.Succeeded));
+
+        var facturadoPorMoneda = ReservaInvoicingCuadreCalculator.CalculatePerCurrency(invoiceLines);
+
+        // Cada moneda con venta toma su facturado (0 si no hay facturas en esa moneda) y calcula su falta.
+        foreach (var line in porMoneda)
+        {
+            decimal facturado = facturadoPorMoneda.TryGetValue(line.Currency, out var neto) ? neto : 0m;
+            line.FacturadoNeto = facturado;
+            line.DisponibleParaFacturar = line.TotalSale - facturado;
+        }
+
+        // Borde raro: una moneda que SOLO aparece en facturas (sin venta vendida en esa moneda) no tiene
+        // linea en PorMoneda, asi que su facturado no se mostraria. No inventamos una linea de venta; lo
+        // dejamos registrado para que se note (es un cruce/sobrefacturacion que el contador deberia revisar).
+        var monedasConVenta = porMoneda.Select(line => line.Currency).ToHashSet(System.StringComparer.Ordinal);
+        foreach (var (currency, facturado) in facturadoPorMoneda)
+        {
+            if (facturado != 0m && !monedasConVenta.Contains(currency))
+            {
+                _logger.LogWarning(
+                    "Reserva {ReservaId}: factura neta en moneda {Currency} sin venta en esa moneda (posible cruce o sobrefacturacion). No se expone en PorMoneda.",
+                    file.Id, currency);
+            }
+        }
+    }
+
+    /// <summary>
     /// Traduce los cobros VIVOS de la reserva a lineas del extracto (siempre ABONO: bajan la deuda). VIVO =
     /// no cancelado y no soft-deleted (mismo filtro que <see cref="ReservaMoneyCalculator"/>).
     ///
@@ -2020,6 +2078,13 @@ public class ReservaService : IReservaService
         // (vendido vs facturado neto). Eje independiente del cobro y del estado operativo. Fuente unica:
         // ReservaInvoicingStatus.Derive (probado, un solo lugar), espejo de CollectionStatus.
         dto.InvoicingStatus = ReservaInvoicingStatus.Derive(file.TotalSale, cuadre.FacturadoNeto);
+
+        // ADR-037 / cuadre POR MONEDA (2026-06-22): el escalar FacturadoNeto/DisponibleParaFacturar mezcla
+        // monedas en multimoneda. Aca calculamos el facturado neto de CADA moneda por separado (facturas + ND
+        // - NC vivas, agrupadas por la moneda ISO del comprobante) y lo cargamos en su linea de PorMoneda,
+        // con "falta facturar" = TotalSale de esa moneda - facturado de esa moneda (MISMO criterio que el
+        // escalar, que usa TotalSale y no ConfirmedSale). La cuenta vive en el calculator (fuente unica).
+        PopulateFacturadoPorMoneda(file, dto.PorMoneda);
 
         // ADR-037 (flag del aviso "Debe — no viaja", ADR-036): hay deuda del cliente y la salida cae en la
         // ventana configurada, con la notificacion habilitada. Reusa la MISMA config y la MISMA regla de

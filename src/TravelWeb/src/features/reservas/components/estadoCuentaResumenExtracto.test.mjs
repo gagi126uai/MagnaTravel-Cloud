@@ -449,82 +449,101 @@ test("B1: cobro congelado + recibo anulado → Editar y Eliminar NO visibles (do
   assert.equal(visible, false);
 });
 
-// ─── I1: Facturación multimoneda como escalar global ─────────────────────────
+// ─── I1: Facturación multimoneda por moneda (nuevo backend 2026-06-22) ───────
 
 /**
- * Verifica que en multimoneda el campo de facturación (facturadoNeto / disponibleParaFacturar)
- * se trate como escalar global, sin atribuirlo a ninguna moneda específica.
+ * Verifica el nuevo comportamiento: el backend expone facturadoNeto y disponibleParaFacturar
+ * DENTRO de porMoneda[], igual que confirmedSale, totalPaid y balance.
  *
- * Regla: el backend expone estos campos como escalares (mezcla de monedas).
- * En multimoneda NO se pueden desglosar por moneda → se muestran como total global.
- * En mono-moneda se muestran con la moneda normal (sí se puede atribuir).
+ * El componente EstadoCuentaResumen usa ColumnaNumericaMulti para facturadoNeto
+ * y ColumnaNumericaMultiCondicional para disponibleParaFacturar.
+ *
+ * EjeEscalarGlobal fue eliminado (ya no tiene consumidores).
  */
-function determinarModoFacturacion(esMultimoneda) {
-  // Si es multimoneda → modo "escalar global" (sin moneda específica).
-  // Si es mono-moneda → modo "por moneda" (atribución directa).
-  return esMultimoneda ? "escalar_global" : "por_moneda";
+
+/**
+ * Replica el acceso que hace ColumnaNumericaMulti en el componente:
+ * lee pm[campo] para cada entrada del array porMoneda.
+ */
+function leerCampoPorMoneda(porMoneda, campo) {
+  return porMoneda.map((pm) => ({ currency: pm.currency, valor: pm[campo] ?? 0 }));
 }
 
-test("I1: mono-moneda → modo por_moneda (se muestra con moneda específica)", () => {
-  const modo = determinarModoFacturacion(false);
-  assert.equal(modo, "por_moneda");
-});
+/**
+ * Replica la lógica de color de ColumnaNumericaMultiCondicional para disponibleParaFacturar:
+ * ámbar si queda algo, gris si es cero.
+ */
+function colorDisponibleParaFacturar(valor) {
+  return valor > 0 ? "amber" : "grey";
+}
 
-test("I1: multimoneda → modo escalar_global (se muestra como total sin moneda específica)", () => {
-  const modo = determinarModoFacturacion(true);
-  assert.equal(modo, "escalar_global");
-});
-
-test("I1: en escalar_global, facturadoNeto no se asigna a ninguna moneda del array porMoneda", () => {
-  // Verifica que la lógica de NOT atribuir a la primera moneda es correcta.
-  // El valor escalar es independiente de porMoneda[].
-  const reservaMultimoneda = {
-    esMultimoneda: true,
-    facturadoNeto: 150000, // mezcla de ARS + USD convertidos → no atribuible
-    porMoneda: [
-      { currency: "ARS", confirmedSale: 100000, totalPaid: 80000 },
-      { currency: "USD", confirmedSale: 500, totalPaid: 300 },
-    ],
-  };
-
-  // En mono-moneda, facturadoNeto se atribuye a la moneda del array.
-  // En multimoneda, el campo escalar es GLOBAL — no existe en porMoneda[].
-  const modoFact = determinarModoFacturacion(reservaMultimoneda.esMultimoneda);
-  assert.equal(modoFact, "escalar_global");
-
-  // Ningún elemento de porMoneda[] debería tener facturadoNeto asignado.
-  const ningunoPorMonedaTieneFacturado = reservaMultimoneda.porMoneda.every(
-    (pm) => pm.facturadoNeto === undefined
-  );
-  assert.equal(ningunoPorMonedaTieneFacturado, true);
-});
-
-test("I1: disponibleParaFacturar también es escalar global en multimoneda", () => {
-  const reservaMultimoneda = {
-    esMultimoneda: true,
-    disponibleParaFacturar: 50000,
-    porMoneda: [
-      { currency: "ARS", confirmedSale: 100000 },
-      { currency: "USD", confirmedSale: 500 },
-    ],
-  };
-
-  // No debe atribuirse a ninguna moneda del array.
-  const ningunoPorMonedaTieneDisponible = reservaMultimoneda.porMoneda.every(
-    (pm) => pm.disponibleParaFacturar === undefined
-  );
-  assert.equal(ningunoPorMonedaTieneDisponible, true);
-  assert.equal(determinarModoFacturacion(reservaMultimoneda.esMultimoneda), "escalar_global");
-});
-
-test("I1: en multimoneda, la sección de venta SÍ se muestra por moneda (confirmedSale está en porMoneda)", () => {
-  // Verificación de que el vendido firme SÍ está disponible por moneda.
+test("I1: en multimoneda, facturadoNeto se lee desde porMoneda[].facturadoNeto (nuevo backend)", () => {
   const porMoneda = [
-    { currency: "ARS", confirmedSale: 100000 },
-    { currency: "USD", confirmedSale: 500 },
+    { currency: "ARS", confirmedSale: 100000, facturadoNeto: 80000, disponibleParaFacturar: 20000 },
+    { currency: "USD", confirmedSale: 500,    facturadoNeto: 300,   disponibleParaFacturar: 200   },
   ];
-  const arsVendido = porMoneda.find((pm) => pm.currency === "ARS")?.confirmedSale;
-  const usdVendido = porMoneda.find((pm) => pm.currency === "USD")?.confirmedSale;
-  assert.equal(arsVendido, 100000);
-  assert.equal(usdVendido, 500);
+
+  const resultado = leerCampoPorMoneda(porMoneda, "facturadoNeto");
+
+  assert.equal(resultado[0].currency, "ARS");
+  assert.equal(resultado[0].valor, 80000);
+  assert.equal(resultado[1].currency, "USD");
+  assert.equal(resultado[1].valor, 300);
+});
+
+test("I1: en multimoneda, disponibleParaFacturar se lee desde porMoneda[].disponibleParaFacturar", () => {
+  const porMoneda = [
+    { currency: "ARS", disponibleParaFacturar: 20000 },
+    { currency: "USD", disponibleParaFacturar: 200 },
+  ];
+
+  const resultado = leerCampoPorMoneda(porMoneda, "disponibleParaFacturar");
+
+  assert.equal(resultado[0].valor, 20000);
+  assert.equal(resultado[1].valor, 200);
+});
+
+test("I1: si porMoneda[].facturadoNeto es null/undefined → se trata como 0 (sin romper)", () => {
+  const porMoneda = [
+    { currency: "ARS", facturadoNeto: null },
+    { currency: "USD" },
+  ];
+
+  const resultado = leerCampoPorMoneda(porMoneda, "facturadoNeto");
+
+  assert.equal(resultado[0].valor, 0);
+  assert.equal(resultado[1].valor, 0);
+});
+
+test("I1: disponibleParaFacturar > 0 → color ámbar (falta facturar algo)", () => {
+  assert.equal(colorDisponibleParaFacturar(20000), "amber");
+  assert.equal(colorDisponibleParaFacturar(1), "amber");
+});
+
+test("I1: disponibleParaFacturar === 0 → color gris (todo facturado)", () => {
+  assert.equal(colorDisponibleParaFacturar(0), "grey");
+});
+
+test("I1: en multimoneda, vendido firme también se lee por moneda (confirmedSale en porMoneda)", () => {
+  // Verifica que el patrón es consistente para los tres campos del eje 1.
+  const porMoneda = [
+    { currency: "ARS", confirmedSale: 100000, facturadoNeto: 100000, disponibleParaFacturar: 0 },
+    { currency: "USD", confirmedSale: 500,    facturadoNeto: 200,    disponibleParaFacturar: 300 },
+  ];
+
+  const vendido    = leerCampoPorMoneda(porMoneda, "confirmedSale");
+  const facturado  = leerCampoPorMoneda(porMoneda, "facturadoNeto");
+  const disponible = leerCampoPorMoneda(porMoneda, "disponibleParaFacturar");
+
+  // ARS: todo facturado, nada pendiente
+  assert.equal(vendido[0].valor, 100000);
+  assert.equal(facturado[0].valor, 100000);
+  assert.equal(disponible[0].valor, 0);
+  assert.equal(colorDisponibleParaFacturar(disponible[0].valor), "grey");
+
+  // USD: parcialmente facturado, quedan $300 pendientes
+  assert.equal(vendido[1].valor, 500);
+  assert.equal(facturado[1].valor, 200);
+  assert.equal(disponible[1].valor, 300);
+  assert.equal(colorDisponibleParaFacturar(disponible[1].valor), "amber");
 });

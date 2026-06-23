@@ -48,16 +48,28 @@ export function EstadoCuentaResumen({ reserva, saldoClientePorMoneda, loadingSal
         </div>
         <div className="flex flex-wrap gap-6 px-6 py-4">
           {esMultimoneda ? (
-            // Multimoneda: "Vendido firme" SÍ por moneda (el backend lo expone en porMoneda[]).
-            // "Facturado" y "Falta facturar" NO por moneda: el backend los expone como escalares
-            // (mezcla de monedas). Atribuirlos a la fila de ARS sería falsa precisión.
-            // Se muestran debajo, separados, con aclaración de que son totales globales.
-            <ColumnaNumericaMulti
-              label="Vendido firme"
-              porMoneda={reserva.porMoneda}
-              campo="confirmedSale"
-              colorClass="text-slate-800 dark:text-slate-200"
-            />
+            // Multimoneda: Vendido firme, Facturado y Falta facturar TODOS vienen por moneda
+            // desde porMoneda[].facturadoNeto y porMoneda[].disponibleParaFacturar (nuevo backend).
+            // Se muestran en columnas separadas, una fila por moneda en cada columna.
+            <>
+              <ColumnaNumericaMulti
+                label="Vendido firme"
+                porMoneda={reserva.porMoneda}
+                campo="confirmedSale"
+                colorClass="text-slate-800 dark:text-slate-200"
+              />
+              <ColumnaNumericaMulti
+                label="Facturado"
+                porMoneda={reserva.porMoneda}
+                campo="facturadoNeto"
+                colorClass="text-indigo-700 dark:text-indigo-400"
+              />
+              <ColumnaNumericaMultiCondicional
+                label="Falta facturar"
+                porMoneda={reserva.porMoneda}
+                campo="disponibleParaFacturar"
+              />
+            </>
           ) : (
             // Mono-moneda: fila plana con los tres valores
             <>
@@ -92,33 +104,6 @@ export function EstadoCuentaResumen({ reserva, saldoClientePorMoneda, loadingSal
           </div>
         </div>
 
-        {/* I1: en multimoneda, facturado y falta-facturar son escalares globales (no por moneda).
-            El backend mezcla monedas en estos campos — mostrarlos en la columna de ARS sería mentira.
-            Se presentan como totales globales, separados del grid por moneda, con nota aclaratoria. */}
-        {esMultimoneda && (
-          <div className="border-t border-slate-100 bg-slate-50/50 px-6 py-3 dark:border-slate-800 dark:bg-slate-800/20">
-            <div className="flex flex-wrap items-center gap-6">
-              <EjeEscalarGlobal
-                label="Facturación (total, todas las monedas)"
-                valor={reserva.facturadoNeto}
-                colorClass="text-indigo-700 dark:text-indigo-400"
-              />
-              <EjeEscalarGlobal
-                label="Falta facturar (total)"
-                valor={reserva.disponibleParaFacturar}
-                colorClass={
-                  (reserva.disponibleParaFacturar ?? 0) > 0
-                    ? "text-amber-700 dark:text-amber-400"
-                    : "text-slate-400 dark:text-slate-600"
-                }
-              />
-            </div>
-            {/* Aclaración honesta: estos totales mezclan monedas (ARS + USD convertidos o directos). */}
-            <p className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">
-              Estos totales combinan todas las monedas. No se pueden desglosar por moneda aún.
-            </p>
-          </div>
-        )}
       </div>
 
       {/* ── Eje 2: Cobranza ────────────────────────────────────────────────── */}
@@ -291,27 +276,34 @@ function EjeNumero({ label, valor, moneda, colorClass }) {
 }
 
 /**
- * Valor escalar global (sin moneda específica) para datos que el backend devuelve
- * como mezcla de monedas y no se pueden desglosar por moneda.
- *
- * Se usa en multimoneda para "Facturado" y "Falta facturar", que son escalares globales.
- * Muestra el número sin símbolo de moneda para no mentirle al usuario.
+ * Columna numérica multimoneda con color condicional por valor.
+ * Se usa para "Falta facturar" donde el color cambia según si queda algo pendiente (ámbar)
+ * o si ya está todo facturado (gris apagado).
  */
-function EjeEscalarGlobal({ label, valor, colorClass }) {
-  // Formateamos el número sin símbolo de moneda porque es una mezcla de monedas.
-  // Usamos es-AR con notación decimal estándar.
-  const valorFormateado = valor != null
-    ? new Intl.NumberFormat("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(valor)
-    : "—";
-
+function ColumnaNumericaMultiCondicional({ label, porMoneda, campo }) {
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className="flex flex-col gap-1">
       <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
         {label}
       </span>
-      <span className={`text-lg font-extrabold leading-none ${colorClass}`}>
-        {valorFormateado}
-      </span>
+      <div className="flex flex-col gap-1">
+        {porMoneda.map((pm) => {
+          const valor = pm[campo] ?? 0;
+          // Color ámbar si queda algo pendiente, gris si es cero o negativo.
+          const colorClass =
+            valor > 0
+              ? "text-amber-700 dark:text-amber-400"
+              : "text-slate-400 dark:text-slate-600";
+          return (
+            <div key={pm.currency} className="flex items-center gap-1.5">
+              <CurrencyBadge currency={pm.currency} size="sm" />
+              <span className={`text-lg font-extrabold leading-none ${colorClass}`}>
+                {formatCurrency(valor, pm.currency)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
