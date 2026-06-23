@@ -56,6 +56,7 @@ public sealed record ReservaCapabilities(
     Cap CanCancel,
     Cap CanAdvance,
     Cap CanEmitVoucher,
+    Cap CanCorrectTravelingEntry,
     IReadOnlyList<string> AllowedForward,
     IReadOnlyList<string> AllowedRevert);
 
@@ -135,6 +136,27 @@ public static class ReservaCapabilityPolicy
     /// <summary>No hay ningun avance manual de estado disponible desde el estado actual.</summary>
     public const string NoForwardTransitionReason =
         "No hay un cambio de estado manual disponible desde el estado actual.";
+
+    /// <summary>
+    /// ADR-036 (2026-06-22): "Sacar de viaje" solo aplica a una reserva que esta En viaje (es la correccion
+    /// de una entrada erronea a ese estado). En cualquier otro estado no hay nada que corregir.
+    /// </summary>
+    public const string CorrectTravelingOnlyFromTravelingReason =
+        "Solo se puede sacar de viaje una reserva que está En viaje.";
+
+    /// <summary>
+    /// ADR-036 (2026-06-22): no se puede sacar de viaje una reserva con factura emitida (CAE vivo). La
+    /// correccion fiscal de una venta facturada se hace por Nota de Credito/ajuste, no devolviendo el estado.
+    /// </summary>
+    public const string CorrectTravelingBlockedByCaeReason =
+        "La reserva tiene factura emitida: la corrección se hace por Nota de Crédito/ajuste.";
+
+    /// <summary>
+    /// ADR-036 (2026-06-22): no se puede sacar de viaje una reserva con un voucher emitido vivo. Hay que
+    /// anular el voucher primero (el caso de uso "entró por error" normalmente no tiene voucher).
+    /// </summary>
+    public const string CorrectTravelingBlockedByVoucherReason =
+        "Anulá el voucher antes de sacar de viaje.";
 
     // =====================================================================================================
     // Conjuntos de estado (FACHADA: reusan las listas del dominio; no inventan taxonomia nueva).
@@ -235,6 +257,7 @@ public static class ReservaCapabilityPolicy
             CanCancel: EvaluateCancel(ctx),
             CanAdvance: EvaluateAdvance(ctx),
             CanEmitVoucher: EvaluateVoucher(ctx),
+            CanCorrectTravelingEntry: EvaluateCorrectTravelingEntry(ctx),
             AllowedForward: ResolveForwardTargets(ctx.Status),
             AllowedRevert: ResolveRevertTargets(ctx.Status));
     }
@@ -391,6 +414,28 @@ public static class ReservaCapabilityPolicy
     {
         if (!ContainsStatus(VoucherStatuses, ctx.Status))
             return Cap.No(VoucherBeforeConfirmedReason);
+        return Cap.Yes;
+    }
+
+    /// <summary>
+    /// ADR-036 (2026-06-22): "Sacar de viaje" (correccion de una entrada erronea a "En viaje"). La capacidad
+    /// PURA es allowed solo si: la reserva esta En viaje (Traveling) Y no tiene factura con CAE vivo Y no tiene
+    /// voucher emitido vivo. Los bloqueos fiscal (CAE) y de voucher NO son bypasseables ni por Admin, por eso
+    /// viven en la capacidad pura (la lee tambien el guard del service).
+    ///
+    /// <para>El PERMISO <c>reservas.correct_traveling</c> (solo Admin) NO se evalua aca a proposito: el contexto
+    /// de capacidades es SIN identidad (ADR-035). El permiso lo compone el front (mostrar el boton) y lo
+    /// revalida el controller. Asi la capacidad responde "el estado lo permite", y la autorizacion es una
+    /// compuerta aparte — misma separacion que el resto de las capacidades.</para>
+    /// </summary>
+    private static Cap EvaluateCorrectTravelingEntry(ReservaCapabilityContext ctx)
+    {
+        if (!EqualsStatus(ctx.Status, EstadoReserva.Traveling))
+            return Cap.No(CorrectTravelingOnlyFromTravelingReason);
+        if (ctx.HasLiveCae)
+            return Cap.No(CorrectTravelingBlockedByCaeReason);
+        if (ctx.HasLiveVoucher)
+            return Cap.No(CorrectTravelingBlockedByVoucherReason);
         return Cap.Yes;
     }
 

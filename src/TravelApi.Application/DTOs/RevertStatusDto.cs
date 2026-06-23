@@ -5,6 +5,14 @@ public record RevertStatusRequest(
     string? AuthorizedBySuperiorUserId,        // requerido si el actor no es Admin
     string? Reason);                           // requerido si el actor no es Admin
 
+/// <summary>
+/// ADR-036 (2026-06-22): pedido de "Sacar de viaje" (correccion de una reserva que entro a "En viaje" por
+/// error). El <see cref="Reason"/> es OBLIGATORIO (minimo 10 caracteres, sin excepcion ni para Admin): esta
+/// accion deshace un estado normalmente inmutable, asi que siempre tiene que quedar registrado por que.
+/// </summary>
+public record CorrectTravelingEntryRequest(
+    string? Reason);
+
 public class RevertOptionsDto
 {
     public string CurrentStatus { get; set; } = string.Empty;

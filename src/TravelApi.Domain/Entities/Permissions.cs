@@ -24,6 +24,17 @@ public static class Permissions
     /// </summary>
     public const string ReservasAuthorizeLockedEdit = "reservas.authorize_locked_edit";
 
+    /// <summary>
+    /// ADR-036 (2026-06-22): "Sacar de viaje" — correccion de EXCEPCION para una reserva que entro a "En viaje"
+    /// por error (fecha mal cargada o el viaje no salio). Devuelve la reserva de Traveling a Confirmed y le
+    /// borra la fecha de salida para que el job nocturno no la vuelva a promover esa misma noche. Es una
+    /// herramienta de correccion sobre un estado que normalmente es inmutable (ADR-036: "En viaje no vuelve
+    /// atras"), por eso es alto riesgo y va aparte del flujo de revert. Default <b>solo Admin</b> (mismo perfil
+    /// que <see cref="ReservasAuthorizeLockedEdit"/> y <see cref="CancellationsForceArcaConfirmation"/>): NO va
+    /// al Colaborador ni al Vendedor. El bloqueo fiscal (factura con CAE vivo) NO es bypasseable ni por Admin.
+    /// </summary>
+    public const string ReservasCorrectTraveling = "reservas.correct_traveling";
+
     // Vouchers
     public const string VouchersGenerate = "vouchers.generate";
     public const string VouchersIssue = "vouchers.issue";
@@ -142,6 +153,8 @@ public static class Permissions
             ReservasViewAll, ReservasCancel, ReservasCancelWithPayment, ReservasDiscountAboveThreshold,
             // ADR-020 F4: autorizar edicion bajo candado (Confirmada en adelante).
             ReservasAuthorizeLockedEdit,
+            // ADR-036: "Sacar de viaje" (correccion de entrada erronea a En viaje). Solo Admin.
+            ReservasCorrectTraveling,
             // FC1.2.1 (BR-V2-01): permission del modulo cancelacion/refund expuesto en UI Reservas.
             CancellationsForceArcaConfirmation,
             // ADR-013: clasificar penalidad como ingreso propio (dispara ND fiscal).

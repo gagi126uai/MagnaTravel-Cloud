@@ -81,6 +81,20 @@ public interface IReservaService
     Task<ReservaDto> RevertStatusAsync(string publicIdOrLegacyId, RevertStatusRequest request, string actorUserId, string? actorUserName, bool actorIsAdmin, CancellationToken ct = default);
 
     /// <summary>
+    /// ADR-036 (2026-06-22): "Sacar de viaje" — correccion de EXCEPCION para una reserva que entro a "En viaje"
+    /// por error (fecha mal cargada o el viaje no salio). Devuelve la reserva de Traveling a Confirmed y borra
+    /// su StartDate (para que el job nocturno no la vuelva a promover; refleja que falta recargar la fecha del
+    /// servicio). NO pasa por la matriz de revert (Traveling no revierte, ADR-036): es una accion dedicada.
+    ///
+    /// <para>Valida en su cuerpo (sin importar el permiso, que ya verifica el controller): la reserva debe estar
+    /// En viaje (si no, <see cref="InvalidOperationException"/> -&gt; 409, idempotente); NO debe tener factura con
+    /// CAE vivo (no NC) — bloqueo NO bypasseable ni por Admin (409); NO debe tener voucher emitido vivo (409); y
+    /// el motivo es OBLIGATORIO (minimo 10 caracteres, sin excepcion para Admin, si no <see cref="ArgumentException"/>
+    /// -&gt; 400). Los cobros NO bloquean (toda Traveling esta saldada por el candado de pago de ADR-036).</para>
+    /// </summary>
+    Task<ReservaDto> CorrectTravelingEntryAsync(string publicIdOrLegacyId, CorrectTravelingEntryRequest request, string actorUserId, string? actorUserName, CancellationToken ct = default);
+
+    /// <summary>
     /// ADR-020 F4 (candado): crea una autorizacion VIVA para editar una reserva confirmada
     /// (Confirmed en adelante). Si el actor tiene <c>reservas.authorize_locked_edit</c> se
     /// auto-autoriza; si no, debe indicar un autorizante que lo tenga. La nueva autorizacion

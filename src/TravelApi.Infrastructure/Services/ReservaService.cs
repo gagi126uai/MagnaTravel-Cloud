@@ -1480,6 +1480,115 @@ public class ReservaService : IReservaService
         return await GetReservaByIdAsync(id);
     }
 
+    /// <summary>
+    /// ADR-036 (2026-06-22): "Sacar de viaje" — correccion de EXCEPCION de una reserva que entro a "En viaje"
+    /// por error (fecha mal cargada o el viaje no salio). La devuelve a Confirmed y borra su StartDate. NO usa
+    /// la matriz de revert a proposito (Traveling no revierte en ADR-036): es una accion dedicada y auditada.
+    ///
+    /// <para>El PERMISO (reservas.correct_traveling, solo Admin) lo verifica el controller; aca validamos las
+    /// reglas de NEGOCIO, que no son bypasseables por nadie (ni Admin): estado correcto, sin factura viva, sin
+    /// voucher vivo, con motivo. Patron idempotente como el job: re-leemos el estado de la base.</para>
+    /// </summary>
+    public async Task<ReservaDto> CorrectTravelingEntryAsync(
+        string publicIdOrLegacyId,
+        CorrectTravelingEntryRequest request,
+        string actorUserId,
+        string? actorUserName,
+        CancellationToken ct = default)
+    {
+        var id = await ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, ct);
+        var reserva = await _context.Reservas.FirstOrDefaultAsync(r => r.Id == id, ct)
+            ?? throw new KeyNotFoundException("Reserva no encontrada");
+
+        // (1) Solo aplica a "En viaje". Re-leemos el estado de la fila (es lo recien cargado), patron idempotente
+        // del job: si otra transaccion ya la saco de viaje (o nunca lo estuvo), no es un error de programa sino
+        // un 409 con mensaje claro. Asi un doble click / reintento no rompe nada.
+        if (!string.Equals(reserva.Status, EstadoReserva.Traveling, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                "Esta acción solo aplica a una reserva En viaje. La reserva ya no está En viaje.");
+
+        // (2) BLOQUEO FISCAL — factura con CAE VIVO (no NC). NO bypasseable ni por Admin: si ya hay un
+        // comprobante fiscal sellado, la correccion se hace por Nota de Credito/ajuste, no devolviendo el
+        // estado. Criterio UNICO con MutationGuards / HasLiveMoneyAsync del lifecycle: factura NO-NC + CAE no
+        // vacio + AnnulmentStatus != Succeeded. Las NC se excluyen (restan, no mantienen viva la reserva). EF
+        // no traduce InvoiceComprobanteHelpers.IsCreditNote a SQL -> se expande inline con los cbteTipo de NC.
+        var hasLiveCae = await _context.Invoices.AsNoTracking().AnyAsync(
+            i => i.ReservaId == id
+                && !CreditNoteComprobanteTipos.Contains(i.TipoComprobante) // excluye NC (3=A, 8=B, 13=C, 53=M)
+                && !string.IsNullOrEmpty(i.CAE)
+                && i.AnnulmentStatus != AnnulmentStatus.Succeeded,
+            ct);
+        if (hasLiveCae)
+            throw new InvalidOperationException(
+                "La reserva tiene factura emitida: la corrección se hace por Nota de Crédito/ajuste.");
+
+        // (3) BLOQUEO POR VOUCHER VIVO — voucher emitido y no anulado (Issued / UploadedExternal). El caso de
+        // uso ("entró por error") normalmente no tiene voucher; si lo tiene, hay que anularlo primero (los datos
+        // del voucher quedarian incoherentes con una reserva que vuelve atras).
+        var hasLiveVoucher = await _context.Vouchers.AsNoTracking().AnyAsync(
+            v => v.ReservaId == id
+                && (v.Status == VoucherStatuses.Issued || v.Status == VoucherStatuses.UploadedExternal),
+            ct);
+        if (hasLiveVoucher)
+            throw new InvalidOperationException("Anulá el voucher antes de sacar de viaje.");
+
+        // (4) COBROS: NO se bloquea por cobros A PROPOSITO. Toda reserva En viaje esta saldada (candado de pago
+        // de ADR-036: para viajar el cliente quedo en Balance == 0). La correccion la devuelve a Confirmed
+        // SALDADA; los cobros quedan tal cual (siguen siendo validos: la venta firme sigue firme). No tocamos
+        // Payments ni el Libro de Caja.
+
+        // (5) MOTIVO OBLIGATORIO — minimo 10 caracteres, SIN excepcion ni para Admin (esta accion deshace un
+        // estado normalmente inmutable: siempre tiene que quedar registrado por que). 400 si no cumple.
+        var reason = (request.Reason ?? "").Trim();
+        if (reason.Length < 10)
+            throw new ArgumentException("Indicá un motivo para sacar de viaje (al menos 10 caracteres).");
+
+        var fromStatus = reserva.Status;
+
+        // (6) Vuelve a Confirmed y se le BORRA StartDate. Por que null y no recomputar: la fecha de salida es
+        // derivada de los servicios; ponerla en null saca la reserva del filtro de candidatos del job
+        // (AutoTransitionConfirmedToTravelingAsync exige StartDate.HasValue && StartDate <= hoy), evitando que
+        // esa misma noche la vuelva a promover. Ademas refleja la realidad: entro por error y falta recargar la
+        // fecha del servicio. Cuando se corrija la fecha del servicio, RecalculateReservationScheduleAsync
+        // recomputa StartDate desde los servicios (si queda futura, el job no la toma). Verificado (grep
+        // 2026-06-22): nada calcula plata/comision/vencimiento sobre Reserva.StartDate — solo filtros de
+        // urgencia/worklist y display; borrarla no descuadra ningun monto.
+        reserva.Status = EstadoReserva.Confirmed;
+        reserva.StartDate = null;
+
+        // (7) Limpiar la franja naranja de regresion si quedo seteada: esta accion NO pasa por el motor
+        // (ReservaAutoStateService) que normalmente la limpia, asi que la limpiamos a mano para no dejar un
+        // aviso huerfano "volvio sola de Confirmada" sobre una reserva que acabamos de poner Confirmed a mano.
+        reserva.LastRegressionReason = null;
+        reserva.LastRegressionAt = null;
+
+        // (8) Rastro auditable con Direction = "Correction" (valor NUEVO, exclusivo de esta accion; ningun
+        // consumidor backend ramifica sobre Direction, verificado en el review). Queda quien la saco de viaje,
+        // cuando y por que. No hay autorizante: el permiso (Admin) ya gateo en el controller.
+        _context.ReservaStatusChangeLogs.Add(new ReservaStatusChangeLog
+        {
+            ReservaId = id,
+            FromStatus = fromStatus,
+            ToStatus = EstadoReserva.Confirmed,
+            Direction = "Correction",
+            ByUserId = actorUserId,
+            ByUserName = actorUserName,
+            Reason = reason,
+            OccurredAt = DateTime.UtcNow
+        });
+
+        await _context.SaveChangesAsync(ct);
+        return await GetReservaByIdAsync(id);
+    }
+
+    /// <summary>
+    /// cbteTipo de las Notas de Credito de AFIP (3=A, 8=B, 13=C, 53=M). Espejo de
+    /// <c>MutationGuards.LiveInvoiceCreditNoteTypes</c>: se excluyen del conteo de "factura viva" porque una NC
+    /// resta y no debe, por si sola, frenar la correccion. Array literal porque EF Core no traduce el helper
+    /// <c>InvoiceComprobanteHelpers.IsCreditNote</c> a SQL. Mantener sincronizado con el de MutationGuards.
+    /// </summary>
+    private static readonly int[] CreditNoteComprobanteTipos = { 3, 8, 13, 53 };
+
     // ============= /Phase 2.4 =============
 
     // ============================================================
@@ -2157,12 +2266,31 @@ public class ReservaService : IReservaService
 
         // ADR-035 (2026-06-19): bloque de CAPACIDADES (fuente unica que el front lee para apagar botones con
         // motivo) y MONEDA PRINCIPAL del cobro. Se calculan al final, con la plata ya armada (PorMoneda) y los
-        // comprobantes ya incluidos (file.Invoices). "CAE vivo" = factura con CAE asignado, resultado "A" y no
-        // anulada (mismo criterio que el cuadre de arriba): es lo que obliga a anular con NC antes de cancelar.
+        // comprobantes ya incluidos (file.Invoices).
+        //
+        // ADR-036 (2026-06-22): "CAE vivo" usa el MISMO criterio que los guards de mutacion fiscal
+        // (MutationGuards.HasLiveCaeForReserva) = factura NO-NC con CAE asignado y AnnulmentStatus != Succeeded.
+        // Antes este calculo usaba solo (Resultado == "A"), que cuenta tambien las Notas de Credito (una NC
+        // tiene su propio CAE y Resultado "A"). Eso era un FALSO POSITIVO para una reserva cuya unica huella
+        // fiscal es una NC (factura original ya anulada): la marcaba "con factura viva" y bloqueaba de mas. El
+        // criterio correcto EXCLUYE las NC (una NC resta, no mantiene viva la reserva). Esto alimenta CanCancel,
+        // RequiresInvoiceAnnulmentToCancel y la nueva CanCorrectTravelingEntry. EF no traduce el helper
+        // InvoiceComprobanteHelpers.IsCreditNote a SQL, pero aca operamos sobre file.Invoices ya en memoria, asi
+        // que podemos llamarlo directo.
         var hasLiveCae = file.Invoices.Any(i =>
-            !string.IsNullOrEmpty(i.CAE)
-            && i.Resultado == "A"
+            !InvoiceComprobanteHelpers.IsCreditNote(i.TipoComprobante)
+            && !string.IsNullOrEmpty(i.CAE)
             && i.AnnulmentStatus != AnnulmentStatus.Succeeded);
+
+        // ADR-036 (2026-06-22): "voucher emitido vivo" (no anulado) alimenta CanCorrectTravelingEntry: no se
+        // saca de viaje una reserva con voucher vivo (hay que anularlo primero). "Vivo" = Status en
+        // {Issued, UploadedExternal} (los dos estados de un voucher entregado; Draft/PendingAuthorization no
+        // estan emitidos, Revoked esta anulado). Una sola query AnyAsync chica, misma magnitud que las de
+        // arriba; no se incluye la coleccion de vouchers en la entidad para no agrandar el detalle.
+        var hasLiveVoucher = await _context.Vouchers.AsNoTracking().AnyAsync(
+            v => v.ReservaId == file.Id
+                && (v.Status == VoucherStatuses.Issued || v.Status == VoucherStatuses.UploadedExternal),
+            CancellationToken.None);
 
         // ADR-036 (2026-06-21): "tiene cobros vivos" alimenta CanCancel (una reserva con plata viva no admite
         // baja simple: hay que anularla por NC/ND). Cuenta CUALQUIER pago no soft-deleted, INCLUIDOS los pagos
@@ -2174,15 +2302,19 @@ public class ReservaService : IReservaService
             Status: file.Status,
             Balance: file.Balance,
             HasLiveCae: hasLiveCae,
-            // HasLiveVoucher no influye en ninguna capacidad de la politica hoy; se pasa en false para no
-            // agregar Includes al detalle. Si una capacidad futura lo necesitara, se carga aca.
-            HasLiveVoucher: false,
+            HasLiveVoucher: hasLiveVoucher,
             HasLiveEditAuth: dto.HasLiveEditAuthorization,
             HasAnyPayment: hasAnyLivePayment);
         dto.Capabilities = MapCapabilities(ReservaCapabilityPolicy.For(capabilityContext));
 
         // Derivado de "tiene CAE vivo": el front explica por que cancelar exige pasar por la NC primero.
         dto.RequiresInvoiceAnnulmentToCancel = hasLiveCae;
+
+        // ADR-036 (2026-06-22): "En corrección" = volvio a Confirmada con la fecha de salida borrada tras un
+        // "Sacar de viaje" (StartDate null). Derivado, sin estado nuevo. El front muestra el chip "En corrección".
+        dto.IsUnderCorrection =
+            string.Equals(file.Status, EstadoReserva.Confirmed, StringComparison.OrdinalIgnoreCase)
+            && !file.StartDate.HasValue;
 
         // ADR-035 Decision 2 / C5: la moneda principal (default del cobro) la decide el backend, nunca el front.
         dto.MonedaPrincipal = ResolvePrimaryCurrency(dto.PorMoneda);
@@ -2228,6 +2360,7 @@ public class ReservaService : IReservaService
             CanCancel = Map(caps.CanCancel),
             CanAdvance = Map(caps.CanAdvance),
             CanEmitVoucher = Map(caps.CanEmitVoucher),
+            CanCorrectTravelingEntry = Map(caps.CanCorrectTravelingEntry),
             AllowedForward = caps.AllowedForward.ToList(),
             AllowedRevert = caps.AllowedRevert.ToList(),
         };

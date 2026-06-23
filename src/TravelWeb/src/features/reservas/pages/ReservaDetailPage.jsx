@@ -27,6 +27,7 @@ import { RevertStatusModal } from "../components/RevertStatusModal";
 import { ServiceList, calculateServiciosCanceladosResumen } from "../components/ServiceList";
 import { EditAuthorizationModal } from "../components/EditAuthorizationModal";
 import { MarkLostModal } from "../components/MarkLostModal";
+import { CorregirEntradaViajeModal } from "../components/CorregirEntradaViajeModal";
 import { isStatusLocked } from "../components/ReservaStatusBadge";
 import { useReservaDetail } from "../hooks/useReservaDetail";
 import { useOperationalFlags } from "../../../contexts/OperationalFlagsContext";
@@ -565,6 +566,8 @@ export default function ReservaDetailPage() {
   // ADR-020: modal para marcar una cotizacion/presupuesto como Perdida.
   const [showMarkLostModal, setShowMarkLostModal] = useState(false);
   const [showEditDatesModal, setShowEditDatesModal] = useState(false);
+  // Tanda 2 (2026-06-22): modal de corrección "Sacar de viaje" — solo Admin + Traveling + capability.
+  const [showCorrectTravelingModal, setShowCorrectTravelingModal] = useState(false);
 
   // ADR-031 v2.1 — Pieza C: estado del readiness. Se declara aquí porque useState
   // siempre va al inicio del componente, pero el useEffect que lo carga se mueve
@@ -924,6 +927,7 @@ export default function ReservaDetailPage() {
         }}
         onRequestEdit={() => setShowEditAuthModal(true)}
         onMarkLost={() => setShowMarkLostModal(true)}
+        onCorrectTraveling={() => setShowCorrectTravelingModal(true)}
         serviciosCancelados={serviciosCancelados}
         totalPasajerosDeclarados={
           // P2 (ADR-031): ReservaHeader lo usa para deshabilitar "El cliente aceptó" cuando no hay pax.
@@ -956,6 +960,31 @@ export default function ReservaDetailPage() {
         hasLiveEditAuthorization={reserva.hasLiveEditAuthorization ?? false}
         editAuthorizationExpiresAt={reserva.editAuthorizationExpiresAt ?? null}
       />
+
+      {/* Banner "En corrección" (Tanda 2, 2026-06-22):
+          Aparece cuando la reserva fue sacada de viaje por corrección (isUnderCorrection=true).
+          La reserva volvió a Confirmada pero está CONGELADA para el pase automático a viaje
+          hasta que se corrija la fecha del servicio.
+          Importante: NO convierte la pantalla en solo-lectura — la reserva es Confirmada operativa,
+          con todas sus acciones disponibles. Solo es un aviso de que hay algo pendiente de revisar.
+          Texto exacto de la spec UX 2026-06-22. */}
+      {reserva.isUnderCorrection && (
+        <div
+          className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-200"
+          data-testid="banner-en-correccion"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="flex items-start gap-2">
+            <span className="text-amber-600 dark:text-amber-400 flex-shrink-0" aria-hidden="true">🔧</span>
+            <div>
+              <span className="font-bold">En corrección — pendiente revisar fechas.</span>{' '}
+              Se sacó de viaje por una corrección. Está congelada: no va a volver a viaje sola.
+              Revisá la fecha del servicio y, si está bien, seguí normal.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ADR-027: franja amarilla "Confirmada con cambios".
           Aparece cuando el vendedor edito precio o costo de un servicio en una reserva viva
@@ -1709,6 +1738,22 @@ export default function ReservaDetailPage() {
           onClose={() => setShowMarkLostModal(false)}
           onMarked={() => {
             setShowMarkLostModal(false);
+            fetchReserva({ showLoading: false, preserveOnError: true });
+          }}
+        />
+      )}
+
+      {/* Tanda 2 (2026-06-22): modal "Sacar de viaje" — corrección de entrada errónea a En viaje.
+          Solo Admin + Traveling + canCorrectTravelingEntry.allowed=true (sin factura/voucher vivo).
+          Al éxito recargamos la reserva para mostrar el banner "En corrección" y el chip. */}
+      {showCorrectTravelingModal && (
+        <CorregirEntradaViajeModal
+          reservaPublicId={publicId}
+          onClose={() => setShowCorrectTravelingModal(false)}
+          onCorregida={() => {
+            setShowCorrectTravelingModal(false);
+            // Feedback breve antes de recargar. El banner "En corrección" aparece en la reserva recargada.
+            showSuccess('Reserva sacada de viaje. Volvió a Confirmada. Acordate de revisar la fecha del servicio.');
             fetchReserva({ showLoading: false, preserveOnError: true });
           }}
         />

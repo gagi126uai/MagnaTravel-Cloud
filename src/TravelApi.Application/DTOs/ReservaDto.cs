@@ -129,6 +129,15 @@ public class ReservaCapabilitiesDto
     public CapabilityDto CanAdvance { get; set; } = new();
     public CapabilityDto CanEmitVoucher { get; set; } = new();
 
+    /// <summary>
+    /// ADR-036 (2026-06-22): si el ESTADO permite "Sacar de viaje" (corregir una entrada erronea a "En viaje").
+    /// allowed solo cuando la reserva esta En viaje, sin factura con CAE vivo y sin voucher emitido vivo. OJO:
+    /// esto NO incluye el permiso — el front ademas debe chequear que el usuario sea Admin
+    /// (<c>reservas.correct_traveling</c>); el backend revalida ambas cosas (estado en la capacidad, permiso en
+    /// el controller). Es la base para mostrar/apagar el boton "Sacar de viaje" con su motivo.
+    /// </summary>
+    public CapabilityDto CanCorrectTravelingEntry { get; set; } = new();
+
     /// <summary>Estados a los que se puede avanzar manualmente (matriz forward del dominio).</summary>
     public List<string> AllowedForward { get; set; } = new();
 
@@ -318,6 +327,16 @@ public class ReservaDto
     /// explicar por que el flujo de cancelacion pide pasar por la NC. Derivado de "tiene CAE vivo".
     /// </summary>
     public bool RequiresInvoiceAnnulmentToCancel { get; set; }
+
+    /// <summary>
+    /// ADR-036 (2026-06-22): true si la reserva quedo "En corrección" tras un "Sacar de viaje" — esto es,
+    /// volvio a Confirmada PERO con la fecha de salida borrada (StartDate == null), senal de que entro a "En
+    /// viaje" por error y falta recargar la fecha del servicio. El front lo usa para mostrar el cartel/chip
+    /// "En corrección — pendiente revisar fechas". Es DERIVADO (Status == Confirmed && StartDate == null), no
+    /// hay estado ni columna nueva. Cuando se corrige la fecha del servicio, StartDate se recomputa y el flag
+    /// se apaga solo.
+    /// </summary>
+    public bool IsUnderCorrection { get; set; }
 
     /// <summary>
     /// ADR-035 Decision 2 / C5 (2026-06-19): moneda PRINCIPAL de la reserva, la que el cobro ofrece

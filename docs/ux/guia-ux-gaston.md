@@ -534,3 +534,14 @@ Ronda 2:
 - **(2026-06-22 — RESPUESTA DE GASTON: vencimientos = NO)** NO se agregan cuotas/vencimientos con fecha. Sigue valiendo la regla del candado: si no pagó todo, no viaja. (Se puede agregar más adelante si hace falta.)
 - **(2026-06-22 — RESPUESTA DE GASTON: margen = SÍ)** Para quien tiene permiso de costos, además del **costo/inversión** se muestra el **margen (ganancia = venta − costo)**. A quien NO ve costos, no se le muestra ni costo ni margen (regla de costos intacta).
 - **(2026-06-22)** Se mantiene lo que ya estaba bien: saldo separado por moneda, NC/ND ligadas a su factura origen, ocultar costo sin permiso, saldo a favor reutilizable del cliente.
+
+## Tanda 2 — "Sacar de viaje" (corrección de entrada errónea a En viaje) (2026-06-22)
+
+> **Origen:** auditoría integral de reservas (experto ERP). "En viaje" quedó como callejón sin salida: si una reserva entró por error (fecha mal cargada / el viaje no salió), no se podía corregir. Diseño del software-architect, decisiones tomadas con su recomendación. NO reabrir.
+
+- **(2026-06-22)** Se agrega una acción de EXCEPCIÓN "**Sacar de viaje**" que devuelve una reserva de "En viaje" a "Confirmada" cuando entró por error. NO es un botón normal: es una corrección con permiso elevado, motivo obligatorio y auditoría.
+- **(2026-06-22)** **Solo Admin** (permiso nuevo `reservas.correct_traveling`, igual perfil que los otros "levantar candado fuerte"). Va discreto (no junto a los botones normales), visible solo para Admin y solo si la reserva está En viaje y NO facturada.
+- **(2026-06-22)** **Bloqueado si la reserva tiene factura con CAE vivo**: ahí no se saca de viaje, se corrige por Nota de Crédito/ajuste (mismo candado fiscal que ya existe).
+- **(2026-06-22)** El modal pide: **motivo obligatorio** (siempre, hasta para Admin) + (si hiciera falta autorizante, mismo patrón que el "volver atrás"). Un cartel explica la consecuencia y recuerda: **"si la fecha estaba mal cargada, después de sacarla de viaje hay que corregir la fecha del servicio; si no, el sistema podría volver a ponerla en viaje"** (la fecha de salida sale de los servicios, no se escribe a mano).
+- **(2026-06-22)** Para que el sistema NO la vuelva a meter en viaje esa misma noche, la reserva queda con una **marca "En corrección"** (chip/cartel visible) que la congela para el proceso automático hasta que se corrija la fecha del servicio o avance de estado. Mientras tanto se ve claramente que está "En corrección — pendiente revisar fechas".
+- **(2026-06-22)** Queda registrado en el historial como **corrección** (distinto de un "volver atrás" normal): quién, cuándo y por qué.

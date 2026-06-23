@@ -1,7 +1,7 @@
 import React from 'react';
 
 /**
- * Chips complementarios de la reserva: tres ejes independientes.
+ * Chips complementarios de la reserva: tres ejes independientes + corrección opcional.
  *
  * Un rótulo = un solo eje. Regla de Gastón 2026-06-22 (refinamiento por review):
  *   - Eje Pago:    Pagada / Debe — no viaja
@@ -11,12 +11,17 @@ import React from 'react';
  * "Pagada" aparece cuando isFullyPaid es true en CUALQUIER estado.
  * "Debe — no viaja" aparece solo en Confirmed dentro de la ventana de aviso.
  * "Vencida con deuda" aparece cuando hasOverdueDebt === true (el viaje terminó con saldo).
- * "En viaje" NO se chip-ea — lo dice el badge grande; repetirlo genera ruido.
+ * "En viaje" NO se chip-ea — el badge grande "EN VIAJE" ya lo dice, repetirlo agrega ruido.
  *
  * Eje Factura: siempre visible (ADR-037). Lee reserva.invoicingStatus.
  *
+ * Chip "En corrección" (2026-06-22): tratamiento secundario (ámbar/gris chico).
+ *   Aparece cuando reserva.isUnderCorrection === true.
+ *   Indica que la reserva fue sacada de viaje por corrección y está congelada para
+ *   el pase automático; no compite con el badge de estado operativo grande.
+ *
  * Flags que provee el backend en ReservaDto:
- *   isFullyPaid, hasOverdueDebt, isWithinUnpaidAlertWindow, invoicingStatus.
+ *   isFullyPaid, hasOverdueDebt, isWithinUnpaidAlertWindow, invoicingStatus, isUnderCorrection.
  *
  * Feedback 2026-06-19 (cambio 6): chips más chicos para no competir con el badge de estado.
  */
@@ -132,6 +137,20 @@ export function ReservaStatusChips({ reserva }) {
                     {invoicing.label}
                 </span>
             </span>
+
+            {/* Chip "En corrección": tratamiento secundario, no compite con el badge grande.
+                Solo aparece cuando isUnderCorrection=true — la reserva fue sacada de viaje
+                por corrección y está congelada para el pase automático hasta que se corrija
+                la fecha del servicio (spec UX 2026-06-22). */}
+            {reserva.isUnderCorrection && (
+                <span
+                    data-testid="chip-en-correccion"
+                    className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800"
+                    title="Pendiente revisar fechas — congelada para el pase automático a viaje"
+                >
+                    En corrección
+                </span>
+            )}
 
         </span>
     );

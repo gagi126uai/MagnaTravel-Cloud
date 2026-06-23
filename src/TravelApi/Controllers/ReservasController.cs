@@ -555,6 +555,43 @@ public class ReservasController : ControllerBase
         }
     }
 
+    // ADR-036 (2026-06-22): "Sacar de viaje" — correccion de EXCEPCION de una reserva que entro a "En viaje"
+    // por error (fecha mal cargada o el viaje no salio). Endpoint DEDICADO (no reabre la matriz de revert, que
+    // a proposito ya no tiene Traveling->Confirmed). Gate de permiso reservas.correct_traveling (solo Admin) +
+    // ownership (bypass con view_all). El SERVICE valida las reglas de negocio (estado En viaje, sin factura
+    // viva, sin voucher vivo, motivo) que NO son bypasseables. Mapeo de excepciones igual que RevertStatus.
+    [HttpPost("{publicIdOrLegacyId}/correct-traveling-entry")]
+    [RequirePermission(Permissions.ReservasCorrectTraveling)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<ActionResult<ReservaDto>> CorrectTravelingEntry(
+        string publicIdOrLegacyId, [FromBody] CorrectTravelingEntryRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var actorUserId = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "System";
+            var actorUserName = User.FindFirstValue("FullName") ?? User.FindFirstValue(ClaimTypes.Name) ?? User.Identity?.Name;
+            var dto = await _reservaService.CorrectTravelingEntryAsync(
+                publicIdOrLegacyId, request, actorUserId, actorUserName, cancellationToken);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
     // ADR-020 F4 (candado): destrabar la edicion de una reserva confirmada. Cualquiera que pueda
     // editar la reserva (ReservasEdit + ownership) puede pedir la autorizacion; el SERVICE valida
     // que quien autoriza tenga reservas.authorize_locked_edit (auto-autorizacion si el actor lo

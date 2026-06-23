@@ -1,8 +1,9 @@
 import React from 'react';
-import { ArrowLeft, Trash2, Archive, AlertTriangle, Undo2, Calendar, Pencil, Ban, Lock, XCircle, RefreshCw } from "lucide-react";
+import { ArrowLeft, Trash2, Archive, AlertTriangle, Undo2, Calendar, Pencil, Ban, Lock, XCircle, RefreshCw, CornerUpLeft } from "lucide-react";
 import { getReservaArchiveBlockReason } from "../archiveRules";
 import { getStatusConfig, translateStatus, isStatusLocked } from "./ReservaStatusBadge";
 import { ReservaStatusChips } from "./ReservaStatusChips";
+import { isAdmin } from "../../../auth";
 
 function formatTripDate(value) {
     if (!value) return null;
@@ -55,6 +56,7 @@ function formatTripDate(value) {
  * - serviciosCancelados: { cancelados: number, totalConProveedor: number } — para el contador "N de M".
  *   El padre lo calcula con calculateServiciosCanceladosResumen(allServices).
  *   Si viene null/undefined no se muestra nada (diseño conservador).
+ * - onCorrectTraveling: callback que abre el modal "Sacar de viaje" (solo Admin + Traveling + capability).
  */
 export function ReservaHeader({
     reserva,
@@ -70,6 +72,7 @@ export function ReservaHeader({
     onMarkLost,
     serviciosCancelados = null,
     totalPasajerosDeclarados = null,
+    onCorrectTraveling,
 }) {
     const isArchived = reserva.status === 'Archived';
     const locked = isStatusLocked(reserva.status);
@@ -154,6 +157,22 @@ export function ReservaHeader({
             ? (Array.isArray(capabilities.allowedRevert) && capabilities.allowedRevert.length > 0)
             : canRevertLocal
     );
+
+    // ─── Botón "Sacar de viaje" (corrección de entrada errónea) ──────────────────
+    // Spec UX 2026-06-22 "Tanda 2": acción de EXCEPCIÓN solo para Admin.
+    // Se renderiza SOLAMENTE si se cumplen LAS TRES condiciones:
+    //   1) La reserva está En viaje (Traveling)
+    //   2) El backend lo permite: canCorrectTravelingEntry.allowed === true
+    //      (solo llega true si no hay factura viva ni voucher vivo)
+    //   3) El usuario es Admin (isAdmin() del store de auth)
+    // Si falta cualquiera de las tres → NO se renderiza (ni gris, ni mensaje).
+    // El botón va discreto y SEPARADO de los botones normales (no en la fila principal).
+    const correctTravelingCapability = getCapability('canCorrectTravelingEntry');
+    const showCorrectTravelingButton =
+        esTraveling &&
+        correctTravelingCapability.allowed === true &&
+        isAdmin() &&
+        typeof onCorrectTraveling === 'function';
 
     // ADR-037: el botón "Reabrir para facturar" fue eliminado. La facturación se desacopló
     // del estado de la reserva: se factura directo desde Finalizada (sin reabrir). El botón
@@ -455,6 +474,27 @@ export function ReservaHeader({
                             </button>
                         )}
                     </div>
+
+                    {/* ── "Sacar de viaje" — separado de la botonera normal ───────────────
+                        Acción de EXCEPCIÓN (spec UX 2026-06-22 "Tanda 2"):
+                        - Solo para Admin, solo En viaje, solo si no hay factura ni voucher vivo.
+                        - Va discreto: separador visual + estilo terciario gris sobrio.
+                        - NO se muestra gris/deshabilitado si no cumple las condiciones: directamente no aparece.
+                        - Al click abre el modal CorregirEntradaViajeModal (NO ejecuta directo). */}
+                    {showCorrectTravelingButton && (
+                        <div className="sm:border-l sm:border-slate-200 sm:dark:border-slate-800 sm:pl-4">
+                            <button
+                                onClick={onCorrectTraveling}
+                                data-testid="reserva-action-correct-traveling"
+                                aria-label="Sacar de viaje — corrección de entrada errónea"
+                                className="inline-flex items-center gap-1.5 px-3 py-2.5 bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 rounded-xl transition-colors text-sm font-semibold"
+                                title="Acción de corrección — solo si la reserva entró en viaje por error"
+                            >
+                                <CornerUpLeft className="w-4 h-4" />
+                                Sacar de viaje
+                            </button>
+                        </div>
+                    )}
                 </div>
             )}
         </div>
