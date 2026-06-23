@@ -36,6 +36,10 @@ public class OperationalFinanceSettingsCatalogFlagsTests
         Action<OperationalFinanceSettings>? customize = null)
     {
         var settings = new OperationalFinanceSettings();
+        // Linea base de test = flags de cancelacion APAGADOS, independiente del default de
+        // produccion (que desde 2026-06-23 viene prendido). Cada test opta-in con customize.
+        settings.EnableNewCancellationFlow = false;
+        settings.EnableCancellationDebitNote = false;
         customize?.Invoke(settings);
         db.OperationalFinanceSettings.Add(settings);
         await db.SaveChangesAsync();

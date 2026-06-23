@@ -67,11 +67,13 @@ public class OperationalFinanceSettings
     /// operaciones con un mensaje "modulo no habilitado". Permite mergear
     /// y deployar la infra sin exponer el flujo a usuarios hasta que QA
     /// y signoff fiscal (OPS-FISCAL-001) lo aprueben.
-    /// Default <c>false</c> en prod; QA lo levanta a <c>true</c> en staging.
-    /// Precondicion antes de prender en prod: ver query SQL §10.2.1 del plan
+    /// Default <c>true</c> (decision de Gaston 2026-06-23: el flujo de cancelacion nuevo
+    /// es el flujo del producto; la Nota de Debito por multa lo requiere). Solo aplica a
+    /// instalaciones nuevas: en un install existente el valor vive en la BD (panel de admin).
+    /// Precondicion al prenderlo sobre datos existentes: ver query SQL §10.2.1 del plan
     /// (ResponsibleUserId backfill).
     /// </summary>
-    public bool EnableNewCancellationFlow { get; set; } = false;
+    public bool EnableNewCancellationFlow { get; set; } = true;
 
     /// <summary>
     /// FC1.2.0 v3 §10.1 — INV-100 precondicion. Si <c>true</c>, la cancelacion
@@ -387,11 +389,13 @@ public class OperationalFinanceSettings
     /// <para><b>NO confundir con <see cref="EnablePartialCreditNoteRealEmission"/></b>
     /// (NC parcial, CONGELADO): ese sigue su camino. Este es un flag NUEVO y distinto.</para>
     ///
-    /// <para>Default <c>false</c>. NO prender en prod hasta: (a) signoff del contador
-    /// matriculado (§11 del ADR), (b) CAE de homologacion ARCA para ND C asociada a
-    /// factura. Misma disciplina que los demas flags fiscales.</para>
+    /// <para>Default <c>true</c> (decision de Gaston 2026-06-23: la regla NC total + ND por
+    /// multa ya esta cerrada por el; ver decisiones-fiscales-2026-06-17). Requiere
+    /// <see cref="EnableNewCancellationFlow"/>=true (validado al arranque). Solo aplica a
+    /// instalaciones nuevas: en un install existente el valor vive en la BD (panel de admin).
+    /// Antes de emitir en serio: homologacion ARCA de la ND C asociada a factura (gate de deploy).</para>
     /// </summary>
-    public bool EnableCancellationDebitNote { get; set; } = false;
+    public bool EnableCancellationDebitNote { get; set; } = true;
 
     // ============================================================
     // ADR-014 (Confirmacion DIFERIDA de la penalidad, 2026-06-02): parametros del
