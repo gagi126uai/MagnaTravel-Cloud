@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowLeft, Trash2, Archive, AlertTriangle, Undo2, Calendar, Pencil, Ban, Lock, XCircle, RefreshCw, CornerUpLeft } from "lucide-react";
+import { ArrowLeft, Trash2, Archive, AlertTriangle, Undo2, Calendar, Pencil, Ban, Lock, XCircle, RefreshCw, CornerUpLeft, FastForward } from "lucide-react";
 import { getReservaArchiveBlockReason } from "../archiveRules";
 import { getStatusConfig, translateStatus, isStatusLocked } from "./ReservaStatusBadge";
 import { ReservaStatusChips } from "./ReservaStatusChips";
@@ -52,7 +52,8 @@ function formatTripDate(value) {
  * - onCancelReserva: callback para abrir el flujo de anulacion en linea
  * - onRequestEdit: callback para abrir el modal de autorizacion de edicion (cuando hay candado)
  * - onMarkLost: callback para abrir el modal "Marcar como perdida"
- * - Los callbacks onStatusChange, onDelete, onArchive, onRevert, onEditDates son manejados por el padre
+ * - Los callbacks onStatusChange, onDelete, onArchive, onRevert, onEditDates, onReschedule son manejados por el padre
+ * - onReschedule: callback que abre ReprogramarViajeModal; se muestra cuando canEditServices.allowed === true.
  * - serviciosCancelados: { cancelados: number, totalConProveedor: number } — para el contador "N de M".
  *   El padre lo calcula con calculateServiciosCanceladosResumen(allServices).
  *   Si viene null/undefined no se muestra nada (diseño conservador).
@@ -66,6 +67,7 @@ export function ReservaHeader({
     onArchive,
     onRevert,
     onEditDates,
+    onReschedule,
     canCancelReserva = false,
     onCancelReserva,
     onRequestEdit,
@@ -117,6 +119,15 @@ export function ReservaHeader({
         && reserva.status !== 'Cancelled'
         && reserva.status !== 'Lost'
         && reserva.status !== 'Closed';
+
+    // ─── Botón "Reprogramar viaje" ────────────────────────────────────────────────
+    // Visible cuando el backend indica que los servicios son editables (canEditServices).
+    // "Reprogramar" es diferente de "Editar fechas":
+    //   - "Editar fechas" overridea la cabecera de la reserva (manual, fecha a fecha).
+    //   - "Reprogramar" mueve TODOS los servicios el mismo delta desde una nueva salida.
+    // Se oculta en estados archivados — la reserva archivada es historial.
+    const editServicesCap = getCapability('canEditServices');
+    const showRescheduleButton = editServicesCap.allowed && !isArchived && typeof onReschedule === 'function';
 
     // ─── Guarda "En viaje" = inmutable ───────────────────────────────────────────
     // Guía UX 2026-06-22: en Traveling la reserva es inmutable por diseño (no por candado
@@ -286,6 +297,22 @@ export function ReservaHeader({
                         >
                             <Pencil className="w-3.5 h-3.5" />
                             Editar fechas
+                        </button>
+                    )}
+
+                    {/* "Reprogramar viaje": mueve TODAS las fechas de los servicios desde una nueva fecha de salida.
+                        Distinto de "Editar fechas" (override de cabecera): este corre todo el viaje en bloque.
+                        Visible cuando canEditServices.allowed=true → el backend sabe si la reserva es editable. */}
+                    {showRescheduleButton && (
+                        <button
+                            onClick={onReschedule}
+                            type="button"
+                            data-testid="reserva-action-reschedule"
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 hover:border-indigo-300 dark:border-indigo-800 dark:bg-indigo-950/30 dark:text-indigo-300 dark:hover:bg-indigo-900/50"
+                            title="Reprogramar viaje — mueve todas las fechas de los servicios"
+                        >
+                            <FastForward className="w-3.5 h-3.5" />
+                            Reprogramar viaje
                         </button>
                     )}
                 </div>

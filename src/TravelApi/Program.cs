@@ -529,6 +529,7 @@ builder.Services.AddScoped<IApprovalPolicyService, ApprovalPolicyService>();
 builder.Services.AddScoped<IMovementsService, MovementsService>();
 builder.Services.AddScoped<ISupplierService, SupplierService>();
 builder.Services.AddScoped<ICustomerService, CustomerService>();
+builder.Services.AddScoped<IPassengerSearchService, PassengerSearchService>();
 builder.Services.AddScoped<IReportService, ReportService>();
 builder.Services.AddScoped<IBnaExchangeRateService, BnaExchangeRateService>();
 builder.Services.AddScoped<IServicioReservaService, ServicioReservaService>();

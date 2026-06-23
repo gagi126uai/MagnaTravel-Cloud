@@ -1,10 +1,42 @@
-import { useEffect, useState } from "react";
-import { BadgeCheck, CalendarDays, FileText, Globe2, Loader2, Mail, Phone, Save, Search, StickyNote, User, X } from "lucide-react";
+/**
+ * Modal completo para crear o editar un pasajero de la reserva.
+ *
+ * Convive con DOS fuentes de autocompletado:
+ *
+ *   1. BASE PROPIA (pasajeros históricos de la agencia):
+ *      Se dispara al tipear en el campo NOMBRE o en el campo DOCUMENTO (debounce 400ms,
+ *      mínimo 3 chars). Devuelve personas que ya viajaron con la agencia.
+ *
+ *   2. PADRÓN AFIP:
+ *      Se dispara manualmente con el botón de la lupa en el campo documento.
+ *      Sigue funcionando igual que antes — el usuario lo activa cuando quiere.
+ *
+ * Regla de precedencia: la base propia aparece primero. El padrón AFIP es
+ * un complemento explícito (el usuario lo activa con el botón), no un automático.
+ *
+ * Props:
+ *   isOpen             — si el modal está abierto
+ *   onClose            — callback para cerrar
+ *   reservaId          — publicId de la reserva (para crear un pasajero nuevo)
+ *   onSuccess          — callback({ passenger }) tras guardar exitosamente
+ *   passengerToEdit    — objeto pasajero existente (null → crear nuevo)
+ *   existingPassengers — lista de pasajeros ya cargados en la reserva (para detectar duplicados)
+ */
+
+import { useEffect, useRef, useState } from "react";
+import { BadgeCheck, CalendarDays, FileText, Globe2, History, Loader2, Mail, Phone, Save, Search, StickyNote, User, X } from "lucide-react";
 import { useDebounce } from "../hooks/useDebounce";
 import { api } from "../api";
 import { showError, showSuccess, showWarning } from "../alerts";
 import { getApiErrorMessage } from "../lib/errors";
 import { getPublicId } from "../lib/publicIds";
+import {
+    cumpleUmbralBusqueda,
+    construirUrlBusquedaHistorica,
+    mapearSugerenciaAlForm,
+    esDuplicadoEnReserva,
+    formatearSubtituloSugerencia,
+} from "../features/reservas/lib/pasajeroSearchLogic.js";
 
 const inputClass = "w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-sm text-slate-900 transition-colors focus:border-indigo-500 focus:bg-white focus:outline-none dark:border-slate-600 dark:bg-slate-700 dark:text-white dark:focus:border-indigo-400";
 const labelClass = "mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300";
@@ -31,19 +63,217 @@ function SectionTitle({ icon: Icon, children }) {
     );
 }
 
-export default function PassengerFormModal({ isOpen, onClose, reservaId, onSuccess, passengerToEdit }) {
+/**
+ * Dropdown de sugerencias de pasajeros históricos.
+ * Se muestra debajo del campo que disparó la búsqueda (nombre o documento).
+ *
+ * Props:
+ *   sugerencias         — array de resultados del backend
+ *   cargando            — si la búsqueda está en curso
+ *   onElegir(sugerencia) — callback al seleccionar un ítem
+ *   onCerrar()          — callback para cerrar el dropdown sin elegir
+ */
+function DropdownHistorico({ sugerencias, cargando, onElegir, onCerrar }) {
+    // No mostramos el dropdown si está vacío y no está cargando
+    if (!cargando && sugerencias.length === 0) return null;
+
+    return (
+        <div
+            className="absolute left-0 right-0 z-[100] mt-1 overflow-hidden rounded-xl border border-indigo-100 bg-white shadow-xl dark:border-indigo-900/40 dark:bg-slate-800"
+            role="listbox"
+            aria-label="Pasajeros de viajes anteriores"
+        >
+            {/* Encabezado del dropdown */}
+            <div className="flex items-center justify-between border-b border-slate-100 bg-indigo-50 px-3 py-2 dark:border-slate-700 dark:bg-indigo-950/30">
+                <span className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-indigo-600 dark:text-indigo-400">
+                    <History className="h-3 w-3" aria-hidden="true" />
+                    Pasajeros de viajes anteriores
+                </span>
+                <button
+                    type="button"
+                    onClick={onCerrar}
+                    aria-label="Cerrar sugerencias"
+                    className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                >
+                    <X className="h-3.5 w-3.5" />
+                </button>
+            </div>
+
+            {/* Spinner mientras carga */}
+            {cargando && (
+                <div className="flex items-center gap-2 px-4 py-3 text-sm text-slate-500">
+                    <Loader2 className="h-4 w-4 animate-spin text-indigo-400" aria-hidden="true" />
+                    Buscando...
+                </div>
+            )}
+
+            {/* Lista de sugerencias */}
+            {!cargando && sugerencias.length > 0 && (
+                <div className="max-h-48 overflow-y-auto">
+                    {sugerencias.map((sugerencia, index) => (
+                        <button
+                            key={`historico-${sugerencia.documentType}-${sugerencia.documentNumber}-${index}`}
+                            type="button"
+                            role="option"
+                            onClick={() => onElegir(sugerencia)}
+                            className="group w-full border-b border-slate-50 px-4 py-2.5 text-left transition-colors last:border-0 hover:bg-indigo-50 dark:border-slate-700 dark:hover:bg-indigo-900/30"
+                        >
+                            <div className="truncate text-sm font-semibold text-slate-900 group-hover:text-indigo-600 dark:text-white dark:group-hover:text-indigo-300">
+                                {sugerencia.fullName}
+                            </div>
+                            <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                                {formatearSubtituloSugerencia(sugerencia)}
+                            </div>
+                        </button>
+                    ))}
+                </div>
+            )}
+
+            {/* Estado vacío discreto (solo cuando terminó de buscar y no hubo resultados) */}
+            {!cargando && sugerencias.length === 0 && (
+                <div className="px-4 py-3 text-sm text-slate-400">
+                    Sin coincidencias en la base de pasajeros.
+                </div>
+            )}
+        </div>
+    );
+}
+
+export default function PassengerFormModal({ isOpen, onClose, reservaId, onSuccess, passengerToEdit, existingPassengers = [] }) {
     const [formData, setFormData] = useState(emptyPassengerForm);
+
+    // ─── Estado: búsqueda en la BASE PROPIA (históricos de la agencia) ───────
+    // Se activa al tipear nombre o documento. Tiene debounce de 400ms.
+    const [sugerenciasHistoricas, setSugerenciasHistoricas] = useState([]);
+    const [cargandoHistoricos, setCargandoHistoricos] = useState(false);
+    // "name" o "document" según qué campo disparó la búsqueda activa
+    const [campoConDropdown, setCampoConDropdown] = useState(null);
+    // Flag para evitar re-disparar la búsqueda inmediatamente después de elegir una sugerencia
+    const eligioSugerencia = useRef(false);
+
+    // ─── Estado: búsqueda en el PADRÓN AFIP (manual, por botón) ────────────
     const [afipResults, setAfipResults] = useState([]);
     const [loadingAfip, setLoadingAfip] = useState(false);
     const [searchingField, setSearchingField] = useState(null);
-    const [loading, setLoading] = useState(false);
-    const [justSelected, setJustSelected] = useState(false);
 
-    const debouncedDocument = useDebounce(formData.documentNumber, 500);
+    // ─── Estado: formulario ──────────────────────────────────────────────────
+    const [loading, setLoading] = useState(false);
+
+    // Debounce de 400ms para no disparar requests en cada tecla
+    const debouncedFullName = useDebounce(formData.fullName, 400);
+    const debouncedDocumentNumber = useDebounce(formData.documentNumber, 400);
 
     const updateField = (field, value) => {
         setFormData((current) => ({ ...current, [field]: value }));
     };
+
+    // ─── Búsqueda en la BASE PROPIA ──────────────────────────────────────────
+
+    /**
+     * Llama al endpoint de búsqueda histórica y actualiza el dropdown.
+     * Es silenciosa en errores: si falla, simplemente cierra el dropdown
+     * sin interrumpir el flujo del formulario.
+     */
+    const buscarHistorico = async (campo, currentFormData) => {
+        setCargandoHistoricos(true);
+        setCampoConDropdown(campo);
+        try {
+            const url = construirUrlBusquedaHistorica(campo, currentFormData);
+            const resultados = await api.get(url);
+            setSugerenciasHistoricas(resultados || []);
+        } catch (error) {
+            // Error silencioso: la búsqueda histórica es una ayuda opcional.
+            // Si falla, el usuario puede seguir completando el form a mano.
+            console.warn("Búsqueda de pasajeros históricos no disponible:", error);
+            setSugerenciasHistoricas([]);
+            setCampoConDropdown(null);
+        } finally {
+            setCargandoHistoricos(false);
+        }
+    };
+
+    const cerrarDropdownHistorico = () => {
+        setSugerenciasHistoricas([]);
+        setCargandoHistoricos(false);
+        setCampoConDropdown(null);
+    };
+
+    /**
+     * Cuando el usuario elige una sugerencia histórica, autocompleta todos los campos.
+     * Si la persona ya está en la reserva, avisa y no autocompleta para evitar duplicado.
+     */
+    const handleElegirHistorico = (sugerencia) => {
+        // Regla de dedup: si ya está como pasajero de esta reserva, no lo agregamos
+        if (esDuplicadoEnReserva(sugerencia, existingPassengers)) {
+            showWarning(
+                `Este pasajero ya está cargado en la reserva (${sugerencia.documentType} ${sugerencia.documentNumber}).`,
+                "Pasajero duplicado"
+            );
+            cerrarDropdownHistorico();
+            return;
+        }
+
+        // Autocompleta el form con todos los datos de la persona histórica
+        const camposAutocompletados = mapearSugerenciaAlForm(sugerencia);
+        setFormData((current) => ({ ...current, ...camposAutocompletados }));
+
+        // Cerramos el dropdown y marcamos que fue por elección (no por tipeo)
+        cerrarDropdownHistorico();
+        // También cerramos el AFIP si estaba abierto
+        setAfipResults([]);
+        setSearchingField(null);
+
+        // Prevenimos que el debounce del valor nuevo redispare la búsqueda
+        eligioSugerencia.current = true;
+    };
+
+    // ─── Effect: buscar histórico al tipear NOMBRE ────────────────────────────
+    // Solo en modo creación (no en edición: si editas un pasajero, ya sabés quién es).
+    useEffect(() => {
+        if (!isOpen || passengerToEdit) return;
+
+        // Si el cambio de valor vino de elegir una sugerencia, lo ignoramos
+        if (eligioSugerencia.current) {
+            eligioSugerencia.current = false;
+            return;
+        }
+
+        if (cumpleUmbralBusqueda(debouncedFullName)) {
+            buscarHistorico("name", formData);
+        } else {
+            // El texto quedó muy corto: cerramos solo si el dropdown activo es de nombre
+            if (campoConDropdown === "name") cerrarDropdownHistorico();
+        }
+        // formData se excluye de las deps intencionalmente: solo queremos
+        // reaccionar al debounce del campo nombre, no a cada keystroke de otros campos.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [debouncedFullName, isOpen, passengerToEdit]);
+
+    // ─── Effect: buscar histórico al tipear DOCUMENTO ────────────────────────
+    // Solo en modo creación y cuando el campo documento tiene suficientes chars.
+    // También dispara la búsqueda AFIP automática que ya existía.
+    useEffect(() => {
+        if (!isOpen || passengerToEdit) return;
+
+        if (eligioSugerencia.current) return; // el reset lo hace el effect de nombre
+
+        if (cumpleUmbralBusqueda(debouncedDocumentNumber)) {
+            // Búsqueda histórica propia (no bloquea ni muestra error al usuario)
+            buscarHistorico("document", formData);
+            // Búsqueda AFIP automática (comportamiento original)
+            if (searchingField !== "name") {
+                handleAfipSearch(debouncedDocumentNumber, "document");
+            }
+        } else {
+            // Texto muy corto: limpiamos los dropdowns
+            if (campoConDropdown === "document") cerrarDropdownHistorico();
+            if (searchingField === "document") setAfipResults([]);
+        }
+        // formData excluido igual que arriba: solo reaccionamos al debounce de documento.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [debouncedDocumentNumber, isOpen, passengerToEdit]);
+
+    // ─── AFIP: búsqueda manual (por botón) ───────────────────────────────────
 
     const handleAfipSearch = async (query, field) => {
         if (!query) return;
@@ -69,24 +299,6 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
         }
     };
 
-    useEffect(() => {
-        if (!isOpen) return;
-        if (justSelected) {
-            setJustSelected(false);
-            return;
-        }
-
-        if (!passengerToEdit) {
-            if (debouncedDocument && debouncedDocument.length >= 3) {
-                if (searchingField !== "name") {
-                    handleAfipSearch(debouncedDocument, "document");
-                }
-            } else if (!debouncedDocument || debouncedDocument.length < 3) {
-                if (searchingField === "document") setAfipResults([]);
-            }
-        }
-    }, [debouncedDocument, isOpen, passengerToEdit]);
-
     const handleAfipSelect = (persona) => {
         setFormData((current) => ({
             ...current,
@@ -95,10 +307,11 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
         }));
         setAfipResults([]);
         setSearchingField(null);
-        setJustSelected(true);
+        eligioSugerencia.current = true;
         showSuccess("Datos de AFIP aplicados.");
     };
 
+    // ─── Resetear el form al abrir/cerrar el modal ────────────────────────────
     useEffect(() => {
         if (!isOpen) return;
 
@@ -111,9 +324,15 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
         } else {
             setFormData(emptyPassengerForm);
         }
+
+        // Limpiamos los dos dropdowns al abrir el modal
         setAfipResults([]);
         setSearchingField(null);
+        cerrarDropdownHistorico();
+        eligioSugerencia.current = false;
     }, [isOpen, passengerToEdit]);
+
+    // ─── Guardar ──────────────────────────────────────────────────────────────
 
     const handleSubmit = async (event) => {
         event.preventDefault();
@@ -161,6 +380,8 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                     <section className={panelClass}>
                         <SectionTitle icon={BadgeCheck}>Identidad</SectionTitle>
                         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+
+                            {/* ─── Campo NOMBRE (con búsqueda histórica) ─────────────────── */}
                             <div className="md:col-span-2">
                                 <label className={labelClass}>Nombre completo *</label>
                                 <div className="relative">
@@ -172,10 +393,24 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                                         placeholder="Nombre del pasajero"
                                         value={formData.fullName || ""}
                                         onChange={(event) => updateField("fullName", event.target.value)}
+                                        // Cerramos el dropdown histórico si el usuario hace click afuera
+                                        aria-autocomplete="list"
+                                        aria-haspopup="listbox"
+                                        aria-expanded={campoConDropdown === "name" ? "true" : "false"}
                                     />
+                                    {/* Dropdown de pasajeros históricos bajo el campo nombre */}
+                                    {!passengerToEdit && campoConDropdown === "name" && (
+                                        <DropdownHistorico
+                                            sugerencias={sugerenciasHistoricas}
+                                            cargando={cargandoHistoricos}
+                                            onElegir={handleElegirHistorico}
+                                            onCerrar={cerrarDropdownHistorico}
+                                        />
+                                    )}
                                 </div>
                             </div>
 
+                            {/* ─── Campo TIPO DOCUMENTO ──────────────────────────────────── */}
                             <div>
                                 <label className={labelClass}>Tipo documento</label>
                                 <select className={inputClass} value={formData.documentType || "DNI"} onChange={(event) => updateField("documentType", event.target.value)}>
@@ -186,6 +421,7 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                                 </select>
                             </div>
 
+                            {/* ─── Campo DOCUMENTO (con histórico + botón AFIP) ──────────── */}
                             <div>
                                 <label className={labelClass}>Numero de documento *</label>
                                 <div className="relative">
@@ -200,16 +436,34 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                                             updateField("documentNumber", event.target.value);
                                             if (searchingField === "document") setSearchingField(null);
                                         }}
+                                        aria-autocomplete="list"
+                                        aria-haspopup="listbox"
+                                        aria-expanded={campoConDropdown === "document" ? "true" : "false"}
                                     />
+                                    {/* Botón de búsqueda manual en AFIP (sigue funcionando igual) */}
                                     <button
                                         type="button"
                                         onClick={() => handleAfipSearch(formData.documentNumber, "document")}
                                         className="absolute right-2 top-2 rounded-lg p-1 text-slate-400 transition-colors hover:bg-indigo-50 hover:text-indigo-600 dark:hover:bg-indigo-900/40"
                                         title="Buscar en AFIP"
                                     >
-                                        {loadingAfip && searchingField === "document" ? <Loader2 className="h-4 w-4 animate-spin text-indigo-500" /> : <Search className="h-4 w-4" />}
+                                        {loadingAfip && searchingField === "document"
+                                            ? <Loader2 className="h-4 w-4 animate-spin text-indigo-500" />
+                                            : <Search className="h-4 w-4" />
+                                        }
                                     </button>
 
+                                    {/* Dropdown de pasajeros históricos bajo el campo documento */}
+                                    {!passengerToEdit && campoConDropdown === "document" && (
+                                        <DropdownHistorico
+                                            sugerencias={sugerenciasHistoricas}
+                                            cargando={cargandoHistoricos}
+                                            onElegir={handleElegirHistorico}
+                                            onCerrar={cerrarDropdownHistorico}
+                                        />
+                                    )}
+
+                                    {/* Dropdown AFIP (sigue igual que antes, aparece cuando searchingField === "document") */}
                                     {afipResults.length > 0 && searchingField === "document" ? (
                                         <div className="absolute left-0 right-0 z-[100] mt-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-800">
                                             <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-900/50">

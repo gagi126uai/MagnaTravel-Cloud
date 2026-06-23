@@ -28,6 +28,7 @@ import { ServiceList, calculateServiciosCanceladosResumen } from "../components/
 import { EditAuthorizationModal } from "../components/EditAuthorizationModal";
 import { MarkLostModal } from "../components/MarkLostModal";
 import { CorregirEntradaViajeModal } from "../components/CorregirEntradaViajeModal";
+import { ReprogramarViajeModal } from "../components/ReprogramarViajeModal";
 import { isStatusLocked } from "../components/ReservaStatusBadge";
 import { useReservaDetail } from "../hooks/useReservaDetail";
 import { useOperationalFlags } from "../../../contexts/OperationalFlagsContext";
@@ -577,6 +578,8 @@ export default function ReservaDetailPage() {
   const [showEditDatesModal, setShowEditDatesModal] = useState(false);
   // Tanda 2 (2026-06-22): modal de corrección "Sacar de viaje" — solo Admin + Traveling + capability.
   const [showCorrectTravelingModal, setShowCorrectTravelingModal] = useState(false);
+  // Tanda 3 (2026-06-23): modal "Reprogramar viaje" — mueve todas las fechas de servicios.
+  const [showRescheduleModal, setShowRescheduleModal] = useState(false);
 
   // ADR-031 v2.1 — Pieza C: estado del readiness. Se declara aquí porque useState
   // siempre va al inicio del componente, pero el useEffect que lo carga se mueve
@@ -937,6 +940,7 @@ export default function ReservaDetailPage() {
         onRequestEdit={() => setShowEditAuthModal(true)}
         onMarkLost={() => setShowMarkLostModal(true)}
         onCorrectTraveling={() => setShowCorrectTravelingModal(true)}
+        onReschedule={() => setShowRescheduleModal(true)}
         serviciosCancelados={serviciosCancelados}
         totalPasajerosDeclarados={
           // P2 (ADR-031): ReservaHeader lo usa para deshabilitar "El cliente aceptó" cuando no hay pax.
@@ -1830,6 +1834,20 @@ export default function ReservaDetailPage() {
           }}
         />
       )}
+
+      {/* Tanda 3 (2026-06-23): modal "Reprogramar viaje" — mueve todas las fechas de servicios.
+          El botón está en ReservaHeader, visible cuando canEditServices.allowed=true.
+          Al éxito recargamos la reserva para reflejar las nuevas fechas. */}
+      <ReprogramarViajeModal
+        isOpen={showRescheduleModal}
+        reserva={reserva}
+        onClose={() => setShowRescheduleModal(false)}
+        onReprogramada={(nuevaSalida) => {
+          setShowRescheduleModal(false);
+          showSuccess(`Viaje reprogramado. Nueva salida: ${nuevaSalida}.`);
+          fetchReserva({ showLoading: false, preserveOnError: true });
+        }}
+      />
     </div>
   );
 }

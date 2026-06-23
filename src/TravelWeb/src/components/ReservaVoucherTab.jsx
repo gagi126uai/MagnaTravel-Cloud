@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Ban, CheckCircle2, Download, Eye, FilePlus2, FileText, Loader2, Pencil, UploadCloud, Plus, X, ThumbsUp, ThumbsDown } from "lucide-react";
+import { AlertTriangle, Ban, CheckCircle2, Download, Eye, FilePlus2, FileText, Loader2, Pencil, Send, UploadCloud, Plus, X, ThumbsUp, ThumbsDown } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../api";
 import { getApiErrorMessage } from "../lib/errors";
 import { getPublicId } from "../lib/publicIds";
 import { useAuthState, isAdmin, hasPermission } from "../auth";
+import { puedeEnviarVoucher, resolverDestinatarioPorDefecto, resolverCandidatosDestinatario } from "./voucherSendLogic";
 
 function getPassengerName(passenger) {
   return passenger?.fullName || passenger?.FullName || passenger?.name || passenger?.Name || "Pasajero";
@@ -234,6 +235,17 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false }) {
   const [voucherToRevoke, setVoucherToRevoke] = useState(null);
   const [revokeReason, setRevokeReason] = useState("");
   const [revokingId, setRevokingId] = useState(null);
+
+  // ── Envío de voucher por WhatsApp ─────────────────────────────────────────────
+  // sendingVoucherId: publicId del voucher que se está enviando (spinner en ese botón).
+  // El envío es individual por botón — sin acumular selección como en MessagesPage.
+  const [sendingVoucherId, setSendingVoucherId] = useState(null);
+
+  // Estado para el mini-selector de destinatario cuando el voucher tiene >1 pasajero.
+  // isSelectingRecipientForVoucher: el voucher para el que estamos eligiendo destinatario.
+  // recipientCandidates: lista de { personType, personId, displayName } a mostrar.
+  const [isSelectingRecipientForVoucher, setIsSelectingRecipientForVoucher] = useState(null);
+  const [recipientCandidates, setRecipientCandidates] = useState([]);
 
   // Modal de edición de voucher externo
   // Solo aplica a vouchers con externalOrigin que no estén revocados.
@@ -546,6 +558,76 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false }) {
     }
   };
 
+  /**
+   * Inicia el flujo de envío de un voucher por WhatsApp.
+   *
+   * Decisión UX: no abrimos un modal completo. Resolvemos el destinatario
+   * automáticamente y enviamos. Solo cuando hay varios pasajeros abrimos
+   * el mini-selector en línea (Modal reutilizado del componente).
+   *
+   * El contrato de POST /messages/voucher es idéntico al que usa MessagesPage:
+   *   { personType, personId, reservaId, voucherIds, caption?, exception? }
+   * En este flujo no pedimos caption ni exception para simplificar — el operador
+   * puede ir a MessagesPage si necesita personalización avanzada.
+   */
+  const handleEnviarVoucher = (voucher) => {
+    const destinatario = resolverDestinatarioPorDefecto(voucher, reserva, passengers);
+
+    if (destinatario === null && (voucher.passengerPublicIds ?? []).length > 1) {
+      // Varios pasajeros: mostramos el mini-selector para que el operador elija.
+      setRecipientCandidates(resolverCandidatosDestinatario(voucher, passengers));
+      setIsSelectingRecipientForVoucher(voucher);
+      return;
+    }
+
+    if (!destinatario) {
+      // No hay pasajeros ni customerPublicId en la reserva → no podemos enviar.
+      toast.error("No se pudo determinar el destinatario. Verificá que la reserva tenga un cliente asignado.");
+      return;
+    }
+
+    ejecutarEnvioVoucher(voucher, destinatario);
+  };
+
+  /**
+   * Llama al endpoint POST /messages/voucher con el destinatario ya resuelto.
+   * Mapea los errores de "sin teléfono" a un mensaje claro en idioma del negocio.
+   */
+  const ejecutarEnvioVoucher = async (voucher, destinatario) => {
+    try {
+      setSendingVoucherId(voucher.publicId);
+
+      await api.post("/messages/voucher", {
+        personType: destinatario.personType,
+        personId: destinatario.personId,
+        reservaId: reservaId,
+        voucherIds: [voucher.publicId],
+        caption: null,
+        exception: null,
+      });
+
+      toast.success(`Voucher enviado por WhatsApp a ${destinatario.displayName}.`);
+    } catch (error) {
+      // El backend devuelve un error 422/400 cuando el destinatario no tiene teléfono.
+      // Buscamos esa condición en el mensaje para dar un cartel más claro.
+      const errorMessage = getApiErrorMessage(error, "");
+      const sinTelefono =
+        errorMessage.toLowerCase().includes("telefono") ||
+        errorMessage.toLowerCase().includes("teléfono") ||
+        errorMessage.toLowerCase().includes("phone");
+
+      if (sinTelefono) {
+        toast.error(
+          `${destinatario.displayName} no tiene teléfono cargado. Agregá un teléfono y reintentá.`
+        );
+      } else {
+        toast.error(errorMessage || "No se pudo enviar. Probá de nuevo.");
+      }
+    } finally {
+      setSendingVoucherId(null);
+    }
+  };
+
   const handleDownload = async (voucher) => {
     try {
       setDownloadingId(voucher.publicId);
@@ -755,6 +837,26 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false }) {
                       {downloadingId === voucher.publicId ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
                       Descargar
                     </button>
+
+                    {/* Botón "Enviar al pasajero": solo si el voucher es enviable y no soloLectura.
+                        puedeEnviarVoucher verifica: estado Issued/UploadedExternal + canSend + !soloLectura.
+                        No aparece en Draft, PendingAuthorization ni Revoked. */}
+                    {puedeEnviarVoucher(voucher, soloLectura) ? (
+                      <button
+                        type="button"
+                        data-testid="voucher-send-whatsapp-button"
+                        onClick={() => handleEnviarVoucher(voucher)}
+                        disabled={sendingVoucherId === voucher.publicId}
+                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-200 px-4 py-2.5 text-sm font-bold text-emerald-700 transition hover:bg-emerald-50 disabled:opacity-60 dark:border-emerald-900/50 dark:text-emerald-300 dark:hover:bg-emerald-900/20"
+                      >
+                        {sendingVoucherId === voucher.publicId ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Send className="h-4 w-4" />
+                        )}
+                        {sendingVoucherId === voucher.publicId ? "Enviando…" : "Enviar al pasajero"}
+                      </button>
+                    ) : null}
 
                     {/* Botones de escritura: Editar, Emitir, Aprobar, Rechazar, Anular.
                         En soloLectura (estado congelado) NO se muestran.
@@ -1082,6 +1184,53 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false }) {
             >
               {revokingId === voucherToRevoke?.publicId ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               Anular Documento
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* MINI-SELECTOR DE DESTINATARIO: aparece cuando el voucher tiene >1 pasajero.
+          El operador elige a cuál de los pasajeros del voucher se envía el WhatsApp.
+          Una vez elegido, se ejecuta el envío directamente sin pasos adicionales. */}
+      <Modal
+        isOpen={Boolean(isSelectingRecipientForVoucher)}
+        onClose={() => {
+          setIsSelectingRecipientForVoucher(null);
+          setRecipientCandidates([]);
+        }}
+        title="¿A quién enviamos el voucher?"
+      >
+        <div className="space-y-4">
+          <p className="text-sm font-semibold text-slate-600 dark:text-slate-300">
+            Este voucher incluye varios pasajeros. Elegí el destinatario del WhatsApp:
+          </p>
+          <div className="space-y-2">
+            {recipientCandidates.map((candidato) => (
+              <button
+                key={candidato.personId}
+                type="button"
+                onClick={() => {
+                  const voucherAEnviar = isSelectingRecipientForVoucher;
+                  setIsSelectingRecipientForVoucher(null);
+                  setRecipientCandidates([]);
+                  ejecutarEnvioVoucher(voucherAEnviar, candidato);
+                }}
+                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-left text-sm font-semibold text-slate-700 transition hover:border-emerald-300 hover:bg-emerald-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-emerald-700 dark:hover:bg-emerald-900/20"
+              >
+                {candidato.displayName}
+              </button>
+            ))}
+          </div>
+          <div className="flex justify-end pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                setIsSelectingRecipientForVoucher(null);
+                setRecipientCandidates([]);
+              }}
+              className="rounded-xl px-4 py-2.5 text-sm font-bold text-slate-600 transition hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+              Cancelar
             </button>
           </div>
         </div>

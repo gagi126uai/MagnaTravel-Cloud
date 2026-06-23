@@ -508,6 +508,14 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(p => p.Phone).HasMaxLength(50);
             entity.Property(p => p.Email).HasMaxLength(200);
             entity.Property(p => p.Gender).HasMaxLength(10);
+
+            // Indice para la busqueda de pasajeros historicos (ficha reutilizable): el lookup principal
+            // es por DocumentNumber exacto sobre TODA la tabla. Sin indice seria un seq scan que crece con
+            // cada pasajero cargado. Parcial (WHERE DocumentNumber IS NOT NULL) porque a muchos pasajeros
+            // legacy les falta el documento y no aportan a esta busqueda. Aditivo (no cambia datos).
+            entity.HasIndex(p => p.DocumentNumber)
+                  .HasDatabaseName("IX_Passengers_DocumentNumber")
+                  .HasFilter("\"DocumentNumber\" IS NOT NULL");
         });
 
         // ServicioReserva (Item)
