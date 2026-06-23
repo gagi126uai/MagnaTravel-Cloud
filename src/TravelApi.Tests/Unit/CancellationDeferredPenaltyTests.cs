@@ -288,14 +288,36 @@ public class CancellationDeferredPenaltyTests
     }
 
     [Fact]
-    public async Task PassThroughConcept_RejectsInv002()
+    public async Task PassThroughConcept_NowEmits_SignedFiscalRule()
     {
+        // REGLA FISCAL CERRADA (firmada): la penalidad pass-through del operador SI emite ND al
+        // cliente. Antes el confirm-penalty rechazaba pass-through con INV-ADR014-002 ("no es ingreso
+        // propio"); ahora, con el resto del gating cumplido (factura C, ARS, monto valido), EMITE.
         var h = BuildService();
+        SetupCreateEmitsDebitNote(h);
         // Operador retiene la penalidad -> default pass-through; pedimos sin concepto explicito.
-        var (bcId, _, _) = await SeedPostNcAsync(h.Ctx, ownership: PenaltyOwnership.Operator);
+        var (bcId, bc, _) = await SeedPostNcAsync(h.Ctx, ownership: PenaltyOwnership.Operator);
+
+        var dto = await h.Service.ConfirmPenaltyAsync(bcId, Request(concept: null), "u", "U", false, default,
+            userCanClassifyAgencyPenalty: true);
+
+        var reloaded = await h.Ctx.BookingCancellations.AsNoTracking().FirstAsync(b => b.Id == bc.Id);
+        Assert.NotNull(reloaded.DebitNoteInvoiceId);
+        Assert.Equal(DebitNoteStatus.Pending, reloaded.DebitNoteStatus);
+        Assert.Equal(CancellationConceptKind.OperatorPenaltyPassThrough, reloaded.ConceptKind);
+        Assert.Equal("Pending", dto.DebitNoteStatus);
+    }
+
+    [Fact]
+    public async Task InsuranceConcept_StillRejectsInv002()
+    {
+        // Solo los conceptos que NO emiten ND (seguros) siguen rechazando con INV-ADR014-002.
+        var h = BuildService();
+        var (bcId, _, _) = await SeedPostNcAsync(h.Ctx, ownership: PenaltyOwnership.Agency);
 
         var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
-            h.Service.ConfirmPenaltyAsync(bcId, Request(concept: null), "u", "U", false, default,
+            h.Service.ConfirmPenaltyAsync(
+                bcId, Request(concept: CancellationConceptKind.RealInsurancePremium), "u", "U", false, default,
                 userCanClassifyAgencyPenalty: true));
         Assert.Equal("INV-ADR014-002", ex.InvariantCode);
     }

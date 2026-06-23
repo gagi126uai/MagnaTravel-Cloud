@@ -378,25 +378,42 @@ public class OperatorRefundService : IOperatorRefundService
         //   operador (netAmount = gross - deducciones). Las dos vias son mutuamente
         //   excluyentes para un mismo monto.
         //
-        //   Por eso: si el BC esta clasificado como ND propia de la agencia
-        //   (AgencyManagementFee / AgencyCancellationFee), RECHAZAMOS cargar una
-        //   deduction CancellationPenalty. Esa penalidad ya se cobra (o se va a cobrar)
-        //   con la ND; netearla aca seria cobrarla dos veces.
+        //   Por eso: si el concepto del BC EMITE una ND por la penalidad, RECHAZAMOS
+        //   cargar una deduction CancellationPenalty. Esa penalidad ya se cobra (o se va
+        //   a cobrar) con la ND; netearla aca seria cobrarla dos veces.
+        //
+        //   IMPORTANTE (regla fiscal firmada): el universo de "emite ND" es MAS amplio
+        //   que "ingreso propio de la agencia". Incluye TAMBIEN la penalidad pass-through
+        //   del operador, que se le cobra al cliente con una ND no gravada. Si miraramos
+        //   solo ConceptIsAgencyOwnedDebitNote, un pass-through con ND emitida podria
+        //   ademas netearse del refund = doble cobro de la misma multa. Por eso usamos
+        //   ConceptEmitsDebitNote (cubre agency-owned + pass-through). La guarda espejo del
+        //   lado de la ND (TryEmitCancellationDebitNoteAsync) ya bloquea por la existencia
+        //   de la deduction sin importar el concepto, asi que ambos lados quedan cerrados.
         //
         //   La validacion vive en runtime (no en un CHECK SQL) porque es
         //   cross-aggregate (BC + allocation del operador): un CHECK acoplaria dos
         //   tablas. Mismo precedente que INV-126 (validacion cross-aggregate en
         //   runtime, no en BD).
-        var conceptIsAgencyOwnedDebitNote =
-            BookingCancellationService.ConceptIsAgencyOwnedDebitNote(bc.ConceptKind);
-        if (conceptIsAgencyOwnedDebitNote &&
+        //   Sutileza del flag (byte-identidad con OFF): con EnableCancellationDebitNote=OFF
+        //   la penalidad pass-through NO emite ND y se cobra UNICAMENTE neteando el refund
+        //   (camino legacy). En ese caso NO debemos bloquear la deduction, o romperiamos el
+        //   comportamiento previo. Por eso el pass-through entra a la disyuncion SOLO con el
+        //   flag ON (cuando la ND realmente esta en juego). El cargo propio de la agencia, en
+        //   cambio, solo puede existir con el flag ON (la clasificacion se cortocircuita con
+        //   OFF), asi que mirarlo siempre es seguro.
+        var settings = await _settings.GetEntityAsync(ct);
+        var penaltyChargedViaDebitNote =
+            BookingCancellationService.ConceptIsAgencyOwnedDebitNote(bc.ConceptKind) ||
+            (settings.EnableCancellationDebitNote &&
+             bc.ConceptKind == CancellationConceptKind.OperatorPenaltyPassThrough);
+        if (penaltyChargedViaDebitNote &&
             request.Deductions.Any(d => d.Kind == DeductionKind.CancellationPenalty))
         {
             throw new BusinessInvariantViolationException(
-                "La penalidad de esta cancelacion es ingreso propio de la agencia y se " +
-                "cobra con una Nota de Debito; no puede ademas descontarse del reintegro " +
-                "al cliente (seria doble cobro). Quita la deduccion de penalidad o " +
-                "reclasifica el concepto.",
+                "La penalidad de esta cancelacion se cobra al cliente con una Nota de Debito; " +
+                "no puede ademas descontarse del reintegro al cliente (seria doble cobro). " +
+                "Quita la deduccion de penalidad o reclasifica el concepto.",
                 invariantCode: "INV-ADR013-001");
         }
 

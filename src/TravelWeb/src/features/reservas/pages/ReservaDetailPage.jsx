@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Clock, CreditCard, Download, Eye, ExternalLink, FileText, History, Paperclip, Pencil, Receipt, Trash2, Users, Plus, RefreshCw, Check, Ban } from "lucide-react";
+import { Clock, CreditCard, Download, Eye, ExternalLink, FileText, History, Loader2, Paperclip, Pencil, Receipt, Trash2, Users, Plus, RefreshCw, Check, Ban } from "lucide-react";
 import { api } from "../../../api";
 import { showConfirm, showError, showSuccess } from "../../../alerts";
 import ReservaTimeline from "../../../components/ReservaTimeline";
@@ -33,6 +33,8 @@ import { useReservaDetail } from "../hooks/useReservaDetail";
 import { useOperationalFlags } from "../../../contexts/OperationalFlagsContext";
 import { useAlerts } from "../../../contexts/AlertsContext";
 import { CancelarReservaInline } from "../../cancellations/components/CancelarReservaInline";
+import { ConfirmarMultaOperadorInline } from "../../cancellations/components/ConfirmarMultaOperadorInline";
+import { cancellationsApi } from "../../cancellations/api/cancellationsApi";
 import { hasPermission, isAdmin } from "../../../auth";
 import { calcularSugerenciaComposicion } from "../lib/pasajeroHint";
 import { EstadoCuentaResumen } from "../components/EstadoCuentaResumen";
@@ -542,6 +544,13 @@ export default function ReservaDetailPage() {
 
   // showCancelInline: panel en linea ADR-035 (nuevo, reemplaza al modal en la solapa account)
   const [showCancelInline, setShowCancelInline] = useState(false);
+
+  // ADR-014: panel inline de "Confirmar multa del operador" (paso diferido post-anulación).
+  // Se muestra en el cartel de estado PendingOperatorRefund cuando hay una multa pendiente.
+  // multaCancellationPublicId: el GUID de la cancelación activa (obtenido de la bandeja al abrir el panel).
+  const [showMultaInline, setShowMultaInline] = useState(false);
+  const [multaCancellationPublicId, setMultaCancellationPublicId] = useState(null);
+  const [buscandoMulta, setBuscandoMulta] = useState(false);
 
   // ADR-027: estado de carga del botón "Dar OK" (acknowledge-changes).
   // Evita doble click y da feedback visual al usuario mientras espera la respuesta del backend.
@@ -1153,12 +1162,75 @@ export default function ReservaDetailPage() {
               se factura directo desde Finalizada (botón "Emitir factura" en la solapa Cuenta). */}
         </div>
       ) : reserva.status === "PendingOperatorRefund" ? (
-        <div
-          className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
-          data-testid="banner-estado-terminal"
-          role="status"
-        >
-          <strong className="font-bold">Anulada, esperando el reembolso del operador</strong> — solo lectura.
+        <div className="space-y-3">
+          {/* Cartel de estado: la reserva está anulada y se espera el reembolso del operador.
+              ADR-014: en este estado puede haber una multa del operador pendiente de confirmar.
+              El botón "Confirmar multa" busca la fila en la bandeja de NDs pendientes y abre el panel inline. */}
+          <div
+            className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300 flex flex-col sm:flex-row sm:items-center gap-3"
+            data-testid="banner-estado-terminal"
+            role="status"
+          >
+            <span className="flex-1">
+              <strong className="font-bold">Anulada, esperando el reembolso del operador</strong> — solo lectura.
+            </span>
+            {/* El botón solo se muestra si el panel inline no está ya abierto.
+                Al hacer clic, busca la cancelación activa en la bandeja de NDs pendientes.
+                Si no la encuentra (ya fue confirmada o no hay multa), informa al usuario. */}
+            {!showMultaInline && (
+              <button
+                type="button"
+                onClick={async () => {
+                  setBuscandoMulta(true);
+                  try {
+                    const fila = await cancellationsApi.getPendingDebitNoteByReservaNumero(
+                      reserva.numeroReserva
+                    );
+                    if (fila) {
+                      setMultaCancellationPublicId(fila.bookingCancellationPublicId);
+                      setShowMultaInline(true);
+                    } else {
+                      // No hay multa pendiente en la bandeja: puede que ya se confirmó
+                      // o que el operador no va a cobrar multa. Informamos sin alarmar.
+                      showError(
+                        "No se encontró una multa del operador pendiente de confirmar para esta reserva. Si el operador ya comunicó el monto, verificá en la bandeja de cargos pendientes.",
+                        "Sin multa pendiente"
+                      );
+                    }
+                  } catch {
+                    showError("No se pudo buscar la multa pendiente. Intentá de nuevo.");
+                  } finally {
+                    setBuscandoMulta(false);
+                  }
+                }}
+                disabled={buscandoMulta}
+                data-testid="btn-confirmar-multa-operador"
+                className="flex-shrink-0 flex items-center gap-2 rounded-lg border border-orange-400 bg-orange-50 px-3 py-2 text-xs font-bold text-orange-700 hover:bg-orange-100 dark:border-orange-700 dark:bg-orange-950/30 dark:text-orange-300 dark:hover:bg-orange-900/40 transition-colors disabled:opacity-50"
+              >
+                {buscandoMulta && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
+                Confirmar multa del operador
+              </button>
+            )}
+          </div>
+
+          {/* Panel inline de confirmación de multa del operador (ADR-014 diferido).
+              Solo se muestra cuando el usuario activó el botón y se encontró la cancelación activa. */}
+          {showMultaInline && multaCancellationPublicId && (
+            <ConfirmarMultaOperadorInline
+              cancellationPublicId={multaCancellationPublicId}
+              reservaNumero={reserva.numeroReserva}
+              onConfirmado={() => {
+                setShowMultaInline(false);
+                setMultaCancellationPublicId(null);
+                // Refrescamos la reserva para que el estado y el extracto queden al día.
+                fetchReserva({ showLoading: false, preserveOnError: true });
+              }}
+              onCerrar={() => {
+                setShowMultaInline(false);
+                setMultaCancellationPublicId(null);
+              }}
+            />
+          )}
         </div>
       ) : null}
 

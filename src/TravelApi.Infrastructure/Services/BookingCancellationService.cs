@@ -2620,15 +2620,21 @@ public class BookingCancellationService
                 $"CreditNoteInvoiceId: {(bc.CreditNoteInvoiceId is null ? "null" : "seteado")}.",
                 invariantCode: "INV-ADR014-001");
 
-        // === Precondicion 5: concepto agency-owned. Resolvemos el concepto efectivo (el
-        // explicito del request, o el default por operador) y rechazamos si es pass-through:
-        // una penalidad del operador NO emite ND (seria declarar ingreso ajeno). ===
+        // === Precondicion 5: concepto que emite ND. Resolvemos el concepto efectivo (el
+        // explicito del request, o el default por operador). Regla fiscal firmada: emiten ND
+        // TANTO el cargo propio de la agencia (gravado) COMO la penalidad pass-through del
+        // operador (no gravada, se le cobra al cliente replicando la multa del operador). Solo
+        // los conceptos de seguro NO emiten ND aca (revision manual). Ver ConceptEmitsDebitNote.
+        //
+        // NOTA: cuando el concepto efectivo es pass-through, el default por operador puede dar
+        // pass-through aunque el request no traiga ConceptKind -> es el caso CENTRAL del panel
+        // (informar la multa del operador). ===
         var effectiveConcept = request.ConceptKind
             ?? DefaultConceptFromSupplier(bc.Supplier?.PenaltyOwnership);
-        if (!ConceptIsAgencyOwnedDebitNote(effectiveConcept))
+        if (!ConceptEmitsDebitNote(effectiveConcept))
             throw new BusinessInvariantViolationException(
-                "Esta penalidad no es ingreso propio de la agencia (pass-through del operador): " +
-                "no corresponde emitir Nota de Debito. Este endpoint es solo para penalidades propias.",
+                "Este concepto no emite Nota de Debito automatica (es un seguro u otro caso de " +
+                "revision manual). Este endpoint emite la ND por penalidad/cargo de cancelacion.",
                 invariantCode: "INV-ADR014-002");
 
         // === Precondicion 6: pre-check de idempotencia (B1, §3.4 pieza 1). Rebota con 409
@@ -3001,6 +3007,29 @@ public class BookingCancellationService
         concept == CancellationConceptKind.AgencyCancellationFee;
 
     /// <summary>
+    /// Regla fiscal cerrada (firmada): una penalidad del OPERADOR cobrada al cliente como
+    /// pass-through TAMBIEN emite una Nota de Debito. La agencia replica la cadena del operador
+    /// (le cobra al cliente la multa que el operador le aplico a la agencia), PERO esa plata NO
+    /// es ingreso gravado propio de la agencia: la ND sale como concepto NO gravado (item 0% /
+    /// AlicuotaIvaId=3, igual que ya arma <see cref="TryEmitCancellationDebitNoteAsync"/>).
+    ///
+    /// <para><b>Diferencia con <see cref="ConceptIsAgencyOwnedDebitNote"/></b> (clave fiscal):
+    /// "emite ND" NO es lo mismo que "es ingreso propio de la agencia". Los dos conceptos
+    /// AgencyManagementFee/AgencyCancellationFee son ingreso propio gravado Y emiten ND;
+    /// OperatorPenaltyPassThrough emite ND pero NO es ingreso propio (es plata del operador). Por
+    /// eso la guarda de PERMISO elevado (clasificar como ingreso propio) sigue mirando
+    /// <see cref="ConceptIsAgencyOwnedDebitNote"/>, no esta. Una ND pass-through NO requiere ese
+    /// permiso porque no declara ingreso gravado de la agencia.</para>
+    ///
+    /// <para>Los conceptos de seguro (RealInsurancePremium, AgencyCancellationCoverage,
+    /// AgencyInsuranceCommission) siguen SIN emitir ND automatica (tratamiento de IVA distinto,
+    /// no cerrado): caen a revision manual via el gating.</para>
+    /// </summary>
+    internal static bool ConceptEmitsDebitNote(CancellationConceptKind concept) =>
+        ConceptIsAgencyOwnedDebitNote(concept) ||
+        concept == CancellationConceptKind.OperatorPenaltyPassThrough;
+
+    /// <summary>
     /// ADR-013 (2026-06-01): aplica al BC la clasificacion de la penalidad que viene en
     /// el request de Confirm. Es el wiring de captura: traduce lo que el usuario informo
     /// (concepto / estado / finalidad / monto) a los campos del <see cref="BookingCancellation"/>
@@ -3146,13 +3175,25 @@ public class BookingCancellationService
             bc.ConceptClassifiedAt = DateTime.UtcNow;
         }
 
-        // (4) Finalidad de la ND. Si el usuario no la informo pero clasifico a ND propia,
-        //     defaulteamos a PenaltyOrCancellationCharge (el unico caso que el MVP automatiza).
+        // (4) Finalidad de la ND. Si el usuario la informo, la respetamos. Si no:
+        //
+        //     - Cargo propio de la agencia (agency-owned): defaulteamos a PenaltyOrCancellationCharge
+        //       (comportamiento historico — el unico caso que el MVP automatiza).
+        //
+        //     - Penalidad pass-through del operador: TAMBIEN emite ND (regla fiscal firmada), pero solo
+        //       defaulteamos la finalidad cuando la penalidad se esta CONFIRMANDO en esta misma captura
+        //       (PenaltyStatus=Confirmed). El path diferido (ConfirmPenaltyAsync) llega siempre con
+        //       Confirmed, asi que la ND pass-through obtiene su finalidad y puede emitir. En el Dia 0
+        //       sin confirmacion (Estimated) NO pre-estampamos la finalidad: no hay ND inminente y
+        //       conservamos el comportamiento previo (DebitNotePurpose queda null).
         if (classification.DebitNotePurpose.HasValue)
         {
             bc.DebitNotePurpose = classification.DebitNotePurpose.Value;
         }
-        else if (ConceptIsAgencyOwnedDebitNote(requestedConcept) && bc.DebitNotePurpose is null)
+        else if (bc.DebitNotePurpose is null &&
+                 (ConceptIsAgencyOwnedDebitNote(requestedConcept) ||
+                  (ConceptEmitsDebitNote(requestedConcept) &&
+                   classification.PenaltyStatus == PenaltyStatus.Confirmed)))
         {
             bc.DebitNotePurpose = TravelApi.Domain.Entities.DebitNotePurpose.PenaltyOrCancellationCharge;
         }
@@ -3228,15 +3269,18 @@ public class BookingCancellationService
     // el proyecto tiene InternalsVisibleTo("TravelApi.Tests"). Es una funcion pura.
     internal static string? EvaluateDebitNoteGating(BookingCancellation bc, Invoice originatingInvoice)
     {
-        // Concepto: solo ingreso propio de la agencia emite ND. Pass-through (default) y
-        // seguros -> manual.
-        if (!ConceptIsAgencyOwnedDebitNote(bc.ConceptKind))
-            return $"Concepto {bc.ConceptKind} no es ingreso propio de la agencia (no emite ND).";
+        // Concepto: emiten ND tanto el cargo propio de la agencia (gravado) COMO la penalidad
+        // pass-through del operador (no gravada, se replica al cliente). Solo los conceptos de
+        // seguro caen a revision manual (tratamiento de IVA no cerrado). Regla fiscal firmada:
+        // ver ConceptEmitsDebitNote.
+        if (!ConceptEmitsDebitNote(bc.ConceptKind))
+            return $"Concepto {bc.ConceptKind} no emite Nota de Debito automatica (revision manual).";
 
-        // El operador NO debe ser pass-through (defensa redundante con el concepto, pero
-        // explicita: el operador define el default y el concepto puede haberlo overrideado).
-        if (bc.Supplier?.PenaltyOwnership == PenaltyOwnership.Operator)
-            return "El operador retiene la penalidad (pass-through): la agencia no emite ND.";
+        // NOTA (regla fiscal firmada): el pass-through del operador YA NO se rutea a manual aca.
+        // Antes (ADR-013 original) un operador con PenaltyOwnership=Operator bloqueaba la ND
+        // porque se asumia que la agencia no replicaba la multa al cliente. La regla cerrada dice
+        // lo contrario: la penalidad del operador SI se le cobra al cliente con una ND (como
+        // concepto no gravado). Por eso ya no rechazamos por PenaltyOwnership=Operator.
 
         // Penalidad confirmada por el operador (R5): no se emite sobre estimada.
         if (bc.PenaltyStatus != PenaltyStatus.Confirmed)

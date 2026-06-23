@@ -139,6 +139,26 @@ export const cancellationsApi = {
    */
   getPendingDebitNotes: () =>
     api.get("/cancellations/debit-notes/pending"),
+
+  /**
+   * Busca la fila de multa operador pendiente para una reserva concreta.
+   *
+   * LIMITACION CONOCIDA: el backend no tiene un endpoint by-reserva; esta funcion
+   * llama a la bandeja completa y filtra client-side por reservaNumero.
+   * Es valido en MVP porque la bandeja es chica (casos abiertos en un momento dado).
+   *
+   * Si el backend agrega un campo `reservaPublicId` a CancellationDebitNotePendingDto
+   * o un endpoint GET /cancellations/debit-notes/pending?reservaPublicId=... ,
+   * reemplazar esta funcion por esa llamada directa.
+   *
+   * @param {string} reservaNumero - Numero de reserva (string, ej. "2025-0042").
+   * @returns {Promise<CancellationDebitNotePendingDto|null>} - La fila si se encontro, null si no.
+   */
+  async getPendingDebitNoteByReservaNumero(reservaNumero) {
+    const items = await api.get("/cancellations/debit-notes/pending");
+    const found = (items || []).find((item) => item.reservaNumero === reservaNumero);
+    return found ?? null;
+  },
 };
 
 // ============================================================================

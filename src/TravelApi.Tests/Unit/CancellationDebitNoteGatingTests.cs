@@ -64,22 +64,26 @@ public class CancellationDebitNoteGatingTests
     // ---- Negativos: cada uno cae a revision manual (motivo != null) ----
 
     [Fact]
-    public void PassThrough_DoesNotEmit()
+    public void PassThrough_NowEmits_SignedFiscalRule()
     {
-        // Concepto pass-through (default) = la plata es del operador -> NO ND.
+        // REGLA FISCAL CERRADA (firmada): la penalidad pass-through del operador SI emite ND al
+        // cliente (la agencia replica la multa del operador como concepto NO gravado). Antes este
+        // concepto se ruteaba a manual; ahora, con el resto del gating cumplido, EMITE.
         var bc = HappyBc();
         bc.ConceptKind = CancellationConceptKind.OperatorPenaltyPassThrough;
-        Assert.NotNull(BookingCancellationService.EvaluateDebitNoteGating(bc, HappyInvoice()));
+        bc.Supplier!.PenaltyOwnership = PenaltyOwnership.Operator; // operador retiene: es el caso tipico de pass-through
+        Assert.Null(BookingCancellationService.EvaluateDebitNoteGating(bc, HappyInvoice()));
     }
 
     [Fact]
-    public void OperatorRetainsPenalty_DoesNotEmit()
+    public void OperatorRetainsPenalty_StillEmits_WhenPassThrough()
     {
-        // Aunque el concepto fuera propio, si el operador esta marcado como pass-through,
-        // la defensa redundante lo manda a manual.
+        // Que el operador "retenga" la penalidad (PenaltyOwnership=Operator) ya NO bloquea la ND:
+        // la regla cerrada dice que esa multa se le cobra al cliente con una ND pass-through.
         var bc = HappyBc();
+        bc.ConceptKind = CancellationConceptKind.OperatorPenaltyPassThrough;
         bc.Supplier!.PenaltyOwnership = PenaltyOwnership.Operator;
-        Assert.NotNull(BookingCancellationService.EvaluateDebitNoteGating(bc, HappyInvoice()));
+        Assert.Null(BookingCancellationService.EvaluateDebitNoteGating(bc, HappyInvoice()));
     }
 
     [Fact]
@@ -242,23 +246,24 @@ public class CancellationDebitNoteGatingTests
     }
 
     /// <summary>
-    /// B1 regresion (review 2026-06-01): la disyuncion anti-doble-cobro de
-    /// OperatorRefundService (INV-ADR013-001, OperatorRefundService.cs:356) se dispara
-    /// SOLO cuando <c>ConceptIsAgencyOwnedDebitNote(bc.ConceptKind)</c> es true. Con el
-    /// flag EnableCancellationDebitNote OFF, la captura deja <c>ConceptKind</c> en
-    /// <see cref="CancellationConceptKind.OperatorPenaltyPassThrough"/> (ver
-    /// CancellationDebitNoteCaptureTests.Capture_FeatureFlagOff_*). Este test fija el otro
-    /// extremo: para ese valor el helper devuelve false, asi que la deduccion
-    /// CancellationPenalty se acepta como siempre (la disyuncion NO se activa). Es el eje
-    /// que garantiza que con el flag OFF OperatorRefundService se comporta como en d29ac8a.
+    /// Pass-through NO es "ingreso propio de la agencia": ese helper sigue devolviendo false para
+    /// pass-through (la ND pass-through no declara ingreso gravado).
+    ///
+    /// <para>OJO (regla fiscal firmada): con EnableCancellationDebitNote ON, la disyuncion
+    /// anti-doble-cobro del OperatorRefundService SI se activa para pass-through (usa
+    /// <c>ConceptEmitsDebitNote</c>, mas amplio: la multa pass-through se cobra con ND, no se puede
+    /// ademas netear del refund). Con el flag OFF, pass-through NO emite ND y la deduction
+    /// CancellationPenalty se acepta como antes (byte-identidad). Este test fija solo el predicado
+    /// estrecho (no agency-owned); la cobertura del flag vive en
+    /// <see cref="PassThroughPenaltyDebitNoteTests"/> y en los tests de OperatorRefundService.</para>
     /// </summary>
     [Fact]
-    public void PassThroughConcept_DoesNotTriggerRefundDisjunction()
+    public void PassThroughConcept_IsNotAgencyOwned()
     {
-        // El default que deja el flag OFF NO es agency-owned -> el guard del
-        // OperatorRefundService (conceptIsAgencyOwnedDebitNote && ...) es false -> acepta
-        // la deduction CancellationPenalty.
         Assert.False(BookingCancellationService.ConceptIsAgencyOwnedDebitNote(
+            CancellationConceptKind.OperatorPenaltyPassThrough));
+        // Pero SI emite ND (regla cerrada).
+        Assert.True(BookingCancellationService.ConceptEmitsDebitNote(
             CancellationConceptKind.OperatorPenaltyPassThrough));
     }
 }

@@ -87,20 +87,14 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar }) {
             draft = await cancellationsApi.draft(reserva.publicId, trimmedReason);
         } catch (error) {
             if (error?.status === 409) {
-                const errorPayload = error?.payload;
-
-                // INV-152: la reserva tiene servicios de más de un operador.
-                if (errorPayload?.invariantCode === "INV-152") {
-                    setConflictMessage(
-                        "Esta reserva tiene servicios de más de un operador. Por ahora la cancelación de reservas con varios operadores no está disponible desde acá. Gestionala manualmente o pedile ayuda a un administrador."
-                    );
-                } else {
-                    setConflictMessage(
-                        getApiErrorMessage(error, "No se pudo iniciar la cancelación. Recargá la página y volvé a intentar.")
-                    );
-                }
+                // ADR-014 (multi-operador ya soportado): el backend emite 1 NC total
+                // sin importar cuántos operadores tiene la reserva. El mensaje viejo de
+                // INV-152 ("varios operadores no disponible") se eliminó — ya no aplica.
+                setConflictMessage(
+                    getApiErrorMessage(error, "No se pudo iniciar la anulación. Recargá la página y volvé a intentar.")
+                );
             } else {
-                showError(getApiErrorMessage(error, "No se pudo iniciar la cancelación."));
+                showError(getApiErrorMessage(error, "No se pudo iniciar la anulación."));
             }
             setProcessing(false);
             return;
