@@ -180,6 +180,7 @@ public class ReservaService : IReservaService
                             Charge = line.Charge,
                             Credit = line.Credit,
                             RunningBalance = line.RunningBalance,
+                            SourcePublicId = line.SourcePublicId,
                         })
                         .ToList(),
                 })
@@ -233,7 +234,9 @@ public class ReservaService : IReservaService
                         DocumentRef: documentRef,
                         Currency: currency,
                         Charge: invoice.ImporteTotal,
-                        Credit: 0m));
+                        Credit: 0m,
+                        // Origen = la factura: el front cruza con invoices[] para abrir su PDF.
+                        SourcePublicId: invoice.PublicId));
                     break;
 
                 case InvoiceComprobanteCategory.DebitNote:
@@ -244,7 +247,9 @@ public class ReservaService : IReservaService
                         DocumentRef: documentRef,
                         Currency: currency,
                         Charge: invoice.ImporteTotal,
-                        Credit: 0m));
+                        Credit: 0m,
+                        // Origen = el comprobante (ND): mismo PublicId de Invoice.
+                        SourcePublicId: invoice.PublicId));
                     break;
 
                 case InvoiceComprobanteCategory.CreditNote:
@@ -255,7 +260,9 @@ public class ReservaService : IReservaService
                         DocumentRef: documentRef,
                         Currency: currency,
                         Charge: 0m,
-                        Credit: invoice.ImporteTotal));
+                        Credit: invoice.ImporteTotal,
+                        // Origen = el comprobante (NC): mismo PublicId de Invoice.
+                        SourcePublicId: invoice.PublicId));
                     break;
 
                 default:
@@ -302,7 +309,9 @@ public class ReservaService : IReservaService
                 DocumentRef: payment.Receipt?.ReceiptNumber,
                 Currency: imputedCurrency,
                 Charge: 0m,
-                Credit: imputedAmount));
+                Credit: imputedAmount,
+                // Origen = el cobro: el front cruza con payments[] para ver/emitir/anular su recibo.
+                SourcePublicId: payment.PublicId));
         }
     }
 

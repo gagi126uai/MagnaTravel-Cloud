@@ -135,6 +135,50 @@ public class ReservaServiceAccountStatementTests
         Assert.Equal(money.PorMoneda["ARS"].Balance, block.ClosingBalance);
     }
 
+    // ===================== SourcePublicId: cada linea apunta a su documento de origen =====================
+
+    /// <summary>
+    /// Verifica el cruce que usa el front para colgar acciones por renglon: la linea de una factura/NC/ND lleva
+    /// el PublicId de ESA Invoice; la linea de un cobro lleva el PublicId de ESE Payment. Asi el front lo cruza
+    /// con la reserva ya cargada (invoices[]/payments[] con su publicId) y reusa los handlers existentes.
+    /// </summary>
+    [Fact]
+    public async Task EachLine_CarriesSourcePublicIdOfItsDocument()
+    {
+        await using var ctx = new AppDbContext(_dbOptions);
+        var d = new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        ctx.Reservas.Add(new Reserva { Id = 1, NumeroReserva = "F-8", Name = "R", Status = EstadoReserva.Confirmed });
+
+        // Factura (cargo) y NC (abono): cada una con su propio PublicId.
+        var invoice = LiveInvoice(1, tipo: 1, total: 100000m, date: d.AddDays(1), nro: 1);
+        var creditNote = LiveInvoice(2, tipo: 3, total: 10000m, date: d.AddDays(3), nro: 2);
+        ctx.Invoices.Add(invoice);
+        ctx.Invoices.Add(creditNote);
+
+        // Cobro (abono) con su propio PublicId.
+        var payment = new Payment { Id = 1, ReservaId = 1, Amount = 40000m, Currency = "ARS", Status = "Paid", AffectsCash = true, PaidAt = d.AddDays(2) };
+        ctx.Payments.Add(payment);
+        await ctx.SaveChangesAsync();
+
+        var service = BuildService(ctx);
+        var statement = await service.GetAccountStatementAsync("1", CancellationToken.None);
+
+        var block = Assert.Single(statement.Currencies);
+
+        // Orden cronologico: Factura (d+1), Cobro (d+2), NC (d+3). Cada linea apunta a su documento.
+        var invoiceLine = block.Lines.Single(l => l.Kind == AccountStatementLineKinds.Invoice);
+        var paymentLine = block.Lines.Single(l => l.Kind == AccountStatementLineKinds.Payment);
+        var creditNoteLine = block.Lines.Single(l => l.Kind == AccountStatementLineKinds.CreditNote);
+
+        Assert.Equal(invoice.PublicId, invoiceLine.SourcePublicId);
+        Assert.Equal(payment.PublicId, paymentLine.SourcePublicId);
+        Assert.Equal(creditNote.PublicId, creditNoteLine.SourcePublicId);
+
+        // El cobro NO apunta a la factura, ni viceversa (cruce correcto, no por casualidad de orden).
+        Assert.NotEqual(invoiceLine.SourcePublicId, paymentLine.SourcePublicId);
+    }
+
     // ===================== INVARIANTE DE DIVERGENCIA: facturacion PARCIAL =====================
 
     /// <summary>

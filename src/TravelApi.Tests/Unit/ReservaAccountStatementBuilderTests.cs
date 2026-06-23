@@ -18,18 +18,20 @@ namespace TravelApi.Tests.Unit;
 /// </summary>
 public class ReservaAccountStatementBuilderTests
 {
-    // Helpers para armar lineas de entrada de forma legible.
-    private static AccountStatementInputLine Invoice(DateTime date, string currency, decimal amount, string? doc = null)
-        => new(date, AccountStatementLineKinds.Invoice, "Factura", doc, currency, Charge: amount, Credit: 0m);
+    // Helpers para armar lineas de entrada de forma legible. SourcePublicId opcional: la mayoria de los casos
+    // no lo necesita (testean orden/saldo); el test dedicado lo pasa para verificar que se arrastra hasta el
+    // resultado.
+    private static AccountStatementInputLine Invoice(DateTime date, string currency, decimal amount, string? doc = null, Guid? sourceId = null)
+        => new(date, AccountStatementLineKinds.Invoice, "Factura", doc, currency, Charge: amount, Credit: 0m, SourcePublicId: sourceId);
 
-    private static AccountStatementInputLine CreditNote(DateTime date, string currency, decimal amount)
-        => new(date, AccountStatementLineKinds.CreditNote, "Nota de crédito", null, currency, Charge: 0m, Credit: amount);
+    private static AccountStatementInputLine CreditNote(DateTime date, string currency, decimal amount, Guid? sourceId = null)
+        => new(date, AccountStatementLineKinds.CreditNote, "Nota de crédito", null, currency, Charge: 0m, Credit: amount, SourcePublicId: sourceId);
 
-    private static AccountStatementInputLine DebitNote(DateTime date, string currency, decimal amount)
-        => new(date, AccountStatementLineKinds.DebitNote, "Nota de débito", null, currency, Charge: amount, Credit: 0m);
+    private static AccountStatementInputLine DebitNote(DateTime date, string currency, decimal amount, Guid? sourceId = null)
+        => new(date, AccountStatementLineKinds.DebitNote, "Nota de débito", null, currency, Charge: amount, Credit: 0m, SourcePublicId: sourceId);
 
-    private static AccountStatementInputLine Payment(DateTime date, string currency, decimal amount)
-        => new(date, AccountStatementLineKinds.Payment, "Cobro", null, currency, Charge: 0m, Credit: amount);
+    private static AccountStatementInputLine Payment(DateTime date, string currency, decimal amount, Guid? sourceId = null)
+        => new(date, AccountStatementLineKinds.Payment, "Cobro", null, currency, Charge: 0m, Credit: amount, SourcePublicId: sourceId);
 
     private static AccountStatementCurrencyBlock SingleBlock(ReservaAccountStatement statement)
         => Assert.Single(statement.Currencies);
@@ -227,6 +229,31 @@ public class ReservaAccountStatementBuilderTests
     {
         var statement = ReservaAccountStatementBuilder.Build(Array.Empty<AccountStatementInputLine>());
         Assert.Empty(statement.Currencies);
+    }
+
+    // ===================== SourcePublicId se arrastra hasta el resultado, por linea =====================
+
+    [Fact]
+    public void SourcePublicId_IsCarriedThrough_PerLine()
+    {
+        var d = new DateTime(2026, 7, 1);
+        var invoiceId = Guid.NewGuid();
+        var paymentId = Guid.NewGuid();
+        var creditNoteId = Guid.NewGuid();
+
+        // Cada linea de entrada trae el PublicId de su documento de origen. El builder no lo interpreta:
+        // solo debe llevarlo tal cual a la linea de resultado correcta.
+        var statement = ReservaAccountStatementBuilder.Build(new[]
+        {
+            Invoice(d, "ARS", 100000m, sourceId: invoiceId),
+            Payment(d.AddDays(1), "ARS", 40000m, sourceId: paymentId),
+            CreditNote(d.AddDays(2), "ARS", 10000m, sourceId: creditNoteId),
+        });
+        var block = SingleBlock(statement);
+
+        Assert.Equal(invoiceId, block.Lines[0].SourcePublicId);
+        Assert.Equal(paymentId, block.Lines[1].SourcePublicId);
+        Assert.Equal(creditNoteId, block.Lines[2].SourcePublicId);
     }
 
     // ===================== Contrato: la linea no transporta costo ni margen =====================

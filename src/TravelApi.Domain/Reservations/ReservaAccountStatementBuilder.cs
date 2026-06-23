@@ -33,7 +33,10 @@ public readonly record struct AccountStatementInputLine(
     string? DocumentRef,
     string Currency,
     decimal Charge,
-    decimal Credit);
+    decimal Credit,
+    // PublicId del documento (Invoice o Payment) que origino la linea. El builder no lo interpreta: solo lo
+    // arrastra hasta la linea de resultado para que el front cuelgue acciones por renglon. Ver el DTO de App.
+    Guid? SourcePublicId);
 
 /// <summary>
 /// Una linea del extracto YA con su saldo corriente calculado. Es lo que el builder devuelve (espejo del
@@ -48,7 +51,9 @@ public readonly record struct AccountStatementResultLine(
     string Currency,
     decimal Charge,
     decimal Credit,
-    decimal RunningBalance);
+    decimal RunningBalance,
+    // PublicId del documento de origen (Invoice/Payment), arrastrado tal cual desde la linea de entrada.
+    Guid? SourcePublicId);
 
 /// <summary>
 /// Un bloque del extracto: todas las lineas de UNA moneda, en orden cronologico, con su saldo de cierre.
@@ -169,7 +174,8 @@ public static class ReservaAccountStatementBuilder
                 Currency: line.Currency,
                 Charge: line.Charge,
                 Credit: line.Credit,
-                RunningBalance: runningBalance));
+                RunningBalance: runningBalance,
+                SourcePublicId: line.SourcePublicId));
         }
 
         // El saldo de cierre es el ultimo running balance (0 si el bloque quedo vacio, caso que no deberia

@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Clock, CreditCard, Download, Eye, ExternalLink, FileText, History, Paperclip, Receipt, Users, Trash2, Edit2, Plus, RefreshCw, Check, Ban } from "lucide-react";
+import { Clock, CreditCard, Download, Eye, ExternalLink, FileText, History, Paperclip, Pencil, Receipt, Trash2, Users, Plus, RefreshCw, Check, Ban } from "lucide-react";
 import { api } from "../../../api";
 import { showConfirm, showError, showSuccess } from "../../../alerts";
 import ReservaTimeline from "../../../components/ReservaTimeline";
@@ -10,18 +10,9 @@ import { ReservaDocumentsTab } from "../../../components/ReservaDocumentsTab";
 import ServiceFormModal from "../../../components/ServiceFormModal";
 import { ServiceInlineCard } from "../inline-service/ServiceInlineCard";
 import { ReservaVoucherTab } from "../../../components/ReservaVoucherTab";
-import {
-  DataGrid,
-  DataGridBody,
-  DataGridCell,
-  DataGridEmptyState,
-  DataGridHeader,
-  DataGridHeaderCell,
-  DataGridHeaderRow,
-  DataGridRow,
-} from "../../../components/ui/DataGrid";
-import { ListEmptyState } from "../../../components/ui/ListEmptyState";
-import { MobileRecordCard, MobileRecordList } from "../../../components/ui/MobileRecordCard";
+// Nota: DataGrid y sus partes ya no se usan en ReservaDetailPage — fueron
+// migrados a EstadoCuentaExtracto.jsx. Se conserva este comentario para contexto
+// en caso de que alguien agregue una tabla nueva en esta página.
 import { getApiErrorMessage } from "../../../lib/errors";
 import { getPublicId, getRelatedPublicId } from "../../../lib/publicIds";
 import { CapacityWarning } from "../components/CapacityWarning";
@@ -32,7 +23,6 @@ import { ReservaLockBanner } from "../components/ReservaLockBanner";
 import { ReservaSummaryStrip } from "../components/ReservaSummaryStrip";
 import { RegistrarCobroInline } from "../components/RegistrarCobroInline";
 import { EmitirFacturaInline } from "../components/EmitirFacturaInline";
-import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import { RevertStatusModal } from "../components/RevertStatusModal";
 import { ServiceList, calculateServiciosCanceladosResumen } from "../components/ServiceList";
 import { EditAuthorizationModal } from "../components/EditAuthorizationModal";
@@ -44,6 +34,8 @@ import { useAlerts } from "../../../contexts/AlertsContext";
 import { CancelarReservaInline } from "../../cancellations/components/CancelarReservaInline";
 import { hasPermission, isAdmin } from "../../../auth";
 import { calcularSugerenciaComposicion } from "../lib/pasajeroHint";
+import { EstadoCuentaResumen } from "../components/EstadoCuentaResumen";
+import { EstadoCuentaExtracto } from "../components/EstadoCuentaExtracto";
 
 /**
  * Determina si la reserva está en un estado "congelado" donde solo se permite
@@ -189,14 +181,16 @@ function InvoicePdfActions({ invoice }) {
 
   return (
     <div className="inline-flex items-center gap-1">
+      {/* I2: aria-label es necesario porque el botón solo tiene ícono, sin texto visible */}
       <button
         type="button"
         onClick={view}
         disabled={busy}
         className="rounded p-1.5 text-indigo-600 hover:bg-indigo-50 disabled:opacity-50 dark:text-indigo-300 dark:hover:bg-indigo-950/40"
         title="Ver PDF"
+        aria-label="Ver PDF"
       >
-        <Eye className="h-4 w-4" />
+        <Eye className="h-4 w-4" aria-hidden="true" />
       </button>
       <button
         type="button"
@@ -204,8 +198,9 @@ function InvoicePdfActions({ invoice }) {
         disabled={busy}
         className="rounded p-1.5 text-emerald-600 hover:bg-emerald-50 disabled:opacity-50 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
         title="Descargar PDF"
+        aria-label="Descargar PDF"
       >
-        <Download className="h-4 w-4" />
+        <Download className="h-4 w-4" aria-hidden="true" />
       </button>
     </div>
   );
@@ -224,27 +219,35 @@ function canIssuePaymentReceipt(payment) {
 /**
  * Acciones del comprobante de pago (recibo) de un cobro individual.
  *
+ * Incluye también Editar cobro y Eliminar cobro (B1 — acciones perdidas al rediseñar la pantalla).
+ * En estados no congelados, el cobro "vivo" (sin recibo anulado) puede editarse o eliminarse.
+ *
  * Regla de estados congelados: en estados congelados (Traveling, Lost, Cancelled,
  * FullyInvoiced) solo se puede VER un comprobante ya emitido. Las acciones de escritura
- * (Emitir, Anular) y el texto informativo "Sin comprobante" desaparecen.
- * Decisión de UX 2026-06-22: "ver/imprimir un papel ya hecho" sí; "crear/anular" no.
+ * (Emitir, Anular, Editar cobro, Eliminar cobro) desaparecen.
+ * Decisión de UX 2026-06-22: "ver/imprimir un papel ya hecho" sí; "crear/anular/editar" no.
  *
  * Props:
  *  - congelado: boolean — derivado de esEstadoCongelado(reserva) en el componente padre.
+ *  - onEditarCobro: callback(payment) — abre RegistrarCobroInline en modo edición.
+ *  - onEliminarCobro: callback(payment) — pide confirmación y elimina el cobro.
  */
-function PaymentReceiptActions({ payment, onView, onIssue, onVoid, congelado }) {
+function PaymentReceiptActions({ payment, onView, onIssue, onVoid, congelado, onEditarCobro, onEliminarCobro }) {
   const receipt = getPaymentReceipt(payment);
 
+  // Un cobro es "vivo" si no tiene recibo anulado. Si está anulado, no tiene sentido editarlo.
+  const reciboAnulado = receipt?.status === "Voided";
+  const cobroEsEditable = !congelado && !reciboAnulado;
+
   if (receipt) {
-    const isVoided = receipt.status === "Voided";
     return (
       <div className="flex flex-wrap items-center gap-2">
         {/* El chip con el número de recibo (o "Comprobante anulado") se muestra siempre:
             es trazabilidad de un documento ya emitido, no una acción. */}
-        <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase ${isVoided ? "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400" : "bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300"}`}>
-          {isVoided ? "Comprobante anulado" : receipt.receiptNumber}
+        <span className={`rounded-full px-2 py-1 text-[10px] font-black uppercase ${reciboAnulado ? "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400" : "bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300"}`}>
+          {reciboAnulado ? "Comprobante anulado" : receipt.receiptNumber}
         </span>
-        {!isVoided ? (
+        {!reciboAnulado ? (
           <>
             {/* "Ver PDF" es lectura → siempre visible, incluso en congelado */}
             <button
@@ -252,8 +255,9 @@ function PaymentReceiptActions({ payment, onView, onIssue, onVoid, congelado }) 
               onClick={() => onView(payment)}
               className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-bold text-indigo-600 transition-colors hover:bg-indigo-50 dark:text-indigo-300 dark:hover:bg-indigo-900/30"
               title="Ver comprobante de pago"
+              aria-label="Ver comprobante de pago"
             >
-              <ExternalLink className="h-3.5 w-3.5" />
+              <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
               Ver PDF
             </button>
             {/* "Anular comprobante" es escritura → solo en estados no congelados */}
@@ -263,12 +267,46 @@ function PaymentReceiptActions({ payment, onView, onIssue, onVoid, congelado }) 
                 onClick={() => onVoid(payment)}
                 className="inline-flex items-center gap-1 rounded-lg border border-rose-200 px-2 py-1 text-xs font-bold text-rose-600 transition-colors hover:bg-rose-50 dark:border-rose-900/30 dark:text-rose-400 dark:hover:bg-rose-900/20"
                 title="Anular comprobante de pago"
+                aria-label="Anular comprobante de pago"
               >
                 Anular comprobante
               </button>
             )}
           </>
         ) : null}
+
+        {/* B1: Editar / Eliminar cobro — solo en estados editables y si el recibo no está anulado.
+            Un recibo anulado implica que el cobro ya fue procesado formalmente; no se edita. */}
+        {cobroEsEditable && (
+          <>
+            {typeof onEditarCobro === "function" && (
+              <button
+                type="button"
+                onClick={() => onEditarCobro(payment)}
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                title="Editar cobro"
+                aria-label="Editar cobro"
+                data-testid="btn-editar-cobro"
+              >
+                <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                Editar
+              </button>
+            )}
+            {typeof onEliminarCobro === "function" && (
+              <button
+                type="button"
+                onClick={() => onEliminarCobro(payment)}
+                className="inline-flex items-center gap-1 rounded-lg border border-rose-200 px-2 py-1 text-xs font-bold text-rose-600 transition-colors hover:bg-rose-50 dark:border-rose-900/30 dark:text-rose-400 dark:hover:bg-rose-900/20"
+                title="Eliminar cobro"
+                aria-label="Eliminar cobro"
+                data-testid="btn-eliminar-cobro"
+              >
+                <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                Eliminar
+              </button>
+            )}
+          </>
+        )}
       </div>
     );
   }
@@ -278,18 +316,78 @@ function PaymentReceiptActions({ payment, onView, onIssue, onVoid, congelado }) 
 
   if (canIssuePaymentReceipt(payment)) {
     return (
-      <button
-        type="button"
-        onClick={() => onIssue(payment)}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 px-3 py-1.5 text-xs font-bold text-indigo-700 transition-colors hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-300 dark:hover:bg-indigo-900/30"
-      >
-        <Receipt className="h-3.5 w-3.5" />
-        Emitir comprobante
-      </button>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => onIssue(payment)}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 px-3 py-1.5 text-xs font-bold text-indigo-700 transition-colors hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-300 dark:hover:bg-indigo-900/30"
+        >
+          <Receipt className="h-3.5 w-3.5" aria-hidden="true" />
+          Emitir comprobante
+        </button>
+        {/* B1: también disponible Editar / Eliminar cuando aún no hay recibo */}
+        {typeof onEditarCobro === "function" && (
+          <button
+            type="button"
+            onClick={() => onEditarCobro(payment)}
+            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+            title="Editar cobro"
+            aria-label="Editar cobro"
+            data-testid="btn-editar-cobro"
+          >
+            <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+            Editar
+          </button>
+        )}
+        {typeof onEliminarCobro === "function" && (
+          <button
+            type="button"
+            onClick={() => onEliminarCobro(payment)}
+            className="inline-flex items-center gap-1 rounded-lg border border-rose-200 px-2 py-1 text-xs font-bold text-rose-600 transition-colors hover:bg-rose-50 dark:border-rose-900/30 dark:text-rose-400 dark:hover:bg-rose-900/20"
+            title="Eliminar cobro"
+            aria-label="Eliminar cobro"
+            data-testid="btn-eliminar-cobro"
+          >
+            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+            Eliminar
+          </button>
+        )}
+      </div>
     );
   }
 
-  return <span className="text-xs text-slate-400">Sin comprobante</span>;
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-xs text-slate-400">Sin comprobante</span>
+      {/* B1: Editar / Eliminar disponibles aunque no haya comprobante (entryType puente, etc.) */}
+      {typeof onEditarCobro === "function" && (
+        <button
+          type="button"
+          onClick={() => onEditarCobro(payment)}
+          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          title="Editar cobro"
+          aria-label="Editar cobro"
+          data-testid="btn-editar-cobro"
+        >
+          <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+          Editar
+        </button>
+      )}
+      {typeof onEliminarCobro === "function" && (
+        <button
+          type="button"
+          onClick={() => onEliminarCobro(payment)}
+          className="inline-flex items-center gap-1 rounded-lg border border-rose-200 px-2 py-1 text-xs font-bold text-rose-600 transition-colors hover:bg-rose-50 dark:border-rose-900/30 dark:text-rose-400 dark:hover:bg-rose-900/20"
+          title="Eliminar cobro"
+          aria-label="Eliminar cobro"
+          data-testid="btn-eliminar-cobro"
+        >
+          <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+          Eliminar
+        </button>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -474,6 +572,22 @@ export default function ReservaDetailPage() {
   // (Causa del crash: useEffect referenciaba `reserva` antes de que se declarara con const.)
   const [readiness, setReadiness] = useState(null);
 
+  // Saldo a favor del cliente (fetch best-effort desde su cuenta corriente).
+  // Se carga al abrir la solapa "account" con el publicId del cliente.
+  // Si falla, el link "Ver cuenta del cliente" sigue mostrándose — degradación elegante.
+  const [saldoClientePorMoneda, setSaldoClientePorMoneda] = useState(null);
+  const [loadingSaldoCliente, setLoadingSaldoCliente] = useState(false);
+
+  // Clave de refresco del extracto contable y del saldo del cliente.
+  // Se incrementa cada vez que ocurre un cambio de plata (cobro, factura, recibo, anulación)
+  // para que EstadoCuentaExtracto y el useEffect del saldo del cliente se re-ejecuten
+  // sin necesidad de refrescar la página completa.
+  const [accountRefreshKey, setAccountRefreshKey] = useState(0);
+
+  // Incrementa la clave de refresco del extracto. Se llama JUNTO a fetchReserva
+  // en cada acción de plata, para que la reserva y el extracto queden sincronizados.
+  const refrescarExtracto = () => setAccountRefreshKey((k) => k + 1);
+
   const [confirmConfig, setConfirmConfig] = useState({
     isOpen: false,
     title: "",
@@ -555,10 +669,44 @@ export default function ReservaDetailPage() {
   // Se coloca acá (post useReservaDetail) por el mismo motivo que el useEffect de arriba.
   const sugerenciaComposicion = calcularSugerenciaComposicion(readiness, reserva);
 
+  // Cargamos el saldo a favor del cliente (cuenta corriente) al abrir la solapa Estado de Cuenta.
+  // Es best-effort: si falla, el link "Ver cuenta del cliente" sigue mostrándose.
+  // Dependemos de activeTab, del publicId del cliente (puede no existir), y del publicId de la reserva.
+  useEffect(() => {
+    const clientePublicId = reserva?.customerPublicId;
+    if (activeTab !== "account" || !clientePublicId) {
+      setSaldoClientePorMoneda(null);
+      return;
+    }
+    let cancelado = false;
+    setLoadingSaldoCliente(true);
+    api.get(`/customers/${clientePublicId}/account`)
+      .then((data) => {
+        if (cancelado) return;
+        // El endpoint de cuenta del cliente devuelve { summary: { creditBalanceByCurrency: [...] } }
+        // Solo nos interesan las entradas con saldo a favor (amount > 0).
+        const entradas = data?.summary?.creditBalanceByCurrency ?? [];
+        const conSaldo = entradas.filter((e) => (e.amount ?? 0) > 0);
+        setSaldoClientePorMoneda(conSaldo.length > 0 ? conSaldo : null);
+      })
+      .catch(() => {
+        if (!cancelado) setSaldoClientePorMoneda(null); // Degradación elegante: no rompe la solapa
+      })
+      .finally(() => {
+        if (!cancelado) setLoadingSaldoCliente(false);
+      });
+    // Cleanup: si el usuario cambia de tab rápido, cancelamos el setState obsoleto.
+    return () => { cancelado = true; };
+    // accountRefreshKey se suma a las deps para que el saldo del cliente
+    // se recargue también cuando cambia la plata (cobro, factura, anulación).
+    // Así la cuenta corriente refleja el estado real sin refrescar la página.
+  }, [activeTab, reserva?.customerPublicId, accountRefreshKey]);
+
   const handleDeletePayment = async (payment) => {
     try {
       await api.delete(`/payments/${getPublicId(payment)}`);
       showSuccess("Pago eliminado correctamente");
+      refrescarExtracto();
       fetchReserva();
     } catch (error) {
       showError(getApiErrorMessage(error, "Error al eliminar pago"));
@@ -579,6 +727,7 @@ export default function ReservaDetailPage() {
     try {
       await api.post(`/payments/${getPublicId(payment)}/receipt`);
       showSuccess("Comprobante emitido correctamente");
+      refrescarExtracto();
       await fetchReserva({ showLoading: false, preserveOnError: true });
     } catch (error) {
       showError(getApiErrorMessage(error, "No se pudo emitir el comprobante."));
@@ -596,6 +745,7 @@ export default function ReservaDetailPage() {
     try {
       await api.post(`/payments/${getPublicId(payment)}/receipt/void`, { reason: null });
       showSuccess("Comprobante anulado.");
+      refrescarExtracto();
       await fetchReserva({ showLoading: false, preserveOnError: true });
     } catch (error) {
       showError(getApiErrorMessage(error, "No se pudo anular el comprobante."));
@@ -1372,6 +1522,9 @@ export default function ReservaDetailPage() {
                   onGuardado={() => {
                     setShowCobroInline(false);
                     setCobroAEditar(null);
+                    // Refresco del extracto: el cobro ya está persistido en el backend;
+                    // refrescarExtracto() hace que el libro mayor se recargue junto con la reserva.
+                    refrescarExtracto();
                     fetchReserva({ showLoading: false, preserveOnError: true });
                   }}
                   onCancelar={() => {
@@ -1392,6 +1545,8 @@ export default function ReservaDetailPage() {
                   clientCuit={reserva?.customerCuit ?? reserva?.client?.cuit ?? null}
                   onFacturaEmitida={() => {
                     setShowFacturaInline(false);
+                    // La factura recién emitida aparece en el extracto sin refrescar la página.
+                    refrescarExtracto();
                     fetchReserva({ showLoading: false, preserveOnError: true });
                   }}
                   onCancelar={() => setShowFacturaInline(false)}
@@ -1407,249 +1562,65 @@ export default function ReservaDetailPage() {
                   reserva={reserva}
                   onCancelado={() => {
                     setShowCancelInline(false);
+                    // La anulación genera NC y ND que deben aparecer en el extracto de inmediato.
+                    refrescarExtracto();
                     fetchReserva({ showLoading: false, preserveOnError: true });
                   }}
                   onCerrar={() => setShowCancelInline(false)}
                 />
               )}
 
-              <div className="grid grid-cols-1 gap-6">
-                <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-                  <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50/30 px-6 py-4 dark:border-slate-800 dark:bg-slate-800/10">
-                    <History className="w-4 h-4 text-emerald-500" />
-                    <h4 className="text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-white">Historial de cobros y comprobantes</h4>
-                  </div>
-                  <DataGrid density="compact" minWidth="900px">
-                    <DataGridHeader>
-                      <DataGridHeaderRow>
-                        <DataGridHeaderCell>Fecha</DataGridHeaderCell>
-                        <DataGridHeaderCell>Metodo</DataGridHeaderCell>
-                        {/* Columna Moneda: siempre presente para multimoneda (indica en qué moneda entró cada cobro) */}
-                        <DataGridHeaderCell>Moneda</DataGridHeaderCell>
-                        <DataGridHeaderCell>Notas</DataGridHeaderCell>
-                        <DataGridHeaderCell>Comprobante</DataGridHeaderCell>
-                        <DataGridHeaderCell align="right">Importe</DataGridHeaderCell>
-                        {/* Columna Acciones (editar/eliminar cobro): se oculta en congelado
-                            porque mover plata ya no aplica en estados terminales. */}
-                        {!congelado && <DataGridHeaderCell align="right">Acciones</DataGridHeaderCell>}
-                      </DataGridHeaderRow>
-                    </DataGridHeader>
-                    <DataGridBody>
-                      {reserva.payments?.length > 0 ? (
-                        reserva.payments.map((payment) => {
-                          const monedaCobro = payment.currency || "ARS";
-                          const esCruzado = payment.imputedCurrency && payment.imputedCurrency !== monedaCobro;
-                          return (
-                            <DataGridRow key={getPublicId(payment)}>
-                              <DataGridCell>{new Date(payment.paidAt).toLocaleDateString()}</DataGridCell>
-                              <DataGridCell>
-                                <span className="rounded bg-slate-100 px-2 py-1 text-[10px] font-black uppercase dark:bg-slate-800">
-                                  {payment.method}
-                                </span>
-                              </DataGridCell>
-                              <DataGridCell>
-                                <CurrencyBadge currency={monedaCobro} size="sm" />
-                              </DataGridCell>
-                              <DataGridCell>
-                                <div>
-                                  {payment.notes || "-"}
-                                  {/* Para cobros cruzados: detalle inline del saldo imputado en la otra moneda */}
-                                  {esCruzado && payment.imputedAmount != null && (
-                                    <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">
-                                      imputado a {payment.imputedCurrency === "USD" ? "US$" : "$"}{Number(payment.imputedAmount).toLocaleString("es-AR", { minimumFractionDigits: 2 })}
-                                    </div>
-                                  )}
-                                </div>
-                              </DataGridCell>
-                              <DataGridCell>
-                                {/* congelado llega desde esEstadoCongelado(reserva) calculado arriba */}
-                                <PaymentReceiptActions payment={payment} onView={handleViewReceiptPdf} onIssue={handleIssueReceipt} onVoid={handleVoidReceipt} congelado={congelado} />
-                              </DataGridCell>
-                              <DataGridCell align="right" className="font-black text-emerald-600">
-                                {/* Importe formateado con la moneda real del cobro */}
-                                {payment.amount?.toLocaleString("es-AR", { style: "currency", currency: monedaCobro })}
-                              </DataGridCell>
-                              {/* Botones Editar/Eliminar cobro: solo si no está congelado (mueven plata) */}
-                              {!congelado && <DataGridCell align="right">
-                                <div className="flex justify-end gap-1">
-                                  <button
-                                    onClick={() => {
-                                      setCobroAEditar(payment);
-                                      setShowCobroInline(true);
-                                    }}
-                                    className="p-1 text-blue-600 hover:bg-blue-50 rounded transition-colors"
-                                    title="Editar cobro"
-                                    aria-label="Editar cobro"
-                                  >
-                                    <Edit2 className="w-3.5 h-3.5" />
-                                  </button>
-                                  <button
-                                    onClick={() =>
-                                      askConfirmation({
-                                        title: "Eliminar cobro?",
-                                        message: `¿Seguro que deseas eliminar el cobro de ${payment.amount?.toLocaleString("es-AR", { style: "currency", currency: monedaCobro })}?`,
-                                        type: "danger",
-                                        onConfirm: () => handleDeletePayment(payment),
-                                      })
-                                    }
-                                    className="p-1 text-rose-600 hover:bg-rose-50 rounded transition-colors"
-                                    title="Eliminar cobro"
-                                    aria-label="Eliminar cobro"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                </div>
-                              </DataGridCell>}
-                            </DataGridRow>
-                          );
-                        })
-                      ) : (
-                        // colSpan varía: 7 columnas con acciones, 6 sin ellas (congelado)
-                        <DataGridEmptyState colSpan={congelado ? 6 : 7} title="No hay cobros registrados." />
-                      )}
-                    </DataGridBody>
-                  </DataGrid>
+              {/* ── Franja de 3 ejes: Venta/Facturación · Cobranza · Costo/Margen ── */}
+              <EstadoCuentaResumen
+                reserva={reserva}
+                saldoClientePorMoneda={saldoClientePorMoneda}
+                loadingSaldoCliente={loadingSaldoCliente}
+              />
 
-                  {/* Subtotal por moneda al pie del historial — solo cuando hay más de una moneda */}
-                  {(() => {
-                    const pagos = reserva.payments || [];
-                    if (pagos.length === 0) return null;
-                    const totales = pagos.reduce((acc, p) => {
-                      const moneda = p.currency || "ARS";
-                      acc[moneda] = (acc[moneda] || 0) + (p.amount || 0);
-                      return acc;
-                    }, {});
-                    const monedas = Object.keys(totales);
-                    if (monedas.length <= 1) return null; // Una sola moneda: no mostrar subtotal extra
-                    return (
-                      <div className="flex items-center justify-end gap-4 px-6 py-3 border-t border-slate-100 dark:border-slate-800 text-sm font-bold text-slate-700 dark:text-slate-300">
-                        <span className="text-xs uppercase tracking-wider text-slate-400">Total cobrado</span>
-                        <span className="flex items-center gap-3">
-                          {monedas.map((moneda, idx) => (
-                            <span key={moneda} className="inline-flex items-center gap-1">
-                              <CurrencyBadge currency={moneda} size="sm" />
-                              {totales[moneda].toLocaleString("es-AR", { style: "currency", currency: moneda })}
-                              {idx < monedas.length - 1 && <span className="text-slate-400 mx-1">·</span>}
-                            </span>
-                          ))}
-                        </span>
-                      </div>
-                    );
-                  })()}
-
-                  {reserva.payments?.length > 0 ? (
-                    <MobileRecordList className="p-4 md:hidden">
-                      {reserva.payments.map((payment) => {
-                        const monedaCobro = payment.currency || "ARS";
-                        const esCruzado = payment.imputedCurrency && payment.imputedCurrency !== monedaCobro;
-                        return (
-                          <MobileRecordCard
-                            key={getPublicId(payment)}
-                            title={payment.method}
-                            subtitle={new Date(payment.paidAt).toLocaleDateString()}
-                            meta={
-                              <>
-                                <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
-                                  <CurrencyBadge currency={monedaCobro} />
-                                  {esCruzado && payment.imputedAmount != null && (
-                                    <span className="text-[10px]">→ imputado a {payment.imputedCurrency === "USD" ? "US$" : "$"}{Number(payment.imputedAmount).toLocaleString("es-AR", { minimumFractionDigits: 2 })}</span>
-                                  )}
-                                </div>
-                                <div className="text-xs text-slate-500 dark:text-slate-400">{payment.notes || "Sin notas"}</div>
-                                <div>
-                                  {/* congelado: misma regla que en desktop — solo Ver PDF visible */}
-                                  <PaymentReceiptActions payment={payment} onView={handleViewReceiptPdf} onIssue={handleIssueReceipt} onVoid={handleVoidReceipt} congelado={congelado} />
-                                </div>
-                              </>
-                            }
-                            footer={<span className="text-sm font-bold text-emerald-600">{payment.amount?.toLocaleString("es-AR", { style: "currency", currency: monedaCobro })}</span>}
-                          />
-                        );
-                      })}
-                    </MobileRecordList>
-                  ) : (
-                    <ListEmptyState
-                      title="No hay cobros registrados."
-                      className="md:hidden rounded-none border-t border-dashed border-slate-200 dark:border-slate-800"
-                    />
-                  )}
+              {/* ── Extracto único (libro mayor) ──────────────────────────────── */}
+              <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50/30 px-6 py-4 dark:border-slate-800 dark:bg-slate-800/10">
+                  <History className="w-4 h-4 text-emerald-500" />
+                  <h4 className="text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-white">
+                    Extracto de cuenta
+                  </h4>
                 </div>
-
-                <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-                  <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50/30 px-6 py-4 dark:border-slate-800 dark:bg-slate-800/10">
-                    <FileText className="w-4 h-4 text-indigo-500" />
-                    <h4 className="text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-white">Documentos Fiscales AFIP</h4>
-                  </div>
-                  <DataGrid density="compact" minWidth="860px">
-                    <DataGridHeader>
-                      <DataGridHeaderRow>
-                        <DataGridHeaderCell>Tipo</DataGridHeaderCell>
-                        <DataGridHeaderCell>Numero</DataGridHeaderCell>
-                        <DataGridHeaderCell>CAE</DataGridHeaderCell>
-                        <DataGridHeaderCell>Estado</DataGridHeaderCell>
-                        <DataGridHeaderCell align="right">Importe</DataGridHeaderCell>
-                        <DataGridHeaderCell align="center">PDF</DataGridHeaderCell>
-                      </DataGridHeaderRow>
-                    </DataGridHeader>
-                    <DataGridBody>
-                      {reserva.invoices?.length > 0 ? (
-                        reserva.invoices.map((invoice) => (
-                          <DataGridRow key={getPublicId(invoice)}>
-                            <DataGridCell className="font-bold">
-                              <InvoiceTypeLabel
-                                tipoComprobante={invoice.tipoComprobante}
-                                originalInvoiceNumeroComprobante={invoice.originalInvoiceNumeroComprobante}
-                                originalInvoicePuntoDeVenta={invoice.originalInvoicePuntoDeVenta}
-                                originalInvoiceTipoComprobante={invoice.originalInvoiceTipoComprobante}
-                              />
-                            </DataGridCell>
-                            <DataGridCell className="font-mono">
-                              {String(invoice.puntoDeVenta).padStart(5, "0")}-{String(invoice.numeroComprobante).padStart(8, "0")}
-                            </DataGridCell>
-                            <DataGridCell className="font-mono text-xs text-slate-400">{invoice.cae || "---"}</DataGridCell>
-                            <DataGridCell>
-                              <InvoiceStatusBadge resultado={invoice.resultado} annulmentStatus={invoice.annulmentStatus} />
-                            </DataGridCell>
-                            <DataGridCell align="right" className="font-black">
-                              {invoice.importeTotal?.toLocaleString("es-AR", { style: "currency", currency: "ARS" })}
-                            </DataGridCell>
-                            <DataGridCell align="center">
-                              <InvoicePdfActions invoice={invoice} />
-                            </DataGridCell>
-                          </DataGridRow>
-                        ))
-                      ) : (
-                        <DataGridEmptyState colSpan={6} title="No hay facturas emitidas para esta reserva." />
-                      )}
-                    </DataGridBody>
-                  </DataGrid>
-                  {reserva.invoices?.length > 0 ? (
-                    <MobileRecordList className="p-4 md:hidden">
-                      {reserva.invoices.map((invoice) => (
-                        <MobileRecordCard
-                          key={getPublicId(invoice)}
-                          statusSlot={<InvoiceStatusBadge resultado={invoice.resultado} annulmentStatus={invoice.annulmentStatus} />}
-                          title={
-                            <InvoiceTypeLabel
-                              tipoComprobante={invoice.tipoComprobante}
-                              originalInvoiceNumeroComprobante={invoice.originalInvoiceNumeroComprobante}
-                              originalInvoicePuntoDeVenta={invoice.originalInvoicePuntoDeVenta}
-                              originalInvoiceTipoComprobante={invoice.originalInvoiceTipoComprobante}
-                            />
-                          }
-                          subtitle={`${String(invoice.puntoDeVenta).padStart(5, "0")}-${String(invoice.numeroComprobante).padStart(8, "0")}`}
-                          meta={<div className="text-xs text-slate-500 dark:text-slate-400">CAE {invoice.cae || "---"}</div>}
-                          footer={<span className="text-sm font-bold text-slate-900 dark:text-white">{invoice.importeTotal?.toLocaleString("es-AR", { style: "currency", currency: "ARS" })}</span>}
-                          footerActions={<InvoicePdfActions invoice={invoice} />}
-                        />
-                      ))}
-                    </MobileRecordList>
-                  ) : (
-                    <ListEmptyState
-                      title="No hay facturas emitidas para esta reserva."
-                      className="md:hidden rounded-none border-t border-dashed border-slate-200 dark:border-slate-800"
-                    />
-                  )}
+                <div className="p-4 md:p-6">
+                  <EstadoCuentaExtracto
+                    reservaPublicId={publicId}
+                    reserva={reserva}
+                    congelado={congelado}
+                    refreshKey={accountRefreshKey}
+                    renderAccionesFactura={(invoice) => <InvoicePdfActions invoice={invoice} />}
+                    renderAccionesCobro={(payment, estaCongelado) => (
+                      <PaymentReceiptActions
+                        payment={payment}
+                        onView={handleViewReceiptPdf}
+                        onIssue={handleIssueReceipt}
+                        onVoid={handleVoidReceipt}
+                        congelado={estaCongelado}
+                        // B1: callbacks restaurados (se perdieron al rediseñar la pantalla).
+                        // El guard !estaCongelado está dentro de PaymentReceiptActions,
+                        // pero también lo pasamos desde acá para claridad semántica.
+                        onEditarCobro={(pago) => {
+                          // Abre RegistrarCobroInline en modo edición con este pago cargado.
+                          // setCobroAEditar + setShowCobroInline siguen el patrón de "Registrar cobro".
+                          setCobroAEditar(pago);
+                          setShowCobroInline(true);
+                        }}
+                        onEliminarCobro={(pago) => {
+                          // Pedimos confirmación antes de eliminar (la acción es irreversible).
+                          // Tras eliminar: refrescamos el extracto Y la reserva (igual que handleDeletePayment).
+                          askConfirmation({
+                            title: "Eliminar cobro",
+                            message: "Esta acción es irreversible. El pago quedará eliminado de la reserva.",
+                            type: "danger",
+                            onConfirm: () => handleDeletePayment(pago),
+                          });
+                        }}
+                      />
+                    )}
+                  />
                 </div>
               </div>
             </div>

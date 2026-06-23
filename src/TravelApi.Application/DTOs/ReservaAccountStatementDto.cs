@@ -55,6 +55,18 @@ public class AccountStatementLineDto
     /// <summary>Referencia del documento (ej. "0001-00000123" para una factura), o null si no aplica.</summary>
     public string? DocumentRef { get; set; }
 
+    /// <summary>
+    /// PublicId del documento de origen de la linea: la <c>Invoice</c> (lineas Invoice/CreditNote/DebitNote)
+    /// o el <c>Payment</c> (lineas Payment) que la genero. El front lo cruza con la reserva ya cargada
+    /// (que trae invoices[] y payments[] con su publicId) para colgar acciones por renglon (ver PDF de la
+    /// factura, ver/emitir/anular el recibo del cobro) reusando los handlers que ya existen.
+    ///
+    /// <para>Es SOLO un identificador, no dato sensible (no hay costo ni margen): el extracto sigue siendo
+    /// venta/cobranza pura. Nullable por robustez ante datos legacy sin PublicId, aunque hoy todas las
+    /// Invoice/Payment lo traen.</para>
+    /// </summary>
+    public Guid? SourcePublicId { get; set; }
+
     /// <summary>Moneda de la linea (igual que la del bloque).</summary>
     public string Currency { get; set; } = "ARS";
 
