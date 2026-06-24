@@ -15,5 +15,11 @@ public interface IAttachmentService
     /// </summary>
     Task<AttachmentDto> RenameAttachmentAsync(string attachmentPublicIdOrLegacyId, string newFileName, string modifiedBy, CancellationToken ct);
 
-    Task DeleteAttachmentAsync(string attachmentPublicIdOrLegacyId, CancellationToken ct);
+    /// <summary>
+    /// Borra un adjunto (registro + archivo en MinIO). B3/OBS-2 (2026-06-24): bloqueado por estado terminal
+    /// (en Finalizada/Anulada/Perdida/Esperando reembolso los documentos son solo lectura: borrar = modificar)
+    /// y AUDITADO (quien/cuando/que archivo), igual que subir y renombrar. <paramref name="deletedBy"/> es el
+    /// actor para el rastro.
+    /// </summary>
+    Task DeleteAttachmentAsync(string attachmentPublicIdOrLegacyId, string deletedBy, CancellationToken ct);
 }

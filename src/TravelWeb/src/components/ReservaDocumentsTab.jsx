@@ -29,8 +29,13 @@ function downloadBlob(blob, fileName) {
  * Muestra nombre, tamaño, fecha/usuario de carga, y botones de acción.
  * Incluye edición inline del nombre: al hacer click en el lápiz, el nombre
  * se convierte en un input de texto confirmable con Enter o el botón checkmark.
+ *
+ * Props:
+ *   soloLectura — cuando true, el botón Renombrar y el botón Eliminar se ocultan.
+ *                 Se usa cuando la reserva no permite agregar/modificar documentos.
+ *                 Ver y descargar siguen disponibles siempre.
  */
-function DocumentRow({ file, onDelete, onDownload, onRename }) {
+function DocumentRow({ file, onDelete, onDownload, onRename, soloLectura = false }) {
   const [previewUrl, setPreviewUrl] = useState(null);
 
   // Estado de edición inline del nombre
@@ -238,8 +243,9 @@ function DocumentRow({ file, onDelete, onDownload, onRename }) {
             <Eye className="h-4 w-4" />
           </button>
         )}
-        {/* Botón renombrar: solo visible cuando NO está en modo edición */}
-        {!isEditing && (
+        {/* Botón renombrar: solo cuando NO está en modo edición Y la reserva permite escritura.
+            En solo lectura (estado terminal) renombrar es escritura → se oculta. */}
+        {!isEditing && !soloLectura && (
           <button
             type="button"
             data-testid="document-rename-button"
@@ -251,6 +257,7 @@ function DocumentRow({ file, onDelete, onDownload, onRename }) {
             <Pencil className="h-4 w-4" />
           </button>
         )}
+        {/* Descargar: siempre visible, incluso en solo lectura (lectura != escritura) */}
         {!isEditing && (
           <button
             type="button"
@@ -264,7 +271,8 @@ function DocumentRow({ file, onDelete, onDownload, onRename }) {
             <Download className="h-4 w-4" />
           </button>
         )}
-        {!isEditing && (
+        {/* Eliminar: escritura → se oculta en solo lectura */}
+        {!isEditing && !soloLectura && (
           <button
             type="button"
             onClick={(event) => {
@@ -282,11 +290,26 @@ function DocumentRow({ file, onDelete, onDownload, onRename }) {
   );
 }
 
-export function ReservaDocumentsTab({ reservaId }) {
+/**
+ * Pestaña de documentos adjuntos (DNI, pasaportes, autorizaciones, etc.) de una reserva.
+ *
+ * Props:
+ *   reservaId         — publicId de la reserva.
+ *   canUploadDocument — CapabilityDto {allowed, reason} del backend (B3, 2026-06-24).
+ *                       Cuando allowed=false, se ocultan la zona de carga, el botón Renombrar
+ *                       y el botón Eliminar. Ver y descargar documentos ya cargados sigue disponible.
+ *                       Si no se pasa (undefined/null), se degrada mostrando todos los botones
+ *                       (comportamiento anterior — compatible con DTOs viejos sin esta capability).
+ */
+export function ReservaDocumentsTab({ reservaId, canUploadDocument }) {
   const [attachments, setAttachments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
+
+  // soloLecturaDocumentos: true cuando el backend indica que no se pueden agregar/modificar docs.
+  // Degradacion elegante: sin capability (DTO viejo), mostramos todo (allowed=true por defecto).
+  const soloLecturaDocumentos = canUploadDocument != null && !canUploadDocument.allowed;
 
   const fetchAttachments = useCallback(async () => {
     try {
@@ -398,59 +421,65 @@ export function ReservaDocumentsTab({ reservaId }) {
 
   return (
     <div className="space-y-6">
-      <div
-        className={`relative cursor-pointer overflow-hidden rounded-xl border-2 border-dashed p-8 text-center transition-all ${
-          isDragging
-            ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
-            : "border-gray-300 bg-gray-50 hover:border-gray-400 dark:border-slate-700 dark:bg-slate-800/50"
-        }`}
-        onDragOver={(event) => {
-          event.preventDefault();
-          setIsDragging(true);
-        }}
-        onDragLeave={(event) => {
-          event.preventDefault();
-          setIsDragging(false);
-        }}
-        onDrop={async (event) => {
-          event.preventDefault();
-          setIsDragging(false);
-          if (event.dataTransfer.files.length > 0) {
-            await handleUpload(event.dataTransfer.files[0]);
-          }
-        }}
-        onClick={() => document.getElementById("reservationDocumentInput")?.click()}
-      >
-        <input
-          id="reservationDocumentInput"
-          type="file"
-          className="hidden"
-          onChange={async (event) => {
-            if (event.target.files?.length > 0) {
-              await handleUpload(event.target.files[0]);
-              event.target.value = "";
+      {/* Zona de carga: solo cuando la reserva permite agregar documentos (canUploadDocument.allowed).
+          En estados terminales (Finalizada/Anulada/Perdida/Esperando reembolso) el backend manda
+          canUploadDocument.allowed=false y esta zona se oculta (B3, 2026-06-24).
+          La lista de documentos ya cargados sigue visible debajo para poder descargarlos. */}
+      {!soloLecturaDocumentos && (
+        <div
+          className={`relative cursor-pointer overflow-hidden rounded-xl border-2 border-dashed p-8 text-center transition-all ${
+            isDragging
+              ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
+              : "border-gray-300 bg-gray-50 hover:border-gray-400 dark:border-slate-700 dark:bg-slate-800/50"
+          }`}
+          onDragOver={(event) => {
+            event.preventDefault();
+            setIsDragging(true);
+          }}
+          onDragLeave={(event) => {
+            event.preventDefault();
+            setIsDragging(false);
+          }}
+          onDrop={async (event) => {
+            event.preventDefault();
+            setIsDragging(false);
+            if (event.dataTransfer.files.length > 0) {
+              await handleUpload(event.dataTransfer.files[0]);
             }
           }}
-          accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx"
-        />
-        <div className="relative z-10 flex flex-col items-center justify-center space-y-3">
-          {uploading ? (
-            <Loader2 className="h-12 w-12 animate-spin text-blue-500" />
-          ) : (
-            <div className="rounded-full bg-white p-3 shadow-sm dark:bg-slate-800">
-              <UploadCloud className={`h-8 w-8 ${isDragging ? "text-blue-500" : "text-gray-400"}`} />
+          onClick={() => document.getElementById("reservationDocumentInput")?.click()}
+        >
+          <input
+            id="reservationDocumentInput"
+            type="file"
+            className="hidden"
+            onChange={async (event) => {
+              if (event.target.files?.length > 0) {
+                await handleUpload(event.target.files[0]);
+                event.target.value = "";
+              }
+            }}
+            accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx"
+          />
+          <div className="relative z-10 flex flex-col items-center justify-center space-y-3">
+            {uploading ? (
+              <Loader2 className="h-12 w-12 animate-spin text-blue-500" />
+            ) : (
+              <div className="rounded-full bg-white p-3 shadow-sm dark:bg-slate-800">
+                <UploadCloud className={`h-8 w-8 ${isDragging ? "text-blue-500" : "text-gray-400"}`} />
+              </div>
+            )}
+            <div>
+              <div className="text-base font-medium text-gray-900 dark:text-gray-100">
+                {uploading ? "Subiendo documento..." : "Haz clic o arrastra documentos aqui"}
+              </div>
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                DNI, pasaportes, permisos, autorizaciones y adjuntos generales (max 25 MB)
+              </p>
             </div>
-          )}
-          <div>
-            <div className="text-base font-medium text-gray-900 dark:text-gray-100">
-              {uploading ? "Subiendo documento..." : "Haz clic o arrastra documentos aqui"}
-            </div>
-            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              DNI, pasaportes, permisos, autorizaciones y adjuntos generales (max 25 MB)
-            </p>
           </div>
         </div>
-      </div>
+      )}
 
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-800">
         <div className="flex items-center justify-between border-b border-gray-200 bg-gray-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-900/50">
@@ -468,6 +497,12 @@ export function ReservaDocumentsTab({ reservaId }) {
           <div className="py-12 text-center text-sm text-gray-500">
             <FileText className="mx-auto mb-3 h-10 w-10 text-gray-300" />
             <p>No hay documentos cargados todavia.</p>
+            {/* En solo lectura informamos que no se pueden agregar documentos nuevos */}
+            {soloLecturaDocumentos && (
+              <p className="mt-1 text-xs text-slate-400">
+                Esta reserva está en solo lectura: no se pueden agregar documentos nuevos.
+              </p>
+            )}
           </div>
         ) : (
           <div className="divide-y divide-gray-100 dark:divide-slate-700">
@@ -478,6 +513,7 @@ export function ReservaDocumentsTab({ reservaId }) {
                 onDelete={handleDelete}
                 onDownload={handleDownload}
                 onRename={handleRename}
+                soloLectura={soloLecturaDocumentos}
               />
             ))}
           </div>

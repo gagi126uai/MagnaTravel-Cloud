@@ -889,11 +889,12 @@ public class VoucherService : IVoucherService
     /// </summary>
     /// <summary>
     /// ADR-035 Decision 3 (2026-06-19): UN UNICO gate de estado de la Reserva para crear/subir voucher. El
-    /// voucher solo se emite desde Confirmada en adelante {Confirmed, Traveling, Closed}; InManagement y los
-    /// pre-venta/terminales NO. Antes VoucherService NO miraba Reserva.Status (solo el ciclo del propio
-    /// voucher), asi que se podia iniciar un voucher en cualquier estado — contradecia la decision del dueño.
+    /// voucher solo se emite/modifica en {Confirmed, Traveling}; InManagement, pre-venta y terminales NO. Antes
+    /// VoucherService NO miraba Reserva.Status (solo el ciclo del propio voucher), asi que se podia iniciar un
+    /// voucher en cualquier estado — contradecia la decision del dueño.
     /// ADR-036 (2026-06-21): se quito ToSettle (estado eliminado); Traveling se mantiene (el voucher se
-    /// necesita para viajar).
+    /// necesita para viajar). B3 (2026-06-24): se SACO Closed — en terminal el voucher es solo lectura
+    /// (ver/reimprimir si, emitir/modificar no). Quedan {Confirmed, Traveling}.
     ///
     /// <para>Usa la MISMA fuente que la capacidad <c>CanEmitVoucher</c> de la politica
     /// (<see cref="ReservaCapabilityPolicy.VoucherStatuses"/>), para que el boton apagado del front y el gate

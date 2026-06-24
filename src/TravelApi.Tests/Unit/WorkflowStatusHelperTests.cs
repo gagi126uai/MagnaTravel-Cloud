@@ -105,4 +105,32 @@ public class WorkflowStatusHelperTests
         Assert.False(WorkflowStatusHelper.CountsForSupplierDebtByType("Hotel", null));
         Assert.False(WorkflowStatusHelper.CountsForSupplierDebtByType("Vuelo", null));
     }
+
+    // --- B2: "Finalizado" (servicio prestado al cerrar la reserva) cuenta como Confirmado (NO Cancelado) ---
+
+    [Theory]
+    [InlineData("Finalizado")]
+    [InlineData("Finalizada")]
+    [InlineData("finalizado")]
+    public void MapGenericStatus_Finalizado_MapsToConfirmado(string status)
+    {
+        // Un servicio finalizado sigue siendo parte de la venta: cuenta IGUAL que un confirmado para la plata.
+        Assert.Equal(WorkflowStatuses.Confirmado, WorkflowStatusHelper.MapGenericStatus(status));
+    }
+
+    [Fact]
+    public void MapFlightStatus_Finalizado_MapsToConfirmado()
+    {
+        // Al cerrar la reserva un vuelo se marca "Finalizado" (no es codigo IATA): debe contar como Confirmado.
+        Assert.Equal(WorkflowStatuses.Confirmado, WorkflowStatusHelper.MapFlightStatus("Finalizado"));
+    }
+
+    [Fact]
+    public void Finalizado_NoEsCancelado_YGeneraDeuda()
+    {
+        // CRITICO: "Finalizado" NO es "Cancelado". Un servicio finalizado sigue generando deuda con el operador
+        // (no sale de la cuenta) — al reves que un cancelado.
+        Assert.True(WorkflowStatusHelper.CountsForSupplierDebtByType("Hotel", "Finalizado"));
+        Assert.True(WorkflowStatusHelper.CountsForSupplierDebtByType("Vuelo", "Finalizado"));
+    }
 }

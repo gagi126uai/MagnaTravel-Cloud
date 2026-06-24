@@ -130,6 +130,66 @@ public class AttachmentServiceRenameTests
             It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // ─── B3/OBS-2: subir/renombrar/borrar bloqueados en estado terminal ───────
+
+    [Theory]
+    [InlineData(EstadoReserva.Closed)]
+    [InlineData(EstadoReserva.Cancelled)]
+    [InlineData(EstadoReserva.Lost)]
+    [InlineData(EstadoReserva.PendingOperatorRefund)]
+    public async Task RenameAttachmentAsync_BlockedOnTerminalState(string status)
+    {
+        using var db = CreateDbContext();
+        var attachment = await SeedAttachmentAsync(db, "doc.pdf", status);
+        var (service, _) = CreateService(db);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.RenameAttachmentAsync(attachment.PublicId.ToString(), "nuevo.pdf", "tester", CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData(EstadoReserva.Closed)]
+    [InlineData(EstadoReserva.Cancelled)]
+    [InlineData(EstadoReserva.Lost)]
+    [InlineData(EstadoReserva.PendingOperatorRefund)]
+    public async Task DeleteAttachmentAsync_BlockedOnTerminalState(string status)
+    {
+        // B3/OBS-2: en terminal los documentos son solo lectura -> borrar = modificar -> bloqueado.
+        using var db = CreateDbContext();
+        var attachment = await SeedAttachmentAsync(db, "doc.pdf", status);
+        var (service, auditMock) = CreateService(db);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.DeleteAttachmentAsync(attachment.PublicId.ToString(), "tester", CancellationToken.None));
+
+        // No se borro el registro y no se audito (la accion fue rechazada de raiz).
+        Assert.NotNull(await db.Set<ReservaAttachment>().FirstOrDefaultAsync(a => a.Id == attachment.Id));
+        auditMock.Verify(a => a.LogBusinessEventAsync(
+            "Delete", It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DeleteAttachmentAsync_OnLiveState_DeletesAndAudits()
+    {
+        // En estado vivo (Confirmed) el borrado procede y deja rastro auditable (quien/que archivo).
+        using var db = CreateDbContext();
+        var attachment = await SeedAttachmentAsync(db, "borrar.pdf", EstadoReserva.Confirmed);
+        var (service, auditMock) = CreateService(db);
+
+        await service.DeleteAttachmentAsync(attachment.PublicId.ToString(), "tester", CancellationToken.None);
+
+        Assert.Null(await db.Set<ReservaAttachment>().FirstOrDefaultAsync(a => a.Id == attachment.Id));
+        auditMock.Verify(a => a.LogBusinessEventAsync(
+            "Delete",
+            nameof(ReservaAttachment),
+            attachment.Id.ToString(),
+            It.IsAny<string>(),
+            "tester",
+            "tester",
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
     private static AppDbContext CreateDbContext()
@@ -160,14 +220,15 @@ public class AttachmentServiceRenameTests
         return (service, auditMock);
     }
 
-    private static async Task<ReservaAttachment> SeedAttachmentAsync(AppDbContext db, string fileName)
+    private static async Task<ReservaAttachment> SeedAttachmentAsync(
+        AppDbContext db, string fileName, string reservaStatus = EstadoReserva.Confirmed)
     {
         var reserva = new Reserva
         {
             PublicId = Guid.NewGuid(),
             NumeroReserva = "R-ATT",
             Name = "Reserva attach",
-            Status = EstadoReserva.Confirmed,
+            Status = reservaStatus,
             Balance = 0m
         };
         db.Reservas.Add(reserva);

@@ -485,6 +485,17 @@ public class ReservaLifecycleAutomationService
             if (transition.StampClosedAt)
                 reserva.ClosedAt = now;
 
+            // B2 (2026-06-24): el cierre por el JOB es el camino DOMINANTE (Traveling -> Closed por fin de
+            // viaje). Igual que el cierre manual, al finalizar la reserva sus servicios RESUELTOS pasan a
+            // "Finalizado" (prestado/cumplido). Misma FUENTE UNICA que el cierre manual
+            // (ReservaServiceFinalizer): asi NINGUN camino a Closed deja servicios en "Confirmado". NO hace
+            // SaveChanges: se persiste en el SaveChanges unico al final de la tanda (atomico con el cambio de
+            // estado). Idempotente: re-aplicarlo sobre servicios ya finalizados es no-op.
+            if (string.Equals(transition.ToStatus, EstadoReserva.Closed, StringComparison.OrdinalIgnoreCase))
+            {
+                await Reservations.ReservaServiceFinalizer.MarkResolvedServicesFinalizedAsync(_db, reserva.Id, ct);
+            }
+
             // CRM leads (fix de fondo 2026-06-18): si el job deja la reserva en un estado FIRME (el caso real
             // es Confirmed -> Traveling) y nacio de un lead, ese lead debe quedar Ganado. Normalmente ya lo
             // estara (llego a Confirmed via el motor, que tambien dispara el hook), pero lo evaluamos aca por

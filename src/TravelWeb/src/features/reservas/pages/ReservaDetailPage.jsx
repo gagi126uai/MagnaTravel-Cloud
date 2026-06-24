@@ -1570,9 +1570,27 @@ export default function ReservaDetailPage() {
           ) : null}
 
           {activeTab === "history" ? <ReservaTimeline reservaId={publicId} /> : null}
-          {activeTab === "attachments" ? <ReservaDocumentsTab reservaId={publicId} /> : null}
-          {/* soloLectura: en estados congelados no se puede emitir ni anular vouchers */}
-          {activeTab === "voucher" ? <ReservaVoucherTab reservaId={publicId} reserva={reserva} soloLectura={congelado} /> : null}
+          {/* canUploadDocument: capability del backend (B3, 2026-06-24).
+              En estados terminales (Finalizada/Anulada/Perdida/Esperando reembolso) = false.
+              La zona de carga y los botones Renombrar/Eliminar se ocultan.
+              Ver y descargar documentos ya cargados sigue disponible. */}
+          {activeTab === "attachments" ? (
+            <ReservaDocumentsTab
+              reservaId={publicId}
+              canUploadDocument={reserva?.capabilities?.canUploadDocument ?? null}
+            />
+          ) : null}
+          {/* soloLectura: en estados congelados no se puede emitir ni anular vouchers.
+              canEmitVoucher: capability del backend (G6, 2026-06-24).
+              En Finalizada (Closed) = false: el viaje terminó, no se emiten vouchers nuevos. */}
+          {activeTab === "voucher" ? (
+            <ReservaVoucherTab
+              reservaId={publicId}
+              reserva={reserva}
+              soloLectura={congelado}
+              canEmitVoucher={reserva?.capabilities?.canEmitVoucher ?? null}
+            />
+          ) : null}
 
           {activeTab === "account" ? (
             <div className="animate-in fade-in space-y-6 duration-500">

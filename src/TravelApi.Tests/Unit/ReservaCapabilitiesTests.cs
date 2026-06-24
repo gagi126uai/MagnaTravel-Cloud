@@ -117,12 +117,12 @@ public class ReservaCapabilitiesTests
         if (!expected) Assert.False(string.IsNullOrWhiteSpace(caps.CanEditOrDeletePayment.Reason));
     }
 
-    // ===================== Voucher: SOLO {Confirmed, Traveling, Closed} (ADR-036 quito ToSettle) =====================
+    // ===================== Voucher: SOLO {Confirmed, Traveling} (B3 2026-06-24 saco Closed) =====================
 
     [Theory]
     [InlineData(EstadoReserva.Confirmed, true)]
     [InlineData(EstadoReserva.Traveling, true)]
-    [InlineData(EstadoReserva.Closed, true)]
+    [InlineData(EstadoReserva.Closed, false)]   // B3: terminal = solo lectura; en Finalizada NO se emite/modifica voucher (ver/reimprimir si)
     [InlineData(EstadoReserva.InManagement, false)] // InManagement NO (decision del dueño)
     [InlineData(EstadoReserva.Quotation, false)]
     [InlineData(EstadoReserva.Budget, false)]
@@ -321,5 +321,62 @@ public class ReservaCapabilitiesTests
         Assert.Contains(EstadoReserva.Closed, caps.AllowedForward);
         Assert.Single(caps.AllowedForward);
         Assert.DoesNotContain(EstadoReserva.Cancelled, caps.AllowedForward);
+    }
+
+    // ===================== G3: cancelar SERVICIO solo en {InManagement, Confirmed} =====================
+
+    [Theory]
+    [InlineData(EstadoReserva.InManagement, true)]
+    [InlineData(EstadoReserva.Confirmed, true)]
+    [InlineData(EstadoReserva.Quotation, false)]   // pre-venta: el servicio se BORRA, no se cancela
+    [InlineData(EstadoReserva.Budget, false)]      // pre-venta
+    [InlineData(EstadoReserva.Traveling, false)]   // en viaje no se cancela (NC/ajuste)
+    [InlineData(EstadoReserva.Closed, false)]
+    [InlineData(EstadoReserva.Lost, false)]
+    [InlineData(EstadoReserva.Cancelled, false)]
+    [InlineData(EstadoReserva.PendingOperatorRefund, false)]
+    public void CanCancelServices_OnlyInActiveCollectionStates(string status, bool expected)
+    {
+        var caps = ReservaCapabilityPolicy.For(Ctx(status));
+        Assert.Equal(expected, caps.CanCancelServices.Allowed);
+        if (!expected) Assert.False(string.IsNullOrWhiteSpace(caps.CanCancelServices.Reason));
+    }
+
+    // ===================== G5: reprogramar viaje solo en {Confirmed, Traveling} =====================
+
+    [Theory]
+    [InlineData(EstadoReserva.Confirmed, true)]
+    [InlineData(EstadoReserva.Traveling, true)]    // el caso central: el viaje se atraso y se corre
+    [InlineData(EstadoReserva.Quotation, false)]
+    [InlineData(EstadoReserva.Budget, false)]
+    [InlineData(EstadoReserva.InManagement, false)] // pre-firme: armar fechas != reprogramar
+    [InlineData(EstadoReserva.Closed, false)]      // terminal: el viaje ya termino
+    [InlineData(EstadoReserva.Lost, false)]
+    [InlineData(EstadoReserva.Cancelled, false)]
+    [InlineData(EstadoReserva.PendingOperatorRefund, false)]
+    public void CanReschedule_OnlyFromConfirmedOnward(string status, bool expected)
+    {
+        var caps = ReservaCapabilityPolicy.For(Ctx(status));
+        Assert.Equal(expected, caps.CanReschedule.Allowed);
+        if (!expected) Assert.False(string.IsNullOrWhiteSpace(caps.CanReschedule.Reason));
+    }
+
+    // ===================== B3: documentos NO se agregan/modifican en terminales =====================
+
+    [Theory]
+    [InlineData(EstadoReserva.Quotation, true)]
+    [InlineData(EstadoReserva.Budget, true)]
+    [InlineData(EstadoReserva.InManagement, true)]
+    [InlineData(EstadoReserva.Confirmed, true)]
+    [InlineData(EstadoReserva.Traveling, true)]
+    [InlineData(EstadoReserva.Closed, false)]      // terminal: documentos solo lectura
+    [InlineData(EstadoReserva.Lost, false)]
+    [InlineData(EstadoReserva.Cancelled, false)]
+    [InlineData(EstadoReserva.PendingOperatorRefund, false)]
+    public void CanUploadDocument_BlockedOnlyOnTerminalStates(string status, bool expected)
+    {
+        var caps = ReservaCapabilityPolicy.For(Ctx(status));
+        Assert.Equal(expected, caps.CanUploadDocument.Allowed);
+        if (!expected) Assert.False(string.IsNullOrWhiteSpace(caps.CanUploadDocument.Reason));
     }
 }

@@ -371,17 +371,18 @@ public class BookingCancellationService
         var reserva = await _db.Reservas.FirstOrDefaultAsync(r => r.PublicId == request.ReservaPublicId, ct)
             ?? throw new KeyNotFoundException($"Reserva {request.ReservaPublicId} no encontrada.");
 
-        // ADR-033 (2026-06-16, E4/B6): gate de ESTADO VIVO. Cancelar un servicio solo tiene sentido si la
-        // reserva esta operativamente viva (En gestion / Confirmada / En viaje / A liquidar). Antes este path
-        // NO validaba estado (F10) y dejaba cancelar servicios en reservas pre-venta (Cotizacion/Presupuesto:
-        // no hay venta), Perdidas, ya Canceladas, Finalizadas o esperando refund -> bajaba el saldo de una
-        // reserva muerta a escondidas. Se reusa ActiveCollectionStatuses (operativo vivo, SIN Closed): una
-        // Finalizada no se "des-cancela" un servicio; si hay que mover su plata es por otro circuito.
+        // ADR-033 (2026-06-16, E4/B6) + G3 (2026-06-24): gate de ESTADO VIVO. Cancelar un servicio solo tiene
+        // sentido si la reserva esta operativamente viva (En gestion / Confirmada). Antes este path NO validaba
+        // estado (F10) y dejaba cancelar servicios en reservas pre-venta (Cotizacion/Presupuesto: nada se
+        // concreto -> ahi un servicio se BORRA, no se cancela), Perdidas, ya Canceladas, Finalizadas o esperando
+        // refund -> bajaba el saldo de una reserva muerta a escondidas. Se reusa ActiveCollectionStatuses
+        // (operativo vivo, SIN Closed ni Traveling): una Finalizada no "des-cancela" un servicio, y En viaje no
+        // se cancela (se corrige por NC/ajuste, ADR-035). Es el MISMO conjunto que la capacidad CanCancelServices
+        // que el front usa para mostrar "Cancelar servicio" vs "Borrar servicio".
         // InvalidOperationException -> 409 (igual que el candado fiscal de abajo).
         if (!EstadoReserva.IsCollectableStatus(reserva.Status))
             throw new InvalidOperationException(
-                "No se puede cancelar un servicio en este estado de la reserva. " +
-                "Solo se cancelan servicios en reservas activas (En gestion, Confirmada, En viaje o A liquidar).");
+                ReservaCapabilityPolicy.ServiceNotCancellableStatusReason);
 
         // 0) SEC-B1 (candado fiscal): ANTES de tocar nada, consultar el mismo guard que usa el path normal
         //    de cambio de Status (BookingService). Si la reserva tiene una FACTURA viva (CAE no anulado) o

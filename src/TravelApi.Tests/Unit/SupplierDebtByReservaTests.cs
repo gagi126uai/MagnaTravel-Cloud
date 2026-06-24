@@ -185,6 +185,34 @@ public class SupplierDebtByReservaTests
         Assert.Equal(500m, ars.Balance);
     }
 
+    // G1/G2 (2026-06-24): una reserva en pre-venta (Quotation/Budget) o muerta (Lost) NO genera deuda con el
+    // proveedor — no se concreto / esta descartada. La fuente unica SupplierDebtCalculator.ValidReservationStatuses
+    // (= {InManagement, Confirmed, Traveling, Closed}) ya las excluye; este test pinea ese comportamiento para que
+    // un cambio futuro de la lista no reintroduzca deuda fantasma de presupuestos/perdidas.
+    [Theory]
+    [InlineData("Quotation")]
+    [InlineData("Budget")]
+    [InlineData("Lost")]
+    public async Task GetSupplierDebtByReservaAsync_PreSaleOrLostReserva_DoesNotGenerateSupplierDebt(string status)
+    {
+        await using var context = CreateContext();
+        var supplier = new Supplier { Name = "Mayorista" };
+        context.Suppliers.Add(supplier);
+        await context.SaveChangesAsync();
+
+        var reserva = await AddReservaAsync(context, "F-PRE", status);
+        // Hotel CONFIRMADO con costo: si la reserva contara, generaria deuda. No debe contar.
+        AddConfirmedHotel(context, supplier.Id, reserva.Id, netCost: 1000m);
+        await context.SaveChangesAsync();
+
+        var service = CreateServiceForUser(context, canSeeCost: true);
+        var dto = await service.GetSupplierDebtByReservaAsync(supplier.Id, CancellationToken.None);
+
+        // Ni lineas por reserva ni totales globales: la deuda es 0.
+        Assert.Empty(dto.Reservas);
+        Assert.Empty(dto.GlobalTotals);
+    }
+
     [Fact]
     public async Task GetSupplierDebtByReservaAsync_PaymentWithoutReserva_GoesToAdvancesBucket()
     {

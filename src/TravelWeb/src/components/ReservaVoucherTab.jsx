@@ -188,11 +188,21 @@ function Modal({ isOpen, onClose, title, children }) {
  * Props:
  *  - reservaId: string — publicId de la reserva.
  *  - reserva: object — DTO de la reserva (para leer pasajeros y saldo).
- *  - soloLectura: boolean — cuando true, se ocultan todos los botones de escritura
+ *  - soloLectura: boolean — cuando true, se ocultan TODOS los botones de escritura
  *    (Añadir, Emitir, Aprobar, Rechazar, Editar, Anular). Solo quedan Ver y Descargar.
  *    Debe derivarse de esEstadoCongelado(reserva) en el componente padre.
+ *  - canEmitVoucher: CapabilityDto {allowed, reason} del backend (G6, 2026-06-24).
+ *    Cuando allowed=false, el botón "Emitir" no aparece aunque el voucher esté en Draft.
+ *    Permite que Finalizada (Closed) bloquee la emisión de vouchers aunque no sea estado congelado.
+ *    Si no se pasa (undefined/null), el comportamiento queda gobernado solo por soloLectura.
  */
-export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false }) {
+export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false, canEmitVoucher }) {
+  // Determinar si la emisión de vouchers está permitida en el estado actual.
+  // soloLectura=true: estados congelados (Traveling/Lost/Cancelled/FullyInvoiced) → bloquea todo.
+  // canEmitVoucher.allowed=false: estados donde el viaje terminó (Closed) → solo bloquea Emitir.
+  // Degradación elegante: sin capability (DTO viejo), comportamiento anterior (solo soloLectura).
+  const puedeEmitirVoucher = !soloLectura && (canEmitVoucher == null || canEmitVoucher.allowed);
+
   const { user } = useAuthState();
   const passengers = useMemo(() => (Array.isArray(reserva?.passengers) ? reserva.passengers : []), [reserva]);
   const [vouchers, setVouchers] = useState([]);
@@ -876,7 +886,11 @@ export function ReservaVoucherTab({ reservaId, reserva, soloLectura = false }) {
                       </button>
                     ) : null}
 
-                    {!soloLectura && voucher.status === "Draft" ? (
+                    {/* Emitir: gateado por puedeEmitirVoucher (combina soloLectura + canEmitVoucher).
+                        En Finalizada (Closed) el backend manda canEmitVoucher.allowed=false:
+                        vouchers ya emitidos siguen visibles y descargables, pero no se emiten nuevos.
+                        (G6, 2026-06-24) */}
+                    {puedeEmitirVoucher && voucher.status === "Draft" ? (
                       <button
                         type="button"
                         onClick={() => promptIssue(voucher)}

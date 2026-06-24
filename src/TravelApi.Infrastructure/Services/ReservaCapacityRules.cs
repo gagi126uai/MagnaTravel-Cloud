@@ -26,7 +26,11 @@ public static class ReservaCapacityRules
     /// </summary>
     public static readonly HashSet<string> ConfirmedServiceStatuses = new(StringComparer.OrdinalIgnoreCase)
     {
-        "Confirmado", "Emitido", "HK", "TK", "KK", "KL"
+        "Confirmado", "Emitido", "HK", "TK", "KK", "KL",
+        // B2/OBS-1 (2026-06-24): "Finalizado" (servicio prestado al cerrar la reserva) es un servicio
+        // RESUELTO/confirmado. Sin esto, tras un revert Closed -> Traveling los guards lo verian como "sin
+        // confirmar" (falso positivo) y bloquearian operaciones validas sobre una reserva que ya estuvo cerrada.
+        WorkflowStatuses.Finalizado
     };
 
     /// <summary>
@@ -93,6 +97,47 @@ public static class ReservaCapacityRules
 
         // Estado de solo lectura: motivo legible segun el grupo terminal (sin datos sensibles).
         throw new InvalidOperationException(ReadOnlyServicesMessageFor(status));
+    }
+
+    /// <summary>
+    /// G5 (2026-06-24): PRIMERA COMPUERTA de la REPROGRAMACION de viaje (mover la fecha de salida de todo el
+    /// itinerario) — candado por ESTADO. Permite reprogramar SOLO desde Confirmada en adelante
+    /// ({Confirmed, Traveling}); bloquea pre-venta (Cotizacion/Presupuesto/En gestion) y terminales.
+    ///
+    /// <para>Es MAS ESTRICTA que <see cref="EnsureServicesEditableByStateAsync"/> a proposito: editar un
+    /// servicio suelto se permite en pre-venta, pero "reprogramar el viaje" es una accion operativa de venta
+    /// firme. Decide con la FUENTE UNICA <see cref="ReservaCapabilityPolicy"/> (el mismo <c>CanReschedule</c>
+    /// que el front usa para apagar el boton). El candado de autorizacion (Confirmed+) y el guard fiscal
+    /// (CAE/voucher) se siguen aplicando aparte, DESPUES de esta compuerta.</para>
+    ///
+    /// <para>Reserva inexistente: no-op (deja que el flujo propio devuelva su 404).</para>
+    /// </summary>
+    public static async Task EnsureReschedulableByStateAsync(
+        AppDbContext db,
+        int reservaId,
+        CancellationToken ct = default)
+    {
+        var status = await db.Reservas.AsNoTracking()
+            .Where(r => r.Id == reservaId)
+            .Select(r => r.Status)
+            .FirstOrDefaultAsync(ct);
+
+        if (string.IsNullOrWhiteSpace(status)) return;
+
+        var capabilities = ReservaCapabilityPolicy.For(new ReservaCapabilityContext(
+            Status: status,
+            Balance: 0m,
+            HasLiveCae: false,
+            HasLiveVoucher: false,
+            HasLiveEditAuth: false,
+            HasAnyPayment: false));
+
+        if (capabilities.CanReschedule.Allowed) return;
+
+        // Estado donde no se reprograma: motivo legible (sin datos sensibles). Reusamos el motivo de la
+        // capacidad para que front (boton apagado) y back (rechazo) muestren EXACTAMENTE el mismo texto.
+        throw new InvalidOperationException(
+            capabilities.CanReschedule.Reason ?? ReservaCapabilityPolicy.NotReschedulableStatusReason);
     }
 
     /// <summary>

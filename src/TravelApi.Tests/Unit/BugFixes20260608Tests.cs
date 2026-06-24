@@ -350,7 +350,9 @@ public class BugFixes20260608Tests
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => service.UpdateStatusAsync(1, EstadoReserva.InManagement));
-        Assert.Contains("sin pasajeros", ex.Message);
+        // G4 (2026-06-24): el mensaje se reescribio sin jerga ("Declará al menos 1 pasajero antes de marcar que
+        // el cliente aceptó."). Pineamos la palabra "pasajero" para no acoplarnos a la frase exacta.
+        Assert.Contains("pasajero", ex.Message);
         // No transiciono.
         Assert.Equal(EstadoReserva.Budget, (await context.Reservas.FindAsync(1))!.Status);
     }

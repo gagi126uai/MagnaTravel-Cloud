@@ -53,7 +53,7 @@ function formatTripDate(value) {
  * - onRequestEdit: callback para abrir el modal de autorizacion de edicion (cuando hay candado)
  * - onMarkLost: callback para abrir el modal "Marcar como perdida"
  * - Los callbacks onStatusChange, onDelete, onArchive, onRevert, onEditDates, onReschedule son manejados por el padre
- * - onReschedule: callback que abre ReprogramarViajeModal; se muestra cuando canEditServices.allowed === true.
+ * - onReschedule: callback que abre ReprogramarViajeModal; se muestra cuando capabilities.canReschedule.allowed === true (G5, 2026-06-24).
  * - serviciosCancelados: { cancelados: number, totalConProveedor: number } — para el contador "N de M".
  *   El padre lo calcula con calculateServiciosCanceladosResumen(allServices).
  *   Si viene null/undefined no se muestra nada (diseño conservador).
@@ -121,13 +121,16 @@ export function ReservaHeader({
         && reserva.status !== 'Closed';
 
     // ─── Botón "Reprogramar viaje" ────────────────────────────────────────────────
-    // Visible cuando el backend indica que los servicios son editables (canEditServices).
+    // G5 (2026-06-24): ahora se gate-a por canReschedule (capability específica del backend),
+    // no por canEditServices. canReschedule=true solo en {Confirmada, En viaje}.
+    // En pre-venta (Quotation/Budget) y en estados terminales = false.
+    // Fallback a canEditServices si el backend aún no manda canReschedule (DTO viejo).
     // "Reprogramar" es diferente de "Editar fechas":
     //   - "Editar fechas" overridea la cabecera de la reserva (manual, fecha a fecha).
     //   - "Reprogramar" mueve TODOS los servicios el mismo delta desde una nueva salida.
     // Se oculta en estados archivados — la reserva archivada es historial.
-    const editServicesCap = getCapability('canEditServices');
-    const showRescheduleButton = editServicesCap.allowed && !isArchived && typeof onReschedule === 'function';
+    const rescheduleCap = capabilities?.canReschedule ?? getCapability('canEditServices');
+    const showRescheduleButton = rescheduleCap.allowed && !isArchived && typeof onReschedule === 'function';
 
     // ─── Guarda "En viaje" = inmutable ───────────────────────────────────────────
     // Guía UX 2026-06-22: en Traveling la reserva es inmutable por diseño (no por candado

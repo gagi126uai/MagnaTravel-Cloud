@@ -7,6 +7,12 @@ public static class WorkflowStatuses
     public const string Solicitado = "Solicitado";
     public const string Confirmado = "Confirmado";
     public const string Cancelado = "Cancelado";
+
+    // B2 (2026-06-24): un servicio PRESTADO/cumplido al cerrar la reserva (Finalizada). NO es "Cancelado":
+    // sigue siendo parte de la venta, asi que NO sale del saldo ni de la deuda con el operador. Es un
+    // sub-estado mas "fuerte" que Confirmado (ya se cumplio), pero a los efectos de plata cuenta IGUAL que
+    // un servicio confirmado/activo. El mapeo (MapGenericStatus / MapFlightStatus) lo trata como Confirmado.
+    public const string Finalizado = "Finalizado";
 }
 
 public static class WorkflowStatusHelper
@@ -19,6 +25,10 @@ public static class WorkflowStatusHelper
         {
             "HK" or "TK" or "KK" or "KL" => WorkflowStatuses.Confirmado,
             "UN" or "UC" or "HX" or "NO" => WorkflowStatuses.Cancelado,
+            // B2 (2026-06-24): un vuelo Finalizado (viaje cumplido al cerrar la reserva) cuenta como
+            // Confirmado para la plata. No es un codigo IATA; lo seteamos nosotros al cerrar la reserva.
+            // Se compara en mayusculas ("FINALIZADO") porque MapFlightStatus normaliza a upper.
+            _ when upper == WorkflowStatuses.Finalizado.ToUpperInvariant() => WorkflowStatuses.Confirmado,
             _ => WorkflowStatuses.Solicitado
         };
     }
@@ -35,6 +45,11 @@ public static class WorkflowStatusHelper
         // Confirmado/Confirmada, Emitido/Emitida) sin esos falsos positivos. Cancel primero (gana sobre confirm).
         if (lower.StartsWith("cancel")) return WorkflowStatuses.Cancelado;
         if (lower.StartsWith("confirm") || lower.StartsWith("emit")) return WorkflowStatuses.Confirmado;
+
+        // B2 (2026-06-24): "Finalizado" (servicio prestado al cerrar la reserva) cuenta como Confirmado para
+        // la plata — un servicio cumplido NO sale del saldo ni de la deuda. Se ancla con StartsWith("finaliz")
+        // para matchear "Finalizado"/"Finalizada" sin falsos positivos (igual criterio que cancel/confirm).
+        if (lower.StartsWith("finaliz")) return WorkflowStatuses.Confirmado;
 
         return WorkflowStatuses.Solicitado;
     }

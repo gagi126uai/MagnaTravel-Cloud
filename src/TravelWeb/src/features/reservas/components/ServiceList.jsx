@@ -206,6 +206,10 @@ export function esServicioConfirmadoPorOperador(svc) {
  * porque en ambos casos la reserva quedó deshecha. La distincion entre Lost/Cancelled
  * la maneja el cartel de estado de la reserva, no los servicios.
  *
+ * 2026-06-24 (G1): cuando la reserva pasa a Closed (Finalizada), el backend marca
+ * los servicios como "Finalizado". Este estado se muestra como "Finalizado" en verde
+ * (completado), NO se tacha (no es cancelación sino cierre exitoso del viaje).
+ *
  * @param {string|null} workflowStatus - Estado workflow del servicio (puede ser null/undefined)
  * @param {string} reservaStatus - Estado de la reserva (ej. "Quotation", "Budget", "InManagement")
  */
@@ -214,6 +218,10 @@ function etiquetaEstadoServicio(workflowStatus, reservaStatus) {
     // ADR-036: Lost Y Cancelled → "Anulado" (ambas = reserva deshecha, unificamos el termino).
     if (reservaStatus === 'Lost') return 'Anulado';
     if (reservaStatus === 'Cancelled') return 'Anulado';
+
+    // "Finalizado": el backend lo marca cuando la reserva se cierra (Closed).
+    // No lo tratamos como cancelado: el viaje fue exitoso, no se tacha.
+    if (workflowStatus === 'Finalizado') return 'Finalizado';
 
     // "Confirmado", "Cancelado" y otros estados concretos del operador
     // (ej. "Emitido", "HK") se muestran tal cual.
@@ -232,6 +240,8 @@ function etiquetaEstadoServicio(workflowStatus, reservaStatus) {
  * "En espera" (cotizacion/presupuesto, nada pedido aun) va gris neutro, distinto
  * del ambar de "Solicitado" (ya pedido al operador, esperando confirmacion).
  * "Anulado" (reserva Lost) va en gris sobrio (la reserva no prosperó).
+ * "Finalizado" (2026-06-24): verde/slate — viaje exitoso, no es cancelación.
+ *   Verde claro en vez del verde intenso de "Confirmado" para distinguirlos.
  */
 function claseColorEstadoServicio(workflowStatus, reservaStatus) {
     const etiqueta = etiquetaEstadoServicio(workflowStatus, reservaStatus);
@@ -240,6 +250,9 @@ function claseColorEstadoServicio(workflowStatus, reservaStatus) {
     // "Anulado" (Lost): gris sobrio — la reserva no prosperó, no queremos un color de alerta.
     if (etiqueta === 'Anulado') return 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-500';
     if (etiqueta === 'En espera') return 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400';
+    // "Finalizado": verde pálido / slate — el servicio se cumplió, el viaje terminó bien.
+    // Se diferencia de "Confirmado" (verde intenso) para no confundir "en camino" con "cerrado".
+    if (etiqueta === 'Finalizado') return 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400';
     return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400';
 }
 
@@ -857,13 +870,20 @@ export function ServiceList({
 
     // ── Guía UX 2026-06-22: botones de escritura ──────────────────────────────────
     // "Agregar / Editar" se ocultan cuando canEditServices.allowed === false.
-    // "Cancelar / Cancelar varios" se ocultan cuando canCancel.allowed === false.
+    // "Cancelar servicio" se oculta cuando canCancelServices.allowed === false (2026-06-24).
+    //   canCancelServices = true SOLO en {En gestión, Confirmada}.
+    //   En Cotización/Presupuesto es false → la acción "Cancelar" no aparece; solo "Borrar".
+    //   El ModalBorrarVsCancelar también lee esServicioConfirmadoPorOperador: si el servicio
+    //   no está resuelto, el modal muestra "Borrar" aunque canCancelServices fuese true.
+    //   Ambas condiciones trabajan juntas sin duplicar lógica de negocio.
     // Si no hay capabilities (DTO viejo), degradamos mostrando los botones (fallback seguro).
     const puedeEditarServicios = capabilities
         ? (capabilities.canEditServices?.allowed !== false)
         : true;
     const puedeCancelarServicios = capabilities
-        ? (capabilities.canCancel?.allowed !== false)
+        // G3 (2026-06-24): usamos canCancelServices específica para servicios.
+        // Fallback a canCancel (campo más viejo) si el backend no mandó canCancelServices todavía.
+        ? (capabilities.canCancelServices?.allowed ?? capabilities.canCancel?.allowed ?? true)
         : true;
     // Gate de costo: con flag OFF se usa isAdmin() (comportamiento original).
     // Con flag ON se usa hasPermission("cobranzas.see_cost") — admin pasa igual (bypass en hasPermission).

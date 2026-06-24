@@ -117,9 +117,15 @@ public class BookingServiceRescheduleTests
 
     /// <summary>
     /// Siembra una reserva con vuelo (ida+vuelta de un segmento), hotel y transfer (solo ida). Es la
-    /// combinacion multi-tipo que pide el caso. status = estado de la reserva (default En gestion: editable).
+    /// combinacion multi-tipo que pide el caso. status = estado de la reserva.
+    ///
+    /// <para>G5 (2026-06-24): el default es <see cref="EstadoReserva.Traveling"/> porque reprogramar ahora solo
+    /// se permite desde Confirmada en adelante ({Confirmed, Traveling}). Se elige Traveling (no Confirmed) para
+    /// los tests de MECANICA DE FECHAS porque Confirmed esta bajo el candado de autorizacion (ReservaLockGuard)
+    /// y exigiria sembrar una autorizacion viva en cada test; Traveling es reprogramable y NO tiene candado, asi
+    /// que aisla la mecanica del shift sin ruido. Antes el default era En gestion, que ya NO es reprogramable.</para>
     /// </summary>
-    private static async Task<Reserva> SeedMultiTypeAsync(AppDbContext context, string status = EstadoReserva.InManagement)
+    private static async Task<Reserva> SeedMultiTypeAsync(AppDbContext context, string status = EstadoReserva.Traveling)
     {
         var supplier = new Supplier { Id = 1, Name = "Operador Test" };
         var reserva = new Reserva
@@ -265,13 +271,36 @@ public class BookingServiceRescheduleTests
         Assert.Equal(TransferPickup.AddDays(5), movedTransfer.PickupDateTime);
     }
 
-    // ===================== Bloqueo por estado: En viaje (solo lectura) =====================
+    // ===================== En viaje SI se puede reprogramar (G5) =====================
 
     [Fact]
-    public async Task Reschedule_Traveling_IsBlockedByStateGuard()
+    public async Task Reschedule_Traveling_IsAllowed()
     {
+        // G5 (2026-06-24): reprogramar aplica "desde Confirmada en adelante" e INCLUYE En viaje. Es el caso de
+        // uso central del feature: el vuelo se atraso con el viaje ya empezado y todo el itinerario se corre.
+        // Antes este estado estaba bloqueado (reusaba CanEditServices, que trata Traveling como solo lectura);
+        // ahora usa el gate dedicado CanReschedule, que SI permite Traveling.
         await using var context = CreateContext();
         var reserva = await SeedMultiTypeAsync(context, status: EstadoReserva.Traveling);
+        var service = CreateService(context, CreateMapper());
+
+        var result = await service.RescheduleAsync(
+            reserva.PublicId.ToString(), new RescheduleReservaRequest(DaysShift: 7), CancellationToken.None);
+
+        Assert.Equal(7, result.DaysShift);
+        var hotel = await context.HotelBookings.SingleAsync();
+        Assert.Equal(HotelCheckIn.AddDays(7), hotel.CheckIn);
+    }
+
+    // ===================== Bloqueo por estado: pre-firme (En gestion) NO reprograma (G5) =====================
+
+    [Fact]
+    public async Task Reschedule_InManagement_IsBlockedByStateGuard()
+    {
+        // G5 (2026-06-24): En gestion es pre-firme. El itinerario todavia se esta armando: mover fechas ahi es
+        // editar el servicio, no "reprogramar el viaje". Reprogramar solo aplica desde Confirmada en adelante.
+        await using var context = CreateContext();
+        var reserva = await SeedMultiTypeAsync(context, status: EstadoReserva.InManagement);
         var service = CreateService(context, CreateMapper());
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>

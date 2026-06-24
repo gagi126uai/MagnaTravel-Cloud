@@ -8,6 +8,7 @@ using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Interfaces;
+using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Infrastructure.Services;
@@ -91,6 +92,11 @@ public class AttachmentService : IAttachmentService
     {
         var reserva = await _reservaRepo.GetByIdAsync(reservaId, ct);
         if (reserva == null) throw new KeyNotFoundException("Reserva not found.");
+
+        // B3 (2026-06-24): en estados terminales (Finalizada/Anulada/Perdida/Esperando reembolso) NO se agregan
+        // documentos. Ver/descargar lo ya cargado sigue disponible (esos endpoints no pasan por aca). Usa la
+        // FUENTE UNICA de capacidades (CanUploadDocument) para que el front (boton apagado) y el back coincidan.
+        EnsureDocumentsWritableByState(reserva);
         var existingCount = await _attachmentRepo.Query().CountAsync(a => a.ReservaId == reservaId, ct);
         if (existingCount >= MaxAttachmentCountPerReserva)
         {
@@ -212,6 +218,11 @@ public class AttachmentService : IAttachmentService
         var attachment = await _attachmentRepo.GetByIdAsync(id, ct);
         if (attachment == null) throw new KeyNotFoundException("Attachment not found.");
 
+        // B3 (2026-06-24): renombrar es MODIFICAR el documento -> bloqueado en estados terminales (igual que
+        // subir). Resolvemos la reserva del adjunto para evaluar el estado por la fuente unica de capacidades.
+        var reserva = await _reservaRepo.GetByIdAsync(attachment.ReservaId, ct);
+        if (reserva != null) EnsureDocumentsWritableByState(reserva);
+
         // 1) Validar el nombre crudo antes de tocar nada. Vacio/solo-espacios se rechaza.
         var trimmed = (newFileName ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(trimmed))
@@ -272,16 +283,26 @@ public class AttachmentService : IAttachmentService
         return MapToDto(attachment);
     }
 
-    public async Task DeleteAttachmentAsync(string attachmentPublicIdOrLegacyId, CancellationToken ct)
+    public async Task DeleteAttachmentAsync(string attachmentPublicIdOrLegacyId, string deletedBy, CancellationToken ct)
     {
         var attachmentId = await ResolveAttachmentIdAsync(attachmentPublicIdOrLegacyId, ct);
-        await DeleteAttachmentAsync(attachmentId, ct);
+        await DeleteAttachmentAsync(attachmentId, deletedBy, ct);
     }
 
-    public async Task DeleteAttachmentAsync(int id, CancellationToken ct)
+    public async Task DeleteAttachmentAsync(int id, string deletedBy, CancellationToken ct)
     {
         var attachment = await _attachmentRepo.GetByIdAsync(id, ct);
         if (attachment == null) throw new KeyNotFoundException("Attachment not found.");
+
+        // B3/OBS-2 (2026-06-24): borrar un documento es MODIFICAR el set de documentos -> bloqueado en estados
+        // terminales (igual que subir/renombrar). Resolvemos la reserva del adjunto para evaluar el estado por
+        // la fuente unica de capacidades.
+        var reserva = await _reservaRepo.GetByIdAsync(attachment.ReservaId, ct);
+        if (reserva != null) EnsureDocumentsWritableByState(reserva);
+
+        // Capturamos el nombre ANTES de borrar para el rastro auditable (solo metadato no sensible).
+        var deletedFileName = attachment.FileName;
+        var reservaIdForAudit = attachment.ReservaId;
 
         await _attachmentRepo.DeleteAsync(attachment, ct);
 
@@ -295,6 +316,20 @@ public class AttachmentService : IAttachmentService
         catch (MinioException ex)
         {
             _logger.LogError(ex, "Error deleting file from MinIO: {FilePath}", attachment.StoredFileName);
+        }
+
+        // B3/OBS-2: rastro auditable del borrado (quien/cuando/que archivo), igual que el renombre. Solo
+        // metadato no sensible (nombre de etiqueta + reserva), nunca contenido del archivo.
+        if (_auditService is not null)
+        {
+            await _auditService.LogBusinessEventAsync(
+                action: "Delete",
+                entityName: nameof(ReservaAttachment),
+                entityId: id.ToString(),
+                details: $"Adjunto '{deletedFileName}' eliminado de la reserva {reservaIdForAudit}.",
+                userId: deletedBy,
+                userName: deletedBy,
+                ct: ct);
         }
     }
 
@@ -337,6 +372,22 @@ public class AttachmentService : IAttachmentService
             UploadedBy = attachment.UploadedBy ?? string.Empty,
             UploadedAt = attachment.UploadedAt
         };
+    }
+
+    /// <summary>
+    /// B3 (2026-06-24): rechaza agregar/modificar documentos cuando la reserva esta en un estado terminal
+    /// (Finalizada/Anulada/Perdida/Esperando reembolso). Evalua la capacidad <c>CanUploadDocument</c> de la
+    /// FUENTE UNICA de capacidades, asi el front (que apaga el boton "Subir documento") y el back rechazan con
+    /// el MISMO criterio y el MISMO motivo. Solo el estado importa, el resto del contexto va en valor neutro.
+    /// InvalidOperationException -> el controller la mapea a 400 (mismo contrato que el resto de validaciones).
+    /// </summary>
+    private static void EnsureDocumentsWritableByState(Reserva reserva)
+    {
+        var capability = ReservaCapabilityPolicy
+            .For(new ReservaCapabilityContext(reserva.Status, reserva.Balance, false, false, false, false))
+            .CanUploadDocument;
+        if (!capability.Allowed)
+            throw new InvalidOperationException(capability.Reason);
     }
 
     private static string SanitizeOriginalFileName(string fileName)

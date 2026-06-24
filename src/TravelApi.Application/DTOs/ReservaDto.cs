@@ -135,6 +135,27 @@ public class ReservaCapabilitiesDto
     /// </summary>
     public CapabilityDto CanAnnul { get; set; } = new();
 
+    /// <summary>
+    /// G3 (2026-06-24): si se puede CANCELAR un servicio en el estado actual. true solo en {En gestión,
+    /// Confirmada}. En pre-venta (Cotización/Presupuesto) un servicio se BORRA, no se cancela; el front usa
+    /// esto para mostrar "Cancelar servicio" vs "Borrar servicio". En viaje/terminales = false.
+    /// </summary>
+    public CapabilityDto CanCancelServices { get; set; } = new();
+
+    /// <summary>
+    /// G5 (2026-06-24): si se puede REPROGRAMAR el viaje (mover la fecha de salida del itinerario) en el estado
+    /// actual. true solo desde Confirmada en adelante {Confirmada, En viaje}. El front apaga el botón
+    /// "Reprogramar viaje" cuando es false.
+    /// </summary>
+    public CapabilityDto CanReschedule { get; set; } = new();
+
+    /// <summary>
+    /// B3 (2026-06-24): si se pueden AGREGAR/MODIFICAR documentos adjuntos en el estado actual. false en
+    /// estados terminales (Finalizada/Anulada/Perdida/Esperando reembolso): ahí los documentos son solo
+    /// lectura. Ver/descargar lo ya cargado no depende de esta capacidad.
+    /// </summary>
+    public CapabilityDto CanUploadDocument { get; set; } = new();
+
     public CapabilityDto CanAdvance { get; set; } = new();
     public CapabilityDto CanEmitVoucher { get; set; } = new();
 

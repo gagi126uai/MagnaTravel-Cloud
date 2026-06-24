@@ -135,4 +135,33 @@ public class ServiceResolutionRulesTests
         Assert.True(ServiceResolutionRules.IsOperatorConfirmed(transfer));
         Assert.True(ServiceResolutionRules.IsResolved(transfer));
     }
+
+    // ===================== B2: "Finalizado" = activo (resuelto), NO cancelado =====================
+
+    [Fact]
+    public void Hotel_Finalizado_IsResolvedNotCancelled()
+    {
+        // Un servicio finalizado (prestado al cerrar la reserva) sigue en la venta: resuelto, NO cancelado.
+        var hotel = new HotelBooking { Status = WorkflowStatuses.Finalizado };
+        Assert.True(ServiceResolutionRules.IsResolved(hotel));
+        Assert.False(ServiceResolutionRules.IsCancelled(hotel));
+    }
+
+    [Fact]
+    public void GenericService_Finalizado_IsResolvedNotCancelled()
+    {
+        var service = new ServicioReserva { Status = WorkflowStatuses.Finalizado };
+        Assert.True(ServiceResolutionRules.IsResolved(service));
+        Assert.False(ServiceResolutionRules.IsCancelled(service));
+    }
+
+    [Fact]
+    public void Flight_Finalizado_IsNotCancelled()
+    {
+        // El vuelo finalizado NO es cancelado (no sale del saldo). Su IsResolved depende de TicketIssuedAt
+        // (al cerrar, un vuelo ya emitido conserva su ticket), pero lo central es que NO es cancelado.
+        var flight = new FlightSegment { Status = WorkflowStatuses.Finalizado, TicketIssuedAt = DateTime.UtcNow };
+        Assert.False(ServiceResolutionRules.IsCancelled(flight));
+        Assert.True(ServiceResolutionRules.IsResolved(flight));
+    }
 }

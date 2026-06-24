@@ -66,9 +66,12 @@ public class AttachmentsController : ControllerBase
         {
             return NotFound();
         }
-        catch (InvalidOperationException)
+        catch (InvalidOperationException ex)
         {
-            return BadRequest(new { message = "El archivo adjunto es invalido o no esta permitido." });
+            // B3 (2026-06-24): el servicio lanza InvalidOperationException tanto por archivo invalido/limite
+            // como por estado terminal (documentos solo lectura). Surface el mensaje real (es texto de negocio
+            // legible, sin datos sensibles) para que el usuario entienda por que no pudo subir.
+            return BadRequest(new { message = ex.Message });
         }
         catch
         {
@@ -140,12 +143,19 @@ public class AttachmentsController : ControllerBase
     {
         try
         {
-            await _attachmentService.DeleteAttachmentAsync(publicIdOrLegacyId, cancellationToken);
+            var deletedBy = User.Identity?.Name ?? "System";
+            await _attachmentService.DeleteAttachmentAsync(publicIdOrLegacyId, deletedBy, cancellationToken);
             return NoContent();
         }
         catch (KeyNotFoundException)
         {
             return NotFound();
+        }
+        catch (InvalidOperationException ex)
+        {
+            // B3/OBS-2 (2026-06-24): en estado terminal los documentos son solo lectura -> no se borran.
+            // Surface el mensaje real (texto de negocio legible, sin datos sensibles).
+            return BadRequest(new { message = ex.Message });
         }
     }
 }

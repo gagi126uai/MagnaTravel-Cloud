@@ -277,6 +277,8 @@ public class Adr033DecoupledCollectionTests
     [InlineData("Cancelled")]
     [InlineData("Closed")]
     [InlineData("Quotation")]
+    [InlineData("Budget")]    // G3 (2026-06-24): en pre-venta el servicio se BORRA, no se cancela
+    [InlineData("Traveling")] // G3/ADR-035: en viaje no se cancela (se corrige por NC/ajuste)
     [InlineData("PendingOperatorRefund")]
     public async Task CancelService_OnDeadReserva_Rejects(string status)
     {

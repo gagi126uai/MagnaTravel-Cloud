@@ -55,6 +55,9 @@ public sealed record ReservaCapabilities(
     Cap CanEditReservaData,
     Cap CanCancel,
     Cap CanAnnul,
+    Cap CanCancelServices,
+    Cap CanReschedule,
+    Cap CanUploadDocument,
     Cap CanAdvance,
     Cap CanEmitVoucher,
     Cap CanCorrectTravelingEntry,
@@ -118,6 +121,27 @@ public static class ReservaCapabilityPolicy
     /// <summary>No hay accion de cancelacion valida en este estado (pre-venta o ya terminal).</summary>
     public const string NotCancellableStatusReason =
         "No se puede cancelar la reserva en este estado.";
+
+    /// <summary>
+    /// G3 (2026-06-24): no se cancela un servicio en este estado. En pre-venta (Cotizacion/Presupuesto) un
+    /// servicio se BORRA, no se cancela (nada se concreto); en viaje/terminales no aplica. Sin datos sensibles.
+    /// </summary>
+    public const string ServiceNotCancellableStatusReason =
+        "En este estado los servicios no se cancelan. En un presupuesto, para sacar un servicio borralo.";
+
+    /// <summary>
+    /// G5 (2026-06-24): no se puede reprogramar el viaje en este estado. Reprogramar (mover la fecha de salida)
+    /// aplica desde Confirmada en adelante (Confirmada / En viaje), no en pre-venta ni en estados terminales.
+    /// </summary>
+    public const string NotReschedulableStatusReason =
+        "El viaje se puede reprogramar recién desde Confirmada en adelante.";
+
+    /// <summary>
+    /// B3 (2026-06-24): en estados terminales (Finalizada/Anulada/Perdida/Esperando reembolso) no se agregan ni
+    /// modifican documentos adjuntos. Ver/descargar lo ya cargado sigue disponible. Sin datos sensibles.
+    /// </summary>
+    public const string DocumentReadOnlyOnTerminalReason =
+        "En este estado no se pueden agregar ni modificar documentos. Los ya cargados se pueden ver y descargar.";
 
     /// <summary>
     /// ADR-036 (2026-06-21): En viaje (Traveling) no se cobra — el viaje ya empezo y para llegar a Traveling
@@ -199,19 +223,23 @@ public static class ReservaCapabilityPolicy
     };
 
     /// <summary>
-    /// Estados desde los que se puede emitir VOUCHER (Decision 3 del dueño): Confirmed en adelante,
-    /// incluido Closed. InManagement NO. Es el MISMO conjunto que enforza
-    /// <c>VoucherService.EnsureReservaAllowsVoucher</c> (fuente compartida para que front y back coincidan).
+    /// Estados desde los que se puede EMITIR / MODIFICAR un VOUCHER: {Confirmed, Traveling}. Es el MISMO
+    /// conjunto que enforza <c>VoucherService.EnsureReservaAllowsVoucher</c> (fuente compartida para que front
+    /// y back coincidan).
     ///
-    /// <para>ADR-036 (2026-06-21): se quito ToSettle (estado eliminado). Traveling SE MANTIENE: el voucher es
-    /// el documento que el pasajero necesita para viajar, asi que debe poder emitirse/reimprimirse en viaje.
-    /// Quedan {Confirmed, Traveling, Closed}.</para>
+    /// <para>B3 (2026-06-24, decision del dueño): se SACO Closed (Finalizada). En estados TERMINALES
+    /// (Closed/Cancelled/Lost/PendingOperatorRefund) un voucher ya NO se agrega ni se modifica — el viaje
+    /// termino o se deshizo. VER/REIMPRIMIR/DESCARGAR un voucher ya emitido SIGUE permitido (eso no pasa por
+    /// esta capacidad: la reimpresion lee un voucher existente, no lo emite). Esto REVIERTE la decision previa
+    /// (ADR-036 incluia Closed para "emitir en Finalizada"): el dueño ahora quiere terminal = solo lectura.</para>
+    ///
+    /// <para>ADR-036 (2026-06-21): ToSettle quedo eliminado. Traveling SE MANTIENE: el voucher es el documento
+    /// que el pasajero necesita para viajar, asi que se emite/reimprime en viaje. Quedan {Confirmed, Traveling}.</para>
     /// </summary>
     public static readonly string[] VoucherStatuses =
     {
         EstadoReserva.Confirmed,
         EstadoReserva.Traveling,
-        EstadoReserva.Closed,
     };
 
     /// <summary>
@@ -250,6 +278,35 @@ public static class ReservaCapabilityPolicy
     };
 
     /// <summary>
+    /// G3 (2026-06-24): estados desde los que se puede CANCELAR un servicio. {InManagement, Confirmed}.
+    ///
+    /// <para><b>Pre-venta NO</b>: en Quotation/Budget nada se concreto con el operador, asi que un servicio no
+    /// se "cancela" — se BORRA (es solo una linea del presupuesto). <b>En viaje / terminales NO</b>: el viaje
+    /// ya empezo (Traveling, se corrige por NC/ajuste) o la reserva esta cerrada/muerta. Coincide EXACTAMENTE
+    /// con <see cref="EstadoReserva.ActiveCollectionStatuses"/> (operativo vivo, sin Closed), que es el mismo
+    /// gate que ya enforza <c>BookingCancellationService.CancelServiceAsync</c> via
+    /// <c>EstadoReserva.IsCollectableStatus</c> — front y back coinciden.</para>
+    /// </summary>
+    private static readonly string[] CancelServiceStatuses = EstadoReserva.ActiveCollectionStatuses;
+
+    /// <summary>
+    /// G5 (2026-06-24): estados desde los que se puede REPROGRAMAR el viaje (mover la fecha de salida de todo
+    /// el itinerario). {Confirmed, Traveling}.
+    ///
+    /// <para>Solo tiene sentido "desde Confirmada en adelante": antes de confirmar (Quotation/Budget/
+    /// InManagement) el itinerario todavia se esta armando — mover fechas es editar el servicio, no reprogramar.
+    /// En los TERMINALES (Closed/Lost/Cancelled/PendingOperatorRefund) no hay viaje que mover. <b>Traveling SI</b>:
+    /// un viaje en curso se puede correr (el vuelo se atraso y todo el itinerario se desplaza). <b>Closed NO</b>:
+    /// una Finalizada no se reprograma (el viaje ya termino). Esto es MAS ESTRICTO que <see cref="CanEditServices"/>
+    /// (que permite pre-venta) a proposito: reprogramar es una accion operativa de venta firme.</para>
+    /// </summary>
+    private static readonly string[] RescheduleStatuses =
+    {
+        EstadoReserva.Confirmed,
+        EstadoReserva.Traveling,
+    };
+
+    /// <summary>
     /// ADR-035: evalua TODAS las capacidades de una reserva a partir de su contexto minimo. Pura: no toca DB.
     /// </summary>
     public static ReservaCapabilities For(ReservaCapabilityContext ctx)
@@ -264,6 +321,9 @@ public static class ReservaCapabilityPolicy
             CanEditReservaData: EvaluateEditReservaData(ctx),
             CanCancel: EvaluateCancel(ctx),
             CanAnnul: EvaluateAnnul(ctx),
+            CanCancelServices: EvaluateCancelServices(ctx),
+            CanReschedule: EvaluateReschedule(ctx),
+            CanUploadDocument: EvaluateUploadDocument(ctx),
             CanAdvance: EvaluateAdvance(ctx),
             CanEmitVoucher: EvaluateVoucher(ctx),
             CanCorrectTravelingEntry: EvaluateCorrectTravelingEntry(ctx),
@@ -434,6 +494,44 @@ public static class ReservaCapabilityPolicy
             return Cap.Yes;
 
         return Cap.No(NoLiveMoneyToAnnulReason);
+    }
+
+    /// <summary>
+    /// G3 (2026-06-24): cancelar un SERVICIO. Permitido solo en {InManagement, Confirmed}
+    /// (<see cref="CancelServiceStatuses"/>). En pre-venta el servicio se borra, no se cancela; en viaje y
+    /// terminales no aplica. Misma fuente que el guard fino <c>CancelServiceAsync</c>
+    /// (<c>EstadoReserva.IsCollectableStatus</c>).
+    /// </summary>
+    private static Cap EvaluateCancelServices(ReservaCapabilityContext ctx)
+    {
+        if (!ContainsStatus(CancelServiceStatuses, ctx.Status))
+            return Cap.No(ServiceNotCancellableStatusReason);
+        return Cap.Yes;
+    }
+
+    /// <summary>
+    /// G5 (2026-06-24): reprogramar el viaje (mover la fecha de salida del itinerario completo). Permitido solo
+    /// en {Confirmed, Traveling} (<see cref="RescheduleStatuses"/>). Bloqueado en pre-venta y terminales. Es
+    /// mas estricto que <see cref="EvaluateEditServices"/> a proposito.
+    /// </summary>
+    private static Cap EvaluateReschedule(ReservaCapabilityContext ctx)
+    {
+        if (!ContainsStatus(RescheduleStatuses, ctx.Status))
+            return Cap.No(NotReschedulableStatusReason);
+        return Cap.Yes;
+    }
+
+    /// <summary>
+    /// B3 (2026-06-24): agregar/modificar DOCUMENTOS adjuntos. Bloqueado en los estados terminales
+    /// (<see cref="PaymentLockedStatuses"/> = Closed/Cancelled/Lost/PendingOperatorRefund), donde los
+    /// documentos son solo lectura (ver/descargar sigue, eso no pasa por esta capacidad). En cualquier otro
+    /// estado (pre-venta incluida) se pueden cargar documentos: un presupuesto puede tener su comprobante.
+    /// </summary>
+    private static Cap EvaluateUploadDocument(ReservaCapabilityContext ctx)
+    {
+        if (ContainsStatus(PaymentLockedStatuses, ctx.Status))
+            return Cap.No(DocumentReadOnlyOnTerminalReason);
+        return Cap.Yes;
     }
 
     /// <summary>

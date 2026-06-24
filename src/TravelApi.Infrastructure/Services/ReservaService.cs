@@ -2367,6 +2367,9 @@ public class ReservaService : IReservaService
             CanEditReservaData = Map(caps.CanEditReservaData),
             CanCancel = Map(caps.CanCancel),
             CanAnnul = Map(caps.CanAnnul),
+            CanCancelServices = Map(caps.CanCancelServices),
+            CanReschedule = Map(caps.CanReschedule),
+            CanUploadDocument = Map(caps.CanUploadDocument),
             CanAdvance = Map(caps.CanAdvance),
             CanEmitVoucher = Map(caps.CanEmitVoucher),
             CanCorrectTravelingEntry = Map(caps.CanCorrectTravelingEntry),
@@ -3598,6 +3601,13 @@ public class ReservaService : IReservaService
         if (status == EstadoReserva.Closed)
         {
             EnsureCanCloseAndStampClosedAt(file);
+
+            // B2 (2026-06-24): al FINALIZAR la reserva, sus servicios RESUELTOS pasan a "Finalizado"
+            // (prestado/cumplido). Delega en la FUENTE UNICA compartida con el cierre por el job
+            // (ReservaServiceFinalizer), para que el cierre manual y el automatico finalicen igual. NO hace
+            // SaveChanges: corre en la misma unidad de trabajo que la transicion (UpdateStatusAsync persiste
+            // una sola vez), asi servicios y estado quedan atomicos.
+            await Reservations.ReservaServiceFinalizer.MarkResolvedServicesFinalizedAsync(_context, id);
         }
 
         // Cancelled manual (B5): GATE FISCAL en el camino COMPARTIDO. Antes vivia solo en el wrapper
@@ -3648,7 +3658,11 @@ public class ReservaService : IReservaService
     {
         var hasServices = await HasServicesAsync(id);
         if (!hasServices)
-            throw new InvalidOperationException("No se puede confirmar la reserva porque no tiene ningun servicio cargado. Agrega al menos un servicio antes de reservar.");
+            // G4 (2026-06-24): mensaje claro y accionable, SIN jerga interna. En este punto el documento todavia
+            // es un PRESUPUESTO (pre-venta), por eso NO decimos "reserva"/"confirmar"/"reservar": el usuario
+            // marca "El cliente aceptó". El bloqueo de fondo (≥1 servicio) se mantiene: un presupuesto vacio no
+            // puede aceptarse.
+            throw new InvalidOperationException("Agregá al menos un servicio antes de marcar que el cliente aceptó.");
 
         // Normalizacion defensiva: en Presupuesto cualquier servicio debe estar en
         // "Solicitado". Si por algun bypass (API directa, data preexistente) hay
@@ -3674,7 +3688,7 @@ public class ReservaService : IReservaService
         if (declaredPax <= 0)
         {
             throw new InvalidOperationException(
-                "No se puede continuar sin pasajeros: declará al menos 1 pasajero en la reserva.");
+                "Declará al menos 1 pasajero antes de marcar que el cliente aceptó.");
         }
 
         // ADR-031: ya NO se exigen los pasajeros NOMINALES (nombre/documento) en este punto. Esa

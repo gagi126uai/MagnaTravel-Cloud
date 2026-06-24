@@ -32,11 +32,14 @@ public partial class BookingService
         //    Se valida ANTES de tocar guards: un request mal formado (los dos modos, o ninguno) es 400, no 409.
         var daysShift = ResolveDaysShift(req, reserva);
 
-        // 2) MISMOS guards que la edicion de un servicio individual, en el MISMO orden:
-        //    (a) candado por ESTADO: terminal/solo-lectura (En viaje/Cancelada/Perdida/Finalizada/Esperando
-        //        reembolso) bloquea de raiz, ANTES de cualquier otra compuerta. Reusa CanEditServices: reprogramar
-        //        ES editar las fechas de los servicios.
-        await GuardServicesEditableByStateAsync(reservaId, ct);
+        // 2) Guards en el MISMO orden que la edicion de un servicio individual:
+        //    (a) candado por ESTADO. G5 (2026-06-24): reprogramar es MAS ESTRICTO que editar un servicio:
+        //        solo se permite desde Confirmada en adelante ({Confirmada, En viaje}). Antes reusaba
+        //        CanEditServices, que tambien dejaba pre-venta (Cotizacion/Presupuesto/En gestion) reprogramar —
+        //        no tiene sentido mover "el viaje" de un presupuesto que todavia se esta armando. Ahora usa el
+        //        gate dedicado CanReschedule. Sigue bloqueando de raiz los terminales y En gestion, ANTES de
+        //        cualquier otra compuerta.
+        await ReservaCapacityRules.EnsureReschedulableByStateAsync(_db, reservaId, ct);
         //    (b) candado de AUTORIZACION: en Confirmada exige autorizacion viva (si no, 409). Registra la
         //        operacion como ReservaDataEdited (es una mutacion de cabecera que afecta a todos los servicios).
         await GuardReservaLockAsync(
