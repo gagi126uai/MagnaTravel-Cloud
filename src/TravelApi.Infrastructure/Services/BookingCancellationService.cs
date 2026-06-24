@@ -163,8 +163,10 @@ public class BookingCancellationService
 
         if (settings.OnePerReservaInvoicePolicy && activeInvoices.Count > 1)
             throw new BusinessInvariantViolationException(
-                "La reserva tiene multiples facturas activas. Solo se soporta " +
-                "cancelacion con una factura por reserva (OnePerReservaInvoicePolicy=true).",
+                // Mensaje NEUTRO para el usuario (sin nombres de flags ni internos): el frontend
+                // mapea INV-100 a copy amigable. Ver memoria frontend-nunca-exponer-internos.
+                "Esta reserva tiene más de una factura emitida. Por ahora la anulación automática " +
+                "no está disponible en ese caso.",
                 invariantCode: "INV-100");
 
         var originatingInvoice = activeInvoices[0];

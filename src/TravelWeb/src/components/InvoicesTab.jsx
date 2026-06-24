@@ -49,9 +49,10 @@ export default function InvoicesTab({ reservaId, balance, onInvoiceCreated, read
             preConfirm: async () => {
                 try {
                     return await api.post(`/invoices/${getPublicId(invoice)}/annul`);
-                } catch (error) {
+                } catch {
+                    // Sin eco del texto crudo del backend: mensaje claro y accionable.
                     Swal.showValidationMessage(
-                        `Error: ${error.response?.data?.message || 'No se pudo anular'}`
+                        'No se pudo anular la factura. Probá de nuevo; si el problema sigue, contactá a administración.'
                     );
                 }
             }

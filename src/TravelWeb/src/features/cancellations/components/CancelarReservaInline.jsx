@@ -23,7 +23,6 @@ import { AlertTriangle, Loader2, Ban, X } from "lucide-react";
 import { api } from "../../../api";
 import { cancellationsApi } from "../api/cancellationsApi";
 import { showSuccess, showError } from "../../../alerts";
-import { getApiErrorMessage } from "../../../lib/errors";
 import {
     buildPenaltyClassificationPayload,
     buildSnapshotData,
@@ -86,15 +85,19 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar }) {
         try {
             draft = await cancellationsApi.draft(reserva.publicId, trimmedReason);
         } catch (error) {
-            if (error?.status === 409) {
-                // ADR-014 (multi-operador ya soportado): el backend emite 1 NC total
-                // sin importar cuántos operadores tiene la reserva. El mensaje viejo de
-                // INV-152 ("varios operadores no disponible") se eliminó — ya no aplica.
+            // NUNCA mostramos el texto crudo del backend (puede traer nombres de flags u otros
+            // internos). Mapeamos por código a copy amigable; el fallback también es amigable.
+            const code = error?.payload?.invariantCode || error?.payload?.code || "";
+            if (error?.status === 409 && code === "INV-100") {
                 setConflictMessage(
-                    getApiErrorMessage(error, "No se pudo iniciar la anulación. Recargá la página y volvé a intentar.")
+                    "Esta reserva tiene más de una factura emitida. Por ahora no se puede anular toda la reserva de una vez: anulá cada factura desde la solapa Facturas, o contactá a administración."
+                );
+            } else if (error?.status === 409) {
+                setConflictMessage(
+                    "No se pudo iniciar la anulación. Probá de nuevo; si el problema sigue, contactá a administración."
                 );
             } else {
-                showError(getApiErrorMessage(error, "No se pudo iniciar la anulación."));
+                showError("No se pudo iniciar la anulación. Probá de nuevo en unos segundos.");
             }
             setProcessing(false);
             return;
@@ -128,20 +131,18 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar }) {
             showSuccess("Reserva anulada. La nota de crédito se está generando.", "Anulación confirmada");
             onCancelado();
         } catch (error) {
-            if (error?.status === 409) {
-                const errorPayload = error?.payload;
-                const code = errorPayload?.code || "";
-
-                let humanMessage;
-                if (code === "CONCURRENT_EDIT") {
-                    humanMessage = "Otro usuario modificó esta cancelación al mismo tiempo. Recargá la página y volvé a intentar.";
-                } else {
-                    humanMessage = getApiErrorMessage(error, "No se pudo confirmar la cancelación. Volvé a intentar.");
-                }
-
-                setConflictMessage(humanMessage);
+            // Igual que el draft: nunca eco del texto crudo del backend. Mapeo por código.
+            const code = error?.payload?.code || error?.payload?.invariantCode || "";
+            if (error?.status === 409 && code === "CONCURRENT_EDIT") {
+                setConflictMessage(
+                    "Otro usuario modificó esta cancelación al mismo tiempo. Recargá la página y volvé a intentar."
+                );
+            } else if (error?.status === 409) {
+                setConflictMessage(
+                    "No se pudo confirmar la anulación. Probá de nuevo; si el problema sigue, contactá a administración."
+                );
             } else {
-                showError(getApiErrorMessage(error, "No se pudo confirmar la cancelación."));
+                showError("No se pudo confirmar la anulación. Probá de nuevo en unos segundos.");
             }
 
             setProcessing(false);
