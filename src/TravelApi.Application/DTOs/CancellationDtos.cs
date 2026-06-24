@@ -91,6 +91,42 @@ public class BookingCancellationDto
     /// "ManualReview" (el gating ruteo a revision manual).
     /// </summary>
     public string DebitNoteStatus { get; set; } = string.Empty;
+
+    /// <summary>
+    /// ADR-014 (read-model, 2026-06-23): true si AHORA MISMO se puede disparar la
+    /// confirmacion diferida de la multa del operador (que emite la Nota de Debito) sobre
+    /// esta cancelacion. Refleja las precondiciones de ESTADO del BC que valida
+    /// <c>ConfirmPenaltyAsync</c> — NO el permiso del usuario ni el 4-eyes (esos los resuelve
+    /// el endpoint confirm-penalty al ejecutar). El frontend lo usa para mostrar el boton
+    /// "Confirmar multa del operador" habilitado o, si es false, un aviso con el motivo
+    /// (<see cref="ConfirmPenaltyBlockedReason"/>): "esperá a que la NC tenga CAE",
+    /// "ya tiene Nota de Débito", "la facturación de Notas de Débito está deshabilitada".
+    ///
+    /// <para><b>Por que es seguro</b>: es una lectura derivada de campos que el DTO ya expone
+    /// (Status, CreditNoteInvoicePublicId, PenaltyStatus, DebitNoteStatus). NO afecta el
+    /// comportamiento del backend: confirm-penalty revalida TODAS las precondiciones
+    /// server-side. Este bool es solo una pista de UI para no ofrecer un boton que va a rebotar.</para>
+    ///
+    /// <para><b>Nota</b>: refleja solo precondiciones de ESTADO. Un caller que mande EXPLICITAMENTE
+    /// un <c>ConceptKind</c> que no emite ND (ej. un seguro) puede rebotar igual con <c>true</c>
+    /// aca (precondicion 5 de confirm-penalty). El panel de multa del operador no manda concepto
+    /// explicito, asi que para su caso este bool es exacto.</para>
+    /// </summary>
+    public bool CanConfirmPenalty { get; set; }
+
+    /// <summary>
+    /// ADR-014 (read-model, 2026-06-23): cuando <see cref="CanConfirmPenalty"/> es false,
+    /// codigo legible del motivo para que el frontend muestre el aviso correcto. Null cuando
+    /// <see cref="CanConfirmPenalty"/> es true. Valores posibles:
+    /// <list type="bullet">
+    ///   <item><c>DebitNoteFeatureDisabled</c>: el flag <c>EnableCancellationDebitNote</c> esta OFF.</item>
+    ///   <item><c>CreditNoteNotYetIssued</c>: la NC total todavia no tiene CAE (estado no post-NC
+    ///         o sin <c>CreditNoteInvoicePublicId</c>).</item>
+    ///   <item><c>DebitNoteAlreadyInPlay</c>: la penalidad ya fue confirmada o la ND ya esta
+    ///         emitida/encolada (no se vuelve a emitir).</item>
+    /// </list>
+    /// </summary>
+    public string? ConfirmPenaltyBlockedReason { get; set; }
 }
 
 /// <summary>

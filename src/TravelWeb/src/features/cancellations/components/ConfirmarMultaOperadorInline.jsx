@@ -19,7 +19,7 @@
  *   - 400: fecha inválida (futura o anterior a la cancelación).
  *
  * Props:
- *   - cancellationPublicId: GUID del BookingCancellation (obtenido de la bandeja).
+ *   - cancellationPublicId: GUID del BookingCancellation (obtenido de GET by-reserva).
  *   - reservaNumero: número de reserva (para mostrar en el header).
  *   - onConfirmado: callback luego de confirmar exitosamente.
  *   - onCerrar: callback para cerrar el panel sin confirmar.

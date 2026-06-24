@@ -5,7 +5,7 @@
  *   - validarCamposMulta: cuándo el monto y la fecha son válidos.
  *   - puedeEnviar: cuándo el botón de submit está habilitado.
  *   - cuándo ofrecer la acción: la reserva debe estar en PendingOperatorRefund.
- *   - filtrado client-side de la bandeja por reservaNumero.
+ *   - decisión al tocar el botón según canConfirmPenalty + confirmPenaltyBlockedReason.
  *
  * Cómo correr:
  *   node --test src/features/cancellations/components/confirmarMultaOperador.test.mjs
@@ -65,15 +65,32 @@ function debeOfrecerConfirmarMulta(reservaStatus) {
     return reservaStatus === "PendingOperatorRefund";
 }
 
-// ─── Réplica del filtrado client-side de la bandeja ───────────────────────────
+// ─── Réplica de la decisión al tocar "Confirmar multa del operador" ───────────
 
 /**
- * Filtra la bandeja de NDs pendientes para encontrar la fila de una reserva.
- * Réplica de getPendingDebitNoteByReservaNumero en cancellationsApi.js.
+ * Dada la cancelación vigente de la reserva (DTO de GET by-reserva), decide si abrir
+ * el panel inline o qué aviso mostrar. Réplica del onClick del botón en
+ * ReservaDetailPage.jsx (ADR-014 read-model: usa canConfirmPenalty +
+ * confirmPenaltyBlockedReason en vez de filtrar la bandeja back-office).
+ *
+ * @returns {{ abrirPanel: boolean, cancellationPublicId: string|null, mensaje: string|null }}
  */
-function filtrarBandejaPorReservaNumero(items, reservaNumero) {
-    const found = (items || []).find((item) => item.reservaNumero === reservaNumero);
-    return found ?? null;
+function decidirAccionMulta(cancelacion) {
+    if (cancelacion?.canConfirmPenalty) {
+        return { abrirPanel: true, cancellationPublicId: cancelacion.publicId, mensaje: null };
+    }
+    const motivo = cancelacion?.confirmPenaltyBlockedReason;
+    let mensaje;
+    if (motivo === "CreditNoteNotYetIssued") {
+        mensaje = "La nota de crédito de la anulación todavía no tiene CAE aprobado en AFIP/ARCA. Esperá unos minutos y volvé a intentar.";
+    } else if (motivo === "DebitNoteAlreadyInPlay") {
+        mensaje = "La multa de este operador ya fue confirmada o la nota de débito ya está en proceso.";
+    } else if (motivo === "DebitNoteFeatureDisabled") {
+        mensaje = "La emisión de notas de débito por multa está deshabilitada. Consultá con administración.";
+    } else {
+        mensaje = "No se puede confirmar la multa del operador en este momento.";
+    }
+    return { abrirPanel: false, cancellationPublicId: null, mensaje };
 }
 
 // ============================================================================
@@ -227,50 +244,49 @@ test("Traveling → NO debe ofrecer confirmar multa", () => {
 });
 
 // ============================================================================
-// Sección 5: filtrado client-side de la bandeja por reservaNumero
+// Sección 5: decisión al tocar el botón (read-model canConfirmPenalty)
+//   El bug original: el botón buscaba la cancelación en la bandeja back-office,
+//   que filtra por estado de la ND y dejaba afuera el caso pass-through (multa
+//   del operador estimada). Ahora se consulta la cancelación de la reserva y se
+//   decide con canConfirmPenalty + confirmPenaltyBlockedReason.
 // ============================================================================
 
-const bandejaEjemplo = [
-    { bookingCancellationPublicId: "guid-aaa", reservaNumero: "2026-0010", debitNoteStatus: "EstimatedPendingConfirmation" },
-    { bookingCancellationPublicId: "guid-bbb", reservaNumero: "2026-0042", debitNoteStatus: "Pending" },
-    { bookingCancellationPublicId: "guid-ccc", reservaNumero: "2026-0099", debitNoteStatus: "ConfirmedWithoutDebitNote" },
-];
-
-test("filtrar bandeja: reservaNumero existente → devuelve la fila correcta", () => {
-    const resultado = filtrarBandejaPorReservaNumero(bandejaEjemplo, "2026-0042");
-    assert.notEqual(resultado, null);
-    assert.equal(resultado.bookingCancellationPublicId, "guid-bbb");
+test("caso pass-through dominante (canConfirmPenalty=true) → abre el panel con el publicId", () => {
+    // Penalidad estimada, NC ya con CAE: ESTE es el caso que el bug dejaba muerto.
+    const cancelacion = { publicId: "guid-bc-1", canConfirmPenalty: true, confirmPenaltyBlockedReason: null };
+    const r = decidirAccionMulta(cancelacion);
+    assert.equal(r.abrirPanel, true);
+    assert.equal(r.cancellationPublicId, "guid-bc-1");
+    assert.equal(r.mensaje, null);
 });
 
-test("filtrar bandeja: reservaNumero inexistente → devuelve null", () => {
-    const resultado = filtrarBandejaPorReservaNumero(bandejaEjemplo, "2026-9999");
-    assert.equal(resultado, null);
+test("NC todavía sin CAE (CreditNoteNotYetIssued) → no abre, avisa que espere", () => {
+    const cancelacion = { publicId: "guid-bc-2", canConfirmPenalty: false, confirmPenaltyBlockedReason: "CreditNoteNotYetIssued" };
+    const r = decidirAccionMulta(cancelacion);
+    assert.equal(r.abrirPanel, false);
+    assert.equal(r.cancellationPublicId, null);
+    assert.match(r.mensaje, /CAE/i);
 });
 
-test("filtrar bandeja: bandeja vacía → devuelve null", () => {
-    const resultado = filtrarBandejaPorReservaNumero([], "2026-0042");
-    assert.equal(resultado, null);
+test("ND ya en juego (DebitNoteAlreadyInPlay) → no abre, avisa que ya fue confirmada", () => {
+    const cancelacion = { publicId: "guid-bc-3", canConfirmPenalty: false, confirmPenaltyBlockedReason: "DebitNoteAlreadyInPlay" };
+    const r = decidirAccionMulta(cancelacion);
+    assert.equal(r.abrirPanel, false);
+    assert.match(r.mensaje, /ya fue confirmada|ya está en proceso/i);
 });
 
-test("filtrar bandeja: bandeja null → devuelve null sin explotar", () => {
-    const resultado = filtrarBandejaPorReservaNumero(null, "2026-0042");
-    assert.equal(resultado, null);
+test("feature deshabilitada (DebitNoteFeatureDisabled) → no abre, avisa deshabilitada", () => {
+    const cancelacion = { publicId: "guid-bc-4", canConfirmPenalty: false, confirmPenaltyBlockedReason: "DebitNoteFeatureDisabled" };
+    const r = decidirAccionMulta(cancelacion);
+    assert.equal(r.abrirPanel, false);
+    assert.match(r.mensaje, /deshabilitada/i);
 });
 
-test("filtrar bandeja: primera coincidencia (si hubiera duplicados) → devuelve el primero", () => {
-    // La bandeja no debería tener duplicados por reserva, pero el filtro es robusto.
-    const conDuplicado = [
-        ...bandejaEjemplo,
-        { bookingCancellationPublicId: "guid-duplicado", reservaNumero: "2026-0042", debitNoteStatus: "Failed" },
-    ];
-    const resultado = filtrarBandejaPorReservaNumero(conDuplicado, "2026-0042");
-    assert.equal(resultado.bookingCancellationPublicId, "guid-bbb"); // el primero
-});
-
-test("filtrar bandeja: reservaNumero distinto al existente → null (case-sensitive)", () => {
-    // Los números de reserva vienen exactamente del backend — no hay que normalizar.
-    const resultado = filtrarBandejaPorReservaNumero(bandejaEjemplo, "2026-0010 ");
-    assert.equal(resultado, null); // espacio extra → no matchea
+test("motivo desconocido → no abre, mensaje genérico (defensivo)", () => {
+    const cancelacion = { publicId: "guid-bc-5", canConfirmPenalty: false, confirmPenaltyBlockedReason: "AlgoNuevo" };
+    const r = decidirAccionMulta(cancelacion);
+    assert.equal(r.abrirPanel, false);
+    assert.match(r.mensaje, /no se puede confirmar/i);
 });
 
 // ============================================================================

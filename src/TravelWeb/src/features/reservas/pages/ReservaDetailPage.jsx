@@ -548,7 +548,7 @@ export default function ReservaDetailPage() {
 
   // ADR-014: panel inline de "Confirmar multa del operador" (paso diferido post-anulación).
   // Se muestra en el cartel de estado PendingOperatorRefund cuando hay una multa pendiente.
-  // multaCancellationPublicId: el GUID de la cancelación activa (obtenido de la bandeja al abrir el panel).
+  // multaCancellationPublicId: el GUID de la cancelación vigente (obtenido de GET by-reserva al abrir el panel).
   const [showMultaInline, setShowMultaInline] = useState(false);
   const [multaCancellationPublicId, setMultaCancellationPublicId] = useState(null);
   const [buscandoMulta, setBuscandoMulta] = useState(false);
@@ -1169,7 +1169,8 @@ export default function ReservaDetailPage() {
         <div className="space-y-3">
           {/* Cartel de estado: la reserva está anulada y se espera el reembolso del operador.
               ADR-014: en este estado puede haber una multa del operador pendiente de confirmar.
-              El botón "Confirmar multa" busca la fila en la bandeja de NDs pendientes y abre el panel inline. */}
+              El botón "Confirmar multa" consulta la cancelación vigente de la reserva (GET by-reserva)
+              y, si canConfirmPenalty, abre el panel inline. */}
           <div
             className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300 flex flex-col sm:flex-row sm:items-center gap-3"
             data-testid="banner-estado-terminal"
@@ -1179,30 +1180,50 @@ export default function ReservaDetailPage() {
               <strong className="font-bold">Anulada, esperando el reembolso del operador</strong> — solo lectura.
             </span>
             {/* El botón solo se muestra si el panel inline no está ya abierto.
-                Al hacer clic, busca la cancelación activa en la bandeja de NDs pendientes.
-                Si no la encuentra (ya fue confirmada o no hay multa), informa al usuario. */}
+                Al hacer clic, busca la cancelación vigente de ESTA reserva (endpoint by-reserva)
+                y usa canConfirmPenalty del DTO para decidir: si se puede, abre el panel; si no,
+                muestra el motivo concreto. Antes buscaba en la bandeja back-office de NDs
+                pendientes, que dejaba afuera el caso pass-through (multa del operador estimada). */}
             {!showMultaInline && (
               <button
                 type="button"
                 onClick={async () => {
                   setBuscandoMulta(true);
                   try {
-                    const fila = await cancellationsApi.getPendingDebitNoteByReservaNumero(
-                      reserva.numeroReserva
-                    );
-                    if (fila) {
-                      setMultaCancellationPublicId(fila.bookingCancellationPublicId);
+                    const cancelacion = await cancellationsApi.getByReserva(publicId);
+                    if (cancelacion?.canConfirmPenalty) {
+                      setMultaCancellationPublicId(cancelacion.publicId);
                       setShowMultaInline(true);
                     } else {
-                      // No hay multa pendiente en la bandeja: puede que ya se confirmó
-                      // o que el operador no va a cobrar multa. Informamos sin alarmar.
-                      showError(
-                        "No se encontró una multa del operador pendiente de confirmar para esta reserva. Si el operador ya comunicó el monto, verificá en la bandeja de cargos pendientes.",
-                        "Sin multa pendiente"
-                      );
+                      // La cancelación existe pero ahora mismo no se puede emitir la ND:
+                      // traducimos el motivo del backend a un aviso claro para el vendedor.
+                      const motivo = cancelacion?.confirmPenaltyBlockedReason;
+                      let mensaje;
+                      if (motivo === "CreditNoteNotYetIssued") {
+                        mensaje =
+                          "La nota de crédito de la anulación todavía no tiene CAE aprobado en AFIP/ARCA. Esperá unos minutos y volvé a intentar.";
+                      } else if (motivo === "DebitNoteAlreadyInPlay") {
+                        mensaje =
+                          "La multa de este operador ya fue confirmada o la nota de débito ya está en proceso.";
+                      } else if (motivo === "DebitNoteFeatureDisabled") {
+                        mensaje =
+                          "La emisión de notas de débito por multa está deshabilitada. Consultá con administración.";
+                      } else {
+                        mensaje = "No se puede confirmar la multa del operador en este momento.";
+                      }
+                      showError(mensaje, "Multa del operador");
                     }
-                  } catch {
-                    showError("No se pudo buscar la multa pendiente. Intentá de nuevo.");
+                  } catch (error) {
+                    if (error?.status === 404) {
+                      // La reserva no tiene una cancelación (no se anuló, o solo hay borradores
+                      // abortados). No debería pasar en este estado, pero lo cubrimos.
+                      showError(
+                        "No se encontró una cancelación para esta reserva.",
+                        "Sin cancelación"
+                      );
+                    } else {
+                      showError("No se pudo buscar la multa pendiente. Intentá de nuevo.");
+                    }
                   } finally {
                     setBuscandoMulta(false);
                   }

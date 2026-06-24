@@ -433,6 +433,31 @@ public class CancellationsController : ControllerBase
     }
 
     /// <summary>
+    /// ADR-014 (read-model, 2026-06-23): lectura de la cancelacion VIGENTE de una reserva por el
+    /// PublicId de la RESERVA. Lo usa el panel "Confirmar multa del operador" de la ficha de
+    /// reserva: va directo a la cancelacion del file en vez de buscarla en la bandeja back-office
+    /// de NDs pendientes (que filtra por estado de la ND y dejaba afuera el caso pass-through).
+    ///
+    /// <para><b>Permiso/ownership</b>: <see cref="Permissions.ReservasView"/> + ownership sobre la
+    /// reserva por la ruta (bypass <c>ReservasViewAll</c> para back-office). Mismo criterio que
+    /// las otras lecturas scoped al vendedor — NO usa <c>cobranzas.*</c> porque es una vista del
+    /// vendedor sobre SU reserva, no la bandeja agregada cross-reserva.</para>
+    ///
+    /// <para>404 si la reserva no tiene ninguna cancelacion no-abortada.</para>
+    /// </summary>
+    [HttpGet("by-reserva/{reservaPublicId:guid}")]
+    [RequirePermission(Permissions.ReservasView)]
+    [RequireOwnership(OwnedEntity.Reserva, "reservaPublicId", bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<ActionResult<BookingCancellationDto>> GetByReserva(
+        Guid reservaPublicId,
+        CancellationToken cancellationToken)
+    {
+        var dto = await _bcService.GetByReservaAsync(reservaPublicId, cancellationToken);
+        if (dto is null) return NotFound();
+        return Ok(dto);
+    }
+
+    /// <summary>
     /// ADR-013 §3.10 (M4, 2026-06-01): bandeja "cancelaciones con NC emitida pero sin su
     /// ND". Devuelve las cancelaciones cuya NC total ya salio con CAE pero cuya Nota de
     /// Debito quedo pendiente o fallida -> fiscalmente incompletas. El service reconcilia de

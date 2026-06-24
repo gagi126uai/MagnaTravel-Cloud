@@ -10,6 +10,7 @@
  *   - PATCH  /api/cancellations/:id/abort     (descartar borrador)
  *   - PATCH  /api/cancellations/:id/confirm-penalty (diferida, emite ND)
  *   - GET    /api/cancellations/:id           (estado actual)
+ *   - GET    /api/cancellations/by-reserva/:reservaPublicId (cancelacion vigente de una reserva)
  *   - GET    /api/cancellations/debit-notes/pending (bandeja back-office)
  */
 
@@ -141,24 +142,20 @@ export const cancellationsApi = {
     api.get("/cancellations/debit-notes/pending"),
 
   /**
-   * Busca la fila de multa operador pendiente para una reserva concreta.
+   * ADR-014 (read-model): obtiene la cancelacion VIGENTE de una reserva por el GUID de la
+   * RESERVA. Reemplaza al viejo getPendingDebitNoteByReservaNumero, que buscaba en la bandeja
+   * back-office de NDs pendientes y dejaba afuera el caso pass-through (multa del operador
+   * estimada, ND aun no aplicable).
    *
-   * LIMITACION CONOCIDA: el backend no tiene un endpoint by-reserva; esta funcion
-   * llama a la bandeja completa y filtra client-side por reservaNumero.
-   * Es valido en MVP porque la bandeja es chica (casos abiertos en un momento dado).
+   * El DTO devuelto trae canConfirmPenalty + confirmPenaltyBlockedReason, que el panel de
+   * "Confirmar multa del operador" usa para decidir si habilitar el flujo o avisar el motivo.
    *
-   * Si el backend agrega un campo `reservaPublicId` a CancellationDebitNotePendingDto
-   * o un endpoint GET /cancellations/debit-notes/pending?reservaPublicId=... ,
-   * reemplazar esta funcion por esa llamada directa.
-   *
-   * @param {string} reservaNumero - Numero de reserva (string, ej. "2025-0042").
-   * @returns {Promise<CancellationDebitNotePendingDto|null>} - La fila si se encontro, null si no.
+   * @param {string} reservaPublicId - GUID de la reserva.
+   * @returns {Promise<BookingCancellationDto>} - La cancelacion vigente.
+   *   Lanza error con status 404 si la reserva no tiene cancelacion no-abortada.
    */
-  async getPendingDebitNoteByReservaNumero(reservaNumero) {
-    const items = await api.get("/cancellations/debit-notes/pending");
-    const found = (items || []).find((item) => item.reservaNumero === reservaNumero);
-    return found ?? null;
-  },
+  getByReserva: (reservaPublicId) =>
+    api.get(`/cancellations/by-reserva/${reservaPublicId}`),
 };
 
 // ============================================================================

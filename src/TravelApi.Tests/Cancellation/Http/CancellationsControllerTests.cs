@@ -398,5 +398,136 @@ public class CancellationsControllerTests : IClassFixture<CustomWebApplicationFa
         Assert.Equal(HttpStatusCode.NotFound, resp.StatusCode);
     }
 
+    // =========================================================================
+    // GET /api/cancellations/by-reserva/{reservaPublicId}
+    //   ADR-014 read-model: la cancelacion vigente de una reserva + la pista de UI
+    //   CanConfirmPenalty. Reemplaza la busqueda en la bandeja back-office que dejaba
+    //   afuera el caso pass-through (multa del operador estimada).
+    // =========================================================================
+
+    [Fact]
+    public async Task GET_ByReserva_Vendedor_OnOtherReserva_Returns403_Ownership()
+    {
+        // Eje de privacidad: un vendedor NO puede leer la cancelacion de una reserva ajena.
+        var seed = await SeedAsync(Guid.NewGuid().ToString("N")[..6]);
+        var client = _factory.CreateClient();
+        SetVendedorHeaders(client, seed.VendedorId);
+
+        var resp = await client.GetAsync($"/api/cancellations/by-reserva/{seed.AjenaReservaPublicId}");
+
+        Assert.Equal(HttpStatusCode.Forbidden, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GET_ByReserva_OwnReserva_NoCancellation_Returns404()
+    {
+        // La reserva existe y es del vendedor, pero no tiene ninguna cancelacion no-abortada.
+        var seed = await SeedAsync(Guid.NewGuid().ToString("N")[..6]);
+        var client = _factory.CreateClient();
+        SetVendedorHeaders(client, seed.VendedorId);
+
+        var resp = await client.GetAsync($"/api/cancellations/by-reserva/{seed.OwnReservaPublicId}");
+
+        Assert.Equal(HttpStatusCode.NotFound, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task GET_ByReserva_PassThrough_PostNc_FlagOn_CanConfirmPenaltyTrue()
+    {
+        // EL caso del bug: anulacion pass-through, NC total ya con CAE, penalidad estimada
+        // (DebitNoteStatus=NotApplicable). La bandeja vieja lo dejaba afuera; el read-model
+        // debe decir CanConfirmPenalty=true para que el boton habilite la confirmacion.
+        var seed = await SeedAsync(Guid.NewGuid().ToString("N")[..6]);
+        var bcPid = await SeedPostNcCancellationAsync(seed.OwnReservaPublicId, debitNoteFlagOn: true);
+
+        var client = _factory.CreateClient(); // Admin -> bypass ownership.
+        var resp = await client.GetAsync($"/api/cancellations/by-reserva/{seed.OwnReservaPublicId}");
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        var dto = await resp.Content.ReadFromJsonAsync<BookingCancellationDto>();
+        Assert.NotNull(dto);
+        Assert.Equal(bcPid, dto!.PublicId); // devuelve el id de la CANCELACION, no el de la reserva
+        Assert.Equal(seed.OwnReservaPublicId, dto.ReservaPublicId);
+        Assert.True(dto.CanConfirmPenalty);
+        Assert.Null(dto.ConfirmPenaltyBlockedReason);
+    }
+
+    [Fact]
+    public async Task GET_ByReserva_FlagOff_CanConfirmPenaltyFalse_FeatureDisabled()
+    {
+        // Mismo BC post-NC, pero con la emision de ND deshabilitada: el read-model bloquea
+        // y expone el motivo "DebitNoteFeatureDisabled".
+        var seed = await SeedAsync(Guid.NewGuid().ToString("N")[..6]);
+        await SeedPostNcCancellationAsync(seed.OwnReservaPublicId, debitNoteFlagOn: false);
+
+        var client = _factory.CreateClient(); // Admin -> bypass ownership.
+        var resp = await client.GetAsync($"/api/cancellations/by-reserva/{seed.OwnReservaPublicId}");
+
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        var dto = await resp.Content.ReadFromJsonAsync<BookingCancellationDto>();
+        Assert.NotNull(dto);
+        Assert.False(dto!.CanConfirmPenalty);
+        Assert.Equal("DebitNoteFeatureDisabled", dto.ConfirmPenaltyBlockedReason);
+    }
+
+    /// <summary>
+    /// Siembra una cancelacion en estado post-NC (AwaitingOperatorRefund, NC total con CAE
+    /// seteada, penalidad Estimated, ND NotApplicable) sobre la reserva dada. Setea ademas el
+    /// flag EnableCancellationDebitNote. Devuelve el PublicId del BookingCancellation.
+    /// </summary>
+    private async Task<Guid> SeedPostNcCancellationAsync(Guid reservaPublicId, bool debitNoteFlagOn)
+    {
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var settingsSvc = scope.ServiceProvider.GetRequiredService<IOperationalFinanceSettingsService>();
+
+        var settings = await settingsSvc.GetEntityAsync(CancellationToken.None);
+        settings.EnableCancellationDebitNote = debitNoteFlagOn;
+        await db.SaveChangesAsync();
+
+        var reserva = await db.Reservas.FirstAsync(r => r.PublicId == reservaPublicId);
+
+        var supplier = new Supplier { Name = "Op postNC " + reservaPublicId.ToString("N")[..6], IsActive = true, TaxCondition = "IVA_RESP_INSCRIPTO" };
+        db.Suppliers.Add(supplier);
+        await db.SaveChangesAsync();
+
+        var originating = new Invoice
+        {
+            ReservaId = reserva.Id,
+            TipoComprobante = 6, PuntoDeVenta = 1, NumeroComprobante = 1,
+            ImporteTotal = 1000m, Resultado = "A", CAE = "11111",
+            VencimientoCAE = DateTime.UtcNow.AddDays(10), CreatedAt = DateTime.UtcNow,
+        };
+        var creditNote = new Invoice
+        {
+            ReservaId = reserva.Id,
+            TipoComprobante = 8, PuntoDeVenta = 1, NumeroComprobante = 1,
+            ImporteTotal = 1000m, Resultado = "A", CAE = "22222",
+            VencimientoCAE = DateTime.UtcNow.AddDays(10), CreatedAt = DateTime.UtcNow,
+        };
+        db.Invoices.AddRange(originating, creditNote);
+        await db.SaveChangesAsync();
+
+        var bc = new BookingCancellation
+        {
+            PublicId = Guid.NewGuid(),
+            CustomerId = reserva.PayerId!.Value,
+            SupplierId = supplier.Id,
+            ReservaId = reserva.Id,
+            OriginatingInvoiceId = originating.Id,
+            CreditNoteInvoiceId = creditNote.Id,
+            Status = BookingCancellationStatus.AwaitingOperatorRefund,
+            PenaltyStatus = PenaltyStatus.Estimated,
+            DebitNoteStatus = DebitNoteStatus.NotApplicable,
+            Reason = "BC post-NC pass-through para test del read-model",
+            DraftedAt = DateTime.UtcNow,
+            DraftedByUserId = "owner-test",
+        };
+        db.BookingCancellations.Add(bc);
+        await db.SaveChangesAsync();
+
+        return bc.PublicId;
+    }
+
     private record TestSeed(string VendedorId, Guid OwnReservaPublicId, Guid AjenaReservaPublicId);
 }

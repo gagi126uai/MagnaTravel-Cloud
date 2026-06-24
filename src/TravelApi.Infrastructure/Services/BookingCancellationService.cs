@@ -1940,6 +1940,25 @@ public class BookingCancellationService
     }
 
     /// <inheritdoc />
+    public async Task<BookingCancellationDto?> GetByReservaAsync(Guid reservaPublicId, CancellationToken ct)
+    {
+        // Una reserva puede tener varios BC a lo largo del tiempo (borradores abortados, etc.).
+        // Para el panel de "confirmar multa del operador" interesa la cancelacion vigente: la mas
+        // reciente que NO fue abortada. INV-081 garantiza una sola cancelacion ACTIVA por reserva,
+        // asi que en la practica esto devuelve la unica cancelacion real. El filtro por
+        // Reserva.PublicId lo traduce EF a un join (no necesita Include; MapToDtoAsync re-consulta
+        // con sus propios Includes por bc.Id).
+        var bc = await _db.BookingCancellations
+            .AsNoTracking()
+            .Where(b => b.Reserva.PublicId == reservaPublicId
+                     && b.Status != BookingCancellationStatus.Aborted)
+            .OrderByDescending(b => b.DraftedAt)
+            .FirstOrDefaultAsync(ct);
+        if (bc is null) return null;
+        return await MapToDtoAsync(bc.Id, ct);
+    }
+
+    /// <inheritdoc />
     public async Task<IReadOnlyList<CancellationDebitNotePendingDto>> GetCancellationsWithMissingDebitNoteAsync(
         CancellationToken ct)
     {
@@ -5020,6 +5039,39 @@ public class BookingCancellationService
             .FirstOrDefaultAsync(b => b.Id == bcId, ct);
         if (bc is null) return null;
 
+        // ADR-014 (read-model, 2026-06-23): pista de UI para el boton "Confirmar multa del
+        // operador". Refleja SOLO las precondiciones de ESTADO que valida ConfirmPenaltyAsync
+        // (flag maestro, NC total con CAE, idempotencia). NO refleja el permiso ni el 4-eyes:
+        // esos los resuelve confirm-penalty al ejecutar. El frontend lo usa para habilitar el
+        // boton o, si esta bloqueado, mostrar el aviso correcto sin disparar una llamada que va
+        // a rebotar. confirm-penalty revalida TODO server-side, asi que esto es solo una pista.
+        var settings = await _settings.GetEntityAsync(ct);
+        bool canConfirmPenalty;
+        string? confirmPenaltyBlockedReason;
+        if (!settings.EnableCancellationDebitNote)
+        {
+            canConfirmPenalty = false;
+            confirmPenaltyBlockedReason = "DebitNoteFeatureDisabled";
+        }
+        else if (!PostCreditNoteStatuses.Contains(bc.Status) || bc.CreditNoteInvoiceId is null)
+        {
+            canConfirmPenalty = false;
+            confirmPenaltyBlockedReason = "CreditNoteNotYetIssued";
+        }
+        else if (bc.PenaltyStatus == PenaltyStatus.Confirmed
+                 || bc.DebitNoteInvoiceId.HasValue
+                 || bc.DebitNoteStatus == DebitNoteStatus.Pending
+                 || bc.DebitNoteStatus == DebitNoteStatus.Issued)
+        {
+            canConfirmPenalty = false;
+            confirmPenaltyBlockedReason = "DebitNoteAlreadyInPlay";
+        }
+        else
+        {
+            canConfirmPenalty = true;
+            confirmPenaltyBlockedReason = null;
+        }
+
         FiscalSnapshotSummaryDto? snapshotDto = null;
         if (bc.FiscalSnapshot != null && bc.Status != BookingCancellationStatus.Drafted)
         {
@@ -5087,6 +5139,9 @@ public class BookingCancellationService
             // ADR-013/014: estado de la penalidad + de la ND, como string (igual que Status).
             PenaltyStatus = bc.PenaltyStatus.ToString(),
             DebitNoteStatus = bc.DebitNoteStatus.ToString(),
+            // ADR-014 (read-model, 2026-06-23): pista de UI para el boton de confirmar multa.
+            CanConfirmPenalty = canConfirmPenalty,
+            ConfirmPenaltyBlockedReason = confirmPenaltyBlockedReason,
         };
     }
 }

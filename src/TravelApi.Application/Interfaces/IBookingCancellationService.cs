@@ -240,6 +240,20 @@ public interface IBookingCancellationService
     Task<BookingCancellationDto?> GetByPublicIdAsync(Guid publicId, CancellationToken ct);
 
     /// <summary>
+    /// ADR-014 (read-model, 2026-06-23): obtiene la cancelacion VIGENTE de una reserva por el
+    /// PublicId de la reserva. "Vigente" = la mas reciente que NO fue abortada (INV-081 garantiza
+    /// una sola cancelacion activa por reserva, asi que en la practica es una sola). Null si la
+    /// reserva no tiene ninguna cancelacion no-abortada.
+    ///
+    /// <para>Existe para el panel "Confirmar multa del operador": antes el frontend buscaba la
+    /// cancelacion en la bandeja back-office de NDs pendientes, que filtra por estado de la ND y
+    /// dejaba afuera el caso pass-through (penalidad estimada, ND aun no aplicable). Con este
+    /// endpoint el frontend va directo a la cancelacion de la reserva y usa
+    /// <c>CanConfirmPenalty</c>/<c>ConfirmPenaltyBlockedReason</c> del DTO para decidir.</para>
+    /// </summary>
+    Task<BookingCancellationDto?> GetByReservaAsync(Guid reservaPublicId, CancellationToken ct);
+
+    /// <summary>
     /// ADR-013 §3.10 (M4, 2026-06-01): bandeja "cancelaciones con NC emitida pero sin su
     /// ND". Devuelve los BCs cuya NC total ya salio (CreditNoteInvoiceId seteado) pero cuya
     /// ND quedo en <c>Pending</c> o <c>Failed</c> -> fiscalmente incompletas.
