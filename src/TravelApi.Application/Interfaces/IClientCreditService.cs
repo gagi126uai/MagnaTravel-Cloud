@@ -119,12 +119,19 @@ public interface IClientCreditService
     /// </list>
     /// </para>
     /// </summary>
+    /// <param name="requesterIsAdmin">
+    /// 2026-06-24: lo setea el controller con <c>User.IsInRole("Admin")</c>. Cuando es true, el kind
+    /// <c>ReversedToOperator</c> NO exige el approval <c>ClientRefundReversal</c> (doble firma): el Admin se
+    /// auto-autoriza y queda el audit <c>AdminSelfAuthorized</c> en su lugar. Va al final con default false
+    /// para no romper callers posicionales legacy (mismo patron que <c>IBookingCancellationService.ConfirmAsync</c>).
+    /// </param>
     Task<ClientCreditWithdrawalDto> WithdrawAsync(
         Guid entryPublicId,
         WithdrawClientCreditRequest request,
         string userId,
         string? userName,
-        CancellationToken ct);
+        CancellationToken ct,
+        bool requesterIsAdmin = false);
 
     /// <summary>
     /// FC4 reversa (2026-06-18): DESHACE un withdrawal de tipo <c>AppliedToNewBooking</c> (saldo a favor que se

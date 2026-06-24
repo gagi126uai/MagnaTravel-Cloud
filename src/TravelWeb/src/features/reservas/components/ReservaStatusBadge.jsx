@@ -74,6 +74,14 @@ export const statusConfig = {
         color: 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-900/20 dark:text-rose-300 dark:border-rose-800',
         icon: '🚫',
     },
+    // Esperando reembolso del operador: la reserva fue anulada y hay una multa del operador
+    // pendiente de confirmar. Es un estado transitorio después de Cancelled.
+    // Color rosa (mismo espectro que Cancelled/Anulada) — sigue siendo una reserva anulada.
+    PendingOperatorRefund: {
+        label: 'Esperando reembolso',
+        color: 'bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-900/30 dark:text-rose-200 dark:border-rose-700',
+        icon: '⏳',
+    },
     // Archivada: solo lectura, fuera del ciclo activo.
     Archived: {
         label: 'Archivada',

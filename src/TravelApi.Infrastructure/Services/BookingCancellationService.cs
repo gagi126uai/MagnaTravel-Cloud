@@ -553,6 +553,91 @@ public class BookingCancellationService
     }
 
     /// <summary>
+    /// CAMBIO 2 (2026-06-24): al ANULAR la reserva COMPLETA (Draft -> Confirm del BookingCancellation), marca
+    /// TODOS los servicios de la reserva como Cancelado, reusando EXACTAMENTE la misma logica por servicio que
+    /// <see cref="MarkTypedServiceCancelledAsync"/> (vuelos con codigo IATA "UN" porque su Status mapea por
+    /// codigo, no por texto; el resto con <see cref="WorkflowStatuses.Cancelado"/>; seteando CancelledAt/By).
+    ///
+    /// <para><b>Por que existe</b>: hasta hoy los servicios solo se marcaban cancelados al cancelar UNO suelto
+    /// (cancelacion parcial). Al anular TODA la reserva, los servicios quedaban en "Confirmado" aunque la
+    /// reserva estuviera en <c>PendingOperatorRefund</c> — la ficha mostraba servicios "Confirmados" de una
+    /// reserva anulada. NO inventamos un estado "en devolucion" del servicio: el servicio queda Cancelado y el
+    /// "esperando reembolso del operador" es dato de la RESERVA, no del servicio (alineado a los ERPs).</para>
+    ///
+    /// <para><b>Idempotente</b>: si un servicio ya esta cancelado (<see cref="ServiceResolutionRules.IsCancelled"/>),
+    /// no lo vuelve a tocar (no pisa CancelledAt/By previos). <b>NO hace SaveChanges</b>: corre dentro de la
+    /// misma transaccion del caller (ConfirmAsync paso 9 / ForceArcaConfirmationAsync) para ser atomico con la
+    /// transicion de estado de la reserva.</para>
+    /// </summary>
+    private async Task CancelAllReservaServicesAsync(
+        int reservaId, string userId, string? userName, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+
+        // Aereos: Status mapea por codigo IATA. "UN" = cancelado (MapFlightStatus). Poner "Cancelado" literal
+        // NO lo sacaria del saldo ni de la deuda, por eso el codigo, igual que el path por-servicio.
+        var flights = await _db.FlightSegments.Where(f => f.ReservaId == reservaId).ToListAsync(ct);
+        foreach (var flight in flights)
+        {
+            if (ServiceResolutionRules.IsCancelled(flight)) continue;
+            flight.Status = "UN";
+            flight.CancelledAt = now;
+            flight.CancelledByUserId = userId;
+            flight.CancelledByUserName = userName;
+        }
+
+        var hotels = await _db.HotelBookings.Where(h => h.ReservaId == reservaId).ToListAsync(ct);
+        foreach (var hotel in hotels)
+        {
+            if (ServiceResolutionRules.IsCancelled(hotel)) continue;
+            hotel.Status = WorkflowStatuses.Cancelado;
+            hotel.CancelledAt = now;
+            hotel.CancelledByUserId = userId;
+            hotel.CancelledByUserName = userName;
+        }
+
+        var transfers = await _db.TransferBookings.Where(t => t.ReservaId == reservaId).ToListAsync(ct);
+        foreach (var transfer in transfers)
+        {
+            if (ServiceResolutionRules.IsCancelled(transfer)) continue;
+            transfer.Status = WorkflowStatuses.Cancelado;
+            transfer.CancelledAt = now;
+            transfer.CancelledByUserId = userId;
+            transfer.CancelledByUserName = userName;
+        }
+
+        var packages = await _db.PackageBookings.Where(p => p.ReservaId == reservaId).ToListAsync(ct);
+        foreach (var package in packages)
+        {
+            if (ServiceResolutionRules.IsCancelled(package)) continue;
+            package.Status = WorkflowStatuses.Cancelado;
+            package.CancelledAt = now;
+            package.CancelledByUserId = userId;
+            package.CancelledByUserName = userName;
+        }
+
+        var assistances = await _db.AssistanceBookings.Where(a => a.ReservaId == reservaId).ToListAsync(ct);
+        foreach (var assistance in assistances)
+        {
+            if (ServiceResolutionRules.IsCancelled(assistance)) continue;
+            assistance.Status = WorkflowStatuses.Cancelado;
+            assistance.CancelledAt = now;
+            assistance.CancelledByUserId = userId;
+            assistance.CancelledByUserName = userName;
+        }
+
+        var genericServices = await _db.Servicios.Where(s => s.ReservaId == reservaId).ToListAsync(ct);
+        foreach (var service in genericServices)
+        {
+            if (ServiceResolutionRules.IsCancelled(service)) continue;
+            service.Status = WorkflowStatuses.Cancelado;
+            service.CancelledAt = now;
+            service.CancelledByUserId = userId;
+            service.CancelledByUserName = userName;
+        }
+    }
+
+    /// <summary>
     /// SEC-B1 (ADR-025 / candado fiscal): devuelve el motivo de bloqueo si NO se puede cancelar el servicio
     /// porque la reserva tiene una factura viva (CAE) o un voucher emitido; <c>null</c> si se permite.
     ///
@@ -970,36 +1055,86 @@ public class BookingCancellationService
                 "La factura original ya fue anulada (NC aprobada). No se puede confirmar la cancelacion.",
                 invariantCode: "INV-100");
 
-        // 4) Override admin: si IsAdminOverride=true, buscar approval.
+        // 4) Override admin: si IsAdminOverride=true, normalmente exige un InvariantOverride aprobado.
         ApprovalRequest? approvalRequest = null;
+        // 2026-06-24: marca de que el Admin se auto-autorizo el override (saltea la doble firma). La usamos
+        // mas abajo para que el bypass del approval de la NC (EnqueueAnnulmentAsync) tambien aplique, ya que
+        // el override del BC quedo cubierto por el rol Admin en vez de por un approval formal.
+        bool adminSelfAuthorizedOverride = false;
         if (request.IsAdminOverride)
         {
             if (string.IsNullOrWhiteSpace(request.OverrideReason) || request.OverrideReason.Trim().Length < 20)
                 throw new BusinessInvariantViolationException(
                     "OverrideReason requerido (min 20 chars) cuando IsAdminOverride=true.");
 
-            if (request.ApprovalRequestPublicId is null)
-                throw new ApprovalRequiredException(
-                    ApprovalRequestType.InvariantOverride,
-                    "BookingCancellation",
-                    bc.Id);
+            if (requesterIsAdmin)
+            {
+                // BYPASS Admin (2026-06-24): el Admin fuerza el override DIRECTO, sin EXIGIR un InvariantOverride
+                // aprobado. Hoy el dueno es el unico Admin y pedirse doble firma a si mismo es teatro (se
+                // auto-aprobaba). Exigimos el motivo (ya validado >= 20 chars arriba) y dejamos el audit
+                // AdminSelfAuthorized para el contador. Condicionado SOLO al rol Admin: el dia que haya varios
+                // admins se puede volver a exigir 4-eyes por policy.
+                adminSelfAuthorizedOverride = true;
 
-            approvalRequest = await _db.ApprovalRequests
-                .FirstOrDefaultAsync(a => a.PublicId == request.ApprovalRequestPublicId, ct)
-                ?? throw new ApprovalRequiredException(
-                    ApprovalRequestType.InvariantOverride, "BookingCancellation", bc.Id);
+                // IMPORTANTE: si el Admin IGUAL trae un approval valido, lo cargamos (best-effort, sin throw).
+                // Razon: la rama FC1.3 (servicios no-Hotel, INV-FC1.3-007) reutiliza este MISMO approvalRequest
+                // para su propio override (Reason >= 50 chars). Ese es un gate fiscal DISTINTO que el task NO
+                // pidio bypassear: si el Admin lo cubrio con un approval, debe seguir funcionando. Si no lo
+                // trae, approvalRequest queda null y el bypass admin aplica al override base (multi-invoice);
+                // la rama FC1.3 decidira por su cuenta si ese caso necesita approval.
+                if (request.ApprovalRequestPublicId is not null)
+                {
+                    var candidate = await _db.ApprovalRequests
+                        .FirstOrDefaultAsync(a => a.PublicId == request.ApprovalRequestPublicId, ct);
+                    var candidateValid = candidate is not null
+                        && candidate.RequestType == ApprovalRequestType.InvariantOverride
+                        && candidate.EntityType == "BookingCancellation"
+                        && candidate.EntityId == bc.Id
+                        && candidate.Status == ApprovalStatus.Approved
+                        && candidate.RequestedByUserId == userId
+                        && candidate.ExpiresAt > DateTime.UtcNow;
+                    if (candidateValid)
+                        approvalRequest = candidate;
+                }
 
-            // Validacion de coherencia approval ↔ BC. Si el admin trae un approval
-            // que apunta a otra entidad, lo rechazamos.
-            var validForBc = approvalRequest.RequestType == ApprovalRequestType.InvariantOverride
-                          && approvalRequest.EntityType == "BookingCancellation"
-                          && approvalRequest.EntityId == bc.Id
-                          && approvalRequest.Status == ApprovalStatus.Approved
-                          && approvalRequest.RequestedByUserId == userId
-                          && approvalRequest.ExpiresAt > DateTime.UtcNow;
-            if (!validForBc)
-                throw new ApprovalRequiredException(
-                    ApprovalRequestType.InvariantOverride, "BookingCancellation", bc.Id);
+                await LogAdminSelfAuthorizedAsync(
+                    bypassedGate: "ConfirmCancellationInvariantOverride",
+                    entityName: AuditActions.BookingCancellationEntityName,
+                    entityId: bc.Id.ToString(),
+                    reason: request.OverrideReason!.Trim(),
+                    amount: bc.OriginatingInvoice?.ImporteTotal,
+                    // El snapshot fiscal todavia no se completa en este punto (step 7); tomamos la moneda del
+                    // request, que es la fuente de la que se construye CurrencyAtEvent mas abajo.
+                    currency: request.SnapshotData?.CurrencyAtEvent,
+                    userId: userId,
+                    userName: userName,
+                    ct: ct);
+            }
+            else
+            {
+                if (request.ApprovalRequestPublicId is null)
+                    throw new ApprovalRequiredException(
+                        ApprovalRequestType.InvariantOverride,
+                        "BookingCancellation",
+                        bc.Id);
+
+                approvalRequest = await _db.ApprovalRequests
+                    .FirstOrDefaultAsync(a => a.PublicId == request.ApprovalRequestPublicId, ct)
+                    ?? throw new ApprovalRequiredException(
+                        ApprovalRequestType.InvariantOverride, "BookingCancellation", bc.Id);
+
+                // Validacion de coherencia approval ↔ BC. Si el admin trae un approval
+                // que apunta a otra entidad, lo rechazamos.
+                var validForBc = approvalRequest.RequestType == ApprovalRequestType.InvariantOverride
+                              && approvalRequest.EntityType == "BookingCancellation"
+                              && approvalRequest.EntityId == bc.Id
+                              && approvalRequest.Status == ApprovalStatus.Approved
+                              && approvalRequest.RequestedByUserId == userId
+                              && approvalRequest.ExpiresAt > DateTime.UtcNow;
+                if (!validForBc)
+                    throw new ApprovalRequiredException(
+                        ApprovalRequestType.InvariantOverride, "BookingCancellation", bc.Id);
+            }
         }
 
         // 5) Normalizar condiciones fiscales y validar coherencia.
@@ -1288,6 +1423,11 @@ public class BookingCancellationService
         LogReservaStatusChange(bc.Reserva, reservaFromStatusConfirm, EstadoReserva.PendingOperatorRefund,
             userId, userName, "Cancelacion (ADR-002): confirmada con el cliente, a la espera del reembolso del operador.");
 
+        // 8-bis) CAMBIO 2 (2026-06-24): anulacion TOTAL -> marcar TODOS los servicios de la reserva como
+        //        Cancelado, en la MISMA transaccion que la transicion de estado (atomico). Idempotente.
+        //        Antes los servicios quedaban "Confirmados" aunque la reserva estuviera anulada.
+        await CancelAllReservaServicesAsync(bc.ReservaId, userId, userName, ct);
+
         // 9) Guardar BC + Reserva ANTES de encolar la annulacion (asi el job
         //    encuentra el BC en AwaitingFiscalConfirmation cuando arranca).
         await _db.SaveChangesAsync(ct);
@@ -1304,21 +1444,24 @@ public class BookingCancellationService
         //     true sin override, un caller no-admin podria emitir NCs sin
         //     control fiscal (OPS-FISCAL-001 plan v3 §13).
         //
-        //     IMPORTANTE: si en el futuro el BC se invoca desde un controller
-        //     que pasa requesterIsAdmin=true porque el usuario es Admin (sin
-        //     necesidad de override formal), revisar si tiene sentido propagarlo
-        //     aca. Hoy no, porque la unica forma de "saltear AFIP approval" es
-        //     traer un approval scoped al BC.
+        //     2026-06-24: ademas del override formal (approvalRequest != null), el bypass del approval de
+        //     la NC tambien aplica cuando el Admin se auto-autorizo el override (adminSelfAuthorizedOverride).
+        //     Es coherente con InvoiceService.EnqueueAnnulmentAsync, que ya saltea su propio approval cuando
+        //     el caller es Admin (requesterIsAdmin). Un caller NO-admin sigue necesitando approval -> nunca
+        //     emite NCs sin control fiscal (OPS-FISCAL-001 plan v3 §13).
+        bool bypassNcApproval = approvalRequest != null || adminSelfAuthorizedOverride;
         var crossRefReason = approvalRequest != null
             ? $"BC override {approvalRequest.PublicId}: {request.OverrideReason!.Trim()}"
-            : $"BC cancellation: {bc.Reason}";
+            : adminSelfAuthorizedOverride
+                ? $"BC admin self-authorized override: {request.OverrideReason!.Trim()}"
+                : $"BC cancellation: {bc.Reason}";
 
         await _invoiceService.EnqueueAnnulmentAsync(
             id: bc.OriginatingInvoiceId,
             userId: userId,
             userName: userName,
             reason: crossRefReason,
-            requesterIsAdmin: approvalRequest != null,
+            requesterIsAdmin: bypassNcApproval,
             ct: ct,
             approvalRequestId: approvalRequest?.Id);
 
@@ -1518,6 +1661,11 @@ public class BookingCancellationService
         // ADR-020 F6 (M7): rastro aditivo del cambio de estado (escape hatch fiscal manual).
         LogReservaStatusChange(bc.Reserva, reservaFromStatusForce, EstadoReserva.PendingOperatorRefund,
             userId, userName, "Cancelacion (ADR-002): confirmacion fiscal forzada por admin, a la espera del reembolso del operador.");
+
+        // 6-bis) CAMBIO 2 (2026-06-24): asegurar que TODOS los servicios queden Cancelado. ConfirmAsync ya los
+        //        cancela al pasar a AwaitingFiscalConfirmation; esto es defensivo/idempotente y ademas cubre
+        //        BCs legacy confirmados antes de este cambio (servicios todavia en "Confirmado").
+        await CancelAllReservaServicesAsync(bc.ReservaId, userId, userName, ct);
 
         // 7) Consumir approval.
         await _approvalService.MarkConsumedAsync(approval.Id, ct);
@@ -2595,11 +2743,13 @@ public class BookingCancellationService
     {
         if (request is null) throw new ArgumentNullException(nameof(request));
 
-        // requesterIsAdmin se mantiene en la firma por paridad con ConfirmAsync, pero este
-        // flujo NO lo lee: el gate de permiso ya viene resuelto en userCanClassifyAgencyPenalty
-        // (el controller hace Admin-OR-permiso) y el 4-eyes se decide por documento+monto, no
-        // por rol. No lo borramos para no divergir la firma de los dos confirmadores.
-        _ = requesterIsAdmin;
+        // 2026-06-24: el gate de permiso (clasificar penalidad propia) ya viene resuelto en
+        // userCanClassifyAgencyPenalty (el controller hace Admin-OR-permiso). Ademas, mas abajo,
+        // requesterIsAdmin se usa para que el Admin SALTEE el 4-eyes del confirm-penalty: hoy el
+        // dueno es el unico Admin y pedirse doble firma a si mismo es teatro (se auto-aprobaba).
+        // El bypass deja SIEMPRE un audit AdminSelfAuthorized (rastro para el contador) y esta
+        // condicionado SOLO al rol Admin: el dia que existan varios admins se puede volver a
+        // exigir 4-eyes por policy (la maquinaria de approval NO se borro).
 
         var settings = await _settings.GetEntityAsync(ct);
 
@@ -2694,7 +2844,38 @@ public class BookingCancellationService
             string.IsNullOrWhiteSpace(request.SupportingDocumentReference) ||
             request.ConfirmedPenaltyAmount > settings.CancellationDebitNoteFourEyesThreshold;
         if (requiresFourEyes)
-            await EnsureFourEyesApprovalAsync(bc, request, userId, ct);
+        {
+            if (requesterIsAdmin)
+            {
+                // BYPASS Admin (2026-06-24): el Admin confirma la penalidad DIRECTO, sin doble firma.
+                // Exigimos un motivo no vacio (reusamos OverrideReason del request) y dejamos el audit
+                // AdminSelfAuthorized para que el contador tenga el rastro. El mismo SaveChanges que
+                // persiste la marca de no-retorno (paso c) atomiza tambien este audit (LogBusinessEvent
+                // hace su propio SaveChanges, pero corre ANTES del commit del paso c).
+                var bypassReason = request.OverrideReason?.Trim();
+                if (string.IsNullOrWhiteSpace(bypassReason))
+                    throw new BusinessInvariantViolationException(
+                        "El Administrador debe indicar un motivo (OverrideReason) para confirmar la penalidad " +
+                        "sin doble firma.",
+                        invariantCode: "INV-ADMIN-SELFAUTH");
+
+                await LogAdminSelfAuthorizedAsync(
+                    bypassedGate: "ConfirmPenaltyFourEyes",
+                    entityName: AuditActions.BookingCancellationEntityName,
+                    entityId: bc.Id.ToString(),
+                    reason: bypassReason,
+                    amount: request.ConfirmedPenaltyAmount,
+                    // La moneda de la multa: la explicita del request, o la del primer line del BC, o ARS.
+                    currency: await ResolvePenaltyCurrencyForAuditAsync(bc, request.PenaltyCurrency, ct),
+                    userId: userId,
+                    userName: userName,
+                    ct: ct);
+            }
+            else
+            {
+                await EnsureFourEyesApprovalAsync(bc, request, userId, ct);
+            }
+        }
 
         // === Aplicar la clasificacion (B1, §3.4 pieza 2, paso a). Reusa el MISMO metodo del
         // path sincrono via el record comun: setea ConceptKind, PenaltyStatus=Confirmed,
@@ -2720,6 +2901,18 @@ public class BookingCancellationService
         // Paso b: las dos fechas nuevas del diferido (eje fiscal del plazo + soporte).
         bc.OperatorPenaltyConfirmedDate = operatorDate;
         bc.SupportingDocumentReference = request.SupportingDocumentReference;
+
+        // Paso b-bis (CAMBIO 3, 2026-06-24): registrar la MONEDA en que el operador retuvo la multa, en la(s)
+        // linea(s) del BC. Es SOLO captura/registro: NO cambia la moneda en la que se EMITE la ND al cliente
+        // (eso sigue como hoy; wire de esta moneda a la emision/FX de la ND es follow-up que requiere firma del
+        // contador). Default explicito por linea = moneda del servicio (line.Currency) si el request no la trae.
+        //
+        // LIMITACION declarada (NO inventar): la confirmacion diferida lleva UN solo monto de penalidad a nivel
+        // BC-padre; no desagrega por operador. Por eso, cuando el request trae PenaltyCurrency explicita, se
+        // aplica pareja a todas las lineas del BC; si no la trae, cada linea conserva su propia moneda como
+        // moneda de la multa. El dia que la penalidad se confirme POR operador (multi-op), esto debe pasar a
+        // recibir la moneda por linea.
+        await PersistPenaltyCurrencyOnLinesAsync(bc, request.PenaltyCurrency, ct);
 
         await _auditService.LogBusinessEventAsync(
             action: AuditActions.BookingCancellationArcaSucceeded,
@@ -2789,6 +2982,94 @@ public class BookingCancellationService
         if (!validForBc)
             throw new ApprovalRequiredException(
                 ApprovalRequestType.InvariantOverride, "BookingCancellation", bc.Id);
+    }
+
+    /// <summary>
+    /// 2026-06-24: deja el rastro de auditoria OBLIGATORIO cuando el Admin saltea una barrera de doble firma
+    /// (4-eyes / approval) y ejecuta la accion directo. NO reemplaza la validacion de permisos/ownership del
+    /// Admin (esa es total y correcta por otro lado); solo documenta el bypass del approval para el contador.
+    ///
+    /// <para>El detail JSON lleva SIEMPRE <c>bypassedGate</c> (que barrera se salteo), la entidad afectada, el
+    /// motivo (exigido al Admin) y, cuando aplica, monto + moneda. NUNCA datos sensibles. Mismo patron de
+    /// emision que el resto de los audits del modulo (LogBusinessEventAsync hace su propio SaveChanges).</para>
+    /// </summary>
+    private Task LogAdminSelfAuthorizedAsync(
+        string bypassedGate,
+        string entityName,
+        string entityId,
+        string reason,
+        decimal? amount,
+        string? currency,
+        string userId,
+        string? userName,
+        CancellationToken ct)
+    {
+        return _auditService.LogBusinessEventAsync(
+            action: AuditActions.AdminSelfAuthorized,
+            entityName: entityName,
+            entityId: entityId,
+            details: JsonSerializer.Serialize(new
+            {
+                bypassedGate,
+                entityName,
+                entityId,
+                reason,
+                amount,
+                currency,
+                selfAuthorizedByUserId = userId,
+            }),
+            userId: userId,
+            userName: userName,
+            ct: ct);
+    }
+
+    /// <summary>
+    /// CAMBIO 3 (2026-06-24): resuelve la moneda de la multa del operador para REGISTRO/auditoria. Prioridad:
+    /// (1) la moneda explicita del request (ISO 4217); (2) la moneda de la primera linea del BC (cada servicio
+    /// cancelado lleva la suya); (3) ARS como fallback conservador. NO cambia la moneda en la que se EMITE la
+    /// ND al cliente (eso sigue como hoy): solo registra la verdad de lo que retuvo el operador.
+    /// </summary>
+    private async Task<string> ResolvePenaltyCurrencyForAuditAsync(
+        BookingCancellation bc, string? requestedCurrency, CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(requestedCurrency))
+            return Monedas.Normalizar(requestedCurrency);
+
+        var firstLineCurrency = await _db.BookingCancellationLines
+            .Where(l => l.BookingCancellationId == bc.Id)
+            .OrderBy(l => l.Id)
+            .Select(l => l.Currency)
+            .FirstOrDefaultAsync(ct);
+
+        return Monedas.Normalizar(firstLineCurrency);
+    }
+
+    /// <summary>
+    /// CAMBIO 3 (2026-06-24): persiste la moneda de la multa del operador en la(s) <see cref="BookingCancellationLine"/>
+    /// del BC. NO hace SaveChanges: lo hace el caller (ConfirmPenaltyAsync paso c). Default por linea = la moneda
+    /// del servicio (<see cref="BookingCancellationLine.Currency"/>) cuando el request no trae una explicita.
+    ///
+    /// <para>Es SOLO registro: no toca el balance, ni el estado, ni la moneda de emision de la ND.</para>
+    /// </summary>
+    private async Task PersistPenaltyCurrencyOnLinesAsync(
+        BookingCancellation bc, string? requestedCurrency, CancellationToken ct)
+    {
+        // Cargamos las lineas TRACKED (sin AsNoTracking) porque vamos a setear PenaltyCurrency y el caller
+        // las persiste en su SaveChanges.
+        var lines = await _db.BookingCancellationLines
+            .Where(l => l.BookingCancellationId == bc.Id)
+            .ToListAsync(ct);
+
+        if (lines.Count == 0) return; // BC sin lineas (legacy): no hay donde registrar; no es error.
+
+        foreach (var line in lines)
+        {
+            // Si el request trae una moneda explicita, se aplica pareja a todas las lineas (ver limitacion en
+            // el call site). Si no, cada linea conserva SU moneda como moneda de la multa.
+            line.PenaltyCurrency = string.IsNullOrWhiteSpace(requestedCurrency)
+                ? Monedas.Normalizar(line.Currency)
+                : Monedas.Normalizar(requestedCurrency);
+        }
     }
 
     /// <summary>

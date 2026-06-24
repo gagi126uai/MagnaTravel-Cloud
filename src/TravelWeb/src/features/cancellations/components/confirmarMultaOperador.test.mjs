@@ -296,14 +296,18 @@ test("motivo desconocido → no abre, mensaje genérico (defensivo)", () => {
 /**
  * Construye el payload de confirm-penalty para el pass-through del operador.
  * Réplica de la lógica del handleConfirmar de ConfirmarMultaOperadorInline.jsx.
+ *
+ * @param {{ montoStr: string, fecha: string, referencia: string, moneda: string }} params
  */
-function construirPayloadMultaOperador({ montoStr, fecha, referencia }) {
+function construirPayloadMultaOperador({ montoStr, fecha, referencia, moneda }) {
     const monto = parseFloat(montoStr);
     return {
         // conceptKind: null = OperatorPenaltyPassThrough (regla fiscal cerrada ADR-014).
         // La agencia actúa como intermediaria, NO emite cargo propio.
         conceptKind: null,
         confirmedPenaltyAmount: monto,
+        // penaltyCurrency: campo nuevo. El backend lo acepta como opcional.
+        penaltyCurrency: moneda,
         operatorConfirmationDate: fecha + "T00:00:00Z",
         debitNotePurpose: null,
         supportingDocumentReference: referencia.trim() || null,
@@ -317,6 +321,7 @@ test("payload pass-through: conceptKind es null (NO es 0 ni AgencyManagementFee)
         montoStr: "500",
         fecha: "2026-06-01",
         referencia: "",
+        moneda: "USD",
     });
     // CRÍTICO: conceptKind=null identifica el pass-through en el backend.
     // conceptKind=0 es OperatorPenaltyPassThrough como INT — en este endpoint
@@ -329,6 +334,7 @@ test("payload pass-through: confirmedPenaltyAmount es el monto parseado", () => 
         montoStr: "1234.56",
         fecha: "2026-06-01",
         referencia: "",
+        moneda: "USD",
     });
     assert.equal(payload.confirmedPenaltyAmount, 1234.56);
 });
@@ -338,6 +344,7 @@ test("payload pass-through: fecha se formatea con T00:00:00Z para el backend", (
         montoStr: "500",
         fecha: "2026-05-15",
         referencia: "",
+        moneda: "USD",
     });
     assert.equal(payload.operatorConfirmationDate, "2026-05-15T00:00:00Z");
 });
@@ -347,6 +354,7 @@ test("payload pass-through: referencia vacía → supportingDocumentReference es
         montoStr: "500",
         fecha: "2026-06-01",
         referencia: "   ", // solo espacios → null
+        moneda: "USD",
     });
     assert.equal(payload.supportingDocumentReference, null);
 });
@@ -356,6 +364,7 @@ test("payload pass-through: referencia con contenido → supportingDocumentRefer
         montoStr: "500",
         fecha: "2026-06-01",
         referencia: "  Nota 2025/123  ",
+        moneda: "USD",
     });
     assert.equal(payload.supportingDocumentReference, "Nota 2025/123");
 });
@@ -365,6 +374,44 @@ test("payload pass-through: debitNotePurpose es null (el backend usa el default)
         montoStr: "500",
         fecha: "2026-06-01",
         referencia: "",
+        moneda: "USD",
     });
     assert.equal(payload.debitNotePurpose, null);
+});
+
+// ============================================================================
+// Sección 7: campo penaltyCurrency en el payload
+// ============================================================================
+
+test("penaltyCurrency: moneda USD → payload tiene penaltyCurrency='USD'", () => {
+    const payload = construirPayloadMultaOperador({
+        montoStr: "500",
+        fecha: "2026-06-01",
+        referencia: "",
+        moneda: "USD",
+    });
+    assert.equal(payload.penaltyCurrency, "USD");
+});
+
+test("penaltyCurrency: moneda ARS → payload tiene penaltyCurrency='ARS'", () => {
+    const payload = construirPayloadMultaOperador({
+        montoStr: "500",
+        fecha: "2026-06-01",
+        referencia: "",
+        moneda: "ARS",
+    });
+    assert.equal(payload.penaltyCurrency, "ARS");
+});
+
+test("penaltyCurrency: el default del componente es USD (operadores turísticos suelen cobrar en dólares)", () => {
+    // Verifica que el estado inicial del componente es "USD".
+    // Si alguien cambia el default, este test lo captura.
+    const defaultMoneda = "USD";
+    const payload = construirPayloadMultaOperador({
+        montoStr: "300",
+        fecha: "2026-06-01",
+        referencia: "",
+        moneda: defaultMoneda,
+    });
+    assert.equal(payload.penaltyCurrency, "USD");
 });

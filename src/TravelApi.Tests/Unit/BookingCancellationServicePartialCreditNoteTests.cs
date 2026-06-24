@@ -11,9 +11,11 @@ using Moq;
 using TravelApi.Application.Constants;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.DTOs.Cancellation;
+using TravelApi.Application.Exceptions;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Exceptions;
+using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Services;
 using Xunit;
@@ -396,6 +398,151 @@ public class BookingCancellationServicePartialCreditNoteTests
         // ahora deja rastro auditable en ReservaStatusChangeLog (sitio :821 de la cancelacion).
         Assert.Contains(ctx.ReservaStatusChangeLogs,
             l => l.ToStatus == EstadoReserva.PendingOperatorRefund);
+    }
+
+    // ============================================================
+    // CAMBIO 2 (2026-06-24): anular la reserva COMPLETA deja TODOS los servicios Cancelado
+    // ============================================================
+
+    [Fact]
+    public async Task ConfirmAsync_TotalCancellation_MarksAllServicesCancelled()
+    {
+        // FC1.2 legacy path (FC1.3 OFF): el camino tipico de anulacion total.
+        var (svc, ctx, _, _, _, _, _, _, _) = BuildService(fc12On: true, fc13On: false);
+        var (bcPublicId, bc) = await SeedScenarioAsync(ctx);
+
+        // Agregamos un aereo tipado a la misma reserva para cubrir la rama del codigo IATA "UN".
+        var flight = new FlightSegment
+        {
+            ReservaId = bc.ReservaId,
+            Status = "HK", // confirmado
+        };
+        ctx.FlightSegments.Add(flight);
+        await ctx.SaveChangesAsync();
+
+        // El servicio generico Hotel nace sin Status de cancelacion.
+        var genericServiceBefore = await ctx.Set<ServicioReserva>().FirstAsync(s => s.ReservaId == bc.ReservaId);
+        Assert.False(ServiceResolutionRules.IsCancelled(genericServiceBefore));
+
+        await svc.ConfirmAsync(bcPublicId, NewConfirmRequest(), "user-1", "Admin", requesterIsAdmin: false, CancellationToken.None);
+
+        // Tras anular la reserva completa, TODOS los servicios quedan cancelados.
+        var genericService = await ctx.Set<ServicioReserva>().FirstAsync(s => s.ReservaId == bc.ReservaId);
+        Assert.True(ServiceResolutionRules.IsCancelled(genericService));
+        Assert.Equal(WorkflowStatuses.Cancelado, genericService.Status);
+        Assert.NotNull(genericService.CancelledAt);
+        Assert.Equal("user-1", genericService.CancelledByUserId);
+
+        var flightAfter = await ctx.FlightSegments.FirstAsync(f => f.ReservaId == bc.ReservaId);
+        Assert.True(ServiceResolutionRules.IsCancelled(flightAfter)); // "UN" mapea a Cancelado
+        Assert.Equal("UN", flightAfter.Status);
+        Assert.NotNull(flightAfter.CancelledAt);
+    }
+
+    [Fact]
+    public async Task ConfirmAsync_TotalCancellation_AlreadyCancelledService_IsIdempotent()
+    {
+        var (svc, ctx, _, _, _, _, _, _, _) = BuildService(fc12On: true, fc13On: false);
+        var (bcPublicId, bc) = await SeedScenarioAsync(ctx);
+
+        // Pre-cancelamos el generico a mano con marca previa: no debe pisarse.
+        var preCancelTime = DateTime.UtcNow.AddDays(-5);
+        var service = await ctx.Set<ServicioReserva>().FirstAsync(s => s.ReservaId == bc.ReservaId);
+        service.Status = WorkflowStatuses.Cancelado;
+        service.CancelledAt = preCancelTime;
+        service.CancelledByUserId = "otro-usuario";
+        await ctx.SaveChangesAsync();
+
+        await svc.ConfirmAsync(bcPublicId, NewConfirmRequest(), "user-1", "Admin", requesterIsAdmin: false, CancellationToken.None);
+
+        // Idempotente: no re-toca la marca previa (no pisa CancelledAt/By).
+        var after = await ctx.Set<ServicioReserva>().FirstAsync(s => s.ReservaId == bc.ReservaId);
+        Assert.Equal("otro-usuario", after.CancelledByUserId);
+        Assert.Equal(preCancelTime, after.CancelledAt);
+    }
+
+    // ============================================================
+    // CAMBIO 1 (2026-06-24): Admin auto-autoriza el IsAdminOverride SIN approval
+    // ============================================================
+
+    [Fact]
+    public async Task ConfirmAsync_AdminSelfAuthorizedOverride_NoApproval_ProceedsLogsAuditAndBypassesNcApproval()
+    {
+        // FC1.3 OFF -> aisla el bypass del override base (multi-invoice), sin la rama hotel FC1.3.
+        var (svc, ctx, invoiceMock, _, auditMock, _, _, _, _) =
+            BuildService(fc12On: true, fc13On: false);
+        var (bcPublicId, _) = await SeedScenarioAsync(ctx);
+
+        // IsAdminOverride=true SIN ApprovalRequestPublicId, pero requesterIsAdmin=true.
+        var req = NewConfirmRequest() with
+        {
+            IsAdminOverride = true,
+            OverrideReason = "Dueno fuerza override; unico admin, sin doble firma",
+            ApprovalRequestPublicId = null,
+        };
+
+        // No debe tirar (antes del cambio, sin approval tiraba ApprovalRequiredException).
+        await svc.ConfirmAsync(bcPublicId, req, "owner", "Owner", requesterIsAdmin: true, CancellationToken.None);
+
+        var bc = await ctx.BookingCancellations.FirstAsync(b => b.PublicId == bcPublicId);
+        Assert.Equal(BookingCancellationStatus.AwaitingFiscalConfirmation, bc.Status);
+
+        // Quedo el rastro de auditoria AdminSelfAuthorized.
+        auditMock.Verify(a => a.LogBusinessEventAsync(
+            AuditActions.AdminSelfAuthorized,
+            AuditActions.BookingCancellationEntityName,
+            It.IsAny<string>(),
+            It.IsAny<string?>(),
+            "owner",
+            It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        // El bypass se propaga a la NC: EnqueueAnnulmentAsync se llama con requesterIsAdmin=true
+        // (saltea tambien el approval del InvoiceAnnulment) y SIN approvalRequestId.
+        invoiceMock.Verify(i => i.EnqueueAnnulmentAsync(
+            It.IsAny<int>(), "owner", It.IsAny<string?>(), It.IsAny<string>(),
+            true, It.IsAny<CancellationToken>(), null), Times.Once);
+    }
+
+    [Fact]
+    public async Task ConfirmAsync_NonAdmin_IsAdminOverride_NoApproval_StillThrows()
+    {
+        var (svc, ctx, _, _, _, _, _, _, _) = BuildService(fc12On: true, fc13On: false);
+        var (bcPublicId, _) = await SeedScenarioAsync(ctx);
+
+        // Un NO-admin con IsAdminOverride pero sin approval -> sigue rebotando (no hay bypass).
+        var req = NewConfirmRequest() with
+        {
+            IsAdminOverride = true,
+            OverrideReason = "intento de vendedor sin doble firma",
+            ApprovalRequestPublicId = null,
+        };
+
+        await Assert.ThrowsAsync<ApprovalRequiredException>(() =>
+            svc.ConfirmAsync(bcPublicId, req, "vendedor", "V", requesterIsAdmin: false, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ConfirmAsync_AdminSelfAuthorized_DoesNotOpenFc13NonHotelGate()
+    {
+        // Red de seguridad (security-review): el bypass de admin NO debe abrir el gate fiscal
+        // INV-FC1.3-007 (mezcla con servicio NO-Hotel). Admin + IsAdminOverride + SIN approval
+        // valido + reserva con servicio no-Hotel + FC1.3 ON -> debe SEGUIR rebotando.
+        var (svc, ctx, _, _, _, _, calculatorMock, _, _) =
+            BuildService(fc12On: true, fc13On: true);
+        var (bcPublicId, _) = await SeedScenarioAsync(ctx, addNonHotelService: true);
+        SetupCalculator(calculatorMock, AutoApprovableDto());
+
+        var req = NewConfirmRequest() with
+        {
+            IsAdminOverride = true,
+            OverrideReason = "Admin quiere forzar mezcla Hotel+Vuelo sin approval",
+            ApprovalRequestPublicId = null,
+        };
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            svc.ConfirmAsync(bcPublicId, req, "owner", "Owner", requesterIsAdmin: true, CancellationToken.None));
+        Assert.Equal("INV-FC1.3-007", ex.InvariantCode);
     }
 
     // ============================================================

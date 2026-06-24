@@ -313,4 +313,21 @@ public static class AuditActions
 
     /// <summary>Reprogramar viaje: entityName para el evento de desplazamiento de fechas.</summary>
     public const string ReservaEntityName = "Reserva";
+
+    // ===== Admin auto-autorizado (bypass de 4-eyes, 2026-06-24) =====
+
+    /// <summary>
+    /// 2026-06-24: el Admin ejecuto DIRECTO una accion que normalmente exige doble firma (4-eyes / approval),
+    /// SIN crear un ApprovalRequest, porque hoy el dueno es el unico Admin y pedirse permiso a si mismo es
+    /// teatro (se auto-aprobaba). El bypass esta condicionado SOLO al rol Admin: el dia que existan varios
+    /// admins que no sean el dueno, se puede volver a exigir 4-eyes por policy (la maquinaria de approval NO
+    /// se borro, sigue intacta para los no-Admin).
+    ///
+    /// <para><b>Por que este audit es OBLIGATORIO</b>: el Admin no pide permiso, pero el contador necesita el
+    /// rastro de que el Admin se auto-autorizo. El detail JSON lleva SIEMPRE: <c>bypassedGate</c> (que barrera
+    /// se salteo, ej. "ConfirmPenaltyFourEyes"), <c>entityName</c>/<c>entityId</c> de la entidad afectada, el
+    /// <c>reason</c> (motivo no vacio, exigido al Admin), y <c>amount</c>/<c>currency</c> cuando aplica. NUNCA
+    /// datos sensibles (documentos, datos de pago).</para>
+    /// </summary>
+    public const string AdminSelfAuthorized = "AdminSelfAuthorized";
 }

@@ -344,7 +344,19 @@ public class BookingCancellation : IHasPublicId
     /// <summary>ADR-013 §3.8: monto de la penalidad confirmada congelado al disparar la ND.</summary>
     public decimal? PenaltyAmountAtEvent { get; set; }
 
-    /// <summary>ADR-013 §3.8: moneda de la penalidad congelada (ARS en el MVP). ISO 4217.</summary>
+    /// <summary>
+    /// ADR-013 §3.8: moneda de la penalidad congelada al disparar la ND. Es la moneda en la que se EMITE la
+    /// Nota de Debito al cliente (alimenta la emision/FX de la ND). Se deriva del <c>MonId</c> de la factura
+    /// original (espacio ARCA): <c>PES</c> se normaliza a <c>ARS</c>, pero el resto conserva el codigo ARCA
+    /// tal cual (ej. <c>DOL</c>, NO <c>USD</c>). Ver <c>FreezeDebitNoteSnapshot</c>.
+    ///
+    /// <para><b>OJO — NO confundir con <see cref="BookingCancellationLine.PenaltyCurrency"/></b>: aquel es la
+    /// moneda en que el OPERADOR RETUVO la multa (registro/verdad operativa, espacio ISO 4217 puro: USD/ARS).
+    /// Este (<c>PenaltyCurrencyAtEvent</c>) es la moneda de EMISION de la ND (espacio ARCA hibrido: ARS/DOL).
+    /// Son conceptos y espacios de codigos DISTINTOS: <b>NO se deben cablear cruzados sin un mapper ISO->ARCA</b>
+    /// (ej. USD->DOL). Hoy no se cruzan: <c>PenaltyCurrency</c> es solo captura y <c>PenaltyCurrencyAtEvent</c>
+    /// se sigue derivando de la factura, como antes.</para>
+    /// </summary>
     [MaxLength(3)]
     public string? PenaltyCurrencyAtEvent { get; set; }
 

@@ -196,7 +196,8 @@ public class ClientCreditService : IClientCreditService
         WithdrawClientCreditRequest request,
         string userId,
         string? userName,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool requesterIsAdmin = false)
     {
         // ATENCION trainee/junior — orden de operaciones (Obs 4 review FC1.2.3, 2026-05-18):
         //
@@ -238,6 +239,12 @@ public class ClientCreditService : IClientCreditService
         //    + amount <= RemainingBalance.
         ValidateAmountCommon(request, entry);
 
+        // 2026-06-24: bandera de auto-autorizacion del Admin para el caso ReversedToOperator. La setea
+        // HandleReversedToOperatorAsync cuando el Admin saltea el approval ClientRefundReversal. La leemos en
+        // el paso 6b para emitir el audit AdminSelfAuthorized DESPUES del SaveChanges del withdrawal (mismo
+        // orden seguro que el resto de los audits: nunca audit huerfano de un retiro que no se persistio).
+        bool reversalAdminSelfAuthorized = false;
+
         // 3) Despacho por kind. Cada handler:
         //    - Valida invariantes especificos del kind (Ley 25.345, approval).
         //    - Crea el ClientCreditWithdrawal (Add() en memoria).
@@ -248,15 +255,29 @@ public class ClientCreditService : IClientCreditService
         //    valor, el Id de la reserva DESTINO a recalcular post-commit (solo AppliedToNewBooking lo
         //    devuelve; los otros 4 kinds devuelven null porque no tocan otra reserva). FC4: necesitamos
         //    saber que reserva recalcular para que el puente de aplicacion baje su deuda atomicamente.
-        var (withdrawal, targetReservaIdToRecalc) = request.Kind switch
+        ClientCreditWithdrawal withdrawal;
+        int? targetReservaIdToRecalc;
+        switch (request.Kind)
         {
-            WithdrawalKind.KeptAsCredit => await HandleKeptAsCreditAsync(entry, request, userId, userName, ct),
-            WithdrawalKind.PhysicalCash => await HandlePhysicalCashAsync(entry, request, userId, userName, ct),
-            WithdrawalKind.Transfer => await HandleTransferAsync(entry, request, userId, userName, ct),
-            WithdrawalKind.AppliedToNewBooking => await HandleAppliedToNewBookingAsync(entry, request, userId, userName, ct),
-            WithdrawalKind.ReversedToOperator => await HandleReversedToOperatorAsync(entry, request, userId, userName, ct),
-            _ => throw new ArgumentException($"WithdrawalKind no soportado: {request.Kind}", nameof(request)),
-        };
+            case WithdrawalKind.KeptAsCredit:
+                (withdrawal, targetReservaIdToRecalc) = await HandleKeptAsCreditAsync(entry, request, userId, userName, ct);
+                break;
+            case WithdrawalKind.PhysicalCash:
+                (withdrawal, targetReservaIdToRecalc) = await HandlePhysicalCashAsync(entry, request, userId, userName, ct);
+                break;
+            case WithdrawalKind.Transfer:
+                (withdrawal, targetReservaIdToRecalc) = await HandleTransferAsync(entry, request, userId, userName, ct);
+                break;
+            case WithdrawalKind.AppliedToNewBooking:
+                (withdrawal, targetReservaIdToRecalc) = await HandleAppliedToNewBookingAsync(entry, request, userId, userName, ct);
+                break;
+            case WithdrawalKind.ReversedToOperator:
+                (withdrawal, targetReservaIdToRecalc, reversalAdminSelfAuthorized) =
+                    await HandleReversedToOperatorAsync(entry, request, userId, userName, requesterIsAdmin, ct);
+                break;
+            default:
+                throw new ArgumentException($"WithdrawalKind no soportado: {request.Kind}", nameof(request));
+        }
 
         // 4-8) Persistencia + recalculo del destino + audit + cierre del BC.
         //
@@ -383,6 +404,37 @@ public class ClientCreditService : IClientCreditService
                         withdrawal.Amount,
                         approvalRequestPublicId = withdrawal.ApprovalRequestId,
                         executedByUserId = userId,
+                    }),
+                    userId: userId,
+                    userName: userName,
+                    ct: ct);
+            }
+
+            // 6b-admin) 2026-06-24: si el Admin se auto-autorizo el reversal (salteo el approval
+            //     ClientRefundReversal), dejamos el audit AdminSelfAuthorized para el contador. Se emite
+            //     DESPUES del SaveChanges del paso 5 (mismo orden seguro que el resto): si el withdrawal no
+            //     se persistio, no queda audit huerfano de un bypass que no ocurrio. No hay campo de motivo
+            //     en el request, asi que usamos un motivo por defecto explicito + el Reference opcional.
+            if (withdrawal.Kind == WithdrawalKind.ReversedToOperator && reversalAdminSelfAuthorized)
+            {
+                var reversalReason = string.IsNullOrWhiteSpace(request.Reference)
+                    ? "Admin auto-autorizo la devolucion de saldo al operador (sin doble firma)."
+                    : $"Admin auto-autorizo la devolucion de saldo al operador (sin doble firma). Ref: {request.Reference.Trim()}";
+
+                await _auditService.LogBusinessEventAsync(
+                    action: AuditActions.AdminSelfAuthorized,
+                    entityName: AuditActions.ClientCreditEntryEntityName,
+                    entityId: entry.PublicId.ToString(),
+                    details: JsonSerializer.Serialize(new
+                    {
+                        bypassedGate = "ClientRefundReversalApproval",
+                        entryPublicId = entry.PublicId,
+                        customerPublicId = entry.Customer.PublicId,
+                        withdrawalPublicId = withdrawal.PublicId,
+                        reason = reversalReason,
+                        amount = withdrawal.Amount,
+                        currency = entry.Currency,
+                        selfAuthorizedByUserId = userId,
                     }),
                     userId: userId,
                     userName: userName,
@@ -944,13 +996,36 @@ public class ClientCreditService : IClientCreditService
     /// </list>
     /// </para>
     /// </summary>
-    private async Task<(ClientCreditWithdrawal withdrawal, int? targetReservaIdToRecalc)> HandleReversedToOperatorAsync(
+    private async Task<(ClientCreditWithdrawal withdrawal, int? targetReservaIdToRecalc, bool adminSelfAuthorized)> HandleReversedToOperatorAsync(
         ClientCreditEntry entry,
         WithdrawClientCreditRequest request,
         string userId,
         string? userName,
+        bool requesterIsAdmin,
         CancellationToken ct)
     {
+        // 2026-06-24: BYPASS Admin. Hoy el dueno es el unico Admin y pedirse a si mismo un approval
+        // ClientRefundReversal es teatro (se auto-aprobaba). Cuando el actor es Admin, NO exigimos el
+        // approval: el Admin se auto-autoriza y mas arriba (WithdrawAsync paso 6b) queda el audit
+        // AdminSelfAuthorized. Condicionado SOLO al rol Admin: el dia que existan varios admins que no
+        // sean el dueno, se puede volver a exigir el approval por policy (la maquinaria sigue intacta abajo).
+        if (requesterIsAdmin)
+        {
+            // Construir withdrawal + ManualCashMovement Income SIN approval consumido (no hubo approval).
+            // El ApprovalRequestId queda null en el withdrawal. El motivo del bypass se documenta en el
+            // audit AdminSelfAuthorized (no hay campo de motivo en WithdrawClientCreditRequest: usamos un
+            // default razonable mas un Reference opcional si el Admin lo cargo).
+            var adminWithdrawal = BuildWithdrawalAndMovement(
+                entry,
+                request,
+                WithdrawalKind.ReversedToOperator,
+                userId,
+                userName,
+                approvalRequestId: null);
+
+            return (adminWithdrawal, null, true);
+        }
+
         if (request.ApprovalRequestPublicId is null)
         {
             throw new ApprovalRequiredException(
@@ -1019,8 +1094,8 @@ public class ClientCreditService : IClientCreditService
             userName,
             approvalRequestId: approval.PublicId.ToString());
 
-        // No toca otra reserva -> segundo valor null.
-        return (withdrawal, null);
+        // No toca otra reserva -> segundo valor null. No fue bypass de Admin -> tercer valor false.
+        return (withdrawal, null, false);
     }
 
     // =========================================================================

@@ -82,6 +82,23 @@ public class BookingCancellationLine : IHasPublicId
     /// <summary>Monto de la penalidad. Null mientras no haya penalidad confirmada.</summary>
     public decimal? PenaltyAmount { get; set; }
 
+    /// <summary>
+    /// CAMBIO 3 (2026-06-24): moneda en la que el operador RETUVO la multa, en espacio <b>ISO 4217 puro</b>
+    /// (USD/ARS). Al operador se le paga en USD, asi que la penalidad puede ser USD o ARS — no necesariamente
+    /// la misma que <see cref="Currency"/> (la del servicio). Es SOLO registro de la verdad de lo que retuvo el
+    /// operador. Default = moneda de la linea (<see cref="Currency"/>) via backfill de la migracion y default
+    /// explicito al confirmar la penalidad.
+    ///
+    /// <para><b>OJO — NO confundir con <see cref="BookingCancellation.PenaltyCurrencyAtEvent"/></b> (el campo
+    /// del BC padre): aquel es la moneda en la que se EMITE la Nota de Debito al cliente y vive en el espacio
+    /// ARCA hibrido (ARS/DOL, derivado del MonId de la factura). Este (<c>PenaltyCurrency</c>) es ISO puro y
+    /// solo describe lo que retuvo el operador. Son conceptos y espacios de codigos DISTINTOS: <b>NO cablear
+    /// esta moneda a la emision/FX de la ND sin un mapper ISO->ARCA</b> (ej. USD->DOL) — y ese wire requiere
+    /// firma del contador (follow-up).</para>
+    /// </summary>
+    [MaxLength(3)]
+    public string? PenaltyCurrency { get; set; }
+
     /// <summary>Momento (sistema) en que se confirmo la penalidad de la linea.</summary>
     public DateTime? PenaltyConfirmedAt { get; set; }
 

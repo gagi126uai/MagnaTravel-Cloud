@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using TravelApi.Application.Constants;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.DTOs.Cancellation;
 using TravelApi.Application.Interfaces;
@@ -49,6 +50,7 @@ public class CancellationDeferredPenaltyTests
         BookingCancellationService Service,
         AppDbContext Ctx,
         Mock<IInvoiceService> InvoiceMock,
+        Mock<IAuditService> AuditMock,
         OperationalFinanceSettings Settings,
         CapturingLogger<BookingCancellationService> Log);
 
@@ -105,7 +107,7 @@ public class CancellationDeferredPenaltyTests
             calculatorMock.Object,
             adminCountMock.Object);
 
-        return new Harness(service, ctx, invoiceMock, settings, log);
+        return new Harness(service, ctx, invoiceMock, auditMock, settings, log);
     }
 
     /// <summary>
@@ -776,5 +778,129 @@ public class CancellationDeferredPenaltyTests
         Assert.DoesNotContain(rows, r =>
             r.BookingCancellationPublicId == bc.PublicId &&
             r.DebitNoteStatus == CancellationDebitNotePendingDto.EstimatedPendingConfirmationPseudoStatus);
+    }
+
+    // ============================================================
+    // CAMBIO 1 (2026-06-24): Admin bypasea el 4-eyes de confirm-penalty
+    // ============================================================
+
+    [Fact]
+    public async Task AdminBypassesFourEyes_WithReason_EmitsAndLogsSelfAuthorized()
+    {
+        var h = BuildService();
+        var (bcId, _, _) = await SeedPostNcAsync(h.Ctx);
+        SetupCreateEmitsDebitNote(h);
+
+        // Sin soporte documental (normalmente exige 4-eyes), pero el actor es Admin -> bypass.
+        // OverrideReason no vacio es obligatorio para el bypass.
+        var request = Request(amount: 30_000m, support: null) with { OverrideReason = "Dueno confirma multa, unico admin" };
+
+        var dto = await h.Service.ConfirmPenaltyAsync(
+            bcId, request, "owner", "Owner", requesterIsAdmin: true, default,
+            userCanClassifyAgencyPenalty: true);
+
+        // Emitio la ND sin pedir approval.
+        Assert.Equal(DebitNoteStatus.Pending, h.Ctx.BookingCancellations.Single().DebitNoteStatus);
+
+        // Quedo el rastro de auditoria AdminSelfAuthorized.
+        h.AuditMock.Verify(a => a.LogBusinessEventAsync(
+            AuditActions.AdminSelfAuthorized,
+            AuditActions.BookingCancellationEntityName,
+            It.IsAny<string>(),
+            It.IsAny<string?>(),
+            "owner",
+            It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task AdminBypassesFourEyes_WithoutReason_Rejected()
+    {
+        var h = BuildService();
+        var (bcId, _, _) = await SeedPostNcAsync(h.Ctx);
+
+        // Admin sin OverrideReason -> rechazo (exigimos motivo para dejar rastro al contador).
+        var request = Request(amount: 30_000m, support: null); // OverrideReason null por defecto
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.ConfirmPenaltyAsync(
+                bcId, request, "owner", "Owner", requesterIsAdmin: true, default,
+                userCanClassifyAgencyPenalty: true));
+        Assert.Equal("INV-ADMIN-SELFAUTH", ex.InvariantCode);
+    }
+
+    [Fact]
+    public async Task NonAdmin_StillRequiresFourEyes_NoBypass()
+    {
+        var h = BuildService();
+        var (bcId, _, _) = await SeedPostNcAsync(h.Ctx);
+
+        // Un no-Admin con OverrideReason pero sin approval valido sigue rebotando (la maquinaria
+        // de 4-eyes NO se borro: el bypass es SOLO para Admin).
+        var request = Request(amount: 30_000m, support: null) with { OverrideReason = "intento de vendedor" };
+
+        await Assert.ThrowsAsync<ApprovalRequiredException>(() =>
+            h.Service.ConfirmPenaltyAsync(
+                bcId, request, "vendedor", "V", requesterIsAdmin: false, default,
+                userCanClassifyAgencyPenalty: true));
+    }
+
+    // ============================================================
+    // CAMBIO 3 (2026-06-24): captura de la MONEDA de la multa del operador
+    // ============================================================
+
+    [Fact]
+    public async Task ConfirmPenalty_PersistsExplicitPenaltyCurrencyOnLines()
+    {
+        var h = BuildService();
+        var (bcId, bc, _) = await SeedPostNcAsync(h.Ctx);
+        SetupCreateEmitsDebitNote(h);
+        await SeedLineAsync(h.Ctx, bc, lineCurrency: "ARS");
+
+        // El operador retuvo la multa en USD aunque el servicio sea ARS.
+        var request = Request(amount: 30_000m) with { PenaltyCurrency = "usd" };
+
+        await h.Service.ConfirmPenaltyAsync(
+            bcId, request, "u", "U", requesterIsAdmin: false, default,
+            userCanClassifyAgencyPenalty: true);
+
+        var line = h.Ctx.BookingCancellationLines.Single(l => l.BookingCancellationId == bc.Id);
+        Assert.Equal("USD", line.PenaltyCurrency); // normalizado a mayusculas
+    }
+
+    [Fact]
+    public async Task ConfirmPenalty_DefaultsPenaltyCurrencyToLineCurrency_WhenNotProvided()
+    {
+        var h = BuildService();
+        var (bcId, bc, _) = await SeedPostNcAsync(h.Ctx);
+        SetupCreateEmitsDebitNote(h);
+        await SeedLineAsync(h.Ctx, bc, lineCurrency: "USD");
+
+        // Request sin PenaltyCurrency -> usa la moneda de la linea/servicio.
+        var request = Request(amount: 30_000m); // PenaltyCurrency null por defecto
+
+        await h.Service.ConfirmPenaltyAsync(
+            bcId, request, "u", "U", requesterIsAdmin: false, default,
+            userCanClassifyAgencyPenalty: true);
+
+        var line = h.Ctx.BookingCancellationLines.Single(l => l.BookingCancellationId == bc.Id);
+        Assert.Equal("USD", line.PenaltyCurrency);
+    }
+
+    /// <summary>Agrega una linea hija al BC con la moneda indicada (helper para los tests de CAMBIO 3).</summary>
+    private static async Task SeedLineAsync(AppDbContext ctx, BookingCancellation bc, string lineCurrency)
+    {
+        var supplierId = ctx.Suppliers.First().Id;
+        ctx.BookingCancellationLines.Add(new BookingCancellationLine
+        {
+            BookingCancellationId = bc.Id,
+            SupplierId = supplierId,
+            ServiceTable = CancellableServiceTable.Hotel,
+            ServiceId = 1,
+            Scope = BookingCancellationLineScope.Full,
+            Currency = lineCurrency,
+            LineSaleAmount = 50_000m,
+        });
+        await ctx.SaveChangesAsync();
     }
 }

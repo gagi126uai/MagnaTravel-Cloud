@@ -321,6 +321,19 @@ public record ConfirmPenaltyRequest(
     DebitNotePurpose? DebitNotePurpose = null,
 
     /// <summary>
+    /// CAMBIO 3 (2026-06-24): moneda de la multa que retuvo el operador (ISO 4217, 3 chars). Al operador se le
+    /// paga en USD, asi que la multa puede ser USD o ARS. Es SOLO captura/registro: persistimos esta moneda en
+    /// la(s) <c>BookingCancellationLine</c> del BC para tener la verdad de lo que retuvo el operador.
+    ///
+    /// <para><b>Opcional</b>: si el request no la trae, el service usa por defecto la moneda de la linea/servicio
+    /// cancelado. <b>NO cambia la moneda en la que se EMITE la Nota de Debito al cliente</b> (eso sigue como hoy,
+    /// territorio del contador). Wire de esta moneda a la emision/FX de la ND es follow-up que requiere firma del
+    /// contador.</para>
+    /// </summary>
+    [MaxLength(3, ErrorMessage = "PenaltyCurrency es ISO 4217 (3 chars).")]
+    string? PenaltyCurrency = null,
+
+    /// <summary>
     /// ADR-014 (§3.1, §3.6): referencia/URL del soporte documental del acuerdo del
     /// operador (mail / PDF). Opcional. Si NO se adjunta, el service exige 4-eyes
     /// (confirmar una penalidad propia sin respaldo es el caso de mayor riesgo).

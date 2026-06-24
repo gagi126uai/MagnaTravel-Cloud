@@ -90,10 +90,14 @@ public class ClientCreditsController : ControllerBase
     {
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
         var userName = User.FindFirst("FullName")?.Value ?? User.FindFirst(ClaimTypes.Name)?.Value;
+        // 2026-06-24: el Admin se auto-autoriza el reversal (ReversedToOperator) sin doble firma. El service
+        // lo resuelve por rol y deja el audit AdminSelfAuthorized. Un caller no-Admin sigue necesitando el
+        // approval ClientRefundReversal.
+        var requesterIsAdmin = User.IsInRole("Admin");
 
         try
         {
-            var dto = await _creditService.WithdrawAsync(publicId, request, userId, userName, cancellationToken);
+            var dto = await _creditService.WithdrawAsync(publicId, request, userId, userName, cancellationToken, requesterIsAdmin);
             return CreatedAtAction(
                 actionName: nameof(GetEntryByPublicId),
                 routeValues: new { publicId },

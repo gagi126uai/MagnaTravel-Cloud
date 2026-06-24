@@ -37,6 +37,13 @@ function getTodayString() {
     return new Date().toISOString().split("T")[0];
 }
 
+// Opciones de moneda para la multa del operador.
+// Default USD porque los operadores turísticos suelen facturar en dólares.
+const MONEDAS_MULTA = [
+    { value: "USD", label: "Dólares (USD)" },
+    { value: "ARS", label: "Pesos (ARS)" },
+];
+
 /**
  * Valida los campos del mini-form de multa del operador.
  *
@@ -85,6 +92,8 @@ export function ConfirmarMultaOperadorInline({
     onCerrar,
 }) {
     const [montoStr, setMontoStr] = useState("");
+    // Default USD: los operadores turísticos suelen retener en dólares.
+    const [moneda, setMoneda] = useState("USD");
     const [fecha, setFecha] = useState(getTodayString());
     const [referencia, setReferencia] = useState("");
     const [submitting, setSubmitting] = useState(false);
@@ -97,6 +106,7 @@ export function ConfirmarMultaOperadorInline({
     // useEffect con [cancellationPublicId]: útil si el componente se reutiliza.
     useEffect(() => {
         setMontoStr("");
+        setMoneda("USD"); // reset a default USD cada vez que se abre para una cancelación nueva
         setFecha(getTodayString());
         setReferencia("");
         setConflictMessage(null);
@@ -121,6 +131,9 @@ export function ConfirmarMultaOperadorInline({
         const payload = {
             conceptKind: null,
             confirmedPenaltyAmount: monto,
+            // penaltyCurrency: campo nuevo — contrato PATCH /cancellations/{id}/confirm-penalty.
+            // El backend lo acepta como opcional; si no llega, asume ARS (legado).
+            penaltyCurrency: moneda,
             // El input type=date devuelve "YYYY-MM-DD". El backend espera DateTime:
             // se agrega "T00:00:00Z" para que el parsing no falle (igual que ConfirmPenaltyModal).
             operatorConfirmationDate: fecha + "T00:00:00Z",
@@ -251,33 +264,67 @@ export function ConfirmarMultaOperadorInline({
                     </div>
                 )}
 
-                {/* ── Monto de la multa ── */}
-                <div>
-                    <label
-                        className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5"
-                        htmlFor="multa-monto"
-                    >
-                        Monto que retiene el operador <span className="text-rose-500" aria-hidden="true">*</span>
-                    </label>
-                    <input
-                        id="multa-monto"
-                        type="number"
-                        min="0.01"
-                        step="0.01"
-                        value={montoStr}
-                        onChange={(e) => setMontoStr(e.target.value)}
-                        placeholder="0.00"
-                        disabled={submitting}
-                        data-testid="multa-monto-input"
-                        className={`w-full rounded-xl border px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 dark:bg-slate-800 dark:text-white disabled:opacity-50 ${
-                            montoTocado && montoError ? "border-rose-400" : "border-slate-300 dark:border-slate-600"
-                        }`}
-                    />
-                    {montoTocado && montoError && (
-                        <div className="mt-1 text-xs text-rose-600" role="alert" data-testid="multa-monto-error">
-                            {montoError}
+                {/* ── Monto + Moneda de la multa (en la misma fila) ── */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {/* Campo: monto que retiene el operador */}
+                    <div>
+                        <label
+                            className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5"
+                            htmlFor="multa-monto"
+                        >
+                            Monto que retiene el operador <span className="text-rose-500" aria-hidden="true">*</span>
+                        </label>
+                        <input
+                            id="multa-monto"
+                            type="number"
+                            min="0.01"
+                            step="0.01"
+                            value={montoStr}
+                            onChange={(e) => setMontoStr(e.target.value)}
+                            placeholder="0.00"
+                            disabled={submitting}
+                            data-testid="multa-monto-input"
+                            className={`w-full rounded-xl border px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 dark:bg-slate-800 dark:text-white disabled:opacity-50 ${
+                                montoTocado && montoError ? "border-rose-400" : "border-slate-300 dark:border-slate-600"
+                            }`}
+                        />
+                        {montoTocado && montoError && (
+                            <div className="mt-1 text-xs text-rose-600" role="alert" data-testid="multa-monto-error">
+                                {montoError}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Campo: moneda en la que el operador retiene la multa.
+                        Default USD porque los operadores turísticos suelen retener en dólares. */}
+                    <div>
+                        <label
+                            className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5"
+                            htmlFor="multa-moneda"
+                        >
+                            Moneda <span className="text-rose-500" aria-hidden="true">*</span>
+                        </label>
+                        <select
+                            id="multa-moneda"
+                            value={moneda}
+                            onChange={(e) => setMoneda(e.target.value)}
+                            disabled={submitting}
+                            data-testid="multa-moneda-select"
+                            className="w-full rounded-xl border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 disabled:opacity-50"
+                        >
+                            {MONEDAS_MULTA.map((opcion) => (
+                                <option key={opcion.value} value={opcion.value}>
+                                    {opcion.label}
+                                </option>
+                            ))}
+                        </select>
+                        {/* Aclaración importante: la moneda elegida acá es solo para registrar
+                            cómo informó el operador la multa. La moneda de emisión de la Nota
+                            de Débito al cliente la define la configuración fiscal (no este campo). */}
+                        <div className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">
+                            Indicá la moneda en la que el operador te informó la multa. La nota de débito al cliente se emite según la configuración fiscal vigente.
                         </div>
-                    )}
+                    </div>
                 </div>
 
                 {/* ── Fecha en que el operador confirmó el monto ── */}
