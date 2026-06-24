@@ -305,6 +305,17 @@ public class ReservaDto
     public string InvoicingStatus { get; set; } = ReservaInvoicingStatus.NotInvoiced;
 
     /// <summary>
+    /// (2026-06-24): true si la reserva tiene una factura EN PROCESO — encolada en AFIP/ARCA esperando el CAE
+    /// (<c>Resultado == "PENDING"</c> y no anulada). Mientras esto es true, el <see cref="InvoicingStatus"/>
+    /// todavia NO la cuenta (el cuadre solo suma comprobantes con CAE aprobado), asi que la UI mostraria
+    /// "Sin facturar" y ofreceria "Emitir factura" otra vez. Este flag existe para que el front avise "factura
+    /// en proceso" y NO ofrezca re-emitir: emitir una segunda mientras hay una PENDING rebota con 409 en el
+    /// backend (mismo criterio: <c>Resultado=="PENDING" &amp;&amp; AnnulmentStatus != Succeeded</c>). Es un
+    /// espejo de lectura de ese guard, para feedback temprano.
+    /// </summary>
+    public bool HasInvoiceInProgress { get; set; }
+
+    /// <summary>
     /// ADR-037 (2026-06-21): true si la reserva entra en el aviso "Debe — no viaja" (ADR-036): el cliente
     /// tiene deuda (saldo pendiente &gt; 0) Y la fecha de salida (<see cref="StartDate"/>) cae dentro de la
     /// ventana configurada (<c>UpcomingUnpaidReservationAlertDays</c>) Y las notificaciones de este tipo

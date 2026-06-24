@@ -1589,17 +1589,39 @@ export default function ReservaDetailPage() {
 
                 const registroPagoHabilitado = !capRegPago || capRegPago.allowed;
                 const facturaHabilitada = !capFactura || capFactura.allowed;
-                // Cancelar ademas requiere permiso de usuario (igual que antes)
-                const cancelarHabilitado = canCancelReserva && (!capCancelar || capCancelar.allowed);
+                // Cancelar ademas requiere permiso de usuario (igual que antes).
+                //
+                // ADR-036 fix (2026-06-24): el boton "Anular reserva" abre el flujo FORMAL que emite la
+                // Nota de Credito (CancelarReservaInline; el panel ya muestra el cartel ambar "tiene
+                // factura -> se emite NC"). La capacidad canCancel modela la "baja simple" y se apaga
+                // cuando hay plata viva (factura con CAE o cobros) para enrutar al anular formal — pero el
+                // UNICO boton ES el anular formal. Si solo miraramos canCancel.allowed, el boton quedaria
+                // escondido justo cuando hay que anular (caso con factura, que es el habitual). Por eso
+                // tambien lo habilitamos cuando el motivo es exactamente "hay que anularla". Ese motivo solo
+                // aparece en estados NO terminales (los terminales dan otro motivo), asi que no reabre el
+                // boton en Cerrada/En viaje/Anulada. El backend revalida todo (DraftAsync exige factura
+                // activa; el guard de baja simple sigue en ReservaService). Constante espejada de
+                // ReservaCapabilityPolicy.HasLiveMoneyMustAnnulReason.
+                const MOTIVO_DEBE_ANULAR_FORMAL =
+                  "Esta reserva tiene cobros o factura: para deshacerla hay que anularla (se emite Nota de Crédito).";
+                const debeAnularFormal =
+                  !!capCancelar && !capCancelar.allowed && capCancelar.reason === MOTIVO_DEBE_ANULAR_FORMAL;
+                const cancelarHabilitado =
+                  canCancelReserva && (!capCancelar || capCancelar.allowed || debeAnularFormal);
 
                 // Mostramos cada acción SOLO si está disponible. En estados de solo lectura
                 // (En viaje, Finalizada, etc.) el backend apaga la capability → el botón NO
                 // aparece. Nada de botón gris con un mensajito rojo debajo: el cartel de
                 // solo-lectura de arriba ya explica el porqué (decisión Gaston 2026-06-22,
                 // coherente con "un solo cartel arriba, nunca motivos pegados a cada botón").
-                const mostrarFactura = reserva.invoicingStatus !== 'FullyInvoiced' && facturaHabilitada;
+                // (2026-06-24): si ya hay una factura EN PROCESO (encolada, esperando CAE), NO ofrecemos
+                // "Emitir factura": el estado de facturación todavía no la cuenta (solo cuenta las que tienen
+                // CAE), así que sin esto el botón seguiría visible y el usuario reemitiría otra (rebota 409).
+                // En su lugar mostramos un cartel "Factura en proceso" para que sepa que ya está en camino.
+                const facturaEnProceso = reserva.hasInvoiceInProgress === true;
+                const mostrarFactura = reserva.invoicingStatus !== 'FullyInvoiced' && facturaHabilitada && !facturaEnProceso;
                 const mostrarCancelar = canCancelReserva && cancelarHabilitado;
-                if (!registroPagoHabilitado && !mostrarFactura && !mostrarCancelar) return null;
+                if (!registroPagoHabilitado && !mostrarFactura && !mostrarCancelar && !facturaEnProceso) return null;
 
                 return (
                   <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/50">
@@ -1624,6 +1646,22 @@ export default function ReservaDetailPage() {
                       >
                         <FileText className="w-4 h-4" /> Emitir factura
                       </button>
+                    )}
+
+                    {/* Factura en proceso (2026-06-24): cartel NO clickeable. Reemplaza al botón
+                        "Emitir factura" mientras la factura está encolada esperando el CAE de AFIP/ARCA.
+                        Evita que el usuario reemita una segunda factura sin saber que ya hay una en camino. */}
+                    {facturaEnProceso && (
+                      <div
+                        className="flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-bold text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
+                        data-testid="factura-en-proceso-pill"
+                        role="status"
+                        aria-live="polite"
+                        title="La factura ya se envió a AFIP/ARCA y está esperando el CAE. No hace falta volver a emitirla."
+                      >
+                        <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                        Factura en proceso (esperando AFIP/ARCA)
+                      </div>
                     )}
 
                     {mostrarCancelar && (

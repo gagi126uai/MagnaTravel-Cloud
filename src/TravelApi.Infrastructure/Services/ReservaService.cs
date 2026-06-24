@@ -2188,6 +2188,14 @@ public class ReservaService : IReservaService
         // ReservaInvoicingStatus.Derive (probado, un solo lugar), espejo de CollectionStatus.
         dto.InvoicingStatus = ReservaInvoicingStatus.Derive(file.TotalSale, cuadre.FacturadoNeto);
 
+        // (2026-06-24): hay una factura EN PROCESO (encolada, esperando CAE). El cuadre de arriba NO la cuenta
+        // (solo suma Resultado="A"), asi que sin este flag el front mostraria "Sin facturar" y volveria a
+        // ofrecer "Emitir factura" sobre una reserva que ya tiene una en vuelo -> el usuario reemite y recien
+        // ahi rebota el 409. Espejo EXACTO del guard de InvoiceService.CreatePendingInvoice
+        // (Resultado=="PENDING" && AnnulmentStatus != Succeeded). file.Invoices ya viene cargado (lo usa el cuadre).
+        dto.HasInvoiceInProgress = file.Invoices.Any(i =>
+            i.Resultado == "PENDING" && i.AnnulmentStatus != AnnulmentStatus.Succeeded);
+
         // ADR-037 / cuadre POR MONEDA (2026-06-22): el escalar FacturadoNeto/DisponibleParaFacturar mezcla
         // monedas en multimoneda. Aca calculamos el facturado neto de CADA moneda por separado (facturas + ND
         // - NC vivas, agrupadas por la moneda ISO del comprobante) y lo cargamos en su linea de PorMoneda,
