@@ -2366,6 +2366,7 @@ public class ReservaService : IReservaService
             CanEditPassengers = Map(caps.CanEditPassengers),
             CanEditReservaData = Map(caps.CanEditReservaData),
             CanCancel = Map(caps.CanCancel),
+            CanAnnul = Map(caps.CanAnnul),
             CanAdvance = Map(caps.CanAdvance),
             CanEmitVoucher = Map(caps.CanEmitVoucher),
             CanCorrectTravelingEntry = Map(caps.CanCorrectTravelingEntry),

@@ -193,6 +193,67 @@ public class ReservaCapabilitiesTests
         Assert.True(caps.CanCancel.Allowed);
     }
 
+    // ===================== CanAnnul: anular formal (deshacer con plata viva, emite NC) =====================
+
+    [Fact]
+    public void CanAnnul_WithLiveCae_Allowed()
+    {
+        // Confirmed con factura (CAE) -> anular formal SI aplica (es el complemento de canCancel=No).
+        var caps = ReservaCapabilityPolicy.For(Ctx(EstadoReserva.Confirmed, balance: 0m, hasLiveCae: true));
+        Assert.True(caps.CanAnnul.Allowed);
+        // Coherencia: canCancel No (hay que anularla) y canAnnul Yes -> el boton del front se muestra por canAnnul.
+        Assert.False(caps.CanCancel.Allowed);
+    }
+
+    [Fact]
+    public void CanAnnul_WithLivePayment_Allowed()
+    {
+        var caps = ReservaCapabilityPolicy.For(Ctx(EstadoReserva.Confirmed, balance: 0m, hasAnyPayment: true));
+        Assert.True(caps.CanAnnul.Allowed);
+    }
+
+    [Fact]
+    public void CanAnnul_CleanFirmReserva_NotAllowed()
+    {
+        // Sin plata viva no hay anulacion formal: el camino es la baja simple (canCancel=Yes).
+        var caps = ReservaCapabilityPolicy.For(Ctx(EstadoReserva.Confirmed, balance: 0m, hasLiveCae: false, hasAnyPayment: false));
+        Assert.False(caps.CanAnnul.Allowed);
+        Assert.Equal(ReservaCapabilityPolicy.NoLiveMoneyToAnnulReason, caps.CanAnnul.Reason);
+        Assert.True(caps.CanCancel.Allowed); // sin plata, deshacer = baja simple
+    }
+
+    [Theory]
+    [InlineData(EstadoReserva.Closed)]
+    [InlineData(EstadoReserva.Traveling)]
+    [InlineData(EstadoReserva.Lost)]
+    [InlineData(EstadoReserva.Cancelled)]
+    [InlineData(EstadoReserva.PendingOperatorRefund)]
+    public void CanAnnul_TerminalStates_NotAllowed_EvenWithMoney(string status)
+    {
+        // Estados terminales: ni con plata viva se anula (una Cerrada/En viaje/Perdida/Anulada/Esperando
+        // reembolso no se deshace por anulacion formal).
+        var caps = ReservaCapabilityPolicy.For(Ctx(status, balance: 0m, hasLiveCae: true, hasAnyPayment: true));
+        Assert.False(caps.CanAnnul.Allowed);
+        Assert.False(string.IsNullOrWhiteSpace(caps.CanAnnul.Reason));
+    }
+
+    [Theory]
+    [InlineData(EstadoReserva.Quotation)]
+    [InlineData(EstadoReserva.Budget)]
+    [InlineData(EstadoReserva.InManagement)]
+    [InlineData(EstadoReserva.Confirmed)]
+    public void Button_AnularReserva_VisibleInLiveStates_WithOrWithoutMoney(string status)
+    {
+        // Invariante del boton "Anular reserva" del front: en estados vivos SIEMPRE hay un camino para
+        // deshacer (baja simple si no hay plata, anulacion formal si la hay). El front usa
+        // canCancel.Allowed || canAnnul.Allowed; aca verificamos que esa union sea true en ambos casos.
+        var sinPlata = ReservaCapabilityPolicy.For(Ctx(status, balance: 0m, hasLiveCae: false, hasAnyPayment: false));
+        Assert.True(sinPlata.CanCancel.Allowed || sinPlata.CanAnnul.Allowed);
+
+        var conPlata = ReservaCapabilityPolicy.For(Ctx(status, balance: 0m, hasLiveCae: true, hasAnyPayment: false));
+        Assert.True(conPlata.CanCancel.Allowed || conPlata.CanAnnul.Allowed);
+    }
+
     // ===================== NC/ND: solo si hay CAE vivo que corregir =====================
 
     [Fact]
@@ -220,6 +281,7 @@ public class ReservaCapabilitiesTests
             AssertReasonWhenDenied(caps.CanEditOrDeletePayment, status, nameof(caps.CanEditOrDeletePayment));
             AssertReasonWhenDenied(caps.CanEditServices, status, nameof(caps.CanEditServices));
             AssertReasonWhenDenied(caps.CanCancel, status, nameof(caps.CanCancel));
+            AssertReasonWhenDenied(caps.CanAnnul, status, nameof(caps.CanAnnul));
             AssertReasonWhenDenied(caps.CanAdvance, status, nameof(caps.CanAdvance));
             AssertReasonWhenDenied(caps.CanEmitVoucher, status, nameof(caps.CanEmitVoucher));
         }

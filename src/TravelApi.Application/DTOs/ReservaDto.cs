@@ -126,6 +126,15 @@ public class ReservaCapabilitiesDto
     public CapabilityDto CanEditReservaData { get; set; } = new();
 
     public CapabilityDto CanCancel { get; set; } = new();
+
+    /// <summary>
+    /// (2026-06-24): si la reserva se puede ANULAR FORMALMENTE (deshacerla con plata viva emitiendo Nota de
+    /// Crédito). Es el complemento de <see cref="CanCancel"/>: cuando hay factura/cobros, canCancel da false
+    /// ("hay que anularla") y ESTA da true. El front muestra el botón "Anular reserva" si
+    /// <c>CanCancel.Allowed || CanAnnul.Allowed</c>. El backend revalida la anulación real aparte.
+    /// </summary>
+    public CapabilityDto CanAnnul { get; set; } = new();
+
     public CapabilityDto CanAdvance { get; set; } = new();
     public CapabilityDto CanEmitVoucher { get; set; } = new();
 

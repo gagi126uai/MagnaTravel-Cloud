@@ -18,14 +18,20 @@ El guard real que impide la baja simple vive aparte (`ReservaService` línea 360
 **no se tocó**. El flujo de anular formal (`BookingCancellationService.DraftAsync`) tiene
 sus propios controles y no usa `canCancel`.
 
-### Arreglo (solo frontend)
-`ReservaDetailPage.jsx`: el botón "Anular reserva" se muestra también cuando el motivo de
-`canCancel` es exactamente "hay que anularla" (caso con factura/cobros). Ese motivo solo
-aparece en estados NO terminales, así que no reabre el botón en Cerrada/En viaje/Anulada.
-El backend revalida todo. Constante espejada de `ReservaCapabilityPolicy.HasLiveMoneyMustAnnulReason`.
+### Arreglo
+Backend: capacidad propia `CanAnnul` en `ReservaCapabilityPolicy` (anular formal = deshacer
+con plata viva emitiendo NC). Misma matriz de estados terminales que `CanCancel`; en estados
+vivos es `true` si hay factura con CAE o cobros. Es el complemento de `CanCancel` (que da
+false con plata viva). Se expone en `ReservaDto.Capabilities.CanAnnul`.
 
-> Follow-up posible: reemplazar el match por texto por una capacidad dedicada `CanAnnul`
-> en el backend (más robusto ante cambios de copy).
+Frontend (`ReservaDetailPage.jsx`): el botón "Anular reserva" se muestra si
+`canCancel.allowed || canAnnul.allowed`. Robusto: no depende del texto del motivo.
+
+El backend revalida la anulación real aparte (`DraftAsync` exige factura activa; el guard de
+baja simple sigue en `ReservaService`). `CanAnnul` es solo compuerta de UI.
+
+> Nota: la primera versión (commit `8b441bf`) usaba un match por el texto del motivo de
+> `canCancel`; este commit lo reemplaza por la capacidad dedicada.
 
 ## 2. Factura encolada sin aviso → riesgo de facturar dos veces
 

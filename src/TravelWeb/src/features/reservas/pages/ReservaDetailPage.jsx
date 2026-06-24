@@ -1586,28 +1586,21 @@ export default function ReservaDetailPage() {
                 const capRegPago = reserva.capabilities?.canRegisterPayment;
                 const capFactura = reserva.capabilities?.canInvoiceSale;
                 const capCancelar = reserva.capabilities?.canCancel;
+                const capAnular = reserva.capabilities?.canAnnul;
 
                 const registroPagoHabilitado = !capRegPago || capRegPago.allowed;
                 const facturaHabilitada = !capFactura || capFactura.allowed;
                 // Cancelar ademas requiere permiso de usuario (igual que antes).
                 //
-                // ADR-036 fix (2026-06-24): el boton "Anular reserva" abre el flujo FORMAL que emite la
-                // Nota de Credito (CancelarReservaInline; el panel ya muestra el cartel ambar "tiene
-                // factura -> se emite NC"). La capacidad canCancel modela la "baja simple" y se apaga
-                // cuando hay plata viva (factura con CAE o cobros) para enrutar al anular formal — pero el
-                // UNICO boton ES el anular formal. Si solo miraramos canCancel.allowed, el boton quedaria
-                // escondido justo cuando hay que anular (caso con factura, que es el habitual). Por eso
-                // tambien lo habilitamos cuando el motivo es exactamente "hay que anularla". Ese motivo solo
-                // aparece en estados NO terminales (los terminales dan otro motivo), asi que no reabre el
-                // boton en Cerrada/En viaje/Anulada. El backend revalida todo (DraftAsync exige factura
-                // activa; el guard de baja simple sigue en ReservaService). Constante espejada de
-                // ReservaCapabilityPolicy.HasLiveMoneyMustAnnulReason.
-                const MOTIVO_DEBE_ANULAR_FORMAL =
-                  "Esta reserva tiene cobros o factura: para deshacerla hay que anularla (se emite Nota de Crédito).";
-                const debeAnularFormal =
-                  !!capCancelar && !capCancelar.allowed && capCancelar.reason === MOTIVO_DEBE_ANULAR_FORMAL;
+                // (2026-06-24): el boton "Anular reserva" abre el flujo FORMAL que emite la Nota de Credito
+                // (CancelarReservaInline; el panel ya muestra el cartel ambar "tiene factura -> se emite NC").
+                // La capacidad canCancel modela la "baja simple" y se apaga cuando hay plata viva (factura con
+                // CAE o cobros). El anular formal es justo lo que hay que hacer en ese caso, asi que el backend
+                // expone una capacidad PROPIA canAnnul (true en estados vivos con plata viva). Mostramos el
+                // boton si aplica la baja simple O la anulacion formal. El backend revalida la anulacion real
+                // aparte (DraftAsync exige factura activa; el guard de baja simple sigue en ReservaService).
                 const cancelarHabilitado =
-                  canCancelReserva && (!capCancelar || capCancelar.allowed || debeAnularFormal);
+                  canCancelReserva && (!capCancelar || capCancelar.allowed || (capAnular?.allowed ?? false));
 
                 // Mostramos cada acción SOLO si está disponible. En estados de solo lectura
                 // (En viaje, Finalizada, etc.) el backend apaga la capability → el botón NO

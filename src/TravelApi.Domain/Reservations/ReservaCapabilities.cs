@@ -54,6 +54,7 @@ public sealed record ReservaCapabilities(
     Cap CanEditPassengers,
     Cap CanEditReservaData,
     Cap CanCancel,
+    Cap CanAnnul,
     Cap CanAdvance,
     Cap CanEmitVoucher,
     Cap CanCorrectTravelingEntry,
@@ -132,6 +133,13 @@ public static class ReservaCapabilityPolicy
     /// </summary>
     public const string HasLiveMoneyMustAnnulReason =
         "Esta reserva tiene cobros o factura: para deshacerla hay que anularla (se emite Nota de Crédito).";
+
+    /// <summary>
+    /// (2026-06-24): no hay plata viva (ni factura ni cobros) que justifique la anulacion FORMAL. En ese
+    /// caso deshacer la reserva es una baja simple (ver <see cref="HasLiveMoneyMustAnnulReason"/> / CanCancel).
+    /// </summary>
+    public const string NoLiveMoneyToAnnulReason =
+        "No hay factura ni cobros para anular formalmente; para deshacer esta reserva usá cancelar.";
 
     /// <summary>No hay ningun avance manual de estado disponible desde el estado actual.</summary>
     public const string NoForwardTransitionReason =
@@ -255,6 +263,7 @@ public static class ReservaCapabilityPolicy
             CanEditPassengers: EvaluateEditPassengers(ctx),
             CanEditReservaData: EvaluateEditReservaData(ctx),
             CanCancel: EvaluateCancel(ctx),
+            CanAnnul: EvaluateAnnul(ctx),
             CanAdvance: EvaluateAdvance(ctx),
             CanEmitVoucher: EvaluateVoucher(ctx),
             CanCorrectTravelingEntry: EvaluateCorrectTravelingEntry(ctx),
@@ -393,6 +402,38 @@ public static class ReservaCapabilityPolicy
             return Cap.No(HasLiveMoneyMustAnnulReason);
 
         return Cap.Yes;
+    }
+
+    /// <summary>
+    /// (2026-06-24): ANULAR FORMAL — deshacer una reserva con PLATA VIVA emitiendo la Nota de Credito (y, si
+    /// hay multa del operador, la Nota de Debito diferida). Es el camino correcto justo cuando
+    /// <see cref="EvaluateCancel"/> da No por "hay que anularla" (factura con CAE o cobros vivos).
+    ///
+    /// <para>Existe como capacidad PROPIA (en vez de que el front adivine por el texto del motivo de canCancel)
+    /// para que el boton "Anular reserva" sea robusto: el front muestra el boton si <c>CanCancel.Allowed ||
+    /// CanAnnul.Allowed</c>. Misma matriz de estados terminales que canCancel (una Cerrada/En viaje/Perdida/
+    /// Anulada/Esperando-reembolso no se anula). En los estados vivos, la anulacion formal aplica SOLO si hay
+    /// plata viva; sin plata, el camino es la baja simple (canCancel). El backend NO usa esta capacidad como
+    /// guard de escritura: la anulacion real la validan <c>BookingCancellationService.DraftAsync/ConfirmAsync</c>
+    /// (exigen factura activa, INV-081, etc.). Es una compuerta de UI, como el resto de las capacidades.</para>
+    /// </summary>
+    private static Cap EvaluateAnnul(ReservaCapabilityContext ctx)
+    {
+        if (EqualsStatus(ctx.Status, EstadoReserva.Closed))
+            return Cap.No(ClosedNotCancellableReason);
+        if (EqualsStatus(ctx.Status, EstadoReserva.Traveling))
+            return Cap.No(TravelingNotCancellableReason);
+        if (EqualsStatus(ctx.Status, EstadoReserva.Lost)
+            || EqualsStatus(ctx.Status, EstadoReserva.Cancelled)
+            || EqualsStatus(ctx.Status, EstadoReserva.PendingOperatorRefund))
+            return Cap.No(NotCancellableStatusReason);
+
+        // Estado vivo: anular formal aplica si hay plata viva (factura con CAE o cobros). Sin plata, el camino
+        // es la baja simple (canCancel), no la anulacion formal.
+        if (ctx.HasLiveCae || ctx.HasAnyPayment)
+            return Cap.Yes;
+
+        return Cap.No(NoLiveMoneyToAnnulReason);
     }
 
     /// <summary>
