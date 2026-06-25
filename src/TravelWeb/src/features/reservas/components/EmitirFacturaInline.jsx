@@ -17,18 +17,31 @@
  * Franja amarilla: aparece arriba de los renglones cuando el total de los items NO
  * coincide con lo vendido confirmado en esa moneda. NO bloquea la emisión.
  *
+ * H2 (2026-06-24): flujo asíncrono con 3 estados visuales:
+ *   PROCESANDO: spinner + texto en criollo (sin jerga).
+ *   ÉXITO: cartel verde con tipo + número de factura. Sin recargar la página.
+ *   RECHAZO: cartel rojo con motivo de AFIP + botón "Corregir y reintentar"
+ *            que vuelve a la ficha con todos los datos intactos.
+ * Paso 2: modal de confirmación antes de enviar (último freno antes de algo irreversible).
+ * Texto fiscal exacto (verificado contra ARCA): "Una vez emitida no se puede eliminar;
+ * solo se corrige o anula con una Nota de Crédito."
+ *
  * Funciones puras exportadas (testeable sin React):
  *   - elegirGrupoPrecarga(grupos, flagMultimonedaOn)
  *   - hayDescuadre(totalItems, suggestedTotal, tolerancia)
- *   - validarUSD(tipoCambio, justificacion) → null | string de error
+ *   - validarCamposUSD(tipoCambio, justificacion) → null | string de error
+ *   - resolverEstadoFiscal(statusItems) → { estado, factura }
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertCircle, Calculator, Plus, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AlertCircle, Calculator, CheckCircle2, Loader2, Plus, Trash2, X } from "lucide-react";
 import { api } from "../../../api";
-import { showError, showSuccess } from "../../../alerts";
+import { showError } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { formatCurrency } from "../../../lib/utils";
+// Paso 3 (H2 2026-06-24): helper compartido con ReservaDetailPage para formatear
+// el número de comprobante. Evita que el formato "Factura B 0001-00012345" diverga.
+import { formatearEtiquetaFactura } from "../lib/invoiceFormatUtils";
 
 // ─── Funciones puras exportables ─────────────────────────────────────────────
 // Están fuera del componente para poder testearlas con Node sin necesidad de React.
@@ -98,6 +111,66 @@ export function validarCamposUSD(tipoCambio, justificacion) {
   }
   return null;
 }
+
+/**
+ * H2 (2026-06-24): interpreta la respuesta del endpoint de estado fiscal.
+ * GET /api/invoices/reserva/{id}/fiscal-status → InvoiceFiscalStatusDto[]
+ *
+ * Devuelve el estado consolidado de la factura recién emitida:
+ *   "InProcess"  → esperando respuesta de AFIP (seguir polling).
+ *   "Issued"     → emitida: tipo + punto de venta + número + CAE + vencimiento.
+ *   "Rejected"   → rechazada por AFIP: motivo en rejectionReason.
+ *   null         → no se encontró la factura en la lista (inesperado, seguir).
+ *
+ * Recibe el publicId de la factura recién encolada para filtrar correctamente
+ * cuando la reserva ya tiene facturas anteriores.
+ *
+ * @param {Array}  statusItems   - lista de InvoiceFiscalStatusDto del backend
+ * @param {string} invoicePublicId - publicId de la factura que acabamos de encolar
+ * @returns {{ estado: string|null, factura: object|null }}
+ */
+export function resolverEstadoFiscal(statusItems, invoicePublicId) {
+  if (!Array.isArray(statusItems) || statusItems.length === 0) {
+    return { estado: null, factura: null };
+  }
+
+  // Buscamos la factura recién emitida por publicId.
+  // Si por alguna razón no llegó el publicId (no debería pasar), tomamos la más reciente.
+  const factura = invoicePublicId
+    ? statusItems.find((f) => String(f.publicId) === String(invoicePublicId))
+    : statusItems[statusItems.length - 1];
+
+  if (!factura) return { estado: null, factura: null };
+
+  return { estado: factura.status, factura };
+}
+
+/**
+ * Construye el label de la factura emitida para mostrar en el cartel de ÉXITO (Paso 4a).
+ * Ej: "Factura B 0001-00012345" — tipo + número formateado.
+ *
+ * Delega a formatearEtiquetaFactura (lib compartida) para usar el mismo formato
+ * que InvoicePdfActions en el Estado de Cuenta (Paso 5). Sin divergencia de formato.
+ *
+ * @param {object|null} factura - InvoiceFiscalStatusDto cuando status === "Issued"
+ * @returns {string}
+ */
+export function labelFacturaEmitida(factura) {
+  if (!factura) return "Factura emitida";
+  return formatearEtiquetaFactura(
+    factura.invoiceType,
+    factura.puntoDeVenta,
+    factura.numeroComprobante
+  );
+}
+
+// ─── Constantes de polling ────────────────────────────────────────────────────
+
+// Intervalo en ms entre cada consulta al endpoint de estado fiscal.
+const POLL_INTERVAL_MS = 3000;
+// Máximo de intentos antes de dar por finalizado el polling sin resultado.
+// 20 intentos × 3s = 60s de espera máxima antes de mostrar el mensaje de "sigue en proceso".
+const POLL_MAX_INTENTOS = 20;
 
 // ─── Constantes de dominio ────────────────────────────────────────────────────
 
@@ -188,6 +261,28 @@ export function EmitirFacturaInline({
 
   const [submitting, setSubmitting] = useState(false);
   const [errorEnvio, setErrorEnvio] = useState(null);
+
+  // ── H2 (2026-06-24): estados del flujo asíncrono de emisión ───────────────
+  // Tres estados visuales: "confirmando" → "procesando" → "exito" | "rechazo".
+  //   "idle"         → formulario normal (estado inicial).
+  //   "confirmando"  → modal de confirmación abierto (paso 2 de la spec).
+  //   "procesando"   → POST enviado, polling activo (paso 3).
+  //   "exito"        → AFIP aprobó, mostramos el número y CAE (paso 4a).
+  //   "rechazo"      → AFIP rechazó, mostramos motivo y botón de reintento (paso 4b).
+  //   "timeout"      → polling superó el máximo sin respuesta de AFIP.
+  const [estadoEmision, setEstadoEmision] = useState("idle");
+
+  // Datos de la factura emitida (publicId, invoiceType, puntoDeVenta, numeroComprobante, CAE).
+  const [facturaEmitidaData, setFacturaEmitidaData] = useState(null);
+  // Motivo de rechazo de AFIP (solo cuando estadoEmision === "rechazo").
+  const [motivoRechazo, setMotivoRechazo] = useState(null);
+
+  // Referencia al intervalo de polling. La usamos para limpiarlo al desmontar.
+  const pollIntervalRef = useRef(null);
+  // Contador de intentos de polling. No necesita ser estado (no dispara re-render).
+  const pollIntentosRef = useRef(0);
+  // publicId de la factura que acabamos de encolar (para filtrar el poll).
+  const facturaEncoladaPublicIdRef = useRef(null);
 
   // ── Derivados de afipSettings ──────────────────────────────────────────────
   const isMonotributista =
@@ -373,16 +468,88 @@ export function EmitirFacturaInline({
     setTributes((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // ── Confirmación de warning post-emisión (fix N2) ──────────────────────────
-  // El usuario vio el aviso del backend y hace clic en "Entendido".
-  // Recién ahí cerramos la sección y refrescamos la reserva en el padre.
-  const handleConfirmarWarning = () => {
-    showSuccess("Comprobante AFIP encolado correctamente.");
-    onFacturaEmitida();
-  };
+  // ── H2: limpieza del intervalo de polling al desmontar ────────────────────
+  // useEffect con deps vacías: corre solo al montar/desmontar.
+  // Garantiza que el interval no quede huérfano si el usuario cierra la ficha
+  // mientras el polling está activo (ej: navega a otra página).
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+      }
+    };
+  }, []);
 
-  // ── Submit ─────────────────────────────────────────────────────────────────
-  const handleSubmit = async () => {
+  // ── H2: función que arranca el polling de estado fiscal ────────────────────
+  /**
+   * Inicia el poll a GET /invoices/reserva/{reservaId}/fiscal-status.
+   * Se llama justo después de que el POST a /invoices da 200/201.
+   *
+   * Lógica:
+   *   - Cada POLL_INTERVAL_MS consulta el estado.
+   *   - Si llega "Issued" → muestra cartel verde + detiene el poll.
+   *   - Si llega "Rejected" → muestra cartel rojo con motivo + detiene.
+   *   - Si supera POLL_MAX_INTENTOS → muestra mensaje de timeout + detiene.
+   *
+   * @param {string} invoicePublicId - publicId de la factura recién encolada.
+   */
+  const iniciarPolling = useCallback((invoicePublicId) => {
+    pollIntentosRef.current = 0;
+    facturaEncoladaPublicIdRef.current = invoicePublicId;
+
+    // Limpiamos cualquier intervalo anterior por seguridad (no debería haber uno).
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+    }
+
+    pollIntervalRef.current = setInterval(async () => {
+      pollIntentosRef.current += 1;
+
+      // Límite de intentos: si se agota sin respuesta de AFIP, mostramos el timeout.
+      if (pollIntentosRef.current > POLL_MAX_INTENTOS) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+        setEstadoEmision("timeout");
+        return;
+      }
+
+      try {
+        const statusItems = await api.get(`/invoices/reserva/${reservaId}/fiscal-status`);
+        const { estado, factura } = resolverEstadoFiscal(statusItems, facturaEncoladaPublicIdRef.current);
+
+        if (estado === "Issued") {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+          setFacturaEmitidaData(factura);
+          setEstadoEmision("exito");
+          // Avisamos al padre para que refresque la reserva y el extracto.
+          // Lo hacemos acá (no al cerrar) para que los datos del extracto se actualicen
+          // en cuanto llega el CAE, sin esperar a que el usuario haga clic en "Cerrar".
+          onFacturaEmitida();
+        } else if (estado === "Rejected") {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+          setMotivoRechazo(factura?.rejectionReason || "AFIP no aceptó el comprobante.");
+          setEstadoEmision("rechazo");
+        }
+        // "InProcess" o null → seguimos polling sin cambiar estado.
+      } catch {
+        // Error de red o 5xx durante el poll: no interrumpir, seguir intentando.
+        // Si persiste, el límite de intentos lo frena.
+      }
+    }, POLL_INTERVAL_MS);
+  }, [reservaId, onFacturaEmitida]);
+
+  // ── H2: validación de la ficha antes de abrir el modal de confirmación ─────
+  /**
+   * Valida los campos del formulario. Si todo está OK, abre el modal de confirmación.
+   * Si hay errores, los muestra en el cartel de error inline (sin abrir el modal).
+   *
+   * Decisión UX (spec P1): la confirmación es el ÚLTIMO paso antes de algo irreversible.
+   * El texto fiscal exacto es: "Una vez emitida no se puede eliminar; solo se corrige
+   * o anula con una Nota de Crédito." (verificado contra ARCA — NO modificar).
+   */
+  const handleClickEmitir = () => {
     setWarningEmision(null);
     setErrorEnvio(null);
 
@@ -407,7 +574,6 @@ export function EmitirFacturaInline({
       return;
     }
     if (esUSD) {
-      // validarCamposUSD es una función pura exportada y testeada.
       const errorUSD = validarCamposUSD(tipoCambio, justificacionTC);
       if (errorUSD) {
         setErrorEnvio(errorUSD);
@@ -415,7 +581,24 @@ export function EmitirFacturaInline({
       }
     }
 
+    // Todo válido → abrir el modal de confirmación (paso 2).
+    setEstadoEmision("confirmando");
+  };
+
+  // ── H2: el usuario canceló en el modal de confirmación ────────────────────
+  const handleCancelarConfirmacion = () => {
+    setEstadoEmision("idle");
+  };
+
+  // ── H2: el usuario confirmó → enviamos a AFIP ─────────────────────────────
+  /**
+   * POST a /invoices. Al tener éxito, pasa al estado PROCESANDO y arranca el polling.
+   * Los errores 409 (ya hay factura pendiente) siguen mostrándose en el error inline.
+   */
+  const handleConfirmarEmision = async () => {
+    setEstadoEmision("procesando");
     setSubmitting(true);
+
     try {
       const payload = {
         reservaId: reservaId,
@@ -437,12 +620,12 @@ export function EmitirFacturaInline({
         forceReason: requiereOverride ? forceReason.trim() : null,
       };
 
-      // Campos multimoneda: solo se agregan al payload cuando la moneda es USD.
+      // Campos multimoneda: solo se agregan cuando la moneda es USD.
       // Con ARS el payload es idéntico al original (backend usa defaults "PES"/1).
       if (esUSD) {
         payload.monId = "USD";
         payload.monCotiz = Number(tipoCambio);
-        // ExchangeRateSource es un enum sin JsonStringEnumConverter → enviar el int
+        // ExchangeRateSource es un enum sin JsonStringEnumConverter → enviar el int.
         payload.exchangeRateSource = EXCHANGE_RATE_SOURCE_BNA_VENDEDOR_DIVISA;
         payload.exchangeRateFetchedAt = new Date().toISOString();
         payload.exchangeRateJustification = justificacionTC.trim();
@@ -450,27 +633,43 @@ export function EmitirFacturaInline({
 
       const response = await api.post("/invoices", payload);
 
-      // Fix N2: si la respuesta trae warning (InvoiceDto.Warning), NO cerrar automáticamente.
-      // La factura ya fue encolada en AFIP, pero el backend advierte algo (ej: descuadre con la reserva).
-      // Mostramos el warning y el usuario tiene que confirmar con "Entendido" para cerrar.
-      // Si NO hay warning, cerramos igual que antes (toast + callback).
+      // Guardamos el warning del backend si viene (InvoiceDto.Warning), pero NO
+      // cerramos ni interrumpimos: el polling nos dirá el estado real de AFIP.
       if (response?.warning) {
         setWarningEmision(response.warning);
-        // No llamamos onFacturaEmitida() ni showSuccess() aquí.
-        // El botón "Entendido" en el JSX es el que llama a handleConfirmarWarning().
-        return;
       }
 
-      showSuccess("Comprobante AFIP encolado correctamente.");
-      onFacturaEmitida();
+      // Arrancamos el polling usando el publicId de la factura recién encolada.
+      // Si el backend no devuelve el publicId, el poll usa la factura más reciente.
+      const invoicePublicId = response?.publicId ?? response?.id ?? null;
+      iniciarPolling(invoicePublicId);
+
     } catch (error) {
       // 409 cuando ya hay una Invoice PENDING para esta reserva.
       // El backend devuelve { message } con texto accionable.
       const mensaje = error?.payload?.message ?? getApiErrorMessage(error) ?? "Error al emitir la factura.";
+      setEstadoEmision("idle");
       setErrorEnvio(mensaje);
     } finally {
       setSubmitting(false);
     }
+  };
+
+  // ── H2: "Corregir y reintentar" — vuelve a la ficha con todos los datos intactos ──
+  // Decisión UX (spec P4): la factura NO salió. El usuario corrige y reenvía.
+  // No limpiamos items, tributos, moneda ni tipo de cambio → el usuario corrige solo lo necesario.
+  const handleReintentar = () => {
+    setEstadoEmision("idle");
+    setMotivoRechazo(null);
+    setErrorEnvio(null);
+    setWarningEmision(null);
+  };
+
+  // ── H2: "Cerrar" luego del éxito ──────────────────────────────────────────
+  // onFacturaEmitida() ya fue llamado al detectar el estado "Issued" en el poll.
+  // Este botón solo cierra la ficha inline visualmente.
+  const handleCerrarExito = () => {
+    onCancelar();
   };
 
   // ── Cargando ───────────────────────────────────────────────────────────────
@@ -514,7 +713,10 @@ export function EmitirFacturaInline({
           </div>
         )}
 
-        {!cargandoInicial && (
+        {/* H2: el contenido del formulario solo se muestra en estado "idle".
+            En los demás estados (procesando/éxito/rechazo/timeout) el cuerpo
+            de la ficha queda vacío y el estado visual se muestra FUERA del div px-6 py-5. */}
+        {!cargandoInicial && estadoEmision === "idle" && (
           <>
             {/* Bloque de deuda / override ──────────────────────────────── */}
             {(requiereOverride || bloqueadoPorDeuda) && (
@@ -920,36 +1122,6 @@ export function EmitirFacturaInline({
               </div>
             </div>
 
-            {/* Fix N2: Warning post-emisión — la factura YA fue encolada en AFIP.
-                El backend advierte algo (ej: descuadre con la reserva). NO cerramos
-                automáticamente para que el usuario lea el aviso. El botón "Entendido"
-                llama a handleConfirmarWarning que cierra y refresca la reserva. */}
-            {warningEmision && (
-              <div
-                data-testid="warning-emision"
-                className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-4 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200"
-                role="alert"
-              >
-                <div className="flex items-start gap-2">
-                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                  <div className="flex-1">
-                    <p className="font-semibold mb-1">Comprobante encolado con advertencia</p>
-                    <p>{warningEmision}</p>
-                  </div>
-                </div>
-                <div className="mt-3 flex justify-end">
-                  <button
-                    type="button"
-                    onClick={handleConfirmarWarning}
-                    data-testid="btn-entendido-warning"
-                    className="px-4 py-2 text-sm font-semibold text-white bg-amber-600 rounded-lg hover:bg-amber-700 transition-colors"
-                  >
-                    Entendido
-                  </button>
-                </div>
-              </div>
-            )}
-
             {/* Error de envío */}
             {errorEnvio && (
               <div
@@ -968,7 +1140,8 @@ export function EmitirFacturaInline({
       </div>
 
       {/* Pie: totales + botones ─────────────────────────────────────────── */}
-      {!cargandoInicial && (
+      {/* H2: el pie solo aparece en el estado "idle" (formulario) */}
+      {!cargandoInicial && estadoEmision === "idle" && (
         <div className="border-t border-indigo-200 dark:border-indigo-900/40 bg-white dark:bg-slate-900/20 px-6 py-4">
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
 
@@ -1016,42 +1189,241 @@ export function EmitirFacturaInline({
             </div>
 
             {/* Botones */}
+            {/* H2: en estados de procesando/éxito/rechazo/timeout los botones del pie se ocultan */}
+            {estadoEmision === "idle" && (
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={onCancelar}
+                  className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-600 dark:hover:bg-slate-700 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClickEmitir}
+                  disabled={
+                    submitting ||
+                    cargandoInicial ||
+                    totales.total <= 0 ||
+                    bloqueadoPorDeuda ||
+                    (requiereOverride && !forceIssue) ||
+                    // USD: bloquear hasta que el operador ingrese TC > 1 y justificación
+                    (esUSD &&
+                      (!(Number(tipoCambio) > 0) ||
+                        Number(tipoCambio) === 1 ||
+                        !justificacionTC.trim()))
+                  }
+                  data-testid="btn-emitir-factura-inline"
+                  className="px-4 py-2 text-sm font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 focus:ring-4 focus:ring-indigo-300 dark:focus:ring-indigo-900 disabled:opacity-50 flex items-center gap-2 transition-colors"
+                >
+                  {requiereOverride
+                    ? "Emitir por excepción"
+                    : esUSD
+                    ? "Emitir factura en USD"
+                    : "Emitir factura"}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── H2: Modal de confirmación antes de emitir (Paso 2) ──────────────
+          El modal es una ventana chica centrada sobre la ficha (overlay local, no global).
+          Foco inicial en "Volver" (el más seguro, para que Enter por error no confirme).
+          Texto fiscal EXACTO verificado contra ARCA — NO modificar.
+          ─────────────────────────────────────────────────────────────────── */}
+      {estadoEmision === "confirmando" && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="factura-confirm-dialog-title"
+          aria-describedby="factura-confirm-dialog-desc"
+        >
+          <div className="relative bg-white dark:bg-slate-900 rounded-2xl shadow-xl max-w-md w-full mx-4 p-6 space-y-4">
             <div className="flex items-center gap-3">
+              <div className="p-2 bg-indigo-100 dark:bg-indigo-900/30 rounded-lg">
+                <Calculator className="w-6 h-6 text-indigo-600 dark:text-indigo-400" aria-hidden="true" />
+              </div>
+              <h2
+                id="factura-confirm-dialog-title"
+                className="text-base font-semibold text-slate-900 dark:text-white"
+              >
+                ¿Confirmás la emisión?
+              </h2>
+            </div>
+
+            <div id="factura-confirm-dialog-desc" className="text-sm text-slate-600 dark:text-slate-300 space-y-2">
+              {/* Texto fiscal exacto (verificado contra ARCA — NO modificar) */}
+              <p className="font-semibold text-amber-700 dark:text-amber-400">
+                Una vez emitida no se puede eliminar; solo se corrige o anula con una Nota de Crédito.
+              </p>
+              {clientName && (
+                <p>
+                  Cliente: <span className="font-medium">{clientName}</span>
+                  {clientCuit && <span className="text-slate-500"> · CUIT {clientCuit}</span>}
+                </p>
+              )}
+              <p>
+                Total: <span className="font-bold text-slate-900 dark:text-white">
+                  {formatCurrency(totales.total, monedaEfectiva)}
+                </span>
+              </p>
+            </div>
+
+            <div className="flex gap-3 pt-2">
+              {/* "Volver" primero y con autoFocus: es la acción más segura */}
               <button
                 type="button"
-                onClick={onCancelar}
-                className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-600 dark:hover:bg-slate-700 transition-colors"
+                onClick={handleCancelarConfirmacion}
+                autoFocus
+                data-testid="btn-volver-confirmar-factura"
+                className="flex-1 rounded-xl border border-slate-300 dark:border-slate-600 px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800"
               >
-                Cancelar
+                Volver
               </button>
               <button
                 type="button"
-                onClick={handleSubmit}
-                disabled={
-                  submitting ||
-                  cargandoInicial ||
-                  totales.total <= 0 ||
-                  bloqueadoPorDeuda ||
-                  (requiereOverride && !forceIssue) ||
-                  // USD: bloquear hasta que el operador ingrese TC > 1 y justificación
-                  (esUSD &&
-                    (!(Number(tipoCambio) > 0) ||
-                      Number(tipoCambio) === 1 ||
-                      !justificacionTC.trim()))
-                }
-                data-testid="btn-emitir-factura-inline"
-                className="px-4 py-2 text-sm font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 focus:ring-4 focus:ring-indigo-300 dark:focus:ring-indigo-900 disabled:opacity-50 flex items-center gap-2 transition-colors"
+                onClick={handleConfirmarEmision}
+                data-testid="btn-si-emitir-factura"
+                className="flex-1 rounded-xl bg-indigo-600 hover:bg-indigo-700 px-4 py-2 text-sm font-bold text-white"
               >
-                {submitting
-                  ? "Emitiendo..."
-                  : requiereOverride
-                  ? "Emitir por excepción"
-                  : esUSD
-                  ? "Emitir factura en USD"
-                  : "Emitir factura"}
+                Sí, emitir
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── H2: Estado PROCESANDO (Paso 3) ───────────────────────────────────
+          Se muestra en el mismo lugar que la ficha, sin cerrar ni navegar.
+          role="status" + aria-live="polite" para que los lectores de pantalla lo anuncien.
+          ─────────────────────────────────────────────────────────────────── */}
+      {estadoEmision === "procesando" && (
+        <div
+          className="px-6 py-10 flex flex-col items-center gap-4 text-center"
+          role="status"
+          aria-live="polite"
+          data-testid="estado-procesando-factura"
+        >
+          <Loader2 className="h-8 w-8 text-indigo-500 animate-spin" aria-hidden="true" />
+          <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
+            Estamos emitiendo la factura en AFIP. En unos instantes vas a ver el número.
+          </p>
+          {/* Warning del backend (si vino) — no bloquea, solo informa */}
+          {warningEmision && (
+            <div
+              data-testid="warning-emision"
+              className="mt-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200"
+            >
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                <p>{warningEmision}</p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── H2: Estado ÉXITO (Paso 4a) ────────────────────────────────────────
+          El bloque "procesando" se transforma en este cartel verde sin recargar la página.
+          El padre ya fue notificado (onFacturaEmitida) al detectar el estado Issued.
+          ─────────────────────────────────────────────────────────────────── */}
+      {estadoEmision === "exito" && facturaEmitidaData && (
+        <div
+          className="px-6 py-10 flex flex-col items-center gap-4 text-center"
+          data-testid="estado-exito-factura"
+        >
+          <CheckCircle2 className="h-10 w-10 text-emerald-500" aria-hidden="true" />
+          <div className="space-y-1">
+            <p className="text-lg font-bold text-emerald-700 dark:text-emerald-400">
+              ¡Factura emitida!
+            </p>
+            <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+              {labelFacturaEmitida(facturaEmitidaData)}
+            </p>
+            {facturaEmitidaData.cae && (
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                CAE: {facturaEmitidaData.cae}
+                {facturaEmitidaData.vencimientoCAE && (
+                  <> · Vto: {new Date(facturaEmitidaData.vencimientoCAE).toLocaleDateString("es-AR")}</>
+                )}
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={handleCerrarExito}
+            data-testid="btn-cerrar-exito-factura"
+            className="mt-2 px-5 py-2 text-sm font-semibold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 transition-colors"
+          >
+            Cerrar
+          </button>
+        </div>
+      )}
+
+      {/* ── H2: Estado RECHAZO (Paso 4b) ──────────────────────────────────────
+          role="alert" para que los lectores de pantalla anuncien el error de AFIP.
+          "Corregir y reintentar" vuelve a la ficha con todos los datos intactos.
+          ─────────────────────────────────────────────────────────────────── */}
+      {estadoEmision === "rechazo" && (
+        <div
+          className="px-6 py-8 flex flex-col items-center gap-4 text-center"
+          role="alert"
+          data-testid="estado-rechazo-factura"
+        >
+          <AlertCircle className="h-10 w-10 text-rose-500" aria-hidden="true" />
+          <div className="space-y-2">
+            <p className="text-base font-bold text-rose-700 dark:text-rose-400">
+              AFIP rechazó la factura.
+            </p>
+            {motivoRechazo && (
+              <div className="rounded-xl border border-rose-200 bg-rose-50 dark:border-rose-900/40 dark:bg-rose-900/20 px-4 py-3 text-sm text-rose-700 dark:text-rose-300 text-left">
+                <span className="font-semibold">Motivo: </span>{motivoRechazo}
+              </div>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={handleReintentar}
+            data-testid="btn-corregir-reintentar-factura"
+            className="mt-2 px-5 py-2 text-sm font-semibold text-white bg-rose-600 rounded-xl hover:bg-rose-700 transition-colors"
+          >
+            Corregir y reintentar
+          </button>
+        </div>
+      )}
+
+      {/* ── H2: Estado TIMEOUT — el poll se agotó sin respuesta de AFIP ──────
+          No es un error: la factura puede seguir siendo procesada en background.
+          El usuario puede cerrar y verla más tarde en el extracto.
+          ─────────────────────────────────────────────────────────────────── */}
+      {estadoEmision === "timeout" && (
+        <div
+          className="px-6 py-8 flex flex-col items-center gap-4 text-center"
+          role="status"
+          aria-live="polite"
+          data-testid="estado-timeout-factura"
+        >
+          <Loader2 className="h-8 w-8 text-slate-400" aria-hidden="true" />
+          <div className="space-y-1">
+            <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
+              Sigue en proceso, podés cerrar y verla más tarde.
+            </p>
+            <p className="text-xs text-slate-400">
+              AFIP puede tardar unos minutos. El resultado va a aparecer en el Estado de Cuenta.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onCancelar}
+            data-testid="btn-cerrar-timeout-factura"
+            className="mt-2 px-5 py-2 text-sm font-semibold border border-slate-300 text-slate-700 rounded-xl hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors"
+          >
+            Cerrar
+          </button>
         </div>
       )}
     </div>

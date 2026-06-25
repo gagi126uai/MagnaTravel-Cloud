@@ -88,6 +88,35 @@ public class MessagesController : ControllerBase
         }
     }
 
+    [HttpPost("invoice")]
+    public async Task<ActionResult<MessageDeliveryDto>> SendInvoiceMessage(
+        [FromBody] SendInvoiceMessageRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var delivery = await _messageService.SendInvoiceMessageAsync(request, BuildActor(), cancellationToken);
+            return Ok(delivery);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Forbid();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error sending invoice message");
+            return Problem(statusCode: StatusCodes.Status502BadGateway, title: "No se pudo enviar la factura.");
+        }
+    }
+
     private OperationActor BuildActor()
     {
         var roles = User.FindAll(ClaimTypes.Role).Select(role => role.Value).Where(role => !string.IsNullOrWhiteSpace(role)).ToArray();

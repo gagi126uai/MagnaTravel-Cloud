@@ -199,4 +199,24 @@ public class OperationalFinanceSettingsDto
     /// </summary>
     [Range(0, 100, ErrorMessage = "SellerCommissionPercent debe estar entre 0 y 100.")]
     public decimal? SellerCommissionPercent { get; set; }
+
+    /// <summary>
+    /// G6 (caducidad de pre-venta, 2026-06-24): dias tras los cuales un Presupuesto (Budget) que no avanzo
+    /// caduca y pasa SOLO a "Perdido". 0 = desactivado. El admin lo setea desde el panel (ej. 7).
+    ///
+    /// <para>Nullable y patch-like (criterio B-002): enviar null u omitir = no se modifica el valor actual.
+    /// Rango 0..3650 (0 = desactivado; el [Range] solo se evalua si viene valor). Se expone read-only en el GET.</para>
+    /// </summary>
+    [Range(0, 3650, ErrorMessage = "BudgetExpirationDays debe estar entre 0 y 3650 (0 = desactivado).")]
+    public int? BudgetExpirationDays { get; set; }
+
+    /// <summary>
+    /// G6 (caducidad de pre-venta, 2026-06-24): dias tras los cuales una Cotizacion (Quotation) que no avanzo
+    /// caduca y pasa SOLO a "Perdido". 0 = desactivado. Eje SEPARADO del de Budget. El admin lo setea (ej. 20).
+    ///
+    /// <para>Nullable y patch-like (criterio B-002): enviar null u omitir = no se modifica el valor actual.
+    /// Rango 0..3650 (0 = desactivado; el [Range] solo se evalua si viene valor). Se expone read-only en el GET.</para>
+    /// </summary>
+    [Range(0, 3650, ErrorMessage = "QuotationExpirationDays debe estar entre 0 y 3650 (0 = desactivado).")]
+    public int? QuotationExpirationDays { get; set; }
 }

@@ -36,7 +36,8 @@ public sealed class AlertsResponse
         object? ticketingDeadlines = null,
         object? passportExpiries = null,
         object? confirmedWithChanges = null,
-        object? stuckOperatorRefunds = null)
+        object? stuckOperatorRefunds = null,
+        object? expiringPreSales = null)
     {
         UrgentTrips = urgentTrips;
         SupplierDebts = supplierDebts;
@@ -49,6 +50,7 @@ public sealed class AlertsResponse
         PassportExpiries = passportExpiries;
         ConfirmedWithChanges = confirmedWithChanges;
         StuckOperatorRefunds = stuckOperatorRefunds;
+        ExpiringPreSales = expiringPreSales;
     }
 
     public object UrgentTrips { get; }
@@ -121,6 +123,16 @@ public sealed class AlertsResponse
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public object? StuckOperatorRefunds { get; }
+
+    /// <summary>
+    /// Q9 (2026-06-24): presupuestos/cotizaciones "por caducar" — un aviso POR RESERVA en Budget o
+    /// Quotation cuya caducidad esta configurada y a la que le faltan &lt;= N dias para pasar a Perdido.
+    /// Item: <c>{ reservaPublicId, numeroReserva, name, holderName, preSaleKind, daysLeft, message }</c>
+    /// (<c>daysLeft == 0</c> = "vence hoy"; 1 = "vence mañana"). Aviso APARTE del de "proximos inicios".
+    /// NO expone montos. Se OMITE del JSON cuando no hay nada que avisar (null).
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public object? ExpiringPreSales { get; }
 
     public int TotalCount { get; }
 }

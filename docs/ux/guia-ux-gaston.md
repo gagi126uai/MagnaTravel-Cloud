@@ -558,3 +558,44 @@ Ronda 2:
 **2) Enviar voucher al pasajero = BOTÓN en la solapa Vouchers + FRENO si el operador no confirmó.** (a) Agregar "Enviar al pasajero" en cada voucher de la solapa Vouchers de la reserva, reusando el envío por WhatsApp que YA existe (`MessageService.SendVoucherMessageAsync`). (b) ENDURECER el gate: no se emite/envía un voucher si el operador NO confirmó el servicio (excepción posible con supervisor, como ya existe para el saldo impago). El envío usa el teléfono del pasajero/cliente; si no hay teléfono, avisar claro.
 
 **3) Pasajero reutilizable = BUSCAR por documento/nombre al cargar.** Al agregar un pasajero (en `PassengerFormModal` / mini-form), si el usuario escribe el documento o el nombre, **sugerir pasajeros que ya viajaron antes** (búsqueda en la base, no solo padrón AFIP) y **autocompletar** al elegir uno. Dedup suave (avisar si el mismo documento ya está en la reserva). No hace falta vincular Passenger↔Customer en esta etapa (solo búsqueda + autocompletar).
+
+## Emisión de la factura de venta: confirmar antes, claridad mientras AFIP procesa, resultado claro (H2, 2026-06-24, respuestas de Gastón)
+
+> **Origen:** Gastón reportó "al emitir la factura no se ve de forma clara". La emisión es ASÍNCRONA:
+> la factura se envía a AFIP/ARCA y el número oficial (CAE) llega DESPUÉS (hay una espera). Hoy el éxito
+> era un cartel con jerga ("Comprobante AFIP encolado correctamente") que cerraba todo, sin paso de
+> confirmación previo, sin estado claro de "en camino" y sin un resultado final visible. Sesión de 5
+> preguntas con dibujos; Gastón eligió las opciones de abajo. Componente: `EmitirFacturaInline.jsx`
+> (ficha EN LÍNEA, ya aprobada 2026-06-13; esto agrega el flujo alrededor de la emisión).
+
+- **(2026-06-24, P1=A) Cartel de confirmación ANTES de emitir.** Al apretar "Emitir factura" (el botón final de la ficha), antes de mandarla a AFIP aparece un cartel que resume **a quién se factura** y **por cuánto total**, y pide confirmar. **Texto fiscal correcto (verificado contra ARCA — NO usar "no se puede borrar"):** "Una vez emitida no se puede eliminar; solo se corrige o anula con una Nota de Crédito." Botones: "Volver" / "Sí, emitir". Es el último paso antes de algo irreversible.
+
+- **(2026-06-24, P2=A+B) Mientras AFIP procesa: texto en criollo + indicador de progreso, juntos.** Apenas se manda, se muestra (en el mismo lugar, sin cerrar de golpe ni dejar un toast suelto): un **spinner/indicador de progreso** + el texto **"Estamos emitiendo la factura en AFIP. En unos instantes vas a ver el número."** Se elimina el viejo "Comprobante AFIP encolado correctamente" (jerga). Este es el estado **PROCESANDO**.
+
+- **(2026-06-24, P3=A+C) Cuando AFIP devuelve el número: éxito verde + auto-actualización en pantalla.** Cuando llega el CAE, el estado "Estamos emitiendo…" se transforma **solo, sin refrescar la página**, en el resultado emitido, y se muestra un **cartel verde de éxito** con el dato concreto: **tipo + número de factura** (ej. "✔ ¡Factura emitida! Factura B 0001-00012345"). El front consulta el estado del backend para saber cuándo pasó de procesando a emitida. Este es el estado **ÉXITO**.
+
+- **(2026-06-24, P4=A) Si AFIP RECHAZA: cartel rojo con el motivo de AFIP + "Corregir y reintentar".** Si AFIP rechaza (CUIT inválido, datos no aceptados, etc.), se muestra un **cartel rojo** con el **motivo que devuelve AFIP** (tal cual lo da AFIP, para que se entienda qué corregir) y un botón **"Corregir y reintentar"** que vuelve a la ficha con los datos cargados intactos para corregir y reenviar. La factura NO salió. Este es el estado **RECHAZO**. (Sigue valiendo la regla de Ronda 2 2026-06-06: nunca se pierde lo cargado ante un error.)
+
+- **(2026-06-24, P5=A+C) Factura ya emitida, desde la reserva: Ver/Descargar PDF + Enviar al cliente + número y CAE a la vista.** En la línea de la factura en el Estado de Cuenta (y donde se muestre el comprobante), se ve el **número de factura y el CAE bien a la vista**, con acciones **"Ver/Descargar PDF"** y **"Enviar al cliente"** (reusa el envío que ya existe para vouchers). Coherente con la regla 2026-06-22 (en estados congelados se puede ver/reimprimir/descargar el PDF; lo nuevo es agregar "Enviar al cliente" y mostrar número+CAE en la línea).
+
+- **(2026-06-24) Los TRES estados visuales del resultado de emisión** (PROCESANDO / ÉXITO / RECHAZO) se diseñan contemplando la espera asíncrona. El backend expone el estado que el front consulta: en proceso / emitida (número+CAE) / rechazada (motivo). Sigue valiendo: todo EN LÍNEA, nada de ventana flotante (salvo el cartel de confirmación de P1, que es el "¿seguro?" antes de algo irreversible, mismo patrón que el "¿confirmás costo $0?" y el de la Nota de Débito fiscal).
+
+## Configuración: caducidad automática de presupuestos y cotizaciones (G6, 2026-06-24, respuestas de Gastón)
+
+> **Origen:** nueva regla de negocio — los Presupuestos y las Cotizaciones que no avanzan caducan a los X
+> días y pasan solos a "Perdido". Los días son configurables por plataforma y POR SEPARADO para presupuesto
+> y para cotización (ej. presupuesto 7 días, cotización 20 días). Sesión de 4 preguntas; Gastón eligió las
+> opciones de abajo. Vive en Configuración → "Operativa, Cobranzas y Facturación" (`OperationalFinanceSettingsTab.jsx`),
+> como un bloque más, con el mismo aspecto de los otros casilleros de días que ya hay.
+
+- **(2026-06-24, P6=B) SIN interruptor: solo los dos casilleros de días.** El bloque no tiene toggle de encender/apagar. Son directamente dos casilleros numéricos. (El "apagado" se hace poniendo 0 en cada uno — ver P8.)
+
+- **(2026-06-24, P7=A) Textos exactos de los casilleros:** **"Caducar cotización a los [ ] días"** y **"Caducar presupuesto a los [ ] días"**.
+
+- **(2026-06-24, P8=A) 0 = no caduca nunca**, con un textito al lado que lo aclara: **"0 = no caduca nunca"**. Cada casillero es independiente (se puede tener cotización que no caduca y presupuesto que sí, o al revés).
+
+- **(2026-06-24, P9=A) La campanita avisa ANTES de que caduque.** Aviso de "por caducar" en la campanita: **"El presupuesto de Fam. García vence en N días"** (y lo equivalente para cotización). El umbral de cuántos días antes avisar lo define el backend; el texto del aviso es el de acá. **CONFIRMADO por Gastón:** este aviso de "por caducar" es **APARTE** del aviso de fecha de viaje ("Próximos inicios") y **NO contradice** la regla 2026-06-06 ("los presupuestos no entran a Próximos inicios"): aquella es sobre el inicio del viaje; esta es sobre el vencimiento del presupuesto/cotización. Son dos secciones distintas de la campanita.
+
+## Chip del eje Pago sin movimientos = "Sin movimientos" (2026-06-24, respuesta de Gastón)
+
+- **(2026-06-24)** El rótulo del chip del eje **Pago** cuando la reserva **no tiene cargos ni cobros** (ningún movimiento de plata) es **"Sin movimientos"** (NO "Sin cobros"). Se suma a los rótulos del eje Pago ya definidos (Pendiente / Parcial / Pagada — guía 2026-06-22). Mantiene el prefijo "Pago:" en gris (regla ADR-035 A-quinque: chip secundario, no estado operativo).

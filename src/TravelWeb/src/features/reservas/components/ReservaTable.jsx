@@ -98,6 +98,15 @@ export function ReservaTable({ reservas, onRowClick, onArchive }) {
                         <DollarSign className="h-2.5 w-2.5" />
                         Debe: {formatCurrency(reserva.balance)}
                       </div>
+                    ) : reserva.collectionStatus === "SinMovimientos" ? (
+                      // Fix 2026-06-24: antes una reserva nueva aparecía como "Saldado" porque
+                      // balance=0 y el backend no distinguía "sin movimientos" de "pagada".
+                      // Ahora el backend envía collectionStatus="SinMovimientos" y lo mostramos
+                      // de forma neutra para no confundir al vendedor.
+                      // Q10 (2026-06-24): rótulo visible actualizado a "Sin movimientos" (spec guia-ux-gaston.md).
+                      <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                        Sin movimientos
+                      </span>
                     ) : (
                       <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400">
                         Saldado

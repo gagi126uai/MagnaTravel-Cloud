@@ -271,13 +271,26 @@ test("A.2: Closed → 'Archivar' visible", () => {
  * Refinamiento review 2026-06-22:
  * El eje Viaje SOLO emite chip cuando hasOverdueDebt === true.
  * isInProgress ya no genera chip porque el badge grande "EN VIAJE" ya lo comunica.
+ *
+ * Fix 2026-06-24 (H1): ahora usa collectionStatus como fuente de verdad para el eje Pago.
+ *   "SinMovimientos" → "Sin movimientos" (reserva nueva sin pagos).
+ *   "Saldado"        → "Pagada".
+ *   Fallback a isFullyPaid si no hay collectionStatus (DTOs viejos).
+ *
+ * Q10 (2026-06-24): rótulo visible actualizado de "Sin cobros" a "Sin movimientos"
+ *   (spec guia-ux-gaston.md). El data-testid "chip-pago-sin-cobros" NO cambia.
  */
 function resolverChips(reserva) {
     if (!reserva) return { ejesVisibles: [], chipPago: null, chipViaje: null, ejeFactura: "Sin facturar" };
 
-    // Eje Pago
+    // Eje Pago — lee collectionStatus primero; fallback a isFullyPaid para DTOs viejos.
     let chipPago = null;
-    if (reserva.isFullyPaid) {
+    const collectionStatus = reserva.collectionStatus;
+
+    if (collectionStatus === "SinMovimientos") {
+        // Q10 (2026-06-24): "Sin movimientos" reemplaza "Sin cobros" como rótulo visible.
+        chipPago = "Sin movimientos";
+    } else if (collectionStatus === "Saldado" || (!collectionStatus && reserva.isFullyPaid)) {
         chipPago = "Pagada";
     } else if (reserva.status === "Confirmed" && reserva.isWithinUnpaidAlertWindow === true) {
         chipPago = "Debe — no viaja";
@@ -465,4 +478,98 @@ test("A.3: reserva=null → chips vacíos sin crash", () => {
     assert.equal(chipPago, null);
     assert.equal(chipViaje, null);
     assert.equal(ejeFactura, "Sin facturar");
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// A.4 — Fix H1 2026-06-24 + Q10: collectionStatus="SinMovimientos" → chip "Sin movimientos"
+//
+// Antes del fix: una reserva nueva (balance=0, sin cobros) llegaba al front con
+// collectionStatus="Saldado" (bug del backend), y el chip decía "Pagada" cuando
+// no se había cobrado nada. Ahora el backend distingue los dos casos:
+//   "Saldado"        = el cliente pagó y no queda deuda.
+//   "SinMovimientos" = la reserva no tiene ningún cargo ni cobro todavía.
+//
+// Q10 (2026-06-24): rótulo visible actualizado de "Sin cobros" → "Sin movimientos"
+// (spec guia-ux-gaston.md). El data-testid "chip-pago-sin-cobros" NO cambia.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+test("A.4: collectionStatus=SinMovimientos → chipPago='Sin movimientos' (no 'Pagada')", () => {
+    // Caso exacto del bug: reserva nueva en InManagement, sin cobros, balance=0.
+    // El backend ya corrigió: ahora envía SinMovimientos en vez de Saldado.
+    const { chipPago } = resolverChips({
+        status: "InManagement",
+        collectionStatus: "SinMovimientos",
+        isFullyPaid: false,
+        invoicingStatus: "NotInvoiced",
+    });
+    // Q10: rótulo visible es "Sin movimientos", no "Sin cobros".
+    assert.equal(chipPago, "Sin movimientos");
+});
+
+test("A.4: collectionStatus=SinMovimientos en Quotation → chipPago='Sin movimientos'", () => {
+    const { chipPago } = resolverChips({
+        status: "Quotation",
+        collectionStatus: "SinMovimientos",
+        isFullyPaid: false,
+        invoicingStatus: "NotInvoiced",
+    });
+    assert.equal(chipPago, "Sin movimientos");
+});
+
+test("A.4: collectionStatus=SinMovimientos NO muestra 'Pagada' aunque isFullyPaid sea true", () => {
+    // Caso defensivo: si el backend manda SinMovimientos, el SinMovimientos gana
+    // aunque isFullyPaid sea true por error. La fuente de verdad es collectionStatus.
+    const { chipPago } = resolverChips({
+        status: "InManagement",
+        collectionStatus: "SinMovimientos",
+        isFullyPaid: true, // inconsistente, pero collectionStatus gana
+        invoicingStatus: "NotInvoiced",
+    });
+    // Q10: el rótulo visible es "Sin movimientos", no "Sin cobros".
+    assert.equal(chipPago, "Sin movimientos");
+});
+
+test("A.4: collectionStatus=Saldado → chipPago='Pagada' (distinción clara de SinMovimientos)", () => {
+    const { chipPago } = resolverChips({
+        status: "Confirmed",
+        collectionStatus: "Saldado",
+        isFullyPaid: true,
+        invoicingStatus: "NotInvoiced",
+    });
+    assert.equal(chipPago, "Pagada");
+});
+
+test("A.4: sin collectionStatus + isFullyPaid=true → chipPago='Pagada' (fallback DTOs viejos)", () => {
+    // Fallback para endpoints que aún no envían collectionStatus.
+    const { chipPago } = resolverChips({
+        status: "Confirmed",
+        // collectionStatus ausente (DTO viejo)
+        isFullyPaid: true,
+        invoicingStatus: "NotInvoiced",
+    });
+    assert.equal(chipPago, "Pagada");
+});
+
+test("A.4: sin collectionStatus + isFullyPaid=false → chipPago=null (fallback DTOs viejos)", () => {
+    // Sin collectionStatus y sin deuda dentro de ventana: no mostramos nada.
+    const { chipPago } = resolverChips({
+        status: "InManagement",
+        // collectionStatus ausente (DTO viejo)
+        isFullyPaid: false,
+        invoicingStatus: "NotInvoiced",
+    });
+    assert.equal(chipPago, null);
+});
+
+test("A.4: collectionStatus=ConDeuda fuera de ventana de aviso → chipPago=null (solo avisa dentro de ventana)", () => {
+    // ConDeuda sin ventana de aviso: el chip "Debe" solo aparece en Confirmed + dentro de ventana.
+    // Si no, no mostramos nada para no alarmar en estados donde no aplica la urgencia.
+    const { chipPago } = resolverChips({
+        status: "InManagement",
+        collectionStatus: "ConDeuda",
+        isFullyPaid: false,
+        isWithinUnpaidAlertWindow: false,
+        invoicingStatus: "NotInvoiced",
+    });
+    assert.equal(chipPago, null);
 });

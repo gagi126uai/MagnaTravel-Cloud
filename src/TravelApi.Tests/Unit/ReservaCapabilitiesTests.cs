@@ -379,4 +379,62 @@ public class ReservaCapabilitiesTests
         Assert.Equal(expected, caps.CanUploadDocument.Allowed);
         if (!expected) Assert.False(string.IsNullOrWhiteSpace(caps.CanUploadDocument.Reason));
     }
+
+    // ============ H3: "Confirmar multa del operador" SOLO con multa pendiente (no por estado) ============
+
+    /// <summary>
+    /// H3 (2026-06-24): la capacidad depende EXCLUSIVAMENTE de HasPendingOperatorPenalty, NO del estado. Con la
+    /// multa pendiente true, allowed en CUALQUIER estado (la confirmacion diferida ocurre cuando la reserva ya
+    /// esta en su estado terminal). Esto ancla el bug: antes el front mostraba el boton por estar en
+    /// PendingOperatorRefund; ahora la verdad es "hay multa pendiente".
+    /// </summary>
+    [Theory]
+    [InlineData(EstadoReserva.PendingOperatorRefund)]
+    [InlineData(EstadoReserva.Cancelled)]
+    [InlineData(EstadoReserva.Closed)]
+    public void CanConfirmOperatorPenalty_AllowedWhenPendingPenalty(string status)
+    {
+        var ctx = new ReservaCapabilityContext(
+            status, Balance: 0m, HasLiveCae: false, HasLiveVoucher: false,
+            HasLiveEditAuth: false, HasAnyPayment: false, HasPendingOperatorPenalty: true);
+        var caps = ReservaCapabilityPolicy.For(ctx);
+        Assert.True(caps.CanConfirmOperatorPenalty.Allowed);
+        Assert.Null(caps.CanConfirmOperatorPenalty.Reason);
+    }
+
+    /// <summary>
+    /// H3: sin multa pendiente, la capacidad es false en TODOS los estados (incluido PendingOperatorRefund, el
+    /// estado que antes la habilitaba de mas) y trae motivo legible. Es el corazon del fix: el estado no alcanza.
+    /// </summary>
+    [Theory]
+    [InlineData(EstadoReserva.Quotation)]
+    [InlineData(EstadoReserva.Budget)]
+    [InlineData(EstadoReserva.InManagement)]
+    [InlineData(EstadoReserva.Confirmed)]
+    [InlineData(EstadoReserva.Traveling)]
+    [InlineData(EstadoReserva.Closed)]
+    [InlineData(EstadoReserva.Lost)]
+    [InlineData(EstadoReserva.Cancelled)]
+    [InlineData(EstadoReserva.PendingOperatorRefund)]
+    public void CanConfirmOperatorPenalty_BlockedWhenNoPendingPenalty(string status)
+    {
+        // Ctx por defecto deja HasPendingOperatorPenalty en false.
+        var caps = ReservaCapabilityPolicy.For(Ctx(status));
+        Assert.False(caps.CanConfirmOperatorPenalty.Allowed);
+        Assert.False(string.IsNullOrWhiteSpace(caps.CanConfirmOperatorPenalty.Reason));
+    }
+
+    /// <summary>
+    /// H3: PendingOperatorRefund SIN multa pendiente es exactamente el caso del bug del dueño (boton muerto):
+    /// el estado de "esperando reembolso" no implica multa por confirmar. Debe quedar bloqueado.
+    /// </summary>
+    [Fact]
+    public void CanConfirmOperatorPenalty_PendingOperatorRefundWithoutPenalty_IsBlocked()
+    {
+        var caps = ReservaCapabilityPolicy.For(Ctx(EstadoReserva.PendingOperatorRefund));
+        Assert.False(caps.CanConfirmOperatorPenalty.Allowed);
+        Assert.Equal(
+            ReservaCapabilityPolicy.NoPendingOperatorPenaltyReason,
+            caps.CanConfirmOperatorPenalty.Reason);
+    }
 }

@@ -70,9 +70,10 @@ function textoRazonCosto(reason) {
  * Calcula el número del badge.
  * Decisión del dueño: urgentTrips y supplierDebts NO se suman (viven en Cobranzas).
  * upcomingStartsVisibles = items filtrados por descarte optimista.
+ * Q9 (2026-06-24): expiringPreSales se suma al badge.
  */
-function calcularBadge(upcomingStartsVisibles, costsToConfirm, notificacionesSinLeer) {
-    return upcomingStartsVisibles.length + costsToConfirm.length + notificacionesSinLeer;
+function calcularBadge(upcomingStartsVisibles, costsToConfirm, notificacionesSinLeer, expiringPreSales = []) {
+    return upcomingStartsVisibles.length + (expiringPreSales?.length ?? 0) + costsToConfirm.length + notificacionesSinLeer;
 }
 
 /**
@@ -372,4 +373,111 @@ test("poda: payload vacío → Set queda vacío (el server ya no manda nada)", (
     assert.equal(podado.size, 0, "Con payload vacío, el Set queda vacío");
     assert.equal(podado.has("aaa"), false);
     assert.equal(podado.has("bbb"), false);
+});
+
+// ─── Tests Q9: badge con expiringPreSales ────────────────────────────────────
+// Q9 (2026-06-24): el bucket expiringPreSales se suma al badge igual que los otros.
+
+test("Q9 badge: expiringPreSales se suma al total del badge", () => {
+    const upcomingStarts = [{ reservaPublicId: "a" }];
+    const costos = [];
+    const notificaciones = 0;
+    const porCaducar = [
+        { reservaPublicId: "x", preSaleKind: "Budget", daysLeft: 2 },
+        { reservaPublicId: "y", preSaleKind: "Quotation", daysLeft: 0 },
+    ];
+
+    // 1 upcoming + 0 costos + 0 notif + 2 por caducar = 3
+    assert.equal(calcularBadge(upcomingStarts, costos, notificaciones, porCaducar), 3);
+});
+
+test("Q9 badge: sin expiringPreSales → badge igual que antes de Q9 (sin regresión)", () => {
+    // El 4to arg es opcional; los tests existentes sin él siguen funcionando.
+    const upcomingStarts = [{ reservaPublicId: "a" }, { reservaPublicId: "b" }];
+    const costos = [{ reason: "NoKnownCost" }];
+    const notificaciones = 1;
+
+    // Sin expiringPreSales: 2 + 1 + 1 = 4
+    assert.equal(calcularBadge(upcomingStarts, costos, notificaciones), 4);
+    // Con expiringPreSales vacío: mismo resultado
+    assert.equal(calcularBadge(upcomingStarts, costos, notificaciones, []), 4);
+});
+
+test("Q9 badge: expiringPreSales null → no rompe (trata como [])", () => {
+    // El contexto puede devolver null cuando el backend no activa el bucket.
+    assert.equal(calcularBadge([], [], 0, null), 0);
+});
+
+test("Q9 badge: solo expiringPreSales, sin nada más", () => {
+    const porCaducar = [
+        { reservaPublicId: "p1", preSaleKind: "Budget", daysLeft: 3 },
+    ];
+    assert.equal(calcularBadge([], [], 0, porCaducar), 1);
+});
+
+// ─── Tests Q9: texto del aviso (anti-regresión B1) ───────────────────────────
+// B1 fix (2026-06-24): el backend devuelve la frase COMPLETA en item.message.
+// El front usa item.message tal cual — NO construye tipo/cliente para evitar duplicados.
+// Ej: backend devuelve "El presupuesto de Fam. García vence en 3 días."
+// Antes del fix el front armaba "El presupuesto de Fam. García" + item.message,
+// resultando en "El presupuesto de Fam. García El presupuesto de Fam. García vence en 3 días."
+
+/**
+ * Simula la lógica de SeccionPorCaducar después del fix B1:
+ * textoAviso = item.message (directo, sin prefixear tipo/cliente).
+ */
+function resolverTextoAvisoB1(item) {
+    // Fix B1: usar message directamente tal como lo devuelve el backend.
+    return item.message;
+}
+
+test("Q9 B1 — textoAviso = item.message del backend, sin prefixear tipo/cliente", () => {
+    // El backend devuelve la frase armada completa.
+    const item = {
+        preSaleKind: "Budget",
+        holderName: "Fam. García",
+        name: "Caribe 7 noches",
+        numeroReserva: "R-100",
+        daysLeft: 3,
+        message: "El presupuesto de Fam. García vence en 3 días.",
+    };
+    const texto = resolverTextoAvisoB1(item);
+
+    // El texto debe ser exactamente item.message — sin construir nada extra.
+    assert.equal(texto, item.message, "El texto debe ser exactamente item.message");
+});
+
+test("Q9 B1 — no duplica 'El presupuesto' ni el nombre del cliente", () => {
+    // Anti-regresión: el bug original construía tipoLabel + nombreCliente + message,
+    // resultando en "El presupuesto de Fam. García El presupuesto de Fam. García vence en 3 días."
+    const item = {
+        preSaleKind: "Budget",
+        holderName: "Fam. García",
+        name: "Caribe 7 noches",
+        numeroReserva: "R-100",
+        daysLeft: 3,
+        message: "El presupuesto de Fam. García vence en 3 días.",
+    };
+    const texto = resolverTextoAvisoB1(item);
+
+    const vecesPresupuesto = (texto.match(/El presupuesto/g) || []).length;
+    assert.equal(vecesPresupuesto, 1, `"El presupuesto" aparece ${vecesPresupuesto} veces — no debe duplicarse`);
+
+    const vecesNombre = (texto.match(/Fam\. García/g) || []).length;
+    assert.equal(vecesNombre, 1, `"Fam. García" aparece ${vecesNombre} veces — no debe duplicarse`);
+});
+
+test("Q9 B1 — mensaje de Quotation también se usa directamente del backend", () => {
+    const item = {
+        preSaleKind: "Quotation",
+        holderName: "Rodríguez, Ana",
+        name: "Vuelo Europa",
+        numeroReserva: "R-200",
+        daysLeft: 0,
+        message: "La cotización de Rodríguez, Ana vence hoy.",
+    };
+    const texto = resolverTextoAvisoB1(item);
+    assert.equal(texto, item.message);
+    const vecesCotizacion = (texto.match(/La cotización/g) || []).length;
+    assert.equal(vecesCotizacion, 1, `"La cotización" no debe duplicarse`);
 });

@@ -415,6 +415,80 @@ public sealed class CancellationDebitNoteDeferredIntegrationTests
     }
 
     // =========================================================================
+    // H3 (2026-06-24) — HasPendingOperatorPenaltyAsync se TRADUCE a SQL contra Postgres real.
+    // Es el unico lugar que ejercita la TRADUCCION de la query (Where + OrderBy + Select a tipo
+    // anonimo). InMemory evalua client-side y NO detectaria un .Select que construya una entidad
+    // mapeada (EF Core 8 + Npgsql lo prohiben en runtime: InvalidOperationException). Como este
+    // metodo corre en CADA carga de detalle de reserva, un test de traduccion es obligatorio.
+    // =========================================================================
+
+    /// <summary>
+    /// H3: con la NC ya emitida y la penalidad aun Estimada (caso pass-through tipico), el metodo
+    /// devuelve true CONTRA POSTGRES — lo que prueba que la proyeccion se traduce a SQL sin
+    /// reventar. Ancla el fix del bloqueante de runtime (proyeccion a tipo anonimo, no a entidad).
+    /// </summary>
+    [Fact]
+    public async Task HasPendingOperatorPenalty_PostNcEstimated_ReturnsTrue_AgainstPostgres()
+    {
+        var bundle = BuildService(debitNoteFlagOn: true);
+        var (_, _, _, reservaId, _) = await SeedPostNcBcAsync(
+            bundle.Ctx,
+            penaltyStatus: PenaltyStatus.Estimated,
+            linkCreditNote: true);
+
+        // Necesitamos el PublicId de la reserva (la API publica trabaja por PublicId).
+        var reservaPublicId = (await bundle.Ctx.Reservas.AsNoTracking().FirstAsync(r => r.Id == reservaId)).PublicId;
+
+        var result = await bundle.Service.HasPendingOperatorPenaltyAsync(reservaPublicId, CancellationToken.None);
+
+        Assert.True(result);
+    }
+
+    /// <summary>
+    /// H3: con la penalidad ya Confirmed (la ND ya esta en juego), el mismo metodo devuelve false
+    /// contra Postgres — confirma que la idempotencia se evalua bien sobre datos reales y que la
+    /// traduccion de la query funciona en ambas ramas (no solo en el happy-path).
+    /// </summary>
+    [Fact]
+    public async Task HasPendingOperatorPenalty_PenaltyAlreadyConfirmed_ReturnsFalse_AgainstPostgres()
+    {
+        var bundle = BuildService(debitNoteFlagOn: true);
+        var (_, _, _, reservaId, _) = await SeedPostNcBcAsync(
+            bundle.Ctx,
+            penaltyStatus: PenaltyStatus.Confirmed,
+            linkCreditNote: true);
+
+        var reservaPublicId = (await bundle.Ctx.Reservas.AsNoTracking().FirstAsync(r => r.Id == reservaId)).PublicId;
+
+        var result = await bundle.Service.HasPendingOperatorPenaltyAsync(reservaPublicId, CancellationToken.None);
+
+        Assert.False(result);
+    }
+
+    /// <summary>
+    /// H3: una reserva SIN cancelacion (no se anulo) devuelve false contra Postgres — la rama
+    /// "no hay BC vigente" de la query. Usa una reserva creada a mano, sin pasar por el seed de BC.
+    /// </summary>
+    [Fact]
+    public async Task HasPendingOperatorPenalty_ReservaWithoutCancellation_ReturnsFalse_AgainstPostgres()
+    {
+        var bundle = BuildService(debitNoteFlagOn: true);
+        var reserva = new Reserva
+        {
+            NumeroReserva = $"H3-{Guid.NewGuid().ToString("N")[..8]}",
+            Name = "Reserva sin cancelacion",
+            Status = EstadoReserva.Confirmed,
+            Balance = 0m,
+        };
+        bundle.Ctx.Reservas.Add(reserva);
+        await bundle.Ctx.SaveChangesAsync();
+
+        var result = await bundle.Service.HasPendingOperatorPenaltyAsync(reserva.PublicId, CancellationToken.None);
+
+        Assert.False(result);
+    }
+
+    // =========================================================================
     // Caso 4-bis — rama complementaria del happy-path: el pipeline "crea" la ND pero el service
     // NO puede resolver su Id por PublicId (DTO con PublicId inexistente). La ND no se vincula
     // y el BC va a ManualReview. Cubre la rama `debitNoteId is null` de TryEmit (§ linea 2048).

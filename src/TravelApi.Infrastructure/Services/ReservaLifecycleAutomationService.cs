@@ -59,7 +59,7 @@ public class ReservaLifecycleAutomationService
     public async Task<int> RunDailyAsync(CancellationToken ct = default)
     {
         var result = await RunDailyDetailedAsync(ct);
-        return result.Promoted + result.Closed + result.Repaired + result.Reconciled;
+        return result.Promoted + result.Closed + result.Repaired + result.Reconciled + result.Expired;
     }
 
     /// <summary>
@@ -87,6 +87,11 @@ public class ReservaLifecycleAutomationService
         // asi que el cierre normal no la alcanzaria; este barrido la cierra por estar vacia).
         var emptyTravelingClosed = await AutoCloseEmptyTravelingAsync(ct);
 
+        // G6 (caducidad de pre-venta, 2026-06-24): un Presupuesto/Cotizacion que no avanzo en X dias caduca
+        // SOLO a "Perdido". Corre junto al resto del housekeeping. Es independiente del flujo de viaje, por eso
+        // su count NO se suma a Promoted/Closed (se loguea aparte). Si los dias estan en 0 (default), no hace nada.
+        var expired = await AutoExpireStalePreSaleAsync(ct);
+
         var promoted = await AutoTransitionConfirmedToTravelingAsync(ct);
 
         // ADR-020: cierre por fin de viaje Traveling -> Closed (EndDate pasada + Balance <= 0). El
@@ -95,10 +100,11 @@ public class ReservaLifecycleAutomationService
         var closed = await AutoTransitionTravelingToClosedAsync(ct);
 
         _logger.LogInformation(
-            "Lifecycle automation finished. Reconciled (motor): {Reconciled}. Repaired: {Repaired}. En viaje vacias cerradas (saneamiento): {EmptyTravelingClosed}. Confirmed->Traveling: {Promoted}. Avanzadas a fin de viaje: {Closed}.",
-            reconciled, repaired, emptyTravelingClosed, promoted, closed);
-        // El saneamiento cuenta como cierres: se suma al count Closed del resultado.
-        return new LifecycleRunResult(promoted, closed + emptyTravelingClosed, repaired, reconciled);
+            "Lifecycle automation finished. Reconciled (motor): {Reconciled}. Repaired: {Repaired}. En viaje vacias cerradas (saneamiento): {EmptyTravelingClosed}. Pre-venta caducada a Perdido: {Expired}. Confirmed->Traveling: {Promoted}. Avanzadas a fin de viaje: {Closed}.",
+            reconciled, repaired, emptyTravelingClosed, expired, promoted, closed);
+        // El saneamiento cuenta como cierres: se suma al count Closed del resultado. La caducidad de pre-venta
+        // (G6) va en su propio campo Expired (no es ni promote ni close: es Budget/Quotation -> Lost).
+        return new LifecycleRunResult(promoted, closed + emptyTravelingClosed, repaired, reconciled, expired);
     }
 
     /// <summary>
@@ -438,6 +444,201 @@ public class ReservaLifecycleAutomationService
     private static readonly int[] LiveInvoiceCreditNoteTypes = { 3, 8, 13, 53 };
 
     /// <summary>
+    /// G6 (caducidad de pre-venta, decision del dueño 2026-06-24): pasa SOLAS a "Perdido" (Lost) las reservas
+    /// en Presupuesto (Budget) o Cotizacion (Quotation) que llevan mas dias en ese estado que el configurado,
+    /// sin haber avanzado. Los dias se configuran por SEPARADO para cada tipo (un valor para Budget, otro para
+    /// Quotation) en <see cref="OperationalFinanceSettings"/>; un valor 0 DESACTIVA la caducidad de ese tipo.
+    ///
+    /// <para>Reusa <see cref="ApplyTransitionsAsync"/> para heredar exactamente el mismo camino que el resto del
+    /// job: rastro auditable (<see cref="ReservaStatusChangeLog"/> con actor "sistema"), re-chequeo de
+    /// concurrencia (si alguien la movio a mano en el medio, se saltea) y el hook de leads. La transicion
+    /// Budget->Lost y Quotation->Lost ya es legitima en <c>ReservaStatusTransitions.Forward</c>; aca solo la
+    /// dispara el sistema en vez de una persona. NO duplica side-effects: G1/G2 ya garantizan que Lost no genera
+    /// deuda con proveedores ni avisos.</para>
+    ///
+    /// <para><b>Idempotente y seguro</b>: solo toca reservas que SIGUEN en Budget/Quotation (las que avanzaron
+    /// ya no estan en esos estados, asi que no se las vuelve a evaluar). El re-chequeo de concurrencia en
+    /// ApplyTransitionsAsync es la red final si una reserva cambia entre la query y el save.</para>
+    /// </summary>
+    public async Task<int> AutoExpireStalePreSaleAsync(CancellationToken ct = default)
+    {
+        var settings = await _settingsService.GetEntityAsync(ct);
+
+        var planned = new List<PlannedTransition>();
+
+        // Budget -> Lost (si esta habilitado: dias > 0).
+        if (settings.BudgetExpirationDays > 0)
+        {
+            await CollectExpiredPreSaleAsync(
+                preSaleStatus: EstadoReserva.Budget,
+                expirationDays: settings.BudgetExpirationDays,
+                planned: planned,
+                ct: ct);
+        }
+
+        // Quotation -> Lost (eje SEPARADO: su propio plazo, tambien gateado por dias > 0).
+        if (settings.QuotationExpirationDays > 0)
+        {
+            await CollectExpiredPreSaleAsync(
+                preSaleStatus: EstadoReserva.Quotation,
+                expirationDays: settings.QuotationExpirationDays,
+                planned: planned,
+                ct: ct);
+        }
+
+        var expired = await ApplyTransitionsAsync(planned, "AutoExpireStalePreSale", ct);
+        if (expired > 0)
+        {
+            _logger.LogInformation(
+                "G6 caducidad de pre-venta: {Count} reserva(s) en Presupuesto/Cotizacion pasaron a Perdido por antigüedad.",
+                expired);
+        }
+
+        return expired;
+    }
+
+    /// <summary>
+    /// G6: junta en <paramref name="planned"/> las reservas de un estado de pre-venta concreto
+    /// (<paramref name="preSaleStatus"/>) que ya superaron su plazo de caducidad, listas para pasar a Lost.
+    ///
+    /// <para><b>Como se mide la antigüedad</b> (decision a confirmar con el dueño): se usa el momento en que la
+    /// reserva ENTRO al estado actual = el ultimo <see cref="ReservaStatusChangeLog"/> con
+    /// <c>ToStatus == preSaleStatus</c>. Si no hay ningun log (caso de Quotation: la reserva NACE en Quotation
+    /// y ese estado inicial no genera log de transicion), se cae a <c>CreatedAt</c>. Asi "lleva X dias sin
+    /// avanzar" se mide desde que efectivamente quedo en ese estado, no desde que se creo la reserva (que para
+    /// un Budget alcanzado por transicion podria ser mucho antes).</para>
+    ///
+    /// <para>El umbral se calcula como "entro antes de (hoy - X dias)". Se compara contra
+    /// <c>DateTime.UtcNow</c> menos los dias; es una caducidad por dias corridos, coherente con el resto del
+    /// job (que trabaja en UTC).</para>
+    ///
+    /// <para><b>GUARD DE PLATA (review de seguridad 2026-06-24)</b>: Lost es TERMINAL (no se edita, no se
+    /// borra, no se devuelve el cobro). El path MANUAL de pasar a Perdida (<c>ReservaService.UpdateStatusAsync</c>)
+    /// BLOQUEA Budget/Quotation -&gt; Lost si hay cobros vivos, porque el path legacy <c>AddPaymentAsync</c> no
+    /// tiene gate de estado: una pre-venta PODRIA tener un cobro cargado. El job NO pasa por ese guard (va por
+    /// <see cref="ApplyTransitionsAsync"/>), asi que replicamos la defensa aca: una pre-venta con un cobro vivo
+    /// o una factura con CAE vivo NO se caduca (caducarla congelaria la plata huerfana sin camino de devolucion).
+    /// Esas reservas se SALTEAN y se loguean (con la lista de IDs) para revision manual, mismo patron que
+    /// <see cref="AutoCloseEmptyTravelingAsync"/>. Una pre-venta con deuda pero SIN cobros si caduca: es el caso
+    /// normal (cotizacion impaga que el cliente no compro), no hay plata que proteger.</para>
+    /// </summary>
+    private async Task CollectExpiredPreSaleAsync(
+        string preSaleStatus,
+        int expirationDays,
+        List<PlannedTransition> planned,
+        CancellationToken ct)
+    {
+        // Frontera: cualquier reserva que entro a este estado ANTES de este instante ya caduco.
+        var cutoffUtc = DateTime.UtcNow.AddDays(-expirationDays);
+
+        // Candidatas: las que SIGUEN en el estado de pre-venta. Traemos Id + CreatedAt para el fallback.
+        var candidates = await _db.Reservas
+            .Where(r => r.Status == preSaleStatus)
+            .Select(r => new { r.Id, r.CreatedAt, r.NumeroReserva })
+            .ToListAsync(ct);
+
+        if (candidates.Count == 0) return;
+
+        var candidateIds = candidates.Select(c => c.Id).ToList();
+
+        // Momento en que cada candidata entro a ESTE estado = el ultimo log con ToStatus == preSaleStatus.
+        // Se agrupa en memoria tras una sola query (sin N+1). Una reserva sin log para este estado no aparece
+        // en el diccionario y cae al fallback CreatedAt.
+        var logRows = await _db.ReservaStatusChangeLogs
+            .Where(log => candidateIds.Contains(log.ReservaId) && log.ToStatus == preSaleStatus)
+            .Select(log => new { log.ReservaId, log.OccurredAt })
+            .ToListAsync(ct);
+
+        var enteredStateAt = logRows
+            .GroupBy(row => row.ReservaId)
+            .ToDictionary(group => group.Key, group => group.Max(row => row.OccurredAt));
+
+        // Paso 1: filtrar por antigüedad. Las que superaron el plazo son candidatas a caducar.
+        var expiredIds = candidates
+            .Where(candidate =>
+            {
+                var sinceUtc = enteredStateAt.TryGetValue(candidate.Id, out var loggedAt)
+                    ? loggedAt
+                    : candidate.CreatedAt; // sin log (Quotation inicial) -> desde la creacion
+                return sinceUtc <= cutoffUtc;
+            })
+            .Select(candidate => candidate.Id)
+            .ToList();
+
+        if (expiredIds.Count == 0) return;
+
+        // Paso 2: cargar en UNA sola query las entidades vencidas (rastreadas, para que ApplyTransitionsAsync
+        // pueda mutar Status y persistir). Evita el N+1 de re-consultar una por una en el foreach.
+        var expiredReservas = await _db.Reservas
+            .Where(r => expiredIds.Contains(r.Id))
+            .ToListAsync(ct);
+
+        // IDs salteados por tener plata viva: se loguean al final para revision manual (NO se caducan).
+        var skippedForLiveMoney = new List<(int Id, string NumeroReserva)>();
+
+        foreach (var reserva in expiredReservas)
+        {
+            // GUARD DE PLATA: si tiene un cobro vivo o una factura con CAE vivo, NO se caduca (ver doc del metodo).
+            if (await HasLivePaymentOrInvoiceAsync(reserva.Id, ct))
+            {
+                skippedForLiveMoney.Add((reserva.Id, reserva.NumeroReserva));
+                continue;
+            }
+
+            planned.Add(new PlannedTransition(
+                Reserva: reserva,
+                FromStatus: preSaleStatus,
+                ToStatus: EstadoReserva.Lost,
+                StampClosedAt: false,
+                WriteForwardLog: true,
+                Reason: $"Caducó por antigüedad ({expirationDays} dias sin avanzar)"));
+        }
+
+        // Aviso de revision manual de las pre-ventas vencidas-con-plata: sin montos (solo Id + NumeroReserva),
+        // respetando el enmascarado de costos. Mismo patron que AutoCloseEmptyTravelingAsync.
+        if (skippedForLiveMoney.Count > 0)
+        {
+            var detalle = string.Join(", ",
+                skippedForLiveMoney.Select(x => $"{x.Id} ({x.NumeroReserva})"));
+            _logger.LogWarning(
+                "G6 caducidad de pre-venta: {Count} reserva(s) en {PreSaleStatus} vencida(s) por antigüedad pero CON plata viva " +
+                "(un cobro registrado o una factura con CAE) NO se caducaron a Perdido. Caducarlas congelaria esa plata " +
+                "(Lost es terminal). Requieren revision manual: {Reservas}.",
+                skippedForLiveMoney.Count, preSaleStatus, detalle);
+        }
+    }
+
+    /// <summary>
+    /// Guard de plata del G6 (review de seguridad 2026-06-24): true si la pre-venta tiene un cobro vivo o una
+    /// factura con CAE vivo, lo que impide caducarla a Lost (terminal) sin congelar la plata.
+    ///
+    /// <para>A diferencia de <see cref="HasLiveMoneyAsync"/> (usado por el saneamiento de Traveling vacias),
+    /// este guard NO mira el Balance: una pre-venta con deuda pero SIN cobros (cotizacion impaga) es el caso
+    /// NORMAL que SI debe caducar — no hay plata recibida que proteger. Solo bloquea cuando entro plata de
+    /// verdad (un Payment vivo) o se emitio un comprobante fiscal (CAE vivo). El criterio de "vivo" espeja al
+    /// del guard manual (<c>!IsDeleted</c> para pagos) y al de los guards de mutacion fiscal (CAE asignado,
+    /// no NC, no anulada) para no divergir.</para>
+    /// </summary>
+    private async Task<bool> HasLivePaymentOrInvoiceAsync(int reservaId, CancellationToken ct)
+    {
+        // (1) Algun cobro vivo (real o puente) de la reserva. !IsDeleted = mismo criterio que el guard manual
+        // de ReservaService.UpdateStatusAsync (Quotation/Budget -> Lost) y que el read-model de capacidades.
+        var hasLivePayment = await _db.Payments.AsNoTracking()
+            .AnyAsync(p => p.ReservaId == reservaId && !p.IsDeleted, ct);
+        if (hasLivePayment)
+            return true;
+
+        // (2) Alguna factura con CAE vivo (no NC). Mismo criterio que los guards de mutacion fiscal y que
+        // HasLiveMoneyAsync. Belt-and-suspenders: una pre-venta no deberia tener CAE, pero datos legacy podrian.
+        var hasLiveCae = await _db.Invoices.AsNoTracking()
+            .AnyAsync(i => i.ReservaId == reservaId
+                && !LiveInvoiceCreditNoteTypes.Contains(i.TipoComprobante) // excluye NC (resta, no mantiene viva)
+                && !string.IsNullOrEmpty(i.CAE)
+                && i.AnnulmentStatus != AnnulmentStatus.Succeeded, ct);
+        return hasLiveCae;
+    }
+
+    /// <summary>
     /// Aplica una tanda de transiciones de estado del job y persiste una sola vez.
     ///
     /// <para>Defensa de concurrencia (reemplaza el viejo xmin, descartado en el review): justo antes
@@ -553,5 +754,6 @@ public class ReservaLifecycleAutomationService
 /// Promoted = cantidad de reservas que pasaron Confirmed -> Traveling.
 /// Closed = cantidad que el job cerro Traveling->Closed (EndDate vencido + Balance cero).
 ///          ADR-036: ToSettle ya no existe.
+/// Expired = cantidad de pre-venta (Budget/Quotation) que el job paso a Lost por antigüedad (G6).
 /// </summary>
-public record LifecycleRunResult(int Promoted, int Closed, int Repaired, int Reconciled = 0);
+public record LifecycleRunResult(int Promoted, int Closed, int Repaired, int Reconciled = 0, int Expired = 0);

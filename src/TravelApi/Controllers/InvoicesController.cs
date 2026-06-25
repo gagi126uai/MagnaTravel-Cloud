@@ -145,6 +145,25 @@ public class InvoicesController : ControllerBase
         return Ok(invoices);
     }
 
+    /// <summary>
+    /// H2 (2026-06-24): estado fiscal CLARO de las facturas de una reserva, para que el front haga POLL
+    /// despues de emitir. La emision es ASINCRONA (POST /invoices encola; un job pide el CAE en segundo
+    /// plano), asi que el front consulta este endpoint hasta saber como termino: en proceso, emitida
+    /// (con numero + CAE + vencimiento) o rechazada (con el motivo de ARCA legible).
+    ///
+    /// SOLO LECTURA: no dispara ninguna emision. Mismo permiso (cobranzas.view) y ownership (bypass
+    /// cobranzas.view_all) que el resto de los GET de facturas — un vendedor solo ve SUS reservas.
+    /// </summary>
+    [HttpGet("reserva/{publicIdOrLegacyId}/fiscal-status")]
+    [RequirePermission(Permissions.CobranzasView)]
+    [RequireOwnership(OwnedEntity.Reserva, "publicIdOrLegacyId", bypassPermission: Permissions.CobranzasViewAll)]
+    public async Task<ActionResult<IEnumerable<InvoiceFiscalStatusDto>>> GetFiscalStatusByReservaId(string publicIdOrLegacyId, CancellationToken ct)
+    {
+        var reservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, ct);
+        var statuses = await _invoiceService.GetFiscalStatusByReservaIdAsync(reservaId, ct);
+        return Ok(statuses);
+    }
+
     [HttpGet("{publicIdOrLegacyId}/pdf")]
     [RequirePermission(Permissions.CobranzasView)]
     [RequireOwnership(OwnedEntity.Invoice, "publicIdOrLegacyId", bypassPermission: Permissions.CobranzasViewAll)]

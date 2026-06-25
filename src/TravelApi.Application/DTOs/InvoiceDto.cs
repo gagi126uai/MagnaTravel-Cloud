@@ -12,6 +12,14 @@ public class InvoiceDto
     public decimal ImporteTotal { get; set; }
     public DateTime CreatedAt { get; set; }
     public string? CAE { get; set; }
+
+    /// <summary>
+    /// Paso 5 (2026-06-24): vencimiento del CAE para mostrarlo en la linea de la factura del Estado de
+    /// Cuenta (junto al numero de comprobante y el CAE). Es un dato FISCAL no sensible (no es costo ni
+    /// margen). Mapea por convencion desde <c>Invoice.VencimientoCAE</c>. Null mientras la factura no
+    /// este emitida (en proceso o rechazada). El front lo lee como <c>invoice.vencimientoCAE</c>.
+    /// </summary>
+    public DateTime? VencimientoCAE { get; set; }
     public string? Resultado { get; set; }
     public string? Observaciones { get; set; }
     public bool WasForced { get; set; }

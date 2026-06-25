@@ -50,7 +50,15 @@ Decisión: no se gatea en el contador; se resuelve investigando ARCA/ERP en inte
 
 ---
 
-### HECHO (backend+frontend, en revisión, cerrando bloqueantes): B2, B3, G1, G2, G3, G4, G5
-### MAÑANA: G6 (caducidad presupuesto/cotización) — Gastón lo difirió 2026-06-24
+## H. BUGS / REVISAR MAÑANA (Gastón 2026-06-24, fin del día)
+- **H1.** Una reserva NUEVA en "En gestión" muestra **"Pago: pagada"** sin haberse registrado ningún pago. El estado de cobro está mal calculado/mostrado cuando no hay cobros.
+- **H2.** Al **emitir la factura no se ve de forma clara** (claridad/UX del flujo de emisión). Revisar cómo se muestra.
+- **H3.** **"Confirmar multa del operador" se sigue viendo en estados que no corresponden.** Acotar a donde realmente aplica.
+- **H4.** **AUDITORÍA GENERAL de AVISOS y "Operador impago":** revisar TODOS los lugares donde aparecen avisos y el aviso de "operador impago" y que NO se muestren cuando el estado de la reserva no lo amerita (pierden lógica). Analizarlas TODAS, no solo las obvias.
+
+---
+
+### HECHO Y DESPLEGABLE (HEAD b7a46a7): A* + lote chico + lote ciclo de vida (B2, B3, G1-G5)
+### MAÑANA: G6 (caducidad presupuesto/cotización) + H1, H2, H3, H4 (bugs/auditoría de avisos)
 ### QUEUE: C1 (multi-factura, arquitecto) · D1-D4 (UX)
 ### FISCAL: por investigación (no contador), informando a Gastón — ver sección E y memoria no-gatear-contador

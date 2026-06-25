@@ -785,6 +785,86 @@ public class InvoiceService : IInvoiceService
             .ToListAsync(ct);
     }
 
+    /// <summary>
+    /// H2 (2026-06-24): estado fiscal CLARO de las facturas de una reserva para el POLL del front.
+    ///
+    /// <para>La emision es ASINCRONA: <c>CreateAsync</c> crea la factura en PENDING y encola
+    /// <c>ProcessInvoiceJob</c>, que le pide el CAE a ARCA en segundo plano y escribe el resultado en
+    /// <c>Invoice.Resultado</c> ("A" aprobada / "R" rechazada) y, si rechaza, el motivo legible en
+    /// <c>Invoice.Observaciones</c> (ya traducido por TranslateAfipError). Este metodo SOLO LEE ese
+    /// estado y lo traduce al contrato claro de tres valores (InProcess/Issued/Rejected). NO dispara
+    /// ninguna emision ni muta nada.</para>
+    ///
+    /// <para>El motivo de rechazo se expone unicamente cuando el estado es Rejected: en los otros
+    /// estados <c>Observaciones</c> puede traer texto transitorio (errores de red mientras esta en
+    /// proceso) que NO es un rechazo definitivo y confundiria al operador.</para>
+    /// </summary>
+    public async Task<IEnumerable<InvoiceFiscalStatusDto>> GetFiscalStatusByReservaIdAsync(int reservaId, CancellationToken ct)
+    {
+        // Traemos solo los campos que el contrato necesita. La traduccion Resultado -> estado claro la hace
+        // el mapper de dominio (InvoiceFiscalStatusMapper) en memoria, despues de materializar: EF no
+        // traduce el switch del mapper a SQL.
+        var rows = await _context.Invoices
+            .AsNoTracking()
+            .Where(i => i.ReservaId == reservaId)
+            .OrderByDescending(i => i.CreatedAt)
+            .Select(invoice => new
+            {
+                invoice.PublicId,
+                ReservaPublicId = invoice.Reserva != null ? (Guid?)invoice.Reserva.PublicId : null,
+                invoice.Resultado,
+                invoice.TipoComprobante,
+                invoice.PuntoDeVenta,
+                invoice.NumeroComprobante,
+                invoice.CAE,
+                invoice.VencimientoCAE,
+                invoice.ImporteTotal,
+                invoice.MonId,
+                invoice.Observaciones,
+                invoice.CreatedAt
+            })
+            .ToListAsync(ct);
+
+        return rows
+            .Select(row =>
+            {
+                var status = InvoiceFiscalStatusMapper.FromResultado(row.Resultado);
+                return new InvoiceFiscalStatusDto
+                {
+                    PublicId = row.PublicId,
+                    ReservaPublicId = row.ReservaPublicId,
+                    Status = status.ToString(),
+                    InvoiceType = MapTipoComprobanteToLetter(row.TipoComprobante),
+                    TipoComprobante = row.TipoComprobante,
+                    PuntoDeVenta = row.PuntoDeVenta,
+                    NumeroComprobante = row.NumeroComprobante,
+                    CAE = row.CAE,
+                    VencimientoCAE = row.VencimientoCAE,
+                    ImporteTotal = row.ImporteTotal,
+                    MonId = string.IsNullOrWhiteSpace(row.MonId) ? "PES" : row.MonId,
+                    // El motivo solo es un rechazo definitivo cuando el estado es Rejected. En InProcess
+                    // las Observaciones pueden ser un error de red transitorio (la factura sigue viva).
+                    RejectionReason = status == InvoiceFiscalStatus.Rejected ? row.Observaciones : null,
+                    CreatedAt = row.CreatedAt
+                };
+            })
+            .ToList();
+    }
+
+    /// <summary>
+    /// Traduce el cbteTipo de ARCA a la letra del comprobante (A/B/C/M). Misma tabla que las proyecciones
+    /// LINQ inline de GetAllAsync/GetByReservaIdAsync, centralizada aca para el mapeo en memoria de H2.
+    /// </summary>
+    private static string MapTipoComprobanteToLetter(int tipoComprobante) =>
+        tipoComprobante switch
+        {
+            1 or 2 or 3 => "A",
+            6 or 7 or 8 => "B",
+            11 or 12 or 13 => "C",
+            51 or 52 or 53 => "M",
+            _ => "UNK",
+        };
+
     public async Task<byte[]> GetPdfAsync(int id, CancellationToken ct)
     {
         var invoice = await _context.Invoices

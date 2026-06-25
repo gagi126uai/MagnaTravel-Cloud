@@ -1605,11 +1605,35 @@ public class SupplierService : ISupplierService
         var reserva = await _dbContext.Reservas
             .AsNoTracking()
             .Where(r => r.Id == reservaId)
-            .Select(r => new { r.PublicId })
+            .Select(r => new { r.PublicId, r.Status })
             .FirstOrDefaultAsync(cancellationToken);
         if (reserva == null)
         {
             throw new KeyNotFoundException("Reserva no encontrada");
+        }
+
+        // H4 (2026-06-24): la deuda con el operador / el aviso "operador impago" SOLO tiene sentido en estados
+        // donde un servicio se concreto con el operador (firme + vivo/finalizado): {InManagement, Confirmed,
+        // Traveling, Closed}. En PRE-VENTA (Cotizacion/Presupuesto) nada se concreto: un presupuesto no genera
+        // deuda con proveedores (regla G2). En los TERMINALES SIN deuda operativa (Perdida = no se compro (G1);
+        // Anulada / Esperando reembolso = la deuda se resuelve por el circuito de cancelacion/refund) tampoco
+        // aplica. En esos estados devolvemos la lista de servicios VACIA: el front no muestra ningun chip "impago"
+        // (antes reportaba TODOS como "unpaid", que era el bug — un presupuesto aparecia con el operador "impago").
+        //
+        // Fuente unica de la regla: el MISMO conjunto que ya usa el calculo de la cuenta corriente del proveedor
+        // (SupplierDebtCalculator.ValidReservationStatuses, via el alias ValidReservationStatuses de esta clase).
+        // Asi este endpoint de "estado de pago por servicio" y la deuda agregada del proveedor coinciden: una
+        // reserva que NO suma a la deuda del operador tampoco reporta servicios impagos.
+        var supplierDebtApplies = ValidReservationStatuses
+            .Any(s => string.Equals(s, reserva.Status, StringComparison.OrdinalIgnoreCase));
+        if (!supplierDebtApplies)
+        {
+            return new ReservaSupplierPaymentStatusDto
+            {
+                ReservaPublicId = reserva.PublicId,
+                AmountsVisible = await CanSeeSupplierCostFiguresAsync(cancellationToken),
+                // Services queda vacio: en este estado no se reporta pago/deuda con el operador.
+            };
         }
 
         // 1) Todos los servicios de la reserva (6 tablas), con su proveedor, costo, moneda y estado.

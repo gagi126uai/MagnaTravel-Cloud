@@ -168,6 +168,16 @@ public class ReservaCapabilitiesDto
     /// </summary>
     public CapabilityDto CanCorrectTravelingEntry { get; set; } = new();
 
+    /// <summary>
+    /// H3 (2026-06-24): si se puede CONFIRMAR LA MULTA DEL OPERADOR (paso diferido que emite la Nota de Débito
+    /// pass-through). allowed SOLO cuando la reserva tiene una multa del operador pendiente de confirmar — es la
+    /// verdad del dato (existe una cancelación con multa diferida sin confirmar), NO el estado. El front muestra el
+    /// botón "Confirmar multa del operador" únicamente si <c>allowed=true</c>; si es false, no lo ofrece (con el
+    /// motivo como tooltip). Solo se calcula en el DETALLE de la reserva (en el listado va false, default). El
+    /// endpoint confirm-penalty revalida permiso/4-ojos/idempotencia server-side.
+    /// </summary>
+    public CapabilityDto CanConfirmOperatorPenalty { get; set; } = new();
+
     /// <summary>Estados a los que se puede avanzar manualmente (matriz forward del dominio).</summary>
     public List<string> AllowedForward { get; set; } = new();
 
@@ -318,11 +328,14 @@ public class ReservaDto
     /// <summary>
     /// ADR-033 (E7/A5, 2026-06-16): ESTADO DE COBRO derivado del saldo POR MONEDA (no persistido, no es
     /// columna). Valores: "ConDeuda" (alguna moneda con Balance &gt; 0), "SaldoAFavor" (sin deuda y alguna
-    /// moneda &lt; 0), "Saldado" (todas en 0). "ConDeuda" gana sobre "SaldoAFavor" cuando hay ambas en
-    /// monedas distintas (una reserva que debe USD y tiene saldo a favor ARS esta, antes que nada, con deuda).
+    /// moneda &lt; 0), "Saldado" (todo en 0 PERO hubo cargos/cobros), "SinMovimientos" (todo en 0 y sin
+    /// cargos ni cobros — reserva nueva, nada cobrado). "ConDeuda" gana sobre "SaldoAFavor" cuando hay ambas
+    /// en monedas distintas (una reserva que debe USD y tiene saldo a favor ARS esta, antes que nada, con deuda).
     /// Se calcula desde <see cref="PorMoneda"/>. Eje independiente del estado operativo y de la facturacion.
+    /// H1 (2026-06-24): el default es "SinMovimientos" (no "Saldado") para que una reserva sin datos de plata
+    /// nunca se muestre como "pagada".
     /// </summary>
-    public string CollectionStatus { get; set; } = ReservaCollectionStatus.Settled;
+    public string CollectionStatus { get; set; } = ReservaCollectionStatus.NoCharges;
 
     /// <summary>
     /// ADR-037 (2026-06-21): ESTADO DE FACTURACION derivado del cuadre VENDIDO vs FACTURADO NETO (no

@@ -396,4 +396,50 @@ public class SupplierPaymentByServiceTests
         var line = ServiceLine(statusDto, hotel.PublicId);
         Assert.Equal(ServiceSupplierPaymentStatuses.Unpaid, line.Status);
     }
+
+    // ===== H4 (2026-06-24): "operador impago" SOLO en estados donde el servicio se concreto con el operador =====
+    // El endpoint NO debe reportar servicios como impagos en PRE-VENTA (Cotizacion/Presupuesto) ni en TERMINALES
+    // sin deuda operativa (Perdida/Anulada/Esperando reembolso). En esos estados devuelve la lista vacia.
+
+    [Theory]
+    [InlineData(EstadoReserva.Quotation)]            // pre-venta: nada se concreto (G2)
+    [InlineData(EstadoReserva.Budget)]               // pre-venta: un presupuesto no genera deuda con proveedores (G2)
+    [InlineData(EstadoReserva.Lost)]                 // perdida: no se compro (G1)
+    [InlineData(EstadoReserva.Cancelled)]            // anulada: deuda por circuito de cancelacion, no por impago
+    [InlineData(EstadoReserva.PendingOperatorRefund)] // esperando reembolso: idem
+    public async Task PreSaleOrTerminal_DoesNotReportSupplierPaymentStatus(string status)
+    {
+        await using var context = CreateContext();
+        var supplier = await AddSupplierAsync(context, "Mayorista");
+        var reserva = await AddReservaAsync(context, "F-H4-" + status, status: status);
+        // Hay un servicio con costo y SIN pagos: si el gate de estado no funcionara, saldria "unpaid" (el bug).
+        await AddConfirmedHotelAsync(context, supplier.Id, reserva.Id, netCost: 1000m);
+
+        var service = CreateService(context);
+        var statusDto = await service.GetReservaSupplierPaymentStatusAsync(reserva.Id, CancellationToken.None);
+
+        // En estos estados NO se reporta ningun servicio: la solapa no muestra ningun chip "impago".
+        Assert.Empty(statusDto.Services);
+        Assert.Equal(reserva.PublicId, statusDto.ReservaPublicId);
+    }
+
+    [Theory]
+    [InlineData(EstadoReserva.InManagement)]
+    [InlineData(EstadoReserva.Confirmed)]
+    [InlineData(EstadoReserva.Traveling)]
+    [InlineData(EstadoReserva.Closed)]
+    public async Task FirmStates_StillReportUnpaidService(string status)
+    {
+        await using var context = CreateContext();
+        var supplier = await AddSupplierAsync(context, "Mayorista");
+        var reserva = await AddReservaAsync(context, "F-H4-firm-" + status, status: status);
+        var hotel = await AddConfirmedHotelAsync(context, supplier.Id, reserva.Id, netCost: 1000m);
+
+        var service = CreateService(context);
+        var statusDto = await service.GetReservaSupplierPaymentStatusAsync(reserva.Id, CancellationToken.None);
+
+        // En estos estados el servicio SI se reporta: un servicio confirmado sin pagos queda "impago".
+        var line = ServiceLine(statusDto, hotel.PublicId);
+        Assert.Equal(ServiceSupplierPaymentStatuses.Unpaid, line.Status);
+    }
 }

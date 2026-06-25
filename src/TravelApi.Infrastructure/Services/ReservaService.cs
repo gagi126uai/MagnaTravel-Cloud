@@ -38,6 +38,11 @@ public class ReservaService : IReservaService
     // servicio: a quien se le exige nombre/documento y quien aparece en el voucher). Opcional para no
     // romper los ctores de tests; si es null, la operacion funciona igual, solo no se registra el evento.
     private readonly IAuditService? _auditService;
+    // H3 (2026-06-24): para saber si la reserva tiene una multa del operador pendiente de confirmar y asi alimentar
+    // la capacidad CanConfirmOperatorPenalty. Opcional (default null) para no romper los ctores de tests unitarios;
+    // si es null (modo test sin cancelaciones), la capacidad queda en false (el boton no se ofrece, comportamiento
+    // seguro). En runtime lo inyecta DI. No hay ciclo: BookingCancellationService NO depende de IReservaService.
+    private readonly IBookingCancellationService? _cancellationService;
 
     /// <summary>
     /// cbteTipo de las Notas de Credito de AFIP (3=A, 8=B, 13=C, 53=M). Se usa para
@@ -58,7 +63,8 @@ public class ReservaService : IReservaService
         IUserPermissionResolver? permissionResolver = null,
         IHttpContextAccessor? httpContextAccessor = null,
         ReservaAutoStateService? autoStateService = null,
-        IAuditService? auditService = null)
+        IAuditService? auditService = null,
+        IBookingCancellationService? cancellationService = null)
     {
         _context = context;
         _mapper = mapper;
@@ -71,6 +77,7 @@ public class ReservaService : IReservaService
         _httpContextAccessor = httpContextAccessor;
         _autoStateService = autoStateService;
         _auditService = auditService;
+        _cancellationService = cancellationService;
     }
 
     /// <summary>
@@ -1989,10 +1996,14 @@ public class ReservaService : IReservaService
         {
             if (!byReserva.TryGetValue(item.PublicId, out var reservaRows))
             {
-                // Sin filas hijas (reserva saldada en 0 o legacy sin backfill): se deja PorMoneda vacio. El
-                // estado de cobro cae al escalar Balance de la fila (unica fuente disponible aca). Para una
-                // reserva saldada da "Saldado"; una legacy con saldo escalar refleja deuda/saldo a favor.
-                item.CollectionStatus = ReservaCollectionStatus.Derive(new[] { item.Balance });
+                // Sin filas hijas (reserva nueva sin servicios, saldada en 0, o legacy sin backfill): no hay
+                // detalle por moneda. Usamos el escalar de la fila para deuda/saldo a favor, y las senales de
+                // actividad (vendio algo / cobro algo) para distinguir "SinMovimientos" de "Saldado".
+                // H1 (2026-06-24): una reserva NUEVA en gestion sin cargos ni cobros NO debe decir "pagada".
+                bool hasCharges = item.TotalSale > 0m;
+                bool hasPayments = item.TotalPaid > 0m;
+                item.CollectionStatus = ReservaCollectionStatus.Derive(
+                    new[] { new ReservaCollectionLine(item.Balance, hasCharges, hasPayments) });
                 continue;
             }
 
@@ -2016,7 +2027,13 @@ public class ReservaService : IReservaService
             item.EsMultimoneda = item.PorMoneda.Count > 1;
 
             // ADR-033 (E7/A5): estado de cobro derivado del saldo POR MONEDA de las filas hijas.
-            item.CollectionStatus = ReservaCollectionStatus.Derive(item.PorMoneda.Select(line => line.Balance));
+            // H1 (2026-06-24): pasamos tambien las senales de actividad (cargos / cobros) para que una reserva
+            // con todo en 0 pero SIN movimientos diga "SinMovimientos" y no "Saldado" (que el front pinta "pagada").
+            item.CollectionStatus = ReservaCollectionStatus.Derive(
+                item.PorMoneda.Select(line => new ReservaCollectionLine(
+                    line.Balance,
+                    hasCharges: line.TotalSale > 0m,
+                    hasPayments: line.TotalPaid > 0m)));
         }
     }
 
@@ -2168,7 +2185,13 @@ public class ReservaService : IReservaService
         dto.TotalMargin = moneySummary.TotalMargin;
 
         // ADR-033 (E7/A5): estado de cobro derivado del saldo POR MONEDA (no del escalar, que mezcla ARS+USD).
-        dto.CollectionStatus = ReservaCollectionStatus.Derive(dto.PorMoneda.Select(line => line.Balance));
+        // H1 (2026-06-24): con senales de actividad (cargos / cobros) para distinguir "SinMovimientos" de "Saldado".
+        // Una reserva nueva en gestion sin servicios ni cobros debe decir "SinMovimientos", no "pagada".
+        dto.CollectionStatus = ReservaCollectionStatus.Derive(
+            dto.PorMoneda.Select(line => new ReservaCollectionLine(
+                line.Balance,
+                hasCharges: line.TotalSale > 0m,
+                hasPayments: line.TotalPaid > 0m)));
 
         // P3 (cuadre de facturacion): cuanto se facturo NETO al cliente (facturas + ND - NC,
         // solo comprobantes con CAE vivo y no anulados) y cuanto queda disponible respecto de
@@ -2306,13 +2329,24 @@ public class ReservaService : IReservaService
         // caja, son rastro de plata que hay que deshacer formalmente. file.Payments ya viene incluido arriba.
         var hasAnyLivePayment = file.Payments.Any(p => !p.IsDeleted);
 
+        // H3 (2026-06-24): ¿hay una multa del operador pendiente de confirmar? Alimenta la capacidad
+        // CanConfirmOperatorPenalty para que el front muestre "Confirmar multa del operador" SOLO cuando realmente
+        // hay algo que confirmar (no por estado: PendingOperatorRefund puede no tener multa pendiente). Se calcula
+        // SOLO en el DETALLE (este metodo), NO en el listado: requiere consultar la cancelacion de la reserva, y
+        // hacerlo por cada fila del listado seria un N+1 (decision: el boton solo vive en la ficha de detalle).
+        // La verdad la define BookingCancellationService (misma derivacion que canConfirmPenalty, fuente unica).
+        // Si no esta inyectado (tests unitarios sin cancelaciones), queda false: el boton no se ofrece (seguro).
+        var hasPendingOperatorPenalty = _cancellationService is not null
+            && await _cancellationService.HasPendingOperatorPenaltyAsync(file.PublicId, CancellationToken.None);
+
         var capabilityContext = new ReservaCapabilityContext(
             Status: file.Status,
             Balance: file.Balance,
             HasLiveCae: hasLiveCae,
             HasLiveVoucher: hasLiveVoucher,
             HasLiveEditAuth: dto.HasLiveEditAuthorization,
-            HasAnyPayment: hasAnyLivePayment);
+            HasAnyPayment: hasAnyLivePayment,
+            HasPendingOperatorPenalty: hasPendingOperatorPenalty);
         dto.Capabilities = MapCapabilities(ReservaCapabilityPolicy.For(capabilityContext));
 
         // Derivado de "tiene CAE vivo": el front explica por que cancelar exige pasar por la NC primero.
@@ -2373,6 +2407,7 @@ public class ReservaService : IReservaService
             CanAdvance = Map(caps.CanAdvance),
             CanEmitVoucher = Map(caps.CanEmitVoucher),
             CanCorrectTravelingEntry = Map(caps.CanCorrectTravelingEntry),
+            CanConfirmOperatorPenalty = Map(caps.CanConfirmOperatorPenalty),
             AllowedForward = caps.AllowedForward.ToList(),
             AllowedRevert = caps.AllowedRevert.ToList(),
         };

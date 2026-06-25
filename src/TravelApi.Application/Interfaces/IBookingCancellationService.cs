@@ -254,6 +254,20 @@ public interface IBookingCancellationService
     Task<BookingCancellationDto?> GetByReservaAsync(Guid reservaPublicId, CancellationToken ct);
 
     /// <summary>
+    /// H3 (2026-06-24): ¿la reserva tiene una MULTA DEL OPERADOR pendiente de confirmar ahora mismo (la
+    /// confirmacion diferida que emite la Nota de Debito pass-through)? true SOLO si su cancelacion vigente cumple
+    /// las precondiciones de ESTADO de <c>ConfirmPenaltyAsync</c> (flag maestro ON, NC total con CAE, penalidad aun
+    /// Estimated, sin ND en juego). NO mira permiso ni 4-eyes.
+    ///
+    /// <para>Lo consume el armado del DETALLE de la reserva (<c>ReservaService</c>) para alimentar la capacidad
+    /// <c>CanConfirmOperatorPenalty</c>: asi el front muestra "Confirmar multa del operador" SOLO cuando realmente
+    /// hay algo que confirmar, sin adivinar por estado. Comparte la misma derivacion canonica que el read-model
+    /// <c>CanConfirmPenalty</c> del DTO de la cancelacion (fuente unica, no divergen). El endpoint confirm-penalty
+    /// revalida todo server-side, asi que esto es una pista de UI. false si la reserva no tiene cancelacion.</para>
+    /// </summary>
+    Task<bool> HasPendingOperatorPenaltyAsync(Guid reservaPublicId, CancellationToken ct);
+
+    /// <summary>
     /// ADR-013 §3.10 (M4, 2026-06-01): bandeja "cancelaciones con NC emitida pero sin su
     /// ND". Devuelve los BCs cuya NC total ya salio (CreditNoteInvoiceId seteado) pero cuya
     /// ND quedo en <c>Pending</c> o <c>Failed</c> -> fiscalmente incompletas.

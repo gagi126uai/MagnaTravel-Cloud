@@ -567,6 +567,27 @@ public class OperationalFinanceSettings
     [System.ComponentModel.DataAnnotations.Schema.Column(TypeName = "numeric(5,2)")]
     public decimal SellerCommissionPercent { get; set; } = 0m;
 
+    // ============================================================
+    // G6 (caducidad de pre-venta, decision del dueño 2026-06-24): un Presupuesto (Budget) o una Cotizacion
+    // (Quotation) que NO avanza a otro estado caduca a los X dias y pasa SOLO a "Perdido" (Lost). Los dias
+    // se configuran POR SEPARADO para cada tipo (un valor para Budget, otro para Quotation). Valor 0 =
+    // caducidad DESACTIVADA para ese tipo (default conservador: nada caduca hasta que el dueño elija un valor).
+    // ============================================================
+
+    /// <summary>
+    /// G6 (2026-06-24): dias de antigüedad tras los cuales un Presupuesto (Budget) que no avanzo caduca y
+    /// pasa SOLO a "Perdido" (Lost). 0 = desactivado (no caduca). Default 0 (el dueño elige el valor desde
+    /// el panel; ej. 7). La antigüedad se mide desde que la reserva entro al estado Budget (ver el job).
+    /// </summary>
+    public int BudgetExpirationDays { get; set; } = 0;
+
+    /// <summary>
+    /// G6 (2026-06-24): dias de antigüedad tras los cuales una Cotizacion (Quotation) que no avanzo caduca y
+    /// pasa SOLO a "Perdido" (Lost). 0 = desactivado (no caduca). Default 0 (el dueño elige el valor desde
+    /// el panel; ej. 20). Eje SEPARADO de <see cref="BudgetExpirationDays"/>: cada tipo tiene su propio plazo.
+    /// </summary>
+    public int QuotationExpirationDays { get; set; } = 0;
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

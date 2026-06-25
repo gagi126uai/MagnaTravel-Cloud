@@ -19,6 +19,13 @@ public interface IInvoiceService
 
     Task<bool> RetryAsync(int id, CancellationToken ct);
     Task<IEnumerable<InvoiceListDto>> GetByReservaIdAsync(int reservaId, CancellationToken ct);
+
+    // H2 (2026-06-24): estado fiscal CLARO de las facturas de una reserva, para el POLL del front.
+    // La emision es ASINCRONA (POST /invoices encola; un job pide el CAE en segundo plano). Este metodo
+    // es SOLO LECTURA: traduce el Resultado crudo de cada factura ("PENDING"/"A"/"R") a InProcess/Issued/
+    // Rejected, expone numero+CAE+vencimiento cuando esta emitida y el motivo de rechazo (Observaciones)
+    // cuando ARCA la rechazo. NO dispara emision. Devuelve las facturas mas recientes primero.
+    Task<IEnumerable<InvoiceFiscalStatusDto>> GetFiscalStatusByReservaIdAsync(int reservaId, CancellationToken ct);
     Task<byte[]> GetPdfAsync(int id, CancellationToken ct);
     // B1.15 Fase 2a (FIX 6): se agrega userName + reason para auditoria fiscal.
     // B1.15 Fase D (2026-05-11): requesterIsAdmin permite bypass del approval

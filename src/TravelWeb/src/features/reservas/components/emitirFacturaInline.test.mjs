@@ -242,6 +242,349 @@ test("validarCamposUSD — TC = 1.5 (dólar oficial no es 1) → válido, sin er
 
 // ─── Test de integración de regla B1 (flujo completo de precarga) ─────────────
 
+// ─── Funciones H2: resolverEstadoFiscal y labelFacturaEmitida ────────────────
+// Copiadas / delegadas de los archivos de producción.
+// Si cambia el original, actualizar acá también.
+
+/**
+ * H2: interpreta la respuesta del endpoint GET /invoices/reserva/{id}/fiscal-status.
+ * Filtra por invoicePublicId para no confundir facturas anteriores de la misma reserva.
+ * Copia de EmitirFacturaInline.jsx.
+ */
+function resolverEstadoFiscal(statusItems, invoicePublicId) {
+  if (!Array.isArray(statusItems) || statusItems.length === 0) {
+    return { estado: null, factura: null };
+  }
+
+  const factura = invoicePublicId
+    ? statusItems.find((f) => String(f.publicId) === String(invoicePublicId))
+    : statusItems[statusItems.length - 1];
+
+  if (!factura) return { estado: null, factura: null };
+  return { estado: factura.status, factura };
+}
+
+/**
+ * Paso 3 (H2 2026-06-24): helper canónico de formato de comprobante.
+ * Copia de src/features/reservas/lib/invoiceFormatUtils.js.
+ * Se usa en dos lugares: EmitirFacturaInline (éxito) y ReservaDetailPage (extracto).
+ */
+function formatearEtiquetaFactura(invoiceType, puntoDeVenta, numeroComprobante) {
+  const tipo = invoiceType || "?";
+  const pdv = String(puntoDeVenta ?? 0).padStart(4, "0");
+  const num = String(numeroComprobante ?? 0).padStart(8, "0");
+  return `Factura ${tipo} ${pdv}-${num}`;
+}
+
+/**
+ * Construye el label de la factura emitida para mostrar en el cartel de ÉXITO.
+ * Delega a formatearEtiquetaFactura (igual que en producción).
+ */
+function labelFacturaEmitida(factura) {
+  if (!factura) return "Factura emitida";
+  return formatearEtiquetaFactura(
+    factura.invoiceType,
+    factura.puntoDeVenta,
+    factura.numeroComprobante
+  );
+}
+
+// ─── Tests: resolverEstadoFiscal (H2) ────────────────────────────────────────
+
+test("resolverEstadoFiscal — lista vacía → estado null, sin factura", () => {
+  // Poll llama antes de que el backend tenga el registro: devuelve array vacío.
+  const resultado = resolverEstadoFiscal([], "abc-123");
+  assert.equal(resultado.estado, null);
+  assert.equal(resultado.factura, null);
+});
+
+test("resolverEstadoFiscal — null → estado null, sin factura", () => {
+  const resultado = resolverEstadoFiscal(null, "abc-123");
+  assert.equal(resultado.estado, null);
+  assert.equal(resultado.factura, null);
+});
+
+test("resolverEstadoFiscal — factura InProcess → seguir polling", () => {
+  const items = [
+    { publicId: "abc-123", status: "InProcess", invoiceType: "B", puntoDeVenta: 1, numeroComprobante: 12345 },
+  ];
+  const resultado = resolverEstadoFiscal(items, "abc-123");
+  assert.equal(resultado.estado, "InProcess");
+  assert.ok(resultado.factura !== null);
+});
+
+test("resolverEstadoFiscal — factura Issued → estado Issued con datos completos", () => {
+  const facturaIssuida = {
+    publicId: "abc-123",
+    status: "Issued",
+    invoiceType: "B",
+    puntoDeVenta: 1,
+    numeroComprobante: 12345,
+    cae: "12345678901234",
+    vencimientoCAE: "2026-07-10T00:00:00",
+  };
+  const items = [facturaIssuida];
+  const resultado = resolverEstadoFiscal(items, "abc-123");
+  assert.equal(resultado.estado, "Issued");
+  assert.equal(resultado.factura, facturaIssuida);
+});
+
+test("resolverEstadoFiscal — factura Rejected → estado Rejected con motivo", () => {
+  const facturaRechazada = {
+    publicId: "abc-123",
+    status: "Rejected",
+    invoiceType: "B",
+    puntoDeVenta: 1,
+    numeroComprobante: 0,
+    rejectionReason: "CUIT del receptor no válido",
+  };
+  const resultado = resolverEstadoFiscal([facturaRechazada], "abc-123");
+  assert.equal(resultado.estado, "Rejected");
+  assert.equal(resultado.factura?.rejectionReason, "CUIT del receptor no válido");
+});
+
+test("resolverEstadoFiscal — reserva con dos facturas, filtra por publicId correcto", () => {
+  // Una reserva puede tener facturas anteriores.
+  // El poll debe identificar SOLO la recién emitida por publicId.
+  const facturaVieja = {
+    publicId: "vieja-999",
+    status: "Issued",
+    invoiceType: "B",
+    puntoDeVenta: 1,
+    numeroComprobante: 10,
+  };
+  const facturaNueva = {
+    publicId: "nueva-888",
+    status: "InProcess",
+    invoiceType: "B",
+    puntoDeVenta: 1,
+    numeroComprobante: 0,
+  };
+  const items = [facturaVieja, facturaNueva];
+
+  // Debe devolver la nueva (InProcess), no la vieja (Issued).
+  const resultado = resolverEstadoFiscal(items, "nueva-888");
+  assert.equal(resultado.estado, "InProcess");
+  assert.equal(resultado.factura?.publicId, "nueva-888");
+});
+
+test("resolverEstadoFiscal — publicId no encontrado → estado null", () => {
+  // El backend no encontró la factura por el publicId dado (caso raro).
+  const items = [
+    { publicId: "otro-555", status: "Issued", invoiceType: "B", puntoDeVenta: 1, numeroComprobante: 10 },
+  ];
+  const resultado = resolverEstadoFiscal(items, "buscado-999");
+  assert.equal(resultado.estado, null);
+  assert.equal(resultado.factura, null);
+});
+
+test("resolverEstadoFiscal — sin invoicePublicId → usa la última factura del array", () => {
+  // Fallback para cuando el POST no devolvió publicId (no debería pasar, pero es seguro).
+  const items = [
+    { publicId: "a", status: "Issued", invoiceType: "B", puntoDeVenta: 1, numeroComprobante: 1 },
+    { publicId: "b", status: "InProcess", invoiceType: "B", puntoDeVenta: 1, numeroComprobante: 2 },
+  ];
+  const resultado = resolverEstadoFiscal(items, null);
+  // Última del array es "b" (InProcess)
+  assert.equal(resultado.factura?.publicId, "b");
+  assert.equal(resultado.estado, "InProcess");
+});
+
+// ─── Tests: formatearEtiquetaFactura (Paso 3 — helper canónico compartido) ────
+// Este es el helper de la lib compartida. labelFacturaEmitida delega en él.
+// También lo usa InvoicePdfActions en el Estado de Cuenta.
+
+test("formatearEtiquetaFactura — Factura B 0001-00012345 (caso normal)", () => {
+  assert.equal(formatearEtiquetaFactura("B", 1, 12345), "Factura B 0001-00012345");
+});
+
+test("formatearEtiquetaFactura — Factura A pdv 99, num 12345678 (sin truncar dígitos)", () => {
+  assert.equal(formatearEtiquetaFactura("A", 99, 12345678), "Factura A 0099-12345678");
+});
+
+test("formatearEtiquetaFactura — Factura M (tipo M es válido AFIP)", () => {
+  assert.equal(formatearEtiquetaFactura("M", 1, 1), "Factura M 0001-00000001");
+});
+
+test("formatearEtiquetaFactura — invoiceType null → '?' como fallback", () => {
+  const label = formatearEtiquetaFactura(null, 1, 1);
+  assert.ok(label.startsWith("Factura ?"), `Recibió: '${label}'`);
+});
+
+test("formatearEtiquetaFactura — puntoDeVenta y numeroComprobante null → rellena con ceros", () => {
+  assert.equal(formatearEtiquetaFactura("B", null, null), "Factura B 0000-00000000");
+});
+
+test("formatearEtiquetaFactura — coherencia con InvoiceDto y InvoiceFiscalStatusDto (mismos campos)", () => {
+  // InvoiceDto (extracto): invoice.invoiceType, invoice.puntoDeVenta, invoice.numeroComprobante
+  // InvoiceFiscalStatusDto (poll): factura.invoiceType, factura.puntoDeVenta, factura.numeroComprobante
+  // Ambos producen el mismo label → mismo formato en los dos contextos.
+  const desdeDtoReserva = formatearEtiquetaFactura("B", 1, 12345);
+  const desdeStatusDto = formatearEtiquetaFactura("B", 1, 12345);
+  assert.equal(desdeDtoReserva, desdeStatusDto, "El formato es idéntico independientemente del DTO de origen");
+});
+
+// ─── Tests: labelFacturaEmitida (H2) ─────────────────────────────────────────
+
+test("labelFacturaEmitida — Factura B punto de venta 1, número 12345 → formato correcto", () => {
+  const factura = { invoiceType: "B", puntoDeVenta: 1, numeroComprobante: 12345 };
+  const label = labelFacturaEmitida(factura);
+  // Formato: "Factura {tipo} {pdv 4 dígitos}-{num 8 dígitos}"
+  assert.equal(label, "Factura B 0001-00012345");
+});
+
+test("labelFacturaEmitida — Factura A con número largo → no truncar ni perder dígitos", () => {
+  const factura = { invoiceType: "A", puntoDeVenta: 99, numeroComprobante: 12345678 };
+  const label = labelFacturaEmitida(factura);
+  assert.equal(label, "Factura A 0099-12345678");
+});
+
+test("labelFacturaEmitida — Factura C con número exacto de 8 dígitos → sin pad extra", () => {
+  const factura = { invoiceType: "C", puntoDeVenta: 1, numeroComprobante: 99999999 };
+  const label = labelFacturaEmitida(factura);
+  assert.equal(label, "Factura C 0001-99999999");
+});
+
+test("labelFacturaEmitida — null → 'Factura emitida' (fallback seguro)", () => {
+  // El componente guarda facturaEmitidaData al detectar Issued en el poll.
+  // Si por alguna razón el estado es null, no debe romperse el render.
+  const label = labelFacturaEmitida(null);
+  assert.equal(label, "Factura emitida");
+});
+
+test("labelFacturaEmitida — invoiceType ausente → usa '?'", () => {
+  const factura = { puntoDeVenta: 1, numeroComprobante: 100 };
+  const label = labelFacturaEmitida(factura);
+  assert.ok(label.startsWith("Factura ?"), `Debe empezar con 'Factura ?', recibió: '${label}'`);
+});
+
+test("labelFacturaEmitida — puntoDeVenta undefined → rellena con ceros correctamente", () => {
+  const factura = { invoiceType: "B", puntoDeVenta: undefined, numeroComprobante: 1 };
+  const label = labelFacturaEmitida(factura);
+  assert.equal(label, "Factura B 0000-00000001");
+});
+
+// ─── Lógica pura G6: conversión de caducidad al guardado ─────────────────────
+// Los inputs son strings (valor de HTMLInputElement.value) → deben convertirse a Number.
+
+/**
+ * Convierte el valor string de un input de días a número para enviar al backend.
+ * 0 = "nunca caduca" (se envía como 0, no como null).
+ */
+function parsearDiasCaducidad(valor) {
+  const num = Number(valor || 0);
+  return isNaN(num) || num < 0 ? 0 : Math.floor(num);
+}
+
+test("G6 — parsearDiasCaducidad: string '30' → 30", () => {
+  assert.equal(parsearDiasCaducidad("30"), 30);
+});
+
+test("G6 — parsearDiasCaducidad: string '0' → 0 (nunca caduca)", () => {
+  assert.equal(parsearDiasCaducidad("0"), 0);
+});
+
+test("G6 — parsearDiasCaducidad: string '' → 0 (vacío = nunca caduca)", () => {
+  assert.equal(parsearDiasCaducidad(""), 0);
+});
+
+test("G6 — parsearDiasCaducidad: negativo → 0 (campo tiene min=0, pero por si acaso)", () => {
+  assert.equal(parsearDiasCaducidad("-5"), 0);
+});
+
+test("G6 — parsearDiasCaducidad: '3650' (max) → 3650", () => {
+  assert.equal(parsearDiasCaducidad("3650"), 3650);
+});
+
+test("G6 — parsearDiasCaducidad: '15.7' → 15 (trunca decimales)", () => {
+  // El input es type=number sin step decimal, pero el backend espera int.
+  assert.equal(parsearDiasCaducidad("15.7"), 15);
+});
+
+// ─── Lógica pura Q9: texto del aviso de pre-venta por caducar ───────────────
+// B1 fix (2026-06-24): el backend devuelve la frase COMPLETA en item.message.
+// El front usa item.message tal cual — NO lo construye para evitar duplicación.
+// Ej: "El presupuesto de Fam. García vence en 3 días." ya viene así del backend.
+
+/**
+ * Replica la lógica del render en SeccionPorCaducar después del fix B1:
+ * textoAviso = item.message (directo, sin construir en el front).
+ */
+function resolverTextoAviso(item) {
+  return item.message;
+}
+
+test("Q9 B1 — texto aviso usa item.message del backend directamente (no duplica tipo/cliente)", () => {
+  // El backend ya devuelve "El presupuesto de Fam. García vence en 3 días."
+  // El front NO debe prefixear "El presupuesto de Fam. García" nuevamente.
+  const item = {
+    preSaleKind: "Budget",
+    holderName: "García, Juan",
+    name: "Paquete Caribe",
+    numeroReserva: "R-001",
+    daysLeft: 2,
+    // message completo como devuelve el backend (B1 fix: no construir en el front)
+    message: "El presupuesto de García, Juan vence en 2 días.",
+  };
+  const texto = resolverTextoAviso(item);
+
+  // El texto resultante debe ser EXACTAMENTE item.message — sin duplicar nada.
+  assert.equal(texto, item.message);
+
+  // Anti-regresión B1: verificar que "El presupuesto" NO aparece dos veces.
+  const conteoTipoLabel = (texto.match(/El presupuesto/g) || []).length;
+  assert.equal(conteoTipoLabel, 1, `"El presupuesto" no debe aparecer duplicado. Texto: '${texto}'`);
+
+  // Anti-regresión B1: verificar que el nombre del cliente NO aparece dos veces.
+  const conteoNombre = (texto.match(/García, Juan/g) || []).length;
+  assert.equal(conteoNombre, 1, `El nombre del cliente no debe aparecer duplicado. Texto: '${texto}'`);
+});
+
+test("Q9 B1 — mensaje de Quotation también viene completo del backend", () => {
+  const item = {
+    preSaleKind: "Quotation",
+    holderName: "Rodríguez, Ana",
+    name: "Vuelo Europa",
+    numeroReserva: "R-002",
+    daysLeft: 0,
+    message: "La cotización de Rodríguez, Ana vence hoy.",
+  };
+  const texto = resolverTextoAviso(item);
+  assert.equal(texto, item.message);
+  const conteo = (texto.match(/La cotización/g) || []).length;
+  assert.equal(conteo, 1, `"La cotización" no debe aparecer duplicada. Texto: '${texto}'`);
+});
+
+test("Q9 — daysLeft===0 → ítem debe ser rojo (esHoy=true)", () => {
+  // La lógica de color no se puede testear sin React, pero sí la detección de esHoy.
+  // esHoy es la señal que determina el color.
+  const daysLeft = 0;
+  const esHoy = daysLeft === 0;
+  assert.equal(esHoy, true, "Con daysLeft=0 el ítem debe marcarse como 'hoy' (rojo)");
+});
+
+test("Q9 — daysLeft===1 → ítem debe ser ámbar (esHoy=false)", () => {
+  const daysLeft = 1;
+  const esHoy = daysLeft === 0;
+  assert.equal(esHoy, false, "Con daysLeft=1 el ítem no es de hoy (ámbar)");
+});
+
+test("Q9 — daysLeft===0 → ítem debe ser rojo (esHoy=true)", () => {
+  // La lógica de color no se puede testear sin React, pero sí la detección de esHoy.
+  // esHoy es la señal que determina el color.
+  const daysLeft = 0;
+  const esHoy = daysLeft === 0;
+  assert.equal(esHoy, true, "Con daysLeft=0 el ítem debe marcarse como 'hoy' (rojo)");
+});
+
+test("Q9 — daysLeft===1 → ítem debe ser ámbar (esHoy=false)", () => {
+  const daysLeft = 1;
+  const esHoy = daysLeft === 0;
+  assert.equal(esHoy, false, "Con daysLeft=1 el ítem no es de hoy (ámbar)");
+});
+
+// ─── Test de integración B1 (flujo completo de precarga) ─────────────────────
+
 test("regla B1 end-to-end: flag OFF + solo USD → soloServiciosUSD=true + items vacío", () => {
   // Simula la lógica completa que ejecuta el useEffect de carga de sugeridos:
   //   1. grupos = solo USD

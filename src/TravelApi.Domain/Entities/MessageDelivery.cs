@@ -6,6 +6,9 @@ public static class MessageDeliveryKinds
 {
     public const string Text = "Text";
     public const string Voucher = "Voucher";
+    // Paso 5 (2026-06-24): envio de la FACTURA (PDF) al cliente por WhatsApp. Mismo canal/infra que el
+    // voucher; se distingue por Kind para que la bandeja de entregas muestre "Factura" y no "Voucher".
+    public const string Invoice = "Invoice";
     public const string IncomingMessage = "IncomingMessage";
     public const string OperationalAck = "OperationalAck";
 }

@@ -4,11 +4,12 @@ import React from 'react';
  * Chips complementarios de la reserva: tres ejes independientes + corrección opcional.
  *
  * Un rótulo = un solo eje. Regla de Gastón 2026-06-22 (refinamiento por review):
- *   - Eje Pago:    Pagada / Debe — no viaja
+ *   - Eje Pago:    Pagada / Sin movimientos / Debe — no viaja
  *   - Eje Viaje:   Vencida con deuda  ← SOLO este caso; "En viaje" lo dice el badge grande.
  *   - Eje Factura: Sin facturar / Facturada en parte / Facturada total
  *
- * "Pagada" aparece cuando isFullyPaid es true en CUALQUIER estado.
+ * "Pagada" aparece cuando collectionStatus === "Saldado".
+ * "Sin movimientos" aparece cuando collectionStatus === "SinMovimientos" (reserva nueva, sin pagos).
  * "Debe — no viaja" aparece solo en Confirmed dentro de la ventana de aviso.
  * "Vencida con deuda" aparece cuando hasOverdueDebt === true (el viaje terminó con saldo).
  * "En viaje" NO se chip-ea — el badge grande "EN VIAJE" ya lo dice, repetirlo agrega ruido.
@@ -21,7 +22,12 @@ import React from 'react';
  *   el pase automático; no compite con el badge de estado operativo grande.
  *
  * Flags que provee el backend en ReservaDto:
- *   isFullyPaid, hasOverdueDebt, isWithinUnpaidAlertWindow, invoicingStatus, isUnderCorrection.
+ *   collectionStatus, isFullyPaid, hasOverdueDebt, isWithinUnpaidAlertWindow,
+ *   invoicingStatus, isUnderCorrection.
+ *
+ * collectionStatus posibles: "ConDeuda" | "SaldoAFavor" | "Saldado" | "SinMovimientos".
+ * Fix 2026-06-24: "SinMovimientos" ya no se muestra como "Pagada" (era "Saldado" antes
+ * de que el backend distinguiera los dos casos).
  *
  * Feedback 2026-06-19 (cambio 6): chips más chicos para no competir con el badge de estado.
  */
@@ -48,11 +54,34 @@ export function ReservaStatusChips({ reserva }) {
     if (!reserva) return null;
 
     // ── Eje PAGO ──────────────────────────────────────────────────────────────────
-    // "Pagada": true cuando isFullyPaid sin importar el estado.
-    // Antes estaba limitado a status === 'Confirmed'; ahora aplica a cualquier estado.
-    // Ejemplo: una reserva Traveling pagada debe mostrar "Pago: Pagada", no nada.
+    // Usamos collectionStatus (nueva derivación del backend) como fuente de verdad
+    // del estado de cobro. Valores posibles:
+    //   "Saldado"        → el cliente no debe nada (chip verde "Pagada")
+    //   "SinMovimientos" → reserva nueva sin cargos ni cobros (chip gris "Sin movimientos")
+    //   "ConDeuda"       → debe algo (chip rojo solo en Confirmed + ventana de aviso)
+    //   "SaldoAFavor"    → cobró de más (no generamos chip de pago; se muestra en otro lado)
+    //
+    // Fix 2026-06-24: antes "SinMovimientos" llegaba como "Saldado" (bug del backend ya
+    // corregido). El chip "Sin movimientos" evita confundir "reserva nueva" con "reserva pagada".
+    //
+    // Fallback a isFullyPaid si el backend no envía collectionStatus (DTOs viejos).
     let chipPago = null;
-    if (reserva.isFullyPaid) {
+    const collectionStatus = reserva.collectionStatus;
+
+    if (collectionStatus === 'SinMovimientos') {
+        // Sin movimientos: la reserva existe pero no hay cargos ni cobros todavía.
+        // Gris neutro: no alarma ni confirma nada.
+        // Q10 (2026-06-24): el rótulo visible cambia a "Sin movimientos" (spec guia-ux-gaston.md).
+        // El key/data-testid "sin-cobros" se mantiene para no romper selectores de QA.
+        chipPago = {
+            key: 'sin-cobros',
+            label: 'Sin movimientos',
+            className: 'bg-slate-100 text-slate-500 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700',
+            title: 'Todavía no hay movimientos de plata registrados para esta reserva.',
+        };
+    } else if (collectionStatus === 'Saldado' || (!collectionStatus && reserva.isFullyPaid)) {
+        // Saldado: el cliente pagó todo lo que debía.
+        // El fallback a isFullyPaid cubre DTOs de endpoints que aún no devuelven collectionStatus.
         chipPago = {
             key: 'paid',
             label: 'Pagada',

@@ -35,6 +35,12 @@ const defaultSettings = {
   // % de ganancia que le corresponde al vendedor como comisión. Rango: 0-100.
   // El backend valida el rango; este default no se envía hasta que el usuario lo edite.
   sellerCommissionPercent: 0,
+  // G6 (2026-06-24): días de caducidad de presupuestos. 0 = no caduca nunca.
+  // El backend lo valida (Range 0..3650); el frontend lo guarda como número.
+  budgetExpirationDays: 0,
+  // G6 (2026-06-24): días de caducidad de cotizaciones. 0 = no caduca nunca.
+  // Eje SEPARADO del de presupuesto — se configura de forma independiente.
+  quotationExpirationDays: 0,
 };
 
 export default function OperationalFinanceSettingsTab() {
@@ -129,6 +135,10 @@ export default function OperationalFinanceSettingsTab() {
         serviceDeadlineAlertDays: Number(form.serviceDeadlineAlertDays || 7),
         // sellerCommissionPercent: convertido a número. El backend valida Range(0,100).
         sellerCommissionPercent: Number(form.sellerCommissionPercent ?? 0),
+        // G6 (2026-06-24): días de caducidad. 0 = no caduca nunca (según spec).
+        // Se guardan como número entero; el backend valida Range(0,3650).
+        budgetExpirationDays: Number(form.budgetExpirationDays || 0),
+        quotationExpirationDays: Number(form.quotationExpirationDays || 0),
       });
       showSuccess("Configuración operativa guardada.");
     } catch (error) {
@@ -380,6 +390,74 @@ export default function OperationalFinanceSettingsTab() {
                 </p>
               </div>
             </div>
+
+          {/* ================================================================
+              G6 (2026-06-24): Caducidad automática de presupuestos y cotizaciones.
+              SIN interruptor — los dos casilleros numéricos son directamente el control.
+              0 = no caduca nunca (aclarado con textito al lado de cada casillero).
+              Los ejes son INDEPENDIENTES: se puede tener cotización que caduca y
+              presupuesto que no, o viceversa.
+              Spec: guia-ux-gaston.md sección "TEMA B: Configuración de caducidad" (2026-06-24).
+              ================================================================ */}
+          <div
+            className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 space-y-4"
+            aria-label="Caducidad de presupuestos y cotizaciones"
+          >
+            <div>
+              <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                Caducidad de presupuestos y cotizaciones
+              </p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                Si no avanzan, pasan solos a &quot;Perdido&quot;.
+              </p>
+            </div>
+
+            {/* Casillero 1: Cotización */}
+            <div className="flex items-center gap-3 flex-wrap">
+              <label
+                htmlFor="quotation-expiration-days"
+                className="text-sm font-medium text-slate-700 dark:text-slate-300 whitespace-nowrap"
+              >
+                Caducar cotización a los
+              </label>
+              <input
+                id="quotation-expiration-days"
+                type="number"
+                min="0"
+                max="3650"
+                value={form.quotationExpirationDays}
+                onChange={(event) => updateField("quotationExpirationDays", event.target.value)}
+                className="w-24 rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2 text-sm text-right"
+                disabled={loading}
+                data-testid="input-quotation-expiration-days"
+              />
+              <span className="text-sm text-slate-700 dark:text-slate-300">días</span>
+              <span className="text-xs text-slate-400 dark:text-slate-500">0 = no caduca nunca</span>
+            </div>
+
+            {/* Casillero 2: Presupuesto */}
+            <div className="flex items-center gap-3 flex-wrap">
+              <label
+                htmlFor="budget-expiration-days"
+                className="text-sm font-medium text-slate-700 dark:text-slate-300 whitespace-nowrap"
+              >
+                Caducar presupuesto a los
+              </label>
+              <input
+                id="budget-expiration-days"
+                type="number"
+                min="0"
+                max="3650"
+                value={form.budgetExpirationDays}
+                onChange={(event) => updateField("budgetExpirationDays", event.target.value)}
+                className="w-24 rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-950 dark:text-white px-3 py-2 text-sm text-right"
+                disabled={loading}
+                data-testid="input-budget-expiration-days"
+              />
+              <span className="text-sm text-slate-700 dark:text-slate-300">días</span>
+              <span className="text-xs text-slate-400 dark:text-slate-500">0 = no caduca nunca</span>
+            </div>
+          </div>
 
           {/* ================================================================
               ZONA PELIGROSA: Nota de Débito por penalidad en cancelaciones.

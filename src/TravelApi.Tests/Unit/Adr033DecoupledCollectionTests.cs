@@ -497,6 +497,87 @@ public class Adr033DecoupledCollectionTests
     }
 
     // =====================================================================================================
+    // H1 (2026-06-24) — overload con senales de actividad: distingue "SinMovimientos" de "Saldado".
+    // Bug: una reserva NUEVA en gestion sin cargos ni cobros mostraba "Pagada".
+    // =====================================================================================================
+
+    [Fact]
+    public void CollectionStatus_NoChargesNoPayments_IsNoCharges()
+    {
+        // Reserva nueva: saldo 0, no vendio nada, no cobro nada -> "SinMovimientos" (NO "Saldado"/"pagada").
+        var status = ReservaCollectionStatus.Derive(new[]
+        {
+            new ReservaCollectionLine(balance: 0m, hasCharges: false, hasPayments: false)
+        });
+        Assert.Equal(ReservaCollectionStatus.NoCharges, status);
+    }
+
+    [Fact]
+    public void CollectionStatus_NoLines_IsNoCharges()
+    {
+        // Sin lineas de plata (reserva sin servicios): "SinMovimientos".
+        var status = ReservaCollectionStatus.Derive(Array.Empty<ReservaCollectionLine>());
+        Assert.Equal(ReservaCollectionStatus.NoCharges, status);
+    }
+
+    [Fact]
+    public void CollectionStatus_ChargedAndPaidInFull_IsSettled()
+    {
+        // Hubo venta y se cobro todo (saldo 0 con actividad) -> "Saldado" (el "pagada" legitimo).
+        var status = ReservaCollectionStatus.Derive(new[]
+        {
+            new ReservaCollectionLine(balance: 0m, hasCharges: true, hasPayments: true)
+        });
+        Assert.Equal(ReservaCollectionStatus.Settled, status);
+    }
+
+    [Fact]
+    public void CollectionStatus_WithChargesButUnpaid_IsWithDebt()
+    {
+        // Vendio y aun no cobro: saldo positivo -> "ConDeuda".
+        var status = ReservaCollectionStatus.Derive(new[]
+        {
+            new ReservaCollectionLine(balance: 1000m, hasCharges: true, hasPayments: false)
+        });
+        Assert.Equal(ReservaCollectionStatus.WithDebt, status);
+    }
+
+    [Fact]
+    public void CollectionStatus_OverpaidCredit_IsCreditBalance()
+    {
+        // Cobro de mas: saldo a favor -> "SaldoAFavor" (gana sobre cualquier "sin movimientos").
+        var status = ReservaCollectionStatus.Derive(new[]
+        {
+            new ReservaCollectionLine(balance: -200m, hasCharges: true, hasPayments: true)
+        });
+        Assert.Equal(ReservaCollectionStatus.CreditBalance, status);
+    }
+
+    [Fact]
+    public void CollectionStatus_DebtInOneCurrency_NoActivityInOther_IsWithDebt()
+    {
+        // Deuda en una moneda gana, aunque otra moneda no tenga movimientos.
+        var status = ReservaCollectionStatus.Derive(new[]
+        {
+            new ReservaCollectionLine(balance: 500m, hasCharges: true, hasPayments: false),
+            new ReservaCollectionLine(balance: 0m, hasCharges: false, hasPayments: false)
+        });
+        Assert.Equal(ReservaCollectionStatus.WithDebt, status);
+    }
+
+    [Fact]
+    public void CollectionStatus_PaymentButZeroBalanceAndNoCharges_IsSettled()
+    {
+        // Caso borde: entro plata pero no hay cargos (p. ej. saldo a favor que luego se aplico y quedo 0).
+        // Hubo actividad (un cobro) -> "Saldado", no "SinMovimientos".
+        var status = ReservaCollectionStatus.Derive(new[]
+        {
+            new ReservaCollectionLine(balance: 0m, hasCharges: false, hasPayments: true)
+        });
+        Assert.Equal(ReservaCollectionStatus.Settled, status);
+    }
+
+    // =====================================================================================================
     // A1 / E2 — cobro A NIVEL SERVICIO (CreatePaymentAsync) sobre una reserva FINALIZADA (Closed) con deuda.
     // La regla de dominio (IsCollectable/EnsureCollectable) ya esta cubierta a nivel unitario; aca probamos
     // el path de servicio end-to-end: que el cobro se REGISTRE, se impute y el Balance quede recalculado.

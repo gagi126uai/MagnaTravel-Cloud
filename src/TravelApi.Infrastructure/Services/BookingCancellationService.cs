@@ -2734,6 +2734,85 @@ public class BookingCancellationService
         BookingCancellationStatus.AbandonedByOperator,
     };
 
+    /// <summary>
+    /// H3 (2026-06-24): FUENTE UNICA de "¿esta cancelacion tiene una multa del operador pendiente de confirmar
+    /// AHORA?" (la confirmacion diferida que emite la ND). Refleja SOLO las precondiciones de ESTADO que valida
+    /// <see cref="ConfirmPenaltyAsync"/> (flag maestro, NC total con CAE, idempotencia: penalidad aun Estimated y
+    /// sin ND en juego). NO refleja permiso ni 4-eyes (esos los resuelve confirm-penalty al ejecutar).
+    ///
+    /// <para>La usan dos lectores que deben coincidir SIEMPRE: (1) el read-model <c>canConfirmPenalty</c> del
+    /// <see cref="BookingCancellationDto"/> (panel de la cancelacion) y (2) <see cref="HasPendingOperatorPenaltyAsync"/>
+    /// (la capacidad <c>CanConfirmOperatorPenalty</c> de la reserva). Extraerla a un metodo puro evita que las dos
+    /// derivaciones diverjan.</para>
+    /// </summary>
+    /// <summary>
+    /// H3 (2026-06-24): los CAMPOS SUELTOS de una cancelacion que deciden si su multa esta pendiente de confirmar.
+    /// Existe para que <see cref="EvaluateCanConfirmPenalty"/> NO reciba la entidad <c>BookingCancellation</c>: asi
+    /// el lector por-reserva puede proyectar a un tipo anonimo en la query (EF Core 8 + Npgsql PROHIBEN construir
+    /// un tipo de entidad mapeado dentro de un <c>.Select</c> server-side — tira InvalidOperationException en
+    /// runtime; InMemory no lo detecta porque evalua client-side). Los dos lectores arman este struct desde su
+    /// fuente (entidad ya cargada en MapToDtoAsync, proyeccion anonima en HasPendingOperatorPenaltyAsync) y
+    /// comparten la MISMA regla.
+    /// </summary>
+    private readonly record struct PenaltyConfirmabilityFields(
+        BookingCancellationStatus Status,
+        int? CreditNoteInvoiceId,
+        PenaltyStatus PenaltyStatus,
+        int? DebitNoteInvoiceId,
+        DebitNoteStatus DebitNoteStatus);
+
+    /// <returns>(canConfirm, blockedReasonCode). blockedReasonCode es null cuando canConfirm es true.</returns>
+    private static (bool CanConfirm, string? BlockedReason) EvaluateCanConfirmPenalty(
+        PenaltyConfirmabilityFields fields, bool debitNoteFeatureEnabled)
+    {
+        if (!debitNoteFeatureEnabled)
+            return (false, "DebitNoteFeatureDisabled");
+
+        // La ND nunca sale antes que la NC total: requiere estado post-NC + CreditNoteInvoiceId seteado (CAE).
+        if (!PostCreditNoteStatuses.Contains(fields.Status) || fields.CreditNoteInvoiceId is null)
+            return (false, "CreditNoteNotYetIssued");
+
+        // Idempotencia: si la penalidad ya fue confirmada o la ND ya esta encolada/emitida, no se vuelve a emitir.
+        if (fields.PenaltyStatus == PenaltyStatus.Confirmed
+            || fields.DebitNoteInvoiceId.HasValue
+            || fields.DebitNoteStatus == DebitNoteStatus.Pending
+            || fields.DebitNoteStatus == DebitNoteStatus.Issued)
+            return (false, "DebitNoteAlreadyInPlay");
+
+        return (true, null);
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> HasPendingOperatorPenaltyAsync(Guid reservaPublicId, CancellationToken ct)
+    {
+        // Misma cancelacion vigente que GetByReservaAsync (la mas reciente no abortada). INV-081 garantiza una
+        // sola cancelacion activa por reserva. Proyectamos SOLO los campos sueltos que necesita la decision a un
+        // tipo ANONIMO (no a la entidad: ver el comentario de PenaltyConfirmabilityFields). No traemos el grafo
+        // entero: esto lo llama el armado del DETALLE de la reserva (hot-ish path).
+        var row = await _db.BookingCancellations
+            .AsNoTracking()
+            .Where(b => b.Reserva.PublicId == reservaPublicId
+                     && b.Status != BookingCancellationStatus.Aborted)
+            .OrderByDescending(b => b.DraftedAt)
+            .Select(b => new
+            {
+                b.Status,
+                b.CreditNoteInvoiceId,
+                b.PenaltyStatus,
+                b.DebitNoteInvoiceId,
+                b.DebitNoteStatus,
+            })
+            .FirstOrDefaultAsync(ct);
+        if (row is null) return false;
+
+        var fields = new PenaltyConfirmabilityFields(
+            row.Status, row.CreditNoteInvoiceId, row.PenaltyStatus, row.DebitNoteInvoiceId, row.DebitNoteStatus);
+
+        var settings = await _settings.GetEntityAsync(ct);
+        var (canConfirm, _) = EvaluateCanConfirmPenalty(fields, settings.EnableCancellationDebitNote);
+        return canConfirm;
+    }
+
     /// <inheritdoc />
     public async Task<BookingCancellationDto> ConfirmPenaltyAsync(
         Guid publicId,
@@ -5330,31 +5409,11 @@ public class BookingCancellationService
         // boton o, si esta bloqueado, mostrar el aviso correcto sin disparar una llamada que va
         // a rebotar. confirm-penalty revalida TODO server-side, asi que esto es solo una pista.
         var settings = await _settings.GetEntityAsync(ct);
-        bool canConfirmPenalty;
-        string? confirmPenaltyBlockedReason;
-        if (!settings.EnableCancellationDebitNote)
-        {
-            canConfirmPenalty = false;
-            confirmPenaltyBlockedReason = "DebitNoteFeatureDisabled";
-        }
-        else if (!PostCreditNoteStatuses.Contains(bc.Status) || bc.CreditNoteInvoiceId is null)
-        {
-            canConfirmPenalty = false;
-            confirmPenaltyBlockedReason = "CreditNoteNotYetIssued";
-        }
-        else if (bc.PenaltyStatus == PenaltyStatus.Confirmed
-                 || bc.DebitNoteInvoiceId.HasValue
-                 || bc.DebitNoteStatus == DebitNoteStatus.Pending
-                 || bc.DebitNoteStatus == DebitNoteStatus.Issued)
-        {
-            canConfirmPenalty = false;
-            confirmPenaltyBlockedReason = "DebitNoteAlreadyInPlay";
-        }
-        else
-        {
-            canConfirmPenalty = true;
-            confirmPenaltyBlockedReason = null;
-        }
+        // La entidad ya esta cargada (con sus Includes): armamos los campos sueltos para la regla compartida.
+        var penaltyFields = new PenaltyConfirmabilityFields(
+            bc.Status, bc.CreditNoteInvoiceId, bc.PenaltyStatus, bc.DebitNoteInvoiceId, bc.DebitNoteStatus);
+        var (canConfirmPenalty, confirmPenaltyBlockedReason) =
+            EvaluateCanConfirmPenalty(penaltyFields, settings.EnableCancellationDebitNote);
 
         FiscalSnapshotSummaryDto? snapshotDto = null;
         if (bc.FiscalSnapshot != null && bc.Status != BookingCancellationStatus.Drafted)

@@ -28,6 +28,17 @@ public class AlertService : IAlertService
     /// </summary>
     private const int PassportValidityMonthsAfterTrip = 6;
 
+    /// <summary>
+    /// Q9 (2026-06-24): anticipacion en dias del aviso "presupuesto/cotizacion por caducar". Avisamos
+    /// cuando a una pre-venta le faltan &lt;= N dias para caducar a Perdido (la caducidad la maneja el job
+    /// G6 con BudgetExpirationDays/QuotationExpirationDays). NO se hizo un setting de DB nuevo (regla del
+    /// proyecto: no agregar mas llaves); 3 es el mismo default operativo que OperatorDeadlineAlertDays.
+    ///
+    /// DECISION A CONFIRMAR CON GASTON: si quiere otro numero de dias de anticipacion (o que sea
+    /// configurable), se ajusta aca o se promueve a setting despues sin cambiar el contrato.
+    /// </summary>
+    private const int PreSaleExpiryAlertDays = 3;
+
     private readonly AppDbContext _context;
     private readonly IOperationalFinanceSettingsService _operationalFinanceSettingsService;
     private readonly ILogger<AlertService> _logger;
@@ -83,12 +94,15 @@ public class AlertService : IAlertService
         var confirmedWithChanges = await ComputeConfirmedWithChangesAsync(caller, cancellationToken);
         // ADR-033 (E6/B3): reservas "esperando refund del operador" con saldo a favor que quedo sin consumir.
         var stuckOperatorRefunds = await ComputeStuckOperatorRefundsAsync(caller, cancellationToken);
+        // Q9 (2026-06-24): presupuestos/cotizaciones por caducar (a <= N dias de pasar a Perdido por el job G6).
+        var expiringPreSales = await ComputeExpiringPreSalesAsync(caller, settings, cancellationToken);
 
         var hasNewAlarms = operatorPaymentDeadlines.Count > 0
                            || ticketingDeadlines.Count > 0
                            || passportExpiries.Count > 0
                            || confirmedWithChanges.Count > 0
-                           || stuckOperatorRefunds.Count > 0;
+                           || stuckOperatorRefunds.Count > 0
+                           || expiringPreSales.Count > 0;
 
         // CAMINO BYTE-IDENTICO (default historico): si NINGUN bucket nuevo esta activo Y no hay NINGUNA
         // alarma nueva que mostrar, devolvemos el MISMO objeto anonimo de siempre (3 propiedades, mismo
@@ -119,7 +133,7 @@ public class AlertService : IAlertService
         var totalCount = financialCount
                          + upcomingStarts.Count + costsToConfirm.Count
                          + operatorPaymentDeadlines.Count + ticketingDeadlines.Count + passportExpiries.Count
-                         + confirmedWithChanges.Count + stuckOperatorRefunds.Count;
+                         + confirmedWithChanges.Count + stuckOperatorRefunds.Count + expiringPreSales.Count;
         return new AlertsResponse(
             urgentTrips: urgentTrips,
             supplierDebts: supplierDebts,
@@ -134,7 +148,8 @@ public class AlertService : IAlertService
             ticketingDeadlines: ticketingDeadlines.Count > 0 ? ticketingDeadlines : null,
             passportExpiries: passportExpiries.Count > 0 ? passportExpiries : null,
             confirmedWithChanges: confirmedWithChanges.Count > 0 ? confirmedWithChanges : null,
-            stuckOperatorRefunds: stuckOperatorRefunds.Count > 0 ? stuckOperatorRefunds : null);
+            stuckOperatorRefunds: stuckOperatorRefunds.Count > 0 ? stuckOperatorRefunds : null,
+            expiringPreSales: expiringPreSales.Count > 0 ? expiringPreSales : null);
     }
 
     /// <summary>
@@ -749,6 +764,147 @@ public class AlertService : IAlertService
             .OrderBy(x => x.Since)
             .Select(x => (object)x)
             .ToList();
+    }
+
+    /// <summary>
+    /// Q9 (2026-06-24): alarma "presupuesto/cotizacion por caducar". UN aviso POR RESERVA en estado de
+    /// pre-venta (Budget o Quotation) cuya caducidad esta CONFIGURADA (BudgetExpirationDays /
+    /// QuotationExpirationDays &gt; 0) y a la que le faltan &lt;= <see cref="PreSaleExpiryAlertDays"/> dias
+    /// para caducar a Perdido. Es un aviso APARTE del de "proximos inicios": las pre-ventas no entran a ese
+    /// bucket; este avisa que la cotizacion esta por vencerse sola.
+    ///
+    /// <para><b>Coherencia con la caducidad (CRITICO)</b>: la antigüedad se mide IGUAL que el job G6
+    /// (<c>ReservaLifecycleAutomationService.AutoExpireStalePreSaleAsync</c>): el momento en que la reserva
+    /// ENTRO al estado actual = el ULTIMO <see cref="ReservaStatusChangeLog"/> con <c>ToStatus == estado</c>,
+    /// y si no hay log (Quotation nace en ese estado sin log de transicion) se cae a <c>CreatedAt</c>. Asi
+    /// el aviso y la caducidad cuentan los mismos dias: nunca avisamos "vence en 2 dias" y el job la caduca
+    /// al dia siguiente.</para>
+    ///
+    /// <para><b>Dias restantes</b>: <c>plazo - dias_transcurridos</c>, redondeado hacia abajo (igual que el
+    /// job, que compara "entro antes de hoy - X"). 1 -&gt; "vence mañana", 0 -&gt; "vence hoy". El texto se
+    /// arma en el backend (legible, sin montos). Si el plazo ya se cumplio (dias restantes &lt; 0) NO se
+    /// avisa: esa reserva la caduca el job, no es "por caducar". Mismo gating de visibilidad que las otras
+    /// alarmas: admin ve todas, el vendedor solo SUS reservas, no-admin sin identidad -&gt; vacio.</para>
+    /// </summary>
+    private async Task<List<object>> ComputeExpiringPreSalesAsync(
+        AlertCallerContext caller, OperationalFinanceSettings settings, CancellationToken ct)
+    {
+        // Fail-closed: un no-admin sin identidad no ve avisos de nadie (mismo borde que UpcomingStarts).
+        if (!caller.IsAdmin && string.IsNullOrEmpty(caller.UserId))
+            return new List<object>();
+
+        var alerts = new List<object>();
+
+        // Presupuesto y Cotizacion son ejes SEPARADOS: cada uno con su propio plazo y solo si esta activo
+        // (dias > 0). Si el dueño desactivo la caducidad de un tipo, no avisamos por ese tipo.
+        if (settings.BudgetExpirationDays > 0)
+        {
+            await CollectExpiringPreSaleAsync(
+                caller, EstadoReserva.Budget, "Presupuesto", settings.BudgetExpirationDays, alerts, ct);
+        }
+
+        if (settings.QuotationExpirationDays > 0)
+        {
+            await CollectExpiringPreSaleAsync(
+                caller, EstadoReserva.Quotation, "Cotización", settings.QuotationExpirationDays, alerts, ct);
+        }
+
+        // Orden estable: lo que vence antes (menos dias restantes) primero.
+        return alerts
+            .OrderBy(a => (int)a.GetType().GetProperty("DaysLeft")!.GetValue(a)!)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Q9: junta en <paramref name="alerts"/> los avisos de un estado de pre-venta concreto. Mide la
+    /// antigüedad con la MISMA logica que el job G6 (ultimo log de entrada al estado, fallback CreatedAt) y
+    /// avisa solo cuando faltan entre 0 y <see cref="PreSaleExpiryAlertDays"/> dias para caducar.
+    /// </summary>
+    private async Task CollectExpiringPreSaleAsync(
+        AlertCallerContext caller,
+        string preSaleStatus,
+        string preSaleLabel,
+        int expirationDays,
+        List<object> alerts,
+        CancellationToken ct)
+    {
+        // Candidatas: las que SIGUEN en este estado de pre-venta, visibles para el caller. Traemos lo minimo
+        // para el aviso + CreatedAt para el fallback de antigüedad. NO exponemos montos ni costos.
+        var candidates = await _context.Reservas
+            .Where(r => r.Status == preSaleStatus
+                        && (caller.IsAdmin || r.ResponsibleUserId == caller.UserId))
+            .Select(r => new
+            {
+                r.Id,
+                r.PublicId,
+                r.NumeroReserva,
+                r.Name,
+                r.CreatedAt,
+                PayerName = r.Payer != null ? r.Payer.FullName : null
+            })
+            .ToListAsync(ct);
+
+        if (candidates.Count == 0)
+            return;
+
+        var candidateIds = candidates.Select(c => c.Id).ToList();
+
+        // Momento en que cada candidata entro a ESTE estado = el ultimo log con ToStatus == preSaleStatus.
+        // Una sola query + agrupacion en memoria (sin N+1). Misma medicion que el job de caducidad.
+        var logRows = await _context.ReservaStatusChangeLogs
+            .Where(log => candidateIds.Contains(log.ReservaId) && log.ToStatus == preSaleStatus)
+            .Select(log => new { log.ReservaId, log.OccurredAt })
+            .ToListAsync(ct);
+
+        var enteredStateAt = logRows
+            .GroupBy(row => row.ReservaId)
+            .ToDictionary(group => group.Key, group => group.Max(row => row.OccurredAt));
+
+        var nowUtc = DateTime.UtcNow;
+
+        foreach (var candidate in candidates)
+        {
+            // Sin log para este estado (Quotation inicial) -> desde la creacion, igual que el job.
+            var sinceUtc = enteredStateAt.TryGetValue(candidate.Id, out var loggedAt)
+                ? loggedAt
+                : candidate.CreatedAt;
+
+            // Dias transcurridos en el estado (corridos, UTC) y dias que faltan para caducar. Floor de los
+            // dias transcurridos para que "vence hoy/mañana" coincida con el corte por dias del job.
+            var daysElapsed = (int)Math.Floor((nowUtc - sinceUtc).TotalDays);
+            var daysLeft = expirationDays - daysElapsed;
+
+            // Solo "por caducar": entre 0 (vence hoy) y la anticipacion. Si daysLeft < 0 ya supero el plazo
+            // (la caduca el job, no es un aviso "por caducar"); si es mayor a la anticipacion, todavia falta.
+            if (daysLeft < 0 || daysLeft > PreSaleExpiryAlertDays)
+                continue;
+
+            alerts.Add(new
+            {
+                ReservaPublicId = candidate.PublicId,
+                NumeroReserva = candidate.NumeroReserva,
+                Name = candidate.Name,
+                HolderName = candidate.PayerName,
+                PreSaleKind = preSaleStatus,
+                DaysLeft = daysLeft,
+                Message = BuildPreSaleExpiryMessage(preSaleLabel, candidate.PayerName ?? candidate.Name, daysLeft)
+            });
+        }
+    }
+
+    /// <summary>
+    /// Q9: arma el texto legible del aviso de caducidad. 1 dia -&gt; "vence mañana"; 0 -&gt; "vence hoy";
+    /// resto -&gt; "vence en N dias". Sin montos ni costos.
+    /// </summary>
+    private static string BuildPreSaleExpiryMessage(string preSaleLabel, string clientName, int daysLeft)
+    {
+        var when = daysLeft switch
+        {
+            0 => "vence hoy",
+            1 => "vence mañana",
+            _ => $"vence en {daysLeft} días"
+        };
+        return $"El {preSaleLabel.ToLowerInvariant()} de {clientName} {when}.";
     }
 
     /// <summary>

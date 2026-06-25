@@ -30,6 +30,22 @@ public class SendVoucherMessageRequest
     public VoucherExceptionRequest? Exception { get; set; }
 }
 
+/// <summary>
+/// Paso 5 (2026-06-24): pedido para enviar el PDF de una FACTURA EMITIDA al cliente de la reserva por
+/// WhatsApp. A diferencia del voucher (que puede ir al pasajero), el destinatario por defecto es el
+/// CLIENTE/pagador de la reserva: la factura es un documento fiscal a su nombre. <c>PersonType</c> y
+/// <c>PersonId</c> se mantienen por simetria con el voucher y para validar que la persona corresponda a
+/// la reserva, pero el caso normal es <c>PersonType = "customer"</c>.
+/// </summary>
+public class SendInvoiceMessageRequest
+{
+    public string PersonType { get; set; } = "customer";
+    public string PersonId { get; set; } = string.Empty;
+    public string ReservaId { get; set; } = string.Empty;
+    public string InvoicePublicId { get; set; } = string.Empty;
+    public string? Caption { get; set; }
+}
+
 public class MessageDeliveryDto
 {
     public Guid PublicId { get; set; }

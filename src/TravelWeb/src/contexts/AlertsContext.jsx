@@ -12,6 +12,9 @@ export function AlertsProvider({ children }) {
     // quien tiene permiso de ver costos. El gating vive en el backend; el front no decide nada.
     // F2 (Próximos Inicios): serviceDeadlines renombrado a upcomingStarts + windowDays.
     // El servidor devuelve upcomingStarts[] (uno por reserva) y upcomingStartsWindowDays (int|null).
+    // Q9 (2026-06-24): expiringPreSales — presupuestos/cotizaciones por caducar.
+    // El backend los incluye cuando hay al menos uno dentro del umbral configurado.
+    // Cada item: { reservaPublicId, numeroReserva, name, holderName, preSaleKind, daysLeft, message }.
     const [alerts, setAlerts] = useState({
         urgentTrips: [],
         supplierDebts: [],
@@ -19,6 +22,8 @@ export function AlertsProvider({ children }) {
         upcomingStartsWindowDays: null,
         costsToConfirm: [],
         totalCount: 0,
+        // Q9: lista de pre-ventas (presupuestos/cotizaciones) por caducar. Null = bucket no activo.
+        expiringPreSales: null,
     });
     const [notifications, setNotifications] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -35,6 +40,7 @@ export function AlertsProvider({ children }) {
                 upcomingStartsWindowDays: null,
                 costsToConfirm: [],
                 totalCount: 0,
+                expiringPreSales: null,
             });
         } catch (error) {
             console.error("Error al cargar alertas:", error);

@@ -159,6 +159,75 @@ function SeccionProximosInicios({ items, onClose, onDescartar, descartando }) {
     );
 }
 
+// ─── Sección 1b: Por caducar ─────────────────────────────────────────────────
+
+/**
+ * Q9 (2026-06-24): Lista de presupuestos/cotizaciones que están por caducar.
+ *
+ * El backend calcula el umbral y el texto del mensaje; el front solo lo muestra.
+ * Ámbar cuando faltan días (daysLeft > 0); rojo cuando vence hoy (daysLeft === 0).
+ * Navegar al aviso lleva a la reserva — mismo patrón que Próximos inicios.
+ *
+ * Sección APARTE de "Próximos inicios": aquella es sobre el inicio del viaje;
+ * esta es sobre el vencimiento del presupuesto/cotización (spec 2026-06-24).
+ *
+ * Props:
+ *   items   — expiringPreSales[] del contexto (null = bucket inactivo, no renderiza)
+ *   onClose — cierra el panel al hacer clic en el Link
+ */
+function SeccionPorCaducar({ items, onClose }) {
+    if (!items || items.length === 0) return null;
+
+    return (
+        <div data-testid="bell-expiring-presales-section">
+            <TituloSeccion>Por caducar</TituloSeccion>
+            <ul role="list" className="divide-y divide-slate-100 dark:divide-slate-800/50">
+                {items.map((item) => {
+                    // Rojo cuando vence hoy (daysLeft === 0), ámbar cuando faltan días.
+                    const esHoy = item.daysLeft === 0;
+                    const colorLinea = esHoy
+                        ? "text-red-600 dark:text-red-400"
+                        : "text-amber-600 dark:text-amber-400";
+                    const colorPunto = esHoy ? "bg-red-500" : "bg-amber-500";
+
+                    // B1 fix (2026-06-24): el backend devuelve la frase COMPLETA en item.message.
+                    // Ej: "El presupuesto de Fam. García vence en 3 días."
+                    // No construir la oración en el front — causaba duplicación del tipo y cliente.
+                    const textoAviso = item.message;
+
+                    return (
+                        <li
+                            key={item.reservaPublicId}
+                            role="listitem"
+                            data-testid="bell-expiring-presales-item"
+                            data-today={esHoy ? "true" : "false"}
+                        >
+                            <Link
+                                to={`/reservas/${item.reservaPublicId}`}
+                                onClick={onClose}
+                                className="flex items-start gap-3 px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+                            >
+                                {/* Punto de color indicador de urgencia */}
+                                <div className="mt-1 flex-shrink-0">
+                                    <div className={`h-2 w-2 rounded-full ${colorPunto}`} />
+                                </div>
+                                <div className="flex-1 min-w-0 space-y-0.5">
+                                    <p className={`text-sm font-semibold ${colorLinea}`}>
+                                        {textoAviso}
+                                    </p>
+                                    <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                                        Reserva {item.numeroReserva}
+                                    </p>
+                                </div>
+                            </Link>
+                        </li>
+                    );
+                })}
+            </ul>
+        </div>
+    );
+}
+
 // ─── Sección 2: Costos a confirmar ───────────────────────────────────────────
 
 /**
@@ -250,6 +319,9 @@ export default function NotificationBell() {
 
     const upcomingStarts = alerts?.upcomingStarts || [];
     const costsToConfirm = alerts?.costsToConfirm || [];
+    // Q9 (2026-06-24): presupuestos/cotizaciones por caducar.
+    // null = el backend no envió el bucket (flag o configuración inactiva); [] = bucket activo pero vacío.
+    const expiringPreSales = alerts?.expiringPreSales || [];
 
     // Poda del Set de descartados optimistas: cada vez que el servidor devuelve un nuevo
     // payload de alertas, eliminamos del Set los ids que el server ya no incluye.
@@ -279,12 +351,13 @@ export default function NotificationBell() {
         (item) => !descartadasOptimistas.has(item.reservaPublicId)
     );
 
-    // Hay avisos activos si alguna sección tiene items (sin contar notificaciones del sistema)
-    const hayAvisosNuevos = upcomingStartsVisibles.length > 0 || costsToConfirm.length > 0;
+    // Hay avisos activos si alguna sección tiene items (sin contar notificaciones del sistema).
+    // Q9: los "por caducar" también cuentan como avisos activos.
+    const hayAvisosNuevos = upcomingStartsVisibles.length > 0 || costsToConfirm.length > 0 || expiringPreSales.length > 0;
 
-    // Badge = próximos inicios visibles + costsToConfirm + notificaciones sin leer.
+    // Badge = próximos inicios visibles + por caducar + costsToConfirm + notificaciones sin leer.
     // Decisión del dueño: urgentTrips y supplierDebts NO se suman (viven en Cobranzas).
-    const totalBadge = upcomingStartsVisibles.length + costsToConfirm.length + unreadCount;
+    const totalBadge = upcomingStartsVisibles.length + expiringPreSales.length + costsToConfirm.length + unreadCount;
 
     /**
      * Handler del botón "Listo" de cada ítem de próximo inicio.
@@ -456,6 +529,10 @@ export default function NotificationBell() {
                             onDescartar={handleDescartar}
                             descartando={descartando}
                         />
+
+                        {/* Sección 1b: Por caducar — presupuestos/cotizaciones que vencen pronto.
+                            Q9 (2026-06-24): sección APARTE de Próximos inicios (spec confirmada). */}
+                        <SeccionPorCaducar items={expiringPreSales} onClose={cerrarPanel} />
 
                         {/* Sección 2: Costos a confirmar (solo si hay items) */}
                         <SeccionCostosAConfirmar costos={costsToConfirm} onClose={cerrarPanel} />

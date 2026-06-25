@@ -133,6 +133,19 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             entity.SellerCommissionPercent = Math.Clamp(request.SellerCommissionPercent.Value, 0m, 100m);
         }
 
+        // G6 (caducidad de pre-venta, 2026-06-24): dias de caducidad de Budget y Quotation, configurables por
+        // separado. Update CONDICIONAL (patch-like, criterio B-002): solo se aplica si el request trae valor.
+        // 0 = desactivado (no caduca ese tipo). El [Range] del DTO valida 0..3650; el Math.Max(0,...) es defensa
+        // adicional por si entra por un camino que no pasa por el binder (seed/test) con un negativo.
+        if (request.BudgetExpirationDays.HasValue)
+        {
+            entity.BudgetExpirationDays = Math.Max(0, request.BudgetExpirationDays.Value);
+        }
+        if (request.QuotationExpirationDays.HasValue)
+        {
+            entity.QuotationExpirationDays = Math.Max(0, request.QuotationExpirationDays.Value);
+        }
+
         entity.UpdatedAt = DateTime.UtcNow;
 
         // FC1.3.2 (ADR-009 §2.10, N-004 round 3, 2026-05-21): pre-condicion GR-002.
@@ -280,6 +293,9 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             EnableSellerCommissions = entity.EnableSellerCommissions,
             // Auditoria ERP 2026-06-13: el GET expone el porcentaje unico de comision para que el panel lo muestre.
             SellerCommissionPercent = entity.SellerCommissionPercent,
+            // G6 (2026-06-24): el GET expone los dias de caducidad de Budget/Quotation para que el panel los edite.
+            BudgetExpirationDays = entity.BudgetExpirationDays,
+            QuotationExpirationDays = entity.QuotationExpirationDays,
         };
     }
 }

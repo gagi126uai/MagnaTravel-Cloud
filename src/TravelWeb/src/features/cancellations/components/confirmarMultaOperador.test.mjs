@@ -415,3 +415,81 @@ test("penaltyCurrency: el default del componente es USD (operadores turísticos 
     });
     assert.equal(payload.penaltyCurrency, "USD");
 });
+
+// ============================================================================
+// Sección 8: Fix H3 2026-06-24 — gate de visibilidad por capability del backend
+//
+// Antes del fix: el botón "Confirmar multa del operador" aparecía en TODAS las
+// reservas con status=PendingOperatorRefund, aunque no hubiera multa pendiente.
+// Ahora el botón solo aparece cuando capabilities.canConfirmOperatorPenalty.allowed
+// es true (fuente de verdad del backend; no depende del estado operativo).
+// ============================================================================
+
+/**
+ * Réplica de la lógica de visibilidad del botón "Confirmar multa del operador".
+ * Fix H3: usa capabilities.canConfirmOperatorPenalty.allowed en vez del estado.
+ *
+ * El panel también requiere que showMultaInline sea false (para no duplicar el form).
+ * Esa condición ya existía y no cambió.
+ */
+function mostrarBotonConfirmarMulta({ reserva, showMultaInline }) {
+    // Si el panel ya está abierto, no mostramos el botón (el form lo reemplaza).
+    if (showMultaInline) return false;
+    // La capability es la única fuente de verdad. No usamos reserva.status.
+    return reserva?.capabilities?.canConfirmOperatorPenalty?.allowed === true;
+}
+
+test("H3: canConfirmOperatorPenalty.allowed=true + panel cerrado → botón visible", () => {
+    const reserva = {
+        status: "PendingOperatorRefund",
+        capabilities: { canConfirmOperatorPenalty: { allowed: true, reason: null } },
+    };
+    assert.equal(mostrarBotonConfirmarMulta({ reserva, showMultaInline: false }), true);
+});
+
+test("H3: canConfirmOperatorPenalty.allowed=false → botón oculto (sin multa pendiente)", () => {
+    // Reserva en PendingOperatorRefund pero sin multa del operador pendiente.
+    // Antes esto mostraba el botón y el click terminaba en showError.
+    const reserva = {
+        status: "PendingOperatorRefund",
+        capabilities: { canConfirmOperatorPenalty: { allowed: false, reason: "DebitNoteAlreadyInPlay" } },
+    };
+    assert.equal(mostrarBotonConfirmarMulta({ reserva, showMultaInline: false }), false);
+});
+
+test("H3: capabilities ausentes → botón oculto (degradación segura, no asumimos que se puede)", () => {
+    // Si el backend no envía capabilities (DTO viejo), no mostramos el botón.
+    // Es más seguro ocultarlo que mostrarlo sin información.
+    const reserva = { status: "PendingOperatorRefund" };
+    assert.equal(mostrarBotonConfirmarMulta({ reserva, showMultaInline: false }), false);
+});
+
+test("H3: canConfirmOperatorPenalty ausente dentro de capabilities → botón oculto", () => {
+    // El backend no incluyó la capability específica (DTO parcial).
+    const reserva = {
+        status: "PendingOperatorRefund",
+        capabilities: { canCancel: { allowed: false } },
+    };
+    assert.equal(mostrarBotonConfirmarMulta({ reserva, showMultaInline: false }), false);
+});
+
+test("H3: panel inline abierto → botón oculto (aunque allowed=true, no duplicamos el form)", () => {
+    // Cuando el form inline ya está abierto, ocultamos el botón que lo abrió.
+    // Esta condición ya existía en la versión anterior y se mantiene igual.
+    const reserva = {
+        status: "PendingOperatorRefund",
+        capabilities: { canConfirmOperatorPenalty: { allowed: true, reason: null } },
+    };
+    assert.equal(mostrarBotonConfirmarMulta({ reserva, showMultaInline: true }), false);
+});
+
+test("H3: allowed=true en estado distinto de PendingOperatorRefund → botón visible (no gateamos por estado)", () => {
+    // El fix mueve el gate de estado a capability: si el backend dice "se puede",
+    // lo mostramos independientemente del estado. En la práctica, el backend solo
+    // devuelve allowed=true en PendingOperatorRefund, pero el front no duplica esa regla.
+    const reserva = {
+        status: "Cancelled",
+        capabilities: { canConfirmOperatorPenalty: { allowed: true, reason: null } },
+    };
+    assert.equal(mostrarBotonConfirmarMulta({ reserva, showMultaInline: false }), true);
+});

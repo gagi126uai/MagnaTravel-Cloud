@@ -12,15 +12,18 @@ public class MessageService : IMessageService
     private readonly AppDbContext _db;
     private readonly IWhatsAppGateway _whatsAppGateway;
     private readonly IVoucherService _voucherService;
+    private readonly IInvoiceService _invoiceService;
 
     public MessageService(
         AppDbContext db,
         IWhatsAppGateway whatsAppGateway,
-        IVoucherService voucherService)
+        IVoucherService voucherService,
+        IInvoiceService invoiceService)
     {
         _db = db;
         _whatsAppGateway = whatsAppGateway;
         _voucherService = voucherService;
+        _invoiceService = invoiceService;
     }
 
     public async Task<IReadOnlyList<MessageRecipientDto>> GetRecipientsAsync(string? search, CancellationToken cancellationToken)
@@ -203,6 +206,122 @@ public class MessageService : IMessageService
         return deliveries;
     }
 
+    /// <summary>
+    /// Paso 5 (2026-06-24): envia el PDF de una factura EMITIDA al cliente de la reserva por WhatsApp.
+    ///
+    /// <para>Reglas de seguridad/negocio (en este orden):
+    /// <list type="number">
+    ///   <item>El actor debe tener permiso de envio de mensajes (mismo gate que el voucher).</item>
+    ///   <item>La factura debe existir y pertenecer a ESA reserva (no se puede mandar la factura de otra).</item>
+    ///   <item>La factura debe estar EMITIDA: Resultado == "A" y con CAE. No se manda una factura en
+    ///         proceso, rechazada, ni una NC/ND (solo el documento de venta).</item>
+    ///   <item>El actor debe poder acceder a la reserva: dueño (ResponsibleUserId) o permiso view_all.</item>
+    ///   <item>El cliente debe tener un contacto cargado; si no, error claro y legible.</item>
+    /// </list></para>
+    ///
+    /// El PDF se obtiene de <c>IInvoiceService.GetPdfAsync</c>, la MISMA generacion que usa "Ver PDF"
+    /// (no se duplica nada). La entrega se registra como un <see cref="MessageDelivery"/> con
+    /// Kind = "Invoice", igual que el voucher registra la suya.
+    /// </summary>
+    public async Task<MessageDeliveryDto> SendInvoiceMessageAsync(
+        SendInvoiceMessageRequest request,
+        OperationActor actor,
+        CancellationToken cancellationToken)
+    {
+        await EnsureActorCanAsync(actor, Permissions.MessagesSend, cancellationToken);
+
+        // Resolvemos al destinatario reusando la misma logica que el voucher (valida que la persona
+        // corresponda a la reserva y que tenga telefono). Para la factura el caso normal es el cliente.
+        var recipient = await ResolveRecipientAsync(request.PersonType, request.PersonId, request.ReservaId, cancellationToken);
+
+        // La factura debe pertenecer a la MISMA reserva del envio. Cargamos por PublicId/legacy y
+        // validamos el vinculo: nunca se manda la factura de otra reserva.
+        var invoiceId = await ResolveInvoiceIdAsync(request.InvoicePublicId, cancellationToken);
+        var invoice = await _db.Invoices
+            .AsNoTracking()
+            .Include(i => i.Reserva)
+            .FirstOrDefaultAsync(i => i.Id == invoiceId, cancellationToken)
+            ?? throw new KeyNotFoundException("Factura no encontrada.");
+
+        if (invoice.ReservaId != recipient.ReservaId)
+        {
+            throw new InvalidOperationException("La factura no corresponde a la reserva indicada.");
+        }
+
+        // Ownership de la reserva: un vendedor solo puede mandar facturas de SUS reservas; el permiso
+        // view_all (back-office/admin) saltea ese limite. Mismo criterio que los GET de facturas.
+        await EnsureActorCanAccessReservaAsync(actor, invoice.Reserva, cancellationToken);
+
+        // Estado fiscal: solo se envia una factura EMITIDA por ARCA (aprobada y con CAE). Una factura en
+        // proceso o rechazada todavia no es un comprobante valido para entregar al cliente.
+        var fiscalStatus = InvoiceFiscalStatusMapper.FromResultado(invoice.Resultado);
+        if (fiscalStatus != InvoiceFiscalStatus.Issued || string.IsNullOrWhiteSpace(invoice.CAE))
+        {
+            throw new InvalidOperationException(
+                "La factura todavia no esta emitida (sin CAE). No se puede enviar una factura en proceso o rechazada.");
+        }
+
+        // CRITICO (fiscal/privacidad): NC y ND viven en la MISMA tabla Invoices (se distinguen por
+        // TipoComprobante) y cuando ARCA las aprueba TAMBIEN quedan con Resultado="A" + CAE. Sin este
+        // guard, pasar el publicId de una NC/ND mandaria su PDF al cliente rotulado como "factura"
+        // (caption + fileName dicen "Factura"). Una NC ademas delata una anulacion/reembolso. Solo se
+        // envian facturas de venta (tipos 1/6/11/51 -> InvoiceComprobanteHelpers.IsInvoice).
+        if (!InvoiceComprobanteHelpers.IsInvoice(invoice.TipoComprobante))
+        {
+            throw new InvalidOperationException(
+                "Solo se puede enviar una factura, no una nota de credito/debito.");
+        }
+
+        // No se manda al cliente una factura ya ANULADA (NC total aprobada por ARCA) como si fuera una
+        // venta valida. AnnulmentStatus.Succeeded es el unico estado que confirma la anulacion.
+        if (invoice.AnnulmentStatus == AnnulmentStatus.Succeeded)
+        {
+            throw new InvalidOperationException(
+                "La factura fue anulada. No se puede enviar una factura anulada.");
+        }
+
+        // Mismo generador que "Ver PDF": no duplicamos la composicion del PDF.
+        var pdfBytes = await _invoiceService.GetPdfAsync(invoice.Id, cancellationToken);
+
+        // Numero de comprobante con el formato estandar AFIP "PtoVta-Numero" (4 + 8 digitos), el mismo
+        // que muestra el PDF (ver InvoicePdfService: PuntoDeVenta:0000 / NumeroComprobante:00000000).
+        var numeroComprobante = $"{invoice.PuntoDeVenta:0000}-{invoice.NumeroComprobante:00000000}";
+        var fileName = $"Factura-{numeroComprobante}.pdf";
+        var caption = string.IsNullOrWhiteSpace(request.Caption)
+            ? $"Te compartimos la factura {numeroComprobante} de la reserva {invoice.Reserva?.NumeroReserva}."
+            : request.Caption.Trim();
+
+        var result = await _whatsAppGateway.SendDocumentAsync(
+            recipient.Phone,
+            caption,
+            fileName,
+            "application/pdf",
+            pdfBytes,
+            cancellationToken);
+
+        var delivery = new MessageDelivery
+        {
+            ReservaId = recipient.ReservaId,
+            CustomerId = recipient.CustomerId,
+            PassengerId = recipient.PassengerId,
+            Channel = MessageDeliveryChannels.WhatsApp,
+            Kind = MessageDeliveryKinds.Invoice,
+            Status = MessageDeliveryStatuses.Sent,
+            Phone = recipient.Phone,
+            MessageText = caption,
+            AttachmentName = fileName,
+            BotMessageId = result.MessageId,
+            SentByUserId = actor.UserId,
+            SentByUserName = actor.UserName,
+            CreatedAt = DateTime.UtcNow,
+            SentAt = DateTime.UtcNow
+        };
+
+        _db.MessageDeliveries.Add(delivery);
+        await _db.SaveChangesAsync(cancellationToken);
+        return MapDelivery(delivery);
+    }
+
     private async Task<ResolvedMessageRecipient> ResolveRecipientAsync(
         string personType,
         string personPublicIdOrLegacyId,
@@ -303,6 +422,57 @@ public class MessageService : IMessageService
         }
 
         return resolved ?? throw new KeyNotFoundException("Pasajero no encontrado.");
+    }
+
+    private async Task<int> ResolveInvoiceIdAsync(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        var resolved = await _db.Invoices.AsNoTracking().ResolveInternalIdAsync(publicIdOrLegacyId, cancellationToken);
+        if (!resolved.HasValue && int.TryParse(publicIdOrLegacyId, out var legacyId))
+        {
+            resolved = legacyId;
+        }
+
+        return resolved ?? throw new KeyNotFoundException("Factura no encontrada.");
+    }
+
+    /// <summary>
+    /// Paso 5 (2026-06-24): valida que el actor pueda operar sobre la reserva de la factura. Mismo
+    /// criterio que los GET de facturas: el dueño (ResponsibleUserId) siempre puede; el resto necesita
+    /// el permiso view_all (back-office/admin). Evita que un vendedor mande la factura de la reserva de
+    /// otro vendedor aunque tenga permiso de enviar mensajes.
+    /// </summary>
+    private async Task EnsureActorCanAccessReservaAsync(OperationActor actor, Reserva? reserva, CancellationToken cancellationToken)
+    {
+        if (reserva is null)
+        {
+            throw new InvalidOperationException("La factura no tiene reserva asociada.");
+        }
+
+        if (actor.IsAdmin)
+        {
+            return;
+        }
+
+        // El dueño de la reserva siempre puede.
+        if (!string.IsNullOrWhiteSpace(reserva.ResponsibleUserId) &&
+            string.Equals(reserva.ResponsibleUserId, actor.UserId, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        // Si no es el dueño, necesita el permiso de ver todas las cobranzas.
+        var roleNames = actor.Roles
+            .Where(role => !string.IsNullOrWhiteSpace(role))
+            .ToArray();
+
+        var canViewAll = roleNames.Length > 0 && await _db.RolePermissions
+            .AsNoTracking()
+            .AnyAsync(item => roleNames.Contains(item.RoleName) && item.Permission == Permissions.CobranzasViewAll, cancellationToken);
+
+        if (!canViewAll)
+        {
+            throw new UnauthorizedAccessException("El usuario no tiene acceso a esta reserva.");
+        }
     }
 
     private async Task<int> ResolveVoucherIdAsync(string publicIdOrLegacyId, CancellationToken cancellationToken)

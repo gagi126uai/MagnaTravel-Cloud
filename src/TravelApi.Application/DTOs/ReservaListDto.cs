@@ -41,8 +41,9 @@ public class ReservaListDto
     /// <summary>
     /// ADR-033 (E7/A5, 2026-06-16): estado de cobro derivado del saldo POR MONEDA (ver
     /// <see cref="ReservaCollectionStatus"/>). Mismo criterio que el detalle. Se llena junto con PorMoneda.
+    /// H1 (2026-06-24): default "SinMovimientos" (no "Saldado") para no mostrar "pagada" sin datos de plata.
     /// </summary>
-    public string CollectionStatus { get; set; } = ReservaCollectionStatus.Settled;
+    public string CollectionStatus { get; set; } = ReservaCollectionStatus.NoCharges;
 
     /// <summary>
     /// ADR-037 (2026-06-21): estado de FACTURACION derivado del cuadre VENDIDO vs FACTURADO NETO (ver

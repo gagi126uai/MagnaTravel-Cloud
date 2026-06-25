@@ -31,13 +31,24 @@ public sealed record Cap(bool Allowed, string? Reason)
 /// <param name="HasLiveVoucher">True si la reserva tiene un voucher emitido vivo (no anulado).</param>
 /// <param name="HasLiveEditAuth">True si hay una autorizacion de edicion bajo candado VIVA (ventana abierta).</param>
 /// <param name="HasAnyPayment">True si la reserva tiene al menos un cobro registrado (real o puente).</param>
+/// <param name="HasPendingOperatorPenalty">
+/// H3 (2026-06-24): True si la reserva tiene una cancelacion con una MULTA DEL OPERADOR pendiente de confirmar
+/// (la confirmacion diferida que dispara la Nota de Debito pass-through). Es la VERDAD que el front necesita para
+/// mostrar "Confirmar multa del operador" SOLO cuando realmente hay algo que confirmar, en vez de adivinar por
+/// estado (PendingOperatorRefund alcanzaba de mas: ese estado puede no tener multa pendiente). El valor lo calcula
+/// quien arma el contexto (ReservaService en el DETALLE) reusando la MISMA condicion que
+/// <c>BookingCancellationService.GetByReservaAsync</c>/<c>canConfirmPenalty</c> — esta capacidad es PURA y solo lo lee.
+/// Default false: en el listado y en los callers que no calculan la cancelacion, el boton no se ofrece (es
+/// seguro: el endpoint confirm-penalty revalida todo server-side).
+/// </param>
 public sealed record ReservaCapabilityContext(
     string Status,
     decimal Balance,
     bool HasLiveCae,
     bool HasLiveVoucher,
     bool HasLiveEditAuth,
-    bool HasAnyPayment);
+    bool HasAnyPayment,
+    bool HasPendingOperatorPenalty = false);
 
 /// <summary>
 /// ADR-035 (2026-06-19): conjunto de capacidades de una reserva, ya resueltas. Es la respuesta de
@@ -61,6 +72,7 @@ public sealed record ReservaCapabilities(
     Cap CanAdvance,
     Cap CanEmitVoucher,
     Cap CanCorrectTravelingEntry,
+    Cap CanConfirmOperatorPenalty,
     IReadOnlyList<string> AllowedForward,
     IReadOnlyList<string> AllowedRevert);
 
@@ -189,6 +201,15 @@ public static class ReservaCapabilityPolicy
     /// </summary>
     public const string CorrectTravelingBlockedByVoucherReason =
         "Anulá el voucher antes de sacar de viaje.";
+
+    /// <summary>
+    /// H3 (2026-06-24): no hay una multa del operador pendiente de confirmar en esta reserva. El boton
+    /// "Confirmar multa del operador" (que emite la Nota de Debito pass-through) solo aplica cuando una
+    /// anulacion dejo una multa diferida sin confirmar. Sin esa multa pendiente, no hay nada que confirmar.
+    /// Sin datos sensibles (ni montos ni operador).
+    /// </summary>
+    public const string NoPendingOperatorPenaltyReason =
+        "No hay una multa del operador pendiente de confirmar en esta reserva.";
 
     // =====================================================================================================
     // Conjuntos de estado (FACHADA: reusan las listas del dominio; no inventan taxonomia nueva).
@@ -327,6 +348,7 @@ public static class ReservaCapabilityPolicy
             CanAdvance: EvaluateAdvance(ctx),
             CanEmitVoucher: EvaluateVoucher(ctx),
             CanCorrectTravelingEntry: EvaluateCorrectTravelingEntry(ctx),
+            CanConfirmOperatorPenalty: EvaluateConfirmOperatorPenalty(ctx),
             AllowedForward: ResolveForwardTargets(ctx.Status),
             AllowedRevert: ResolveRevertTargets(ctx.Status));
     }
@@ -575,6 +597,28 @@ public static class ReservaCapabilityPolicy
             return Cap.No(CorrectTravelingBlockedByCaeReason);
         if (ctx.HasLiveVoucher)
             return Cap.No(CorrectTravelingBlockedByVoucherReason);
+        return Cap.Yes;
+    }
+
+    /// <summary>
+    /// H3 (2026-06-24): "Confirmar multa del operador" (dispara la Nota de Debito pass-through). allowed SOLO si
+    /// la reserva tiene una multa del operador PENDIENTE de confirmar (<see cref="ReservaCapabilityContext.HasPendingOperatorPenalty"/>).
+    ///
+    /// <para>Antes el front decidia por ESTADO (mostraba el boton en PendingOperatorRefund), pero ese estado puede
+    /// existir sin multa pendiente (anulacion sin multa, o multa ya confirmada): el boton aparecia muerto. Esta
+    /// capacidad mueve la decision a la VERDAD del dato (hay una cancelacion con multa diferida sin confirmar),
+    /// no al estado. NO depende del estado de la reserva a proposito: una multa diferida se confirma DESPUES de la
+    /// anulacion, cuando la reserva ya esta en su estado terminal; el gate real es "existe la multa pendiente".</para>
+    ///
+    /// <para>El flag lo calcula quien arma el contexto reusando la condicion canonica de
+    /// <c>BookingCancellationService</c> (flag maestro ON + NC total con CAE + penalidad aun Estimated + sin ND en
+    /// juego). Esta clase pura NO recalcula esa condicion: solo la lee. El endpoint confirm-penalty revalida TODO
+    /// server-side (permiso, 4-eyes, idempotencia), asi que esta capacidad es una compuerta de UI, como el resto.</para>
+    /// </summary>
+    private static Cap EvaluateConfirmOperatorPenalty(ReservaCapabilityContext ctx)
+    {
+        if (!ctx.HasPendingOperatorPenalty)
+            return Cap.No(NoPendingOperatorPenaltyReason);
         return Cap.Yes;
     }
 

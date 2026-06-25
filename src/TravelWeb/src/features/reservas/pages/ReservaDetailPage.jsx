@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Clock, CreditCard, Download, Eye, ExternalLink, FileText, History, Loader2, Paperclip, Pencil, Receipt, Trash2, Users, Plus, RefreshCw, Check, Ban } from "lucide-react";
+import { Clock, CreditCard, Download, Eye, ExternalLink, FileText, History, Loader2, Paperclip, Pencil, Receipt, Send, Trash2, Users, Plus, RefreshCw, Check, Ban } from "lucide-react";
 import { api } from "../../../api";
 import { showConfirm, showError, showSuccess } from "../../../alerts";
 import ReservaTimeline from "../../../components/ReservaTimeline";
@@ -40,6 +40,9 @@ import { hasPermission, isAdmin } from "../../../auth";
 import { calcularSugerenciaComposicion } from "../lib/pasajeroHint";
 import { EstadoCuentaResumen } from "../components/EstadoCuentaResumen";
 import { EstadoCuentaExtracto } from "../components/EstadoCuentaExtracto";
+// Paso 3 (H2 2026-06-24): helper compartido con EmitirFacturaInline para formatear
+// el número de comprobante. Mismo formato en el cartel de éxito y en el Estado de Cuenta.
+import { formatearEtiquetaFactura } from "../lib/invoiceFormatUtils";
 
 /**
  * Determina si la reserva está en un estado "congelado" donde solo se permite
@@ -135,19 +138,49 @@ function InvoiceTypeLabel({ tipoComprobante, originalInvoiceNumeroComprobante, o
   );
 }
 
-// Botones para ver/descargar el PDF de una factura AFIP. Solo se muestran si la
-// factura fue aceptada (resultado === "A"); si falló/rechazó, no hay PDF valido.
-function InvoicePdfActions({ invoice }) {
+/**
+ * H2 Paso 5 (2026-06-24): Acciones de factura AFIP en el extracto de cuenta.
+ *
+ * Muestra número de comprobante + CAE visibles, y acciones:
+ *   - "Ver PDF": abre el PDF en pestaña nueva.
+ *   - "Enviar al cliente": envía el PDF al cliente/pagador por WhatsApp.
+ *     Usa POST /messages/invoice (endpoint dedicado, 2026-06-24).
+ *     Respuestas: 200 éxito; 400 {message} (sin contacto, factura no emitida);
+ *     403 sin acceso; 502 fallo de WhatsApp → "No se pudo enviar, intentá de nuevo".
+ *
+ * Solo se muestran si la factura fue aceptada por AFIP (resultado === "A").
+ * Botones con icono + texto (regla guia-ux-gaston.md 2026-06-08).
+ *
+ * Props:
+ *   invoice  - InvoiceDto de la reserva (campos: invoiceType, puntoDeVenta,
+ *              numeroComprobante, cae, vencimientoCAE, publicId, resultado).
+ *   reserva  - DTO completo (para customerPublicId y publicId de la reserva).
+ */
+function InvoicePdfActions({ invoice, reserva }) {
   const [busy, setBusy] = useState(false);
-  const publicId = getPublicId(invoice);
-  if (invoice?.resultado !== "A" || !publicId) {
+  const [enviando, setEnviando] = useState(false);
+  const invoicePublicId = getPublicId(invoice);
+
+  // Solo mostramos acciones cuando AFIP aprobó la factura (resultado === "A").
+  if (invoice?.resultado !== "A" || !invoicePublicId) {
     return <span className="text-xs text-slate-400">-</span>;
   }
 
-  const fileLabel = `Factura-${invoice.tipoComprobante === 1 ? "A" : invoice.tipoComprobante === 6 ? "B" : "C"}-${String(invoice.puntoDeVenta).padStart(5, "0")}-${String(invoice.numeroComprobante).padStart(8, "0")}.pdf`;
+  // Etiqueta legible reutilizando el helper compartido (Paso 3).
+  // Usamos invoice.invoiceType (letra directa: "A"/"B"/"C"/"M") en lugar de tipoComprobante (int).
+  const numeroLegible = formatearEtiquetaFactura(
+    invoice.invoiceType,
+    invoice.puntoDeVenta,
+    invoice.numeroComprobante
+  );
+
+  // Label para el atributo download del PDF
+  const pdv = String(invoice.puntoDeVenta ?? 0).padStart(4, "0");
+  const num = String(invoice.numeroComprobante ?? 0).padStart(8, "0");
+  const fileLabel = `Factura-${invoice.invoiceType || "X"}-${pdv}-${num}.pdf`;
 
   const fetchBlob = async () => {
-    const response = await api.get(`/invoices/${publicId}/pdf`, { responseType: "blob" });
+    const response = await api.get(`/invoices/${invoicePublicId}/pdf`, { responseType: "blob" });
     return new Blob([response], { type: "application/pdf" });
   };
 
@@ -164,48 +197,97 @@ function InvoicePdfActions({ invoice }) {
     }
   };
 
-  const download = async () => {
-    setBusy(true);
+  /**
+   * H2 Paso 5: envía la factura al cliente por WhatsApp via POST /messages/invoice.
+   *
+   * Destinatario: siempre el cliente/pagador de la reserva (personType="customer").
+   * El backend valida que la factura esté emitida y que el cliente tenga teléfono.
+   *
+   * Errores posibles:
+   *   400 → el backend devuelve { message } accionable (sin contacto, factura no emitida).
+   *   403 → sin permiso de envío.
+   *   502 → fallo del canal WhatsApp → "No se pudo enviar, intentá de nuevo".
+   */
+  const enviarAlCliente = async () => {
+    const customerPublicId = reserva?.customerPublicId;
+    const reservaPublicId = reserva?.publicId ?? getPublicId(reserva);
+
+    // Si la reserva no tiene cliente asignado, el backend lo rechazaría igual con 400.
+    // Cortamos antes para dar un mensaje más claro.
+    if (!customerPublicId) {
+      showError("No hay un contacto cargado para enviar. Asigná un cliente a la reserva.");
+      return;
+    }
+
+    setEnviando(true);
     try {
-      const blob = await fetchBlob();
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", fileLabel);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
+      await api.post("/messages/invoice", {
+        personType: "customer",
+        personId: customerPublicId,
+        reservaId: reservaPublicId,
+        invoicePublicId: invoicePublicId,
+        caption: `Factura ${pdv}-${num}`,
+      });
+      showSuccess("Factura enviada al cliente.");
     } catch (error) {
-      showError(getApiErrorMessage(error) || "No se pudo descargar la factura.", "Error al descargar factura");
+      const statusCode = error?.status ?? error?.response?.status ?? 0;
+
+      if (statusCode === 403) {
+        // 403: el usuario no tiene permiso de envío de mensajes.
+        showError("No tenés permiso para enviar mensajes.");
+      } else if (statusCode === 502) {
+        // 502: el canal WhatsApp falló (servicio externo).
+        showError("No se pudo enviar, intentá de nuevo.");
+      } else {
+        // 400 u otro: el backend devuelve { message } con texto accionable.
+        // Ej: "La factura no está emitida", "El cliente no tiene teléfono".
+        const mensaje = getApiErrorMessage(error) || "No se pudo enviar la factura.";
+        showError(mensaje);
+      }
     } finally {
-      setBusy(false);
+      setEnviando(false);
     }
   };
 
   return (
-    <div className="inline-flex items-center gap-1">
-      {/* I2: aria-label es necesario porque el botón solo tiene ícono, sin texto visible */}
-      <button
-        type="button"
-        onClick={view}
-        disabled={busy}
-        className="rounded p-1.5 text-indigo-600 hover:bg-indigo-50 disabled:opacity-50 dark:text-indigo-300 dark:hover:bg-indigo-950/40"
-        title="Ver PDF"
-        aria-label="Ver PDF"
-      >
-        <Eye className="h-4 w-4" aria-hidden="true" />
-      </button>
-      <button
-        type="button"
-        onClick={download}
-        disabled={busy}
-        className="rounded p-1.5 text-emerald-600 hover:bg-emerald-50 disabled:opacity-50 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
-        title="Descargar PDF"
-        aria-label="Descargar PDF"
-      >
-        <Download className="h-4 w-4" aria-hidden="true" />
-      </button>
+    <div className="flex flex-col gap-1.5">
+      {/* Número de comprobante + CAE bien a la vista (spec Paso 5 H2) */}
+      <div className="text-xs font-mono font-semibold text-slate-700 dark:text-slate-300">
+        {numeroLegible}
+      </div>
+      {invoice.cae && (
+        <div className="text-[10px] text-slate-400 dark:text-slate-500">
+          CAE: {invoice.cae}
+          {invoice.vencimientoCAE && (
+            <> · Vto: {new Date(invoice.vencimientoCAE).toLocaleDateString("es-AR")}</>
+          )}
+        </div>
+      )}
+
+      {/* Acciones con icono + texto (regla 2026-06-08 guia-ux-gaston.md) */}
+      <div className="inline-flex items-center gap-2">
+        <button
+          type="button"
+          onClick={view}
+          disabled={busy || enviando}
+          className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-indigo-600 hover:bg-indigo-50 disabled:opacity-50 dark:text-indigo-300 dark:hover:bg-indigo-950/40 transition-colors"
+          aria-label="Ver PDF de la factura"
+        >
+          <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+          Ver PDF
+        </button>
+        <button
+          type="button"
+          onClick={enviarAlCliente}
+          disabled={busy || enviando}
+          data-testid="btn-enviar-factura-cliente"
+          className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-emerald-600 hover:bg-emerald-50 disabled:opacity-50 dark:text-emerald-300 dark:hover:bg-emerald-950/40 transition-colors"
+          aria-label="Enviar factura al cliente por WhatsApp"
+        >
+          <Send className="h-3.5 w-3.5" aria-hidden="true" />
+          {enviando ? "Enviando..." : "Enviar al cliente"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -1169,8 +1251,14 @@ export default function ReservaDetailPage() {
         <div className="space-y-3">
           {/* Cartel de estado: la reserva está anulada y se espera el reembolso del operador.
               ADR-014: en este estado puede haber una multa del operador pendiente de confirmar.
-              El botón "Confirmar multa" consulta la cancelación vigente de la reserva (GET by-reserva)
-              y, si canConfirmPenalty, abre el panel inline. */}
+
+              Fix 2026-06-24 (H3): el botón "Confirmar multa" ahora se muestra SOLO cuando
+              reserva.capabilities.canConfirmOperatorPenalty.allowed === true (fuente de verdad
+              del backend). Antes aparecía para cualquier reserva en PendingOperatorRefund y
+              hacía una llamada extra al backend para determinar si habilitarlo.
+
+              El clic sigue haciendo GET by-reserva para obtener el cancellationPublicId que
+              necesita el formulario inline (ese ID no viene en el DTO de la reserva). */}
           <div
             className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300 flex flex-col sm:flex-row sm:items-center gap-3"
             data-testid="banner-estado-terminal"
@@ -1179,50 +1267,37 @@ export default function ReservaDetailPage() {
             <span className="flex-1">
               <strong className="font-bold">Anulada, esperando el reembolso del operador</strong> — solo lectura.
             </span>
-            {/* El botón solo se muestra si el panel inline no está ya abierto.
-                Al hacer clic, busca la cancelación vigente de ESTA reserva (endpoint by-reserva)
-                y usa canConfirmPenalty del DTO para decidir: si se puede, abre el panel; si no,
-                muestra el motivo concreto. Antes buscaba en la bandeja back-office de NDs
-                pendientes, que dejaba afuera el caso pass-through (multa del operador estimada). */}
-            {!showMultaInline && (
+            {/* El botón se muestra SOLO cuando la capability lo permite (allowed=true).
+                Cuando no hay multa pendiente (allowed=false), no mostramos el botón —
+                evita la confusión de mostrar "Confirmar multa" en reservas sin multa. */}
+            {!showMultaInline && reserva.capabilities?.canConfirmOperatorPenalty?.allowed === true && (
               <button
                 type="button"
                 onClick={async () => {
+                  // El clic carga el cancellationPublicId que necesita el formulario.
+                  // La capability ya garantiza que hay una multa pendiente, así que
+                  // si el GET falla o devuelve 404 es un caso anómalo que reportamos.
                   setBuscandoMulta(true);
                   try {
                     const cancelacion = await cancellationsApi.getByReserva(publicId);
-                    if (cancelacion?.canConfirmPenalty) {
-                      setMultaCancellationPublicId(cancelacion.publicId);
-                      setShowMultaInline(true);
-                    } else {
-                      // La cancelación existe pero ahora mismo no se puede emitir la ND:
-                      // traducimos el motivo del backend a un aviso claro para el vendedor.
-                      const motivo = cancelacion?.confirmPenaltyBlockedReason;
-                      let mensaje;
-                      if (motivo === "CreditNoteNotYetIssued") {
-                        mensaje =
-                          "La nota de crédito de la anulación todavía no tiene CAE aprobado en AFIP/ARCA. Esperá unos minutos y volvé a intentar.";
-                      } else if (motivo === "DebitNoteAlreadyInPlay") {
-                        mensaje =
-                          "La multa de este operador ya fue confirmada o la nota de débito ya está en proceso.";
-                      } else if (motivo === "DebitNoteFeatureDisabled") {
-                        mensaje =
-                          "La emisión de notas de débito por multa está deshabilitada. Consultá con administración.";
-                      } else {
-                        mensaje = "No se puede confirmar la multa del operador en este momento.";
-                      }
-                      showError(mensaje, "Multa del operador");
+                    // Defensa ante un 200 anómalo sin publicId: no abrir el panel en silencio.
+                    if (!cancelacion?.publicId) {
+                      showError(
+                        "No se encontró una cancelación para esta reserva. Si el problema persiste, consultá con administración.",
+                        "Sin cancelación"
+                      );
+                      return;
                     }
+                    setMultaCancellationPublicId(cancelacion.publicId);
+                    setShowMultaInline(true);
                   } catch (error) {
                     if (error?.status === 404) {
-                      // La reserva no tiene una cancelación (no se anuló, o solo hay borradores
-                      // abortados). No debería pasar en este estado, pero lo cubrimos.
                       showError(
-                        "No se encontró una cancelación para esta reserva.",
+                        "No se encontró una cancelación para esta reserva. Si el problema persiste, consultá con administración.",
                         "Sin cancelación"
                       );
                     } else {
-                      showError("No se pudo buscar la multa pendiente. Intentá de nuevo.");
+                      showError("No se pudo cargar los datos de la multa. Intentá de nuevo.");
                     }
                   } finally {
                     setBuscandoMulta(false);
@@ -1766,7 +1841,8 @@ export default function ReservaDetailPage() {
                     reserva={reserva}
                     congelado={congelado}
                     refreshKey={accountRefreshKey}
-                    renderAccionesFactura={(invoice) => <InvoicePdfActions invoice={invoice} />}
+                    // H2 Paso 5: pasamos reserva para que InvoicePdfActions pueda enviar al cliente
+                    renderAccionesFactura={(invoice) => <InvoicePdfActions invoice={invoice} reserva={reserva} />}
                     renderAccionesCobro={(payment, estaCongelado) => (
                       <PaymentReceiptActions
                         payment={payment}
