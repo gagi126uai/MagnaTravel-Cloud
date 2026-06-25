@@ -196,9 +196,15 @@ public class ReservaService : IReservaService
     }
 
     /// <summary>
-    /// Traduce las facturas/ND/NC VIVAS de la reserva a lineas del extracto. VIVA = resultado "A" (aprobada)
-    /// y no anulada (mismo criterio que el cuadre de facturacion). Factura/ND son CARGO (suman la deuda); NC
-    /// es ABONO (la resta). Tipo desconocido (dato sucio) se omite, igual que en el cuadre.
+    /// Traduce las facturas/ND/NC de la reserva a lineas del extracto. Cuenta todo comprobante con CAE
+    /// aprobado, AUNQUE este anulado (misma regla unica que el cuadre: <c>CountsInNetBilled</c>). Factura/ND
+    /// son CARGO (suman la deuda); NC es ABONO (la resta). Tipo desconocido (dato sucio) se omite.
+    ///
+    /// <para>FIX doble conteo (extracto): la factura ANULADA (AnnulmentStatus=Succeeded) DEBE seguir
+    /// mostrandose como cargo, y su Nota de Credito como abono. Si saltaramos la factura Succeeded (lo que
+    /// hacia antes), el extracto mostraba solo la NC suelta (un abono sin su cargo) y el saldo corriente del
+    /// libro mayor quedaba incoherente. Mostrando AMBAS lineas, el saldo cierra: factura 80k cargo, NC 80k
+    /// abono -> saldo de esa anulacion = 0.</para>
     ///
     /// <para>La fecha de cada linea es la de EMISION FISCAL (<c>Invoice.IssuedAt</c>, la fecha que ARCA aprobo
     /// el CAE), con fallback a <c>CreatedAt</c> para comprobantes legacy sin IssuedAt: asi el orden cronologico
@@ -210,9 +216,9 @@ public class ReservaService : IReservaService
 
         foreach (var invoice in file.Invoices)
         {
-            // Mismo filtro de "comprobante vivo" del cuadre: aprobado y no anulado.
-            bool isLive = invoice.Resultado == "A" && invoice.AnnulmentStatus != AnnulmentStatus.Succeeded;
-            if (!isLive) continue;
+            // Regla unica del cuadre: cuenta si el CAE esta aprobado (aunque la factura este anulada). La
+            // anulacion la refleja su Nota de Credito como abono; no se omite la factura para no descuadrar.
+            if (!ReservaInvoicingCuadreCalculator.CountsInNetBilled(invoice.Resultado)) continue;
 
             var category = InvoiceComprobanteHelpers.Categorize(invoice.TipoComprobante);
 
@@ -310,7 +316,8 @@ public class ReservaService : IReservaService
             Currency: Domain.Helpers.ArcaCurrencyMapper.ToIso(invoice.MonId) ?? Monedas.ARS,
             TipoComprobante: invoice.TipoComprobante,
             ImporteTotal: invoice.ImporteTotal,
-            IsLive: invoice.Resultado == "A" && invoice.AnnulmentStatus != AnnulmentStatus.Succeeded));
+            // Regla unica: cuenta el CAE aprobado aunque este anulado; la NC hace la resta (sin doble conteo).
+            IsLive: ReservaInvoicingCuadreCalculator.CountsInNetBilled(invoice.Resultado)));
 
         var facturadoPorMoneda = ReservaInvoicingCuadreCalculator.CalculatePerCurrency(invoiceLines);
 
@@ -1746,6 +1753,14 @@ public class ReservaService : IReservaService
         reserva.ChangesAckByUserName = actorUserName;
         reserva.ChangesAckAt = now;
 
+        // 2026-06-24: el motor de estados deja el texto del motivo de revision en LastRegressionReason/
+        // LastRegressionAt (los campos que el front ya usa para la franja informativa) cuando una reserva
+        // confirmada queda "con cambios" porque un servicio dejo de estar resuelto. Como esa marca y su motivo
+        // van en lockstep y solo los baja una persona, los limpiamos JUNTO con el OK. Asi no queda una franja
+        // "hay servicios sin resolver" colgada despues de que el dueño ya reviso.
+        reserva.LastRegressionReason = null;
+        reserva.LastRegressionAt = null;
+
         // ADR-027 (detalle, 2026-06-13): el OK borra TODO el detalle pendiente de la reserva. La auditoria de
         // "quien dio el OK" queda en la reserva (ChangesAckBy*); el detalle de los cambios ya no es "pendiente".
         var pendingChanges = await _context.ReservaPendingChanges
@@ -2000,7 +2015,13 @@ public class ReservaService : IReservaService
                 // detalle por moneda. Usamos el escalar de la fila para deuda/saldo a favor, y las senales de
                 // actividad (vendio algo / cobro algo) para distinguir "SinMovimientos" de "Saldado".
                 // H1 (2026-06-24): una reserva NUEVA en gestion sin cargos ni cobros NO debe decir "pagada".
-                bool hasCharges = item.TotalSale > 0m;
+                //
+                // H1b (2026-06-24, FIX): aca NO hay ConfirmedSale escalar en el DTO (ReservaListDto solo trae
+                // TotalSale). Pero el Balance escalar YA se calcula con la venta exigible (ConfirmedSale -
+                // TotalPaid), asi que la senal coherente de "hubo cargos exigibles" es Balance != 0 (no
+                // TotalSale, que es la venta cotizada). Asi una reserva cotizada-no-confirmada sin cobros
+                // (Balance 0, TotalPaid 0) queda en "SinMovimientos", igual que en los paths con filas hijas.
+                bool hasCharges = item.Balance != 0m;
                 bool hasPayments = item.TotalPaid > 0m;
                 item.CollectionStatus = ReservaCollectionStatus.Derive(
                     new[] { new ReservaCollectionLine(item.Balance, hasCharges, hasPayments) });
@@ -2029,10 +2050,13 @@ public class ReservaService : IReservaService
             // ADR-033 (E7/A5): estado de cobro derivado del saldo POR MONEDA de las filas hijas.
             // H1 (2026-06-24): pasamos tambien las senales de actividad (cargos / cobros) para que una reserva
             // con todo en 0 pero SIN movimientos diga "SinMovimientos" y no "Saldado" (que el front pinta "pagada").
+            // H1b (2026-06-24, FIX): la senal de CARGOS usa la venta EXIGIBLE (ConfirmedSale), NO la cotizada
+            // (TotalSale). El Balance se calcula con ConfirmedSale; usar TotalSale dejaba "pagada" a una reserva
+            // con servicios con precio pero NO confirmados y sin cobros (ver detalle en el path de detalle).
             item.CollectionStatus = ReservaCollectionStatus.Derive(
                 item.PorMoneda.Select(line => new ReservaCollectionLine(
                     line.Balance,
-                    hasCharges: line.TotalSale > 0m,
+                    hasCharges: line.ConfirmedSale > 0m,
                     hasPayments: line.TotalPaid > 0m)));
         }
     }
@@ -2040,9 +2064,11 @@ public class ReservaService : IReservaService
     /// <summary>
     /// ADR-037 (2026-06-21): llena <c>InvoicingStatus</c> de cada fila del listado con el carril de
     /// facturacion DERIVADO (mismo que el detalle). Para no recalcular el cuadre por reserva (N+1), suma el
-    /// FACTURADO NETO de toda la pagina en UNA query agrupada por reserva (facturas + ND - NC, solo
-    /// comprobantes VIVOS: CAE aprobado <c>Resultado == "A"</c> y no anulados <c>AnnulmentStatus != Succeeded</c>,
-    /// misma definicion de "vivo" que <c>ReservaInvoicingCuadreCalculator</c>) y deriva el estado por reserva.
+    /// FACTURADO NETO de toda la pagina en UNA query agrupada por reserva (facturas + ND - NC, contando todo
+    /// comprobante con CAE aprobado <c>Resultado == "A"</c> AUNQUE este anulado — misma regla
+    /// <c>ReservaInvoicingCuadreCalculator.CountsInNetBilled</c> que el detalle y el extracto) y deriva el
+    /// estado por reserva. La factura anulada sigue sumando y su Nota de Credito resta: la anulacion se
+    /// cuenta una sola vez (sin esto, full daba -monto y parcial restaba de mas).
     ///
     /// <para>Las reservas sin comprobantes vivos no aparecen en el agregado: quedan en "NotInvoiced" (el
     /// default del DTO), que es lo correcto. El <c>vendido</c> sale del escalar <c>TotalSale</c> que cada
@@ -2065,8 +2091,10 @@ public class ReservaService : IReservaService
             from invoice in _context.Invoices.AsNoTracking()
             join reservaPadre in _context.Reservas.AsNoTracking() on invoice.ReservaId equals reservaPadre.Id
             where publicIds.Contains(reservaPadre.PublicId)
+                  // Regla unica del facturado neto (CountsInNetBilled, inline porque EF no traduce el helper):
+                  // cuenta el CAE aprobado AUNQUE este anulado (Succeeded). NO se excluye Succeeded: la factura
+                  // anulada sigue sumando y su Nota de Credito resta -> la anulacion se cuenta UNA sola vez.
                   && invoice.Resultado == "A"
-                  && invoice.AnnulmentStatus != AnnulmentStatus.Succeeded
             group invoice by reservaPadre.PublicId into byReserva
             select new
             {
@@ -2187,10 +2215,17 @@ public class ReservaService : IReservaService
         // ADR-033 (E7/A5): estado de cobro derivado del saldo POR MONEDA (no del escalar, que mezcla ARS+USD).
         // H1 (2026-06-24): con senales de actividad (cargos / cobros) para distinguir "SinMovimientos" de "Saldado".
         // Una reserva nueva en gestion sin servicios ni cobros debe decir "SinMovimientos", no "pagada".
+        //
+        // H1b (2026-06-24, FIX del fix): la senal de CARGOS debe ser la venta EXIGIBLE (ConfirmedSale), NO la
+        // venta cotizada (TotalSale). El Balance se calcula con ConfirmedSale (Balance = ConfirmedSale -
+        // TotalPaid), asi que usar TotalSale para "hubo cargos" era incoherente: una reserva con servicios
+        // CON PRECIO pero NO confirmados por el operador y CERO cobros tiene TotalSale>0 (hasCharges=true) pero
+        // ConfirmedSale=0 -> Balance=0 -> caia en "Saldado" y el front la pintaba "pagada" sin haber cobrado
+        // nada. Con ConfirmedSale ese caso queda en "SinMovimientos", que es lo correcto.
         dto.CollectionStatus = ReservaCollectionStatus.Derive(
             dto.PorMoneda.Select(line => new ReservaCollectionLine(
                 line.Balance,
-                hasCharges: line.TotalSale > 0m,
+                hasCharges: line.ConfirmedSale > 0m,
                 hasPayments: line.TotalPaid > 0m)));
 
         // P3 (cuadre de facturacion): cuanto se facturo NETO al cliente (facturas + ND - NC,
@@ -2202,7 +2237,8 @@ public class ReservaService : IReservaService
             file.Invoices.Select(i => new CuadreInvoiceLine(
                 i.TipoComprobante,
                 i.ImporteTotal,
-                IsLive: i.Resultado == "A" && i.AnnulmentStatus != AnnulmentStatus.Succeeded)));
+                // Regla unica: cuenta el CAE aprobado aunque este anulado; la NC hace la resta (sin doble conteo).
+                IsLive: ReservaInvoicingCuadreCalculator.CountsInNetBilled(i.Resultado))));
         dto.FacturadoNeto = cuadre.FacturadoNeto;
         dto.DisponibleParaFacturar = cuadre.Disponible;
 
@@ -3266,18 +3302,48 @@ public class ReservaService : IReservaService
         payment.AffectsCash = true;
 
         _context.Payments.Add(payment);
-        await _context.SaveChangesAsync();
-        await UpdateBalanceAsync(reservaId);
 
-        // fix bug #6 (2026-06-17): EL AGUJERO de sobrepago. Este path anidado (POST /api/reservas/{id}/payments)
-        // no convertia el excedente en saldo a favor del cliente, asi que un cobro de mas dejaba un saldo
-        // NEGATIVO atrapado en la reserva, invisible al bolsillo del cliente y a "aplicar saldo a favor a otra
-        // reserva" (FC4). Ahora delega en el MISMO helper que el camino canonico (CreatePaymentAsync) — sin
-        // duplicar la regla. El actor sale de los helpers existentes de ReservaService (GetCurrentUser*OrNull).
-        await OverpaymentCreditConverter.ConvertAsync(
-            _context, payment, GetCurrentUserIdOrNull(), GetCurrentUserNameOrNull(), _logger);
+        // ARREGLO 1 (atomicidad del cobro, 2026-06-24): este path legacy anidado (POST /api/reservas/{id}/payments)
+        // tenia el MISMO problema que PaymentService.CreatePaymentAsync: el alta encadenaba SaveChanges sueltos
+        // (cobro -> recalculo del saldo + comision via UpdateBalanceAsync -> conversion del sobrepago en saldo a
+        // favor del cliente). Si se cortaba despues de crear el credito+puente pero antes del recalculo final, el
+        // excedente quedaba contado dos veces. Lo envolvemos en UNA transaccion (mismo patron que el canonico y
+        // que el resto del service). En InMemory (tests) el provider no soporta transacciones: corre sin ella.
+        //
+        // NOTA: este path no escribe el asiento de caja del cobro (es deuda conocida del camino legacy, no la
+        // tocamos aca); la transaccion igual cubre lo que SI escribe (cobro + saldo + comision + sobrepago).
+        if (_context.Database.IsRelational())
+        {
+            var strategy = _context.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async () =>
+            {
+                await using var transaction = await _context.Database.BeginTransactionAsync();
+                await PersistLegacyPaymentAsync();
+                await transaction.CommitAsync();
+            });
+        }
+        else
+        {
+            await PersistLegacyPaymentAsync();
+        }
 
         return _mapper.Map<PaymentDto>(payment);
+
+        // Cuerpo comun de persistencia (local function): cobro + recalculo de saldo/comision + conversion del
+        // sobrepago, reusable dentro y fuera de la transaccion.
+        async Task PersistLegacyPaymentAsync()
+        {
+            await _context.SaveChangesAsync();
+            await UpdateBalanceAsync(reservaId);
+
+            // fix bug #6 (2026-06-17): EL AGUJERO de sobrepago. Este path anidado (POST /api/reservas/{id}/payments)
+            // no convertia el excedente en saldo a favor del cliente, asi que un cobro de mas dejaba un saldo
+            // NEGATIVO atrapado en la reserva, invisible al bolsillo del cliente y a "aplicar saldo a favor a otra
+            // reserva" (FC4). Ahora delega en el MISMO helper que el camino canonico (CreatePaymentAsync) — sin
+            // duplicar la regla. El actor sale de los helpers existentes de ReservaService (GetCurrentUser*OrNull).
+            await OverpaymentCreditConverter.ConvertAsync(
+                _context, payment, GetCurrentUserIdOrNull(), GetCurrentUserNameOrNull(), _logger);
+        }
     }
 
     public async Task<PaymentDto> UpdatePaymentAsync(int reservaId, int paymentId, Payment updatedPayment)
@@ -4148,6 +4214,17 @@ public class ReservaService : IReservaService
         if (!string.IsNullOrWhiteSpace(emptyReason))
             throw new InvalidOperationException($"No se puede pasar a Operativo: {emptyReason}");
 
+        // GATE "confirmada con cambios" (2026-06-24): una reserva confirmada que tiene cambios sin revisar
+        // (un servicio dejo de estar resuelto, se quedo sin servicios, o se edito precio/costo) NO avanza al
+        // viaje hasta que una persona de el OK (endpoint acknowledge-changes). Antes este candado lo cumplia
+        // la regresion automatica (al volver a En gestion, el pase a Traveling no aplicaba); ahora la reserva
+        // queda en Confirmed, asi que la marca es la que frena el avance. Cubre tanto este pase manual como el
+        // automatico del job (que tiene el mismo gate). InvalidOperationException -> 409 en los controllers.
+        if (fullReserva.HasUnacknowledgedChanges)
+            throw new InvalidOperationException(
+                "No se puede pasar a En viaje: la reserva tiene cambios sin revisar. " +
+                "Revisa los cambios y da el OK antes de continuar.");
+
         // Inconsistencia de capacidad pasajeros vs servicios — bloqueo independiente del estado financiero.
         var capacityReason = await ReservaCapacityRules.GetBlockReasonAsync(_context, id, CancellationToken.None);
         if (!string.IsNullOrWhiteSpace(capacityReason))
@@ -4445,7 +4522,14 @@ public class ReservaService : IReservaService
         // cobro cruzado NO es deuda). Mismo criterio canonico que IsEconomicallySettled, que ya se calculo
         // arriba. Antes era "Balance == 0m" exacto: una reserva pagada de mas (Balance < 0) o con un resto
         // de centavo mostraba "no pagada / con deuda" — el bug "pagada y figura que debe".
-        dto.IsFullyPaid = dto.IsEconomicallySettled;
+        //
+        // H1b (2026-06-24): "Pagada" (IsFullyPaid) requiere ADEMAS que haya habido ACTIVIDAD EXIGIBLE. Una
+        // reserva cotizada-no-confirmada (ConfirmedSale=0) sin cobros tiene Balance=0 -> IsEconomicallySettled
+        // true, pero NO esta "pagada": no hay nada cobrado. Sin esto, las pantallas que usan IsFullyPaid
+        // directo (p. ej. el chip "Pagada" de cobros) heredan el bug "pagada sin cobrar".
+        // NO se toca IsEconomicallySettled (lo usa el gate de facturacion AFIP; cambiarlo es riesgoso).
+        bool hadCollectibleActivity = dto.ConfirmedSale > 0m || dto.TotalPaid > 0m;
+        dto.IsFullyPaid = dto.IsEconomicallySettled && hadCollectibleActivity;
         dto.HasOverdueDebt = dto.EndDate.HasValue
             && dto.EndDate.Value.Date < DateTime.UtcNow.Date
             && !dto.IsEconomicallySettled;
@@ -4465,7 +4549,14 @@ public class ReservaService : IReservaService
         // cobro cruzado NO es deuda). Mismo criterio canonico que IsEconomicallySettled, que ya se calculo
         // arriba. Antes era "Balance == 0m" exacto: una reserva pagada de mas (Balance < 0) o con un resto
         // de centavo mostraba "no pagada / con deuda" — el bug "pagada y figura que debe".
-        dto.IsFullyPaid = dto.IsEconomicallySettled;
+        //
+        // H1b (2026-06-24): "Pagada" (IsFullyPaid) requiere ADEMAS actividad EXIGIBLE. El ReservaListDto no
+        // trae ConfirmedSale escalar, pero el Balance escalar YA se calcula con la venta exigible
+        // (ConfirmedSale - TotalPaid): una reserva cotizada-no-confirmada sin cobros tiene Balance=0 y
+        // TotalPaid=0 -> sin actividad -> NO "pagada". Mismo arreglo del bug "pagada sin cobrar".
+        // NO se toca IsEconomicallySettled (lo usa el gate de facturacion AFIP).
+        bool hadCollectibleActivity = dto.Balance != 0m || dto.TotalPaid > 0m;
+        dto.IsFullyPaid = dto.IsEconomicallySettled && hadCollectibleActivity;
         dto.HasOverdueDebt = dto.EndDate.HasValue
             && dto.EndDate.Value.Date < DateTime.UtcNow.Date
             && !dto.IsEconomicallySettled;

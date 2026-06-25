@@ -85,6 +85,58 @@ public class ReservaInvoicingCuadreCalculatorTests
         Assert.Equal(20_000m, r.Exceso);
     }
 
+    // ============================================================================================
+    // FIX doble conteo de la anulacion (2026-06-25): la regla CountsInNetBilled cuenta el CAE aprobado
+    // AUNQUE este anulado (Succeeded). El llamador arma IsLive con esa regla, asi la factura anulada
+    // sigue sumando y su NC resta -> la anulacion se cuenta UNA sola vez.
+    // ============================================================================================
+
+    [Fact]
+    public void CountsInNetBilled_SoloElCaeAprobado_CuentaAunqueEsteAnulado()
+    {
+        // CAE aprobado cuenta (sin importar si despues se anulo: eso lo refleja la NC, no el filtro).
+        Assert.True(ReservaInvoicingCuadreCalculator.CountsInNetBilled("A"));
+        // Sin CAE firme no cuenta: PENDING, rechazado, null.
+        Assert.False(ReservaInvoicingCuadreCalculator.CountsInNetBilled("PENDING"));
+        Assert.False(ReservaInvoicingCuadreCalculator.CountsInNetBilled("R"));
+        Assert.False(ReservaInvoicingCuadreCalculator.CountsInNetBilled(null));
+    }
+
+    [Fact]
+    public void AnulacionTotal_FacturaAnuladaMasNC_FacturadoNetoCero()
+    {
+        // La factura anulada (CAE aprobado) SIGUE sumando porque CountsInNetBilled("A") = true; su NC resta.
+        // 80k (factura anulada, suma) - 80k (NC) = 0. Antes (excluyendo Succeeded) daba -80k.
+        bool facturaAnuladaCuenta = ReservaInvoicingCuadreCalculator.CountsInNetBilled("A");
+        bool ncCuenta = ReservaInvoicingCuadreCalculator.CountsInNetBilled("A");
+
+        var r = ReservaInvoicingCuadreCalculator.Calculate(80_000m, new[]
+        {
+            new CuadreInvoiceLine(11, 80_000m, IsLive: facturaAnuladaCuenta), // Factura C anulada
+            new CuadreInvoiceLine(13, 80_000m, IsLive: ncCuenta),             // NC C
+        });
+
+        Assert.Equal(0m, r.FacturadoNeto);
+        Assert.Equal(80_000m, r.Disponible);
+        Assert.False(r.Excedido);
+    }
+
+    [Fact]
+    public void NotaDeCreditoParcial_FacturaCompletaMenosLoAcreditado()
+    {
+        // NC parcial: la factura cuenta por su monto completo (100k) y la NC resta solo lo acreditado (30k).
+        // Facturado neto = 70k. Antes (si la factura caia en Succeeded y se excluia) daba -30k.
+        var r = ReservaInvoicingCuadreCalculator.Calculate(100_000m, new[]
+        {
+            new CuadreInvoiceLine(11, 100_000m, IsLive: ReservaInvoicingCuadreCalculator.CountsInNetBilled("A")),
+            new CuadreInvoiceLine(13, 30_000m, IsLive: ReservaInvoicingCuadreCalculator.CountsInNetBilled("A")),
+        });
+
+        Assert.Equal(70_000m, r.FacturadoNeto);
+        Assert.Equal(30_000m, r.Disponible);
+        Assert.False(r.Excedido);
+    }
+
     [Fact]
     public void ComprobantesNoVivos_NoCuentan()
     {

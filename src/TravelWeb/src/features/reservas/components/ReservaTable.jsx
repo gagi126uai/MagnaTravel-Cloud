@@ -99,17 +99,29 @@ export function ReservaTable({ reservas, onRowClick, onArchive }) {
                         Debe: {formatCurrency(reserva.balance)}
                       </div>
                     ) : reserva.collectionStatus === "SinMovimientos" ? (
-                      // Fix 2026-06-24: antes una reserva nueva aparecía como "Saldado" porque
-                      // balance=0 y el backend no distinguía "sin movimientos" de "pagada".
-                      // Ahora el backend envía collectionStatus="SinMovimientos" y lo mostramos
-                      // de forma neutra para no confundir al vendedor.
-                      // Q10 (2026-06-24): rótulo visible actualizado a "Sin movimientos" (spec guia-ux-gaston.md).
+                      // Sin movimientos: reserva nueva, sin cargos ni cobros todavía.
+                      // Fix 2026-06-24: antes aparecía como "Saldado" porque balance=0
+                      // y el backend no distinguía "sin movimientos" de "pagada".
                       <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400">
                         Sin movimientos
                       </span>
-                    ) : (
+                    ) : reserva.collectionStatus === "Saldado" ? (
+                      // Saldado: el backend lo confirmó explícitamente.
+                      // BUG MENOR-3 fix 2026-06-24: antes el else final asumía "Saldado" verde
+                      // para cualquier caso desconocido (SaldoAFavor, null, etc.) — incorrecto.
                       <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400">
                         Saldado
+                      </span>
+                    ) : reserva.collectionStatus === "SaldoAFavor" ? (
+                      // El cliente pagó de más: hay saldo a favor en su cuenta.
+                      <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400">
+                        A favor
+                      </span>
+                    ) : (
+                      // Estado desconocido o DTO sin collectionStatus: gris neutro.
+                      // Nunca mostrar "Saldado" verde si el backend no lo afirmó.
+                      <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                        Sin movimientos
                       </span>
                     )}
                   </div>

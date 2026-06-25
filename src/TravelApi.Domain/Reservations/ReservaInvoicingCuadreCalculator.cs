@@ -4,9 +4,11 @@ using TravelApi.Domain.Entities;
 namespace TravelApi.Domain.Reservations;
 
 /// <summary>
-/// Una linea de comprobante para el calculo del cuadre: su tipo AFIP, su importe total
-/// y si esta "vivo" (CAE aprobado y no anulado). El llamador arma esta lista desde las
-/// Invoices de la reserva.
+/// Una linea de comprobante para el calculo del cuadre: su tipo AFIP, su importe total y si CUENTA en el
+/// facturado neto (<see cref="IsLive"/> = CAE aprobado, AUNQUE este anulado — ver
+/// <see cref="ReservaInvoicingCuadreCalculator.CountsInNetBilled"/>). El llamador arma esta lista desde las
+/// Invoices de la reserva usando esa regla unica, para que la factura anulada siga sumando y su Nota de
+/// Credito reste (sin doble conteo de la anulacion).
 /// </summary>
 public readonly record struct CuadreInvoiceLine(int TipoComprobante, decimal ImporteTotal, bool IsLive);
 
@@ -15,6 +17,7 @@ public readonly record struct CuadreInvoiceLine(int TipoComprobante, decimal Imp
 /// MONEDA ISO ("ARS"/"USD") del comprobante. El llamador la deriva de <c>Invoice.MonId</c> (codigo ARCA
 /// "PES"/"DOL") con <c>ArcaCurrencyMapper.ToIso</c>; si MonId viene vacio o no se reconoce, normaliza a
 /// ARS (regla legacy: factura sin moneda = pesos). Asi el cuadre se agrupa por moneda sin mezclar.
+/// <see cref="IsLive"/> usa la misma regla <see cref="ReservaInvoicingCuadreCalculator.CountsInNetBilled"/>.
 /// </summary>
 public readonly record struct CuadreInvoiceLineByCurrency(
     string Currency, int TipoComprobante, decimal ImporteTotal, bool IsLive);
@@ -114,9 +117,33 @@ public static class ReservaInvoicingCuadreCalculator
     }
 
     /// <summary>
-    /// Regla de signo UNICA del cuadre: una factura/ND viva suma su importe, una NC viva lo resta, y todo
-    /// lo demas (no vivo, tipo desconocido) aporta 0. La comparten el calculo escalar y el por-moneda para
-    /// que nunca tengan criterios distintos de "que cuenta y con que signo".
+    /// Regla UNICA de "este comprobante cuenta en el FACTURADO NETO".
+    ///
+    /// <para>Cuenta cualquier comprobante con CAE APROBADO (<c>Resultado == "A"</c>), AUNQUE este anulado
+    /// (<c>AnnulmentStatus = Succeeded</c>). Esto es deliberado y es el corazon del fix de doble conteo:
+    /// cuando se anula una factura, la factura original queda Succeeded y nace una Nota de Credito (CAE
+    /// aprobado, sin anular). Si excluyeramos la factura Succeeded del lado que SUMA, la anulacion se
+    /// contaria DOS veces (la factura deja de sumar Y la NC resta) y el facturado neto se iria a negativo.
+    /// Dejando que la factura siga sumando y que la NC reste, la cuenta cierra:</para>
+    /// <list type="bullet">
+    ///   <item>Anulacion TOTAL: factura 80k (Succeeded, suma) + NC 80k (resta) = facturado neto 0.</item>
+    ///   <item>NC PARCIAL: factura 100k (suma) + NC 30k (resta) = facturado neto 70k.</item>
+    /// </list>
+    ///
+    /// <para>NO confundir con el guard de cancelacion <c>hasLiveCae</c> (en ReservaService), que SI excluye
+    /// las Succeeded y las NCs a proposito: ese responde otra pregunta ("hay una factura de venta viva para
+    /// anular?"). Esta regla es solo para el CUADRE / facturado neto / extracto.</para>
+    ///
+    /// <para>Un comprobante sin CAE aprobado (PENDING, rechazado, null) NO cuenta: todavia no es facturacion
+    /// fiscal firme.</para>
+    /// </summary>
+    public static bool CountsInNetBilled(string? resultado)
+        => resultado == "A";
+
+    /// <summary>
+    /// Regla de signo UNICA del cuadre: una factura/ND que cuenta suma su importe, una NC que cuenta lo
+    /// resta, y todo lo demas (no cuenta, tipo desconocido) aporta 0. La comparten el calculo escalar y el
+    /// por-moneda para que nunca tengan criterios distintos de "que cuenta y con que signo".
     /// </summary>
     private static decimal SignedNetAmount(int tipoComprobante, decimal importeTotal, bool isLive)
     {

@@ -26,8 +26,10 @@ import React from 'react';
  *   invoicingStatus, isUnderCorrection.
  *
  * collectionStatus posibles: "ConDeuda" | "SaldoAFavor" | "Saldado" | "SinMovimientos".
- * Fix 2026-06-24: "SinMovimientos" ya no se muestra como "Pagada" (era "Saldado" antes
- * de que el backend distinguiera los dos casos).
+ * Fix 2026-06-24 (SinMovimientos): "SinMovimientos" ya no se muestra como "Pagada".
+ * Fix 2026-06-24 (BUG MENOR-1): se eliminó el fallback a isFullyPaid — "Pagada" SOLO
+ *   cuando collectionStatus === "Saldado" (explícito del backend). Sin collectionStatus
+ *   no se muestra chip para no mostrar información incorrecta.
  *
  * Feedback 2026-06-19 (cambio 6): chips más chicos para no competir con el badge de estado.
  */
@@ -61,10 +63,9 @@ export function ReservaStatusChips({ reserva }) {
     //   "ConDeuda"       → debe algo (chip rojo solo en Confirmed + ventana de aviso)
     //   "SaldoAFavor"    → cobró de más (no generamos chip de pago; se muestra en otro lado)
     //
-    // Fix 2026-06-24: antes "SinMovimientos" llegaba como "Saldado" (bug del backend ya
-    // corregido). El chip "Sin movimientos" evita confundir "reserva nueva" con "reserva pagada".
-    //
-    // Fallback a isFullyPaid si el backend no envía collectionStatus (DTOs viejos).
+    // Fix 2026-06-24 (SinMovimientos): antes llegaba como "Saldado" (bug del backend ya corregido).
+    // Fix 2026-06-24 (BUG MENOR-1): eliminado el fallback a isFullyPaid — solo se muestra "Pagada"
+    // cuando collectionStatus===Saldado explícito. Sin collectionStatus → sin chip (más seguro).
     let chipPago = null;
     const collectionStatus = reserva.collectionStatus;
 
@@ -79,9 +80,14 @@ export function ReservaStatusChips({ reserva }) {
             className: 'bg-slate-100 text-slate-500 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700',
             title: 'Todavía no hay movimientos de plata registrados para esta reserva.',
         };
-    } else if (collectionStatus === 'Saldado' || (!collectionStatus && reserva.isFullyPaid)) {
-        // Saldado: el cliente pagó todo lo que debía.
-        // El fallback a isFullyPaid cubre DTOs de endpoints que aún no devuelven collectionStatus.
+    } else if (collectionStatus === 'Saldado') {
+        // Saldado: el cliente pagó todo lo que debía (el backend lo afirmó explícitamente).
+        //
+        // BUG MENOR-1 fix 2026-06-24: se elimina el fallback a isFullyPaid.
+        // Antes: si collectionStatus no venía en el DTO, isFullyPaid=true hacía aparecer "Pagada"
+        // aunque la reserva no tuviera ningún cobro (balance=0 por defecto, sin movimientos).
+        // Ahora: "Pagada" SOLO cuando el backend dice Saldado de forma explícita.
+        // Si collectionStatus no viene → no mostramos chip de pago (caso raro/legacy).
         chipPago = {
             key: 'paid',
             label: 'Pagada',

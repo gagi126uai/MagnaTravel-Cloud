@@ -225,24 +225,76 @@ public class ReservaInvoicedPerCurrencyTests
     }
 
     [Fact]
-    public async Task FacturaAnulada_NoCuenta_ComoFacturado()
+    public async Task FacturaAnuladaConSuNotaDeCredito_LaAnulacionSeCuentaUnaVez()
     {
+        // FIX doble conteo (por moneda): una factura anulada (Succeeded) SIGUE sumando, y su Nota de Credito
+        // resta. Antes la factura Succeeded se excluia del lado que suma Y la NC restaba -> la anulacion se
+        // contaba DOS veces y el facturado neto se iba a negativo. Escenario realista de anulacion total +
+        // refacturacion: factura 90k anulada + NC 90k + factura nueva 40k = facturado neto 40k.
         await using var context = CreateContext();
         var reserva = new Reserva { Id = 1, NumeroReserva = "R-1", Name = "R1", Status = EstadoReserva.Confirmed };
         context.Reservas.Add(reserva);
         context.Servicios.Add(ConfirmedService(10, reserva.Id, "ARS", salePrice: 90_000m));
 
-        // Una factura anulada (Succeeded) y una viva: solo la viva cuenta.
+        // Factura original anulada (Succeeded): sigue contando como facturado.
         var anulada = LiveInvoice(reserva.Id, tipoComprobante: 11, importe: 90_000m, monIdArca: "PES", numero: 1);
         anulada.AnnulmentStatus = AnnulmentStatus.Succeeded;
         context.Invoices.Add(anulada);
-        context.Invoices.Add(LiveInvoice(reserva.Id, tipoComprobante: 11, importe: 40_000m, monIdArca: "PES", numero: 2));
+        // NC C (tipo 13) por el total: resta los 90k anulados.
+        context.Invoices.Add(LiveInvoice(reserva.Id, tipoComprobante: 13, importe: 90_000m, monIdArca: "PES", numero: 2));
+        // Refacturacion parcial nueva de 40k.
+        context.Invoices.Add(LiveInvoice(reserva.Id, tipoComprobante: 11, importe: 40_000m, monIdArca: "PES", numero: 3));
         await context.SaveChangesAsync();
 
         var dto = await CreateService(context).GetReservaByIdAsync(reserva.PublicId.ToString(), CancellationToken.None);
 
         var ars = LineOf(dto, "ARS");
-        Assert.Equal(40_000m, ars.FacturadoNeto);
+        Assert.Equal(40_000m, ars.FacturadoNeto); // 90k (anulada, suma) - 90k (NC) + 40k (nueva)
         Assert.Equal(90_000m - 40_000m, ars.DisponibleParaFacturar);
+    }
+
+    [Fact]
+    public async Task AnulacionTotal_FacturadoNetoCero()
+    {
+        // Anulacion TOTAL sin refacturar: factura 80k anulada (Succeeded) + NC 80k = facturado neto 0
+        // (antes daba -80k porque la factura dejaba de sumar y la NC restaba).
+        await using var context = CreateContext();
+        var reserva = new Reserva { Id = 1, NumeroReserva = "R-2", Name = "R2", Status = EstadoReserva.Confirmed };
+        context.Reservas.Add(reserva);
+        context.Servicios.Add(ConfirmedService(10, reserva.Id, "ARS", salePrice: 80_000m));
+
+        var anulada = LiveInvoice(reserva.Id, tipoComprobante: 11, importe: 80_000m, monIdArca: "PES", numero: 1);
+        anulada.AnnulmentStatus = AnnulmentStatus.Succeeded;
+        context.Invoices.Add(anulada);
+        context.Invoices.Add(LiveInvoice(reserva.Id, tipoComprobante: 13, importe: 80_000m, monIdArca: "PES", numero: 2));
+        await context.SaveChangesAsync();
+
+        var dto = await CreateService(context).GetReservaByIdAsync(reserva.PublicId.ToString(), CancellationToken.None);
+
+        var ars = LineOf(dto, "ARS");
+        Assert.Equal(0m, ars.FacturadoNeto);
+        Assert.Equal(80_000m, ars.DisponibleParaFacturar); // queda todo por refacturar
+    }
+
+    [Fact]
+    public async Task NotaDeCreditoParcial_RestaSoloLoAcreditado()
+    {
+        // NC PARCIAL: factura 100k viva + NC 30k = facturado neto 70k (antes daba -30k: la factura NO estaba
+        // anulada pero el bug aparece igual cuando la factura cae en Succeeded; aca verificamos el caso parcial
+        // canonico donde la factura sigue viva y la NC parcial solo resta lo acreditado).
+        await using var context = CreateContext();
+        var reserva = new Reserva { Id = 1, NumeroReserva = "R-3", Name = "R3", Status = EstadoReserva.Confirmed };
+        context.Reservas.Add(reserva);
+        context.Servicios.Add(ConfirmedService(10, reserva.Id, "ARS", salePrice: 100_000m));
+
+        context.Invoices.Add(LiveInvoice(reserva.Id, tipoComprobante: 11, importe: 100_000m, monIdArca: "PES", numero: 1));
+        context.Invoices.Add(LiveInvoice(reserva.Id, tipoComprobante: 13, importe: 30_000m, monIdArca: "PES", numero: 2));
+        await context.SaveChangesAsync();
+
+        var dto = await CreateService(context).GetReservaByIdAsync(reserva.PublicId.ToString(), CancellationToken.None);
+
+        var ars = LineOf(dto, "ARS");
+        Assert.Equal(70_000m, ars.FacturadoNeto);
+        Assert.Equal(30_000m, ars.DisponibleParaFacturar);
     }
 }

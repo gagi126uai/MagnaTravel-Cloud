@@ -217,4 +217,44 @@ public class LifecycleFixes20260624Tests
         // No transiciono: sigue en Presupuesto.
         Assert.Equal(EstadoReserva.Budget, (await context.Reservas.FindAsync(1))!.Status);
     }
+
+    // ===================== El proceso nocturno YA NO regresa Confirmed -> En gestion =====================
+
+    [Fact]
+    public async Task NightlyReconciliation_ConfirmedWithUnresolvedService_DoesNotRegress_OnlyMarksChanges()
+    {
+        // 2026-06-24 (alineado a Odoo/SAP): la reconciliacion nocturna corre el mismo motor sobre todas las
+        // Confirmed/En gestion. Antes regresaba a En gestion las Confirmed con servicios sin resolver; ahora NO
+        // mueve el estado: las deja Confirmed pero marcadas "confirmada con cambios". Y como es cura en lote,
+        // no notifica (suppressNotifications interno).
+        await using var context = NewContext();
+        context.Reservas.Add(new Reserva
+        {
+            Id = 1, NumeroReserva = "F-2026-RECON", Name = "Confirmada con servicio sin resolver",
+            Status = EstadoReserva.Confirmed, ResponsibleUserId = "vendedor-1"
+        });
+        // Un servicio resuelto + uno sin resolver: rompe "todo resuelto".
+        context.HotelBookings.Add(new HotelBooking
+        {
+            Id = 10, ReservaId = 1, HotelName = "Resuelto", Status = WorkflowStatuses.Confirmado, ConfirmedAt = DateTime.UtcNow
+        });
+        context.HotelBookings.Add(new HotelBooking
+        {
+            Id = 11, ReservaId = 1, HotelName = "Sin resolver", Status = WorkflowStatuses.Solicitado
+        });
+        await context.SaveChangesAsync();
+
+        var job = NewLifecycleJob(context);
+        var reconciled = await job.ReconcileAutoStatesAsync(CancellationToken.None);
+
+        // No curo ningun ESTADO (no regreso nada): el contador queda en 0.
+        Assert.Equal(0, reconciled);
+
+        var stored = await context.Reservas.FindAsync(1);
+        Assert.Equal(EstadoReserva.Confirmed, stored!.Status);     // NO regreso a En gestion
+        Assert.True(stored.HasUnacknowledgedChanges);              // pero quedo marcada para revisar
+
+        // Cura en lote: no notifica.
+        Assert.Empty(context.Notifications.Where(n => n.RelatedEntityId == 1));
+    }
 }

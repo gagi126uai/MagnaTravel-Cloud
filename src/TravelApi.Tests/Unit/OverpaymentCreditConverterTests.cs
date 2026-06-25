@@ -276,4 +276,56 @@ public class OverpaymentCreditConverterTests
         var reserva = await context.Reservas.AsNoTracking().FirstAsync(r => r.Id == 1);
         Assert.Equal(0m, reserva.Balance);
     }
+
+    // ============================ ARREGLO 1 — atomicidad: el sobrepago no se duplica ============================
+
+    /// <summary>
+    /// ARREGLO 1 (atomicidad del cobro, 2026-06-24): el bug que la transaccion envolvente previene es que el
+    /// excedente quede contado DOS veces (como saldo a favor del cliente Y como saldo negativo de la reserva).
+    /// Este test verifica el ESTADO CONSISTENTE final del camino feliz: tras un cobro con sobrepago hay
+    /// EXACTAMENTE un credito vivo y UN solo puente vivo, y la reserva queda en 0 (ni a favor ni en contra).
+    ///
+    /// <para>La atomicidad REAL ante un corte a mitad solo se puede verificar contra Postgres (InMemory no
+    /// soporta transacciones: BeginTransactionAsync es no-op). Aca cubrimos que la secuencia completa deja un
+    /// estado unico y bien cuadrado, sin artefactos duplicados.</para>
+    /// </summary>
+    [Fact]
+    public async Task CanonicalCreatePayment_WithOverpayment_DoesNotDuplicateCreditOrBridge()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedReservaWithPayerAsync(context, salePrice: 100m);
+
+        var service = BuildPaymentService(context);
+        var reservaPublicId = await context.Reservas.AsNoTracking()
+            .Where(r => r.Id == 1).Select(r => r.PublicId).FirstAsync();
+
+        await service.CreatePaymentAsync(
+            new CreatePaymentRequest { ReservaId = reservaPublicId.ToString(), Amount = 130m, Method = "Transfer" },
+            CancellationToken.None);
+
+        // UN solo credito vivo por el excedente (30), no dos.
+        var liveCredits = await context.ClientCreditEntries.AsNoTracking()
+            .Where(c => c.CustomerId == 1 && c.RemainingBalance > 0m)
+            .ToListAsync();
+        var credit = Assert.Single(liveCredits);
+        Assert.Equal(30m, credit.RemainingBalance);
+
+        // UN solo puente vivo (negativo) que saca ese excedente del saldo de la reserva.
+        var liveBridges = await context.Payments.IgnoreQueryFilters().AsNoTracking()
+            .Where(p => p.ReservaId == 1
+                && p.Method == OverpaymentCreditCleanup.BridgeMethod
+                && !p.IsDeleted)
+            .ToListAsync();
+        var bridge = Assert.Single(liveBridges);
+        Assert.Equal(-30m, bridge.Amount);
+
+        // La reserva queda saldada en 0: el excedente NO quedo ademas como saldo negativo (no doble conteo).
+        var reserva = await context.Reservas.AsNoTracking().FirstAsync(r => r.Id == 1);
+        Assert.Equal(0m, reserva.Balance);
+
+        // El detalle por moneda tambien queda en 0 (la fuente de verdad multimoneda no quedo sobre-pagada).
+        var ars = await context.ReservaMoneyByCurrency.AsNoTracking()
+            .FirstAsync(m => m.ReservaId == 1 && m.Currency == Monedas.Normalizar("ARS"));
+        Assert.Equal(0m, ars.Balance);
+    }
 }

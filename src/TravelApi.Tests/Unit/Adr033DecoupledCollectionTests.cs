@@ -578,6 +578,154 @@ public class Adr033DecoupledCollectionTests
     }
 
     // =====================================================================================================
+    // H1b (2026-06-24) — RAIZ del bug "Pagada sin cobrar". La senal de CARGOS para derivar el estado de cobro
+    // DEBE ser la venta EXIGIBLE (ConfirmedSale), NO la venta cotizada (TotalSale). El Balance se calcula con
+    // ConfirmedSale; usar TotalSale dejaba una reserva con servicios CON PRECIO pero NO confirmados y SIN
+    // cobros como "Saldado" (el front la pintaba "pagada") cuando deberia ser "SinMovimientos".
+    //
+    // Estos tests usan el calculador REAL (ReservaMoneyCalculator) para producir la linea de plata de una
+    // reserva cotizada-no-confirmada, y luego derivan el estado con la MISMA construccion de senal que la
+    // produccion (hasCharges: line.ConfirmedSale > 0). Asi el test se rompe si alguien vuelve a TotalSale.
+    // =====================================================================================================
+
+    /// <summary>Hotel cotizado pero NO confirmado por el operador (status "Solicitado"): cuenta para el
+    /// total comercial (TotalSale) pero NO resuelve, asi que NO suma a ConfirmedSale.</summary>
+    private static Reserva BuildReservaWithQuotedUnconfirmedHotel(decimal salePrice)
+    {
+        return new Reserva
+        {
+            Name = "Cotizacion sin confirmar",
+            NumeroReserva = "RES-H1B",
+            Status = EstadoReserva.InManagement,
+            HotelBookings = new List<HotelBooking>
+            {
+                new HotelBooking
+                {
+                    HotelName = "Hotel cotizado",
+                    Status = "Solicitado", // cotizado, NO confirmado -> no resuelve
+                    Currency = "ARS",
+                    SalePrice = salePrice,
+                    NetCost = 0m,
+                }
+            },
+            Payments = new List<Payment>(), // sin cobros
+        };
+    }
+
+    [Fact]
+    public void Calculator_QuotedUnconfirmedHotelNoPayments_HasSaleButNoConfirmedSaleAndZeroBalance()
+    {
+        // Sustenta el bug: TotalSale > 0 (hay precio), ConfirmedSale = 0 (no resuelto), Balance = 0 (no exigible).
+        var reserva = BuildReservaWithQuotedUnconfirmedHotel(salePrice: 1500m);
+
+        var summary = TravelApi.Domain.Reservations.ReservaMoneyCalculator.Calculate(reserva);
+        var ars = summary.PorMoneda["ARS"];
+
+        Assert.Equal(1500m, ars.TotalSale);    // cotizado
+        Assert.Equal(0m, ars.ConfirmedSale);   // no confirmado -> no exigible
+        Assert.Equal(0m, ars.TotalPaid);       // sin cobros
+        Assert.Equal(0m, ars.Balance);         // Balance = ConfirmedSale - TotalPaid = 0
+    }
+
+    [Fact]
+    public void CollectionStatus_QuotedUnconfirmedNoPayments_IsNoCharges_NotSettled()
+    {
+        // (a) cotizada-no-confirmada sin cobros -> SinMovimientos (NO "pagada").
+        // Construimos la senal IGUAL que la produccion: hasCharges = ConfirmedSale > 0.
+        var reserva = BuildReservaWithQuotedUnconfirmedHotel(salePrice: 1500m);
+        var summary = TravelApi.Domain.Reservations.ReservaMoneyCalculator.Calculate(reserva);
+
+        var status = ReservaCollectionStatus.Derive(summary.PorMoneda.Values.Select(line =>
+            new ReservaCollectionLine(
+                line.Balance,
+                hasCharges: line.ConfirmedSale > 0m,
+                hasPayments: line.TotalPaid > 0m)));
+
+        Assert.Equal(ReservaCollectionStatus.NoCharges, status);
+    }
+
+    [Fact]
+    public void CollectionStatus_QuotedUnconfirmed_OldTotalSaleSignal_WouldHaveBeenSettled_RegressionGuard()
+    {
+        // Documenta EXACTAMENTE el bug que se arregla: con la senal VIEJA (hasCharges: TotalSale > 0) la misma
+        // reserva caia en "Saldado" -> "pagada". Si alguien revierte la senal a TotalSale, este test recuerda
+        // por que esta mal (no es un test del comportamiento deseado, es la prueba del agujero historico).
+        var reserva = BuildReservaWithQuotedUnconfirmedHotel(salePrice: 1500m);
+        var summary = TravelApi.Domain.Reservations.ReservaMoneyCalculator.Calculate(reserva);
+
+        var statusConSenalVieja = ReservaCollectionStatus.Derive(summary.PorMoneda.Values.Select(line =>
+            new ReservaCollectionLine(
+                line.Balance,
+                hasCharges: line.TotalSale > 0m, // <-- senal VIEJA (incorrecta)
+                hasPayments: line.TotalPaid > 0m)));
+
+        Assert.Equal(ReservaCollectionStatus.Settled, statusConSenalVieja); // el bug
+    }
+
+    [Fact]
+    public void CollectionStatus_ConfirmedWithDebt_IsWithDebt()
+    {
+        // (b) confirmada con deuda -> ConDeuda. Hotel confirmado (resuelve) y sin cobro.
+        var reserva = new Reserva
+        {
+            Name = "Confirmada con deuda", NumeroReserva = "RES-H1B-2", Status = EstadoReserva.Confirmed,
+            HotelBookings = new List<HotelBooking>
+            {
+                new HotelBooking { HotelName = "H", Status = "Confirmado", Currency = "ARS", SalePrice = 2000m }
+            },
+            Payments = new List<Payment>(),
+        };
+        var summary = TravelApi.Domain.Reservations.ReservaMoneyCalculator.Calculate(reserva);
+
+        var status = ReservaCollectionStatus.Derive(summary.PorMoneda.Values.Select(line =>
+            new ReservaCollectionLine(line.Balance, line.ConfirmedSale > 0m, line.TotalPaid > 0m)));
+
+        Assert.Equal(ReservaCollectionStatus.WithDebt, status);
+    }
+
+    [Fact]
+    public void CollectionStatus_ConfirmedAndPaidInFull_IsSettled()
+    {
+        // (c) confirmada y pagada (balance 0) -> Saldado. Hotel confirmado + cobro que iguala la venta.
+        var reserva = new Reserva
+        {
+            Name = "Confirmada pagada", NumeroReserva = "RES-H1B-3", Status = EstadoReserva.Confirmed,
+            HotelBookings = new List<HotelBooking>
+            {
+                new HotelBooking { HotelName = "H", Status = "Confirmado", Currency = "ARS", SalePrice = 2000m }
+            },
+            Payments = new List<Payment> { new Payment { Amount = 2000m, Currency = "ARS", Status = "Confirmed" } },
+        };
+        var summary = TravelApi.Domain.Reservations.ReservaMoneyCalculator.Calculate(reserva);
+
+        var status = ReservaCollectionStatus.Derive(summary.PorMoneda.Values.Select(line =>
+            new ReservaCollectionLine(line.Balance, line.ConfirmedSale > 0m, line.TotalPaid > 0m)));
+
+        Assert.Equal(ReservaCollectionStatus.Settled, status);
+    }
+
+    [Fact]
+    public void CollectionStatus_ConfirmedAndOverpaid_IsCreditBalance()
+    {
+        // (d) cobro de mas -> SaldoAFavor. Hotel confirmado + cobro mayor a la venta.
+        var reserva = new Reserva
+        {
+            Name = "Confirmada sobrepago", NumeroReserva = "RES-H1B-4", Status = EstadoReserva.Confirmed,
+            HotelBookings = new List<HotelBooking>
+            {
+                new HotelBooking { HotelName = "H", Status = "Confirmado", Currency = "ARS", SalePrice = 2000m }
+            },
+            Payments = new List<Payment> { new Payment { Amount = 2500m, Currency = "ARS", Status = "Confirmed" } },
+        };
+        var summary = TravelApi.Domain.Reservations.ReservaMoneyCalculator.Calculate(reserva);
+
+        var status = ReservaCollectionStatus.Derive(summary.PorMoneda.Values.Select(line =>
+            new ReservaCollectionLine(line.Balance, line.ConfirmedSale > 0m, line.TotalPaid > 0m)));
+
+        Assert.Equal(ReservaCollectionStatus.CreditBalance, status);
+    }
+
+    // =====================================================================================================
     // A1 / E2 — cobro A NIVEL SERVICIO (CreatePaymentAsync) sobre una reserva FINALIZADA (Closed) con deuda.
     // La regla de dominio (IsCollectable/EnsureCollectable) ya esta cubierta a nivel unitario; aca probamos
     // el path de servicio end-to-end: que el cobro se REGISTRE, se impute y el Balance quede recalculado.

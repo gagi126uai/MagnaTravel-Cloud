@@ -17,8 +17,21 @@ public static class NotificationTypes
     /// <summary>
     /// ADR-020 (decision #6): regresion automatica Confirmed -> En gestion. Type DEDICADO para que el
     /// dedup ("ya avise hoy de esta reserva") matchee SOLO regresiones y no cualquier Warning urgente.
+    ///
+    /// <para>OBSOLETO (2026-06-24): la regresion automatica Confirmed -> En gestion se elimino (las reservas
+    /// confirmadas ya no vuelven solas a En gestion; en su lugar quedan marcadas "confirmada con cambios", ver
+    /// <see cref="ReservaNeedsReview"/>). Esta constante se conserva para no romper avisos historicos ya
+    /// persistidos con este Type, pero NO se generan nuevos.</para>
     /// </summary>
     public const string ReservaAutoRegression = "ReservaAutoRegression";
+
+    /// <summary>
+    /// 2026-06-24 (reemplaza a <see cref="ReservaAutoRegression"/>): una reserva confirmada quedo MARCADA
+    /// "confirmada con cambios / revisar" porque un servicio dejo de estar resuelto o se quedo sin servicios
+    /// (antes esto la regresaba a En gestion; ahora la deja en Confirmed y solo avisa). Type DEDICADO para que
+    /// el dedup ("ya avise hoy de esta reserva") matchee SOLO este aviso y no cualquier Warning urgente.
+    /// </summary>
+    public const string ReservaNeedsReview = "ReservaNeedsReview";
 }
 
 public class Notification

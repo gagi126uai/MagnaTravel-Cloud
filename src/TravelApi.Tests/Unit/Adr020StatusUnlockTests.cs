@@ -99,10 +99,11 @@ public class Adr020StatusUnlockTests
         ResponsibleUserId = responsibleUserId
     };
 
-    // ===================== (a) Cambio de ESTADO: exento del candado + dispara regresion =====================
+    // ===================== (a) Cambio de ESTADO: exento del candado + marca "con cambios" =====================
+    // 2026-06-24: ya NO regresa de estado (la regresion automatica se elimino). Queda Confirmed + marcada.
 
     [Fact]
-    public async Task UpdateHotelStatus_OnConfirmedReserva_WithoutAuthorization_Succeeds_AndRegressesToInManagement()
+    public async Task UpdateHotelStatus_OnConfirmedReserva_WithoutAuthorization_Succeeds_AndMarksChanges()
     {
         await using var ctx = NewContext();
         // Reserva confirmada cuyo unico servicio estaba resuelto (Confirmado por el operador).
@@ -116,12 +117,15 @@ public class Adr020StatusUnlockTests
         await ctx.SaveChangesAsync();
 
         // El operador des-confirmo el hotel (lo paso a Solicitado). NO hay autorizacion viva:
-        // debe pasar igual (no es decision de la agencia) y romper "todo resuelto" -> regresion.
+        // debe pasar igual (no es decision de la agencia) y romper "todo resuelto". La reserva NO regresa de
+        // estado: queda Confirmed pero MARCADA "confirmada con cambios / revisar".
         var dto = await NewBookingService(ctx).UpdateHotelStatusAsync("10", "Solicitado", null, CancellationToken.None);
 
         Assert.Equal("Solicitado", dto.Status);
         Assert.Equal("Solicitado", (await ctx.HotelBookings.FindAsync(10))!.Status);
-        Assert.Equal(EstadoReserva.InManagement, (await ctx.Reservas.FindAsync(1))!.Status);
+        var reserva = await ctx.Reservas.FindAsync(1);
+        Assert.Equal(EstadoReserva.Confirmed, reserva!.Status);
+        Assert.True(reserva.HasUnacknowledgedChanges);
         // No se creo ningun registro de "cambio bajo candado": el candado nunca intervino.
         Assert.Empty(ctx.ReservaEditAuthorizationChanges);
     }
@@ -174,8 +178,11 @@ public class Adr020StatusUnlockTests
         Assert.NotNull(hotel.CancelledAt); // rastro de cancelacion estampado
         // El candado nunca intervino (es realidad del operador, no edicion de la agencia).
         Assert.Empty(ctx.ReservaEditAuthorizationChanges);
-        // El servicio cancelado sale de la resolucion -> la reserva regresa a En gestion.
-        Assert.Equal(EstadoReserva.InManagement, (await ctx.Reservas.FindAsync(1))!.Status);
+        // El servicio cancelado sale de la resolucion: la reserva NO regresa de estado (2026-06-24), queda
+        // Confirmed pero marcada "confirmada con cambios" (se quedo sin servicios vivos).
+        var reserva = await ctx.Reservas.FindAsync(1);
+        Assert.Equal(EstadoReserva.Confirmed, reserva!.Status);
+        Assert.True(reserva.HasUnacknowledgedChanges);
     }
 
     [Fact]

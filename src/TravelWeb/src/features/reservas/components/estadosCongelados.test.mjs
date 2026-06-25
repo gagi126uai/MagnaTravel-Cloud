@@ -1,13 +1,19 @@
 /**
- * Tests de lógica pura para los dos cambios de UI del 2026-06-22:
+ * Tests de lógica pura para los dos cambios de UI del 2026-06-22 + fixes de 2026-06-24:
  *
  * Cambio 1 — Comprobantes: en estado congelado solo se puede VER un comprobante
- *   ya emitido. Las acciones de escritura (Emitir, Anular comprobante, Editar cobro,
- *   Eliminar cobro) desaparecen.
+ *   ya emitido. Las acciones de escritura (Emitir, Anular comprobante) desaparecen.
  *
  * Cambio 2 — Banner "Pedí autorización": solo debe aparecer en "Confirmada".
  *   En Traveling y Closed el vendedor ya tiene el cartel de solo-lectura;
  *   el banner ámbar no aporta nada.
+ *
+ * BUG IMP-3 fix 2026-06-24 — Editar/Eliminar cobro se gobiernan por la capacidad
+ *   `canEditOrDeletePayment` del backend, no por el helper `congelado`.
+ *   En Closed el backend pone esa capacidad en false aunque congelado=false.
+ *
+ * BUG IMP-4 fix 2026-06-24 — esCongeladoParaRecibos NO incluye FullyInvoiced.
+ *   Facturación y cobranza son ejes separados (ADR-037).
  *
  * Cómo correr:
  *   node --test src/features/reservas/components/estadosCongelados.test.mjs
@@ -16,16 +22,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-// ─── Réplica del helper esEstadoCongelado (ReservaDetailPage.jsx) ─────────────
+// ─── Réplica del helper esEstadoCongelado (para vouchers y documentos) ────────
 
 /**
- * Un estado es "congelado" cuando:
+ * Un estado es "congelado para vouchers/documentos" cuando:
  *  - La reserva ya arrancó (Traveling) → el viaje está en curso.
  *  - Está perdida (Lost) o anulada (Cancelled) → proceso cerrado.
+ *  - Esperando reembolso (PendingOperatorRefund) → en solo lectura.
  *  - Ya está completamente facturada (FullyInvoiced) → no se emiten más documentos.
  *
- * NO es congelado: Confirmed, InManagement, Budget, Quotation, Closed, etc.
- * (en Closed todavía se puede facturar, por eso no es congelado).
+ * NO es congelado: Confirmed, InManagement, Budget, Quotation, Closed (sin FullyInvoiced).
+ * (en Closed todavía se puede facturar, por eso no es congelado para vouchers salvo que
+ * ya esté completamente facturado).
+ *
+ * NOTA: este helper NO se usa para los recibos de cobro (ver esCongeladoParaRecibos).
  */
 function esEstadoCongelado(reserva) {
   if (!reserva) return false;
@@ -38,77 +48,141 @@ function esEstadoCongelado(reserva) {
   );
 }
 
-// ── Estados que SÍ son congelados ─────────────────────────────────────────────
+/**
+ * Réplica de esCongeladoParaRecibos (ReservaDetailPage.jsx).
+ * Controla si se puede emitir o anular el RECIBO de un cobro.
+ *
+ * BUG IMP-4 fix 2026-06-24: NO incluye FullyInvoiced porque facturación y cobranza
+ * son ejes separados (ADR-037). Una reserva FullyInvoiced puede seguir teniendo
+ * cobros que necesiten recibo.
+ */
+function esCongeladoParaRecibos(reserva) {
+  if (!reserva) return false;
+  return (
+    reserva.status === "Traveling" ||
+    reserva.status === "Lost" ||
+    reserva.status === "Cancelled" ||
+    reserva.status === "PendingOperatorRefund"
+  );
+}
 
-test("congelado: Traveling → true (viaje en curso, solo lectura)", () => {
+// ── Estados que SÍ son congelados para VOUCHERS ───────────────────────────────
+
+test("congelado vouchers: Traveling → true (viaje en curso, solo lectura)", () => {
   assert.equal(esEstadoCongelado({ status: "Traveling", invoicingStatus: "NotInvoiced" }), true);
 });
 
-test("congelado: Lost → true (cerrada sin cobro)", () => {
+test("congelado vouchers: Lost → true (cerrada sin cobro)", () => {
   assert.equal(esEstadoCongelado({ status: "Lost", invoicingStatus: "NotInvoiced" }), true);
 });
 
-test("congelado: Cancelled → true (anulada formalmente)", () => {
+test("congelado vouchers: Cancelled → true (anulada formalmente)", () => {
   assert.equal(esEstadoCongelado({ status: "Cancelled", invoicingStatus: "NotInvoiced" }), true);
 });
 
-test("congelado: PendingOperatorRefund → true (anulada esperando reembolso, decisión 2026-06-22)", () => {
+test("congelado vouchers: PendingOperatorRefund → true (anulada esperando reembolso, decisión 2026-06-22)", () => {
   assert.equal(esEstadoCongelado({ status: "PendingOperatorRefund", invoicingStatus: "NotInvoiced" }), true);
 });
 
-test("congelado: FullyInvoiced → true sin importar el status operativo", () => {
-  // Una reserva Confirmed pero ya con facturación completa no puede emitir más.
+test("congelado vouchers: FullyInvoiced → true sin importar el status operativo", () => {
+  // Una reserva Confirmed pero ya con facturación completa no puede emitir más documentos.
   assert.equal(esEstadoCongelado({ status: "Confirmed", invoicingStatus: "FullyInvoiced" }), true);
 });
 
-test("congelado: Closed + FullyInvoiced → true", () => {
+test("congelado vouchers: Closed + FullyInvoiced → true", () => {
   assert.equal(esEstadoCongelado({ status: "Closed", invoicingStatus: "FullyInvoiced" }), true);
 });
 
-// ── Estados que NO son congelados ─────────────────────────────────────────────
+// ── Estados que NO son congelados para VOUCHERS ───────────────────────────────
 
-test("no congelado: Confirmed con factura parcial → false (puede emitir más)", () => {
+test("no congelado vouchers: Confirmed con factura parcial → false (puede emitir más)", () => {
   assert.equal(esEstadoCongelado({ status: "Confirmed", invoicingStatus: "PartiallyInvoiced" }), false);
 });
 
-test("no congelado: Confirmed sin facturar → false", () => {
+test("no congelado vouchers: Confirmed sin facturar → false", () => {
   assert.equal(esEstadoCongelado({ status: "Confirmed", invoicingStatus: "NotInvoiced" }), false);
 });
 
-test("no congelado: InManagement → false", () => {
+test("no congelado vouchers: InManagement → false", () => {
   assert.equal(esEstadoCongelado({ status: "InManagement", invoicingStatus: "NotInvoiced" }), false);
 });
 
-test("no congelado: Budget → false", () => {
+test("no congelado vouchers: Budget → false", () => {
   assert.equal(esEstadoCongelado({ status: "Budget", invoicingStatus: "NotInvoiced" }), false);
 });
 
-test("no congelado: Quotation → false", () => {
+test("no congelado vouchers: Quotation → false", () => {
   assert.equal(esEstadoCongelado({ status: "Quotation", invoicingStatus: "NotInvoiced" }), false);
 });
 
-test("no congelado: Closed sin factura → false (puede facturar desde Finalizada, ADR-037)", () => {
+test("no congelado vouchers: Closed sin factura → false (puede facturar desde Finalizada, ADR-037)", () => {
   // En Closed todavía se puede emitir factura (desacople de facturación ADR-037).
   assert.equal(esEstadoCongelado({ status: "Closed", invoicingStatus: "NotInvoiced" }), false);
 });
 
-test("no congelado: reserva null → false (degradación elegante)", () => {
+test("no congelado vouchers: reserva null → false (degradación elegante)", () => {
   assert.equal(esEstadoCongelado(null), false);
   assert.equal(esEstadoCongelado(undefined), false);
+});
+
+// ── esCongeladoParaRecibos: BUG IMP-4 fix ────────────────────────────────────
+
+test("recibos: Traveling → congelado (viaje en curso)", () => {
+  assert.equal(esCongeladoParaRecibos({ status: "Traveling" }), true);
+});
+
+test("recibos: Lost → congelado", () => {
+  assert.equal(esCongeladoParaRecibos({ status: "Lost" }), true);
+});
+
+test("recibos: Cancelled → congelado", () => {
+  assert.equal(esCongeladoParaRecibos({ status: "Cancelled" }), true);
+});
+
+test("recibos: PendingOperatorRefund → congelado", () => {
+  assert.equal(esCongeladoParaRecibos({ status: "PendingOperatorRefund" }), true);
+});
+
+test("recibos: Confirmed + FullyInvoiced → NO congelado (BUG IMP-4 fix: ADR-037)", () => {
+  // Una reserva totalmente facturada puede seguir teniendo cobros pendientes.
+  // FullyInvoiced no bloquea emitir/anular el recibo de un cobro.
+  assert.equal(esCongeladoParaRecibos({ status: "Confirmed", invoicingStatus: "FullyInvoiced" }), false);
+});
+
+test("recibos: Closed → NO congelado (el bloqueo de editar viene de canEditOrDeletePayment)", () => {
+  // Closed: emitir un recibo de un cobro reciente sigue siendo válido.
+  // El bloqueo de Editar/Eliminar viene del capability del backend, no de este helper.
+  assert.equal(esCongeladoParaRecibos({ status: "Closed" }), false);
+});
+
+test("recibos: InManagement → NO congelado", () => {
+  assert.equal(esCongeladoParaRecibos({ status: "InManagement" }), false);
+});
+
+test("recibos: null → false (degradación elegante)", () => {
+  assert.equal(esCongeladoParaRecibos(null), false);
 });
 
 // ─── Réplica: lógica de PaymentReceiptActions con prop congelado ───────────────
 
 /**
  * Réplica de la lógica de visibilidad dentro de PaymentReceiptActions.
- * Devuelve un objeto con qué elementos se muestran para un cobro dado.
+ * `congelado` aquí es el resultado de esCongeladoParaRecibos (sin FullyInvoiced).
+ * `canEditarEliminar` viene de la capacidad `canEditOrDeletePayment.allowed` del backend.
+ *
+ * BUG IMP-3 fix 2026-06-24: Editar/Eliminar ya no dependen de `congelado` sino de
+ * `canEditarEliminar` (la capacidad real del backend).
  */
-function resolverAccionesRecibo({ receipt, payment, congelado }) {
+function resolverAccionesRecibo({ receipt, payment, congelado, canEditarEliminar }) {
   const tieneRecibo = Boolean(receipt);
   const estaAnulado = receipt?.status === "Voided";
   const puedeEmitir = !tieneRecibo &&
     (payment?.entryType === "Payment") &&
     Number(payment?.amount || 0) > 0;
+
+  // Editar/Eliminar: se rigen por la capacidad del backend + guard de recibo anulado.
+  // BUG IMP-3 fix: antes era !congelado && !reciboAnulado.
+  const cobroEditable = Boolean(canEditarEliminar) && !estaAnulado;
 
   if (tieneRecibo) {
     return {
@@ -116,8 +190,11 @@ function resolverAccionesRecibo({ receipt, payment, congelado }) {
       chipVisible: true,
       // Ver PDF: visible solo si el recibo no está anulado.
       verPdfVisible: !estaAnulado,
-      // Anular comprobante: solo si no anulado Y no congelado.
+      // Anular comprobante: solo si no anulado Y no congelado (para recibos).
       anularVisible: !estaAnulado && !congelado,
+      // Editar/Eliminar cobro: dependen de canEditarEliminar + guard de recibo anulado.
+      editarVisible: cobroEditable,
+      eliminarVisible: cobroEditable,
       // Emitir: no aplica (ya tiene recibo).
       emitirVisible: false,
       // "Sin comprobante": no aplica.
@@ -125,12 +202,14 @@ function resolverAccionesRecibo({ receipt, payment, congelado }) {
     };
   }
 
-  // Sin recibo y congelado: nada se muestra (ni "Sin comprobante").
+  // Sin recibo y congelado para recibos: nada se muestra (ni "Sin comprobante").
   if (congelado) {
     return {
       chipVisible: false,
       verPdfVisible: false,
       anularVisible: false,
+      editarVisible: cobroEditable,
+      eliminarVisible: cobroEditable,
       emitirVisible: false,
       sinComprobanteVisible: false,
     };
@@ -141,6 +220,8 @@ function resolverAccionesRecibo({ receipt, payment, congelado }) {
     chipVisible: false,
     verPdfVisible: false,
     anularVisible: false,
+    editarVisible: cobroEditable,
+    eliminarVisible: cobroEditable,
     emitirVisible: puedeEmitir,
     sinComprobanteVisible: !puedeEmitir,
   };
@@ -148,29 +229,51 @@ function resolverAccionesRecibo({ receipt, payment, congelado }) {
 
 // ── Con recibo vigente ─────────────────────────────────────────────────────────
 
-test("recibo: con recibo vigente en normal → chip + Ver PDF + Anular visibles", () => {
+test("recibo: con recibo vigente en normal + canEditarEliminar=true → chip + Ver PDF + Anular + Editar + Eliminar visibles", () => {
   const result = resolverAccionesRecibo({
     receipt: { status: "Issued", receiptNumber: "R-001" },
     payment: { entryType: "Payment", amount: 1000 },
     congelado: false,
+    canEditarEliminar: true,
   });
   assert.equal(result.chipVisible, true);
   assert.equal(result.verPdfVisible, true);
   assert.equal(result.anularVisible, true);
+  assert.equal(result.editarVisible, true);
+  assert.equal(result.eliminarVisible, true);
   assert.equal(result.emitirVisible, false);
 });
 
-test("recibo: con recibo vigente en CONGELADO → chip + Ver PDF visibles, Anular OCULTO", () => {
+test("recibo: con recibo vigente en CONGELADO (para recibos) → chip + Ver PDF + Editar (si permitido), Anular OCULTO", () => {
   // Decisión UX 2026-06-22: "ver/imprimir un papel ya hecho" sí; "anular" no.
+  // BUG IMP-3: Editar/Eliminar ahora dependen de canEditarEliminar, no de congelado.
   const result = resolverAccionesRecibo({
     receipt: { status: "Issued", receiptNumber: "R-001" },
     payment: { entryType: "Payment", amount: 1000 },
     congelado: true,
+    canEditarEliminar: true,
   });
   assert.equal(result.chipVisible, true);
   assert.equal(result.verPdfVisible, true);
-  assert.equal(result.anularVisible, false, "Anular debe ocultarse en congelado");
+  assert.equal(result.anularVisible, false, "Anular debe ocultarse cuando congelado para recibos");
+  assert.equal(result.editarVisible, true, "Editar depende de canEditarEliminar, no de congelado");
   assert.equal(result.emitirVisible, false);
+});
+
+test("recibo: con recibo vigente + canEditarEliminar=false (Closed) → Editar y Eliminar OCULTOS", () => {
+  // BUG IMP-3 fix: en Closed el backend devuelve canEditOrDeletePayment=false.
+  // Antes del fix: congelado=false en Closed → aparecían los botones aunque el backend los rechazara.
+  const result = resolverAccionesRecibo({
+    receipt: { status: "Issued", receiptNumber: "R-001" },
+    payment: { entryType: "Payment", amount: 1000 },
+    congelado: false,
+    canEditarEliminar: false,
+  });
+  assert.equal(result.editarVisible, false, "Editar oculto cuando backend dice canEditOrDeletePayment=false");
+  assert.equal(result.eliminarVisible, false, "Eliminar oculto cuando backend dice canEditOrDeletePayment=false");
+  assert.equal(result.chipVisible, true, "El chip de número sigue visible");
+  assert.equal(result.verPdfVisible, true, "Ver PDF sigue visible");
+  assert.equal(result.anularVisible, true, "Anular sigue disponible si no congelado");
 });
 
 test("recibo: comprobante ya anulado en CONGELADO → solo chip visible (sin Ver PDF ni Anular)", () => {
@@ -178,65 +281,82 @@ test("recibo: comprobante ya anulado en CONGELADO → solo chip visible (sin Ver
     receipt: { status: "Voided", receiptNumber: "R-002" },
     payment: { entryType: "Payment", amount: 1000 },
     congelado: true,
+    canEditarEliminar: false,
   });
   assert.equal(result.chipVisible, true);
   assert.equal(result.verPdfVisible, false);
   assert.equal(result.anularVisible, false);
+  assert.equal(result.editarVisible, false, "Recibo anulado bloquea Editar aunque el capability lo permita");
 });
 
 // ── Sin recibo ─────────────────────────────────────────────────────────────────
 
-test("sin recibo: cobro emitible en normal → botón Emitir visible", () => {
+test("sin recibo: cobro emitible en normal + canEditarEliminar=true → Emitir + Editar + Eliminar visibles", () => {
   const result = resolverAccionesRecibo({
     receipt: null,
     payment: { entryType: "Payment", amount: 500 },
     congelado: false,
+    canEditarEliminar: true,
   });
   assert.equal(result.emitirVisible, true);
+  assert.equal(result.editarVisible, true);
+  assert.equal(result.eliminarVisible, true);
   assert.equal(result.sinComprobanteVisible, false);
   assert.equal(result.chipVisible, false);
 });
 
-test("sin recibo: cobro emitible en CONGELADO → nada visible (ni Emitir ni 'Sin comprobante')", () => {
-  // Regla de UX: en congelado no se ofrece emitir ni se muestra el texto informativo.
+test("sin recibo: cobro emitible en CONGELADO (para recibos) → Emitir y 'Sin comprobante' ocultos; Editar según capability", () => {
+  // Regla de UX: en congelado para recibos no se ofrece emitir ni se muestra el texto informativo.
+  // Editar/Eliminar siguen dependiendo de canEditarEliminar (pueden ser accesibles si el backend lo permite).
   const result = resolverAccionesRecibo({
     receipt: null,
     payment: { entryType: "Payment", amount: 500 },
     congelado: true,
+    canEditarEliminar: false,
   });
-  assert.equal(result.emitirVisible, false, "Emitir debe ocultarse en congelado");
-  assert.equal(result.sinComprobanteVisible, false, "'Sin comprobante' debe ocultarse en congelado");
+  assert.equal(result.emitirVisible, false, "Emitir debe ocultarse en congelado para recibos");
+  assert.equal(result.sinComprobanteVisible, false, "'Sin comprobante' debe ocultarse en congelado para recibos");
   assert.equal(result.chipVisible, false);
   assert.equal(result.verPdfVisible, false);
   assert.equal(result.anularVisible, false);
+  assert.equal(result.editarVisible, false);
+  assert.equal(result.eliminarVisible, false);
 });
 
-test("sin recibo: cobro no emitible (ajuste/crédito) en normal → 'Sin comprobante' visible", () => {
+test("sin recibo: cobro no emitible (ajuste/crédito) en normal + canEditarEliminar=false → 'Sin comprobante' visible, sin Editar", () => {
   // Un cobro de tipo "Adjustment" no genera recibo aunque sea no-congelado.
   const result = resolverAccionesRecibo({
     receipt: null,
     payment: { entryType: "Adjustment", amount: 100 },
     congelado: false,
+    canEditarEliminar: false,
   });
   assert.equal(result.emitirVisible, false);
   assert.equal(result.sinComprobanteVisible, true);
+  assert.equal(result.editarVisible, false);
+  assert.equal(result.eliminarVisible, false);
 });
 
-// ─── Réplica: visibilidad de la columna "Acciones" (Editar/Eliminar cobro) ────
+// ─── Réplica: visibilidad de Editar/Eliminar cobro (ahora vía canEditarEliminar) ──
 
 /**
- * Los botones Editar cobro y Eliminar cobro mueven plata → solo en no-congelado.
+ * BUG IMP-3 fix: Editar y Eliminar cobro se gobiernan por la capacidad del backend.
+ * Ya no dependen de !congelado; el backend decide según el estado de la reserva.
  */
-function muestraColumnAccionesCobro(congelado) {
-  return !congelado;
+function muestraAccionesCobro({ canEditarEliminar, reciboAnulado }) {
+  return Boolean(canEditarEliminar) && !reciboAnulado;
 }
 
-test("columna acciones cobro: no congelado → visible", () => {
-  assert.equal(muestraColumnAccionesCobro(false), true);
+test("acciones cobro: canEditarEliminar=true sin recibo anulado → Editar y Eliminar visibles", () => {
+  assert.equal(muestraAccionesCobro({ canEditarEliminar: true, reciboAnulado: false }), true);
 });
 
-test("columna acciones cobro: congelado → oculta", () => {
-  assert.equal(muestraColumnAccionesCobro(true), false);
+test("acciones cobro: canEditarEliminar=false (Closed/terminal) → Editar y Eliminar OCULTOS", () => {
+  assert.equal(muestraAccionesCobro({ canEditarEliminar: false, reciboAnulado: false }), false);
+});
+
+test("acciones cobro: recibo anulado (aunque canEditarEliminar=true) → Editar y Eliminar OCULTOS", () => {
+  assert.equal(muestraAccionesCobro({ canEditarEliminar: true, reciboAnulado: true }), false);
 });
 
 // ─── Réplica: botones de escritura en vouchers (Zona C) ───────────────────────

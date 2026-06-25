@@ -17,10 +17,19 @@ namespace TravelApi.Infrastructure.Services.Reservations;
 /// segunda transicion):</para>
 /// <list type="number">
 /// <item>Estampa <c>ConfirmedAt</c> en los servicios que acaban de pasar a confirmados por el operador.</item>
-/// <item>Si TODOS los servicios vivos estan resueltos y la reserva esta En gestion -&gt; Confirmada.
-///   Si la reserva estaba Confirmada y dejo de estar todo resuelto -&gt; vuelve a En gestion + aviso
-///   urgente al vendedor (fallback admins si no hay responsable; sin duplicar el mismo dia).</item>
+/// <item>Si TODOS los servicios vivos estan resueltos y la reserva esta En gestion -&gt; Confirmada (auto-confirm
+///   hacia adelante).</item>
+/// <item>Si la reserva estaba Confirmada y dejo de estar todo resuelto (o se quedo sin servicios vivos): YA NO
+///   la regresa a En gestion. La deja EN Confirmed pero MARCADA "confirmada con cambios / revisar"
+///   (<c>HasUnacknowledgedChanges</c>, mismo mecanismo que la edicion de precio/costo) + aviso urgente al
+///   vendedor (fallback admins; sin duplicar el mismo dia). El sistema solo avisa; la persona decide. La marca
+///   solo la baja una persona (endpoint acknowledge-changes) y, mientras este puesta, frena el pase automatico
+///   a "En viaje" (gate en el job de lifecycle y en el pase manual).</item>
 /// </list>
+///
+/// <para>CAMBIO DE FONDO (2026-06-24, alineado a Odoo/SAP): se elimino la regresion automatica Confirmed -&gt;
+/// En gestion. Una reserva confirmada nunca vuelve sola a un estado anterior. El auto-confirm hacia adelante se
+/// mantiene intacto.</para>
 ///
 /// <para>Concurrencia: last-write-wins aceptado (el motor es idempotente por evaluacion de estado
 /// total). La reconciliacion nocturna del job cura cualquier reserva que haya esquivado el chokepoint.</para>
@@ -42,14 +51,16 @@ public class ReservaAutoStateService
 
     /// <summary>
     /// Evalua una reserva y aplica (con su propio SaveChanges) el estampado de ConfirmedAt y la
-    /// transicion automatica que corresponda. Devuelve <c>true</c> si hubo un cambio de estado real
-    /// (forward o regresion) — lo usa la reconciliacion nocturna para contar cuantas curo.
+    /// transicion automatica que corresponda. Devuelve <c>true</c> SOLO si hubo un cambio de ESTADO real (hoy
+    /// el unico es el auto-confirm InManagement -&gt; Confirmed) — lo usa la reconciliacion nocturna para contar
+    /// cuantas curo. Marcar una reserva "confirmada con cambios" NO cuenta como cambio de estado (no la cura,
+    /// solo la marca), asi que no infla ese contador.
     ///
-    /// <para><paramref name="suppressNotifications"/>: cuando es true NO se crea el aviso de regresion.
-    /// Lo usa la reconciliacion nocturna (ADR-020 §4.4): es una CURA en lote, no un evento en vivo, y
-    /// su PRIMERA corrida tras el deploy regresaria en masa reservas historicas Confirmed que con las
-    /// reglas nuevas tienen servicios sin resolver — un aviso por cada una seria ruido. La marca
-    /// LastRegressionReason SI se setea igual (la franja naranja queda), solo se calla la campana.</para>
+    /// <para><paramref name="suppressNotifications"/>: cuando es true NO se crea el aviso de "confirmada con
+    /// cambios / revisar". Lo usa la reconciliacion nocturna: es una CURA en lote, no un evento en vivo, y su
+    /// PRIMERA corrida tras el deploy marcaria en masa reservas historicas Confirmed que con las reglas nuevas
+    /// tienen servicios sin resolver — un aviso por cada una seria ruido. La marca (HasUnacknowledgedChanges +
+    /// el texto del motivo) SI se setea igual, solo se calla la campana.</para>
     /// </summary>
     public async Task<bool> EvaluateAndApplyAsync(int reservaId, bool suppressNotifications = false, CancellationToken ct = default)
     {
@@ -65,6 +76,9 @@ public class ReservaAutoStateService
 
         var now = DateTime.UtcNow;
         bool anyChange = StampConfirmedAt(reserva, now);
+        // Marca "confirmada con cambios" recien puesta en esta evaluacion: hay que persistirla y avisar, pero
+        // NO es un cambio de ESTADO, asi que no infla el contador de "reservas curadas" de la reconciliacion.
+        bool needsReviewMarked = false;
 
         // El motor solo opera en la frontera InManagement <-> Confirmed. En cualquier otro estado
         // (Quotation, Budget, Traveling, Closed, Lost, Cancelled...) no toca el estado. (ADR-036: ToSettle murio.)
@@ -80,22 +94,31 @@ public class ReservaAutoStateService
             {
                 ApplyTransition(reserva, EstadoReserva.Confirmed, "Forward", now,
                     "Todos los servicios resueltos: confirmacion automatica");
-                // La reserva volvio a estar OK: la franja naranja de regresion ya no aplica.
-                reserva.LastRegressionReason = null;
-                reserva.LastRegressionAt = null;
                 anyChange = true;
+                // OJO: NO se limpia aca la marca "confirmada con cambios" (HasUnacknowledgedChanges) ni su
+                // motivo. Esa marca representa "el dueño todavia no reviso un cambio" y solo la baja una
+                // PERSONA (endpoint acknowledge-changes). Que los servicios se vuelvan a resolver solos no
+                // significa que el dueño ya vio lo que paso; el aviso queda hasta que de el OK.
             }
             else if (string.Equals(reserva.Status, EstadoReserva.Confirmed, StringComparison.OrdinalIgnoreCase) && !allResolved)
             {
-                var regressionReason = BuildRegressionReason(reserva);
-                ApplyTransition(reserva, EstadoReserva.InManagement, "Revert", now, regressionReason);
-                // Decision #6: el frontend muestra una franja naranja con este motivo hasta que la
-                // reserva se vuelva a auto-confirmar (ahi se limpia, ver rama Forward).
-                reserva.LastRegressionReason = regressionReason;
-                reserva.LastRegressionAt = now;
-                if (!suppressNotifications)
-                    await NotifyRegressionAsync(reserva, now, ct);
-                anyChange = true;
+                // CAMBIO DE FONDO (2026-06-24, alineado a Odoo/SAP): una reserva confirmada YA NO vuelve sola a
+                // "En gestion" cuando un servicio deja de estar resuelto (el operador cancelo/reprogramo, se
+                // agrego un servicio nuevo, o se quedo sin servicios vivos). Regresarla de estado era un
+                // movimiento automatico sorpresivo que pisaba lo que el usuario veia. En su lugar la dejamos
+                // EN Confirmed pero MARCADA "confirmada con cambios / revisar" (mismo mecanismo que usa la
+                // edicion de precio/costo, ADR-027): el sistema solo AVISA, la persona decide que hacer.
+                //
+                // CRITICO (cobertura del hueco): mientras la marca este puesta, el gate de pase a "En viaje"
+                // (job nocturno y pase manual) NO promueve la reserva. Antes la regresion cumplia ese rol
+                // (al no estar en Confirmed, el job no la tomaba); ahora ese candado lo da la marca.
+                bool marked = MarkNeedsReview(reserva, now);
+                if (marked)
+                {
+                    needsReviewMarked = true;
+                    if (!suppressNotifications)
+                        await NotifyNeedsReviewAsync(reserva, now, ct);
+                }
             }
         }
 
@@ -108,10 +131,10 @@ public class ReservaAutoStateService
         // SaveChanges para persistir el lead en la misma transaccion que el cambio del motor (todo o nada).
         bool leadMarkedWon = await SourceLeadWonHook.MarkSourceLeadAsWonIfReservaIsFirmAsync(_context, reserva, ct);
 
-        // Persistimos si el motor cambio el estado O si el hook acabo de marcar el lead como Ganado. Usamos
-        // el bool preciso del hook (no ChangeTracker.HasChanges() global) para no flushear cambios ajenos que
-        // el contexto compartido pudiera tener pendientes en los flujos de plata.
-        if (anyChange || leadMarkedWon)
+        // Persistimos si el motor cambio el estado, O si acaba de marcar la reserva "con cambios para revisar",
+        // O si el hook marco el lead como Ganado. Usamos bools precisos (no ChangeTracker.HasChanges() global)
+        // para no flushear cambios ajenos que el contexto compartido pudiera tener pendientes en los flujos de plata.
+        if (anyChange || needsReviewMarked || leadMarkedWon)
             await _context.SaveChangesAsync(ct);
 
         // El return sigue siendo "hubo cambio de ESTADO" (lo que cuenta la reconciliacion como reserva curada):
@@ -174,20 +197,87 @@ public class ReservaAutoStateService
     }
 
     /// <summary>
-    /// ADR-020 (decision #6): arma el texto de la franja naranja. Intenta nombrar el/los tipo(s) de
-    /// servicio que dejaron de estar resueltos (lo mas accionable que podemos derivar sin input humano).
-    /// Si no logra identificar ninguno (caso raro), cae a un mensaje generico.
+    /// Deja la reserva confirmada MARCADA "confirmada con cambios / revisar" (sin cambiar su estado) cuando un
+    /// servicio dejo de estar resuelto o se quedo sin servicios vivos. Reusa el mismo mecanismo que la edicion
+    /// de precio/costo (ADR-027): <c>HasUnacknowledgedChanges</c> + <c>ChangesPendingSince</c>. La marca solo la
+    /// baja una PERSONA (endpoint acknowledge-changes), nunca se limpia sola.
+    ///
+    /// <para>Devuelve <c>true</c> si esta evaluacion ACABA de poner la marca (no estaba puesta). Si ya estaba
+    /// marcada, refresca solo el texto del motivo (por si cambio que servicio quedo sin resolver) y devuelve
+    /// <c>false</c> — asi no se re-dispara el aviso ni se re-pisa la fecha "desde cuando esta pendiente".</para>
+    ///
+    /// <para><c>ChangesPendingSince</c> NO se re-pisa si ya habia algo pendiente (idempotente, mismo criterio
+    /// que <c>MarkUnacknowledgedChangesIfLiveAsync</c> en ReservaService): representa "desde cuando hay algo
+    /// para revisar".</para>
     /// </summary>
-    private static string BuildRegressionReason(Reserva reserva)
+    private bool MarkNeedsReview(Reserva reserva, DateTime now)
+    {
+        var reason = BuildNeedsReviewReason(reserva);
+
+        // Texto del motivo: se guarda en LastRegressionReason/LastRegressionAt, los campos que el frontend ya
+        // lee para mostrar la franja informativa. Tras sacar la regresion, estos campos pasaron a significar
+        // "motivo por el que hay que revisar la reserva" (ya no "volvio a En gestion"). Se refresca siempre
+        // (puede haber cambiado que servicio quedo sin resolver). Lo limpia el acknowledge junto con la marca.
+        reserva.LastRegressionReason = reason;
+        reserva.LastRegressionAt = now;
+
+        // Si ya estaba marcada, no es una marca NUEVA: no re-disparamos aviso ni re-pisamos la fecha.
+        if (reserva.HasUnacknowledgedChanges)
+            return false;
+
+        reserva.HasUnacknowledgedChanges = true;
+        reserva.ChangesPendingSince = now;
+
+        _logger.LogInformation(
+            "Auto-state: Reserva {ReservaId} queda Confirmada pero marcada 'confirmada con cambios' (un servicio dejo de estar resuelto o se quedo sin servicios). Motivo: {Reason}",
+            reserva.Id, reason);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Arma el texto del motivo de revision. Intenta nombrar el/los tipo(s) de servicio que dejaron de estar
+    /// resueltos (lo mas accionable que podemos derivar sin input humano). Si la reserva quedo sin servicios
+    /// vivos, lo dice claro. Si no logra identificar ninguno (caso raro), cae a un mensaje neutro. Sin datos
+    /// sensibles (ni montos ni pasajeros).
+    /// </summary>
+    private static string BuildNeedsReviewReason(Reserva reserva)
     {
         // Reusa la fuente unica de "que servicios vivos siguen sin resolver" (misma que usa el voucher).
         var unresolvedTypes = ServiceResolutionRules.GetUnresolvedLiveServiceLabels(reserva);
 
-        if (unresolvedTypes.Count == 0)
-            return "Un servicio dejo de estar resuelto: regresion automatica a En gestion";
+        if (unresolvedTypes.Count > 0)
+            return $"Hay servicios que dejaron de estar resueltos: {string.Join(", ", unresolvedTypes)}. " +
+                   "Puede ser un servicio nuevo o que el operador cancelo/reprogramo uno confirmado. Revisala.";
 
-        return $"Volvio a En gestion porque hay servicios sin resolver: {string.Join(", ", unresolvedTypes)}. " +
-               "Puede ser un servicio nuevo o que el operador cancelo/reprogramo uno confirmado.";
+        // La lista de "sin resolver" puede venir VACIA cuando la reserva quedo SIN NINGUN servicio vivo (se
+        // cancelaron o eliminaron todos). En ese caso ningun servicio "dejo de estar resuelto" (no hay
+        // servicios), asi que lo decimos como lo que es, no con el mensaje de servicios pendientes.
+        bool hasAnyLiveService = HasAnyLiveService(reserva);
+        if (!hasAnyLiveService)
+            return "La reserva quedo sin servicios activos (se cancelaron o eliminaron todos). " +
+                   "Agrega al menos un servicio o revisa la reserva.";
+
+        // Caso teorico residual (hay servicios vivos pero no se pudo nombrar ninguno como sin resolver).
+        return "La reserva tiene cambios para revisar antes de avanzar al viaje.";
+    }
+
+    /// <summary>
+    /// True si la reserva tiene AL MENOS un servicio vivo (no cancelado) en cualquiera de sus 6 colecciones.
+    /// Mismo criterio de "vivo" que <see cref="AllLiveServicesResolved"/> (usa los predicados IsCancelled),
+    /// para no divergir: si este metodo dice "no hay vivos", el motor tambien conto liveCount = 0.
+    /// </summary>
+    private static bool HasAnyLiveService(Reserva reserva)
+    {
+        bool AnyLive<T>(IEnumerable<T> items, Func<T, bool> isCancelled)
+            => items.Any(item => !isCancelled(item));
+
+        return AnyLive(reserva.FlightSegments, ServiceResolutionRules.IsCancelled)
+            || AnyLive(reserva.HotelBookings, ServiceResolutionRules.IsCancelled)
+            || AnyLive(reserva.TransferBookings, ServiceResolutionRules.IsCancelled)
+            || AnyLive(reserva.PackageBookings, ServiceResolutionRules.IsCancelled)
+            || AnyLive(reserva.AssistanceBookings, ServiceResolutionRules.IsCancelled)
+            || AnyLive(reserva.Servicios, ServiceResolutionRules.IsCancelled);
     }
 
     private void ApplyTransition(Reserva reserva, string toStatus, string direction, DateTime now, string reason)
@@ -211,29 +301,30 @@ public class ReservaAutoStateService
     }
 
     /// <summary>
-    /// Avisa al vendedor responsable que la reserva regreso a En gestion (Priority=Urgent). Si la
-    /// reserva no tiene responsable (ResponsibleUserId null), avisa a TODOS los admins (mejor un aviso
-    /// de mas que una regresion silenciosa). Dedup: NO inserta si ya hay un aviso de regresion para esta
-    /// reserva creado HOY (una reserva que entra y sale de Confirmada varias veces el mismo dia genera UNO).
+    /// Avisa al vendedor responsable que la reserva quedo "confirmada con cambios" y hay que revisarla
+    /// (Priority=Urgent), SIN haberla regresado de estado. Si la reserva no tiene responsable
+    /// (ResponsibleUserId null), avisa a TODOS los admins (mejor un aviso de mas que un cambio silencioso).
+    /// Dedup: NO inserta si ya hay un aviso de revision para esta reserva creado HOY (una reserva que cambia
+    /// varias veces el mismo dia genera UNO).
     /// </summary>
-    private async Task NotifyRegressionAsync(Reserva reserva, DateTime now, CancellationToken ct)
+    private async Task NotifyNeedsReviewAsync(Reserva reserva, DateTime now, CancellationToken ct)
     {
         var today = now.Date;
         var tomorrow = today.AddDays(1);
 
-        // Dedup por Type DEDICADO (ADR-020): antes el filtro era Type=Warning+Priority=Urgent, demasiado
-        // amplio — un aviso urgente cualquiera de la misma reserva podia suprimir la regresion (o al
-        // reves). Con el Type propio el dedup matchea SOLO regresiones.
+        // Dedup por Type DEDICADO: el filtro matchea SOLO este aviso (no cualquier Warning urgente de la
+        // misma reserva, que podria suprimirlo o ser suprimido por el).
         bool alreadyNotifiedToday = await _context.Notifications.AnyAsync(n =>
             n.RelatedEntityType == "Reserva"
             && n.RelatedEntityId == reserva.Id
-            && n.Type == NotificationTypes.ReservaAutoRegression
+            && n.Type == NotificationTypes.ReservaNeedsReview
             && n.CreatedAt >= today && n.CreatedAt < tomorrow, ct);
         if (alreadyNotifiedToday) return;
 
         var message =
-            $"La reserva {reserva.NumeroReserva} volvio a 'En gestion': un servicio dejo de estar resuelto " +
-            "(el operador cancelo/reprogramo o se agrego un servicio nuevo). Revisala.";
+            $"La reserva {reserva.NumeroReserva} quedo 'confirmada con cambios': un servicio dejo de estar " +
+            "resuelto (el operador cancelo/reprogramo o se agrego un servicio nuevo) o se quedo sin servicios. " +
+            "Sigue confirmada, pero revisala antes de que avance al viaje.";
 
         var recipients = new List<string>();
         if (!string.IsNullOrEmpty(reserva.ResponsibleUserId))
@@ -257,7 +348,7 @@ public class ReservaAutoStateService
             {
                 UserId = userId,
                 Message = message,
-                Type = NotificationTypes.ReservaAutoRegression,
+                Type = NotificationTypes.ReservaNeedsReview,
                 Priority = "Urgent",
                 RelatedEntityId = reserva.Id,
                 RelatedEntityType = "Reserva",

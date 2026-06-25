@@ -45,19 +45,23 @@ import { EstadoCuentaExtracto } from "../components/EstadoCuentaExtracto";
 import { formatearEtiquetaFactura } from "../lib/invoiceFormatUtils";
 
 /**
- * Determina si la reserva está en un estado "congelado" donde solo se permite
- * ver/imprimir documentos ya emitidos, pero NO crear, anular ni editar.
+ * Determina si la reserva está en un estado "congelado" para VOUCHERS Y DOCUMENTOS:
+ * solo se puede ver/imprimir lo ya emitido, pero NO crear, anular ni editar.
  *
- * Criterio unificado (decisión UX 2026-06-22):
+ * Criterio (decisión UX 2026-06-22):
  *  - En viaje (Traveling): el viaje ya arrancó, nada cambia.
  *  - Perdida (Lost): cerrada sin cobro, es histórico.
  *  - Anulada (Cancelled): proceso de anulación completado.
- *  - Esperando reembolso del operador (PendingOperatorRefund): anulada, en solo lectura
- *    hasta que llegue el reembolso (decisión de Gastón 2026-06-22: igual que congelada).
- *  - Facturada total (FullyInvoiced): ya no se emiten más comprobantes de venta.
+ *  - Esperando reembolso (PendingOperatorRefund): anulada, en solo lectura.
+ *  - Facturada total (FullyInvoiced): ya no se emiten más documentos de venta.
  *
- * Se usa en las zonas de recibos de cobro (Zona A) y de vouchers (Zona C).
- * La Zona B (PDF de factura AFIP) siempre queda visible — no la toca este helper.
+ * Se usa en la Zona C (vouchers) y en la Zona de documentos.
+ * La Zona B (PDF de factura AFIP) siempre queda visible.
+ *
+ * IMPORTANTE: NO se usa para controlar Editar/Eliminar cobro.
+ * Esas acciones se gobiernan por la capacidad `canEditOrDeletePayment` del DTO
+ * (ver PaymentReceiptActions). Razón: cobro y facturación son ejes separados (ADR-037);
+ * una reserva FullyInvoiced puede seguir teniendo cobros pendientes de ajuste.
  */
 function esEstadoCongelado(reserva) {
   if (!reserva) return false;
@@ -67,6 +71,31 @@ function esEstadoCongelado(reserva) {
     reserva.status === "Cancelled" ||
     reserva.status === "PendingOperatorRefund" ||
     reserva.invoicingStatus === "FullyInvoiced"
+  );
+}
+
+/**
+ * Determina si la reserva está en un estado donde NO se puede emitir ni anular
+ * el comprobante de un cobro (recibo). NO incluye FullyInvoiced porque facturación
+ * y cobranza son ejes separados (ADR-037).
+ *
+ * Criterio para recibos de cobro (BUG IMP-3 fix, 2026-06-24):
+ *  - En viaje (Traveling): viaje en curso, solo lectura.
+ *  - Perdida (Lost): histórico cerrado.
+ *  - Anulada (Cancelled): proceso terminado.
+ *  - Esperando reembolso (PendingOperatorRefund): anulada, en solo lectura.
+ *
+ * Closed (Finalizada) NO está aquí: en Closed todavía se puede emitir recibo
+ * de un cobro reciente. El control de Editar/Eliminar cobro se delega al
+ * capability `canEditOrDeletePayment` del DTO del backend.
+ */
+function esCongeladoParaRecibos(reserva) {
+  if (!reserva) return false;
+  return (
+    reserva.status === "Traveling" ||
+    reserva.status === "Lost" ||
+    reserva.status === "Cancelled" ||
+    reserva.status === "PendingOperatorRefund"
   );
 }
 
@@ -305,25 +334,37 @@ function canIssuePaymentReceipt(payment) {
 /**
  * Acciones del comprobante de pago (recibo) de un cobro individual.
  *
- * Incluye también Editar cobro y Eliminar cobro (B1 — acciones perdidas al rediseñar la pantalla).
- * En estados no congelados, el cobro "vivo" (sin recibo anulado) puede editarse o eliminarse.
+ * Incluye también Editar cobro y Eliminar cobro.
+ * Hay dos criterios distintos de bloqueo (ADR-037 + BUG IMP-3 fix 2026-06-24):
  *
- * Regla de estados congelados: en estados congelados (Traveling, Lost, Cancelled,
- * FullyInvoiced) solo se puede VER un comprobante ya emitido. Las acciones de escritura
- * (Emitir, Anular, Editar cobro, Eliminar cobro) desaparecen.
+ *   - `congelado`: controla emitir/anular el RECIBO del cobro.
+ *     Verdadero en estados operativos terminales (Traveling/Lost/Cancelled/PendingOperatorRefund).
+ *     Usa esCongeladoParaRecibos(), que NO incluye FullyInvoiced (facturación y cobranza son
+ *     ejes separados en ADR-037).
+ *
+ *   - `canEditarEliminar`: controla los botones Editar y Eliminar del cobro en sí.
+ *     Viene de la capacidad `canEditOrDeletePayment.allowed` del DTO del backend.
+ *     El backend ya considera el estado de la reserva (Closed/terminal → false).
+ *     Si el backend no la envía, se asume false por seguridad.
+ *
  * Decisión de UX 2026-06-22: "ver/imprimir un papel ya hecho" sí; "crear/anular/editar" no.
  *
  * Props:
- *  - congelado: boolean — derivado de esEstadoCongelado(reserva) en el componente padre.
+ *  - congelado: boolean — solo afecta emitir/anular el RECIBO (no editar/eliminar el cobro).
+ *  - canEditarEliminar: boolean — si el backend permite editar o eliminar este cobro.
  *  - onEditarCobro: callback(payment) — abre RegistrarCobroInline en modo edición.
  *  - onEliminarCobro: callback(payment) — pide confirmación y elimina el cobro.
  */
-function PaymentReceiptActions({ payment, onView, onIssue, onVoid, congelado, onEditarCobro, onEliminarCobro }) {
+function PaymentReceiptActions({ payment, onView, onIssue, onVoid, congelado, canEditarEliminar, onEditarCobro, onEliminarCobro }) {
   const receipt = getPaymentReceipt(payment);
 
-  // Un cobro es "vivo" si no tiene recibo anulado. Si está anulado, no tiene sentido editarlo.
+  // Un cobro con recibo anulado ya fue procesado formalmente; no tiene sentido editarlo
+  // aunque el capability diga que se puede. El recibo anulado es un "techo" extra.
   const reciboAnulado = receipt?.status === "Voided";
-  const cobroEsEditable = !congelado && !reciboAnulado;
+
+  // Gobernado por la capacidad real del backend + guard de recibo anulado.
+  // canEditarEliminar=false en Closed, terminal u otros estados que el backend restrinja.
+  const cobroEsEditable = Boolean(canEditarEliminar) && !reciboAnulado;
 
   if (receipt) {
     return (
@@ -939,10 +980,21 @@ export default function ReservaDetailPage() {
   // "isEarlyStage" reemplaza al antiguo "isBudget" que solo chequeaba Budget.
   const isEarlyStage = reserva?.status === "Quotation" || reserva?.status === "Budget";
 
-  // "congelado": estado donde solo se puede ver/imprimir documentos ya emitidos.
-  // Las acciones de escritura (emitir, anular, editar cobro) se ocultan.
+  // "congelado": controla vouchers y documentos. Se ocultan las acciones de escritura
+  // (emitir, anular voucher, subir documento) en estados terminales o FullyInvoiced.
   // Decisión UX 2026-06-22: un solo criterio aplicado en las zonas A y C.
   const congelado = esEstadoCongelado(reserva);
+
+  // "congeladoParaRecibos": controla emitir/anular el RECIBO de un cobro.
+  // NO incluye FullyInvoiced porque facturación y cobranza son ejes separados (ADR-037).
+  // BUG IMP-3 fix 2026-06-24: Closed ya no hereda el bloqueo de vouchers.
+  const congeladoParaRecibos = esCongeladoParaRecibos(reserva);
+
+  // Capacidad del backend para editar o eliminar cobros.
+  // El backend la pone en false en Closed/terminal. Si no viene en el DTO, asumimos false
+  // por seguridad (no mostramos botones que el server va a rechazar).
+  // BUG IMP-3 fix 2026-06-24: reemplaza al congelado local para gobernar Editar/Eliminar.
+  const puedeEditarEliminarCobro = reserva?.capabilities?.canEditOrDeletePayment?.allowed === true;
 
   // Contador "N de M servicios cancelados" para el ReservaHeader (ADR-025).
   // Se recalcula solo cuando cambia allServices (memoizado para no correr en cada render).
@@ -1839,20 +1891,22 @@ export default function ReservaDetailPage() {
                   <EstadoCuentaExtracto
                     reservaPublicId={publicId}
                     reserva={reserva}
-                    congelado={congelado}
+                    congelado={congeladoParaRecibos}
                     refreshKey={accountRefreshKey}
                     // H2 Paso 5: pasamos reserva para que InvoicePdfActions pueda enviar al cliente
                     renderAccionesFactura={(invoice) => <InvoicePdfActions invoice={invoice} reserva={reserva} />}
-                    renderAccionesCobro={(payment, estaCongelado) => (
+                    renderAccionesCobro={(payment, estaCongeladoParaRecibo) => (
                       <PaymentReceiptActions
                         payment={payment}
                         onView={handleViewReceiptPdf}
                         onIssue={handleIssueReceipt}
                         onVoid={handleVoidReceipt}
-                        congelado={estaCongelado}
-                        // B1: callbacks restaurados (se perdieron al rediseñar la pantalla).
-                        // El guard !estaCongelado está dentro de PaymentReceiptActions,
-                        // pero también lo pasamos desde acá para claridad semántica.
+                        // congelado controla SOLO emitir/anular el recibo de comprobante.
+                        // BUG IMP-3 fix 2026-06-24: ya no incluye FullyInvoiced (ADR-037).
+                        congelado={estaCongeladoParaRecibo}
+                        // canEditarEliminar gobierna los botones Editar y Eliminar del cobro.
+                        // Viene de la capacidad real del backend: false en Closed y otros estados terminales.
+                        canEditarEliminar={puedeEditarEliminarCobro}
                         onEditarCobro={(pago) => {
                           // Abre RegistrarCobroInline en modo edición con este pago cargado.
                           // setCobroAEditar + setShowCobroInline siguen el patrón de "Registrar cobro".

@@ -275,7 +275,10 @@ test("A.2: Closed → 'Archivar' visible", () => {
  * Fix 2026-06-24 (H1): ahora usa collectionStatus como fuente de verdad para el eje Pago.
  *   "SinMovimientos" → "Sin movimientos" (reserva nueva sin pagos).
  *   "Saldado"        → "Pagada".
- *   Fallback a isFullyPaid si no hay collectionStatus (DTOs viejos).
+ *
+ * BUG MENOR-1 fix 2026-06-24: se elimina el fallback a isFullyPaid.
+ *   Antes: si collectionStatus no venía, isFullyPaid=true hacía aparecer "Pagada"
+ *   aunque no hubiera cobros. Ahora: sin collectionStatus → no se muestra chip de pago.
  *
  * Q10 (2026-06-24): rótulo visible actualizado de "Sin cobros" a "Sin movimientos"
  *   (spec guia-ux-gaston.md). El data-testid "chip-pago-sin-cobros" NO cambia.
@@ -283,14 +286,16 @@ test("A.2: Closed → 'Archivar' visible", () => {
 function resolverChips(reserva) {
     if (!reserva) return { ejesVisibles: [], chipPago: null, chipViaje: null, ejeFactura: "Sin facturar" };
 
-    // Eje Pago — lee collectionStatus primero; fallback a isFullyPaid para DTOs viejos.
+    // Eje Pago — solo lee collectionStatus (fuente de verdad del backend).
+    // Sin fallback a isFullyPaid: ese fallback causaba "Pagada" falso en reservas nuevas.
     let chipPago = null;
     const collectionStatus = reserva.collectionStatus;
 
     if (collectionStatus === "SinMovimientos") {
         // Q10 (2026-06-24): "Sin movimientos" reemplaza "Sin cobros" como rótulo visible.
         chipPago = "Sin movimientos";
-    } else if (collectionStatus === "Saldado" || (!collectionStatus && reserva.isFullyPaid)) {
+    } else if (collectionStatus === "Saldado") {
+        // "Pagada" SOLO cuando el backend lo afirmó explícitamente.
         chipPago = "Pagada";
     } else if (reserva.status === "Confirmed" && reserva.isWithinUnpaidAlertWindow === true) {
         chipPago = "Debe — no viaja";
@@ -321,7 +326,7 @@ function resolverChips(reserva) {
 test("A.3: Traveling + pagada + facturada total → Pago:Pagada · sin chip Viaje · Factura:Facturada total", () => {
     const { chipPago, chipViaje, ejeFactura } = resolverChips({
         status: "Traveling",
-        isFullyPaid: true,
+        collectionStatus: "Saldado",
         isInProgress: true,
         hasOverdueDebt: false,
         invoicingStatus: "FullyInvoiced",
@@ -337,7 +342,7 @@ test("A.3: Traveling + pagada + facturada total → Pago:Pagada · sin chip Viaj
 test("A.3: Traveling con isInProgress=true → chipViaje=null (badge grande lo comunica)", () => {
     const { chipViaje } = resolverChips({
         status: "Traveling",
-        isFullyPaid: true,
+        collectionStatus: "Saldado",
         isInProgress: true,
         hasOverdueDebt: false,
         invoicingStatus: "NotInvoiced",
@@ -346,32 +351,32 @@ test("A.3: Traveling con isInProgress=true → chipViaje=null (badge grande lo c
     assert.equal(chipViaje, null);
 });
 
-// ── "Pagada" ahora aparece en cualquier estado (no solo Confirmed) ────────────
+// ── "Pagada" aparece cuando collectionStatus===Saldado (en cualquier estado) ──
 
-test("A.3: isFullyPaid=true en Traveling → chipPago=Pagada", () => {
+test("A.3: collectionStatus=Saldado en Traveling → chipPago=Pagada", () => {
     const { chipPago } = resolverChips({
         status: "Traveling",
-        isFullyPaid: true,
+        collectionStatus: "Saldado",
         isInProgress: true,
         invoicingStatus: "NotInvoiced",
     });
     assert.equal(chipPago, "Pagada");
 });
 
-test("A.3: isFullyPaid=true en Closed → chipPago=Pagada", () => {
+test("A.3: collectionStatus=Saldado en Closed → chipPago=Pagada", () => {
     const { chipPago } = resolverChips({
         status: "Closed",
-        isFullyPaid: true,
+        collectionStatus: "Saldado",
         isInProgress: false,
         invoicingStatus: "FullyInvoiced",
     });
     assert.equal(chipPago, "Pagada");
 });
 
-test("A.3: isFullyPaid=true en Confirmed → chipPago=Pagada (como antes)", () => {
+test("A.3: collectionStatus=Saldado en Confirmed → chipPago=Pagada", () => {
     const { chipPago } = resolverChips({
         status: "Confirmed",
-        isFullyPaid: true,
+        collectionStatus: "Saldado",
         isInProgress: false,
         invoicingStatus: "NotInvoiced",
     });
@@ -533,24 +538,26 @@ test("A.4: collectionStatus=Saldado → chipPago='Pagada' (distinción clara de 
     const { chipPago } = resolverChips({
         status: "Confirmed",
         collectionStatus: "Saldado",
-        isFullyPaid: true,
         invoicingStatus: "NotInvoiced",
     });
     assert.equal(chipPago, "Pagada");
 });
 
-test("A.4: sin collectionStatus + isFullyPaid=true → chipPago='Pagada' (fallback DTOs viejos)", () => {
-    // Fallback para endpoints que aún no envían collectionStatus.
+test("A.4: sin collectionStatus + isFullyPaid=true → chipPago=null (BUG MENOR-1 fix 2026-06-24)", () => {
+    // BUG MENOR-1 fix: antes el fallback a isFullyPaid hacía aparecer "Pagada" aunque
+    // no hubiera ningún cobro registrado. Ahora sin collectionStatus → no se muestra chip.
+    // El caso real (DTO moderno) siempre envía collectionStatus; el caso DTO viejo
+    // es mejor no mostrar nada que mostrar algo incorrecto.
     const { chipPago } = resolverChips({
         status: "Confirmed",
-        // collectionStatus ausente (DTO viejo)
+        // collectionStatus ausente (DTO viejo o bug de integración)
         isFullyPaid: true,
         invoicingStatus: "NotInvoiced",
     });
-    assert.equal(chipPago, "Pagada");
+    assert.equal(chipPago, null, "Sin collectionStatus no debe aparecer 'Pagada' aunque isFullyPaid sea true");
 });
 
-test("A.4: sin collectionStatus + isFullyPaid=false → chipPago=null (fallback DTOs viejos)", () => {
+test("A.4: sin collectionStatus + isFullyPaid=false → chipPago=null (sin movimientos sin collectionStatus)", () => {
     // Sin collectionStatus y sin deuda dentro de ventana: no mostramos nada.
     const { chipPago } = resolverChips({
         status: "InManagement",
@@ -572,4 +579,212 @@ test("A.4: collectionStatus=ConDeuda fuera de ventana de aviso → chipPago=null
         invoicingStatus: "NotInvoiced",
     });
     assert.equal(chipPago, null);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BUG IMP-3 fix 2026-06-24: Editar/Eliminar cobro se rigen por canEditOrDeletePayment
+// (capacidad real del backend), no por el helper "congelado" del frontend.
+//
+// Antes: en Closed (Finalizada), congelado=false → aparecían Editar/Eliminar aunque el
+//        backend los rechazara (canEditOrDeletePayment.allowed === false en estados terminales).
+// Ahora: canEditarEliminar = capabilities.canEditOrDeletePayment.allowed.
+//        El backend ya sabe en qué estados se puede editar/eliminar un cobro.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Réplica de la lógica de PaymentReceiptActions para el par Editar/Eliminar cobro.
+ * canEditarEliminar viene directamente de la capacidad del backend.
+ */
+function calcularCobroEditable({ canEditarEliminar, reciboAnulado }) {
+    // El backend decide si la acción está disponible en este estado.
+    // Guard extra: si el recibo ya fue anulado, no tiene sentido editar el cobro.
+    return Boolean(canEditarEliminar) && !reciboAnulado;
+}
+
+test("IMP-3: canEditOrDeletePayment=true + sin recibo anulado → Editar y Eliminar visibles", () => {
+    const editable = calcularCobroEditable({ canEditarEliminar: true, reciboAnulado: false });
+    assert.equal(editable, true);
+});
+
+test("IMP-3: canEditOrDeletePayment=false (Closed/terminal) → Editar y Eliminar OCULTOS", () => {
+    // Closed: el backend devuelve canEditOrDeletePayment.allowed=false.
+    // Antes del fix este caso mostraba los botones (congelado=false en Closed).
+    const editable = calcularCobroEditable({ canEditarEliminar: false, reciboAnulado: false });
+    assert.equal(editable, false, "En Closed el backend rechaza editar/eliminar cobros");
+});
+
+test("IMP-3: canEditOrDeletePayment=true + recibo anulado → Editar y Eliminar OCULTOS (guard de recibo)", () => {
+    // Aunque el backend permita editar, un recibo anulado ya fue procesado formalmente.
+    const editable = calcularCobroEditable({ canEditarEliminar: true, reciboAnulado: true });
+    assert.equal(editable, false, "Un recibo anulado no se puede editar aunque el backend lo permita");
+});
+
+test("IMP-3: canEditOrDeletePayment undefined (DTO sin capability) → Editar y Eliminar OCULTOS (seguro por defecto)", () => {
+    // Si el DTO no trae la capacidad, Boolean(undefined) = false → botones ocultos.
+    // Es mejor no mostrar que mostrar un botón que el server va a rechazar.
+    const editable = calcularCobroEditable({ canEditarEliminar: undefined, reciboAnulado: false });
+    assert.equal(editable, false, "Sin capability del backend se asume false por seguridad");
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BUG IMP-4 fix 2026-06-24: FullyInvoiced NO bloquea las acciones de COBRO.
+//
+// Antes: esEstadoCongelado incluía FullyInvoiced → en una reserva Confirmed+FullyInvoiced
+//        los botones de emitir/anular recibo de cobro se ocultaban, aunque el cliente
+//        pudiera hacer un pago pendiente.
+// Ahora: esCongeladoParaRecibos (nuevo helper) NO incluye FullyInvoiced.
+//        FullyInvoiced sigue en esEstadoCongelado para vouchers y documentos.
+//        Las acciones de cobro se rigen por la capacidad canEditOrDeletePayment.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Réplica de esCongeladoParaRecibos (sin FullyInvoiced).
+ * Controla si se puede emitir o anular el recibo de un cobro.
+ */
+function esCongeladoParaRecibos(reserva) {
+    if (!reserva) return false;
+    return (
+        reserva.status === "Traveling" ||
+        reserva.status === "Lost" ||
+        reserva.status === "Cancelled" ||
+        reserva.status === "PendingOperatorRefund"
+    );
+}
+
+test("IMP-4: Confirmed + FullyInvoiced → esCongeladoParaRecibos = false (cobro no bloqueado)", () => {
+    // BUG IMP-4: antes FullyInvoiced bloqueaba los recibos. Ahora no: facturación y
+    // cobranza son ejes separados (ADR-037). Si hay un cobro pendiente, se puede registrar.
+    const result = esCongeladoParaRecibos({ status: "Confirmed", invoicingStatus: "FullyInvoiced" });
+    assert.equal(result, false, "FullyInvoiced no debe bloquear las acciones de cobro");
+});
+
+test("IMP-4: Closed + FullyInvoiced → esCongeladoParaRecibos = false (Closed tampoco bloquea recibos)", () => {
+    // Closed (Finalizada): el bloqueo de editar/eliminar viene de canEditOrDeletePayment,
+    // no de congeladoParaRecibos. Emitir un recibo de un cobro reciente sigue siendo válido.
+    const result = esCongeladoParaRecibos({ status: "Closed", invoicingStatus: "FullyInvoiced" });
+    assert.equal(result, false);
+});
+
+test("IMP-4: Traveling → esCongeladoParaRecibos = true (viaje en curso)", () => {
+    const result = esCongeladoParaRecibos({ status: "Traveling", invoicingStatus: "NotInvoiced" });
+    assert.equal(result, true);
+});
+
+test("IMP-4: Lost → esCongeladoParaRecibos = true", () => {
+    const result = esCongeladoParaRecibos({ status: "Lost", invoicingStatus: "NotInvoiced" });
+    assert.equal(result, true);
+});
+
+test("IMP-4: Cancelled → esCongeladoParaRecibos = true", () => {
+    const result = esCongeladoParaRecibos({ status: "Cancelled", invoicingStatus: "NotInvoiced" });
+    assert.equal(result, true);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BUG IMP-4 / BUG 3: balance negativo = A favor (no deuda roja)
+// EstadoCuentaResumen: si balance < 0 → rótulo "A favor" en verde, monto positivo.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Réplica de la lógica de EjeBalanceMono / ColumnaBalanceMulti.
+ * Decide el rótulo y el color según el signo del balance.
+ */
+function resolverDisplayBalance(balance) {
+    const valor = balance ?? 0;
+    if (valor < 0) {
+        return { rotulo: "A favor", monto: Math.abs(valor), esAFavor: true };
+    }
+    return {
+        rotulo: "Saldo a cobrar",
+        monto: valor,
+        esAFavor: false,
+    };
+}
+
+test("BUG3: balance negativo → rótulo 'A favor', monto en positivo (no deuda roja)", () => {
+    // Caso del bug: balance=-500 aparecía como "Saldo a cobrar: -$500" en rojo.
+    const display = resolverDisplayBalance(-500);
+    assert.equal(display.rotulo, "A favor", "Balance negativo debe rotularse A favor");
+    assert.equal(display.monto, 500, "El monto debe ser positivo (Math.abs)");
+    assert.equal(display.esAFavor, true);
+});
+
+test("BUG3: balance positivo → rótulo 'Saldo a cobrar' (cliente debe plata)", () => {
+    const display = resolverDisplayBalance(1200);
+    assert.equal(display.rotulo, "Saldo a cobrar");
+    assert.equal(display.monto, 1200);
+    assert.equal(display.esAFavor, false);
+});
+
+test("BUG3: balance cero → rótulo 'Saldo a cobrar', monto $0 (neutro)", () => {
+    const display = resolverDisplayBalance(0);
+    assert.equal(display.rotulo, "Saldo a cobrar");
+    assert.equal(display.monto, 0);
+    assert.equal(display.esAFavor, false);
+});
+
+test("BUG3: balance null → trata como 0, rótulo 'Saldo a cobrar'", () => {
+    // Degradación elegante si el backend no envía el campo.
+    const display = resolverDisplayBalance(null);
+    assert.equal(display.monto, 0);
+    assert.equal(display.esAFavor, false);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BUG MENOR-3 fix 2026-06-24: ReservaTable ya no asume "Saldado" por defecto.
+// El else final antes pintaba "Saldado" verde para cualquier collectionStatus
+// desconocido (null, SaldoAFavor, etc.). Ahora cada caso es explícito.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Réplica de la lógica de la columna Finanzas en ReservaTable.
+ * Devuelve el rótulo del estado de cobro para la fila de la tabla.
+ */
+function resolverRotuloTabla({ balance, collectionStatus }) {
+    if (balance > 0) {
+        return "Debe";
+    }
+    if (collectionStatus === "SinMovimientos") {
+        return "Sin movimientos";
+    }
+    if (collectionStatus === "Saldado") {
+        return "Saldado";
+    }
+    if (collectionStatus === "SaldoAFavor") {
+        return "A favor";
+    }
+    // Desconocido o DTO sin collectionStatus: neutro, no asumir "Saldado".
+    return "Sin movimientos";
+}
+
+test("MENOR-3: balance > 0 → 'Debe' (cliente debe plata)", () => {
+    const rotulo = resolverRotuloTabla({ balance: 500, collectionStatus: "ConDeuda" });
+    assert.equal(rotulo, "Debe");
+});
+
+test("MENOR-3: collectionStatus=Saldado → 'Saldado' verde (solo cuando el backend lo dice)", () => {
+    const rotulo = resolverRotuloTabla({ balance: 0, collectionStatus: "Saldado" });
+    assert.equal(rotulo, "Saldado");
+});
+
+test("MENOR-3: collectionStatus=SaldoAFavor → 'A favor' (tiene su propio rótulo)", () => {
+    // Antes del fix: caía en el else y mostraba "Saldado" verde — incorrecto.
+    const rotulo = resolverRotuloTabla({ balance: 0, collectionStatus: "SaldoAFavor" });
+    assert.equal(rotulo, "A favor", "SaldoAFavor debe mostrar 'A favor', no 'Saldado'");
+});
+
+test("MENOR-3: collectionStatus=SinMovimientos → 'Sin movimientos' (reserva nueva)", () => {
+    const rotulo = resolverRotuloTabla({ balance: 0, collectionStatus: "SinMovimientos" });
+    assert.equal(rotulo, "Sin movimientos");
+});
+
+test("MENOR-3: collectionStatus ausente (null) → 'Sin movimientos' (neutro, nunca 'Saldado' falso)", () => {
+    // BUG MENOR-3 fix: antes el else asumía "Saldado" para null → incorrecto.
+    const rotulo = resolverRotuloTabla({ balance: 0, collectionStatus: null });
+    assert.equal(rotulo, "Sin movimientos", "Sin collectionStatus no debe asumir Saldado");
+});
+
+test("MENOR-3: collectionStatus desconocido (string raro) → 'Sin movimientos' (neutro)", () => {
+    const rotulo = resolverRotuloTabla({ balance: 0, collectionStatus: "ValorNuevoDelBackend" });
+    assert.equal(rotulo, "Sin movimientos", "Valor desconocido no debe asumir Saldado verde");
 });

@@ -215,6 +215,10 @@ public class InvoiceService : IInvoiceService
             approvedInvoices = approvedInvoices.Where(i => i.Reserva != null && i.Reserva.ResponsibleUserId == ownerScope);
         }
 
+        // Facturado neto por reserva = facturas + ND - NC, contando TODO comprobante con CAE aprobado
+        // (approvedInvoices ya filtra Resultado == "A") AUNQUE este anulado (Succeeded). Misma regla
+        // CountsInNetBilled que el detalle/listado/extracto: la factura anulada sigue sumando y su NC resta,
+        // asi la anulacion se cuenta una sola vez. Por eso NO se excluye AnnulmentStatus.Succeeded aca.
         var invoiceTotalsByReserva = approvedInvoices
             .GroupBy(invoice => invoice.ReservaId)
             .Select(group => new

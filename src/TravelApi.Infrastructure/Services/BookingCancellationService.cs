@@ -641,6 +641,50 @@ public class BookingCancellationService
     }
 
     /// <summary>
+    /// ARREGLO 1 (2026-06-24, bloqueante): tras anular la reserva COMPLETA (todos los servicios a Cancelado),
+    /// recalcula EN EL MISMO request: (1) la deuda de CADA operador afectado y (2) la plata del cliente + la
+    /// comision del vendedor de la reserva. Replica EXACTAMENTE el patron del path de cancelar UN servicio
+    /// suelto (<see cref="CancelServiceAsync"/>), que ya recalculaba bien; antes la anulacion total dejaba
+    /// esto para el job de AFIP, que solo tocaba la plata del cliente -> la deuda agregada con el operador
+    /// quedaba inflada (contaba servicios ya anulados) y la comision colgada hasta que algo mas tocara al
+    /// proveedor o un Admin recalculara a mano.
+    ///
+    /// <para><b>Reusa los persisters existentes</b> (no inventa calculo):
+    /// <list type="bullet">
+    /// <item><see cref="SupplierDebtPersister"/> por cada operador distinto de los servicios de la reserva.
+    ///   Con los servicios ya en Cancelado, esas compras dejan de contar y la deuda baja a lo real.</item>
+    /// <item><see cref="ReservaMoneyPersister"/> para el cliente; este persister, al final, ya dispara
+    ///   <c>CommissionAccrualPersister</c> (chokepoint unico de la plata), asi que la comision se pone en
+    ///   cero por su tope-cero al quedar la reserva sin servicios vivos. No hay que llamarlo aparte.</item>
+    /// </list></para>
+    ///
+    /// <para><b>SaveChanges</b>: <see cref="SupplierDebtPersister"/> NO guarda (lo hace el caller), por eso
+    /// hacemos un <c>SaveChanges</c> explicito tras recalcular todos los proveedores. <see cref="ReservaMoneyPersister"/>
+    /// SI guarda internamente. Cuando este metodo corre dentro de la transaccion de <see cref="ConfirmAsync"/>
+    /// (ARREGLO 3), todos esos SaveChanges participan de la misma transaccion -> atomico con la anulacion.</para>
+    /// </summary>
+    private async Task RecalculateMoneyAfterTotalCancellationAsync(int reservaId, CancellationToken ct)
+    {
+        // 1) Deuda de cada operador afectado. Reusamos el helper que ya junta los SupplierId distintos de los
+        //    6 tipos de servicio de la reserva (mismo universo que la anulacion).
+        var affectedSupplierIds = await GetDistinctSupplierIdsAsync(reservaId, ct);
+        foreach (var supplierId in affectedSupplierIds)
+        {
+            await TravelApi.Infrastructure.Reservations.SupplierDebtPersister.PersistAsync(_db, supplierId, ct);
+        }
+
+        // 2) SupplierDebtPersister no guarda solo -> persistimos la deuda de todos los proveedores de una vez.
+        //    Si no hay proveedores, no hay nada que guardar (evitamos un SaveChanges al pedo).
+        if (affectedSupplierIds.Count > 0)
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+
+        // 3) Plata del cliente (+ comision por el chokepoint de ReservaMoneyPersister). Guarda internamente.
+        await TravelApi.Infrastructure.Reservations.ReservaMoneyPersister.PersistAsync(_db, reservaId, ct);
+    }
+
+    /// <summary>
     /// SEC-B1 (ADR-025 / candado fiscal): devuelve el motivo de bloqueo si NO se puede cancelar el servicio
     /// porque la reserva tiene una factura viva (CAE) o un voucher emitido; <c>null</c> si se permite.
     ///
@@ -1406,52 +1450,39 @@ public class BookingCancellationService
                 invariantCode: "INV-156");
         }
 
-        // 8) Transicionar BC + Reserva (HC2 plan v3: bypass UpdateStatusAsync —
-        //    el state machine general no contempla la transicion lateral a
-        //    PendingOperatorRefund, lo hacemos directo y dejamos el comentario
-        //    para que en una review el lector entienda por que).
-        bc.Status = BookingCancellationStatus.AwaitingFiscalConfirmation;
-        bc.ConfirmedWithClientAt = DateTime.UtcNow;
-        bc.ConfirmedByUserId = userId;
-        bc.ConfirmedByUserName = userName;
-        bc.OperatorRefundDueBy = DateTime.UtcNow.AddDays(settings.OperatorRefundTimeoutDays);
-
-        // HC2 plan v3 §6.1 step 5: bypass UpdateStatusAsync porque
-        // AllowedRevertTransitions no contempla esta salida. La transicion
-        // queda visible en el audit log + la query de Reservas filtra por
-        // status.
-        var reservaFromStatusConfirm = bc.Reserva.Status;
-        bc.Reserva.Status = EstadoReserva.PendingOperatorRefund;
-        // ADR-020 F6 (M7): rastro aditivo del cambio de estado (este path lo escribe por fuera de la maquina).
-        LogReservaStatusChange(bc.Reserva, reservaFromStatusConfirm, EstadoReserva.PendingOperatorRefund,
-            userId, userName, "Cancelacion (ADR-002): confirmada con el cliente, a la espera del reembolso del operador.");
-
-        // 8-bis) CAMBIO 2 (2026-06-24): anulacion TOTAL -> marcar TODOS los servicios de la reserva como
-        //        Cancelado, en la MISMA transaccion que la transicion de estado (atomico). Idempotente.
-        //        Antes los servicios quedaban "Confirmados" aunque la reserva estuviera anulada.
-        await CancelAllReservaServicesAsync(bc.ReservaId, userId, userName, ct);
-
-        // 9) Guardar BC + Reserva ANTES de encolar la annulacion (asi el job
-        //    encuentra el BC en AwaitingFiscalConfirmation cuando arranca).
-        await _db.SaveChangesAsync(ct);
-
-        // 10) BR-V2-03 cross-reference: encolar annulacion en AFIP.
-        //     Si hubo override admin, pasamos el approvalRequestId para que el
-        //     InvoiceService persista la cross-reference fiscal.
+        // ===================================================================
+        // ARREGLO 3 (2026-06-24, integridad): confirmacion de anulacion "todo o nada".
         //
-        //     Bypass del approval del InvoiceAnnulment (requesterIsAdmin del
-        //     InvoiceService, NO confundir con el parametro homonimo de
-        //     ConfirmAsync): se hace SOLO cuando el override del BC ya cubre la
-        //     NC fiscal (approvalRequest != null). Cuando NO hay override, la NC
-        //     tiene que pasar por su approval workflow normal — si seteamos
-        //     true sin override, un caller no-admin podria emitir NCs sin
-        //     control fiscal (OPS-FISCAL-001 plan v3 §13).
+        //   Hasta hoy los pasos 8-12 encadenaban varios cambios (estado de la reserva + servicios a Cancelado
+        //   + recalculos del ARREGLO 1 + consumir la autorizacion + auditoria) con VARIOS SaveChangesAsync; y
+        //   ojo: LogBusinessEventAsync hace su PROPIO commit (flushea todo el ChangeTracker). Si el proceso se
+        //   cortaba a mitad, quedaba a medias (ej. reserva anulada y servicios cancelados pero sin NC).
         //
-        //     2026-06-24: ademas del override formal (approvalRequest != null), el bypass del approval de
-        //     la NC tambien aplica cuando el Admin se auto-autorizo el override (adminSelfAuthorizedOverride).
-        //     Es coherente con InvoiceService.EnqueueAnnulmentAsync, que ya saltea su propio approval cuando
-        //     el caller es Admin (requesterIsAdmin). Un caller NO-admin sigue necesitando approval -> nunca
-        //     emite NCs sin control fiscal (OPS-FISCAL-001 plan v3 §13).
+        //   FIX: envolvemos toda la SECUENCIA DE ESCRITURA (estado + servicios + recalculos + consumir
+        //   approval + auditoria) en UNA transaccion (patron EF del proyecto: IExecutionStrategy.ExecuteAsync
+        //   + BeginTransactionAsync, igual que el camino FC4 de saldo a favor en ClientCreditService). Dentro
+        //   de la transaccion la auditoria va por StageBusinessEvent (NO commitea) para entrar en el MISMO
+        //   commit. Asi: o se anula TODO, o no se toca nada.
+        //
+        //   CRITICO con la Nota de Credito: EnqueueAnnulmentAsync NO va dentro de la transaccion. Internamente
+        //   programa el job de AFIP en Hangfire (_backgroundJobClient.Enqueue, NO transaccional): si corriera
+        //   dentro y la transaccion hiciera rollback, el job quedaria agendado y correria sobre datos
+        //   revertidos. Por eso se encola DESPUES del commit exitoso. El invariante es: "o se anulo todo Y se
+        //   encolo la NC, o no se toco nada". El pre-guard de moneda (step 7-bis) ya corrio ANTES de la
+        //   transaccion, asi que el caso de rechazo conocido no deja la cancelacion a medias.
+        //
+        //   InMemory (tests unit) NO soporta transacciones, por eso ramificamos por IsRelational() — mismo
+        //   criterio que ClientCreditService. En InMemory ejecutamos el mismo cuerpo sin transaccion envolvente
+        //   (la atomicidad real se valida en integracion Postgres).
+        // ===================================================================
+
+        // Datos para encolar la NC, resueltos ANTES de la transaccion (no dependen de la persistencia).
+        //     Bypass del approval del InvoiceAnnulment (requesterIsAdmin del InvoiceService, NO confundir con
+        //     el parametro homonimo de ConfirmAsync): SOLO cuando el override del BC ya cubre la NC fiscal
+        //     (approvalRequest != null) o el Admin se auto-autorizo (adminSelfAuthorizedOverride). Coherente
+        //     con InvoiceService.EnqueueAnnulmentAsync (saltea su propio approval cuando el caller es Admin).
+        //     Un caller NO-admin sin override sigue necesitando approval -> nunca emite NC sin control fiscal
+        //     (OPS-FISCAL-001 plan v3 §13).
         bool bypassNcApproval = approvalRequest != null || adminSelfAuthorizedOverride;
         var crossRefReason = approvalRequest != null
             ? $"BC override {approvalRequest.PublicId}: {request.OverrideReason!.Trim()}"
@@ -1459,6 +1490,24 @@ public class BookingCancellationService
                 ? $"BC admin self-authorized override: {request.OverrideReason!.Trim()}"
                 : $"BC cancellation: {bc.Reason}";
 
+        if (_db.Database.IsRelational())
+        {
+            var strategy = _db.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async () =>
+            {
+                await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+                await PersistConfirmationCoreAsync();
+                await transaction.CommitAsync(ct);
+            });
+        }
+        else
+        {
+            // InMemory: sin transaccion envolvente (los tests de atomicidad real viven en integracion Postgres).
+            await PersistConfirmationCoreAsync();
+        }
+
+        // 10) BR-V2-03 cross-reference: encolar la anulacion en AFIP. DESPUES del commit (ver bloque ARREGLO 3
+        //     arriba): el job de Hangfire NO debe quedar agendado si la transaccion revierte.
         await _invoiceService.EnqueueAnnulmentAsync(
             id: bc.OriginatingInvoiceId,
             userId: userId,
@@ -1467,41 +1516,6 @@ public class BookingCancellationService
             requesterIsAdmin: bypassNcApproval,
             ct: ct,
             approvalRequestId: approvalRequest?.Id);
-
-        // 11) Marcar el InvariantOverride como Consumed si hubo override.
-        //     Importante hacerlo DESPUES de EnqueueAnnulmentAsync — si el
-        //     encolado tira, no consumimos el approval.
-        if (approvalRequest != null)
-        {
-            await _approvalService.MarkConsumedAsync(approvalRequest.Id, ct);
-        }
-
-        // 12) Audit. Incluimos approvalRequestPublicId en metadata para que el
-        //     reviewer pueda cruzar audit logs con Invoice.AnnulmentApprovalRequestId.
-        await _auditService.LogBusinessEventAsync(
-            action: AuditActions.BookingCancellationConfirmed,
-            entityName: AuditActions.BookingCancellationEntityName,
-            entityId: bc.Id.ToString(),
-            details: JsonSerializer.Serialize(new
-            {
-                bc.PublicId,
-                ReservaPublicId = bc.Reserva.PublicId,
-                approvalRequestPublicId = approvalRequest?.PublicId,
-                isAdminOverride = request.IsAdminOverride,
-                overrideReason = request.OverrideReason,
-                fiscalSnapshot = new
-                {
-                    bc.FiscalSnapshot.CurrencyAtEvent,
-                    bc.FiscalSnapshot.ExchangeRateAtOriginalInvoice,
-                    bc.FiscalSnapshot.Source,
-                    bc.FiscalSnapshot.AgencyTaxConditionAtEvent,
-                    bc.FiscalSnapshot.SupplierTaxConditionAtEvent,
-                    bc.FiscalSnapshot.CustomerTaxConditionAtEvent,
-                },
-            }),
-            userId: userId,
-            userName: userName,
-            ct: ct);
 
         // FC1.2.7b counter: marcamos confirm + flag with_override para que el
         // dashboard pueda distinguir "cuantas cancelaciones fueron normales vs
@@ -1514,6 +1528,89 @@ public class BookingCancellationService
 
         return await MapToDtoAsync(bc.Id, ct)
             ?? throw new InvalidOperationException("BC no encontrada despues de confirmar. Estado inconsistente.");
+
+        // ===================================================================
+        // ARREGLO 3: cuerpo comun de la secuencia de escritura de la confirmacion. Definido como local
+        // function para reusarlo dentro y fuera de la transaccion envolvente sin duplicar codigo. TODAS las
+        // SaveChanges de aca dentro (la propia, las de los persisters del ARREGLO 1, la de MarkConsumedAsync)
+        // participan de la transaccion ambiente cuando existe, asi un fallo en cualquier paso revierte TODO.
+        // NO incluye EnqueueAnnulmentAsync a proposito (el job de AFIP se agenda DESPUES del commit).
+        // ===================================================================
+        async Task PersistConfirmationCoreAsync()
+        {
+            // 8) Transicionar BC + Reserva (HC2 plan v3: bypass UpdateStatusAsync — el state machine general
+            //    no contempla la transicion lateral a PendingOperatorRefund, lo hacemos directo).
+            bc.Status = BookingCancellationStatus.AwaitingFiscalConfirmation;
+            bc.ConfirmedWithClientAt = DateTime.UtcNow;
+            bc.ConfirmedByUserId = userId;
+            bc.ConfirmedByUserName = userName;
+            bc.OperatorRefundDueBy = DateTime.UtcNow.AddDays(settings.OperatorRefundTimeoutDays);
+
+            // HC2 plan v3 §6.1 step 5: bypass UpdateStatusAsync porque AllowedRevertTransitions no contempla
+            // esta salida. La transicion queda visible en el audit log + la query de Reservas filtra por status.
+            var reservaFromStatusConfirm = bc.Reserva.Status;
+            bc.Reserva.Status = EstadoReserva.PendingOperatorRefund;
+            // ADR-020 F6 (M7): rastro aditivo del cambio de estado (este path lo escribe por fuera de la maquina).
+            LogReservaStatusChange(bc.Reserva, reservaFromStatusConfirm, EstadoReserva.PendingOperatorRefund,
+                userId, userName, "Cancelacion (ADR-002): confirmada con el cliente, a la espera del reembolso del operador.");
+
+            // 8-bis) CAMBIO 2 (2026-06-24): anulacion TOTAL -> marcar TODOS los servicios de la reserva como
+            //        Cancelado, en la MISMA transaccion que la transicion de estado (atomico). Idempotente.
+            await CancelAllReservaServicesAsync(bc.ReservaId, userId, userName, ct);
+
+            // 8-bis.5) Persistir el estado de la reserva + los servicios cancelados ANTES de recalcular. Los
+            //          persisters (SupplierDebtPersister/ReservaMoneyPersister) leen con AsNoTracking, es decir
+            //          desde la BASE, no desde el ChangeTracker; si no guardamos primero, recalcularian sobre los
+            //          servicios todavia "Confirmados" y la deuda no bajaria (mismo orden que CancelServiceAsync,
+            //          que guarda el servicio cancelado antes de recalcular). Dentro de la transaccion -> atomico.
+            await _db.SaveChangesAsync(ct);
+
+            // 8-ter) ARREGLO 1 (2026-06-24): recalcular deuda de los operadores + plata del cliente + comision
+            //        EN EL MISMO request, ahora que los servicios quedaron Cancelado. Antes esto quedaba para
+            //        el job de AFIP (que solo tocaba la plata del cliente) -> la deuda con el operador quedaba
+            //        inflada y la comision colgada. Reusa los persisters existentes (no inventa calculo).
+            await RecalculateMoneyAfterTotalCancellationAsync(bc.ReservaId, ct);
+
+            // 9) Sellar approval consumido + audit stageado. (El estado BC/Reserva + servicios ya se guardaron
+            //    en 8-bis.5; los persisters del ARREGLO 1 ya guardaron lo suyo.)
+            //
+            // 11) Marcar el InvariantOverride como Consumed si hubo override. Dentro de la transaccion: si el
+            //     commit falla, el approval NO queda consumido (se puede reintentar). MarkConsumedAsync hace su
+            //     propio SaveChanges sobre el mismo DbContext -> participa de la transaccion ambiente.
+            if (approvalRequest != null)
+            {
+                await _approvalService.MarkConsumedAsync(approvalRequest.Id, ct);
+            }
+
+            // 12) Audit. STAGEADO (no commitea) para entrar en el MISMO commit que la mutacion (ARREGLO 3).
+            //     Antes era LogBusinessEventAsync, que hacia su propio commit y rompia la atomicidad.
+            _auditService.StageBusinessEvent(
+                action: AuditActions.BookingCancellationConfirmed,
+                entityName: AuditActions.BookingCancellationEntityName,
+                entityId: bc.Id.ToString(),
+                details: JsonSerializer.Serialize(new
+                {
+                    bc.PublicId,
+                    ReservaPublicId = bc.Reserva.PublicId,
+                    approvalRequestPublicId = approvalRequest?.PublicId,
+                    isAdminOverride = request.IsAdminOverride,
+                    overrideReason = request.OverrideReason,
+                    fiscalSnapshot = new
+                    {
+                        bc.FiscalSnapshot.CurrencyAtEvent,
+                        bc.FiscalSnapshot.ExchangeRateAtOriginalInvoice,
+                        bc.FiscalSnapshot.Source,
+                        bc.FiscalSnapshot.AgencyTaxConditionAtEvent,
+                        bc.FiscalSnapshot.SupplierTaxConditionAtEvent,
+                        bc.FiscalSnapshot.CustomerTaxConditionAtEvent,
+                    },
+                }),
+                userId: userId,
+                userName: userName);
+
+            // SaveChanges final del estado BC/Reserva + el audit stageado, todo en la misma transaccion.
+            await _db.SaveChangesAsync(ct);
+        }
     }
 
     public async Task<BookingCancellationDto> AbortAsync(
@@ -1669,6 +1766,16 @@ public class BookingCancellationService
         //        cancela al pasar a AwaitingFiscalConfirmation; esto es defensivo/idempotente y ademas cubre
         //        BCs legacy confirmados antes de este cambio (servicios todavia en "Confirmado").
         await CancelAllReservaServicesAsync(bc.ReservaId, userId, userName, ct);
+
+        // 6-bis.5) Persistir estado + servicios cancelados ANTES de recalcular: los persisters leen con
+        //          AsNoTracking (desde la base), asi que sin este guardado recalcularian sobre datos viejos
+        //          y la deuda no bajaria. Mismo motivo que en ConfirmAsync (paso 8-bis.5).
+        await _db.SaveChangesAsync(ct);
+
+        // 6-ter) ARREGLO 1 (2026-06-24): recalcular deuda de operadores + plata del cliente + comision en el
+        //        mismo request, ahora que todos los servicios quedaron Cancelado. Defensivo/idempotente igual
+        //        que el 6-bis: si ConfirmAsync ya recalculo, este recalculo da el mismo numero (es determinista).
+        await RecalculateMoneyAfterTotalCancellationAsync(bc.ReservaId, ct);
 
         // 7) Consumir approval.
         await _approvalService.MarkConsumedAsync(approval.Id, ct);
@@ -3218,6 +3325,35 @@ public class BookingCancellationService
             return;
         }
 
+        // (1-ter) ARREGLO 2 (2026-06-24, fiscal bloqueante): multi-operador con multa confirmada.
+        //
+        //   La ND automatica se arma con montos a NIVEL del BC padre (bc.PenaltyAmountAtEvent / ConceptKind /
+        //   moneda de la factura): UNA sola ND por cancelacion. Eso es correcto cuando hay UN operador con
+        //   multa. Pero una reserva multi-operador (ADR-025) puede tener DOS multas confirmadas, cada una con
+        //   su propio monto y hasta su propia moneda (op A en ARS, op B en USD). La emision por LINEA de
+        //   operador NO existe todavia (es un rediseño aparte): si dejaramos correr el motor actual, saldria
+        //   UNA ND que mezcla/ignora la segunda multa -> comprobante fiscal incorrecto.
+        //
+        //   FIX CONSERVADOR (no inventamos emision por linea): si detectamos mas de UN operador distinto con
+        //   penalidad CONFIRMADA en las lineas de esta cancelacion, NO emitimos la ND automatica y derivamos a
+        //   revision/registro MANUAL (mismo mecanismo que ya usa el gating para factura no-ARS, etc.). El
+        //   operador emite/confirma cada ND a mano por ahora. Solo cerramos el agujero de la ND incorrecta.
+        var confirmedPenaltySupplierCount = await CountSuppliersWithConfirmedPenaltyAsync(bc.Id, ct);
+        if (confirmedPenaltySupplierCount > 1)
+        {
+            _logger.LogWarning(
+                "ADR-013/ARREGLO2: BC {BcPublicId} tiene {Count} operadores con multa confirmada. " +
+                "No se emite ND automatica (no hay emision por linea de operador). Rutea a revision manual.",
+                bc.PublicId, confirmedPenaltySupplierCount);
+            await RouteDebitNoteToManualReviewAsync(
+                bc,
+                $"La cancelacion tiene multas confirmadas de {confirmedPenaltySupplierCount} operadores distintos. " +
+                "La Nota de Debito de cada operador se confirma y emite manualmente por ahora " +
+                "(la emision automatica por operador todavia no esta disponible).",
+                ct);
+            return;
+        }
+
         var originatingInvoice = bc.OriginatingInvoice;
         if (originatingInvoice is null)
         {
@@ -3780,6 +3916,27 @@ public class BookingCancellationService
         _logger.LogInformation(
             "metric:cancellation_debit_note_manual_review | BcPublicId={BcPublicId} Reason={Reason}",
             bc.PublicId, reason);
+    }
+
+    /// <summary>
+    /// ARREGLO 2 (2026-06-24): cuenta cuantos OPERADORES distintos tienen una penalidad CONFIRMADA en las
+    /// lineas de esta cancelacion. Es la señal que decide si la ND automatica es segura (1 operador) o si hay
+    /// que derivar a revision manual (mas de 1 -> la emision por linea de operador no existe todavia).
+    ///
+    /// <para>Mira <see cref="BookingCancellationLine"/> porque ahi vive la penalidad POR OPERADOR
+    /// (<see cref="BookingCancellationLine.PenaltyStatus"/> + <see cref="BookingCancellationLine.SupplierId"/>).
+    /// El BC padre solo lleva un monto agregado, que es justamente lo que no alcanza para multi-operador. Si la
+    /// cancelacion no tiene lineas (caso legacy NC total sin lineas) devuelve 0 -> no bloquea (sigue el flujo de
+    /// siempre, un solo operador).</para>
+    /// </summary>
+    private async Task<int> CountSuppliersWithConfirmedPenaltyAsync(int bookingCancellationId, CancellationToken ct)
+    {
+        return await _db.BookingCancellationLines
+            .Where(line => line.BookingCancellationId == bookingCancellationId
+                        && line.PenaltyStatus == PenaltyStatus.Confirmed)
+            .Select(line => line.SupplierId)
+            .Distinct()
+            .CountAsync(ct);
     }
 
     public async Task OnArcaFailedAsync(int originatingInvoiceId, string? afipErrorMessage, CancellationToken ct)

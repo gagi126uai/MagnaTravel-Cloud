@@ -211,6 +211,33 @@ public class Adr036CorrectTravelingEntryTests
         Assert.Equal(EstadoReserva.Traveling, stored.Status);
     }
 
+    [Fact]
+    public async Task NightlyJob_ConfirmedWithUnacknowledgedChanges_DoesNotPromoteToTraveling()
+    {
+        // 2026-06-24: al eliminar la regresion automatica, una reserva confirmada que quedo "con cambios sin
+        // revisar" (un servicio dejo de estar resuelto) ya no vuelve a En gestion. El job NO debe promoverla a
+        // En viaje sola: tiene que esperar a que una persona de el OK. Misma reserva del control de arriba pero
+        // con la marca puesta -> 0 promovidas.
+        await using var context = CreateContext();
+        context.Reservas.Add(new Reserva
+        {
+            Id = 3, NumeroReserva = "R-36-3", Name = "Con cambios", Status = EstadoReserva.Confirmed,
+            StartDate = DateTime.UtcNow.Date, Balance = 0m,
+            HasUnacknowledgedChanges = true, ChangesPendingSince = DateTime.UtcNow
+        });
+        context.HotelBookings.Add(new HotelBooking
+        {
+            Id = 30, ReservaId = 3, HotelName = "H", Status = "Confirmado", ConfirmedAt = DateTime.UtcNow
+        });
+        await context.SaveChangesAsync();
+
+        var promoted = await CreateJob(context).AutoTransitionConfirmedToTravelingAsync(CancellationToken.None);
+
+        Assert.Equal(0, promoted);
+        var stored = await context.Reservas.AsNoTracking().SingleAsync(r => r.Id == 3);
+        Assert.Equal(EstadoReserva.Confirmed, stored.Status);
+    }
+
     // ============================= (3) Bloqueo fiscal: factura con CAE vivo =============================
 
     [Fact]

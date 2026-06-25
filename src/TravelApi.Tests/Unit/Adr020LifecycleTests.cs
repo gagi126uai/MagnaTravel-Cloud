@@ -123,10 +123,14 @@ public class Adr020LifecycleTests
         Assert.Single(ctx.ReservaStatusChangeLogs.Where(l => l.ToStatus == EstadoReserva.Confirmed));
     }
 
-    // ===================== Motor: regresion + notificacion =====================
+    // ===================== Motor: "confirmada con cambios" (reemplaza la vieja regresion) =====================
+    //
+    // CAMBIO DE FONDO 2026-06-24 (alineado a Odoo/SAP): una reserva confirmada que deja de tener todos sus
+    // servicios resueltos YA NO regresa sola a En gestion. Queda EN Confirmed pero MARCADA "confirmada con
+    // cambios / revisar" (HasUnacknowledgedChanges) + aviso urgente. El sistema solo avisa; la persona decide.
 
     [Fact]
-    public async Task Engine_ServiceBecomesUnresolved_RegressesConfirmedToInManagement_AndNotifiesResponsible()
+    public async Task Engine_ServiceBecomesUnresolved_StaysConfirmed_MarksChanges_AndNotifiesResponsible()
     {
         await using var ctx = NewContext();
         ctx.Reservas.Add(Reserva(1, EstadoReserva.Confirmed, responsibleUserId: "vendedor-1"));
@@ -135,17 +139,24 @@ public class Adr020LifecycleTests
         ctx.HotelBookings.Add(new HotelBooking { Id = 11, ReservaId = 1, HotelName = "H2", Status = "Solicitado" });
         await ctx.SaveChangesAsync();
 
-        var changed = await NewEngine(ctx).EvaluateAndApplyAsync(1);
+        // Marcar no es cambio de estado: EvaluateAndApplyAsync devuelve false (solo cuenta curas de estado).
+        var changedState = await NewEngine(ctx).EvaluateAndApplyAsync(1);
 
-        Assert.True(changed);
-        Assert.Equal(EstadoReserva.InManagement, (await ctx.Reservas.FindAsync(1))!.Status);
+        Assert.False(changedState);
+        var reserva = await ctx.Reservas.FindAsync(1);
+        // NO regresa: sigue Confirmed.
+        Assert.Equal(EstadoReserva.Confirmed, reserva!.Status);
+        // Pero queda marcada para revisar.
+        Assert.True(reserva.HasUnacknowledgedChanges);
+        Assert.NotNull(reserva.ChangesPendingSince);
         var notif = Assert.Single(ctx.Notifications.Where(n => n.RelatedEntityId == 1));
         Assert.Equal("vendedor-1", notif.UserId);
         Assert.Equal("Urgent", notif.Priority);
+        Assert.Equal(NotificationTypes.ReservaNeedsReview, notif.Type);
     }
 
     [Fact]
-    public async Task Engine_Regression_SameDay_DoesNotDuplicateNotification()
+    public async Task Engine_NeedsReview_SameDay_DoesNotDuplicateNotification()
     {
         await using var ctx = NewContext();
         ctx.Reservas.Add(Reserva(1, EstadoReserva.Confirmed, responsibleUserId: "vendedor-1"));
@@ -153,18 +164,15 @@ public class Adr020LifecycleTests
         await ctx.SaveChangesAsync();
 
         var engine = NewEngine(ctx);
-        await engine.EvaluateAndApplyAsync(1); // regresa + notifica
-
-        // Vuelve a Confirmada y vuelve a romperse el mismo dia.
-        (await ctx.Reservas.FindAsync(1))!.Status = EstadoReserva.Confirmed;
-        await ctx.SaveChangesAsync();
-        await engine.EvaluateAndApplyAsync(1); // regresa de nuevo, NO debe duplicar
+        await engine.EvaluateAndApplyAsync(1); // marca + notifica
+        // Segunda evaluacion el mismo dia: ya esta marcada, no debe re-disparar el aviso.
+        await engine.EvaluateAndApplyAsync(1);
 
         Assert.Single(ctx.Notifications.Where(n => n.RelatedEntityId == 1));
     }
 
     [Fact]
-    public async Task Engine_Regression_NoResponsible_FallsBackToAdmins()
+    public async Task Engine_NeedsReview_NoResponsible_FallsBackToAdmins()
     {
         await using var ctx = NewContext();
         // Sembrar un admin (rol + user + user-role).
@@ -182,38 +190,41 @@ public class Adr020LifecycleTests
     }
 
     [Fact]
-    public async Task Engine_SetsLastRegressionReason_OnRegression_AndClearsItOnReconfirm()
+    public async Task Engine_SetsReviewReason_OnUnresolved_AndDoesNotAutoClearOnReResolve()
     {
+        // La marca y su motivo NO se limpian solos cuando los servicios se vuelven a resolver: solo los baja
+        // una persona (acknowledge-changes). El sistema avisa; el dueño revisa cuando quiere.
         await using var ctx = NewContext();
         ctx.Reservas.Add(Reserva(1, EstadoReserva.Confirmed, responsibleUserId: "vendedor-1"));
         ctx.HotelBookings.Add(new HotelBooking { Id = 10, ReservaId = 1, HotelName = "H", Status = "Confirmado", ConfirmedAt = DateTime.UtcNow });
-        // Servicio nuevo solicitado: rompe "todo resuelto" -> regresion.
         ctx.HotelBookings.Add(new HotelBooking { Id = 11, ReservaId = 1, HotelName = "H2", Status = "Solicitado" });
         await ctx.SaveChangesAsync();
 
         var engine = NewEngine(ctx);
         await engine.EvaluateAndApplyAsync(1);
 
-        var afterRegression = await ctx.Reservas.FindAsync(1);
-        Assert.Equal(EstadoReserva.InManagement, afterRegression!.Status);
-        Assert.False(string.IsNullOrEmpty(afterRegression.LastRegressionReason));
-        Assert.NotNull(afterRegression.LastRegressionAt);
+        var afterMark = await ctx.Reservas.FindAsync(1);
+        Assert.Equal(EstadoReserva.Confirmed, afterMark!.Status);
+        Assert.True(afterMark.HasUnacknowledgedChanges);
+        Assert.False(string.IsNullOrEmpty(afterMark.LastRegressionReason));
+        Assert.NotNull(afterMark.LastRegressionAt);
 
-        // Resolvemos el servicio pendiente -> el motor reconfirma y limpia la franja.
+        // Resolvemos el servicio pendiente: la reserva ya estaba Confirmed (no hay forward), y la marca queda.
         (await ctx.HotelBookings.FindAsync(11))!.Status = "Confirmado";
         await ctx.SaveChangesAsync();
         await engine.EvaluateAndApplyAsync(1);
 
-        var afterReconfirm = await ctx.Reservas.FindAsync(1);
-        Assert.Equal(EstadoReserva.Confirmed, afterReconfirm!.Status);
-        Assert.Null(afterReconfirm.LastRegressionReason);
-        Assert.Null(afterReconfirm.LastRegressionAt);
+        var afterReResolve = await ctx.Reservas.FindAsync(1);
+        Assert.Equal(EstadoReserva.Confirmed, afterReResolve!.Status);
+        // La marca sigue puesta: solo la baja una persona.
+        Assert.True(afterReResolve.HasUnacknowledgedChanges);
+        Assert.False(string.IsNullOrEmpty(afterReResolve.LastRegressionReason));
     }
 
     [Fact]
-    public async Task Engine_Reconciliation_SuppressesRegressionNotification_ButStillSetsFranja()
+    public async Task Engine_Reconciliation_SuppressesNotification_ButStillMarksChanges()
     {
-        // La reconciliacion nocturna NO debe notificar (cura en lote), pero SI deja la franja naranja.
+        // La reconciliacion nocturna NO debe notificar (cura en lote), pero SI deja la reserva marcada.
         await using var ctx = NewContext();
         ctx.Reservas.Add(Reserva(1, EstadoReserva.Confirmed, responsibleUserId: "vendedor-1"));
         ctx.HotelBookings.Add(new HotelBooking { Id = 11, ReservaId = 1, HotelName = "H2", Status = "Solicitado" });
@@ -223,8 +234,97 @@ public class Adr020LifecycleTests
 
         Assert.Empty(ctx.Notifications.Where(n => n.RelatedEntityId == 1));
         var reserva = await ctx.Reservas.FindAsync(1);
-        Assert.Equal(EstadoReserva.InManagement, reserva!.Status);
+        Assert.Equal(EstadoReserva.Confirmed, reserva!.Status);
+        Assert.True(reserva.HasUnacknowledgedChanges);
         Assert.False(string.IsNullOrEmpty(reserva.LastRegressionReason));
+    }
+
+    // ===================== Reserva confirmada VACIADA de servicios =====================
+
+    [Fact]
+    public async Task Engine_ConfirmedReservaEmptiedOfAllServices_StaysConfirmed_MarksWithEmptyMessage()
+    {
+        // Una reserva Confirmed que se quedo SIN servicios vivos (todos cancelados): NO regresa de estado y NO
+        // muestra el texto confuso "un servicio dejo de estar resuelto" (no hay servicios). Queda marcada con un
+        // mensaje que dice que se quedo sin servicios activos.
+        await using var ctx = NewContext();
+        ctx.Reservas.Add(Reserva(1, EstadoReserva.Confirmed, responsibleUserId: "vendedor-1"));
+        // Unico servicio: CANCELADO (no vivo). La reserva queda sin servicios activos.
+        ctx.HotelBookings.Add(new HotelBooking { Id = 10, ReservaId = 1, HotelName = "H", Status = "Cancelado" });
+        await ctx.SaveChangesAsync();
+
+        await NewEngine(ctx).EvaluateAndApplyAsync(1);
+
+        var reserva = await ctx.Reservas.FindAsync(1);
+        Assert.Equal(EstadoReserva.Confirmed, reserva!.Status);
+        Assert.True(reserva.HasUnacknowledgedChanges);
+
+        // El mensaje NO debe afirmar que "un servicio dejo de estar resuelto" (texto confuso para una vacia).
+        Assert.DoesNotContain("dejaron de estar resueltos", reserva.LastRegressionReason ?? string.Empty);
+        // Debe explicar que la reserva quedo sin servicios activos.
+        Assert.Contains("sin servicios activos", reserva.LastRegressionReason ?? string.Empty);
+    }
+
+    [Fact]
+    public async Task Engine_ConfirmedReservaWithNewUnresolvedService_StaysConfirmed_NamingTheServiceType()
+    {
+        // Contraste con el caso de arriba: cuando SI hay un servicio vivo sin resolver, el mensaje nombra
+        // el tipo, sin caer al texto de "sin servicios activos".
+        await using var ctx = NewContext();
+        ctx.Reservas.Add(Reserva(1, EstadoReserva.Confirmed, responsibleUserId: "vendedor-1"));
+        ctx.HotelBookings.Add(new HotelBooking { Id = 10, ReservaId = 1, HotelName = "H", Status = "Confirmado", ConfirmedAt = DateTime.UtcNow });
+        ctx.HotelBookings.Add(new HotelBooking { Id = 11, ReservaId = 1, HotelName = "H2", Status = "Solicitado" });
+        await ctx.SaveChangesAsync();
+
+        await NewEngine(ctx).EvaluateAndApplyAsync(1);
+
+        var reserva = await ctx.Reservas.FindAsync(1);
+        Assert.Equal(EstadoReserva.Confirmed, reserva!.Status);
+        Assert.True(reserva.HasUnacknowledgedChanges);
+        Assert.Contains("hotel", reserva.LastRegressionReason ?? string.Empty);
+        Assert.DoesNotContain("sin servicios activos", reserva.LastRegressionReason ?? string.Empty);
+    }
+
+    // ===================== Gate manual de "En viaje": cambios sin revisar lo frenan =====================
+    // 2026-06-24: al eliminar la regresion, la marca "confirmada con cambios" es la que evita que una reserva
+    // confirmada avance a En viaje sin que una persona revise. Cubre el pase MANUAL (el del job esta en otro test).
+
+    [Fact]
+    public async Task UpdateStatus_ConfirmedToTraveling_WithUnacknowledgedChanges_Rejected()
+    {
+        await using var ctx = NewContext();
+        var reserva = Reserva(1, EstadoReserva.Confirmed);
+        reserva.StartDate = DateTime.UtcNow.Date;
+        reserva.Balance = 0m;                       // cliente saldado: el candado de pago pasa
+        reserva.HasUnacknowledgedChanges = true;    // pero hay cambios sin revisar -> debe frenar
+        ctx.Reservas.Add(reserva);
+        ctx.HotelBookings.Add(new HotelBooking { Id = 10, ReservaId = 1, HotelName = "H", Status = "Confirmado", ConfirmedAt = DateTime.UtcNow });
+        await ctx.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => NewReservaService(ctx).UpdateStatusAsync(1, EstadoReserva.Traveling));
+        Assert.Contains("cambios sin revisar", ex.Message);
+
+        // No avanzo: sigue Confirmed.
+        Assert.Equal(EstadoReserva.Confirmed, (await ctx.Reservas.FindAsync(1))!.Status);
+    }
+
+    [Fact]
+    public async Task UpdateStatus_ConfirmedToTraveling_WithoutUnacknowledgedChanges_Allowed()
+    {
+        // Control: sin la marca, el pase manual a En viaje funciona (no rompimos el flujo normal).
+        await using var ctx = NewContext();
+        var reserva = Reserva(1, EstadoReserva.Confirmed);
+        reserva.StartDate = DateTime.UtcNow.Date;
+        reserva.Balance = 0m;
+        reserva.HasUnacknowledgedChanges = false;
+        ctx.Reservas.Add(reserva);
+        ctx.HotelBookings.Add(new HotelBooking { Id = 10, ReservaId = 1, HotelName = "H", Status = "Confirmado", ConfirmedAt = DateTime.UtcNow });
+        await ctx.SaveChangesAsync();
+
+        var result = await NewReservaService(ctx).UpdateStatusAsync(1, EstadoReserva.Traveling);
+
+        Assert.Equal(EstadoReserva.Traveling, result.Status);
     }
 
     // ===================== Matriz manual: Lost =====================

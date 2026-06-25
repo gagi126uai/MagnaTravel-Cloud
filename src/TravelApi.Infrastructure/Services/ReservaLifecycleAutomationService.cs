@@ -1,3 +1,4 @@
+using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using TravelApi.Application.Interfaces;
@@ -56,6 +57,24 @@ public class ReservaLifecycleAutomationService
         _autoStateService = autoStateService;
     }
 
+    /// <summary>
+    /// Entry point que invoca Hangfire en el cron de las 3am. Delega en <see cref="RunDailyDetailedAsync"/> y
+    /// devuelve el total de transiciones aplicadas.
+    ///
+    /// <para>ARREGLO 2 (2026-06-25): <c>[DisableConcurrentExecution]</c> es el guard de Hangfire contra corridas
+    /// PROGRAMADAS solapadas. Sin el, una corrida nocturna lenta que se cruzara con la del dia siguiente podia
+    /// pisarse en la ventana entre la re-lectura y el SaveChanges -> auditoria duplicada y doble procesamiento.
+    /// Hangfire toma un lock distribuido (tabla de locks de Postgres) keyado por este metodo: la segunda corrida
+    /// ESPERA hasta el timeout a que termine la primera; si no lo consigue, falla esa ejecucion (no corre en
+    /// paralelo). El timeout (10 min) cubre una corrida nocturna larga sin ser eterno.</para>
+    ///
+    /// <para>El disparo MANUAL del admin (<c>AdminMaintenanceController.RunLifecycle</c>) corre INLINE
+    /// <see cref="RunDailyDetailedAsync"/> y NO comparte este lock (mantiene su contrato sincrono). Una eventual
+    /// superposicion manual+programada es SEGURA a nivel datos gracias al ARREGLO 1 (cada transicion re-valida
+    /// estado y saldo frescos antes de aplicar): la segunda corrida ve los estados ya movidos y los saltea. El
+    /// peor efecto seria trabajo repetido, no corrupcion. Ver la nota en el controller para cerrar esa ventana.</para>
+    /// </summary>
+    [DisableConcurrentExecution(timeoutInSeconds: 600)]
     public async Task<int> RunDailyAsync(CancellationToken ct = default)
     {
         var result = await RunDailyDetailedAsync(ct);
@@ -75,29 +94,35 @@ public class ReservaLifecycleAutomationService
     /// </summary>
     public async Task<LifecycleRunResult> RunDailyDetailedAsync(CancellationToken ct = default)
     {
+        // ARREGLO 3 (2026-06-25): cada fase va aislada en su propio try/catch (via RunPhaseSafelyAsync). Antes,
+        // una sola fila veneno (FK, constraint, deadlock) que reventara una fase abortaba la corrida ENTERA y las
+        // fases SIGUIENTES nunca corrian esa noche (ej. fallaba "Confirmada->En viaje" y nunca corria el cierre
+        // por fin de viaje). Ahora una fase que explota se loguea y devuelve 0, y la corrida sigue con la
+        // siguiente. La atomicidad DENTRO de cada transicion individual se mantiene (ver ApplyTransitionsAsync).
+
         // ADR-020 F3 (cura del motor): re-evalua el motor sobre todas las reservas En gestion /
         // Confirmada y corrige las que hayan esquivado el chokepoint o quedado en la ventana entre
         // los dos saves. Corre PRIMERO para que el resto del job vea estados ya reconciliados.
-        var reconciled = await ReconcileAutoStatesAsync(ct);
+        var reconciled = await RunPhaseSafelyAsync("ReconcileAutoStates", () => ReconcileAutoStatesAsync(ct));
 
-        var repaired = await AutoRepairTravelingDatesAsync(ct);
+        var repaired = await RunPhaseSafelyAsync("AutoRepairTravelingDates", () => AutoRepairTravelingDatesAsync(ct));
 
         // ADR-036 (saneamiento): cerrar las reservas que ya quedaron En viaje SIN servicios. Corre junto al
         // resto del housekeeping de Traveling y antes del cierre por fin de viaje (una vacia no tiene EndDate,
         // asi que el cierre normal no la alcanzaria; este barrido la cierra por estar vacia).
-        var emptyTravelingClosed = await AutoCloseEmptyTravelingAsync(ct);
+        var emptyTravelingClosed = await RunPhaseSafelyAsync("AutoCloseEmptyTraveling", () => AutoCloseEmptyTravelingAsync(ct));
 
         // G6 (caducidad de pre-venta, 2026-06-24): un Presupuesto/Cotizacion que no avanzo en X dias caduca
         // SOLO a "Perdido". Corre junto al resto del housekeeping. Es independiente del flujo de viaje, por eso
         // su count NO se suma a Promoted/Closed (se loguea aparte). Si los dias estan en 0 (default), no hace nada.
-        var expired = await AutoExpireStalePreSaleAsync(ct);
+        var expired = await RunPhaseSafelyAsync("AutoExpireStalePreSale", () => AutoExpireStalePreSaleAsync(ct));
 
-        var promoted = await AutoTransitionConfirmedToTravelingAsync(ct);
+        var promoted = await RunPhaseSafelyAsync("AutoTransitionConfirmedToTraveling", () => AutoTransitionConfirmedToTravelingAsync(ct));
 
         // ADR-020: cierre por fin de viaje Traveling -> Closed (EndDate pasada + Balance <= 0). El
         // <= 0 (no == 0) cubre el saldo a favor: una reserva cuyo cliente pago de mas debe poder
         // cerrarse igual (coherente con el gate manual, que solo bloquea Balance > 0). ADR-036: ToSettle murio.
-        var closed = await AutoTransitionTravelingToClosedAsync(ct);
+        var closed = await RunPhaseSafelyAsync("AutoTransitionTravelingToClosed", () => AutoTransitionTravelingToClosedAsync(ct));
 
         _logger.LogInformation(
             "Lifecycle automation finished. Reconciled (motor): {Reconciled}. Repaired: {Repaired}. En viaje vacias cerradas (saneamiento): {EmptyTravelingClosed}. Pre-venta caducada a Perdido: {Expired}. Confirmed->Traveling: {Promoted}. Avanzadas a fin de viaje: {Closed}.",
@@ -105,6 +130,36 @@ public class ReservaLifecycleAutomationService
         // El saneamiento cuenta como cierres: se suma al count Closed del resultado. La caducidad de pre-venta
         // (G6) va en su propio campo Expired (no es ni promote ni close: es Budget/Quotation -> Lost).
         return new LifecycleRunResult(promoted, closed + emptyTravelingClosed, repaired, reconciled, expired);
+    }
+
+    /// <summary>
+    /// ARREGLO 3 (2026-06-25): corre una FASE del job aislada. Si la fase lanza una excepcion (una fila veneno
+    /// que ni siquiera ApplyTransitionsAsync alcanza a atajar, ej. un error en la query o en el motor de
+    /// reconciliacion), la logueamos, descartamos cualquier cambio rastreado que la fase haya dejado a medias
+    /// (para no contaminar la fase siguiente) y devolvemos 0. Asi una fase mala NO impide que corran las
+    /// siguientes esa misma noche. La cancelacion del job (OperationCanceledException) SI se propaga: es shutdown,
+    /// no una fila veneno.
+    /// </summary>
+    private async Task<int> RunPhaseSafelyAsync(string phaseName, Func<Task<int>> phase)
+    {
+        try
+        {
+            return await phase();
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Lifecycle: la fase '{Phase}' fallo y se saltea entera. Las fases siguientes continuan; la proxima corrida la reintenta.",
+                phaseName);
+            // La fase pudo dejar entidades rastreadas a medias (ej. un SaveChanges que reviento). Las descartamos
+            // para que la fase siguiente arranque limpia y no re-intente flushear esas mismas filas.
+            DiscardTrackedChanges();
+            return 0;
+        }
     }
 
     /// <summary>
@@ -206,6 +261,22 @@ public class ReservaLifecycleAutomationService
 
         foreach (var reserva in candidates)
         {
+            // GATE "confirmada con cambios" (2026-06-24): si la reserva confirmada quedo MARCADA con cambios sin
+            // revisar (un servicio dejo de estar resuelto, se quedo sin servicios, o se edito precio/costo), el
+            // job NO la promueve sola a "En viaje": el dueño tiene que revisar y dar el OK primero
+            // (acknowledge-changes). Antes este candado lo cumplia la regresion automatica (la reserva volvia a
+            // En gestion y el job no la tomaba); al eliminar la regresion, la reserva queda en Confirmed y esta
+            // marca es la que evita que progrese en silencio. Mismo gate que el pase manual
+            // (EnsureCanStartTravelingAsync). Se reintenta en la proxima corrida cuando se de el OK.
+            if (reserva.HasUnacknowledgedChanges)
+            {
+                blocked++;
+                _logger.LogInformation(
+                    "Reserva {ReservaId} ({NumeroReserva}) NO promovida automaticamente Confirmed->Traveling: tiene cambios sin revisar (confirmada con cambios). Se reintenta cuando se de el OK.",
+                    reserva.Id, reserva.NumeroReserva);
+                continue;
+            }
+
             // Inconsistencia de capacidad pasajeros vs servicios bloquea el pase (independiente del
             // saldo). ADR-020: NO re-chequeamos servicios sin resolver — para estar en Confirmed el
             // motor ya garantizo que todos estan resueltos.
@@ -250,13 +321,16 @@ public class ReservaLifecycleAutomationService
                 ToStatus: EstadoReserva.Traveling,
                 StampClosedAt: false,
                 WriteForwardLog: true,
-                Reason: "Inicio de viaje (StartDate alcanzada)"));
+                Reason: "Inicio de viaje (StartDate alcanzada)",
+                // ARREGLO 1: re-validar al aplicar que el cliente SIGA saldado (un cobro pudo borrarse/editarse
+                // entre esta query y el commit). Sin esto el job promovia a En viaje con saldo rancio.
+                MoneyGate: MoneyGate.ClientFullyPaid));
         }
 
         var promoted = await ApplyTransitionsAsync(planned, "AutoTransitionConfirmedToTraveling", ct);
 
         _logger.LogInformation(
-            "Auto-promoted {Promoted} Reserva(s) Confirmed->Traveling. Skipped {Blocked} por inconsistencia de capacidad, sin servicios cargados o saldo del cliente pendiente.",
+            "Auto-promoted {Promoted} Reserva(s) Confirmed->Traveling. Skipped {Blocked} por cambios sin revisar, inconsistencia de capacidad, sin servicios cargados o saldo del cliente pendiente.",
             promoted, blocked);
 
         return promoted;
@@ -287,7 +361,10 @@ public class ReservaLifecycleAutomationService
             ToStatus: EstadoReserva.Closed,
             StampClosedAt: true,
             WriteForwardLog: true,
-            Reason: "Fin de viaje (EndDate pasada) con saldo saldado: cierre directo")).ToList();
+            Reason: "Fin de viaje (EndDate pasada) con saldo saldado: cierre directo",
+            // ARREGLO 1: re-validar al aplicar que el saldo SIGA <= 0 (un cobro pudo borrarse/editarse entre
+            // esta query y el commit, dejando deuda). Sin esto el job cerraba reservas con deuda.
+            MoneyGate: MoneyGate.BalanceNonPositive)).ToList();
 
         var saved = await ApplyTransitionsAsync(planned, "AutoTransitionTravelingToClosed", ct);
         if (saved > 0)
@@ -647,6 +724,22 @@ public class ReservaLifecycleAutomationService
     /// salteamos y la logueamos en vez de pisar su cambio. La concurrencia fina (lock por fila)
     /// queda como mejora futura; este re-chequeo cubre el caso comun job-vs-cajero.</para>
     ///
+    /// <para>ARREGLO 1 (saldo rancio, 2026-06-25): el re-chequeo de concurrencia re-leia SOLO el Status, nunca
+    /// el Balance. Si entre la query inicial de la fase y este momento un cajero borraba/editaba un cobro (subia
+    /// el saldo), el job igual promovia a "En viaje" una reserva que YA no estaba paga o cerraba una con deuda,
+    /// usando el Balance viejo cargado al inicio de la fase. Ahora, ademas del Status, re-leemos el Balance
+    /// FRESCO de la base y re-validamos la condicion de plata segun <see cref="PlannedTransition.MoneyGate"/>:
+    /// si ya no se cumple, salteamos esa reserva (no transiciona) y lo logueamos. Nunca promovemos/cerramos con
+    /// numeros rancios. El Balance es un escalar materializado (lo escribe <c>ReservaMoneyPersister</c> en cada
+    /// movimiento de plata), asi que leer la fila es suficiente: no hay que recalcular aca.</para>
+    ///
+    /// <para>ARREGLO 3 (fila veneno, 2026-06-25): cada item va envuelto en try/catch. Si una fila falla (FK,
+    /// constraint, etc.) al preparar su transicion, se SALTEA y se loguea — las demas de la tanda y las fases
+    /// siguientes continuan. La atomicidad DENTRO de una transicion se mantiene: el cambio de Status + finalizar
+    /// servicios + ClosedAt + log se preparan juntos y se persisten en el SaveChanges unico del final. Si una
+    /// fila lanza despues de haber tocado el ChangeTracker, se descarta toda la tanda (ver el catch del
+    /// SaveChanges) para no persistir un estado a medias.</para>
+    ///
     /// <para>FIX 5 (A1): si la transicion pertenece a la cadena nueva (flag ON), se escribe un
     /// <see cref="ReservaStatusChangeLog"/> con Direction="Forward" y actor "sistema" para dejar
     /// rastro auditable. Las transiciones del ciclo clasico NO se loguean (deuda preexistente,
@@ -666,77 +759,181 @@ public class ReservaLifecycleAutomationService
         {
             var reserva = transition.Reserva;
 
-            // Defensa de concurrencia: re-leer el estado actual en la base. Si cambio respecto del
-            // origen esperado, otra transaccion la toco -> saltear sin pisar.
-            var currentStatusInDb = await _db.Reservas
-                .AsNoTracking()
-                .Where(r => r.Id == reserva.Id)
-                .Select(r => r.Status)
-                .FirstOrDefaultAsync(ct);
-
-            if (!string.Equals(currentStatusInDb, transition.FromStatus, StringComparison.OrdinalIgnoreCase))
+            try
             {
-                _logger.LogWarning(
-                    "Lifecycle {Operation}: Reserva {ReservaId} saltada. Esperaba origen '{From}' pero en la base esta en '{Current}' (otra transaccion la modifico). Se reevalua en la proxima corrida.",
-                    operation, reserva.Id, transition.FromStatus, currentStatusInDb);
-                continue;
-            }
+                // Defensa de concurrencia + saldo rancio: re-leer estado Y saldo ACTUALES de la base en una
+                // sola query AsNoTracking. Si el estado cambio respecto del origen esperado, otra transaccion
+                // la toco -> saltear. Si la condicion de plata ya no se cumple (un cobro se borro/edito), tampoco
+                // transicionamos -> saltear sin pisar.
+                var freshRow = await _db.Reservas
+                    .AsNoTracking()
+                    .Where(r => r.Id == reserva.Id)
+                    .Select(r => new { r.Status, r.Balance })
+                    .FirstOrDefaultAsync(ct);
 
-            reserva.Status = transition.ToStatus;
-            if (transition.StampClosedAt)
-                reserva.ClosedAt = now;
-
-            // B2 (2026-06-24): el cierre por el JOB es el camino DOMINANTE (Traveling -> Closed por fin de
-            // viaje). Igual que el cierre manual, al finalizar la reserva sus servicios RESUELTOS pasan a
-            // "Finalizado" (prestado/cumplido). Misma FUENTE UNICA que el cierre manual
-            // (ReservaServiceFinalizer): asi NINGUN camino a Closed deja servicios en "Confirmado". NO hace
-            // SaveChanges: se persiste en el SaveChanges unico al final de la tanda (atomico con el cambio de
-            // estado). Idempotente: re-aplicarlo sobre servicios ya finalizados es no-op.
-            if (string.Equals(transition.ToStatus, EstadoReserva.Closed, StringComparison.OrdinalIgnoreCase))
-            {
-                await Reservations.ReservaServiceFinalizer.MarkResolvedServicesFinalizedAsync(_db, reserva.Id, ct);
-            }
-
-            // CRM leads (fix de fondo 2026-06-18): si el job deja la reserva en un estado FIRME (el caso real
-            // es Confirmed -> Traveling) y nacio de un lead, ese lead debe quedar Ganado. Normalmente ya lo
-            // estara (llego a Confirmed via el motor, que tambien dispara el hook), pero lo evaluamos aca por
-            // si alguna reserva alcanzo Traveling sin haber pasado por ese disparo. Idempotente: no toca un
-            // lead ya Ganado/Perdido, y el cierre Traveling -> Closed (no firme) es no-op. Sin SaveChanges
-            // propio: se persiste en el SaveChanges unico al final de la tanda.
-            await Reservations.SourceLeadWonHook.MarkSourceLeadAsWonIfReservaIsFirmAsync(_db, reserva, ct);
-
-            // FIX 5 (A1): rastro auditable solo para transiciones de la cadena nueva.
-            if (transition.WriteForwardLog)
-            {
-                _db.ReservaStatusChangeLogs.Add(new ReservaStatusChangeLog
+                if (freshRow is null)
                 {
-                    ReservaId = reserva.Id,
-                    FromStatus = transition.FromStatus,
-                    ToStatus = transition.ToStatus,
-                    Direction = "Forward",
-                    ByUserId = SystemActorUserId,
-                    ByUserName = SystemActorUserName,
-                    Reason = transition.Reason,
-                    OccurredAt = now
-                });
-            }
+                    // Defensivo: la reserva se borro entre el plan y este momento. Saltear.
+                    _logger.LogWarning(
+                        "Lifecycle {Operation}: Reserva {ReservaId} saltada. Ya no existe en la base (se borro entre el plan y el commit).",
+                        operation, reserva.Id);
+                    continue;
+                }
 
-            applied++;
+                if (!string.Equals(freshRow.Status, transition.FromStatus, StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogWarning(
+                        "Lifecycle {Operation}: Reserva {ReservaId} saltada. Esperaba origen '{From}' pero en la base esta en '{Current}' (otra transaccion la modifico). Se reevalua en la proxima corrida.",
+                        operation, reserva.Id, transition.FromStatus, freshRow.Status);
+                    continue;
+                }
+
+                // ARREGLO 1: re-validar la plata contra el saldo FRESCO (no el cargado al inicio de la fase).
+                if (!MoneyGatePasses(transition.MoneyGate, freshRow.Balance))
+                {
+                    _logger.LogWarning(
+                        "Lifecycle {Operation}: Reserva {ReservaId} saltada. El saldo cambio entre la consulta inicial y el commit y ya no cumple la condicion de plata ({Gate}). NO se transiciona con numeros rancios; se reevalua en la proxima corrida.",
+                        operation, reserva.Id, transition.MoneyGate);
+                    continue;
+                }
+
+                reserva.Status = transition.ToStatus;
+                if (transition.StampClosedAt)
+                    reserva.ClosedAt = now;
+
+                // B2 (2026-06-24): el cierre por el JOB es el camino DOMINANTE (Traveling -> Closed por fin de
+                // viaje). Igual que el cierre manual, al finalizar la reserva sus servicios RESUELTOS pasan a
+                // "Finalizado" (prestado/cumplido). Misma FUENTE UNICA que el cierre manual
+                // (ReservaServiceFinalizer): asi NINGUN camino a Closed deja servicios en "Confirmado". NO hace
+                // SaveChanges: se persiste en el SaveChanges unico al final de la tanda (atomico con el cambio de
+                // estado). Idempotente: re-aplicarlo sobre servicios ya finalizados es no-op.
+                if (string.Equals(transition.ToStatus, EstadoReserva.Closed, StringComparison.OrdinalIgnoreCase))
+                {
+                    await Reservations.ReservaServiceFinalizer.MarkResolvedServicesFinalizedAsync(_db, reserva.Id, ct);
+                }
+
+                // CRM leads (fix de fondo 2026-06-18): si el job deja la reserva en un estado FIRME (el caso real
+                // es Confirmed -> Traveling) y nacio de un lead, ese lead debe quedar Ganado. Normalmente ya lo
+                // estara (llego a Confirmed via el motor, que tambien dispara el hook), pero lo evaluamos aca por
+                // si alguna reserva alcanzo Traveling sin haber pasado por ese disparo. Idempotente: no toca un
+                // lead ya Ganado/Perdido, y el cierre Traveling -> Closed (no firme) es no-op. Sin SaveChanges
+                // propio: se persiste en el SaveChanges unico al final de la tanda.
+                await Reservations.SourceLeadWonHook.MarkSourceLeadAsWonIfReservaIsFirmAsync(_db, reserva, ct);
+
+                // FIX 5 (A1): rastro auditable solo para transiciones de la cadena nueva.
+                if (transition.WriteForwardLog)
+                {
+                    _db.ReservaStatusChangeLogs.Add(new ReservaStatusChangeLog
+                    {
+                        ReservaId = reserva.Id,
+                        FromStatus = transition.FromStatus,
+                        ToStatus = transition.ToStatus,
+                        Direction = "Forward",
+                        ByUserId = SystemActorUserId,
+                        ByUserName = SystemActorUserName,
+                        Reason = transition.Reason,
+                        OccurredAt = now
+                    });
+                }
+
+                applied++;
+            }
+            catch (OperationCanceledException)
+            {
+                // Cancelacion del job: propagar (no es una "fila veneno", es shutdown).
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // ARREGLO 3: una fila que falla al prepararse no debe tumbar la tanda. La salteamos y seguimos.
+                // (Si llego a tocar el ChangeTracker antes de fallar, el catch del SaveChanges de abajo descarta
+                // la tanda entera para no persistir a medias.)
+                _logger.LogError(ex,
+                    "Lifecycle {Operation}: Reserva {ReservaId} salteada por error al preparar su transicion. Las demas siguen.",
+                    operation, reserva.Id);
+            }
         }
 
         if (applied == 0) return 0;
 
-        // Persistencia unica al final. Con el re-chequeo de arriba, last-write-wins solo puede
-        // perderse en la ventana entre el re-read y el SaveChanges (muy chica). Aceptable: la
-        // concurrencia fina es mejora futura.
-        await _db.SaveChangesAsync(ct);
-        return applied;
+        try
+        {
+            // Persistencia unica al final. Con el re-chequeo de arriba, last-write-wins solo puede
+            // perderse en la ventana entre el re-read y el SaveChanges (muy chica). Aceptable: la
+            // concurrencia fina es mejora futura.
+            await _db.SaveChangesAsync(ct);
+            return applied;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // ARREGLO 3: si el SaveChanges de la tanda falla (ej. una fila veneno que solo revienta al hacer
+            // flush: FK, constraint, deadlock), descartamos los cambios rastreados de ESTA fase para que la
+            // proxima FASE del job pueda correr con un ChangeTracker limpio. La fase falla (devuelve 0 aplicadas)
+            // pero NO propaga: el resto de la corrida nocturna continua. La proxima corrida reintenta.
+            _logger.LogError(ex,
+                "Lifecycle {Operation}: fallo el SaveChanges de la tanda ({Planned} planificadas). Se descartan los cambios de esta fase; las fases siguientes continuan y la proxima corrida reintenta.",
+                operation, applied);
+            DiscardTrackedChanges();
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// ARREGLO 1: evalua la condicion de plata de una transicion contra un Balance FRESCO leido de la base.
+    /// Es la misma regla del gate manual (<c>ReservationEconomicPolicy</c>), centralizada para no divergir.
+    /// </summary>
+    private static bool MoneyGatePasses(MoneyGate gate, decimal freshBalance)
+    {
+        return gate switch
+        {
+            // En viaje: el cliente debe seguir saldado (mismo helper puro que el pase manual).
+            MoneyGate.ClientFullyPaid => ReservationEconomicPolicy.IsClientFullyPaid(freshBalance),
+            // Cierre por fin de viaje: saldo <= 0 (cubre saldo a favor), coherente con el gate manual.
+            MoneyGate.BalanceNonPositive => ReservationEconomicPolicy.RoundCurrency(freshBalance) <= 0m,
+            // Sin gate de plata (ej. caducidad de pre-venta G6: su propio guard ya corrio antes).
+            _ => true
+        };
+    }
+
+    /// <summary>
+    /// ARREGLO 3: descarta TODOS los cambios rastreados (detach) tras un SaveChanges fallido de una fase, para
+    /// que la fase siguiente arranque con un ChangeTracker limpio y no re-intente flushear las mismas filas
+    /// veneno. Recorre una copia de las entries porque cambiar State muta la coleccion subyacente.
+    /// </summary>
+    private void DiscardTrackedChanges()
+    {
+        foreach (var entry in _db.ChangeTracker.Entries().ToList())
+        {
+            entry.State = EntityState.Detached;
+        }
+    }
+
+    /// <summary>
+    /// Re-validacion de plata que el job hace JUSTO antes de aplicar una transicion (ARREGLO 1, 2026-06-25).
+    /// Indica que condicion de saldo debe RE-CHEQUEARSE contra el Balance FRESCO de la base (no el cargado al
+    /// inicio de la fase), para no promover/cerrar con numeros rancios si un cajero movio la plata en el medio.
+    /// </summary>
+    private enum MoneyGate
+    {
+        /// <summary>No re-chequea plata (ej. caducidad de pre-venta G6: su guard de plata ya corrio antes).</summary>
+        None,
+
+        /// <summary>Para "En viaje": el cliente debe seguir SALDADO (IsClientFullyPaid sobre el Balance fresco).</summary>
+        ClientFullyPaid,
+
+        /// <summary>Para cerrar por fin de viaje: el saldo fresco debe seguir &lt;= 0 (coherente con el gate manual).</summary>
+        BalanceNonPositive
     }
 
     /// <summary>
     /// Una transicion planificada por el job: la reserva a mover, su estado origen esperado
-    /// (para el re-chequeo de concurrencia), el destino, si estampar ClosedAt y si debe dejar
-    /// rastro auditable (solo la cadena nueva, FIX 5).
+    /// (para el re-chequeo de concurrencia), el destino, si estampar ClosedAt, si debe dejar
+    /// rastro auditable (solo la cadena nueva, FIX 5) y que condicion de plata re-validar contra el
+    /// saldo fresco justo antes de aplicar (ARREGLO 1).
     /// </summary>
     private sealed record PlannedTransition(
         Reserva Reserva,
@@ -744,7 +941,8 @@ public class ReservaLifecycleAutomationService
         string ToStatus,
         bool StampClosedAt,
         bool WriteForwardLog,
-        string? Reason);
+        string? Reason,
+        MoneyGate MoneyGate = MoneyGate.None);
 }
 
 /// <summary>

@@ -232,13 +232,16 @@ public class ReservaDto
     public decimal ConfirmedSale { get; set; }
 
     /// <summary>
-    /// ADR-020 (decision #6): si la reserva volvio SOLA de Confirmada a En gestion, este es el motivo
-    /// (null si nunca regreso o si ya se re-confirmo). El frontend muestra una franja naranja con este
-    /// texto. Se limpia automaticamente cuando la reserva se vuelve a confirmar.
+    /// Motivo por el que la reserva quedo "confirmada con cambios / revisar" (null si no hay nada para revisar
+    /// por servicios). Lo setea el motor cuando una reserva confirmada deja de tener todos sus servicios
+    /// resueltos o se queda sin servicios: la reserva NO regresa de estado (la regresion automatica se elimino
+    /// el 2026-06-24), queda confirmada pero marcada. El frontend muestra una franja informativa con este texto.
+    /// Se limpia cuando una persona da el OK (acknowledge-changes), junto con <see cref="HasUnacknowledgedChanges"/>.
+    /// El nombre es historico (antes era el motivo de la regresion automatica).
     /// </summary>
     public string? LastRegressionReason { get; set; }
 
-    /// <summary>Cuando ocurrio la ultima regresion automatica (par de <see cref="LastRegressionReason"/>).</summary>
+    /// <summary>Cuando se marco el ultimo motivo de revision (par de <see cref="LastRegressionReason"/>).</summary>
     public DateTime? LastRegressionAt { get; set; }
 
     /// <summary>

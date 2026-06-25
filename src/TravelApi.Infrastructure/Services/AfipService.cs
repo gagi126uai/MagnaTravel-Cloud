@@ -1102,9 +1102,97 @@ public class AfipService : IAfipService
 
             await EnsureAuth(settings);
 
+            // ============================================================================
+            // IDEMPOTENCIA ANTI-DOBLE-CAE (2026-06-25) — mismo mecanismo que la NC parcial
+            // (ProcessPartialCreditNoteJob en InvoiceService: ArcaIdempotencyKeys + stale key
+            // recovery). Cierra el agujero por el que un re-despacho del job (reinicio del
+            // worker, redelivery at-least-once de Hangfire) podia pedir un NUEVO numero y
+            // emitir un SEGUNDO CAE real para la misma operacion cuando el primer POST
+            // autorizo en ARCA pero la respuesta/SaveChanges se perdio.
+            //
+            // Cubre los 3 tipos que pasan por aca: factura de venta, NC total y ND.
+            //
+            // Flujo (capas del plan FC1.3.F2.2 adaptadas a este job):
+            //   (a) Snapshot del numerador ARCA ANTES de insertar la key.
+            //   (b) idemKey deterministica por Invoice (mismo invoiceId => misma key).
+            //   (c) INSERT de la key (UNIQUE). Si entra, seguimos a emitir.
+            //   (d) Si choca (re-despacho): consultar ARCA. Si el comprobante YA se emitio,
+            //       adoptamos su CAE/numero en ESTA Invoice (sin re-POSTear). Si no viajo,
+            //       borramos la key huerfana y reintentamos limpio.
+            // ============================================================================
+
+            // (a) Snapshot del numerador ARCA PRIMERO. Tiene que vivir en la misma ejecucion
+            //     del job que el POST: si Hangfire reintenta, este snapshot se recaptura y la
+            //     capa de recovery usa el de la corrida ANTERIOR (persistido en la key huerfana).
+            int lastSeenNumeroBeforePost = await GetLastAuthorizedNumeroAsync(
+                puntoVenta: settings.PuntoDeVenta,
+                cbteTipo: invoice.TipoComprobante,
+                ct: CancellationToken.None);
+
+            // (b) idemKey por Invoice: el invoiceId + tipo + punto de venta identifican de forma
+            //     unica la operacion. El mismo invoiceId re-despachado produce la MISMA key.
+            string invoiceIdemKey = BuildInvoiceIdempotencyKey(
+                invoiceId: invoice.Id,
+                tipoComprobante: invoice.TipoComprobante,
+                puntoDeVenta: settings.PuntoDeVenta);
+
+            // Umbrales de idempotencia: se leen de OperationalFinanceSettings (la misma fuente
+            // que usa la NC parcial). Si la fila no existe (entornos de test InMemory) caemos a
+            // los defaults de la entidad — comportamiento seguro e identico al diseño base.
+            var idempotencySettings = await _context.OperationalFinanceSettings
+                .OrderBy(s => s.Id)
+                .FirstOrDefaultAsync()
+                ?? new OperationalFinanceSettings();
+
+            // (c) INSERT de la key ANTES de tocar ARCA.
+            bool keyInserted = await TryInsertInvoiceIdempotencyKeyAsync(
+                invoiceIdemKey,
+                lastSeenNumeroBeforePost,
+                CancellationToken.None);
+
+            if (!keyInserted)
+            {
+                // (d) La key ya existia (re-despacho del job). Arbitrar contra ARCA: derivar el
+                //     CAE ya emitido, o limpiar la huerfana para re-emitir limpio.
+                bool resolvedWithoutNewPost = await HandleStaleInvoiceIdempotencyKeyAsync(
+                    idemKey: invoiceIdemKey,
+                    invoice: invoice,
+                    settings: settings,
+                    staleThresholdMinutes: idempotencySettings.IdempotencyKeyStaleThresholdMinutes,
+                    roundingTolerance: idempotencySettings.PartialCreditNoteRoundingTolerance,
+                    ct: CancellationToken.None);
+
+                if (resolvedWithoutNewPost)
+                {
+                    // Recuperamos el CAE ya emitido (o no es nuestro turno): NO re-POSTear.
+                    return;
+                }
+
+                // La key huerfana se borro -> reintentar el INSERT limpio. Si vuelve a chocar,
+                // otra corrida gano la carrera: no re-emitimos (el otro intento o un re-despacho
+                // posterior lo resuelven).
+                bool reinserted = await TryInsertInvoiceIdempotencyKeyAsync(
+                    invoiceIdemKey,
+                    lastSeenNumeroBeforePost,
+                    CancellationToken.None);
+
+                if (!reinserted)
+                {
+                    _logger.LogWarning(
+                        "ProcessInvoiceJob: IdempotencyKey activa tras limpiar la huerfana para " +
+                        "Invoice {InvoiceId}. Otro intento gano la carrera. No se re-emite.",
+                        invoiceId);
+                    return;
+                }
+            }
+
             // Re-construct data needed for AFIP from the Invoice entity
             // 1. Next Number
-            int cbteNro = await GetNextVoucherNumber(settings, invoice.TipoComprobante);
+            //    Usamos snapshot + 1 (= ultimo autorizado + 1) en vez de un segundo
+            //    GetNextVoucherNumber: es el MISMO valor pero evita una consulta extra a ARCA y
+            //    queda consistente con el snapshot que persiste la idempotency key (lo que hace
+            //    que el recovery pueda comparar correctamente el numerador).
+            int cbteNro = lastSeenNumeroBeforePost + 1;
             
             // 2. Doc Details from Snapshot or Relation? 
             // Better to parse from Snapshot to ensure immutability, but for now use relation or fallback
@@ -1333,6 +1421,11 @@ public class AfipService : IAfipService
                 // para que la UI muestre "En proceso / Reintentar" en vez de
                 // "Rechazado". El Vendedor decide cuando reintentar manualmente
                 // (boton Reintentar en InvoicingTab).
+                //
+                // IDEMPOTENCIA: NO resolvemos la key. Si el POST llego a ARCA igual (el
+                // numerador pudo avanzar) y solo se perdio la respuesta, dejar la key SIN
+                // resolver permite que un re-despacho la detecte como huerfana y recupere el
+                // CAE consultando a ARCA, en vez de re-emitir.
                 invoice.Resultado = "PENDING";
                 invoice.Observaciones = "AFIP respondió con un error de red o XML inválido. Reintentá en unos segundos.";
                 await _context.SaveChangesAsync();
@@ -1346,15 +1439,15 @@ public class AfipService : IAfipService
                  var sbErr = new StringBuilder();
                  // Capture Errors and Observations
                  var errors = resultNode.Descendants(XName.Get("Err", "http://ar.gov.afip.dif.FEV1/"));
-                 foreach(var e in errors) 
+                 foreach(var e in errors)
                  {
                      var code = e.Element(XName.Get("Code", "http://ar.gov.afip.dif.FEV1/"))?.Value;
                      var msg = e.Element(XName.Get("Msg", "http://ar.gov.afip.dif.FEV1/"))?.Value;
                      sbErr.AppendLine(TranslateAfipError(code, msg));
                  }
-                 
+
                  var obs = resultNode.Descendants(XName.Get("Obs", "http://ar.gov.afip.dif.FEV1/"));
-                 foreach(var o in obs) 
+                 foreach(var o in obs)
                  {
                      var code = o.Element(XName.Get("Code", "http://ar.gov.afip.dif.FEV1/"))?.Value;
                      var msg = o.Element(XName.Get("Msg", "http://ar.gov.afip.dif.FEV1/"))?.Value;
@@ -1363,25 +1456,80 @@ public class AfipService : IAfipService
 
                  invoice.Resultado = "R";
                  invoice.Observaciones = sbErr.ToString().Trim();
+                 // IDEMPOTENCIA: rechazo DEFINITIVO de ARCA -> NO se emitio comprobante, no hay
+                 // CAE que recuperar. Resolvemos la key (cierra el intento). Un re-despacho la
+                 // vera resuelta y no re-POSTeara; el reintento real lo decide el usuario via
+                 // RetryAsync, que limpia el estado.
+                 await ResolveInvoiceIdempotencyKeyAsync(invoiceIdemKey, CancellationToken.None);
                  await _context.SaveChangesAsync();
                  return;
             }
 
-            // Success
-            var detResp = resultNode.Descendants(XName.Get("FECAEDetResponse", "http://ar.gov.afip.dif.FEV1/")).First();
-            var cae = detResp.Element(XName.Get("CAE", "http://ar.gov.afip.dif.FEV1/"))?.Value;
-            var caeVto = detResp.Element(XName.Get("CAEFchVto", "http://ar.gov.afip.dif.FEV1/"))?.Value;
+            // Success path. ARCA respondio Resultado="A" (aprobado) o "O"/"P" (aprobado CON
+            // observaciones / parcial). En AMBOS casos el comprobante queda emitido CON CAE: la
+            // diferencia es que con observaciones ARCA agrega codigos en <Obs> que conviene
+            // preservar (no son un rechazo). Antes el codigo solo distinguia "R" de "no R" y
+            // asumia que el CAE siempre venia: un CAE nulo en este punto tiraba excepcion -> la
+            // factura quedaba PENDING en silencio aunque ARCA ya le hubiera dado un CAE.
+            var detResp = resultNode.Descendants(XName.Get("FECAEDetResponse", "http://ar.gov.afip.dif.FEV1/")).FirstOrDefault();
+            var cae = detResp?.Element(XName.Get("CAE", "http://ar.gov.afip.dif.FEV1/"))?.Value;
+            var caeVto = detResp?.Element(XName.Get("CAEFchVto", "http://ar.gov.afip.dif.FEV1/"))?.Value;
+
+            // Manejo robusto del "Observado" (O): capturamos las observaciones del detalle para
+            // dejarlas en la factura aunque haya CAE (son informativas, no un rechazo).
+            string? successObservations = null;
+            if (detResp != null)
+            {
+                var detObs = detResp.Descendants(XName.Get("Obs", "http://ar.gov.afip.dif.FEV1/"));
+                var sbObs = new StringBuilder();
+                foreach (var o in detObs)
+                {
+                    var code = o.Element(XName.Get("Code", "http://ar.gov.afip.dif.FEV1/"))?.Value;
+                    var msg = o.Element(XName.Get("Msg", "http://ar.gov.afip.dif.FEV1/"))?.Value;
+                    sbObs.AppendLine(TranslateAfipError(code, msg));
+                }
+                var obsText = sbObs.ToString().Trim();
+                if (obsText.Length > 0)
+                {
+                    successObservations = obsText;
+                }
+            }
+
+            // CASO ANOMALO: ARCA no rechazo (no "R") pero NO devolvio CAE. No podemos afirmar
+            // que el comprobante quedo emitido ni inventar un CAE. En vez de tirar excepcion (que
+            // dejaba un PENDING silencioso con un posible CAE real perdido), marcamos PENDING con
+            // las observaciones capturadas y NO resolvemos la key: un re-despacho consultara ARCA
+            // y, si el comprobante SI se emitio, recuperara el CAE real (sin doble emision).
+            if (string.IsNullOrWhiteSpace(cae) || string.IsNullOrWhiteSpace(caeVto))
+            {
+                _logger.LogWarning(
+                    "ProcessInvoiceJob: ARCA respondio sin rechazo (Resultado={CabResult}) pero sin CAE/Vto " +
+                    "para Invoice {InvoiceId}. Se deja PENDING para recuperar via idempotencia en el proximo despacho.",
+                    cabResult, invoiceId);
+
+                invoice.Resultado = "PENDING";
+                invoice.Observaciones = successObservations is null
+                    ? "AFIP no devolvió CAE en la respuesta. Reintentá en unos segundos."
+                    : "AFIP no devolvió CAE en la respuesta. Observaciones: " + successObservations;
+                await _context.SaveChangesAsync();
+                return;
+            }
 
             invoice.Resultado = "A";
             invoice.CAE = cae;
-            invoice.VencimientoCAE = DateTime.ParseExact(caeVto!, "yyyyMMdd", null).ToUniversalTime();
+            invoice.VencimientoCAE = DateTime.ParseExact(caeVto, "yyyyMMdd", null).ToUniversalTime();
             invoice.NumeroComprobante = cbteNro; // Assign actual number used
-            invoice.Observaciones = null;
+            // Observado (O): preservamos las observaciones; aprobado limpio (A): null como antes.
+            invoice.Observaciones = successObservations;
             // ADR-024 item 3 (auditoria de emision, 2026-06-12): IssuedAt = momento en que ARCA aprobo el
             // CAE (Resultado="A"). Es la evidencia fiscal de cuando se emitio realmente el comprobante. UTC
             // para coherencia con el resto de timestamps (la columna es timestamptz).
             invoice.IssuedAt = DateTime.UtcNow;
-            
+
+            // IDEMPOTENCIA: emision exitosa -> resolvemos la key. La factura ya tiene CAE; un
+            // re-despacho ahora corta por el guard Resultado=="A" al inicio del job.
+            await ResolveInvoiceIdempotencyKeyAsync(invoiceIdemKey, CancellationToken.None);
+
             await _context.SaveChangesAsync();
 
             if (IsCreditNote(invoice.TipoComprobante))
@@ -2084,6 +2232,279 @@ public class AfipService : IAfipService
             ImporteTotal: detail.ImporteTotal,
             MonId: detail.MonId,
             MonCotiz: detail.MonCotiz);
+    }
+
+    // ========================================================================================
+    // IDEMPOTENCIA ANTI-DOBLE-CAE de ProcessInvoiceJob (2026-06-25)
+    //
+    // Mismo mecanismo que la NC parcial (InvoiceService.ProcessPartialCreditNoteJob): tabla
+    // ArcaIdempotencyKeys + "stale key recovery". La diferencia es el OBJETO sobre el que se
+    // ancla la clave: aca es la Invoice (factura de venta, NC total o ND) identificada por su
+    // Id, no una liquidacion de NC parcial. Por eso estos helpers son propios de este job y no
+    // reusan las firmas de InvoiceService (que reciben PartialCreditNoteEmissionInput), pero
+    // siguen EXACTAMENTE el mismo patron y la misma tabla/infra.
+    // ========================================================================================
+
+    /// <summary>
+    /// Construye la clave de idempotencia deterministica de una emision de Invoice (factura de
+    /// venta, NC total o ND). Dos despachos del job para la MISMA Invoice producen el MISMO hash,
+    /// y el indice UNIQUE de <c>ArcaIdempotencyKeys</c> rechaza el segundo INSERT.
+    ///
+    /// <para>El prefijo <c>inv|</c> evita cualquier colision teorica con las keys de la NC parcial
+    /// (que se arman con otra combinacion de campos): ambas familias conviven en la misma tabla.</para>
+    /// </summary>
+    internal static string BuildInvoiceIdempotencyKey(int invoiceId, int tipoComprobante, int puntoDeVenta)
+    {
+        // El invoiceId ya es unico por si solo; sumamos tipo + punto de venta para que la key
+        // quede autoexplicativa y robusta ante cualquier reuso futuro de Ids entre entornos.
+        string raw = string.Create(
+            CultureInfo.InvariantCulture,
+            $"inv|{invoiceId}|{tipoComprobante}|{puntoDeVenta}");
+
+        byte[] hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw));
+
+        // La columna Key es varchar(64); SHA256 en hex son 64 chars exactos.
+        return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Intenta insertar la clave de idempotencia ANTES del POST a ARCA. Devuelve <c>true</c> si
+    /// el INSERT entro, <c>false</c> si choco con el indice UNIQUE (ya existe una key con ese
+    /// valor: otra corrida o una huerfana de un crash previo).
+    ///
+    /// <para>Ante el choque, dejamos el ChangeTracker limpio (Detached) para que el context siga
+    /// usable por el recovery — mismo cuidado que <c>InvoiceService.TryInsertIdempotencyKeyAsync</c>.</para>
+    /// </summary>
+    private async Task<bool> TryInsertInvoiceIdempotencyKeyAsync(
+        string idemKey,
+        int lastSeenNumeroBeforePost,
+        CancellationToken ct)
+    {
+        var entity = new ArcaIdempotencyKey
+        {
+            Key = idemKey,
+            JobId = null,
+            CreatedAt = DateTime.UtcNow,
+            ResolvedAt = null,
+            LastSeenNumeroBeforePost = lastSeenNumeroBeforePost,
+        };
+
+        _context.ArcaIdempotencyKeys.Add(entity);
+        try
+        {
+            await _context.SaveChangesAsync(ct);
+            return true;
+        }
+        catch (DbUpdateException ex) when (IsUniqueConstraintViolation(ex))
+        {
+            // Ya existe una key con ese valor. Limpiamos el tracker para que el context quede
+            // usable por el recovery (si re-guardamos con la entidad Added pegada, EF la
+            // re-insertaria y volveria a fallar).
+            _context.Entry(entity).State = EntityState.Detached;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Marca una clave de idempotencia como resuelta (intento terminado: exito o rechazo
+    /// definitivo). Un re-despacho que vea la key resuelta NO re-POSTea. No hace SaveChanges:
+    /// lo deja al SaveChanges del caller para que la resolucion de la key y el estado final de
+    /// la Invoice se persistan de forma atomica.
+    ///
+    /// <para>Si la key no existe (caso defensivo: alguien la borro), no hace nada.</para>
+    /// </summary>
+    private async Task ResolveInvoiceIdempotencyKeyAsync(string idemKey, CancellationToken ct)
+    {
+        var key = await _context.ArcaIdempotencyKeys.FirstOrDefaultAsync(k => k.Key == idemKey, ct);
+        if (key is not null && key.ResolvedAt is null)
+        {
+            key.ResolvedAt = DateTime.UtcNow;
+        }
+    }
+
+    /// <summary>
+    /// Recovery de una clave de idempotencia que ya existe (re-despacho del job). Decide entre
+    /// tres caminos, mismo arbitraje que el de la NC parcial
+    /// (<c>InvoiceService.HandleStaleIdempotencyKeyAsync</c>):
+    /// <list type="bullet">
+    ///   <item><b>Key reciente o ya resuelta</b>: otro intento la procesa AHORA, o ya termino.
+    ///   No re-POSTear. Devuelve <c>true</c>.</item>
+    ///   <item><b>Key huerfana + ARCA emitio el comprobante</b>: el POST viajo en una corrida
+    ///   anterior. Adoptamos el CAE/numero en ESTA Invoice, resolvemos la key y NO re-POSTeamos.
+    ///   Devuelve <c>true</c>.</item>
+    ///   <item><b>Key huerfana + el POST nunca viajo</b>: borramos la key y devolvemos
+    ///   <c>false</c> para que el caller reintente la emision limpia.</item>
+    /// </list>
+    ///
+    /// <para><b>Como matchea el comprobante en ARCA</b>:
+    /// <list type="bullet">
+    ///   <item>NC total / ND (tienen factura origen): por <c>CbteAsoc == OriginalInvoice.NumeroComprobante</c>
+    ///   + monto, igual que la NC parcial. Es el match preciso.</item>
+    ///   <item>Factura de venta (sin comprobante asociado): por monto + moneda. Es lo mas preciso
+    ///   posible para una factura suelta. Si el monto/moneda no coinciden, se trata como mismatch
+    ///   y se reintenta limpio (nunca se adopta un CAE de otro comprobante).</item>
+    /// </list>
+    /// </para>
+    /// </summary>
+    private async Task<bool> HandleStaleInvoiceIdempotencyKeyAsync(
+        string idemKey,
+        Invoice invoice,
+        AfipSettings settings,
+        int staleThresholdMinutes,
+        decimal roundingTolerance,
+        CancellationToken ct)
+    {
+        var existingKey = await _context.ArcaIdempotencyKeys
+            .FirstOrDefaultAsync(k => k.Key == idemKey, ct);
+
+        // Carrera: la key existia cuando el INSERT choco pero ya no esta (otro intento la
+        // resolvio + housekeeping la borro entre medio). No re-POSTear a ciegas.
+        if (existingKey is null)
+        {
+            _logger.LogWarning(
+                "ProcessInvoiceJob: IdempotencyKey desaparecio entre el INSERT fallido y la lectura " +
+                "para Invoice {InvoiceId}. Otro intento la resolvio. No se re-emite.",
+                invoice.Id);
+            return true;
+        }
+
+        // Ya resuelta: el intento anterior termino (exito o rechazo terminal). No re-emitir.
+        if (existingKey.ResolvedAt is not null)
+        {
+            _logger.LogWarning(
+                "ProcessInvoiceJob: IdempotencyKey ya resuelta (ResolvedAt={ResolvedAt:o}) para " +
+                "Invoice {InvoiceId}. No se re-emite.",
+                existingKey.ResolvedAt, invoice.Id);
+            return true;
+        }
+
+        double ageMinutes = (DateTime.UtcNow - existingKey.CreatedAt).TotalMinutes;
+
+        // Key reciente: otro intento esta en vuelo. No es nuestro turno.
+        if (ageMinutes <= staleThresholdMinutes)
+        {
+            _logger.LogWarning(
+                "ProcessInvoiceJob: IdempotencyKey activa, otro job procesando " +
+                "(age={Age:F1}min, umbral={Umbral}min) para Invoice {InvoiceId}. " +
+                "Se resuelve en el proximo despacho.",
+                ageMinutes, staleThresholdMinutes, invoice.Id);
+            return true;
+        }
+
+        // Key huerfana (vieja + sin resolver): consultamos ARCA con el numerador REAL capturado
+        // antes del POST de la corrida anterior. Si avanzo, hay un comprobante para inspeccionar.
+        var arcaResult = await QueryLastAuthorizedWithDetailsAsync(
+            puntoVenta: settings.PuntoDeVenta,
+            cbteTipo: invoice.TipoComprobante,
+            lastSeenNumeroBeforePost: existingKey.LastSeenNumeroBeforePost,
+            ct: ct);
+
+        bool arcaMatchesOurInvoice = ArcaResultMatchesInvoice(arcaResult, invoice, roundingTolerance);
+
+        if (arcaMatchesOurInvoice)
+        {
+            // El POST viajo en una corrida anterior y ARCA emitio el comprobante que matchea
+            // ESTA factura. Adoptamos el CAE ya emitido en vez de re-emitir (anti-doble-CAE).
+            invoice.CAE = arcaResult.Cae;
+            invoice.Resultado = "A";
+            invoice.NumeroComprobante = arcaResult.LastNumero ?? invoice.NumeroComprobante;
+            if (arcaResult.IssuedAt.HasValue)
+            {
+                invoice.IssuedAt = DateTime.SpecifyKind(arcaResult.IssuedAt.Value, DateTimeKind.Utc);
+            }
+            invoice.Observaciones = null;
+
+            existingKey.ResolvedAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync(ct);
+
+            _logger.LogWarning(
+                "ProcessInvoiceJob idempotency recovery: derivado CAE de comprobante ya emitido " +
+                "(no se re-emitio). InvoiceId={InvoiceId} CAE={Cae}",
+                invoice.Id, arcaResult.Cae);
+            _logger.LogInformation(
+                "metric:Afip.ProcessInvoiceJob.RecoveredFromStaleKey | invoiceId={InvoiceId}",
+                invoice.Id);
+
+            // La reversion economica de una NC se aplica igual que en el path normal: el
+            // comprobante quedo emitido (Resultado="A"), recuperado o no.
+            if (IsCreditNote(invoice.TipoComprobante))
+            {
+                await ApplyCreditNoteEconomicReversalAsync(invoice.Id);
+            }
+
+            return true;
+        }
+
+        // El POST nunca viajo (Found=false) o el comprobante encontrado NO matchea esta factura.
+        // Borramos la key huerfana y dejamos el sistema limpio para re-emitir.
+        _context.ArcaIdempotencyKeys.Remove(existingKey);
+        await _context.SaveChangesAsync(ct);
+
+        _logger.LogWarning(
+            "ProcessInvoiceJob idempotency: stale key removida (huerfana de crash previo o mismatch " +
+            "de numerador) para Invoice {InvoiceId}. ArcaFound={Found}. Reintento limpio.",
+            invoice.Id, arcaResult.Found);
+
+        return false;
+    }
+
+    /// <summary>
+    /// Decide si el comprobante que ARCA reporta como ultimo autorizado corresponde a ESTA
+    /// Invoice. El criterio depende de si la factura tiene comprobante asociado:
+    /// <list type="bullet">
+    ///   <item>Con origen (NC total / ND): match fuerte por <c>CbteAsoc</c> apuntando a la
+    ///   factura origen + monto dentro de la tolerancia.</item>
+    ///   <item>Sin origen (factura de venta): match por monto + moneda (lo mas preciso posible
+    ///   para un comprobante suelto). Nunca se adopta un CAE si el monto/moneda no coinciden.</item>
+    /// </list>
+    /// </summary>
+    internal static bool ArcaResultMatchesInvoice(
+        ArcaCompoundQueryResult arcaResult,
+        Invoice invoice,
+        decimal roundingTolerance)
+    {
+        if (!arcaResult.Found)
+        {
+            return false;
+        }
+
+        bool amountMatches =
+            Math.Abs((arcaResult.ImporteTotal ?? -1m) - invoice.ImporteTotal) <= roundingTolerance;
+
+        if (!amountMatches)
+        {
+            return false;
+        }
+
+        bool hasAssociated = invoice.OriginalInvoiceId.HasValue && invoice.OriginalInvoice != null;
+        if (hasAssociated)
+        {
+            // NC total / ND: el comprobante de ARCA tiene que apuntar EXACTAMENTE a nuestra
+            // factura origen. Es el match preciso que evita adoptar el CAE de otra NC/ND del
+            // mismo monto.
+            return arcaResult.CbteAsoc == invoice.OriginalInvoice!.NumeroComprobante;
+        }
+
+        // Factura de venta suelta: ademas del monto, exigimos que coincida la moneda. Si ARCA
+        // no reporto moneda, no la podemos contradecir: aceptamos solo por monto (degradacion
+        // segura, ya filtrada por el monto exacto + numerador avanzado).
+        if (string.IsNullOrWhiteSpace(arcaResult.MonId))
+        {
+            return true;
+        }
+
+        return string.Equals(arcaResult.MonId, invoice.MonId, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Detecta si una <see cref="DbUpdateException"/> proviene de una violacion del indice UNIQUE
+    /// de Postgres. Mismo patron que <c>InvoiceService.IsUniqueConstraintViolation</c> y
+    /// <c>BookingCancellationService.IsUniqueConstraintViolation</c>.
+    /// </summary>
+    private static bool IsUniqueConstraintViolation(DbUpdateException ex)
+    {
+        return ex.InnerException is Npgsql.PostgresException pg
+            && pg.SqlState == Npgsql.PostgresErrorCodes.UniqueViolation;
     }
 
     // ADR-024 (2026-06-12): GetConditionIvaId fue ELIMINADO. Tenia dos problemas que la spec ADR-024

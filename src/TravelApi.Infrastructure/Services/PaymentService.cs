@@ -727,20 +727,55 @@ public class PaymentService : IPaymentService
             _dbContext.CashLedgerEntries.Add(ledgerEntry);
         }
 
-        await _dbContext.SaveChangesAsync(cancellationToken);
-        await RecalculateReservaBalanceAsync(reservaId, cancellationToken);
-
-        // ADR-022 §4.9 (Q1): si el cobro dejo la reserva con saldo a FAVOR del cliente en la moneda del
-        // pago, el excedente se convierte en saldo a favor del cliente (ClientCreditEntry) y la reserva
-        // queda en 0. Es una IMPUTACION (mueve plata de "saldo de reserva" a "bolsillo del cliente"), NO
-        // un movimiento de caja nuevo: el asiento del cobro ya reflejo la plata real que entro.
-        await ConvertOverpaymentToClientCreditAsync(payment, ledgerActorUserId, ledgerActorUserName, cancellationToken);
+        // ARREGLO 1 (atomicidad del cobro, 2026-06-24): el alta de un cobro encadena VARIAS escrituras con su
+        // propio SaveChanges (cobro + asiento de caja -> recalculo del saldo + comision -> conversion del
+        // sobrepago en saldo a favor del cliente, que a su vez vuelve a recalcular). Antes corrian sueltas,
+        // sin transaccion. Si el proceso se cortaba despues de crear el saldo a favor del cliente (credito +
+        // puente) pero antes del recalculo final, el excedente quedaba contado DOS veces: como saldo a favor
+        // del cliente Y como saldo negativo de la reserva. Las envolvemos todas en UNA transaccion (mismo
+        // patron que FC4 / ClientCreditService): o se registra el cobro Y se ajusta todo junto (saldo,
+        // sobrepago->credito, comision), o no se toca nada.
+        //
+        // OJO trainee/junior: la transaccion envolvente solo se puede usar contra un provider RELACIONAL.
+        // Los unit tests corren sobre EF InMemory (no soporta transacciones). Por eso ramificamos por
+        // IsRelational(): en InMemory ejecutamos el mismo cuerpo sin transaccion (la atomicidad real se
+        // valida en integracion Postgres). Las SaveChanges internas participan de la transaccion ambiente
+        // cuando existe y NO commitean hasta transaction.CommitAsync.
+        if (_dbContext.Database.IsRelational())
+        {
+            var strategy = _dbContext.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async () =>
+            {
+                await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+                await PersistNewPaymentAsync();
+                await transaction.CommitAsync(cancellationToken);
+            });
+        }
+        else
+        {
+            await PersistNewPaymentAsync();
+        }
 
         var created = await _dbContext.Payments
             .Include(p => p.Receipt)
             .FirstAsync(p => p.Id == payment.Id, cancellationToken);
 
         return _mapper.Map<PaymentDto>(created);
+
+        // Cuerpo comun de persistencia (local function) para reusarlo dentro y fuera de la transaccion
+        // envolvente sin duplicar codigo. Persiste el cobro + asiento, recalcula el saldo (que ademas
+        // devenga la comision) y convierte el sobrepago en saldo a favor del cliente.
+        async Task PersistNewPaymentAsync()
+        {
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            await RecalculateReservaBalanceAsync(reservaId, cancellationToken);
+
+            // ADR-022 §4.9 (Q1): si el cobro dejo la reserva con saldo a FAVOR del cliente en la moneda del
+            // pago, el excedente se convierte en saldo a favor del cliente (ClientCreditEntry) y la reserva
+            // queda en 0. Es una IMPUTACION (mueve plata de "saldo de reserva" a "bolsillo del cliente"), NO
+            // un movimiento de caja nuevo: el asiento del cobro ya reflejo la plata real que entro.
+            await ConvertOverpaymentToClientCreditAsync(payment, ledgerActorUserId, ledgerActorUserName, cancellationToken);
+        }
     }
 
     /// <summary>
@@ -1125,32 +1160,57 @@ public class PaymentService : IPaymentService
             }
         }
 
-        // El SaveChanges va DESPUES del Add: limpiar IsDeleted y crear el asiento vivo deben ocurrir en la
-        // MISMA transaccion. Si se guardara antes del Add, una caida entre ambos dejaria pago vivo sin asiento
-        // (justo el bug que se esta arreglando).
-        await _dbContext.SaveChangesAsync(cancellationToken);
-
-        if (payment.ReservaId.HasValue)
+        // ARREGLO 1 (atomicidad, 2026-06-24): restaurar un cobro encadena tambien varias escrituras con su
+        // propio SaveChanges (limpiar IsDeleted + re-asentar caja -> recalcular saldo + comision -> reconstruir
+        // el saldo a favor del sobrepago). Las envolvemos en UNA transaccion (mismo patron que el alta) para
+        // que un corte a mitad no deje un cobro vivo sin asiento o el saldo a favor a medias. En InMemory
+        // (tests) el provider no soporta transacciones: corremos el mismo cuerpo sin transaccion.
+        if (_dbContext.Database.IsRelational())
         {
-            await RecalculateReservaBalanceAsync(payment.ReservaId.Value, cancellationToken);
-
-            // fix bug #9 (2026-06-17): al ANULAR el cobro, OverpaymentCreditCleanup limpio el saldo a favor
-            // (credito + puente) que ese cobro habia generado. Al RESTAURARLO hay que reconstruirlo, si no
-            // queda asimetrico: la reserva vuelve a quedar sobre-pagada con el excedente atrapado, invisible
-            // al bolsillo del cliente y a FC4. La conversion es idempotente (solo actua si hay Balance < 0),
-            // asi que re-restaurar no duplica el credito.
-            //
-            // DECISION (conservadora): NO se revalida EnsureCollectable aca. Restaurar es una operacion
-            // ADMINISTRATIVA de deshacer una anulacion, no un cobro nuevo: el cobro ya existio y fue legitimo.
-            // Gatearla por estado bloquearia deshacer una anulacion equivocada cuando la reserva ya paso a un
-            // estado terminal (Cancelada/Perdida), que es justo cuando mas se necesita poder revertir. El alta
-            // de cobro nuevo (CreatePaymentAsync / AddPaymentAsync) si exige EnsureCollectable; restaurar no.
-            var (creditActorUserId, creditActorUserName) = ResolveLedgerActor();
-            await ConvertOverpaymentToClientCreditAsync(
-                payment, creditActorUserId, creditActorUserName, cancellationToken);
+            var strategy = _dbContext.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async () =>
+            {
+                await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+                await PersistRestoredPaymentAsync();
+                await transaction.CommitAsync(cancellationToken);
+            });
+        }
+        else
+        {
+            await PersistRestoredPaymentAsync();
         }
 
         return payment.PublicId;
+
+        // Cuerpo comun de la restauracion (local function). Persiste el cobro revivido + su asiento nuevo,
+        // recalcula el saldo (devenga la comision) y reconstruye el saldo a favor del sobrepago si lo hubo.
+        async Task PersistRestoredPaymentAsync()
+        {
+            // El SaveChanges va DESPUES del Add: limpiar IsDeleted y crear el asiento vivo deben ocurrir en la
+            // MISMA transaccion. Si se guardara antes del Add, una caida entre ambos dejaria pago vivo sin asiento
+            // (justo el bug que se esta arreglando).
+            await _dbContext.SaveChangesAsync(cancellationToken);
+
+            if (payment.ReservaId.HasValue)
+            {
+                await RecalculateReservaBalanceAsync(payment.ReservaId.Value, cancellationToken);
+
+                // fix bug #9 (2026-06-17): al ANULAR el cobro, OverpaymentCreditCleanup limpio el saldo a favor
+                // (credito + puente) que ese cobro habia generado. Al RESTAURARLO hay que reconstruirlo, si no
+                // queda asimetrico: la reserva vuelve a quedar sobre-pagada con el excedente atrapado, invisible
+                // al bolsillo del cliente y a FC4. La conversion es idempotente (solo actua si hay Balance < 0),
+                // asi que re-restaurar no duplica el credito.
+                //
+                // DECISION (conservadora): NO se revalida EnsureCollectable aca. Restaurar es una operacion
+                // ADMINISTRATIVA de deshacer una anulacion, no un cobro nuevo: el cobro ya existio y fue legitimo.
+                // Gatearla por estado bloquearia deshacer una anulacion equivocada cuando la reserva ya paso a un
+                // estado terminal (Cancelada/Perdida), que es justo cuando mas se necesita poder revertir. El alta
+                // de cobro nuevo (CreatePaymentAsync / AddPaymentAsync) si exige EnsureCollectable; restaurar no.
+                var (creditActorUserId, creditActorUserName) = ResolveLedgerActor();
+                await ConvertOverpaymentToClientCreditAsync(
+                    payment, creditActorUserId, creditActorUserName, cancellationToken);
+            }
+        }
     }
 
     public async Task<Guid> RestorePaymentAsync(string paymentPublicIdOrLegacyId, CancellationToken cancellationToken)

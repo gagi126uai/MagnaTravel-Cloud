@@ -279,24 +279,26 @@ public class ClientCreditService : IClientCreditService
                 throw new ArgumentException($"WithdrawalKind no soportado: {request.Kind}", nameof(request));
         }
 
-        // 4-8) Persistencia + recalculo del destino + audit + cierre del BC.
+        // 4-8) Persistencia + recalculo del destino + audit + cierre del BC, TODO atomico.
         //
-        //    FC4 (2026-06-14, fix bloqueante B1 del review): cuando el kind es AppliedToNewBooking, el
-        //    decremento del bolsillo, el INSERT del withdrawal Y el INSERT del Payment puente en la reserva
-        //    destino, MAS el recalculo de la deuda de esa reserva (ReservaMoneyByCurrency), tienen que ser
-        //    atomicos. Si el recalculo del destino fallara despues de bajar el bolsillo, quedaria plata
-        //    perdida (saldo descontado sin haber acreditado la reserva) — exactamente el bug que FC4 cierra.
-        //    Por eso, SOLO cuando hay una reserva destino a recalcular, envolvemos todo en una transaccion
-        //    explicita. Para los otros 4 kinds dejamos el flujo viejo intacto (sin transaccion envolvente):
-        //    minimizamos el blast radius y no cambiamos su comportamiento.
+        //    Originalmente la transaccion envolvente solo cubria AppliedToNewBooking (FC4, fix B1 2026-06-14).
+        //    ARREGLO 2 (atomicidad de retiros, 2026-06-24): la extendemos a TODOS los kinds. Razon: los retiros
+        //    PhysicalCash / Transfer / ReversedToOperator decrementan el bolsillo de saldo a favor Y emiten un
+        //    EGRESO DE CAJA real (ManualCashMovement + asiento en el Libro de Caja, ver BuildWithdrawalAndMovement),
+        //    encadenando ademas el/los audit (que hacen su propio SaveChanges) y el cierre del BC (otro SaveChanges).
+        //    Sin transaccion, si el proceso se cortaba a mitad la plata ya habia salido de caja pero el estado
+        //    quedaba a medias (ej. asiento de egreso escrito pero el BC sin cerrar, o el audit fiscal sin emitir).
+        //    Para ReversedToOperator esto es especialmente sensible: es plata que vuelve al operador.
+        //
+        //    Con la transaccion envolvente, todas las SaveChanges internas (la del paso 5, las de los audits y la
+        //    del cierre del BC) se flushean dentro de la MISMA transaccion abierta y NO commitean: el commit real
+        //    ocurre una sola vez en transaction.CommitAsync. O queda todo, o no queda nada.
         //
         //    OJO trainee/junior: la transaccion envolvente SOLO se puede usar contra un provider RELACIONAL.
         //    Los tests unit corren sobre EF InMemory, que NO soporta transacciones (BeginTransactionAsync
         //    explota). Por eso ramificamos por _db.Database.IsRelational(): en InMemory ejecutamos el mismo
         //    cuerpo sin transaccion (los tests de atomicidad real viven en integracion Postgres).
-        bool needsWrappingTransaction = targetReservaIdToRecalc != null && _db.Database.IsRelational();
-
-        if (needsWrappingTransaction)
+        if (_db.Database.IsRelational())
         {
             // CreateExecutionStrategy + BeginTransactionAsync: mismo patron que ReservaService.CreateReservaAsync.
             // El ExecutionStrategy reintenta toda la lambda si Postgres devuelve un error transitorio.
@@ -304,13 +306,13 @@ public class ClientCreditService : IClientCreditService
             await strategy.ExecuteAsync(async () =>
             {
                 await using var transaction = await _db.Database.BeginTransactionAsync(ct);
-                await PersistAndFinalizeAsync(commitDestinationRecalc: true);
+                await PersistAndFinalizeAsync(commitDestinationRecalc: targetReservaIdToRecalc != null);
                 await transaction.CommitAsync(ct);
             });
         }
         else
         {
-            // Flujo sin transaccion envolvente: los otros kinds (sin destino) o InMemory en tests.
+            // InMemory en tests: mismo cuerpo sin transaccion (el provider no las soporta).
             await PersistAndFinalizeAsync(commitDestinationRecalc: targetReservaIdToRecalc != null);
         }
 

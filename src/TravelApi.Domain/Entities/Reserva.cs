@@ -278,17 +278,21 @@ public class Reserva : IHasPublicId
     public ICollection<ReservaEditAuthorization> EditAuthorizations { get; set; } = new List<ReservaEditAuthorization>();
 
     /// <summary>
-    /// ADR-020 (decision #6): motivo de la ULTIMA regresion automatica Confirmed -> InManagement.
-    /// Lo SETEA el motor (<see cref="TravelApi.Domain.Reservations.ServiceResolutionRules"/> via
-    /// ReservaAutoStateService) cuando una reserva confirmada vuelve sola a En gestion (un servicio
-    /// dejo de estar resuelto: el operador cancelo/reprogramo o se agrego un servicio nuevo). Lo
-    /// LIMPIA (null) el mismo motor cuando la reserva se vuelve a auto-confirmar. El frontend lo usa
-    /// para mostrar la franja naranja "volvio a En gestion porque ...". Es informativo, no afecta plata.
+    /// Motivo por el que la reserva quedo "confirmada con cambios / revisar". Lo SETEA el motor de estados
+    /// (ReservaAutoStateService) cuando una reserva confirmada deja de tener todos sus servicios resueltos (el
+    /// operador cancelo/reprogramo, se agrego un servicio nuevo, o se quedo sin servicios vivos): la reserva NO
+    /// regresa de estado (eso se elimino el 2026-06-24, antes era una regresion automatica Confirmed ->
+    /// InManagement), queda EN Confirmed pero marcada (<see cref="HasUnacknowledgedChanges"/>). Lo LIMPIA (null)
+    /// el endpoint acknowledge-changes cuando una persona da el OK, junto con la marca. El frontend lo usa para
+    /// mostrar la franja informativa con el motivo. Es informativo, no afecta plata.
+    ///
+    /// <para>El nombre del campo es historico (cuando existia la regresion automatica). Hoy significa "motivo
+    /// de revision", no "motivo de regresion". Se conservo el nombre/columna para no migrar la base.</para>
     /// </summary>
     [MaxLength(300)]
     public string? LastRegressionReason { get; set; }
 
-    /// <summary>Cuando ocurrio la ultima regresion automatica (par de <see cref="LastRegressionReason"/>).</summary>
+    /// <summary>Cuando se marco el ultimo motivo de revision (par de <see cref="LastRegressionReason"/>).</summary>
     public DateTime? LastRegressionAt { get; set; }
 
     // === ADR-027 (auditoria ERP, hallazgo #10): "confirmada con cambios" ===

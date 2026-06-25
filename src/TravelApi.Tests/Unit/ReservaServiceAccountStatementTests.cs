@@ -238,10 +238,10 @@ public class ReservaServiceAccountStatementTests
         Assert.NotEqual(money.PorMoneda["ARS"].Balance, block.ClosingBalance);
     }
 
-    // ===================== Anulados / borrados NO aparecen =====================
+    // ===================== Rechazados / borrados NO aparecen; anulada+NC SI (libro mayor) =====================
 
     [Fact]
-    public async Task AnnulledInvoiceAndDeletedPayment_DoNotAppear()
+    public async Task RejectedInvoiceAndDeletedPayment_DoNotAppear()
     {
         await using var ctx = new AppDbContext(_dbOptions);
         var d = new DateTime(2026, 2, 1, 0, 0, 0, DateTimeKind.Utc);
@@ -249,11 +249,7 @@ public class ReservaServiceAccountStatementTests
         ctx.Reservas.Add(new Reserva { Id = 1, NumeroReserva = "F-2", Name = "R", Status = EstadoReserva.Confirmed });
         // Factura VIVA.
         ctx.Invoices.Add(LiveInvoice(1, tipo: 1, total: 100000m, date: d.AddDays(1), nro: 1));
-        // Factura ANULADA (AnnulmentStatus = Succeeded): no debe aparecer.
-        var annulled = LiveInvoice(2, tipo: 1, total: 999999m, date: d.AddDays(1), nro: 2);
-        annulled.AnnulmentStatus = AnnulmentStatus.Succeeded;
-        ctx.Invoices.Add(annulled);
-        // Factura RECHAZADA (Resultado != "A"): no debe aparecer.
+        // Factura RECHAZADA (Resultado != "A"): no debe aparecer (no es facturacion fiscal firme).
         var rejected = LiveInvoice(3, tipo: 1, total: 888888m, date: d.AddDays(1), nro: 3);
         rejected.Resultado = "R";
         ctx.Invoices.Add(rejected);
@@ -271,6 +267,37 @@ public class ReservaServiceAccountStatementTests
         // Solo 2 lineas vivas: 1 factura + 1 cobro. Saldo = 100000 - 40000 = 60000.
         Assert.Equal(2, block.Lines.Count);
         Assert.Equal(60000m, block.ClosingBalance);
+    }
+
+    [Fact]
+    public async Task AnnulledInvoiceWithCreditNote_BothAppearAsLedgerLines_AndNetToZero()
+    {
+        // FIX doble conteo (extracto): cuando se anula una factura total, la factura original queda
+        // AnnulmentStatus=Succeeded y nace su Nota de Credito. El extracto (estilo libro mayor) DEBE mostrar
+        // AMBAS lineas: la factura como CARGO y la NC como ABONO. Antes saltaba la factura Succeeded y mostraba
+        // solo la NC suelta (un abono sin su cargo), dejando el saldo corriente incoherente.
+        await using var ctx = new AppDbContext(_dbOptions);
+        var d = new DateTime(2026, 2, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        ctx.Reservas.Add(new Reserva { Id = 1, NumeroReserva = "F-2b", Name = "R", Status = EstadoReserva.Confirmed });
+        // Factura A anulada (Succeeded): sigue contando como cargo, su anulacion la refleja la NC.
+        var annulled = LiveInvoice(1, tipo: 1, total: 80000m, date: d.AddDays(1), nro: 1);
+        annulled.AnnulmentStatus = AnnulmentStatus.Succeeded;
+        ctx.Invoices.Add(annulled);
+        // NC A (tipo 3) por el total: abono que neutraliza la factura.
+        ctx.Invoices.Add(LiveInvoice(2, tipo: 3, total: 80000m, date: d.AddDays(2), nro: 2));
+        await ctx.SaveChangesAsync();
+
+        var service = BuildService(ctx);
+        var statement = await service.GetAccountStatementAsync("1", CancellationToken.None);
+
+        var block = Assert.Single(statement.Currencies);
+        Assert.Equal("ARS", block.Currency);
+        // Dos lineas (factura cargo + NC abono). Saldo de la anulacion = 80000 - 80000 = 0.
+        Assert.Equal(2, block.Lines.Count);
+        Assert.Equal(80000m, block.Lines.Sum(l => l.Charge));
+        Assert.Equal(80000m, block.Lines.Sum(l => l.Credit));
+        Assert.Equal(0m, block.ClosingBalance);
     }
 
     // ===================== Cobro cruzado USD->ARS cae en bloque ARS por ImputedAmount =====================
