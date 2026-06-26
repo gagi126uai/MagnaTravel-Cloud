@@ -14,7 +14,14 @@ import {
 import { useFinanceHome } from "../hooks/useFinanceHome";
 import { formatCurrency, formatDate } from "../lib/financeUtils";
 import { getPublicId } from "../../../lib/publicIds";
+// F4-7 (2026-06-26): necesario para renderizar métricas bimoneda en HomeCard
+import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 
+/**
+ * Tarjeta de resumen de un módulo de finanzas en la home (Cobranzas, Caja, Facturación).
+ * F4-7 (2026-06-26): las métricas soportan `valuesByCurrency` para mostrar ARS y USD separados.
+ * Si la métrica solo tiene `value`, se comporta igual que antes.
+ */
 function HomeCard({ title, description, icon: Icon, accentClass, metrics, ctaTo, ctaLabel }) {
   return (
     <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm overflow-hidden">
@@ -33,14 +40,30 @@ function HomeCard({ title, description, icon: Icon, accentClass, metrics, ctaTo,
           {metrics.map((metric) => (
             <div
               key={metric.label}
+              data-testid={metric.testId}
               className="rounded-2xl border border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/40 px-4 py-3"
             >
               <div className="text-[11px] uppercase tracking-wider font-semibold text-slate-400 mb-1">
                 {metric.label}
               </div>
-              <div className="text-xl font-light text-slate-900 dark:text-white">
-                {metric.isCount ? Number(metric.value || 0) : formatCurrency(metric.value)}
-              </div>
+              {metric.valuesByCurrency && metric.valuesByCurrency.length > 0 ? (
+                // F4-7: modo bimoneda — ARS arriba, USD abajo (regla: nunca mezclar monedas)
+                <div className="space-y-1">
+                  {metric.valuesByCurrency.map((pm) => (
+                    <div key={pm.currency} className="flex items-center gap-1.5">
+                      <CurrencyBadge currency={pm.currency} size="sm" />
+                      <span className="text-xl font-light text-slate-900 dark:text-white">
+                        {formatCurrency(pm.value, pm.currency)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                // Modo mono-moneda o conteo (comportamiento original sin cambios)
+                <div className="text-xl font-light text-slate-900 dark:text-white">
+                  {metric.isCount ? Number(metric.value || 0) : formatCurrency(metric.value)}
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -102,7 +125,20 @@ export default function PaymentsHomePage() {
           accentClass="bg-amber-50 text-amber-600 dark:bg-amber-950/30 dark:text-amber-300"
           metrics={[
             { label: "Saldo pendiente de cobro", value: collectionsSummary?.pendingAmount || 0 },
-            { label: "Cobrado este mes", value: collectionsSummary?.collectedThisMonth || 0 },
+            // F4-7 (2026-06-26): "Cobrado este mes" usa moneda real por separado.
+            // Bug fix #2: era `length > 1` → meses con solo USD caían al escalar ARS ("$ 3.400" en vez de "US$ 3.400").
+            // Regla: usar porMoneda cuando hay >= 1 entrada; escalar solo si vacío/ausente (DTO viejo).
+            (() => {
+              const byCurrency = collectionsSummary?.collectedThisMonthByCurrency;
+              const tieneMonedas = Array.isArray(byCurrency) && byCurrency.length >= 1;
+              return {
+                label: "Cobrado este mes",
+                testId: "kpi-cobrado-mes",
+                ...(tieneMonedas
+                  ? { valuesByCurrency: byCurrency.map((pm) => ({ currency: pm.currency, value: pm.amount })) }
+                  : { value: collectionsSummary?.collectedThisMonth || 0 }),
+              };
+            })(),
             { label: "Reservas urgentes", value: collectionsSummary?.urgentReservationsCount || 0, isCount: true },
           ]}
           ctaTo="/payments/collections"

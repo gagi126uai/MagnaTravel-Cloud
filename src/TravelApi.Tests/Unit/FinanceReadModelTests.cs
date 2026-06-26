@@ -1,8 +1,11 @@
 using System;
+using System.Collections.Generic;
+using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
 using AutoMapper;
 using Hangfire;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -94,6 +97,202 @@ public class FinanceReadModelTests
         Assert.Equal(750m, summary.UrgentPendingAmount);
         Assert.Equal(2, summary.BlockedOperationalCount);
         Assert.Equal(2, summary.BlockedVoucherCount);
+    }
+
+    [Fact]
+    public async Task GetCollectionsSummaryAsync_AppliedCreditBridge_DoesNotInflateCollected()
+    {
+        using var context = new AppDbContext(_dbOptions);
+        var now = DateTime.UtcNow;
+
+        // Un cobro REAL (plata nueva que entró a caja) de 250.
+        context.Payments.Add(new Payment
+        {
+            Id = 1,
+            Amount = 250m,
+            PaidAt = now,
+            Status = "Paid",
+            EntryType = PaymentEntryTypes.Payment,
+            AffectsCash = true,
+            Currency = "ARS",
+            Method = "Transfer"
+        });
+
+        // Un pago PUENTE de APLICACION de saldo a favor (positivo, EntryType=Payment, AffectsCash=false, atado a
+        // un withdrawal del bolsillo). Baja la deuda del destino pero NO es plata nueva: no cuenta en "cobrado"
+        // y SI aparece en la linea aparte "aplicados de saldo a favor".
+        context.Payments.Add(new Payment
+        {
+            Id = 2,
+            Amount = 1000m,
+            PaidAt = now,
+            Status = "Paid",
+            EntryType = PaymentEntryTypes.Payment,
+            AffectsCash = false,
+            Currency = "ARS",
+            Method = "SaldoAFavorAplicado",
+            AppliedFromCreditWithdrawalId = 1
+        });
+        await context.SaveChangesAsync();
+
+        var settingsMock = new Mock<IOperationalFinanceSettingsService>();
+        settingsMock
+            .Setup(x => x.GetEntityAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OperationalFinanceSettings { UpcomingUnpaidReservationAlertDays = 7 });
+
+        var service = new PaymentService(context, null!, Mock.Of<IMapper>(), settingsMock.Object, NullLogger<PaymentService>.Instance);
+
+        var summary = await service.GetCollectionsSummaryAsync(CancellationToken.None);
+
+        // Solo el cobro real cuenta; el puente NO infla el KPI de cobrado.
+        Assert.Equal(250m, summary.CollectedThisMonth);
+        var line = Assert.Single(summary.CollectedThisMonthByCurrency);
+        Assert.Equal("ARS", line.Currency);
+        Assert.Equal(250m, line.Amount);
+
+        // La aplicacion de saldo a favor aparece en su propia linea (por moneda) y NO en cobrado.
+        var creditLine = Assert.Single(summary.CreditApplicationsThisMonthByCurrency);
+        Assert.Equal("ARS", creditLine.Currency);
+        Assert.Equal(1000m, creditLine.Amount);
+    }
+
+    [Fact]
+    public async Task GetCollectionsSummaryAsync_RealCollection_NotCountedAsCreditApplication()
+    {
+        using var context = new AppDbContext(_dbOptions);
+        var now = DateTime.UtcNow;
+
+        // Un cobro REAL: aparece en cobrado, NO en aplicaciones de saldo a favor.
+        context.Payments.Add(new Payment
+        {
+            Id = 1, Amount = 250m, PaidAt = now, Status = "Paid",
+            EntryType = PaymentEntryTypes.Payment, AffectsCash = true, Currency = "ARS", Method = "Transfer"
+        });
+        await context.SaveChangesAsync();
+
+        var settingsMock = new Mock<IOperationalFinanceSettingsService>();
+        settingsMock
+            .Setup(x => x.GetEntityAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OperationalFinanceSettings { UpcomingUnpaidReservationAlertDays = 7 });
+
+        var service = new PaymentService(context, null!, Mock.Of<IMapper>(), settingsMock.Object, NullLogger<PaymentService>.Instance);
+
+        var summary = await service.GetCollectionsSummaryAsync(CancellationToken.None);
+
+        Assert.Equal(250m, summary.CollectedThisMonth);
+        Assert.Empty(summary.CreditApplicationsThisMonthByCurrency);
+    }
+
+    [Fact]
+    public async Task GetCollectionsSummaryAsync_RespectsOwnerScope_ForCollectedAndCreditApplications()
+    {
+        using var context = new AppDbContext(_dbOptions);
+        var now = DateTime.UtcNow;
+
+        // Dos vendedores con una reserva cada uno (un vendedor sin cobranzas.view_all solo ve LA SUYA).
+        context.Reservas.Add(new Reserva
+        {
+            Id = 1, NumeroReserva = "F-A", Name = "Reserva A", Status = EstadoReserva.Confirmed,
+            ResponsibleUserId = "vendedorA"
+        });
+        context.Reservas.Add(new Reserva
+        {
+            Id = 2, NumeroReserva = "F-B", Name = "Reserva B", Status = EstadoReserva.Confirmed,
+            ResponsibleUserId = "vendedorB"
+        });
+
+        // Cobro real + aplicacion de saldo a favor para CADA vendedor.
+        context.Payments.Add(new Payment
+        {
+            Id = 1, ReservaId = 1, Amount = 250m, PaidAt = now, Status = "Paid",
+            EntryType = PaymentEntryTypes.Payment, AffectsCash = true, Currency = "ARS", Method = "Transfer"
+        });
+        context.Payments.Add(new Payment
+        {
+            Id = 2, ReservaId = 2, Amount = 999m, PaidAt = now, Status = "Paid",
+            EntryType = PaymentEntryTypes.Payment, AffectsCash = true, Currency = "ARS", Method = "Transfer"
+        });
+        context.Payments.Add(new Payment
+        {
+            Id = 3, ReservaId = 1, Amount = 1000m, PaidAt = now, Status = "Paid",
+            EntryType = PaymentEntryTypes.Payment, AffectsCash = false, Currency = "ARS",
+            Method = "SaldoAFavorAplicado", AppliedFromCreditWithdrawalId = 1
+        });
+        context.Payments.Add(new Payment
+        {
+            Id = 4, ReservaId = 2, Amount = 777m, PaidAt = now, Status = "Paid",
+            EntryType = PaymentEntryTypes.Payment, AffectsCash = false, Currency = "ARS",
+            Method = "SaldoAFavorAplicado", AppliedFromCreditWithdrawalId = 2
+        });
+        await context.SaveChangesAsync();
+
+        var settingsMock = new Mock<IOperationalFinanceSettingsService>();
+        settingsMock
+            .Setup(x => x.GetEntityAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OperationalFinanceSettings { UpcomingUnpaidReservationAlertDays = 7 });
+
+        // Usuario "vendedorA" SIN cobranzas.view_all (perms vacios) -> ownerScope = vendedorA: solo ve lo suyo.
+        var claims = new List<Claim> { new(ClaimTypes.NameIdentifier, "vendedorA") };
+        var httpContextAccessor = new HttpContextAccessor
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity(claims, "Test"))
+            }
+        };
+        var permissionResolver = new Mock<IUserPermissionResolver>();
+        IReadOnlySet<string> emptyPerms = new HashSet<string>();
+        permissionResolver
+            .Setup(r => r.GetPermissionsAsync("vendedorA", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(emptyPerms);
+
+        var service = new PaymentService(
+            context, null!, Mock.Of<IMapper>(), settingsMock.Object, NullLogger<PaymentService>.Instance,
+            permissionResolver: permissionResolver.Object, httpContextAccessor: httpContextAccessor);
+
+        var summary = await service.GetCollectionsSummaryAsync(CancellationToken.None);
+
+        // Cobrado: solo el de vendedorA (250), NO el de vendedorB (999).
+        Assert.Equal(250m, summary.CollectedThisMonth);
+        Assert.Equal(250m, Assert.Single(summary.CollectedThisMonthByCurrency).Amount);
+
+        // Aplicaciones de saldo a favor: solo la de vendedorA (1000), NO la de vendedorB (777).
+        var creditLine = Assert.Single(summary.CreditApplicationsThisMonthByCurrency);
+        Assert.Equal(1000m, creditLine.Amount);
+    }
+
+    [Fact]
+    public async Task GetCollectionsSummaryAsync_CollectedSeparatedByCurrency()
+    {
+        using var context = new AppDbContext(_dbOptions);
+        var now = DateTime.UtcNow;
+
+        // Dos cobros reales en monedas distintas: nunca se suman ARS + USD en una linea.
+        context.Payments.Add(new Payment
+        {
+            Id = 1, Amount = 250m, PaidAt = now, Status = "Paid",
+            EntryType = PaymentEntryTypes.Payment, AffectsCash = true, Currency = "ARS", Method = "Transfer"
+        });
+        context.Payments.Add(new Payment
+        {
+            Id = 2, Amount = 80m, PaidAt = now, Status = "Paid",
+            EntryType = PaymentEntryTypes.Payment, AffectsCash = true, Currency = "USD", Method = "Transfer"
+        });
+        await context.SaveChangesAsync();
+
+        var settingsMock = new Mock<IOperationalFinanceSettingsService>();
+        settingsMock
+            .Setup(x => x.GetEntityAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OperationalFinanceSettings { UpcomingUnpaidReservationAlertDays = 7 });
+
+        var service = new PaymentService(context, null!, Mock.Of<IMapper>(), settingsMock.Object, NullLogger<PaymentService>.Instance);
+
+        var summary = await service.GetCollectionsSummaryAsync(CancellationToken.None);
+
+        // Detalle por moneda: una linea ARS 250, una linea USD 80 (sin mezclar).
+        Assert.Equal(2, summary.CollectedThisMonthByCurrency.Count);
+        Assert.Equal(250m, summary.CollectedThisMonthByCurrency.Single(x => x.Currency == "ARS").Amount);
+        Assert.Equal(80m, summary.CollectedThisMonthByCurrency.Single(x => x.Currency == "USD").Amount);
     }
 
     [Fact]

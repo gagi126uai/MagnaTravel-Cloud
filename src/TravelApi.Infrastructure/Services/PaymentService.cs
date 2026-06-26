@@ -182,12 +182,22 @@ public class PaymentService : IPaymentService
             .Where(r => r.StartDate.HasValue && r.StartDate.Value.Date >= today && r.StartDate.Value.Date <= threshold)
             .ToList();
 
+        // "Cobrado este mes" = plata REAL nueva que entró a caja este mes. Filtros:
+        //  - no anulada / no borrada;
+        //  - EntryType Payment (no reversas de NC);
+        //  - Amount > 0 (es un ingreso, no un ajuste negativo);
+        //  - AffectsCash == true: EXCLUYE los pagos PUENTE (saldo a favor aplicado de otra reserva,
+        //    sobrepago, anulacion->credito). Esos bajan la deuda del destino pero NO son plata nueva: contarlos
+        //    inflaba el KPI con plata que ya habia entrado en otra reserva (o que nunca entró). Ver
+        //    OverpaymentCreditConverter / AppliedCreditBridge / CancellationToClientCreditConverter (todos
+        //    crean Payment con AffectsCash=false).
         var collectedQuery = _dbContext.Payments
             .AsNoTracking()
             .Where(p =>
                 !p.IsDeleted &&
                 p.Status != "Cancelled" &&
                 p.EntryType == PaymentEntryTypes.Payment &&
+                p.AffectsCash &&
                 p.Amount > 0 &&
                 p.PaidAt >= currentMonth);
         if (ownerScope is not null)
@@ -195,13 +205,69 @@ public class PaymentService : IPaymentService
             collectedQuery = collectedQuery.Where(p => p.Reserva != null && p.Reserva.ResponsibleUserId == ownerScope);
         }
 
-        var collectedThisMonth = await collectedQuery
-            .SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
+        // Agrupado POR MONEDA real del cobro (Payment.Currency): nunca se suman ARS + USD en un total.
+        // Currency puede venir null/vacio en pagos legacy -> se normaliza a "ARS" (regla legacy del sistema).
+        var collectedByCurrencyRaw = await collectedQuery
+            .GroupBy(p => p.Currency)
+            .Select(g => new { Currency = g.Key, Amount = g.Sum(p => p.Amount) })
+            .ToListAsync(cancellationToken);
+
+        var collectedByCurrency = collectedByCurrencyRaw
+            .GroupBy(x => string.IsNullOrWhiteSpace(x.Currency) ? "ARS" : x.Currency, StringComparer.Ordinal)
+            .Select(g => new CurrencyAmountDto
+            {
+                Currency = g.Key,
+                Amount = EconomicRulesHelper.RoundCurrency(g.Sum(x => x.Amount)),
+            })
+            .OrderBy(x => x.Currency, StringComparer.Ordinal)
+            .ToList();
+
+        // Escalar de compat: suma cross-moneda (igual que los demas escalares historicos). El detalle real,
+        // sin mezclar monedas, viaja en CollectedThisMonthByCurrency.
+        var collectedThisMonth = collectedByCurrency.Sum(x => x.Amount);
+
+        // (2026-06-26, P1=B) Saldo a favor APLICADO este mes (linea chica "+ $X aplicados de saldo a favor",
+        // debajo del cobrado real). NO es plata nueva: son los Payment PUENTE POSITIVOS de aplicacion de credito
+        // — MISMO criterio canonico que AppliedCreditBridge.IsAppliedCreditBridge (Method "SaldoAFavorAplicado",
+        // AffectsCash=false, AppliedFromCreditWithdrawalId != null), expandido inline porque ese helper recibe la
+        // entidad ya materializada y no se traduce a SQL. Solo los POSITIVOS de APLICACION: el puente NEGATIVO de
+        // sobrepago usa otro Method/FK (OriginalPaymentId) y el de anulacion->credito tampoco matchea este Method.
+        var creditApplicationsQuery = _dbContext.Payments
+            .AsNoTracking()
+            .Where(p =>
+                !p.IsDeleted &&
+                p.Status != "Cancelled" &&
+                p.Method == AppliedCreditBridge.BridgeMethod &&
+                !p.AffectsCash &&
+                p.AppliedFromCreditWithdrawalId != null &&
+                p.Amount > 0 &&
+                p.PaidAt >= currentMonth);
+        if (ownerScope is not null)
+        {
+            creditApplicationsQuery = creditApplicationsQuery.Where(p => p.Reserva != null && p.Reserva.ResponsibleUserId == ownerScope);
+        }
+
+        var creditApplicationsRaw = await creditApplicationsQuery
+            .GroupBy(p => p.Currency)
+            .Select(g => new { Currency = g.Key, Amount = g.Sum(p => p.Amount) })
+            .ToListAsync(cancellationToken);
+
+        var creditApplicationsByCurrency = creditApplicationsRaw
+            .GroupBy(x => string.IsNullOrWhiteSpace(x.Currency) ? "ARS" : x.Currency, StringComparer.Ordinal)
+            .Select(g => new CurrencyAmountDto
+            {
+                Currency = g.Key,
+                Amount = EconomicRulesHelper.RoundCurrency(g.Sum(x => x.Amount)),
+            })
+            .OrderBy(x => x.Currency, StringComparer.Ordinal)
+            .ToList();
 
         return new CollectionsSummaryDto
         {
             PendingAmount = EconomicRulesHelper.RoundCurrency(pendingAmount),
             CollectedThisMonth = EconomicRulesHelper.RoundCurrency(collectedThisMonth),
+            CollectedThisMonthByCurrency = collectedByCurrency,
+            CreditApplicationsThisMonthByCurrency = creditApplicationsByCurrency,
             UrgentReservationsCount = urgentReservations.Count,
             UrgentPendingAmount = EconomicRulesHelper.RoundCurrency(urgentReservations.Sum(r => r.Balance)),
             BlockedOperationalCount = settings.RequireFullPaymentForOperativeStatus ? pendingReservations.Count : 0,

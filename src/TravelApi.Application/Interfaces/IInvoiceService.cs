@@ -26,6 +26,12 @@ public interface IInvoiceService
     // Rejected, expone numero+CAE+vencimiento cuando esta emitida y el motivo de rechazo (Observaciones)
     // cuando ARCA la rechazo. NO dispara emision. Devuelve las facturas mas recientes primero.
     Task<IEnumerable<InvoiceFiscalStatusDto>> GetFiscalStatusByReservaIdAsync(int reservaId, CancellationToken ct);
+
+    // Fase 4 (2026-06-26): PRE-CHEQUEO de emision. Deriva la letra que se emitiria hoy (misma matriz fiscal que
+    // CreatePendingInvoice) y avisa el unico bloqueo duro: cliente que recibiria Factura A pero sin CUIT (ARCA
+    // rebota). SOLO LECTURA: no encola ni muta nada. Throws InvalidOperationException si la reserva no existe.
+    Task<InvoiceEmissionPreflightDto> GetEmissionPreflightAsync(int reservaId, CancellationToken ct);
+
     Task<byte[]> GetPdfAsync(int id, CancellationToken ct);
     // B1.15 Fase 2a (FIX 6): se agrega userName + reason para auditoria fiscal.
     // B1.15 Fase D (2026-05-11): requesterIsAdmin permite bypass del approval

@@ -140,16 +140,31 @@ export function ReservaHeader({
     // pero agregamos una guarda defensiva en el front para el caso de DTO viejo.
     const esTraveling = reserva.status === 'Traveling';
 
-    // ─── Boton "Anular reserva" (antes "Cancelar") ────────────────────────────────
-    // ADR-035: siempre visible si hay permiso de usuario; apagado (gris) si capabilities.canCancel.allowed=false.
-    // ADR-036: el boton dice "Anular" porque en este producto "anular" = deshacer el viaje.
-    // "Cancelar" significa saldar una deuda — se reserva para botones de descarte de formularios.
-    // Feedback 2026-06-19: SIN texto de motivo debajo, solo gris.
-    // ADR-036: ToSettle eliminado del fallback (ya no existe ese estado en la UI).
+    // ─── Boton "Anular reserva" ─────────────────────────────────────────────────
+    // F4-2 (2026-06-26): el botón lee `canAnnul` como capacidad PRIMARIA.
+    //   canAnnul.allowed=true  → reserva con plata viva (factura con CAE o cobros).
+    //                             CancelarReservaInline emite NC formal.
+    //   canCancel.allowed=true → baja simple sin documentos fiscales vivos (PreSale/DirectCancel).
+    //                            Mismo botón, distinto camino dentro de CancelarReservaInline.
+    //   Ambas false → botón gris (ADR-035: siempre visible si el usuario tiene permiso,
+    //                             apagado cuando ninguna capacidad lo permite).
+    //
+    // ADR-036: "anular" = deshacer el viaje. "Cancelar" = saldar deuda (otro concepto).
     // Guía UX 2026-06-22: ocultar en Traveling (en viaje no se anula).
+    // Feedback 2026-06-19: SIN texto de motivo debajo, solo gris.
     const CANCELLABLE_STATUSES_FALLBACK = ['InManagement', 'Confirmed'];
+    const annulCapability = getCapability('canAnnul');
     const cancelCapability = getCapability('canCancel');
-    const showCancelButton = !esTraveling && canCancelReserva && onCancelReserva && !isArchived && (
+    // Botón habilitado cuando CUALQUIERA de las dos capacidades lo permite.
+    const puedeAnular = annulCapability.allowed || cancelCapability.allowed;
+
+    // F4-2 fix (2026-06-26): ocultar "Anular reserva" en pre-venta (Quotation/Budget).
+    // En esos estados el botón "Perdida (⊗)" cubre el camino natural — el cliente no compró.
+    // "Anular" es solo para reservas en firme (con servicios, cobros o factura viva).
+    // Sin esto, canCancel.allowed=true en pre-venta hacía que el botón quedara habilitado ahí también.
+    const isPreSale = reserva.status === 'Quotation' || reserva.status === 'Budget';
+
+    const showCancelButton = !isPreSale && !esTraveling && canCancelReserva && onCancelReserva && !isArchived && (
         capabilities
             ? true
             : CANCELLABLE_STATUSES_FALLBACK.includes(reserva.status)
@@ -435,20 +450,20 @@ export function ReservaHeader({
                             </button>
                         )}
 
-                        {/* ── Boton "Anular reserva" (antes "Cancelar") ─────────────────────────────
-                            ADR-036: "Anular" = deshacer el viaje con proceso fiscal.
-                            "Cancelar" en este producto significa saldar una deuda — NO se usa acá.
-                            SIEMPRE VISIBLE si el usuario tiene permiso.
-                            Feedback 2026-06-19: si no está permitido, solo gris (sin texto debajo).
-                            El cartel único en ReservaDetailPage explica el motivo global. */}
+                        {/* ── Boton "Anular reserva" ──────────────────────────────────────────────
+                            F4-2 (2026-06-26): habilitado cuando canAnnul.allowed OR canCancel.allowed.
+                            En gris (disabled) solo cuando NINGUNA de las dos lo permite.
+                            ADR-035: SIEMPRE VISIBLE si el usuario tiene permiso (reservas.cancel).
+                            Feedback 2026-06-19: SIN texto de motivo debajo, solo gris.
+                            El cartel único en ReservaDetailPage explica el estado global. */}
                         {showCancelButton && (
                             <button
-                                onClick={cancelCapability.allowed ? onCancelReserva : undefined}
-                                disabled={!cancelCapability.allowed}
-                                data-testid="reserva-action-cancel"
+                                onClick={puedeAnular ? onCancelReserva : undefined}
+                                disabled={!puedeAnular}
+                                data-testid="btn-anular-reserva"
                                 aria-label="Anular reserva"
                                 className={`inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl transition-colors text-sm font-semibold ${
-                                    cancelCapability.allowed
+                                    puedeAnular
                                         ? 'bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-900/20 dark:text-rose-300'
                                         : 'bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-600 cursor-not-allowed'
                                 }`}

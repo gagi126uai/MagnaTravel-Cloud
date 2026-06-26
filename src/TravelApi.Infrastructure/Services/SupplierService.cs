@@ -1143,8 +1143,16 @@ public class SupplierService : ISupplierService
         Guid? servicePublicId = null;
         if (hasService)
         {
-            servicePublicId = await ResolveServiceForSupplierPaymentAsync(
+            var resolvedService = await ResolveServiceForSupplierPaymentAsync(
                 supplierId, reservaId.Value, normalizedServiceKind!, request.ServicePublicId!, cancellationToken);
+            servicePublicId = resolvedService.PublicId;
+
+            // (2026-06-26) Cuando el pago se imputa a UN servicio concreto, ademas del tope global y por reserva
+            // hay que validar contra ESE servicio: (a) la moneda del pago coincide con la del costo del servicio
+            // y (b) el pago no supera el costo pendiente del servicio con el operador. Sin esto se podia pagar en
+            // otra moneda o pagar de mas a un servicio (siempre que la deuda total de la reserva lo cubriera).
+            await EnsureServicePaymentWithinServiceCostAsync(
+                reservaId.Value, resolvedService, currency, request, excludePaymentId, cancellationToken);
         }
 
         // La reserva tiene que tener al menos un servicio de ESTE proveedor (no se puede imputar un pago a
@@ -1189,11 +1197,11 @@ public class SupplierService : ISupplierService
 
     /// <summary>
     /// ADR-036 4c: resuelve un servicio por (recordKind, publicId) y valida que exista, sea de ESTE proveedor
-    /// y de ESTA reserva. Devuelve el PublicId confirmado del servicio (que es justamente el id polimorfico
-    /// que se persiste en el pago). No devuelve el id interno porque la referencia es por PublicId, no FK.
+    /// y de ESTA reserva. Devuelve el PublicId confirmado (id polimorfico que se persiste en el pago) junto con
+    /// el COSTO y la MONEDA del servicio, que luego se usan para validar moneda y tope por servicio.
     /// Lanza <see cref="InvalidOperationException"/> si el servicio no cumple (el controller lo traduce a 400).
     /// </summary>
-    private async Task<Guid> ResolveServiceForSupplierPaymentAsync(
+    private async Task<ResolvedServiceForPayment> ResolveServiceForSupplierPaymentAsync(
         int supplierId, int reservaId, string recordKind, string servicePublicIdRaw, CancellationToken cancellationToken)
     {
         if (!Guid.TryParse(servicePublicIdRaw, out var servicePublicId))
@@ -1202,32 +1210,111 @@ public class SupplierService : ISupplierService
         }
 
         // Cada tipo vive en su propia tabla; consultamos solo la que corresponde al recordKind. La condicion
-        // es siempre la misma: mismo PublicId, mismo proveedor, misma reserva. AsNoTracking (solo validamos).
-        bool exists = recordKind switch
+        // es siempre la misma: mismo PublicId, mismo proveedor, misma reserva. Traemos costo + moneda (no solo
+        // existencia) para validar despues moneda/tope por servicio. Todas las ramas proyectan la MISMA forma
+        // anonima { NetCost, Currency }, asi el switch unifica el tipo. AsNoTracking (solo leemos para validar).
+        var match = recordKind switch
         {
-            ServicePaymentRecordKinds.Flight => await _dbContext.FlightSegments.AsNoTracking().AnyAsync(
-                s => s.PublicId == servicePublicId && s.SupplierId == supplierId && s.ReservaId == reservaId, cancellationToken),
-            ServicePaymentRecordKinds.Hotel => await _dbContext.HotelBookings.AsNoTracking().AnyAsync(
-                s => s.PublicId == servicePublicId && s.SupplierId == supplierId && s.ReservaId == reservaId, cancellationToken),
-            ServicePaymentRecordKinds.Transfer => await _dbContext.TransferBookings.AsNoTracking().AnyAsync(
-                s => s.PublicId == servicePublicId && s.SupplierId == supplierId && s.ReservaId == reservaId, cancellationToken),
-            ServicePaymentRecordKinds.Package => await _dbContext.PackageBookings.AsNoTracking().AnyAsync(
-                s => s.PublicId == servicePublicId && s.SupplierId == supplierId && s.ReservaId == reservaId, cancellationToken),
-            ServicePaymentRecordKinds.Assistance => await _dbContext.AssistanceBookings.AsNoTracking().AnyAsync(
-                s => s.PublicId == servicePublicId && s.SupplierId == supplierId && s.ReservaId == reservaId, cancellationToken),
+            ServicePaymentRecordKinds.Flight => await _dbContext.FlightSegments.AsNoTracking()
+                .Where(s => s.PublicId == servicePublicId && s.SupplierId == supplierId && s.ReservaId == reservaId)
+                .Select(s => new { s.NetCost, s.Currency }).FirstOrDefaultAsync(cancellationToken),
+            ServicePaymentRecordKinds.Hotel => await _dbContext.HotelBookings.AsNoTracking()
+                .Where(s => s.PublicId == servicePublicId && s.SupplierId == supplierId && s.ReservaId == reservaId)
+                .Select(s => new { s.NetCost, s.Currency }).FirstOrDefaultAsync(cancellationToken),
+            ServicePaymentRecordKinds.Transfer => await _dbContext.TransferBookings.AsNoTracking()
+                .Where(s => s.PublicId == servicePublicId && s.SupplierId == supplierId && s.ReservaId == reservaId)
+                .Select(s => new { s.NetCost, s.Currency }).FirstOrDefaultAsync(cancellationToken),
+            ServicePaymentRecordKinds.Package => await _dbContext.PackageBookings.AsNoTracking()
+                .Where(s => s.PublicId == servicePublicId && s.SupplierId == supplierId && s.ReservaId == reservaId)
+                .Select(s => new { s.NetCost, s.Currency }).FirstOrDefaultAsync(cancellationToken),
+            ServicePaymentRecordKinds.Assistance => await _dbContext.AssistanceBookings.AsNoTracking()
+                .Where(s => s.PublicId == servicePublicId && s.SupplierId == supplierId && s.ReservaId == reservaId)
+                .Select(s => new { s.NetCost, s.Currency }).FirstOrDefaultAsync(cancellationToken),
             // El generico guarda SupplierId nullable; exigimos que coincida igual.
-            ServicePaymentRecordKinds.Generic => await _dbContext.Servicios.AsNoTracking().AnyAsync(
-                s => s.PublicId == servicePublicId && s.SupplierId == supplierId && s.ReservaId == reservaId, cancellationToken),
-            _ => false
+            ServicePaymentRecordKinds.Generic => await _dbContext.Servicios.AsNoTracking()
+                .Where(s => s.PublicId == servicePublicId && s.SupplierId == supplierId && s.ReservaId == reservaId)
+                .Select(s => new { s.NetCost, s.Currency }).FirstOrDefaultAsync(cancellationToken),
+            _ => null
         };
 
-        if (!exists)
+        if (match is null)
         {
             throw new InvalidOperationException(
                 "El servicio indicado no existe, no es de este proveedor o no pertenece a la reserva.");
         }
 
-        return servicePublicId;
+        // La moneda del servicio se normaliza (null -> ARS) igual que en la vista de estado por servicio.
+        return new ResolvedServiceForPayment(servicePublicId, match.NetCost, Monedas.Normalizar(match.Currency));
+    }
+
+    /// <summary>Servicio resuelto para imputar un pago: su PublicId + el costo y la moneda contra los que se valida.</summary>
+    private readonly record struct ResolvedServiceForPayment(Guid PublicId, decimal NetCost, string Currency);
+
+    /// <summary>
+    /// (2026-06-26) Valida un pago al operador imputado a UN servicio concreto contra ESE servicio (no solo
+    /// contra la deuda global de la reserva): (a) la moneda del pago debe coincidir con la del costo del
+    /// servicio y (b) el pago no puede superar el costo pendiente del servicio con el operador. Mismo criterio
+    /// de cuenta que la vista de estado por servicio (<see cref="GetReservaSupplierPaymentStatusAsync"/>), para
+    /// que validacion y reporte no diverjan. Lanza <see cref="InvalidOperationException"/> (el controller la
+    /// traduce a 400 con un mensaje generico, sin revelar el costo exacto).
+    /// </summary>
+    private async Task EnsureServicePaymentWithinServiceCostAsync(
+        int reservaId,
+        ResolvedServiceForPayment service,
+        PaymentCurrencyResolver.Resolved currency,
+        SupplierPaymentRequest request,
+        int? excludePaymentId,
+        CancellationToken cancellationToken)
+    {
+        // Moneda y monto EFECTIVAMENTE imputados al servicio: si el pago cruzo moneda, baja la deuda en la
+        // moneda imputada por su equivalente; si no, baja en su propia moneda por su monto. Mismo criterio que
+        // el resto de la cuenta del proveedor.
+        string imputedCurrency = Monedas.Normalizar(currency.ImputedCurrency ?? currency.Currency);
+        decimal imputedAmount = currency.ImputedAmount ?? EconomicRulesHelper.RoundCurrency(request.Amount);
+
+        // (a) Moneda: un servicio en USD se paga en USD (o con un pago cruzado cuyo equivalente imputado es USD).
+        if (!string.Equals(imputedCurrency, service.Currency, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "La moneda del pago no coincide con la del costo del servicio.");
+        }
+
+        // (b) Tope por servicio: lo ya pagado a ESTE servicio (excluyendo el pago que se edita) + este pago no
+        // puede superar el costo del servicio. Misma cuenta que la vista de estado (ImputedAmount ?? Amount).
+        decimal alreadyPaidToService = await CalculateServicePaidToOperatorAsync(
+            reservaId, service.PublicId, excludePaymentId, cancellationToken);
+        decimal netCost = EconomicRulesHelper.RoundCurrency(service.NetCost);
+        decimal outstanding = EconomicRulesHelper.RoundCurrency(netCost - alreadyPaidToService);
+
+        if (imputedAmount > outstanding)
+        {
+            throw new InvalidOperationException(
+                "El pago excede el costo pendiente de este servicio con el operador.");
+        }
+    }
+
+    /// <summary>
+    /// (2026-06-26) Suma lo ya pagado al operador POR UN SERVICIO concreto de una reserva (equivalente imputado
+    /// de cada pago vivo: <c>ImputedAmount ?? Amount</c>), excluyendo opcionalmente el pago que se esta editando.
+    /// Mismo criterio que <see cref="GetReservaSupplierPaymentStatusAsync"/>, para que el tope coincida con el
+    /// "pagado/pendiente" que ve el usuario en la solapa. El query filter !IsDeleted ya excluye los anulados.
+    /// </summary>
+    private async Task<decimal> CalculateServicePaidToOperatorAsync(
+        int reservaId, Guid servicePublicId, int? excludePaymentId, CancellationToken cancellationToken)
+    {
+        var paymentRows = await _dbContext.SupplierPayments
+            .Where(p => p.ReservaId == reservaId
+                        && p.ServicePublicId == servicePublicId
+                        && (excludePaymentId == null || p.Id != excludePaymentId.Value))
+            .Select(p => new { p.Amount, p.ImputedAmount })
+            .ToListAsync(cancellationToken);
+
+        decimal total = 0m;
+        foreach (var row in paymentRows)
+        {
+            total += row.ImputedAmount ?? row.Amount;
+        }
+        return EconomicRulesHelper.RoundCurrency(total);
     }
 
     /// <summary>

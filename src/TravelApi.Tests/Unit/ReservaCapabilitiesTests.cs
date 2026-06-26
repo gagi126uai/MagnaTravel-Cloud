@@ -254,6 +254,59 @@ public class ReservaCapabilitiesTests
         Assert.True(conPlata.CanCancel.Allowed || conPlata.CanAnnul.Allowed);
     }
 
+    // ===================== Eliminar: solo pre-venta sin plata viva =====================
+
+    [Theory]
+    // Pre-venta sin plata: se puede ELIMINAR fisicamente.
+    [InlineData(EstadoReserva.Quotation, true)]
+    [InlineData(EstadoReserva.Budget, true)]
+    // Mas alla de pre-venta: NO se borra (se cancela/anula).
+    [InlineData(EstadoReserva.InManagement, false)]
+    [InlineData(EstadoReserva.Confirmed, false)]
+    [InlineData(EstadoReserva.Traveling, false)]
+    [InlineData(EstadoReserva.Closed, false)]
+    [InlineData(EstadoReserva.Lost, false)]
+    [InlineData(EstadoReserva.Cancelled, false)]
+    [InlineData(EstadoReserva.PendingOperatorRefund, false)]
+    public void CanDelete_OnlyInPreSaleWithoutLiveMoney(string status, bool expected)
+    {
+        var caps = ReservaCapabilityPolicy.For(Ctx(status, balance: 0m, hasLiveCae: false, hasAnyPayment: false));
+        Assert.Equal(expected, caps.CanDelete.Allowed);
+        if (!expected) Assert.False(string.IsNullOrWhiteSpace(caps.CanDelete.Reason));
+    }
+
+    [Fact]
+    public void CanDelete_PreSaleWithPayment_NotAllowed()
+    {
+        // Un presupuesto con cobros NO se borra (la plata viva exige anular). Antes el backend no mandaba esta
+        // capacidad y el front mostraba "Eliminar" igual: este es el caso que cierra el agujero.
+        var caps = ReservaCapabilityPolicy.For(Ctx(EstadoReserva.Budget, balance: 0m, hasLiveCae: false, hasAnyPayment: true));
+        Assert.False(caps.CanDelete.Allowed);
+        Assert.Equal(ReservaCapabilityPolicy.HasLiveMoneyCannotDeleteReason, caps.CanDelete.Reason);
+    }
+
+    [Fact]
+    public void CanDelete_PreSaleWithLiveCae_NotAllowed()
+    {
+        var caps = ReservaCapabilityPolicy.For(Ctx(EstadoReserva.Budget, balance: 0m, hasLiveCae: true, hasAnyPayment: false));
+        Assert.False(caps.CanDelete.Allowed);
+        Assert.Equal(ReservaCapabilityPolicy.HasLiveMoneyCannotDeleteReason, caps.CanDelete.Reason);
+    }
+
+    [Fact]
+    public void CanDelete_PreSaleWithOperatorConfirmedService_NotAllowed()
+    {
+        // (2026-06-26) Un presupuesto SIN plata pero con un servicio ya confirmado con el operador NO se borra
+        // (hay compromiso con el proveedor). La capacidad debe COINCIDIR con DeleteGuards (que bloquea ese caso
+        // aun en pre-venta); antes la capacidad mentía y el front mostraba "Eliminar" -> 409 al clickear.
+        var ctx = new ReservaCapabilityContext(
+            EstadoReserva.Budget, Balance: 0m, HasLiveCae: false, HasLiveVoucher: false, HasLiveEditAuth: false,
+            HasAnyPayment: false, HasPendingOperatorPenalty: false, HasOperatorConfirmedService: true);
+        var caps = ReservaCapabilityPolicy.For(ctx);
+        Assert.False(caps.CanDelete.Allowed);
+        Assert.Equal(ReservaCapabilityPolicy.HasOperatorConfirmedServiceCannotDeleteReason, caps.CanDelete.Reason);
+    }
+
     // ===================== NC/ND: solo si hay CAE vivo que corregir =====================
 
     [Fact]

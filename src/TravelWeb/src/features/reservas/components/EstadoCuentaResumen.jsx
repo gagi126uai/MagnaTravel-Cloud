@@ -64,11 +64,16 @@ export function EstadoCuentaResumen({ reserva, saldoClientePorMoneda, loadingSal
                 campo="facturadoNeto"
                 colorClass="text-indigo-700 dark:text-indigo-400"
               />
-              <ColumnaNumericaMultiCondicional
-                label="Falta facturar"
-                porMoneda={reserva.porMoneda}
-                campo="disponibleParaFacturar"
-              />
+              {/* F4-5: data-testid en la columna de "Falta facturar" para tests y QA.
+                  Sub-testids por moneda van en ColumnaNumericaMultiCondicional. */}
+              <div data-testid="kpi-falta-facturar">
+                <ColumnaNumericaMultiCondicional
+                  label="Falta facturar"
+                  porMoneda={reserva.porMoneda}
+                  campo="disponibleParaFacturar"
+                  rowTestIdPrefix="kpi-falta-facturar"
+                />
+              </div>
             </>
           ) : (
             // Mono-moneda: fila plana con los tres valores
@@ -85,16 +90,19 @@ export function EstadoCuentaResumen({ reserva, saldoClientePorMoneda, loadingSal
                 moneda={reserva.porMoneda?.[0]?.currency ?? "ARS"}
                 colorClass="text-indigo-700 dark:text-indigo-400"
               />
-              <EjeNumero
-                label="Falta facturar"
-                valor={reserva.disponibleParaFacturar}
-                moneda={reserva.porMoneda?.[0]?.currency ?? "ARS"}
-                colorClass={
-                  (reserva.disponibleParaFacturar ?? 0) > 0
-                    ? "text-amber-700 dark:text-amber-400"
-                    : "text-slate-400 dark:text-slate-600"
-                }
-              />
+              {/* F4-5: data-testid en mono-moneda también, para consistencia en tests. */}
+              <div data-testid="kpi-falta-facturar">
+                <EjeNumero
+                  label="Falta facturar"
+                  valor={reserva.disponibleParaFacturar}
+                  moneda={reserva.porMoneda?.[0]?.currency ?? "ARS"}
+                  colorClass={
+                    (reserva.disponibleParaFacturar ?? 0) > 0
+                      ? "text-amber-700 dark:text-amber-400"
+                      : "text-slate-400 dark:text-slate-600"
+                  }
+                />
+              </div>
             </>
           )}
 
@@ -283,8 +291,11 @@ function EjeNumero({ label, valor, moneda, colorClass }) {
  * Columna numérica multimoneda con color condicional por valor.
  * Se usa para "Falta facturar" donde el color cambia según si queda algo pendiente (ámbar)
  * o si ya está todo facturado (gris apagado).
+ *
+ * F4-5: acepta `rowTestIdPrefix` para agregar data-testid por fila de moneda.
+ * Ej: rowTestIdPrefix="kpi-falta-facturar" → data-testid="kpi-falta-facturar-ars" / "...-usd".
  */
-function ColumnaNumericaMultiCondicional({ label, porMoneda, campo }) {
+function ColumnaNumericaMultiCondicional({ label, porMoneda, campo, rowTestIdPrefix }) {
   return (
     <div className="flex flex-col gap-1">
       <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
@@ -299,7 +310,11 @@ function ColumnaNumericaMultiCondicional({ label, porMoneda, campo }) {
               ? "text-amber-700 dark:text-amber-400"
               : "text-slate-400 dark:text-slate-600";
           return (
-            <div key={pm.currency} className="flex items-center gap-1.5">
+            <div
+              key={pm.currency}
+              className="flex items-center gap-1.5"
+              data-testid={rowTestIdPrefix ? `${rowTestIdPrefix}-${pm.currency.toLowerCase()}` : undefined}
+            >
               <CurrencyBadge currency={pm.currency} size="sm" />
               <span className={`text-lg font-extrabold leading-none ${colorClass}`}>
                 {formatCurrency(valor, pm.currency)}

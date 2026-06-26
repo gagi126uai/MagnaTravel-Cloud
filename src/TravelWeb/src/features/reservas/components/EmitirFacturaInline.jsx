@@ -48,6 +48,35 @@ import { formatearEtiquetaFactura } from "../lib/invoiceFormatUtils";
 // El componente las llama internamente; no se duplica lógica.
 
 /**
+ * F4-8 (2026-06-26): interpreta el resultado del preflight de emisión de factura.
+ *
+ * Regla de oro del backend: solo hay UN bloqueo duro — cuando la factura sería
+ * Factura A pero el cliente NO tiene CUIT válido (lo rechazaría ARCA con certeza).
+ * Todo lo demás viene con Allowed=true aunque la condición sea dudosa.
+ *
+ * El front NO implementa la regla fiscal: eso lo decide el backend. Acá solo
+ * leemos el veredicto y decidimos si bloquear o dejar pasar.
+ *
+ * @param {object|null} preflight - InvoiceEmissionPreflightDto del backend
+ * @returns {{ message: string } | null} - null si no hay bloqueo; objeto con mensaje si bloquea
+ */
+export function resolverPreflightBloqueo(preflight) {
+  if (!preflight) return null;
+
+  // El único bloqueo duro es allowed=false (o severity==="block").
+  // El texto del mensaje viene del backend en criollo; si no viene, usamos el default de la spec.
+  if (preflight.allowed === false || preflight.severity === "block") {
+    const mensajeDefault =
+      "Este cliente no es Responsable Inscripto. No corresponde Factura A. " +
+      "Revisá el tipo de comprobante o la condición del cliente.";
+    return { message: preflight.reason || mensajeDefault };
+  }
+
+  // allowed=true o severity="ok"/"warn": sin bloqueo.
+  return null;
+}
+
+/**
  * Elige qué grupo de items precargar al abrir el formulario.
  *
  * Regla de seguridad fiscal (fix B1):
@@ -262,15 +291,22 @@ export function EmitirFacturaInline({
   const [submitting, setSubmitting] = useState(false);
   const [errorEnvio, setErrorEnvio] = useState(null);
 
-  // ── H2 (2026-06-24): estados del flujo asíncrono de emisión ───────────────
-  // Tres estados visuales: "confirmando" → "procesando" → "exito" | "rechazo".
-  //   "idle"         → formulario normal (estado inicial).
-  //   "confirmando"  → modal de confirmación abierto (paso 2 de la spec).
-  //   "procesando"   → POST enviado, polling activo (paso 3).
-  //   "exito"        → AFIP aprobó, mostramos el número y CAE (paso 4a).
-  //   "rechazo"      → AFIP rechazó, mostramos motivo y botón de reintento (paso 4b).
-  //   "timeout"      → polling superó el máximo sin respuesta de AFIP.
+  // ── H2 (2026-06-24) + F4-8 (2026-06-26): estados del flujo asíncrono de emisión ──
+  // Estados:
+  //   "idle"                → formulario normal (estado inicial).
+  //   "preflight-cargando"  → verificando si la factura puede emitirse (F4-8).
+  //                           El formulario sigue visible, el botón muestra spinner.
+  //   "preflight-bloqueado" → el preflight devolvió un bloqueo (ej: Factura A sin CUIT).
+  //                           Se muestra el aviso y solo el botón "Volver".
+  //   "confirmando"         → modal de confirmación abierto (paso 2 de la spec).
+  //   "procesando"          → POST enviado, polling activo (paso 3).
+  //   "exito"               → AFIP aprobó, mostramos el número y CAE (paso 4a).
+  //   "rechazo"             → AFIP rechazó, mostramos motivo y botón de reintento (paso 4b).
+  //   "timeout"             → polling superó el máximo sin respuesta de AFIP.
   const [estadoEmision, setEstadoEmision] = useState("idle");
+
+  // F4-8: resultado del preflight (InvoiceEmissionPreflightDto). null si no se consultó aún.
+  const [preflightInfo, setPreflightInfo] = useState(null);
 
   // Datos de la factura emitida (publicId, invoiceType, puntoDeVenta, numeroComprobante, CAE).
   const [facturaEmitidaData, setFacturaEmitidaData] = useState(null);
@@ -542,14 +578,21 @@ export function EmitirFacturaInline({
 
   // ── H2: validación de la ficha antes de abrir el modal de confirmación ─────
   /**
-   * Valida los campos del formulario. Si todo está OK, abre el modal de confirmación.
-   * Si hay errores, los muestra en el cartel de error inline (sin abrir el modal).
+   * F4-8 (2026-06-26): valida el formulario y luego consulta el preflight antes de confirmar.
+   *
+   * Flujo:
+   *   1. Validación del formulario (igual que antes).
+   *   2. GET /invoices/reserva/{id}/emission-preflight → verifica si la factura puede emitirse.
+   *      Bloqueo duro: Factura A sin CUIT del cliente → muestra aviso y para.
+   *      Fallback de error de red: si el endpoint no responde, continúa igual (no bloqueamos
+   *      la emisión por un error de preflight — el backend vuelve a validar al emitir).
+   *   3. Si pasa: abre el modal de confirmación normal (paso 2).
    *
    * Decisión UX (spec P1): la confirmación es el ÚLTIMO paso antes de algo irreversible.
-   * El texto fiscal exacto es: "Una vez emitida no se puede eliminar; solo se corrige
-   * o anula con una Nota de Crédito." (verificado contra ARCA — NO modificar).
+   * Texto fiscal exacto (verificado contra ARCA — NO modificar):
+   * "Una vez emitida no se puede eliminar; solo se corrige o anula con una Nota de Crédito."
    */
-  const handleClickEmitir = () => {
+  const handleClickEmitir = async () => {
     setWarningEmision(null);
     setErrorEnvio(null);
 
@@ -579,6 +622,24 @@ export function EmitirFacturaInline({
         setErrorEnvio(errorUSD);
         return;
       }
+    }
+
+    // F4-8: preflight check — verifica condición fiscal del cliente antes de abrir el modal.
+    // Si el endpoint falla (red, 404, etc.) saltamos al modal normal: el backend revalida al emitir.
+    setEstadoEmision("preflight-cargando");
+    try {
+      const preflight = await api.get(`/invoices/reserva/${reservaId}/emission-preflight`);
+      setPreflightInfo(preflight);
+      const bloqueo = resolverPreflightBloqueo(preflight);
+      if (bloqueo) {
+        // El backend dice que esta factura no puede emitirse (ej: Factura A sin CUIT).
+        setEstadoEmision("preflight-bloqueado");
+        return;
+      }
+    } catch {
+      // Error de red o endpoint aún no disponible: seguimos sin bloquear.
+      // Fallback conservador: la regla fiscal la revalida el backend al emitir.
+      setPreflightInfo(null);
     }
 
     // Todo válido → abrir el modal de confirmación (paso 2).
@@ -663,6 +724,8 @@ export function EmitirFacturaInline({
     setMotivoRechazo(null);
     setErrorEnvio(null);
     setWarningEmision(null);
+    // F4-8: limpiamos el preflight para que en el próximo intento vuelva a verificar.
+    setPreflightInfo(null);
   };
 
   // ── H2: "Cerrar" luego del éxito ──────────────────────────────────────────
@@ -716,7 +779,9 @@ export function EmitirFacturaInline({
         {/* H2: el contenido del formulario solo se muestra en estado "idle".
             En los demás estados (procesando/éxito/rechazo/timeout) el cuerpo
             de la ficha queda vacío y el estado visual se muestra FUERA del div px-6 py-5. */}
-        {!cargandoInicial && estadoEmision === "idle" && (
+        {/* F4-8: el formulario sigue visible mientras dura el preflight-cargando.
+            Solo desaparece cuando el bloqueo ya se decidió o se avanza a confirmando. */}
+        {!cargandoInicial && (estadoEmision === "idle" || estadoEmision === "preflight-cargando") && (
           <>
             {/* Bloque de deuda / override ──────────────────────────────── */}
             {(requiereOverride || bloqueadoPorDeuda) && (
@@ -1140,8 +1205,8 @@ export function EmitirFacturaInline({
       </div>
 
       {/* Pie: totales + botones ─────────────────────────────────────────── */}
-      {/* H2: el pie solo aparece en el estado "idle" (formulario) */}
-      {!cargandoInicial && estadoEmision === "idle" && (
+      {/* F4-8: el pie también se muestra en "preflight-cargando" (botón deshabilitado con spinner). */}
+      {!cargandoInicial && (estadoEmision === "idle" || estadoEmision === "preflight-cargando") && (
         <div className="border-t border-indigo-200 dark:border-indigo-900/40 bg-white dark:bg-slate-900/20 px-6 py-4">
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
 
@@ -1189,8 +1254,9 @@ export function EmitirFacturaInline({
             </div>
 
             {/* Botones */}
-            {/* H2: en estados de procesando/éxito/rechazo/timeout los botones del pie se ocultan */}
-            {estadoEmision === "idle" && (
+            {/* F4-8: en "preflight-cargando" los botones siguen visibles (el de emitir queda
+                deshabilitado con spinner). Solo se ocultan en procesando/éxito/rechazo/timeout. */}
+            {(estadoEmision === "idle" || estadoEmision === "preflight-cargando") && (
               <div className="flex items-center gap-3">
                 <button
                   type="button"
@@ -1203,6 +1269,8 @@ export function EmitirFacturaInline({
                   type="button"
                   onClick={handleClickEmitir}
                   disabled={
+                    // F4-8: mientras verifica el preflight, el botón queda deshabilitado
+                    estadoEmision === "preflight-cargando" ||
                     submitting ||
                     cargandoInicial ||
                     totales.total <= 0 ||
@@ -1217,7 +1285,13 @@ export function EmitirFacturaInline({
                   data-testid="btn-emitir-factura-inline"
                   className="px-4 py-2 text-sm font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 focus:ring-4 focus:ring-indigo-300 dark:focus:ring-indigo-900 disabled:opacity-50 flex items-center gap-2 transition-colors"
                 >
-                  {requiereOverride
+                  {estadoEmision === "preflight-cargando" ? (
+                    // Spinner mientras el preflight verifica la condición fiscal del cliente
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                      Verificando...
+                    </>
+                  ) : requiereOverride
                     ? "Emitir por excepción"
                     : esUSD
                     ? "Emitir factura en USD"
@@ -1225,6 +1299,71 @@ export function EmitirFacturaInline({
                 </button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ── F4-8: Aviso de bloqueo de preflight (Factura A sin CUIT) ─────────
+          Se muestra ANTES del modal de confirmación cuando el backend devuelve Allowed=false.
+          Es el ÚNICO bloqueo duro que implementa la spec (ver InvoiceEmissionPreflightDto.cs).
+          Solo tiene el botón "Volver" — no hay forma de forzarlo desde el front.
+          data-testid="aviso-factura-a-no-corresponde" para QA y tests automatizados.
+          ─────────────────────────────────────────────────────────────────── */}
+      {estadoEmision === "preflight-bloqueado" && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="preflight-block-title"
+          aria-describedby="preflight-block-desc"
+          data-testid="aviso-factura-a-no-corresponde"
+        >
+          <div className="relative bg-white dark:bg-slate-900 rounded-2xl shadow-xl max-w-md w-full mx-4 p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-amber-100 dark:bg-amber-900/30 rounded-lg">
+                <AlertCircle className="w-6 h-6 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+              </div>
+              <h2
+                id="preflight-block-title"
+                className="text-base font-semibold text-slate-900 dark:text-white"
+              >
+                No se puede emitir esta factura
+              </h2>
+            </div>
+
+            <p
+              id="preflight-block-desc"
+              className="text-sm text-slate-700 dark:text-slate-300"
+            >
+              {preflightInfo?.reason ||
+                "Este cliente no es Responsable Inscripto. No corresponde Factura A. " +
+                "Revisá el tipo de comprobante o la condición del cliente."}
+            </p>
+
+            {/* Si el backend informa qué datos faltan, los mostramos */}
+            {Array.isArray(preflightInfo?.missingData) && preflightInfo.missingData.length > 0 && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-900/20 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
+                <p className="font-semibold mb-1">Datos faltantes:</p>
+                <ul className="list-disc list-inside">
+                  {preflightInfo.missingData.map((dato) => (
+                    <li key={dato}>{dato}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* "Volver" es la ÚNICA acción: no hay forma de forzar una Factura A sin CUIT. */}
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setEstadoEmision("idle")}
+                autoFocus
+                data-testid="btn-volver-bloqueo-preflight"
+                className="px-5 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-600 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+              >
+                Volver
+              </button>
+            </div>
           </div>
         </div>
       )}

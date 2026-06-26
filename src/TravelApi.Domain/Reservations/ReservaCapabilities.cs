@@ -41,6 +41,14 @@ public sealed record Cap(bool Allowed, string? Reason)
 /// Default false: en el listado y en los callers que no calculan la cancelacion, el boton no se ofrece (es
 /// seguro: el endpoint confirm-penalty revalida todo server-side).
 /// </param>
+/// <param name="HasOperatorConfirmedService">
+/// (2026-06-26): True si la reserva tiene AL MENOS un servicio confirmado por el operador (ConfirmedAt sellado).
+/// Lo necesita <c>canDelete</c>: una reserva en pre-venta con un servicio ya confirmado con el proveedor NO se
+/// puede borrar fisicamente (hay compromiso/deuda con el proveedor; el borrado cascadearia ese servicio sin pasar
+/// por la cancelacion). Lo calcula quien arma el contexto reusando <c>DeleteGuards.ReservaHasOperatorConfirmedServiceAsync</c>
+/// (misma query exacta que el guard de borrado, para que capacidad y guard no diverjan). Default false: en el
+/// listado / callers que no lo calculan, la capacidad no agrega este bloqueo (el borrado real lo revalida igual).
+/// </param>
 public sealed record ReservaCapabilityContext(
     string Status,
     decimal Balance,
@@ -48,7 +56,8 @@ public sealed record ReservaCapabilityContext(
     bool HasLiveVoucher,
     bool HasLiveEditAuth,
     bool HasAnyPayment,
-    bool HasPendingOperatorPenalty = false);
+    bool HasPendingOperatorPenalty = false,
+    bool HasOperatorConfirmedService = false);
 
 /// <summary>
 /// ADR-035 (2026-06-19): conjunto de capacidades de una reserva, ya resueltas. Es la respuesta de
@@ -66,6 +75,7 @@ public sealed record ReservaCapabilities(
     Cap CanEditReservaData,
     Cap CanCancel,
     Cap CanAnnul,
+    Cap CanDelete,
     Cap CanCancelServices,
     Cap CanReschedule,
     Cap CanUploadDocument,
@@ -176,6 +186,32 @@ public static class ReservaCapabilityPolicy
     /// </summary>
     public const string NoLiveMoneyToAnnulReason =
         "No hay factura ni cobros para anular formalmente; para deshacer esta reserva usá cancelar.";
+
+    /// <summary>
+    /// (2026-06-26): ELIMINAR fisicamente la reserva solo aplica en pre-venta (Cotizacion/Presupuesto). Mas
+    /// alla de eso una reserva no se borra: se cancela o se anula (queda historia). Motivo legible para el front.
+    /// Mismo criterio que el guard de escritura <c>DeleteGuards.GetReservaDeleteBlockReasonAsync</c> (estado).
+    /// </summary>
+    public const string NotDeletableStatusReason =
+        "Solo se puede eliminar una reserva en Cotización o Presupuesto. En otros estados se cancela o se anula.";
+
+    /// <summary>
+    /// (2026-06-26): no se puede ELIMINAR una reserva (aunque este en pre-venta) si tiene plata viva — cobros
+    /// registrados o una factura con CAE vivo. Borrarla fisicamente tiraria ese rastro de plata sin pasar por la
+    /// cancelacion/anulacion formal. Para deshacerla hay que Anular (se emite Nota de Credito / queda saldo a
+    /// favor). Sin datos sensibles (ni montos ni nombres). Espejo del guard <c>DeleteGuards</c> (plata viva).
+    /// </summary>
+    public const string HasLiveMoneyCannotDeleteReason =
+        "Esta reserva tiene cobros o factura: no se puede eliminar. Para deshacerla, anulala.";
+
+    /// <summary>
+    /// (2026-06-26): no se puede ELIMINAR una reserva (aunque este en pre-venta y sin plata) si tiene un servicio
+    /// ya confirmado con el operador. Hay compromiso/deuda con el proveedor; borrarla fisicamente tiraria ese
+    /// servicio sin pasar por la cancelacion que liquida la penalidad. Hay que cancelar ese servicio primero. Sin
+    /// datos sensibles. Espejo del guard <c>DeleteGuards.GetReservaDeleteBlockReasonAsync</c> (servicio confirmado).
+    /// </summary>
+    public const string HasOperatorConfirmedServiceCannotDeleteReason =
+        "Esta reserva tiene un servicio ya confirmado con el operador: no se puede eliminar. Cancelá ese servicio primero.";
 
     /// <summary>No hay ningun avance manual de estado disponible desde el estado actual.</summary>
     public const string NoForwardTransitionReason =
@@ -328,6 +364,20 @@ public static class ReservaCapabilityPolicy
     };
 
     /// <summary>
+    /// (2026-06-26): estados desde los que se puede ELIMINAR FISICAMENTE la reserva. {Quotation, Budget}
+    /// (pre-venta). Coincide con la regla de estado de <c>DeleteGuards.GetReservaDeleteBlockReasonAsync</c>
+    /// (fuente unica server-side): mas alla de pre-venta una reserva se cancela/anula, no se borra. El borrado
+    /// real revalida ademas que no haya plata viva ni servicios confirmados por el operador (esta capacidad
+    /// cubre el caso de plata viva con <see cref="EvaluateDelete"/>; el guard de servicios confirmados queda
+    /// como defensa final en DeleteGuards, fuera del contexto puro de capacidades).
+    /// </summary>
+    private static readonly string[] DeletableStatuses =
+    {
+        EstadoReserva.Quotation,
+        EstadoReserva.Budget,
+    };
+
+    /// <summary>
     /// ADR-035: evalua TODAS las capacidades de una reserva a partir de su contexto minimo. Pura: no toca DB.
     /// </summary>
     public static ReservaCapabilities For(ReservaCapabilityContext ctx)
@@ -342,6 +392,7 @@ public static class ReservaCapabilityPolicy
             CanEditReservaData: EvaluateEditReservaData(ctx),
             CanCancel: EvaluateCancel(ctx),
             CanAnnul: EvaluateAnnul(ctx),
+            CanDelete: EvaluateDelete(ctx),
             CanCancelServices: EvaluateCancelServices(ctx),
             CanReschedule: EvaluateReschedule(ctx),
             CanUploadDocument: EvaluateUploadDocument(ctx),
@@ -516,6 +567,33 @@ public static class ReservaCapabilityPolicy
             return Cap.Yes;
 
         return Cap.No(NoLiveMoneyToAnnulReason);
+    }
+
+    /// <summary>
+    /// (2026-06-26): ELIMINAR fisicamente la reserva. allowed solo en pre-venta ({Quotation, Budget},
+    /// <see cref="DeletableStatuses"/>) Y sin plata viva (sin cobros y sin factura con CAE vivo). Es el complemento
+    /// de <see cref="EvaluateCancel"/>/<see cref="EvaluateAnnul"/>: una reserva de presupuesto sin plata SE BORRA;
+    /// con plata viva NO (hay que anularla). Espejo de la regla server-side <c>DeleteGuards</c> (estado + plata).
+    ///
+    /// <para>El front leia <c>canDelete</c> del DTO pero el backend no lo mandaba, asi que el helper caia en el
+    /// default <c>allowed:true</c> y mostraba "Eliminar" en un presupuesto con cobros. Con esta capacidad el
+    /// backend manda la verdad. Cubre los TRES bloqueos del guard de borrado real: estado no-preventa, plata viva
+    /// (cobros/CAE) y servicio confirmado con el operador (<see cref="ReservaCapabilityContext.HasOperatorConfirmedService"/>).
+    /// El borrado real (<c>DeleteGuards.GetReservaDeleteBlockReasonAsync</c>) revalida todo igual; la capacidad ya
+    /// no miente para ninguno de esos casos.</para>
+    /// </summary>
+    private static Cap EvaluateDelete(ReservaCapabilityContext ctx)
+    {
+        if (!ContainsStatus(DeletableStatuses, ctx.Status))
+            return Cap.No(NotDeletableStatusReason);
+        // Aun en pre-venta: si ya hay cobros o factura con CAE vivo, no se borra fisicamente (se anula).
+        if (ctx.HasLiveCae || ctx.HasAnyPayment)
+            return Cap.No(HasLiveMoneyCannotDeleteReason);
+        // Aun en pre-venta y sin plata: un servicio confirmado con el operador bloquea el borrado (compromiso con
+        // el proveedor). Coincide con DeleteGuards.GetReservaDeleteBlockReasonAsync para que la capacidad no mienta.
+        if (ctx.HasOperatorConfirmedService)
+            return Cap.No(HasOperatorConfirmedServiceCannotDeleteReason);
+        return Cap.Yes;
     }
 
     /// <summary>

@@ -3,7 +3,38 @@ namespace TravelApi.Application.DTOs;
 public class CollectionsSummaryDto
 {
     public decimal PendingAmount { get; set; }
+
+    /// <summary>
+    /// Plata REAL nueva que entró este mes (cobros que mueven caja). Escalar de compat: suma cross-moneda
+    /// (igual que el resto de los escalares historicos; con todo en ARS coincide con la unica fila ARS de
+    /// <see cref="CollectedThisMonthByCurrency"/>). NUNCA usar para decidir nada por moneda: el detalle real,
+    /// sin mezclar ARS/USD, va en <see cref="CollectedThisMonthByCurrency"/>.
+    ///
+    /// <para>(2026-06-26) EXCLUYE los pagos puente (<c>AffectsCash=false</c>): el saldo a favor aplicado de
+    /// OTRA reserva baja la deuda del destino pero NO es plata nueva que entró a caja, asi que no infla este KPI.</para>
+    /// </summary>
     public decimal CollectedThisMonth { get; set; }
+
+    /// <summary>
+    /// (2026-06-26) Plata REAL cobrada este mes SEPARADA por moneda real del cobro (no se mezclan ARS y USD,
+    /// regla dura). Mismo criterio que <see cref="CollectedThisMonth"/> (solo cobros con <c>AffectsCash=true</c>,
+    /// sin puentes de saldo a favor), pero agrupado por <c>Payment.Currency</c>. Una sola fila = mono-moneda.
+    /// Patron espejo de <see cref="CashByCurrencyDto"/> en la caja.
+    /// </summary>
+    public List<CurrencyAmountDto> CollectedThisMonthByCurrency { get; set; } = new();
+
+    /// <summary>
+    /// (2026-06-26, decision P1=B de Gaston) Saldo a favor del cliente APLICADO este mes a reservas, SEPARADO
+    /// por moneda. NO es plata nueva en caja (por eso NO entra en <see cref="CollectedThisMonth"/> ni en
+    /// <see cref="CollectedThisMonthByCurrency"/>): es la linea chica "+ $X aplicados de saldo a favor" que el
+    /// front muestra DEBAJO del numero grande de cobrado real. Son los Payment PUENTE POSITIVOS de aplicacion
+    /// de credito (<c>AppliedCreditBridge.IsAppliedCreditBridge</c>: Method "SaldoAFavorAplicado",
+    /// <c>AffectsCash=false</c>, <c>AppliedFromCreditWithdrawalId != null</c>) — distinto de los puentes
+    /// NEGATIVOS de retiro/sobrepago. Agrupado por <c>Payment.Currency</c> (null -&gt; ARS). Vacio si no hubo
+    /// aplicaciones este mes.
+    /// </summary>
+    public List<CurrencyAmountDto> CreditApplicationsThisMonthByCurrency { get; set; } = new();
+
     public int UrgentReservationsCount { get; set; }
     public decimal UrgentPendingAmount { get; set; }
     public int BlockedOperationalCount { get; set; }

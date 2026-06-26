@@ -347,6 +347,99 @@ public class SupplierPaymentByServiceTests
             service.AddSupplierPaymentAsync(supplier.Id, badRequest, CancellationToken.None));
     }
 
+    // ===== (2026-06-26) tope y moneda POR SERVICIO =====
+    // Cuando el pago se imputa a UN servicio concreto, ademas del tope global/por reserva se valida contra
+    // ESE servicio: la moneda del pago debe coincidir con la del costo del servicio y no puede superar el
+    // costo pendiente del servicio. Se usa un servicio "hermano" para dar headroom a la deuda de la reserva,
+    // de modo que sea LA validacion por servicio (no el tope por reserva) la que rechaza.
+
+    [Fact]
+    public async Task PaymentInWrongCurrencyForService_IsRejected()
+    {
+        await using var context = CreateContext();
+        var supplier = await AddSupplierAsync(context, "Mayorista mixto");
+        var reserva = await AddReservaAsync(context, "F-CUR");
+        // Servicio objetivo en USD; un hermano en ARS para que la reserva tenga deuda ARS (headroom).
+        var usdHotel = await AddConfirmedHotelAsync(context, supplier.Id, reserva.Id, netCost: 300m, currency: "USD");
+        await AddConfirmedHotelAsync(context, supplier.Id, reserva.Id, netCost: 5000m, currency: null); // ARS
+
+        var service = CreateService(context);
+        // Pago en ARS imputado al servicio USD -> rechazado por moneda (no por tope de reserva: hay deuda ARS).
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.AddSupplierPaymentAsync(
+                supplier.Id,
+                PaymentToService(1000m, reserva, ServicePaymentRecordKinds.Hotel, usdHotel.PublicId, currency: null),
+                CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task PaymentExceedingServiceCost_IsRejected()
+    {
+        await using var context = CreateContext();
+        var supplier = await AddSupplierAsync(context, "Mayorista");
+        var reserva = await AddReservaAsync(context, "F-CAP");
+        // Dos servicios ARS de 1000 (deuda de reserva ARS = 2000). Pagar 1500 al servicio A supera SU costo
+        // (1000) aunque la deuda de la reserva (2000) lo cubriria. Debe rechazar por tope POR SERVICIO.
+        var hotelA = await AddConfirmedHotelAsync(context, supplier.Id, reserva.Id, netCost: 1000m);
+        await AddConfirmedHotelAsync(context, supplier.Id, reserva.Id, netCost: 1000m);
+
+        var service = CreateService(context);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.AddSupplierPaymentAsync(
+                supplier.Id,
+                PaymentToService(1500m, reserva, ServicePaymentRecordKinds.Hotel, hotelA.PublicId),
+                CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task PaymentWithinServiceCost_WithSiblingService_Succeeds()
+    {
+        await using var context = CreateContext();
+        var supplier = await AddSupplierAsync(context, "Mayorista");
+        var reserva = await AddReservaAsync(context, "F-OK");
+        // Dos servicios ARS de 1000. Pagar exactamente 1000 al servicio A es valido (no supera su costo) aunque
+        // exista un hermano: la validacion por servicio NO debe dar falso rechazo.
+        var hotelA = await AddConfirmedHotelAsync(context, supplier.Id, reserva.Id, netCost: 1000m);
+        await AddConfirmedHotelAsync(context, supplier.Id, reserva.Id, netCost: 1000m);
+
+        var service = CreateService(context);
+        await service.AddSupplierPaymentAsync(
+            supplier.Id,
+            PaymentToService(1000m, reserva, ServicePaymentRecordKinds.Hotel, hotelA.PublicId),
+            CancellationToken.None);
+
+        var statusDto = await service.GetReservaSupplierPaymentStatusAsync(reserva.Id, CancellationToken.None);
+        var line = ServiceLine(statusDto, hotelA.PublicId);
+        Assert.Equal(ServiceSupplierPaymentStatuses.Paid, line.Status);
+        Assert.Equal(1000m, line.PaidToOperator);
+        Assert.Equal(0m, line.OutstandingToOperator);
+    }
+
+    [Fact]
+    public async Task SecondPaymentExceedingRemainingServiceCost_IsRejected()
+    {
+        await using var context = CreateContext();
+        var supplier = await AddSupplierAsync(context, "Mayorista");
+        var reserva = await AddReservaAsync(context, "F-CAP2");
+        // Servicio de 1000 + hermano de 1000 (deuda reserva ARS = 2000). Un primer pago de 600 deja 400 de
+        // saldo en el servicio. Un segundo pago de 600 al MISMO servicio supera su saldo (400) -> rechazado,
+        // aunque la deuda de la reserva (1400 restante) lo cubriria.
+        var hotelA = await AddConfirmedHotelAsync(context, supplier.Id, reserva.Id, netCost: 1000m);
+        await AddConfirmedHotelAsync(context, supplier.Id, reserva.Id, netCost: 1000m);
+
+        var service = CreateService(context);
+        await service.AddSupplierPaymentAsync(
+            supplier.Id,
+            PaymentToService(600m, reserva, ServicePaymentRecordKinds.Hotel, hotelA.PublicId),
+            CancellationToken.None);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.AddSupplierPaymentAsync(
+                supplier.Id,
+                PaymentToService(600m, reserva, ServicePaymentRecordKinds.Hotel, hotelA.PublicId),
+                CancellationToken.None));
+    }
+
     // ============================= multimoneda =============================
 
     [Fact]

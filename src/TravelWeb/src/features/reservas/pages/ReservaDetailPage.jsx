@@ -1735,17 +1735,17 @@ export default function ReservaDetailPage() {
 
                 const registroPagoHabilitado = !capRegPago || capRegPago.allowed;
                 const facturaHabilitada = !capFactura || capFactura.allowed;
-                // Cancelar ademas requiere permiso de usuario (igual que antes).
-                //
-                // (2026-06-24): el boton "Anular reserva" abre el flujo FORMAL que emite la Nota de Credito
-                // (CancelarReservaInline; el panel ya muestra el cartel ambar "tiene factura -> se emite NC").
-                // La capacidad canCancel modela la "baja simple" y se apaga cuando hay plata viva (factura con
-                // CAE o cobros). El anular formal es justo lo que hay que hacer en ese caso, asi que el backend
-                // expone una capacidad PROPIA canAnnul (true en estados vivos con plata viva). Mostramos el
-                // boton si aplica la baja simple O la anulacion formal. El backend revalida la anulacion real
-                // aparte (DraftAsync exige factura activa; el guard de baja simple sigue en ReservaService).
+                // F4-2 (2026-06-26): el botón "Anular reserva" usa canAnnul como capacidad primaria.
+                //   canAnnul.allowed=true  → reserva con plata viva → emite NC formal.
+                //   canCancel.allowed=true → baja simple (sin documentos fiscales vivos).
+                // Se muestra cuando CUALQUIERA de las dos permite la acción.
+                // Degradación elegante: si no vienen capabilities, caemos al permiso de usuario.
+                const puedeAnularFormal = capAnular?.allowed ?? false;
+                const puedeEliminarSimple = capCancelar?.allowed ?? false;
                 const cancelarHabilitado =
-                  canCancelReserva && (!capCancelar || capCancelar.allowed || (capAnular?.allowed ?? false));
+                  canCancelReserva && (!capAnular && !capCancelar
+                    ? true               // DTO viejo sin capabilities → permitir si tiene el permiso
+                    : puedeAnularFormal || puedeEliminarSimple);
 
                 // Mostramos cada acción SOLO si está disponible. En estados de solo lectura
                 // (En viaje, Finalizada, etc.) el backend apaga la capability → el botón NO
@@ -1802,13 +1802,16 @@ export default function ReservaDetailPage() {
                       </div>
                     )}
 
+                    {/* F4-2: texto "Anular reserva" (ADR-036: "anular" = deshacer el viaje,
+                        no confundir con "cancelar" = saldar deuda). testid unificado
+                        con el botón del encabezado para poder referenciarlo en tests. */}
                     {mostrarCancelar && (
                       <button
                         onClick={() => setShowCancelInline(true)}
                         className="flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-sm font-bold text-white transition-all hover:bg-rose-700"
-                        data-testid="btn-cancelar-reserva-account"
+                        data-testid="btn-anular-reserva"
                       >
-                        <Ban className="w-4 h-4" /> Cancelar reserva
+                        <Ban className="w-4 h-4" /> Anular reserva
                       </button>
                     )}
                   </div>

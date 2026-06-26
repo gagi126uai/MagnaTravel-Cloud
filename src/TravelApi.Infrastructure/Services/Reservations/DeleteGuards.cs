@@ -81,8 +81,13 @@ public static class DeleteGuards
     /// ADR-020 (INV-020-04): indica si la reserva tiene AL MENOS un servicio confirmado por el
     /// operador (ConfirmedAt sellado) en cualquiera de las 6 colecciones de servicios. Se cortocircuita
     /// en la primera coincidencia para no recorrer todas las tablas si ya encontro una.
+    ///
+    /// <para>Es PUBLICO a proposito: la capacidad <c>canDelete</c> (ReservaService -&gt; ReservaCapabilityPolicy)
+    /// debe coincidir EXACTO con lo que este guard bloquea, para que el front no muestre "Eliminar" en un
+    /// presupuesto cuyo borrado el guard rechazaria por tener un servicio confirmado con el operador. Una sola
+    /// fuente de verdad evita que capacidad y guard divergan.</para>
     /// </summary>
-    private static async Task<bool> ReservaHasOperatorConfirmedServiceAsync(
+    public static async Task<bool> ReservaHasOperatorConfirmedServiceAsync(
         AppDbContext db,
         int reservaId,
         CancellationToken ct)

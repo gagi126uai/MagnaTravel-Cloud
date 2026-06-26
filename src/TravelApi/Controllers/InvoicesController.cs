@@ -164,6 +164,38 @@ public class InvoicesController : ControllerBase
         return Ok(statuses);
     }
 
+    /// <summary>
+    /// Fase 4 (2026-06-26): PRE-CHEQUEO de emisión. El vendedor NO elige la letra (la deriva el backend con la
+    /// matriz fiscal confirmada por dueño + contador en <c>InvoiceTypeResolver</c>); este endpoint le AVISA qué
+    /// letra saldría y frena ANTES de que ARCA rechace en el único caso duro: cliente que recibiría Factura A
+    /// pero sin CUIT. SOLO LECTURA: no encola ni muta nada.
+    ///
+    /// Mismo permiso (cobranzas.view) y ownership (bypass cobranzas.view_all) que los otros GET de facturas de
+    /// la reserva (suggested-items / fiscal-status): un vendedor solo consulta SUS reservas.
+    /// </summary>
+    [HttpGet("reserva/{publicIdOrLegacyId}/emission-preflight")]
+    [RequirePermission(Permissions.CobranzasView)]
+    [RequireOwnership(OwnedEntity.Reserva, "publicIdOrLegacyId", bypassPermission: Permissions.CobranzasViewAll)]
+    public async Task<ActionResult<InvoiceEmissionPreflightDto>> GetEmissionPreflight(string publicIdOrLegacyId, CancellationToken ct)
+    {
+        try
+        {
+            var reservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, ct);
+            var preflight = await _invoiceService.GetEmissionPreflightAsync(reservaId, ct);
+            return Ok(preflight);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Reserva no encontrada -> el service tira InvalidOperationException con mensaje claro (mismo
+            // contrato que suggested-items).
+            return Conflict(new { message = ex.Message });
+        }
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+        }
+    }
+
     [HttpGet("{publicIdOrLegacyId}/pdf")]
     [RequirePermission(Permissions.CobranzasView)]
     [RequireOwnership(OwnedEntity.Invoice, "publicIdOrLegacyId", bypassPermission: Permissions.CobranzasViewAll)]

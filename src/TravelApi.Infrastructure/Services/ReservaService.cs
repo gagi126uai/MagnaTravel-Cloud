@@ -2605,6 +2605,16 @@ public class ReservaService : IReservaService
         var hasPendingOperatorPenalty = _cancellationService is not null
             && await _cancellationService.HasPendingOperatorPenaltyAsync(file.PublicId, CancellationToken.None);
 
+        // (2026-06-26): para que canDelete NO mienta, miramos si hay un servicio confirmado con el operador (mismo
+        // bloqueo que DeleteGuards). Solo importa en pre-venta (Cotizacion/Presupuesto): es el unico estado donde
+        // canDelete podria dar true. Fuera de pre-venta el borrado ya esta bloqueado por estado, asi que evitamos
+        // la query de 6 tablas (queda en false, no cambia el resultado de la capacidad).
+        var isPreSaleForDelete =
+            string.Equals(file.Status, EstadoReserva.Quotation, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(file.Status, EstadoReserva.Budget, StringComparison.OrdinalIgnoreCase);
+        var hasOperatorConfirmedService = isPreSaleForDelete
+            && await DeleteGuards.ReservaHasOperatorConfirmedServiceAsync(_context, file.Id, CancellationToken.None);
+
         var capabilityContext = new ReservaCapabilityContext(
             Status: file.Status,
             Balance: file.Balance,
@@ -2612,7 +2622,8 @@ public class ReservaService : IReservaService
             HasLiveVoucher: hasLiveVoucher,
             HasLiveEditAuth: dto.HasLiveEditAuthorization,
             HasAnyPayment: hasAnyLivePayment,
-            HasPendingOperatorPenalty: hasPendingOperatorPenalty);
+            HasPendingOperatorPenalty: hasPendingOperatorPenalty,
+            HasOperatorConfirmedService: hasOperatorConfirmedService);
         dto.Capabilities = MapCapabilities(ReservaCapabilityPolicy.For(capabilityContext));
 
         // Derivado de "tiene CAE vivo": el front explica por que cancelar exige pasar por la NC primero.
@@ -2732,6 +2743,7 @@ public class ReservaService : IReservaService
             CanEditReservaData = Map(caps.CanEditReservaData),
             CanCancel = Map(caps.CanCancel),
             CanAnnul = Map(caps.CanAnnul),
+            CanDelete = Map(caps.CanDelete),
             CanCancelServices = Map(caps.CanCancelServices),
             CanReschedule = Map(caps.CanReschedule),
             CanUploadDocument = Map(caps.CanUploadDocument),

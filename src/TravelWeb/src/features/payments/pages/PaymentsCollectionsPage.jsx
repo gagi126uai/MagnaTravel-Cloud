@@ -69,10 +69,38 @@ export default function PaymentsCollectionsPage() {
         }
       />
 
+      {/* F4-7 (2026-06-26): "Cobrado este mes" usa collectedThisMonthByCurrency cuando
+          el backend lo expone con más de una moneda (multimoneda). En mono-moneda (o DTO
+          viejo sin el campo), cae al escalar collectedThisMonth para compatibilidad.
+          La línea chica de "saldo a favor aplicado" aparece cuando el backend expone
+          creditApplicationsByCurrency (campo aún no disponible → línea no se muestra). */}
       <FinanceMetricsGrid
         items={[
           { label: "Saldo pendiente de cobro", value: summary?.pendingAmount || 0 },
-          { label: "Cobrado este mes", value: summary?.collectedThisMonth || 0 },
+          (() => {
+            const byCurrency = summary?.collectedThisMonthByCurrency;
+            // Bug fix #2 (2026-06-26): era `length > 1` → omitía meses con una sola moneda extranjera
+            // (ej: solo USD), caía al escalar ARS y mostraba "$ 3.400" en vez de "US$ 3.400".
+            // Regla: usar porMoneda siempre que haya al menos una entrada; escalar solo si vacío/ausente.
+            const tieneMonedas = Array.isArray(byCurrency) && byCurrency.length >= 1;
+
+            // Bug fix #1 (2026-06-26): mapear `amount → value` para creditApplicationsByCurrency,
+            // igual que se hace para collectedThisMonthByCurrency (shape del backend: { currency, amount }).
+            // FinanceMetricsGrid siempre lee `pm.value` — sin el mapeo la línea chica nunca aparecía.
+            const creditByCurrency = (summary?.creditApplicationsThisMonthByCurrency ?? [])
+              .map((pm) => ({ currency: pm.currency, value: pm.amount }));
+
+            return {
+              label: "Cobrado este mes",
+              testId: "kpi-cobrado-mes",
+              // Con porMoneda: mostrar cada moneda real por separado (nunca sumar ARS + USD).
+              // Sin porMoneda: escalar de compatibilidad (DTO viejo sin el campo).
+              ...(tieneMonedas
+                ? { valuesByCurrency: byCurrency.map((pm) => ({ currency: pm.currency, value: pm.amount })) }
+                : { value: summary?.collectedThisMonth || 0 }),
+              creditApplicationsByCurrency: creditByCurrency,
+            };
+          })(),
           { label: "Reservas urgentes", value: summary?.urgentReservationsCount || 0, isCount: true },
           { label: "Saldo urgente", value: summary?.urgentPendingAmount || 0 },
           { label: "Bloquean operativo", value: summary?.blockedOperationalCount || 0, isCount: true },

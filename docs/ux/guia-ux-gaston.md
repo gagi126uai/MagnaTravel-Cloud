@@ -632,3 +632,26 @@ Ronda 2:
   - **Ya terminal (Perdida / Anulada / Esperando reembolso):** el botón "Anular" NO aparece; pantalla de solo lectura.
 
 - **(2026-06-25 — dependencia técnica, NO es decisión de UX):** para mostrar el cartel correcto, el front necesita distinguir el caso 3 del caso 2 cuando NO hay factura → el backend debe exponer en el DTO de la reserva un dato tipo **"tiene cobros sin factura"** (bool) **+ el monto cobrado por moneda** (el backend ya lo acumula en `PorMoneda`). El campo `requiresInvoiceAnnulmentToCancel` que ya existe sigue marcando el caso 4. Esto solo habilita elegir el cartel; no cambia ninguna decisión de UX.
+
+## Fase 4 — "La pantalla obedece al backend": KPI del mes, botón ya-cumplido, aviso de Factura A (2026-06-26, respuestas de Gastón)
+
+> **Origen:** Fase 4 de la auditoría integral de reservas. El front se inventaba reglas en vez de leer
+> la verdad del backend (capacidades + datos por moneda). La mayor parte fue corrección sin cambio
+> visible (leer `invoicingStatus`, `porMoneda`, capacidades de anular/eliminar, nunca mezclar monedas);
+> tres puntos sí eran decisión de UX y Gastón los respondió. Sesión de 3 preguntas; Gastón eligió las
+> tres recomendadas. NO reabrir.
+
+**1) KPI "Cobrado este mes" = solo plata nueva real; el saldo a favor aplicado va aparte y chiquito (P1=B).**
+- **(2026-06-26)** El número grande de "Cobrado este mes" muestra **solo la plata nueva que de verdad entró**, separada por moneda (nunca sumando monedas). **El saldo a favor que se aplicó de una reserva a otra NO suma al número grande** (no es plata nueva, es plata que ya estaba). Coherente con la regla de Caja 2026-06-09 ("la caja no inventa pesos que no entraron").
+- **(2026-06-26)** Para que nada parezca "perdido", **debajo del número grande va una línea chica**: **"+ $ X aplicados de saldo a favor"** (con su monto por moneda, igual criterio multimoneda). Esa línea solo aparece si en el mes hubo saldo a favor aplicado; si no hubo, no se muestra.
+
+**2) Regla unificada: botón de acción YA CUMPLIDA en una reserva activa = DESAPARECE (P2=A).**
+- **(2026-06-26)** Cuando una acción **ya se hizo** y no queda nada por hacer en una reserva **todavía activa** (ej. "Emitir factura" en una reserva ya **Facturada total**), el botón **DESAPARECE**. El chip de al lado (ej. "Factura: Facturada total") ya explica el porqué; no hace falta un botón gris.
+- **(2026-06-26 — UNIFICA la regla de botones apagados):** se distinguen dos motivos para que un botón no esté:
+  - **Acción ya cumplida** (no queda nada que hacer) en reserva activa → el botón **se esconde** (no aparece).
+  - **Acción bloqueada por estado terminal / permiso / candado** → sigue ADR-035 A (2026-06-19): botón **gris** sin motivo por botón + UN cartel arriba que explica el estado; y en estados de solo lectura los botones de escritura se ocultan (2026-06-22).
+  - En criollo: si **ya está hecho**, se esconde; si **no se puede por el estado o el permiso**, va gris (o se oculta en solo-lectura). El "gris sin motivo" NO se usa para cosas ya cumplidas.
+
+**3) Factura A a un cliente que no corresponde: avisar y FRENAR antes de emitir (P3=A).**
+- **(2026-06-26)** Antes de emitir una **Factura A**, si el cliente **no es del tipo que corresponde** (no es Responsable Inscripto), el cartel de confirmación ("¿seguro?" de emitir, el de H2 2026-06-24) **muestra un aviso claro y NO deja seguir** hasta corregir el tipo de comprobante o la condición del cliente. No se manda a AFIP para que vuelva rechazada.
+- **(2026-06-26 — alcance)** Gastón decidió SOLO el **aviso antes** (la parte de pantalla). La **regla fiscal de fondo** (qué condición de IVA habilita cada tipo de comprobante) la confirma el área contable/fiscal; el front solo muestra el aviso con el dato que el backend resuelva. El texto del aviso va en criollo, sin jerga ni códigos internos.

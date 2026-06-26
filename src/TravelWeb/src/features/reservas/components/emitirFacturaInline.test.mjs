@@ -424,6 +424,119 @@ test("formatearEtiquetaFactura — coherencia con InvoiceDto y InvoiceFiscalStat
   assert.equal(desdeDtoReserva, desdeStatusDto, "El formato es idéntico independientemente del DTO de origen");
 });
 
+// ─── Función: resolverPreflightBloqueo (F4-8) ────────────────────────────────
+// Copia de EmitirFacturaInline.jsx — interpreta el InvoiceEmissionPreflightDto.
+// ÚNICO bloqueo duro: Factura A con cliente sin CUIT válido.
+// Todo lo demás: Allowed=true (no se frena la emisión).
+
+/**
+ * F4-8: interpreta el resultado del preflight de emisión de factura.
+ * Devuelve { message } si bloquea; null si puede continuar.
+ * @param {object|null} preflight - InvoiceEmissionPreflightDto del backend
+ */
+function resolverPreflightBloqueo(preflight) {
+  if (!preflight) return null;
+
+  if (preflight.allowed === false || preflight.severity === "block") {
+    const mensajeDefault =
+      "Este cliente no es Responsable Inscripto. No corresponde Factura A. " +
+      "Revisá el tipo de comprobante o la condición del cliente.";
+    return { message: preflight.reason || mensajeDefault };
+  }
+
+  return null;
+}
+
+// ─── Tests: resolverPreflightBloqueo ─────────────────────────────────────────
+
+test("resolverPreflightBloqueo — null → null (sin bloqueo, continúa al modal)", () => {
+  // Si el endpoint falla o no responde, preflight es null.
+  // La regla de fallback es conservadora: seguir sin bloquear (el backend revalida al emitir).
+  const resultado = resolverPreflightBloqueo(null);
+  assert.equal(resultado, null);
+});
+
+test("resolverPreflightBloqueo — allowed=true, severity=ok → null (caso normal)", () => {
+  // Factura B para consumidor final: siempre ok.
+  const preflight = { allowed: true, severity: "ok", willEmitLetter: "B", reason: null };
+  const resultado = resolverPreflightBloqueo(preflight);
+  assert.equal(resultado, null);
+});
+
+test("resolverPreflightBloqueo — allowed=true, severity=warn → null (advertencia pero NO bloquea)", () => {
+  // severity=warn es informativo, el usuario puede seguir.
+  // El backend lo usa para advertencias que no son un rechazo seguro de ARCA.
+  const preflight = {
+    allowed: true,
+    severity: "warn",
+    willEmitLetter: "A",
+    reason: "El cliente tiene condición dudosa, verificar CUIT."
+  };
+  const resultado = resolverPreflightBloqueo(preflight);
+  assert.equal(resultado, null, "severity=warn no debe bloquear — solo informar");
+});
+
+test("resolverPreflightBloqueo — allowed=false → objeto con message (BLOQUEA)", () => {
+  // Caso principal: Factura A para cliente sin CUIT → ARCA lo rechazaría con certeza.
+  const preflight = {
+    allowed: false,
+    severity: "block",
+    willEmitLetter: "A",
+    reason: "El cliente no tiene CUIT registrado. No se puede emitir Factura A.",
+    missingData: ["CUIT"],
+  };
+  const resultado = resolverPreflightBloqueo(preflight);
+  assert.ok(resultado !== null, "Debe devolver un objeto de bloqueo");
+  assert.ok(typeof resultado.message === "string" && resultado.message.length > 0);
+  assert.ok(
+    resultado.message.includes("CUIT") || resultado.message.includes("corresponde"),
+    `El mensaje debe mencionar CUIT o el problema: '${resultado.message}'`
+  );
+});
+
+test("resolverPreflightBloqueo — allowed=false, reason provisto → usa el reason del backend", () => {
+  // El backend envía el texto en criollo sin datos sensibles.
+  // El front lo muestra literalmente (no reescribe el mensaje).
+  const razonDelBackend = "Este cliente es Consumidor Final y recibiría una Factura A, lo cual no corresponde.";
+  const preflight = {
+    allowed: false,
+    severity: "block",
+    willEmitLetter: "A",
+    reason: razonDelBackend,
+    missingData: [],
+  };
+  const resultado = resolverPreflightBloqueo(preflight);
+  assert.equal(resultado?.message, razonDelBackend, "El mensaje debe ser exactamente el que manda el backend");
+});
+
+test("resolverPreflightBloqueo — allowed=false, reason null → usa el mensaje default del front", () => {
+  // Si el backend no manda reason, el front tiene su propio fallback legible.
+  const preflight = { allowed: false, severity: "block", willEmitLetter: "A", reason: null };
+  const resultado = resolverPreflightBloqueo(preflight);
+  assert.ok(resultado !== null);
+  assert.ok(resultado.message.length > 10, "El mensaje default debe ser descriptivo, no vacío");
+});
+
+test("resolverPreflightBloqueo — severity=block aunque allowed=true → bloquea igual", () => {
+  // Defensivo: si por alguna razón el backend manda severity=block con allowed=true,
+  // la función bloquea igual (severity es la fuente de verdad del tipo de respuesta).
+  const preflight = {
+    allowed: true,   // inconsistencia del backend
+    severity: "block",
+    willEmitLetter: "A",
+    reason: "Bloqueo por coherencia interna.",
+  };
+  const resultado = resolverPreflightBloqueo(preflight);
+  assert.ok(resultado !== null, "severity=block debe bloquear aunque allowed sea true");
+});
+
+test("resolverPreflightBloqueo — objeto vacío → null (no bloquea por defecto)", () => {
+  // DTO vacío (sin campos): la regla conservadora es no bloquear.
+  // El backend siempre manda los campos requeridos; esto es solo para robustez.
+  const resultado = resolverPreflightBloqueo({});
+  assert.equal(resultado, null);
+});
+
 // ─── Tests: labelFacturaEmitida (H2) ─────────────────────────────────────────
 
 test("labelFacturaEmitida — Factura B punto de venta 1, número 12345 → formato correcto", () => {

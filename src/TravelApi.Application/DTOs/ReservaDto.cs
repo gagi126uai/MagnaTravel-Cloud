@@ -170,6 +170,16 @@ public class ReservaCapabilitiesDto
     public CapabilityDto CanAnnul { get; set; } = new();
 
     /// <summary>
+    /// (2026-06-26): si la reserva se puede ELIMINAR FISICAMENTE. <c>Allowed=true</c> solo en pre-venta
+    /// (Cotización/Presupuesto) y SIN plata viva (sin cobros ni factura con CAE). En cualquier otro caso
+    /// <c>Allowed=false</c> con el motivo. El front muestra "Eliminar" solo si <c>Allowed=true</c>; antes el
+    /// backend NO mandaba esta capacidad y el front la asumía permitida por default (mostraba "Eliminar" en
+    /// presupuestos con cobros). El borrado real revalida con DeleteGuards (incluye servicios confirmados por
+    /// el operador, que esta capacidad no mira).
+    /// </summary>
+    public CapabilityDto CanDelete { get; set; } = new();
+
+    /// <summary>
     /// G3 (2026-06-24): si se puede CANCELAR un servicio en el estado actual. true solo en {En gestión,
     /// Confirmada}. En pre-venta (Cotización/Presupuesto) un servicio se BORRA, no se cancela; el front usa
     /// esto para mostrar "Cancelar servicio" vs "Borrar servicio". En viaje/terminales = false.

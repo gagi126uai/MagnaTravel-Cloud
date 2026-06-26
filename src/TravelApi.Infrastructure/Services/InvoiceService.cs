@@ -856,6 +856,124 @@ public class InvoiceService : IInvoiceService
     }
 
     /// <summary>
+    /// Fase 4 (2026-06-26): PRE-CHEQUEO de emisión. Calcula la letra que se emitiría hoy (reusando la MISMA
+    /// matriz fiscal que <c>AfipService.CreatePendingInvoice</c>: <see cref="InvoiceTypeResolver"/>, confirmada
+    /// por dueño + contador) y avisa el único bloqueo duro antes de mandar a ARCA: cliente que recibiría Factura
+    /// A pero SIN CUIT válido (ARCA rebota seguro). SOLO LECTURA: no encola nada ni toca la matriz fiscal.
+    ///
+    /// <para>Regla de oro CONSERVADORA: el único <c>allowed=false</c> es "A sin CUIT". Para cualquier otra duda
+    /// se devuelve <c>allowed=true</c> (con un warn informativo cuando la condición de IVA del cliente no se
+    /// reconoce y por eso degradó a Factura B). El caso Exterior / Factura E queda FUERA de alcance (a confirmar
+    /// con el contador): este preview no lo evalúa.</para>
+    /// </summary>
+    public async Task<InvoiceEmissionPreflightDto> GetEmissionPreflightAsync(int reservaId, CancellationToken ct)
+    {
+        // Emisor (la agencia): MISMA fuente que CreatePendingInvoice (AfipSettings.TaxCondition). Si NO hay fila de
+        // AfipSettings, la facturación electrónica no está configurada: la emisión real fallaría con "AFIP no
+        // configurado". Lo detectamos para avisar (warn), sin tirar excepción (es un preview de solo lectura).
+        var afip = await _context.AfipSettings
+            .AsNoTracking()
+            .Select(s => new { s.TaxCondition })
+            .FirstOrDefaultAsync(ct);
+        bool afipConfigured = afip is not null;
+        var emisorTaxCondition = afip?.TaxCondition;
+
+        // Receptor (el cliente pagador de la reserva): MISMA fuente que CreatePendingInvoice (reserva.Payer).
+        var reserva = await _context.Reservas
+            .AsNoTracking()
+            .Where(r => r.Id == reservaId)
+            .Select(r => new
+            {
+                HasPayer = r.Payer != null,
+                CustomerTaxCondition = r.Payer != null ? r.Payer.TaxCondition : null,
+                CustomerTaxId = r.Payer != null ? r.Payer.TaxId : null,
+                CustomerDocumentType = r.Payer != null ? r.Payer.DocumentType : null,
+                CustomerDocumentNumber = r.Payer != null ? r.Payer.DocumentNumber : null,
+            })
+            .FirstOrDefaultAsync(ct);
+
+        if (reserva is null)
+        {
+            // Mismo contrato que GetSuggestedItemsAsync: reserva inexistente -> InvalidOperationException
+            // (el controller la traduce a 409 con mensaje claro).
+            throw new InvalidOperationException("Reserva no encontrada");
+        }
+
+        // Letra que se emitiría hoy. ResolveSaleInvoiceType devuelve el cbteTipo base (1/6/11); lo mapeamos a
+        // "A"/"B"/"C". DEBE coincidir con CreatePendingInvoice porque es el MISMO resolver con los MISMOS datos.
+        int tipo = InvoiceTypeResolver.ResolveSaleInvoiceType(
+            emisorTaxCondition: emisorTaxCondition,
+            receptorTaxCondition: reserva.CustomerTaxCondition);
+        string letter = MapTipoComprobanteToLetter(tipo);
+
+        var result = new InvoiceEmissionPreflightDto
+        {
+            WillEmitLetter = letter,
+            CustomerTaxCondition = reserva.CustomerTaxCondition ?? string.Empty,
+        };
+
+        // BLOQUEO DURO (único): Factura A sin CUIT válido. ArcaReceptorResolver resuelve el documento del
+        // receptor con la MISMA precedencia que la emisión real (CUIT gana). DocTipo 80 = CUIT; cualquier otro
+        // (DNI, pasaporte, sin identificar) significa que NO hay CUIT y la Factura A rebotaría en ARCA.
+        // Se evalúa PRIMERO: es el único caso que frena (allowed=false); los avisos de abajo no bloquean.
+        if (letter == "A")
+        {
+            var receptorDoc = ArcaReceptorResolver.ResolveDocument(
+                reserva.CustomerTaxId, reserva.CustomerDocumentType, reserva.CustomerDocumentNumber);
+            if (receptorDoc.DocTipo != ArcaReceptorResolver.DocTipoCuit)
+            {
+                result.Allowed = false;
+                result.Severity = "block";
+                result.MissingData.Add("CUIT");
+                result.Reason =
+                    "Este cliente va a recibir Factura A, pero le falta el CUIT. " +
+                    "Cargá el CUIT en la ficha del cliente y volvé a intentar.";
+                return result;
+            }
+        }
+
+        // WARN (no bloquea): la reserva no tiene cliente asignado. La emisión real rechaza "sin cliente
+        // asignado"; el preflight no puede frenar (regla conservadora) pero avisa para asignarlo antes.
+        if (!reserva.HasPayer)
+        {
+            result.Allowed = true;
+            result.Severity = "warn";
+            result.Reason = "Esta reserva no tiene un cliente asignado. Asigná el cliente antes de emitir.";
+            return result;
+        }
+
+        // WARN (no bloquea): la facturación electrónica todavía no está configurada (no hay AfipSettings). La
+        // emisión real fallaría con "AFIP no configurado"; avisamos sin frenar (no es un problema del comprobante).
+        if (!afipConfigured)
+        {
+            result.Allowed = true;
+            result.Severity = "warn";
+            result.Reason = "La facturación electrónica todavía no está configurada.";
+            return result;
+        }
+
+        // WARN (no bloquea): la condición de IVA del cliente no se reconoce (texto raro/vacío) y por eso la letra
+        // degradó a Factura B. Solo aplica cuando la letra es B (si el emisor es Mono/Exento la letra es C y no
+        // depende del receptor; si fuera A no podría ser Unknown). Avisa para revisar la ficha, pero deja emitir.
+        var receptorCanonical = TaxConditionNormalizer.Normalize(reserva.CustomerTaxCondition);
+        if (letter == "B" && receptorCanonical == TaxConditionCanonical.Unknown)
+        {
+            result.Allowed = true;
+            result.Severity = "warn";
+            result.Reason =
+                "No reconocemos la condición de IVA de este cliente. Revisá la ficha; " +
+                "si continuás, se emite Factura B.";
+            return result;
+        }
+
+        // OK: todo en orden. Se informa la letra para que el front la confirme.
+        result.Allowed = true;
+        result.Severity = "ok";
+        result.Reason = $"Se va a emitir Factura {letter}.";
+        return result;
+    }
+
+    /// <summary>
     /// Traduce el cbteTipo de ARCA a la letra del comprobante (A/B/C/M). Misma tabla que las proyecciones
     /// LINQ inline de GetAllAsync/GetByReservaIdAsync, centralizada aca para el mapeo en memoria de H2.
     /// </summary>
