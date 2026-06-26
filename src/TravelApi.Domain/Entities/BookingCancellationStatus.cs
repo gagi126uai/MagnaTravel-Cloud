@@ -29,7 +29,14 @@ public enum BookingCancellationStatus
     /// <summary>T3 cerrado: el cliente consumio o transfirio todo el saldo. La Reserva queda en <c>Cancelled</c>.</summary>
     Closed = 4,
 
-    /// <summary>El operador supero el timeout (<c>OperatorRefundTimeoutDays</c>) sin devolver. La Reserva queda en <c>Cancelled</c>. Recovery posible via <c>lateRefundReceived</c>.</summary>
+    /// <summary>
+    /// El operador supero el timeout (<c>OperatorRefundTimeoutDays</c>) sin devolver. La Reserva queda en
+    /// <c>Cancelled</c>. (2026-06-26) Lo asigna el job nocturno (<c>OperatorRefundTimeoutJob</c>). <b>Estado
+    /// TERMINAL por ahora</b>: NO existe todavia un path para registrar un reembolso tardio sobre una BC ya
+    /// abandonada (la transicion <c>lateRefundReceived</c> del state-machine de ADR-002 quedo SIN implementar).
+    /// Si el operador reembolsa despues, hoy se resuelve a mano. Reabrir el circuito de allocation desde este
+    /// estado es un follow-up FUTURO explicito, no parte de este fix.
+    /// </summary>
     AbandonedByOperator = 5,
 
     /// <summary>Abort manual desde <see cref="Drafted"/>: ningun side-effect fiscal generado. La Reserva no cambia.</summary>

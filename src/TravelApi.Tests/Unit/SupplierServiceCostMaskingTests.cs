@@ -386,33 +386,41 @@ public class SupplierServiceCostMaskingTests
     }
 
     // ============================= mensajes de error con deuda =============================
+    // (2026-06-26) El viejo tope GLOBAL (surrogate mezclado) se ELIMINO por decision del dueño (un anticipo a
+    // cuenta es prepago genuino, sin tope). El mensaje generico que NO filtra la deuda sigue vigente en el rechazo
+    // que SI permanece: imputar un pago a una reserva por encima de la deuda de ese proveedor EN ESA RESERVA.
+    // Estos tests fijan que ese mensaje es generico (sin montos) para todos, con y sin see_cost (ADR-017 F1b).
 
     [Fact]
-    public async Task AddSupplierPaymentAsync_ExceedsDebt_UserWithoutSeeCost_GenericMessageWithoutAmounts()
+    public async Task AddSupplierPaymentAsync_ExceedsReservaDebt_UserWithoutSeeCost_GenericMessageWithoutAmounts()
     {
         await using var context = CreateContext();
         var supplier = await SeedSupplierAccountAsync(context);
         var service = CreateServiceForUser(context, canSeeCost: false);
 
-        // Deuda real = 100 (compra confirmada) - 40 (pago) = 60. Un pago de 999 rebota.
-        var request = new SupplierPaymentRequest(999m, "Transfer", null, null, null, null);
+        // La reserva masking debe 100 (su hotel confirmado). Imputar 999 a ESA reserva supera su deuda -> rebota.
+        var reservaPublicId = (await context.Reservas.AsNoTracking()
+            .FirstAsync(r => r.NumeroReserva == "F-2026-MASK")).PublicId.ToString();
+        var request = new SupplierPaymentRequest(999m, "Transfer", null, null, reservaPublicId, null);
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => service.AddSupplierPaymentAsync(supplier.Id, request, CancellationToken.None));
 
         // El mensaje NO debe revelar la deuda exacta al caller sin see_cost.
-        Assert.DoesNotContain("60", ex.Message);
+        Assert.DoesNotContain("100", ex.Message);
         Assert.Contains("excede la deuda", ex.Message);
     }
 
     [Fact]
-    public async Task AddSupplierPaymentAsync_ExceedsDebt_UserWithSeeCost_StillGenericMessage()
+    public async Task AddSupplierPaymentAsync_ExceedsReservaDebt_UserWithSeeCost_StillGenericMessage()
     {
         await using var context = CreateContext();
         var supplier = await SeedSupplierAccountAsync(context);
         var service = CreateServiceForUser(context, canSeeCost: true);
 
-        var request = new SupplierPaymentRequest(999m, "Transfer", null, null, null, null);
+        var reservaPublicId = (await context.Reservas.AsNoTracking()
+            .FirstAsync(r => r.NumeroReserva == "F-2026-MASK")).PublicId.ToString();
+        var request = new SupplierPaymentRequest(999m, "Transfer", null, null, reservaPublicId, null);
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => service.AddSupplierPaymentAsync(supplier.Id, request, CancellationToken.None));
@@ -421,7 +429,7 @@ public class SupplierServiceCostMaskingTests
         // porque SuppliersController lo traduce a un mensaje HTTP generico — un mensaje con
         // la deuda exacta seria codigo muerto que nunca llega al cliente. El masking real de
         // montos vive en los DTOs de la cuenta del proveedor, no en los mensajes de error.
-        Assert.DoesNotContain("60", ex.Message);
+        Assert.DoesNotContain("100", ex.Message);
         Assert.Contains("excede la deuda", ex.Message);
     }
 

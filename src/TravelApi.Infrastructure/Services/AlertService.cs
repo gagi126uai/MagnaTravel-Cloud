@@ -39,6 +39,16 @@ public class AlertService : IAlertService
     /// </summary>
     private const int PreSaleExpiryAlertDays = 3;
 
+    /// <summary>
+    /// (2026-06-26): ventana de la alarma "el operador no reembolso". Solo se avisan las cancelaciones cuya fecha
+    /// limite de reembolso (<c>OperatorRefundDueBy</c>) cayó dentro de los ultimos N dias. COTA NECESARIA porque
+    /// <c>AbandonedByOperator</c> es TERMINAL (no transiciona): sin este tope, cada cancelacion abandonada
+    /// aparecería en la campanita PARA SIEMPRE y se acumularían infinito. 90 dias (un trimestre) da margen
+    /// razonable para reclamar al operador o dar la cancelacion por perdida; pasado eso, deja de molestar (el
+    /// dato sigue en la cancelacion, solo no se alarma). Se elige constante (no setting): umbral operativo estable.
+    /// </summary>
+    private const int AbandonedOperatorRefundAlertDays = 90;
+
     private readonly AppDbContext _context;
     private readonly IOperationalFinanceSettingsService _operationalFinanceSettingsService;
     private readonly ILogger<AlertService> _logger;
@@ -96,13 +106,16 @@ public class AlertService : IAlertService
         var stuckOperatorRefunds = await ComputeStuckOperatorRefundsAsync(caller, cancellationToken);
         // Q9 (2026-06-24): presupuestos/cotizaciones por caducar (a <= N dias de pasar a Perdido por el job G6).
         var expiringPreSales = await ComputeExpiringPreSalesAsync(caller, settings, cancellationToken);
+        // (2026-06-26): cancelaciones cuyo operador no reembolso (abandonadas por el job o vencidas sin cerrar).
+        var abandonedOperatorRefunds = await ComputeAbandonedOperatorRefundsAsync(caller, today, cancellationToken);
 
         var hasNewAlarms = operatorPaymentDeadlines.Count > 0
                            || ticketingDeadlines.Count > 0
                            || passportExpiries.Count > 0
                            || confirmedWithChanges.Count > 0
                            || stuckOperatorRefunds.Count > 0
-                           || expiringPreSales.Count > 0;
+                           || expiringPreSales.Count > 0
+                           || abandonedOperatorRefunds.Count > 0;
 
         // CAMINO BYTE-IDENTICO (default historico): si NINGUN bucket nuevo esta activo Y no hay NINGUNA
         // alarma nueva que mostrar, devolvemos el MISMO objeto anonimo de siempre (3 propiedades, mismo
@@ -133,7 +146,8 @@ public class AlertService : IAlertService
         var totalCount = financialCount
                          + upcomingStarts.Count + costsToConfirm.Count
                          + operatorPaymentDeadlines.Count + ticketingDeadlines.Count + passportExpiries.Count
-                         + confirmedWithChanges.Count + stuckOperatorRefunds.Count + expiringPreSales.Count;
+                         + confirmedWithChanges.Count + stuckOperatorRefunds.Count + expiringPreSales.Count
+                         + abandonedOperatorRefunds.Count;
         return new AlertsResponse(
             urgentTrips: urgentTrips,
             supplierDebts: supplierDebts,
@@ -149,7 +163,8 @@ public class AlertService : IAlertService
             passportExpiries: passportExpiries.Count > 0 ? passportExpiries : null,
             confirmedWithChanges: confirmedWithChanges.Count > 0 ? confirmedWithChanges : null,
             stuckOperatorRefunds: stuckOperatorRefunds.Count > 0 ? stuckOperatorRefunds : null,
-            expiringPreSales: expiringPreSales.Count > 0 ? expiringPreSales : null);
+            expiringPreSales: expiringPreSales.Count > 0 ? expiringPreSales : null,
+            abandonedOperatorRefunds: abandonedOperatorRefunds.Count > 0 ? abandonedOperatorRefunds : null);
     }
 
     /// <summary>
@@ -762,6 +777,86 @@ public class AlertService : IAlertService
                 Since = g.Min(x => x.CreatedAt)
             })
             .OrderBy(x => x.Since)
+            .Select(x => (object)x)
+            .ToList();
+    }
+
+    /// <summary>
+    /// (2026-06-26): alarma "el operador no reembolso". UN aviso POR RESERVA cuya cancelacion quedo sin que el
+    /// operador devuelva la plata: ya sea <c>AbandonedByOperator</c> (el plazo vencio y el job nocturno la cerro)
+    /// o <c>AwaitingOperatorRefund</c> con <c>OperatorRefundDueBy</c> ya vencido (todavia sin cerrar — entre que
+    /// vence y corre el job, o si el job aun no paso).
+    ///
+    /// <para>Cierra el hueco por el que la cuenta por cobrar al operador quedaba colgada sin alerta: antes el
+    /// estado <c>AbandonedByOperator</c> ni se asignaba. El usuario ve la lista para reclamar al operador o dar
+    /// la cancelacion por perdida (<c>AbandonedByOperator</c> es terminal: registrar un reembolso tardio sobre
+    /// una BC ya abandonada NO esta implementado, es follow-up futuro).</para>
+    ///
+    /// <para><b>Cota temporal</b>: solo se avisan las cuya <c>OperatorRefundDueBy</c> cayó en los ultimos
+    /// <see cref="AbandonedOperatorRefundAlertDays"/> dias. Sin este tope, como <c>AbandonedByOperator</c> no
+    /// transiciona nunca, cada cancelacion abandonada se acumularía en la campanita para siempre.</para>
+    ///
+    /// <para>Mismo gating de visibilidad que los demas buckets nuevos: admin ve todas, el vendedor solo SUS
+    /// reservas (<c>reserva.ResponsibleUserId</c>), no-admin sin identidad -&gt; vacio (fail-closed). NO expone
+    /// montos (es solo visibilidad); el detalle economico se ve abriendo la cancelacion.</para>
+    /// </summary>
+    private async Task<List<object>> ComputeAbandonedOperatorRefundsAsync(
+        AlertCallerContext caller, DateTime today, CancellationToken ct)
+    {
+        // Fail-closed: un no-admin sin identidad no ve avisos de nadie (mismo borde que UpcomingStarts).
+        if (!caller.IsAdmin && string.IsNullOrEmpty(caller.UserId))
+            return new List<object>();
+
+        var nowUtc = DateTime.UtcNow;
+        // Cota temporal (ver doc del metodo): solo las vencidas/abandonadas en los ultimos N dias.
+        var cutoffUtc = nowUtc.AddDays(-AbandonedOperatorRefundAlertDays);
+
+        // Cancelaciones con el reembolso del operador trabado: ya abandonadas por el job, o vencidas sin cerrar.
+        // Acotadas a la ventana (OperatorRefundDueBy >= cutoff) para no acumular abandonadas viejas para siempre.
+        // Se unen a su reserva para el scope por dueño y los datos de display.
+        var query =
+            from bc in _context.BookingCancellations
+            where bc.OperatorRefundDueBy != null
+                  && bc.OperatorRefundDueBy >= cutoffUtc
+                  && (bc.Status == BookingCancellationStatus.AbandonedByOperator
+                      || (bc.Status == BookingCancellationStatus.AwaitingOperatorRefund
+                          && bc.OperatorRefundDueBy < nowUtc))
+            join reserva in _context.Reservas on bc.ReservaId equals reserva.Id
+            where caller.IsAdmin || reserva.ResponsibleUserId == caller.UserId
+            select new
+            {
+                reserva.PublicId,
+                reserva.NumeroReserva,
+                reserva.Name,
+                PayerName = reserva.Payer != null ? reserva.Payer.FullName : null,
+                bc.Status,
+                bc.OperatorRefundDueBy
+            };
+
+        var rows = await query.ToListAsync(ct);
+
+        // daysOverdue: dias corridos desde que vencio el plazo (>= 0). El que mas tiempo lleva vencido, primero.
+        return rows
+            .Select(r =>
+            {
+                bool isAbandoned = r.Status == BookingCancellationStatus.AbandonedByOperator;
+                int daysOverdue = r.OperatorRefundDueBy.HasValue
+                    ? Math.Max(0, (int)(today - r.OperatorRefundDueBy.Value.Date).TotalDays)
+                    : 0;
+                return new
+                {
+                    ReservaPublicId = r.PublicId,
+                    NumeroReserva = r.NumeroReserva,
+                    Name = r.Name,
+                    HolderName = r.PayerName,
+                    // El front distingue "ya dada por perdida" de "vencida sin cerrar" por este campo.
+                    Status = isAbandoned ? "AbandonedByOperator" : "Overdue",
+                    OperatorRefundDueBy = r.OperatorRefundDueBy,
+                    DaysOverdue = daysOverdue
+                };
+            })
+            .OrderByDescending(x => x.DaysOverdue)
+            .ThenBy(x => x.NumeroReserva, StringComparer.Ordinal)
             .Select(x => (object)x)
             .ToList();
     }

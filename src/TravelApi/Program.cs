@@ -557,6 +557,10 @@ builder.Services.AddScoped<TravelApi.Infrastructure.Services.PartialCreditNoteBr
 // nunca se persistio por crash/timeout). Consulta ARCA y reconcilia o escala a manual.
 // No-op si EnablePartialCreditNotes=false.
 builder.Services.AddScoped<TravelApi.Infrastructure.Services.PartialCreditNotePostingReconciliationJob>();
+
+// (2026-06-26): job nocturno que cierra el ciclo del reembolso del operador. Las cancelaciones trabadas en
+// AwaitingOperatorRefund con OperatorRefundDueBy vencido pasan a AbandonedByOperator (reserva -> Cancelled).
+builder.Services.AddScoped<TravelApi.Infrastructure.Services.OperatorRefundTimeoutJob>();
 builder.Services.AddScoped<ISearchService, SearchService>();
 builder.Services.AddScoped<IRateService, RateService>();
 builder.Services.AddScoped<ICountryService, CountryService>();
@@ -944,6 +948,14 @@ if (hangfireSchedulerEnabled)
         "partial-credit-note-posting-reconciliation",
         job => job.RunAsync(CancellationToken.None),
         "*/30 * * * *");
+
+    // (2026-06-26): cierre del ciclo del reembolso del operador. Corre 4am UTC (junto al housekeeping nocturno,
+    // despues del lifecycle de las 3am) para que las cancelaciones cuyo operador no reembolso dentro del plazo
+    // pasen a AbandonedByOperator y la reserva se cierre, antes de que el usuario abra el sistema a la manana.
+    RecurringJob.AddOrUpdate<TravelApi.Infrastructure.Services.OperatorRefundTimeoutJob>(
+        "operator-refund-timeout",
+        job => job.RunAsync(CancellationToken.None),
+        Cron.Daily(4));
 }
 
 // 3. Health Check

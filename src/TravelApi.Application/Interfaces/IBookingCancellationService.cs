@@ -171,6 +171,23 @@ public interface IBookingCancellationService
     /// </summary>
     Task OnAllCreditConsumedAsync(int bookingCancellationId, CancellationToken ct);
 
+    /// <summary>
+    /// (2026-06-26) Cierra el ciclo del reembolso del operador: busca las cancelaciones en
+    /// <c>AwaitingOperatorRefund</c> cuyo plazo (<c>OperatorRefundDueBy</c>) ya vencio y las transiciona a
+    /// <c>AbandonedByOperator</c>, cerrando la RESERVA (<c>PendingOperatorRefund</c> -> <c>Cancelled</c>).
+    ///
+    /// <para>Antes de este fix el estado <c>AbandonedByOperator</c> NUNCA se asignaba (codigo muerto) y no habia
+    /// job que mirara <c>OperatorRefundDueBy</c>: cuando el operador no devolvia el reembolso, la cuenta por
+    /// cobrar quedaba colgada para siempre sin alerta. Lo invoca un job nocturno (<c>OperatorRefundTimeoutJob</c>).</para>
+    ///
+    /// <para><b>Idempotente</b>: re-ejecutarlo no reprocesa (una cancelacion ya en <c>AbandonedByOperator</c> ya
+    /// no esta en <c>AwaitingOperatorRefund</c>). <b>Aisla fila veneno</b>: cada cancelacion se procesa y
+    /// persiste por separado; si una falla, las demas siguen. Deja rastro de auditoria
+    /// (<c>BookingCancellationAbandonedByOperator</c>) y log de cambio de estado de la reserva. Devuelve cuantas
+    /// cancelaciones se marcaron como abandonadas.</para>
+    /// </summary>
+    Task<int> ProcessExpiredOperatorRefundsAsync(CancellationToken ct);
+
     // ===== FC1.3.3 — comando publico para NC parcial (admin edita liquidacion en manual review) =====
 
     /// <summary>

@@ -44,7 +44,11 @@ internal static class SupplierDebtPersister
         var supplier = await db.Suppliers.FirstOrDefaultAsync(s => s.Id == supplierId, ct);
         if (supplier == null) return;
 
-        var porMoneda = await CalculateDebtByCurrencyAsync(db, supplierId, ct);
+        // (2026-06-26) El modo de facturacion del proveedor decide si sus servicios generan deuda de compra.
+        // Un proveedor CommissionOnly (intermediacion) factura directo al cliente: la agencia NO le compra, asi
+        // que sus costos confirmados NO son Cuenta por Pagar. Se pasa el modo al calculo para que la deuda
+        // materializada (escalar + tabla hija) lo respete. Ver SupplierDebtCalculator.SupplierGeneratesPurchaseDebt.
+        var porMoneda = await CalculateDebtByCurrencyAsync(db, supplierId, supplier.InvoicingMode, ct);
 
         // 1) Escalar surrogate (semaforo): identico a la cuenta legacy mono-moneda.
         supplier.CurrentBalance = SupplierDebtCalculator.ToSurrogateBalance(porMoneda);
@@ -180,9 +184,16 @@ internal static class SupplierDebtPersister
     /// (volumen chico por proveedor) y se filtra en memoria.
     /// </summary>
     private static async Task<IReadOnlyDictionary<string, SupplierDebtLine>> CalculateDebtByCurrencyAsync(
-        AppDbContext db, int supplierId, CancellationToken ct)
+        AppDbContext db, int supplierId, SupplierInvoicingMode invoicingMode, CancellationToken ct)
     {
-        var rows = await BuildSupplierServiceDebtRowsAsync(db, supplierId, ct);
+        // (2026-06-26) Solo el reseller (TotalToCustomer) genera deuda de compra. Para un CommissionOnly la deuda
+        // de costo es CERO: no construimos compras confirmadas (los pagos se siguen procesando mas abajo). Asi la
+        // deuda materializada no infla las Cuentas por Pagar con costos que la agencia nunca le debe al operador.
+        var generatesPurchaseDebt = SupplierDebtCalculator.SupplierGeneratesPurchaseDebt(invoicingMode);
+
+        var rows = generatesPurchaseDebt
+            ? await BuildSupplierServiceDebtRowsAsync(db, supplierId, ct)
+            : new List<SupplierDebtServiceRow>();
 
         var confirmedPurchases = rows
             .Where(r => WorkflowStatusHelper.CountsForSupplierDebtByType(r.Type, r.Status))

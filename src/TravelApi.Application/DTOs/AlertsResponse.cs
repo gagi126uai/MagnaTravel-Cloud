@@ -37,7 +37,8 @@ public sealed class AlertsResponse
         object? passportExpiries = null,
         object? confirmedWithChanges = null,
         object? stuckOperatorRefunds = null,
-        object? expiringPreSales = null)
+        object? expiringPreSales = null,
+        object? abandonedOperatorRefunds = null)
     {
         UrgentTrips = urgentTrips;
         SupplierDebts = supplierDebts;
@@ -51,6 +52,7 @@ public sealed class AlertsResponse
         ConfirmedWithChanges = confirmedWithChanges;
         StuckOperatorRefunds = stuckOperatorRefunds;
         ExpiringPreSales = expiringPreSales;
+        AbandonedOperatorRefunds = abandonedOperatorRefunds;
     }
 
     public object UrgentTrips { get; }
@@ -133,6 +135,17 @@ public sealed class AlertsResponse
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public object? ExpiringPreSales { get; }
+
+    /// <summary>
+    /// (2026-06-26): cancelaciones en las que el operador no reembolso — un aviso POR RESERVA cuya cancelacion
+    /// esta en <c>AbandonedByOperator</c> (el plazo vencio y el job ya la cerro) o en <c>AwaitingOperatorRefund</c>
+    /// con el plazo (<c>OperatorRefundDueBy</c>) ya vencido (todavia sin cerrar). Item: <c>{ reservaPublicId,
+    /// numeroReserva, name, holderName, status, operatorRefundDueBy, daysOverdue }</c>. Cierra el hueco por el
+    /// que la cuenta por cobrar al operador quedaba colgada sin alerta. NO expone montos. Se OMITE del JSON
+    /// cuando no hay nada que avisar (null).
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public object? AbandonedOperatorRefunds { get; }
 
     public int TotalCount { get; }
 }

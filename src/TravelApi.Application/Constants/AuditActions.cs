@@ -200,6 +200,16 @@ public static class AuditActions
     /// </summary>
     public const string BookingCancellationClosedByOperatorRefund = "BookingCancellationClosedByOperatorRefund";
 
+    /// <summary>
+    /// (2026-06-26): el operador supero el plazo (<c>OperatorRefundDueBy</c>) sin reembolsar. El job nocturno
+    /// transiciono la cancelacion <c>AwaitingOperatorRefund</c> -> <c>AbandonedByOperator</c> y cerro la RESERVA
+    /// (<c>PendingOperatorRefund</c> -> <c>Cancelled</c>). Antes este estado nunca se asignaba (codigo muerto) y
+    /// la cuenta por cobrar al operador quedaba colgada sin alerta. Disparado por el sistema (sin actor humano).
+    /// <b>AbandonedByOperator es terminal por ahora</b>: registrar un reembolso tardio sobre una BC ya abandonada
+    /// NO esta implementado (queda como follow-up futuro); hoy ese caso se resuelve a mano.
+    /// </summary>
+    public const string BookingCancellationAbandonedByOperator = "BookingCancellationAbandonedByOperator";
+
     // ===== Entity names (helpers) =====
 
     /// <summary>

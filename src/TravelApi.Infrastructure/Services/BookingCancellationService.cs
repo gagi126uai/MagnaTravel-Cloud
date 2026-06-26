@@ -1971,6 +1971,139 @@ public class BookingCancellationService
             bc.PublicId, bc.ReceivedRefundAmount);
     }
 
+    // =========================================================================
+    // (2026-06-26) Cierre del ciclo del reembolso del operador (timeout).
+    //
+    // Antes: BookingCancellationStatus.AbandonedByOperator NUNCA se asignaba (codigo muerto) y no habia job que
+    // mirara OperatorRefundDueBy. Cuando el operador no devolvia el reembolso, la cancelacion quedaba colgada en
+    // AwaitingOperatorRefund para siempre, sin alerta. Este metodo (lo invoca OperatorRefundTimeoutJob de noche)
+    // cierra ese ciclo: las cancelaciones cuyo plazo vencio pasan a AbandonedByOperator y la reserva a Cancelled.
+    // =========================================================================
+
+    /// <inheritdoc />
+    public async Task<int> ProcessExpiredOperatorRefundsAsync(CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+
+        // Candidatas: esperan el reembolso del operador (AwaitingOperatorRefund) y su plazo (OperatorRefundDueBy,
+        // seteado en T0 = confirmacion + OperatorRefundTimeoutDays) ya vencio. Traemos solo los IDs: cada una se
+        // procesa y persiste por separado (aislamiento de fila veneno), igual criterio que los jobs nocturnos.
+        var expiredIds = await _db.BookingCancellations
+            .AsNoTracking()
+            .Where(bc => bc.Status == BookingCancellationStatus.AwaitingOperatorRefund
+                      && bc.OperatorRefundDueBy != null
+                      && bc.OperatorRefundDueBy < now)
+            .Select(bc => bc.Id)
+            .ToListAsync(ct);
+
+        if (expiredIds.Count == 0)
+            return 0;
+
+        var abandoned = 0;
+        foreach (var bcId in expiredIds)
+        {
+            try
+            {
+                if (await AbandonExpiredOperatorRefundAsync(bcId, now, ct))
+                    abandoned++;
+            }
+            catch (OperationCanceledException)
+            {
+                throw; // shutdown del job: propagar, no es fila veneno
+            }
+            catch (Exception ex)
+            {
+                // Una cancelacion que falla (ej. DbUpdateConcurrencyException por xmin si otra transaccion la
+                // toco en el medio, o una fila inconsistente) NO debe frenar al resto. Logueamos, limpiamos lo
+                // que haya quedado a medias en el ChangeTracker y seguimos con la proxima. La proxima corrida la
+                // reintenta (sigue en AwaitingOperatorRefund con el plazo vencido).
+                _logger.LogError(ex,
+                    "ProcessExpiredOperatorRefunds: fallo al abandonar la cancelacion {BcId}. Se saltea; las demas siguen.",
+                    bcId);
+                _db.ChangeTracker.Clear();
+            }
+        }
+
+        if (abandoned > 0)
+        {
+            _logger.LogWarning(
+                "ProcessExpiredOperatorRefunds: {Abandoned} cancelacion(es) marcadas AbandonedByOperator por plazo de reembolso vencido (de {Candidates} candidatas).",
+                abandoned, expiredIds.Count);
+        }
+
+        return abandoned;
+    }
+
+    /// <summary>
+    /// (2026-06-26) Transiciona UNA cancelacion vencida a <see cref="BookingCancellationStatus.AbandonedByOperator"/>
+    /// y cierra su reserva (<c>PendingOperatorRefund</c> -> <c>Cancelled</c>), persistiendo en su propio
+    /// SaveChanges (asi una falla no arrastra a las demas). Devuelve false si ya no aplica (idempotencia / carrera:
+    /// el operador pago o ya fue procesada). El efecto sobre la reserva es el documentado para este estado
+    /// (la reserva queda Cancelled); el saldo a favor del cliente NO se toca. <b>AbandonedByOperator es terminal
+    /// por ahora</b>: registrar un reembolso tardio sobre esta BC NO esta implementado (follow-up futuro).
+    /// </summary>
+    private async Task<bool> AbandonExpiredOperatorRefundAsync(int bcId, DateTime now, CancellationToken ct)
+    {
+        var bc = await _db.BookingCancellations
+            .Include(x => x.Reserva)
+            .FirstOrDefaultAsync(x => x.Id == bcId, ct);
+
+        // Idempotencia / carrera: si entre la lista de candidatas y este momento cambio de estado (el operador
+        // reembolso, otra corrida la proceso), es no-op. El plazo tambien se re-chequea por si lo extendieron.
+        if (bc is null
+            || bc.Status != BookingCancellationStatus.AwaitingOperatorRefund
+            || bc.OperatorRefundDueBy is null
+            || bc.OperatorRefundDueBy >= now)
+        {
+            return false;
+        }
+
+        bc.Status = BookingCancellationStatus.AbandonedByOperator;
+        bc.ClosedAt = now;
+
+        // Cierre de la reserva (efecto documentado del estado): PendingOperatorRefund -> Cancelled. Guard por
+        // estado para idempotencia: si la reserva ya quedo Cancelled por otra via (ej. el cliente consumio su
+        // credito antes), NO la volvemos a mover ni re-logueamos. El saldo a favor del cliente queda intacto.
+        if (bc.Reserva is not null && bc.Reserva.Status == EstadoReserva.PendingOperatorRefund)
+        {
+            var reservaFromStatus = bc.Reserva.Status;
+            bc.Reserva.Status = EstadoReserva.Cancelled;
+            LogReservaStatusChange(bc.Reserva, reservaFromStatus, EstadoReserva.Cancelled,
+                actorUserId: null, actorUserName: null,
+                reason: "Cancelacion (ADR-002): el operador no reembolso dentro del plazo (timeout), reserva cerrada (sistema).");
+        }
+
+        await _auditService.LogBusinessEventAsync(
+            action: AuditActions.BookingCancellationAbandonedByOperator,
+            entityName: AuditActions.BookingCancellationEntityName,
+            entityId: bc.Id.ToString(),
+            details: JsonSerializer.Serialize(new
+            {
+                bc.PublicId,
+                reservaPublicId = bc.Reserva?.PublicId,
+                operatorRefundDueBy = bc.OperatorRefundDueBy,
+                receivedRefundAmount = bc.ReceivedRefundAmount,
+                estimatedRefundAmount = bc.EstimatedRefundAmount,
+            }),
+            userId: bc.ConfirmedByUserId ?? bc.DraftedByUserId,
+            userName: bc.ConfirmedByUserName ?? bc.DraftedByUserName,
+            ct: ct);
+
+        // Commit explicito de la transicion (BC + reserva + ReservaStatusChangeLog) en su propia transaccion.
+        // NO es redundante con el SaveChanges interno de LogBusinessEventAsync: NO dependemos de que la auditoria
+        // flushee nuestras mutaciones de dominio (es un detalle de implementacion del AuditService real, y en los
+        // tests el IAuditService esta mockeado y NO guarda). Este SaveChanges garantiza que el abandono se persista
+        // siempre, independiente de la implementacion de auditoria. En prod, si la auditoria ya flusheo, este queda
+        // como no-op (no hay cambios pendientes).
+        await _db.SaveChangesAsync(ct);
+
+        _logger.LogWarning(
+            "BC {BcPublicId}: marcada AbandonedByOperator (plazo de reembolso {DueBy:o} vencido). Reserva cerrada (Cancelled).",
+            bc.PublicId, bc.OperatorRefundDueBy);
+
+        return true;
+    }
+
     public async Task OnAllocationVoidedAsync(int bookingCancellationId, decimal netAmount, CancellationToken ct)
     {
         // FC1.2.2 (2026-05-18): el caller (OperatorRefundService.VoidAllocation)

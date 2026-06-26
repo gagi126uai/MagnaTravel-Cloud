@@ -519,24 +519,15 @@ public class SupplierService : ISupplierService
         // pago ARS no cruzado todo queda en null = identico al legacy.
         var currency = ResolvePaymentCurrencyBlock(request);
 
-        var currentDebt = await CalculateSupplierDebt(id, cancellationToken);
-        if (request.Amount > currentDebt)
-        {
-            // ADR-017 F1b: este mensaje NO debe revelar la deuda exacta con el proveedor.
-            // SuppliersController traduce esta InvalidOperationException a un mensaje HTTP
-            // generico ("No se pudo registrar el pago al proveedor"), asi que cualquier
-            // detalle por permiso aca seria codigo muerto que jamas llega al cliente. Para
-            // evitar esa incoherencia (y un eventual leak si algun futuro caller surfacea
-            // ex.Message), el mensaje es generico para todos. El enmascarado real de montos
-            // vive en los DTOs (MaskSupplierPaymentAmountsAsync), no en los mensajes de error.
-            // ADR-022 §4 P4: esta es la validacion GLOBAL (tope general contra toda la deuda del
-            // proveedor). Si el pago viene imputado a una reserva, ademas se valida que no exceda la
-            // deuda de ese proveedor EN ESA RESERVA y EN ESA MONEDA (ResolveImputationAsync).
-            throw new InvalidOperationException("El pago excede la deuda actual con el proveedor.");
-        }
-
-        // ADR-022 §4 P4 + ADR-036 4c: la imputacion del pago. O una reserva concreta (validada), opcionalmente
-        // imputada a UN servicio de esa reserva, o anticipo "a cuenta".
+        // (2026-06-26, decision del dueño) Se ELIMINO el viejo tope GLOBAL que comparaba el monto contra
+        // ToSurrogateBalance: ese surrogate SUMA max(0,saldo) de ARS + USD en un solo numero, asi que un pago en
+        // una moneda se medía contra deuda mezclada de TODAS (el bug de cruce de monedas). Las validaciones REALES
+        // viven en ResolveSupplierPaymentImputationAsync, ESTRICTAMENTE por moneda y sin mezclar:
+        //   - imputado a una RESERVA: no excede la deuda de ese proveedor EN ESA RESERVA y EN ESA MONEDA;
+        //   - imputado a un SERVICIO: coincide la moneda y no supera el costo pendiente de ESE servicio;
+        //   - anticipo "a cuenta" (seña/prepago): SIN tope superior — puede quedar como saldo a favor con el
+        //     operador EN SU MONEDA (reservar cupo pagando antes). La aislacion por moneda la garantiza
+        //     SupplierDebtCalculator: un pago solo afecta el bucket de su propia moneda imputada, nunca otro.
         var imputation = await ResolveSupplierPaymentImputationAsync(
             id, request, currency, cancellationToken);
 
@@ -573,7 +564,7 @@ public class SupplierService : ISupplierService
         // sincronizamos escalar surrogate + tabla hija. El recalculo lee los pagos de la BD (su query
         // filter !IsDeleted excluye los borrados), por eso el pago debe estar guardado antes de
         // recalcular. Para un pago ARS no cruzado el escalar resultante es identico a la cuenta vieja
-        // (currentDebt - Amount). Escalar y tabla hija quedan en la misma (segunda) SaveChanges.
+        // (deuda previa - Amount). Escalar y tabla hija quedan en la misma (segunda) SaveChanges.
         await _dbContext.SaveChangesAsync(cancellationToken);
         await PersistSupplierBalanceAsync(supplier, cancellationToken);
         await _dbContext.SaveChangesAsync(cancellationToken);
@@ -603,20 +594,11 @@ public class SupplierService : ISupplierService
         // ADR-021: resolver/validar el bloque de moneda igual que en el alta.
         var currency = ResolvePaymentCurrencyBlock(request);
 
-        var realDebt = await CalculateSupplierDebt(id, cancellationToken);
-        var debtPrePayment = realDebt + payment.Amount;
-
-        if (request.Amount > debtPrePayment)
-        {
-            // ADR-017 F1b: mismo criterio que AddSupplierPaymentAsync — el controller pisa
-            // esta excepcion con un mensaje HTTP generico, asi que el mensaje es generico
-            // para todos (sin revelar la deuda). El masking de montos vive en los DTOs.
-            throw new InvalidOperationException("La modificacion del pago excede la deuda actual con el proveedor.");
-        }
-
-        // ADR-022 §4 P4 + ADR-036 4c: re-resolver la imputacion (reserva concreta, opcional servicio, o
-        // anticipo a cuenta), excluyendo el propio pago de la deuda restante de la reserva (su monto viejo
-        // no debe contarse como "ya pagado").
+        // (2026-06-26, decision del dueño) Igual que en el alta: se ELIMINO el tope GLOBAL con surrogate mezclado
+        // (era el bug de cruce de monedas). Las validaciones reales (por reserva / por servicio / por moneda) viven
+        // en ResolveSupplierPaymentImputationAsync; el anticipo a cuenta no tiene tope superior (prepago/seña).
+        // excludePaymentId saca el monto VIEJO del propio pago de la deuda restante, para no contarlo como "ya
+        // pagado" al validar la imputacion a reserva/servicio (la edicion de un anticipo no usa cap).
         var imputation = await ResolveSupplierPaymentImputationAsync(
             id, request, currency, cancellationToken, excludePaymentId: payment.Id);
 
@@ -645,7 +627,7 @@ public class SupplierService : ISupplierService
 
         // ADR-021 §15.3: persistimos la edicion del pago y recalculamos la deuda por moneda
         // (escalar surrogate + tabla hija). Para un pago ARS no cruzado el escalar resultante es
-        // identico a la cuenta vieja (debtPrePayment - Amount). El recalculo lee de la BD, por eso
+        // identico a la cuenta vieja (deuda previa - Amount). El recalculo lee de la BD, por eso
         // la edicion va antes.
         await _dbContext.SaveChangesAsync(cancellationToken);
         await PersistSupplierBalanceAsync(supplier, cancellationToken);
@@ -998,50 +980,32 @@ public class SupplierService : ISupplierService
     // en memoria (volumen chico por proveedor) porque la regla por tipo no es traducible a SQL.
     private async Task<decimal> CalculateSupplierConfirmedPurchasesAsync(int supplierId, CancellationToken cancellationToken)
     {
+        // (2026-06-26) CommissionOnly no genera deuda de compra: total de compras confirmadas = 0 (intermediacion,
+        // la agencia no compra). Mismo gate que el resto de la cuenta del proveedor.
+        if (!await SupplierGeneratesPurchaseDebtAsync(supplierId, cancellationToken))
+            return 0m;
+
         var rows = await BuildSupplierServicesQuery(supplierId).ToListAsync(cancellationToken);
         return rows
             .Where(r => WorkflowStatusHelper.CountsForSupplierDebtByType(r.Type, r.Status))
             .Sum(r => r.NetCost);
     }
 
-    // ADR-021 §15.4: la deuda con el proveedor SEPARADA por moneda. Mismo filtro oficial de servicios
-    // que generan deuda, pero ahora cada NetCost cae en la linea de la moneda del servicio, y cada
-    // pago vivo en la moneda a la que se imputa. Lo usa el persister de la tabla hija y el escalar.
-    private async Task<IReadOnlyDictionary<string, SupplierDebtLine>> CalculateSupplierDebtPorMonedaAsync(
-        int supplierId, CancellationToken cancellationToken)
+    /// <summary>
+    /// (2026-06-26) ¿Los servicios de este proveedor generan deuda de compra (Cuenta por Pagar)? Lee su
+    /// <see cref="Supplier.InvoicingMode"/> y delega la regla en el dominio
+    /// (<see cref="SupplierDebtCalculator.SupplierGeneratesPurchaseDebt"/>): reseller (TotalToCustomer) si,
+    /// intermediacion (CommissionOnly) no. Se consulta SOLO la columna del modo (no toda la entidad) por moneda.
+    /// Lo usan todas las lecturas de la deuda del proveedor para que el numero coincida con el persister.
+    /// </summary>
+    private async Task<bool> SupplierGeneratesPurchaseDebtAsync(int supplierId, CancellationToken cancellationToken)
     {
-        var rows = await BuildSupplierServicesQuery(supplierId).ToListAsync(cancellationToken);
-
-        var confirmedPurchases = rows
-            .Where(r => WorkflowStatusHelper.CountsForSupplierDebtByType(r.Type, r.Status))
-            .Select(r => new SupplierDebtCalculator.ConfirmedPurchase(r.Currency, r.NetCost));
-
-        // El query filter !IsDeleted ya excluye los pagos soft-deleted (AppDbContext), por eso una
-        // anulacion es self-healing: el pago borrado deja de sumar y la deuda de su moneda vuelve a subir.
-        var paymentRows = await _dbContext.SupplierPayments
-            .Where(payment => payment.SupplierId == supplierId)
-            .Select(payment => new
-            {
-                payment.Amount,
-                payment.Currency,
-                payment.ImputedCurrency,
-                payment.ImputedAmount
-            })
-            .ToListAsync(cancellationToken);
-
-        var payments = paymentRows.Select(p => new SupplierDebtCalculator.SupplierPaymentInput(
-            p.Amount, p.Currency, p.ImputedCurrency, p.ImputedAmount));
-
-        return SupplierDebtCalculator.Calculate(confirmedPurchases, payments);
-    }
-
-    // Escalar surrogate de la deuda (semaforo §15.3): mono-moneda = identico a la cuenta legacy
-    // (compras - pagos); multimoneda = sum(max(0, deuda por moneda)). Lo derivamos del detalle por
-    // moneda para que haya UNA sola fuente de la cuenta.
-    private async Task<decimal> CalculateSupplierDebt(int supplierId, CancellationToken cancellationToken)
-    {
-        var porMoneda = await CalculateSupplierDebtPorMonedaAsync(supplierId, cancellationToken);
-        return SupplierDebtCalculator.ToSurrogateBalance(porMoneda);
+        var invoicingMode = await _dbContext.Suppliers
+            .AsNoTracking()
+            .Where(s => s.Id == supplierId)
+            .Select(s => s.InvoicingMode)
+            .FirstOrDefaultAsync(cancellationToken);
+        return SupplierDebtCalculator.SupplierGeneratesPurchaseDebt(invoicingMode);
     }
 
     /// <summary>
@@ -1115,7 +1079,14 @@ public class SupplierService : ISupplierService
 
         if (!hasReserva)
         {
-            // Anticipo a cuenta (explicito o legacy): sin reserva ni servicio. Vale solo el tope global.
+            // Anticipo "a cuenta" / seña (explicito o legacy): sin reserva ni servicio.
+            // (2026-06-26, decision del dueño) Es un PREPAGO GENUINO: SIN tope superior. El operador puede recibir
+            // una seña por adelantado (reservar cupo pagando antes), incluso por ENCIMA de la deuda actual en esa
+            // moneda; el excedente queda como SALDO A FAVOR con ese operador EN ESA MONEDA. La UNICA regla dura es
+            // NO MEZCLAR MONEDAS: un anticipo en USD jamas reduce/afecta la deuda en ARS (ni viceversa). Esa
+            // aislacion la garantiza estructuralmente SupplierDebtCalculator: el pago imputa SOLO al bucket de su
+            // moneda imputada (ImputedCurrency ?? Currency), nunca a otra. Por eso aca NO hay ninguna validacion de
+            // tope (se elimino el viejo gate por moneda y el tope global con surrogate mezclado, que era el bug).
             return SupplierPaymentImputationResult.AdvanceToAccount;
         }
 
@@ -1318,9 +1289,9 @@ public class SupplierService : ISupplierService
     }
 
     /// <summary>
-    /// ADR-022 §4 P4: deuda de un proveedor SEPARADA por moneda PERO acotada a UNA reserva. Mismo motor que
-    /// <see cref="CalculateSupplierDebtPorMonedaAsync"/> (compras confirmadas - pagos imputados, por moneda),
-    /// solo que tanto los servicios como los pagos se filtran por <paramref name="reservaId"/>.
+    /// ADR-022 §4 P4: deuda de un proveedor SEPARADA por moneda PERO acotada a UNA reserva. Mismo motor puro
+    /// (<see cref="SupplierDebtCalculator"/>: compras confirmadas - pagos imputados, por moneda) que el resto de
+    /// la cuenta del proveedor, solo que tanto los servicios como los pagos se filtran por <paramref name="reservaId"/>.
     /// <paramref name="excludePaymentId"/> saca el pago que se esta editando del "ya pagado".
     /// </summary>
     private async Task<IReadOnlyDictionary<string, SupplierDebtLine>> CalculateSupplierDebtInReservaAsync(
@@ -1328,10 +1299,22 @@ public class SupplierService : ISupplierService
     {
         // Servicios de este proveedor en ESTA reserva, por tipo/estado/moneda. Reusar el calculador puro
         // mantiene la cuenta identica a la global, solo que acotada a la reserva.
-        var serviceRows = await BuildSupplierServiceDebtRowsInReservaAsync(supplierId, reservaId, cancellationToken);
-        var confirmedPurchases = serviceRows
-            .Where(r => WorkflowStatusHelper.CountsForSupplierDebtByType(r.Type, r.Status))
-            .Select(r => new SupplierDebtCalculator.ConfirmedPurchase(r.Currency, r.NetCost));
+        // (2026-06-26) CommissionOnly -> deuda de compra CERO tambien por reserva (intermediacion): sin compras
+        // confirmadas no se puede imputar un pago a la reserva de ese operador (no hay nada que pagar). Mismo
+        // gate que el calculo global, asi la validacion de pago por reserva coincide con la deuda materializada.
+        IEnumerable<SupplierDebtCalculator.ConfirmedPurchase> confirmedPurchases;
+        if (await SupplierGeneratesPurchaseDebtAsync(supplierId, cancellationToken))
+        {
+            var serviceRows = await BuildSupplierServiceDebtRowsInReservaAsync(supplierId, reservaId, cancellationToken);
+            confirmedPurchases = serviceRows
+                .Where(r => WorkflowStatusHelper.CountsForSupplierDebtByType(r.Type, r.Status))
+                .Select(r => new SupplierDebtCalculator.ConfirmedPurchase(r.Currency, r.NetCost))
+                .ToList();
+        }
+        else
+        {
+            confirmedPurchases = Array.Empty<SupplierDebtCalculator.ConfirmedPurchase>();
+        }
 
         var paymentRows = await _dbContext.SupplierPayments
             .Where(p => p.SupplierId == supplierId
@@ -1422,7 +1405,13 @@ public class SupplierService : ISupplierService
         // 1) COMPRAS CONFIRMADAS por reserva. Reusamos la MISMA query que alimenta el total global (ya
         //    filtrada por estados de reserva vivos), y nos quedamos solo con las que generan deuda por la
         //    regla oficial por tipo. Cada fila trae su ReservaPublicId/NumeroReserva/FileName y su moneda.
-        var serviceRows = await BuildSupplierServicesQuery(id).ToListAsync(cancellationToken);
+        // (2026-06-26) CommissionOnly (intermediacion) no genera deuda de compra: ninguna reserva acumula
+        // Cuenta por Pagar por sus servicios. Dejamos las compras confirmadas vacias (los pagos/anticipos que
+        // existieran siguen apareciendo y reconcilian igual). Mismo gate que el calculo global por moneda.
+        var generatesPurchaseDebt = await SupplierGeneratesPurchaseDebtAsync(id, cancellationToken);
+        var serviceRows = generatesPurchaseDebt
+            ? await BuildSupplierServicesQuery(id).ToListAsync(cancellationToken)
+            : new List<SupplierAccountServiceListItemDto>();
         var confirmedServiceRows = serviceRows
             .Where(row => WorkflowStatusHelper.CountsForSupplierDebtByType(row.Type, row.Status))
             .ToList();
@@ -1751,6 +1740,17 @@ public class SupplierService : ISupplierService
 
         foreach (var service in serviceRows)
         {
+            // (2026-06-26) Coherente con AGUJERO 1: un servicio de proveedor CommissionOnly (intermediacion) NO
+            // genera deuda con el operador (el operador factura directo al cliente, la agencia no compra). Por eso
+            // NO se reporta estado de pago al operador para ese servicio: queda FUERA del listado, igual que en
+            // pre-venta el front no muestra ningun chip. Asi no aparece un "operador impago" espurio. Reusa la
+            // regla unica de dominio. Un servicio sin proveedor (modo null) se reporta como antes (no se cambia).
+            if (service.SupplierInvoicingMode.HasValue
+                && !SupplierDebtCalculator.SupplierGeneratesPurchaseDebt(service.SupplierInvoicingMode.Value))
+            {
+                continue;
+            }
+
             paidByService.TryGetValue(service.PublicId, out var paid);
             decimal netCost = EconomicRulesHelper.RoundCurrency(service.NetCost);
             paid = EconomicRulesHelper.RoundCurrency(paid);
@@ -1799,10 +1799,15 @@ public class SupplierService : ISupplierService
         return ServiceSupplierPaymentStatuses.Partial;
     }
 
-    /// <summary>Fila minima de un servicio de la reserva para el estado de pago al operador.</summary>
+    /// <summary>
+    /// Fila minima de un servicio de la reserva para el estado de pago al operador.
+    /// (2026-06-26) <see cref="SupplierInvoicingMode"/> nullable: el modo de facturacion del proveedor del
+    /// servicio (null si el servicio no tiene proveedor). Se usa para NO reportar estado de pago al operador
+    /// en servicios de proveedores CommissionOnly (intermediacion: no hay deuda con el operador).
+    /// </summary>
     private readonly record struct ReservaServicePaymentRow(
         string RecordKind, Guid PublicId, Guid? SupplierPublicId, string? SupplierName,
-        decimal NetCost, string? Currency, string Status);
+        decimal NetCost, string? Currency, string Status, SupplierInvoicingMode? SupplierInvoicingMode);
 
     /// <summary>
     /// Reune todos los servicios de una reserva (6 tablas) con su (recordKind, publicId, proveedor, costo,
@@ -1821,7 +1826,8 @@ public class SupplierService : ISupplierService
         rows.AddRange(flights.Select(s => new ReservaServicePaymentRow(
             ServicePaymentRecordKinds.Flight, s.PublicId,
             s.Supplier != null ? (Guid?)s.Supplier.PublicId : null, s.Supplier != null ? s.Supplier.Name : null,
-            s.NetCost, s.Currency, s.Status)));
+            s.NetCost, s.Currency, s.Status,
+            s.Supplier != null ? (SupplierInvoicingMode?)s.Supplier.InvoicingMode : null)));
 
         var hotels = await _dbContext.HotelBookings.AsNoTracking()
             .Where(s => s.ReservaId == reservaId)
@@ -1830,7 +1836,8 @@ public class SupplierService : ISupplierService
         rows.AddRange(hotels.Select(s => new ReservaServicePaymentRow(
             ServicePaymentRecordKinds.Hotel, s.PublicId,
             s.Supplier != null ? (Guid?)s.Supplier.PublicId : null, s.Supplier != null ? s.Supplier.Name : null,
-            s.NetCost, s.Currency, s.Status)));
+            s.NetCost, s.Currency, s.Status,
+            s.Supplier != null ? (SupplierInvoicingMode?)s.Supplier.InvoicingMode : null)));
 
         var transfers = await _dbContext.TransferBookings.AsNoTracking()
             .Where(s => s.ReservaId == reservaId)
@@ -1839,7 +1846,8 @@ public class SupplierService : ISupplierService
         rows.AddRange(transfers.Select(s => new ReservaServicePaymentRow(
             ServicePaymentRecordKinds.Transfer, s.PublicId,
             s.Supplier != null ? (Guid?)s.Supplier.PublicId : null, s.Supplier != null ? s.Supplier.Name : null,
-            s.NetCost, s.Currency, s.Status)));
+            s.NetCost, s.Currency, s.Status,
+            s.Supplier != null ? (SupplierInvoicingMode?)s.Supplier.InvoicingMode : null)));
 
         var packages = await _dbContext.PackageBookings.AsNoTracking()
             .Where(s => s.ReservaId == reservaId)
@@ -1848,7 +1856,8 @@ public class SupplierService : ISupplierService
         rows.AddRange(packages.Select(s => new ReservaServicePaymentRow(
             ServicePaymentRecordKinds.Package, s.PublicId,
             s.Supplier != null ? (Guid?)s.Supplier.PublicId : null, s.Supplier != null ? s.Supplier.Name : null,
-            s.NetCost, s.Currency, s.Status)));
+            s.NetCost, s.Currency, s.Status,
+            s.Supplier != null ? (SupplierInvoicingMode?)s.Supplier.InvoicingMode : null)));
 
         var assistances = await _dbContext.AssistanceBookings.AsNoTracking()
             .Where(s => s.ReservaId == reservaId)
@@ -1857,7 +1866,8 @@ public class SupplierService : ISupplierService
         rows.AddRange(assistances.Select(s => new ReservaServicePaymentRow(
             ServicePaymentRecordKinds.Assistance, s.PublicId,
             s.Supplier != null ? (Guid?)s.Supplier.PublicId : null, s.Supplier != null ? s.Supplier.Name : null,
-            s.NetCost, s.Currency, s.Status)));
+            s.NetCost, s.Currency, s.Status,
+            s.Supplier != null ? (SupplierInvoicingMode?)s.Supplier.InvoicingMode : null)));
 
         var generics = await _dbContext.Servicios.AsNoTracking()
             .Where(s => s.ReservaId == reservaId)
@@ -1866,7 +1876,8 @@ public class SupplierService : ISupplierService
         rows.AddRange(generics.Select(s => new ReservaServicePaymentRow(
             ServicePaymentRecordKinds.Generic, s.PublicId,
             s.Supplier != null ? (Guid?)s.Supplier.PublicId : null, s.Supplier != null ? s.Supplier.Name : null,
-            s.NetCost, s.Currency, s.Status)));
+            s.NetCost, s.Currency, s.Status,
+            s.Supplier != null ? (SupplierInvoicingMode?)s.Supplier.InvoicingMode : null)));
 
         return rows;
     }

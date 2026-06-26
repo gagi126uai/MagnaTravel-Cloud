@@ -37,6 +37,29 @@ public static class SupplierDebtCalculator
     };
 
     /// <summary>
+    /// (2026-06-26) Regla unica: ¿los servicios de un proveedor generan Cuenta por Pagar (deuda de compra) segun
+    /// su modelo de facturacion al cliente?
+    ///
+    /// <list type="bullet">
+    /// <item><see cref="SupplierInvoicingMode.TotalToCustomer"/> (reseller): la agencia COMPRA al operador y le
+    ///   revende al cliente -> SI hay deuda de compra (el costo confirmado es Cuenta por Pagar). Comportamiento
+    ///   historico.</item>
+    /// <item><see cref="SupplierInvoicingMode.CommissionOnly"/> (intermediacion): el operador le factura DIRECTO
+    ///   al cliente final; la agencia NO compra el servicio, solo cobra su comision -> NO hay deuda de compra con
+    ///   ese operador por ese servicio. Antes de este fix la deuda nacia ciega del NetCost ignorando el modo, e
+    ///   inflaba las Cuentas por Pagar con plata que la agencia nunca le debe al operador.</item>
+    /// </list>
+    ///
+    /// <para><b>Por que vive en el dominio</b>: es la MISMA regla que tienen que aplicar el persister de la deuda
+    /// (escalar + tabla hija) y todas las lecturas de la cuenta del proveedor en <c>SupplierService</c>. Tenerla
+    /// en un solo lugar evita que una rama la aplique y otra no (la deuda mentiria distinto segun el camino).
+    /// Solo afecta el lado COMPRA (ConfirmedPurchases): los pagos ya registrados al operador se siguen contando
+    /// (un CommissionOnly no deberia tener pagos, pero si los hubiera, quedan como saldo a favor, no se ocultan).</para>
+    /// </summary>
+    public static bool SupplierGeneratesPurchaseDebt(SupplierInvoicingMode invoicingMode)
+        => invoicingMode == SupplierInvoicingMode.TotalToCustomer;
+
+    /// <summary>
     /// Una compra confirmada que aporta a la deuda: su monto (NetCost) y su moneda (null = ARS).
     /// </summary>
     public readonly record struct ConfirmedPurchase(string? Currency, decimal NetCost);
