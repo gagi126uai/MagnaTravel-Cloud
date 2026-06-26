@@ -40,6 +40,10 @@ public class AnnulWithPaymentsToCreditTests
     private readonly IMapper _mapper;
     private readonly Mock<IOperationalFinanceSettingsService> _settingsServiceMock;
 
+    // Motivo valido (>= 10 chars) para los casos felices. Sin la palabra "cost" para no chocar con la
+    // asercion del test de auditoria de que el detail no expone costos.
+    private const string ValidReason = "Cliente desistio del viaje por fuerza mayor";
+
     public AnnulWithPaymentsToCreditTests()
     {
         _dbOptions = new DbContextOptionsBuilder<AppDbContext>()
@@ -185,7 +189,7 @@ public class AnnulWithPaymentsToCreditTests
             .Where(r => r.Id == 1).Select(r => r.PublicId).FirstAsync();
 
         var dto = await BuildReservaService(context).AnnulWithPaymentsToCreditAsync(
-            reservaPublicId.ToString(), actorUserId: "u1", actorUserName: "User One");
+            reservaPublicId.ToString(), reason: ValidReason, actorUserId: "u1", actorUserName: "User One");
 
         // La reserva quedo Cancelled.
         Assert.Equal(EstadoReserva.Cancelled, dto.Status);
@@ -227,7 +231,7 @@ public class AnnulWithPaymentsToCreditTests
             .Where(r => r.Id == 1).Select(r => r.PublicId).FirstAsync();
 
         var dto = await BuildReservaService(context).AnnulWithPaymentsToCreditAsync(
-            reservaPublicId.ToString(), actorUserId: "u1", actorUserName: "User One");
+            reservaPublicId.ToString(), reason: ValidReason, actorUserId: "u1", actorUserName: "User One");
 
         Assert.Equal(EstadoReserva.Cancelled, dto.Status);
 
@@ -274,7 +278,7 @@ public class AnnulWithPaymentsToCreditTests
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             BuildReservaService(context).AnnulWithPaymentsToCreditAsync(
-                reservaPublicId.ToString(), actorUserId: "u1", actorUserName: "User One"));
+                reservaPublicId.ToString(), reason: ValidReason, actorUserId: "u1", actorUserName: "User One"));
 
         // No se creo credito ni puente, y la reserva sigue Confirmed (no se anulo).
         Assert.Empty(await context.ClientCreditEntries.AsNoTracking().ToListAsync());
@@ -298,7 +302,7 @@ public class AnnulWithPaymentsToCreditTests
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             BuildReservaService(context).AnnulWithPaymentsToCreditAsync(
-                reservaPublicId.ToString(), actorUserId: "u1", actorUserName: "User One"));
+                reservaPublicId.ToString(), reason: ValidReason, actorUserId: "u1", actorUserName: "User One"));
 
         Assert.Empty(await context.ClientCreditEntries.AsNoTracking().ToListAsync());
         var reserva = await context.Reservas.AsNoTracking().FirstAsync(r => r.Id == 1);
@@ -320,7 +324,7 @@ public class AnnulWithPaymentsToCreditTests
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             BuildReservaService(context).AnnulWithPaymentsToCreditAsync(
-                reservaPublicId.ToString(), actorUserId: "u1", actorUserName: "User One"));
+                reservaPublicId.ToString(), reason: ValidReason, actorUserId: "u1", actorUserName: "User One"));
 
         Assert.Empty(await context.ClientCreditEntries.AsNoTracking().ToListAsync());
     }
@@ -410,7 +414,7 @@ public class AnnulWithPaymentsToCreditTests
             .Where(r => r.Id == 1).Select(r => r.PublicId).FirstAsync();
 
         await BuildReservaService(context).AnnulWithPaymentsToCreditAsync(
-            reservaPublicId.ToString(), actorUserId: "u1", actorUserName: "User One");
+            reservaPublicId.ToString(), reason: ValidReason, actorUserId: "u1", actorUserName: "User One");
 
         // Tras anular (reserva Cancelled + servicio cancelado), la deuda del operador se recalcula a 0:
         // el servicio anulado deja de contar. Antes del fix quedaba INFLADA en 80.
@@ -438,11 +442,11 @@ public class AnnulWithPaymentsToCreditTests
         var service = BuildReservaService(context);
 
         // Primera anulacion: convierte 100 ARS a saldo a favor.
-        await service.AnnulWithPaymentsToCreditAsync(reservaPublicId.ToString(), "u1", "User One");
+        await service.AnnulWithPaymentsToCreditAsync(reservaPublicId.ToString(), ValidReason, "u1", "User One");
 
         // Segunda invocacion (simula doble clic / retry de la ExecutionStrategy): debe ser NO-OP, no lanzar
         // (la reserva ya esta Cancelled) y NO duplicar el credito ni el puente.
-        var dto = await service.AnnulWithPaymentsToCreditAsync(reservaPublicId.ToString(), "u1", "User One");
+        var dto = await service.AnnulWithPaymentsToCreditAsync(reservaPublicId.ToString(), ValidReason, "u1", "User One");
         Assert.Equal(EstadoReserva.Cancelled, dto.Status);
 
         // Sigue habiendo UN solo credito y UN solo puente (la idempotencia funciono).
@@ -475,7 +479,7 @@ public class AnnulWithPaymentsToCreditTests
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             BuildReservaService(context).AnnulWithPaymentsToCreditAsync(
-                reservaPublicId.ToString(), "u1", "User One"));
+                reservaPublicId.ToString(), ValidReason, "u1", "User One"));
 
         // NADA mutado: sigue Confirmed, sin credito, sin puente. La plata NO desaparece.
         var after = await context.Reservas.AsNoTracking().FirstAsync(r => r.Id == 1);
@@ -501,7 +505,7 @@ public class AnnulWithPaymentsToCreditTests
 
         var audit = new CapturingAuditService();
         await BuildReservaService(context, audit).AnnulWithPaymentsToCreditAsync(
-            reservaPublicId.ToString(), "u1", "User One");
+            reservaPublicId.ToString(), ValidReason, "u1", "User One");
 
         // Se stageo exactamente el evento de "anulada con cobros a saldo a favor".
         var staged = Assert.Single(audit.Staged,
@@ -515,8 +519,40 @@ public class AnnulWithPaymentsToCreditTests
         Assert.Contains("\"amount\":100", staged.Details);
         Assert.Contains("\"currency\":\"USD\"", staged.Details);
         Assert.Contains("\"amount\":50", staged.Details);
+        // ...y el MOTIVO declarado por el operador (justificacion de negocio que cierra el hueco de auditoria).
+        Assert.Contains($"\"reason\":\"{ValidReason}\"", staged.Details);
         // ...y NO expone costo del operador ni otros datos sensibles.
         Assert.DoesNotContain("cost", staged.Details, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("netcost", staged.Details, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ===================== Motivo obligatorio (>= 10 chars) — validacion server-side =====================
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("corto")]          // < 10 chars
+    [InlineData("123456789")]      // 9 chars, justo por debajo del minimo
+    public async Task AnnulWithCredit_InvalidReason_Throws_AndDoesNotMutate(string invalidReason)
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedFirmReservaAsync(context, EstadoReserva.Confirmed, arsSale: 100m);
+        AddLivePayment(context, 100m, "ARS");
+        await context.SaveChangesAsync();
+
+        var reservaPublicId = await context.Reservas.AsNoTracking()
+            .Where(r => r.Id == 1).Select(r => r.PublicId).FirstAsync();
+
+        // Motivo vacio/corto -> ArgumentException (el controller la mapea a 400). Se valida ANTES de tocar nada.
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            BuildReservaService(context).AnnulWithPaymentsToCreditAsync(
+                reservaPublicId.ToString(), invalidReason, "u1", "User One"));
+
+        // NADA mutado: sigue Confirmed, sin credito, sin puente.
+        var after = await context.Reservas.AsNoTracking().FirstAsync(r => r.Id == 1);
+        Assert.Equal(EstadoReserva.Confirmed, after.Status);
+        Assert.Empty(await context.ClientCreditEntries.AsNoTracking().ToListAsync());
+        Assert.Empty(await context.Payments.IgnoreQueryFilters().AsNoTracking()
+            .Where(p => p.Method == CancellationToClientCreditConverter.BridgeMethod).ToListAsync());
     }
 }

@@ -1102,9 +1102,22 @@ public class ReservaService : IReservaService
     /// asi que no hay nada que acreditar fiscalmente. Si la hubiera, este metodo RECHAZA y deriva a
     /// <c>BookingCancellationService</c> (camino (4)). No se tocan los guards fiscales ni AfipService/InvoiceService.</para>
     /// </summary>
+    /// <summary>Largo minimo del motivo de la anulacion. Mismo criterio que el draft de cancelacion con NC y que
+    /// RevertStatusAsync: una operacion que mueve plata a saldo a favor tiene que quedar JUSTIFICADA en el audit.</summary>
+    private const int AnnulReasonMinLength = 10;
+
     public async Task<ReservaDto> AnnulWithPaymentsToCreditAsync(
-        string publicIdOrLegacyId, string? actorUserId, string? actorUserName, CancellationToken ct = default)
+        string publicIdOrLegacyId, string reason, string? actorUserId, string? actorUserName, CancellationToken ct = default)
     {
+        // Validacion server-side del motivo (NO se confia en el front): obligatorio y >= 10 chars. Es plata que se
+        // mueve a saldo a favor -> sin justificacion no se ejecuta. ArgumentException; el controller la mapea a 400.
+        var trimmedReason = reason?.Trim() ?? string.Empty;
+        if (trimmedReason.Length < AnnulReasonMinLength)
+        {
+            throw new ArgumentException(
+                $"El motivo de la anulación es obligatorio y debe tener al menos {AnnulReasonMinLength} caracteres.");
+        }
+
         var id = await ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, ct);
 
         // Efecto atomico. Patron FC4: solo contra provider RELACIONAL usamos transaccion envolvente
@@ -1122,13 +1135,13 @@ public class ReservaService : IReservaService
             await strategy.ExecuteAsync(async () =>
             {
                 await using var transaction = await _context.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
-                await LoadValidateAndApplyAnnulWithPaymentsToCreditAsync(id, actorUserId, actorUserName, ct);
+                await LoadValidateAndApplyAnnulWithPaymentsToCreditAsync(id, trimmedReason, actorUserId, actorUserName, ct);
                 await transaction.CommitAsync(ct);
             });
         }
         else
         {
-            await LoadValidateAndApplyAnnulWithPaymentsToCreditAsync(id, actorUserId, actorUserName, ct);
+            await LoadValidateAndApplyAnnulWithPaymentsToCreditAsync(id, trimmedReason, actorUserId, actorUserName, ct);
         }
 
         return await GetReservaByIdAsync(id);
@@ -1141,7 +1154,7 @@ public class ReservaService : IReservaService
     /// de un intento previo que se aborto, ni reusa una instancia tracked stale.
     /// </summary>
     private async Task LoadValidateAndApplyAnnulWithPaymentsToCreditAsync(
-        int id, string? actorUserId, string? actorUserName, CancellationToken ct)
+        int id, string reason, string? actorUserId, string? actorUserName, CancellationToken ct)
     {
         // Pizarra limpia. En un reintento de la ExecutionStrategy el ChangeTracker aun tiene las entidades
         // Added del intento anterior (saldo a favor, puente, audit); sin esto, el proximo SaveChanges las
@@ -1219,17 +1232,17 @@ public class ReservaService : IReservaService
                 "La reserva tiene cobros pero no tiene un cliente pagador asignado; no se puede generar saldo a favor.");
         }
 
-        await ApplyAnnulWithPaymentsToCreditAsync(reserva, actorUserId, actorUserName, ct);
+        await ApplyAnnulWithPaymentsToCreditAsync(reserva, reason, actorUserId, actorUserName, ct);
     }
 
     /// <summary>
     /// Cuerpo comun del caso (3): cancela servicios, traslada los cobros a saldo a favor por moneda, pasa la
-    /// reserva a Cancelled, stagea el audit y persiste el saldo. NO abre transaccion (la abre el caller); las
-    /// SaveChanges de aca participan de la transaccion ambiente cuando existe, asi un fallo en cualquier paso
-    /// revierte TODO.
+    /// reserva a Cancelled, stagea el audit (con el motivo) y persiste el saldo. NO abre transaccion (la abre el
+    /// caller); las SaveChanges de aca participan de la transaccion ambiente cuando existe, asi un fallo en
+    /// cualquier paso revierte TODO.
     /// </summary>
     private async Task ApplyAnnulWithPaymentsToCreditAsync(
-        Reserva reserva, string? actorUserId, string? actorUserName, CancellationToken ct)
+        Reserva reserva, string reason, string? actorUserId, string? actorUserName, CancellationToken ct)
     {
         var fromStatus = reserva.Status;
 
@@ -1261,7 +1274,8 @@ public class ReservaService : IReservaService
         reserva.Status = EstadoReserva.Cancelled;
 
         // d) Audit STAGEADO (no guarda): entra en el mismo commit que el resto. Rastro de "reserva anulada,
-        //    cobros a saldo a favor" con monto POR MONEDA. Sin costos ni datos sensibles.
+        //    cobros a saldo a favor" con monto POR MONEDA + el MOTIVO declarado por el operador (justificacion de
+        //    negocio, no es dato sensible). Sin costos ni datos sensibles.
         if (_auditService is not null)
         {
             var details = System.Text.Json.JsonSerializer.Serialize(new
@@ -1271,6 +1285,7 @@ public class ReservaService : IReservaService
                 customerId = reserva.PayerId,
                 fromStatus,
                 toStatus = EstadoReserva.Cancelled,
+                reason,
                 creditsByCurrency = convertedByCurrency
                     .Select(c => new { currency = c.Currency, amount = c.Amount })
                     .ToList(),

@@ -70,14 +70,24 @@ function puedeVerBotonCancelar({ canCancelReserva, isArchived, capabilities, res
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Lógica copiada de CancelarReservaInline.jsx (cartel según factura)
+// Lógica copiada de CancelarReservaInline.jsx (cartel según caso de anulación)
+// Actualizado 2026-06-25: 3 carteles en vez de 2, discriminados por cancellationCase.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Replica de la lógica de selección de cartel en CancelarReservaInline.
- * Devuelve: "verde" | "ambar"
+ * Replica del discriminador de caso en CancelarReservaInline (función determinarCasoAnulacion).
+ * Usa cancellationCase del backend como fuente primaria; cae al booleano legacy si no viene.
+ * Devuelve: "DirectCancel" | "PaymentsToCredit" | "CreditNote" | (cualquier otro caso)
  */
 function resolverColorCartelCancelacion(reserva) {
+    // Fuente primaria: cancellationCase del DTO (backend 2026-06-25).
+    if (reserva?.cancellationCase) {
+        if (reserva.cancellationCase === "DirectCancel") return "verde";
+        if (reserva.cancellationCase === "PaymentsToCredit") return "celeste";
+        return "ambar"; // CreditNote, NotApplicable, PreSale, o cualquier valor futuro.
+    }
+    // FALLBACK: DTO viejo sin cancellationCase → comportamiento legacy (2 carteles).
+    // PaymentsToCredit no se puede inferir desde el booleano solo.
     return reserva?.requiresInvoiceAnnulmentToCancel === true ? "ambar" : "verde";
 }
 
@@ -247,31 +257,52 @@ test("A cancelar: archivada → NO visible", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// C) Tests: cartel verde vs ámbar en CancelarReservaInline
+// C) Tests: 3 carteles en CancelarReservaInline según cancellationCase
+//    Actualizado 2026-06-25: cartel nuevo CELESTE para PaymentsToCredit.
 // ─────────────────────────────────────────────────────────────────────────────
 
-test("C cartel: requiresInvoiceAnnulmentToCancel=false → cartel VERDE (sin factura)", () => {
+test("C cartel: cancellationCase=DirectCancel → cartel VERDE (sin factura, sin cobros)", () => {
+    const reserva = { cancellationCase: "DirectCancel" };
+    assert.equal(resolverColorCartelCancelacion(reserva), "verde");
+});
+
+test("C cartel: cancellationCase=PaymentsToCredit → cartel CELESTE (sin factura, con cobros)", () => {
+    // Caso nuevo: la plata cobrada queda como saldo a favor.
+    const reserva = { cancellationCase: "PaymentsToCredit" };
+    assert.equal(resolverColorCartelCancelacion(reserva), "celeste");
+});
+
+test("C cartel: cancellationCase=CreditNote → cartel ÁMBAR (con factura emitida)", () => {
+    const reserva = { cancellationCase: "CreditNote" };
+    assert.equal(resolverColorCartelCancelacion(reserva), "ambar");
+});
+
+test("C cartel: cancellationCase=NotApplicable → cartel ÁMBAR (fallback conservador)", () => {
+    // NotApplicable no debería llegar a este panel; si llega, ámbar es el más seguro.
+    const reserva = { cancellationCase: "NotApplicable" };
+    assert.equal(resolverColorCartelCancelacion(reserva), "ambar");
+});
+
+test("C cartel: sin cancellationCase, requiresInvoiceAnnulmentToCancel=false → VERDE (fallback legacy)", () => {
+    // DTO viejo sin discriminador. Comportamiento idéntico al anterior.
     const reserva = { requiresInvoiceAnnulmentToCancel: false };
-    const color = resolverColorCartelCancelacion(reserva);
-    assert.equal(color, "verde");
+    assert.equal(resolverColorCartelCancelacion(reserva), "verde");
 });
 
-test("C cartel: requiresInvoiceAnnulmentToCancel=true → cartel ÁMBAR (con factura emitida)", () => {
+test("C cartel: sin cancellationCase, requiresInvoiceAnnulmentToCancel=true → ÁMBAR (fallback legacy)", () => {
+    // DTO viejo con factura. Comportamiento idéntico al anterior.
     const reserva = { requiresInvoiceAnnulmentToCancel: true };
-    const color = resolverColorCartelCancelacion(reserva);
-    assert.equal(color, "ambar");
+    assert.equal(resolverColorCartelCancelacion(reserva), "ambar");
 });
 
-test("C cartel: requiresInvoiceAnnulmentToCancel=undefined (DTO viejo) → cartel VERDE (conservador)", () => {
-    // Un DTO viejo sin el campo → undefined → false → verde (no asustamos al usuario).
+test("C cartel: sin cancellationCase, sin requiresInvoiceAnnulmentToCancel (DTO muy viejo) → VERDE (conservador)", () => {
+    // Ningún campo disponible: verde para no asustar al usuario.
     const reserva = {};
-    const color = resolverColorCartelCancelacion(reserva);
-    assert.equal(color, "verde");
+    assert.equal(resolverColorCartelCancelacion(reserva), "verde");
 });
 
 test("C cartel: reserva=null → verde (no rompe)", () => {
-    const color = resolverColorCartelCancelacion(null);
-    assert.equal(color, "verde");
+    assert.equal(resolverColorCartelCancelacion(null), "verde");
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

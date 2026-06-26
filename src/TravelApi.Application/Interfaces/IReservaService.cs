@@ -92,7 +92,13 @@ public interface IReservaService
     /// NC) y CON al menos un cobro vivo (si no, el camino es la baja simple). Los PERMISOS (reservas.cancel +
     /// reservas.cancel_with_payment) los exige el caller/controller.</para>
     /// </summary>
-    Task<ReservaDto> AnnulWithPaymentsToCreditAsync(string publicIdOrLegacyId, string? actorUserId, string? actorUserName, CancellationToken ct = default);
+    /// <param name="reason">
+    /// Motivo de negocio de la anulacion declarado por el operador (OBLIGATORIO, min 10 chars — mismo criterio que
+    /// el draft de cancelacion con NC y que RevertStatusAsync). Es plata que se mueve a saldo a favor: queda en la
+    /// auditoria como justificacion. El service valida server-side (<see cref="ArgumentException"/> si no cumple);
+    /// NO se confia en la validacion del front.
+    /// </param>
+    Task<ReservaDto> AnnulWithPaymentsToCreditAsync(string publicIdOrLegacyId, string reason, string? actorUserId, string? actorUserName, CancellationToken ct = default);
 
     Task<TransitionReadinessDto> GetTransitionReadinessAsync(string publicIdOrLegacyId, string targetStatus, CancellationToken ct = default);
     Task<RevertOptionsDto> GetRevertOptionsAsync(string publicIdOrLegacyId, string actorUserId, bool actorIsAdmin, CancellationToken ct = default);

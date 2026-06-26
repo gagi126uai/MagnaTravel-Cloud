@@ -69,3 +69,13 @@ public record RescheduleReservaRequest(
 /// se almacena en el campo PNR; para el resto en ConfirmationNumber.
 /// </summary>
 public record ServiceStatusUpdateRequest(string Status, string? ConfirmationNumber = null);
+
+/// <summary>
+/// Body de <c>POST /api/reservas/{id}/annul-with-credit</c> (caso (3): anular en firme sin factura, con cobros,
+/// convirtiendo la plata en saldo a favor). <see cref="Reason"/> es el MOTIVO obligatorio de la anulacion
+/// declarado por el operador (min 10 chars; mismo criterio que el draft de cancelacion con NC). Como mueve plata
+/// a saldo a favor, la justificacion queda registrada en la auditoria. El controller y el service validan el
+/// largo server-side (no se confia en el front). Nullable para controlar nosotros el mensaje de error en español
+/// en vez del 400 generico de model-binding cuando el body llega vacio.
+/// </summary>
+public record AnnulWithCreditRequest(string? Reason);

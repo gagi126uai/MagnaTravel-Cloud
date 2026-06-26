@@ -644,19 +644,35 @@ public class ReservasController : ControllerBase
     [HttpPost("{publicIdOrLegacyId}/annul-with-credit")]
     [RequirePermission(Permissions.ReservasCancelWithPayment)]
     [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
-    public async Task<ActionResult<ReservaDto>> AnnulWithCredit(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    public async Task<ActionResult<ReservaDto>> AnnulWithCredit(
+        string publicIdOrLegacyId, [FromBody] AnnulWithCreditRequest request, CancellationToken cancellationToken)
     {
+        // Validacion del MOTIVO en el borde (no se confia en el front): obligatorio y >= 10 chars, mismo criterio
+        // que el draft de cancelacion con NC. Mensaje propio en español (no eco crudo del input). El service
+        // revalida igual server-side (defensa en profundidad). Es plata que se mueve a saldo a favor: sin
+        // justificacion no se ejecuta.
+        var reason = request?.Reason?.Trim() ?? string.Empty;
+        if (reason.Length < 10)
+        {
+            return BadRequest(new { message = "El motivo de la anulación es obligatorio y debe tener al menos 10 caracteres." });
+        }
+
         try
         {
             var actorUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
             var actorUserName = User.FindFirstValue("FullName") ?? User.FindFirstValue(ClaimTypes.Name) ?? User.Identity?.Name;
             var dto = await _reservaService.AnnulWithPaymentsToCreditAsync(
-                publicIdOrLegacyId, actorUserId, actorUserName, cancellationToken);
+                publicIdOrLegacyId, reason, actorUserId, actorUserName, cancellationToken);
             return Ok(dto);
         }
         catch (KeyNotFoundException)
         {
             return NotFound();
+        }
+        catch (ArgumentException ex)
+        {
+            // Motivo invalido revalidado en el service (defensa en profundidad): entrada invalida -> 400.
+            return BadRequest(new { message = ex.Message });
         }
         catch (UnauthorizedAccessException ex)
         {

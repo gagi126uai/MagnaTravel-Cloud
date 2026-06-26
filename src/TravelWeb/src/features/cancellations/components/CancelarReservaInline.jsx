@@ -8,13 +8,15 @@
  * En este producto "Cancelar" = saldar una deuda; "Anular" = deshacer el viaje.
  * El estado interno del backend sigue siendo "Cancelled", pero el usuario ve "Anular/Anulada".
  *
- * El cartel de color (verde / ámbar) informa si la anulacion NECESITA emitir una nota de
- * crédito en AFIP/ARCA, usando el campo `requiresInvoiceAnnulmentToCancel` del DTO.
+ * guia-ux-gaston.md 2026-06-25 — 3 casos distintos según `cancellationCase` del DTO:
+ *   - DirectCancel (VERDE):      sin factura, sin cobros → baja directa.
+ *   - PaymentsToCredit (CELESTE): sin factura, CON cobros → la plata pasa a saldo a favor.
+ *   - CreditNote (ÁMBAR):        con factura CAE vivo → anulación formal con Nota de Crédito.
  *
  * Props:
  *   - reserva: objeto de la reserva (necesita publicId, numeroReserva, customerName,
- *              requiresInvoiceAnnulmentToCancel).
- *   - onCancelado: callback luego de confirmar exitosamente (nombre legacy mantenido por compatibilidad).
+ *              cancellationCase, cancellationCreditByCurrency, requiresInvoiceAnnulmentToCancel).
+ *   - onCancelado: callback luego de confirmar exitosamente (nombre legacy mantenido).
  *   - onCerrar: callback cuando el usuario cierra el panel sin anular.
  */
 
@@ -23,27 +25,78 @@ import { AlertTriangle, Loader2, Ban, X } from "lucide-react";
 import { api } from "../../../api";
 import { cancellationsApi } from "../api/cancellationsApi";
 import { showSuccess, showError } from "../../../alerts";
+import { formatCurrency } from "../../../lib/utils";
 import {
     buildPenaltyClassificationPayload,
     buildSnapshotData,
 } from "../lib/penaltyPayload";
+import {
+    TEXTO_BANNER_DIRECT_CANCEL,
+    TEXTO_BANNER_SALDO_FAVOR_INICIO,
+    TEXTO_BANNER_SALDO_FAVOR_ANTE_NEGRITA,
+    TEXTO_BANNER_SALDO_FAVOR_NEGRITA,
+    TEXTO_BANNER_SALDO_FAVOR_POST_NEGRITA,
+    TEXTO_BANNER_CREDIT_NOTE,
+    MENSAJE_EXITO_DIRECT_CANCEL,
+    MENSAJE_EXITO_PAYMENTS_TO_CREDIT,
+    MENSAJE_EXITO_CREDIT_NOTE,
+} from "./cancelarReservaCopy";
+
+// ─── Funciones de lógica pura (replicadas en cancelarReservaInline.test.mjs) ──
+
+/**
+ * Determina el caso de anulación a partir del discriminador del backend.
+ * Cuando el campo `cancellationCase` no viene (DTO viejo en cache), cae al
+ * comportamiento legacy usando `requiresInvoiceAnnulmentToCancel`.
+ *
+ * El caso "PaymentsToCredit" NO puede inferirse desde el booleano legacy solo
+ * (requeriría saber si hay cobros), así que el fallback ignora ese caso y
+ * queda en DirectCancel o CreditNote — igual que el comportamiento anterior.
+ *
+ * @param {object} reserva - DTO de la reserva
+ * @returns {string} - "DirectCancel" | "PaymentsToCredit" | "CreditNote" | "NotApplicable" | "PreSale"
+ */
+function determinarCasoAnulacion(reserva) {
+    if (reserva?.cancellationCase) {
+        return reserva.cancellationCase;
+    }
+    // FALLBACK: DTO sin cancellationCase (versión vieja en cache o sin actualizar).
+    // CreditNote si tiene factura CAE vivo, DirectCancel en cualquier otro caso.
+    return reserva?.requiresInvoiceAnnulmentToCancel === true ? "CreditNote" : "DirectCancel";
+}
+
+/**
+ * Formatea los montos de saldo a favor para el cartel celeste (caso PaymentsToCredit).
+ * Usa el formateador de moneda del proyecto para ser consistente con el resto de la app.
+ * Separa con " · " cuando hay más de una moneda (nunca suma ARS + USD: regla del contador).
+ *
+ * @param {Array<{currency: string, amount: number}>} creditByCurrency
+ * @returns {string} - Ej: "$ 150.000,00 · US$200,00"
+ */
+function formatearMontosSaldoAFavor(creditByCurrency) {
+    if (!creditByCurrency || creditByCurrency.length === 0) return "";
+    return creditByCurrency
+        .map((item) => formatCurrency(item.amount, item.currency))
+        .join(" · ");
+}
+
+// ─── Componente ───────────────────────────────────────────────────────────────
 
 export function CancelarReservaInline({ reserva, onCancelado, onCerrar }) {
     const [reason, setReason] = useState("");
 
-    // `processing` cubre las 2 llamadas internas (draft + confirm) como un único loading.
+    // `processing` cubre todas las llamadas internas como un único loading visible al usuario.
     const [processing, setProcessing] = useState(false);
 
-    // Mensaje de conflicto 409 (invariante de negocio). Se muestra en un banner dentro del
-    // panel para que el usuario lo vea sin que desaparezca el formulario con lo cargado.
+    // Mensaje de conflicto (400/409 recuperable). Se muestra en un banner inline para que
+    // el usuario lo vea sin que desaparezca el formulario con lo cargado.
     const [conflictMessage, setConflictMessage] = useState(null);
 
-    // Settings de AFIP/ARCA necesarios para construir el snapshot fiscal del confirm.
-    // Se precargan al montar el panel para tenerlos listos cuando el usuario confirma.
+    // Settings de AFIP/ARCA necesarios para construir el snapshot fiscal del paso confirm.
+    // Solo los usa el camino CreditNote; se precargan igual para tenerlos listos si hace falta.
     const [afipSettings, setAfipSettings] = useState(null);
 
-    // Resetea el estado al montar (o si el panel se reutiliza).
-    // useEffect con []: corre una sola vez al montar el componente.
+    // useEffect con []: corre una sola vez al montar el componente para resetear el estado.
     useEffect(() => {
         setReason("");
         setProcessing(false);
@@ -80,13 +133,53 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar }) {
         setProcessing(true);
         setConflictMessage(null);
 
+        const caso = determinarCasoAnulacion(reserva);
+
+        // ── Caso 3: sin factura, con cobros → la plata queda como saldo a favor ─────────
+        // Usa un endpoint distinto: un solo POST con { reason }, sin el flujo de 2 pasos.
+        // El front valida el motivo ≥10 chars arriba; el backend también valida server-side.
+        if (caso === "PaymentsToCredit") {
+            try {
+                await cancellationsApi.annulWithCredit(reserva.publicId, trimmedReason);
+                showSuccess(MENSAJE_EXITO_PAYMENTS_TO_CREDIT, "Anulación confirmada");
+                onCancelado();
+            } catch (error) {
+                // NUNCA mostramos el texto crudo del backend (puede traer nombres internos).
+                const code = error?.payload?.invariantCode || error?.payload?.code || "";
+                if (error?.status === 400) {
+                    // 400: el backend rechazó el motivo (< 10 chars). El front ya lo valida,
+                    // pero el backend también controla server-side (regla de auditoría).
+                    setConflictMessage("Revisá el motivo de la anulación (mínimo 10 caracteres).");
+                } else if (error?.status === 403) {
+                    showError("No tenés permiso para anular esta reserva.");
+                } else if (error?.status === 404) {
+                    showError("No encontramos la reserva. Recargá la página.");
+                } else if (error?.status === 409 && code === "INV-100") {
+                    setConflictMessage(
+                        "Esta reserva tiene más de una factura emitida. Por ahora no se puede anular toda la reserva de una vez: anulá cada factura desde la solapa Facturas, o contactá a administración."
+                    );
+                } else if (error?.status === 409) {
+                    setConflictMessage(
+                        "No se pudo anular la reserva. Probá de nuevo; si el problema sigue, contactá a administración."
+                    );
+                } else {
+                    showError("No se pudo anular la reserva. Probá de nuevo en unos segundos.");
+                }
+                setProcessing(false);
+            }
+            return;
+        }
+
+        // ── Casos 2 y 4: DirectCancel y CreditNote → flujo draft → confirm ──────────────
+        // Mismo camino técnico (2 llamadas al backend); la diferencia es si hay factura
+        // o no, y eso lo resuelve el backend internamente.
+
         // PASO 1: crear el borrador (draft). Si falla acá no seguimos.
         let draft;
         try {
             draft = await cancellationsApi.draft(reserva.publicId, trimmedReason);
         } catch (error) {
-            // NUNCA mostramos el texto crudo del backend (puede traer nombres de flags u otros
-            // internos). Mapeamos por código a copy amigable; el fallback también es amigable.
+            // NUNCA mostramos el texto crudo del backend.
             const code = error?.payload?.invariantCode || error?.payload?.code || "";
             if (error?.status === 409 && code === "INV-100") {
                 setConflictMessage(
@@ -103,10 +196,10 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar }) {
             return;
         }
 
-        // PASO 2: confirmar la cancelación. Emite la nota de crédito en AFIP/ARCA (async).
+        // PASO 2: confirmar la cancelación. Emite la NC en AFIP/ARCA si hay factura (async).
         //
         // Clasificación de penalidad: siempre "operator_pass_through" (int 0).
-        // La agencia NO emite ningún cargo propio ni nota de débito.
+        // La agencia NO emite ningún cargo propio ni nota de débito en este paso.
         // Solo se emite la nota de crédito. Es la opción más neutra para el mostrador.
         const penaltyClassification = buildPenaltyClassificationPayload(
             "operator_pass_through",
@@ -127,11 +220,17 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar }) {
 
         try {
             await cancellationsApi.confirm(draft.publicId, payload);
-            // ADR-036: el mensaje visible dice "anulada" (no "cancelada").
-            showSuccess("Reserva anulada. La nota de crédito se está generando.", "Anulación confirmada");
+
+            // Mensaje diferenciado: DirectCancel (sin NC) vs CreditNote (con NC en AFIP).
+            if (caso === "DirectCancel") {
+                showSuccess(MENSAJE_EXITO_DIRECT_CANCEL, "Anulación confirmada");
+            } else {
+                // CreditNote, y también el fallback de DTOs viejos sin cancellationCase.
+                showSuccess(MENSAJE_EXITO_CREDIT_NOTE, "Anulación confirmada");
+            }
             onCancelado();
         } catch (error) {
-            // Igual que el draft: nunca eco del texto crudo del backend. Mapeo por código.
+            // NUNCA mostramos el texto crudo del backend.
             const code = error?.payload?.code || error?.payload?.invariantCode || "";
             if (error?.status === 409 && code === "CONCURRENT_EDIT") {
                 setConflictMessage(
@@ -156,10 +255,11 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar }) {
     const tooShort = reason.length > 0 && reasonTrimmed.length < 10;
     const canSubmit = !processing && reasonTrimmed.length >= 10;
 
-    // `requiresInvoiceAnnulmentToCancel` viene del DTO (ADR-035, campo boolean).
-    // true  → reserva tiene factura con CAE vivo; al cancelar se emite NC en AFIP.
-    // false → no hay factura emitida; se cancela sin nota de crédito.
-    const requiereAnulacion = reserva?.requiresInvoiceAnnulmentToCancel === true;
+    // Determina el caso activo para mostrar el cartel correcto.
+    const casoAnulacion = determinarCasoAnulacion(reserva);
+
+    // Monto formateado para el cartel celeste (solo viene en el caso PaymentsToCredit).
+    const montosFormateados = formatearMontosSaldoAFavor(reserva?.cancellationCreditByCurrency);
 
     return (
         <div
@@ -170,7 +270,6 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar }) {
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                     <Ban className="w-4 h-4 text-rose-600" aria-hidden="true" />
-                    {/* ADR-036: "Anular reserva" en vez de "Cancelar reserva" */}
                     <h4 className="text-sm font-bold text-slate-900 dark:text-white">Anular reserva</h4>
                     <span className="text-xs text-slate-500 dark:text-slate-400">
                         #{reserva.numeroReserva} — {reserva.customerName}
@@ -187,32 +286,51 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar }) {
                 </button>
             </div>
 
-            {/* ── Cartel según haya o no factura emitida (ADR-035, 2026-06-19) ──
-                Verde: no hay factura; se cancela directo.
-                Ámbar: hay factura con CAE; la cancelación emite NC en AFIP/ARCA.
-
-                Decisión de UX (guia-ux-gaston.md sección ADR-035):
-                "Si la reserva NO tiene factura emitida → cartel verde. Si SÍ tiene → cartel ámbar." */}
-            {!requiereAnulacion ? (
+            {/* ── Cartel según el caso de anulación (guia-ux-gaston.md 2026-06-25) ──
+                Caso 2 DirectCancel     → VERDE:   sin factura, sin cobros.
+                Caso 3 PaymentsToCredit → CELESTE:  sin factura, con cobros (plata → saldo a favor).
+                Caso 4 CreditNote       → ÁMBAR:   con factura CAE → emite NC en AFIP/ARCA.
+                Cualquier otro caso     → ÁMBAR:   fallback conservador (no prometemos nada).
+                Los textos viven en cancelarReservaCopy.js para que los tests puedan importarlos. */}
+            {casoAnulacion === "DirectCancel" && (
                 <div
                     className="flex items-start gap-2 rounded-lg border border-green-200 bg-green-50 p-3.5 text-xs text-green-800 dark:bg-green-950/30 dark:border-green-800 dark:text-green-200"
                     data-testid="cancelar-banner-sin-factura"
                 >
-                    <span>Esta reserva no tiene factura emitida, se cancela directo, sin nota de crédito.</span>
+                    <span>{TEXTO_BANNER_DIRECT_CANCEL}</span>
                 </div>
-            ) : (
+            )}
+
+            {casoAnulacion === "PaymentsToCredit" && (
+                <div
+                    className="flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50 p-3.5 text-xs text-sky-800 dark:bg-sky-950/30 dark:border-sky-800 dark:text-sky-200"
+                    data-testid="cancelar-banner-saldo-favor"
+                >
+                    {/* Decisión UX (guia 2026-06-25): mostrar el monto cobrado por moneda
+                        para que el agente sepa exactamente cuánto queda como saldo a favor.
+                        Los montos nunca se suman entre monedas (regla del contador: ARS y USD siempre separados).
+                        "SALDO A FAVOR" en negrita (presentacional; el texto vive en cancelarReservaCopy.js). */}
+                    <span>
+                        {TEXTO_BANNER_SALDO_FAVOR_INICIO}
+                        {montosFormateados ? ` (${montosFormateados})` : ""}.{" "}
+                        {TEXTO_BANNER_SALDO_FAVOR_ANTE_NEGRITA}
+                        <strong>{TEXTO_BANNER_SALDO_FAVOR_NEGRITA}</strong>
+                        {TEXTO_BANNER_SALDO_FAVOR_POST_NEGRITA}
+                    </span>
+                </div>
+            )}
+
+            {casoAnulacion !== "DirectCancel" && casoAnulacion !== "PaymentsToCredit" && (
                 <div
                     className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3.5 text-xs text-amber-800 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-200"
                     data-testid="cancelar-banner-con-factura"
                 >
                     <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" aria-hidden="true" />
-                    <span>
-                        Esta reserva tiene factura emitida, al cancelar se emite la nota de crédito en AFIP/ARCA para anularla.
-                    </span>
+                    <span>{TEXTO_BANNER_CREDIT_NOTE}</span>
                 </div>
             )}
 
-            {/* ── Error de conflicto 409 ── */}
+            {/* ── Error de conflicto (400/409 recuperable) ── */}
             {conflictMessage && (
                 <div
                     role="alert"
@@ -273,7 +391,6 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar }) {
                     className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-bold text-white hover:bg-rose-700 transition-colors disabled:opacity-50 flex items-center gap-2"
                 >
                     {processing && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-                    {/* ADR-036: "Anular reserva" en vez de "Cancelar reserva" */}
                     {processing ? "Anulando..." : "Anular reserva"}
                 </button>
             </div>

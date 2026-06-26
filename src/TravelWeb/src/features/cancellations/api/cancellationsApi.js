@@ -156,6 +156,28 @@ export const cancellationsApi = {
    */
   getByReserva: (reservaPublicId) =>
     api.get(`/cancellations/by-reserva/${reservaPublicId}`),
+
+  /**
+   * Anula una reserva en firme que tiene cobros pero sin factura emitida.
+   * Los pagos cobrados al cliente quedan como saldo a favor, reutilizables en otra reserva.
+   * Corresponde al caso "PaymentsToCredit" del discriminador cancellationCase del DTO.
+   *
+   * Endpoint: POST /api/reservas/{reservaPublicId}/annul-with-credit { reason }.
+   *
+   * Errores posibles:
+   *   - 400: motivo invalido (< 10 caracteres o vacio). El front valida primero, pero el
+   *          backend tambien lo controla server-side.
+   *   - 403: sin permiso para anular la reserva.
+   *   - 404: reserva no encontrada.
+   *   - 409: precondicion de negocio no cumplida (estado no firme, factura CAE viva,
+   *          sin cobros, reserva sin pagador). El body trae un mensaje descriptivo.
+   *
+   * @param {string} reservaPublicId - GUID de la reserva a anular.
+   * @param {string} reason - Motivo de la anulacion (>=10 caracteres, validado server-side).
+   * @returns {Promise<ReservaDto>} - La reserva actualizada con estado terminal (Cancelled).
+   */
+  annulWithCredit: (reservaPublicId, reason) =>
+    api.post(`/reservas/${reservaPublicId}/annul-with-credit`, { reason }),
 };
 
 // ============================================================================
