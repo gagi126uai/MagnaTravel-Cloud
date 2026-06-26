@@ -1087,10 +1087,12 @@ public class ReservaService : IReservaService
     }
 
     /// <summary>
-    /// Caso (3) del flujo unificado de "Anular reserva": anular una reserva en firme SIN factura con CAE vivo
-    /// pero CON cobros vivos -> pasa a Cancelled y la plata cobrada queda como SALDO A FAVOR del cliente
-    /// (reutilizable), sin emitir Nota de Credito. Ver el contrato completo en
-    /// <see cref="IReservaService.AnnulWithPaymentsToCreditAsync"/>.
+    /// "Anular reserva SIN factura" del flujo unificado: anular una reserva en firme SIN factura con CAE vivo,
+    /// CON o SIN cobros. Pasa la reserva a Cancelled. Cubre dos casos del discriminador:
+    ///   - DirectCancel (sin cobros):     baja directa, SIN generar saldo a favor ni Nota de Credito.
+    ///   - PaymentsToCredit (con cobros): la plata cobrada queda como SALDO A FAVOR del cliente (reutilizable),
+    ///     un <see cref="ClientCreditEntry"/> por moneda, sin emitir Nota de Credito (no hay factura que acreditar).
+    /// Ver el contrato completo en <see cref="IReservaService.AnnulWithPaymentsToCreditAsync"/>.
     ///
     /// <para><b>Atomicidad (patron FC4)</b>: todo el efecto (cambio de estado a Cancelled, cancelacion de los
     /// servicios para que la reserva no quede con venta exigible, conversion de cobros a saldo a favor por
@@ -1119,6 +1121,41 @@ public class ReservaService : IReservaService
         }
 
         var id = await ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, ct);
+
+        // AUTHZ (mismo patron que UpdateStatusAsync, lineas ~1058-1082): permiso BASE reservas.cancel y, SOLO si
+        // la reserva tiene cobros o facturas asociadas, ademas reservas.cancel_with_payment. Admin bypassa (ya
+        // paso por el handler de permisos del controller; este chequeo cubre al Vendedor). Asi la baja DIRECTA
+        // sin plata (DirectCancel) le alcanza a un Vendedor con reservas.cancel, mientras que convertir cobros a
+        // saldo a favor (PaymentsToCredit) sigue exigiendo la autorizacion reforzada.
+        //
+        // En tests unitarios sin HttpContext/resolver el actorUserId puede llegar null o no haber resolver: en
+        // ese caso el bloque queda inerte (mismo comportamiento que UpdateStatusAsync). El SERVICE igual valida
+        // las precondiciones de negocio mas abajo.
+        if (!string.IsNullOrEmpty(actorUserId))
+        {
+            var httpContextUser = _httpContextAccessor?.HttpContext?.User;
+            var isAdmin = httpContextUser?.IsInRole("Admin") ?? false;
+            if (!isAdmin)
+            {
+                var hasCancel = await UserHasPermissionAsync(actorUserId, Permissions.ReservasCancel, ct);
+                if (!hasCancel)
+                {
+                    throw new UnauthorizedAccessException("No tenes permiso para anular reservas.");
+                }
+
+                var hasPaymentsOrInvoices = await _context.Payments.AnyAsync(p => p.ReservaId == id && !p.IsDeleted, ct)
+                    || await _context.Invoices.AnyAsync(i => i.ReservaId == id, ct);
+                if (hasPaymentsOrInvoices)
+                {
+                    var hasCancelWithPayment = await UserHasPermissionAsync(actorUserId, Permissions.ReservasCancelWithPayment, ct);
+                    if (!hasCancelWithPayment)
+                    {
+                        throw new UnauthorizedAccessException(
+                            "Anular una reserva con cobros o facturas asociadas requiere autorizacion adicional.");
+                    }
+                }
+            }
+        }
 
         // Efecto atomico. Patron FC4: solo contra provider RELACIONAL usamos transaccion envolvente
         // (InMemory en los tests no soporta transacciones -> ramificamos por IsRelational y corremos el mismo
@@ -1174,15 +1211,19 @@ public class ReservaService : IReservaService
             .FirstOrDefaultAsync(r => r.Id == id, ct)
             ?? throw new KeyNotFoundException("Reserva no encontrada");
 
-        // 2) GUARD DE IDEMPOTENCIA (corre PRIMERO, antes que las demas precondiciones). Si ya existe un puente
-        //    de "saldo a favor por anulacion" para esta reserva, la conversion YA se hizo (doble clic, retry de
-        //    la ExecutionStrategy, o el ganador de una carrera Serializable). No-op: no re-validamos estado (ya
-        //    estaria Cancelled y harpia fallar la precondicion 3) ni duplicamos el credito. Usamos el Method del
-        //    puente — es UNICO de esta operacion; NO usamos SourceReservaId del credito porque el converter de
-        //    SOBREPAGO tambien lo setea y daria falso positivo en una reserva que solo tuvo sobrepago.
+        // 2) GUARD DE IDEMPOTENCIA (corre PRIMERO, antes que las demas precondiciones). Doble clic, retry de la
+        //    ExecutionStrategy o ganador de una carrera Serializable: si la operacion YA se aplico, esto es un
+        //    reintento y debe ser NO-OP (no re-validar estado ni duplicar nada). Dos señales de "ya aplicada":
+        //      (a) existe el puente de "saldo a favor por anulacion" -> hubo conversion de cobros (PaymentsToCredit).
+        //          Usamos el Method del puente — es UNICO de esta operacion; NO usamos SourceReservaId del credito
+        //          porque el converter de SOBREPAGO tambien lo setea y daria falso positivo.
+        //      (b) la reserva ya esta Cancelled -> cubre el caso DIRECTO sin cobros (DirectCancel), que NO deja
+        //          puente (no hay plata que trasladar): sin esta señal, un segundo clic veria la reserva ya
+        //          anulada, fallaria la precondicion de estado firme y devolveria un 409 confuso.
         var alreadyConverted = await _context.Payments.AnyAsync(
             p => p.ReservaId == id && p.Method == CancellationToClientCreditConverter.BridgeMethod, ct);
-        if (alreadyConverted)
+        var alreadyCancelled = string.Equals(reserva.Status, EstadoReserva.Cancelled, StringComparison.OrdinalIgnoreCase);
+        if (alreadyConverted || alreadyCancelled)
             return;
 
         // 3) Precondicion de estado: solo aplica en venta firme NO terminal (InManagement / Confirmed). En
@@ -1214,19 +1255,20 @@ public class ReservaService : IReservaService
                 "(se emite Nota de Crédito).");
         }
 
-        // 5) Precondicion de plata: debe haber al menos un cobro vivo. Si no hay plata, el camino correcto es la
-        //    baja simple (UpdateStatusAsync -> Cancelled), no esta operacion (que crearia un saldo a favor de 0).
+        // 5) Plata viva: ¿hay al menos un cobro vivo? Antes esto RECHAZABA cuando NO habia (forzaba la baja
+        //    simple por otro camino). Ahora este metodo cubre AMBOS casos del flujo unificado:
+        //      - CON cobros (PaymentsToCredit): el converter traslada la plata a saldo a favor del cliente.
+        //      - SIN cobros (DirectCancel):     el converter no genera ningun saldo a favor (TotalPaid=0 por
+        //        moneda -> devuelve lista vacia) y la reserva se anula DIRECTO.
+        //    En los dos el efecto atomico es el mismo (cancelar servicios + recalcular deuda del operador +
+        //    pasar a Cancelled + auditar). Por eso ya NO rechazamos por "sin cobros".
         var hasLivePayments = reserva.Payments.Any(p => !p.IsDeleted);
-        if (!hasLivePayments)
-        {
-            throw new InvalidOperationException(
-                "La reserva no tiene cobros para convertir en saldo a favor. Para deshacerla usá cancelar.");
-        }
 
-        // 6) Precondicion de pagador: si hay cobros vivos pero la reserva no tiene cliente pagador asignado, NO
-        //    hay bolsillo al que mover la plata. Antes el converter solo logueaba un Warning y NO creaba credito
-        //    -> la reserva se anulaba IGUAL y la plata del cliente desaparecia. Rechazamos ANTES de mutar nada.
-        if (reserva.PayerId is null)
+        // 6) Pagador: solo es OBLIGATORIO si hay cobros vivos. Sin pagador no hay bolsillo de cliente al que
+        //    acreditar la plata, asi que con cobros + PayerId null rechazamos ANTES de mutar nada (si no, la
+        //    plata del cliente desapareceria). Sin cobros (baja directa) no se genera ningun saldo a favor, asi
+        //    que PayerId null es perfectamente aceptable.
+        if (hasLivePayments && reserva.PayerId is null)
         {
             throw new InvalidOperationException(
                 "La reserva tiene cobros pero no tiene un cliente pagador asignado; no se puede generar saldo a favor.");
@@ -1273,9 +1315,14 @@ public class ReservaService : IReservaService
         }
         reserva.Status = EstadoReserva.Cancelled;
 
-        // d) Audit STAGEADO (no guarda): entra en el mismo commit que el resto. Rastro de "reserva anulada,
-        //    cobros a saldo a favor" con monto POR MONEDA + el MOTIVO declarado por el operador (justificacion de
-        //    negocio, no es dato sensible). Sin costos ni datos sensibles.
+        // d) Audit STAGEADO (no guarda): entra en el mismo commit que el resto. El detail lleva la reserva, el
+        //    cliente, el estado origen/destino, el MOTIVO declarado (justificacion de negocio, no es dato
+        //    sensible) y la lista de saldos a favor POR MONEDA. Sin costos ni datos sensibles.
+        //
+        //    Elegimos la ACCION segun si hubo o no conversion a saldo a favor, para que la auditoria no insinue
+        //    un "saldo a favor" inexistente en la baja directa:
+        //      - con saldo a favor (PaymentsToCredit): ReservaCancelledWithPaymentsToClientCredit.
+        //      - sin saldo a favor (DirectCancel):      ReservaAnnulledDirectlyWithoutCredit (creditsByCurrency vacio).
         if (_auditService is not null)
         {
             var details = System.Text.Json.JsonSerializer.Serialize(new
@@ -1290,8 +1337,11 @@ public class ReservaService : IReservaService
                     .Select(c => new { currency = c.Currency, amount = c.Amount })
                     .ToList(),
             });
+            var auditAction = convertedByCurrency.Count > 0
+                ? AuditActions.ReservaCancelledWithPaymentsToClientCredit
+                : AuditActions.ReservaAnnulledDirectlyWithoutCredit;
             _auditService.StageBusinessEvent(
-                AuditActions.ReservaCancelledWithPaymentsToClientCredit,
+                auditAction,
                 AuditActions.ReservaEntityName,
                 reserva.Id.ToString(),
                 details,

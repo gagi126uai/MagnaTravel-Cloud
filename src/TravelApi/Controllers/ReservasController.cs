@@ -635,14 +635,21 @@ public class ReservasController : ControllerBase
         }
     }
 
-    // (2026-06-25) Caso (3) del flujo unificado de "Anular reserva": anular una reserva en firme SIN factura con
-    // CAE vivo pero CON cobros vivos -> pasa a Cancelada y la plata cobrada queda como SALDO A FAVOR del cliente
-    // (reutilizable), SIN emitir Nota de Credito. Endpoint DEDICADO: es plata sensible, no se mezcla con el
-    // PUT /status generico. Gate de permiso reservas.cancel_with_payment (anular con plata exige la autorizacion
-    // reforzada) + ownership (bypass con view_all). El SERVICE revalida server-side TODO lo no bypasseable:
-    // estado firme, SIN factura CAE viva (si la hay -> 409, derivar al camino formal de NC) y CON cobros vivos.
+    // (2026-06-25/26) "Anular reserva SIN factura" del flujo unificado: anular una reserva en firme SIN factura
+    // con CAE vivo, CON o SIN cobros. Cubre dos casos del discriminador cancellationCase:
+    //   - DirectCancel (sin cobros):     pasa a Cancelada, SIN generar saldo a favor ni Nota de Credito.
+    //   - PaymentsToCredit (con cobros): pasa a Cancelada y la plata cobrada queda como SALDO A FAVOR (reutilizable).
+    // En ambos: misma transaccion atomica (cancela servicios + recalcula deuda del operador + Cancelled + audita).
+    // Endpoint DEDICADO: es plata sensible, no se mezcla con el PUT /status generico.
+    //
+    // PERMISO: el atributo exige el permiso BASE reservas.cancel; el SERVICE refuerza condicionalmente
+    // (mismo patron que UpdateStatusAsync): SOLO si la reserva tiene cobros o facturas exige ademas
+    // reservas.cancel_with_payment. Asi una baja directa SIN plata le alcanza a un Vendedor con reservas.cancel,
+    // y convertir cobros a saldo a favor sigue pidiendo la autorizacion reforzada. Admin bypassa.
+    // + ownership (bypass con view_all). El SERVICE revalida server-side TODO lo no bypasseable: estado firme,
+    // SIN factura CAE viva (si la hay -> 409, derivar al camino formal de NC) y, si hay cobros, con pagador.
     [HttpPost("{publicIdOrLegacyId}/annul-with-credit")]
-    [RequirePermission(Permissions.ReservasCancelWithPayment)]
+    [RequirePermission(Permissions.ReservasCancel)]
     [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
     public async Task<ActionResult<ReservaDto>> AnnulWithCredit(
         string publicIdOrLegacyId, [FromBody] AnnulWithCreditRequest request, CancellationToken cancellationToken)

@@ -173,6 +173,16 @@ public static class AuditActions
     public const string ReservaCancelledWithPaymentsToClientCredit = "ReservaCancelledWithPaymentsToClientCredit";
 
     /// <summary>
+    /// (2026-06-26): se ANULO DIRECTAMENTE una reserva en firme SIN factura y SIN cobros vivos (caso (2)
+    /// "DirectCancel" del flujo unificado de "Anular reserva"). La reserva paso a <c>Cancelled</c> sin generar
+    /// ningun saldo a favor (no habia plata que trasladar) ni emitir Nota de Credito (no habia factura que
+    /// acreditar). Es la baja directa. Se separa de <see cref="ReservaCancelledWithPaymentsToClientCredit"/>
+    /// para que la auditoria NO insinue un "saldo a favor" inexistente. El detail JSON lleva la reserva, el
+    /// estado origen, el destino (Cancelled) y el motivo — la lista de saldos a favor viaja VACIA.
+    /// </summary>
+    public const string ReservaAnnulledDirectlyWithoutCredit = "ReservaAnnulledDirectlyWithoutCredit";
+
+    /// <summary>
     /// FC1.2.3 (2026-05-18): cuando el ultimo withdraw deja el BC sin saldos
     /// pendientes (todos los entries en RemainingBalance=0), el BC pasa a
     /// <c>Closed</c> y la Reserva a <c>Cancelled</c>. El audit deja trazabilidad

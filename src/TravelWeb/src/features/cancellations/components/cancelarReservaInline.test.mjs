@@ -96,9 +96,13 @@ function formatearMontosSaldoAFavor(creditByCurrency) {
 /**
  * Determina si el caso usa el endpoint annulWithCredit (true) o el flujo
  * draft/confirm (false). Réplica del branch en handleCancelar.
+ *
+ * DirectCancel y PaymentsToCredit (ambos SIN factura) van al endpoint annul-with-credit;
+ * el backend decide internamente si genera saldo a favor (cuando hay cobros) o no.
+ * Solo CreditNote (con factura CAE viva) usa el flujo draft/confirm que emite la NC.
  */
 function usaRutaAnnulWithCredit(caso) {
-    return caso === "PaymentsToCredit";
+    return caso === "PaymentsToCredit" || caso === "DirectCancel";
 }
 
 // ─── Réplica de la selección de mensaje de éxito ─────────────────────────────
@@ -287,8 +291,8 @@ test("PaymentsToCredit → usa annulWithCredit (NO draft/confirm)", () => {
     assert.equal(usaRutaAnnulWithCredit("PaymentsToCredit"), true);
 });
 
-test("DirectCancel → usa draft/confirm (NO annulWithCredit)", () => {
-    assert.equal(usaRutaAnnulWithCredit("DirectCancel"), false);
+test("DirectCancel → usa annulWithCredit (NO draft/confirm: el endpoint sin factura hace la baja directa)", () => {
+    assert.equal(usaRutaAnnulWithCredit("DirectCancel"), true);
 });
 
 test("CreditNote → usa draft/confirm (NO annulWithCredit)", () => {
@@ -364,11 +368,11 @@ test("caso vacío → muestra banner ámbar (extra defensivo)", () => {
 // Sección 6: coherencia entre discriminador, cartel y mensaje
 // ============================================================================
 
-test("DirectCancel: coherencia caso → cartel verde + mensaje corto + ruta draft/confirm", () => {
+test("DirectCancel: coherencia caso → cartel verde + mensaje corto + ruta annulWithCredit", () => {
     const caso = "DirectCancel";
     assert.equal(determinarCartelVisible(caso), "cancelar-banner-sin-factura");
     assert.equal(elegirMensajeExito(caso), "Reserva anulada.");
-    assert.equal(usaRutaAnnulWithCredit(caso), false);
+    assert.equal(usaRutaAnnulWithCredit(caso), true);
 });
 
 test("PaymentsToCredit: coherencia caso → cartel celeste + mensaje saldo a favor + ruta annulWithCredit", () => {

@@ -78,19 +78,25 @@ public interface IReservaService
     Task<ReservaDto> UpdateStatusAsync(string publicIdOrLegacyId, string status, string? actorUserId, CancellationToken ct = default);
 
     /// <summary>
-    /// Caso (3) del flujo unificado de "Anular reserva" (2026-06-25): ANULA una reserva EN FIRME (InManagement /
-    /// Confirmed), SIN factura con CAE vivo pero CON cobros vivos, pasandola a <c>Cancelled</c> Y convirtiendo la
-    /// plata cobrada en SALDO A FAVOR del cliente (reutilizable), SIN emitir Nota de Credito (no hay factura que
-    /// acreditar). Es el camino del medio entre la baja simple (sin plata, via <see cref="UpdateStatusAsync(string, string, string?, CancellationToken)"/>)
-    /// y la anulacion formal con NC (<c>BookingCancellationService</c>, que exige factura).
+    /// "Anular reserva SIN factura" del flujo unificado (2026-06-25/26): ANULA una reserva EN FIRME (InManagement /
+    /// Confirmed) SIN factura con CAE vivo, CON o SIN cobros, pasandola a <c>Cancelled</c>. Cubre dos casos del
+    /// discriminador <c>cancellationCase</c>:
+    ///   - DirectCancel (sin cobros):     baja directa, SIN generar saldo a favor ni Nota de Credito.
+    ///   - PaymentsToCredit (con cobros): convierte la plata cobrada en SALDO A FAVOR del cliente (reutilizable),
+    ///     un saldo por moneda, SIN emitir Nota de Credito (no hay factura que acreditar).
+    /// Reemplaza, para reservas SIN factura, tanto la baja simple (<see cref="UpdateStatusAsync(string, string, string?, CancellationToken)"/>)
+    /// como el camino del medio. La anulacion formal con NC (<c>BookingCancellationService</c>, que exige
+    /// factura) sigue siendo un camino aparte.
     ///
-    /// <para>Atomico (transaccion patron FC4): o la reserva queda Cancelled Y la plata 100% como saldo a favor, o
-    /// no se toca nada. Crea un saldo a favor del cliente POR MONEDA con cobros vivos.</para>
+    /// <para>Atomico (transaccion patron FC4): o la reserva queda Cancelled (y, si habia cobros, la plata 100%
+    /// como saldo a favor), o no se toca nada. En ambos casos cancela los servicios y recalcula la deuda del
+    /// operador.</para>
     ///
     /// <para>Valida (server-side, no bypasseable): la reserva debe estar en estado firme (InManagement/Confirmed)
     /// SIN factura con CAE vivo (si la tiene -> <see cref="InvalidOperationException"/>, derivar al camino formal de
-    /// NC) y CON al menos un cobro vivo (si no, el camino es la baja simple). Los PERMISOS (reservas.cancel +
-    /// reservas.cancel_with_payment) los exige el caller/controller.</para>
+    /// NC). Si hay cobros vivos, exige un cliente pagador asignado. PERMISOS: el caller/controller exige el base
+    /// reservas.cancel; el service refuerza con reservas.cancel_with_payment SOLO si la reserva tiene cobros o
+    /// facturas (Admin bypassa).</para>
     /// </summary>
     /// <param name="reason">
     /// Motivo de negocio de la anulacion declarado por el operador (OBLIGATORIO, min 10 chars — mismo criterio que

@@ -135,13 +135,19 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar }) {
 
         const caso = determinarCasoAnulacion(reserva);
 
-        // ── Caso 3: sin factura, con cobros → la plata queda como saldo a favor ─────────
-        // Usa un endpoint distinto: un solo POST con { reason }, sin el flujo de 2 pasos.
-        // El front valida el motivo ≥10 chars arriba; el backend también valida server-side.
-        if (caso === "PaymentsToCredit") {
+        // ── Casos SIN factura (DirectCancel y PaymentsToCredit) → endpoint annul-with-credit ─────────
+        // Ambos van al MISMO endpoint dedicado (un solo POST con { reason }, sin el flujo de 2 pasos del draft):
+        //   - DirectCancel:      sin cobros → baja directa, sin nota de crédito.
+        //   - PaymentsToCredit:  con cobros → la plata cobrada queda como saldo a favor del cliente.
+        // El backend decide internamente qué hacer según haya o no cobros; el front solo cambia el mensaje de
+        // éxito. El front valida el motivo ≥10 chars arriba; el backend también valida server-side.
+        if (caso === "DirectCancel" || caso === "PaymentsToCredit") {
             try {
                 await cancellationsApi.annulWithCredit(reserva.publicId, trimmedReason);
-                showSuccess(MENSAJE_EXITO_PAYMENTS_TO_CREDIT, "Anulación confirmada");
+                const mensajeExito = caso === "DirectCancel"
+                    ? MENSAJE_EXITO_DIRECT_CANCEL
+                    : MENSAJE_EXITO_PAYMENTS_TO_CREDIT;
+                showSuccess(mensajeExito, "Anulación confirmada");
                 onCancelado();
             } catch (error) {
                 // NUNCA mostramos el texto crudo del backend (puede traer nombres internos).
@@ -170,9 +176,10 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar }) {
             return;
         }
 
-        // ── Casos 2 y 4: DirectCancel y CreditNote → flujo draft → confirm ──────────────
-        // Mismo camino técnico (2 llamadas al backend); la diferencia es si hay factura
-        // o no, y eso lo resuelve el backend internamente.
+        // ── Caso CreditNote (con factura CAE viva) → flujo draft → confirm ──────────────
+        // Este camino emite la Nota de Crédito en AFIP/ARCA (2 llamadas al backend). DirectCancel y
+        // PaymentsToCredit ya se resolvieron arriba por el endpoint annul-with-credit; acá solo cae CreditNote
+        // (y el fallback conservador de DTOs viejos sin cancellationCase con requiresInvoiceAnnulmentToCancel).
 
         // PASO 1: crear el borrador (draft). Si falla acá no seguimos.
         let draft;
@@ -221,13 +228,8 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar }) {
         try {
             await cancellationsApi.confirm(draft.publicId, payload);
 
-            // Mensaje diferenciado: DirectCancel (sin NC) vs CreditNote (con NC en AFIP).
-            if (caso === "DirectCancel") {
-                showSuccess(MENSAJE_EXITO_DIRECT_CANCEL, "Anulación confirmada");
-            } else {
-                // CreditNote, y también el fallback de DTOs viejos sin cancellationCase.
-                showSuccess(MENSAJE_EXITO_CREDIT_NOTE, "Anulación confirmada");
-            }
+            // Solo llega acá el caso CreditNote (con NC en AFIP), más el fallback conservador de DTOs viejos.
+            showSuccess(MENSAJE_EXITO_CREDIT_NOTE, "Anulación confirmada");
             onCancelado();
         } catch (error) {
             // NUNCA mostramos el texto crudo del backend.

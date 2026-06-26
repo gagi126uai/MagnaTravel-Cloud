@@ -1,8 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
 using AutoMapper;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -71,9 +74,47 @@ public class AnnulWithPaymentsToCreditTests
             null!, null!, null!, null!);
     }
 
+    /// <summary>
+    /// HttpContext con el rol indicado (y opcionalmente el userId). Sirve para ejercitar el guard de permisos
+    /// (reservas.cancel / reservas.cancel_with_payment) que ahora corre dentro de AnnulWithPaymentsToCreditAsync.
+    /// </summary>
+    private static IHttpContextAccessor BuildContextAccessor(string userId, params string[] roles)
+    {
+        var claims = new List<Claim> { new(ClaimTypes.NameIdentifier, userId) };
+        foreach (var role in roles)
+        {
+            claims.Add(new Claim(ClaimTypes.Role, role));
+        }
+        var ctx = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(claims, "Test")) };
+        return new HttpContextAccessor { HttpContext = ctx };
+    }
+
+    /// <summary>Resolver de permisos fake: devuelve EXACTAMENTE el set indicado para ese userId.</summary>
+    private static IUserPermissionResolver BuildResolver(string userId, params string[] permissions)
+    {
+        var mock = new Mock<IUserPermissionResolver>();
+        IReadOnlySet<string> set = new HashSet<string>(permissions);
+        mock.Setup(r => r.GetPermissionsAsync(userId, It.IsAny<CancellationToken>())).ReturnsAsync(set);
+        return mock.Object;
+    }
+
+    // La mayoria de los tests se enfocan en la LOGICA de plata/estado, no en permisos. Para que el guard de
+    // permisos quede inerte, construimos el service con un HttpContext de rol Admin (Admin bypassa la authz).
+    // Los tests de PERMISO usan BuildReservaServiceWithAuthz con un Vendedor y un resolver concreto.
     private ReservaService BuildReservaService(AppDbContext context, IAuditService? auditService = null)
         => new(context, _mapper, _settingsServiceMock.Object, BuildUserManager(), NullLogger<ReservaService>.Instance,
+            permissionResolver: BuildResolver("u1"), httpContextAccessor: BuildContextAccessor("u1", "Admin"),
             auditService: auditService);
+
+    /// <summary>
+    /// Service para los tests de PERMISO: inyecta un HttpContext NO-Admin (Vendedor) y un resolver con el set de
+    /// permisos indicado, para que el guard de authz dentro de AnnulWithPaymentsToCreditAsync efectivamente corra.
+    /// </summary>
+    private ReservaService BuildReservaServiceWithAuthz(
+        AppDbContext context, string userId, params string[] permissions)
+        => new(context, _mapper, _settingsServiceMock.Object, BuildUserManager(), NullLogger<ReservaService>.Instance,
+            permissionResolver: BuildResolver(userId, permissions),
+            httpContextAccessor: BuildContextAccessor(userId, "Vendedor"));
 
     /// <summary>
     /// Fake de IAuditService que CAPTURA lo que se stagea (no toca la base). Solo nos interesa
@@ -288,25 +329,77 @@ public class AnnulWithPaymentsToCreditTests
         Assert.Equal(EstadoReserva.Confirmed, reserva.Status);
     }
 
-    // ============================ Test 3b — sin cobros: rechaza (es baja simple) ============================
+    // =============== Test 3b — sin cobros (DirectCancel): baja directa, sin saldo a favor ===============
 
     [Fact]
-    public async Task AnnulWithCredit_WithoutPayments_Rejects()
+    public async Task AnnulWithCredit_WithoutPayments_CancelsDirectly_WithoutCreatingCredit()
     {
         await using var context = new AppDbContext(_dbOptions);
         await SeedFirmReservaAsync(context, EstadoReserva.Confirmed, arsSale: 100m);
-        // sin cobros
+        // sin cobros -> caso DirectCancel: el mismo endpoint ahora hace la baja DIRECTA (antes rechazaba).
 
         var reservaPublicId = await context.Reservas.AsNoTracking()
             .Where(r => r.Id == 1).Select(r => r.PublicId).FirstAsync();
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            BuildReservaService(context).AnnulWithPaymentsToCreditAsync(
-                reservaPublicId.ToString(), reason: ValidReason, actorUserId: "u1", actorUserName: "User One"));
+        var dto = await BuildReservaService(context).AnnulWithPaymentsToCreditAsync(
+            reservaPublicId.ToString(), reason: ValidReason, actorUserId: "u1", actorUserName: "User One");
 
+        // La reserva quedo Cancelled.
+        Assert.Equal(EstadoReserva.Cancelled, dto.Status);
+
+        // NO se creo ningun saldo a favor (no habia plata que trasladar) ni puente.
         Assert.Empty(await context.ClientCreditEntries.AsNoTracking().ToListAsync());
+        Assert.Empty(await context.Payments.IgnoreQueryFilters().AsNoTracking()
+            .Where(p => p.Method == CancellationToClientCreditConverter.BridgeMethod).ToListAsync());
+
         var reserva = await context.Reservas.AsNoTracking().FirstAsync(r => r.Id == 1);
-        Assert.Equal(EstadoReserva.Confirmed, reserva.Status);
+        Assert.Equal(EstadoReserva.Cancelled, reserva.Status);
+    }
+
+    // =============== Test 3b' — sin cobros + sin pagador (PayerId null): se permite igual ===============
+
+    [Fact]
+    public async Task AnnulWithCredit_WithoutPayments_NullPayer_IsAllowed_AndCancels()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedFirmReservaAsync(context, EstadoReserva.Confirmed, arsSale: 100m);
+        // Sin cobros y sin pagador: PayerId null es ACEPTABLE porque no se genera ningun saldo a favor.
+        var seeded = await context.Reservas.FirstAsync(r => r.Id == 1);
+        seeded.PayerId = null;
+        await context.SaveChangesAsync();
+
+        var reservaPublicId = await context.Reservas.AsNoTracking()
+            .Where(r => r.Id == 1).Select(r => r.PublicId).FirstAsync();
+
+        var dto = await BuildReservaService(context).AnnulWithPaymentsToCreditAsync(
+            reservaPublicId.ToString(), reason: ValidReason, actorUserId: "u1", actorUserName: "User One");
+
+        Assert.Equal(EstadoReserva.Cancelled, dto.Status);
+        Assert.Empty(await context.ClientCreditEntries.AsNoTracking().ToListAsync());
+    }
+
+    // =============== Test 3b'' — sin cobros: el audit usa la accion de baja directa (sin saldo a favor) =====
+
+    [Fact]
+    public async Task AnnulWithCredit_WithoutPayments_StagesDirectAnnulAudit_WithEmptyCredits()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedFirmReservaAsync(context, EstadoReserva.Confirmed, arsSale: 100m);
+
+        var reservaPublicId = await context.Reservas.AsNoTracking()
+            .Where(r => r.Id == 1).Select(r => r.PublicId).FirstAsync();
+
+        var audit = new CapturingAuditService();
+        await BuildReservaService(context, audit).AnnulWithPaymentsToCreditAsync(
+            reservaPublicId.ToString(), ValidReason, "u1", "User One");
+
+        // Se stageo la accion de BAJA DIRECTA (no la de saldo a favor), con la lista de creditos VACIA.
+        var staged = Assert.Single(audit.Staged,
+            e => e.Action == AuditActions.ReservaAnnulledDirectlyWithoutCredit);
+        Assert.DoesNotContain(audit.Staged, e => e.Action == AuditActions.ReservaCancelledWithPaymentsToClientCredit);
+        Assert.NotNull(staged.Details);
+        Assert.Contains("\"creditsByCurrency\":[]", staged.Details);
+        Assert.Contains($"\"reason\":\"{ValidReason}\"", staged.Details);
     }
 
     // ============================ Test 3c — estado no firme: rechaza ============================
@@ -461,6 +554,51 @@ public class AnnulWithPaymentsToCreditTests
         Assert.Single(bridges);
     }
 
+    // ============ BLOQUEANTE 2-bis — idempotencia DirectCancel (rama alreadyCancelled, SIN puente) ============
+
+    [Fact]
+    public async Task AnnulWithCredit_DirectCancel_SecondInvocation_IsNoOp_ViaAlreadyCancelledBranch()
+    {
+        // Baja DIRECTA (sin cobros, sin factura): el converter NO crea puente, asi que la rama de idempotencia
+        // por `alreadyConverted` (existe Payment con BridgeMethod) NUNCA dispara aca. El segundo clic debe cortar
+        // por la rama `alreadyCancelled` (la reserva ya quedo Cancelled): no-op, NO un 409 de "estado no firme".
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedFirmReservaAsync(context, EstadoReserva.Confirmed, arsSale: 100m);
+        // sin cobros, sin factura
+
+        var reservaPublicId = await context.Reservas.AsNoTracking()
+            .Where(r => r.Id == 1).Select(r => r.PublicId).FirstAsync();
+        var service = BuildReservaService(context);
+
+        // Primera anulacion: baja directa -> Cancelled, servicios cancelados, sin credito ni puente.
+        var first = await service.AnnulWithPaymentsToCreditAsync(reservaPublicId.ToString(), ValidReason, "u1", "User One");
+        Assert.Equal(EstadoReserva.Cancelled, first.Status);
+        Assert.Empty(await context.ClientCreditEntries.AsNoTracking().ToListAsync());
+        Assert.Empty(await context.Payments.IgnoreQueryFilters().AsNoTracking()
+            .Where(p => p.Method == CancellationToClientCreditConverter.BridgeMethod).ToListAsync());
+
+        // Capturamos el conteo de servicios cancelados tras el 1er llamado, para verificar que el 2do no toca nada.
+        var cancelledServicesAfterFirst = await context.Servicios.AsNoTracking()
+            .CountAsync(s => s.ReservaId == 1 && s.Status == "Cancelado");
+
+        // Segundo llamado (doble clic): NO lanza (no 409 por estado no firme), devuelve la reserva Cancelled,
+        // y NO crea entidades nuevas (rama alreadyCancelled = no-op).
+        var second = await service.AnnulWithPaymentsToCreditAsync(reservaPublicId.ToString(), ValidReason, "u1", "User One");
+        Assert.Equal(EstadoReserva.Cancelled, second.Status);
+
+        // Sigue sin credito ni puente (no se genero nada de la nada en el reintento).
+        Assert.Empty(await context.ClientCreditEntries.AsNoTracking().ToListAsync());
+        Assert.Empty(await context.Payments.IgnoreQueryFilters().AsNoTracking()
+            .Where(p => p.Method == CancellationToClientCreditConverter.BridgeMethod).ToListAsync());
+
+        // El estado no cambio y la cancelacion de servicios no se duplico ni revirtio.
+        var reserva = await context.Reservas.AsNoTracking().FirstAsync(r => r.Id == 1);
+        Assert.Equal(EstadoReserva.Cancelled, reserva.Status);
+        var cancelledServicesAfterSecond = await context.Servicios.AsNoTracking()
+            .CountAsync(s => s.ReservaId == 1 && s.Status == "Cancelado");
+        Assert.Equal(cancelledServicesAfterFirst, cancelledServicesAfterSecond);
+    }
+
     // ===================== BLOQUEANTE 3 — cobros pero sin pagador: rechaza, no pierde plata =====================
 
     [Fact]
@@ -554,5 +692,86 @@ public class AnnulWithPaymentsToCreditTests
         Assert.Empty(await context.ClientCreditEntries.AsNoTracking().ToListAsync());
         Assert.Empty(await context.Payments.IgnoreQueryFilters().AsNoTracking()
             .Where(p => p.Method == CancellationToClientCreditConverter.BridgeMethod).ToListAsync());
+    }
+
+    // ===================== PERMISOS — mismo criterio condicional que UpdateStatusAsync =====================
+    // Base reservas.cancel; SOLO si la reserva tiene cobros/facturas, ademas reservas.cancel_with_payment.
+
+    [Fact]
+    public async Task AnnulWithCredit_DirectCancel_WithCancelPermissionOnly_Succeeds()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedFirmReservaAsync(context, EstadoReserva.Confirmed, arsSale: 100m);
+        // Sin cobros (DirectCancel): a un Vendedor con SOLO reservas.cancel le alcanza.
+
+        var reservaPublicId = await context.Reservas.AsNoTracking()
+            .Where(r => r.Id == 1).Select(r => r.PublicId).FirstAsync();
+
+        var service = BuildReservaServiceWithAuthz(context, "vendedor-1", Permissions.ReservasCancel);
+        var dto = await service.AnnulWithPaymentsToCreditAsync(
+            reservaPublicId.ToString(), ValidReason, "vendedor-1", "Vendedor Uno");
+
+        Assert.Equal(EstadoReserva.Cancelled, dto.Status);
+    }
+
+    [Fact]
+    public async Task AnnulWithCredit_WithoutCancelPermission_Throws403_EvenForDirectCancel()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedFirmReservaAsync(context, EstadoReserva.Confirmed, arsSale: 100m);
+
+        var reservaPublicId = await context.Reservas.AsNoTracking()
+            .Where(r => r.Id == 1).Select(r => r.PublicId).FirstAsync();
+
+        // Sin reservas.cancel -> 403, no toca nada.
+        var service = BuildReservaServiceWithAuthz(context, "vendedor-1" /* sin permisos */);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.AnnulWithPaymentsToCreditAsync(reservaPublicId.ToString(), ValidReason, "vendedor-1", "Vendedor Uno"));
+
+        var reserva = await context.Reservas.AsNoTracking().FirstAsync(r => r.Id == 1);
+        Assert.Equal(EstadoReserva.Confirmed, reserva.Status);
+    }
+
+    [Fact]
+    public async Task AnnulWithCredit_PaymentsToCredit_WithCancelPermissionOnly_Throws403()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedFirmReservaAsync(context, EstadoReserva.Confirmed, arsSale: 100m);
+        AddLivePayment(context, 100m, "ARS");
+        await context.SaveChangesAsync();
+
+        var reservaPublicId = await context.Reservas.AsNoTracking()
+            .Where(r => r.Id == 1).Select(r => r.PublicId).FirstAsync();
+
+        // Con cobros pero SOLO reservas.cancel (falta reservas.cancel_with_payment) -> 403, no toca nada.
+        var service = BuildReservaServiceWithAuthz(context, "vendedor-1", Permissions.ReservasCancel);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.AnnulWithPaymentsToCreditAsync(reservaPublicId.ToString(), ValidReason, "vendedor-1", "Vendedor Uno"));
+
+        var reserva = await context.Reservas.AsNoTracking().FirstAsync(r => r.Id == 1);
+        Assert.Equal(EstadoReserva.Confirmed, reserva.Status);
+        Assert.Empty(await context.ClientCreditEntries.AsNoTracking().ToListAsync());
+    }
+
+    [Fact]
+    public async Task AnnulWithCredit_PaymentsToCredit_WithReinforcedPermission_Succeeds()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedFirmReservaAsync(context, EstadoReserva.Confirmed, arsSale: 100m);
+        AddLivePayment(context, 100m, "ARS");
+        await context.SaveChangesAsync();
+
+        var reservaPublicId = await context.Reservas.AsNoTracking()
+            .Where(r => r.Id == 1).Select(r => r.PublicId).FirstAsync();
+
+        // Con cobros y reservas.cancel + reservas.cancel_with_payment -> pasa: anula y genera saldo a favor.
+        var service = BuildReservaServiceWithAuthz(
+            context, "colab-1", Permissions.ReservasCancel, Permissions.ReservasCancelWithPayment);
+        var dto = await service.AnnulWithPaymentsToCreditAsync(
+            reservaPublicId.ToString(), ValidReason, "colab-1", "Colaborador Uno");
+
+        Assert.Equal(EstadoReserva.Cancelled, dto.Status);
+        var credit = await context.ClientCreditEntries.AsNoTracking().SingleAsync(c => c.CustomerId == 1);
+        Assert.Equal(100m, credit.RemainingBalance);
     }
 }
