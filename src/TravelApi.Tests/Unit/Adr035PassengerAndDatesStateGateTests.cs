@@ -363,4 +363,76 @@ public class Adr035PassengerAndDatesStateGateTests
         var reserva = await ctx.Reservas.AsNoTracking().SingleAsync();
         Assert.Null(reserva.StartDate); // el candado bloqueo antes de persistir
     }
+
+    // =====================================================================================================
+    // INTEGRIDAD DE DATOS (2026-06-25): no se puede borrar el ULTIMO pasajero de una reserva EN FIRME. El
+    // motor de estado no mira el roster, asi que sin este guard una reserva quedaba Confirmada/En viaje con
+    // 0 pasajeros. En pre-venta (Cotizacion/Presupuesto) si se permite quedar en 0 (ya cubierto por
+    // RemovePassenger_OnEarlyStages_Allowed). Para deshacer la reserva hay que Anular/Cancelar.
+    // =====================================================================================================
+
+    private static void SeedSecondPassenger(AppDbContext ctx)
+    {
+        ctx.Passengers.Add(new Passenger
+        {
+            Id = 11,
+            PublicId = Guid.NewGuid(),
+            ReservaId = 1,
+            FullName = "Maria Lopez",
+            DocumentType = "DNI",
+            DocumentNumber = "87654321"
+        });
+    }
+
+    [Fact]
+    public async Task RemoveLastPassenger_OnConfirmedReserva_Blocked_EvenWithLiveAuthorization()
+    {
+        await using var ctx = NewContext();
+        SeedReserva(ctx, EstadoReserva.Confirmed);
+        SeedPassenger(ctx, fullName: "Juan Perez", documentNumber: "12345678"); // unico pasajero
+        // Autorizacion viva: demuestra que el bloqueo NO es del candado de estado/autorizacion, sino del
+        // guard de integridad (no dejar la reserva en firme sin pasajeros).
+        AddLiveAuthorization(ctx);
+        await ctx.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            NewService(ctx).RemovePassengerAsync("10", CancellationToken.None));
+
+        // Mensaje legible que orienta a Anular/Cancelar, sin jerga ni montos.
+        Assert.Contains("ultimo pasajero", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("anular", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, await ctx.Passengers.CountAsync()); // no se borro
+    }
+
+    [Fact]
+    public async Task RemoveNonLastPassenger_OnConfirmedReserva_Allowed_WithLiveAuthorization()
+    {
+        await using var ctx = NewContext();
+        SeedReserva(ctx, EstadoReserva.Confirmed);
+        SeedPassenger(ctx, fullName: "Juan Perez", documentNumber: "12345678");
+        SeedSecondPassenger(ctx); // queda otro pasajero -> borrar uno NO deja la reserva vacia
+        AddLiveAuthorization(ctx); // en firme borrar un pasajero pide autorizacion (candado ADR-020 F4)
+        await ctx.SaveChangesAsync();
+
+        await NewService(ctx).RemovePassengerAsync("10", CancellationToken.None);
+
+        // El que queda es el segundo: el guard de "ultimo pasajero" NO se dispara porque quedaba otro.
+        Assert.Equal(1, await ctx.Passengers.CountAsync());
+        Assert.Equal(11, (await ctx.Passengers.AsNoTracking().SingleAsync()).Id);
+    }
+
+    [Fact]
+    public async Task RemoveLastPassenger_OnBudgetReserva_Allowed_StillBuilding()
+    {
+        // En pre-venta (Presupuesto) la reserva se esta armando: quedar en 0 pasajeros es valido. Este caso
+        // confirma que el guard de "ultimo pasajero" NO aplica fuera de los estados en firme.
+        await using var ctx = NewContext();
+        SeedReserva(ctx, EstadoReserva.Budget);
+        SeedPassenger(ctx, fullName: "Juan Perez", documentNumber: "12345678"); // unico pasajero
+        await ctx.SaveChangesAsync();
+
+        await NewService(ctx).RemovePassengerAsync("10", CancellationToken.None);
+
+        Assert.Equal(0, await ctx.Passengers.CountAsync()); // se permitio quedar en 0
+    }
 }

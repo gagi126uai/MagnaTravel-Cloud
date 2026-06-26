@@ -1,6 +1,40 @@
 namespace TravelApi.Application.DTOs;
 
 /// <summary>
+/// (2026-06-25) Valores del discriminador <see cref="ReservaDto.CancellationCase"/>: en cual de los cuatro
+/// caminos de "Anular reserva" cae la reserva. El backend lo calcula; el front solo lo lee para mostrar el
+/// cartel de confirmacion correcto. No son estados de la reserva (los estados viven en <c>EstadoReserva</c>).
+/// </summary>
+public static class ReservaCancellationCases
+{
+    /// <summary>Pre-venta (Cotizacion/Presupuesto): se descarta / marca Perdida. No hay plata que conservar.</summary>
+    public const string PreSale = "PreSale";
+
+    /// <summary>En firme, SIN factura y SIN cobros: baja directa a Cancelada.</summary>
+    public const string DirectCancel = "DirectCancel";
+
+    /// <summary>En firme, SIN factura pero CON cobros: Cancelada + la plata cobrada queda como saldo a favor.</summary>
+    public const string PaymentsToCredit = "PaymentsToCredit";
+
+    /// <summary>Con factura con CAE vivo: anulacion formal con Nota de Credito.</summary>
+    public const string CreditNote = "CreditNote";
+
+    /// <summary>La reserva no se puede anular en su estado actual (terminal o En viaje).</summary>
+    public const string NotApplicable = "NotApplicable";
+}
+
+/// <summary>
+/// (2026-06-25) Monto que quedaria como saldo a favor del cliente en UNA moneda si se anula una reserva del
+/// caso <see cref="ReservaCancellationCases.PaymentsToCredit"/>. Es venta/cobro del cliente, no costo: no se
+/// enmascara.
+/// </summary>
+public class ReservaCancellationCreditLineDto
+{
+    public string Currency { get; set; } = "ARS";
+    public decimal Amount { get; set; }
+}
+
+/// <summary>
 /// ADR-021 Capa 5 (multimoneda, 2026-06-10): una linea de plata de la reserva separada por moneda.
 /// Espejo del value object de dominio <c>ReservaMoneyLine</c>. El front la usa para mostrar columnas
 /// ARS/USD sin mezclar. <see cref="TotalCost"/> es COSTO/inversion -> se enmascara igual que el escalar
@@ -384,6 +418,31 @@ public class ReservaDto
     /// explicar por que el flujo de cancelacion pide pasar por la NC. Derivado de "tiene CAE vivo".
     /// </summary>
     public bool RequiresInvoiceAnnulmentToCancel { get; set; }
+
+    /// <summary>
+    /// (2026-06-25) Flujo unificado de "Anular reserva": discriminador que dice EN QUE CASO de anulacion esta la
+    /// reserva, para que el front muestre el cartel de confirmacion correcto SIN decidir la logica de plata por su
+    /// cuenta (la decide el backend). Valores en <see cref="ReservaCancellationCases"/>:
+    /// <list type="bullet">
+    ///   <item><b>PreSale</b>: pre-venta (Cotizacion/Presupuesto) -> se descarta / marca Perdida.</item>
+    ///   <item><b>DirectCancel</b>: en firme SIN factura y SIN cobros -> baja directa a Cancelada.</item>
+    ///   <item><b>PaymentsToCredit</b>: en firme SIN factura pero CON cobros -> Cancelada + la plata cobrada queda
+    ///         como SALDO A FAVOR del cliente (ver <see cref="CancellationCreditByCurrency"/>).</item>
+    ///   <item><b>CreditNote</b>: con factura con CAE vivo -> anulacion formal con Nota de Credito.</item>
+    ///   <item><b>NotApplicable</b>: la reserva no se puede anular en su estado actual (terminal o En viaje).</item>
+    /// </list>
+    /// Es DERIVADO del estado + plata viva (mismo criterio que las capacidades canCancel/canAnnul); no hay estado
+    /// ni columna nueva. El backend es la unica fuente de este caso.
+    /// </summary>
+    public string CancellationCase { get; set; } = ReservaCancellationCases.NotApplicable;
+
+    /// <summary>
+    /// (2026-06-25) Solo para <see cref="CancellationCase"/> == <c>PaymentsToCredit</c>: el monto de cobros vivos
+    /// SEPARADO POR MONEDA que quedaria como saldo a favor del cliente si se anula. El front lo muestra en el
+    /// cartel de confirmacion ("Quedará a tu favor: ARS 100.000, USD 50"). Es VENTA/COBRO del cliente, NO costo:
+    /// no se enmascara. Vacio en los demas casos. Fuente: TotalPaid por moneda del ReservaMoneyCalculator.
+    /// </summary>
+    public List<ReservaCancellationCreditLineDto> CancellationCreditByCurrency { get; set; } = new();
 
     /// <summary>
     /// ADR-036 (2026-06-22): true si la reserva quedo "En corrección" tras un "Sacar de viaje" — esto es,

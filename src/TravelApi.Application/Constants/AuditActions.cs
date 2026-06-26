@@ -163,6 +163,16 @@ public static class AuditActions
     public const string ClientCreditApplicationReversed = "ClientCreditApplicationReversed";
 
     /// <summary>
+    /// (2026-06-25): se ANULO una reserva en firme SIN factura pero CON cobros vivos (caso (3) del flujo
+    /// unificado de "Anular reserva"). La reserva paso a <c>Cancelled</c> y la plata cobrada se convirtio en
+    /// SALDO A FAVOR del cliente (un <see cref="ClientCreditEntry"/> por cada moneda con cobros vivos), sin
+    /// emitir Nota de Credito (no habia factura que acreditar). Es el camino del medio entre la baja simple
+    /// (sin plata) y la anulacion formal con NC (con factura). El detail JSON lleva la reserva, el cliente y
+    /// el monto trasladado a saldo a favor POR MONEDA — NUNCA costos ni datos sensibles.
+    /// </summary>
+    public const string ReservaCancelledWithPaymentsToClientCredit = "ReservaCancelledWithPaymentsToClientCredit";
+
+    /// <summary>
     /// FC1.2.3 (2026-05-18): cuando el ultimo withdraw deja el BC sin saldos
     /// pendientes (todos los entries en RemainingBalance=0), el BC pasa a
     /// <c>Closed</c> y la Reserva a <c>Cancelled</c>. El audit deja trazabilidad

@@ -84,6 +84,95 @@ internal static class SupplierDebtPersister
     }
 
     /// <summary>
+    /// (2026-06-26) Recalcula y persiste la deuda de TODOS los operadores que participan de una reserva, en la
+    /// MISMA transaccion del caller. Junta los <c>SupplierId</c> distintos de los 6 tipos de servicio de la
+    /// reserva (<see cref="GetReservaSupplierIdsAsync"/>), corre <see cref="PersistAsync"/> por cada uno y hace
+    /// UN solo <c>SaveChanges</c> al final (PersistAsync no guarda por si mismo).
+    ///
+    /// <para><b>Por que existe</b>: este patron (recalcular la deuda de cada operador tras cancelar los servicios
+    /// de una reserva) lo necesitan DOS caminos: la anulacion total formal con Nota de Credito
+    /// (<c>BookingCancellationService.RecalculateMoneyAfterTotalCancellationAsync</c>) y el caso (3) del flujo
+    /// "Anular reserva" (anular en firme sin factura pero con cobros -> saldo a favor,
+    /// <c>ReservaService.ApplyAnnulWithPaymentsToCreditAsync</c>). Sin esto, este ultimo dejaba la deuda del
+    /// operador INFLADA (seguia contando servicios ya anulados). Centralizar la regla evita una tercera copia que
+    /// pueda divergir.</para>
+    ///
+    /// <para><b>Precondicion de orden</b>: el caller ya debe haber persistido (SaveChanges) la cancelacion de los
+    /// servicios y/o el cambio de estado de la reserva ANTES de llamar aca, porque este metodo LEE de la base
+    /// (AsNoTracking) para recalcular. Si corre antes del flush, los servicios cancelados todavia contarian.</para>
+    /// </summary>
+    public static async Task PersistForReservaSuppliersAsync(
+        AppDbContext db, int reservaId, CancellationToken ct = default)
+    {
+        var affectedSupplierIds = await GetReservaSupplierIdsAsync(db, reservaId, ct);
+        foreach (var supplierId in affectedSupplierIds)
+        {
+            await PersistAsync(db, supplierId, ct);
+        }
+
+        // PersistAsync no guarda solo -> persistimos la deuda de todos los proveedores de una vez. Si no hay
+        // proveedores, no hay nada que guardar (evitamos un SaveChanges al pedo).
+        if (affectedSupplierIds.Count > 0)
+        {
+            await db.SaveChangesAsync(ct);
+        }
+    }
+
+    /// <summary>
+    /// (2026-06-26) Junta los <c>SupplierId</c> DISTINTOS de los 6 tipos de servicio de una reserva (los 5
+    /// tipados + el generico). El generico tiene <c>SupplierId</c> nullable -> se filtran los NULL. Es el mismo
+    /// universo que <c>SupplierService.BuildSupplierServicesQuery</c>. Devuelve la lista para que el caller la
+    /// reuse (recalcular deuda, armar lineas de cancelacion por operador, etc.).
+    /// </summary>
+    public static async Task<List<int>> GetReservaSupplierIdsAsync(
+        AppDbContext db, int reservaId, CancellationToken ct = default)
+    {
+        var supplierIds = new HashSet<int>();
+
+        // Fuente 1: tabla generica. SupplierId es nullable -> filtramos los NULL.
+        var genericSupplierIds = await db.Servicios
+            .Where(s => s.ReservaId == reservaId && s.SupplierId != null)
+            .Select(s => s.SupplierId!.Value)
+            .Distinct()
+            .ToListAsync(ct);
+        foreach (var id in genericSupplierIds)
+            supplierIds.Add(id);
+
+        // Fuentes 2-6: tablas tipadas. SupplierId es NOT NULL en todas.
+        var hotelSupplierIds = await db.HotelBookings
+            .Where(h => h.ReservaId == reservaId)
+            .Select(h => h.SupplierId).Distinct().ToListAsync(ct);
+        foreach (var id in hotelSupplierIds)
+            supplierIds.Add(id);
+
+        var flightSupplierIds = await db.FlightSegments
+            .Where(f => f.ReservaId == reservaId)
+            .Select(f => f.SupplierId).Distinct().ToListAsync(ct);
+        foreach (var id in flightSupplierIds)
+            supplierIds.Add(id);
+
+        var transferSupplierIds = await db.TransferBookings
+            .Where(t => t.ReservaId == reservaId)
+            .Select(t => t.SupplierId).Distinct().ToListAsync(ct);
+        foreach (var id in transferSupplierIds)
+            supplierIds.Add(id);
+
+        var packageSupplierIds = await db.PackageBookings
+            .Where(p => p.ReservaId == reservaId)
+            .Select(p => p.SupplierId).Distinct().ToListAsync(ct);
+        foreach (var id in packageSupplierIds)
+            supplierIds.Add(id);
+
+        var assistanceSupplierIds = await db.AssistanceBookings
+            .Where(a => a.ReservaId == reservaId)
+            .Select(a => a.SupplierId).Distinct().ToListAsync(ct);
+        foreach (var id in assistanceSupplierIds)
+            supplierIds.Add(id);
+
+        return supplierIds.ToList();
+    }
+
+    /// <summary>
     /// Deuda por moneda = compras CONFIRMADAS (por la regla oficial por tipo) menos pagos vivos imputados.
     /// Recorre los 5 tipos tipados + el servicio generico, exactamente el mismo universo que
     /// <c>SupplierService.BuildSupplierServicesQuery</c>. La regla por tipo

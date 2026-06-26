@@ -76,6 +76,24 @@ public interface IReservaService
     /// <see cref="UnauthorizedAccessException"/> (-> 403).
     /// </summary>
     Task<ReservaDto> UpdateStatusAsync(string publicIdOrLegacyId, string status, string? actorUserId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Caso (3) del flujo unificado de "Anular reserva" (2026-06-25): ANULA una reserva EN FIRME (InManagement /
+    /// Confirmed), SIN factura con CAE vivo pero CON cobros vivos, pasandola a <c>Cancelled</c> Y convirtiendo la
+    /// plata cobrada en SALDO A FAVOR del cliente (reutilizable), SIN emitir Nota de Credito (no hay factura que
+    /// acreditar). Es el camino del medio entre la baja simple (sin plata, via <see cref="UpdateStatusAsync(string, string, string?, CancellationToken)"/>)
+    /// y la anulacion formal con NC (<c>BookingCancellationService</c>, que exige factura).
+    ///
+    /// <para>Atomico (transaccion patron FC4): o la reserva queda Cancelled Y la plata 100% como saldo a favor, o
+    /// no se toca nada. Crea un saldo a favor del cliente POR MONEDA con cobros vivos.</para>
+    ///
+    /// <para>Valida (server-side, no bypasseable): la reserva debe estar en estado firme (InManagement/Confirmed)
+    /// SIN factura con CAE vivo (si la tiene -> <see cref="InvalidOperationException"/>, derivar al camino formal de
+    /// NC) y CON al menos un cobro vivo (si no, el camino es la baja simple). Los PERMISOS (reservas.cancel +
+    /// reservas.cancel_with_payment) los exige el caller/controller.</para>
+    /// </summary>
+    Task<ReservaDto> AnnulWithPaymentsToCreditAsync(string publicIdOrLegacyId, string? actorUserId, string? actorUserName, CancellationToken ct = default);
+
     Task<TransitionReadinessDto> GetTransitionReadinessAsync(string publicIdOrLegacyId, string targetStatus, CancellationToken ct = default);
     Task<RevertOptionsDto> GetRevertOptionsAsync(string publicIdOrLegacyId, string actorUserId, bool actorIsAdmin, CancellationToken ct = default);
     Task<ReservaDto> RevertStatusAsync(string publicIdOrLegacyId, RevertStatusRequest request, string actorUserId, string? actorUserName, bool actorIsAdmin, CancellationToken ct = default);

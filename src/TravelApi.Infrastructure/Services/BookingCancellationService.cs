@@ -665,22 +665,13 @@ public class BookingCancellationService
     /// </summary>
     private async Task RecalculateMoneyAfterTotalCancellationAsync(int reservaId, CancellationToken ct)
     {
-        // 1) Deuda de cada operador afectado. Reusamos el helper que ya junta los SupplierId distintos de los
-        //    6 tipos de servicio de la reserva (mismo universo que la anulacion).
-        var affectedSupplierIds = await GetDistinctSupplierIdsAsync(reservaId, ct);
-        foreach (var supplierId in affectedSupplierIds)
-        {
-            await TravelApi.Infrastructure.Reservations.SupplierDebtPersister.PersistAsync(_db, supplierId, ct);
-        }
+        // 1) Deuda de cada operador afectado. Reusamos el helper compartido (2026-06-26): junta los SupplierId
+        //    distintos de los 6 tipos de servicio, recalcula con SupplierDebtPersister por cada uno y hace un
+        //    SaveChanges. La MISMA regla la usa el caso (3) del flujo "Anular reserva"
+        //    (ReservaService.ApplyAnnulWithPaymentsToCreditAsync), para no tener una tercera copia que diverja.
+        await TravelApi.Infrastructure.Reservations.SupplierDebtPersister.PersistForReservaSuppliersAsync(_db, reservaId, ct);
 
-        // 2) SupplierDebtPersister no guarda solo -> persistimos la deuda de todos los proveedores de una vez.
-        //    Si no hay proveedores, no hay nada que guardar (evitamos un SaveChanges al pedo).
-        if (affectedSupplierIds.Count > 0)
-        {
-            await _db.SaveChangesAsync(ct);
-        }
-
-        // 3) Plata del cliente (+ comision por el chokepoint de ReservaMoneyPersister). Guarda internamente.
+        // 2) Plata del cliente (+ comision por el chokepoint de ReservaMoneyPersister). Guarda internamente.
         await TravelApi.Infrastructure.Reservations.ReservaMoneyPersister.PersistAsync(_db, reservaId, ct);
     }
 
@@ -4643,62 +4634,12 @@ public class BookingCancellationService
         }
     }
 
-    private async Task<List<int>> GetDistinctSupplierIdsAsync(int reservaId, CancellationToken ct)
-    {
-        var supplierIds = new HashSet<int>();
-
-        // Fuente 1: tabla generica. SupplierId es nullable -> filtramos los NULL.
-        var genericSupplierIds = await _db.Servicios
-            .Where(s => s.ReservaId == reservaId && s.SupplierId != null)
-            .Select(s => s.SupplierId!.Value)
-            .Distinct()
-            .ToListAsync(ct);
-        foreach (var id in genericSupplierIds)
-            supplierIds.Add(id);
-
-        // Fuentes 2-6: tablas tipadas. SupplierId es NOT NULL en todas.
-        var hotelSupplierIds = await _db.HotelBookings
-            .Where(h => h.ReservaId == reservaId)
-            .Select(h => h.SupplierId)
-            .Distinct()
-            .ToListAsync(ct);
-        foreach (var id in hotelSupplierIds)
-            supplierIds.Add(id);
-
-        var flightSupplierIds = await _db.FlightSegments
-            .Where(f => f.ReservaId == reservaId)
-            .Select(f => f.SupplierId)
-            .Distinct()
-            .ToListAsync(ct);
-        foreach (var id in flightSupplierIds)
-            supplierIds.Add(id);
-
-        var transferSupplierIds = await _db.TransferBookings
-            .Where(t => t.ReservaId == reservaId)
-            .Select(t => t.SupplierId)
-            .Distinct()
-            .ToListAsync(ct);
-        foreach (var id in transferSupplierIds)
-            supplierIds.Add(id);
-
-        var packageSupplierIds = await _db.PackageBookings
-            .Where(p => p.ReservaId == reservaId)
-            .Select(p => p.SupplierId)
-            .Distinct()
-            .ToListAsync(ct);
-        foreach (var id in packageSupplierIds)
-            supplierIds.Add(id);
-
-        var assistanceSupplierIds = await _db.AssistanceBookings
-            .Where(a => a.ReservaId == reservaId)
-            .Select(a => a.SupplierId)
-            .Distinct()
-            .ToListAsync(ct);
-        foreach (var id in assistanceSupplierIds)
-            supplierIds.Add(id);
-
-        return supplierIds.ToList();
-    }
+    // (2026-06-26) Delega en el helper compartido SupplierDebtPersister.GetReservaSupplierIdsAsync: la misma
+    // logica de "juntar los SupplierId distintos de los 6 tipos de servicio" la usa la anulacion con saldo a
+    // favor (caso (3) del flujo "Anular reserva"). Se mantiene este metodo privado como atajo de instancia
+    // (usa _db) para no tocar los callers internos (InferSingleSupplierIdAsync).
+    private Task<List<int>> GetDistinctSupplierIdsAsync(int reservaId, CancellationToken ct)
+        => TravelApi.Infrastructure.Reservations.SupplierDebtPersister.GetReservaSupplierIdsAsync(_db, reservaId, ct);
 
     // =========================================================================
     // FC1.3.3 (ADR-009 §2.7 + §2.3.4.bis, 2026-05-21): helpers privados FC1.3

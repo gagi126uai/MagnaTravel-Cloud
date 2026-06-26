@@ -1086,6 +1086,221 @@ public class ReservaService : IReservaService
         return await GetReservaByIdAsync(id);
     }
 
+    /// <summary>
+    /// Caso (3) del flujo unificado de "Anular reserva": anular una reserva en firme SIN factura con CAE vivo
+    /// pero CON cobros vivos -> pasa a Cancelled y la plata cobrada queda como SALDO A FAVOR del cliente
+    /// (reutilizable), sin emitir Nota de Credito. Ver el contrato completo en
+    /// <see cref="IReservaService.AnnulWithPaymentsToCreditAsync"/>.
+    ///
+    /// <para><b>Atomicidad (patron FC4)</b>: todo el efecto (cambio de estado a Cancelled, cancelacion de los
+    /// servicios para que la reserva no quede con venta exigible, conversion de cobros a saldo a favor por
+    /// moneda y el audit) entra en UNA sola transaccion. El audit se STAGEA con <c>StageBusinessEvent</c> para
+    /// que viaje en el mismo commit. Invariante: o se anula la reserva Y la plata queda 100% como saldo a
+    /// favor, o no se toca nada.</para>
+    ///
+    /// <para><b>Por que NO toca el camino formal con NC</b>: aca, por precondicion, NO hay factura con CAE vivo,
+    /// asi que no hay nada que acreditar fiscalmente. Si la hubiera, este metodo RECHAZA y deriva a
+    /// <c>BookingCancellationService</c> (camino (4)). No se tocan los guards fiscales ni AfipService/InvoiceService.</para>
+    /// </summary>
+    public async Task<ReservaDto> AnnulWithPaymentsToCreditAsync(
+        string publicIdOrLegacyId, string? actorUserId, string? actorUserName, CancellationToken ct = default)
+    {
+        var id = await ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, ct);
+
+        // Efecto atomico. Patron FC4: solo contra provider RELACIONAL usamos transaccion envolvente
+        // (InMemory en los tests no soporta transacciones -> ramificamos por IsRelational y corremos el mismo
+        // cuerpo sin transaccion; la atomicidad real se valida en integracion Postgres).
+        //
+        // IMPORTANTE (idempotencia/concurrencia, 2026-06-26): la carga de la reserva Y las precondiciones van
+        // DENTRO del delegado de la ExecutionStrategy, no afuera. Bajo Serializable, dos requests concurrentes
+        // (doble clic) pasan ambos las precondiciones; el perdedor aborta con 40001 y la ExecutionStrategy
+        // REEJECUTA el delegado. Si recargamos fresco adentro (y limpiamos el ChangeTracker), el reintento ve
+        // la reserva ya anulada y hace no-op en vez de crear un SEGUNDO saldo a favor de la nada.
+        if (_context.Database.IsRelational())
+        {
+            var strategy = _context.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async () =>
+            {
+                await using var transaction = await _context.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+                await LoadValidateAndApplyAnnulWithPaymentsToCreditAsync(id, actorUserId, actorUserName, ct);
+                await transaction.CommitAsync(ct);
+            });
+        }
+        else
+        {
+            await LoadValidateAndApplyAnnulWithPaymentsToCreditAsync(id, actorUserId, actorUserName, ct);
+        }
+
+        return await GetReservaByIdAsync(id);
+    }
+
+    /// <summary>
+    /// Carga fresca la reserva, re-valida TODAS las precondiciones DENTRO de la transaccion y aplica el efecto.
+    /// Se invoca una vez por intento de la ExecutionStrategy: cada reintento empieza con la pizarra limpia
+    /// (<c>ChangeTracker.Clear</c>) y recarga, asi nunca arrastra entidades <c>Added</c> (credito/puente/audit)
+    /// de un intento previo que se aborto, ni reusa una instancia tracked stale.
+    /// </summary>
+    private async Task LoadValidateAndApplyAnnulWithPaymentsToCreditAsync(
+        int id, string? actorUserId, string? actorUserName, CancellationToken ct)
+    {
+        // Pizarra limpia. En un reintento de la ExecutionStrategy el ChangeTracker aun tiene las entidades
+        // Added del intento anterior (saldo a favor, puente, audit); sin esto, el proximo SaveChanges las
+        // re-insertaria -> saldo a favor DUPLICADO. Clear() las suelta y recargamos todo fresco abajo.
+        _context.ChangeTracker.Clear();
+
+        // 1) Cargar la reserva con su grafo economico (pagos + servicios) tracked: vamos a mutarla. Mismos
+        //    Includes que usa el calculador/persister de plata, para que TotalPaid por moneda cuadre.
+        var reserva = await _context.Reservas
+            .Include(r => r.Payments)
+            .Include(r => r.Servicios)
+            .Include(r => r.FlightSegments)
+            .Include(r => r.HotelBookings)
+            .Include(r => r.TransferBookings)
+            .Include(r => r.PackageBookings)
+            .Include(r => r.AssistanceBookings)
+            .FirstOrDefaultAsync(r => r.Id == id, ct)
+            ?? throw new KeyNotFoundException("Reserva no encontrada");
+
+        // 2) GUARD DE IDEMPOTENCIA (corre PRIMERO, antes que las demas precondiciones). Si ya existe un puente
+        //    de "saldo a favor por anulacion" para esta reserva, la conversion YA se hizo (doble clic, retry de
+        //    la ExecutionStrategy, o el ganador de una carrera Serializable). No-op: no re-validamos estado (ya
+        //    estaria Cancelled y harpia fallar la precondicion 3) ni duplicamos el credito. Usamos el Method del
+        //    puente — es UNICO de esta operacion; NO usamos SourceReservaId del credito porque el converter de
+        //    SOBREPAGO tambien lo setea y daria falso positivo en una reserva que solo tuvo sobrepago.
+        var alreadyConverted = await _context.Payments.AnyAsync(
+            p => p.ReservaId == id && p.Method == CancellationToClientCreditConverter.BridgeMethod, ct);
+        if (alreadyConverted)
+            return;
+
+        // 3) Precondicion de estado: solo aplica en venta firme NO terminal (InManagement / Confirmed). En
+        //    pre-venta el camino es MarkLost/baja; en terminales no hay nada que anular. Usamos la lista de
+        //    estados firmes pero EXCLUIMOS los terminales firmes (Closed) y los ya-anulados.
+        var isAnnulableState =
+            string.Equals(reserva.Status, EstadoReserva.InManagement, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(reserva.Status, EstadoReserva.Confirmed, StringComparison.OrdinalIgnoreCase);
+        if (!isAnnulableState)
+        {
+            throw new InvalidOperationException(
+                "Esta acción solo aplica a una reserva en firme (En gestión o Confirmada). " +
+                "En este estado no se puede anular con saldo a favor.");
+        }
+
+        // 4) Precondicion fiscal: NO debe tener factura con CAE vivo. Si la tiene, hay que ANULAR por el camino
+        //    formal (Nota de Credito), no por aca. Mismo criterio de "CAE vivo" que el guard de cancelacion
+        //    (excluye NC: una NC nace para anular, no mantiene viva la reserva). Derivamos al camino (4).
+        var hasLiveCae = await _context.Invoices.AnyAsync(
+            i => i.ReservaId == id
+                && !CreditNoteComprobanteTypes.Contains(i.TipoComprobante)
+                && !string.IsNullOrEmpty(i.CAE)
+                && i.AnnulmentStatus != AnnulmentStatus.Succeeded,
+            ct);
+        if (hasLiveCae)
+        {
+            throw new InvalidOperationException(
+                "La reserva tiene factura emitida. Para deshacerla hay que anularla por el camino formal " +
+                "(se emite Nota de Crédito).");
+        }
+
+        // 5) Precondicion de plata: debe haber al menos un cobro vivo. Si no hay plata, el camino correcto es la
+        //    baja simple (UpdateStatusAsync -> Cancelled), no esta operacion (que crearia un saldo a favor de 0).
+        var hasLivePayments = reserva.Payments.Any(p => !p.IsDeleted);
+        if (!hasLivePayments)
+        {
+            throw new InvalidOperationException(
+                "La reserva no tiene cobros para convertir en saldo a favor. Para deshacerla usá cancelar.");
+        }
+
+        // 6) Precondicion de pagador: si hay cobros vivos pero la reserva no tiene cliente pagador asignado, NO
+        //    hay bolsillo al que mover la plata. Antes el converter solo logueaba un Warning y NO creaba credito
+        //    -> la reserva se anulaba IGUAL y la plata del cliente desaparecia. Rechazamos ANTES de mutar nada.
+        if (reserva.PayerId is null)
+        {
+            throw new InvalidOperationException(
+                "La reserva tiene cobros pero no tiene un cliente pagador asignado; no se puede generar saldo a favor.");
+        }
+
+        await ApplyAnnulWithPaymentsToCreditAsync(reserva, actorUserId, actorUserName, ct);
+    }
+
+    /// <summary>
+    /// Cuerpo comun del caso (3): cancela servicios, traslada los cobros a saldo a favor por moneda, pasa la
+    /// reserva a Cancelled, stagea el audit y persiste el saldo. NO abre transaccion (la abre el caller); las
+    /// SaveChanges de aca participan de la transaccion ambiente cuando existe, asi un fallo en cualquier paso
+    /// revierte TODO.
+    /// </summary>
+    private async Task ApplyAnnulWithPaymentsToCreditAsync(
+        Reserva reserva, string? actorUserId, string? actorUserName, CancellationToken ct)
+    {
+        var fromStatus = reserva.Status;
+
+        // a) Cancelar TODOS los servicios vivos de la reserva. Sin esto, la reserva quedaria Cancelled pero con
+        //    venta confirmada exigible (ConfirmedSale > 0): el saldo no daria 0 una vez sacada la plata pagada.
+        //    Reusa la MISMA fuente que la anulacion total formal (CancelAllReservaServicesAsync de
+        //    BookingCancellationService) via el helper compartido. No hace SaveChanges (lo cerramos abajo).
+        await Reservations.ReservaServiceCanceller.CancelAllLiveServicesAsync(_context, reserva.Id, actorUserId, actorUserName, ct);
+
+        // b) Convertir la plata viva en saldo a favor del cliente, por moneda. NO hace SaveChanges (corre dentro
+        //    de la transaccion del caller). Devuelve el detalle por moneda para el audit.
+        var convertedByCurrency = CancellationToClientCreditConverter.Convert(
+            _context, reserva, actorUserId, actorUserName, _logger);
+
+        // c) Pasar la reserva a Cancelled + dejar el rastro de transicion (mismo patron que UpdateStatusAsync).
+        var isRealChange = !string.Equals(fromStatus, EstadoReserva.Cancelled, StringComparison.OrdinalIgnoreCase);
+        if (isRealChange)
+        {
+            _context.ReservaStatusChangeLogs.Add(new ReservaStatusChangeLog
+            {
+                ReservaId = reserva.Id,
+                FromStatus = fromStatus,
+                ToStatus = EstadoReserva.Cancelled,
+                Direction = "Forward",
+                ByUserId = actorUserId,
+                OccurredAt = DateTime.UtcNow
+            });
+        }
+        reserva.Status = EstadoReserva.Cancelled;
+
+        // d) Audit STAGEADO (no guarda): entra en el mismo commit que el resto. Rastro de "reserva anulada,
+        //    cobros a saldo a favor" con monto POR MONEDA. Sin costos ni datos sensibles.
+        if (_auditService is not null)
+        {
+            var details = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                reservaPublicId = reserva.PublicId,
+                reservaId = reserva.Id,
+                customerId = reserva.PayerId,
+                fromStatus,
+                toStatus = EstadoReserva.Cancelled,
+                creditsByCurrency = convertedByCurrency
+                    .Select(c => new { currency = c.Currency, amount = c.Amount })
+                    .ToList(),
+            });
+            _auditService.StageBusinessEvent(
+                AuditActions.ReservaCancelledWithPaymentsToClientCredit,
+                AuditActions.ReservaEntityName,
+                reserva.Id.ToString(),
+                details,
+                actorUserId ?? string.Empty,
+                actorUserName);
+        }
+
+        // e) PRIMER SaveChanges: persiste servicios cancelados + creditos + puentes negativos + cambio de
+        //    estado + audit, todo de una. Si algo falla, la transaccion del caller revierte TODO.
+        await _context.SaveChangesAsync(ct);
+
+        // f) Recalcular la deuda de CADA operador afectado ahora que sus servicios quedaron cancelados (paso e
+        //    ya los persistio). Sin esto la deuda del operador quedaba INFLADA (seguia contando servicios ya
+        //    anulados). Mismo helper compartido que usa la anulacion total formal con NC
+        //    (BookingCancellationService.RecalculateMoneyAfterTotalCancellationAsync). Hace su propio SaveChanges
+        //    (participa de la transaccion ambiente).
+        await TravelApi.Infrastructure.Reservations.SupplierDebtPersister.PersistForReservaSuppliersAsync(_context, reserva.Id, ct);
+
+        // g) Recalcular el saldo de la reserva con los puentes ya vivos: la deuda exigible queda en 0 (servicios
+        //    cancelados) y la plata pagada quedo trasladada al bolsillo. Persiste internamente (participa de la
+        //    transaccion ambiente). Sincroniza el surrogate Balance y la tabla por moneda.
+        await ReservaMoneyPersister.PersistAsync(_context, reserva.Id, ct);
+    }
+
     public async Task<TransitionReadinessDto> GetTransitionReadinessAsync(string publicIdOrLegacyId, string targetStatus, CancellationToken ct = default)
     {
         var id = await ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, ct);
@@ -2388,6 +2603,11 @@ public class ReservaService : IReservaService
         // Derivado de "tiene CAE vivo": el front explica por que cancelar exige pasar por la NC primero.
         dto.RequiresInvoiceAnnulmentToCancel = hasLiveCae;
 
+        // (2026-06-25) Flujo unificado de "Anular reserva": discriminador del CASO de anulacion + monto que
+        // quedaria como saldo a favor (caso 3). El backend decide; el front solo lo lee para el cartel correcto.
+        // Reusa las mismas senales que las capacidades (estado + plata viva), sin estado ni columna nueva.
+        PopulateCancellationCase(dto, file.Status, hasLiveCae, hasAnyLivePayment);
+
         // ADR-036 (2026-06-22): "En corrección" = volvio a Confirmada con la fecha de salida borrada tras un
         // "Sacar de viaje" (StartDate null). Derivado, sin estado nuevo. El front muestra el chip "En corrección".
         dto.IsUnderCorrection =
@@ -2398,6 +2618,66 @@ public class ReservaService : IReservaService
         dto.MonedaPrincipal = ResolvePrimaryCurrency(dto.PorMoneda);
 
         return dto;
+    }
+
+    /// <summary>
+    /// (2026-06-25) Calcula el discriminador del CASO de anulacion (Part B del flujo unificado de "Anular
+    /// reserva") y, para el caso de saldo a favor, el monto de cobros vivos POR MONEDA. El front lee esto para
+    /// mostrar el cartel correcto; la logica de plata la decide SIEMPRE el backend.
+    ///
+    /// <para>El criterio es el MISMO que usan las capacidades canCancel/canAnnul (estado + plata viva), para que
+    /// no haya dos verdades. Pre-venta = Cotizacion/Presupuesto; los estados terminales y En viaje no admiten
+    /// anulacion (NotApplicable). En firme: con factura CAE viva -> NC; sin factura pero con cobros -> saldo a
+    /// favor; sin nada -> baja directa.</para>
+    /// </summary>
+    private static void PopulateCancellationCase(ReservaDto dto, string status, bool hasLiveCae, bool hasAnyLivePayment)
+    {
+        // Pre-venta: se descarta / marca Perdida. No hay plata viva que conservar (un presupuesto con cobros es
+        // un estado raro; igual su anulacion no pasa por aca, el front ofrece "descartar").
+        if (string.Equals(status, EstadoReserva.Quotation, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(status, EstadoReserva.Budget, StringComparison.OrdinalIgnoreCase))
+        {
+            dto.CancellationCase = ReservaCancellationCases.PreSale;
+            return;
+        }
+
+        // En firme (InManagement / Confirmed) = los unicos estados donde la anulacion decide entre los 3 caminos
+        // de plata. Cualquier otro (Traveling, Closed, Lost, Cancelled, PendingOperatorRefund) no se anula.
+        var isFirmAnnulable =
+            string.Equals(status, EstadoReserva.InManagement, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(status, EstadoReserva.Confirmed, StringComparison.OrdinalIgnoreCase);
+        if (!isFirmAnnulable)
+        {
+            dto.CancellationCase = ReservaCancellationCases.NotApplicable;
+            return;
+        }
+
+        // Con factura con CAE vivo -> camino formal con Nota de Credito (caso 4). Manda sobre los cobros: aunque
+        // haya cobros, si hay factura la anulacion correcta es la NC.
+        if (hasLiveCae)
+        {
+            dto.CancellationCase = ReservaCancellationCases.CreditNote;
+            return;
+        }
+
+        // Sin factura pero con cobros vivos -> Cancelada + saldo a favor (caso 3). Exponemos el monto por moneda
+        // (lo PAGADO en cada moneda) para el cartel. Es lo mismo que convertira AnnulWithPaymentsToCreditAsync.
+        if (hasAnyLivePayment)
+        {
+            dto.CancellationCase = ReservaCancellationCases.PaymentsToCredit;
+            dto.CancellationCreditByCurrency = dto.PorMoneda
+                .Where(line => line.TotalPaid > 0m)
+                .Select(line => new ReservaCancellationCreditLineDto
+                {
+                    Currency = line.Currency,
+                    Amount = line.TotalPaid,
+                })
+                .ToList();
+            return;
+        }
+
+        // Sin factura y sin cobros -> baja directa a Cancelada (caso 2).
+        dto.CancellationCase = ReservaCancellationCases.DirectCancel;
     }
 
     /// <summary>
@@ -2688,6 +2968,21 @@ public class ReservaService : IReservaService
         });
     }
 
+    /// <summary>
+    /// Integridad de datos (2026-06-25): valida que la fecha de regreso de un servicio generico no sea
+    /// anterior a la de salida. El regreso es OPCIONAL (ver <see cref="ServicioReserva.ReturnDate"/>): si no
+    /// viene, no hay nada que validar (servicio de una sola fecha). Se compara solo con ambas presentes.
+    /// Replica el patron de Hotel/Asistencia/Vuelo/Traslado/Paquete de BookingService, pero vive aca porque
+    /// el servicio generico se da de alta/edita en ReservaService (otra clase).
+    /// </summary>
+    private static void ValidateGenericServiceDates(DateTime departureDate, DateTime? returnDate)
+    {
+        if (returnDate.HasValue && returnDate.Value < departureDate)
+        {
+            throw new ArgumentException("La fecha de regreso no puede ser anterior a la de salida.");
+        }
+    }
+
     public async Task<(ServicioReserva Reservation, string? Warning)> AddServiceAsync(int reservaId, AddServiceRequest request, CancellationToken ct = default)
     {
         var file = await _context.Reservas.FindAsync(reservaId);
@@ -2708,6 +3003,10 @@ public class ReservaService : IReservaService
 
         if (string.IsNullOrWhiteSpace(request.ServiceType)) throw new ArgumentException("Debe seleccionar un tipo de servicio");
         if (request.DepartureDate == default) throw new ArgumentException("La fecha de salida es obligatoria");
+        // Integridad de datos (2026-06-25): la fecha de regreso (opcional) no puede ser anterior a la de
+        // salida. Solo se valida si ambas estan presentes; un servicio de una sola fecha (ReturnDate null)
+        // sigue siendo valido.
+        ValidateGenericServiceDates(request.DepartureDate, request.ReturnDate);
         if (request.SalePrice <= 0) throw new ArgumentException("El precio de venta debe ser mayor a 0");
         if (request.NetCost < 0) throw new ArgumentException("El costo neto no puede ser negativo");
 
@@ -2849,6 +3148,8 @@ public class ReservaService : IReservaService
 
         if (string.IsNullOrWhiteSpace(request.ServiceType)) throw new ArgumentException("Debe seleccionar un tipo de servicio");
         if (request.SalePrice <= 0) throw new ArgumentException("El precio de venta debe ser mayor a 0");
+        // Integridad de datos (2026-06-25): misma regla que en el alta — regreso (opcional) >= salida.
+        ValidateGenericServiceDates(request.DepartureDate, request.ReturnDate);
 
         // ADR-022 §4.10 (fix P1): capturamos el proveedor ANTERIOR antes de pisarlo. Si el usuario cambia
         // de proveedor (o le saca/pone proveedor), hay que recalcular la deuda del VIEJO y del NUEVO: el

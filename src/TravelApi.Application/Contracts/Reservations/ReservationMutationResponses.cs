@@ -26,4 +26,12 @@ public class RescheduleReservaResult
 
     /// <summary>Nueva fecha de regreso de la reserva, recalculada despues del shift. Null si la reserva no tiene fechas.</summary>
     public DateTime? NewEndDate { get; set; }
+
+    /// <summary>
+    /// Aviso NO bloqueante para mostrar al usuario (mismo patron que <see cref="ReservationServiceMutationResult.Warning"/>).
+    /// Se llena, por ejemplo, cuando la reprogramacion deja la nueva fecha de salida en el PASADO: no se
+    /// bloquea (puede ser un caso valido, p.ej. cargar un viaje ya ocurrido), pero el front lo advierte.
+    /// Null = sin aviso.
+    /// </summary>
+    public string? Warning { get; set; }
 }

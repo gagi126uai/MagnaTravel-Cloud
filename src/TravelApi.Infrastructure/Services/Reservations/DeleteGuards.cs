@@ -188,6 +188,12 @@ public static class DeleteGuards
     /// Devuelve el motivo de bloqueo para borrar un pasajero o null si esta permitido.
     ///
     /// Reglas:
+    ///  - Integridad de datos (2026-06-25): no se puede borrar el ULTIMO pasajero cuando la reserva
+    ///    ya esta EN FIRME (Confirmada en adelante). Una reserva en firme con servicios resueltos y
+    ///    cero pasajeros es un estado incoherente: el motor de estado no mira el roster, asi que sin
+    ///    este guard la reserva quedaba Confirmada/Traveling con 0 pasajeros. Para deshacer la reserva
+    ///    hay que Anular/Cancelar, NO borrar el ultimo pasajero. En pre-venta (Cotizacion/Presupuesto)
+    ///    si se permite quedar en 0 (todavia se esta armando). Ver <see cref="EstadoReserva"/>.
     ///  - Pre-existente: la Reserva no puede estar en Operativo o Cerrado.
     ///  - Pre-existente: el pasajero no puede estar asignado a un voucher.
     ///  - Pre-existente: la Reserva no puede tener vouchers ya emitidos.
@@ -227,7 +233,45 @@ public static class DeleteGuards
                    "Anulá la factura con nota de credito primero.";
         }
 
+        // Integridad de datos: el ULTIMO pasajero no se borra si la reserva esta en firme. Se evalua AL FINAL
+        // (despues de los bloqueos fiscales/voucher, que tienen un mensaje mas especifico y accionable): este
+        // guard cubre el caso puro de una reserva en firme con un solo pasajero, sin factura ni voucher. Solo
+        // contamos OTROS pasajeros vivos (distintos a este); si no queda ninguno, este es el ultimo.
+        if (RequiresAtLeastOnePassenger(passenger.ReservaStatus))
+        {
+            var hasOtherPassengers = await db.Passengers
+                .AnyAsync(p => p.ReservaId == passenger.ReservaId && p.Id != passengerId, ct);
+            if (!hasOtherPassengers)
+            {
+                return "No se puede borrar el ultimo pasajero de una reserva en firme. " +
+                       "Si querés deshacer la reserva, usá Anular o Cancelar.";
+            }
+        }
+
         return null;
+    }
+
+    /// <summary>
+    /// Integridad de datos (2026-06-25): true si una reserva en este estado debe conservar SIEMPRE al menos
+    /// un pasajero (no se puede borrar el ultimo). Aplica a partir de Confirmada (la venta esta en firme y
+    /// los servicios estan resueltos/comprometidos). En pre-venta (Cotizacion/Presupuesto/En gestion) el
+    /// roster todavia se esta armando y puede quedar en 0, asi que NO entran aca.
+    ///
+    /// <para>DECISION A CONFIRMAR CON GASTON: hoy <see cref="EstadoReserva.InManagement"/> (En gestion) NO
+    /// exige al menos un pasajero. Es la etapa donde el cliente ya acepto pero todavia se gestionan los
+    /// servicios; se deja editar el roster con libertad (incluido quedar en 0 transitoriamente). Si el
+    /// negocio prefiere que En gestion tambien exija >= 1 pasajero, agregar InManagement a esta lista.</para>
+    /// </summary>
+    private static bool RequiresAtLeastOnePassenger(string? reservaStatus)
+    {
+        if (string.IsNullOrWhiteSpace(reservaStatus)) return false;
+
+        // Estados "en firme" donde la reserva ya no se esta armando: borrar el ultimo pasajero la dejaria
+        // incoherente (Confirmada/En viaje/Cerrada/Esperando-reembolso con 0 pasajeros).
+        return reservaStatus == EstadoReserva.Confirmed
+            || reservaStatus == EstadoReserva.Traveling
+            || reservaStatus == EstadoReserva.Closed
+            || reservaStatus == EstadoReserva.PendingOperatorRefund;
     }
 
     /// <summary>

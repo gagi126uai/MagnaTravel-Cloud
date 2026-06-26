@@ -475,4 +475,48 @@ public class BookingServiceRescheduleTests
         Assert.Contains("\"daysShift\":4", evt.Details);
         Assert.Contains("\"servicesMoved\":3", evt.Details);
     }
+
+    // ===================== Aviso (no bloqueante): salida queda en el PASADO =====================
+
+    [Fact]
+    public async Task Reschedule_ToPast_ReturnsWarning_DoesNotBlock()
+    {
+        // Integridad de datos (2026-06-25): un shift negativo grande deja la salida en el pasado. NO se
+        // bloquea (puede ser un caso valido), pero el resultado trae un aviso para que el front lo muestre.
+        await using var context = CreateContext();
+        var reserva = await SeedMultiTypeAsync(context); // salida mas temprana = check-in del hotel (10/08/2026)
+        var service = CreateService(context, CreateMapper());
+
+        // Calculamos un shift que deje la salida claramente en el pasado: (hoy - 10 dias) - salida actual.
+        var today = TravelApi.Infrastructure.Time.AgencyTimezone.TodayWallClockUtc();
+        var targetPast = today.AddDays(-10);
+        var shiftToPast = (int)(targetPast.Date - HotelCheckIn.Date).TotalDays;
+
+        var result = await service.RescheduleAsync(
+            reserva.PublicId.ToString(), new RescheduleReservaRequest(DaysShift: shiftToPast), CancellationToken.None);
+
+        // No bloqueo: el shift se aplico (servicios movidos) y trae aviso.
+        Assert.Equal(3, result.ServicesMoved);
+        Assert.NotNull(result.Warning);
+        Assert.Contains("pasado", result.Warning!, StringComparison.OrdinalIgnoreCase);
+
+        // Las fechas efectivamente se movieron al pasado.
+        var hotel = await context.HotelBookings.SingleAsync();
+        Assert.Equal(HotelCheckIn.AddDays(shiftToPast), hotel.CheckIn);
+        Assert.True(hotel.CheckIn.Date < today.Date);
+    }
+
+    [Fact]
+    public async Task Reschedule_ToFuture_NoWarning()
+    {
+        // Un shift que deja la salida en el futuro NO genera aviso.
+        await using var context = CreateContext();
+        var reserva = await SeedMultiTypeAsync(context); // salida 10/08/2026, ya futura respecto de hoy
+        var service = CreateService(context, CreateMapper());
+
+        var result = await service.RescheduleAsync(
+            reserva.PublicId.ToString(), new RescheduleReservaRequest(DaysShift: 5), CancellationToken.None);
+
+        Assert.Null(result.Warning);
+    }
 }

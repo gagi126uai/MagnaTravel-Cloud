@@ -199,6 +199,7 @@ public partial class BookingService
 
     private async Task<FlightSegmentDto> CreateFlightWithCatalogAsync(int reservaId, CreateFlightRequest req, CancellationToken ct)
     {
+        ValidateFlightTimes(req.DepartureTime, req.ArrivalTime);
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         ValidateCatalogCreateInputs(req.Currency, req.RateId, req.NewCatalogProduct, isHotel: false);
 
@@ -285,6 +286,7 @@ public partial class BookingService
 
     private async Task<TransferBookingDto> CreateTransferWithCatalogAsync(int reservaId, CreateTransferRequest req, CancellationToken ct)
     {
+        ValidateTransferTimes(req.PickupDateTime, req.ReturnDateTime);
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         ValidateCatalogCreateInputs(req.Currency, req.RateId, req.NewCatalogProduct, isHotel: false);
 
@@ -368,6 +370,7 @@ public partial class BookingService
 
     private async Task<PackageBookingDto> CreatePackageWithCatalogAsync(int reservaId, CreatePackageRequest req, CancellationToken ct)
     {
+        ValidatePackageDates(req.StartDate, req.EndDate);
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         ValidateCatalogCreateInputs(req.Currency, req.RateId, req.NewCatalogProduct, isHotel: false);
 

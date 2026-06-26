@@ -380,6 +380,47 @@ public partial class BookingService : IBookingService
     }
 
     /// <summary>
+    /// Integridad de datos (2026-06-25): la hora de LLEGADA de un vuelo no puede ser anterior a la de
+    /// salida. La llegada es OPCIONAL (vuelos solo de ida, ver <see cref="FlightSegment.ArrivalTime"/>):
+    /// si no viene, no hay nada que validar. Solo se compara cuando AMBAS estan presentes. Se permite que
+    /// sean iguales (caso borde sin sentido practico, pero no es una fecha "imposible").
+    /// </summary>
+    private static void ValidateFlightTimes(DateTime departureTime, DateTime? arrivalTime)
+    {
+        if (arrivalTime.HasValue && arrivalTime.Value < departureTime)
+        {
+            throw new ArgumentException("La hora de llegada no puede ser anterior a la de salida.");
+        }
+    }
+
+    /// <summary>
+    /// Integridad de datos (2026-06-25): la fecha/hora de REGRESO de un traslado no puede ser anterior a la
+    /// de salida (pickup). El regreso es OPCIONAL (solo ida y vuelta, ver
+    /// <see cref="TransferBooking.ReturnDateTime"/>): si no viene, no se valida. Solo se compara con ambas
+    /// presentes.
+    /// </summary>
+    private static void ValidateTransferTimes(DateTime pickupDateTime, DateTime? returnDateTime)
+    {
+        if (returnDateTime.HasValue && returnDateTime.Value < pickupDateTime)
+        {
+            throw new ArgumentException("La fecha de regreso no puede ser anterior a la de salida.");
+        }
+    }
+
+    /// <summary>
+    /// Integridad de datos (2026-06-25): la fecha de FIN de un paquete no puede ser anterior a la de inicio.
+    /// El fin es OPCIONAL (la ficha "producto-primero" permite omitirlo, ver
+    /// <see cref="PackageBooking.EndDate"/>): si no viene, no se valida. Solo se compara con ambas presentes.
+    /// </summary>
+    private static void ValidatePackageDates(DateTime startDate, DateTime? endDate)
+    {
+        if (endDate.HasValue && endDate.Value < startDate)
+        {
+            throw new ArgumentException("La fecha de fin no puede ser anterior a la de inicio.");
+        }
+    }
+
+    /// <summary>
     /// Aplica el snapshot del tarifario a una asistencia: congela precios (igual que Flight/Package)
     /// y copia la moneda para trazabilidad. Si la tarifa define proveedor, lo usa.
     /// </summary>
@@ -623,6 +664,7 @@ public partial class BookingService : IBookingService
         if (await IsCatalogFindOrCreateEnabledAsync(ct))
             return await CreateFlightWithCatalogAsync(reservaId, req, ct);
 
+        ValidateFlightTimes(req.DepartureTime, req.ArrivalTime);
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         var file = await _fileRepo.GetByIdAsync(reservaId, ct);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
@@ -711,6 +753,7 @@ public partial class BookingService : IBookingService
 
     public async Task<FlightSegmentDto> UpdateFlightAsync(int reservaId, int id, UpdateFlightRequest req, CancellationToken ct)
     {
+        ValidateFlightTimes(req.DepartureTime, req.ArrivalTime);
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         var flight = await _flightRepo.GetByIdAsync(id, ct);
         if (flight == null || flight.ReservaId != reservaId) throw new KeyNotFoundException("Vuelo no encontrado");
@@ -1236,6 +1279,7 @@ public partial class BookingService : IBookingService
         if (await IsCatalogFindOrCreateEnabledAsync(ct))
             return await CreatePackageWithCatalogAsync(reservaId, req, ct);
 
+        ValidatePackageDates(req.StartDate, req.EndDate);
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         var file = await _fileRepo.GetByIdAsync(reservaId, ct);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
@@ -1310,6 +1354,7 @@ public partial class BookingService : IBookingService
 
     public async Task<PackageBookingDto> UpdatePackageAsync(int reservaId, int id, UpdatePackageRequest req, CancellationToken ct)
     {
+        ValidatePackageDates(req.StartDate, req.EndDate);
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         var package = await _packageRepo.GetByIdAsync(id, ct);
         if (package == null || package.ReservaId != reservaId) throw new KeyNotFoundException("Paquete no encontrado");
@@ -1498,6 +1543,7 @@ public partial class BookingService : IBookingService
         if (await IsCatalogFindOrCreateEnabledAsync(ct))
             return await CreateTransferWithCatalogAsync(reservaId, req, ct);
 
+        ValidateTransferTimes(req.PickupDateTime, req.ReturnDateTime);
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         var file = await _fileRepo.GetByIdAsync(reservaId, ct);
         if (file == null) throw new KeyNotFoundException("Reserva no encontrada");
@@ -1577,6 +1623,7 @@ public partial class BookingService : IBookingService
 
     public async Task<TransferBookingDto> UpdateTransferAsync(int reservaId, int id, UpdateTransferRequest req, CancellationToken ct)
     {
+        ValidateTransferTimes(req.PickupDateTime, req.ReturnDateTime);
         if (req.SalePrice <= 0) throw new ArgumentException("El valor de venta debe ser mayor a 0.");
         var transfer = await _transferRepo.GetByIdAsync(id, ct);
         if (transfer == null || transfer.ReservaId != reservaId) throw new KeyNotFoundException("Traslado no encontrado");

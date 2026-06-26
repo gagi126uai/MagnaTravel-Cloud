@@ -635,6 +635,50 @@ public class ReservasController : ControllerBase
         }
     }
 
+    // (2026-06-25) Caso (3) del flujo unificado de "Anular reserva": anular una reserva en firme SIN factura con
+    // CAE vivo pero CON cobros vivos -> pasa a Cancelada y la plata cobrada queda como SALDO A FAVOR del cliente
+    // (reutilizable), SIN emitir Nota de Credito. Endpoint DEDICADO: es plata sensible, no se mezcla con el
+    // PUT /status generico. Gate de permiso reservas.cancel_with_payment (anular con plata exige la autorizacion
+    // reforzada) + ownership (bypass con view_all). El SERVICE revalida server-side TODO lo no bypasseable:
+    // estado firme, SIN factura CAE viva (si la hay -> 409, derivar al camino formal de NC) y CON cobros vivos.
+    [HttpPost("{publicIdOrLegacyId}/annul-with-credit")]
+    [RequirePermission(Permissions.ReservasCancelWithPayment)]
+    [RequireOwnership(OwnedEntity.Reserva, bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<ActionResult<ReservaDto>> AnnulWithCredit(string publicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var actorUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            var actorUserName = User.FindFirstValue("FullName") ?? User.FindFirstValue(ClaimTypes.Name) ?? User.Identity?.Name;
+            var dto = await _reservaService.AnnulWithPaymentsToCreditAsync(
+                publicIdOrLegacyId, actorUserId, actorUserName, cancellationToken);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Precondiciones de negocio (estado no firme, factura CAE viva, sin cobros): conflicto de estado.
+            return Conflict(new { message = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error annulling reserva with credit {ReservaId}", publicIdOrLegacyId);
+            if (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+            }
+
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo anular la reserva.");
+        }
+    }
+
     // ADR-020 F4 (candado): destrabar la edicion de una reserva confirmada. Cualquiera que pueda
     // editar la reserva (ReservasEdit + ownership) puede pedir la autorizacion; el SERVICE valida
     // que quien autoriza tenga reservas.authorize_locked_edit (auto-autorizacion si el actor lo

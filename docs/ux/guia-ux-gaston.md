@@ -599,3 +599,36 @@ Ronda 2:
 ## Chip del eje Pago sin movimientos = "Sin movimientos" (2026-06-24, respuesta de Gastón)
 
 - **(2026-06-24)** El rótulo del chip del eje **Pago** cuando la reserva **no tiene cargos ni cobros** (ningún movimiento de plata) es **"Sin movimientos"** (NO "Sin cobros"). Se suma a los rótulos del eje Pago ya definidos (Pendiente / Parcial / Pagada — guía 2026-06-22). Mantiene el prefijo "Pago:" en gris (regla ADR-035 A-quinque: chip secundario, no estado operativo).
+
+## Anular reserva: UN solo botón que SIEMPRE funciona, con cartel correcto por caso (2026-06-25, respuestas de Gastón)
+
+> **Origen:** Gastón reportó que "deshacer una reserva" era un caos. El botón "Anular" siempre iba por
+> el camino de la Nota de Crédito (que exige factura): en una reserva sin factura mostraba un cartel verde
+> que prometía "se cancela directo" y después fallaba con "contactá a administración" — un callejón sin
+> salida. Además el mismo botón se llamaba "Anular" en el encabezado y "Cancelar reserva" en otra solapa.
+> La lógica de negocio (4 casos) ya estaba decidida; acá se cierra CÓMO se ve y se confirma. Sesión de 4
+> preguntas; Gastón aceptó las recomendadas (P1-A + P3-A combinados, P2-A, P4-A). NO reabrir.
+> Refuerza el vocabulario duro Anular/Anulada (ADR-036 punto 1) y el panel en línea (ADR-035 C).
+> Componente real: `CancelarReservaInline.jsx` (ya existe, ya en línea, ya se llama "Anular reserva").
+
+- **(2026-06-25) UN solo botón, una sola palabra: "Anular reserva", en todos lados.** Se resuelve la inconsistencia "Anular" (encabezado) vs "Cancelar reserva" (solapa) a favor de **"Anular reserva"** en cualquier lugar donde la acción signifique deshacer el viaje. (Coherente con ADR-036 punto 1: "Anular" = deshacer el viaje; "Cancelar" = saldar/pagar el total. El "Cancelar" que solo cierra un panel sin guardar NO se toca.)
+
+- **(2026-06-25) Los 4 casos y el cartel EXACTO de confirmación de cada uno** (el cartel NUNCA promete algo que después no pasa):
+  - **Caso 1 — Pre-venta (Cotización / Presupuesto):** NO usa el botón "Anular". Usa el botón **"Perdida"** (icono ⊗) que ya existe en pre-venta: se marca **Perdido**, sin comprobante, con confirmación "¿Seguro?" + motivo opcional (regla del ciclo de vida + punto 7).
+  - **Caso 2 — En firme, SIN factura, SIN cobros:** **Cartel VERDE.** Texto: **"Esta reserva no tiene factura emitida, se anula directo, sin nota de crédito."** (P2-A: el verbo pasa de "se cancela" a "se anula").
+  - **Caso 3 — En firme, SIN factura, CON cobros (la plata queda como saldo a favor):** **Cartel CELESTE.** Texto: **"Esta reserva no tiene factura, pero el cliente ya pagó ($ 150.000 · US$ 200). Al anular, esos montos quedan como SALDO A FAVOR del cliente, para usar en otra reserva."** (P1-A + P3-A combinados: avisa que la plata NO se pierde **y muestra el monto, separado por moneda**, nunca sumado). Si la reserva es de una sola moneda, se muestra ese único monto.
+  - **Caso 4 — Con factura emitida:** **Cartel ÁMBAR.** Texto: **"Esta reserva tiene factura emitida, al anular se emite la nota de crédito en AFIP/ARCA para anularla."** (P2-A: el verbo pasa de "al cancelar" a "al anular").
+
+- **(2026-06-25) Mensaje de ÉXITO por caso** (tras confirmar):
+  - Caso 2 (baja directa): **"Reserva anulada."**
+  - Caso 3 (saldo a favor): **"Reserva anulada. Lo cobrado quedó como saldo a favor del cliente."** (P4-A: le confirma DÓNDE quedó la plata).
+  - Caso 4 (con factura): **"Reserva anulada. La nota de crédito se está generando."** (ya existía, se mantiene).
+
+- **(2026-06-25) Todo lo demás ya estaba decidido y se mantiene:** panel **EN LÍNEA** (nunca ventana flotante), **motivo obligatorio** (mín. 10 caracteres) — ADR-035 C; en reserva con plata viva el botón **"Eliminar" no aparece**, solo "Anular", y la explicación va recién al abrir el panel — ADR-036 P3=A; tras anular, la reserva queda en estado terminal de **solo lectura** con cartel chico arriba y sus servicios muestran **"Anulado"** — ADR-036 puntos 3 y 8.
+
+- **(2026-06-25) Bloqueos legítimos (qué se muestra si NO se puede anular):**
+  - **Más de una factura emitida:** no se puede anular toda la reserva de una; mensaje claro ("anulá cada factura desde la solapa Facturas, o contactá a administración") — patrón ya existente.
+  - **En viaje:** el botón "Anular" NO aparece (regla 2026-06-22, 2da tanda punto 1). Si entró por error, va por "Sacar de viaje" (Admin).
+  - **Ya terminal (Perdida / Anulada / Esperando reembolso):** el botón "Anular" NO aparece; pantalla de solo lectura.
+
+- **(2026-06-25 — dependencia técnica, NO es decisión de UX):** para mostrar el cartel correcto, el front necesita distinguir el caso 3 del caso 2 cuando NO hay factura → el backend debe exponer en el DTO de la reserva un dato tipo **"tiene cobros sin factura"** (bool) **+ el monto cobrado por moneda** (el backend ya lo acumula en `PorMoneda`). El campo `requiresInvoiceAnnulmentToCancel` que ya existe sigue marcando el caso 4. Esto solo habilita elegir el cartel; no cambia ninguna decisión de UX.

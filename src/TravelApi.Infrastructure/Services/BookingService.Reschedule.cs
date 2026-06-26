@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using TravelApi.Application.Constants;
 using TravelApi.Application.Contracts.Reservations;
 using TravelApi.Domain.Entities;
+using TravelApi.Infrastructure.Time;
 
 namespace TravelApi.Infrastructure.Services;
 
@@ -88,7 +89,29 @@ public partial class BookingService
             ServicesMoved = servicesMoved,
             NewStartDate = newStart,
             NewEndDate = newEnd,
+            // Aviso NO bloqueante: si el shift dejo la salida en el pasado, lo advertimos (no se bloquea).
+            Warning = BuildPastDateWarning(newStart),
         };
+    }
+
+    /// <summary>
+    /// Integridad de datos (2026-06-25): devuelve un AVISO no bloqueante si la nueva fecha de salida quedo en
+    /// el PASADO (por un shift negativo grande). NO se bloquea: cargar un viaje ya ocurrido o corregir fechas
+    /// historicas son casos validos. Solo se compara por fecha-calendario contra "hoy" (hora de pared de la
+    /// agencia, ver <see cref="AgencyTimezone.TodayWallClockUtc"/>), para no marcar como "pasado" un viaje que
+    /// sale HOY mas temprano. Null = la salida no quedo en el pasado (o la reserva no tiene fecha).
+    /// </summary>
+    private static string? BuildPastDateWarning(DateTime? newStartDate)
+    {
+        if (newStartDate is null) return null;
+
+        var today = AgencyTimezone.TodayWallClockUtc();
+        if (newStartDate.Value.Date < today.Date)
+        {
+            return "La nueva fecha de salida quedó en el pasado. Revisá que sea correcta.";
+        }
+
+        return null;
     }
 
     /// <summary>
