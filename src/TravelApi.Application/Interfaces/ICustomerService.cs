@@ -9,6 +9,27 @@ public interface ICustomerService
     Task<CustomerListItemDto> GetCustomerAsync(int id, CancellationToken cancellationToken);
     Task<Customer> CreateCustomerAsync(Customer customer, CancellationToken cancellationToken);
     Task<Customer> UpdateCustomerAsync(int id, Customer customer, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// ADR-040 (cuenta corriente del cliente, 2026-06-26): setea la configuracion de cuenta corriente de un
+    /// cliente — su modo de cobro (Prepaid/Account/null=hereda el default de agencia), su plazo de pago y sus
+    /// limites de credito POR MONEDA. Es la accion que ACTIVA la cuenta corriente para un cliente. Es SENSIBLE
+    /// (define cuanta plata se presta): se audita quien y viejo-&gt;nuevo, atomico con el cambio.
+    ///
+    /// <para><b>Limites por moneda</b>: el diccionario es el ESTADO DESEADO COMPLETO. Las monedas presentes se
+    /// upsertean; las monedas que el cliente tenia y ya no estan se BORRAN (ausencia = esa moneda vuelve a ser
+    /// prepago). El actor (userId/userName) lo resuelve el caller desde el contexto autenticado; este metodo no
+    /// toca HttpContext para seguir siendo testeable.</para>
+    /// </summary>
+    Task<Customer> UpdateCustomerCreditConfigAsync(
+        int id,
+        CustomerBillingMode? billingMode,
+        int paymentTermsDays,
+        IReadOnlyDictionary<string, decimal> creditLimitsByCurrency,
+        string actorUserId,
+        string? actorUserName,
+        CancellationToken cancellationToken);
+
     Task<CustomerDeletionResult> DeleteOrArchiveCustomerAsync(int id, CancellationToken cancellationToken);
     Task<Customer> ReactivateCustomerAsync(int id, CancellationToken cancellationToken);
     Task<CustomerAccountOverviewDto> GetCustomerAccountOverviewAsync(int id, CancellationToken cancellationToken);

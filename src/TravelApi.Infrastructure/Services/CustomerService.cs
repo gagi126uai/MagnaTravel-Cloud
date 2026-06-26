@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using TravelApi.Application.Constants;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -18,10 +19,16 @@ public class CustomerService : ICustomerService
     // de saldo dentro de este service.
     private readonly IFinancePositionService _financePosition;
 
-    public CustomerService(AppDbContext dbContext, IFinancePositionService financePosition)
+    // ADR-040: auditoria de la config de cuenta corriente (accion sensible). OPCIONAL a proposito: muchos tests
+    // construyen CustomerService sin auditoria; con StageBusinessEvent la fila de audit entra en el MISMO
+    // SaveChanges que el cambio (atomico). Si es null (test sin auditoria), el cambio se aplica igual sin audit.
+    private readonly IAuditService? _auditService;
+
+    public CustomerService(AppDbContext dbContext, IFinancePositionService financePosition, IAuditService? auditService = null)
     {
         _dbContext = dbContext;
         _financePosition = financePosition;
+        _auditService = auditService;
     }
 
     public async Task<PagedResponse<CustomerListItemDto>> GetCustomersAsync(CustomerListQuery query, CancellationToken cancellationToken)
@@ -282,6 +289,121 @@ public class CustomerService : ICustomerService
 
         await _dbContext.SaveChangesAsync(cancellationToken);
         return existing;
+    }
+
+    public async Task<Customer> UpdateCustomerCreditConfigAsync(
+        int id,
+        CustomerBillingMode? billingMode,
+        int paymentTermsDays,
+        IReadOnlyDictionary<string, decimal> creditLimitsByCurrency,
+        string actorUserId,
+        string? actorUserName,
+        CancellationToken cancellationToken)
+    {
+        if (paymentTermsDays < 0)
+            throw new InvalidOperationException("El plazo de pago no puede ser negativo.");
+
+        // Validamos los limites ANTES de tocar nada: un limite negativo es un error de entrada, no algo que
+        // debamos persistir a medias. Tambien normalizamos la moneda (ARS/USD) y, si vinieran dos claves que
+        // normalizan a la misma moneda, nos quedamos con la mas alta (no es un caso esperado del front).
+        //
+        // N1 (defensa en profundidad): un limite en CERO se trata como AUSENCIA (sin credito en esa moneda =
+        // prepago duro). NO se persiste una fila-cero ambigua: no entra al estado deseado, asi la fila existente
+        // (si la habia) se BORRA mas abajo. La politica de credito ya trata fila-cero == ausencia, pero evitamos
+        // dejar el dato ambiguo en la base. Solo se persisten limites estrictamente positivos.
+        var desiredLimits = new Dictionary<string, decimal>(StringComparer.Ordinal);
+        foreach (var (currency, limit) in creditLimitsByCurrency)
+        {
+            if (limit < 0)
+                throw new InvalidOperationException("El límite de crédito no puede ser negativo.");
+
+            if (limit == 0m)
+                continue; // 0 = sin credito = ausencia: no se persiste fila (se borra la existente si la hay).
+
+            var key = Monedas.Normalizar(currency);
+            if (!desiredLimits.TryGetValue(key, out var existing) || limit > existing)
+                desiredLimits[key] = limit;
+        }
+
+        var customer = await _dbContext.Customers
+            .Include(c => c.CreditLimitsByCurrency)
+            .FirstOrDefaultAsync(c => c.Id == id, cancellationToken);
+        if (customer == null)
+            throw new KeyNotFoundException("Cliente no encontrado");
+
+        // Snapshot del estado VIEJO para el detalle de auditoria (viejo -> nuevo).
+        var oldBillingMode = customer.BillingMode;
+        var oldPaymentTermsDays = customer.PaymentTermsDays;
+        var oldLimits = customer.CreditLimitsByCurrency
+            .ToDictionary(limit => Monedas.Normalizar(limit.Currency), limit => limit.Limit, StringComparer.Ordinal);
+
+        customer.BillingMode = billingMode;
+        customer.PaymentTermsDays = paymentTermsDays;
+
+        // Upsert de los limites por moneda contra el ESTADO DESEADO: actualizar/crear las monedas presentes,
+        // borrar las que el cliente tenia y ya no estan (ausencia = esa moneda vuelve a ser prepago).
+        var existingByCurrency = customer.CreditLimitsByCurrency
+            .ToDictionary(limit => Monedas.Normalizar(limit.Currency), StringComparer.Ordinal);
+
+        foreach (var (currency, limit) in desiredLimits)
+        {
+            if (existingByCurrency.TryGetValue(currency, out var row))
+                row.Limit = limit;
+            else
+                customer.CreditLimitsByCurrency.Add(new CustomerCreditLimitByCurrency
+                {
+                    CustomerId = customer.Id,
+                    Currency = currency,
+                    Limit = limit
+                });
+        }
+
+        foreach (var (currency, row) in existingByCurrency)
+        {
+            if (!desiredLimits.ContainsKey(currency))
+                _dbContext.CustomerCreditLimitByCurrency.Remove(row);
+        }
+
+        // Auditoria SENSIBLE (atomica via StageBusinessEvent: entra en el mismo SaveChanges). El detalle lleva
+        // viejo -> nuevo de los tres ejes. Los limites son dato de plata, pero el audit log es de por si
+        // restringido (pantalla de auditoria con permiso), por eso aca SI se registran los montos.
+        var details = BuildCreditConfigAuditDetails(
+            oldBillingMode, billingMode,
+            oldPaymentTermsDays, paymentTermsDays,
+            oldLimits, desiredLimits);
+
+        _auditService?.StageBusinessEvent(
+            action: AuditActions.CustomerCreditConfigUpdated,
+            entityName: "Customer",
+            entityId: customer.Id.ToString(),
+            details: details,
+            userId: actorUserId,
+            userName: actorUserName);
+
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return customer;
+    }
+
+    /// <summary>
+    /// Arma el detalle legible (viejo -&gt; nuevo) de un cambio de config de cuenta corriente para la auditoria.
+    /// Texto plano y compacto (no JSON estricto) — suficiente para la pantalla de auditoria.
+    /// </summary>
+    private static string BuildCreditConfigAuditDetails(
+        CustomerBillingMode? oldMode, CustomerBillingMode? newMode,
+        int oldTerms, int newTerms,
+        IReadOnlyDictionary<string, decimal> oldLimits,
+        IReadOnlyDictionary<string, decimal> newLimits)
+    {
+        string FormatMode(CustomerBillingMode? mode) => mode?.ToString() ?? "Hereda(default)";
+        string FormatLimits(IReadOnlyDictionary<string, decimal> limits) =>
+            limits.Count == 0
+                ? "(sin limites)"
+                : string.Join(", ", limits.OrderBy(kvp => kvp.Key, StringComparer.Ordinal)
+                    .Select(kvp => $"{kvp.Key}:{kvp.Value:N2}"));
+
+        return $"BillingMode: {FormatMode(oldMode)} -> {FormatMode(newMode)}. " +
+               $"PaymentTermsDays: {oldTerms} -> {newTerms}. " +
+               $"CreditLimits: [{FormatLimits(oldLimits)}] -> [{FormatLimits(newLimits)}].";
     }
 
     public async Task<CustomerDeletionResult> DeleteOrArchiveCustomerAsync(int id, CancellationToken cancellationToken)

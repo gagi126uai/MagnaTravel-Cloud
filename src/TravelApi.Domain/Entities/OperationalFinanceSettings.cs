@@ -588,6 +588,37 @@ public class OperationalFinanceSettings
     /// </summary>
     public int QuotationExpirationDays { get; set; } = 0;
 
+    // ============================================================
+    // ADR-040 (cuenta corriente del cliente, 2026-06-26): default de agencia para la forma de cobro + llave
+    // que decide si pasarse del limite de credito al viajar FRENA o solo AVISA. Defaults conservadores: con
+    // ellos el sistema se comporta byte-identico al prepago puro de ADR-036 (un cliente nace Prepaid y, si
+    // alguien lo pasa a cuenta corriente, pasarse del limite FRENA igual que el prepago).
+    // ============================================================
+
+    /// <summary>
+    /// ADR-040: modo de cobro con el que NACE un cliente nuevo (y el que se hereda cuando
+    /// <c>Customer.BillingMode</c> es null). Default <see cref="CustomerBillingMode.Prepaid"/> = byte-identico
+    /// a hoy. La agencia lo cambia a <see cref="CustomerBillingMode.Account"/> si su operatoria es mayormente
+    /// a cuenta. Se guarda como entero (EF default enum-&gt;int).
+    /// </summary>
+    public CustomerBillingMode DefaultCustomerBillingMode { get; set; } = CustomerBillingMode.Prepaid;
+
+    /// <summary>
+    /// ADR-040: la llave "frena o avisa" del candado de credito al pasar a "En viaje".
+    ///
+    /// <para><b>true (default = FRENA)</b>: un cliente a cuenta que se PASA de su limite (o que debe en una
+    /// moneda sin limite asignado) NO puede viajar — igual de duro que el candado prepago. Es la posicion
+    /// segura: es el momento de mayor riesgo de plata (se presta el servicio).</para>
+    ///
+    /// <para><b>false (solo AVISA)</b>: la agencia confia en su cartera; el cliente a cuenta viaja IGUAL aunque
+    /// se pase del limite, pero el sistema SIEMPRE emite un aviso (el caller lo loguea/expone). Nunca queda sin
+    /// ningun control.</para>
+    ///
+    /// <para><b>Solo afecta el branch cuenta corriente (Account); NUNCA toca el prepago.</b> Un cliente Prepaid
+    /// sigue con su candado duro incondicional pase lo que pase con esta llave.</para>
+    /// </summary>
+    public bool BlockTravelWhenCreditExceeded { get; set; } = true;
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

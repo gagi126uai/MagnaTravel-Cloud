@@ -2182,6 +2182,14 @@ public class ReservaService : IReservaService
             TotalCostActive = await summaryBaseQuery
                 .Where(r => r.Status != EstadoReserva.Closed && r.Status != EstadoReserva.Cancelled && r.Status != EstadoReserva.Lost && r.Status != "Archived")
                 .SumAsync(r => (decimal?)r.TotalCost, cancellationToken) ?? 0m,
+            // ADR-040 (cuenta corriente, review B4): este KPI es el "saldo pendiente de la cartera ACTIVA" y por
+            // diseño EXCLUYE Closed (una reserva finalizada salio de la operativa). Con cuenta corriente puede
+            // haber deuda viva en reservas Closed (un cliente a cuenta cerro su viaje debiendo). Esa deuda NO
+            // desaparece de la cartera: vive en la CUENTA CORRIENTE del cliente / AR canonico
+            // (FinancePositionService, cuyo ReceivableDebtStatuses SI incluye Closed con Balance>0). Este KPI de
+            // "activos" se deja como esta a proposito; el seguimiento de la deuda de Account cerrados es el AR /
+            // la cuenta del cliente, no este contador. Un KPI dedicado de "cartera vencida" (aging) es aditivo y
+            // llega con la Fase 2.
             TotalPendingBalance = await summaryBaseQuery
                 .Where(r => r.Status != EstadoReserva.Closed && r.Status != EstadoReserva.Cancelled && r.Status != EstadoReserva.Lost && r.Status != "Archived" && r.Balance > 0)
                 .SumAsync(r => (decimal?)r.Balance, cancellationToken) ?? 0m
@@ -4076,10 +4084,14 @@ public class ReservaService : IReservaService
             await EnsureCanStartTravelingAsync(file, id, settings, checkUnconfirmedServices: false);
         }
 
-        // Traveling -> Closed: bloquea saldo pendiente + estampa ClosedAt. (ADR-036: ya no hay ToSettle.)
+        // Traveling -> Closed: bloquea saldo pendiente (solo prepago) + estampa ClosedAt. (ADR-036: ya no hay
+        // ToSettle.) ADR-040 (review B4): un cliente a cuenta corriente puede cerrar debiendo.
         if (status == EstadoReserva.Closed)
         {
-            EnsureCanCloseAndStampClosedAt(file);
+            var closingOnAccount =
+                await ClientCreditGate.ResolveModeAsync(_context, file.PayerId, settings, CancellationToken.None)
+                    == CustomerBillingMode.Account;
+            EnsureCanCloseAndStampClosedAt(file, closingOnAccount);
 
             // B2 (2026-06-24): al FINALIZAR la reserva, sus servicios RESUELTOS pasan a "Finalizado"
             // (prestado/cumplido). Delega en la FUENTE UNICA compartida con el cierre por el job
@@ -4616,21 +4628,50 @@ public class ReservaService : IReservaService
                 throw new InvalidOperationException($"No se puede pasar a Operativo: {unconfirmedReason}");
         }
 
-        // ADR-036: CANDADO DURO de pago del cliente — incondicional, no mira la llave. El mensaje no lleva
+        // ADR-036/ADR-040: candado de pago del cliente, BIFURCADO por modo de cobro. El mensaje nunca lleva
         // montos (sin datos sensibles). InvalidOperationException -> 409 en los controllers.
-        if (!ReservationEconomicPolicy.IsClientFullyPaid(file.Balance))
-            throw new InvalidOperationException(ReservationEconomicPolicy.ClientNotFullyPaidForTravelingMessage);
+        var billingMode = await ClientCreditGate.ResolveModeAsync(_context, file.PayerId, settings, CancellationToken.None);
+        if (billingMode == CustomerBillingMode.Account)
+        {
+            // Cuenta corriente: puede viajar DEBIENDO mientras su deuda total por moneda no supere su limite
+            // (review B1: la exposicion incluye las reservas ya "En viaje"). Si PayerId fuera null, ResolveModeAsync
+            // ya habria devuelto Prepaid; por eso aca PayerId es no-null.
+            var decision = await ClientCreditGate.EvaluateCanTravelAsync(
+                _context, file.PayerId!.Value, file.Balance, settings, CancellationToken.None);
+
+            // El branch Account SIEMPRE avisa cuando hay violacion, aunque la agencia haya elegido "solo avisar"
+            // (la llave deja pasar pero nunca sin ningun control). El aviso no lleva montos.
+            if (decision.Warning != null)
+                _logger.LogWarning(
+                    "EnsureCanStartTraveling: Reserva {ReservaId} (cliente a cuenta) viaja con aviso de credito. {Warning}",
+                    id, decision.Warning);
+
+            if (!decision.Allowed)
+                throw new InvalidOperationException(decision.BlockReason);
+        }
+        else
+        {
+            // Prepago (ADR-036): candado DURO e incondicional. CERO cambios respecto de hoy (byte-identico).
+            if (!ReservationEconomicPolicy.IsClientFullyPaid(file.Balance))
+                throw new InvalidOperationException(ReservationEconomicPolicy.ClientNotFullyPaidForTravelingMessage);
+        }
     }
 
     /// <summary>
-    /// Gate de cierre: no se puede cerrar con saldo pendiente. Si pasa, estampa ClosedAt.
-    /// ADR-036 (2026-06-21): corre en Traveling -&gt; Closed (ya no existe ToSettle -&gt; Closed).
+    /// Gate de cierre: estampa ClosedAt. ADR-036 (2026-06-21): corre en Traveling -&gt; Closed (ya no existe
+    /// ToSettle -&gt; Closed).
+    ///
+    /// <para>ADR-040 (cuenta corriente, 2026-06-26, review B4): BIFURCADO por modo de cobro. Un cliente PREPAGO
+    /// no cierra con saldo pendiente (candado de ADR-036). Un cliente a CUENTA CORRIENTE SI cierra debiendo: el
+    /// viaje termino y la deuda sigue viva en su cuenta (FinancePositionService la cuenta como AR aunque la
+    /// reserva quede Closed). Sin esta excepcion, las reservas a cuenta con saldo quedarian atascadas "En viaje"
+    /// para siempre. Al cierre NO se re-chequea el limite: el viaje ya ocurrio, no tiene sentido trabar el cierre.</para>
     /// </summary>
-    private static void EnsureCanCloseAndStampClosedAt(Reserva file)
+    private static void EnsureCanCloseAndStampClosedAt(Reserva file, bool customerTravelsOnAccount)
     {
         // Saldo pendiente CON tolerancia de redondeo: un resto de centavo (tipico en cobro cruzado de
         // moneda) no debe trabar el cierre. Antes "Balance > 0" exacto frenaba el cierre por 1 centavo.
-        if (!EconomicRulesHelper.IsEconomicallySettled(file))
+        if (!customerTravelsOnAccount && !EconomicRulesHelper.IsEconomicallySettled(file))
             throw new InvalidOperationException($"No se puede cerrar la reserva porque tiene un saldo pendiente de {file.Balance:N2}.");
         file.ClosedAt = DateTime.UtcNow;
     }

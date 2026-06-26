@@ -21,10 +21,16 @@ public static class ReservationEconomicPolicy
     }
 
     /// <summary>
-    /// ADR-036 (2026-06-21, prepago puro): CANDADO DURO E INCONDICIONAL de pase a "En viaje" por el lado del
-    /// CLIENTE. La reserva solo puede entrar a Traveling si el cliente quedo SALDADO (Balance &lt;= 0, con
-    /// tolerancia de redondeo). Esta regla NO depende de la llave <c>RequireFullPaymentForOperativeStatus</c>:
-    /// en el modelo prepago el cliente paga el 100% antes de viajar, siempre.
+    /// ADR-036 (2026-06-21, prepago puro): CANDADO DURO de pase a "En viaje" por el lado del CLIENTE, para los
+    /// clientes en modo PREPAGO. La reserva solo puede entrar a Traveling si el cliente quedo SALDADO (Balance
+    /// &lt;= 0, con tolerancia de redondeo). Esta regla NO depende de la llave
+    /// <c>RequireFullPaymentForOperativeStatus</c>: en el modelo prepago el cliente paga el 100% antes de viajar.
+    ///
+    /// <para><b>ADR-040 (cuenta corriente, 2026-06-26): este candado ya NO es "incondicional para todos"</b>. Es
+    /// el branch PREPAGO. Para clientes en modo <c>Account</c> (cuenta corriente) el candado de "saldado" se
+    /// REEMPLAZA por <c>ClientCreditPolicy.EvaluateCanTravel</c> (puede viajar debiendo dentro de su limite por
+    /// moneda). La bifurcacion por modo vive en el caller (ReservaService.EnsureCanStartTravelingAsync y el job);
+    /// esta funcion queda intacta y byte-identica — sigue siendo el camino prepago, cero cambios.</para>
     ///
     /// <para>Es una funcion PURA que recibe el Balance YA MATERIALIZADO (el escalar surrogate de la reserva),
     /// para que la usen identico el pase MANUAL (ReservaService) y el JOB automatico

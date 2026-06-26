@@ -263,6 +263,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<ReservaMoneyByCurrency> ReservaMoneyByCurrency => Set<ReservaMoneyByCurrency>();
     public DbSet<SupplierBalanceByCurrency> SupplierBalanceByCurrency => Set<SupplierBalanceByCurrency>();
 
+    // ADR-040 (cuenta corriente del cliente, 2026-06-26): limite de credito del cliente por moneda. Config en
+    // OnModelCreating. Ausencia de fila para una moneda = esa moneda es prepago para el cliente.
+    public DbSet<CustomerCreditLimitByCurrency> CustomerCreditLimitByCurrency => Set<CustomerCreditLimitByCurrency>();
+
     // Auditoria ERP 2026-06-12 (hallazgo #1): comision del vendedor devengada por reserva, separada por
     // moneda (una fila por Reserva + Vendedor + Moneda). Config en OnModelCreating.
     public DbSet<CommissionAccrual> CommissionAccruals => Set<CommissionAccrual>();
@@ -1290,6 +1294,23 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         modelBuilder.Entity<OperationalFinanceSettings>(entity =>
         {
             entity.Property(s => s.AfipInvoiceControlMode).HasMaxLength(50).IsRequired();
+        });
+
+        // ADR-040 (cuenta corriente del cliente, 2026-06-26): limite de credito del cliente por moneda. Espejo
+        // estructural de SupplierBalanceByCurrency. FK Cascade: al borrar el cliente, sus limites se borran.
+        modelBuilder.Entity<CustomerCreditLimitByCurrency>(entity =>
+        {
+            entity.ToTable("CustomerCreditLimitByCurrency");
+            entity.Property(x => x.Currency).HasMaxLength(3).IsRequired().HasDefaultValue("ARS");
+            entity.Property(x => x.Limit).HasPrecision(18, 2);
+
+            entity.HasOne(x => x.Customer)
+                  .WithMany(c => c.CreditLimitsByCurrency)
+                  .HasForeignKey(x => x.CustomerId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            // Una sola fila por (cliente, moneda): el limite de una moneda es unico.
+            entity.HasIndex(x => new { x.CustomerId, x.Currency }).IsUnique();
         });
 
         // Auditoria ERP 2026-06-12 (hallazgo #1): comision del vendedor por reserva+moneda.

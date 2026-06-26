@@ -134,6 +134,31 @@ public static class EstadoReserva
     };
 
     /// <summary>
+    /// ADR-040 (cuenta corriente del cliente, 2026-06-26): estados que cuentan para la EXPOSICION DE CREDITO de
+    /// un cliente — la deuda viva que consume su limite de cuenta corriente. A diferencia de
+    /// <see cref="SaleFirmStatuses"/> (el AR de cobranza), esta lista SI INCLUYE <see cref="Traveling"/>.
+    ///
+    /// <para><b>Por que difiere de <c>SaleFirmStatuses</c></b> (review B1, leccion ADR-033 "no mezclar sets de
+    /// estados"): el AR de cobranza saca Traveling a proposito porque en prepago puro una reserva NO entra a "En
+    /// viaje" debiendo, asi que una Traveling con deuda "no deberia existir". Con cuenta corriente eso CAMBIA: un
+    /// cliente a cuenta SI viaja debiendo, asi que sus reservas Traveling con saldo son deuda real y viva que
+    /// DEBE contar contra su limite. Si reusaramos <c>SaleFirmStatuses</c> (sin Traveling) la exposicion
+    /// quedaria subestimada justo para los clientes que la feature habilita — un agujero de plata. Por eso es
+    /// una lista DEDICADA y SEPARADA, no un alias.</para>
+    ///
+    /// <para>Cubre todo el ciclo en firme donde el cliente puede deber: en gestion, confirmada, en viaje y
+    /// finalizada con deuda. Pre-venta (Quotation/Budget) y descartados (Lost/Cancelled/PendingOperatorRefund)
+    /// NO consumen credito (no hay venta firme exigible).</para>
+    /// </summary>
+    public static readonly string[] CreditExposureStatuses =
+    {
+        InManagement,
+        Confirmed,
+        Traveling,
+        Closed
+    };
+
+    /// <summary>
     /// ADR-032 (2026-06-15): FUENTE UNICA de la regla "se puede cobrar / tocar plata en este estado".
     /// Antes esta pregunta estaba escrita de tres formas distintas (PaymentService solo bloqueaba Budget,
     /// el endpoint anidado no bloqueaba nada, y la cobranza/FC4 usaban la lista canonica). Ahora los tres

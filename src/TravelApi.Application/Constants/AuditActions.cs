@@ -22,6 +22,15 @@ namespace TravelApi.Application.Constants;
 /// </summary>
 public static class AuditActions
 {
+    // ===== ADR-040 cuenta corriente del cliente =====
+
+    /// <summary>
+    /// ADR-040 (2026-06-26): cambio de la configuracion de cuenta corriente de un cliente (modo de cobro,
+    /// limites de credito por moneda, plazo de pago). Accion SENSIBLE: define cuanta plata se le presta al
+    /// cliente. EntityName=Customer, EntityId=Customer.Id; el detalle JSON lleva viejo-&gt;nuevo de cada campo.
+    /// </summary>
+    public const string CustomerCreditConfigUpdated = "CustomerCreditConfigUpdated";
+
     // ===== Modulo cancelacion/refund (FC1.2) =====
 
     /// <summary>

@@ -3,7 +3,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
+using TravelApi.Infrastructure.Reservations;
 
 namespace TravelApi.Infrastructure.Services;
 
@@ -38,6 +40,13 @@ public class ReservaLifecycleAutomationService
     // transiciones automaticas del job de las que hace una persona.
     private const string SystemActorUserId = "system:lifecycle";
     private const string SystemActorUserName = "Sistema (lifecycle)";
+
+    // ADR-040: diccionarios vacios reutilizables para clientes a cuenta sin limites/sin exposicion cargada. Sin
+    // limites = todas las monedas en las que deba son prepago (la politica las bloquea); sin exposicion = no debe.
+    private static readonly IReadOnlyDictionary<string, decimal> EmptyLimits =
+        new Dictionary<string, decimal>(StringComparer.Ordinal);
+    private static readonly IReadOnlyDictionary<string, decimal> EmptyExposure =
+        new Dictionary<string, decimal>(StringComparer.Ordinal);
 
     private readonly AppDbContext _db;
     private readonly ILogger<ReservaLifecycleAutomationService> _logger;
@@ -256,6 +265,20 @@ public class ReservaLifecycleAutomationService
                 && r.StartDate.HasValue && r.StartDate.Value.Date <= today)
             .ToListAsync(ct);
 
+        // ADR-040 (cuenta corriente): para bifurcar el candado de pago por modo de cobro, precargamos en una sola
+        // pasada (anti N+1) los settings, los modos propios de los pagadores, sus limites por moneda y una
+        // exposicion de PREVISUALIZACION. La exposicion AUTORITATIVA se re-lee FRESCA al aplicar (review B2).
+        // Settings defensivo: si cae, se degrada a prepago puro y los clientes prepago promueven igual.
+        var settings = await LoadSettingsOrDefaultAsync(ct);
+        var payerIds = candidates
+            .Where(r => r.PayerId.HasValue)
+            .Select(r => r.PayerId!.Value)
+            .Distinct()
+            .ToList();
+        var billingModes = await ClientCreditGate.GetBillingModesAsync(_db, payerIds, ct);
+        var creditLimits = await ClientCreditGate.GetLimitsByCurrencyForCustomersAsync(_db, payerIds, ct);
+        var previewExposure = await CustomerCreditExposureReader.GetExposureByCurrencyForCustomersAsync(_db, payerIds, ct);
+
         var planned = new List<PlannedTransition>();
         var blocked = 0;
 
@@ -304,8 +327,55 @@ public class ReservaLifecycleAutomationService
                 continue;
             }
 
-            // ADR-036: candado DURO de pago del cliente. Si todavia debe, no viaja: se cuenta como bloqueado,
-            // se loguea (sin montos) y se reintenta en la proxima corrida. Nunca excepcion en el job.
+            // ADR-036/ADR-040: candado de pago del cliente, BIFURCADO por modo de cobro. Nunca excepcion en el job:
+            // un cliente que no pasa el candado se cuenta como bloqueado, se loguea (sin montos) y se reintenta.
+            // ResolveBillingMode trata PayerId null como Prepaid (review I1: evita NRE si el default es Account).
+            var billingMode = ResolveBillingMode(reserva.PayerId, billingModes, settings.DefaultCustomerBillingMode);
+
+            if (billingMode == CustomerBillingMode.Account)
+            {
+                // Cuenta corriente: puede viajar debiendo dentro de su limite por moneda. Aca evaluamos con la
+                // exposicion de PREVISUALIZACION (para no planear lo que claramente no pasa); la decision
+                // AUTORITATIVA la re-toma el apply con la exposicion FRESCA (review B2, ClientCreditRecheck).
+                var customerId = reserva.PayerId!.Value;
+                var previewDecision = ClientCreditPolicy.EvaluateCanTravel(new ClientCreditContext(
+                    LimitsByCurrency: creditLimits.GetValueOrDefault(customerId) ?? EmptyLimits,
+                    ExposureByCurrency: previewExposure.GetValueOrDefault(customerId) ?? EmptyExposure,
+                    IsInArrears: false, // FASE 1: la mora llega en Fase 2 (vencimientos).
+                    BlockWhenOverLimit: settings.BlockTravelWhenCreditExceeded,
+                    ThisReservaBalance: reserva.Balance));
+
+                if (!previewDecision.Allowed)
+                {
+                    blocked++;
+                    _logger.LogInformation(
+                        "Reserva {ReservaId} ({NumeroReserva}) NO promovida automaticamente Confirmed->Traveling: el cliente (cuenta corriente) esta fuera de su limite de credito. Se reintenta cuando regularice.",
+                        reserva.Id, reserva.NumeroReserva);
+                    continue;
+                }
+
+                // El cliente a cuenta NO usa el MoneyGate escalar (debe poder viajar debiendo). La re-validacion de
+                // concurrencia se hace con el ClientCreditRecheck (init-only): re-lee la exposicion TOTAL fresca y
+                // re-evalua la politica de credito al aplicar (review B2).
+                planned.Add(new PlannedTransition(
+                    Reserva: reserva,
+                    FromStatus: EstadoReserva.Confirmed,
+                    ToStatus: EstadoReserva.Traveling,
+                    StampClosedAt: false,
+                    WriteForwardLog: true,
+                    Reason: "Inicio de viaje (StartDate alcanzada, cliente a cuenta corriente)",
+                    MoneyGate: MoneyGate.None)
+                {
+                    ClientCreditRecheck = new ClientCreditRecheck(
+                        CustomerId: customerId,
+                        LimitsByCurrency: creditLimits.GetValueOrDefault(customerId) ?? EmptyLimits,
+                        BlockWhenOverLimit: settings.BlockTravelWhenCreditExceeded,
+                        IsInArrears: false)
+                });
+                continue;
+            }
+
+            // Prepago (ADR-036): candado DURO incondicional. Si todavia debe, no viaja. CERO cambios respecto de hoy.
             if (!ReservationEconomicPolicy.IsClientFullyPaid(reserva.Balance))
             {
                 blocked++;
@@ -337,34 +407,74 @@ public class ReservaLifecycleAutomationService
     }
 
     /// <summary>
-    /// AMBOS CICLOS: cierra Traveling -&gt; Closed cuando el viaje ya termino (EndDate &lt; hoy) Y
-    /// NO hay saldo pendiente (Balance == 0). Las reservas con EndDate vencido pero saldo
-    /// pendiente quedan en Traveling y se ven con chip "Vencida con deuda".
+    /// AMBOS CICLOS: cierra Traveling -&gt; Closed cuando el viaje ya termino (EndDate &lt; hoy). Para clientes
+    /// PREPAGO solo cierra si NO hay saldo pendiente (Balance &lt;= 0); las que tienen EndDate vencido pero saldo
+    /// pendiente quedan en Traveling con chip "Vencida con deuda".
     ///
     /// <para>ADR-036 (2026-06-21, prepago puro): el fin de viaje cierra directo Traveling -&gt; Closed (ya no
-    /// existe el desvio ToSettle "a liquidar"). La unica diferencia es el rastro auditable: con flag ON se
-    /// escribe ReservaStatusChangeLog (como el resto de la cadena nueva); con flag OFF no.</para>
+    /// existe el desvio ToSettle "a liquidar").</para>
+    ///
+    /// <para>ADR-040 (cuenta corriente, 2026-06-26, review B4): BIFURCADO por modo de cobro. Un cliente a CUENTA
+    /// CORRIENTE cierra IGUAL aunque deba — el viaje termino y su deuda sigue viva en su cuenta (AR canonico,
+    /// incluye Closed). Sin esta excepcion, las reservas a cuenta con saldo quedarian atascadas "En viaje"
+    /// eternamente. Para clientes a cuenta NO se usa MoneyGate (no exigimos saldo &lt;= 0 al cerrar).</para>
     /// </summary>
     public async Task<int> AutoTransitionTravelingToClosedAsync(CancellationToken ct = default)
     {
         var today = DateTime.UtcNow.Date;
+
+        // Cargamos TODAS las Traveling con fin de viaje pasado (sin filtrar por saldo): el filtro de saldo pasa a
+        // depender del modo de cobro. Para prepago se exige Balance <= 0 (como antes); para cuenta corriente se
+        // cierra aunque deba. Resolver el modo en SQL obligaria a join + default de agencia; es mas claro y
+        // mantenible resolverlo en memoria con los modos precargados (anti N+1) — el volumen es chico.
         var candidates = await _db.Reservas
             .Where(r => r.Status == EstadoReserva.Traveling
                 && r.EndDate.HasValue
-                && r.EndDate.Value.Date < today
-                && r.Balance <= 0) // ADR-020 (M3): <= 0 cubre el saldo a favor, coherente con el gate manual
+                && r.EndDate.Value.Date < today)
             .ToListAsync(ct);
 
-        var planned = candidates.Select(reserva => new PlannedTransition(
-            Reserva: reserva,
-            FromStatus: EstadoReserva.Traveling,
-            ToStatus: EstadoReserva.Closed,
-            StampClosedAt: true,
-            WriteForwardLog: true,
-            Reason: "Fin de viaje (EndDate pasada) con saldo saldado: cierre directo",
-            // ARREGLO 1: re-validar al aplicar que el saldo SIGA <= 0 (un cobro pudo borrarse/editarse entre
-            // esta query y el commit, dejando deuda). Sin esto el job cerraba reservas con deuda.
-            MoneyGate: MoneyGate.BalanceNonPositive)).ToList();
+        var settings = await LoadSettingsOrDefaultAsync(ct);
+        var payerIds = candidates
+            .Where(r => r.PayerId.HasValue)
+            .Select(r => r.PayerId!.Value)
+            .Distinct()
+            .ToList();
+        var billingModes = await ClientCreditGate.GetBillingModesAsync(_db, payerIds, ct);
+
+        var planned = new List<PlannedTransition>();
+        foreach (var reserva in candidates)
+        {
+            // ResolveBillingMode trata PayerId null como Prepaid (review I1): una reserva sin pagador no es a
+            // cuenta aunque el default sea Account, asi cae al cierre prepago (exige saldo <= 0).
+            var billingMode = ResolveBillingMode(reserva.PayerId, billingModes, settings.DefaultCustomerBillingMode);
+
+            if (billingMode == CustomerBillingMode.Account)
+            {
+                // Cuenta corriente: cierra con deuda. SIN MoneyGate (no exigimos saldo <= 0).
+                planned.Add(new PlannedTransition(
+                    Reserva: reserva,
+                    FromStatus: EstadoReserva.Traveling,
+                    ToStatus: EstadoReserva.Closed,
+                    StampClosedAt: true,
+                    WriteForwardLog: true,
+                    Reason: "Fin de viaje (cuenta corriente): cierre con la deuda viva en la cuenta del cliente",
+                    MoneyGate: MoneyGate.None));
+            }
+            else if (ReservationEconomicPolicy.RoundCurrency(reserva.Balance) <= 0m)
+            {
+                // Prepago saldado: cierre directo (ADR-036). Prepago con deuda NO se cierra (queda "Vencida con deuda").
+                planned.Add(new PlannedTransition(
+                    Reserva: reserva,
+                    FromStatus: EstadoReserva.Traveling,
+                    ToStatus: EstadoReserva.Closed,
+                    StampClosedAt: true,
+                    WriteForwardLog: true,
+                    Reason: "Fin de viaje (EndDate pasada) con saldo saldado: cierre directo",
+                    // ARREGLO 1: re-validar al aplicar que el saldo SIGA <= 0 (un cobro pudo borrarse/editarse entre
+                    // esta query y el commit, dejando deuda). Sin esto el job cerraba reservas con deuda.
+                    MoneyGate: MoneyGate.BalanceNonPositive));
+            }
+        }
 
         var saved = await ApplyTransitionsAsync(planned, "AutoTransitionTravelingToClosed", ct);
         if (saved > 0)
@@ -797,6 +907,36 @@ public class ReservaLifecycleAutomationService
                     continue;
                 }
 
+                // ADR-040 (review B2): re-validacion de credito de cuenta corriente. A diferencia del MoneyGate
+                // escalar (que mira UNA reserva), aca RE-LEEMOS la exposicion TOTAL FRESCA del cliente por moneda
+                // y re-evaluamos la politica completa: un cobro en OTRA reserva del mismo cliente pudo cambiar su
+                // situacion de credito entre el plan y el commit. Sin esto, el job promoveria a "En viaje" con una
+                // exposicion rancia.
+                if (transition.ClientCreditRecheck is { } recheck)
+                {
+                    var freshExposure = await CustomerCreditExposureReader.GetExposureByCurrencyAsync(_db, recheck.CustomerId, ct);
+                    var decision = ClientCreditPolicy.EvaluateCanTravel(new ClientCreditContext(
+                        LimitsByCurrency: recheck.LimitsByCurrency,
+                        ExposureByCurrency: freshExposure,
+                        IsInArrears: recheck.IsInArrears,
+                        BlockWhenOverLimit: recheck.BlockWhenOverLimit,
+                        ThisReservaBalance: freshRow.Balance));
+
+                    if (!decision.Allowed)
+                    {
+                        _logger.LogWarning(
+                            "Lifecycle {Operation}: Reserva {ReservaId} saltada. La exposicion de credito del cliente (cuenta corriente) cambio entre el plan y el commit y ya no cumple la politica. Se reevalua en la proxima corrida.",
+                            operation, reserva.Id);
+                        continue;
+                    }
+
+                    // El branch Account SIEMPRE avisa cuando hay violacion bajo llave "solo avisar".
+                    if (decision.Warning != null)
+                        _logger.LogWarning(
+                            "Lifecycle {Operation}: Reserva {ReservaId} promovida a En viaje con AVISO de credito (cuenta corriente). {Warning}",
+                            operation, reserva.Id, decision.Warning);
+                }
+
                 reserva.Status = transition.ToStatus;
                 if (transition.StampClosedAt)
                     reserva.ClosedAt = now;
@@ -886,6 +1026,47 @@ public class ReservaLifecycleAutomationService
     /// ARREGLO 1: evalua la condicion de plata de una transicion contra un Balance FRESCO leido de la base.
     /// Es la misma regla del gate manual (<c>ReservationEconomicPolicy</c>), centralizada para no divergir.
     /// </summary>
+    /// <summary>
+    /// ADR-040 (review I1): resuelve el modo de cobro EFECTIVO de una reserva en el job, alineado con
+    /// <c>ClientCreditGate.ResolveModeAsync</c> del path manual. Una reserva SIN pagador (<c>PayerId</c> null)
+    /// es SIEMPRE Prepaid — aunque el default de agencia sea Account — porque sin cliente no hay cuenta corriente
+    /// que evaluar. Esto evita el NRE de dereferenciar <c>PayerId!.Value</c> en la rama Account cuando el default
+    /// es Account y la reserva no tiene pagador (landmine que tumbaba TODA la fase del job).
+    /// </summary>
+    private static CustomerBillingMode ResolveBillingMode(
+        int? payerId,
+        IReadOnlyDictionary<int, CustomerBillingMode?> billingModes,
+        CustomerBillingMode agencyDefault)
+        => payerId is null
+            ? CustomerBillingMode.Prepaid
+            : ClientBillingModeResolver.Resolve(billingModes.GetValueOrDefault(payerId.Value), agencyDefault);
+
+    /// <summary>
+    /// ADR-040: carga los settings de forma DEFENSIVA para las fases que bifurcan por modo de cobro. Si la
+    /// lectura falla (ej. settings caido), NO tumba la fase: degrada a un default (prepago puro, FRENA), que es
+    /// la posicion segura. Asi un problema de settings no frena la promocion/cierre de los clientes prepago (el
+    /// caso comun) — solo se pierde la lenidad de cuenta corriente hasta que settings vuelva. Coherente con la
+    /// resiliencia por fase (ARREGLO 3): un fallo no cascada.
+    /// </summary>
+    private async Task<OperationalFinanceSettings> LoadSettingsOrDefaultAsync(CancellationToken ct)
+    {
+        try
+        {
+            return await _settingsService.GetEntityAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Lifecycle: no se pudieron leer los settings; se degrada a prepago puro (FRENA) para esta fase. " +
+                "Los clientes prepago siguen su candado normal; la lenidad de cuenta corriente se reanuda cuando settings vuelva.");
+            return new OperationalFinanceSettings();
+        }
+    }
+
     private static bool MoneyGatePasses(MoneyGate gate, decimal freshBalance)
     {
         return gate switch
@@ -942,7 +1123,27 @@ public class ReservaLifecycleAutomationService
         bool StampClosedAt,
         bool WriteForwardLog,
         string? Reason,
-        MoneyGate MoneyGate = MoneyGate.None);
+        MoneyGate MoneyGate = MoneyGate.None)
+    {
+        // ADR-040 (review B2): si esta presente, al aplicar se re-lee la exposicion de credito TOTAL FRESCA del
+        // cliente y se re-evalua la politica de cuenta corriente (no el saldo escalar). Solo lo usan las
+        // transiciones a "En viaje" de clientes a cuenta. Null = no aplica (camino prepago / cierres). Se deja
+        // FUERA del constructor posicional (propiedad init-only) a proposito: el ctor primario sigue teniendo 7
+        // parametros, asi no se rompen los tests del job que construyen PlannedTransition por reflexion.
+        public ClientCreditRecheck? ClientCreditRecheck { get; init; }
+    }
+
+    /// <summary>
+    /// ADR-040 (review B2): datos capturados en la planificacion para RE-EVALUAR el credito del cliente a cuenta
+    /// al momento de aplicar, contra la exposicion FRESCA leida en ese instante. Los limites y la llave se
+    /// capturan en el plan (config que casi no cambia durante una corrida nocturna); lo que se re-lee fresco es
+    /// la EXPOSICION por moneda, que es lo que un cajero puede mover entre el plan y el commit.
+    /// </summary>
+    private sealed record ClientCreditRecheck(
+        int CustomerId,
+        IReadOnlyDictionary<string, decimal> LimitsByCurrency,
+        bool BlockWhenOverLimit,
+        bool IsInArrears);
 }
 
 /// <summary>
