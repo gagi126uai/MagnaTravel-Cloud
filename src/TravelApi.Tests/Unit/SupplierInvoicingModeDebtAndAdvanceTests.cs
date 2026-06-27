@@ -402,4 +402,73 @@ public class SupplierInvoicingModeDebtAndAdvanceTests
         var updated = await context.SupplierPayments.AsNoTracking().SingleAsync(p => p.Id == paymentId);
         Assert.Equal(800m, updated.Amount);
     }
+
+    [Fact]
+    public async Task ReservaImputedPayment_OverDebt_OnlyAffectsItsCurrency_ExcessIsCredit()
+    {
+        // (2026-06-26) Un pago al operador imputado a una RESERVA por encima de su deuda en esa moneda se acepta;
+        // el excedente queda como saldo a favor en ESA moneda y NUNCA toca la deuda de otra moneda.
+        await using var context = CreateContext();
+        var supplier = await AddSupplierAsync(context, SupplierInvoicingMode.TotalToCustomer);
+        var reserva = await AddReservaAsync(context, "F-IMP-ISO");
+        AddConfirmedHotel(context, supplier.Id, reserva.Id, netCost: 1000m, currency: Monedas.ARS);
+        AddConfirmedHotel(context, supplier.Id, reserva.Id, netCost: 1000m, currency: Monedas.USD);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context);
+        // USD 1500 imputado a la reserva (sin servicio puntual): excede la deuda USD (1000) -> aceptado.
+        var paymentId = await service.AddSupplierPaymentAsync(
+            supplier.Id,
+            new SupplierPaymentRequest(Amount: 1500m, Method: "Transfer", Reference: null, Notes: null,
+                ReservaId: reserva.PublicId.ToString(), ServicioReservaId: null, Currency: Monedas.USD),
+            CancellationToken.None);
+        Assert.NotEqual(Guid.Empty, paymentId);
+
+        var ars = await context.SupplierBalanceByCurrency.AsNoTracking()
+            .SingleAsync(r => r.SupplierId == supplier.Id && r.Currency == Monedas.ARS);
+        var usd = await context.SupplierBalanceByCurrency.AsNoTracking()
+            .SingleAsync(r => r.SupplierId == supplier.Id && r.Currency == Monedas.USD);
+        Assert.Equal(1000m, ars.Balance);  // ARS intacta: el pago USD no la toco
+        Assert.Equal(-500m, usd.Balance);  // USD: 1000 - 1500 = -500 (saldo a favor)
+    }
+
+    [Fact]
+    public async Task EditReservaImputedPayment_ToAmountOverReservaDebt_Accepted_ExcessIsCredit()
+    {
+        // (2026-06-26, decision del dueño) Simetria del alta: EDITAR un pago imputado a una reserva para que pase
+        // a SUPERAR la deuda de esa reserva tambien se acepta; el excedente queda como saldo a favor en esa moneda.
+        // Antes la edicion rechazaba por el tope por reserva; ahora la unica validacion que queda es la de moneda.
+        await using var context = CreateContext();
+        var supplier = await AddSupplierAsync(context, SupplierInvoicingMode.TotalToCustomer);
+        var reserva = await AddReservaAsync(context, "F-EDIT-OVER");
+        AddConfirmedHotel(context, supplier.Id, reserva.Id, netCost: 1000m, currency: Monedas.ARS);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context);
+
+        // Alta: 300 imputado a la reserva (dentro de la deuda).
+        var paymentPublicId = await service.AddSupplierPaymentAsync(
+            supplier.Id,
+            new SupplierPaymentRequest(Amount: 300m, Method: "Transfer", Reference: null, Notes: null,
+                ReservaId: reserva.PublicId.ToString(), ServicioReservaId: null, IsAdvanceToAccount: false,
+                Currency: Monedas.ARS),
+            CancellationToken.None);
+        var paymentId = await context.SupplierPayments.AsNoTracking()
+            .Where(p => p.PublicId == paymentPublicId).Select(p => p.Id).SingleAsync();
+
+        // Edicion a 1500 (> deuda 1000 de la reserva) -> ya NO rechaza; el excedente es saldo a favor.
+        await service.UpdateSupplierPaymentAsync(
+            supplier.Id, paymentId,
+            new SupplierPaymentRequest(Amount: 1500m, Method: "Transfer", Reference: null, Notes: null,
+                ReservaId: reserva.PublicId.ToString(), ServicioReservaId: null, IsAdvanceToAccount: false,
+                Currency: Monedas.ARS),
+            CancellationToken.None);
+
+        var updated = await context.SupplierPayments.AsNoTracking().SingleAsync(p => p.Id == paymentId);
+        Assert.Equal(1500m, updated.Amount);
+
+        var ars = await context.SupplierBalanceByCurrency.AsNoTracking()
+            .SingleAsync(r => r.SupplierId == supplier.Id && r.Currency == Monedas.ARS);
+        Assert.Equal(-500m, ars.Balance); // 1000 - 1500 = -500 saldo a favor (sin doble conteo del monto viejo)
+    }
 }

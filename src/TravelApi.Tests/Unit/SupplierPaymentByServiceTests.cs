@@ -373,22 +373,28 @@ public class SupplierPaymentByServiceTests
     }
 
     [Fact]
-    public async Task PaymentExceedingServiceCost_IsRejected()
+    public async Task PaymentExceedingServiceCost_IsAccepted_ExcessIsCredit()
     {
+        // (2026-06-26, decision del dueño) Pagar al operador POR ENCIMA del costo del servicio ahora SE ACEPTA:
+        // el excedente queda como saldo a favor con el operador en esa moneda (señar/prepagar por adelantado).
         await using var context = CreateContext();
         var supplier = await AddSupplierAsync(context, "Mayorista");
         var reserva = await AddReservaAsync(context, "F-CAP");
-        // Dos servicios ARS de 1000 (deuda de reserva ARS = 2000). Pagar 1500 al servicio A supera SU costo
-        // (1000) aunque la deuda de la reserva (2000) lo cubriria. Debe rechazar por tope POR SERVICIO.
         var hotelA = await AddConfirmedHotelAsync(context, supplier.Id, reserva.Id, netCost: 1000m);
-        await AddConfirmedHotelAsync(context, supplier.Id, reserva.Id, netCost: 1000m);
 
         var service = CreateService(context);
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            service.AddSupplierPaymentAsync(
-                supplier.Id,
-                PaymentToService(1500m, reserva, ServicePaymentRecordKinds.Hotel, hotelA.PublicId),
-                CancellationToken.None));
+        var paymentPublicId = await service.AddSupplierPaymentAsync(
+            supplier.Id,
+            PaymentToService(1500m, reserva, ServicePaymentRecordKinds.Hotel, hotelA.PublicId),
+            CancellationToken.None);
+
+        Assert.NotEqual(Guid.Empty, paymentPublicId); // ya NO se rechaza
+
+        var statusDto = await service.GetReservaSupplierPaymentStatusAsync(reserva.Id, CancellationToken.None);
+        var line = ServiceLine(statusDto, hotelA.PublicId);
+        Assert.Equal(ServiceSupplierPaymentStatuses.Paid, line.Status);
+        Assert.Equal(1500m, line.PaidToOperator);
+        Assert.Equal(-500m, line.OutstandingToOperator); // 1000 - 1500 = -500 (saldo a favor)
     }
 
     [Fact]
@@ -416,16 +422,14 @@ public class SupplierPaymentByServiceTests
     }
 
     [Fact]
-    public async Task SecondPaymentExceedingRemainingServiceCost_IsRejected()
+    public async Task SecondPaymentExceedingRemainingServiceCost_IsAccepted_ExcessIsCredit()
     {
+        // (2026-06-26) Sumar pagos al MISMO servicio por encima de su costo ahora SE ACEPTA; el total queda como
+        // saldo a favor en esa moneda. Primer pago 600, segundo 600 -> total 1200 > costo 1000 -> ambos validos.
         await using var context = CreateContext();
         var supplier = await AddSupplierAsync(context, "Mayorista");
         var reserva = await AddReservaAsync(context, "F-CAP2");
-        // Servicio de 1000 + hermano de 1000 (deuda reserva ARS = 2000). Un primer pago de 600 deja 400 de
-        // saldo en el servicio. Un segundo pago de 600 al MISMO servicio supera su saldo (400) -> rechazado,
-        // aunque la deuda de la reserva (1400 restante) lo cubriria.
         var hotelA = await AddConfirmedHotelAsync(context, supplier.Id, reserva.Id, netCost: 1000m);
-        await AddConfirmedHotelAsync(context, supplier.Id, reserva.Id, netCost: 1000m);
 
         var service = CreateService(context);
         await service.AddSupplierPaymentAsync(
@@ -433,11 +437,18 @@ public class SupplierPaymentByServiceTests
             PaymentToService(600m, reserva, ServicePaymentRecordKinds.Hotel, hotelA.PublicId),
             CancellationToken.None);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            service.AddSupplierPaymentAsync(
-                supplier.Id,
-                PaymentToService(600m, reserva, ServicePaymentRecordKinds.Hotel, hotelA.PublicId),
-                CancellationToken.None));
+        // El segundo pago YA NO se rechaza.
+        var secondId = await service.AddSupplierPaymentAsync(
+            supplier.Id,
+            PaymentToService(600m, reserva, ServicePaymentRecordKinds.Hotel, hotelA.PublicId),
+            CancellationToken.None);
+        Assert.NotEqual(Guid.Empty, secondId);
+
+        var statusDto = await service.GetReservaSupplierPaymentStatusAsync(reserva.Id, CancellationToken.None);
+        var line = ServiceLine(statusDto, hotelA.PublicId);
+        Assert.Equal(ServiceSupplierPaymentStatuses.Paid, line.Status);
+        Assert.Equal(1200m, line.PaidToOperator);
+        Assert.Equal(-200m, line.OutstandingToOperator); // 1000 - 1200 = -200 (saldo a favor)
     }
 
     // ============================= multimoneda =============================

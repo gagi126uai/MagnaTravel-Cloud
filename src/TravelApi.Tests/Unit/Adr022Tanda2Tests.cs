@@ -351,26 +351,31 @@ public class Adr022Tanda2Tests
     }
 
     [Fact]
-    public async Task AddSupplierPayment_ImputedToReserva_ExceedsReservaDebt_Rejected()
+    public async Task AddSupplierPayment_ImputedToReserva_ExceedsReservaDebt_Accepted_ExcessIsCredit()
     {
+        // (2026-06-26, decision del dueño) Pagar a un operador imputado a una reserva POR ENCIMA de la deuda de
+        // esa reserva ahora SE ACEPTA: el excedente queda como saldo a favor con el operador en esa moneda.
         await using var context = CreateContext();
         var (supplier, reserva) = await SeedSupplierAndReservaAsync(context);
-        // Otra reserva con MUCHA deuda para que el tope GLOBAL no sea el que frena (asi probamos el tope por
-        // reserva). La reserva imputada solo tiene 200 de deuda.
-        var otherReserva = new Reserva { Id = 2, NumeroReserva = "F-2026-0002", Name = "Otra", Status = EstadoReserva.Confirmed };
-        context.Reservas.Add(otherReserva);
-        context.Servicios.Add(NewConfirmedGenericService(id: 91, reserva.Id, supplier.Id, netCost: 200m));
-        context.Servicios.Add(NewConfirmedGenericService(id: 92, otherReserva.Id, supplier.Id, netCost: 5000m));
+        context.Servicios.Add(NewConfirmedGenericService(id: 91, reserva.Id, supplier.Id, netCost: 200m)); // ARS
         await context.SaveChangesAsync();
         await new SupplierService(context).UpdateBalanceAsync(supplier.Id, CancellationToken.None);
 
         var service = new SupplierService(context);
-        // 1000 < deuda global (5200) pero > deuda de ESTA reserva (200) -> rechazo por tope de reserva.
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            service.AddSupplierPaymentAsync(
-                supplier.Id, PaymentImputedToReserva(1000m, reserva.PublicId.ToString()), CancellationToken.None));
+        // 1000 > deuda de la reserva (200 ARS): antes se rechazaba; ahora se acepta y el excedente (800) es credito.
+        var publicId = await service.AddSupplierPaymentAsync(
+            supplier.Id, PaymentImputedToReserva(1000m, reserva.PublicId.ToString()), CancellationToken.None);
 
-        Assert.Equal(0, await context.SupplierPayments.CountAsync());
+        Assert.NotEqual(Guid.Empty, publicId);
+        Assert.Equal(1, await context.SupplierPayments.CountAsync());
+
+        // La posicion ARS del operador queda como saldo a favor (-800): el excedente NO se pierde ni cambia de
+        // moneda. Se lee de la tabla materializada (no enmascarada por see_cost).
+        var ars = await context.SupplierBalanceByCurrency.AsNoTracking()
+            .SingleAsync(r => r.SupplierId == supplier.Id && r.Currency == Monedas.ARS);
+        Assert.Equal(200m, ars.ConfirmedPurchases);
+        Assert.Equal(1000m, ars.TotalPaid);
+        Assert.Equal(-800m, ars.Balance); // 200 - 1000 = -800 saldo a favor
     }
 
     [Fact]

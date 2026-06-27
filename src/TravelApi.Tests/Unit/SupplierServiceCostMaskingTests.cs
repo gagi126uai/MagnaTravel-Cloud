@@ -385,34 +385,35 @@ public class SupplierServiceCostMaskingTests
         Assert.Equal(500m, result.CurrentBalance);
     }
 
-    // ============================= mensajes de error con deuda =============================
-    // (2026-06-26) El viejo tope GLOBAL (surrogate mezclado) se ELIMINO por decision del dueño (un anticipo a
-    // cuenta es prepago genuino, sin tope). El mensaje generico que NO filtra la deuda sigue vigente en el rechazo
-    // que SI permanece: imputar un pago a una reserva por encima de la deuda de ese proveedor EN ESA RESERVA.
-    // Estos tests fijan que ese mensaje es generico (sin montos) para todos, con y sin see_cost (ADR-017 F1b).
+    // ============================= mensajes de error sin filtrar montos =============================
+    // (2026-06-26) Los topes por MONTO (global, por reserva, por servicio) se eliminaron por decision del dueño
+    // (los pagos al operador admiten señas/prepagos: el excedente queda como saldo a favor en su moneda). El
+    // rechazo que SI permanece y NO debe filtrar montos es la INCOHERENCIA DE MONEDA: imputar un pago a una
+    // reserva en una moneda con la que esa reserva no opera con el proveedor. Estos tests fijan que ese mensaje
+    // es generico (sin montos) para todos, con y sin see_cost (ADR-017 F1b).
 
     [Fact]
-    public async Task AddSupplierPaymentAsync_ExceedsReservaDebt_UserWithoutSeeCost_GenericMessageWithoutAmounts()
+    public async Task AddSupplierPaymentAsync_WrongCurrencyForReserva_UserWithoutSeeCost_GenericMessageWithoutAmounts()
     {
         await using var context = CreateContext();
         var supplier = await SeedSupplierAccountAsync(context);
         var service = CreateServiceForUser(context, canSeeCost: false);
 
-        // La reserva masking debe 100 (su hotel confirmado). Imputar 999 a ESA reserva supera su deuda -> rebota.
+        // La reserva masking solo opera en ARS (su hotel). Imputar un pago en USD a ESA reserva no coincide -> rebota.
         var reservaPublicId = (await context.Reservas.AsNoTracking()
             .FirstAsync(r => r.NumeroReserva == "F-2026-MASK")).PublicId.ToString();
-        var request = new SupplierPaymentRequest(999m, "Transfer", null, null, reservaPublicId, null);
+        var request = new SupplierPaymentRequest(999m, "Transfer", null, null, reservaPublicId, null, Currency: "USD");
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => service.AddSupplierPaymentAsync(supplier.Id, request, CancellationToken.None));
 
-        // El mensaje NO debe revelar la deuda exacta al caller sin see_cost.
+        // El mensaje NO debe revelar montos de deuda/costo al caller sin see_cost.
         Assert.DoesNotContain("100", ex.Message);
-        Assert.Contains("excede la deuda", ex.Message);
+        Assert.Contains("no coincide", ex.Message);
     }
 
     [Fact]
-    public async Task AddSupplierPaymentAsync_ExceedsReservaDebt_UserWithSeeCost_StillGenericMessage()
+    public async Task AddSupplierPaymentAsync_WrongCurrencyForReserva_UserWithSeeCost_StillGenericMessage()
     {
         await using var context = CreateContext();
         var supplier = await SeedSupplierAccountAsync(context);
@@ -420,17 +421,16 @@ public class SupplierServiceCostMaskingTests
 
         var reservaPublicId = (await context.Reservas.AsNoTracking()
             .FirstAsync(r => r.NumeroReserva == "F-2026-MASK")).PublicId.ToString();
-        var request = new SupplierPaymentRequest(999m, "Transfer", null, null, reservaPublicId, null);
+        var request = new SupplierPaymentRequest(999m, "Transfer", null, null, reservaPublicId, null, Currency: "USD");
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => service.AddSupplierPaymentAsync(supplier.Id, request, CancellationToken.None));
 
         // ADR-017 F1b: el mensaje de error es generico para TODOS (incluso con see_cost),
-        // porque SuppliersController lo traduce a un mensaje HTTP generico — un mensaje con
-        // la deuda exacta seria codigo muerto que nunca llega al cliente. El masking real de
+        // porque SuppliersController lo traduce a un mensaje HTTP generico. El masking real de
         // montos vive en los DTOs de la cuenta del proveedor, no en los mensajes de error.
         Assert.DoesNotContain("100", ex.Message);
-        Assert.Contains("excede la deuda", ex.Message);
+        Assert.Contains("no coincide", ex.Message);
     }
 
     // ============================= fail-closed =============================
