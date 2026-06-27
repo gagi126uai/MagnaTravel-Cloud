@@ -17,15 +17,35 @@ is_placeholder() {
 
 require_health() {
   local container="$1"
+  # Espera a que el contenedor pase a healthy/running (los que tienen healthcheck arrancan
+  # en "starting" unos segundos tras el deploy). Reintenta hasta HEALTH_TIMEOUT segundos en
+  # vez de mirar una sola vez, asi un servicio que todavia esta levantando no tumba el deploy.
+  local timeout="${HEALTH_TIMEOUT:-90}"
+  local waited=0
   local status
-  status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container" 2>/dev/null || true)"
+  while :; do
+    status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container" 2>/dev/null || true)"
 
-  if [ "$status" != "healthy" ] && [ "$status" != "running" ]; then
-    echo "$container is not healthy/running. Current status: ${status:-missing}" >&2
-    exit 1
-  fi
+    if [ "$status" = "healthy" ] || [ "$status" = "running" ]; then
+      echo "$container: $status"
+      return 0
+    fi
 
-  echo "$container: $status"
+    # Estados terminales: no tiene sentido seguir esperando, fallar rapido.
+    if [ "$status" = "exited" ] || [ "$status" = "dead" ]; then
+      break
+    fi
+
+    if [ "$waited" -ge "$timeout" ]; then
+      break
+    fi
+
+    sleep 3
+    waited=$((waited + 3))
+  done
+
+  echo "$container is not healthy/running after ${waited}s. Current status: ${status:-missing}" >&2
+  exit 1
 }
 
 echo "Compose services:"
