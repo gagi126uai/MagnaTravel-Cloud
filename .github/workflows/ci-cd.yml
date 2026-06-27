@@ -1,0 +1,100 @@
+name: CI/CD
+
+# Cada push a main: corre las pruebas (backend + frontend) y, SOLO si TODO pasa,
+# despliega en el VPS ejecutando scripts/ops/deploy.sh por SSH.
+# Tambien se puede disparar a mano desde la pestania Actions (workflow_dispatch).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Un solo deploy a la vez. cancel-in-progress: false => si ya hay un run corriendo,
+# el nuevo QUEDA EN COLA (no se cancela un deploy a mitad de camino, que seria peligroso).
+concurrency:
+  group: ci-cd-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ----------------------------------------------------------------------------
+  # GATE 1: pruebas del backend (.NET 8) — solo unit tests, no requieren Postgres.
+  # ----------------------------------------------------------------------------
+  test-backend:
+    name: Pruebas backend (.NET 8 unit)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Instalar .NET SDK (segun global.json)
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Correr unit tests del backend
+        run: >-
+          dotnet test src/TravelApi.Tests/TravelApi.Tests.csproj
+          --filter "FullyQualifiedName~Unit"
+          --logger "console;verbosity=normal"
+
+  # ----------------------------------------------------------------------------
+  # GATE 2: pruebas + build del frontend (Vite / React, Node 20).
+  # ----------------------------------------------------------------------------
+  test-frontend:
+    name: Pruebas + build frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/TravelWeb
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Instalar Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: src/TravelWeb/package-lock.json
+
+      - name: Instalar dependencias (npm ci)
+        run: npm ci
+
+      - name: Correr tests del frontend
+        run: npm test
+
+      - name: Build de produccion del frontend
+        run: npm run build
+
+  # ----------------------------------------------------------------------------
+  # DEPLOY: solo si AMBOS gates pasaron. Se conecta por SSH al VPS y corre el
+  # deploy real (git pull --ff-only + scripts/ops/deploy.sh, que ya valida
+  # secretos, construye imagenes, corre migraciones one-shot y verifica salud).
+  # ----------------------------------------------------------------------------
+  deploy:
+    name: Deploy al VPS
+    needs: [test-backend, test-frontend]
+    runs-on: ubuntu-latest
+    # Desplegar tanto en push a main como en disparo manual desde Actions.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Deploy por SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          # El build de imagenes + migraciones puede tardar; subimos el limite (default 10m).
+          command_timeout: 30m
+          script: |
+            set -euo pipefail
+            cd "${{ secrets.VPS_PROJECT_DIR }}"
+            echo "== Deploy iniciado: $(date -u +%Y-%m-%dT%H:%M:%SZ) =="
+            echo "Commit local antes del pull: $(git rev-parse --short HEAD)"
+            git pull --ff-only origin main
+            echo "Commit despues del pull:     $(git rev-parse --short HEAD)"
+            bash scripts/ops/deploy.sh
+            echo "== Deploy OK =="
