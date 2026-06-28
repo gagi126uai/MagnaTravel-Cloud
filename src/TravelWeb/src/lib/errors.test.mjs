@@ -116,6 +116,71 @@ test("getApiErrorMessage — error sin message ni payload → devuelve fallback"
     assert.strictEqual(getApiErrorMessage({}, "Sin datos"), "Sin datos");
 });
 
+// ─── Nuevos HTTP statusTexts bare (E1 + hardening) ───────────────────────────
+// Verificar que los statusTexts que el browser asigna al campo message cuando el
+// servidor devuelve body vacío sean interceptados antes de llegar al usuario.
+
+test("getApiErrorMessage — 'Not Found' sin payload → genérico español", () => {
+    const error = { message: "Not Found" };
+    assert.strictEqual(getApiErrorMessage(error, "Fallback"), SPANISH_NETWORK_GENERIC);
+});
+
+test("getApiErrorMessage — 'Forbidden' sin payload → genérico español", () => {
+    const error = { message: "Forbidden" };
+    assert.strictEqual(getApiErrorMessage(error, "Fallback"), SPANISH_NETWORK_GENERIC);
+});
+
+test("getApiErrorMessage — 'Unauthorized' sin payload → genérico español", () => {
+    const error = { message: "Unauthorized" };
+    assert.strictEqual(getApiErrorMessage(error, "Fallback"), SPANISH_NETWORK_GENERIC);
+});
+
+test("getApiErrorMessage — 'Bad Request' sin payload → genérico español", () => {
+    const error = { message: "Bad Request" };
+    assert.strictEqual(getApiErrorMessage(error, "Fallback"), SPANISH_NETWORK_GENERIC);
+});
+
+test("getApiErrorMessage — 'Too Many Requests' sin payload → genérico español", () => {
+    const error = { message: "Too Many Requests" };
+    assert.strictEqual(getApiErrorMessage(error, "Fallback"), SPANISH_NETWORK_GENERIC);
+});
+
+test("getApiErrorMessage — case-insensitive: 'not found' → genérico español", () => {
+    // El browser puede enviar el statusText en minúsculas según el entorno
+    const error = { message: "not found" };
+    assert.strictEqual(getApiErrorMessage(error, "Fallback"), SPANISH_NETWORK_GENERIC);
+});
+
+test("getApiErrorMessage — 'forbidden' minúsculas → genérico español", () => {
+    const error = { message: "forbidden" };
+    assert.strictEqual(getApiErrorMessage(error, "Fallback"), SPANISH_NETWORK_GENERIC);
+});
+
+// Payload.message en español pasa intacto AUNQUE el message (statusText) sea un bare statusText.
+// Esto asegura que el mensaje real del servidor no se reemplaza por el genérico.
+
+test("hardening — 'Not Found' como statusText pero payload en español → payload pasa intacto", () => {
+    const error = {
+        payload: { message: "El comprobante con ese ID no existe." },
+        message: "Not Found",
+    };
+    assert.strictEqual(
+        getApiErrorMessage(error, "Fallback"),
+        "El comprobante con ese ID no existe."
+    );
+});
+
+test("hardening — 'Forbidden' como statusText pero payload en español → payload pasa intacto", () => {
+    const error = {
+        payload: { message: "No tenés permiso para ver este comprobante." },
+        message: "Forbidden",
+    };
+    assert.strictEqual(
+        getApiErrorMessage(error, "Fallback"),
+        "No tenés permiso para ver este comprobante."
+    );
+});
+
 // ─── normalizeMessage — integración ──────────────────────────────────────────
 
 test("normalizeMessage — string 'Failed to fetch' → genérico español", () => {

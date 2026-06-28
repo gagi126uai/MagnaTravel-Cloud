@@ -1,18 +1,33 @@
+/**
+ * Cuenta corriente del cliente — 4 solapas.
+ *
+ * Layout:
+ *   ┌── Encabezado (siempre visible) ──────────────────────────────────────────┐
+ *   │  Identidad + tarjetas de resumen (Ventas/Cobrado/Reservas/Facturas)      │
+ *   │  + chips de saldo por moneda ("Debe en $" / "Debe en US$")              │
+ *   │  + carteles "A FAVOR" con botón "Usar saldo a favor"                    │
+ *   │  + aplicaciones de saldo a favor vigentes (revertibles)                 │
+ *   └──────────────────────────────────────────────────────────────────────────┘
+ *   ┌── Solapas ───────────────────────────────────────────────────────────────┐
+ *   │  Reservas  │  Estado de cuenta (default)  │  Facturación  │  Datos bancarios│
+ *   └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Decisiones de diseño (spec sec.3, 2026-06-28):
+ *   P10=A: solapa del dinero se llama "Estado de cuenta".
+ *   P11=A: datos bancarios del cliente en su propia solapa "Datos bancarios".
+ *   P12=A: tarjetas de resumen fijas arriba del encabezado, visibles en cualquier solapa.
+ *   Nombre "Facturación" (no "Facturación AFIP": AFIP/ARCA solo aparece en el chip de cada comprobante).
+ */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
-  Eye,
   Loader2,
   Mail,
   Phone,
-  Plus,
   Receipt,
-  Search,
-  Trash2,
   Undo2,
   Wallet,
-  XCircle,
 } from "lucide-react";
 import { api } from "../../../api";
 import { showConfirm, showError, showSuccess } from "../../../alerts";
@@ -43,6 +58,13 @@ import { AccountPageSkeleton } from "../../../components/ui/skeleton";
 import { useDebounce } from "../../../hooks/useDebounce";
 import { getApiErrorMessage, isDatabaseUnavailableError } from "../../../lib/errors";
 import { getPublicId } from "../../../lib/publicIds";
+import { formatCurrency } from "../../../lib/utils";
+import { ReservaStatusBadge } from "../../reservas/components/ReservaStatusBadge";
+import { formatTipoComprobante } from "../lib/facturacionFilters";
+import { EstadoCuentaClienteTab } from "../components/EstadoCuentaClienteTab";
+import { FacturacionClienteTab } from "../components/FacturacionClienteTab";
+
+// ─── Constantes de paginación (solo usadas por la solapa Reservas) ───────────
 
 const emptyPage = {
   items: [],
@@ -54,139 +76,92 @@ const emptyPage = {
   hasNextPage: false,
 };
 
-const defaultPagingState = {
-  reservas: { page: 1, pageSize: 25 },
-  payments: { page: 1, pageSize: 25 },
-  invoices: { page: 1, pageSize: 25 },
-};
-
-const defaultPageState = {
-  reservas: emptyPage,
-  payments: emptyPage,
-  invoices: emptyPage,
-};
-
-const tabLabels = {
-  reservas: "Reservas",
-  payments: "Pagos",
-  invoices: "Facturacion AFIP",
-};
-
-const formatCurrency = (value) =>
-  new Intl.NumberFormat("es-AR", {
-    style: "currency",
-    currency: "ARS",
-    minimumFractionDigits: 0,
-  }).format(value || 0);
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const formatDate = (dateString) => {
-  if (!dateString) {
-    return "-";
-  }
-
+  if (!dateString) return "-";
   return new Date(dateString).toLocaleDateString("es-AR");
 };
 
-const formatInvoiceNumber = (invoice) =>
-  `${String(invoice.puntoDeVenta ?? 0).padStart(5, "0")}-${String(invoice.numeroComprobante ?? 0).padStart(8, "0")}`;
-
-const formatInvoiceType = (invoice) => {
-  switch (invoice.tipoComprobante) {
-    case 1:
-      return "Factura A";
-    case 6:
-      return "Factura B";
-    case 11:
-      return "Factura C";
-    case 3:
-      return "Nota de Credito A";
-    case 8:
-      return "Nota de Credito B";
-    case 13:
-      return "Nota de Credito C";
-    default:
-      return `Tipo ${invoice.tipoComprobante}`;
-  }
-};
-
+/**
+ * Renderiza el PDF de la factura en una pestaña nueva del navegador.
+ * La "cáscara" HTML se abre primero con un spinner (para no ser bloqueado como popup),
+ * y luego se reemplaza con el PDF cuando llega.
+ *
+ * Helpers escapeHtml y renderInvoiceTab son funciones puras (sin React) que se reutilizan
+ * para el estado loading y el estado final con iframe.
+ */
 const escapeHtml = (value) =>
   String(value ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
-    .replaceAll("\"", "&quot;")
+    .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
 
 const renderInvoiceTab = (previewWindow, { title, body }) => {
-  if (!previewWindow || previewWindow.closed) {
-    return;
-  }
-
+  if (!previewWindow || previewWindow.closed) return;
   previewWindow.document.open();
   previewWindow.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>${escapeHtml(title)}</title><style>:root{color-scheme:light;font-family:Inter,system-ui,sans-serif;background:#e2e8f0;color:#0f172a}*{box-sizing:border-box}body{margin:0;min-height:100vh;background:linear-gradient(180deg,#f8fafc 0%,#e2e8f0 100%)}.shell{min-height:100vh;display:flex;flex-direction:column}.header{padding:16px 20px;border-bottom:1px solid #cbd5e1;background:rgba(255,255,255,.96);backdrop-filter:blur(10px)}.eyebrow{margin:0 0 6px;font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#4f46e5}.title{margin:0;font-size:20px;font-weight:700}.subtitle{margin:6px 0 0;font-size:14px;color:#475569}.content{flex:1;padding:20px}.panel{height:calc(100vh - 117px);border:1px solid #cbd5e1;border-radius:18px;overflow:hidden;background:#fff;box-shadow:0 20px 50px rgba(15,23,42,.15)}.state{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:24px;text-align:center}.state-title{margin:0;font-size:18px;font-weight:700}.state-text{margin:0;max-width:480px;color:#475569;line-height:1.5}.spinner{width:42px;height:42px;border:4px solid #cbd5e1;border-top-color:#4f46e5;border-radius:999px;animation:spin .9s linear infinite}iframe{width:100%;height:100%;border:0;background:#fff}@keyframes spin{to{transform:rotate(360deg)}}</style></head><body>${body}</body></html>`);
   previewWindow.document.close();
 };
 
-function StatusBadge({ status }) {
-  const colors = {
-    Presupuesto: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400",
-    Reservado: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400",
-    Operativo: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400",
-    Cerrado: "bg-slate-100 text-slate-800 dark:bg-slate-700 dark:text-slate-300",
-    Cancelado: "bg-rose-100 text-rose-800 dark:bg-rose-900/30 dark:text-rose-400",
-  };
+// B1: el estado de la reserva se muestra con el badge canónico (estados en inglés del backend
+// → etiquetas en español de negocio). El StatusBadge local fue eliminado porque usaba
+// claves en español que no coincidían con los valores del backend, causando que estados como
+// "InManagement", "Confirmed", "Traveling", etc. se mostraran en inglés crudo al usuario.
+// ReservaStatusBadge importado de features/reservas/components/ReservaStatusBadge.jsx.
 
-  return (
-    <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${colors[status] || "bg-slate-100 text-slate-800"}`}>
-      {status}
-    </span>
-  );
-}
+// ─── Componente principal ─────────────────────────────────────────────────────
 
 export default function CustomerAccountPage() {
   const { publicId } = useParams();
   const navigate = useNavigate();
+
+  // ── Estado del overview (resumen del encabezado) ──────────────────────────
   const [overview, setOverview] = useState(null);
-  const [pages, setPages] = useState(defaultPageState);
-  const [paging, setPaging] = useState(defaultPagingState);
-  const [tabLoading, setTabLoading] = useState({
-    reservas: true,
-    payments: true,
-    invoices: true,
-  });
   const [loadingOverview, setLoadingOverview] = useState(true);
   const [databaseUnavailable, setDatabaseUnavailable] = useState(false);
-  const [activeTab, setActiveTab] = useState("reservas");
+
+  // ── Solapa activa — default "estadoDeCuenta" (decisión UX P12=A) ──────────
+  const [activeTab, setActiveTab] = useState("estadoDeCuenta");
+
+  // ── refreshKey para el Estado de cuenta ──────────────────────────────────
+  // El padre lo incrementa al registrar/eliminar un cobro para que
+  // EstadoCuentaClienteTab se recargue automáticamente (mismo patrón que SupplierExtractoSection).
+  const [extractoRefreshKey, setExtractoRefreshKey] = useState(0);
+
+  // ── Paginación y datos de la solapa Reservas (única que tiene paginación propia) ──
+  const [reservasPage, setReservasPage] = useState(emptyPage);
+  const [reservasPaging, setReservasPaging] = useState({ page: 1, pageSize: 25 });
+  const [tabLoadingReservas, setTabLoadingReservas] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const debouncedSearch = useDebounce(searchTerm, 300);
+
+  // ── Opciones de reservas para el modal de cobro ──────────────────────────
   const [reservaOptions, setReservaOptions] = useState([]);
+
+  // ── Modal de cobro (CustomerPaymentModal) ────────────────────────────────
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [paymentToEdit, setPaymentToEdit] = useState(null);
-  const [approvalContext, setApprovalContext] = useState(null);
-  // Controla qué ficha "Usar saldo a favor" está abierta. Guarda la moneda del cartel
-  // que disparó la apertura (ej. "ARS" o "USD"). null = ninguna ficha abierta.
-  // Solo puede haber una abierta a la vez para no confundir al usuario.
-  const [monedaFichaUsarSaldo, setMonedaFichaUsarSaldo] = useState(null);
 
-  // Aplicaciones VIVAS de saldo a favor (retiros kind=AppliedToNewBooking activos).
-  // Vienen de GET /customers/{id}/credit y se muestran como filas revertibles
-  // en el extracto de la cuenta corriente.
+  // ── Modal de aprobación ───────────────────────────────────────────────────
+  const [approvalContext, setApprovalContext] = useState(null);
+
+  // ── Saldo a favor: ficha inline y aplicaciones revertibles ───────────────
+  // monedaFichaUsarSaldo: moneda del cartel que disparó la apertura de la ficha (o null)
+  const [monedaFichaUsarSaldo, setMonedaFichaUsarSaldo] = useState(null);
   const [creditApplications, setCreditApplications] = useState([]);
   const [loadingCreditApplications, setLoadingCreditApplications] = useState(false);
-
-  // Deuda del cliente por reserva (nuevo endpoint GET /customers/{id}/account/debt-by-reserva).
-  // Permite mostrar cuánto debe cada reserva en el picker de "Aplicar a otra reserva",
-  // con desglose por moneda (ya no necesitamos el balance escalar de antes).
-  // null = no cargado todavía; [] = cargó pero no hay reservas con deuda.
   const [deudaClientePorReserva, setDeudaClientePorReserva] = useState(null);
 
-  // Revert inline: publicId de la aplicación que está en proceso de reversión.
-  // null = ninguna en proceso. Permite mostrar el formulario de motivo inline
-  // fila a fila sin necesidad de un modal.
+  // ── Estado del formulario inline de reversión de aplicaciones ────────────
   const [revirtiendoAplicacionId, setRevirtiendoAplicacionId] = useState(null);
   const [motivoReversion, setMotivoReversion] = useState("");
   const [guardandoReversion, setGuardandoReversion] = useState(false);
   const [errorReversion, setErrorReversion] = useState(null);
-  const debouncedSearch = useDebounce(searchTerm, 300);
+
+  // ── Carga del overview (encabezado) ──────────────────────────────────────
 
   const loadOverview = useCallback(async () => {
     setLoadingOverview(true);
@@ -203,98 +178,84 @@ export default function CustomerAccountPage() {
     }
   }, [publicId]);
 
-  // Carga la deuda del cliente desglosada por reserva y por moneda.
-  // Endpoint nuevo: GET /customers/{id}/account/debt-by-reserva
-  // DTO: { reservas: [ { reservaPublicId, numeroReserva, fileName, debtByCurrency: [{currency, amount}] } ] }
-  // Se usa para el picker del kind 3 (aplicar saldo a una reserva específica),
-  // mostrando cuánto debe cada reserva en la moneda del cartel activo.
-  const loadDeudaClientePorReserva = useCallback(async () => {
-    try {
-      const response = await api.get(`/customers/${publicId}/account/debt-by-reserva`);
-      setDeudaClientePorReserva(response?.reservas ?? []);
-    } catch (error) {
-      // No bloquea la pantalla: si falla, el picker queda vacío y el usuario ve el mensaje de estado vacío.
-      console.warn("[CustomerAccountPage] No se pudo cargar deuda por reserva:", error?.message);
-      setDeudaClientePorReserva([]);
-    }
-  }, [publicId]);
-
-  // Carga las aplicaciones VIVAS de saldo a favor desde el endpoint FC4.
-  // Se llama junto con loadOverview para que las filas revertibles estén disponibles.
-  // No bloquea la pantalla si falla: es informativo, no crítico.
-  const loadCreditApplications = useCallback(async () => {
-    setLoadingCreditApplications(true);
-    try {
-      const creditOverview = await api.get(`/customers/${publicId}/credit`);
-      setCreditApplications(Array.isArray(creditOverview?.activeApplications) ? creditOverview.activeApplications : []);
-    } catch (error) {
-      // No bloquea la pantalla: la cuenta corriente sigue funcionando sin este dato
-      console.warn("[CustomerAccountPage] No se pudo cargar las aplicaciones de saldo:", error?.message);
-      setCreditApplications([]);
-    } finally {
-      setLoadingCreditApplications(false);
-    }
-  }, [publicId]);
-
   const loadReservaOptions = useCallback(async () => {
     try {
       const response = await api.get(
         `/customers/${publicId}/account/reservas?page=1&pageSize=100&sortBy=createdAt&sortDir=desc`
       );
       setReservaOptions(response?.items || []);
-      setDatabaseUnavailable(false);
     } catch (error) {
       setReservaOptions([]);
       setDatabaseUnavailable(isDatabaseUnavailableError(error));
     }
   }, [publicId]);
 
-  const loadTab = useCallback(
-    async (tabKey) => {
-      setTabLoading((current) => ({ ...current, [tabKey]: true }));
+  // Carga deuda por reserva para el picker de "Aplicar saldo a reserva específica"
+  const loadDeudaClientePorReserva = useCallback(async () => {
+    try {
+      const response = await api.get(`/customers/${publicId}/account/debt-by-reserva`);
+      setDeudaClientePorReserva(response?.reservas ?? []);
+    } catch (error) {
+      // No bloquea la pantalla: el picker quedará vacío si falla
+      console.warn("[CustomerAccountPage] No se pudo cargar deuda por reserva:", error?.message);
+      setDeudaClientePorReserva([]);
+    }
+  }, [publicId]);
 
-      try {
-        const tabPaging = paging[tabKey];
-        const params = new URLSearchParams({
-          page: String(tabPaging.page),
-          pageSize: String(tabPaging.pageSize),
-          sortBy: tabKey === "payments" ? "paidAt" : "createdAt",
-          sortDir: "desc",
-        });
+  // Carga aplicaciones VIVAS de saldo a favor (FC4 — las que se pueden revertir)
+  const loadCreditApplications = useCallback(async () => {
+    setLoadingCreditApplications(true);
+    try {
+      const creditOverview = await api.get(`/customers/${publicId}/credit`);
+      setCreditApplications(Array.isArray(creditOverview?.activeApplications) ? creditOverview.activeApplications : []);
+    } catch (error) {
+      console.warn("[CustomerAccountPage] No se pudo cargar aplicaciones de saldo:", error?.message);
+      setCreditApplications([]);
+    } finally {
+      setLoadingCreditApplications(false);
+    }
+  }, [publicId]);
 
-        if (debouncedSearch.trim()) {
-          params.set("search", debouncedSearch.trim());
-        }
+  // ── Carga de la solapa Reservas (paginada) ────────────────────────────────
 
-        const response = await api.get(`/customers/${publicId}/account/${tabKey}?${params.toString()}`);
-        setPages((current) => ({
-          ...current,
-          [tabKey]: { ...emptyPage, ...(response || {}) },
-        }));
-        setDatabaseUnavailable(false);
-      } catch (error) {
-        setPages((current) => ({
-          ...current,
-          [tabKey]: emptyPage,
-        }));
-        setDatabaseUnavailable(isDatabaseUnavailableError(error));
-        showError(`No se pudo cargar ${tabLabels[tabKey].toLowerCase()}.`);
-      } finally {
-        setTabLoading((current) => ({ ...current, [tabKey]: false }));
-      }
-    },
-    [debouncedSearch, paging, publicId]
-  );
+  const loadReservas = useCallback(async () => {
+    setTabLoadingReservas(true);
+    try {
+      const params = new URLSearchParams({
+        page: String(reservasPaging.page),
+        pageSize: String(reservasPaging.pageSize),
+        sortBy: "createdAt",
+        sortDir: "desc",
+      });
+      if (debouncedSearch.trim()) params.set("search", debouncedSearch.trim());
+
+      const response = await api.get(`/customers/${publicId}/account/reservas?${params.toString()}`);
+      setReservasPage({ ...emptyPage, ...(response || {}) });
+      setDatabaseUnavailable(false);
+    } catch (error) {
+      setReservasPage(emptyPage);
+      setDatabaseUnavailable(isDatabaseUnavailableError(error));
+      showError("No se pudieron cargar las reservas.");
+    } finally {
+      setTabLoadingReservas(false);
+    }
+  }, [publicId, reservasPaging.page, reservasPaging.pageSize, debouncedSearch]);
+
+  // ── refreshAll: recarga el encabezado + solapa reservas + extracto ────────
 
   const refreshAll = useCallback(async () => {
+    // Incrementar refreshKey hace que EstadoCuentaClienteTab se recargue automáticamente
+    // (lo tiene como dependencia de su useEffect de carga).
+    setExtractoRefreshKey((prev) => prev + 1);
     await Promise.all([
       loadOverview(),
       loadReservaOptions(),
-      loadTab("reservas"),
-      loadTab("payments"),
-      loadTab("invoices"),
+      loadCreditApplications(),
+      loadDeudaClientePorReserva(),
     ]);
-  }, [loadOverview, loadReservaOptions, loadTab]);
+  }, [loadOverview, loadReservaOptions, loadCreditApplications, loadDeudaClientePorReserva]);
+
+  // ── useFinanceActions (maneja anular recibo con flujo de aprobación) ──────
 
   const { handleVoidReceipt } = useFinanceActions(refreshAll, {
     onApprovalRequired: ({ requestType, entityType, entityId }) => {
@@ -307,13 +268,17 @@ export default function CustomerAccountPage() {
     },
   });
 
+  // ── Effects de carga ──────────────────────────────────────────────────────
+
+  // Resetea el estado cuando cambia el cliente en la URL
   useEffect(() => {
-    setPaging(defaultPagingState);
-    setPages(defaultPageState);
+    setActiveTab("estadoDeCuenta");
     setSearchTerm("");
-    setActiveTab("reservas");
+    setReservasPaging({ page: 1, pageSize: 25 });
+    setExtractoRefreshKey(0);
   }, [publicId]);
 
+  // Carga inicial del encabezado y datos auxiliares
   useEffect(() => {
     loadOverview();
     loadReservaOptions();
@@ -321,19 +286,21 @@ export default function CustomerAccountPage() {
     loadDeudaClientePorReserva();
   }, [loadOverview, loadReservaOptions, loadCreditApplications, loadDeudaClientePorReserva]);
 
+  // Carga de la solapa Reservas cuando es la solapa activa
   useEffect(() => {
-    loadTab(activeTab);
-  }, [activeTab, loadTab]);
+    if (activeTab === "reservas") {
+      loadReservas();
+    }
+  }, [activeTab, loadReservas]);
 
+  // Resetea la página de reservas cuando cambia el término de búsqueda
   useEffect(() => {
-    setPaging((current) => ({
-      ...current,
-      [activeTab]: {
-        ...current[activeTab],
-        page: 1,
-      },
-    }));
+    if (activeTab === "reservas") {
+      setReservasPaging((current) => ({ ...current, page: 1 }));
+    }
   }, [activeTab, debouncedSearch]);
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
 
   const handleOpenModal = (payment = null) => {
     setPaymentToEdit(payment);
@@ -341,132 +308,103 @@ export default function CustomerAccountPage() {
   };
 
   const handleDeletePayment = async (payment) => {
+    // NIT: usar la moneda real del cobro (payment.currency), no asumir ARS
+    const monedaPago = payment.currency ?? "ARS";
     const confirmed = await showConfirm(
-      "Eliminar pago",
-      `Se anulara el pago de ${formatCurrency(payment.amount)} y la deuda volvera a la reserva.`,
-      "Si, eliminar",
+      "Eliminar cobro",
+      `Se anulará el cobro de ${formatCurrency(payment.amount, monedaPago)} y la deuda volverá a la reserva.`,
+      "Sí, eliminar",
       "red"
     );
-
-    if (!confirmed || !payment.reservaPublicId) {
-      return;
-    }
+    if (!confirmed || !payment.reservaPublicId) return;
 
     try {
       await api.delete(`/reservas/${payment.reservaPublicId}/payments/${getPublicId(payment)}`);
       await refreshAll();
-      showSuccess("El pago fue eliminado.");
+      showSuccess("El cobro fue eliminado.");
     } catch (error) {
       console.error(error);
-      showError("No se pudo eliminar el pago.");
+      showError("No se pudo eliminar el cobro.");
     }
   };
 
   const handleOpenInvoicePreview = async (invoice) => {
     const previewWindow = window.open("", "_blank");
     if (!previewWindow) {
-      showError("El navegador bloqueo la apertura de la factura.");
+      showError("El navegador bloqueó la apertura de la factura.");
       return;
     }
-
     previewWindow.opener = null;
-    const invoiceTitle = `${formatInvoiceType(invoice)} ${formatInvoiceNumber(invoice)}`;
+
+    // B2: usa formatTipoComprobante (cubre todos los tipos A/B/C/M, NC, ND).
+    // Antes había un tipoMap incompleto con fallback "Tipo ${int}" que exponía el
+    // código ARCA al usuario para tipos no mapeados (ND 2/7/12, Factura M 51, etc.).
+    const pdv = String(invoice.puntoDeVenta ?? 0).padStart(5, "0");
+    const num = String(invoice.numeroComprobante ?? 0).padStart(8, "0");
+    const tipo = formatTipoComprobante(invoice.tipoComprobante);
+    const invoiceTitle = `${tipo} ${pdv}-${num}`;
 
     renderInvoiceTab(previewWindow, {
       title: invoiceTitle,
-      body: `
-        <div class="shell">
-          <div class="header">
-            <p class="eyebrow">Facturacion AFIP</p>
-            <h1 class="title">${escapeHtml(invoiceTitle)}</h1>
-            <p class="subtitle">Preparando la factura para mostrarla en esta pestaña.</p>
-          </div>
-          <div class="content">
-            <div class="panel">
-              <div class="state">
-                <div class="spinner"></div>
-                <p class="state-title">Cargando factura...</p>
-                <p class="state-text">Estamos obteniendo el PDF autenticado para abrirlo fuera de la cuenta corriente.</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      `,
+      body: `<div class="shell"><div class="header"><p class="eyebrow">Facturación</p><h1 class="title">${escapeHtml(invoiceTitle)}</h1><p class="subtitle">Preparando la factura para mostrarla en esta pestaña.</p></div><div class="content"><div class="panel"><div class="state"><div class="spinner"></div><p class="state-title">Cargando factura...</p></div></div></div></div>`,
     });
 
     try {
       const blob = await api.get(`/invoices/${getPublicId(invoice)}/pdf`, { responseType: "blob" });
-      if (!(blob instanceof Blob) || blob.size === 0) {
-        throw new Error("La factura no devolvio un PDF valido.");
-      }
+      if (!(blob instanceof Blob) || blob.size === 0) throw new Error("La factura no devolvió un PDF válido.");
 
       const pdfUrl = URL.createObjectURL(blob);
       const releaseTimer = window.setInterval(() => {
-        if (previewWindow.closed) {
-          URL.revokeObjectURL(pdfUrl);
-          window.clearInterval(releaseTimer);
-        }
+        if (previewWindow.closed) { URL.revokeObjectURL(pdfUrl); window.clearInterval(releaseTimer); }
       }, 1000);
 
       renderInvoiceTab(previewWindow, {
         title: invoiceTitle,
-        body: `
-          <div class="shell">
-            <div class="header">
-              <p class="eyebrow">Facturacion AFIP</p>
-              <h1 class="title">${escapeHtml(invoiceTitle)}</h1>
-              <p class="subtitle">Vista de la factura emitida en AFIP.</p>
-            </div>
-            <div class="content">
-              <div class="panel">
-                <iframe src="${pdfUrl}" title="${escapeHtml(invoiceTitle)}"></iframe>
-              </div>
-            </div>
-          </div>
-        `,
+        body: `<div class="shell"><div class="header"><p class="eyebrow">Facturación</p><h1 class="title">${escapeHtml(invoiceTitle)}</h1><p class="subtitle">Vista del comprobante emitido.</p></div><div class="content"><div class="panel"><iframe src="${pdfUrl}" title="${escapeHtml(invoiceTitle)}"></iframe></div></div></div>`,
       });
-    } catch (error) {
+    } catch {
+      // E1: NO interpolamos error.message en la ventana del comprobante.
+      // Cuando el PDF endpoint falla sin body, api.js asigna error.message = statusText
+      // (ej: "Not Found", "Forbidden", "Internal Server Error") — inglés técnico que no
+      // debe llegar al usuario. Usamos texto fijo en español para este estado de error.
       renderInvoiceTab(previewWindow, {
         title: invoiceTitle,
-        body: `
-          <div class="shell">
-            <div class="header">
-              <p class="eyebrow">Facturacion AFIP</p>
-              <h1 class="title">${escapeHtml(invoiceTitle)}</h1>
-              <p class="subtitle">No fue posible abrir la factura.</p>
-            </div>
-            <div class="content">
-              <div class="panel">
-                <div class="state">
-                  <p class="state-title">No se pudo cargar la factura</p>
-                  <p class="state-text">${escapeHtml(error?.message || "El servidor no devolvio un PDF valido.")}</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        `,
+        body: `<div class="shell"><div class="header"><p class="eyebrow">Facturación</p><h1 class="title">${escapeHtml(invoiceTitle)}</h1><p class="subtitle">No fue posible abrir el comprobante.</p></div><div class="content"><div class="panel"><div class="state"><p class="state-title">No se pudo cargar el comprobante</p><p class="state-text">No se pudo abrir el comprobante. Probá de nuevo en un momento.</p></div></div></div></div>`,
       });
     }
   };
 
-  const currentPage = pages[activeTab] || emptyPage;
-  const currentPaging = paging[activeTab] || defaultPagingState.reservas;
-  const currentTabLoading = tabLoading[activeTab];
-  const reservas = pages.reservas.items || [];
-  const payments = pages.payments.items || [];
-  const invoices = pages.invoices.items || [];
+  const handleRevertirAplicacion = async (applicationPublicId) => {
+    setGuardandoReversion(true);
+    setErrorReversion(null);
+    try {
+      await api.post(
+        `/customers/${publicId}/credit/applications/${applicationPublicId}/reverse`,
+        { reason: motivoReversion.trim() || null }
+      );
+      setRevirtiendoAplicacionId(null);
+      setMotivoReversion("");
+      await Promise.all([loadOverview(), loadCreditApplications()]);
+    } catch (error) {
+      setErrorReversion(getApiErrorMessage(error, "No se pudo revertir la aplicación. Intentá de nuevo."));
+    } finally {
+      setGuardandoReversion(false);
+    }
+  };
+
+  // ── Datos derivados ───────────────────────────────────────────────────────
+
   const summary = overview?.summary || {};
   const customer = overview?.customer;
+  const reservas = reservasPage.items || [];
 
+  // Reservas sin cancelar: para el picker del modal de cobro
   const availableReservas = useMemo(
-    () => reservaOptions.filter((reserva) => reserva.status !== "Cancelled"),
+    () => reservaOptions.filter((r) => r.status !== "Cancelled"),
     [reservaOptions]
   );
 
-  // Filtra las reservas con deuda EN UNA MONEDA ESPECÍFICA para el picker kind 3.
-  // Usa el nuevo endpoint GET /customers/{id}/account/debt-by-reserva,
-  // que devuelve el desglose por moneda en debtByCurrency[].
-  // El filtro por moneda es necesario: nunca mezclar ARS con USD en el picker.
+  // Filtra por moneda para el picker de "aplicar saldo a reserva específica"
   const getReservasConDeudaEnMoneda = useCallback((moneda) => {
     if (!deudaClientePorReserva) return [];
     return deudaClientePorReserva.filter((reserva) => {
@@ -477,59 +415,27 @@ export default function CustomerAccountPage() {
     });
   }, [deudaClientePorReserva]);
 
-  // Revierte una aplicación de saldo a favor desde la fila del extracto.
-  // El motivo es opcional: puede ir vacío y el backend lo acepta igual.
-  const handleRevertirAplicacion = async (applicationPublicId) => {
-    setGuardandoReversion(true);
-    setErrorReversion(null);
-    try {
-      await api.post(
-        `/customers/${publicId}/credit/applications/${applicationPublicId}/reverse`,
-        { reason: motivoReversion.trim() || null }
-      );
-      // Limpiar el estado de reversión y recargar tanto el overview como las aplicaciones
-      setRevirtiendoAplicacionId(null);
-      setMotivoReversion("");
-      await Promise.all([loadOverview(), loadCreditApplications()]);
-    } catch (error) {
-      setErrorReversion(
-        getApiErrorMessage(error, "No se pudo revertir la aplicación. Intentá de nuevo.")
-      );
-    } finally {
-      setGuardandoReversion(false);
-    }
-  };
+  // ── Render ────────────────────────────────────────────────────────────────
 
-  const updateCurrentPage = (page) => {
-    setPaging((current) => ({
-      ...current,
-      [activeTab]: {
-        ...current[activeTab],
-        page,
-      },
-    }));
-  };
-
-  const updateCurrentPageSize = (pageSize) => {
-    setPaging((current) => ({
-      ...current,
-      [activeTab]: {
-        page: 1,
-        pageSize,
-      },
-    }));
-  };
-
-  if (loadingOverview) {
-    return <AccountPageSkeleton />;
-  }
+  if (loadingOverview) return <AccountPageSkeleton />;
 
   if (!overview && !databaseUnavailable) {
     return <div className="py-12 text-center text-muted-foreground">No se encontraron datos del cliente.</div>;
   }
 
+  // Chips de saldo por moneda (multimoneda, separados).
+  // Usa summary.receivableByCurrency del backend (ADR-022 Capa 8).
+  // Si está vacío (sin deuda activa), no muestra el bloque rojo.
+  const saldoPorMoneda = Array.isArray(summary.receivableByCurrency)
+    ? summary.receivableByCurrency.filter((item) => (item.amount ?? 0) > 0)
+    : [];
+
+  // Cuando no hay deuda activa, muestra igualmente un chip verde/gris con el escalar legacy
+  const sinDeudaEnNingunaMoneda = saldoPorMoneda.length === 0;
+
   return (
     <div className="space-y-6">
+      {/* ── Barra de navegación superior ───────────────────────────────────── */}
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="icon" onClick={() => navigate("/customers")}>
@@ -541,29 +447,23 @@ export default function CustomerAccountPage() {
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => navigate(`/quotes?create=1&customerPublicId=${publicId}`)}
-            className="gap-2 border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800 dark:border-indigo-800 dark:text-indigo-300 dark:hover:bg-indigo-900/20"
-            disabled={databaseUnavailable}
-          >
-            <Receipt className="h-4 w-4" />
-            Nueva cotizacion
-          </Button>
-          <Button
-            onClick={() => handleOpenModal(null)}
-            className="gap-2 bg-emerald-600 text-white shadow-lg shadow-emerald-500/20 hover:bg-emerald-700"
-            disabled={databaseUnavailable}
-          >
-            <Plus className="h-4 w-4" />
-            Nueva cobranza
-          </Button>
-        </div>
+        {/* Nueva cotización: acción rápida independiente del cobro */}
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => navigate(`/quotes?create=1&customerPublicId=${publicId}`)}
+          className="gap-2 border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800 dark:border-indigo-800 dark:text-indigo-300 dark:hover:bg-indigo-900/20"
+          disabled={databaseUnavailable}
+        >
+          <Receipt className="h-4 w-4" />
+          Nueva cotización
+        </Button>
       </div>
 
+      {/* ── Encabezado (siempre visible sobre las solapas) ─────────────────── */}
       <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+
+        {/* Tarjeta izquierda: identidad + resumen de actividad */}
         <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
           <div className="flex items-start gap-4">
             <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-cyan-500 text-2xl font-bold text-white shadow-md">
@@ -587,14 +487,15 @@ export default function CustomerAccountPage() {
             </div>
           </div>
 
+          {/* Tarjetas de resumen: Ventas / Cobrado / Reservas / Facturas (P12=A: fijas) */}
           <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-950/60">
               <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">Ventas</div>
-              <div className="mt-1 text-lg font-bold text-slate-900 dark:text-white">{formatCurrency(summary.totalSales)}</div>
+              <div className="mt-1 text-lg font-bold text-slate-900 dark:text-white">{formatCurrency(summary.totalSales, "ARS")}</div>
             </div>
             <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-950/60">
               <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">Cobrado</div>
-              <div className="mt-1 text-lg font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(summary.totalPaid)}</div>
+              <div className="mt-1 text-lg font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(summary.totalPaid, "ARS")}</div>
             </div>
             <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-950/60">
               <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">Reservas</div>
@@ -607,53 +508,47 @@ export default function CustomerAccountPage() {
           </div>
         </div>
 
-        <div
-          className={`rounded-xl border p-6 shadow-sm ${
-            Number(summary.totalBalance || 0) > 0
-              ? "border-rose-100 bg-rose-50 dark:border-rose-900/30 dark:bg-rose-900/10"
-              : "border-emerald-100 bg-emerald-50 dark:border-emerald-900/30 dark:bg-emerald-900/10"
-          }`}
-        >
-          <div className="text-sm font-medium text-slate-500 dark:text-slate-400">Saldo Actual</div>
-          <div
-            className={`mt-1 text-3xl font-bold ${
-              Number(summary.totalBalance || 0) > 0
-                ? "text-rose-600 dark:text-rose-400"
-                : "text-emerald-600 dark:text-emerald-400"
-            }`}
-          >
-            {formatCurrency(summary.totalBalance)}
-          </div>
-          <div className="mt-2 text-xs font-medium text-slate-400">
-            {Number(summary.totalBalance || 0) > 0 ? "Deuda pendiente" : "Al dia / A favor"}
-          </div>
-          <div className="mt-6 grid gap-3 sm:grid-cols-2">
-            <div className="rounded-lg bg-white/70 p-3 dark:bg-slate-900/60">
-              <div className="text-[11px] uppercase tracking-wider text-slate-400">Pagos</div>
-              <div className="text-lg font-semibold text-slate-900 dark:text-white">{summary.paymentCount || 0}</div>
+        {/*
+          Tarjeta derecha: chips de saldo por moneda ("Debe en $" / "Debe en US$").
+          Regla multimoneda: NUNCA se suman ARS y USD en un solo número.
+          Se usa summary.receivableByCurrency (ADR-022 Capa 8).
+          Si no hay deuda activa, se muestra un chip verde/neutro.
+        */}
+        <div className="flex flex-col gap-3">
+          {sinDeudaEnNingunaMoneda ? (
+            <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-6 shadow-sm dark:border-emerald-900/30 dark:bg-emerald-900/10 flex-1">
+              <div className="text-sm font-medium text-slate-500 dark:text-slate-400">Saldo</div>
+              <div className="mt-1 text-3xl font-bold text-emerald-600 dark:text-emerald-400">Al día</div>
+              <div className="mt-2 text-xs font-medium text-slate-400">Sin deuda pendiente</div>
             </div>
-            <div className="rounded-lg bg-white/70 p-3 dark:bg-slate-900/60">
-              <div className="text-[11px] uppercase tracking-wider text-slate-400">Limite credito</div>
-              <div className="text-lg font-semibold text-slate-900 dark:text-white">{formatCurrency(customer?.creditLimit)}</div>
-            </div>
-          </div>
+          ) : (
+            saldoPorMoneda.map((item) => (
+              <div
+                key={item.currency}
+                className="rounded-xl border border-rose-100 bg-rose-50 p-5 shadow-sm dark:border-rose-900/30 dark:bg-rose-900/10"
+                data-testid={`chip-saldo-${item.currency}`}
+              >
+                <div className="text-xs font-bold uppercase tracking-wider text-rose-700 dark:text-rose-400">
+                  Debe en {item.currency === "USD" ? "US$" : "$"}
+                </div>
+                <div className="mt-1 text-2xl font-bold text-rose-600 dark:text-rose-400">
+                  {formatCurrency(item.amount, item.currency)}
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </div>
 
       {/*
-        Carteles "A FAVOR" por moneda.
-
-        El backend devuelve summary.creditBalanceByCurrency: lista de { currency, amount }
-        con SOLO las monedas que tienen saldo a favor > 0 (el backend ya filtra).
-        Regla multimoneda: un cartel por moneda, nunca sumados ni mezclados.
-        Permiso cobranzas.edit: si el usuario lo tiene, muestra el botón "Usar saldo a favor".
-        Si no tiene el permiso, el cartel es solo informativo (sin botón).
+        ── Carteles "A FAVOR" por moneda ───────────────────────────────────────
+        Un cartel por moneda con saldo a favor > 0. Regla multimoneda: uno por moneda,
+        nunca sumados. El botón "Usar saldo a favor" abre la ficha inline.
       */}
       {Array.isArray(summary.creditBalanceByCurrency) && summary.creditBalanceByCurrency.length > 0 && (
         <div className="flex flex-col gap-3">
           {summary.creditBalanceByCurrency.map((creditEntry) => (
             <div key={creditEntry.currency}>
-              {/* Cartel verde "A FAVOR EN $" o "A FAVOR EN US$" */}
               <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 dark:border-emerald-900/40 dark:bg-emerald-950/20">
                 <div>
                   <div className="text-[11px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
@@ -669,12 +564,6 @@ export default function CustomerAccountPage() {
                     El cliente pagó de más en {creditEntry.currency === "USD" ? "dólares" : "pesos"}
                   </div>
                 </div>
-
-                {/*
-                  Botón "Usar saldo a favor": solo si el usuario tiene permiso cobranzas.edit.
-                  Sin ese permiso el cartel sigue siendo visible (informativo para quien consulta la cuenta).
-                  El botón abre la ficha inline de esa moneda; cierra cualquier otra que esté abierta.
-                */}
                 {hasPermission("cobranzas.edit") && (
                   <button
                     type="button"
@@ -691,8 +580,6 @@ export default function CustomerAccountPage() {
                   </button>
                 )}
               </div>
-
-              {/* Ficha inline: se despliega debajo del cartel de la moneda correspondiente */}
               {monedaFichaUsarSaldo === creditEntry.currency && (
                 <div className="mt-2">
                   <UsarSaldoAFavorInline
@@ -702,7 +589,6 @@ export default function CustomerAccountPage() {
                     reservasConDeuda={getReservasConDeudaEnMoneda(creditEntry.currency)}
                     onConfirmado={() => {
                       setMonedaFichaUsarSaldo(null);
-                      // Recargar overview, aplicaciones y deuda por reserva: el saldo disponible baja
                       Promise.all([loadOverview(), loadCreditApplications(), loadDeudaClientePorReserva()]);
                     }}
                     onCancelar={() => setMonedaFichaUsarSaldo(null)}
@@ -715,17 +601,9 @@ export default function CustomerAccountPage() {
       )}
 
       {/*
-        Sección: aplicaciones VIVAS de saldo a favor a otras reservas.
-
-        Muestra cada aplicación como una fila revertible:
-          "Saldo a favor aplicado a R-XXXX — $monto — fecha"  [Revertir]
-
-        Al hacer click en "Revertir", se despliega un campo de motivo (opcional)
-        y un botón de confirmación — todo inline, sin modal.
-
-        El motivo es opcional: puede enviarse vacío y el backend lo acepta.
-        Una vez revertida, la aplicación desaparece de esta lista y el saldo
-        vuelve al bolsillo original del cliente.
+        ── Aplicaciones VIVAS de saldo a favor ─────────────────────────────────
+        Muestra saldos que ya se aplicaron a otras reservas y que se pueden revertir.
+        Cada fila tiene un formulario inline de reversión (sin modal).
       */}
       {creditApplications.length > 0 && (
         <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 dark:border-indigo-900/40 dark:bg-indigo-950/10 overflow-hidden">
@@ -738,18 +616,12 @@ export default function CustomerAccountPage() {
             {creditApplications.map((aplicacion) => {
               const estaRevirtiendoEsta = revirtiendoAplicacionId === String(aplicacion.applicationPublicId);
               const simbolo = aplicacion.currency === "USD" ? "US$" : "$";
-              const monto = Number(aplicacion.amount).toLocaleString("es-AR", {
-                minimumFractionDigits: 2,
-                maximumFractionDigits: 2,
-              });
-              const fechaTexto = aplicacion.appliedAt
-                ? new Date(aplicacion.appliedAt).toLocaleDateString("es-AR")
-                : "—";
+              const monto = Number(aplicacion.amount).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+              const fechaTexto = aplicacion.appliedAt ? new Date(aplicacion.appliedAt).toLocaleDateString("es-AR") : "—";
 
               return (
                 <li key={String(aplicacion.applicationPublicId)} className="px-5 py-3">
                   <div className="flex items-start justify-between gap-3 flex-wrap">
-                    {/* Descripción de la aplicación */}
                     <div className="min-w-0">
                       <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">
                         Saldo a favor aplicado a{" "}
@@ -772,8 +644,6 @@ export default function CustomerAccountPage() {
                         Aplicado el {fechaTexto}
                       </p>
                     </div>
-
-                    {/* Botón Revertir: solo si el usuario tiene permiso cobranzas.edit */}
                     {hasPermission("cobranzas.edit") && !estaRevirtiendoEsta && (
                       <button
                         type="button"
@@ -790,8 +660,6 @@ export default function CustomerAccountPage() {
                       </button>
                     )}
                   </div>
-
-                  {/* Formulario inline de confirmación de reversión */}
                   {estaRevirtiendoEsta && (
                     <div className="mt-3 space-y-2 rounded-lg bg-white dark:bg-slate-800 border border-indigo-200 dark:border-indigo-900/40 p-3">
                       <label
@@ -811,18 +679,12 @@ export default function CustomerAccountPage() {
                         data-testid={`motivo-reversion-${aplicacion.applicationPublicId}`}
                       />
                       {errorReversion && (
-                        <p className="text-xs text-rose-600 dark:text-rose-400" role="alert">
-                          {errorReversion}
-                        </p>
+                        <p className="text-xs text-rose-600 dark:text-rose-400" role="alert">{errorReversion}</p>
                       )}
                       <div className="flex justify-end gap-2">
                         <button
                           type="button"
-                          onClick={() => {
-                            setRevirtiendoAplicacionId(null);
-                            setMotivoReversion("");
-                            setErrorReversion(null);
-                          }}
+                          onClick={() => { setRevirtiendoAplicacionId(null); setMotivoReversion(""); setErrorReversion(null); }}
                           disabled={guardandoReversion}
                           className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 disabled:opacity-50 transition-colors"
                         >
@@ -836,15 +698,9 @@ export default function CustomerAccountPage() {
                           data-testid={`confirmar-reversion-${aplicacion.applicationPublicId}`}
                         >
                           {guardandoReversion ? (
-                            <>
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                              Revirtiendo…
-                            </>
+                            <><Loader2 className="h-3 w-3 animate-spin" />Revirtiendo…</>
                           ) : (
-                            <>
-                              <Undo2 className="h-3 w-3" />
-                              Confirmar reversión
-                            </>
+                            <><Undo2 className="h-3 w-3" />Confirmar reversión</>
                           )}
                         </button>
                       </div>
@@ -863,23 +719,15 @@ export default function CustomerAccountPage() {
         </div>
       )}
 
-      {/* ── Datos bancarios del cliente ─────────────────────────────────────── */}
-      {/* ownerType="Customer", ownerId=publicId del cliente.
-          Permiso de edición: cobranzas.edit (mismo equipo que gestiona créditos y cobros).
-          Suposición: permiso no confirmado por Gastón — marcar si cambia. */}
-      <ListaCuentasBancarias
-        ownerType="Customer"
-        ownerId={publicId}
-        title="Datos bancarios"
-        canEdit={hasPermission("clientes.edit")}
-      />
-
+      {/* ── Solapas ─────────────────────────────────────────────────────────── */}
       <div className="flex flex-col gap-4">
+        {/* Barra de solapas con data-testid estables */}
         <div className="flex flex-wrap gap-6 border-b border-slate-200 dark:border-slate-800">
           {[
-            { key: "reservas", count: summary.reservaCount || 0 },
-            { key: "payments", count: summary.paymentCount || 0 },
-            { key: "invoices", count: summary.invoiceCount || 0 },
+            { key: "reservas", label: "Reservas", count: summary.reservaCount || 0 },
+            { key: "estadoDeCuenta", label: "Estado de cuenta", count: null },
+            { key: "facturacion", label: "Facturación", count: summary.invoiceCount || 0 },
+            { key: "datosBancarios", label: "Datos bancarios", count: null },
           ].map((tab) => (
             <button
               key={tab.key}
@@ -890,12 +738,15 @@ export default function CustomerAccountPage() {
                   ? "text-indigo-600 dark:text-indigo-400"
                   : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
               }`}
+              data-testid={`tab-${tab.key}`}
             >
               <span className="flex items-center gap-2">
-                {tabLabels[tab.key]}
-                <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 dark:bg-slate-800">
-                  {tab.count}
-                </span>
+                {tab.label}
+                {tab.count !== null && (
+                  <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 dark:bg-slate-800">
+                    {tab.count}
+                  </span>
+                )}
               </span>
               {activeTab === tab.key && (
                 <div className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full bg-indigo-600 dark:bg-indigo-400" />
@@ -904,385 +755,178 @@ export default function CustomerAccountPage() {
           ))}
         </div>
 
-        <ListToolbar
-          className="p-3"
-          searchSlot={
-            <div className="relative min-w-[260px]">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input
-                type="text"
-                placeholder={`Buscar en ${tabLabels[activeTab].toLowerCase()}...`}
-                value={searchTerm}
-                onChange={(event) => setSearchTerm(event.target.value)}
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm transition-shadow focus:ring-2 focus:ring-slate-200 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
-              />
-            </div>
-          }
-        />
-      </div>
+        {/* ── Contenido de la solapa Reservas ──────────────────────────────── */}
+        {activeTab === "reservas" && (
+          <>
+            {/* Buscador de reservas */}
+            <ListToolbar
+              className="p-3"
+              searchSlot={
+                <div className="relative min-w-[260px]">
+                  <Receipt className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Buscar en reservas..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm transition-shadow focus:ring-2 focus:ring-slate-200 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                  />
+                </div>
+              }
+            />
+            {databaseUnavailable ? (
+              <DatabaseUnavailableState />
+            ) : tabLoadingReservas && reservas.length === 0 ? (
+              <div className="flex h-48 items-center justify-center text-slate-400">
+                <Loader2 className="h-8 w-8 animate-spin" />
+              </div>
+            ) : (
+              <>
+                <DataGrid density="compact" minWidth="900px">
+                  <DataGridHeader>
+                    <DataGridHeaderRow>
+                      <DataGridHeaderCell>Fecha</DataGridHeaderCell>
+                      <DataGridHeaderCell>Reserva</DataGridHeaderCell>
+                      <DataGridHeaderCell>Estado</DataGridHeaderCell>
+                      <DataGridHeaderCell align="right">Venta</DataGridHeaderCell>
+                      <DataGridHeaderCell align="right">Cobrado</DataGridHeaderCell>
+                      <DataGridHeaderCell align="right">Saldo</DataGridHeaderCell>
+                      <DataGridHeaderCell align="right">Acción</DataGridHeaderCell>
+                    </DataGridHeaderRow>
+                  </DataGridHeader>
+                  <DataGridBody>
+                    {reservas.length === 0 ? (
+                      <DataGridEmptyState colSpan={7} title="No hay reservas para mostrar." />
+                    ) : (
+                      reservas.map((reserva) => (
+                        <DataGridRow key={getPublicId(reserva)}>
+                          <DataGridCell>{formatDate(reserva.startDate || reserva.createdAt)}</DataGridCell>
+                          <DataGridCell>
+                            <div className="font-semibold text-slate-900 dark:text-white">{reserva.numeroReserva}</div>
+                            <div className="text-xs text-slate-500 dark:text-slate-400">{reserva.name}</div>
+                          </DataGridCell>
+                          <DataGridCell><ReservaStatusBadge status={reserva.status} /></DataGridCell>
+                          <DataGridCell align="right" className="font-semibold text-slate-900 dark:text-white">
+                            {formatCurrency(reserva.totalSale, "ARS")}
+                          </DataGridCell>
+                          <DataGridCell align="right" className="font-semibold text-emerald-600 dark:text-emerald-400">
+                            {formatCurrency(reserva.paid, "ARS")}
+                          </DataGridCell>
+                          <DataGridCell align="right" className="font-semibold text-rose-600 dark:text-rose-400">
+                            {formatCurrency(reserva.balance, "ARS")}
+                          </DataGridCell>
+                          <DataGridActionCell>
+                            <Link
+                              to={`/reservas/${getPublicId(reserva)}`}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-indigo-600 hover:bg-indigo-50 dark:border-slate-700 dark:hover:bg-slate-800"
+                            >
+                              Ver
+                            </Link>
+                          </DataGridActionCell>
+                        </DataGridRow>
+                      ))
+                    )}
+                  </DataGridBody>
+                </DataGrid>
 
-      {databaseUnavailable ? (
-        <DatabaseUnavailableState />
-      ) : currentTabLoading && currentPage.items.length === 0 ? (
-        <div className="flex h-48 items-center justify-center text-slate-400">
-          <Loader2 className="h-8 w-8 animate-spin" />
-        </div>
-      ) : (
-        <>
-          {activeTab === "reservas" && (
-            <>
-              <DataGrid density="compact" minWidth="900px">
-                <DataGridHeader>
-                  <DataGridHeaderRow>
-                    <DataGridHeaderCell>Fecha</DataGridHeaderCell>
-                    <DataGridHeaderCell>Reserva</DataGridHeaderCell>
-                    <DataGridHeaderCell>Estado</DataGridHeaderCell>
-                    <DataGridHeaderCell align="right">Venta</DataGridHeaderCell>
-                    <DataGridHeaderCell align="right">Cobrado</DataGridHeaderCell>
-                    <DataGridHeaderCell align="right">Saldo</DataGridHeaderCell>
-                    <DataGridHeaderCell align="right">Accion</DataGridHeaderCell>
-                  </DataGridHeaderRow>
-                </DataGridHeader>
-                <DataGridBody>
-                  {reservas.length === 0 ? (
-                    <DataGridEmptyState colSpan={7} title="No hay reservas para mostrar." />
-                  ) : (
-                    reservas.map((reserva) => (
-                      <DataGridRow key={getPublicId(reserva)}>
-                        <DataGridCell>{formatDate(reserva.startDate || reserva.createdAt)}</DataGridCell>
-                        <DataGridCell>
-                          <div className="font-semibold text-slate-900 dark:text-white">{reserva.numeroReserva}</div>
-                          <div className="text-xs text-slate-500 dark:text-slate-400">{reserva.name}</div>
-                        </DataGridCell>
-                        <DataGridCell>
-                          <StatusBadge status={reserva.status} />
-                        </DataGridCell>
-                        <DataGridCell align="right" className="font-semibold text-slate-900 dark:text-white">
-                          {formatCurrency(reserva.totalSale)}
-                        </DataGridCell>
-                        <DataGridCell align="right" className="font-semibold text-emerald-600 dark:text-emerald-400">
-                          {formatCurrency(reserva.paid)}
-                        </DataGridCell>
-                        <DataGridCell align="right" className="font-semibold text-rose-600 dark:text-rose-400">
-                          {formatCurrency(reserva.balance)}
-                        </DataGridCell>
-                        <DataGridActionCell>
+                {reservas.length === 0 ? (
+                  <ListEmptyState
+                    title="No hay reservas para mostrar."
+                    className="md:hidden rounded-xl border border-dashed border-slate-200 dark:border-slate-800"
+                  />
+                ) : (
+                  <MobileRecordList>
+                    {reservas.map((reserva) => (
+                      <MobileRecordCard
+                        key={getPublicId(reserva)}
+                        statusSlot={<ReservaStatusBadge status={reserva.status} />}
+                        title={reserva.numeroReserva}
+                        subtitle={reserva.name}
+                        meta={
+                          <>
+                            <div className="text-xs text-slate-500 dark:text-slate-400">
+                              Fecha: {formatDate(reserva.startDate || reserva.createdAt)}
+                            </div>
+                            <div className="text-xs text-slate-500 dark:text-slate-400">
+                              Venta {formatCurrency(reserva.totalSale, "ARS")} · Cobrado {formatCurrency(reserva.paid, "ARS")}
+                            </div>
+                          </>
+                        }
+                        footer={<span className="text-sm font-semibold text-rose-600 dark:text-rose-400">Saldo {formatCurrency(reserva.balance, "ARS")}</span>}
+                        footerActions={
                           <Link
                             to={`/reservas/${getPublicId(reserva)}`}
-                            className="inline-flex rounded-lg p-2 text-indigo-500 hover:bg-indigo-50 dark:hover:bg-slate-800"
+                            className="inline-flex rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-indigo-600 hover:bg-indigo-50 dark:border-slate-700 dark:hover:bg-slate-800"
                           >
-                            <Eye className="h-4 w-4" />
-                          </Link>
-                        </DataGridActionCell>
-                      </DataGridRow>
-                    ))
-                  )}
-                </DataGridBody>
-              </DataGrid>
-
-              {reservas.length === 0 ? (
-                <ListEmptyState
-                  title="No hay reservas para mostrar."
-                  className="md:hidden rounded-xl border border-dashed border-slate-200 dark:border-slate-800"
-                />
-              ) : (
-                <MobileRecordList>
-                  {reservas.map((reserva) => (
-                    <MobileRecordCard
-                      key={getPublicId(reserva)}
-                      statusSlot={<StatusBadge status={reserva.status} />}
-                      title={reserva.numeroReserva}
-                      subtitle={reserva.name}
-                      meta={
-                        <>
-                          <div className="text-xs text-slate-500 dark:text-slate-400">
-                            Fecha: {formatDate(reserva.startDate || reserva.createdAt)}
-                          </div>
-                          <div className="text-xs text-slate-500 dark:text-slate-400">
-                            Venta {formatCurrency(reserva.totalSale)} · Cobrado {formatCurrency(reserva.paid)}
-                          </div>
-                        </>
-                      }
-                      footer={<span className="text-sm font-semibold text-rose-600 dark:text-rose-400">Saldo {formatCurrency(reserva.balance)}</span>}
-                      footerActions={
-                        <Link
-                          to={`/reservas/${getPublicId(reserva)}`}
-                          className="inline-flex rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-indigo-600 hover:bg-indigo-50 dark:border-slate-700 dark:hover:bg-slate-800"
-                        >
-                          Ver
-                        </Link>
-                      }
-                    />
-                  ))}
-                </MobileRecordList>
-              )}
-            </>
-          )}
-
-          {activeTab === "payments" && (
-            <>
-              <DataGrid density="compact" minWidth="900px">
-                <DataGridHeader>
-                  <DataGridHeaderRow>
-                    <DataGridHeaderCell>Fecha</DataGridHeaderCell>
-                    <DataGridHeaderCell>Reserva</DataGridHeaderCell>
-                    <DataGridHeaderCell>Metodo</DataGridHeaderCell>
-                    <DataGridHeaderCell align="right">Monto</DataGridHeaderCell>
-                    <DataGridHeaderCell>Notas</DataGridHeaderCell>
-                    <DataGridHeaderCell align="right">Accion</DataGridHeaderCell>
-                  </DataGridHeaderRow>
-                </DataGridHeader>
-                <DataGridBody>
-                  {payments.length === 0 ? (
-                    <DataGridEmptyState colSpan={6} title="No hay pagos para mostrar." />
-                  ) : (
-                    payments.map((payment) => (
-                      <DataGridRow key={getPublicId(payment)}>
-                        <DataGridCell>{formatDate(payment.paidAt)}</DataGridCell>
-                        <DataGridCell>
-                          {payment.reservaPublicId ? (
-                            <Link to={`/reservas/${payment.reservaPublicId}`} className="font-semibold text-indigo-600 hover:text-indigo-700">
-                              {payment.numeroReserva || "Reserva"}
-                            </Link>
-                          ) : (
-                            <span className="text-slate-500 dark:text-slate-400">{payment.numeroReserva || "Sin reserva"}</span>
-                          )}
-                          <div className="text-xs text-slate-500 dark:text-slate-400">{payment.fileName}</div>
-                        </DataGridCell>
-                        <DataGridCell>{payment.method}</DataGridCell>
-                        <DataGridCell align="right" className="font-semibold text-emerald-600 dark:text-emerald-400">
-                          {formatCurrency(payment.amount)}
-                        </DataGridCell>
-                        <DataGridCell>{payment.notes || "-"}</DataGridCell>
-                        <DataGridActionCell>
-                          <div className="flex items-center justify-end gap-1">
-                            {payment.receiptPublicId && payment.receiptStatus === "Issued" && (
-                              <button
-                                type="button"
-                                onClick={() => handleVoidReceipt(payment)}
-                                className="inline-flex rounded-lg p-2 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-900/20"
-                                title="Anular comprobante de pago"
-                              >
-                                <XCircle className="h-4 w-4" />
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => handleDeletePayment(payment)}
-                              className="inline-flex rounded-lg p-2 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20"
-                              title="Eliminar pago"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          </div>
-                        </DataGridActionCell>
-                      </DataGridRow>
-                    ))
-                  )}
-                </DataGridBody>
-              </DataGrid>
-
-              {payments.length === 0 ? (
-                <ListEmptyState
-                  title="No hay pagos para mostrar."
-                  className="md:hidden rounded-xl border border-dashed border-slate-200 dark:border-slate-800"
-                />
-              ) : (
-                <MobileRecordList>
-                  {payments.map((payment) => (
-                    <MobileRecordCard
-                      key={getPublicId(payment)}
-                      title={payment.method}
-                      subtitle={formatDate(payment.paidAt)}
-                      meta={
-                        <>
-                          <div className="text-xs text-slate-500 dark:text-slate-400">
-                            {payment.reservaPublicId ? payment.numeroReserva || "Reserva" : payment.numeroReserva || "Sin reserva"}
-                          </div>
-                          <div className="text-xs text-slate-500 dark:text-slate-400">{payment.notes || "Sin notas"}</div>
-                        </>
-                      }
-                      footer={<span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">{formatCurrency(payment.amount)}</span>}
-                      footerActions={
-                        <div className="flex gap-2">
-                          {payment.receiptPublicId && payment.receiptStatus === "Issued" && (
-                            <button
-                              type="button"
-                              onClick={() => handleVoidReceipt(payment)}
-                              className="inline-flex rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
-                            >
-                              Anular comp.
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => handleDeletePayment(payment)}
-                            className="inline-flex rounded-lg border border-rose-200 px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-900/30 dark:hover:bg-rose-900/20"
-                          >
-                            Eliminar
-                          </button>
-                        </div>
-                      }
-                    />
-                  ))}
-                </MobileRecordList>
-              )}
-            </>
-          )}
-
-          {activeTab === "invoices" && (
-            <>
-              <DataGrid density="compact" minWidth="900px">
-                <DataGridHeader>
-                  <DataGridHeaderRow>
-                    <DataGridHeaderCell>Fecha</DataGridHeaderCell>
-                    <DataGridHeaderCell>Comprobante</DataGridHeaderCell>
-                    <DataGridHeaderCell>Tipo</DataGridHeaderCell>
-                    <DataGridHeaderCell align="right">Importe</DataGridHeaderCell>
-                    <DataGridHeaderCell align="center">Estado</DataGridHeaderCell>
-                    <DataGridHeaderCell align="right">Accion</DataGridHeaderCell>
-                  </DataGridHeaderRow>
-                </DataGridHeader>
-                <DataGridBody>
-                  {invoices.length === 0 ? (
-                    <DataGridEmptyState colSpan={6} title="No hay facturas para mostrar." />
-                  ) : (
-                    invoices.map((invoice) => (
-                      <DataGridRow key={getPublicId(invoice)}>
-                        <DataGridCell>{formatDate(invoice.createdAt)}</DataGridCell>
-                        <DataGridCell className="font-semibold text-slate-900 dark:text-white">{formatInvoiceNumber(invoice)}</DataGridCell>
-                        <DataGridCell>
-                          <div className="flex items-center gap-2">
-                            <Receipt className="h-4 w-4 text-indigo-400" />
-                            <span>{formatInvoiceType(invoice)}</span>
-                          </div>
-                        </DataGridCell>
-                        <DataGridCell align="right" className="font-semibold text-slate-900 dark:text-white">
-                          {formatCurrency(invoice.importeTotal)}
-                        </DataGridCell>
-                        <DataGridCell align="center">
-                          {invoice.annulmentStatus === "Pending" ? (
-                            <span
-                              className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
-                              role="status"
-                              aria-live="polite"
-                            >
-                              Anulando…
-                            </span>
-                          ) : (
-                            <span
-                              className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
-                                invoice.resultado === "A"
-                                  ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
-                                  : invoice.resultado === "R"
-                                  ? "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400"
-                                  : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
-                              }`}
-                            >
-                              {invoice.resultado === "A"
-                                ? "Aprobado"
-                                : invoice.resultado === "R"
-                                ? "Rechazado"
-                                : "En proceso"}
-                            </span>
-                          )}
-                        </DataGridCell>
-                        <DataGridActionCell>
-                          <button
-                            type="button"
-                            onClick={() => handleOpenInvoicePreview(invoice)}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
-                          >
-                            <Eye className="h-4 w-4" />
                             Ver
-                          </button>
-                        </DataGridActionCell>
-                      </DataGridRow>
-                    ))
-                  )}
-                </DataGridBody>
-              </DataGrid>
+                          </Link>
+                        }
+                      />
+                    ))}
+                  </MobileRecordList>
+                )}
 
-              {invoices.length === 0 ? (
-                <ListEmptyState
-                  title="No hay facturas para mostrar."
-                  className="md:hidden rounded-xl border border-dashed border-slate-200 dark:border-slate-800"
+                <PaginationFooter
+                  page={reservasPage.page || reservasPaging.page}
+                  pageSize={reservasPage.pageSize || reservasPaging.pageSize}
+                  totalCount={reservasPage.totalCount || 0}
+                  totalPages={reservasPage.totalPages || 0}
+                  hasPreviousPage={Boolean(reservasPage.hasPreviousPage)}
+                  hasNextPage={Boolean(reservasPage.hasNextPage)}
+                  onPageChange={(page) => setReservasPaging((prev) => ({ ...prev, page }))}
+                  onPageSizeChange={(pageSize) => setReservasPaging({ page: 1, pageSize })}
                 />
-              ) : (
-                <MobileRecordList>
-                  {invoices.map((invoice) => (
-                    <MobileRecordCard
-                      key={getPublicId(invoice)}
-                      statusSlot={
-                        invoice.annulmentStatus === "Pending" ? (
-                          <span
-                            className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
-                            role="status"
-                            aria-live="polite"
-                          >
-                            Anulando…
-                          </span>
-                        ) : (
-                          <span
-                            className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
-                              invoice.resultado === "A"
-                                ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400"
-                                : invoice.resultado === "R"
-                                ? "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400"
-                                : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
-                            }`}
-                          >
-                            {invoice.resultado === "A"
-                              ? "Aprobado"
-                              : invoice.resultado === "R"
-                              ? "Rechazado"
-                              : "En proceso"}
-                          </span>
-                        )
-                      }
-                      title={formatInvoiceNumber(invoice)}
-                      subtitle={formatInvoiceType(invoice)}
-                      meta={
-                        <>
-                          <div className="text-xs text-slate-500 dark:text-slate-400">Fecha {formatDate(invoice.createdAt)}</div>
-                          <div className="text-xs text-slate-500 dark:text-slate-400">Importe {formatCurrency(invoice.importeTotal)}</div>
-                        </>
-                      }
-                      footerActions={
-                        <button
-                          type="button"
-                          onClick={() => handleOpenInvoicePreview(invoice)}
-                          className="inline-flex rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800"
-                        >
-                          Ver
-                        </button>
-                      }
-                    />
-                  ))}
-                </MobileRecordList>
-              )}
-            </>
-          )}
+              </>
+            )}
+          </>
+        )}
 
-          <PaginationFooter
-            page={currentPage.page || currentPaging.page}
-            pageSize={currentPage.pageSize || currentPaging.pageSize}
-            totalCount={currentPage.totalCount || 0}
-            totalPages={currentPage.totalPages || 0}
-            hasPreviousPage={Boolean(currentPage.hasPreviousPage)}
-            hasNextPage={Boolean(currentPage.hasNextPage)}
-            onPageChange={updateCurrentPage}
-            onPageSizeChange={updateCurrentPageSize}
+        {/* ── Contenido de la solapa Estado de cuenta ──────────────────────── */}
+        {activeTab === "estadoDeCuenta" && (
+          <EstadoCuentaClienteTab
+            customerPublicId={publicId}
+            refreshKey={extractoRefreshKey}
+            onVerFactura={handleOpenInvoicePreview}
+            onEliminarPago={handleDeletePayment}
+            onAnularRecibo={handleVoidReceipt}
+            onNuevaCobranza={() => handleOpenModal(null)}
+            canRegistrarCobranza={hasPermission("cobranzas.edit")}
           />
-        </>
-      )}
+        )}
 
+        {/* ── Contenido de la solapa Facturación ───────────────────────────── */}
+        {/* Antes se llamaba "Facturación AFIP" — renombrado a "Facturación".
+            AFIP/ARCA solo aparece como chip de estado en cada comprobante. */}
+        {activeTab === "facturacion" && (
+          <FacturacionClienteTab
+            customerPublicId={publicId}
+            onVerFactura={handleOpenInvoicePreview}
+          />
+        )}
+
+        {/* ── Contenido de la solapa Datos bancarios ───────────────────────── */}
+        {/* Los datos bancarios del cliente (CBU/alias) se movieron del encabezado
+            a esta solapa propia (decisión UX P11=A, 2026-06-28). */}
+        {activeTab === "datosBancarios" && (
+          <ListaCuentasBancarias
+            ownerType="Customer"
+            ownerId={publicId}
+            title="Datos bancarios del cliente"
+            canEdit={hasPermission("clientes.edit")}
+          />
+        )}
+      </div>
+
+      {/* ── Modales (solo CustomerPaymentModal y RequestApprovalModal) ────── */}
+      {/*
+        CustomerPaymentModal: permanece como modal de acción rápida para registrar cobros.
+        Se abre desde el botón "Nuevo cobro" dentro de la solapa Estado de cuenta.
+        TODO (mejora a futuro): migrar a ficha en línea como el cobro en la reserva
+        (RegistrarCobroInline), pero eso es un cambio de mayor envergadura fuera de scope.
+      */}
       <CustomerPaymentModal
         isOpen={isModalOpen}
-        onClose={() => {
-          setIsModalOpen(false);
-          setPaymentToEdit(null);
-        }}
+        onClose={() => { setIsModalOpen(false); setPaymentToEdit(null); }}
         paymentToEdit={paymentToEdit}
         customerId={publicId}
         availableReservas={availableReservas}

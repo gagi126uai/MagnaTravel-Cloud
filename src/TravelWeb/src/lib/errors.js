@@ -23,12 +23,25 @@ const TRANSPORT_ERROR_EXACT = new Set([
 // Strings exactos que son bare HTTP statusText sin payload del servidor.
 // Si el servidor hubiera enviado un cuerpo con payload.message, esa ruta
 // tiene prioridad y este check nunca se alcanza (ver getApiErrorMessage).
+//
+// Esta lista cubre los statusTexts más comunes que el browser/fetch asigna
+// cuando el servidor responde sin body o con body vacío. El match es EXACTO
+// (case-insensitive vía toLowerCase) para no interceptar mensajes del servidor
+// en español que contengan estas palabras como parte de un texto más largo.
 const HTTP_STATUSTEXT_EXACT = new Set([
-  "internal server error",
+  // 4xx
+  "bad request",          // 400
+  "unauthorized",         // 401
+  "forbidden",            // 403
+  "not found",            // 404
+  "too many requests",    // 429
+  // 5xx
+  "internal server error", // 500
+  "bad gateway",           // 502
+  "service unavailable",   // 503
+  "gateway timeout",       // 504
+  // Genérico de algunos clientes fetch/XHR
   "request failed",
-  "bad gateway",
-  "service unavailable",
-  "gateway timeout",
 ]);
 
 /**

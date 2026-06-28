@@ -22,6 +22,14 @@ public class InvoiceListDto
     public decimal OutstandingBalanceAtIssuance { get; set; }
     public string InvoiceType { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Moneda ISO 4217 del comprobante ("ARS"/"USD"), derivada de <c>Invoice.MonId</c> (que guarda el
+    /// codigo de ARCA: "PES"/"DOL"). Se expone en ISO, NO el codigo ARCA crudo, para que el front la
+    /// agrupe junto a los cobros (que ya viajan en ISO) y lleve saldo corriente POR MONEDA sin mezclar
+    /// ARS con USD. Default "ARS": las facturas en pesos y las legacy sin moneda explicita.
+    /// </summary>
+    public string Currency { get; set; } = "ARS";
+
     // B1.15 (2026-05-11): para UI consistente con InvoiceDto.
     public string AnnulmentStatus { get; set; } = "None";
     public Guid? OriginalInvoicePublicId { get; set; }

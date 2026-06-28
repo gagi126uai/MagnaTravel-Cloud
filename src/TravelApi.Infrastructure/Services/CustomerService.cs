@@ -817,11 +817,19 @@ public class CustomerService : ICustomerService
             ? paymentsQuery.OrderByDescending(payment => payment.PaidAt).ThenByDescending(payment => payment.Id)
             : paymentsQuery.OrderBy(payment => payment.PaidAt).ThenBy(payment => payment.Id);
 
-        return await paymentsQuery
+        var response = await paymentsQuery
             .Select(payment => new CustomerAccountPaymentListItemDto
             {
                 PublicId = payment.PublicId,
                 Amount = payment.Amount,
+                // Moneda real del cobro (sobre la que esta expresado Amount). Es el detalle "caja que entro".
+                Currency = payment.Currency,
+                // Moneda y monto IMPUTADOS (lo que efectivamente bajo de la deuda). El extracto agrupa y lleva
+                // saldo corriente por ESTA moneda para que cuadre con lo que el cliente debe (ADR-021). El
+                // fallback "?? Currency" / "?? Amount" SI se traduce a SQL (COALESCE); lo unico que NO traduce
+                // es Monedas.Normalizar, asi que dejamos el codigo crudo aca y lo normalizamos en memoria abajo.
+                ImputedCurrency = payment.ImputedCurrency ?? payment.Currency,
+                ImputedAmount = payment.ImputedAmount ?? payment.Amount,
                 Method = payment.Method,
                 PaidAt = payment.PaidAt,
                 Notes = payment.Notes,
@@ -833,6 +841,16 @@ public class CustomerService : ICustomerService
                 ReceiptStatus = payment.Receipt != null ? payment.Receipt.Status : null
             })
             .ToPagedResponseAsync(query, cancellationToken);
+
+        // Normalizamos la moneda imputada en memoria (legacy null/vacio -> ARS), igual que en
+        // GetCustomerAvailableCreditAsync: Monedas.Normalizar no traduce a SQL, por eso va aca y no en el Select.
+        // Garantiza codigos ISO limpios ("ARS"/"USD") y nunca un codigo interno o vacio.
+        foreach (var item in response.Items)
+        {
+            item.ImputedCurrency = Monedas.Normalizar(item.ImputedCurrency);
+        }
+
+        return response;
     }
 
     public async Task<PagedResponse<InvoiceListDto>> GetCustomerAccountInvoicesAsync(int id, PagedQuery query, CancellationToken cancellationToken)
@@ -880,7 +898,14 @@ public class CustomerService : ICustomerService
                     invoice.TipoComprobante == 6 || invoice.TipoComprobante == 7 || invoice.TipoComprobante == 8 ? "B" :
                     invoice.TipoComprobante == 11 || invoice.TipoComprobante == 12 || invoice.TipoComprobante == 13 ? "C" :
                     invoice.TipoComprobante == 51 ? "M" :
-                    "UNK"
+                    "UNK",
+                // Invoice.MonId guarda el codigo de ARCA ("PES"/"DOL"); el front (y los cobros) hablan ISO
+                // ("ARS"/"USD"). Mapeo inline (no ArcaCurrencyMapper.ToIso, que EF no traduce a SQL) para
+                // que la factura caiga en el bloque de su moneda en el extracto. Fallback "ARS" = regla
+                // legacy (fila sin moneda explicita se lee como pesos).
+                Currency =
+                    invoice.MonId == "DOL" ? "USD" :
+                    "ARS"
             })
             .ToPagedResponseAsync(query, cancellationToken);
     }

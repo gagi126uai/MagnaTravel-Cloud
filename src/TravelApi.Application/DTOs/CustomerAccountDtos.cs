@@ -1,3 +1,5 @@
+using TravelApi.Domain.Entities;
+
 namespace TravelApi.Application.DTOs;
 
 public class CustomerListItemDto
@@ -153,6 +155,32 @@ public class CustomerAccountPaymentListItemDto
 {
     public Guid PublicId { get; set; }
     public decimal Amount { get; set; }
+
+    /// <summary>
+    /// Moneda ISO 4217 del cobro ("ARS"/"USD"), tomada de <c>Payment.Currency</c> (la moneda real
+    /// en la que entro la plata, sobre la que esta expresado <see cref="Amount"/>). El front la usa
+    /// para agrupar y llevar saldo corriente POR MONEDA: el saldo en USD nunca se mezcla con el de ARS.
+    /// Es un codigo limpio, no un entero interno; el front lo mapea a la etiqueta visible.
+    /// </summary>
+    public string Currency { get; set; } = Monedas.ARS;
+
+    /// <summary>
+    /// Moneda ISO 4217 ("ARS"/"USD") de la DEUDA a la que se IMPUTO el cobro (ADR-021 "pagar en otra
+    /// moneda"): si el cobro entro en USD pero canceló deuda en ARS, aca viaja "ARS". Sale de
+    /// <c>Payment.ImputedCurrency ?? Payment.Currency</c>. El extracto de la cuenta del cliente AGRUPA
+    /// y lleva saldo corriente por ESTA moneda (no por <see cref="Currency"/>), para que el saldo por
+    /// moneda reconcilie con lo que el cliente debe — igual criterio que el extracto por reserva.
+    /// </summary>
+    public string ImputedCurrency { get; set; } = Monedas.ARS;
+
+    /// <summary>
+    /// Monto del cobro EXPRESADO en la moneda imputada (<see cref="ImputedCurrency"/>): lo que
+    /// efectivamente bajo del saldo de esa moneda. Sale de <c>Payment.ImputedAmount ?? Payment.Amount</c>.
+    /// En un cobro NO cruzado coincide con <see cref="Amount"/>; en uno cruzado es el equivalente ya
+    /// convertido. El extracto usa este monto para el saldo corriente por moneda.
+    /// </summary>
+    public decimal ImputedAmount { get; set; }
+
     public string Method { get; set; } = string.Empty;
     public DateTime PaidAt { get; set; }
     public string? Notes { get; set; }
