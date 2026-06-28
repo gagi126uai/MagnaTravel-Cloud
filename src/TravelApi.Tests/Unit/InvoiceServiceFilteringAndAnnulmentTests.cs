@@ -1071,4 +1071,275 @@ public class InvoiceServiceFilteringAndAnnulmentTests
         Assert.NotNull(capturedRequest);
         Assert.Equal("vendedor-anula", capturedRequest!.IssuedByUserId);
     }
+
+    // =========================================================================================
+    // Pantalla GLOBAL de Facturacion (2026-06-28): filtros server-side de GetAllAsync.
+    //
+    // Todos estos tests usan un Admin (ownerScope = null => ve TODA la agencia) y un set de
+    // comprobantes variado sembrado inline, para validar cada filtro de forma aislada.
+    // =========================================================================================
+
+    /// <summary>
+    /// Siembra una unica reserva y una lista de comprobantes variados (distintas fechas, tipos,
+    /// monedas y estados de anulacion) para los tests de filtro de la pantalla global.
+    /// </summary>
+    private static async Task SeedGlobalInvoicesAsync(AppDbContext context)
+    {
+        context.Reservas.Add(new Reserva
+        {
+            Id = 1, NumeroReserva = "F-GLOB-0001", Name = "Reserva global",
+            Status = EstadoReserva.Confirmed, ResponsibleUserId = "vendedor-A",
+            TotalSale = 10000m, Balance = 0m
+        });
+
+        context.Invoices.AddRange(
+            // Factura A en ARS, emitida el 2026-01-10
+            new Invoice
+            {
+                Id = 1, ReservaId = 1, TipoComprobante = 1, PuntoDeVenta = 5,
+                NumeroComprobante = 9001, Resultado = "A", CAE = "CAE-A",
+                MonId = "PES", ImporteTotal = 1000m,
+                CreatedAt = new DateTime(2026, 1, 10, 12, 0, 0, DateTimeKind.Utc)
+            },
+            // Factura B en USD, emitida el 2026-02-15
+            new Invoice
+            {
+                Id = 2, ReservaId = 1, TipoComprobante = 6, PuntoDeVenta = 5,
+                NumeroComprobante = 9002, Resultado = "A", CAE = "CAE-B",
+                MonId = "DOL", MonCotiz = 1000m, ImporteTotal = 2000m,
+                CreatedAt = new DateTime(2026, 2, 15, 12, 0, 0, DateTimeKind.Utc)
+            },
+            // Nota de credito B en ARS, emitida el 2026-03-20, ya anulando (Pending)
+            new Invoice
+            {
+                Id = 3, ReservaId = 1, TipoComprobante = 8, PuntoDeVenta = 5,
+                NumeroComprobante = 9003, Resultado = "A", CAE = "CAE-NC",
+                MonId = "PES", ImporteTotal = 500m, AnnulmentStatus = AnnulmentStatus.Pending,
+                CreatedAt = new DateTime(2026, 3, 20, 12, 0, 0, DateTimeKind.Utc)
+            },
+            // Nota de debito B en ARS, emitida el 2026-03-25
+            new Invoice
+            {
+                Id = 4, ReservaId = 1, TipoComprobante = 7, PuntoDeVenta = 5,
+                NumeroComprobante = 9004, Resultado = "A", CAE = "CAE-ND",
+                MonId = "PES", ImporteTotal = 300m,
+                CreatedAt = new DateTime(2026, 3, 25, 12, 0, 0, DateTimeKind.Utc)
+            },
+            // Factura B en ARS anulada (NC aprobada => Succeeded), emitida el 2026-04-01
+            new Invoice
+            {
+                Id = 5, ReservaId = 1, TipoComprobante = 6, PuntoDeVenta = 5,
+                NumeroComprobante = 9005, Resultado = "A", CAE = "CAE-ANU",
+                MonId = "PES", ImporteTotal = 1500m, AnnulmentStatus = AnnulmentStatus.Succeeded,
+                CreatedAt = new DateTime(2026, 4, 1, 12, 0, 0, DateTimeKind.Utc)
+            });
+
+        await context.SaveChangesAsync();
+    }
+
+    private InvoiceService BuildAdminService(AppDbContext context)
+        => BuildService(context, BuildContextAccessor("admin-1", "Admin"), BuildResolver("admin-1"));
+
+    [Fact]
+    public async Task GetAll_DateRange_FiltersByIssueDate()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedGlobalInvoicesAsync(context);
+        var service = BuildAdminService(context);
+
+        // Rango 2026-02-01 .. 2026-03-20 inclusive => Factura B (02-15), NC B (03-20).
+        var query = new InvoicesListQuery
+        {
+            DateFrom = new DateTime(2026, 2, 1),
+            DateTo = new DateTime(2026, 3, 20)
+        };
+        var page = await service.GetAllAsync(query, CancellationToken.None);
+
+        var numeros = page.Items.Select(i => i.NumeroComprobante).OrderBy(n => n).ToList();
+        Assert.Equal(new long[] { 9002, 9003 }, numeros);
+    }
+
+    [Fact]
+    public async Task GetAll_DateTo_IsInclusiveOfWholeDay()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedGlobalInvoicesAsync(context);
+        var service = BuildAdminService(context);
+
+        // La NC B se emitio a las 12:00 del 2026-03-20. Un "hasta" sin hora (medianoche) debe
+        // incluirla igual (dia completo), no excluirla.
+        var query = new InvoicesListQuery
+        {
+            DateFrom = new DateTime(2026, 3, 20),
+            DateTo = new DateTime(2026, 3, 20)
+        };
+        var page = await service.GetAllAsync(query, CancellationToken.None);
+
+        var item = Assert.Single(page.Items);
+        Assert.Equal(9003L, item.NumeroComprobante);
+    }
+
+    [Fact]
+    public async Task GetAll_DocumentFactura_ReturnsOnlyInvoices()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedGlobalInvoicesAsync(context);
+        var service = BuildAdminService(context);
+
+        var page = await service.GetAllAsync(new InvoicesListQuery { Document = "factura" }, CancellationToken.None);
+
+        // Facturas = tipos 1 y 6 (ids 1, 2, 5). NC (8) y ND (7) quedan fuera.
+        var numeros = page.Items.Select(i => i.NumeroComprobante).OrderBy(n => n).ToList();
+        Assert.Equal(new long[] { 9001, 9002, 9005 }, numeros);
+    }
+
+    [Fact]
+    public async Task GetAll_DocumentDebitNote_ReturnsOnlyDebitNotes()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedGlobalInvoicesAsync(context);
+        var service = BuildAdminService(context);
+
+        var page = await service.GetAllAsync(new InvoicesListQuery { Document = "debitnote" }, CancellationToken.None);
+
+        var item = Assert.Single(page.Items);
+        Assert.Equal(9004L, item.NumeroComprobante); // ND B
+    }
+
+    [Fact]
+    public async Task GetAll_DocumentAndLetter_PinpointsExactTipoComprobante()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedGlobalInvoicesAsync(context);
+        var service = BuildAdminService(context);
+
+        // NC + letra B => tipo 8 (solo la NC B).
+        var page = await service.GetAllAsync(
+            new InvoicesListQuery { Document = "creditnote", Letter = "B" }, CancellationToken.None);
+
+        var item = Assert.Single(page.Items);
+        Assert.Equal(9003L, item.NumeroComprobante);
+    }
+
+    [Fact]
+    public async Task GetAll_LetterOnly_FiltersAcrossFamilies()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedGlobalInvoicesAsync(context);
+        var service = BuildAdminService(context);
+
+        // Letra A sin familia => Factura A (tipo 1) es el unico comprobante letra A del set.
+        var page = await service.GetAllAsync(new InvoicesListQuery { Letter = "A" }, CancellationToken.None);
+
+        var item = Assert.Single(page.Items);
+        Assert.Equal(9001L, item.NumeroComprobante);
+    }
+
+    [Fact]
+    public async Task GetAll_Currency_Usd_ReturnsOnlyDollarInvoices()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedGlobalInvoicesAsync(context);
+        var service = BuildAdminService(context);
+
+        var page = await service.GetAllAsync(new InvoicesListQuery { Currency = "USD" }, CancellationToken.None);
+
+        var item = Assert.Single(page.Items);
+        Assert.Equal(9002L, item.NumeroComprobante);
+        Assert.Equal("USD", item.Currency);
+    }
+
+    [Fact]
+    public async Task GetAll_Currency_Ars_ExcludesDollarInvoices()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedGlobalInvoicesAsync(context);
+        var service = BuildAdminService(context);
+
+        var page = await service.GetAllAsync(new InvoicesListQuery { Currency = "ARS" }, CancellationToken.None);
+
+        Assert.DoesNotContain(page.Items, i => i.NumeroComprobante == 9002L);
+        Assert.All(page.Items, i => Assert.Equal("ARS", i.Currency));
+        Assert.Equal(4, page.Items.Count); // todos menos la USD
+    }
+
+    [Fact]
+    public async Task GetAll_NumberSearch_MatchesComprobanteNumber()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedGlobalInvoicesAsync(context);
+        var service = BuildAdminService(context);
+
+        var page = await service.GetAllAsync(new InvoicesListQuery { VoucherNumber = "9004" }, CancellationToken.None);
+
+        var item = Assert.Single(page.Items);
+        Assert.Equal(9004L, item.NumeroComprobante);
+    }
+
+    [Fact]
+    public async Task GetAll_AnnulmentFilter_Annulled_ReturnsOnlySucceeded()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedGlobalInvoicesAsync(context);
+        var service = BuildAdminService(context);
+
+        var page = await service.GetAllAsync(new InvoicesListQuery { Annulment = "annulled" }, CancellationToken.None);
+
+        var item = Assert.Single(page.Items);
+        Assert.Equal(9005L, item.NumeroComprobante);
+        Assert.Equal("Succeeded", item.AnnulmentStatus);
+    }
+
+    [Fact]
+    public async Task GetAll_DefaultOrdering_IsNewestFirst()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedGlobalInvoicesAsync(context);
+        var service = BuildAdminService(context);
+
+        var page = await service.GetAllAsync(new InvoicesListQuery(), CancellationToken.None);
+
+        // El comprobante mas reciente (2026-04-01, id 5) debe venir primero.
+        Assert.Equal(9005L, page.Items.First().NumeroComprobante);
+    }
+
+    [Fact]
+    public async Task GetAll_Pagination_RespectsPageSizeAndTotalCount()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedGlobalInvoicesAsync(context);
+        var service = BuildAdminService(context);
+
+        // PageSize 25 es el minimo permitido; sembramos 5 comprobantes asi que entran en 1 pagina,
+        // pero validamos que el conteo total y los flags de paginado sean correctos.
+        var page = await service.GetAllAsync(new InvoicesListQuery { Page = 1, PageSize = 25 }, CancellationToken.None);
+
+        Assert.Equal(5, page.TotalCount);
+        Assert.Equal(1, page.TotalPages);
+        Assert.False(page.HasNextPage);
+        Assert.False(page.HasPreviousPage);
+        Assert.Equal(5, page.Items.Count);
+    }
+
+    [Fact]
+    public async Task GetAll_CombinedFilters_AreAndedTogether()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedGlobalInvoicesAsync(context);
+        var service = BuildAdminService(context);
+
+        // Facturas + ARS + dentro de enero => solo la Factura A (id 1). La Factura B (USD) cae por moneda,
+        // la Factura B anulada (04-01) cae por fecha.
+        var query = new InvoicesListQuery
+        {
+            Document = "factura",
+            Currency = "ARS",
+            DateFrom = new DateTime(2026, 1, 1),
+            DateTo = new DateTime(2026, 1, 31)
+        };
+        var page = await service.GetAllAsync(query, CancellationToken.None);
+
+        var item = Assert.Single(page.Items);
+        Assert.Equal(9001L, item.NumeroComprobante);
+    }
 }

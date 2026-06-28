@@ -87,6 +87,36 @@ public class InvoicesListQuery : PagedQuery
     public string? VoucherNumber { get; set; }
     public string? Result { get; set; }
 
+    // Pantalla global de Facturacion (2026-06-28): filtros adicionales para listar TODOS los
+    // comprobantes de la agencia (no por cliente). Todos se aplican server-side sobre columnas
+    // de Invoice (ver ApplyInvoiceStructuredFilters). Cuando vienen nulos/vacios no filtran nada,
+    // asi el contrato del endpoint por-cliente que ya existia no cambia.
+
+    /// <summary>Rango de fecha de emision (fecha del comprobante = Invoice.CreatedAt), desde inclusive.</summary>
+    public DateTime? DateFrom { get; set; }
+
+    /// <summary>Rango de fecha de emision, hasta inclusive (se incluye el dia completo del "hasta").</summary>
+    public DateTime? DateTo { get; set; }
+
+    /// <summary>
+    /// Familia de comprobante: "factura" | "creditnote" | "debitnote". Mas fino que <see cref="Kind"/>
+    /// (que solo distingue emitidos vs NC). Combina (AND) con <see cref="Letter"/> para apuntar a un
+    /// tipoComprobante exacto del set ARCA.
+    /// </summary>
+    public string? Document { get; set; }
+
+    /// <summary>Letra fiscal del comprobante: "A" | "B" | "C" | "M".</summary>
+    public string? Letter { get; set; }
+
+    /// <summary>Moneda ISO del comprobante: "ARS" | "USD". Mapea a Invoice.MonId ("PES"/"DOL").</summary>
+    public string? Currency { get; set; }
+
+    /// <summary>
+    /// Estado de anulacion: "none" (vigente) | "pending"/"anulando" | "annulled"/"anulada"
+    /// (NC aprobada) | "failed". Filtra sobre Invoice.AnnulmentStatus.
+    /// </summary>
+    public string? Annulment { get; set; }
+
     public InvoicesListQuery()
     {
         SortBy = "createdAt";

@@ -18,6 +18,10 @@
  *   - onReset(): limpia todos los filtros al período por defecto (últimos 90 días)
  *   - totalResultados: number — cuántos comprobantes pasan los filtros actuales (para mostrar "N comprobantes")
  *   - isLoading: boolean — muestra estado cargando mientras se trae la lista del backend
+ *   - estadoOpciones: array opcional de { valor, etiqueta } para el selector "Estado".
+ *       Si no se pasa, usa OPCIONES_ESTADO_FILTRO (los 4 estados de la solapa del cliente).
+ *       La pantalla global de Facturación (server-side) pasa OPCIONES_ESTADO_FILTRO_GLOBAL
+ *       que incluye "anulada" (AnnulmentStatus.Succeeded) además de "anulando".
  */
 import { Search, X } from "lucide-react";
 import { OPCIONES_TIPO_FILTRO, OPCIONES_ESTADO_FILTRO } from "../lib/facturacionFilters";
@@ -25,7 +29,11 @@ import { OPCIONES_TIPO_FILTRO, OPCIONES_ESTADO_FILTRO } from "../lib/facturacion
 const etiquetaSelect = "rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200";
 const etiquetaInput = "w-full rounded-xl border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-3 text-sm transition-shadow focus:ring-2 focus:ring-slate-200 dark:border-slate-800 dark:bg-slate-900 dark:text-white";
 
-export function FacturacionFilters({ filters, onChange, onReset, totalResultados, isLoading }) {
+export function FacturacionFilters({ filters, onChange, onReset, totalResultados, isLoading, estadoOpciones }) {
+  // Usa las opciones de estado que le pasen; si no llegan, usa el set por defecto
+  // (el de la solapa del cliente, sin "anulada"). Así la pantalla global puede pasar
+  // OPCIONES_ESTADO_FILTRO_GLOBAL sin romper la solapa del cliente.
+  const opcionesDeEstado = estadoOpciones ?? OPCIONES_ESTADO_FILTRO;
   /**
    * Actualiza un campo del objeto de filtros sin tocar los demás.
    * El parent recibe el objeto completo actualizado y puede reaccionar.
@@ -113,7 +121,7 @@ export function FacturacionFilters({ filters, onChange, onReset, totalResultados
             className={etiquetaSelect}
             data-testid="filtro-estado"
           >
-            {OPCIONES_ESTADO_FILTRO.map((opcion) => (
+            {opcionesDeEstado.map((opcion) => (
               <option key={opcion.valor} value={opcion.valor}>
                 {opcion.etiqueta}
               </option>

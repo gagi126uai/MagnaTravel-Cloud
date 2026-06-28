@@ -33,6 +33,7 @@ import {
   Inbox,
   FileWarning,
   FileMinus2,
+  FileText,
   TrendingUp,
   Wallet,
   ChevronRight,
@@ -90,9 +91,11 @@ export const MODULE_DEFS = [
     links: [
       { to: "/customers", label: "Clientes",               icon: Users,       requiredPermission: "clientes.view" },
       { to: "/crm",       label: "Posibles clientes",      icon: UserPlus,    requiredPermission: "crm.view" },
-      { to: "/payments",  label: "Cobranza y Facturación", icon: CreditCard,  requiredPermission: "cobranzas.view" },
-      // TODO: cuando se construya la pantalla global de Facturación (comprobantes de toda la
-      //       agencia, spec 2026-06-28 §4/P14), agregar aquí el link a su ruta (ej: /invoices).
+      { to: "/payments",     label: "Cobranza y Facturación", icon: CreditCard, requiredPermission: "cobranzas.view" },
+      // Pantalla global de Facturación: todos los comprobantes de la agencia (spec 2026-06-28 §4/P14).
+      // Requiere cobranzas.view_all (un vendedor sin ese permiso no la ve aquí; accede a sus propios
+      // comprobantes desde la solapa de facturación de cada cliente).
+      { to: "/facturacion", label: "Facturación",             icon: FileText,   requiredPermission: "cobranzas.view_all" },
       { to: "/cancellations/credit-notes/inbox",  label: "NC por revisar",    icon: FileMinus2,  requiredPermission: "cobranzas.view_all" },
       { to: "/credit-note-reconciliation/inbox",  label: "Reconciliación NC", icon: FileWarning, requiredPermission: "approvals.review" },
     ],

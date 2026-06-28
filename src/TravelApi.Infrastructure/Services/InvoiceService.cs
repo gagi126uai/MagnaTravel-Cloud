@@ -188,6 +188,11 @@ public class InvoiceService : IInvoiceService
                     invoice.TipoComprobante == 11 || invoice.TipoComprobante == 12 || invoice.TipoComprobante == 13 ? "C" :
                     invoice.TipoComprobante == 51 ? "M" :
                     "UNK",
+                // MonId guarda el codigo ARCA ("PES"/"DOL"); el front habla ISO. Mapeo inline (EF no
+                // traduce ArcaCurrencyMapper.ToIso). Fallback "ARS" = facturas en pesos y legacy.
+                Currency =
+                    invoice.MonId == "DOL" ? "USD" :
+                    "ARS",
                 AnnulmentStatus = invoice.AnnulmentStatus.ToString(),
                 OriginalInvoicePublicId = invoice.OriginalInvoice != null ? (Guid?)invoice.OriginalInvoice.PublicId : null,
                 OriginalInvoiceNumeroComprobante = invoice.OriginalInvoice != null ? (long?)invoice.OriginalInvoice.NumeroComprobante : null,
@@ -780,6 +785,11 @@ public class InvoiceService : IInvoiceService
                     invoice.TipoComprobante == 11 || invoice.TipoComprobante == 12 || invoice.TipoComprobante == 13 ? "C" :
                     invoice.TipoComprobante == 51 ? "M" :
                     "UNK",
+                // MonId guarda el codigo ARCA ("PES"/"DOL"); el front habla ISO. Mapeo inline (EF no
+                // traduce ArcaCurrencyMapper.ToIso). Fallback "ARS" = facturas en pesos y legacy.
+                Currency =
+                    invoice.MonId == "DOL" ? "USD" :
+                    "ARS",
                 AnnulmentStatus = invoice.AnnulmentStatus.ToString(),
                 OriginalInvoicePublicId = invoice.OriginalInvoice != null ? (Guid?)invoice.OriginalInvoice.PublicId : null,
                 OriginalInvoiceNumeroComprobante = invoice.OriginalInvoice != null ? (long?)invoice.OriginalInvoice.NumeroComprobante : null,
@@ -3312,7 +3322,133 @@ public class InvoiceService : IInvoiceService
             };
         }
 
+        // Pantalla global de Facturacion (2026-06-28): los filtros de abajo son server-side, sobre columnas
+        // propias de Invoice (CreatedAt, TipoComprobante, MonId, AnnulmentStatus), por eso EF los traduce a SQL.
+
+        // Rango de fecha de emision (desde/hasta). Filtramos sobre CreatedAt — la MISMA columna que se muestra
+        // como "fecha" en la lista (InvoiceListDto.CreatedAt) y la que ya usa el filtro Period — para que el
+        // rango sea coherente con lo que ve el usuario. (IssuedAt, la fecha del CAE, puede ser null mientras la
+        // factura esta en proceso, asi que no sirve para filtrar el listado completo.)
+        //
+        // Las fechas llegan del query string con Kind=Unspecified; las marcamos Utc porque la columna es
+        // timestamptz en Postgres y Npgsql exige Utc al comparar (mismo patron que el filtro Period de arriba).
+        if (request.DateFrom.HasValue)
+        {
+            var fromUtc = DateTime.SpecifyKind(request.DateFrom.Value, DateTimeKind.Utc);
+            query = query.Where(invoice => invoice.CreatedAt >= fromUtc);
+        }
+
+        if (request.DateTo.HasValue)
+        {
+            // "Hasta" inclusive del dia completo: tomamos el inicio del dia siguiente y usamos < (no <=),
+            // asi un comprobante emitido a las 23:59 del dia "hasta" sigue entrando aunque el filtro venga
+            // sin hora.
+            var toExclusiveUtc = DateTime.SpecifyKind(request.DateTo.Value.Date, DateTimeKind.Utc).AddDays(1);
+            query = query.Where(invoice => invoice.CreatedAt < toExclusiveUtc);
+        }
+
+        query = ApplyInvoiceDocumentAndLetterFilter(query, request.Document, request.Letter);
+
+        if (!string.IsNullOrWhiteSpace(request.Currency))
+        {
+            var normalizedCurrency = request.Currency.Trim().ToLowerInvariant();
+            // MonId guarda el codigo ARCA ("PES"/"DOL"); el front habla ISO. "USD" = "DOL"; cualquier otra cosa
+            // (incluido null/legacy y "PES") cuenta como ARS, coherente con el mapeo Currency del Select del DTO.
+            query = normalizedCurrency switch
+            {
+                "usd" or "dol" => query.Where(invoice => invoice.MonId == "DOL"),
+                "ars" or "pes" => query.Where(invoice => invoice.MonId != "DOL"),
+                _ => query
+            };
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Annulment))
+        {
+            var normalizedAnnulment = request.Annulment.Trim().ToLowerInvariant();
+            query = normalizedAnnulment switch
+            {
+                "none" or "vigente" => query.Where(invoice => invoice.AnnulmentStatus == AnnulmentStatus.None),
+                "pending" or "anulando" => query.Where(invoice => invoice.AnnulmentStatus == AnnulmentStatus.Pending),
+                "annulled" or "anulada" or "succeeded" => query.Where(invoice => invoice.AnnulmentStatus == AnnulmentStatus.Succeeded),
+                "failed" or "fallida" => query.Where(invoice => invoice.AnnulmentStatus == AnnulmentStatus.Failed),
+                _ => query
+            };
+        }
+
         return query;
+    }
+
+    /// <summary>
+    /// Filtra por familia de comprobante (factura/NC/ND) y/o letra fiscal (A/B/C/M), traduciendo a los codigos
+    /// tipoComprobante del set ARCA. Se usa en la pantalla global de Facturacion. Es server-side: arma el
+    /// conjunto de codigos en memoria y deja que EF lo traduzca a un IN (...) sobre TipoComprobante.
+    ///
+    /// Matriz ARCA (fila = familia, columna = letra):
+    ///   Factura -> A=1,  B=6,  C=11, M=51
+    ///   Nota de credito (NC) -> A=3,  B=8,  C=13, M=53
+    ///   Nota de debito (ND)  -> A=2,  B=7,  C=12, M=52
+    /// </summary>
+    private static IQueryable<Invoice> ApplyInvoiceDocumentAndLetterFilter(IQueryable<Invoice> query, string? document, string? letter)
+    {
+        var normalizedDocument = (document ?? string.Empty).Trim().ToLowerInvariant();
+        var normalizedLetter = (letter ?? string.Empty).Trim().ToUpperInvariant();
+
+        var noDocumentFilter = normalizedDocument is "" or "all";
+        var noLetterFilter = normalizedLetter is "" or "ALL";
+        if (noDocumentFilter && noLetterFilter)
+        {
+            return query;
+        }
+
+        // Codigos por familia. Cada lista esta indexada igual: [A, B, C, M].
+        int[]? facturaCodes = new[] { 1, 6, 11, 51 };
+        int[]? creditNoteCodes = new[] { 3, 8, 13, 53 };
+        int[]? debitNoteCodes = new[] { 2, 7, 12, 52 };
+
+        // Que familias entran segun el filtro de documento.
+        var families = new List<int[]>();
+        switch (normalizedDocument)
+        {
+            case "factura" or "invoice":
+                families.Add(facturaCodes);
+                break;
+            case "creditnote" or "nc" or "notacredito":
+                families.Add(creditNoteCodes);
+                break;
+            case "debitnote" or "nd" or "notadebito":
+                families.Add(debitNoteCodes);
+                break;
+            default: // sin filtro de familia: las tres
+                families.Add(facturaCodes);
+                families.Add(creditNoteCodes);
+                families.Add(debitNoteCodes);
+                break;
+        }
+
+        // Indice de la letra dentro de cada lista (A=0, B=1, C=2, M=3). -1 = sin filtro de letra (todas).
+        var letterIndex = normalizedLetter switch
+        {
+            "A" => 0,
+            "B" => 1,
+            "C" => 2,
+            "M" => 3,
+            _ => -1
+        };
+
+        var allowedCodes = new List<int>();
+        foreach (var family in families)
+        {
+            if (letterIndex >= 0)
+            {
+                allowedCodes.Add(family[letterIndex]);
+            }
+            else
+            {
+                allowedCodes.AddRange(family);
+            }
+        }
+
+        return query.Where(invoice => allowedCodes.Contains(invoice.TipoComprobante));
     }
 
     private static IQueryable<Invoice> ApplyInvoiceOrdering(IQueryable<Invoice> query, InvoicesListQuery request)

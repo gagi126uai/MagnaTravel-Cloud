@@ -54,6 +54,9 @@ import CancellationCreditNoteInboxPage from "./features/cancellations/pages/Canc
 import CommissionsPage from "./features/commissions/pages/CommissionsPage";
 // ADR-041 Tanda 4: bandeja de reembolsos pendientes del operador (plata que el operador debe devolver al anular).
 import OperatorRefundsPage from "./features/suppliers/pages/OperatorRefundsPage";
+// Pantalla global de Facturación (spec 2026-06-28 §4/P14): todos los comprobantes de la agencia.
+// Requiere cobranzas.view_all (quien no lo tiene solo ve los suyos desde la cuenta del cliente).
+import FacturacionPage from "./features/invoices/pages/FacturacionPage";
 
 function FullScreenLoader() {
   return (
@@ -329,6 +332,14 @@ export default function App() {
                     <Route
                       path="/operator-refunds"
                       element={hasPermission("tesoreria.supplier_payments") ? <OperatorRefundsPage /> : <Navigate to="/dashboard" replace />}
+                    />
+                    {/* Pantalla global de Facturación: todos los comprobantes de la agencia.
+                        Permiso cobranzas.view_all (un vendedor sin él solo ve los suyos desde
+                        la solapa de facturación de cada cliente). El backend también hace cumplir
+                        el scope en GET /invoices vía GetOwnerScopeOrNullAsync. */}
+                    <Route
+                      path="/facturacion"
+                      element={hasPermission("cobranzas.view_all") ? <FacturacionPage /> : <Navigate to="/dashboard" replace />}
                     />
                     <Route
                       path="/admin"
