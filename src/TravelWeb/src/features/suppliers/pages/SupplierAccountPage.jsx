@@ -47,6 +47,9 @@ import { UsarSaldoOperadorInline } from "../components/UsarSaldoOperadorInline";
 import { ListaCuentasBancarias } from "../../../features/bank-accounts/components/ListaCuentasBancarias";
 import { OperatorRefundsPendingSection } from "../components/OperatorRefundsPendingSection";
 import { useOperatorRefundsPending } from "../hooks/useOperatorRefundsPending";
+// CURRENCY_OPTIONS se reutiliza del alta de operador para mantener las etiquetas consistentes.
+// No duplicamos el array: si el equipo agrega una moneda, se actualiza en un solo lugar.
+import { CURRENCY_OPTIONS } from "../lib/nuevoOperadorLogic.js";
 
 // Estado inicial vacío para la paginación de servicios.
 const emptyPage = {
@@ -155,9 +158,8 @@ function BalanceHeaderChips({ balancesByCurrency }) {
  * dentro de la solapa "Datos" sin ninguna ventana flotante encima.
  * Regla de Gastón: "el modal me parece horrible" (guia-ux-gaston.md).
  *
- * Campos: razón social, CUIT, condición fiscal, contacto, teléfono, email,
- * dirección, y estado activo/inactivo. Iguales al SupplierFormModal actual.
- * No se agregan campos nuevos (moneda por defecto, escape fiscal) sin aprobación.
+ * Campos: razón social, moneda por defecto, CUIT, condición fiscal,
+ * contacto, teléfono, email, dirección, y estado activo/inactivo.
  *
  * Props:
  *   - supplier: objeto del proveedor (viene del overview de la página).
@@ -174,6 +176,9 @@ function SupplierInlineEditForm({ supplier, onGuardado }) {
         email: "",
         phone: "",
         isActive: true,
+        // defaultCurrency: moneda del carril de cuenta corriente de este operador.
+        // ARS y USD son dos extractos separados; cambiar la moneda NO migra los movimientos históricos.
+        defaultCurrency: "ARS",
         // defaultPaymentTermDays: campo del modelo (ADR-041) que NO se muestra en la UI
         // pero se incluye en el PUT para no pisarlo con null en un FULL overwrite.
         defaultPaymentTermDays: null,
@@ -194,6 +199,9 @@ function SupplierInlineEditForm({ supplier, onGuardado }) {
             email: supplier.email || "",
             phone: supplier.phone || "",
             isActive: supplier.isActive ?? true,
+            // Moneda por defecto: se recupera del backend.
+            // Fallback ARS para operadores creados antes de que este campo existiera.
+            defaultCurrency: supplier.defaultCurrency || "ARS",
             // Round-trip: preservamos el plazo de pago acordado (ADR-041) aunque no
             // lo mostremos en este form. Sin esto, el PUT lo pierde (full overwrite).
             defaultPaymentTermDays: supplier.defaultPaymentTermDays ?? null,
@@ -265,6 +273,25 @@ function SupplierInlineEditForm({ supplier, onGuardado }) {
                         <option value="MONOTRIBUTISTA">Monotributista</option>
                         <option value="IVA_EXENTO">Exento</option>
                         <option value="CONSUMIDOR_FINAL">Cons. Final</option>
+                    </select>
+                </div>
+
+                {/* Moneda por defecto: define en qué carril de cuenta corriente operan los
+                    servicios y pagos de este proveedor. ARS y USD son extractos separados;
+                    cambiar este campo NO migra los movimientos ya registrados. */}
+                <div className="space-y-2 sm:col-span-2">
+                    <label className={labelClass}>Moneda por defecto</label>
+                    <select
+                        value={formData.defaultCurrency}
+                        onChange={handleChange("defaultCurrency")}
+                        className={inputClass}
+                        data-testid="supplier-datos-defaultCurrency"
+                    >
+                        {CURRENCY_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                                {opt.label}
+                            </option>
+                        ))}
                     </select>
                 </div>
 
@@ -1078,6 +1105,12 @@ export default function SupplierAccountPage() {
     // al usuario (ej: "IVA_RESP_INSCRIPTO").
     const taxConditionLabel = TAX_CONDITION_LABELS[supplier?.taxCondition] ?? null;
 
+    // Label de la moneda por defecto para la vista de solo lectura (solapa Datos).
+    // Busca en CURRENCY_OPTIONS para mostrar "Pesos ($)" en lugar del código "ARS".
+    const defaultCurrencyLabel = CURRENCY_OPTIONS.find(
+        (option) => option.value === supplier?.defaultCurrency
+    )?.label ?? "—";
+
     // ─── Definición de solapas (patrón igual que ReservaDetailPage) ──────────
     const solapas = [
         { id: "cuenta-corriente",    label: "Cuenta corriente",    icon: CreditCard  },
@@ -1546,6 +1579,10 @@ export default function SupplierAccountPage() {
                                         <div>
                                             <p className="text-muted-foreground text-xs uppercase tracking-wider mb-1">Condición fiscal</p>
                                             <p className="font-medium">{taxConditionLabel || "—"}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-muted-foreground text-xs uppercase tracking-wider mb-1">Moneda por defecto</p>
+                                            <p className="font-medium">{defaultCurrencyLabel}</p>
                                         </div>
                                         <div>
                                             <p className="text-muted-foreground text-xs uppercase tracking-wider mb-1">Contacto</p>

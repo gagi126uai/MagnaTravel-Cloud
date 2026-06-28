@@ -3,6 +3,8 @@ import { Wallet } from "lucide-react";
 import { Badge } from "../../../components/ui/badge";
 import { formatCurrency } from "../../../lib/utils";
 import { getPublicId } from "../../../lib/publicIds";
+// Reutilizamos CURRENCY_OPTIONS del alta para que las etiquetas sean idénticas en ambas superficies.
+import { CURRENCY_OPTIONS } from "../lib/nuevoOperadorLogic.js";
 
 export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
     const [formData, setFormData] = useState({
@@ -14,7 +16,11 @@ export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
         email: "",
         phone: "",
         isActive: true,
-        currentBalance: 0
+        currentBalance: 0,
+        // Moneda por defecto del carril de cuenta corriente del operador.
+        defaultCurrency: "ARS",
+        // Round-trip: se preserva en el PUT para no perder el plazo acordado (ADR-041).
+        defaultPaymentTermDays: null,
     });
 
     useEffect(() => {
@@ -28,7 +34,11 @@ export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
                 email: supplier.email || "",
                 phone: supplier.phone || "",
                 isActive: supplier.isActive ?? true,
-                currentBalance: supplier.currentBalance || 0
+                currentBalance: supplier.currentBalance || 0,
+                // Moneda por defecto: fallback ARS para operadores creados antes de que el campo existiera.
+                defaultCurrency: supplier.defaultCurrency || "ARS",
+                // Round-trip: preservamos el plazo pactado aunque no se muestre en este form.
+                defaultPaymentTermDays: supplier.defaultPaymentTermDays ?? null,
             });
         } else {
             setFormData({
@@ -40,7 +50,9 @@ export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
                 email: "",
                 phone: "",
                 isActive: true,
-                currentBalance: 0
+                currentBalance: 0,
+                defaultCurrency: "ARS",
+                defaultPaymentTermDays: null,
             });
         }
     }, [supplier, isOpen]);
@@ -108,6 +120,24 @@ export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
                                 <option value="MONOTRIBUTISTA">Monotributista</option>
                                 <option value="IVA_EXENTO">Exento</option>
                                 <option value="CONSUMIDOR_FINAL">Cons. Final</option>
+                            </select>
+                        </div>
+
+                        {/* Moneda por defecto: define en qué carril de cuenta corriente opera este proveedor.
+                            ARS y USD son extractos separados; no se mezclan nunca. */}
+                        <div className="space-y-2 sm:col-span-2">
+                            <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Moneda por defecto</label>
+                            <select
+                                value={formData.defaultCurrency}
+                                onChange={(e) => setFormData({ ...formData, defaultCurrency: e.target.value })}
+                                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-slate-950 dark:border-slate-800 dark:text-white"
+                                data-testid="supplier-form-defaultCurrency"
+                            >
+                                {CURRENCY_OPTIONS.map((opt) => (
+                                    <option key={opt.value} value={opt.value}>
+                                        {opt.label}
+                                    </option>
+                                ))}
                             </select>
                         </div>
 

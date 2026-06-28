@@ -889,7 +889,7 @@ public class CustomerService : ICustomerService
                 Observaciones = invoice.Observaciones,
                 WasForced = invoice.WasForced,
                 ForceReason = invoice.ForceReason,
-                ForcedByUserId = invoice.ForcedByUserId,
+                // ForcedByUserId (GUID interno de Identity) NO se proyecta: minimizacion de datos.
                 ForcedByUserName = invoice.ForcedByUserName,
                 ForcedAt = invoice.ForcedAt,
                 OutstandingBalanceAtIssuance = invoice.OutstandingBalanceAtIssuance,

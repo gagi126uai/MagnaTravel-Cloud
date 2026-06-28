@@ -16,7 +16,8 @@ public class InvoiceListDto
     public string? Observaciones { get; set; }
     public bool WasForced { get; set; }
     public string? ForceReason { get; set; }
-    public string? ForcedByUserId { get; set; }
+    // Minimizacion de datos: NO se expone ForcedByUserId (GUID interno de Identity) al navegador.
+    // Para la UI alcanza con el nombre humano (ForcedByUserName) y el motivo (ForceReason).
     public string? ForcedByUserName { get; set; }
     public DateTime? ForcedAt { get; set; }
     public decimal OutstandingBalanceAtIssuance { get; set; }
