@@ -6,18 +6,18 @@ import {
     Building2,
     Phone,
     Mail,
-    FileText,
     Plus,
-    Pencil,
-    Trash2,
     Search,
     Filter,
     Check,
     X,
     Layers,
     ExternalLink,
-    TrendingDown,
     TrendingUp,
+    CreditCard,
+    RotateCcw,
+    Landmark,
+    Settings,
 } from "lucide-react";
 import { api } from "../../../api";
 import { AccountPageSkeleton } from "../../../components/ui/skeleton";
@@ -46,7 +46,9 @@ import { PagarProveedorInline } from "../components/PagarProveedorInline";
 import { UsarSaldoOperadorInline } from "../components/UsarSaldoOperadorInline";
 import { ListaCuentasBancarias } from "../../../features/bank-accounts/components/ListaCuentasBancarias";
 import { OperatorRefundsPendingSection } from "../components/OperatorRefundsPendingSection";
+import { useOperatorRefundsPending } from "../hooks/useOperatorRefundsPending";
 
+// Estado inicial vacío para la paginación de servicios.
 const emptyPage = {
     items: [],
     page: 1,
@@ -57,154 +59,297 @@ const emptyPage = {
     hasNextPage: false,
 };
 
-// ─── Franja de saldo separada por moneda ──────────────────────────────────────
+// Etiquetas en español para el enum de condición fiscal del backend.
+// El backend almacena strings como "IVA_RESP_INSCRIPTO"; acá los hacemos legibles.
+const TAX_CONDITION_LABELS = {
+    IVA_RESP_INSCRIPTO: "Resp. Inscripto",
+    MONOTRIBUTISTA: "Monotributista",
+    IVA_EXENTO: "Exento",
+    CONSUMIDOR_FINAL: "Cons. Final",
+};
+
+// ─── Chips de saldo en vivo del encabezado ────────────────────────────────────
 
 /**
- * Tarjetas de resumen financiero del proveedor, una por moneda.
+ * Chips compactos que muestran el saldo con el proveedor por moneda.
  *
- * Regla multimoneda: NUNCA se suman pesos con dólares en un solo número.
- * Cada moneda tiene su propia tarjeta con el saldo corriente.
+ * Siempre visibles en el encabezado, sobre las solapas.
+ * Reglas clave:
+ *   - NUNCA suma ARS + USD (multimoneda dura). Un chip por moneda.
+ *   - Sin permiso cobranzas.see_cost → todo gris, monto "—", SIN verde.
+ *     No revelar que hay saldo a favor ni saldo a pagar a quien no tiene permiso.
+ *   - Con permiso → rojo si le debemos, verde si pagamos de más (a favor).
  *
- * Semáforo visual:
- *   - Balance > 0 (le debemos): rojo → "Le debo en $"
- *   - Balance = 0 (sin deuda):  gris → "Sin deuda en $"
- *   - Balance < 0 (pagamos de más): verde → "A favor con este proveedor: $"
- *
- * Enmascarado: si el usuario no tiene permiso cobranzas.see_cost, los montos
- * se muestran como "—" (el backend ya devuelve 0, pero mostramos "—" para que
- * no confunda "sin permiso" con "no hay deuda").
- *
- * Props:
- *   - balancesByCurrency: Array<{ currency, confirmedPurchases, totalPaid, balance }>
- *   - serviceCount: number — cantidad de servicios comprados al proveedor
- *   - onRegistrarPago: () => void — abre la ficha de pago en línea
- *   - mostrandoPago: boolean — true cuando la ficha de pago ya está abierta
- *   - onUsarSaldo: (currency: string) => void — abre la ficha de "Usar saldo a favor" para esa moneda
- *   - monedaUsandoSaldo: string|null — moneda cuya ficha de saldo está abierta (para el toggle del botón)
+ * Los botones de acción ("Registrar pago", "Usar saldo a favor") NO van acá;
+ * van en la solapa "Cuenta corriente" para no saturar el encabezado.
  */
-function FranjaSaldoPorMoneda({ balancesByCurrency, serviceCount, onRegistrarPago, mostrandoPago, onUsarSaldo, monedaUsandoSaldo }) {
-    // hasPermission("cobranzas.see_cost") ya evalúa isAdmin internamente
+function BalanceHeaderChips({ balancesByCurrency }) {
     const puedeVerMontos = hasPermission("cobranzas.see_cost");
-
     const balances = Array.isArray(balancesByCurrency) ? balancesByCurrency : [];
 
+    if (balances.length === 0) return null;
+
     return (
-        <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-stretch">
-
-            {/* Tarjeta de conteo de servicios (siempre visible, sin permiso de costo) */}
-            <div className="rounded-xl border bg-card p-4 shadow-sm flex-shrink-0">
-                <div className="flex items-center gap-2 text-muted-foreground mb-1">
-                    <FileText className="h-4 w-4" />
-                    <span className="text-sm">Servicios</span>
-                </div>
-                <p className="text-2xl font-bold">{serviceCount ?? 0}</p>
-            </div>
-
-            {/* Una tarjeta por moneda.
-                Si balancesByCurrency está vacío (endpoint viejo o proveedor sin movimientos),
-                no mostramos nada extra y el cajero puede registrar el primer pago igual. */}
+        <div className="flex flex-wrap gap-2 mt-3">
             {balances.map((balance) => {
                 const deuda = balance.balance ?? 0;
                 const esAFavor = deuda < 0;
                 const esCero = deuda === 0;
 
+                // Sin permiso: colores neutros para no revelar el estado del saldo.
+                // Con permiso: rojo=le debo, verde=a favor, gris=sin deuda.
+                const chipStyle = !puedeVerMontos
+                    ? "border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/20"
+                    : esAFavor
+                        ? "border-emerald-200 bg-emerald-50 dark:border-emerald-900/40 dark:bg-emerald-950/20"
+                        : esCero
+                            ? "border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/20"
+                            : "border-rose-200 bg-rose-50/60 dark:border-rose-900/40 dark:bg-rose-950/20";
+
+                const textStyle = !puedeVerMontos
+                    ? "text-slate-500"
+                    : esAFavor
+                        ? "text-emerald-700 dark:text-emerald-400"
+                        : esCero
+                            ? "text-slate-500"
+                            : "text-rose-700 dark:text-rose-400";
+
+                const simboloMoneda = balance.currency === "USD" ? "US$" : "$";
+
+                // Etiqueta según el estado (sin permiso: solo indica la moneda, sin revelar deuda/favor)
+                const etiqueta = !puedeVerMontos
+                    ? `En ${simboloMoneda}`
+                    : esAFavor
+                        ? `A favor en ${simboloMoneda}`
+                        : esCero
+                            ? `Sin deuda en ${simboloMoneda}`
+                            : `Le debo en ${simboloMoneda}`;
+
                 return (
                     <div
                         key={balance.currency}
-                        className={`rounded-xl border p-4 shadow-sm flex-1 min-w-[200px] ${
-                            esAFavor
-                                ? "border-emerald-200 bg-emerald-50 dark:border-emerald-900/40 dark:bg-emerald-950/20"
-                                : esCero
-                                ? "border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/20"
-                                : "border-rose-200 bg-rose-50/60 dark:border-rose-900/40 dark:bg-rose-950/20"
-                        }`}
-                        data-testid={`saldo-moneda-${balance.currency}`}
+                        className={`inline-flex flex-col rounded-lg border px-3 py-2 ${chipStyle}`}
+                        data-testid={`header-saldo-${balance.currency}`}
                     >
-                        {/* Etiqueta de estado */}
-                        <div className={`flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider mb-1 ${
-                            esAFavor ? "text-emerald-700 dark:text-emerald-400"
-                            : esCero ? "text-slate-500"
-                            : "text-rose-700 dark:text-rose-400"
-                        }`}>
-                            {esAFavor
-                                ? <><TrendingUp className="h-3.5 w-3.5" /> A favor con este proveedor en {balance.currency === "USD" ? "US$" : "$"}</>
-                                : esCero
-                                ? `Sin deuda en ${balance.currency === "USD" ? "US$" : "$"}`
-                                : <><TrendingDown className="h-3.5 w-3.5" /> Le debo en {balance.currency === "USD" ? "US$" : "$"}</>
-                            }
-                        </div>
-
-                        {/* Monto principal */}
-                        <p className={`text-2xl font-bold ${
-                            esAFavor ? "text-emerald-700 dark:text-emerald-400"
-                            : esCero ? "text-slate-500"
-                            : "text-rose-700 dark:text-rose-400"
-                        }`}>
+                        <span className={`text-xs font-bold uppercase tracking-wider ${textStyle}`}>
+                            {etiqueta}
+                        </span>
+                        <span className={`font-mono font-bold text-xl ${textStyle}`}>
                             {puedeVerMontos
                                 ? formatCurrency(Math.abs(deuda), balance.currency)
-                                : "—"
-                            }
-                        </p>
-
-                        {/* Desglose compras / pagado: visible solo con permiso */}
-                        {puedeVerMontos && (
-                            <div className="mt-2 flex gap-3 text-[10px] text-muted-foreground">
-                                <span>Compras: {formatCurrency(balance.confirmedPurchases ?? 0, balance.currency)}</span>
-                                <span>Pagado: {formatCurrency(balance.totalPaid ?? 0, balance.currency)}</span>
-                            </div>
-                        )}
-
-                        {/* Aviso sin permiso */}
-                        {!puedeVerMontos && (
-                            <p className="mt-1 text-[10px] text-muted-foreground">
-                                Sin permiso para ver montos de costo
-                            </p>
-                        )}
-
-                        {/* Botón "Usar saldo a favor": solo aparece en carteles verdes (a favor)
-                            y solo si el usuario tiene el permiso para gestionar pagos.
-                            Alterna entre "Usar saldo" y "Cerrar" si la ficha ya está abierta. */}
-                        {esAFavor && hasPermission("tesoreria.supplier_payments") && (
-                            <div className="mt-3 border-t border-emerald-100 dark:border-emerald-900/30 pt-2">
-                                <button
-                                    type="button"
-                                    onClick={() => onUsarSaldo && onUsarSaldo(balance.currency)}
-                                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                                        monedaUsandoSaldo === balance.currency
-                                            ? "bg-emerald-200 text-emerald-800 hover:bg-emerald-300 dark:bg-emerald-900/60 dark:text-emerald-200"
-                                            : "bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm"
-                                    }`}
-                                    data-testid={`btn-usar-saldo-${balance.currency}`}
-                                >
-                                    <TrendingUp className="h-3.5 w-3.5" />
-                                    {monedaUsandoSaldo === balance.currency ? "Cerrar" : "Usar saldo a favor"}
-                                </button>
-                            </div>
-                        )}
+                                : "—"}
+                        </span>
                     </div>
                 );
             })}
-
-            {/* Botón de registrar pago: solo visible con permiso tesoreria.supplier_payments.
-                Sin ese permiso el cajero puede VER la cuenta corriente pero no registrar pagos. */}
-            {hasPermission("tesoreria.supplier_payments") && (
-                <div className="flex items-center sm:ml-auto">
-                    <button
-                        type="button"
-                        onClick={onRegistrarPago}
-                        className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors ${
-                            mostrandoPago
-                                ? "bg-slate-500 hover:bg-slate-600 shadow-slate-500/20"
-                                : "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-500/20"
-                        }`}
-                        data-testid="btn-registrar-pago"
-                    >
-                        <Plus className="h-4 w-4" />
-                        {mostrandoPago ? "Cerrar pago" : "Registrar pago"}
-                    </button>
-                </div>
-            )}
         </div>
+    );
+}
+
+// ─── Formulario de edición del proveedor (solapa "Datos") ─────────────────────
+
+/**
+ * Formulario en línea para editar los datos de identidad del proveedor.
+ *
+ * Reemplaza el modal "Editar proveedor": el contenido se muestra directamente
+ * dentro de la solapa "Datos" sin ninguna ventana flotante encima.
+ * Regla de Gastón: "el modal me parece horrible" (guia-ux-gaston.md).
+ *
+ * Campos: razón social, CUIT, condición fiscal, contacto, teléfono, email,
+ * dirección, y estado activo/inactivo. Iguales al SupplierFormModal actual.
+ * No se agregan campos nuevos (moneda por defecto, escape fiscal) sin aprobación.
+ *
+ * Props:
+ *   - supplier: objeto del proveedor (viene del overview de la página).
+ *   - onGuardado: callback al guardar exitosamente (recarga el overview para
+ *     que el encabezado muestre el nombre/CUIT actualizado).
+ */
+function SupplierInlineEditForm({ supplier, onGuardado }) {
+    const [formData, setFormData] = useState({
+        name: "",
+        contactName: "",
+        taxId: "",
+        taxCondition: "",
+        address: "",
+        email: "",
+        phone: "",
+        isActive: true,
+        // defaultPaymentTermDays: campo del modelo (ADR-041) que NO se muestra en la UI
+        // pero se incluye en el PUT para no pisarlo con null en un FULL overwrite.
+        defaultPaymentTermDays: null,
+    });
+    const [saving, setSaving] = useState(false);
+
+    // Inicializa el formulario con los datos del proveedor cuando llegan del servidor.
+    // Cada vez que el proveedor se recarga (handlePagoGuardado llama loadOverview, etc.)
+    // el formulario vuelve a los valores guardados. Esto está comentado para que quede claro.
+    useEffect(() => {
+        if (!supplier) return;
+        setFormData({
+            name: supplier.name || "",
+            contactName: supplier.contactName || "",
+            taxId: supplier.taxId || "",
+            taxCondition: supplier.taxCondition || "",
+            address: supplier.address || "",
+            email: supplier.email || "",
+            phone: supplier.phone || "",
+            isActive: supplier.isActive ?? true,
+            // Round-trip: preservamos el plazo de pago acordado (ADR-041) aunque no
+            // lo mostremos en este form. Sin esto, el PUT lo pierde (full overwrite).
+            defaultPaymentTermDays: supplier.defaultPaymentTermDays ?? null,
+        });
+    }, [supplier]);
+
+    const handleChange = (campo) => (event) => {
+        setFormData((anterior) => ({ ...anterior, [campo]: event.target.value }));
+    };
+
+    const handleSubmit = async (event) => {
+        event.preventDefault();
+        setSaving(true);
+        try {
+            await api.put(`/suppliers/${getPublicId(supplier)}`, formData);
+            showSuccess("Datos del operador guardados correctamente.");
+            if (onGuardado) onGuardado();
+        } catch (error) {
+            showError(getApiErrorMessage(error, "No se pudieron guardar los datos del operador."), "Error al guardar");
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const inputClass =
+        "w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 dark:bg-slate-950 dark:border-slate-800 dark:text-white";
+    const labelClass = "text-sm font-medium text-slate-700 dark:text-slate-300";
+
+    return (
+        <form onSubmit={handleSubmit} className="space-y-5">
+            <div className="grid gap-4 sm:grid-cols-2">
+
+                {/* Razón social: único campo obligatorio para guardar */}
+                <div className="space-y-2 sm:col-span-2">
+                    <label className={labelClass}>Razón social *</label>
+                    <input
+                        type="text"
+                        required
+                        value={formData.name}
+                        onChange={handleChange("name")}
+                        placeholder="Ej: Despegar Argentina S.A."
+                        className={inputClass}
+                        data-testid="supplier-datos-name"
+                    />
+                </div>
+
+                <div className="space-y-2">
+                    <label className={labelClass}>CUIT</label>
+                    <input
+                        type="text"
+                        value={formData.taxId}
+                        onChange={handleChange("taxId")}
+                        placeholder="20-12345678-9"
+                        className={inputClass}
+                        data-testid="supplier-datos-taxId"
+                    />
+                </div>
+
+                <div className="space-y-2">
+                    <label className={labelClass}>Condición fiscal</label>
+                    <select
+                        value={formData.taxCondition}
+                        onChange={handleChange("taxCondition")}
+                        className={inputClass}
+                        data-testid="supplier-datos-taxCondition"
+                    >
+                        <option value="">Seleccionar...</option>
+                        <option value="IVA_RESP_INSCRIPTO">Resp. Inscripto</option>
+                        <option value="MONOTRIBUTISTA">Monotributista</option>
+                        <option value="IVA_EXENTO">Exento</option>
+                        <option value="CONSUMIDOR_FINAL">Cons. Final</option>
+                    </select>
+                </div>
+
+                <div className="space-y-2">
+                    <label className={labelClass}>Contacto</label>
+                    <input
+                        type="text"
+                        value={formData.contactName}
+                        onChange={handleChange("contactName")}
+                        placeholder="Nombre de la persona de contacto"
+                        className={inputClass}
+                        data-testid="supplier-datos-contactName"
+                    />
+                </div>
+
+                <div className="space-y-2">
+                    <label className={labelClass}>Teléfono</label>
+                    <input
+                        type="text"
+                        value={formData.phone}
+                        onChange={handleChange("phone")}
+                        placeholder="+54 11 ..."
+                        className={inputClass}
+                        data-testid="supplier-datos-phone"
+                    />
+                </div>
+
+                <div className="space-y-2 sm:col-span-2">
+                    <label className={labelClass}>Email</label>
+                    <input
+                        type="email"
+                        value={formData.email}
+                        onChange={handleChange("email")}
+                        placeholder="contacto@operador.com"
+                        className={inputClass}
+                        data-testid="supplier-datos-email"
+                    />
+                </div>
+
+                <div className="space-y-2 sm:col-span-2">
+                    <label className={labelClass}>Dirección</label>
+                    <input
+                        type="text"
+                        value={formData.address}
+                        onChange={handleChange("address")}
+                        placeholder="Calle y número, ciudad"
+                        className={inputClass}
+                        data-testid="supplier-datos-address"
+                    />
+                </div>
+
+                {/* Toggle activo/inactivo: inactivo = no aparece en buscadores, pero mantiene historial */}
+                <div className="sm:col-span-2 flex items-center gap-3 rounded-lg border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/30 p-3">
+                    <input
+                        type="checkbox"
+                        id="supplier-isActive"
+                        checked={formData.isActive}
+                        onChange={(event) =>
+                            setFormData((anterior) => ({ ...anterior, isActive: event.target.checked }))
+                        }
+                        className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                        data-testid="supplier-datos-isActive"
+                    />
+                    <label htmlFor="supplier-isActive" className={labelClass + " cursor-pointer"}>
+                        Operador activo
+                    </label>
+                    <span className="text-xs text-muted-foreground">
+                        {formData.isActive
+                            ? "Activo — aparece en buscadores y se le pueden asignar servicios."
+                            : "Inactivo — no aparece en buscadores, pero mantiene su historial."}
+                    </span>
+                </div>
+            </div>
+
+            <div className="flex items-center gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
+                <button
+                    type="submit"
+                    disabled={saving}
+                    className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 shadow-lg shadow-indigo-500/25 transition-all disabled:opacity-50"
+                    data-testid="supplier-datos-submit"
+                >
+                    {saving ? "Guardando..." : "Guardar cambios"}
+                </button>
+            </div>
+        </form>
     );
 }
 
@@ -221,8 +366,7 @@ function FranjaSaldoPorMoneda({ balancesByCurrency, serviceCount, onRegistrarPag
  * (no verde ni rojo) y un aviso en el encabezado para que quede claro que es
  * falta de permiso, no que la deuda es cero.
  *
- * Se usa en la pagina de cuenta corriente del proveedor (SupplierAccountPage),
- * debajo del extracto.
+ * Se usa en la solapa "Cuenta corriente" de SupplierAccountPage.
  *
  * Props:
  * - publicId: string — publicId del proveedor (para el endpoint)
@@ -521,10 +665,11 @@ function ServiceStatusEditor({ service, onUpdated }) {
             showSuccess(`Estado actualizado a "${newStatus}"`);
             if (onUpdated) onUpdated();
         } catch (error) {
-            // Revertir en UI
+            // Revertir el valor optimista en la UI antes de mostrar el error.
+            // Usamos getApiErrorMessage para evitar que strings de red en inglés
+            // ("Failed to fetch", "Internal Server Error") lleguen al usuario.
             setValue(previous);
-            const message = error?.response?.data?.message || error?.message || "No se pudo actualizar el estado.";
-            showError(message, "No se pudo cambiar el estado");
+            showError(getApiErrorMessage(error, "No se pudo actualizar el estado."), "No se pudo cambiar el estado");
         } finally {
             setSaving(false);
         }
@@ -554,8 +699,8 @@ function ServiceStatusEditor({ service, onUpdated }) {
 // ─── Editor del código de confirmación del servicio ──────────────────────────
 
 // Editor inline del codigo de confirmacion del proveedor (PNR para vuelos,
-// ConfirmationNumber para el resto). Misma logica de edicion que el status:
-// click para entrar en modo edit, blur o Enter para guardar, Esc para cancelar.
+// ConfirmationNumber para el resto). Click para editar, Enter/blur para guardar,
+// Esc para cancelar.
 function ServiceConfirmationEditor({ service, onUpdated }) {
     const endpoint = STATUS_ENDPOINT_BY_TYPE[service.type];
     const [editing, setEditing] = useState(false);
@@ -588,8 +733,8 @@ function ServiceConfirmationEditor({ service, onUpdated }) {
             setEditing(false);
             if (onUpdated) onUpdated();
         } catch (error) {
-            const message = error?.response?.data?.message || error?.message || "No se pudo guardar el codigo.";
-            showError(message, "No se pudo guardar el codigo");
+            // getApiErrorMessage normaliza el error y evita strings en inglés del runtime.
+            showError(getApiErrorMessage(error, "No se pudo guardar el código."), "No se pudo guardar el código");
         } finally {
             setSaving(false);
         }
@@ -653,25 +798,32 @@ function ServiceConfirmationEditor({ service, onUpdated }) {
 // ─── Página principal ─────────────────────────────────────────────────────────
 
 /**
- * Pantalla de cuenta corriente del proveedor.
+ * Página de ficha del proveedor (operador), rediseñada como encabezado + solapas.
  *
- * Secciones (de arriba a abajo):
- *   1. Encabezado: nombre, datos de contacto, CUIT.
- *   2. Franja de saldo por moneda: una tarjeta por moneda con el saldo corriente.
- *      Botón "Registrar pago" abre la ficha en línea (sin modal).
- *   3. Ficha de pago en línea (cuando está abierta): debajo de la franja.
- *   4. Extracto de cuenta: libro mayor cronológico, un bloque por moneda.
- *   5. Deuda por expediente: saldo desglosado por reserva y moneda.
- *   6. Servicios comprados: lista operativa con estado y código de confirmación.
+ * Estructura:
+ *   ENCABEZADO (siempre visible): nombre, "Operador", CUIT, condición fiscal,
+ *   datos de contacto, y chips de saldo EN VIVO por moneda.
+ *
+ *   SOLAPAS (mismo patrón visual que la ficha de reserva):
+ *     1. Cuenta corriente  — acciones pago/saldo + extracto + deuda por expediente
+ *     2. Servicios comprados — grilla operativa con estado y código de confirmación
+ *     3. Reembolsos         — plata que el operador debe devolver por anulaciones
+ *     4. Datos bancarios    — cuentas (CBU/alias) del operador
+ *     5. Datos              — edición de identidad (razón social, CUIT, etc.) SIN modal
  */
 export default function SupplierAccountPage() {
     const { publicId } = useParams();
     const navigate = useNavigate();
 
+    // ─── Solapa activa ────────────────────────────────────────────────────────
+    const [activeTab, setActiveTab] = useState("cuenta-corriente");
+
+    // ─── Overview del proveedor ───────────────────────────────────────────────
     const [overview, setOverview] = useState(null);
     const [loadingOverview, setLoadingOverview] = useState(true);
     const [databaseUnavailable, setDatabaseUnavailable] = useState(false);
 
+    // ─── Grilla de servicios comprados ────────────────────────────────────────
     const [servicesPage, setServicesPage] = useState(emptyPage);
     const [servicesPaging, setServicesPaging] = useState({ page: 1, pageSize: 25 });
     const [servicesLoading, setServicesLoading] = useState(true);
@@ -679,32 +831,35 @@ export default function SupplierAccountPage() {
     const [serviceType, setServiceType] = useState("all");
     const debouncedServiceSearch = useDebounce(serviceSearch, 300);
 
-    // extractoRefreshKey se incrementa al registrar un pago nuevo para que
-    // el extracto y el overview se recarguen automáticamente sin que el usuario
-    // tenga que refrescar la página.
+    // ─── Control de fichas en línea (Cuenta corriente) ───────────────────────
+    // extractoRefreshKey: incrementar fuerza al extracto a recargar sin que el usuario
+    // refresque la página manualmente.
     const [extractoRefreshKey, setExtractoRefreshKey] = useState(0);
-
-    // showPagoInline: controla si la ficha de pago en línea está abierta o cerrada.
     const [showPagoInline, setShowPagoInline] = useState(false);
-
-    // paymentToEdit: cuando no es null, la ficha de pago se abre en modo edición
-    // con los datos de este pago pre-cargados.
     const [paymentToEdit, setPaymentToEdit] = useState(null);
-
-    // allPayments: lista plana de todos los pagos del proveedor (hasta 200 registros).
-    // Se usa para cruzar con sourcePublicId de cada línea del extracto y poder
-    // ofrecer el botón "Editar" con el objeto completo (monto, método, TC, etc.).
-    const [allPayments, setAllPayments] = useState([]);
-
-    // supplierCreditOverview: resultado de GET /suppliers/{id}/credit.
-    // Contiene Currencies[].AvailableBalance y ActiveApplications[].
-    // Independiente del overview general porque el saldo a favor puede diferir
-    // si hay aplicaciones pendientes de amortizar.
-    const [supplierCreditOverview, setSupplierCreditOverview] = useState(null);
-
     // monedaUsandoSaldo: qué moneda tiene la ficha "Usar saldo a favor" abierta.
     // null = ninguna abierta. Solo una moneda puede estar abierta a la vez.
     const [monedaUsandoSaldo, setMonedaUsandoSaldo] = useState(null);
+
+    // ─── Datos de soporte para el extracto ───────────────────────────────────
+    // allPayments: lista de hasta 200 pagos del proveedor. Se usa para cruzar
+    // con sourcePublicId de cada línea del extracto y ofrecer el botón "Editar".
+    const [allPayments, setAllPayments] = useState([]);
+    // supplierCreditOverview: saldo a favor y aplicaciones activas.
+    const [supplierCreditOverview, setSupplierCreditOverview] = useState(null);
+
+    // ─── Badge de reembolsos pendientes (numerito en la solapa) ──────────────
+    // Cargamos el conteo de reembolsos al montar para poder mostrar el badge.
+    // OperatorRefundsPendingSection también carga sus propios datos internamente
+    // cuando el usuario entra a la solapa — este call paralelo es intencional.
+    const { items: pendingRefundsItems } = useOperatorRefundsPending(publicId);
+    // Solo mostramos el badge si el usuario tiene permiso (de lo contrario el
+    // endpoint habría devuelto 403 o vacío, y no tiene sentido mostrarlo).
+    const cantidadReembolsosPendientes = hasPermission("tesoreria.supplier_payments")
+        ? pendingRefundsItems.length
+        : 0;
+
+    // ─── Funciones de carga ───────────────────────────────────────────────────
 
     const loadOverview = useCallback(async () => {
         setLoadingOverview(true);
@@ -721,13 +876,14 @@ export default function SupplierAccountPage() {
         }
     }, [publicId]);
 
-    // Carga hasta 200 pagos del proveedor para poder hacer el cross-reference en el extracto.
-    // Si hay más de 200 pagos los más viejos no tendrán botón Editar, pero sí Eliminar (tienen sourcePublicId).
-    // Esta cantidad es un límite práctico; no se pagina (son datos de soporte, no de listado).
+    // Carga hasta 200 pagos del proveedor para hacer cross-reference en el extracto.
+    // Si hay más de 200 pagos los más viejos no tendrán botón Editar (sí Eliminar).
     const loadAllPayments = useCallback(async () => {
         if (!publicId) return;
         try {
-            const response = await api.get(`/suppliers/${publicId}/account/payments?page=1&pageSize=200&sortBy=paidAt&sortDir=desc`);
+            const response = await api.get(
+                `/suppliers/${publicId}/account/payments?page=1&pageSize=200&sortBy=paidAt&sortDir=desc`
+            );
             setAllPayments(response?.items || []);
         } catch (error) {
             // No bloqueante: si falla, el extracto sigue funcionando sin botones de edición.
@@ -736,15 +892,14 @@ export default function SupplierAccountPage() {
         }
     }, [publicId]);
 
-    // Carga el overview de crédito del proveedor (saldo a favor y aplicaciones activas).
-    // Se llama al montar y al revertir una aplicación para que la lista se actualice.
+    // Carga el saldo a favor y aplicaciones activas del proveedor.
     const loadSupplierCredit = useCallback(async () => {
         try {
             const creditData = await api.get(`/suppliers/${publicId}/credit`);
             setSupplierCreditOverview(creditData);
         } catch (error) {
-            // No bloqueante: si falla, los carteles de saldo a favor siguen visibles
-            // pero no se podrá ver la lista de aplicaciones activas ni usar el botón.
+            // No bloqueante: los carteles de saldo a favor siguen visibles
+            // pero sin lista de aplicaciones activas ni botón para usar el saldo.
             console.warn("[SupplierAccountPage] No se pudo cargar el overview de crédito del proveedor:", error?.message);
             setSupplierCreditOverview(null);
         }
@@ -759,15 +914,12 @@ export default function SupplierAccountPage() {
                 sortBy: "date",
                 sortDir: "desc",
             });
-
             if (debouncedServiceSearch.trim()) {
                 params.set("search", debouncedServiceSearch.trim());
             }
-
             if (serviceType !== "all") {
                 params.set("type", serviceType);
             }
-
             const response = await api.get(`/suppliers/${publicId}/account/services?${params.toString()}`);
             setServicesPage({ ...emptyPage, ...(response || {}) });
             setDatabaseUnavailable(false);
@@ -780,8 +932,9 @@ export default function SupplierAccountPage() {
         }
     }, [debouncedServiceSearch, publicId, serviceType, servicesPaging.page, servicesPaging.pageSize]);
 
-    // Refresca overview, pagos y extracto después de guardar un pago (nuevo o editado).
-    // El extracto se recarga solo porque extractoRefreshKey es su dependencia de efecto.
+    // ─── Handlers ─────────────────────────────────────────────────────────────
+
+    // Refresca overview, pagos y extracto después de guardar un pago.
     const handlePagoGuardado = useCallback(async () => {
         setShowPagoInline(false);
         setPaymentToEdit(null);
@@ -789,30 +942,28 @@ export default function SupplierAccountPage() {
         await Promise.all([loadOverview(), loadAllPayments(), loadSupplierCredit()]);
     }, [loadOverview, loadAllPayments, loadSupplierCredit]);
 
-    // Se llama al completar una aplicación de saldo a favor: recarga todo lo relacionado.
+    // Se llama al completar una aplicación de saldo a favor.
     const handleSaldoAplicado = useCallback(async () => {
         setMonedaUsandoSaldo(null);
         setExtractoRefreshKey((k) => k + 1);
         await Promise.all([loadOverview(), loadSupplierCredit()]);
     }, [loadOverview, loadSupplierCredit]);
 
-    // Se llama al revertir una aplicación: recarga el extracto y el credit overview.
+    // Se llama al revertir una aplicación de saldo a favor.
     const handleRevertirAplicacionTerminada = useCallback(async () => {
         setExtractoRefreshKey((k) => k + 1);
         await Promise.all([loadOverview(), loadSupplierCredit()]);
     }, [loadOverview, loadSupplierCredit]);
 
     // Abre la ficha de pago en modo edición con el pago seleccionado.
-    // Si la ficha ya estaba abierta para un pago diferente, la reemplaza.
     const handleEditarPago = useCallback((payment) => {
         setPaymentToEdit(payment);
         setShowPagoInline(true);
-        // Scroll al principio para que la ficha quede visible
+        // Scroll al principio para que la ficha de pago quede visible
         window.scrollTo({ top: 0, behavior: "smooth" });
     }, []);
 
-    // Solicita confirmación y luego elimina un pago del proveedor.
-    // Recarga el extracto y el resumen de saldos automáticamente.
+    // Confirma y elimina un pago del proveedor.
     const handleEliminarPago = useCallback(async (payment) => {
         const paymentId = getPublicId(payment) || payment?.publicId;
         if (!paymentId) return;
@@ -836,6 +987,8 @@ export default function SupplierAccountPage() {
         }
     }, [publicId, loadOverview, loadAllPayments]);
 
+    // ─── Efectos ──────────────────────────────────────────────────────────────
+
     // Resetear estado al cambiar de proveedor (navegación directa entre cuentas)
     useEffect(() => {
         setServicesPaging({ page: 1, pageSize: 25 });
@@ -847,31 +1000,24 @@ export default function SupplierAccountPage() {
         setExtractoRefreshKey(0);
         setMonedaUsandoSaldo(null);
         setSupplierCreditOverview(null);
+        // Volvemos siempre a la primera solapa al cambiar de proveedor
+        setActiveTab("cuenta-corriente");
     }, [publicId]);
 
-    useEffect(() => {
-        loadOverview();
-    }, [loadOverview]);
+    // useEffect con dependencias [loadOverview], etc.: cada función loadXxx ya
+    // incluye publicId en su useCallback, así que cambiar el proveedor redefine
+    // la función y dispara el efecto automáticamente.
+    useEffect(() => { loadOverview(); }, [loadOverview]);
+    useEffect(() => { loadSupplierCredit(); }, [loadSupplierCredit]);
+    useEffect(() => { loadServices(); }, [loadServices]);
+    useEffect(() => { loadAllPayments(); }, [loadAllPayments]);
 
-    // Carga el overview de crédito al montar y cada vez que cambia el proveedor.
-    // useEffect con dependencia en loadSupplierCredit (que ya incluye publicId).
-    useEffect(() => {
-        loadSupplierCredit();
-    }, [loadSupplierCredit]);
-
-    useEffect(() => {
-        loadServices();
-    }, [loadServices]);
-
-    // Carga la lista de pagos al montar y cada vez que cambia el proveedor.
-    useEffect(() => {
-        loadAllPayments();
-    }, [loadAllPayments]);
-
-    // Al cambiar filtros de búsqueda o tipo, volvemos a la página 1
+    // Al cambiar filtros de búsqueda o tipo, volvemos a la página 1 de servicios.
     useEffect(() => {
         setServicesPaging((current) => ({ ...current, page: 1 }));
     }, [debouncedServiceSearch, serviceType, servicesPaging.pageSize]);
+
+    // ─── Guardas de estado ────────────────────────────────────────────────────
 
     if (loadingOverview) {
         return <AccountPageSkeleton />;
@@ -889,338 +1035,544 @@ export default function SupplierAccountPage() {
         return <DatabaseUnavailableState />;
     }
 
+    // ─── Datos derivados ──────────────────────────────────────────────────────
+
     const supplier = overview?.supplier;
     const services = servicesPage.items || [];
 
     // balancesByCurrency: array de { currency, confirmedPurchases, totalPaid, balance }.
-    // Es el reemplazo del summary escalar (que sumaba ARS+USD incorrectamente).
-    // Puede venir de overview.balancesByCurrency (campo nuevo del backend Tanda 1).
+    // Reemplaza el resumen escalar anterior que sumaba ARS+USD incorrectamente.
     const balancesByCurrency = overview?.balancesByCurrency || [];
 
-    // serviceCount puede venir del summary anterior o calcularse desde balances
-    const serviceCount = overview?.summary?.serviceCount ?? 0;
-
-    // Permiso para ver montos de costo: controla la columna "Costo" en Servicios Comprados.
-    // El mismo permiso que en FranjaSaldoPorMoneda y PagarProveedorInline.
     const puedeVerMontos = hasPermission("cobranzas.see_cost");
-
-    // Permiso para editar/eliminar pagos al proveedor desde el extracto.
-    // El mismo permiso que se usa para registrar nuevos pagos.
     const puedeEditarEliminarPago = hasPermission("tesoreria.supplier_payments");
 
-    // Aplicaciones de saldo a favor vigentes: vienen del credit overview.
-    // Si el endpoint aún no respondió (o falló), usamos array vacío.
+    // Aplicaciones de saldo a favor vigentes (para el extracto).
     const activeApplications = supplierCreditOverview?.activeApplications ?? [];
 
-    // Saldo disponible para la moneda que está usando la ficha de "Usar saldo".
-    // Viene de SupplierCreditOverviewDto.Currencies[].AvailableBalance.
+    // Saldo disponible para la moneda cuya ficha de "Usar saldo" está abierta.
     const getSaldoDisponible = (moneda) => {
         const creditCurrencyLine = (supplierCreditOverview?.currencies ?? []).find(
             (c) => c.currency === moneda
         );
-        // Si el overview de crédito no cargó todavía, usamos el valor del overview general
-        // como fallback (Math.abs del balance cuando es a favor).
         if (creditCurrencyLine != null) {
             return Number(creditCurrencyLine.availableBalance ?? 0);
         }
+        // Fallback: usamos el balance negativo del overview general (deuda < 0 = a favor)
         const balanceLine = balancesByCurrency.find((b) => b.currency === moneda);
         const deuda = balanceLine?.balance ?? 0;
         return deuda < 0 ? Math.abs(deuda) : 0;
     };
 
+    // Monedas con saldo a favor: son las que muestran el botón "Usar saldo" en la solapa.
+    const monedasAFavor = balancesByCurrency.filter((b) => (b.balance ?? 0) < 0);
+
+    // Etiqueta de la solapa "Reembolsos" con el badge numérico si hay pendientes.
+    const labelReembolsos = cantidadReembolsosPendientes > 0
+        ? `Reembolsos (${cantidadReembolsosPendientes})`
+        : "Reembolsos";
+
+    // Condición fiscal en español para el subtítulo del encabezado.
+    // Si el valor del backend no está en nuestro mapeo, lo omitimos:
+    // la alternativa anterior (?? supplier?.taxCondition) exponía el enum interno
+    // al usuario (ej: "IVA_RESP_INSCRIPTO").
+    const taxConditionLabel = TAX_CONDITION_LABELS[supplier?.taxCondition] ?? null;
+
+    // ─── Definición de solapas (patrón igual que ReservaDetailPage) ──────────
+    const solapas = [
+        { id: "cuenta-corriente",    label: "Cuenta corriente",    icon: CreditCard  },
+        { id: "servicios-comprados", label: "Servicios comprados", icon: Building2   },
+        { id: "reembolsos",          label: labelReembolsos,        icon: RotateCcw   },
+        { id: "datos-bancarios",     label: "Datos bancarios",      icon: Landmark    },
+        { id: "datos",               label: "Datos",                icon: Settings    },
+    ];
+
     return (
         <div className="p-6 space-y-6 max-w-7xl mx-auto">
 
-            {/* ── Encabezado ─────────────────────────────────────────────────── */}
-            <div className="flex items-center gap-4">
+            {/* ── Encabezado: identidad + chips de saldo ────────────────────────
+                Siempre visible, arriba de las solapas.
+                Chips enmascarados sin permiso cobranzas.see_cost (nunca mostrar verde sin permiso).
+            ─────────────────────────────────────────────────────────────────── */}
+            <div className="flex items-start gap-4">
                 <button
                     onClick={() => navigate("/suppliers")}
-                    className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-input bg-background/50 hover:bg-accent"
-                    aria-label="Volver al listado de proveedores"
+                    className="mt-1 inline-flex h-10 w-10 items-center justify-center rounded-lg border border-input bg-background/50 hover:bg-accent flex-shrink-0"
+                    aria-label="Volver al listado de operadores"
                 >
                     <ArrowLeft className="h-5 w-5" />
                 </button>
-                <div>
-                    <h1 className="text-2xl font-bold">Cuenta corriente: {supplier?.name}</h1>
-                    <p className="text-muted-foreground">
-                        {supplier?.contactName && `${supplier.contactName} · `}
-                        {supplier?.taxId && `CUIT: ${supplier.taxId}`}
+
+                <div className="min-w-0 flex-1">
+                    {/* Nombre del proveedor */}
+                    <h1 className="text-2xl font-bold truncate">{supplier?.name}</h1>
+
+                    {/* Subtítulo: tipo + CUIT + condición fiscal */}
+                    <p className="text-muted-foreground text-sm mt-0.5">
+                        Operador
+                        {supplier?.taxId && ` · CUIT ${supplier.taxId}`}
+                        {taxConditionLabel && ` · ${taxConditionLabel}`}
                     </p>
+
+                    {/* Datos de contacto opcionales */}
+                    {(supplier?.phone || supplier?.email) && (
+                        <div className="flex flex-wrap gap-3 mt-1.5 text-sm text-muted-foreground">
+                            {supplier?.phone && (
+                                <span className="flex items-center gap-1">
+                                    <Phone className="h-4 w-4" /> {supplier.phone}
+                                </span>
+                            )}
+                            {supplier?.email && (
+                                <span className="flex items-center gap-1">
+                                    <Mail className="h-4 w-4" /> {supplier.email}
+                                </span>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Chips de saldo en vivo por moneda */}
+                    <BalanceHeaderChips balancesByCurrency={balancesByCurrency} />
                 </div>
             </div>
 
-            {/* Datos de contacto */}
-            <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
-                {supplier?.phone && (
-                    <span className="flex items-center gap-1">
-                        <Phone className="h-4 w-4" /> {supplier.phone}
-                    </span>
-                )}
-                {supplier?.email && (
-                    <span className="flex items-center gap-1">
-                        <Mail className="h-4 w-4" /> {supplier.email}
-                    </span>
-                )}
-            </div>
+            {/* ── Solapas (mismo patrón visual que la ficha de la reserva) ─────── */}
+            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
 
-            {/* ── Franja de saldo por moneda + botón "Registrar pago" ─────────── */}
-            <FranjaSaldoPorMoneda
-                balancesByCurrency={balancesByCurrency}
-                serviceCount={serviceCount}
-                onRegistrarPago={() => setShowPagoInline((prev) => !prev)}
-                mostrandoPago={showPagoInline}
-                onUsarSaldo={(moneda) => setMonedaUsandoSaldo((prev) => (prev === moneda ? null : moneda))}
-                monedaUsandoSaldo={monedaUsandoSaldo}
-            />
-
-            {/* ── Ficha "Usar saldo a favor" en línea ───────────────────────── */}
-            {monedaUsandoSaldo && (
-                <UsarSaldoOperadorInline
-                    supplierId={getPublicId(supplier)}
-                    moneda={monedaUsandoSaldo}
-                    saldoDisponible={getSaldoDisponible(monedaUsandoSaldo)}
-                    onAplicado={handleSaldoAplicado}
-                    onCancelar={() => setMonedaUsandoSaldo(null)}
-                />
-            )}
-
-            {/* ── Ficha de pago en línea (nuevo o edición) ──────────────────── */}
-            {showPagoInline && (
-                <PagarProveedorInline
-                    supplierId={getPublicId(supplier)}
-                    balancesByCurrency={balancesByCurrency}
-                    paymentToEdit={paymentToEdit}
-                    onGuardado={handlePagoGuardado}
-                    onCancelar={() => {
-                        setShowPagoInline(false);
-                        setPaymentToEdit(null);
-                    }}
-                />
-            )}
-
-            {/* ── Extracto de cuenta (libro mayor) + aplicaciones de saldo ───── */}
-            <SupplierExtractoSection
-                supplierPublicId={publicId}
-                refreshKey={extractoRefreshKey}
-                allPayments={allPayments}
-                canEditarEliminar={puedeEditarEliminarPago}
-                onEditarPago={handleEditarPago}
-                onEliminarPago={handleEliminarPago}
-                activeApplications={activeApplications}
-                canRevertir={puedeEditarEliminarPago}
-                onRevertirTerminado={handleRevertirAplicacionTerminada}
-            />
-
-            {/* ── Deuda desglosada por reserva ──────────────────────────────── */}
-            <SupplierDebtByReservaSection publicId={publicId} />
-
-            {/* ── Reembolsos a cobrar de este proveedor ─────────────────────── */}
-            {/* ADR-041 Tanda 4: plata que este operador nos debe devolver por anulaciones.
-                showSupplierColumn=false porque el operador ya está en el encabezado de la página.
-                El componente se autogate con tesoreria.supplier_payments — si el usuario no tiene
-                ese permiso, no se renderiza nada (ni el encabezado de la sección). */}
-            <OperatorRefundsPendingSection
-                supplierPublicId={publicId}
-                showSupplierColumn={false}
-            />
-
-            {/* ── Datos bancarios del proveedor ─────────────────────────────── */}
-            {/* ownerType="Supplier", ownerId=publicId del proveedor.
-                Permiso de edición: tesoreria.supplier_payments (mismo equipo que gestiona pagos).
-                Suposición: permiso no confirmado por Gastón — marcar si cambia. */}
-            <ListaCuentasBancarias
-                ownerType="Supplier"
-                ownerId={publicId}
-                title="Datos bancarios"
-                canEdit={hasPermission("proveedores.edit")}
-            />
-
-            {/* ── Servicios comprados: lista operativa ──────────────────────── */}
-            <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
-                <div className="border-b p-4 space-y-4">
-                    <div className="flex items-center justify-between gap-3">
-                        <h2 className="flex items-center gap-2 font-semibold">
-                            <Building2 className="h-5 w-5" />
-                            Servicios Comprados
-                        </h2>
-                        <span className="text-sm text-muted-foreground">{servicesPage.totalCount || 0} resultados</span>
-                    </div>
-
-                    <ListToolbar
-                        className="border-slate-200/80 shadow-none dark:border-slate-800"
-                        searchSlot={
-                            <div className="relative flex-1">
-                                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                                <input
-                                    type="text"
-                                    placeholder="Buscar descripcion, expediente o archivo..."
-                                    value={serviceSearch}
-                                    onChange={(event) => setServiceSearch(event.target.value)}
-                                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm dark:border-slate-800 dark:bg-slate-900 dark:text-white"
-                                />
-                            </div>
-                        }
-                        filterSlot={
-                            <div className="relative lg:w-56">
-                                <Filter className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                                <select
-                                    value={serviceType}
-                                    onChange={(event) => setServiceType(event.target.value)}
-                                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm dark:border-slate-800 dark:bg-slate-900 dark:text-white"
-                                >
-                                    <option value="all">Todos los tipos</option>
-                                    <option value="Aereo">Aereo</option>
-                                    <option value="Hotel">Hotel</option>
-                                    <option value="Traslado">Traslado</option>
-                                    <option value="Paquete">Paquete</option>
-                                    <option value="Otro">Otros</option>
-                                </select>
-                            </div>
-                        }
-                    />
-                </div>
-
-                <DataGrid density="compact" minWidth="1000px">
-                    <DataGridHeader>
-                        <DataGridHeaderRow>
-                            <DataGridHeaderCell>Tipo</DataGridHeaderCell>
-                            <DataGridHeaderCell>Descripcion</DataGridHeaderCell>
-                            <DataGridHeaderCell>Reserva</DataGridHeaderCell>
-                            <DataGridHeaderCell>Fecha</DataGridHeaderCell>
-                            <DataGridHeaderCell>Estado</DataGridHeaderCell>
-                            <DataGridHeaderCell>Codigo</DataGridHeaderCell>
-                            <DataGridHeaderCell align="right">Costo</DataGridHeaderCell>
-                            <DataGridHeaderCell align="right">Venta</DataGridHeaderCell>
-                        </DataGridHeaderRow>
-                    </DataGridHeader>
-                    <DataGridBody>
-                        {servicesLoading ? (
-                            <DataGridEmptyState colSpan={8} title="Cargando servicios..." />
-                        ) : services.length === 0 ? (
-                            <DataGridEmptyState colSpan={8} title="No hay servicios para este filtro." />
-                        ) : (
-                            services.map((service) => (
-                                <DataGridRow key={getPublicId(service)}>
-                                    <DataGridCell>
-                                        <span className="rounded bg-primary/10 px-2 py-1 text-xs font-medium text-primary">
-                                            {service.type}
-                                        </span>
-                                    </DataGridCell>
-                                    <DataGridCell>
-                                        <div className="font-medium">{service.description || "-"}</div>
-                                        {service.fileName ? <div className="text-xs text-muted-foreground">{service.fileName}</div> : null}
-                                    </DataGridCell>
-                                    <DataGridCell>
-                                        {service.reservaPublicId ? (
-                                            <Link to={`/reservas/${service.reservaPublicId}`} className="font-medium text-primary hover:underline">
-                                                {service.numeroReserva || "Ver reserva"}
-                                            </Link>
-                                        ) : (
-                                            service.numeroReserva || "-"
-                                        )}
-                                    </DataGridCell>
-                                    <DataGridCell>{formatDate(service.date)}</DataGridCell>
-                                    <DataGridCell>
-                                        <ServiceStatusEditor
-                                            service={service}
-                                            onUpdated={() => { loadServices(); loadOverview(); }}
-                                        />
-                                    </DataGridCell>
-                                    <DataGridCell>
-                                        <ServiceConfirmationEditor
-                                            service={service}
-                                            onUpdated={() => { loadServices(); loadOverview(); }}
-                                        />
-                                    </DataGridCell>
-                                    {/* Costo neto: enmascarado sin permiso cobranzas.see_cost.
-                                        Sin currency el formatCurrency muestra "$0,00" para USD — bug bloqueante. */}
-                                    <DataGridCell align="right" className="font-mono">
-                                        {puedeVerMontos
-                                            ? formatCurrency(service.netCost, service.currency)
-                                            : <span className="text-muted-foreground">—</span>
-                                        }
-                                    </DataGridCell>
-                                    <DataGridCell align="right" className="font-mono">
-                                        {formatCurrency(service.salePrice, service.currency)}
-                                    </DataGridCell>
-                                </DataGridRow>
-                            ))
-                        )}
-                    </DataGridBody>
-                </DataGrid>
-
-                {servicesLoading ? (
-                    <div className="p-4 text-center text-sm text-muted-foreground md:hidden">Cargando servicios...</div>
-                ) : services.length === 0 ? (
-                    <ListEmptyState
-                        title="No hay servicios para este filtro."
-                        className="md:hidden rounded-none border-t border-dashed border-slate-200 dark:border-slate-800"
-                    />
-                ) : (
-                    <MobileRecordList className="p-4 md:hidden">
-                        {services.map((service) => (
-                            <MobileRecordCard
-                                key={getPublicId(service)}
-                                title={service.description || "Sin descripcion"}
-                                subtitle={service.type}
-                                meta={
-                                    <>
-                                        <div className="text-xs text-slate-500 dark:text-slate-400">Fecha {formatDate(service.date)}</div>
-                                        <div className="text-xs text-slate-500 dark:text-slate-400">
-                                            {service.reservaPublicId ? (
-                                                <Link to={`/reservas/${service.reservaPublicId}`} className="text-primary hover:underline">
-                                                    {service.numeroReserva || "Ver reserva"}
-                                                </Link>
-                                            ) : (
-                                                service.numeroReserva || "Sin expediente"
-                                            )}
-                                        </div>
-                                        <div className="flex flex-wrap items-center gap-2 mt-1">
-                                            <ServiceStatusEditor
-                                                service={service}
-                                                onUpdated={() => { loadServices(); loadOverview(); }}
-                                            />
-                                        </div>
-                                        <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                                            Codigo:{" "}
-                                            <ServiceConfirmationEditor
-                                                service={service}
-                                                onUpdated={() => { loadServices(); loadOverview(); }}
-                                            />
-                                        </div>
-                                    </>
-                                }
-                                footer={
-                                    // Costo: enmascarado sin permiso y currency requerido para multimoneda
-                                    <span className="text-xs text-slate-500">
-                                        Costo{" "}
-                                        {puedeVerMontos
-                                            ? formatCurrency(service.netCost, service.currency)
-                                            : <span className="text-muted-foreground">—</span>
-                                        }
-                                    </span>
-                                }
-                                footerActions={
-                                    <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">
-                                        Venta {formatCurrency(service.salePrice, service.currency)}
-                                    </span>
-                                }
-                            />
+                {/* Barra de navegación entre solapas */}
+                <div className="border-b border-slate-100 bg-slate-50/30 px-4 dark:border-slate-800 dark:bg-slate-800/20 sm:px-6">
+                    <nav className="scrollbar-hide flex gap-8 overflow-x-auto" role="tablist">
+                        {solapas.map((solapa) => (
+                            <button
+                                key={solapa.id}
+                                role="tab"
+                                aria-selected={activeTab === solapa.id}
+                                aria-controls={`panel-${solapa.id}`}
+                                onClick={() => setActiveTab(solapa.id)}
+                                data-testid={`supplier-tab-${solapa.id}`}
+                                className={`relative flex items-center gap-2 whitespace-nowrap py-4 text-sm font-semibold transition-all ${
+                                    activeTab === solapa.id
+                                        ? "text-indigo-600 dark:text-indigo-400"
+                                        : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+                                }`}
+                            >
+                                <solapa.icon className={`h-4 w-4 ${activeTab === solapa.id ? "animate-bounce" : ""}`} />
+                                {solapa.label}
+                                {/* Línea azul inferior del tab activo */}
+                                {activeTab === solapa.id && (
+                                    <div className="absolute bottom-0 left-0 right-0 h-0.5 rounded-t-full bg-indigo-600 dark:bg-indigo-400" />
+                                )}
+                            </button>
                         ))}
-                    </MobileRecordList>
-                )}
+                    </nav>
+                </div>
 
-                <div className="border-t p-4">
-                    <PaginationFooter
-                        page={servicesPage.page || servicesPaging.page}
-                        pageSize={servicesPage.pageSize || servicesPaging.pageSize}
-                        totalCount={servicesPage.totalCount || 0}
-                        totalPages={servicesPage.totalPages || 0}
-                        hasPreviousPage={Boolean(servicesPage.hasPreviousPage)}
-                        hasNextPage={Boolean(servicesPage.hasNextPage)}
-                        onPageChange={(page) => setServicesPaging((current) => ({ ...current, page }))}
-                        onPageSizeChange={(pageSize) => setServicesPaging({ page: 1, pageSize })}
-                    />
+                {/* Contenido de la solapa activa */}
+                <div className="p-4 sm:p-6 lg:p-8">
+
+                    {/* ── SOLAPA 1: Cuenta corriente ────────────────────────────────────
+                        Acciones + extracto + deuda por expediente.
+                        Los botones abren fichas en línea debajo (sin ventanas flotantes).
+                    ─────────────────────────────────────────────────────────────── */}
+                    {activeTab === "cuenta-corriente" && (
+                        <div className="space-y-6" id="panel-cuenta-corriente" role="tabpanel">
+
+                            {/* Botones de acción: solo visibles con permiso tesoreria.supplier_payments */}
+                            {hasPermission("tesoreria.supplier_payments") && (
+                                <div className="flex flex-wrap items-center gap-3">
+
+                                    {/* "Registrar pago": alterna la ficha de pago en línea */}
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowPagoInline((prev) => !prev)}
+                                        data-testid="btn-registrar-pago"
+                                        className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors ${
+                                            showPagoInline
+                                                ? "bg-slate-500 hover:bg-slate-600"
+                                                : "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-500/20"
+                                        }`}
+                                    >
+                                        <Plus className="h-4 w-4" />
+                                        {showPagoInline ? "Cerrar" : "Registrar pago"}
+                                    </button>
+
+                                    {/* "Usar saldo a favor": un botón por cada moneda con saldo verde.
+                                        Si no hay saldo a favor en ninguna moneda, no aparece ningún botón.
+                                        Si hay dos monedas a favor, ambos botones muestran su símbolo. */}
+                                    {monedasAFavor.map((balance) => {
+                                        const simbolo = balance.currency === "USD" ? "US$" : "$";
+                                        const estaAbierto = monedaUsandoSaldo === balance.currency;
+                                        return (
+                                            <button
+                                                key={balance.currency}
+                                                type="button"
+                                                onClick={() =>
+                                                    setMonedaUsandoSaldo((prev) =>
+                                                        prev === balance.currency ? null : balance.currency
+                                                    )
+                                                }
+                                                data-testid={`btn-usar-saldo-${balance.currency}`}
+                                                className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium shadow-sm transition-colors ${
+                                                    estaAbierto
+                                                        ? "bg-emerald-200 text-emerald-800 hover:bg-emerald-300 dark:bg-emerald-900/60 dark:text-emerald-200"
+                                                        : "bg-emerald-600 text-white hover:bg-emerald-700 shadow-emerald-500/20"
+                                                }`}
+                                            >
+                                                <TrendingUp className="h-4 w-4" />
+                                                {estaAbierto
+                                                    ? `Cerrar saldo ${simbolo}`
+                                                    : monedasAFavor.length > 1
+                                                        ? `Usar saldo en ${simbolo}`
+                                                        : "Usar saldo a favor"}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            )}
+
+                            {/* Ficha "Usar saldo a favor" en línea (debajo de los botones) */}
+                            {monedaUsandoSaldo && (
+                                <UsarSaldoOperadorInline
+                                    supplierId={getPublicId(supplier)}
+                                    moneda={monedaUsandoSaldo}
+                                    saldoDisponible={getSaldoDisponible(monedaUsandoSaldo)}
+                                    onAplicado={handleSaldoAplicado}
+                                    onCancelar={() => setMonedaUsandoSaldo(null)}
+                                />
+                            )}
+
+                            {/* Ficha de pago en línea (nuevo pago o edición de uno existente) */}
+                            {showPagoInline && (
+                                <PagarProveedorInline
+                                    supplierId={getPublicId(supplier)}
+                                    balancesByCurrency={balancesByCurrency}
+                                    paymentToEdit={paymentToEdit}
+                                    onGuardado={handlePagoGuardado}
+                                    onCancelar={() => {
+                                        setShowPagoInline(false);
+                                        setPaymentToEdit(null);
+                                    }}
+                                />
+                            )}
+
+                            {/* Extracto de cuenta: libro mayor cronológico por moneda */}
+                            <SupplierExtractoSection
+                                supplierPublicId={publicId}
+                                refreshKey={extractoRefreshKey}
+                                allPayments={allPayments}
+                                canEditarEliminar={puedeEditarEliminarPago}
+                                onEditarPago={handleEditarPago}
+                                onEliminarPago={handleEliminarPago}
+                                activeApplications={activeApplications}
+                                canRevertir={puedeEditarEliminarPago}
+                                onRevertirTerminado={handleRevertirAplicacionTerminada}
+                            />
+
+                            {/* Deuda desglosada por reserva/expediente */}
+                            <SupplierDebtByReservaSection publicId={publicId} />
+                        </div>
+                    )}
+
+                    {/* ── SOLAPA 2: Servicios comprados ────────────────────────────────
+                        Grilla operativa con búsqueda, filtro, paginación,
+                        y editores inline de estado y código de confirmación.
+                        Contenido idéntico al que estaba antes en la página apilada.
+                    ─────────────────────────────────────────────────────────────── */}
+                    {activeTab === "servicios-comprados" && (
+                        <div id="panel-servicios-comprados" role="tabpanel">
+                            <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
+                                <div className="border-b p-4 space-y-4">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <h2 className="flex items-center gap-2 font-semibold">
+                                            <Building2 className="h-5 w-5" />
+                                            Servicios comprados
+                                        </h2>
+                                        <span className="text-sm text-muted-foreground">
+                                            {servicesPage.totalCount || 0} resultados
+                                        </span>
+                                    </div>
+
+                                    <ListToolbar
+                                        className="border-slate-200/80 shadow-none dark:border-slate-800"
+                                        searchSlot={
+                                            <div className="relative flex-1">
+                                                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                                                <input
+                                                    type="text"
+                                                    placeholder="Buscar descripcion, expediente o archivo..."
+                                                    value={serviceSearch}
+                                                    onChange={(event) => setServiceSearch(event.target.value)}
+                                                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                                                />
+                                            </div>
+                                        }
+                                        filterSlot={
+                                            <div className="relative lg:w-56">
+                                                <Filter className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+                                                <select
+                                                    value={serviceType}
+                                                    onChange={(event) => setServiceType(event.target.value)}
+                                                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm dark:border-slate-800 dark:bg-slate-900 dark:text-white"
+                                                >
+                                                    <option value="all">Todos los tipos</option>
+                                                    <option value="Aereo">Aereo</option>
+                                                    <option value="Hotel">Hotel</option>
+                                                    <option value="Traslado">Traslado</option>
+                                                    <option value="Paquete">Paquete</option>
+                                                    <option value="Otro">Otros</option>
+                                                </select>
+                                            </div>
+                                        }
+                                    />
+                                </div>
+
+                                {/* Grilla desktop */}
+                                <DataGrid density="compact" minWidth="1000px">
+                                    <DataGridHeader>
+                                        <DataGridHeaderRow>
+                                            <DataGridHeaderCell>Tipo</DataGridHeaderCell>
+                                            <DataGridHeaderCell>Descripcion</DataGridHeaderCell>
+                                            <DataGridHeaderCell>Reserva</DataGridHeaderCell>
+                                            <DataGridHeaderCell>Fecha</DataGridHeaderCell>
+                                            <DataGridHeaderCell>Estado</DataGridHeaderCell>
+                                            <DataGridHeaderCell>Codigo</DataGridHeaderCell>
+                                            <DataGridHeaderCell align="right">Costo</DataGridHeaderCell>
+                                            <DataGridHeaderCell align="right">Venta</DataGridHeaderCell>
+                                        </DataGridHeaderRow>
+                                    </DataGridHeader>
+                                    <DataGridBody>
+                                        {servicesLoading ? (
+                                            <DataGridEmptyState colSpan={8} title="Cargando servicios..." />
+                                        ) : services.length === 0 ? (
+                                            <DataGridEmptyState colSpan={8} title="No hay servicios para este filtro." />
+                                        ) : (
+                                            services.map((service) => (
+                                                <DataGridRow key={getPublicId(service)}>
+                                                    <DataGridCell>
+                                                        <span className="rounded bg-primary/10 px-2 py-1 text-xs font-medium text-primary">
+                                                            {service.type}
+                                                        </span>
+                                                    </DataGridCell>
+                                                    <DataGridCell>
+                                                        <div className="font-medium">{service.description || "-"}</div>
+                                                        {service.fileName
+                                                            ? <div className="text-xs text-muted-foreground">{service.fileName}</div>
+                                                            : null}
+                                                    </DataGridCell>
+                                                    <DataGridCell>
+                                                        {service.reservaPublicId ? (
+                                                            <Link
+                                                                to={`/reservas/${service.reservaPublicId}`}
+                                                                className="font-medium text-primary hover:underline"
+                                                            >
+                                                                {service.numeroReserva || "Ver reserva"}
+                                                            </Link>
+                                                        ) : (
+                                                            service.numeroReserva || "-"
+                                                        )}
+                                                    </DataGridCell>
+                                                    <DataGridCell>{formatDate(service.date)}</DataGridCell>
+                                                    <DataGridCell>
+                                                        <ServiceStatusEditor
+                                                            service={service}
+                                                            onUpdated={() => { loadServices(); loadOverview(); }}
+                                                        />
+                                                    </DataGridCell>
+                                                    <DataGridCell>
+                                                        <ServiceConfirmationEditor
+                                                            service={service}
+                                                            onUpdated={() => { loadServices(); loadOverview(); }}
+                                                        />
+                                                    </DataGridCell>
+                                                    {/* Costo: enmascarado sin permiso cobranzas.see_cost */}
+                                                    <DataGridCell align="right" className="font-mono">
+                                                        {puedeVerMontos
+                                                            ? formatCurrency(service.netCost, service.currency)
+                                                            : <span className="text-muted-foreground">—</span>
+                                                        }
+                                                    </DataGridCell>
+                                                    <DataGridCell align="right" className="font-mono">
+                                                        {formatCurrency(service.salePrice, service.currency)}
+                                                    </DataGridCell>
+                                                </DataGridRow>
+                                            ))
+                                        )}
+                                    </DataGridBody>
+                                </DataGrid>
+
+                                {/* Vista mobile */}
+                                {servicesLoading ? (
+                                    <div className="p-4 text-center text-sm text-muted-foreground md:hidden">
+                                        Cargando servicios...
+                                    </div>
+                                ) : services.length === 0 ? (
+                                    <ListEmptyState
+                                        title="No hay servicios para este filtro."
+                                        className="md:hidden rounded-none border-t border-dashed border-slate-200 dark:border-slate-800"
+                                    />
+                                ) : (
+                                    <MobileRecordList className="p-4 md:hidden">
+                                        {services.map((service) => (
+                                            <MobileRecordCard
+                                                key={getPublicId(service)}
+                                                title={service.description || "Sin descripcion"}
+                                                subtitle={service.type}
+                                                meta={
+                                                    <>
+                                                        <div className="text-xs text-slate-500 dark:text-slate-400">
+                                                            Fecha {formatDate(service.date)}
+                                                        </div>
+                                                        <div className="text-xs text-slate-500 dark:text-slate-400">
+                                                            {service.reservaPublicId ? (
+                                                                <Link
+                                                                    to={`/reservas/${service.reservaPublicId}`}
+                                                                    className="text-primary hover:underline"
+                                                                >
+                                                                    {service.numeroReserva || "Ver reserva"}
+                                                                </Link>
+                                                            ) : (
+                                                                service.numeroReserva || "Sin expediente"
+                                                            )}
+                                                        </div>
+                                                        <div className="flex flex-wrap items-center gap-2 mt-1">
+                                                            <ServiceStatusEditor
+                                                                service={service}
+                                                                onUpdated={() => { loadServices(); loadOverview(); }}
+                                                            />
+                                                        </div>
+                                                        <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                                                            Codigo:{" "}
+                                                            <ServiceConfirmationEditor
+                                                                service={service}
+                                                                onUpdated={() => { loadServices(); loadOverview(); }}
+                                                            />
+                                                        </div>
+                                                    </>
+                                                }
+                                                footer={
+                                                    <span className="text-xs text-slate-500">
+                                                        Costo{" "}
+                                                        {puedeVerMontos
+                                                            ? formatCurrency(service.netCost, service.currency)
+                                                            : <span className="text-muted-foreground">—</span>
+                                                        }
+                                                    </span>
+                                                }
+                                                footerActions={
+                                                    <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+                                                        Venta {formatCurrency(service.salePrice, service.currency)}
+                                                    </span>
+                                                }
+                                            />
+                                        ))}
+                                    </MobileRecordList>
+                                )}
+
+                                {/* Paginación */}
+                                <div className="border-t p-4">
+                                    <PaginationFooter
+                                        page={servicesPage.page || servicesPaging.page}
+                                        pageSize={servicesPage.pageSize || servicesPaging.pageSize}
+                                        totalCount={servicesPage.totalCount || 0}
+                                        totalPages={servicesPage.totalPages || 0}
+                                        hasPreviousPage={Boolean(servicesPage.hasPreviousPage)}
+                                        hasNextPage={Boolean(servicesPage.hasNextPage)}
+                                        onPageChange={(page) =>
+                                            setServicesPaging((current) => ({ ...current, page }))
+                                        }
+                                        onPageSizeChange={(pageSize) =>
+                                            setServicesPaging({ page: 1, pageSize })
+                                        }
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* ── SOLAPA 3: Reembolsos ──────────────────────────────────────────
+                        Plata que el operador nos debe devolver por anulaciones.
+                        OperatorRefundsPendingSection se autogate con tesoreria.supplier_payments;
+                        si el usuario no tiene ese permiso, no se renderiza nada.
+                    ─────────────────────────────────────────────────────────────── */}
+                    {activeTab === "reembolsos" && (
+                        <div id="panel-reembolsos" role="tabpanel">
+                            <OperatorRefundsPendingSection
+                                supplierPublicId={publicId}
+                                showSupplierColumn={false}
+                            />
+                        </div>
+                    )}
+
+                    {/* ── SOLAPA 4: Datos bancarios ─────────────────────────────────────
+                        Lista de cuentas bancarias del operador (CBU/alias).
+                        Edición gateada por proveedores.edit.
+                    ─────────────────────────────────────────────────────────────── */}
+                    {activeTab === "datos-bancarios" && (
+                        <div id="panel-datos-bancarios" role="tabpanel">
+                            <ListaCuentasBancarias
+                                ownerType="Supplier"
+                                ownerId={publicId}
+                                title="Datos bancarios del operador"
+                                canEdit={hasPermission("proveedores.edit")}
+                            />
+                        </div>
+                    )}
+
+                    {/* ── SOLAPA 5: Datos ───────────────────────────────────────────────
+                        Edición de identidad del proveedor en línea (sin ventana flotante).
+                        Reemplaza el modal "Editar proveedor" anterior.
+                        Solo lectura para quien no tiene proveedores.edit.
+                    ─────────────────────────────────────────────────────────────── */}
+                    {activeTab === "datos" && (
+                        <div id="panel-datos" role="tabpanel" className="max-w-2xl">
+                            <h2 className="text-lg font-semibold mb-6">Datos del operador</h2>
+
+                            {hasPermission("proveedores.edit") ? (
+                                <SupplierInlineEditForm
+                                    supplier={supplier}
+                                    onGuardado={loadOverview}
+                                />
+                            ) : (
+                                // Vista de solo lectura para quien no tiene permiso de editar
+                                <div className="space-y-4 text-sm">
+                                    <div className="grid sm:grid-cols-2 gap-4">
+                                        <div>
+                                            <p className="text-muted-foreground text-xs uppercase tracking-wider mb-1">Razón social</p>
+                                            <p className="font-medium">{supplier?.name || "—"}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-muted-foreground text-xs uppercase tracking-wider mb-1">CUIT</p>
+                                            <p className="font-medium">{supplier?.taxId || "—"}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-muted-foreground text-xs uppercase tracking-wider mb-1">Condición fiscal</p>
+                                            <p className="font-medium">{taxConditionLabel || "—"}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-muted-foreground text-xs uppercase tracking-wider mb-1">Contacto</p>
+                                            <p className="font-medium">{supplier?.contactName || "—"}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-muted-foreground text-xs uppercase tracking-wider mb-1">Teléfono</p>
+                                            <p className="font-medium">{supplier?.phone || "—"}</p>
+                                        </div>
+                                        <div>
+                                            <p className="text-muted-foreground text-xs uppercase tracking-wider mb-1">Email</p>
+                                            <p className="font-medium">{supplier?.email || "—"}</p>
+                                        </div>
+                                        {supplier?.address && (
+                                            <div className="sm:col-span-2">
+                                                <p className="text-muted-foreground text-xs uppercase tracking-wider mb-1">Dirección</p>
+                                                <p className="font-medium">{supplier.address}</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                    <p className="text-xs text-muted-foreground mt-2">
+                                        No tenés permiso para editar los datos del operador.
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
