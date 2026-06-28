@@ -188,6 +188,34 @@ public interface IBookingCancellationService
     /// </summary>
     Task<int> ProcessExpiredOperatorRefundsAsync(CancellationToken ct);
 
+    /// <summary>
+    /// ADR-041 TANDA 4 (2026-06-28): REABRE una cancelacion <c>AbandonedByOperator</c> para registrar un
+    /// REEMBOLSO TARDIO (el operador devolvio plata DESPUES de que el plazo venció y la cuenta se dio por perdida).
+    /// La transicion es CONTROLADA y AUDITADA: la cancelacion vuelve a <c>AwaitingOperatorRefund</c> con un plazo
+    /// nuevo (<c>OperatorRefundDueBy</c> = ahora + <c>OperatorRefundTimeoutDays</c>) para que el job de timeout no
+    /// la vuelva a abandonar de inmediato; <c>ClosedAt</c> se limpia. Una vez reabierta, el cashier registra el
+    /// ingreso (<c>OperatorRefundService.RecordReceivedAsync</c>) y lo imputa (<c>AllocateAsync</c>) con el circuito
+    /// NORMAL, que genera el saldo a favor del CLIENTE de la reserva.
+    ///
+    /// <para><b>La RESERVA NO se resucita</b>: el viaje sigue cancelado (<c>Cancelled</c>). Reabrir es solo para
+    /// el circuito de plata del operador; el reembolso tardio se vuelve saldo a favor del cliente al imputarse.</para>
+    ///
+    /// <para><b>Idempotencia</b>: si la cancelacion ya esta en <c>AwaitingOperatorRefund</c> o
+    /// <c>ClientCreditApplied</c> (ya esta abierta / ya recibio algo), es no-op y devuelve el DTO actual sin
+    /// re-auditar. Si esta en cualquier otro estado que no sea <c>AbandonedByOperator</c> (Drafted, Closed,
+    /// Aborted, etc.), rechaza con <c>BusinessInvariantViolationException</c>.</para>
+    ///
+    /// <para><b>Permiso</b>: lo gatea el controller con <c>caja.edit</c> (mismo permiso que registrar el reembolso).
+    /// El motivo (&gt;= 10 chars) es obligatorio para la auditoria. Marca durable del "tardio" = el audit log
+    /// <c>BookingCancellationReopenedForLateRefund</c> (no se agrega columna; decision documentada).</para>
+    /// </summary>
+    Task<BookingCancellationDto> ReopenAbandonedForLateRefundAsync(
+        Guid publicId,
+        string reason,
+        string userId,
+        string? userName,
+        CancellationToken ct);
+
     // ===== FC1.3.3 — comando publico para NC parcial (admin edita liquidacion en manual review) =====
 
     /// <summary>

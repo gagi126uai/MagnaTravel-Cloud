@@ -810,6 +810,85 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.ToTable("AuditLogs");
                 });
 
+            modelBuilder.Entity("TravelApi.Domain.Entities.BankAccount", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<int?>("AccountType")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Alias")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("Bank")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Cbu")
+                        .HasMaxLength(22)
+                        .HasColumnType("character varying(22)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedByUserId")
+                        .HasMaxLength(450)
+                        .HasColumnType("character varying(450)");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<string>("HolderName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("HolderTaxId")
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsPrimary")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Notes")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<int>("OwnerId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("OwnerType")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("PublicId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PublicId")
+                        .IsUnique();
+
+                    b.HasIndex("OwnerType", "OwnerId", "IsActive");
+
+                    b.ToTable("BankAccounts", null, t =>
+                        {
+                            t.HasCheckConstraint("chk_BankAccounts_cbu_or_alias", "\"Cbu\" IS NOT NULL OR \"Alias\" IS NOT NULL");
+                        });
+                });
+
             modelBuilder.Entity("TravelApi.Domain.Entities.BnaExchangeRateSnapshot", b =>
                 {
                     b.Property<int>("Id")
@@ -4980,6 +5059,9 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Property<decimal>("CurrentBalance")
                         .HasColumnType("numeric");
 
+                    b.Property<int?>("DefaultPaymentTermDays")
+                        .HasColumnType("integer");
+
                     b.Property<string>("Email")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
@@ -5062,6 +5144,134 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("SupplierBalanceByCurrency", (string)null);
+                });
+
+            modelBuilder.Entity("TravelApi.Domain.Entities.SupplierCreditApplication", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedByUserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("character varying(450)");
+
+                    b.Property<string>("CreatedByUserName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<int>("Kind")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("PublicId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ReversalReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<int?>("ReversesApplicationId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("SupplierCreditEntryId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("TargetReservaId")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PublicId")
+                        .IsUnique();
+
+                    b.HasIndex("ReversesApplicationId")
+                        .IsUnique()
+                        .HasFilter("\"ReversesApplicationId\" IS NOT NULL");
+
+                    b.HasIndex("SupplierCreditEntryId");
+
+                    b.HasIndex("TargetReservaId");
+
+                    b.ToTable("SupplierCreditApplications", (string)null);
+                });
+
+            modelBuilder.Entity("TravelApi.Domain.Entities.SupplierCreditEntry", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedByUserId")
+                        .HasMaxLength(450)
+                        .HasColumnType("character varying(450)");
+
+                    b.Property<string>("CreatedByUserName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<decimal>("CreditedAmount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)")
+                        .HasDefaultValue("ARS");
+
+                    b.Property<bool>("IsFullyConsumed")
+                        .HasColumnType("boolean");
+
+                    b.Property<Guid>("PublicId")
+                        .HasColumnType("uuid");
+
+                    b.Property<decimal>("RemainingBalance")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<int?>("SourceOperatorRefundReceivedId")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("SourceSupplierPaymentId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("SupplierId")
+                        .HasColumnType("integer");
+
+                    b.Property<uint>("xmin")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PublicId")
+                        .IsUnique();
+
+                    b.HasIndex("SourceSupplierPaymentId");
+
+                    b.HasIndex("SupplierId", "Currency");
+
+                    b.HasIndex("SupplierId", "IsFullyConsumed");
+
+                    b.ToTable("SupplierCreditEntries", (string)null);
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.SupplierPayment", b =>
@@ -6890,6 +7100,50 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Navigation("Supplier");
                 });
 
+            modelBuilder.Entity("TravelApi.Domain.Entities.SupplierCreditApplication", b =>
+                {
+                    b.HasOne("TravelApi.Domain.Entities.SupplierCreditApplication", "ReversesApplication")
+                        .WithMany()
+                        .HasForeignKey("ReversesApplicationId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("TravelApi.Domain.Entities.SupplierCreditEntry", "Entry")
+                        .WithMany("Applications")
+                        .HasForeignKey("SupplierCreditEntryId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TravelApi.Domain.Entities.Reserva", "TargetReserva")
+                        .WithMany()
+                        .HasForeignKey("TargetReservaId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Entry");
+
+                    b.Navigation("ReversesApplication");
+
+                    b.Navigation("TargetReserva");
+                });
+
+            modelBuilder.Entity("TravelApi.Domain.Entities.SupplierCreditEntry", b =>
+                {
+                    b.HasOne("TravelApi.Domain.Entities.SupplierPayment", "SourceSupplierPayment")
+                        .WithMany()
+                        .HasForeignKey("SourceSupplierPaymentId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("TravelApi.Domain.Entities.Supplier", "Supplier")
+                        .WithMany()
+                        .HasForeignKey("SupplierId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("SourceSupplierPayment");
+
+                    b.Navigation("Supplier");
+                });
+
             modelBuilder.Entity("TravelApi.Domain.Entities.SupplierPayment", b =>
                 {
                     b.HasOne("TravelApi.Domain.Entities.Reserva", "Reserva")
@@ -7135,6 +7389,11 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Navigation("Payments");
 
                     b.Navigation("Segments");
+                });
+
+            modelBuilder.Entity("TravelApi.Domain.Entities.SupplierCreditEntry", b =>
+                {
+                    b.Navigation("Applications");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.Voucher", b =>

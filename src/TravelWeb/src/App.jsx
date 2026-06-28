@@ -52,6 +52,8 @@ import CancellationDebitNoteInboxPage from "./features/cancellations/pages/Cance
 import CancellationCreditNoteInboxPage from "./features/cancellations/pages/CancellationCreditNoteInboxPage";
 // Comisiones de vendedor: solo visible para el dueño/admin.
 import CommissionsPage from "./features/commissions/pages/CommissionsPage";
+// ADR-041 Tanda 4: bandeja de reembolsos pendientes del operador (plata que el operador debe devolver al anular).
+import OperatorRefundsPage from "./features/suppliers/pages/OperatorRefundsPage";
 
 function FullScreenLoader() {
   return (
@@ -321,6 +323,12 @@ export default function App() {
                     <Route
                       path="/commissions"
                       element={isAdmin() ? <CommissionsPage /> : <Navigate to="/dashboard" replace />}
+                    />
+                    {/* ADR-041 Tanda 4: bandeja de reembolsos a cobrar del operador.
+                        Permiso tesoreria.supplier_payments (mismo que el endpoint del backend). */}
+                    <Route
+                      path="/operator-refunds"
+                      element={hasPermission("tesoreria.supplier_payments") ? <OperatorRefundsPage /> : <Navigate to="/dashboard" replace />}
                     />
                     <Route
                       path="/admin"

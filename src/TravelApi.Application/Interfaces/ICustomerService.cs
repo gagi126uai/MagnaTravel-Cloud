@@ -38,6 +38,13 @@ public interface ICustomerService
     Task<PagedResponse<InvoiceListDto>> GetCustomerAccountInvoicesAsync(int id, PagedQuery query, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Deuda del cliente DESGLOSADA POR RESERVA y por moneda (solo reservas con saldo pendiente). Misma
+    /// fuente y filtro que el saldo a cobrar por moneda (ReservaMoneyByCurrency en firme), sin agregar a
+    /// traves de reservas. El front lo usa para ofrecer destinos de "usar saldo a favor" en la moneda correcta.
+    /// </summary>
+    Task<CustomerDebtByReservaDto> GetCustomerDebtByReservaAsync(int id, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Lista los saldos a favor DISPONIBLES (RemainingBalance &gt; 0) del cliente, ordenados del más
     /// viejo al más nuevo (FIFO de consumo). El front lo usa para que el usuario elija de qué entry
     /// retirar/aplicar. El agregado por moneda para el cartel ya viene en GetCustomerAccountOverviewAsync.

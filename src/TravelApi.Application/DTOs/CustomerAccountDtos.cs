@@ -107,6 +107,48 @@ public class CustomerAccountReservaListItemDto
     public decimal Paid { get; set; }
 }
 
+// ===================================================================================================
+// Deuda del cliente DESGLOSADA POR RESERVA y por moneda. Espejo conceptual del lado proveedor
+// (SupplierDebtByReservaDto). Alimenta el buscador del flujo "usar saldo a favor -> aplicar a otra
+// reserva" del cliente: el front necesita saber EN QUE reservas y EN QUE moneda debe el cliente para
+// ofrecer solo destinos con deuda en la misma moneda del saldo a favor (el saldo en USD no cancela
+// deuda en ARS). El total global por moneda ya viaja en CustomerAccountSummaryDto.ReceivableByCurrency;
+// esto es el MISMO numero abierto por reserva.
+//
+// Masking: la cuenta del cliente (lado VENTA) NO enmascara montos, a diferencia de la cuenta del
+// proveedor (lado COSTO, que oculta cifras sin cobranzas.see_cost). El gate es clientes.view +
+// cobranzas.view, igual que el resto de los endpoints de montos de la cuenta del cliente.
+// ===================================================================================================
+
+/// <summary>
+/// Deuda del cliente con la agencia, abierta por reserva (expediente) y por moneda. Lista solo las
+/// reservas donde el cliente es el pagador y tiene saldo pendiente (deuda &gt; 0) en al menos una moneda.
+/// </summary>
+public class CustomerDebtByReservaDto
+{
+    public Guid CustomerPublicId { get; set; }
+    public string CustomerName { get; set; } = string.Empty;
+
+    /// <summary>Una entrada por reserva con deuda viva del cliente; dentro, una linea por moneda.</summary>
+    public List<CustomerDebtReservaLineDto> Reservas { get; set; } = new();
+}
+
+/// <summary>
+/// La deuda del cliente en UNA reserva, abierta por moneda. La identidad (numero, nombre del expediente)
+/// viaja siempre; los montos son la deuda viva por moneda (Balance &gt; 0 de ReservaMoneyByCurrency).
+/// </summary>
+public class CustomerDebtReservaLineDto
+{
+    public Guid ReservaPublicId { get; set; }
+    public string? NumeroReserva { get; set; }
+
+    /// <summary>Nombre del expediente (titular) = <c>Reserva.Name</c>. Mismo campo que la pestaña Pagos.</summary>
+    public string? FileName { get; set; }
+
+    /// <summary>Una linea por moneda en la que el cliente debe en esta reserva. Nunca mezcla monedas.</summary>
+    public List<CurrencyAmountDto> DebtByCurrency { get; set; } = new();
+}
+
 public class CustomerAccountPaymentListItemDto
 {
     public Guid PublicId { get; set; }

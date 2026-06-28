@@ -6,9 +6,6 @@ import {
     Building2,
     Phone,
     Mail,
-    CreditCard,
-    DollarSign,
-    TrendingUp,
     FileText,
     Plus,
     Pencil,
@@ -19,14 +16,14 @@ import {
     X,
     Layers,
     ExternalLink,
+    TrendingDown,
+    TrendingUp,
 } from "lucide-react";
 import { api } from "../../../api";
-import SupplierPaymentModal from "../../../components/SupplierPaymentModal";
 import { AccountPageSkeleton } from "../../../components/ui/skeleton";
 import { DatabaseUnavailableState } from "../../../components/ui/DatabaseUnavailableState";
 import {
     DataGrid,
-    DataGridActionCell,
     DataGridBody,
     DataGridCell,
     DataGridEmptyState,
@@ -40,11 +37,15 @@ import { ListToolbar } from "../../../components/ui/ListToolbar";
 import { MobileRecordCard, MobileRecordList } from "../../../components/ui/MobileRecordCard";
 import { PaginationFooter } from "../../../components/ui/PaginationFooter";
 import { formatCurrency, formatDate } from "../../../lib/utils";
-import Swal from "sweetalert2";
-import { showSuccess, showError } from "../../../alerts";
+import { showSuccess, showError, showConfirm } from "../../../alerts";
 import { getPublicId } from "../../../lib/publicIds";
 import { useDebounce } from "../../../hooks/useDebounce";
-import { isDatabaseUnavailableError } from "../../../lib/errors";
+import { getApiErrorMessage, isDatabaseUnavailableError } from "../../../lib/errors";
+import { SupplierExtractoSection } from "../components/SupplierExtractoSection";
+import { PagarProveedorInline } from "../components/PagarProveedorInline";
+import { UsarSaldoOperadorInline } from "../components/UsarSaldoOperadorInline";
+import { ListaCuentasBancarias } from "../../../features/bank-accounts/components/ListaCuentasBancarias";
+import { OperatorRefundsPendingSection } from "../components/OperatorRefundsPendingSection";
 
 const emptyPage = {
     items: [],
@@ -55,6 +56,159 @@ const emptyPage = {
     hasPreviousPage: false,
     hasNextPage: false,
 };
+
+// ─── Franja de saldo separada por moneda ──────────────────────────────────────
+
+/**
+ * Tarjetas de resumen financiero del proveedor, una por moneda.
+ *
+ * Regla multimoneda: NUNCA se suman pesos con dólares en un solo número.
+ * Cada moneda tiene su propia tarjeta con el saldo corriente.
+ *
+ * Semáforo visual:
+ *   - Balance > 0 (le debemos): rojo → "Le debo en $"
+ *   - Balance = 0 (sin deuda):  gris → "Sin deuda en $"
+ *   - Balance < 0 (pagamos de más): verde → "A favor con este proveedor: $"
+ *
+ * Enmascarado: si el usuario no tiene permiso cobranzas.see_cost, los montos
+ * se muestran como "—" (el backend ya devuelve 0, pero mostramos "—" para que
+ * no confunda "sin permiso" con "no hay deuda").
+ *
+ * Props:
+ *   - balancesByCurrency: Array<{ currency, confirmedPurchases, totalPaid, balance }>
+ *   - serviceCount: number — cantidad de servicios comprados al proveedor
+ *   - onRegistrarPago: () => void — abre la ficha de pago en línea
+ *   - mostrandoPago: boolean — true cuando la ficha de pago ya está abierta
+ *   - onUsarSaldo: (currency: string) => void — abre la ficha de "Usar saldo a favor" para esa moneda
+ *   - monedaUsandoSaldo: string|null — moneda cuya ficha de saldo está abierta (para el toggle del botón)
+ */
+function FranjaSaldoPorMoneda({ balancesByCurrency, serviceCount, onRegistrarPago, mostrandoPago, onUsarSaldo, monedaUsandoSaldo }) {
+    // hasPermission("cobranzas.see_cost") ya evalúa isAdmin internamente
+    const puedeVerMontos = hasPermission("cobranzas.see_cost");
+
+    const balances = Array.isArray(balancesByCurrency) ? balancesByCurrency : [];
+
+    return (
+        <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-stretch">
+
+            {/* Tarjeta de conteo de servicios (siempre visible, sin permiso de costo) */}
+            <div className="rounded-xl border bg-card p-4 shadow-sm flex-shrink-0">
+                <div className="flex items-center gap-2 text-muted-foreground mb-1">
+                    <FileText className="h-4 w-4" />
+                    <span className="text-sm">Servicios</span>
+                </div>
+                <p className="text-2xl font-bold">{serviceCount ?? 0}</p>
+            </div>
+
+            {/* Una tarjeta por moneda.
+                Si balancesByCurrency está vacío (endpoint viejo o proveedor sin movimientos),
+                no mostramos nada extra y el cajero puede registrar el primer pago igual. */}
+            {balances.map((balance) => {
+                const deuda = balance.balance ?? 0;
+                const esAFavor = deuda < 0;
+                const esCero = deuda === 0;
+
+                return (
+                    <div
+                        key={balance.currency}
+                        className={`rounded-xl border p-4 shadow-sm flex-1 min-w-[200px] ${
+                            esAFavor
+                                ? "border-emerald-200 bg-emerald-50 dark:border-emerald-900/40 dark:bg-emerald-950/20"
+                                : esCero
+                                ? "border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/20"
+                                : "border-rose-200 bg-rose-50/60 dark:border-rose-900/40 dark:bg-rose-950/20"
+                        }`}
+                        data-testid={`saldo-moneda-${balance.currency}`}
+                    >
+                        {/* Etiqueta de estado */}
+                        <div className={`flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider mb-1 ${
+                            esAFavor ? "text-emerald-700 dark:text-emerald-400"
+                            : esCero ? "text-slate-500"
+                            : "text-rose-700 dark:text-rose-400"
+                        }`}>
+                            {esAFavor
+                                ? <><TrendingUp className="h-3.5 w-3.5" /> A favor con este proveedor en {balance.currency === "USD" ? "US$" : "$"}</>
+                                : esCero
+                                ? `Sin deuda en ${balance.currency === "USD" ? "US$" : "$"}`
+                                : <><TrendingDown className="h-3.5 w-3.5" /> Le debo en {balance.currency === "USD" ? "US$" : "$"}</>
+                            }
+                        </div>
+
+                        {/* Monto principal */}
+                        <p className={`text-2xl font-bold ${
+                            esAFavor ? "text-emerald-700 dark:text-emerald-400"
+                            : esCero ? "text-slate-500"
+                            : "text-rose-700 dark:text-rose-400"
+                        }`}>
+                            {puedeVerMontos
+                                ? formatCurrency(Math.abs(deuda), balance.currency)
+                                : "—"
+                            }
+                        </p>
+
+                        {/* Desglose compras / pagado: visible solo con permiso */}
+                        {puedeVerMontos && (
+                            <div className="mt-2 flex gap-3 text-[10px] text-muted-foreground">
+                                <span>Compras: {formatCurrency(balance.confirmedPurchases ?? 0, balance.currency)}</span>
+                                <span>Pagado: {formatCurrency(balance.totalPaid ?? 0, balance.currency)}</span>
+                            </div>
+                        )}
+
+                        {/* Aviso sin permiso */}
+                        {!puedeVerMontos && (
+                            <p className="mt-1 text-[10px] text-muted-foreground">
+                                Sin permiso para ver montos de costo
+                            </p>
+                        )}
+
+                        {/* Botón "Usar saldo a favor": solo aparece en carteles verdes (a favor)
+                            y solo si el usuario tiene el permiso para gestionar pagos.
+                            Alterna entre "Usar saldo" y "Cerrar" si la ficha ya está abierta. */}
+                        {esAFavor && hasPermission("tesoreria.supplier_payments") && (
+                            <div className="mt-3 border-t border-emerald-100 dark:border-emerald-900/30 pt-2">
+                                <button
+                                    type="button"
+                                    onClick={() => onUsarSaldo && onUsarSaldo(balance.currency)}
+                                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                                        monedaUsandoSaldo === balance.currency
+                                            ? "bg-emerald-200 text-emerald-800 hover:bg-emerald-300 dark:bg-emerald-900/60 dark:text-emerald-200"
+                                            : "bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm"
+                                    }`}
+                                    data-testid={`btn-usar-saldo-${balance.currency}`}
+                                >
+                                    <TrendingUp className="h-3.5 w-3.5" />
+                                    {monedaUsandoSaldo === balance.currency ? "Cerrar" : "Usar saldo a favor"}
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                );
+            })}
+
+            {/* Botón de registrar pago: solo visible con permiso tesoreria.supplier_payments.
+                Sin ese permiso el cajero puede VER la cuenta corriente pero no registrar pagos. */}
+            {hasPermission("tesoreria.supplier_payments") && (
+                <div className="flex items-center sm:ml-auto">
+                    <button
+                        type="button"
+                        onClick={onRegistrarPago}
+                        className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors ${
+                            mostrandoPago
+                                ? "bg-slate-500 hover:bg-slate-600 shadow-slate-500/20"
+                                : "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-500/20"
+                        }`}
+                        data-testid="btn-registrar-pago"
+                    >
+                        <Plus className="h-4 w-4" />
+                        {mostrandoPago ? "Cerrar pago" : "Registrar pago"}
+                    </button>
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ─── Tabla de deuda por expediente ───────────────────────────────────────────
 
 /**
  * Tabla de deuda al proveedor abierta POR EXPEDIENTE (reserva) y por moneda.
@@ -68,7 +222,7 @@ const emptyPage = {
  * falta de permiso, no que la deuda es cero.
  *
  * Se usa en la pagina de cuenta corriente del proveedor (SupplierAccountPage),
- * debajo de las tarjetas de resumen.
+ * debajo del extracto.
  *
  * Props:
  * - publicId: string — publicId del proveedor (para el endpoint)
@@ -333,6 +487,8 @@ function SupplierDebtByReservaSection({ publicId }) {
     );
 }
 
+// ─── Editor de estado del servicio ───────────────────────────────────────────
+
 // Mapeo de Type (en espanol, viene del backend) -> endpoint de status update.
 // Si no esta mapeado (servicios genericos), no se permite editar inline aca.
 const STATUS_ENDPOINT_BY_TYPE = {
@@ -394,6 +550,8 @@ function ServiceStatusEditor({ service, onUpdated }) {
         </select>
     );
 }
+
+// ─── Editor del código de confirmación del servicio ──────────────────────────
 
 // Editor inline del codigo de confirmacion del proveedor (PNR para vuelos,
 // ConfirmationNumber para el resto). Misma logica de edicion que el status:
@@ -492,28 +650,61 @@ function ServiceConfirmationEditor({ service, onUpdated }) {
     );
 }
 
+// ─── Página principal ─────────────────────────────────────────────────────────
 
+/**
+ * Pantalla de cuenta corriente del proveedor.
+ *
+ * Secciones (de arriba a abajo):
+ *   1. Encabezado: nombre, datos de contacto, CUIT.
+ *   2. Franja de saldo por moneda: una tarjeta por moneda con el saldo corriente.
+ *      Botón "Registrar pago" abre la ficha en línea (sin modal).
+ *   3. Ficha de pago en línea (cuando está abierta): debajo de la franja.
+ *   4. Extracto de cuenta: libro mayor cronológico, un bloque por moneda.
+ *   5. Deuda por expediente: saldo desglosado por reserva y moneda.
+ *   6. Servicios comprados: lista operativa con estado y código de confirmación.
+ */
 export default function SupplierAccountPage() {
     const { publicId } = useParams();
     const navigate = useNavigate();
+
     const [overview, setOverview] = useState(null);
     const [loadingOverview, setLoadingOverview] = useState(true);
     const [databaseUnavailable, setDatabaseUnavailable] = useState(false);
 
     const [servicesPage, setServicesPage] = useState(emptyPage);
-    const [paymentsPage, setPaymentsPage] = useState(emptyPage);
     const [servicesPaging, setServicesPaging] = useState({ page: 1, pageSize: 25 });
-    const [paymentsPaging, setPaymentsPaging] = useState({ page: 1, pageSize: 25 });
     const [servicesLoading, setServicesLoading] = useState(true);
-    const [paymentsLoading, setPaymentsLoading] = useState(true);
     const [serviceSearch, setServiceSearch] = useState("");
-    const [paymentSearch, setPaymentSearch] = useState("");
     const [serviceType, setServiceType] = useState("all");
     const debouncedServiceSearch = useDebounce(serviceSearch, 300);
-    const debouncedPaymentSearch = useDebounce(paymentSearch, 300);
 
-    const [showPaymentModal, setShowPaymentModal] = useState(false);
-    const [editingPayment, setEditingPayment] = useState(null);
+    // extractoRefreshKey se incrementa al registrar un pago nuevo para que
+    // el extracto y el overview se recarguen automáticamente sin que el usuario
+    // tenga que refrescar la página.
+    const [extractoRefreshKey, setExtractoRefreshKey] = useState(0);
+
+    // showPagoInline: controla si la ficha de pago en línea está abierta o cerrada.
+    const [showPagoInline, setShowPagoInline] = useState(false);
+
+    // paymentToEdit: cuando no es null, la ficha de pago se abre en modo edición
+    // con los datos de este pago pre-cargados.
+    const [paymentToEdit, setPaymentToEdit] = useState(null);
+
+    // allPayments: lista plana de todos los pagos del proveedor (hasta 200 registros).
+    // Se usa para cruzar con sourcePublicId de cada línea del extracto y poder
+    // ofrecer el botón "Editar" con el objeto completo (monto, método, TC, etc.).
+    const [allPayments, setAllPayments] = useState([]);
+
+    // supplierCreditOverview: resultado de GET /suppliers/{id}/credit.
+    // Contiene Currencies[].AvailableBalance y ActiveApplications[].
+    // Independiente del overview general porque el saldo a favor puede diferir
+    // si hay aplicaciones pendientes de amortizar.
+    const [supplierCreditOverview, setSupplierCreditOverview] = useState(null);
+
+    // monedaUsandoSaldo: qué moneda tiene la ficha "Usar saldo a favor" abierta.
+    // null = ninguna abierta. Solo una moneda puede estar abierta a la vez.
+    const [monedaUsandoSaldo, setMonedaUsandoSaldo] = useState(null);
 
     const loadOverview = useCallback(async () => {
         setLoadingOverview(true);
@@ -527,6 +718,35 @@ export default function SupplierAccountPage() {
             setDatabaseUnavailable(isDatabaseUnavailableError(error));
         } finally {
             setLoadingOverview(false);
+        }
+    }, [publicId]);
+
+    // Carga hasta 200 pagos del proveedor para poder hacer el cross-reference en el extracto.
+    // Si hay más de 200 pagos los más viejos no tendrán botón Editar, pero sí Eliminar (tienen sourcePublicId).
+    // Esta cantidad es un límite práctico; no se pagina (son datos de soporte, no de listado).
+    const loadAllPayments = useCallback(async () => {
+        if (!publicId) return;
+        try {
+            const response = await api.get(`/suppliers/${publicId}/account/payments?page=1&pageSize=200&sortBy=paidAt&sortDir=desc`);
+            setAllPayments(response?.items || []);
+        } catch (error) {
+            // No bloqueante: si falla, el extracto sigue funcionando sin botones de edición.
+            console.warn("[SupplierAccountPage] No se pudo cargar la lista de pagos para el extracto:", error?.message);
+            setAllPayments([]);
+        }
+    }, [publicId]);
+
+    // Carga el overview de crédito del proveedor (saldo a favor y aplicaciones activas).
+    // Se llama al montar y al revertir una aplicación para que la lista se actualice.
+    const loadSupplierCredit = useCallback(async () => {
+        try {
+            const creditData = await api.get(`/suppliers/${publicId}/credit`);
+            setSupplierCreditOverview(creditData);
+        } catch (error) {
+            // No bloqueante: si falla, los carteles de saldo a favor siguen visibles
+            // pero no se podrá ver la lista de aplicaciones activas ni usar el botón.
+            console.warn("[SupplierAccountPage] No se pudo cargar el overview de crédito del proveedor:", error?.message);
+            setSupplierCreditOverview(null);
         }
     }, [publicId]);
 
@@ -560,96 +780,98 @@ export default function SupplierAccountPage() {
         }
     }, [debouncedServiceSearch, publicId, serviceType, servicesPaging.page, servicesPaging.pageSize]);
 
-    const loadPayments = useCallback(async () => {
-        setPaymentsLoading(true);
+    // Refresca overview, pagos y extracto después de guardar un pago (nuevo o editado).
+    // El extracto se recarga solo porque extractoRefreshKey es su dependencia de efecto.
+    const handlePagoGuardado = useCallback(async () => {
+        setShowPagoInline(false);
+        setPaymentToEdit(null);
+        setExtractoRefreshKey((k) => k + 1);
+        await Promise.all([loadOverview(), loadAllPayments(), loadSupplierCredit()]);
+    }, [loadOverview, loadAllPayments, loadSupplierCredit]);
+
+    // Se llama al completar una aplicación de saldo a favor: recarga todo lo relacionado.
+    const handleSaldoAplicado = useCallback(async () => {
+        setMonedaUsandoSaldo(null);
+        setExtractoRefreshKey((k) => k + 1);
+        await Promise.all([loadOverview(), loadSupplierCredit()]);
+    }, [loadOverview, loadSupplierCredit]);
+
+    // Se llama al revertir una aplicación: recarga el extracto y el credit overview.
+    const handleRevertirAplicacionTerminada = useCallback(async () => {
+        setExtractoRefreshKey((k) => k + 1);
+        await Promise.all([loadOverview(), loadSupplierCredit()]);
+    }, [loadOverview, loadSupplierCredit]);
+
+    // Abre la ficha de pago en modo edición con el pago seleccionado.
+    // Si la ficha ya estaba abierta para un pago diferente, la reemplaza.
+    const handleEditarPago = useCallback((payment) => {
+        setPaymentToEdit(payment);
+        setShowPagoInline(true);
+        // Scroll al principio para que la ficha quede visible
+        window.scrollTo({ top: 0, behavior: "smooth" });
+    }, []);
+
+    // Solicita confirmación y luego elimina un pago del proveedor.
+    // Recarga el extracto y el resumen de saldos automáticamente.
+    const handleEliminarPago = useCallback(async (payment) => {
+        const paymentId = getPublicId(payment) || payment?.publicId;
+        if (!paymentId) return;
+
+        const result = await showConfirm({
+            title: "Eliminar pago",
+            text: "¿Seguro que querés eliminar este pago? El saldo del proveedor se va a restaurar.",
+            confirmText: "Sí, eliminar",
+            confirmColor: "rose",
+        });
+
+        if (!result?.isConfirmed) return;
+
         try {
-            const params = new URLSearchParams({
-                page: String(paymentsPaging.page),
-                pageSize: String(paymentsPaging.pageSize),
-                sortBy: "paidAt",
-                sortDir: "desc",
-            });
-
-            if (debouncedPaymentSearch.trim()) {
-                params.set("search", debouncedPaymentSearch.trim());
-            }
-
-            const response = await api.get(`/suppliers/${publicId}/account/payments?${params.toString()}`);
-            setPaymentsPage({ ...emptyPage, ...(response || {}) });
-            setDatabaseUnavailable(false);
+            await api.delete(`/suppliers/${publicId}/payments/${paymentId}`);
+            setExtractoRefreshKey((k) => k + 1);
+            await Promise.all([loadOverview(), loadAllPayments()]);
+            showSuccess("Pago eliminado.");
         } catch (error) {
-            console.error("Error loading supplier payments:", error);
-            setPaymentsPage(emptyPage);
-            setDatabaseUnavailable(isDatabaseUnavailableError(error));
-        } finally {
-            setPaymentsLoading(false);
+            showError(getApiErrorMessage(error, "No se pudo eliminar el pago."), "Error al eliminar");
         }
-    }, [debouncedPaymentSearch, paymentsPaging.page, paymentsPaging.pageSize, publicId]);
+    }, [publicId, loadOverview, loadAllPayments]);
 
-    const refreshAll = useCallback(async () => {
-        await Promise.all([loadOverview(), loadServices(), loadPayments()]);
-    }, [loadOverview, loadPayments, loadServices]);
-
+    // Resetear estado al cambiar de proveedor (navegación directa entre cuentas)
     useEffect(() => {
         setServicesPaging({ page: 1, pageSize: 25 });
-        setPaymentsPaging({ page: 1, pageSize: 25 });
         setServiceSearch("");
-        setPaymentSearch("");
         setServiceType("all");
+        setShowPagoInline(false);
+        setPaymentToEdit(null);
+        setAllPayments([]);
+        setExtractoRefreshKey(0);
+        setMonedaUsandoSaldo(null);
+        setSupplierCreditOverview(null);
     }, [publicId]);
 
     useEffect(() => {
         loadOverview();
     }, [loadOverview]);
 
+    // Carga el overview de crédito al montar y cada vez que cambia el proveedor.
+    // useEffect con dependencia en loadSupplierCredit (que ya incluye publicId).
+    useEffect(() => {
+        loadSupplierCredit();
+    }, [loadSupplierCredit]);
+
     useEffect(() => {
         loadServices();
     }, [loadServices]);
 
+    // Carga la lista de pagos al montar y cada vez que cambia el proveedor.
     useEffect(() => {
-        loadPayments();
-    }, [loadPayments]);
+        loadAllPayments();
+    }, [loadAllPayments]);
 
+    // Al cambiar filtros de búsqueda o tipo, volvemos a la página 1
     useEffect(() => {
         setServicesPaging((current) => ({ ...current, page: 1 }));
     }, [debouncedServiceSearch, serviceType, servicesPaging.pageSize]);
-
-    useEffect(() => {
-        setPaymentsPaging((current) => ({ ...current, page: 1 }));
-    }, [debouncedPaymentSearch, paymentsPaging.pageSize]);
-
-    const handleOpenPaymentModal = (payment = null) => {
-        setEditingPayment(payment);
-        setShowPaymentModal(true);
-    };
-
-    const handlePaymentSuccess = async () => {
-        setShowPaymentModal(false);
-        await refreshAll();
-    };
-
-    const handleDeletePayment = async (payment) => {
-        const result = await Swal.fire({
-            title: "Eliminar pago?",
-            text: `Se restaurara la deuda de ${formatCurrency(payment.amount)}. Esta accion no se puede deshacer.`,
-            icon: "warning",
-            showCancelButton: true,
-            confirmButtonText: "Si, eliminar",
-            cancelButtonText: "Cancelar",
-        });
-
-        if (!result.isConfirmed) {
-            return;
-        }
-
-        try {
-            await api.delete(`/suppliers/${publicId}/payments/${getPublicId(payment)}`);
-            await refreshAll();
-            Swal.fire("Eliminado", "El pago fue eliminado y el saldo restaurado.", "success");
-        } catch (error) {
-            Swal.fire("Error", "No se pudo eliminar el pago", "error");
-        }
-    };
 
     if (loadingOverview) {
         return <AccountPageSkeleton />;
@@ -658,7 +880,7 @@ export default function SupplierAccountPage() {
     if (!overview && !databaseUnavailable) {
         return (
             <div className="p-6">
-                <p className="text-muted-foreground">No se encontro el proveedor.</p>
+                <p className="text-muted-foreground">No se encontró el proveedor.</p>
             </div>
         );
     }
@@ -668,38 +890,66 @@ export default function SupplierAccountPage() {
     }
 
     const supplier = overview?.supplier;
-    const summary = overview?.summary || {};
     const services = servicesPage.items || [];
-    const payments = paymentsPage.items || [];
+
+    // balancesByCurrency: array de { currency, confirmedPurchases, totalPaid, balance }.
+    // Es el reemplazo del summary escalar (que sumaba ARS+USD incorrectamente).
+    // Puede venir de overview.balancesByCurrency (campo nuevo del backend Tanda 1).
+    const balancesByCurrency = overview?.balancesByCurrency || [];
+
+    // serviceCount puede venir del summary anterior o calcularse desde balances
+    const serviceCount = overview?.summary?.serviceCount ?? 0;
+
+    // Permiso para ver montos de costo: controla la columna "Costo" en Servicios Comprados.
+    // El mismo permiso que en FranjaSaldoPorMoneda y PagarProveedorInline.
+    const puedeVerMontos = hasPermission("cobranzas.see_cost");
+
+    // Permiso para editar/eliminar pagos al proveedor desde el extracto.
+    // El mismo permiso que se usa para registrar nuevos pagos.
+    const puedeEditarEliminarPago = hasPermission("tesoreria.supplier_payments");
+
+    // Aplicaciones de saldo a favor vigentes: vienen del credit overview.
+    // Si el endpoint aún no respondió (o falló), usamos array vacío.
+    const activeApplications = supplierCreditOverview?.activeApplications ?? [];
+
+    // Saldo disponible para la moneda que está usando la ficha de "Usar saldo".
+    // Viene de SupplierCreditOverviewDto.Currencies[].AvailableBalance.
+    const getSaldoDisponible = (moneda) => {
+        const creditCurrencyLine = (supplierCreditOverview?.currencies ?? []).find(
+            (c) => c.currency === moneda
+        );
+        // Si el overview de crédito no cargó todavía, usamos el valor del overview general
+        // como fallback (Math.abs del balance cuando es a favor).
+        if (creditCurrencyLine != null) {
+            return Number(creditCurrencyLine.availableBalance ?? 0);
+        }
+        const balanceLine = balancesByCurrency.find((b) => b.currency === moneda);
+        const deuda = balanceLine?.balance ?? 0;
+        return deuda < 0 ? Math.abs(deuda) : 0;
+    };
 
     return (
         <div className="p-6 space-y-6 max-w-7xl mx-auto">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                <div className="flex items-center gap-4">
-                    <button
-                        onClick={() => navigate("/suppliers")}
-                        className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-input bg-background/50 hover:bg-accent"
-                    >
-                        <ArrowLeft className="h-5 w-5" />
-                    </button>
-                    <div>
-                        <h1 className="text-2xl font-bold">Cuenta Corriente: {supplier?.name}</h1>
-                        <p className="text-muted-foreground">
-                            {supplier?.contactName && `${supplier.contactName} · `}
-                            {supplier?.taxId && `CUIT: ${supplier.taxId}`}
-                        </p>
-                    </div>
-                </div>
 
+            {/* ── Encabezado ─────────────────────────────────────────────────── */}
+            <div className="flex items-center gap-4">
                 <button
-                    onClick={() => handleOpenPaymentModal()}
-                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 shadow-sm shadow-emerald-500/20"
+                    onClick={() => navigate("/suppliers")}
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-input bg-background/50 hover:bg-accent"
+                    aria-label="Volver al listado de proveedores"
                 >
-                    <Plus className="h-4 w-4" />
-                    Registrar Pago
+                    <ArrowLeft className="h-5 w-5" />
                 </button>
+                <div>
+                    <h1 className="text-2xl font-bold">Cuenta corriente: {supplier?.name}</h1>
+                    <p className="text-muted-foreground">
+                        {supplier?.contactName && `${supplier.contactName} · `}
+                        {supplier?.taxId && `CUIT: ${supplier.taxId}`}
+                    </p>
+                </div>
             </div>
 
+            {/* Datos de contacto */}
             <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
                 {supplier?.phone && (
                     <span className="flex items-center gap-1">
@@ -713,53 +963,79 @@ export default function SupplierAccountPage() {
                 )}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                <div className="rounded-xl border bg-card p-4 shadow-sm">
-                    <div className="flex items-center gap-2 text-muted-foreground mb-1">
-                        <FileText className="h-4 w-4" />
-                        <span className="text-sm">Servicios</span>
-                    </div>
-                    <p className="text-2xl font-bold">{summary.serviceCount || 0}</p>
-                </div>
+            {/* ── Franja de saldo por moneda + botón "Registrar pago" ─────────── */}
+            <FranjaSaldoPorMoneda
+                balancesByCurrency={balancesByCurrency}
+                serviceCount={serviceCount}
+                onRegistrarPago={() => setShowPagoInline((prev) => !prev)}
+                mostrandoPago={showPagoInline}
+                onUsarSaldo={(moneda) => setMonedaUsandoSaldo((prev) => (prev === moneda ? null : moneda))}
+                monedaUsandoSaldo={monedaUsandoSaldo}
+            />
 
-                <div className="rounded-xl border bg-card p-4 shadow-sm">
-                    <div className="flex items-center gap-2 text-muted-foreground mb-1">
-                        <CreditCard className="h-4 w-4" />
-                        <span className="text-sm">Pagos</span>
-                    </div>
-                    <p className="text-2xl font-bold">{summary.paymentCount || 0}</p>
-                </div>
+            {/* ── Ficha "Usar saldo a favor" en línea ───────────────────────── */}
+            {monedaUsandoSaldo && (
+                <UsarSaldoOperadorInline
+                    supplierId={getPublicId(supplier)}
+                    moneda={monedaUsandoSaldo}
+                    saldoDisponible={getSaldoDisponible(monedaUsandoSaldo)}
+                    onAplicado={handleSaldoAplicado}
+                    onCancelar={() => setMonedaUsandoSaldo(null)}
+                />
+            )}
 
-                <div className="rounded-xl border bg-card p-4 shadow-sm">
-                    <div className="flex items-center gap-2 text-muted-foreground mb-1">
-                        <DollarSign className="h-4 w-4" />
-                        <span className="text-sm">Total Compras</span>
-                    </div>
-                    <p className="text-2xl font-bold">{formatCurrency(summary.totalPurchases)}</p>
-                </div>
+            {/* ── Ficha de pago en línea (nuevo o edición) ──────────────────── */}
+            {showPagoInline && (
+                <PagarProveedorInline
+                    supplierId={getPublicId(supplier)}
+                    balancesByCurrency={balancesByCurrency}
+                    paymentToEdit={paymentToEdit}
+                    onGuardado={handlePagoGuardado}
+                    onCancelar={() => {
+                        setShowPagoInline(false);
+                        setPaymentToEdit(null);
+                    }}
+                />
+            )}
 
-                <div className="rounded-xl border bg-card p-4 shadow-sm">
-                    <div className="flex items-center gap-2 text-muted-foreground mb-1">
-                        <CreditCard className="h-4 w-4" />
-                        <span className="text-sm">Total Pagado</span>
-                    </div>
-                    <p className="text-2xl font-bold text-green-600">{formatCurrency(summary.totalPaid)}</p>
-                </div>
+            {/* ── Extracto de cuenta (libro mayor) + aplicaciones de saldo ───── */}
+            <SupplierExtractoSection
+                supplierPublicId={publicId}
+                refreshKey={extractoRefreshKey}
+                allPayments={allPayments}
+                canEditarEliminar={puedeEditarEliminarPago}
+                onEditarPago={handleEditarPago}
+                onEliminarPago={handleEliminarPago}
+                activeApplications={activeApplications}
+                canRevertir={puedeEditarEliminarPago}
+                onRevertirTerminado={handleRevertirAplicacionTerminada}
+            />
 
-                <div className="rounded-xl border bg-gradient-to-br from-red-500/10 to-orange-500/10 border-red-500/30 p-4 shadow-sm">
-                    <div className="flex items-center gap-2 text-red-600 mb-1">
-                        <TrendingUp className="h-4 w-4" />
-                        <span className="text-sm font-medium">Saldo Pendiente</span>
-                    </div>
-                    <p className="text-2xl font-bold text-red-600">{formatCurrency(summary.balance)}</p>
-                </div>
-            </div>
-
-            {/* Sección de deuda por expediente (reserva): auditoria ERP hallazgo #4.
-                Muestra lo que se le debe al proveedor, abierto reserva por reserva y por moneda.
-                Los anticipos a cuenta (pagos sin reserva imputada) van al final y restan del total. */}
+            {/* ── Deuda desglosada por reserva ──────────────────────────────── */}
             <SupplierDebtByReservaSection publicId={publicId} />
 
+            {/* ── Reembolsos a cobrar de este proveedor ─────────────────────── */}
+            {/* ADR-041 Tanda 4: plata que este operador nos debe devolver por anulaciones.
+                showSupplierColumn=false porque el operador ya está en el encabezado de la página.
+                El componente se autogate con tesoreria.supplier_payments — si el usuario no tiene
+                ese permiso, no se renderiza nada (ni el encabezado de la sección). */}
+            <OperatorRefundsPendingSection
+                supplierPublicId={publicId}
+                showSupplierColumn={false}
+            />
+
+            {/* ── Datos bancarios del proveedor ─────────────────────────────── */}
+            {/* ownerType="Supplier", ownerId=publicId del proveedor.
+                Permiso de edición: tesoreria.supplier_payments (mismo equipo que gestiona pagos).
+                Suposición: permiso no confirmado por Gastón — marcar si cambia. */}
+            <ListaCuentasBancarias
+                ownerType="Supplier"
+                ownerId={publicId}
+                title="Datos bancarios"
+                canEdit={hasPermission("proveedores.edit")}
+            />
+
+            {/* ── Servicios comprados: lista operativa ──────────────────────── */}
             <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
                 <div className="border-b p-4 space-y-4">
                     <div className="flex items-center justify-between gap-3">
@@ -856,8 +1132,17 @@ export default function SupplierAccountPage() {
                                             onUpdated={() => { loadServices(); loadOverview(); }}
                                         />
                                     </DataGridCell>
-                                    <DataGridCell align="right" className="font-mono">{formatCurrency(service.netCost)}</DataGridCell>
-                                    <DataGridCell align="right" className="font-mono">{formatCurrency(service.salePrice)}</DataGridCell>
+                                    {/* Costo neto: enmascarado sin permiso cobranzas.see_cost.
+                                        Sin currency el formatCurrency muestra "$0,00" para USD — bug bloqueante. */}
+                                    <DataGridCell align="right" className="font-mono">
+                                        {puedeVerMontos
+                                            ? formatCurrency(service.netCost, service.currency)
+                                            : <span className="text-muted-foreground">—</span>
+                                        }
+                                    </DataGridCell>
+                                    <DataGridCell align="right" className="font-mono">
+                                        {formatCurrency(service.salePrice, service.currency)}
+                                    </DataGridCell>
                                 </DataGridRow>
                             ))
                         )}
@@ -905,8 +1190,21 @@ export default function SupplierAccountPage() {
                                         </div>
                                     </>
                                 }
-                                footer={<span className="text-xs text-slate-500">Costo {formatCurrency(service.netCost)}</span>}
-                                footerActions={<span className="text-xs font-semibold text-slate-700 dark:text-slate-200">Venta {formatCurrency(service.salePrice)}</span>}
+                                footer={
+                                    // Costo: enmascarado sin permiso y currency requerido para multimoneda
+                                    <span className="text-xs text-slate-500">
+                                        Costo{" "}
+                                        {puedeVerMontos
+                                            ? formatCurrency(service.netCost, service.currency)
+                                            : <span className="text-muted-foreground">—</span>
+                                        }
+                                    </span>
+                                }
+                                footerActions={
+                                    <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+                                        Venta {formatCurrency(service.salePrice, service.currency)}
+                                    </span>
+                                }
                             />
                         ))}
                     </MobileRecordList>
@@ -925,165 +1223,6 @@ export default function SupplierAccountPage() {
                     />
                 </div>
             </div>
-
-            <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
-                <div className="border-b p-4 space-y-4">
-                    <div className="flex items-center justify-between gap-3">
-                        <h2 className="flex items-center gap-2 font-semibold">
-                            <CreditCard className="h-5 w-5" />
-                            Historial de Pagos
-                        </h2>
-                        <span className="text-sm text-muted-foreground">{paymentsPage.totalCount || 0} resultados</span>
-                    </div>
-
-                    <ListToolbar
-                        className="border-slate-200/80 shadow-none dark:border-slate-800"
-                        searchSlot={
-                            <div className="relative">
-                                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                                <input
-                                    type="text"
-                                    placeholder="Buscar referencia, notas o expediente..."
-                                    value={paymentSearch}
-                                    onChange={(event) => setPaymentSearch(event.target.value)}
-                                    className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2 pl-9 pr-4 text-sm dark:border-slate-800 dark:bg-slate-900 dark:text-white"
-                                />
-                            </div>
-                        }
-                    />
-                </div>
-
-                <DataGrid density="compact" minWidth="920px">
-                    <DataGridHeader>
-                        <DataGridHeaderRow>
-                            <DataGridHeaderCell>Fecha</DataGridHeaderCell>
-                            <DataGridHeaderCell>Metodo</DataGridHeaderCell>
-                            <DataGridHeaderCell>Referencia</DataGridHeaderCell>
-                            <DataGridHeaderCell>Reserva</DataGridHeaderCell>
-                            <DataGridHeaderCell>Notas</DataGridHeaderCell>
-                            <DataGridHeaderCell align="right">Monto</DataGridHeaderCell>
-                            <DataGridHeaderCell align="center">Acciones</DataGridHeaderCell>
-                        </DataGridHeaderRow>
-                    </DataGridHeader>
-                    <DataGridBody>
-                        {paymentsLoading ? (
-                            <DataGridEmptyState colSpan={7} title="Cargando pagos..." />
-                        ) : payments.length === 0 ? (
-                            <DataGridEmptyState colSpan={7} title="No hay pagos para este filtro." />
-                        ) : (
-                            payments.map((payment) => (
-                                <DataGridRow key={getPublicId(payment)}>
-                                    <DataGridCell>{formatDate(payment.paidAt)}</DataGridCell>
-                                    <DataGridCell>{payment.method}</DataGridCell>
-                                    <DataGridCell className="font-mono text-xs">{payment.reference || "-"}</DataGridCell>
-                                    <DataGridCell>
-                                        {payment.reservaPublicId ? (
-                                            <Link to={`/reservas/${payment.reservaPublicId}`} className="text-primary hover:underline">
-                                                {payment.numeroReserva || "Ver reserva"}
-                                            </Link>
-                                        ) : (
-                                            payment.numeroReserva || "-"
-                                        )}
-                                    </DataGridCell>
-                                    <DataGridCell className="max-w-xs truncate text-muted-foreground">{payment.notes || "-"}</DataGridCell>
-                                    <DataGridCell align="right" className="font-mono font-medium text-green-600">
-                                        {formatCurrency(payment.amount)}
-                                    </DataGridCell>
-                                    <DataGridActionCell align="center">
-                                        <button
-                                            onClick={() => handleOpenPaymentModal(payment)}
-                                            className="rounded-lg p-2 text-blue-600 hover:bg-blue-50"
-                                            title="Editar"
-                                        >
-                                            <Pencil className="h-4 w-4" />
-                                        </button>
-                                        <button
-                                            onClick={() => handleDeletePayment(payment)}
-                                            className="rounded-lg p-2 text-red-600 hover:bg-red-50"
-                                            title="Eliminar"
-                                        >
-                                            <Trash2 className="h-4 w-4" />
-                                        </button>
-                                    </DataGridActionCell>
-                                </DataGridRow>
-                            ))
-                        )}
-                    </DataGridBody>
-                </DataGrid>
-
-                {paymentsLoading ? (
-                    <div className="p-4 text-center text-sm text-muted-foreground md:hidden">Cargando pagos...</div>
-                ) : payments.length === 0 ? (
-                    <ListEmptyState
-                        title="No hay pagos para este filtro."
-                        className="md:hidden rounded-none border-t border-dashed border-slate-200 dark:border-slate-800"
-                    />
-                ) : (
-                    <MobileRecordList className="p-4 md:hidden">
-                        {payments.map((payment) => (
-                            <MobileRecordCard
-                                key={getPublicId(payment)}
-                                title={payment.method}
-                                subtitle={formatDate(payment.paidAt)}
-                                meta={
-                                    <>
-                                        <div className="text-sm text-muted-foreground">
-                                            {payment.reservaPublicId ? (
-                                                <Link to={`/reservas/${payment.reservaPublicId}`} className="text-primary hover:underline">
-                                                    {payment.numeroReserva || "Ver reserva"}
-                                                </Link>
-                                            ) : (
-                                                payment.numeroReserva || "Sin expediente"
-                                            )}
-                                        </div>
-                                        {payment.notes ? <div className="text-xs italic text-muted-foreground">{payment.notes}</div> : null}
-                                    </>
-                                }
-                                footer={<span className="font-mono font-bold text-green-600">{formatCurrency(payment.amount)}</span>}
-                                footerActions={
-                                    <>
-                                        <button
-                                            onClick={() => handleOpenPaymentModal(payment)}
-                                            className="flex items-center gap-1 rounded-lg bg-slate-100 px-3 py-1.5 text-xs text-slate-600"
-                                        >
-                                            <Pencil className="h-3 w-3" /> Editar
-                                        </button>
-                                        <button
-                                            onClick={() => handleDeletePayment(payment)}
-                                            className="flex items-center gap-1 rounded-lg bg-red-50 px-3 py-1.5 text-xs text-red-600"
-                                        >
-                                            <Trash2 className="h-3 w-3" /> Eliminar
-                                        </button>
-                                    </>
-                                }
-                            />
-                        ))}
-                    </MobileRecordList>
-                )}
-
-                <div className="border-t p-4">
-                    <PaginationFooter
-                        page={paymentsPage.page || paymentsPaging.page}
-                        pageSize={paymentsPage.pageSize || paymentsPaging.pageSize}
-                        totalCount={paymentsPage.totalCount || 0}
-                        totalPages={paymentsPage.totalPages || 0}
-                        hasPreviousPage={Boolean(paymentsPage.hasPreviousPage)}
-                        hasNextPage={Boolean(paymentsPage.hasNextPage)}
-                        onPageChange={(page) => setPaymentsPaging((current) => ({ ...current, page }))}
-                        onPageSizeChange={(pageSize) => setPaymentsPaging({ page: 1, pageSize })}
-                    />
-                </div>
-            </div>
-
-            <SupplierPaymentModal
-                isOpen={showPaymentModal}
-                onClose={() => setShowPaymentModal(false)}
-                onSuccess={handlePaymentSuccess}
-                supplierId={getPublicId(supplier)}
-                supplierName={supplier?.name}
-                currentBalance={summary.balance}
-                editingPayment={editingPayment}
-            />
         </div>
     );
 }

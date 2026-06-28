@@ -10,6 +10,8 @@
  *   - validarMontoRetiro: monto 0, negativo, mayor al saldo, igual al saldo, parcial
  *   - formatearDescripcionEntry: ARS, USD, sin reserva de origen, con reserva
  *   - armarPayloadRetiro: kind 0 (KeptAsCredit), kind 1 (Efectivo), kind 2 (Transferencia)
+ *   - validarAplicacion (kind 3): sin reserva destino, monto inválido, monto excede saldo
+ *   - armarPayloadAplicacion (kind 3): payload para POST /customers/{id}/credit/apply
  */
 
 import test from "node:test";
@@ -200,4 +202,198 @@ test("armarPayloadRetiro - string numérico como monto se convierte a número", 
   const payload = armarPayloadRetiro(2, "450.75");
   assert.strictEqual(typeof payload.amount, "number");
   assert.strictEqual(payload.amount, 450.75);
+});
+
+// ─── Tests de validarAplicacion (kind 3) ──────────────────────────────────────
+
+// Replica local de la función (mismo patrón que el resto del archivo)
+function validarAplicacion(monto, saldoDisponible, targetReservaPublicId) {
+  if (!targetReservaPublicId) {
+    return "Elegí una reserva destino antes de confirmar.";
+  }
+  const montoNum = parseFloat(monto);
+  if (!monto || isNaN(montoNum) || montoNum <= 0) {
+    return "El monto tiene que ser mayor a 0.";
+  }
+  if (montoNum > saldoDisponible) {
+    return `El monto no puede superar el saldo disponible (${saldoDisponible}).`;
+  }
+  return null;
+}
+
+test("validarAplicacion - sin reserva destino devuelve error aunque el monto sea válido", () => {
+  const resultado = validarAplicacion(500, 1000, null);
+  assert.ok(resultado !== null, "Debe haber error");
+  assert.ok(resultado.includes("reserva"), "El mensaje debe mencionar 'reserva'");
+});
+
+test("validarAplicacion - sin reserva y sin monto: prioriza error de reserva", () => {
+  const resultado = validarAplicacion("", 1000, null);
+  assert.ok(resultado !== null);
+  // El error de "reserva faltante" debe aparecer antes que el de monto
+  assert.ok(resultado.includes("reserva"));
+});
+
+test("validarAplicacion - con reserva pero monto 0 devuelve error de monto", () => {
+  const resultado = validarAplicacion(0, 1000, "guid-reserva-123");
+  assert.ok(resultado !== null);
+  assert.ok(resultado.includes("mayor a 0"));
+});
+
+test("validarAplicacion - con reserva pero monto vacío devuelve error de monto", () => {
+  const resultado = validarAplicacion("", 1000, "guid-reserva-123");
+  assert.ok(resultado !== null);
+  assert.ok(resultado.includes("mayor a 0"));
+});
+
+test("validarAplicacion - monto excede saldo disponible devuelve error con el saldo", () => {
+  const resultado = validarAplicacion(1500, 1000, "guid-reserva-123");
+  assert.ok(resultado !== null);
+  assert.ok(resultado.includes("1000"));
+});
+
+test("validarAplicacion - monto igual al saldo disponible es válido", () => {
+  const resultado = validarAplicacion(1000, 1000, "guid-reserva-123");
+  assert.strictEqual(resultado, null);
+});
+
+test("validarAplicacion - monto menor al saldo disponible es válido", () => {
+  const resultado = validarAplicacion(500, 1000, "guid-reserva-123");
+  assert.strictEqual(resultado, null);
+});
+
+test("validarAplicacion - string numérico como monto funciona igual que número", () => {
+  const resultado = validarAplicacion("450.50", 1000, "guid-reserva-123");
+  assert.strictEqual(resultado, null);
+});
+
+// ─── Tests de armarPayloadAplicacion (kind 3) ─────────────────────────────────
+
+function armarPayloadAplicacion(currency, amount, targetReservaPublicId) {
+  return {
+    currency,
+    amount: parseFloat(amount),
+    targetReservaPublicId,
+  };
+}
+
+test("armarPayloadAplicacion - incluye currency, amount y targetReservaPublicId", () => {
+  const payload = armarPayloadAplicacion("ARS", 500, "guid-reserva-abc");
+  assert.strictEqual(payload.currency, "ARS");
+  assert.strictEqual(payload.amount, 500);
+  assert.strictEqual(payload.targetReservaPublicId, "guid-reserva-abc");
+});
+
+test("armarPayloadAplicacion - convierte amount de string a número", () => {
+  const payload = armarPayloadAplicacion("USD", "250.75", "guid-reserva-xyz");
+  assert.strictEqual(typeof payload.amount, "number");
+  assert.strictEqual(payload.amount, 250.75);
+});
+
+test("armarPayloadAplicacion - funciona para USD", () => {
+  const payload = armarPayloadAplicacion("USD", 100, "guid-reserva-usd");
+  assert.strictEqual(payload.currency, "USD");
+  assert.strictEqual(payload.amount, 100);
+});
+
+test("armarPayloadAplicacion - payload tiene exactamente 3 campos (currency, amount, targetReservaPublicId)", () => {
+  const payload = armarPayloadAplicacion("ARS", 300, "guid-reserva-444");
+  const campos = Object.keys(payload);
+  assert.strictEqual(campos.length, 3, "El payload no debe tener campos extra");
+  assert.ok(campos.includes("currency"));
+  assert.ok(campos.includes("amount"));
+  assert.ok(campos.includes("targetReservaPublicId"));
+});
+
+// ─── Tests del monto sugerido kind 3 cliente (debt-by-reserva) ───────────────
+// Valida la regla: monto sugerido = min(deuda de la reserva en esa moneda, saldo disponible).
+// Esta lógica vive en el click handler del listbox de UsarSaldoAFavorInline.
+
+/**
+ * Simula el cálculo del monto sugerido al seleccionar una reserva en el picker
+ * de "Aplicar a otra reserva" (kind 3) cuando el nuevo endpoint está cablebado.
+ */
+function calcularMontoSugeridoCliente(reserva, moneda, saldoDisponible) {
+  const lineaDeuda = (reserva.debtByCurrency ?? []).find((c) => c.currency === moneda);
+  const deudaEnMoneda = lineaDeuda?.amount ?? null;
+  if (deudaEnMoneda != null && deudaEnMoneda > 0) {
+    return Math.min(deudaEnMoneda, saldoDisponible);
+  }
+  // Si no hay deuda disponible (endpoint legacy / shape vieja), dejamos el saldo completo
+  return saldoDisponible;
+}
+
+test("monto sugerido cliente - deuda < saldo disponible → sugerencia = deuda", () => {
+  const reserva = {
+    reservaPublicId: "r-1",
+    numeroReserva: "R-001",
+    debtByCurrency: [{ currency: "ARS", amount: 500 }],
+  };
+  const resultado = calcularMontoSugeridoCliente(reserva, "ARS", 1000);
+  assert.strictEqual(resultado, 500);
+});
+
+test("monto sugerido cliente - deuda > saldo disponible → sugerencia = saldo disponible", () => {
+  const reserva = {
+    reservaPublicId: "r-2",
+    numeroReserva: "R-002",
+    debtByCurrency: [{ currency: "ARS", amount: 2000 }],
+  };
+  const resultado = calcularMontoSugeridoCliente(reserva, "ARS", 800);
+  assert.strictEqual(resultado, 800);
+});
+
+test("monto sugerido cliente - deuda igual al saldo disponible → sugerencia = ese valor", () => {
+  const reserva = {
+    reservaPublicId: "r-3",
+    debtByCurrency: [{ currency: "USD", amount: 300 }],
+  };
+  const resultado = calcularMontoSugeridoCliente(reserva, "USD", 300);
+  assert.strictEqual(resultado, 300);
+});
+
+test("monto sugerido cliente - sin deuda en la moneda → fallback al saldo disponible", () => {
+  const reserva = {
+    reservaPublicId: "r-4",
+    debtByCurrency: [{ currency: "ARS", amount: 500 }],
+  };
+  // La reserva tiene deuda en ARS pero se pregunta por USD
+  const resultado = calcularMontoSugeridoCliente(reserva, "USD", 1000);
+  // Sin lineaDeuda para USD, cae al fallback (saldoDisponible)
+  assert.strictEqual(resultado, 1000);
+});
+
+test("monto sugerido cliente - debtByCurrency vacío → fallback al saldo disponible", () => {
+  const reserva = {
+    reservaPublicId: "r-5",
+    debtByCurrency: [],
+  };
+  const resultado = calcularMontoSugeridoCliente(reserva, "ARS", 500);
+  assert.strictEqual(resultado, 500);
+});
+
+// ─── Test B1 del picker cliente: el ID de reserva viaja correctamente ──────────
+// Verifica que al armar el payload se usa reservaPublicId (no publicId ni undefined).
+
+test("armarPayloadAplicacion - usa reservaPublicId del DTO del nuevo endpoint (no publicId)", () => {
+  // Shape real del nuevo endpoint GET /customers/{id}/account/debt-by-reserva
+  const reservaDelNuevoEndpoint = {
+    reservaPublicId: "guid-real-123",
+    numeroReserva: "R-0045",
+    fileName: "Viaje a Bariloche",
+    debtByCurrency: [{ currency: "ARS", amount: 1500 }],
+  };
+
+  // Simulamos lo que hace el componente al confirmar kind 3:
+  const targetReservaPublicId =
+    reservaDelNuevoEndpoint.reservaPublicId ??
+    // getPublicId fallback (no aplica acá, pero simula la lógica real)
+    reservaDelNuevoEndpoint.publicId;
+
+  const payload = armarPayloadAplicacion("ARS", 500, targetReservaPublicId);
+
+  assert.strictEqual(payload.targetReservaPublicId, "guid-real-123",
+    "El guid tiene que viajar en el payload (no null ni undefined)");
+  assert.notStrictEqual(payload.targetReservaPublicId, null);
+  assert.notStrictEqual(payload.targetReservaPublicId, undefined);
 });

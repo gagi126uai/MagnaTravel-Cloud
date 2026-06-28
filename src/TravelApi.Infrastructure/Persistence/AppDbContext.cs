@@ -267,6 +267,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     // OnModelCreating. Ausencia de fila para una moneda = esa moneda es prepago para el cliente.
     public DbSet<CustomerCreditLimitByCurrency> CustomerCreditLimitByCurrency => Set<CustomerCreditLimitByCurrency>();
 
+    // ADR-041 (cuentas bancarias polimorficas, 2026-06-27): una sola tabla para las cuentas de la Agencia,
+    // los Clientes y los Proveedores (OwnerType + OwnerId, FK logica). Config (indice + CHECK alias/cbu) en
+    // OnModelCreating.
+    public DbSet<BankAccount> BankAccounts => Set<BankAccount>();
+
     // Auditoria ERP 2026-06-12 (hallazgo #1): comision del vendedor devengada por reserva, separada por
     // moneda (una fila por Reserva + Vendedor + Moneda). Config en OnModelCreating.
     public DbSet<CommissionAccrual> CommissionAccruals => Set<CommissionAccrual>();
@@ -340,6 +345,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<ClientCreditEntry> ClientCreditEntries => Set<ClientCreditEntry>();
     public DbSet<ClientCreditWithdrawal> ClientCreditWithdrawals => Set<ClientCreditWithdrawal>();
 
+    // ADR-041 TANDA 3 (lado proveedor, 2026-06-27): saldo a favor CONSUMIBLE con un operador (espejo del
+    // saldo a favor del cliente). Configuracion (FK, CHECK, indices, xmin) en OnModelCreating.
+    public DbSet<SupplierCreditEntry> SupplierCreditEntries => Set<SupplierCreditEntry>();
+    public DbSet<SupplierCreditApplication> SupplierCreditApplications => Set<SupplierCreditApplication>();
+
     // ADR-022 (Libro de Caja persistido, 2026-06-11): el asiento inmutable de cada hecho que
     // mueve caja, en su moneda real. Fuente de verdad de la CAJA. Configuracion (FKs, indice unico
     // parcial por origen, CHECK constraints) en OnModelCreating.
@@ -401,6 +411,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         ConfigurePublicEntity<PassengerServiceAssignment>(modelBuilder);
         ConfigurePublicEntity<ReservaStatusChangeLog>(modelBuilder);
         ConfigurePublicEntity<ReservaEditAuthorization>(modelBuilder);
+        ConfigurePublicEntity<BankAccount>(modelBuilder);
 
         // Supplier
         modelBuilder.Entity<Supplier>(entity =>
@@ -1313,6 +1324,39 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(x => new { x.CustomerId, x.Currency }).IsUnique();
         });
 
+        // ADR-041 (cuentas bancarias polimorficas, 2026-06-27). Una sola tabla para los tres dueños.
+        // OwnerType/OwnerId NO tienen FK fisica (una columna no puede apuntar a 3 tablas) — la integridad
+        // del dueño la valida el servicio. Enums persistidos como int (mismo patron que el resto del modulo).
+        modelBuilder.Entity<BankAccount>(entity =>
+        {
+            entity.ToTable("BankAccounts");
+
+            entity.Property(x => x.OwnerType).HasConversion<int>();
+            entity.Property(x => x.AccountType).HasConversion<int?>();
+            entity.Property(x => x.HolderName).HasMaxLength(200).IsRequired();
+            entity.Property(x => x.Currency).HasMaxLength(3).IsRequired();
+            entity.Property(x => x.Cbu).HasMaxLength(22);
+            entity.Property(x => x.Alias).HasMaxLength(50);
+            entity.Property(x => x.Bank).HasMaxLength(100);
+            entity.Property(x => x.HolderTaxId).HasMaxLength(20);
+            entity.Property(x => x.Notes).HasMaxLength(500);
+            entity.Property(x => x.CreatedByUserId).HasMaxLength(450);
+
+            // Lookup principal: "las cuentas activas de este dueño". Incluye IsActive para que el filtro de
+            // soft-delete del listado use el indice y no haga seq scan a medida que crece la tabla.
+            entity.HasIndex(x => new { x.OwnerType, x.OwnerId, x.IsActive });
+
+            // Defensa en profundidad a nivel BD: una cuenta SIN CBU y SIN alias no identifica un destino de
+            // plata. El servicio ya lo valida; este CHECK garantiza que ningun camino (bug del API, import,
+            // SQL manual) deje una fila ambigua. EF lo emite como parte del CREATE TABLE de la tabla nueva.
+            entity.ToTable(t =>
+            {
+                t.HasCheckConstraint(
+                    "chk_BankAccounts_cbu_or_alias",
+                    "\"Cbu\" IS NOT NULL OR \"Alias\" IS NOT NULL");
+            });
+        });
+
         // Auditoria ERP 2026-06-12 (hallazgo #1): comision del vendedor por reserva+moneda.
         // Columnas SIN HasColumnName -> nombre de columna = nombre de propiedad (evita el trap M2 que
         // rompio produccion al usar nombre de propiedad en SQL crudo). FK Cascade: al borrar la reserva,
@@ -1490,6 +1534,88 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         });
 
         ConfigureCancellationModule(modelBuilder);
+        ConfigureSupplierCreditModule(modelBuilder);
+    }
+
+    /// <summary>
+    /// ADR-041 TANDA 3 (lado proveedor, 2026-06-27): configura el ledger de saldo a favor con operadores
+    /// (<see cref="SupplierCreditEntry"/> aggregate + <see cref="SupplierCreditApplication"/> child). Espejo del
+    /// modulo ClientCredit del lado cliente: PublicId uuid + unique index, FK Restrict, precision 18,2, CHECK SQL
+    /// del saldo no-negativo (se agrega en la migracion) y xmin como concurrency token para los applies paralelos.
+    /// </summary>
+    private static void ConfigureSupplierCreditModule(ModelBuilder modelBuilder)
+    {
+        ConfigurePublicEntity<SupplierCreditEntry>(modelBuilder);
+        ConfigurePublicEntity<SupplierCreditApplication>(modelBuilder);
+
+        modelBuilder.Entity<SupplierCreditEntry>(entity =>
+        {
+            entity.ToTable("SupplierCreditEntries");
+            entity.Property(c => c.CreditedAmount).HasPrecision(18, 2);
+            entity.Property(c => c.RemainingBalance).HasPrecision(18, 2);
+            // Bolsillo por moneda: NOT NULL default ARS (igual que ClientCreditEntry / SupplierBalanceByCurrency).
+            entity.Property(c => c.Currency).HasMaxLength(3).IsRequired().HasDefaultValue(Monedas.ARS);
+            entity.Property(c => c.CreatedByUserId).HasMaxLength(450);
+            entity.Property(c => c.CreatedByUserName).HasMaxLength(200);
+
+            entity.HasOne(c => c.Supplier)
+                  .WithMany()
+                  .HasForeignKey(c => c.SupplierId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            // Origen sobrepago: nullable (el backfill no tiene pago de origen). El reembolso tardio
+            // (SourceOperatorRefundReceivedId) NO se configura como FK en esta tanda: hoy siempre va null y no
+            // queremos acoplar con el modulo de refunds todavia (solo persistimos la columna escalar).
+            entity.HasOne(c => c.SourceSupplierPayment)
+                  .WithMany()
+                  .HasForeignKey(c => c.SourceSupplierPaymentId)
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasMany(c => c.Applications)
+                  .WithOne(a => a.Entry)
+                  .HasForeignKey(a => a.SupplierCreditEntryId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(c => new { c.SupplierId, c.Currency });
+            entity.HasIndex(c => new { c.SupplierId, c.IsFullyConsumed });
+
+            // xmin: dos applies paralelos sobre el mismo entry pelean -> DbUpdateConcurrencyException -> retry.
+            entity.UseXminAsConcurrencyToken();
+        });
+
+        modelBuilder.Entity<SupplierCreditApplication>(entity =>
+        {
+            entity.ToTable("SupplierCreditApplications");
+            entity.Property(a => a.Amount).HasPrecision(18, 2);
+            entity.Property(a => a.Kind).HasConversion<int>();
+            entity.Property(a => a.CreatedByUserId).HasMaxLength(450).IsRequired();
+            entity.Property(a => a.CreatedByUserName).HasMaxLength(200);
+            entity.Property(a => a.ReversalReason).HasMaxLength(500);
+
+            entity.HasOne(a => a.TargetReserva)
+                  .WithMany()
+                  .HasForeignKey(a => a.TargetReservaId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            // Auto-referencia: una reversa apunta a la aplicacion original (anti doble-reversa + trazabilidad).
+            entity.HasOne(a => a.ReversesApplication)
+                  .WithMany()
+                  .HasForeignKey(a => a.ReversesApplicationId)
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasIndex(a => a.SupplierCreditEntryId);
+            entity.HasIndex(a => a.TargetReservaId);
+
+            // M3 (review): RED DURA contra la doble-reversa por CARRERA. Indice UNICO PARCIAL: a lo sumo UNA
+            // contra-fila (Reversed) puede apuntar a una misma aplicacion. Si dos reversas concurrentes pasan la
+            // validacion en memoria, Postgres rechaza la segunda (23505). Parcial (WHERE NOT NULL) para no chocar
+            // entre las Applied (que tienen ReversesApplicationId = NULL).
+            entity.HasIndex(a => a.ReversesApplicationId)
+                  .IsUnique()
+                  .HasFilter("\"ReversesApplicationId\" IS NOT NULL");
+        });
     }
 
     /// <summary>

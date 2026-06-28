@@ -1,9 +1,11 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Errors;
 using TravelApi.Infrastructure.Persistence;
 
@@ -16,11 +18,16 @@ public class CustomersController : ControllerBase
 {
     private readonly ICustomerService _customerService;
     private readonly IEntityReferenceResolver _entityReferenceResolver;
+    private readonly IClientCreditService _clientCreditService;
 
-    public CustomersController(ICustomerService customerService, IEntityReferenceResolver entityReferenceResolver)
+    public CustomersController(
+        ICustomerService customerService,
+        IEntityReferenceResolver entityReferenceResolver,
+        IClientCreditService clientCreditService)
     {
         _customerService = customerService;
         _entityReferenceResolver = entityReferenceResolver;
+        _clientCreditService = clientCreditService;
     }
 
     // ADR-023 T3.2: todo CustomersController estaba [Authorize] sin permiso fino ->
@@ -263,6 +270,32 @@ public class CustomersController : ControllerBase
     }
 
     /// <summary>
+    /// Deuda del cliente DESGLOSADA POR RESERVA y por moneda (espejo del lado proveedor
+    /// GET /api/suppliers/{id}/account/debt-by-reserva). Solo reservas con saldo pendiente. Alimenta el
+    /// buscador del flujo "usar saldo a favor -> aplicar a otra reserva": el front ofrece como destino solo
+    /// reservas con deuda en la MISMA moneda del saldo a favor (el saldo en USD no cancela deuda en ARS).
+    /// </summary>
+    // Mismo gate que /account y /credit: expone montos de deuda del cliente -> clientes.view Y cobranzas.view
+    // (AND apilando atributos). El lado VENTA no enmascara montos (a diferencia de la cuenta del proveedor).
+    [HttpGet("{publicIdOrLegacyId}/account/debt-by-reserva")]
+    [RequirePermission(Permissions.ClientesView)]
+    [RequirePermission(Permissions.CobranzasView)]
+    public async Task<ActionResult<CustomerDebtByReservaDto>> GetCustomerDebtByReserva(
+        string publicIdOrLegacyId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Customer>(publicIdOrLegacyId, cancellationToken);
+            return Ok(await _customerService.GetCustomerDebtByReservaAsync(id, cancellationToken));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
+    /// <summary>
     /// Lista los saldos a favor DISPONIBLES del cliente (entries con RemainingBalance &gt; 0), del más
     /// viejo al más nuevo. El front lo usa para el botón "usar saldo a favor": el usuario elige de qué
     /// entry retirar y luego llama al withdraw (POST /api/client-credit-entries/{entryPublicId}/withdrawals).
@@ -293,6 +326,128 @@ public class CustomersController : ControllerBase
             }
             return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo obtener el saldo a favor del cliente.");
         }
+    }
+
+    // ===================================================================================================
+    // FC4 — saldo a favor del cliente CONSUMIBLE: ver / APLICAR / REVERTIR a otra reserva del mismo cliente.
+    // Espejo del lado operador (SuppliersController .../credit). Lectura con clientes.view + cobranzas.view
+    // (mismo gate que /account y /available-credit, que tampoco enmascaran montos del cliente). Aplicar y
+    // revertir mueven la deuda de una reserva -> cobranzas.edit. La ownership de la reserva destino la valida
+    // el service (devuelve 403 si esta a cargo de otro vendedor y el usuario no ve todas las cobranzas).
+    // ===================================================================================================
+
+    /// <summary>Saldo a favor disponible del cliente, agrupado por moneda (bolsillos con saldo &gt; 0).</summary>
+    [HttpGet("{publicIdOrLegacyId}/credit")]
+    [RequirePermission(Permissions.ClientesView)]
+    [RequirePermission(Permissions.CobranzasView)]
+    public async Task<ActionResult<ClientCreditOverviewDto>> GetCustomerCredit(
+        string publicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Customer>(publicIdOrLegacyId, cancellationToken);
+            return Ok(await _clientCreditService.GetCustomerCreditAsync(id, cancellationToken));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
+    /// <summary>Aplica saldo a favor del cliente a OTRA reserva del mismo cliente y misma moneda (FIFO).</summary>
+    [HttpPost("{publicIdOrLegacyId}/credit/apply")]
+    [RequirePermission(Permissions.CobranzasEdit)]
+    public async Task<ActionResult<ClientCreditApplicationResultDto>> ApplyCustomerCredit(
+        string publicIdOrLegacyId, [FromBody] ApplyClientCreditRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Customer>(publicIdOrLegacyId, cancellationToken);
+            var (userId, userName) = ResolveActor();
+            var result = await _clientCreditService.ApplyCustomerCreditAsync(id, request, userId, userName, cancellationToken);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // La reserva destino no esta a cargo del usuario actual (y este no ve todas las cobranzas). 403,
+            // mismo contrato que el alta de pago / el flujo por-bolsillo.
+            return new ObjectResult(PermissionDeniedProblemFactory.OwnershipRequired(OwnedEntity.Reserva.ToString()))
+            {
+                StatusCode = StatusCodes.Status403Forbidden
+            };
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (BusinessInvariantViolationException ex)
+        {
+            // Tope superado / moneda cruzada / cliente equivocado / estado no firme: conflicto de negocio (409).
+            return Conflict(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Modulo deshabilitado (feature flag off).
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>Revierte una aplicacion de saldo a favor del cliente (repone el bolsillo, deshace el puente).</summary>
+    [HttpPost("{publicIdOrLegacyId}/credit/applications/{applicationPublicId:guid}/reverse")]
+    [RequirePermission(Permissions.CobranzasEdit)]
+    public async Task<ActionResult<ClientCreditApplicationResultDto>> ReverseCustomerCreditApplication(
+        string publicIdOrLegacyId,
+        Guid applicationPublicId,
+        [FromBody] ReverseClientCreditApplicationRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Customer>(publicIdOrLegacyId, cancellationToken);
+            var (userId, userName) = ResolveActor();
+            var result = await _clientCreditService.ReverseCustomerCreditApplicationAsync(
+                id, applicationPublicId, request, userId, userName, cancellationToken);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // La reserva destino (cuya deuda muta la reversa) no esta a cargo del usuario actual (y este no ve
+            // todas las cobranzas). 403, mismo contrato que el alta de pago / el apply / el flujo por-bolsillo.
+            return new ObjectResult(PermissionDeniedProblemFactory.OwnershipRequired(OwnedEntity.Reserva.ToString()))
+            {
+                StatusCode = StatusCodes.Status403Forbidden
+            };
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (BusinessInvariantViolationException ex)
+        {
+            // No es una aplicacion / ya revertida / tope superado (409).
+            return Conflict(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Flag off o estado inconsistente (puente sin reserva destino).
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>Actor actual (userId, userName) para auditoria de las operaciones de saldo a favor del cliente.</summary>
+    private (string UserId, string? UserName) ResolveActor()
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
+        var userName = User.FindFirst("FullName")?.Value ?? User.FindFirst(ClaimTypes.Name)?.Value;
+        return (userId, userName);
     }
 
     private static Customer MapCustomer(CustomerUpsertRequest request)

@@ -655,3 +655,64 @@ Ronda 2:
 **3) Factura A a un cliente que no corresponde: avisar y FRENAR antes de emitir (P3=A).**
 - **(2026-06-26)** Antes de emitir una **Factura A**, si el cliente **no es del tipo que corresponde** (no es Responsable Inscripto), el cartel de confirmación ("¿seguro?" de emitir, el de H2 2026-06-24) **muestra un aviso claro y NO deja seguir** hasta corregir el tipo de comprobante o la condición del cliente. No se manda a AFIP para que vuelva rechazada.
 - **(2026-06-26 — alcance)** Gastón decidió SOLO el **aviso antes** (la parte de pantalla). La **regla fiscal de fondo** (qué condición de IVA habilita cada tipo de comprobante) la confirma el área contable/fiscal; el front solo muestra el aviso con el dato que el backend resuelva. El texto del aviso va en criollo, sin jerga ni códigos internos.
+
+## Proveedores / Cuentas por Pagar — REDISEÑO COMPLETO: la cuenta del proveedor pasa a ser un EXTRACTO (2026-06-27, directiva de Gastón)
+
+> **Origen:** Gastón vio la pantalla actual de cuenta corriente del proveedor (`SupplierAccountPage.jsx`,
+> 5 tarjetas que MEZCLAN monedas + tabla de servicios + historial de pagos) y dijo textual:
+> **"es horrible como está hecha eso, hay que hacer un rediseño completo"**, y que **la cuenta del
+> proveedor debe seguir el MISMO patrón visual que la cuenta corriente del cliente** (el extracto / libro
+> mayor estilo banco, ADR-040 / decisión 2026-06-22). Esto es una directiva DEL DUEÑO; resuelve el layout
+> principal. El resto (cuentas bancarias, esperando reembolso, saldo a favor del operador) sigue abierto
+> como preguntas (ver el bloque de preguntas relayado al orquestador, tanda 2026-06-27).
+
+- **(2026-06-27 — directiva de Gastón — SUPERSEDE el formato "5 tarjetas + 2 tablas" de 2026-06-10/06-11)**
+  La cuenta corriente del proveedor se rehace como **EXTRACTO tipo libro mayor / banco**, igual que la del
+  cliente: **franja resumen arriba con el saldo POR MONEDA separado** ("Le debo en $" / "Le debo en US$",
+  nunca sumados), y debajo **una sola línea de tiempo cronológica** donde cada **compra** (servicio comprado
+  al operador) **SUMA** lo que le debo (cargo) y cada **pago / anticipo / reembolso recibido** **RESTA**
+  (abono), mostrando el **saldo corriente después de cada movimiento**. Un bloque por moneda; jamás se mezclan
+  pesos y dólares (regla dura multimoneda 2026-06-09/06-10). Las 5 tarjetas que hoy mezclan monedas DESAPARECEN.
+- **(2026-06-27)** Se mantiene intacto: el **enmascarado de costos** (sin `cobranzas.see_cost`, los montos van
+  "—" / "Sin permiso", nunca en verde) y la sección **"Deuda por expediente"** (deuda abierta reserva por
+  reserva y por moneda, con anticipos que restan) que ya existe y ya cumple multimoneda. El **pago al
+  proveedor pasa a EN LÍNEA** (debajo, dentro de la página), reemplazando la ventana flotante actual
+  (`SupplierPaymentModal`), igual que el cobro del cliente (regla "el modal me parece horrible", 2026-06-09 P3).
+- **(2026-06-27 — dependencia técnica, NO es decisión de UX)** Hoy existe el endpoint de extracto SOLO a nivel
+  reserva (`/reservas/{id}/account-statement`, lado cliente). El extracto a nivel PROVEEDOR (todas sus
+  compras/pagos en una línea de tiempo con saldo corriente por moneda) necesita un endpoint nuevo de backend.
+  No cambia ninguna decisión de UX; solo habilita construir esta pantalla.
+
+## Cuentas bancarias (CBU/alias) de agencia, clientes y proveedores — base decidida (2026-06-28)
+
+> **Origen:** el backend ya construyó una entidad de cuentas bancarias polimórfica (un mismo "libro de
+> cuentas" para tres dueños distintos: la AGENCIA, cada CLIENTE y cada PROVEEDOR). Gastón ya tomó las
+> decisiones de fondo que están abajo (entregadas vía el orquestador como "decidido, no reabrir"). Lo que
+> NO está cerrado (dónde vive cada pantalla, para qué se usan, devoluciones, cuenta principal, validación
+> fina) quedó como PREGUNTAS relayadas a Gastón (tanda 2026-06-28). Endpoints listos:
+> `GET /api/bank-accounts?ownerType=&ownerId=` (lista, CBU/alias TAPADOS), `GET /api/bank-accounts/{publicId}`
+> (detalle, completo), `POST/PUT/DELETE`. `ownerType` = Agency / Customer / Supplier.
+
+- **(2026-06-28 — decidido por Gastón, no reabrir) Se guardan cuentas bancarias de TRES dueños:** la
+  **agencia**, cada **cliente** y cada **proveedor**. Cada dueño puede tener **VARIAS** cuentas.
+- **(2026-06-28 — decidido) Datos de una cuenta:** banco, tipo de cuenta, CBU, alias, titular, CUIT, moneda.
+  **Obligatorios:** (alias **O** CBU) + titular + moneda. El resto es libre (sin escribir "(opcional)" por
+  todos lados — regla general 2026-06-05; los obligatorios se marcan con un asterisco y listo).
+- **(2026-06-28 — decidido) El CBU y el alias se ven TAPADOS en las listas** (solo los últimos dígitos, ej.
+  `CBU ····3344` / `alias ····.viajes`) y **completos en el detalle**, y para ver el número completo hace
+  falta permiso. (Qué permiso exacto = pregunta fina abierta.)
+- **(2026-06-28 — decidido) Al PAGAR a un proveedor se muestra su CBU/alias con un botón "Copiar"**, para
+  copiar y pegar en el homebanking sin tipear (evita errores de transcripción). Va dentro de la ficha de
+  pago en línea (`PagarProveedorInline`). (Cómo se elige si el proveedor tiene varias cuentas = pregunta abierta.)
+- **(2026-06-28 — aplica regla dura existente) El alta/edición de una cuenta va EN LÍNEA, NUNCA en ventana
+  flotante** (regla "el modal me parece horrible", 2026-06-09 P3 / ADR-035 C). La lista de cuentas del dueño
+  + la ficha de alta/edición que se abre debajo, dentro de la misma página.
+- **(2026-06-28 — aplica regla dura existente) Multimoneda:** cada cuenta tiene UNA moneda; las cuentas se
+  listan tal cual, nunca se "suma" nada. No aplica acá el bloque de saldos por moneda (una cuenta bancaria no
+  tiene saldo en el sistema), pero sí la coherencia visual $/US$.
+
+> ⏳ PENDIENTE DE RESPUESTA DE GASTÓN (tanda 2026-06-28, ver bloque de preguntas relayado): dónde se
+> administran las cuentas de cada dueño (Configuración / ficha proveedor / ficha cliente), para qué se usan
+> las de la agencia y dónde las ve el cliente, si las del cliente sirven para devoluciones, si hay una cuenta
+> "principal/preferida", cómo se elige la cuenta del proveedor al pagar si hay varias, y la validación fina
+> (CBU de 22 dígitos: avisar o frenar) + qué permiso revela el número completo.

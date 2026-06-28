@@ -10,6 +10,7 @@ import {
   Receipt,
   Search,
   Trash2,
+  Undo2,
   Wallet,
   XCircle,
 } from "lucide-react";
@@ -20,6 +21,7 @@ import CustomerPaymentModal from "../../../components/CustomerPaymentModal";
 import RequestApprovalModal from "../../approvals/components/RequestApprovalModal";
 import { useFinanceActions } from "../../payments/hooks/useFinanceActions";
 import { UsarSaldoAFavorInline } from "../components/UsarSaldoAFavorInline";
+import { ListaCuentasBancarias } from "../../bank-accounts/components/ListaCuentasBancarias";
 import { Button } from "../../../components/ui/button";
 import {
   DataGrid,
@@ -39,7 +41,7 @@ import { ListToolbar } from "../../../components/ui/ListToolbar";
 import { MobileRecordCard, MobileRecordList } from "../../../components/ui/MobileRecordCard";
 import { AccountPageSkeleton } from "../../../components/ui/skeleton";
 import { useDebounce } from "../../../hooks/useDebounce";
-import { isDatabaseUnavailableError } from "../../../lib/errors";
+import { getApiErrorMessage, isDatabaseUnavailableError } from "../../../lib/errors";
 import { getPublicId } from "../../../lib/publicIds";
 
 const emptyPage = {
@@ -164,6 +166,26 @@ export default function CustomerAccountPage() {
   // que disparó la apertura (ej. "ARS" o "USD"). null = ninguna ficha abierta.
   // Solo puede haber una abierta a la vez para no confundir al usuario.
   const [monedaFichaUsarSaldo, setMonedaFichaUsarSaldo] = useState(null);
+
+  // Aplicaciones VIVAS de saldo a favor (retiros kind=AppliedToNewBooking activos).
+  // Vienen de GET /customers/{id}/credit y se muestran como filas revertibles
+  // en el extracto de la cuenta corriente.
+  const [creditApplications, setCreditApplications] = useState([]);
+  const [loadingCreditApplications, setLoadingCreditApplications] = useState(false);
+
+  // Deuda del cliente por reserva (nuevo endpoint GET /customers/{id}/account/debt-by-reserva).
+  // Permite mostrar cuánto debe cada reserva en el picker de "Aplicar a otra reserva",
+  // con desglose por moneda (ya no necesitamos el balance escalar de antes).
+  // null = no cargado todavía; [] = cargó pero no hay reservas con deuda.
+  const [deudaClientePorReserva, setDeudaClientePorReserva] = useState(null);
+
+  // Revert inline: publicId de la aplicación que está en proceso de reversión.
+  // null = ninguna en proceso. Permite mostrar el formulario de motivo inline
+  // fila a fila sin necesidad de un modal.
+  const [revirtiendoAplicacionId, setRevirtiendoAplicacionId] = useState(null);
+  const [motivoReversion, setMotivoReversion] = useState("");
+  const [guardandoReversion, setGuardandoReversion] = useState(false);
+  const [errorReversion, setErrorReversion] = useState(null);
   const debouncedSearch = useDebounce(searchTerm, 300);
 
   const loadOverview = useCallback(async () => {
@@ -178,6 +200,39 @@ export default function CustomerAccountPage() {
       showError("No se pudo cargar la cuenta corriente.");
     } finally {
       setLoadingOverview(false);
+    }
+  }, [publicId]);
+
+  // Carga la deuda del cliente desglosada por reserva y por moneda.
+  // Endpoint nuevo: GET /customers/{id}/account/debt-by-reserva
+  // DTO: { reservas: [ { reservaPublicId, numeroReserva, fileName, debtByCurrency: [{currency, amount}] } ] }
+  // Se usa para el picker del kind 3 (aplicar saldo a una reserva específica),
+  // mostrando cuánto debe cada reserva en la moneda del cartel activo.
+  const loadDeudaClientePorReserva = useCallback(async () => {
+    try {
+      const response = await api.get(`/customers/${publicId}/account/debt-by-reserva`);
+      setDeudaClientePorReserva(response?.reservas ?? []);
+    } catch (error) {
+      // No bloquea la pantalla: si falla, el picker queda vacío y el usuario ve el mensaje de estado vacío.
+      console.warn("[CustomerAccountPage] No se pudo cargar deuda por reserva:", error?.message);
+      setDeudaClientePorReserva([]);
+    }
+  }, [publicId]);
+
+  // Carga las aplicaciones VIVAS de saldo a favor desde el endpoint FC4.
+  // Se llama junto con loadOverview para que las filas revertibles estén disponibles.
+  // No bloquea la pantalla si falla: es informativo, no crítico.
+  const loadCreditApplications = useCallback(async () => {
+    setLoadingCreditApplications(true);
+    try {
+      const creditOverview = await api.get(`/customers/${publicId}/credit`);
+      setCreditApplications(Array.isArray(creditOverview?.activeApplications) ? creditOverview.activeApplications : []);
+    } catch (error) {
+      // No bloquea la pantalla: la cuenta corriente sigue funcionando sin este dato
+      console.warn("[CustomerAccountPage] No se pudo cargar las aplicaciones de saldo:", error?.message);
+      setCreditApplications([]);
+    } finally {
+      setLoadingCreditApplications(false);
     }
   }, [publicId]);
 
@@ -262,7 +317,9 @@ export default function CustomerAccountPage() {
   useEffect(() => {
     loadOverview();
     loadReservaOptions();
-  }, [loadOverview, loadReservaOptions]);
+    loadCreditApplications();
+    loadDeudaClientePorReserva();
+  }, [loadOverview, loadReservaOptions, loadCreditApplications, loadDeudaClientePorReserva]);
 
   useEffect(() => {
     loadTab(activeTab);
@@ -405,6 +462,43 @@ export default function CustomerAccountPage() {
     () => reservaOptions.filter((reserva) => reserva.status !== "Cancelled"),
     [reservaOptions]
   );
+
+  // Filtra las reservas con deuda EN UNA MONEDA ESPECÍFICA para el picker kind 3.
+  // Usa el nuevo endpoint GET /customers/{id}/account/debt-by-reserva,
+  // que devuelve el desglose por moneda en debtByCurrency[].
+  // El filtro por moneda es necesario: nunca mezclar ARS con USD en el picker.
+  const getReservasConDeudaEnMoneda = useCallback((moneda) => {
+    if (!deudaClientePorReserva) return [];
+    return deudaClientePorReserva.filter((reserva) => {
+      const lineaMoneda = (reserva.debtByCurrency ?? []).find(
+        (c) => c.currency === moneda && (c.amount ?? 0) > 0
+      );
+      return lineaMoneda != null;
+    });
+  }, [deudaClientePorReserva]);
+
+  // Revierte una aplicación de saldo a favor desde la fila del extracto.
+  // El motivo es opcional: puede ir vacío y el backend lo acepta igual.
+  const handleRevertirAplicacion = async (applicationPublicId) => {
+    setGuardandoReversion(true);
+    setErrorReversion(null);
+    try {
+      await api.post(
+        `/customers/${publicId}/credit/applications/${applicationPublicId}/reverse`,
+        { reason: motivoReversion.trim() || null }
+      );
+      // Limpiar el estado de reversión y recargar tanto el overview como las aplicaciones
+      setRevirtiendoAplicacionId(null);
+      setMotivoReversion("");
+      await Promise.all([loadOverview(), loadCreditApplications()]);
+    } catch (error) {
+      setErrorReversion(
+        getApiErrorMessage(error, "No se pudo revertir la aplicación. Intentá de nuevo.")
+      );
+    } finally {
+      setGuardandoReversion(false);
+    }
+  };
 
   const updateCurrentPage = (page) => {
     setPaging((current) => ({
@@ -604,9 +698,12 @@ export default function CustomerAccountPage() {
                   <UsarSaldoAFavorInline
                     publicId={publicId}
                     moneda={creditEntry.currency}
+                    saldoDisponible={Number(creditEntry.amount)}
+                    reservasConDeuda={getReservasConDeudaEnMoneda(creditEntry.currency)}
                     onConfirmado={() => {
                       setMonedaFichaUsarSaldo(null);
-                      loadOverview();
+                      // Recargar overview, aplicaciones y deuda por reserva: el saldo disponible baja
+                      Promise.all([loadOverview(), loadCreditApplications(), loadDeudaClientePorReserva()]);
                     }}
                     onCancelar={() => setMonedaFichaUsarSaldo(null)}
                   />
@@ -616,6 +713,166 @@ export default function CustomerAccountPage() {
           ))}
         </div>
       )}
+
+      {/*
+        Sección: aplicaciones VIVAS de saldo a favor a otras reservas.
+
+        Muestra cada aplicación como una fila revertible:
+          "Saldo a favor aplicado a R-XXXX — $monto — fecha"  [Revertir]
+
+        Al hacer click en "Revertir", se despliega un campo de motivo (opcional)
+        y un botón de confirmación — todo inline, sin modal.
+
+        El motivo es opcional: puede enviarse vacío y el backend lo acepta.
+        Una vez revertida, la aplicación desaparece de esta lista y el saldo
+        vuelve al bolsillo original del cliente.
+      */}
+      {creditApplications.length > 0 && (
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 dark:border-indigo-900/40 dark:bg-indigo-950/10 overflow-hidden">
+          <div className="px-5 py-3 border-b border-indigo-100 dark:border-indigo-900/30">
+            <h3 className="text-sm font-bold text-indigo-800 dark:text-indigo-300">
+              Saldo a favor aplicado a otras reservas
+            </h3>
+          </div>
+          <ul className="divide-y divide-indigo-100 dark:divide-indigo-900/20">
+            {creditApplications.map((aplicacion) => {
+              const estaRevirtiendoEsta = revirtiendoAplicacionId === String(aplicacion.applicationPublicId);
+              const simbolo = aplicacion.currency === "USD" ? "US$" : "$";
+              const monto = Number(aplicacion.amount).toLocaleString("es-AR", {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              });
+              const fechaTexto = aplicacion.appliedAt
+                ? new Date(aplicacion.appliedAt).toLocaleDateString("es-AR")
+                : "—";
+
+              return (
+                <li key={String(aplicacion.applicationPublicId)} className="px-5 py-3">
+                  <div className="flex items-start justify-between gap-3 flex-wrap">
+                    {/* Descripción de la aplicación */}
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+                        Saldo a favor aplicado a{" "}
+                        <Link
+                          to={`/reservas/${aplicacion.targetReservaPublicId}`}
+                          className="text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300 hover:underline"
+                        >
+                          {aplicacion.targetReservaNumber ?? "la reserva"}
+                        </Link>
+                        <span className="ml-2 font-bold text-indigo-700 dark:text-indigo-400">
+                          −{simbolo}{monto}
+                        </span>
+                      </p>
+                      {aplicacion.targetReservaHolderName && (
+                        <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                          Titular: {aplicacion.targetReservaHolderName}
+                        </p>
+                      )}
+                      <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                        Aplicado el {fechaTexto}
+                      </p>
+                    </div>
+
+                    {/* Botón Revertir: solo si el usuario tiene permiso cobranzas.edit */}
+                    {hasPermission("cobranzas.edit") && !estaRevirtiendoEsta && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRevirtiendoAplicacionId(String(aplicacion.applicationPublicId));
+                          setMotivoReversion("");
+                          setErrorReversion(null);
+                        }}
+                        className="flex-shrink-0 flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:bg-slate-900 dark:text-indigo-400 dark:hover:bg-indigo-950/30 transition-colors"
+                        data-testid={`revertir-aplicacion-${aplicacion.applicationPublicId}`}
+                      >
+                        <Undo2 className="h-3.5 w-3.5" />
+                        Revertir
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Formulario inline de confirmación de reversión */}
+                  {estaRevirtiendoEsta && (
+                    <div className="mt-3 space-y-2 rounded-lg bg-white dark:bg-slate-800 border border-indigo-200 dark:border-indigo-900/40 p-3">
+                      <label
+                        htmlFor={`motivo-reversion-${aplicacion.applicationPublicId}`}
+                        className="text-xs font-semibold text-slate-600 dark:text-slate-400"
+                      >
+                        Motivo de la reversión (opcional)
+                      </label>
+                      <textarea
+                        id={`motivo-reversion-${aplicacion.applicationPublicId}`}
+                        rows={2}
+                        value={motivoReversion}
+                        onChange={(e) => setMotivoReversion(e.target.value)}
+                        disabled={guardandoReversion}
+                        placeholder="Indicá el motivo si lo tenés..."
+                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 dark:border-slate-700 dark:bg-slate-900 dark:text-white disabled:opacity-50 resize-none"
+                        data-testid={`motivo-reversion-${aplicacion.applicationPublicId}`}
+                      />
+                      {errorReversion && (
+                        <p className="text-xs text-rose-600 dark:text-rose-400" role="alert">
+                          {errorReversion}
+                        </p>
+                      )}
+                      <div className="flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRevirtiendoAplicacionId(null);
+                            setMotivoReversion("");
+                            setErrorReversion(null);
+                          }}
+                          disabled={guardandoReversion}
+                          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 disabled:opacity-50 transition-colors"
+                        >
+                          Cancelar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleRevertirAplicacion(String(aplicacion.applicationPublicId))}
+                          disabled={guardandoReversion}
+                          className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+                          data-testid={`confirmar-reversion-${aplicacion.applicationPublicId}`}
+                        >
+                          {guardandoReversion ? (
+                            <>
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              Revirtiendo…
+                            </>
+                          ) : (
+                            <>
+                              <Undo2 className="h-3 w-3" />
+                              Confirmar reversión
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+          {loadingCreditApplications && (
+            <div className="px-5 py-3 text-xs text-slate-400 flex items-center gap-1.5">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Actualizando aplicaciones...
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Datos bancarios del cliente ─────────────────────────────────────── */}
+      {/* ownerType="Customer", ownerId=publicId del cliente.
+          Permiso de edición: cobranzas.edit (mismo equipo que gestiona créditos y cobros).
+          Suposición: permiso no confirmado por Gastón — marcar si cambia. */}
+      <ListaCuentasBancarias
+        ownerType="Customer"
+        ownerId={publicId}
+        title="Datos bancarios"
+        canEdit={hasPermission("clientes.edit")}
+      />
 
       <div className="flex flex-col gap-4">
         <div className="flex flex-wrap gap-6 border-b border-slate-200 dark:border-slate-800">

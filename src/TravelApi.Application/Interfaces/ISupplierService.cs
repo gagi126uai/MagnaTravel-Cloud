@@ -34,6 +34,15 @@ public interface ISupplierService
     /// <paramref name="reservaId"/> es el id interno de la reserva (ya resuelto desde el publicId).
     /// </summary>
     Task<ReservaSupplierPaymentStatusDto> GetReservaSupplierPaymentStatusAsync(int reservaId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// TANDA 1 (cuenta corriente del proveedor): EXTRACTO de la Cuenta por Pagar como libro mayor, SEPARADO
+    /// por moneda y con saldo corriente. Cargos = compras confirmadas del operador; abonos = pagos al operador.
+    /// El saldo de cierre de cada moneda coincide con <c>SupplierBalanceByCurrency.Balance</c> (misma fuente de
+    /// verdad que la deuda: mismas compras que cuentan, misma imputacion de pagos, misma exclusion de
+    /// CommissionOnly / soft-deleted). Los montos respetan el masking see_cost.
+    /// </summary>
+    Task<SupplierAccountStatementDto> GetSupplierAccountStatementAsync(int id, CancellationToken cancellationToken);
 }
 
 /// <summary>

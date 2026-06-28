@@ -70,6 +70,33 @@ public class SupplierService : ISupplierService
     private Task<bool> CanSeeSupplierCostFiguresAsync(CancellationToken cancellationToken)
         => CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, cancellationToken);
 
+    /// <summary>
+    /// SEC-1 (TANDA 1): ¿el caller actual puede ver los DATOS DE TESORERIA de un pago al operador (metodo,
+    /// referencia)? Es un permiso DISTINTO de ver montos de costo: el extracto del proveedor esta gateado por
+    /// <c>proveedores.view</c> (lo ve, p.ej., un vendedor), pero el metodo/referencia de un pago son datos de
+    /// tesoreria y solo deben mostrarse con <see cref="Permissions.TesoreriaSupplierPayments"/> (mismo permiso
+    /// que protege la solapa de pagos; <c>debt-by-reserva</c> tampoco expone metodo/referencia por pago).
+    ///
+    /// <para>Mismo criterio que <see cref="CostMasking.CanSeeCostAsync"/>: Admin pasa por rol; sin
+    /// HttpContext/resolver (tests, jobs) es FAIL-CLOSED (no puede), para no filtrar por accidente.</para>
+    /// </summary>
+    private async Task<bool> CanSeeSupplierPaymentDetailsAsync(CancellationToken cancellationToken)
+    {
+        var user = _httpContextAccessor?.HttpContext?.User;
+
+        // Admin bypass por rol.
+        if (user?.IsInRole("Admin") ?? false) return true;
+
+        // Sin resolver o sin user resoluble: fail-closed.
+        if (_permissionResolver is null || user is null) return false;
+
+        var userId = user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(userId)) return false;
+
+        var permissions = await _permissionResolver.GetPermissionsAsync(userId, cancellationToken);
+        return permissions.Contains(Permissions.TesoreriaSupplierPayments);
+    }
+
     public async Task<PagedResponse<SupplierListItemDto>> GetSuppliersAsync(SupplierListQuery query, CancellationToken cancellationToken)
     {
         var suppliersQuery = _dbContext.Suppliers.AsNoTracking();
@@ -151,6 +178,10 @@ public class SupplierService : ISupplierService
             throw new ArgumentException("El nombre del proveedor es requerido.");
         }
 
+        // ADR-041 TANDA 5: el plazo de pago es opcional, pero si viene no puede ser negativo (un plazo
+        // negativo no tiene sentido y daria un vencimiento sugerido anterior a la compra).
+        ValidateDefaultPaymentTermDays(supplier.DefaultPaymentTermDays);
+
         supplier.CreatedAt = DateTime.UtcNow;
         supplier.CurrentBalance = 0;
 
@@ -166,6 +197,9 @@ public class SupplierService : ISupplierService
         {
             throw new KeyNotFoundException("Proveedor no encontrado");
         }
+
+        // ADR-041 TANDA 5: validar el plazo de pago antes de tocar la entidad (si viene, >= 0).
+        ValidateDefaultPaymentTermDays(supplier.DefaultPaymentTermDays);
 
         // B1.15 Fase 0' (CODE-13): bloquear cambios fiscales (TaxId, TaxCondition)
         // cuando hay reservas con factura CAE viva referenciando al proveedor.
@@ -208,6 +242,8 @@ public class SupplierService : ISupplierService
         existing.TaxCondition = supplier.TaxCondition;
         existing.Address = supplier.Address;
         existing.IsActive = supplier.IsActive;
+        // ADR-041 TANDA 5: plazo de pago por defecto (null = se borra el plazo = sin vencimiento sugerido).
+        existing.DefaultPaymentTermDays = supplier.DefaultPaymentTermDays;
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -223,6 +259,19 @@ public class SupplierService : ISupplierService
         }
 
         return existing;
+    }
+
+    /// <summary>
+    /// ADR-041 TANDA 5: el plazo de pago por defecto del proveedor es opcional (null = sin plazo), pero si
+    /// se manda no puede ser negativo. Un plazo negativo daria un vencimiento sugerido ANTERIOR a la compra,
+    /// que no tiene sentido de negocio. Lanza <see cref="ArgumentException"/> (el controller la mapea a 400).
+    /// </summary>
+    private static void ValidateDefaultPaymentTermDays(int? defaultPaymentTermDays)
+    {
+        if (defaultPaymentTermDays.HasValue && defaultPaymentTermDays.Value < 0)
+        {
+            throw new ArgumentException("El plazo de pago al proveedor no puede ser negativo.");
+        }
     }
 
     /// <summary>
@@ -406,6 +455,24 @@ public class SupplierService : ISupplierService
         var serviceCount = await servicesQuery.CountAsync(cancellationToken);
         var paymentCount = await paymentsQuery.CountAsync(cancellationToken);
 
+        // TANDA 1 (fix de monedas mezcladas): el saldo REAL por moneda se lee de la proyeccion ya
+        // materializada SupplierBalanceByCurrency (NO se recalcula a mano). El resumen escalar de arriba
+        // sigue existiendo por compatibilidad, pero SUMA todas las monedas en un solo numero y solo es fiel
+        // mono-moneda; el front debe consumir BalancesByCurrency para el saldo correcto (la plata no cruza
+        // ARS/USD). Orden alfabetico estable (ARS antes que USD) coherente con el resto de la cuenta.
+        var balancesByCurrency = await _dbContext.SupplierBalanceByCurrency
+            .AsNoTracking()
+            .Where(row => row.SupplierId == id)
+            .OrderBy(row => row.Currency)
+            .Select(row => new SupplierAccountBalanceByCurrencyDto
+            {
+                Currency = row.Currency,
+                ConfirmedPurchases = row.ConfirmedPurchases,
+                TotalPaid = row.TotalPaid,
+                Balance = row.Balance
+            })
+            .ToListAsync(cancellationToken);
+
         var overview = new SupplierAccountOverviewDto
         {
             Supplier = supplier,
@@ -416,7 +483,8 @@ public class SupplierService : ISupplierService
                 Balance = EconomicRulesHelper.RoundCurrency(totalPurchases - totalPaid),
                 ServiceCount = serviceCount,
                 PaymentCount = paymentCount
-            }
+            },
+            BalancesByCurrency = balancesByCurrency
         };
 
         // ADR-017 F1b: TODO el resumen es plata del lado costo/deuda (compras al
@@ -428,9 +496,170 @@ public class SupplierService : ISupplierService
             overview.Summary.TotalPurchases = 0m;
             overview.Summary.TotalPaid = 0m;
             overview.Summary.Balance = 0m;
+
+            // El saldo por moneda tambien es costo/deuda: se anulan los montos pero se conserva la
+            // estructura (que monedas existen), igual que el resto de la cuenta del proveedor.
+            foreach (var line in overview.BalancesByCurrency)
+            {
+                line.ConfirmedPurchases = 0m;
+                line.TotalPaid = 0m;
+                line.Balance = 0m;
+            }
         }
 
         return overview;
+    }
+
+    /// <summary>
+    /// TANDA 1 (cuenta corriente del proveedor): EXTRACTO de la Cuenta por Pagar como libro mayor, separado
+    /// por moneda y con saldo corriente. NO crea una segunda verdad: reusa EXACTAMENTE el mismo universo de
+    /// compras confirmadas que la deuda materializada (mismo <see cref="BuildSupplierServicesQuery"/> + regla
+    /// oficial por tipo <c>CountsForSupplierDebtByType</c> + gate CommissionOnly), los mismos pagos vivos (el
+    /// query filter <c>!IsDeleted</c> excluye los anulados) y la MISMA primitiva de imputacion del calculador.
+    /// Por construccion, el saldo de cierre de cada moneda coincide con <c>SupplierBalanceByCurrency.Balance</c>
+    /// (hay un test invariante que lo verifica).
+    ///
+    /// <para><b>Masking</b>: el extracto es COSTO (deuda con el operador). Sin <c>cobranzas.see_cost</c> los
+    /// montos se anulan a 0 y <c>AmountsVisible</c> viene false; la estructura (movimientos, fechas, monedas)
+    /// sigue visible, igual que el resto de la cuenta del proveedor.</para>
+    /// </summary>
+    public async Task<SupplierAccountStatementDto> GetSupplierAccountStatementAsync(int id, CancellationToken cancellationToken)
+    {
+        var supplier = await _dbContext.Suppliers
+            .AsNoTracking()
+            .Where(s => s.Id == id)
+            .Select(s => new { s.PublicId, s.Name })
+            .FirstOrDefaultAsync(cancellationToken);
+        if (supplier == null)
+        {
+            throw new KeyNotFoundException("Proveedor no encontrado");
+        }
+
+        // CARGOS = compras CONFIRMADAS que cuentan como deuda. Mismo universo + misma regla por tipo + mismo
+        // gate CommissionOnly que el persister de la deuda (un proveedor intermediacion no genera compras).
+        var generatesPurchaseDebt = await SupplierGeneratesPurchaseDebtAsync(id, cancellationToken);
+        var serviceRows = generatesPurchaseDebt
+            ? await BuildSupplierServicesQuery(id).ToListAsync(cancellationToken)
+            : new List<SupplierAccountServiceListItemDto>();
+        var confirmedServiceRows = serviceRows
+            .Where(row => WorkflowStatusHelper.CountsForSupplierDebtByType(row.Type, row.Status))
+            .ToList();
+
+        // ABONOS = pagos vivos al operador. El query filter !IsDeleted ya excluye los anulados (igual que la
+        // deuda), por eso una anulacion es self-healing y el extracto sigue cerrando con el saldo.
+        var paymentRows = await _dbContext.SupplierPayments
+            .Where(payment => payment.SupplierId == id)
+            .Select(payment => new
+            {
+                payment.PublicId,
+                payment.PaidAt,
+                payment.Method,
+                payment.Reference,
+                payment.Amount,
+                payment.Currency,
+                payment.ImputedCurrency,
+                payment.ImputedAmount
+            })
+            .ToListAsync(cancellationToken);
+
+        // SEC-1: el metodo/referencia de un pago son datos de TESORERIA. El extracto lo ve cualquiera con
+        // proveedores.view (p.ej. un vendedor), pero esos detalles solo se exponen con tesoreria.supplier_payments.
+        // Sin el permiso, la linea de pago conserva fecha/moneda/monto pero con descripcion generica y sin
+        // referencia (igual que debt-by-reserva, que tampoco expone metodo/referencia por pago).
+        bool canSeePaymentDetails = await CanSeeSupplierPaymentDetailsAsync(cancellationToken);
+
+        // Armamos las lineas planas usando las factories del builder, que derivan moneda/monto del abono con
+        // la primitiva de imputacion del calculador (single truth). El builder agrupa por moneda y acumula.
+        var inputLines = new List<SupplierAccountStatementInputLine>();
+
+        foreach (var row in confirmedServiceRows)
+        {
+            inputLines.Add(SupplierAccountStatementBuilder.PurchaseLine(
+                date: row.Date,
+                description: BuildPurchaseDescription(row),
+                documentRef: row.NumeroReserva,
+                currency: row.Currency,
+                netCost: row.NetCost,
+                sourcePublicId: row.PublicId));
+        }
+
+        foreach (var payment in paymentRows)
+        {
+            var paymentInput = new SupplierDebtCalculator.SupplierPaymentInput(
+                payment.Amount, payment.Currency, payment.ImputedCurrency, payment.ImputedAmount);
+
+            // Con permiso de tesoreria: metodo como descripcion (o fallback) y referencia como documento.
+            // Sin permiso: descripcion generica y sin referencia (no se filtran datos de tesoreria).
+            string description = canSeePaymentDetails && !string.IsNullOrWhiteSpace(payment.Method)
+                ? payment.Method
+                : "Pago al operador";
+            string? documentRef = canSeePaymentDetails ? payment.Reference : null;
+
+            inputLines.Add(SupplierAccountStatementBuilder.PaymentLine(
+                date: payment.PaidAt,
+                description: description,
+                documentRef: documentRef,
+                payment: paymentInput,
+                sourcePublicId: payment.PublicId));
+        }
+
+        var statement = SupplierAccountStatementBuilder.Build(inputLines);
+
+        bool canSeeCost = await CanSeeSupplierCostFiguresAsync(cancellationToken);
+        return MapSupplierAccountStatement(supplier.PublicId, supplier.Name, statement, canSeeCost);
+    }
+
+    /// <summary>Texto legible de una linea de compra del extracto: "Tipo: descripcion" (sin costo, eso va aparte).</summary>
+    private static string BuildPurchaseDescription(SupplierAccountServiceListItemDto row)
+    {
+        if (string.IsNullOrWhiteSpace(row.Description))
+            return row.Type;
+        return $"{row.Type}: {row.Description}".Trim();
+    }
+
+    /// <summary>
+    /// Mapea el extracto del dominio (value object puro) al DTO de salida, redondeando los montos a 2 decimales
+    /// (coherente con la columna decimal(18,2) de la proyeccion). Si el caller no puede ver costos, anula los
+    /// montos (cargo/abono/saldo) a 0 pero conserva la estructura (movimientos, fechas, monedas).
+    /// </summary>
+    private static SupplierAccountStatementDto MapSupplierAccountStatement(
+        Guid supplierPublicId, string supplierName, SupplierAccountStatement statement, bool canSeeCost)
+    {
+        var dto = new SupplierAccountStatementDto
+        {
+            SupplierPublicId = supplierPublicId,
+            SupplierName = supplierName,
+            AmountsVisible = canSeeCost
+        };
+
+        foreach (var block in statement.Currencies)
+        {
+            var blockDto = new SupplierAccountStatementCurrencyBlockDto
+            {
+                Currency = block.Currency,
+                ClosingBalance = canSeeCost ? EconomicRulesHelper.RoundCurrency(block.ClosingBalance) : 0m
+            };
+
+            foreach (var line in block.Lines)
+            {
+                blockDto.Lines.Add(new SupplierAccountStatementLineDto
+                {
+                    Date = line.Date,
+                    Kind = line.Kind,
+                    Description = line.Description,
+                    DocumentRef = line.DocumentRef,
+                    SourcePublicId = line.SourcePublicId,
+                    Currency = line.Currency,
+                    Charge = canSeeCost ? EconomicRulesHelper.RoundCurrency(line.Charge) : 0m,
+                    Credit = canSeeCost ? EconomicRulesHelper.RoundCurrency(line.Credit) : 0m,
+                    RunningBalance = canSeeCost ? EconomicRulesHelper.RoundCurrency(line.RunningBalance) : 0m
+                });
+            }
+
+            dto.Currencies.Add(blockDto);
+        }
+
+        return dto;
     }
 
     public async Task<PagedResponse<SupplierAccountServiceListItemDto>> GetSupplierAccountServicesAsync(
@@ -459,6 +688,20 @@ public class SupplierService : ISupplierService
 
         servicesQuery = ApplySupplierAccountServiceOrdering(servicesQuery, query);
         var page = await servicesQuery.ToPagedResponseAsync(query, cancellationToken);
+
+        // ADR-041 TANDA 5: vencimiento sugerido por linea. El plazo vive en el maestro del proveedor (todas
+        // las filas son de ESTE proveedor), asi que lo leemos UNA vez y derivamos la fecha por servicio.
+        // Si el proveedor no tiene plazo, las lineas quedan sin vencimiento (null) = comportamiento actual.
+        var defaultPaymentTermDays = await _dbContext.Suppliers
+            .AsNoTracking()
+            .Where(supplier => supplier.Id == id)
+            .Select(supplier => supplier.DefaultPaymentTermDays)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        foreach (var item in page.Items)
+        {
+            item.SuggestedDueDate = SupplierDebtCalculator.DeriveSuggestedDueDate(item.Date, defaultPaymentTermDays);
+        }
 
         // ADR-017 F1b: NetCost es el costo del servicio con el proveedor — sin
         // cobranzas.see_cost se anula. SalePrice NO se toca (D1: es venta, el
@@ -569,7 +812,51 @@ public class SupplierService : ISupplierService
         await PersistSupplierBalanceAsync(supplier, cancellationToken);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
+        // ADR-041 TANDA 3: si este pago dejo SOBREPAGO con el operador en alguna moneda, el excedente se
+        // materializa como SALDO A FAVOR consumible (SupplierCreditEntry). El recalculo de arriba ya dejo el
+        // Balance negativo committed; el reconciler lo lee y crea/ajusta el pool. No mueve la deuda (la caja
+        // ya conto el pago completo en TotalPaid): solo le da cara consumible al balance negativo.
+        await ReconcileSupplierCreditAsync(supplier.Id, sourceSupplierPaymentId: payment.Id, cancellationToken);
+
         return payment.PublicId;
+    }
+
+    /// <summary>
+    /// ADR-041 TANDA 3: mantiene el pool de saldo a favor con el operador (<c>SupplierCreditEntry</c>) en sync
+    /// con el sobrepago derivado, por moneda. Se llama DESPUES de persistir la deuda del proveedor (el balance
+    /// ya esta committed). Sin auditoria/actor (jobs/tests) igual reconcilia el pool. Ver
+    /// <see cref="TravelApi.Infrastructure.Reservations.SupplierCreditReconciler"/>.
+    /// </summary>
+    private Task ReconcileSupplierCreditAsync(int supplierId, int? sourceSupplierPaymentId, CancellationToken cancellationToken)
+    {
+        var (userId, userName) = ResolveCurrentActor();
+        return TravelApi.Infrastructure.Reservations.SupplierCreditReconciler.ReconcileAsync(
+            _dbContext, supplierId, sourceSupplierPaymentId, userId, userName, _auditService, cancellationToken);
+    }
+
+    /// <summary>
+    /// ADR-041 TANDA 3: corre un cuerpo de escritura DENTRO de una transaccion (solo en provider relacional).
+    /// Lo usan la edicion y la baja de un pago: si el reconciler del saldo a favor LANZA (porque la edicion
+    /// destruiria un saldo ya aplicado a otra reserva), la transaccion revierte y el pago NO queda modificado
+    /// a medias. En InMemory (tests) no hay transaccion: el mismo cuerpo corre sin envoltura (el throw se
+    /// propaga igual y los tests de bloqueo lo validan). Mismo patron que <c>ClientCreditService</c>.
+    /// </summary>
+    private async Task RunInWriteTransactionAsync(Func<Task> body, CancellationToken cancellationToken)
+    {
+        if (_dbContext.Database.IsRelational())
+        {
+            var strategy = _dbContext.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async () =>
+            {
+                await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+                await body();
+                await transaction.CommitAsync(cancellationToken);
+            });
+        }
+        else
+        {
+            await body();
+        }
     }
 
     public async Task UpdateSupplierPaymentAsync(int id, int paymentId, SupplierPaymentRequest request, CancellationToken cancellationToken)
@@ -628,10 +915,19 @@ public class SupplierService : ISupplierService
         // ADR-021 §15.3: persistimos la edicion del pago y recalculamos la deuda por moneda
         // (escalar surrogate + tabla hija). Para un pago ARS no cruzado el escalar resultante es
         // identico a la cuenta vieja (deuda previa - Amount). El recalculo lee de la BD, por eso
-        // la edicion va antes.
-        await _dbContext.SaveChangesAsync(cancellationToken);
-        await PersistSupplierBalanceAsync(supplier, cancellationToken);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        // la edicion va antes. ADR-041: todo dentro de UNA transaccion con el reconciler, para que si la
+        // edicion destruiria un saldo a favor ya aplicado, revierta entero (el pago NO queda a medias).
+        await RunInWriteTransactionAsync(async () =>
+        {
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            await PersistSupplierBalanceAsync(supplier, cancellationToken);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+
+            // ADR-041 TANDA 3: editar el monto/moneda del pago pudo CRECER o REDUCIR el sobrepago. El reconciler
+            // crea o drena el saldo a favor para que el pool siga reflejando el sobrepago. Si la edicion bajaria
+            // el sobrepago por debajo de lo ya aplicado a otra reserva, lanza (no se destruye un saldo consumido).
+            await ReconcileSupplierCreditAsync(supplier.Id, sourceSupplierPaymentId: payment.Id, cancellationToken);
+        }, cancellationToken);
     }
 
     public async Task DeleteSupplierPaymentAsync(int id, int paymentId, CancellationToken cancellationToken)
@@ -671,9 +967,19 @@ public class SupplierService : ISupplierService
         // matematica de reversa a mano: soft-deleteamos, guardamos, y RECALCULAMOS. El query filter
         // !IsDeleted excluye el pago borrado, asi la deuda de su moneda imputada vuelve a subir por el
         // monto correcto (self-healing). El persister sincroniza escalar surrogate + tabla hija.
-        await _dbContext.SaveChangesAsync(cancellationToken);
-        await PersistSupplierBalanceAsync(supplier, cancellationToken);
-        await _dbContext.SaveChangesAsync(cancellationToken);
+        // ADR-041: la baja del pago + recalculo + reconciliacion del saldo a favor van en UNA transaccion. Si el
+        // saldo a favor ya se aplico a otra reserva, el reconciler lanza y la baja entera revierte.
+        await RunInWriteTransactionAsync(async () =>
+        {
+            await _dbContext.SaveChangesAsync(cancellationToken);
+            await PersistSupplierBalanceAsync(supplier, cancellationToken);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+
+            // ADR-041 TANDA 3: borrar el pago redujo (o elimino) el sobrepago. El reconciler drena el saldo a
+            // favor que ya no esta respaldado. Si ese saldo ya se aplico a otra reserva, lanza y bloquea la baja
+            // (hay que revertir la aplicacion primero). No hay pago de origen para un drenaje -> sourcePaymentId null.
+            await ReconcileSupplierCreditAsync(supplier.Id, sourceSupplierPaymentId: null, cancellationToken);
+        }, cancellationToken);
 
         if (_auditService is not null)
         {
@@ -1390,7 +1696,22 @@ public class SupplierService : ISupplierService
                 payment.ImputedAmount))
             .ToListAsync(cancellationToken);
 
-        var result = BuildSupplierDebtByReserva(supplier.PublicId, supplier.Name, confirmedServiceRows, paymentRows);
+        // ADR-041 TANDA 3: saldo a favor del operador APLICADO a reservas (neto Applied - Reversed), por reserva
+        // y moneda. Baja la deuda-por-reserva del destino SIN mover caja. Traemos la identidad de la reserva
+        // destino para poder crear su linea aunque no tenga compras/pagos vivos (caso raro pero reconcilia igual).
+        var creditApplicationRows = await _dbContext.SupplierCreditApplications
+            .Where(application => application.Entry.SupplierId == id)
+            .Select(application => new SupplierCreditApplicationRow(
+                application.Kind,
+                application.Amount,
+                application.Entry.Currency,
+                application.TargetReserva!.PublicId,
+                application.TargetReserva!.NumeroReserva,
+                application.TargetReserva!.Name))
+            .ToListAsync(cancellationToken);
+
+        var result = BuildSupplierDebtByReserva(
+            supplier.PublicId, supplier.Name, confirmedServiceRows, paymentRows, creditApplicationRows);
 
         // Masking see_cost: sin permiso, la estructura queda visible pero todos los montos en 0.
         if (!await CanSeeSupplierCostFiguresAsync(cancellationToken))
@@ -1400,6 +1721,18 @@ public class SupplierService : ISupplierService
 
         return result;
     }
+
+    /// <summary>
+    /// ADR-041 TANDA 3: fila minima de una aplicacion/reversa de saldo a favor del operador para el desglose por
+    /// reserva. <see cref="Kind"/> da el signo economico (Applied baja la deuda destino; Reversed la repone).
+    /// </summary>
+    private readonly record struct SupplierCreditApplicationRow(
+        SupplierCreditApplicationKind Kind,
+        decimal Amount,
+        string? Currency,
+        Guid ReservaPublicId,
+        string? NumeroReserva,
+        string? FileName);
 
     /// <summary>
     /// Fila minima de un pago al proveedor para imputarlo en el desglose por reserva. Si <see cref="ReservaId"/>
@@ -1425,7 +1758,8 @@ public class SupplierService : ISupplierService
         Guid supplierPublicId,
         string supplierName,
         IReadOnlyList<SupplierAccountServiceListItemDto> confirmedServiceRows,
-        IReadOnlyList<SupplierPaymentImputationRow> paymentRows)
+        IReadOnlyList<SupplierPaymentImputationRow> paymentRows,
+        IReadOnlyList<SupplierCreditApplicationRow> creditApplicationRows)
     {
         // --- Compras confirmadas agrupadas por reserva (y dentro, por moneda) ---
         // Por cada reserva guardamos su identidad (numero/nombre) y las compras por moneda.
@@ -1479,6 +1813,32 @@ public class SupplierService : ISupplierService
             accumulator.AddPayment(imputedCurrency, imputedAmount);
         }
 
+        // --- Saldo a favor del operador APLICADO a reservas (ADR-041 TANDA 3) ---
+        // Neto por reserva+moneda (Applied suma, Reversed resta). Baja la deuda-por-reserva del destino sin
+        // mover caja. Total por moneda para el bucket de reconciliacion + el offset que mantiene GlobalTotals.
+        var creditAppliedByCurrency = new Dictionary<string, decimal>(StringComparer.Ordinal);
+
+        foreach (var application in creditApplicationRows)
+        {
+            string currency = Monedas.Normalizar(application.Currency);
+            // Una Reversed deshace una Applied: signo opuesto. Asi el neto refleja lo realmente aplicado.
+            decimal signedAmount = application.Kind == SupplierCreditApplicationKind.Applied
+                ? application.Amount
+                : -application.Amount;
+
+            // La reserva destino tiene servicios del operador (lo valida el apply), pero por si quedo sin
+            // compras vivas, la creamos para que su linea aparezca y la reconciliacion cierre.
+            if (!reservaPurchases.TryGetValue(application.ReservaPublicId, out var accumulator))
+            {
+                accumulator = new ReservaDebtAccumulator(
+                    application.ReservaPublicId, application.NumeroReserva, application.FileName);
+                reservaPurchases[application.ReservaPublicId] = accumulator;
+            }
+
+            accumulator.AddCreditApplied(currency, signedAmount);
+            AccumulateCurrency(creditAppliedByCurrency, currency, signedAmount);
+        }
+
         // --- Materializar el DTO ---
         var dto = new SupplierDebtByReservaDto
         {
@@ -1487,8 +1847,9 @@ public class SupplierService : ISupplierService
         };
 
         // Totales globales de reconciliacion: se acumulan sumando TODAS las lineas por moneda (reservas +
-        // anticipos). Por construccion esto iguala compras totales - pagos totales por moneda, que es el
-        // mismo numero que el calculo global de la cuenta corriente.
+        // anticipos + saldo a favor aplicado). Por construccion esto iguala compras totales - pagos totales por
+        // moneda (caja), que es el mismo numero que el calculo global de la cuenta corriente: una aplicacion de
+        // saldo a favor es NETO-CERO a nivel global (baja la reserva destino y se suma de vuelta en el offset).
         var globalByCurrency = new Dictionary<string, decimal>(StringComparer.Ordinal);
 
         foreach (var accumulator in reservaPurchases.Values)
@@ -1500,20 +1861,35 @@ public class SupplierService : ISupplierService
                 FileName = accumulator.FileName
             };
 
-            foreach (var (currency, line) in accumulator.ToLines())
+            foreach (var line in accumulator.ToLines())
             {
                 reservaLine.Currencies.Add(new SupplierDebtCurrencyLineDto
                 {
-                    Currency = currency,
+                    Currency = line.Currency,
                     ConfirmedPurchases = EconomicRulesHelper.RoundCurrency(line.ConfirmedPurchases),
                     TotalPaid = EconomicRulesHelper.RoundCurrency(line.TotalPaid),
+                    CreditApplied = EconomicRulesHelper.RoundCurrency(line.CreditApplied),
                     Balance = EconomicRulesHelper.RoundCurrency(line.Balance)
                 });
 
-                AccumulateCurrency(globalByCurrency, currency, line.Balance);
+                AccumulateCurrency(globalByCurrency, line.Currency, line.Balance);
             }
 
             dto.Reservas.Add(reservaLine);
+        }
+
+        // Offset: el saldo a favor aplicado bajo la deuda de las reservas destino; lo sumamos de vuelta al
+        // global para que GlobalTotals siga igualando la deuda de CAJA (compras - pagos). El bucket
+        // CreditAppliedFromBalance lo expone explicito para la reconciliacion del front.
+        foreach (var (currency, amount) in creditAppliedByCurrency)
+        {
+            if (amount == 0m) continue;
+            dto.CreditAppliedFromBalance.Add(new SupplierDebtCurrencyAmountDto
+            {
+                Currency = currency,
+                Amount = EconomicRulesHelper.RoundCurrency(amount)
+            });
+            AccumulateCurrency(globalByCurrency, currency, amount);
         }
 
         foreach (var (currency, amount) in advancesByCurrency)
@@ -1580,19 +1956,34 @@ public class SupplierService : ISupplierService
             _paidByCurrency[currency] = current + imputedAmount;
         }
 
-        /// <summary>Devuelve una <see cref="SupplierDebtLine"/> por cada moneda presente en compras o pagos.</summary>
-        public IEnumerable<KeyValuePair<string, SupplierDebtLine>> ToLines()
+        // ADR-041 TANDA 3: saldo a favor del operador aplicado a esta reserva en una moneda (neto). Baja la
+        // deuda exigible sin ser caja, por eso va en su propio bucket (no se mezcla con TotalPaid = caja real).
+        private readonly Dictionary<string, decimal> _creditAppliedByCurrency = new(StringComparer.Ordinal);
+
+        public void AddCreditApplied(string currency, decimal amount)
+        {
+            _creditAppliedByCurrency.TryGetValue(currency, out var current);
+            _creditAppliedByCurrency[currency] = current + amount;
+        }
+
+        /// <summary>
+        /// Devuelve una linea por cada moneda presente en compras, pagos o saldo a favor aplicado. El saldo
+        /// (<c>Balance</c>) ya descuenta el saldo a favor aplicado: <c>compras - pagado - creditoAplicado</c>.
+        /// </summary>
+        public IEnumerable<(string Currency, decimal ConfirmedPurchases, decimal TotalPaid, decimal CreditApplied, decimal Balance)> ToLines()
         {
             var currencies = new HashSet<string>(StringComparer.Ordinal);
             foreach (var key in _purchasesByCurrency.Keys) currencies.Add(key);
             foreach (var key in _paidByCurrency.Keys) currencies.Add(key);
+            foreach (var key in _creditAppliedByCurrency.Keys) currencies.Add(key);
 
             foreach (var currency in currencies)
             {
                 _purchasesByCurrency.TryGetValue(currency, out var purchases);
                 _paidByCurrency.TryGetValue(currency, out var paid);
-                yield return new KeyValuePair<string, SupplierDebtLine>(
-                    currency, new SupplierDebtLine(currency, purchases, paid));
+                _creditAppliedByCurrency.TryGetValue(currency, out var creditApplied);
+                decimal balance = purchases - paid - creditApplied;
+                yield return (currency, purchases, paid, creditApplied, balance);
             }
         }
     }
@@ -1609,6 +2000,7 @@ public class SupplierService : ISupplierService
             {
                 currencyLine.ConfirmedPurchases = 0m;
                 currencyLine.TotalPaid = 0m;
+                currencyLine.CreditApplied = 0m;
                 currencyLine.Balance = 0m;
             }
         }
@@ -1616,6 +2008,11 @@ public class SupplierService : ISupplierService
         foreach (var advance in dto.AdvancesToAccount)
         {
             advance.Amount = 0m;
+        }
+
+        foreach (var creditApplied in dto.CreditAppliedFromBalance)
+        {
+            creditApplied.Amount = 0m;
         }
 
         foreach (var total in dto.GlobalTotals)

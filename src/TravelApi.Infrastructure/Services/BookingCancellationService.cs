@@ -1657,6 +1657,96 @@ public class BookingCancellationService
         return (await MapToDtoAsync(bc.Id, ct))!;
     }
 
+    // =========================================================================
+    // ADR-041 TANDA 4 (2026-06-28): reembolso TARDIO del operador.
+    //
+    // AbandonedByOperator era TERMINAL: si el operador devolvia plata despues del plazo, no habia forma de
+    // registrarla por sistema. Este metodo es la transicion CONTROLADA que reabre el circuito: vuelve la
+    // cancelacion a AwaitingOperatorRefund (con plazo nuevo) para que el cashier registre + impute el ingreso
+    // con el circuito normal de allocation (que genera saldo a favor del CLIENTE). La reserva sigue Cancelled.
+    // =========================================================================
+
+    /// <inheritdoc />
+    public async Task<BookingCancellationDto> ReopenAbandonedForLateRefundAsync(
+        Guid publicId,
+        string reason,
+        string userId,
+        string? userName,
+        CancellationToken ct)
+    {
+        await EnsureFeatureFlagOnAsync(ct);
+
+        if (string.IsNullOrWhiteSpace(reason) || reason.Trim().Length < 10)
+        {
+            throw new ArgumentException(
+                "El motivo de la reapertura por reembolso tardio es obligatorio (minimo 10 caracteres).",
+                nameof(reason));
+        }
+
+        var bc = await _db.BookingCancellations
+            .Include(b => b.Reserva)
+            .FirstOrDefaultAsync(b => b.PublicId == publicId, ct)
+            ?? throw new KeyNotFoundException($"BC {publicId} no encontrada.");
+
+        // Idempotencia: si ya esta abierta (esperando o recibiendo refund) NO hay nada que reabrir. Devolvemos el
+        // estado actual sin re-auditar — un doble click o un retry no debe generar otro evento de reapertura.
+        if (bc.Status == BookingCancellationStatus.AwaitingOperatorRefund
+            || bc.Status == BookingCancellationStatus.ClientCreditApplied)
+        {
+            _logger.LogInformation(
+                "ReopenAbandonedForLateRefundAsync no-op: BC {BcPublicId} ya esta abierta ({Status}).",
+                bc.PublicId, bc.Status);
+            return (await MapToDtoAsync(bc.Id, ct))!;
+        }
+
+        // Solo se reabre desde AbandonedByOperator. Cualquier otro estado (Drafted, Aborted, Closed,
+        // AwaitingFiscalConfirmation, ArcaRejected, ManualReview*) NO es un caso de reembolso tardio.
+        if (bc.Status != BookingCancellationStatus.AbandonedByOperator)
+        {
+            throw new BusinessInvariantViolationException(
+                $"Solo se puede reabrir por reembolso tardio una cancelacion abandonada por el operador " +
+                $"(actual: {bc.Status}).",
+                invariantCode: "INV-093");
+        }
+
+        var settings = await _settings.GetEntityAsync(ct);
+        var previousStatus = bc.Status;
+
+        // Reapertura: vuelve a esperar el reintegro del operador. Plazo NUEVO (ahora + timeout) para que el job de
+        // timeout (ProcessExpiredOperatorRefunds) no la re-abandone esta misma noche por el plazo viejo ya vencido.
+        bc.Status = BookingCancellationStatus.AwaitingOperatorRefund;
+        bc.ClosedAt = null;
+        bc.OperatorRefundDueBy = DateTime.UtcNow.AddDays(settings.OperatorRefundTimeoutDays);
+
+        // La RESERVA NO se toca: el viaje sigue cancelado. El reembolso tardio se vuelve saldo a favor del cliente
+        // recien cuando el cashier lo imputa (AllocateAsync), no por reabrir la cancelacion.
+
+        await _auditService.LogBusinessEventAsync(
+            action: AuditActions.BookingCancellationReopenedForLateRefund,
+            entityName: AuditActions.BookingCancellationEntityName,
+            entityId: bc.Id.ToString(),
+            details: JsonSerializer.Serialize(new
+            {
+                bc.PublicId,
+                reservaPublicId = bc.Reserva?.PublicId,
+                previousStatus = previousStatus.ToString(),
+                newOperatorRefundDueBy = bc.OperatorRefundDueBy,
+                reason = reason.Trim(),
+            }),
+            userId: userId,
+            userName: userName,
+            ct: ct);
+
+        await _db.SaveChangesAsync(ct);
+
+        _logger.LogWarning(
+            "BC {BcPublicId}: REABIERTA por reembolso tardio (AbandonedByOperator -> AwaitingOperatorRefund). " +
+            "Nuevo plazo {DueBy:o}. La reserva sigue Cancelled. ActorUserId={UserId}",
+            bc.PublicId, bc.OperatorRefundDueBy, userId);
+
+        return (await MapToDtoAsync(bc.Id, ct))!;
+    }
+
     public async Task<BookingCancellationDto> ForceArcaConfirmationAsync(
         Guid publicId,
         ForceArcaConfirmationRequest request,

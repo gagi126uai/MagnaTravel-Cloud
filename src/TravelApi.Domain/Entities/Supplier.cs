@@ -32,6 +32,18 @@ public class Supplier : IHasPublicId
 
     public bool IsActive { get; set; } = true;
 
+    /// <summary>
+    /// ADR-041 TANDA 5 (2026-06-27): plazo de pago por defecto (en dias) acordado con este operador.
+    /// OPCIONAL: <c>null</c> = el operador no tiene plazo configurado = comportamiento actual (la deuda
+    /// no muestra vencimiento sugerido).
+    ///
+    /// <para>Seguimos siendo PREPAGO: este plazo NO bloquea nada. Solo sirve para DERIVAR un vencimiento
+    /// sugerido por cada compra/servicio (= fecha de la compra + estos dias), para priorizar pagos y avisar.
+    /// La deuda al operador hoy es derivada de los servicios (no hay "factura del operador" con vencimiento
+    /// propio), por eso el plazo vive en el maestro del proveedor y el vencimiento se deriva por linea.</para>
+    /// </summary>
+    public int? DefaultPaymentTermDays { get; set; }
+
     // Financials (what we owe them) - calculated, not editable on create
     public decimal CurrentBalance { get; set; } = 0;
 

@@ -497,6 +497,10 @@ builder.Services.AddScoped<IPartialCreditNoteApprovalBridge>(sp =>
 // porque los 3 services hablan en una sola direccion: OperatorRefund -> BC + CC.
 builder.Services.AddScoped<IOperatorRefundService, OperatorRefundService>();
 
+// ADR-041 TANDA 4 (2026-06-28): read-model SOLO LECTURA de "reembolsos a cobrar del operador" (ficha del
+// proveedor + bandeja global). Enmascara montos de costo via CostMasking (IHttpContextAccessor + permisos).
+builder.Services.AddScoped<IOperatorRefundReadModelService, OperatorRefundReadModelService>();
+
 // FC1.2.2 (2026-05-18) — ClientCreditService stub minimo en FC1.2.2 (solo
 // CreateEntryAsync). La implementacion completa con WithdrawAsync llega en FC1.2.3.
 builder.Services.AddScoped<IClientCreditService, ClientCreditService>();
@@ -528,7 +532,11 @@ builder.Services.AddScoped<IPartialCreditNoteReconciliationService, PartialCredi
 builder.Services.AddScoped<IApprovalPolicyService, ApprovalPolicyService>();
 builder.Services.AddScoped<IMovementsService, MovementsService>();
 builder.Services.AddScoped<ISupplierService, SupplierService>();
+// ADR-041 TANDA 3 (lado proveedor): saldo a favor CONSUMIBLE con un operador (aplicar/revertir).
+builder.Services.AddScoped<ISupplierCreditService, SupplierCreditService>();
 builder.Services.AddScoped<ICustomerService, CustomerService>();
+// ADR-041 (2026-06-27): cuentas bancarias polimorficas (Agencia / Cliente / Proveedor).
+builder.Services.AddScoped<IBankAccountService, BankAccountService>();
 builder.Services.AddScoped<IPassengerSearchService, PassengerSearchService>();
 builder.Services.AddScoped<IReportService, ReportService>();
 builder.Services.AddScoped<IBnaExchangeRateService, BnaExchangeRateService>();

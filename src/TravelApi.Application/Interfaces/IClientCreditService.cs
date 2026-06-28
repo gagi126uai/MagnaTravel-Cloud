@@ -173,4 +173,60 @@ public interface IClientCreditService
     Task<List<ClientCreditEntryDto>> GetEntriesByBcAsync(
         Guid bookingCancellationPublicId,
         CancellationToken ct);
+
+    // =====================================================================================================
+    // FC4 — flujo de CUENTA DEL CLIENTE (espejo del lado operador SupplierCreditService): ver, APLICAR y
+    // REVERTIR saldo a favor del cliente a otra reserva del mismo cliente, a nivel cliente (FIFO por
+    // antiguedad), sin tener que elegir un bolsillo concreto.
+    // =====================================================================================================
+
+    /// <summary>
+    /// FC4: saldo a favor DISPONIBLE del cliente, agrupado por moneda (bolsillos con <c>RemainingBalance &gt; 0</c>,
+    /// del mas viejo al mas nuevo). NO enmascara montos (es plata del cliente, lado venta/cobranza). Lo consume
+    /// el front para el boton "usar saldo a favor" a nivel cliente.
+    /// </summary>
+    /// <exception cref="KeyNotFoundException">El cliente no existe.</exception>
+    Task<ClientCreditOverviewDto> GetCustomerCreditAsync(int customerId, CancellationToken ct);
+
+    /// <summary>
+    /// FC4: APLICA saldo a favor del cliente a OTRA reserva del MISMO cliente y MISMA moneda. Drena los bolsillos
+    /// por antiguedad (FIFO) hasta cubrir el monto y, por cada bolsillo tocado, crea un Payment "puente" positivo
+    /// (no mueve caja) que baja la deuda exigible de la reserva destino. Atomico (un SaveChanges para los retiros
+    /// + puentes + auditoria, dentro de una transaccion envolvente que tambien recalcula la deuda del destino) y
+    /// con retry por concurrencia (xmin del bolsillo).
+    ///
+    /// <para><b>Topes</b> (es plata): (a) no exceder el saldo a favor disponible del cliente en esa moneda;
+    /// (b) NO cruzar monedas (ARS nunca toca USD: si el destino no debe en la moneda del saldo, se rechaza);
+    /// (c) la reserva destino debe ser del MISMO cliente; (d) no superar la deuda viva del destino en esa moneda
+    /// (no dejar saldo a favor atrapado sobre-pagando la reserva destino). Ademas valida que la reserva destino
+    /// este a cargo del usuario (si no ve todas las cobranzas), igual que el alta de pago normal.</para>
+    /// </summary>
+    /// <exception cref="ArgumentException">Monto &lt;= 0 o moneda no soportada.</exception>
+    /// <exception cref="KeyNotFoundException">Cliente o reserva destino inexistentes.</exception>
+    /// <exception cref="UnauthorizedAccessException">La reserva destino esta a cargo de otro vendedor.</exception>
+    /// <exception cref="TravelApi.Domain.Exceptions.BusinessInvariantViolationException">Algun tope de negocio (pool, moneda, cliente, deuda destino, estado).</exception>
+    Task<ClientCreditApplicationResultDto> ApplyCustomerCreditAsync(
+        int customerId,
+        ApplyClientCreditRequest request,
+        string userId,
+        string? userName,
+        CancellationToken ct);
+
+    /// <summary>
+    /// FC4: REVIERTE una aplicacion de saldo a favor del cliente (un retiro de kind <c>AppliedToNewBooking</c>).
+    /// La plata vuelve al bolsillo (re-incrementa <c>RemainingBalance</c>) y el Payment puente de la reserva
+    /// destino queda soft-deleted (su deuda vuelve al nivel previo). Atomico + retry por concurrencia. El motivo
+    /// (&gt;= 10 chars) se audita. Anti doble-reversa: si el puente ya no esta vivo, se rechaza.
+    /// </summary>
+    /// <param name="applicationPublicId">PublicId del retiro <c>AppliedToNewBooking</c> a revertir.</param>
+    /// <exception cref="ArgumentException">Motivo ausente o demasiado corto.</exception>
+    /// <exception cref="KeyNotFoundException">La aplicacion no existe o no pertenece a este cliente.</exception>
+    /// <exception cref="TravelApi.Domain.Exceptions.BusinessInvariantViolationException">No es una aplicacion, ya revertida, o tope superado.</exception>
+    Task<ClientCreditApplicationResultDto> ReverseCustomerCreditApplicationAsync(
+        int customerId,
+        Guid applicationPublicId,
+        ReverseClientCreditApplicationRequest request,
+        string userId,
+        string? userName,
+        CancellationToken ct);
 }

@@ -22,6 +22,47 @@ namespace TravelApi.Application.Constants;
 /// </summary>
 public static class AuditActions
 {
+    // ===== ADR-041 cuentas bancarias polimorficas =====
+
+    /// <summary>
+    /// ADR-041 (2026-06-27): se creo una cuenta bancaria (de la Agencia, un Cliente o un Proveedor).
+    /// EntityName=BankAccount, EntityId = BankAccount.PublicId. El detail JSON lleva el dueño (tipo+id), la
+    /// moneda, el titular y el CBU ENMASCARADO (solo ultimos 4) — NUNCA el CBU completo en el log.
+    /// </summary>
+    public const string BankAccountCreated = "BankAccountCreated";
+
+    /// <summary>
+    /// ADR-041 (2026-06-27): se edito una cuenta bancaria. EntityName=BankAccount, EntityId = PublicId.
+    /// El detail JSON lleva el dueño y el CBU enmascarado del estado nuevo — NUNCA el CBU completo.
+    /// </summary>
+    public const string BankAccountUpdated = "BankAccountUpdated";
+
+    /// <summary>
+    /// ADR-041 (2026-06-27): se DESACTIVO (soft-delete) una cuenta bancaria. EntityName=BankAccount,
+    /// EntityId = PublicId. El detail JSON lleva el dueño y el CBU enmascarado.
+    /// </summary>
+    public const string BankAccountDeleted = "BankAccountDeleted";
+
+    /// <summary>
+    /// ADR-041 (2026-06-27): alguien ABRIO el detalle de una cuenta bancaria, accediendo al CBU/alias COMPLETOS
+    /// (desenmascarados). Es la unica LECTURA que se audita (la lista va enmascarada). Importa para el producto
+    /// multi-agencia: deja rastro de quien vio un destino de transferencia. EntityName=BankAccount, EntityId =
+    /// PublicId. El detail JSON lleva el dueño y el CBU/alias ENMASCARADOS (no se duplica el dato en claro).
+    /// </summary>
+    public const string BankAccountDetailViewed = "BankAccountDetailViewed";
+
+    /// <summary>
+    /// ADR-041 TANDA 6 (2026-06-28): una cuenta bancaria quedo como PRINCIPAL del dueño para su moneda (a donde
+    /// transferir por defecto). Accion SENSIBLE: cambia el destino de pago sugerido. Se registra cuando una cuenta
+    /// PASA a ser principal (alta/edicion con IsPrimary=true, endpoint set-primary, o auto-principal de la primera
+    /// cuenta del dueño+moneda). EntityName=BankAccount, EntityId=PublicId. El detail lleva dueño, moneda y el CBU
+    /// ENMASCARADO — NUNCA el CBU completo.
+    /// </summary>
+    public const string BankAccountSetPrimary = "BankAccountSetPrimary";
+
+    /// <summary>ADR-041: entityName para los eventos de auditoria sobre una cuenta bancaria.</summary>
+    public const string BankAccountEntityName = "BankAccount";
+
     // ===== ADR-040 cuenta corriente del cliente =====
 
     /// <summary>
@@ -162,6 +203,17 @@ public static class AuditActions
     public const string ClientCreditAppliedToBooking = "ClientCreditAppliedToBooking";
 
     /// <summary>
+    /// FC4 (saldo a favor del cliente aplicado por el flujo de CUENTA DEL CLIENTE, espejo del lado operador):
+    /// se APLICO saldo a favor del cliente a OTRA reserva del mismo cliente y misma moneda desde el endpoint
+    /// <c>POST /api/customers/{id}/credit/apply</c>. Drena el/los bolsillos (FIFO) y baja la deuda exigible de
+    /// la reserva destino via el Payment puente, SIN mover caja. Se emite UN evento por bolsillo drenado, con
+    /// el detail JSON: retiro, bolsillo, cliente, moneda, monto y reserva destino — NUNCA datos sensibles.
+    /// Difiere de <see cref="ClientCreditAppliedToBooking"/> (que es el audit del LADO DESTINO del flujo viejo
+    /// por-bolsillo): este es el audit del flujo nuevo a nivel cliente, staged en la misma transaccion.
+    /// </summary>
+    public const string ClientCreditApplied = "ClientCreditApplied";
+
+    /// <summary>
     /// FC4 reversa (2026-06-18): se DESHIZO la aplicacion de un saldo a favor a otra reserva (el caso inverso de
     /// <see cref="ClientCreditAppliedToBooking"/>). El saldo vuelve al bolsillo del cliente (se RE-INCREMENTA el
     /// <c>RemainingBalance</c> del <see cref="ClientCreditEntry"/>) y el <see cref="Payment"/> puente positivo de
@@ -219,6 +271,50 @@ public static class AuditActions
     /// </summary>
     public const string BookingCancellationAbandonedByOperator = "BookingCancellationAbandonedByOperator";
 
+    /// <summary>
+    /// ADR-041 TANDA 4 (2026-06-28): se REABRIO una cancelacion <c>AbandonedByOperator</c> para registrar un
+    /// REEMBOLSO TARDIO del operador (el operador devolvio plata DESPUES de que el plazo venció y la cuenta se
+    /// dio por perdida). La cancelacion vuelve a <c>AwaitingOperatorRefund</c> con un nuevo plazo; la RESERVA NO
+    /// se resucita (el viaje sigue cancelado), el reembolso tardio solo genera saldo a favor del cliente cuando se
+    /// imputa (circuito normal de allocation). El detail JSON lleva la cancelacion, la reserva, el estado previo,
+    /// el nuevo plazo y el motivo — NUNCA datos sensibles. Disparado por caja (mismo permiso que registrar el
+    /// reembolso). Es la marca durable de que ese reembolso fue "tardio".
+    /// </summary>
+    public const string BookingCancellationReopenedForLateRefund = "BookingCancellationReopenedForLateRefund";
+
+    // ===== Modulo SupplierCredit (ADR-041 TANDA 3, lado proveedor) =====
+
+    /// <summary>
+    /// ADR-041 TANDA 3 (2026-06-27): nacio (o se agrando) un saldo a favor consumible con un operador
+    /// porque un pago al operador genero sobrepago en una moneda (<see cref="SupplierCreditEntryEntityName"/>).
+    /// El detail JSON lleva el operador, la moneda, el monto acreditado y el pago de origen — NUNCA datos
+    /// sensibles. Disparado dentro de la misma transaccion que el recalculo de la deuda del proveedor.
+    /// </summary>
+    public const string SupplierCreditCreated = "SupplierCreditCreated";
+
+    /// <summary>
+    /// ADR-041 TANDA 3 (2026-06-27): se REDUJO/destruyo saldo a favor con un operador porque el pago de origen se
+    /// edito o borro y el sobrepago derivado bajo. El reconciler drena el credito NO aplicado (en lockstep
+    /// CreditedAmount/RemainingBalance). El detail JSON lleva el operador, la moneda, el monto drenado y el pago
+    /// de origen. Si el drenaje requeriria tocar credito ya aplicado a otra reserva, la operacion se bloquea (no
+    /// hay drenaje). Cierra el agujero de que solo se auditaba la creacion del saldo a favor, no su reduccion.
+    /// </summary>
+    public const string SupplierCreditDrained = "SupplierCreditDrained";
+
+    /// <summary>
+    /// ADR-041 TANDA 3 (2026-06-27): se APLICO saldo a favor del operador a OTRA reserva del mismo operador y
+    /// misma moneda (drena el pool, baja la deuda-por-reserva del destino, NETO-CERO sobre el Balance agregado).
+    /// El detail JSON lleva el operador, la moneda, el monto, la reserva destino y el bolsillo consumido.
+    /// </summary>
+    public const string SupplierCreditApplied = "SupplierCreditApplied";
+
+    /// <summary>
+    /// ADR-041 TANDA 3 (2026-06-27): se REVIRTIO una aplicacion de saldo a favor del operador (contra-fila
+    /// inmutable): repone el pool y deshace la imputacion en la reserva destino. El detail JSON lleva la
+    /// aplicacion original, el monto repuesto, la reserva destino y el motivo — NUNCA datos sensibles.
+    /// </summary>
+    public const string SupplierCreditApplicationReversed = "SupplierCreditApplicationReversed";
+
     // ===== Entity names (helpers) =====
 
     /// <summary>
@@ -239,6 +335,12 @@ public static class AuditActions
 
     /// <summary>FC1.2.3: entityName para eventos sobre el saldo del cliente (entry).</summary>
     public const string ClientCreditEntryEntityName = "ClientCreditEntry";
+
+    /// <summary>ADR-041 TANDA 3: entityName para eventos sobre el saldo a favor con un operador (entry).</summary>
+    public const string SupplierCreditEntryEntityName = "SupplierCreditEntry";
+
+    /// <summary>ADR-041 TANDA 3: entityName para eventos sobre la aplicacion/reversa de saldo a favor del operador.</summary>
+    public const string SupplierCreditApplicationEntityName = "SupplierCreditApplication";
 
     // ===== Modulo NC parcial Hotel (FC1.3.3) =====
 

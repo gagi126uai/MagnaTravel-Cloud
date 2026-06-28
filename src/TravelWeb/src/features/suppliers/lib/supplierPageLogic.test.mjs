@@ -1,0 +1,291 @@
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import {
+    resolverMonedaPrincipalProveedor,
+    calcularEquivalenteProveedor,
+    construirPayloadPagoProveedor,
+} from "./supplierPageLogic.js";
+
+// ─── resolverMonedaPrincipalProveedor ────────────────────────────────────────
+
+describe("resolverMonedaPrincipalProveedor", () => {
+    it("retorna ARS cuando el array esta vacio", () => {
+        assert.equal(resolverMonedaPrincipalProveedor([]), "ARS");
+    });
+
+    it("retorna ARS cuando el argumento es null", () => {
+        assert.equal(resolverMonedaPrincipalProveedor(null), "ARS");
+    });
+
+    it("retorna ARS cuando el argumento es undefined", () => {
+        assert.equal(resolverMonedaPrincipalProveedor(undefined), "ARS");
+    });
+
+    it("retorna la primera moneda con saldo positivo", () => {
+        const balances = [
+            { currency: "USD", balance: 500 },
+            { currency: "ARS", balance: 10000 },
+        ];
+        assert.equal(resolverMonedaPrincipalProveedor(balances), "USD");
+    });
+
+    it("retorna ARS primero si tiene deuda aunque USD tambien tenga", () => {
+        const balances = [
+            { currency: "ARS", balance: 5000 },
+            { currency: "USD", balance: 300 },
+        ];
+        assert.equal(resolverMonedaPrincipalProveedor(balances), "ARS");
+    });
+
+    it("retorna la primera de la lista cuando todos estan en cero", () => {
+        const balances = [
+            { currency: "ARS", balance: 0 },
+            { currency: "USD", balance: 0 },
+        ];
+        assert.equal(resolverMonedaPrincipalProveedor(balances), "ARS");
+    });
+
+    it("retorna la primera de la lista cuando todos estan a favor (balance negativo)", () => {
+        const balances = [
+            { currency: "ARS", balance: -100 },
+            { currency: "USD", balance: -200 },
+        ];
+        assert.equal(resolverMonedaPrincipalProveedor(balances), "ARS");
+    });
+
+    it("funciona con una sola moneda", () => {
+        assert.equal(
+            resolverMonedaPrincipalProveedor([{ currency: "USD", balance: 300 }]),
+            "USD"
+        );
+    });
+
+    it("ignora monedas con balance undefined o null, prefiere las con deuda real", () => {
+        const balances = [
+            { currency: "ARS", balance: null },
+            { currency: "USD", balance: 500 },
+        ];
+        // null no es > 0, así que USD gana (tiene 500)
+        assert.equal(resolverMonedaPrincipalProveedor(balances), "USD");
+    });
+});
+
+// ─── calcularEquivalenteProveedor ────────────────────────────────────────────
+
+describe("calcularEquivalenteProveedor", () => {
+    it("retorna null cuando las monedas son iguales (ARS → ARS)", () => {
+        assert.equal(calcularEquivalenteProveedor("1000", "1200", "ARS", "ARS"), null);
+    });
+
+    it("retorna null cuando las monedas son iguales (USD → USD)", () => {
+        assert.equal(calcularEquivalenteProveedor("500", "1200", "USD", "USD"), null);
+    });
+
+    it("retorna null cuando el TC esta vacio", () => {
+        assert.equal(calcularEquivalenteProveedor("1000", "", "ARS", "USD"), null);
+    });
+
+    it("retorna null cuando el monto esta vacio", () => {
+        assert.equal(calcularEquivalenteProveedor("", "1200", "ARS", "USD"), null);
+    });
+
+    it("retorna null cuando el TC es cero", () => {
+        assert.equal(calcularEquivalenteProveedor("1000", "0", "ARS", "USD"), null);
+    });
+
+    it("retorna null cuando el TC es negativo", () => {
+        assert.equal(calcularEquivalenteProveedor("1000", "-1200", "ARS", "USD"), null);
+    });
+
+    it("retorna null cuando monedaCobro es undefined", () => {
+        assert.equal(calcularEquivalenteProveedor("1000", "1200", undefined, "USD"), null);
+    });
+
+    it("ARS → USD: divide por el TC (1 USD = $1200, pago $1200 → cancelo US$1)", () => {
+        assert.equal(calcularEquivalenteProveedor("1200", "1200", "ARS", "USD"), 1);
+    });
+
+    it("ARS → USD: pago $2400 con TC 1200 → cancelo US$2", () => {
+        assert.equal(calcularEquivalenteProveedor("2400", "1200", "ARS", "USD"), 2);
+    });
+
+    it("USD → ARS: multiplica por el TC (1 USD = $1200, pago US$1 → cancelo $1200)", () => {
+        assert.equal(calcularEquivalenteProveedor("1", "1200", "USD", "ARS"), 1200);
+    });
+
+    it("USD → ARS: pago US$2.5 con TC 1000 → cancelo $2500", () => {
+        assert.equal(calcularEquivalenteProveedor("2.5", "1000", "USD", "ARS"), 2500);
+    });
+
+    it("retorna null para combinaciones de moneda no soportadas", () => {
+        // EUR/USD no tiene formula definida
+        assert.equal(calcularEquivalenteProveedor("100", "1.1", "EUR", "USD"), null);
+    });
+});
+
+// ─── construirPayloadPagoProveedor ───────────────────────────────────────────
+
+describe("construirPayloadPagoProveedor", () => {
+    // Datos base reutilizables para la mayoria de los tests
+    const camposBase = {
+        monto: "1000",
+        monedaPago: "ARS",
+        metodo: "Transfer",
+        fecha: "2026-06-27",
+        referencia: "",
+        notas: "",
+        reservaId: null,
+        serviceRecordKind: null,
+        servicePublicId: null,
+        esCruzado: false,
+        saldoImputado: "ARS",
+        tipoCambio: "",
+        fuenteTC: 5,
+        fechaTC: "2026-06-27",
+        montoEquivalente: null,
+    };
+
+    it("pago simple: NO incluye ningun campo de tipo de cambio", () => {
+        const payload = construirPayloadPagoProveedor(camposBase);
+        // Estos campos NO deben estar en el payload cuando esCruzado=false.
+        // Si se enviaran con valores null/undefined el backend los rechaza.
+        assert.equal("imputedCurrency" in payload, false);
+        assert.equal("exchangeRate" in payload, false);
+        assert.equal("exchangeRateSource" in payload, false);
+        assert.equal("exchangeRateAt" in payload, false);
+        assert.equal("imputedAmount" in payload, false);
+    });
+
+    it("pago simple: incluye amount, currency, method y paidAt correctamente tipados", () => {
+        const payload = construirPayloadPagoProveedor(camposBase);
+        assert.equal(payload.amount, 1000);
+        assert.equal(typeof payload.amount, "number");
+        assert.equal(payload.currency, "ARS");
+        assert.equal(payload.method, "Transfer");
+        // paidAt debe ser ISO string (incluye T y Z)
+        assert.ok(payload.paidAt.includes("T"), `paidAt debe ser ISO: "${payload.paidAt}"`);
+    });
+
+    it("referencia vacia se convierte a null (no manda string vacio al backend)", () => {
+        const payload = construirPayloadPagoProveedor({ ...camposBase, referencia: "  " });
+        assert.equal(payload.reference, null);
+    });
+
+    it("notas vacias se convierten a null", () => {
+        const payload = construirPayloadPagoProveedor({ ...camposBase, notas: "  " });
+        assert.equal(payload.notes, null);
+    });
+
+    it("referencia con contenido se manda como string limpio", () => {
+        const payload = construirPayloadPagoProveedor({ ...camposBase, referencia: "  TRF-123  " });
+        assert.equal(payload.reference, "TRF-123");
+    });
+
+    it("pago simple con reserva y servicio imputados", () => {
+        const payload = construirPayloadPagoProveedor({
+            ...camposBase,
+            reservaId: "uuid-reserva-123",
+            serviceRecordKind: "hotel",
+            servicePublicId: "uuid-service-456",
+        });
+        assert.equal(payload.reservaId, "uuid-reserva-123");
+        assert.equal(payload.serviceRecordKind, "hotel");
+        assert.equal(payload.servicePublicId, "uuid-service-456");
+    });
+
+    it("pago simple sin imputacion: reservaId/serviceRecordKind/servicePublicId son null", () => {
+        const payload = construirPayloadPagoProveedor(camposBase);
+        assert.equal(payload.reservaId, null);
+        assert.equal(payload.serviceRecordKind, null);
+        assert.equal(payload.servicePublicId, null);
+    });
+
+    it("pago cruzado ARS→USD: SÍ incluye los 5 campos de tipo de cambio", () => {
+        const payload = construirPayloadPagoProveedor({
+            ...camposBase,
+            monedaPago: "ARS",
+            esCruzado: true,
+            saldoImputado: "USD",
+            tipoCambio: "1200",
+            fuenteTC: 5,
+            fechaTC: "2026-06-27",
+            montoEquivalente: 0.833,
+        });
+        // Los 5 campos deben estar presentes
+        assert.equal("imputedCurrency" in payload, true);
+        assert.equal("exchangeRate" in payload, true);
+        assert.equal("exchangeRateSource" in payload, true);
+        assert.equal("exchangeRateAt" in payload, true);
+        assert.equal("imputedAmount" in payload, true);
+        // Valores correctos
+        assert.equal(payload.imputedCurrency, "USD");
+        assert.equal(payload.exchangeRate, 1200);
+        assert.equal(payload.imputedAmount, 0.833);
+    });
+
+    it("pago cruzado: exchangeRateSource es siempre INT aunque el <select> lo devuelva como string", () => {
+        // El <select> HTML devuelve strings; el backend espera un int para el enum ExchangeRateSource.
+        // construirPayloadPagoProveedor debe convertir con Number().
+        const payload = construirPayloadPagoProveedor({
+            ...camposBase,
+            esCruzado: true,
+            saldoImputado: "USD",
+            tipoCambio: "1000",
+            fuenteTC: "6", // string que viene del <select>
+            fechaTC: "2026-06-27",
+            montoEquivalente: 0.5,
+        });
+        assert.strictEqual(typeof payload.exchangeRateSource, "number");
+        assert.strictEqual(payload.exchangeRateSource, 6);
+    });
+
+    it("pago cruzado: exchangeRateAt es ISO string de fechaTC", () => {
+        const payload = construirPayloadPagoProveedor({
+            ...camposBase,
+            esCruzado: true,
+            saldoImputado: "USD",
+            tipoCambio: "1200",
+            fuenteTC: 1,
+            fechaTC: "2026-06-15",
+            montoEquivalente: 1,
+        });
+        assert.ok(
+            payload.exchangeRateAt.startsWith("2026-06-15"),
+            `exchangeRateAt debe arrancar con la fecha ingresada: "${payload.exchangeRateAt}"`
+        );
+    });
+
+    it("pago cruzado USD→ARS: imputedCurrency es ARS", () => {
+        const payload = construirPayloadPagoProveedor({
+            ...camposBase,
+            monedaPago: "USD",
+            esCruzado: true,
+            saldoImputado: "ARS",
+            tipoCambio: "1200",
+            fuenteTC: 5,
+            fechaTC: "2026-06-27",
+            montoEquivalente: 1200,
+        });
+        assert.equal(payload.imputedCurrency, "ARS");
+        assert.equal(payload.currency, "USD");
+    });
+
+    it("pago cruzado: tambien incluye los campos base (amount, currency, method, etc.)", () => {
+        const payload = construirPayloadPagoProveedor({
+            ...camposBase,
+            monto: "500",
+            monedaPago: "ARS",
+            metodo: "Cash",
+            esCruzado: true,
+            saldoImputado: "USD",
+            tipoCambio: "1000",
+            fuenteTC: 5,
+            fechaTC: "2026-06-27",
+            montoEquivalente: 0.5,
+        });
+        // Los campos base siguen presentes incluso en pago cruzado
+        assert.equal(payload.amount, 500);
+        assert.equal(payload.currency, "ARS");
+        assert.equal(payload.method, "Cash");
+    });
+});

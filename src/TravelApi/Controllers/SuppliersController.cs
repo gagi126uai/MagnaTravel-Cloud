@@ -1,10 +1,12 @@
 #pragma warning disable CS8601, CS8602, CS8604, CS8618
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Controllers;
@@ -20,11 +22,19 @@ public class SuppliersController : ControllerBase
 {
     private readonly ISupplierService _supplierService;
     private readonly IEntityReferenceResolver _entityReferenceResolver;
+    private readonly ISupplierCreditService _supplierCreditService;
+    private readonly IOperatorRefundReadModelService _operatorRefundReadModel;
 
-    public SuppliersController(ISupplierService supplierService, IEntityReferenceResolver entityReferenceResolver)
+    public SuppliersController(
+        ISupplierService supplierService,
+        IEntityReferenceResolver entityReferenceResolver,
+        ISupplierCreditService supplierCreditService,
+        IOperatorRefundReadModelService operatorRefundReadModel)
     {
         _supplierService = supplierService;
         _entityReferenceResolver = entityReferenceResolver;
+        _supplierCreditService = supplierCreditService;
+        _operatorRefundReadModel = operatorRefundReadModel;
     }
 
     [HttpGet]
@@ -179,6 +189,53 @@ public class SuppliersController : ControllerBase
         }
     }
 
+    // TANDA 1 (cuenta corriente del proveedor): EXTRACTO de la Cuenta por Pagar como libro mayor por moneda
+    // (cargos = compras confirmadas, abonos = pagos al operador, saldo corriente). Mismo permiso que el resto
+    // de la cuenta del proveedor (proveedores.view): la estructura es visible con ese permiso; los MONTOS los
+    // enmascara el servicio si falta cobranzas.see_cost (read-only, sin migracion).
+    [HttpGet("{publicIdOrLegacyId}/account/statement")]
+    [RequirePermission(Permissions.ProveedoresView)]
+    public async Task<ActionResult<SupplierAccountStatementDto>> GetSupplierAccountStatement(
+        string publicIdOrLegacyId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
+            return Ok(await _supplierService.GetSupplierAccountStatementAsync(id, cancellationToken));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
+    // ADR-041 TANDA 4 (2026-06-28): "reembolsos a cobrar" de ESTE operador = sus cancelaciones esperando (o ya
+    // dadas por perdidas esperando) el reintegro, con semaforo y estimado por moneda.
+    //
+    // SEGURIDAD (B1, review backend+seguridad 2026-06-28): se gatea con tesoreria.supplier_payments, NO con
+    // proveedores.view. Motivo: el read-model puebla el NOMBRE del cliente que origino cada anulacion, y
+    // proveedores.view lo tiene el rol Vendedor -> con ese permiso un vendedor veria clientes de otros vendedores
+    // (fuga horizontal). tesoreria.supplier_payments es el permiso de la pata de tesoreria del proveedor
+    // (account/payments, y la bandeja global), coherente con que esto es informacion de cobranza al operador. Los
+    // MONTOS ademas se enmascaran si falta cobranzas.see_cost. SOLO LECTURA, sin migracion.
+    [HttpGet("{publicIdOrLegacyId}/operator-refunds/pending")]
+    [RequirePermission(Permissions.TesoreriaSupplierPayments)]
+    public async Task<ActionResult<IReadOnlyList<OperatorRefundPendingItemDto>>> GetSupplierPendingOperatorRefunds(
+        string publicIdOrLegacyId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
+            return Ok(await _operatorRefundReadModel.GetSupplierPendingRefundsAsync(id, cancellationToken));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
     [HttpGet("{publicIdOrLegacyId}/account/payments")]
     [RequirePermission(Permissions.TesoreriaSupplierPayments)]
     public async Task<ActionResult<PagedResponse<SupplierPaymentDto>>> GetSupplierAccountPayments(
@@ -276,6 +333,96 @@ public class SuppliersController : ControllerBase
         return Ok(payments);
     }
 
+    // ===================================================================================================
+    // ADR-041 TANDA 3 (lado proveedor): saldo a favor CONSUMIBLE con un operador. Mismo permiso de
+    // tesoreria que los pagos (es plata del lado costo/proveedor). Los montos respetan el masking see_cost
+    // dentro del service. Aplicar/revertir son operaciones que mueven la imputacion del saldo a favor.
+    // ===================================================================================================
+
+    /// <summary>Saldo a favor disponible con el operador, agrupado por moneda (bolsillos con saldo &gt; 0).</summary>
+    [HttpGet("{publicIdOrLegacyId}/credit")]
+    [RequirePermission(Permissions.TesoreriaSupplierPayments)]
+    public async Task<ActionResult<SupplierCreditOverviewDto>> GetSupplierCredit(
+        string publicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
+            return Ok(await _supplierCreditService.GetSupplierCreditAsync(id, cancellationToken));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
+    /// <summary>Aplica saldo a favor del operador a OTRA reserva del mismo operador y misma moneda.</summary>
+    [HttpPost("{publicIdOrLegacyId}/credit/apply")]
+    [RequirePermission(Permissions.TesoreriaSupplierPayments)]
+    public async Task<ActionResult<SupplierCreditApplicationResultDto>> ApplySupplierCredit(
+        string publicIdOrLegacyId, [FromBody] ApplySupplierCreditRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
+            var (userId, userName) = ResolveActor();
+            var result = await _supplierCreditService.ApplyCreditAsync(id, request, userId, userName, cancellationToken);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (BusinessInvariantViolationException ex)
+        {
+            // Tope superado / moneda cruzada / reserva de otro operador: conflicto de negocio (409).
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>Revierte una aplicacion de saldo a favor del operador (repone el pool y deshace la imputacion).</summary>
+    [HttpPost("{publicIdOrLegacyId}/credit/applications/{applicationPublicId:guid}/reverse")]
+    [RequirePermission(Permissions.TesoreriaSupplierPayments)]
+    public async Task<ActionResult<SupplierCreditApplicationResultDto>> ReverseSupplierCreditApplication(
+        string publicIdOrLegacyId,
+        Guid applicationPublicId,
+        [FromBody] ReverseSupplierCreditApplicationRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
+            var (userId, userName) = ResolveActor();
+            var result = await _supplierCreditService.ReverseApplicationAsync(
+                id, applicationPublicId, request, userId, userName, cancellationToken);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (BusinessInvariantViolationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>Actor actual (userId, userName) para auditoria de las operaciones de saldo a favor del operador.</summary>
+    private (string UserId, string? UserName) ResolveActor()
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
+        var userName = User.FindFirst("FullName")?.Value ?? User.FindFirst(ClaimTypes.Name)?.Value;
+        return (userId, userName);
+    }
+
     private static object ToSupplierResponse(Supplier supplier) => new
     {
         supplier.PublicId,
@@ -287,6 +434,8 @@ public class SuppliersController : ControllerBase
         supplier.TaxCondition,
         supplier.Address,
         supplier.IsActive,
+        // ADR-041 TANDA 5: plazo de pago por defecto (dias) acordado con el operador. null = sin plazo.
+        supplier.DefaultPaymentTermDays,
         supplier.CurrentBalance,
         supplier.CreatedAt
     };
@@ -300,7 +449,9 @@ public class SuppliersController : ControllerBase
         TaxId = request.TaxId,
         TaxCondition = request.TaxCondition,
         Address = request.Address,
-        IsActive = request.IsActive
+        IsActive = request.IsActive,
+        // ADR-041 TANDA 5: plazo de pago por defecto. La validacion (>= 0) la hace el servicio.
+        DefaultPaymentTermDays = request.DefaultPaymentTermDays
     };
 }
 
@@ -312,4 +463,6 @@ public record SupplierUpsertRequest(
     string? TaxId,
     string? TaxCondition,
     string? Address,
-    bool IsActive = true);
+    bool IsActive = true,
+    // ADR-041 TANDA 5: plazo de pago por defecto en dias (opcional). null = sin plazo = comportamiento actual.
+    int? DefaultPaymentTermDays = null);

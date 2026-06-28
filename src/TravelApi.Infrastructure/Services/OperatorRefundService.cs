@@ -633,6 +633,43 @@ public class OperatorRefundService : IOperatorRefundService
     }
 
     /// <summary>
+    /// ADR-041 T4 (MENOR 1, review 2026-06-28): INVERSA de <see cref="DistributeReceivedRefundToOperatorLines"/>.
+    /// Cuando se ANULA una allocation, hay que sacar el neto anulado de las MISMAS lineas del operador a las que
+    /// se imputo al recibir, sino el estimado por linea del read-model "esperando reembolso" queda subestimado
+    /// (la linea figura con plata recibida que en realidad se anulo). Drenamos en orden INVERSO al de la
+    /// imputacion (Distribute llena de la primera a la ultima y la ultima absorbe el excedente; al revertir
+    /// sacamos primero de la ultima) y recomputamos el <see cref="BookingCancellationLineRefundStatus"/> de cada
+    /// linea tocada. Nunca deja una linea en negativo (clamp por linea). El total drenado == lo recibido por el
+    /// operador en esas lineas, asi que el AGREGADO por operador que usa el read-model queda exacto.
+    /// </summary>
+    // internal static (sin EF) para poder testear la simetria como funcion pura desde TravelApi.Tests.
+    internal static void RemoveReceivedRefundFromOperatorLines(
+        List<BookingCancellationLine> operatorLines,
+        decimal netRemoved)
+    {
+        if (operatorLines.Count == 0) return;
+
+        decimal remaining = netRemoved;
+        for (int i = operatorLines.Count - 1; i >= 0 && remaining > 0m; i--)
+        {
+            var line = operatorLines[i];
+
+            decimal take = Math.Min(line.ReceivedRefundAmount, remaining);
+            line.ReceivedRefundAmount -= take;
+            remaining -= take;
+
+            // Recompute del estado tras restar: si seguia cubriendo el cap, Settled; si quedo con algo, pendiente;
+            // si quedo en cero, vuelve a None (la linea ya no recibio nada del operador).
+            if (line.RefundCap > 0m && line.ReceivedRefundAmount >= line.RefundCap)
+                line.RefundStatus = BookingCancellationLineRefundStatus.Settled;
+            else if (line.ReceivedRefundAmount > 0m)
+                line.RefundStatus = BookingCancellationLineRefundStatus.PendingOperatorRefund;
+            else
+                line.RefundStatus = BookingCancellationLineRefundStatus.None;
+        }
+    }
+
+    /// <summary>
     /// Valida la matriz Agencia × Operador × Deducciones segun el snapshot
     /// fiscal capturado al confirmar el BC. Las reglas vivien aca porque son
     /// runtime (no se pueden expresar como CHECK SQL sin acoplar dos tablas).
@@ -743,7 +780,7 @@ public class OperatorRefundService : IOperatorRefundService
         //    saldo del cliente antes de permitir void).
         var allocation = await _db.OperatorRefundAllocations
             .Include(a => a.Refund)
-            .Include(a => a.BookingCancellation)
+            .Include(a => a.BookingCancellation).ThenInclude(b => b.Lines) // MENOR 1: revertir la imputacion por linea
             .Include(a => a.Deductions)
             .FirstOrDefaultAsync(a => a.PublicId == allocationPublicId, ct)
             ?? throw new KeyNotFoundException(
@@ -800,6 +837,16 @@ public class OperatorRefundService : IOperatorRefundService
 
         // 6) Ajustar el denormalizado del BC.
         allocation.BookingCancellation.ReceivedRefundAmount -= allocation.NetAmount;
+
+        // 6-bis) MENOR 1 (review 2026-06-28): simetria con el allocate. Al imputar,
+        //        DistributeReceivedRefundToOperatorLines sumo el neto a las lineas del operador; al anular hay que
+        //        restarlo de las MISMAS lineas (mismo set: las del SupplierId del refund), sino el estimado por
+        //        linea del read-model "esperando reembolso" queda subestimado. Mismo criterio de set que el allocate
+        //        (todas las lineas del operador, sin filtrar por moneda — Distribute tampoco filtra).
+        var operatorLines = allocation.BookingCancellation.Lines
+            .Where(l => l.SupplierId == allocation.Refund.SupplierId)
+            .ToList();
+        RemoveReceivedRefundFromOperatorLines(operatorLines, allocation.NetAmount);
 
         // 7) Notificar al BC service para que evalue revertir el Status si
         //    no quedan mas allocations activas.

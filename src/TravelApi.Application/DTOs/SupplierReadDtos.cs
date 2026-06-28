@@ -18,7 +18,40 @@ public class SupplierListItemDto
 public class SupplierAccountOverviewDto
 {
     public SupplierAccountSupplierDto Supplier { get; set; } = new();
+
+    /// <summary>
+    /// DEPRECADO para los montos (N2, TANDA 1): resumen ESCALAR historico. <c>TotalPurchases</c>,
+    /// <c>TotalPaid</c> y <c>Balance</c> SUMAN ARS+USD en un solo numero (mezcla monedas) y SOLO son fieles si
+    /// el proveedor opera en UNA sola moneda — NO usar para mostrar el saldo. La fuente CORRECTA del saldo es
+    /// <see cref="BalancesByCurrency"/> (separado por moneda). Lo unico que sigue valido aca son los
+    /// CONTADORES (<c>ServiceCount</c>/<c>PaymentCount</c>). Se conserva por compatibilidad del contrato.
+    /// </summary>
     public SupplierAccountSummaryDto Summary { get; set; } = new();
+
+    /// <summary>
+    /// Saldo de la Cuenta por Pagar SEPARADO por moneda, leido tal cual de la proyeccion materializada
+    /// <c>SupplierBalanceByCurrency</c> (compras confirmadas - pagado, por moneda). Es la unica fuente
+    /// correcta del saldo: la plata NUNCA cruza ARS/USD, y el sobrepago de una moneda no compensa la deuda de
+    /// otra. <c>Balance</c> positivo = la agencia le debe al operador en esa moneda; negativo = saldo a favor
+    /// (le pago de mas). Vacio si el proveedor no tiene movimientos. Los montos respetan el masking see_cost
+    /// igual que el resto de la cuenta.
+    /// </summary>
+    public List<SupplierAccountBalanceByCurrencyDto> BalancesByCurrency { get; set; } = new();
+}
+
+/// <summary>
+/// Saldo de la Cuenta por Pagar de UNA moneda, proyectado desde <c>SupplierBalanceByCurrency</c>.
+/// Espejo del DTO del lado cliente (saldo por moneda). NO se recalcula: se lee de la proyeccion ya
+/// materializada por el persister de la deuda.
+/// </summary>
+public class SupplierAccountBalanceByCurrencyDto
+{
+    public string Currency { get; set; } = "ARS";
+    public decimal ConfirmedPurchases { get; set; }
+    public decimal TotalPaid { get; set; }
+
+    /// <summary>Saldo = compras confirmadas - pagado en ESTA moneda. Positivo = deuda; negativo = saldo a favor.</summary>
+    public decimal Balance { get; set; }
 }
 
 public class SupplierAccountSupplierDto
@@ -62,6 +95,15 @@ public class SupplierAccountServiceListItemDto
     public string? Currency { get; set; }
 
     public DateTime Date { get; set; }
+
+    /// <summary>
+    /// ADR-041 TANDA 5 (2026-06-27): vencimiento SUGERIDO de la deuda de esta compra/servicio con el operador.
+    /// = <see cref="Date"/> + <c>Supplier.DefaultPaymentTermDays</c>. <c>null</c> cuando el operador no tiene
+    /// plazo configurado (comportamiento actual). Es INFORMATIVO: seguimos prepago, NO bloquea nada; el front
+    /// pinta los chips "por vencer"/"vencida" a partir de esta fecha.
+    /// </summary>
+    public DateTime? SuggestedDueDate { get; set; }
+
     public string Status { get; set; } = string.Empty;
     public string? NumeroReserva { get; set; }
     public string? FileName { get; set; }
@@ -97,9 +139,18 @@ public class SupplierDebtByReservaDto
     public List<SupplierDebtCurrencyAmountDto> AdvancesToAccount { get; set; } = new();
 
     /// <summary>
+    /// ADR-041 TANDA 3: saldo a favor del operador APLICADO a reservas (neto de reversas), por moneda. Es la
+    /// cara consumida del balance negativo: baja la deuda-por-reserva del destino SIN mover caja. Se expone
+    /// como bucket aparte para que la reconciliacion cierre: por moneda,
+    /// <c>GlobalTotals == Σ saldos por reserva + anticipos a cuenta + saldo a favor aplicado</c>. Lista vacia
+    /// si el operador no tiene saldo a favor aplicado en esa moneda (no rompe lectores previos).
+    /// </summary>
+    public List<SupplierDebtCurrencyAmountDto> CreditAppliedFromBalance { get; set; } = new();
+
+    /// <summary>
     /// Total global de la deuda por moneda (el mismo numero que la cuenta corriente global ya calculaba).
     /// Sirve de control de reconciliacion: por moneda, debe igualar la suma de los saldos por reserva mas
-    /// los anticipos a cuenta de esa moneda.
+    /// los anticipos a cuenta y el saldo a favor aplicado de esa moneda.
     /// </summary>
     public List<SupplierDebtCurrencyAmountDto> GlobalTotals { get; set; } = new();
 }
@@ -125,7 +176,16 @@ public class SupplierDebtCurrencyLineDto
     public decimal ConfirmedPurchases { get; set; }
     public decimal TotalPaid { get; set; }
 
-    /// <summary>Saldo = compras confirmadas - pagado. Puede ser negativo (sobrepago a esta reserva/proveedor).</summary>
+    /// <summary>
+    /// ADR-041 TANDA 3: saldo a favor del operador APLICADO a ESTA reserva en esta moneda (neto de reversas).
+    /// Baja la deuda exigible sin ser caja. 0 si no se aplico saldo a favor a esta reserva.
+    /// </summary>
+    public decimal CreditApplied { get; set; }
+
+    /// <summary>
+    /// Saldo = compras confirmadas - pagado - saldo a favor aplicado. Puede ser negativo (sobrepago a esta
+    /// reserva/proveedor o saldo a favor aplicado por encima de la deuda).
+    /// </summary>
     public decimal Balance { get; set; }
 }
 
@@ -198,6 +258,89 @@ public static class ServiceSupplierPaymentStatuses
     public const string Paid = "paid";
     public const string Partial = "partial";
     public const string Unpaid = "unpaid";
+}
+
+// ===================================================================================================
+// TANDA 1 (cuenta corriente del proveedor, 2026-06-27): EXTRACTO de la Cuenta por Pagar como LIBRO MAYOR.
+// Espejo del extracto de la reserva (ReservaAccountStatementDto), pero del lado COSTO: cargo = compra
+// confirmada al operador, abono = pago al operador, separado por moneda, con saldo corriente.
+// Invariante (test): el ClosingBalance de cada moneda == SupplierBalanceByCurrency.Balance de esa moneda.
+// ===================================================================================================
+
+/// <summary>
+/// "Estado de Cuenta" del PROVEEDOR como LIBRO MAYOR (extracto estilo banco). Read-model DERIVADO (no se
+/// persiste): una linea cronologica por cada compra confirmada (cargo) y cada pago al operador (abono), con
+/// saldo corriente, SEPARADO por moneda.
+///
+/// <para><b>SEGURIDAD</b>: es del lado COSTO (deuda con el operador). Sin <c>cobranzas.see_cost</c> los montos
+/// (cargos, abonos, saldos) se anulan a 0 y <see cref="AmountsVisible"/> viene en false; la estructura
+/// (movimientos, fechas, monedas) sigue visible, igual que el resto de la cuenta del proveedor.</para>
+/// </summary>
+public class SupplierAccountStatementDto
+{
+    public Guid SupplierPublicId { get; set; }
+    public string SupplierName { get; set; } = string.Empty;
+
+    /// <summary>true si el caller puede ver montos (cobranzas.see_cost). Si false, los montos vienen en 0.</summary>
+    public bool AmountsVisible { get; set; }
+
+    /// <summary>Un bloque por cada moneda presente (ARS/USD/...). Vacio si el proveedor no tiene movimientos.</summary>
+    public List<SupplierAccountStatementCurrencyBlockDto> Currencies { get; set; } = new();
+}
+
+/// <summary>
+/// Bloque del extracto del proveedor de UNA moneda: sus lineas en orden cronologico y su saldo de cierre.
+/// </summary>
+public class SupplierAccountStatementCurrencyBlockDto
+{
+    public string Currency { get; set; } = "ARS";
+
+    public List<SupplierAccountStatementLineDto> Lines { get; set; } = new();
+
+    /// <summary>
+    /// Saldo de cierre de la moneda = saldo corriente de la ultima linea (positivo = la agencia le debe al
+    /// operador; negativo = saldo a favor). Coincide con el saldo POR MONEDA de la proyeccion
+    /// <c>SupplierBalanceByCurrency.Balance</c> (invariante verificado por test).
+    /// </summary>
+    public decimal ClosingBalance { get; set; }
+}
+
+/// <summary>
+/// Una linea del extracto del proveedor. Estilo banco: <see cref="Charge"/> SUMA a la deuda con el operador
+/// (compra confirmada), <see cref="Credit"/> la RESTA (pago al operador). Una linea trae uno u otro (el otro
+/// en 0). <see cref="RunningBalance"/> es el saldo acumulado de la moneda hasta esta linea inclusive.
+/// </summary>
+public class SupplierAccountStatementLineDto
+{
+    /// <summary>Fecha del movimiento (alta del servicio comprado o fecha del pago al operador).</summary>
+    public DateTime Date { get; set; }
+
+    /// <summary>Tipo de movimiento: "Purchase" (compra confirmada) / "Payment" (pago al operador).</summary>
+    public string Kind { get; set; } = string.Empty;
+
+    /// <summary>Texto legible del movimiento (descripcion del servicio; metodo del pago).</summary>
+    public string Description { get; set; } = string.Empty;
+
+    /// <summary>Referencia del documento (nº de expediente de la compra; referencia del pago), o null.</summary>
+    public string? DocumentRef { get; set; }
+
+    /// <summary>
+    /// PublicId del documento de origen: el servicio comprado (lineas Purchase) o el pago al operador
+    /// (lineas Payment). El front lo cruza para colgar acciones por renglon. Es solo un identificador.
+    /// </summary>
+    public Guid? SourcePublicId { get; set; }
+
+    /// <summary>Moneda de la linea (igual que la del bloque).</summary>
+    public string Currency { get; set; } = "ARS";
+
+    /// <summary>Monto que SUMA a la deuda (compra confirmada). 0 si la linea es un pago. Enmascarado a 0 sin see_cost.</summary>
+    public decimal Charge { get; set; }
+
+    /// <summary>Monto que RESTA de la deuda (pago al operador). 0 si la linea es una compra. Enmascarado a 0 sin see_cost.</summary>
+    public decimal Credit { get; set; }
+
+    /// <summary>Saldo corriente de la moneda hasta esta linea inclusive. Enmascarado a 0 sin see_cost.</summary>
+    public decimal RunningBalance { get; set; }
 }
 
 public class SupplierPaymentDto

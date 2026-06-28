@@ -31,11 +31,12 @@ public enum BookingCancellationStatus
 
     /// <summary>
     /// El operador supero el timeout (<c>OperatorRefundTimeoutDays</c>) sin devolver. La Reserva queda en
-    /// <c>Cancelled</c>. (2026-06-26) Lo asigna el job nocturno (<c>OperatorRefundTimeoutJob</c>). <b>Estado
-    /// TERMINAL por ahora</b>: NO existe todavia un path para registrar un reembolso tardio sobre una BC ya
-    /// abandonada (la transicion <c>lateRefundReceived</c> del state-machine de ADR-002 quedo SIN implementar).
-    /// Si el operador reembolsa despues, hoy se resuelve a mano. Reabrir el circuito de allocation desde este
-    /// estado es un follow-up FUTURO explicito, no parte de este fix.
+    /// <c>Cancelled</c>. (2026-06-26) Lo asigna el job nocturno (<c>OperatorRefundTimeoutJob</c>).
+    /// <para>(2026-06-28, ADR-041 TANDA 4) YA NO es estrictamente terminal: existe el path de REEMBOLSO TARDIO
+    /// (<c>IBookingCancellationService.ReopenAbandonedForLateRefundAsync</c>) que reabre la cancelacion a
+    /// <see cref="AwaitingOperatorRefund"/> (con plazo nuevo) para registrar e imputar un reembolso que llega
+    /// despues de darse por perdido. La RESERVA NO se resucita (el viaje sigue Cancelled); el reembolso tardio se
+    /// vuelve saldo a favor del cliente al imputarse con el circuito normal de allocation.</para>
     /// </summary>
     AbandonedByOperator = 5,
 

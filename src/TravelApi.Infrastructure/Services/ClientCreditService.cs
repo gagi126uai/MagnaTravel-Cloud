@@ -52,6 +52,10 @@ namespace TravelApi.Infrastructure.Services;
 /// </summary>
 public class ClientCreditService : IClientCreditService
 {
+    // FC4 flujo cliente: reintentos ante choque de concurrencia sobre el RemainingBalance del bolsillo (xmin).
+    // Mismo valor que el lado operador (SupplierCreditService).
+    private const int MaxConcurrencyRetries = 3;
+
     private readonly AppDbContext _db;
     private readonly IBookingCancellationService _bcService;
     private readonly IApprovalRequestService _approvalService;
@@ -1150,6 +1154,532 @@ public class ClientCreditService : IClientCreditService
             .ToListAsync(ct);
 
         return entries.Select(MapEntry).ToList();
+    }
+
+    // =========================================================================
+    // FC4 — flujo de CUENTA DEL CLIENTE (espejo del lado operador SupplierCreditService).
+    //
+    // Ver / APLICAR / REVERTIR saldo a favor del cliente a otra reserva del MISMO cliente, a nivel cliente
+    // (FIFO por antiguedad), sin elegir bolsillo a mano. REUSA el mismo modelo que el flujo por-bolsillo:
+    // el "retiro" es un ClientCreditWithdrawal(AppliedToNewBooking) y el efecto en la reserva destino es el
+    // Payment puente de AppliedCreditBridge (no inventamos otro modelo). La diferencia es que aca el drenaje
+    // recorre VARIOS bolsillos en una sola operacion atomica, con retry por concurrencia (xmin del bolsillo).
+    // =========================================================================
+
+    public async Task<ClientCreditOverviewDto> GetCustomerCreditAsync(int customerId, CancellationToken ct)
+    {
+        var customer = await _db.Customers
+            .AsNoTracking()
+            .Where(c => c.Id == customerId)
+            .Select(c => new { c.PublicId, c.FullName })
+            .FirstOrDefaultAsync(ct)
+            ?? throw new KeyNotFoundException("Cliente no encontrado");
+
+        // Solo bolsillos con saldo disponible (RemainingBalance > 0): es lo que se puede aplicar.
+        var entries = await _db.ClientCreditEntries
+            .AsNoTracking()
+            .Where(e => e.CustomerId == customerId && e.RemainingBalance > 0m)
+            .Select(e => new { e.PublicId, e.Currency, e.CreditedAmount, e.RemainingBalance, e.CreatedAt })
+            .ToListAsync(ct);
+
+        var dto = new ClientCreditOverviewDto
+        {
+            CustomerPublicId = customer.PublicId,
+            CustomerName = customer.FullName,
+        };
+
+        // Agrupamos por moneda (ARS/USD nunca se mezclan).
+        var byCurrency = entries
+            .GroupBy(e => Monedas.Normalizar(e.Currency))
+            .OrderBy(g => g.Key);
+
+        foreach (var group in byCurrency)
+        {
+            dto.Currencies.Add(new ClientCreditCurrencyLineDto
+            {
+                Currency = group.Key,
+                AvailableBalance = group.Sum(e => e.RemainingBalance),
+                Entries = group
+                    .OrderBy(e => e.CreatedAt)
+                    .Select(e => new ClientCreditEntryLineDto
+                    {
+                        PublicId = e.PublicId,
+                        CreditedAmount = e.CreditedAmount,
+                        RemainingBalance = e.RemainingBalance,
+                        CreatedAt = e.CreatedAt,
+                    })
+                    .ToList(),
+            });
+        }
+
+        // Aplicaciones VIVAS de saldo a favor a otras reservas del cliente: cada Payment puente activo
+        // (Method=SaldoAFavorAplicado, !IsDeleted) atado a un retiro AppliedToNewBooking de un bolsillo de ESTE
+        // cliente. Una sola query (proyeccion) para no disparar N+1: trae directo el numero de la reserva destino.
+        // Por INV-093 la reserva destino siempre es del MISMO cliente, asi que el titular es el propio cliente.
+        // El front muestra estas filas en el extracto con un boton "Revertir" por cada una (revierte por su
+        // ApplicationPublicId). Asi un apply que drenó N bolsillos queda como N filas independientes.
+        var applicationRows = await _db.Payments
+            .AsNoTracking()
+            .Where(p => p.Method == AppliedCreditBridge.BridgeMethod
+                     && !p.AffectsCash
+                     && !p.IsDeleted
+                     && p.AppliedFromCreditWithdrawalId != null
+                     && p.AppliedFromCreditWithdrawal!.Entry.CustomerId == customerId)
+            .Select(p => new
+            {
+                ApplicationPublicId = p.AppliedFromCreditWithdrawal!.PublicId,
+                EntryPublicId = p.AppliedFromCreditWithdrawal!.Entry.PublicId,
+                p.Currency,
+                p.Amount,
+                AppliedAt = p.PaidAt,
+                TargetReservaPublicId = p.Reserva != null ? p.Reserva.PublicId : Guid.Empty,
+                TargetReservaNumber = p.Reserva != null ? p.Reserva.NumeroReserva : null,
+            })
+            .ToListAsync(ct);
+
+        dto.ActiveApplications = applicationRows
+            .OrderByDescending(r => r.AppliedAt)
+            .Select(r => new ClientCreditApplicationLineDto
+            {
+                ApplicationPublicId = r.ApplicationPublicId,
+                EntryPublicId = r.EntryPublicId,
+                Currency = Monedas.Normalizar(r.Currency),
+                Amount = r.Amount,
+                TargetReservaPublicId = r.TargetReservaPublicId,
+                TargetReservaNumber = r.TargetReservaNumber,
+                TargetReservaHolderName = customer.FullName, // INV-093: el titular del destino es este mismo cliente
+                AppliedAt = r.AppliedAt,
+            })
+            .ToList();
+
+        // A DIFERENCIA del lado operador: NO se enmascara por cobranzas.see_cost. El saldo a favor del cliente
+        // es plata del cliente (lado venta/cobranza), no un costo de la agencia. Coherente con /available-credit
+        // y con la cuenta del cliente, que tampoco enmascaran montos.
+        return dto;
+    }
+
+    // =========================================================================
+    // ApplyCustomerCreditAsync (con retry de concurrencia)
+    // =========================================================================
+
+    public async Task<ClientCreditApplicationResultDto> ApplyCustomerCreditAsync(
+        int customerId,
+        ApplyClientCreditRequest request,
+        string userId,
+        string? userName,
+        CancellationToken ct)
+    {
+        if (request.Amount <= 0m)
+        {
+            throw new ArgumentException("El monto a aplicar debe ser mayor a 0.", nameof(request));
+        }
+        if (!Monedas.EsSoportada(request.Currency))
+        {
+            throw new ArgumentException("Moneda no soportada.", nameof(request));
+        }
+
+        // Mismo gate de feature flag que el resto de las escrituras del modulo.
+        await EnsureFeatureFlagOnAsync(ct);
+
+        for (var attempt = 0; attempt < MaxConcurrencyRetries; attempt++)
+        {
+            try
+            {
+                return await TryApplyCustomerCreditOnceAsync(customerId, request, userId, userName, ct);
+            }
+            catch (DbUpdateConcurrencyException ex)
+            {
+                _logger.LogWarning(ex,
+                    "ApplyCustomerCreditAsync concurrency conflict on attempt {Attempt}/{Max} for customer {CustomerId}. Retrying.",
+                    attempt + 1, MaxConcurrencyRetries, customerId);
+
+                _db.ChangeTracker.Clear();
+                if (attempt == MaxConcurrencyRetries - 1) throw;
+                await Task.Delay((int)Math.Pow(4, attempt) * 100, ct);
+            }
+        }
+
+        throw new InvalidOperationException("ApplyCustomerCreditAsync retry loop exhausted sin resultado.");
+    }
+
+    private async Task<ClientCreditApplicationResultDto> TryApplyCustomerCreditOnceAsync(
+        int customerId,
+        ApplyClientCreditRequest request,
+        string userId,
+        string? userName,
+        CancellationToken ct)
+    {
+        string currency = Monedas.Normalizar(request.Currency);
+        decimal amount = ReservationEconomicPolicy.RoundCurrency(request.Amount);
+
+        var customer = await _db.Customers.FirstOrDefaultAsync(c => c.Id == customerId, ct)
+            ?? throw new KeyNotFoundException("Cliente no encontrado");
+
+        // Reserva destino con su grafo economico (tracked: usamos su Id para los puentes y calculamos su deuda).
+        var targetReserva = await LoadReservaWithEconomicGraphAsync(request.TargetReservaPublicId, ct)
+            ?? throw new KeyNotFoundException("Reserva destino no encontrada");
+
+        // (c) MISMO cliente. El saldo del cliente A no se aplica a una reserva del cliente B.
+        if (targetReserva.PayerId != customerId)
+        {
+            throw new BusinessInvariantViolationException(
+                "La reserva destino no pertenece al mismo cliente del saldo a favor. " +
+                "No se puede aplicar saldo de un cliente a la reserva de otro.",
+                invariantCode: "INV-093");
+        }
+
+        // Ownership de la reserva DESTINO (mismo principio que el alta de pago normal y el flujo por-bolsillo):
+        // un vendedor con scope acotado solo puede aplicar saldo a una reserva a su cargo. Sin esto, este
+        // endpoint a nivel cliente seria una puerta lateral que evade la restriccion del path por-bolsillo.
+        var ownerScope = await GetTargetReservaOwnerScopeOrNullAsync(ct);
+        if (ownerScope is not null
+            && !string.Equals(targetReserva.ResponsibleUserId, ownerScope, StringComparison.Ordinal))
+        {
+            throw new UnauthorizedAccessException(
+                "La reserva destino no esta asignada al usuario actual. No se puede aplicar saldo a una " +
+                "reserva a cargo de otro vendedor.");
+        }
+
+        // Estado VENTA FIRME (incluye Closed con deuda, ADR-033). No se aplica saldo a un Presupuesto/Cotizacion/
+        // Perdida/Cancelada. Mismo invariantCode INV-096 que el flujo por-bolsillo.
+        if (!EstadoReserva.IsSaleFirmStatus(targetReserva.Status))
+        {
+            throw new BusinessInvariantViolationException(
+                "No se puede aplicar un saldo a favor a una reserva que no esta en gestion de cobro " +
+                $"(estado actual: {targetReserva.Status}). Pasala a En gestion primero.",
+                invariantCode: "INV-096");
+        }
+
+        // (b) Deuda exigible del destino EN LA MONEDA DEL SALDO. 0 si esa moneda no aparece o ya esta saldada.
+        // Esto bloquea de hecho el cruce de monedas: un saldo USD contra una reserva que solo debe ARS da 0.
+        decimal targetDebtInCurrency = GetReservaConfirmedBalanceForCurrency(targetReserva, currency);
+        if (targetDebtInCurrency <= 0m)
+        {
+            throw new BusinessInvariantViolationException(
+                $"No se puede aplicar un saldo a favor en {currency} a una reserva que no tiene deuda en {currency} " +
+                "(el saldo a favor solo se aplica a una deuda de la misma moneda; ARS nunca toca USD).",
+                invariantCode: "INV-095");
+        }
+
+        // (a) Pool disponible en esa moneda. El saldo a favor del cliente es un ledger de PRIMERA CLASE: el
+        // RemainingBalance se decrementa atomicamente en cada retiro y NUNCA se re-deriva de otra proyeccion.
+        // Por eso (a diferencia del lado operador) NO hace falta topear contra un "sobrepago derivado fresco":
+        // Σ RemainingBalance YA es el saldo real. FIFO por antiguedad (CreatedAt, desempate por Id).
+        var entries = await _db.ClientCreditEntries
+            .Where(e => e.CustomerId == customerId && e.RemainingBalance > 0m)
+            .ToListAsync(ct);
+        var currencyEntries = entries
+            .Where(e => Monedas.Normalizar(e.Currency) == currency)
+            .OrderBy(e => e.CreatedAt)
+            .ThenBy(e => e.Id)
+            .ToList();
+
+        decimal pool = currencyEntries.Sum(e => e.RemainingBalance);
+
+        // SEGURIDAD: los mensajes de tope NO revelan la cifra disponible ni la deuda (el endpoint ya esta
+        // gateado por cobranzas.edit). El CHECK SQL del saldo no-negativo es la red dura bajo concurrencia.
+        if (amount > pool)
+        {
+            throw new BusinessInvariantViolationException(
+                "El monto a aplicar supera el saldo a favor disponible del cliente en esa moneda.",
+                invariantCode: "INV-085");
+        }
+
+        // (d) No sobre-aplicar: el monto no puede superar la deuda viva del destino en esa moneda, para no dejar
+        // la reserva destino con saldo a favor atrapado.
+        if (amount > targetDebtInCurrency)
+        {
+            throw new BusinessInvariantViolationException(
+                "El monto a aplicar supera la deuda de la reserva destino en esa moneda.",
+                invariantCode: "INV-097");
+        }
+
+        // Drenar FIFO. Por cada bolsillo tocado: 1 ClientCreditWithdrawal(AppliedToNewBooking) + 1 Payment puente
+        // positivo (no mueve caja, baja la deuda del destino). Cada retiro es reversible de forma independiente.
+        decimal remainingToApply = amount;
+        ClientCreditWithdrawal? firstWithdrawal = null;
+        ClientCreditEntry? firstEntry = null;
+
+        foreach (var entry in currencyEntries)
+        {
+            if (remainingToApply <= 0m) break;
+
+            decimal take = Math.Min(entry.RemainingBalance, remainingToApply);
+            entry.RemainingBalance = ReservationEconomicPolicy.RoundCurrency(entry.RemainingBalance - take);
+            if (entry.RemainingBalance <= 0m)
+            {
+                entry.RemainingBalance = 0m;
+                entry.IsFullyConsumed = true;
+            }
+            remainingToApply = ReservationEconomicPolicy.RoundCurrency(remainingToApply - take);
+
+            var withdrawal = new ClientCreditWithdrawal
+            {
+                ClientCreditEntryId = entry.Id,
+                Entry = entry,
+                Kind = WithdrawalKind.AppliedToNewBooking,
+                Amount = take,
+                ExecutedAt = DateTime.UtcNow,
+                ExecutedByUserId = userId,
+                ExecutedByUserName = userName ?? string.Empty,
+                ManualCashMovementId = null,
+                ApprovalRequestId = null,
+            };
+            _db.ClientCreditWithdrawals.Add(withdrawal);
+            firstWithdrawal ??= withdrawal;
+            firstEntry ??= entry;
+
+            // Payment puente POSITIVO en la reserva destino. La FK al withdrawal se ata por NAVIGATION property
+            // (withdrawal.Id es 0 hasta el SaveChanges; EF resuelve la FK en orden topologico).
+            var bridge = new Payment
+            {
+                ReservaId = targetReserva.Id,
+                Amount = take,                                  // POSITIVO (baja la deuda)
+                Currency = currency,                            // moneda del bolsillo
+                ImputedCurrency = null,                         // same-currency: se imputa a su propia moneda
+                Method = AppliedCreditBridge.BridgeMethod,      // "SaldoAFavorAplicado"
+                AffectsCash = false,                            // la plata ya entro antes; NO mueve caja
+                EntryType = PaymentEntryTypes.Payment,
+                Status = "Paid",
+                PaidAt = DateTime.UtcNow,
+                Notes = $"Saldo a favor aplicado (bolsillo {entry.PublicId}).",
+                CreatedByUserId = userId,
+                CreatedByUserName = userName,
+                AppliedFromCreditWithdrawal = withdrawal,
+            };
+            _db.Payments.Add(bridge);
+
+            // Auditoria STAGED (no LogBusinessEventAsync): entra en la MISMA SaveChanges que el retiro + puente.
+            _auditService.StageBusinessEvent(
+                action: AuditActions.ClientCreditApplied,
+                entityName: AuditActions.ClientCreditWithdrawalEntityName,
+                entityId: withdrawal.PublicId.ToString(),
+                details: JsonSerializer.Serialize(new
+                {
+                    withdrawalPublicId = withdrawal.PublicId,
+                    entryPublicId = entry.PublicId,
+                    customerPublicId = customer.PublicId,
+                    currency,
+                    amount = take,
+                    targetReservaPublicId = targetReserva.PublicId,
+                }),
+                userId: userId,
+                userName: userName);
+        }
+
+        // Persistencia atomica: retiros + puentes + auditoria staged en UN SaveChanges, y el recalculo de la
+        // deuda del destino (que hace su propia SaveChanges) dentro de la MISMA transaccion envolvente. El xmin
+        // de cada bolsillo detecta si otro apply lo movio en paralelo -> DbUpdateConcurrencyException -> retry.
+        await PersistApplyAndRecalcAsync(targetReserva.Id, ct);
+
+        decimal availableAfter = await GetCustomerAvailableBalanceAsync(customerId, currency, ct);
+
+        _logger.LogInformation(
+            "metric:client_credit_applied | CustomerId={CustomerId} Currency={Currency} Amount={Amount} TargetReservaId={TargetReservaId}",
+            customerId, currency, amount, targetReserva.Id);
+
+        return new ClientCreditApplicationResultDto
+        {
+            ApplicationPublicId = firstWithdrawal!.PublicId,
+            EntryPublicId = firstEntry!.PublicId,
+            Currency = currency,
+            Amount = amount,
+            TargetReservaPublicId = targetReserva.PublicId,
+            IsReversal = false,
+            AvailableBalanceAfter = availableAfter,
+        };
+    }
+
+    // =========================================================================
+    // ReverseCustomerCreditApplicationAsync (con retry de concurrencia)
+    // =========================================================================
+
+    public async Task<ClientCreditApplicationResultDto> ReverseCustomerCreditApplicationAsync(
+        int customerId,
+        Guid applicationPublicId,
+        ReverseClientCreditApplicationRequest request,
+        string userId,
+        string? userName,
+        CancellationToken ct)
+    {
+        // Motivo OPCIONAL (decision del dueño): puede venir null/vacio y la reversa procede igual. Si viene, se
+        // audita; si no, se audita sin motivo. NO se exige un minimo de caracteres.
+        await EnsureFeatureFlagOnAsync(ct);
+
+        for (var attempt = 0; attempt < MaxConcurrencyRetries; attempt++)
+        {
+            try
+            {
+                return await TryReverseCustomerCreditOnceAsync(customerId, applicationPublicId, request, userId, userName, ct);
+            }
+            catch (DbUpdateConcurrencyException ex)
+            {
+                _logger.LogWarning(ex,
+                    "ReverseCustomerCreditApplicationAsync concurrency conflict on attempt {Attempt}/{Max} for application {ApplicationPublicId}. Retrying.",
+                    attempt + 1, MaxConcurrencyRetries, applicationPublicId);
+
+                _db.ChangeTracker.Clear();
+                if (attempt == MaxConcurrencyRetries - 1) throw;
+                await Task.Delay((int)Math.Pow(4, attempt) * 100, ct);
+            }
+        }
+
+        throw new InvalidOperationException("ReverseCustomerCreditApplicationAsync retry loop exhausted sin resultado.");
+    }
+
+    private async Task<ClientCreditApplicationResultDto> TryReverseCustomerCreditOnceAsync(
+        int customerId,
+        Guid applicationPublicId,
+        ReverseClientCreditApplicationRequest request,
+        string userId,
+        string? userName,
+        CancellationToken ct)
+    {
+        // El "applicationPublicId" es el PublicId del retiro AppliedToNewBooking. Tracked: vamos a re-incrementar
+        // el bolsillo.
+        var withdrawal = await _db.ClientCreditWithdrawals
+            .Include(w => w.Entry).ThenInclude(e => e.Customer)
+            .FirstOrDefaultAsync(w => w.PublicId == applicationPublicId, ct)
+            ?? throw new KeyNotFoundException("Aplicacion de saldo a favor no encontrada");
+
+        // La aplicacion tiene que pertenecer a ESTE cliente (su bolsillo es del customer de la ruta).
+        if (withdrawal.Entry.CustomerId != customerId)
+        {
+            throw new KeyNotFoundException("Aplicacion de saldo a favor no encontrada");
+        }
+
+        // Solo se revierte una APLICACION a otra reserva. Los otros kinds (efectivo, transferencia, etc.) tienen
+        // sus propios flujos. Mismo criterio (409) que el lado operador.
+        if (withdrawal.Kind != WithdrawalKind.AppliedToNewBooking)
+        {
+            throw new BusinessInvariantViolationException(
+                "Solo se puede revertir una aplicacion de saldo a favor a otra reserva (no otro tipo de retiro).",
+                invariantCode: "INV-CLICREDIT-005");
+        }
+
+        var entry = withdrawal.Entry;
+        string currency = Monedas.Normalizar(entry.Currency);
+
+        // Puente VIVO atado a este retiro: su existencia es la fuente de verdad de "esta aplicacion sigue activa".
+        var liveBridge = await AppliedCreditBridge.FindLiveBridgeAsync(_db, withdrawal.Id, ct);
+
+        // Guardas de integridad (anti doble-reversa + tope superior del bolsillo). Si bloquea, abortamos SIN mutar.
+        var blockReason = AppliedCreditBridge.GetReverseBlockReason(entry, liveBridge);
+        if (blockReason is not null)
+        {
+            throw new BusinessInvariantViolationException(blockReason, invariantCode: "INV-098");
+        }
+
+        var targetReservaId = liveBridge!.ReservaId
+            ?? throw new InvalidOperationException(
+                "El pago puente de saldo a favor aplicado no tiene reserva destino. Estado inconsistente.");
+
+        // PublicId + responsable del destino (lo leemos antes de mutar). El responsable lo usa la guarda de
+        // ownership de abajo.
+        var targetReservaInfo = await _db.Reservas
+            .AsNoTracking()
+            .Where(r => r.Id == targetReservaId)
+            .Select(r => new { r.PublicId, r.ResponsibleUserId })
+            .FirstOrDefaultAsync(ct);
+        var targetReservaPublicId = targetReservaInfo?.PublicId ?? Guid.Empty;
+
+        // B1 (review seguridad): ownership de la reserva DESTINO. La reversa MUTA la deuda de esa reserva, asi
+        // que un vendedor con scope acotado solo puede revertir sobre una reserva a su cargo (a menos que vea
+        // todas las cobranzas). Simetrico con el apply (GetTargetReservaOwnerScopeOrNullAsync) y con el viejo
+        // ReverseAppliedCreditAsync (paso 4b). Sin HttpContext (tests/legacy) el scope es null y no se filtra.
+        // UnauthorizedAccessException -> el controller la traduce a 403.
+        var ownerScope = await GetTargetReservaOwnerScopeOrNullAsync(ct);
+        if (ownerScope is not null
+            && !string.Equals(targetReservaInfo?.ResponsibleUserId, ownerScope, StringComparison.Ordinal))
+        {
+            throw new UnauthorizedAccessException(
+                "La reserva destino no esta asignada al usuario actual. No se puede revertir una aplicacion de " +
+                "saldo sobre una reserva a cargo de otro vendedor.");
+        }
+
+        // Reversa sobre las entidades ya cargadas (sin SaveChanges): soft-delete del puente + re-incremento del
+        // bolsillo (y recalculo de IsFullyConsumed dentro de ReverseArtifacts).
+        decimal amountReturnedToPocket = AppliedCreditBridge.ReverseArtifacts(entry, liveBridge);
+
+        // Auditoria STAGED (misma SaveChanges). El motivo es OPCIONAL: si vino, lo normalizamos; si no, queda null.
+        var auditReason = string.IsNullOrWhiteSpace(request.Reason) ? null : request.Reason.Trim();
+        _auditService.StageBusinessEvent(
+            action: AuditActions.ClientCreditApplicationReversed,
+            entityName: AuditActions.ClientCreditWithdrawalEntityName,
+            entityId: withdrawal.PublicId.ToString(),
+            details: JsonSerializer.Serialize(new
+            {
+                withdrawalPublicId = withdrawal.PublicId,
+                entryPublicId = entry.PublicId,
+                customerPublicId = entry.Customer.PublicId,
+                targetReservaId,
+                amountReturnedToPocket,
+                currency,
+                remainingBalanceAfter = entry.RemainingBalance,
+                reason = auditReason,
+            }),
+            userId: userId,
+            userName: userName);
+
+        // Persistencia atomica: soft-delete del puente + re-incremento del bolsillo + auditoria staged en un
+        // SaveChanges, y el recalculo de la deuda del destino en la misma transaccion envolvente.
+        await PersistApplyAndRecalcAsync(targetReservaId, ct);
+
+        decimal availableAfter = await GetCustomerAvailableBalanceAsync(customerId, currency, ct);
+
+        _logger.LogInformation(
+            "metric:client_credit_application_reversed | CustomerId={CustomerId} Currency={Currency} Amount={Amount} TargetReservaId={TargetReservaId}",
+            customerId, currency, amountReturnedToPocket, targetReservaId);
+
+        return new ClientCreditApplicationResultDto
+        {
+            ApplicationPublicId = withdrawal.PublicId,
+            EntryPublicId = entry.PublicId,
+            Currency = currency,
+            Amount = amountReturnedToPocket,
+            TargetReservaPublicId = targetReservaPublicId,
+            IsReversal = true,
+            AvailableBalanceAfter = availableAfter,
+        };
+    }
+
+    /// <summary>
+    /// FC4: persiste lo ya armado en el ChangeTracker (retiros + puentes + auditoria staged, O el soft-delete del
+    /// puente + re-incremento del bolsillo) y recalcula la deuda de la reserva destino, TODO atomico. Contra un
+    /// provider RELACIONAL usa una transaccion envolvente para que la SaveChanges principal y la del persister
+    /// (que hace su propia SaveChanges) commiteen juntas; en InMemory (tests) corre el mismo cuerpo sin
+    /// transaccion (el provider no las soporta). Replica el patron de <see cref="WithdrawAsync"/>.
+    /// </summary>
+    private async Task PersistApplyAndRecalcAsync(int targetReservaId, CancellationToken ct)
+    {
+        if (_db.Database.IsRelational())
+        {
+            var strategy = _db.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async () =>
+            {
+                await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+                await _db.SaveChangesAsync(ct);
+                await ReservaMoneyPersister.PersistAsync(_db, targetReservaId, ct);
+                await transaction.CommitAsync(ct);
+            });
+        }
+        else
+        {
+            await _db.SaveChangesAsync(ct);
+            await ReservaMoneyPersister.PersistAsync(_db, targetReservaId, ct);
+        }
+    }
+
+    /// <summary>FC4: saldo a favor disponible (Σ RemainingBalance) del cliente en una moneda, leido fresco.</summary>
+    private async Task<decimal> GetCustomerAvailableBalanceAsync(int customerId, string currency, CancellationToken ct)
+    {
+        var rows = await _db.ClientCreditEntries
+            .Where(e => e.CustomerId == customerId && e.RemainingBalance > 0m)
+            .Select(e => new { e.Currency, e.RemainingBalance })
+            .ToListAsync(ct);
+        return rows
+            .Where(r => Monedas.Normalizar(r.Currency) == currency)
+            .Sum(r => r.RemainingBalance);
     }
 
     // =========================================================================

@@ -28,6 +28,8 @@ import { showSuccess } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { getPublicId } from "../../../lib/publicIds";
 import { X, CreditCard } from "lucide-react";
+import { RecuadroCuentaBancaria } from "../../bank-accounts/components/RecuadroCuentaBancaria";
+import { OWNER_TYPE } from "../../bank-accounts/lib/bankAccountLogic";
 
 // Fuentes de tipo de cambio del backend (enum ExchangeRateSource).
 // VALORES REALES del enum (src/TravelApi.Domain/Entities/ExchangeRateSource.cs):
@@ -276,6 +278,24 @@ export function RegistrarCobroInline({
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4">
+
+                {/* Datos bancarios de la agencia para que el cliente pueda transferir.
+                    Decisión de Gaston: "mostrar datos bancarios en pantalla al cobrar".
+                    Solo en nuevo cobro (en edición el movimiento ya está registrado)
+                    y solo cuando el método es Transferencia: para Efectivo, Cheque, etc.
+                    los datos bancarios no son relevantes y solo generan ruido visual.
+                    Si la agencia no tiene cuenta en la moneda del cobro, o el backend
+                    devuelve 403 (sin permiso configuracion.view), se oculta silenciosamente.
+                    La moneda del cobro (monedaCobro) puede cambiar si el cajero activa
+                    "pagar en otra moneda"; el recuadro se actualiza automáticamente. */}
+                {!paymentToEdit && metodo === "Transferencia" && (
+                    <RecuadroCuentaBancaria
+                        ownerType={OWNER_TYPE.Agency}
+                        ownerId={0}
+                        moneda={monedaCobro}
+                        titulo="Tus datos para que el cliente transfiera"
+                    />
+                )}
 
                 {/* ── Banner de moneda principal (ADR-035) ──────────────────────────────────
                     Siempre visible cuando hay datos de plata en la reserva.

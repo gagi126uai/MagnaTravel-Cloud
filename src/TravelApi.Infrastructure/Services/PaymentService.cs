@@ -1132,6 +1132,18 @@ public class PaymentService : IPaymentService
         var receipt = payment.Receipt ?? throw new InvalidOperationException("El pago aun no tiene comprobante emitido.");
         var agency = await _dbContext.AgencySettings.FirstOrDefaultAsync(cancellationToken) ?? new AgencySettings();
 
+        // ADR-041: datos bancarios de la AGENCIA para que el cliente sepa a donde transferir el saldo. Se consulta
+        // BankAccount DIRECTO (no el BankAccountService) a proposito: ese servicio ENMASCARA el CBU para los
+        // listados de pantalla, pero en el PDF el CBU debe ir COMPLETO (es dato propio de la agencia, destino de
+        // transferencia). La funcion pura AgencyBankAccountSelector elige cual mostrar segun la moneda del cobro.
+        var agencyBankAccounts = await _dbContext.BankAccounts
+            .AsNoTracking()
+            .Where(account => account.OwnerType == BankAccountOwnerType.Agency && account.IsActive)
+            .ToListAsync(cancellationToken);
+
+        var bankAccountsToShow = TravelApi.Domain.Helpers.AgencyBankAccountSelector
+            .SelectForDocument(agencyBankAccounts, payment.Currency);
+
         var document = Document.Create(container =>
         {
             container.Page(page =>
@@ -1161,6 +1173,14 @@ public class PaymentService : IPaymentService
                     col.Item().Text($"Importe: {payment.Amount.ToString("C2")}");
                     if (!string.IsNullOrWhiteSpace(payment.Notes))
                         col.Item().Text($"Notas: {payment.Notes}");
+
+                    // ADR-041: pie con los datos bancarios de la agencia. Solo se reserva el slot si HAY cuentas
+                    // a mostrar; QuestPDF rompe si a un IContainer no se le dibuja nada, asi que el if es necesario.
+                    if (bankAccountsToShow.Count > 0)
+                    {
+                        col.Item().PaddingTop(6).Element(c =>
+                            AgencyBankDetailsPdfSection.Compose(c, bankAccountsToShow));
+                    }
                 });
 
                 page.Footer().AlignCenter().Text("Documento interno. No reemplaza la factura AFIP.").Italic().FontSize(9).FontColor(Colors.Grey.Darken1);

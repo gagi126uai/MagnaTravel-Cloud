@@ -41,6 +41,7 @@ import WhatsAppBotTab from "../components/WhatsAppBotTab";
 import RolesPermissionsTab from "../components/RolesPermissionsTab";
 import AuditPage from "./AuditPage";
 import { getPublicId } from "../lib/publicIds";
+import { ListaCuentasBancarias } from "../features/bank-accounts/components/ListaCuentasBancarias";
 
 const serviceTypes = [
   { value: "", label: "Todos los servicios" },
@@ -686,6 +687,17 @@ Ajustá cómo funciona el sistema para tu agencia.
                   </div>
                 </div>
               </form>
+
+              {/* Tarjeta: Datos bancarios de la agencia.
+                  ownerType="Agency", ownerId=0 (convención del backend para la agencia).
+                  Solo los admins pueden agregar/editar/borrar cuentas bancarias propias de la agencia.
+                  Suposición: el permiso de edición es isAdmin() — no hay permiso fino definido aún. */}
+              <ListaCuentasBancarias
+                ownerType="Agency"
+                ownerId={0}
+                title="Datos bancarios de la agencia"
+                canEdit={isAdmin()}
+              />
             </div>
 
             {/* Side Panel for Configs */}

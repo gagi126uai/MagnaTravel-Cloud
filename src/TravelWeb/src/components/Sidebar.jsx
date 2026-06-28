@@ -20,6 +20,7 @@ import {
   FileWarning,
   FileMinus2,
   TrendingUp,
+  Wallet,
 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { useAlerts } from "../contexts/AlertsContext";
@@ -47,6 +48,9 @@ const mainLinks = [
   // ADR-025: bandeja de NC por revisar (servicios cancelados con NC pendiente de emision).
   // Gateada por cobranzas.view_all (solo personal de back-office de facturacion).
   { to: "/cancellations/credit-notes/inbox", label: "NC por revisar", icon: FileMinus2, requiredPermission: "cobranzas.view_all" },
+  // ADR-041 Tanda 4: bandeja de reembolsos a cobrar del operador.
+  // Solo visible para quien puede gestionar pagos a proveedores (tesoreria.supplier_payments).
+  { to: "/operator-refunds", label: "Reembolsos operador", icon: Wallet, requiredPermission: "tesoreria.supplier_payments" },
   // Comisiones de vendedor: solo el dueño/admin la ve. El vendedor nunca ve sus propias comisiones
   // desde este menú — esa decisión es del dueño (guia-ux-gaston.md 2026-06-13).
   { to: "/commissions", label: "Comisiones", icon: TrendingUp, adminOnly: true },

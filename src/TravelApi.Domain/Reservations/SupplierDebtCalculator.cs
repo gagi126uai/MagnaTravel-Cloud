@@ -60,6 +60,25 @@ public static class SupplierDebtCalculator
         => invoicingMode == SupplierInvoicingMode.TotalToCustomer;
 
     /// <summary>
+    /// ADR-041 TANDA 5 (2026-06-27): deriva el vencimiento SUGERIDO de una compra/servicio con el operador.
+    /// = <paramref name="serviceOrPurchaseDate"/> + el plazo por defecto del proveedor (en dias).
+    ///
+    /// <para>OPCIONAL: si el proveedor no tiene plazo (<paramref name="defaultPaymentTermDays"/> = null), no
+    /// hay vencimiento sugerido y devuelve <c>null</c> (comportamiento actual). Seguimos prepago: este dato es
+    /// solo INFORMATIVO (priorizar/avisar), NO bloquea nada. Funcion pura para poder testear la derivacion sin
+    /// EF; la validacion de que el plazo no sea negativo se hace al persistir el proveedor.</para>
+    /// </summary>
+    public static DateTime? DeriveSuggestedDueDate(DateTime serviceOrPurchaseDate, int? defaultPaymentTermDays)
+    {
+        if (defaultPaymentTermDays is not int termDays)
+        {
+            return null;
+        }
+
+        return serviceOrPurchaseDate.AddDays(termDays);
+    }
+
+    /// <summary>
     /// Una compra confirmada que aporta a la deuda: su monto (NetCost) y su moneda (null = ARS).
     /// </summary>
     public readonly record struct ConfirmedPurchase(string? Currency, decimal NetCost);
@@ -71,6 +90,23 @@ public static class SupplierDebtCalculator
     /// </summary>
     public readonly record struct SupplierPaymentInput(
         decimal Amount, string? Currency, string? ImputedCurrency, decimal? ImputedAmount);
+
+    /// <summary>
+    /// Moneda a la que un pago IMPUTA su deuda: la imputada si el pago cruzo de moneda, si no su propia
+    /// moneda (normalizada, null -> ARS). Es la primitiva UNICA de imputacion de pagos: la usan tanto el
+    /// calculo de deuda (<see cref="Calculate"/>) como el extracto del proveedor
+    /// (<c>SupplierAccountStatementBuilder</c>), para que la deuda materializada y el saldo de cierre del
+    /// extracto NO puedan divergir (no hay dos formulas de imputacion escritas a mano).
+    /// </summary>
+    public static string ImputedCurrencyOf(SupplierPaymentInput payment)
+        => Monedas.Normalizar(payment.ImputedCurrency ?? payment.Currency);
+
+    /// <summary>
+    /// Monto que un pago IMPUTA a la deuda: el equivalente imputado si cruzo de moneda, si no su monto de
+    /// caja. Primitiva UNICA de imputacion de pagos (ver <see cref="ImputedCurrencyOf"/>).
+    /// </summary>
+    public static decimal ImputedAmountOf(SupplierPaymentInput payment)
+        => payment.ImputedAmount ?? payment.Amount;
 
     /// <summary>
     /// Calcula la deuda por moneda. Devuelve una linea por cada moneda presente en compras o pagos.
@@ -95,9 +131,10 @@ public static class SupplierDebtCalculator
         foreach (var payment in payments)
         {
             // Imputa el equivalente a la moneda de la deuda (ImputedCurrency); si no cruzo, su propia
-            // moneda y su Amount. Para el caso legacy (sin moneda ni imputacion) es ARS + Amount.
-            string imputedCurrency = Monedas.Normalizar(payment.ImputedCurrency ?? payment.Currency);
-            decimal imputedAmount = payment.ImputedAmount ?? payment.Amount;
+            // moneda y su Amount. Para el caso legacy (sin moneda ni imputacion) es ARS + Amount. Usamos
+            // las primitivas publicas para que el extracto del proveedor impute EXACTAMENTE igual.
+            string imputedCurrency = ImputedCurrencyOf(payment);
+            decimal imputedAmount = ImputedAmountOf(payment);
             paidByCurrency.TryGetValue(imputedCurrency, out var current);
             paidByCurrency[imputedCurrency] = current + imputedAmount;
         }

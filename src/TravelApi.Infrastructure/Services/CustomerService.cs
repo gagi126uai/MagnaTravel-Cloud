@@ -595,6 +595,136 @@ public class CustomerService : ICustomerService
     }
 
     /// <summary>
+    /// Deuda del cliente DESGLOSADA POR RESERVA y por moneda. Reusa la MISMA fuente y el MISMO filtro que
+    /// <see cref="IFinancePositionService.GetCustomerReceivableByCurrencyAsync"/> (la deuda del cliente por
+    /// moneda): filas de <c>ReservaMoneyByCurrency</c> con saldo &gt; 0, de reservas donde el cliente es el
+    /// PAGADOR (<c>PayerId</c>) y el estado es venta firme (<c>ReceivableDebtStatuses</c>). La unica diferencia
+    /// es que NO agrega a traves de reservas: deja una linea por reserva y moneda. Asi el total por moneda de
+    /// esta vista reconcilia exactamente con el agregado global del cliente (una sola fuente de verdad).
+    ///
+    /// El lado VENTA no enmascara montos (a diferencia de la cuenta del proveedor); el gate de permiso vive en
+    /// el controller (clientes.view + cobranzas.view), igual que el resto de los montos de la cuenta del cliente.
+    /// </summary>
+    public async Task<CustomerDebtByReservaDto> GetCustomerDebtByReservaAsync(int id, CancellationToken cancellationToken)
+    {
+        var customer = await _dbContext.Customers
+            .AsNoTracking()
+            .Where(entity => entity.Id == id)
+            .Select(entity => new { entity.PublicId, entity.FullName })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (customer == null)
+        {
+            throw new KeyNotFoundException("Cliente no encontrado");
+        }
+
+        // Mismo predicado que GetCustomerReceivableByCurrencyAsync, pero trayendo la identidad de la reserva
+        // para poder abrir el desglose. Join explicito contra Reservas (no nav implicita) para correr igual en
+        // Postgres e InMemory. Solo saldos positivos (deuda viva del cliente).
+        var rows = await (
+            from row in _dbContext.ReservaMoneyByCurrency
+            join reserva in _dbContext.Reservas on row.ReservaId equals reserva.Id
+            where reserva.PayerId == id
+                && FinancePositionService.ReceivableDebtStatuses.Contains(reserva.Status)
+                && row.Balance > 0
+            select new
+            {
+                reserva.PublicId,
+                reserva.NumeroReserva,
+                reserva.Name,
+                row.Currency,
+                row.Balance
+            })
+            .ToListAsync(cancellationToken);
+
+        return BuildCustomerDebtByReserva(customer.PublicId, customer.FullName, rows
+            .Select(r => (r.PublicId, r.NumeroReserva, r.Name, r.Currency, r.Balance)));
+    }
+
+    /// <summary>
+    /// Agrupa las filas (reserva + moneda + saldo) en una linea por reserva con sus monedas. Funcion pura en
+    /// memoria (sin EF): normaliza la moneda (legacy null/vacio -> ARS), suma por moneda dentro de cada reserva,
+    /// y ordena reservas por numero y monedas por codigo, para que el shape sea estable.
+    /// </summary>
+    private static CustomerDebtByReservaDto BuildCustomerDebtByReserva(
+        Guid customerPublicId,
+        string customerName,
+        IEnumerable<(Guid ReservaPublicId, string? NumeroReserva, string? FileName, string? Currency, decimal Balance)> rows)
+    {
+        var accumulatorsByReserva = new Dictionary<Guid, CustomerReservaDebtAccumulator>();
+
+        foreach (var row in rows)
+        {
+            if (!accumulatorsByReserva.TryGetValue(row.ReservaPublicId, out var accumulator))
+            {
+                accumulator = new CustomerReservaDebtAccumulator(row.ReservaPublicId, row.NumeroReserva, row.FileName);
+                accumulatorsByReserva[row.ReservaPublicId] = accumulator;
+            }
+
+            string currency = Monedas.Normalizar(row.Currency);
+            accumulator.AddDebt(currency, row.Balance);
+        }
+
+        var reservaLines = accumulatorsByReserva.Values
+            .Select(accumulator => accumulator.ToDto())
+            .OrderBy(line => line.NumeroReserva, StringComparer.Ordinal)
+            .ToList();
+
+        return new CustomerDebtByReservaDto
+        {
+            CustomerPublicId = customerPublicId,
+            CustomerName = customerName,
+            Reservas = reservaLines
+        };
+    }
+
+    /// <summary>
+    /// Acumulador en memoria de la deuda de UNA reserva por moneda mientras se arma el desglose. Guarda la
+    /// identidad de la reserva y suma saldos por moneda (por si llegaran dos filas de la misma moneda tras
+    /// normalizar legacy null -> ARS).
+    /// </summary>
+    private sealed class CustomerReservaDebtAccumulator
+    {
+        private readonly Guid _reservaPublicId;
+        private readonly string? _numeroReserva;
+        private readonly string? _fileName;
+        private readonly Dictionary<string, decimal> _debtByCurrency = new(StringComparer.Ordinal);
+
+        public CustomerReservaDebtAccumulator(Guid reservaPublicId, string? numeroReserva, string? fileName)
+        {
+            _reservaPublicId = reservaPublicId;
+            _numeroReserva = numeroReserva;
+            _fileName = fileName;
+        }
+
+        public void AddDebt(string currency, decimal amount)
+        {
+            _debtByCurrency.TryGetValue(currency, out var current);
+            _debtByCurrency[currency] = current + amount;
+        }
+
+        public CustomerDebtReservaLineDto ToDto()
+        {
+            var currencies = _debtByCurrency
+                .OrderBy(kvp => kvp.Key, StringComparer.Ordinal)
+                .Select(kvp => new CurrencyAmountDto
+                {
+                    Currency = kvp.Key,
+                    Amount = EconomicRulesHelper.RoundCurrency(kvp.Value)
+                })
+                .ToList();
+
+            return new CustomerDebtReservaLineDto
+            {
+                ReservaPublicId = _reservaPublicId,
+                NumeroReserva = _numeroReserva,
+                FileName = _fileName,
+                DebtByCurrency = currencies
+            };
+        }
+    }
+
+    /// <summary>
     /// Normaliza la moneda (null/vacio -> ARS para datos legacy), redondea y ordena por moneda. Las lineas en 0
     /// no se omiten aca (un grupo solo existe si tuvo saldo &gt; 0 en la query).
     /// </summary>
