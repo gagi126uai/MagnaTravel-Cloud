@@ -17,6 +17,17 @@
 
 Todo esto se apoya en reglas ya escritas de la guía que se citan más abajo.
 
+## Respuestas confirmadas por Gastón (2026-06-28) — cierra el gate UX
+
+Gastón respondió las decisiones que mueven el producto (las demás quedaron con la opción recomendada, puede corregirlas al verlas):
+- **Menú (P15):** árbol aprobado tal cual.
+- **Estilo del menú (P16):** **módulos que se abren y cierran (colapsables)** — opción B. (Por eso el Sidebar se construye colapsable; esto SÍ está aprobado por el dueño.)
+- **Solapas del operador (P1):** **5 solapas separadas** — opción A.
+- **Facturación global (P14):** **sí**, además una pantalla general de Facturación en el menú (dentro de Ventas).
+- **Cuenta del cliente:** se fusiona "Pagos" en Estado de cuenta (3 solapas).
+- **Alta de proveedor:** se abre dentro de la página (no ventana); CUIT + condición obligatorios con escape "datos fiscales pendientes".
+- **Facturación:** renombrar sin "AFIP" + filtros; período default 90 días.
+
 ---
 
 # 1) Ficha del operador (proveedor) — encabezado + solapas
