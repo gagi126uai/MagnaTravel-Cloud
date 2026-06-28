@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus, Search } from "lucide-react";
+import { NuevoOperadorInline } from "../components/NuevoOperadorInline";
 import { SupplierFormModal } from "../components/SupplierFormModal";
 import { SupplierMobileList } from "../components/SupplierMobileList";
 import { SupplierTable } from "../components/SupplierTable";
@@ -14,8 +15,14 @@ import { getPublicId } from "../../../lib/publicIds";
 
 export default function SuppliersPage() {
   const navigate = useNavigate();
-  const [isModalOpen, setIsModalOpen] = useState(false);
+
+  // La ficha de ALTA se abre en línea (dentro de la página, no como ventana flotante).
+  const [mostrarNuevoOperador, setMostrarNuevoOperador] = useState(false);
+
+  // La edición de un operador existente sigue usando el modal hasta que se
+  // migre a la solapa "Datos" de SupplierAccountPage (spec sección 1, pendiente).
   const [currentSupplier, setCurrentSupplier] = useState(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
   const {
     loading,
@@ -34,36 +41,58 @@ export default function SuppliersPage() {
     setPageSize,
     handleSaveSupplier,
     handleToggleStatus,
+    refresh,
     databaseUnavailable,
   } = useSuppliers();
 
-  const handleOpenModal = (supplier = null) => {
+  // Abre el modal de edición para un operador existente.
+  // La creación ya no pasa por acá: usa NuevoOperadorInline.
+  function handleOpenEditModal(supplier) {
     setCurrentSupplier(supplier);
-    setIsModalOpen(true);
-  };
+    setIsEditModalOpen(true);
+  }
 
-  const onSave = async (formData, supplierId) => {
+  async function onSaveEdit(formData, supplierId) {
     const success = await handleSaveSupplier(formData, supplierId);
     if (success) {
-      setIsModalOpen(false);
+      setIsEditModalOpen(false);
     }
-  };
+  }
+
+  // Cuando el alta inline termina con éxito, cerramos la ficha y refrescamos la lista.
+  function handleOperadorCreado() {
+    setMostrarNuevoOperador(false);
+    refresh();
+  }
 
   return (
     <div className="animate-in fade-in space-y-6 duration-500">
       <ListPageHeader
-        title="Proveedores"
+        title="Operadores"
         subtitle="Tus operadores y mayoristas, con la cuenta corriente de cada uno."
         actions={
-          <Button
-            onClick={() => handleOpenModal()}
-            className="gap-2 bg-indigo-600 text-white shadow-sm shadow-indigo-500/20 hover:bg-indigo-700"
-          >
-            <Plus className="h-4 w-4" />
-            Nuevo Proveedor
-          </Button>
+          // Si la ficha está abierta, el botón no se muestra para no confundir.
+          !mostrarNuevoOperador && (
+            <Button
+              onClick={() => setMostrarNuevoOperador(true)}
+              className="gap-2 bg-indigo-600 text-white shadow-sm shadow-indigo-500/20 hover:bg-indigo-700"
+              data-testid="btn-nuevo-operador"
+            >
+              <Plus className="h-4 w-4" />
+              Nuevo operador
+            </Button>
+          )
         }
       />
+
+      {/* Ficha de alta en línea: se despliega debajo del encabezado, antes de la lista.
+          Sigue la regla del dueño: nada se abre como ventana encima de la página. */}
+      {mostrarNuevoOperador && (
+        <NuevoOperadorInline
+          onCreado={handleOperadorCreado}
+          onCancelar={() => setMostrarNuevoOperador(false)}
+        />
+      )}
 
       <ListToolbar
         searchSlot={
@@ -92,20 +121,20 @@ export default function SuppliersPage() {
       />
 
       {loading && suppliers.length === 0 ? (
-        <div className="p-12 text-center text-slate-500">Cargando proveedores...</div>
+        <div className="p-12 text-center text-slate-500">Cargando operadores…</div>
       ) : databaseUnavailable ? (
         <DatabaseUnavailableState />
       ) : (
         <>
           <SupplierTable
             suppliers={suppliers}
-            onEdit={handleOpenModal}
+            onEdit={handleOpenEditModal}
             onToggleStatus={handleToggleStatus}
             onAccountClick={(supplier) => navigate(`/suppliers/${getPublicId(supplier)}/account`)}
           />
           <SupplierMobileList
             suppliers={suppliers}
-            onEdit={handleOpenModal}
+            onEdit={handleOpenEditModal}
             onToggleStatus={handleToggleStatus}
             onAccountClick={(supplier) => navigate(`/suppliers/${getPublicId(supplier)}/account`)}
           />
@@ -122,11 +151,13 @@ export default function SuppliersPage() {
         </>
       )}
 
+      {/* Modal de EDICIÓN de un operador existente.
+          La edición migra a la solapa "Datos" de SupplierAccountPage en la spec sección 1. */}
       <SupplierFormModal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
+        isOpen={isEditModalOpen}
+        onClose={() => setIsEditModalOpen(false)}
         supplier={currentSupplier}
-        onSave={onSave}
+        onSave={onSaveEdit}
       />
     </div>
   );

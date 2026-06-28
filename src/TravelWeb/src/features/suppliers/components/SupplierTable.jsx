@@ -33,7 +33,7 @@ export function SupplierTable({ suppliers, onEdit, onToggleStatus, onAccountClic
     <DataGrid minWidth="860px" tableClassName="table-fixed">
       <DataGridHeader>
         <DataGridHeaderRow>
-          <DataGridHeaderCell className="w-[30%]">Proveedor</DataGridHeaderCell>
+          <DataGridHeaderCell className="w-[30%]">Operador</DataGridHeaderCell>
           <DataGridHeaderCell className="w-[25%]">Contacto</DataGridHeaderCell>
           <DataGridHeaderCell align="right" className="w-[18%]">
             <div className="group relative flex items-center justify-end gap-1 cursor-help">
@@ -52,8 +52,8 @@ export function SupplierTable({ suppliers, onEdit, onToggleStatus, onAccountClic
         {suppliers.length === 0 ? (
           <DataGridEmptyState
             colSpan={5}
-            title="No se encontraron proveedores"
-            description="Ajusta los filtros o crea un proveedor nuevo para empezar."
+            title="No se encontraron operadores"
+            description="Ajustá los filtros o creá un operador nuevo para empezar."
           />
         ) : (
           suppliers.map((supplier) => (

@@ -77,9 +77,12 @@ public class SuppliersController : ControllerBase
             var result = await _supplierService.CreateSupplierAsync(MapSupplier(supplier), cancellationToken);
             return CreatedAtAction(nameof(GetSupplier), new { publicIdOrLegacyId = result.PublicId }, ToSupplierResponse(result));
         }
-        catch (ArgumentException)
+        catch (ArgumentException ex)
         {
-            return BadRequest(new { message = "No se pudo crear el proveedor." });
+            // Las validaciones del servicio (nombre requerido, plazo de pago negativo, moneda por defecto no
+            // soportada) lanzan ArgumentException con un mensaje en espanol de negocio (sin nombres internos ni
+            // strings de framework/enum). Se devuelve ese mensaje para que el alta muestre el motivo concreto.
+            return BadRequest(new { message = ex.Message });
         }
     }
 
@@ -93,9 +96,10 @@ public class SuppliersController : ControllerBase
             var result = await _supplierService.UpdateSupplierAsync(id, MapSupplier(supplier), cancellationToken);
             return Ok(ToSupplierResponse(result));
         }
-        catch (ArgumentException)
+        catch (ArgumentException ex)
         {
-            return BadRequest(new { message = "No se pudo actualizar el proveedor." });
+            // Igual que en el alta: el servicio valida con mensajes de negocio en espanol (sin internals).
+            return BadRequest(new { message = ex.Message });
         }
         catch (KeyNotFoundException)
         {
@@ -436,6 +440,9 @@ public class SuppliersController : ControllerBase
         supplier.IsActive,
         // ADR-041 TANDA 5: plazo de pago por defecto (dias) acordado con el operador. null = sin plazo.
         supplier.DefaultPaymentTermDays,
+        // Rediseño alta de operador (2026-06-28): moneda por defecto (ISO ARS/USD) para que el form de edicion
+        // muestre el valor actual.
+        supplier.DefaultCurrency,
         supplier.CurrentBalance,
         supplier.CreatedAt
     };
@@ -451,7 +458,10 @@ public class SuppliersController : ControllerBase
         Address = request.Address,
         IsActive = request.IsActive,
         // ADR-041 TANDA 5: plazo de pago por defecto. La validacion (>= 0) la hace el servicio.
-        DefaultPaymentTermDays = request.DefaultPaymentTermDays
+        DefaultPaymentTermDays = request.DefaultPaymentTermDays,
+        // Rediseño alta de operador (2026-06-28): moneda por defecto. La validacion (moneda soportada) y la
+        // normalizacion a ARS si viene vacia las hace el servicio.
+        DefaultCurrency = request.DefaultCurrency
     };
 }
 
@@ -465,4 +475,8 @@ public record SupplierUpsertRequest(
     string? Address,
     bool IsActive = true,
     // ADR-041 TANDA 5: plazo de pago por defecto en dias (opcional). null = sin plazo = comportamiento actual.
-    int? DefaultPaymentTermDays = null);
+    int? DefaultPaymentTermDays = null,
+    // Rediseño alta de operador (2026-06-28): moneda por defecto del operador (ISO "ARS"/"USD"). null/vacio
+    // = el front no la mando -> el servicio la resuelve a ARS. Si viene un valor no soportado, el servicio
+    // rechaza con un mensaje en espanol (validacion server-side, no se confia en el front).
+    string? DefaultCurrency = null);

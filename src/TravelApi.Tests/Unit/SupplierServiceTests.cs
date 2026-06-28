@@ -496,4 +496,128 @@ public class SupplierServiceTests
         Assert.Equal("Nombre nuevo", result.Name);
         Assert.True(result.IsActive);
     }
+
+    // ----------------------------------------------------------------------
+    // Rediseño alta de operador (2026-06-28): moneda por defecto del operador.
+    // El alta acepta una moneda por defecto (ARS/USD), la valida server-side y
+    // permite guardar SIN datos fiscales (el escape "datos fiscales pendientes"
+    // se enforza en la UI; el servidor NO exige CUIT/condicion fiscal).
+    // ----------------------------------------------------------------------
+
+    [Fact]
+    public async Task CreateSupplierAsync_WithDefaultCurrencyUsd_PersistsCanonicalCurrency()
+    {
+        await using var context = CreateContext();
+        var service = new SupplierService(context);
+
+        // El front manda "usd" en minuscula: se acepta y se guarda canonico "USD".
+        var incoming = new Supplier { Name = "Operador USD", DefaultCurrency = "usd" };
+
+        var result = await service.CreateSupplierAsync(incoming, CancellationToken.None);
+
+        Assert.Equal(Monedas.USD, result.DefaultCurrency);
+        var stored = await context.Suppliers.FindAsync(result.Id);
+        Assert.Equal(Monedas.USD, stored!.DefaultCurrency);
+    }
+
+    [Fact]
+    public async Task CreateSupplierAsync_WithoutDefaultCurrency_DefaultsToArs()
+    {
+        await using var context = CreateContext();
+        var service = new SupplierService(context);
+
+        // Moneda vacia: el servidor la resuelve a ARS (moneda por defecto del sistema), no es un error.
+        var incoming = new Supplier { Name = "Operador sin moneda", DefaultCurrency = "  " };
+
+        var result = await service.CreateSupplierAsync(incoming, CancellationToken.None);
+
+        Assert.Equal(Monedas.ARS, result.DefaultCurrency);
+    }
+
+    [Fact]
+    public async Task CreateSupplierAsync_WithUnsupportedCurrency_ThrowsFriendlySpanishMessage()
+    {
+        await using var context = CreateContext();
+        var service = new SupplierService(context);
+
+        var incoming = new Supplier { Name = "Operador moneda mala", DefaultCurrency = "EUR" };
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(
+            () => service.CreateSupplierAsync(incoming, CancellationToken.None));
+
+        // Mensaje de negocio en espanol que NO filtra el valor recibido ni el catalogo interno.
+        Assert.Equal("La moneda por defecto del proveedor no es válida.", ex.Message);
+        Assert.DoesNotContain("EUR", ex.Message);
+        // No se persistio nada.
+        Assert.Equal(0, await context.Suppliers.CountAsync());
+    }
+
+    [Fact]
+    public async Task CreateSupplierAsync_WithoutTaxIdOrTaxCondition_Succeeds()
+    {
+        await using var context = CreateContext();
+        var service = new SupplierService(context);
+
+        // Escape "datos fiscales pendientes": el alta debe poder guardar sin CUIT ni condicion fiscal.
+        var incoming = new Supplier
+        {
+            Name = "Operador fiscalmente incompleto",
+            DefaultCurrency = Monedas.ARS,
+            TaxId = null,
+            TaxCondition = null
+        };
+
+        var result = await service.CreateSupplierAsync(incoming, CancellationToken.None);
+
+        Assert.True(result.Id > 0);
+        Assert.Null(result.TaxId);
+        Assert.Null(result.TaxCondition);
+    }
+
+    [Fact]
+    public async Task UpdateSupplierAsync_WithUnsupportedCurrency_ThrowsAndDoesNotPersist()
+    {
+        await using var context = CreateContext();
+        var supplier = new Supplier { Name = "Operador edit moneda", DefaultCurrency = Monedas.ARS };
+        context.Suppliers.Add(supplier);
+        await context.SaveChangesAsync();
+
+        var service = new SupplierService(context);
+        var incoming = BuildIncomingSupplier(supplier, isActive: true);
+        incoming.DefaultCurrency = "BRL"; // no soportada
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(
+            () => service.UpdateSupplierAsync(supplier.Id, incoming, CancellationToken.None));
+        Assert.Equal("La moneda por defecto del proveedor no es válida.", ex.Message);
+
+        // La moneda guardada sigue siendo la original (la edicion no se aplico).
+        var stored = await context.Suppliers.FindAsync(supplier.Id);
+        Assert.Equal(Monedas.ARS, stored!.DefaultCurrency);
+    }
+
+    [Fact]
+    public async Task UpdateSupplierAsync_WithoutDefaultCurrency_PreservesExistingCurrency()
+    {
+        // Regresion (perdida de dato): los forms de edicion existentes NO mandan defaultCurrency. Editar
+        // cualquier otro campo (ej. el telefono) NO debe resetear la moneda de un operador USD a ARS.
+        await using var context = CreateContext();
+        var supplier = new Supplier { Name = "Operador USD", DefaultCurrency = Monedas.USD, Phone = "111" };
+        context.Suppliers.Add(supplier);
+        await context.SaveChangesAsync();
+
+        var service = new SupplierService(context);
+
+        // Simulamos el request del form de edicion: trae los otros campos pero NO la moneda (null).
+        var incoming = BuildIncomingSupplier(supplier, isActive: true);
+        incoming.Phone = "222";
+        incoming.DefaultCurrency = null;
+
+        var result = await service.UpdateSupplierAsync(supplier.Id, incoming, CancellationToken.None);
+
+        Assert.Equal("222", result.Phone);
+        Assert.Equal(Monedas.USD, result.DefaultCurrency); // se preservo, NO se reseteo a ARS
+
+        var stored = await context.Suppliers.FindAsync(supplier.Id);
+        Assert.Equal(Monedas.USD, stored!.DefaultCurrency);
+    }
 }

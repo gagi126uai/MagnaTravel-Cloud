@@ -23,8 +23,8 @@ export function SupplierMobileList({ suppliers, onEdit, onToggleStatus, onAccoun
   if (suppliers.length === 0) {
     return (
       <ListEmptyState
-        title="No se encontraron proveedores"
-        description="Ajusta los filtros o crea un proveedor nuevo."
+        title="No se encontraron operadores"
+        description="Ajustá los filtros o creá un operador nuevo."
         className="md:hidden rounded-xl border border-dashed border-slate-300 dark:border-slate-700"
       />
     );

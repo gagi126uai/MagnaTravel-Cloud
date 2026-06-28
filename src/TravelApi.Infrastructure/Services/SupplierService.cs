@@ -128,6 +128,7 @@ public class SupplierService : ISupplierService
                 TaxId = supplier.TaxId,
                 TaxCondition = supplier.TaxCondition,
                 Address = supplier.Address,
+                DefaultCurrency = supplier.DefaultCurrency,
                 IsActive = supplier.IsActive,
                 CurrentBalance = supplier.CurrentBalance,
                 CreatedAt = supplier.CreatedAt
@@ -182,6 +183,10 @@ public class SupplierService : ISupplierService
         // negativo no tiene sentido y daria un vencimiento sugerido anterior a la compra).
         ValidateDefaultPaymentTermDays(supplier.DefaultPaymentTermDays);
 
+        // Rediseño alta de operador (2026-06-28): la moneda por defecto debe ser una soportada (ARS/USD).
+        // Si viene vacia se resuelve a ARS; se guarda la forma canonica en mayuscula.
+        supplier.DefaultCurrency = ValidateAndNormalizeDefaultCurrency(supplier.DefaultCurrency);
+
         supplier.CreatedAt = DateTime.UtcNow;
         supplier.CurrentBalance = 0;
 
@@ -200,6 +205,18 @@ public class SupplierService : ISupplierService
 
         // ADR-041 TANDA 5: validar el plazo de pago antes de tocar la entidad (si viene, >= 0).
         ValidateDefaultPaymentTermDays(supplier.DefaultPaymentTermDays);
+
+        // Rediseño alta de operador (2026-06-28): la moneda por defecto SOLO se toca si el request realmente
+        // trae una. Los forms de edicion existentes (SupplierFormModal y la solapa "Datos") NO mandan
+        // defaultCurrency, asi que tratar el null/vacio como "poner ARS" RESETEARIA en silencio la moneda
+        // elegida (un operador en USD pasaria a ARS al editar, p.ej., el telefono = perdida de dato). Por eso:
+        //   - request con valor  -> se valida (debe ser soportada) y se asigna normalizada (validate-before-mutate);
+        //   - request null/vacio -> se DEJA la moneda existente intacta (no se asigna nada).
+        // Distinto del alta: ahi el null/vacio SI defaultea a ARS porque un proveedor nuevo necesita una moneda.
+        bool defaultCurrencyProvided = !string.IsNullOrWhiteSpace(supplier.DefaultCurrency);
+        string? normalizedDefaultCurrency = defaultCurrencyProvided
+            ? ValidateAndNormalizeDefaultCurrency(supplier.DefaultCurrency)
+            : null;
 
         // B1.15 Fase 0' (CODE-13): bloquear cambios fiscales (TaxId, TaxCondition)
         // cuando hay reservas con factura CAE viva referenciando al proveedor.
@@ -244,6 +261,12 @@ public class SupplierService : ISupplierService
         existing.IsActive = supplier.IsActive;
         // ADR-041 TANDA 5: plazo de pago por defecto (null = se borra el plazo = sin vencimiento sugerido).
         existing.DefaultPaymentTermDays = supplier.DefaultPaymentTermDays;
+        // Rediseño alta de operador (2026-06-28): solo se pisa la moneda si el request trajo una (ver arriba);
+        // si no vino, se preserva la existente para no resetearla a ARS al editar otros campos.
+        if (defaultCurrencyProvided)
+        {
+            existing.DefaultCurrency = normalizedDefaultCurrency;
+        }
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -272,6 +295,30 @@ public class SupplierService : ISupplierService
         {
             throw new ArgumentException("El plazo de pago al proveedor no puede ser negativo.");
         }
+    }
+
+    /// <summary>
+    /// Rediseño alta de operador (2026-06-28): valida y normaliza la moneda por defecto del proveedor.
+    /// No se confia en el front: la moneda DEBE ser una de las soportadas (<see cref="Monedas.Soportadas"/>,
+    /// hoy ARS/USD). Vacio/null = el form no la mando -> se resuelve a ARS (la moneda por defecto del sistema).
+    /// Un valor no soportado se rechaza con un mensaje de negocio en espanol (sin exponer el valor ni strings
+    /// internos). Devuelve la forma canonica en mayuscula (tolera "usd" del front).
+    /// </summary>
+    private static string ValidateAndNormalizeDefaultCurrency(string? defaultCurrency)
+    {
+        // Vacio = el front no eligio moneda -> ARS por defecto (no es un error de validacion).
+        if (string.IsNullOrWhiteSpace(defaultCurrency))
+        {
+            return Monedas.ARS;
+        }
+
+        if (!Monedas.EsSoportada(defaultCurrency))
+        {
+            // Mensaje generico de negocio: NO incluye el valor recibido ni el catalogo interno de monedas.
+            throw new ArgumentException("La moneda por defecto del proveedor no es válida.");
+        }
+
+        return Monedas.Normalizar(defaultCurrency);
     }
 
     /// <summary>
@@ -435,6 +482,7 @@ public class SupplierService : ISupplierService
                 TaxId = item.TaxId,
                 TaxCondition = item.TaxCondition,
                 Address = item.Address,
+                DefaultCurrency = item.DefaultCurrency,
                 IsActive = item.IsActive,
                 CurrentBalance = item.CurrentBalance
             })

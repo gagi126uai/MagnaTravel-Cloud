@@ -10,6 +10,13 @@ public class SupplierListItemDto
     public string? TaxId { get; set; }
     public string? TaxCondition { get; set; }
     public string? Address { get; set; }
+
+    /// <summary>
+    /// Rediseño alta de operador (2026-06-28): moneda por defecto del operador (ISO ARS/USD). El form de
+    /// edicion la usa para preseleccionar la moneda. null solo en filas legacy aun no migradas (se lee ARS).
+    /// </summary>
+    public string? DefaultCurrency { get; set; }
+
     public bool IsActive { get; set; }
     public decimal CurrentBalance { get; set; }
     public DateTime CreatedAt { get; set; }
@@ -64,6 +71,10 @@ public class SupplierAccountSupplierDto
     public string? TaxId { get; set; }
     public string? TaxCondition { get; set; }
     public string? Address { get; set; }
+
+    /// <summary>Rediseño alta de operador (2026-06-28): moneda por defecto del operador (ISO ARS/USD).</summary>
+    public string? DefaultCurrency { get; set; }
+
     public bool IsActive { get; set; }
     public decimal CurrentBalance { get; set; }
 }

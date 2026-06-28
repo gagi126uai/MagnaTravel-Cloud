@@ -421,6 +421,12 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(s => s.Email).HasMaxLength(100);
             entity.Property(s => s.Phone).HasMaxLength(50);
 
+            // Rediseño alta de operador (2026-06-28): moneda por defecto del operador (ISO ARS/USD).
+            // Nullable con default 'ARS' a nivel BD (mismo criterio que SupplierPayment.Currency): las
+            // filas existentes quedan en pesos sin backfill manual. La validacion de que sea una moneda
+            // soportada vive en SupplierService (server-side, no se confia en el front).
+            entity.Property(s => s.DefaultCurrency).HasMaxLength(3).HasDefaultValue(Monedas.ARS);
+
             // ADR-013 (2026-06-01): "quien se queda la penalidad". Enum como int,
             // consistente con el resto del modulo. Default Operator (pass-through) lo
             // pone la migracion a nivel BD para que las filas existentes queden en el

@@ -30,6 +30,19 @@ public class Supplier : IHasPublicId
     [MaxLength(200)]
     public string? Address { get; set; }
 
+    /// <summary>
+    /// Rediseño alta de operador (2026-06-28): moneda por defecto del operador en codigo ISO
+    /// ("ARS"/"USD"). Es la moneda que el alta propone al cargar compras/pagos de este operador
+    /// (la mayoria opera siempre en la misma). NO bloquea operar en otra moneda: la plata real de
+    /// cada compra/pago sigue resolviendose por su propia moneda; esto es solo un valor sugerido.
+    ///
+    /// <para>NULLABLE con default "ARS" (<see cref="Monedas.ARS"/>): las filas viejas quedan en ARS
+    /// (la moneda por defecto del sistema) sin backfill destructivo. La validacion server-side
+    /// (debe ser una de <see cref="Monedas.Soportadas"/>) la hace <c>SupplierService</c>.</para>
+    /// </summary>
+    [MaxLength(3)]
+    public string? DefaultCurrency { get; set; } = Monedas.ARS;
+
     public bool IsActive { get; set; } = true;
 
     /// <summary>
