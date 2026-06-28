@@ -330,7 +330,7 @@ public record ConfirmPenaltyRequest(
     /// territorio del contador). Wire de esta moneda a la emision/FX de la ND es follow-up que requiere firma del
     /// contador.</para>
     /// </summary>
-    [MaxLength(3, ErrorMessage = "PenaltyCurrency es ISO 4217 (3 chars).")]
+    [MaxLength(3, ErrorMessage = "La moneda debe ser un código de 3 letras (por ejemplo: ARS o USD).")]
     string? PenaltyCurrency = null,
 
     /// <summary>
@@ -437,7 +437,7 @@ public record RecordOperatorRefundRequest(
     [Range(0.01, double.MaxValue, ErrorMessage = "El monto debe ser mayor a cero.")]
     decimal ReceivedAmount,
 
-    [Required, MaxLength(3, ErrorMessage = "Currency es ISO 4217 (3 chars).")]
+    [Required, MaxLength(3, ErrorMessage = "La moneda debe ser un código de 3 letras (por ejemplo: ARS o USD).")]
     string Currency,
 
     [Required] DateTime ReceivedAt,
@@ -462,7 +462,7 @@ public record RecordOperatorRefundRequest(
 public record DeductionLineRequest(
     [Required] DeductionKind Kind,
 
-    [Range(0.01, double.MaxValue, ErrorMessage = "Amount debe ser mayor a cero.")]
+    [Range(0.01, double.MaxValue, ErrorMessage = "El monto debe ser mayor a cero.")]
     decimal Amount,
 
     [MaxLength(500)] string? Description,
@@ -501,7 +501,7 @@ public record DeductionLineRequest(
 public record AllocateRefundRequest(
     [Required] Guid BookingCancellationPublicId,
 
-    [Range(0.01, double.MaxValue, ErrorMessage = "GrossAmount debe ser mayor a cero.")]
+    [Range(0.01, double.MaxValue, ErrorMessage = "El monto debe ser mayor a cero.")]
     decimal GrossAmount,
 
     [Required] List<DeductionLineRequest> Deductions
@@ -635,7 +635,7 @@ public record WithdrawClientCreditRequest(
     // KeptAsCredit no consume saldo: Amount = 0 valido. El resto debe ser > 0.
     // No usamos [Range(0.01, ...)] porque excluiria KeptAsCredit; el service
     // valida el rango segun kind.
-    [Range(0, double.MaxValue, ErrorMessage = "Amount no puede ser negativo.")]
+    [Range(0, double.MaxValue, ErrorMessage = "El monto no puede ser negativo.")]
     decimal Amount,
 
     // Solo se usa cuando Kind == Transfer (o PhysicalCash con descripcion).

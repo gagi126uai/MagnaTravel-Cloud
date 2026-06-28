@@ -41,10 +41,10 @@ namespace TravelApi.Application.DTOs.Cancellation;
 /// "decision politica" de "decision operativa".</para>
 /// </summary>
 public record ForceBridgeCallbackRequest(
-    [Required(ErrorMessage = "ApprovalRequestOverridePublicId es obligatorio.")]
+    [Required(ErrorMessage = "Falta indicar la solicitud de autorización.")]
     Guid ApprovalRequestOverridePublicId,
 
-    [Required(ErrorMessage = "Reason es obligatorio.")]
-    [MinLength(50, ErrorMessage = "Reason debe tener al menos 50 caracteres.")]
+    [Required(ErrorMessage = "El motivo es obligatorio.")]
+    [MinLength(50, ErrorMessage = "El motivo debe tener al menos 50 caracteres.")]
     [MaxLength(1000)]
     string Reason);

@@ -35,10 +35,10 @@ namespace TravelApi.Application.DTOs.Cancellation;
 /// no de una decision manual sin justificar.</para>
 /// </summary>
 public record EditLiquidationRequest(
-    [Range(0, double.MaxValue, ErrorMessage = "OperatorPenaltyAmountOverride debe ser >= 0.")]
+    [Range(0, double.MaxValue, ErrorMessage = "El monto de la multa del operador no puede ser negativo.")]
     decimal? OperatorPenaltyAmountOverride,
 
-    [Range(0, double.MaxValue, ErrorMessage = "NonRefundableItemsAmountOverride debe ser >= 0.")]
+    [Range(0, double.MaxValue, ErrorMessage = "El monto de los conceptos no reembolsables no puede ser negativo.")]
     decimal? NonRefundableItemsAmountOverride,
 
     // Opcional. Si null, el calculator decide el kind segun la matriz 8. Si el
@@ -47,8 +47,8 @@ public record EditLiquidationRequest(
     // permite forzar TotalPlusNewInvoice (GR-001 lo rechazaria en re-clasificacion).
     CreditNoteKind? CreditNoteKindOverride,
 
-    [Required(ErrorMessage = "Comment es obligatorio.")]
-    [MinLength(20, ErrorMessage = "Comment debe tener al menos 20 caracteres.")]
+    [Required(ErrorMessage = "El comentario es obligatorio.")]
+    [MinLength(20, ErrorMessage = "El comentario debe tener al menos 20 caracteres.")]
     [MaxLength(1000)]
     string Comment
 );

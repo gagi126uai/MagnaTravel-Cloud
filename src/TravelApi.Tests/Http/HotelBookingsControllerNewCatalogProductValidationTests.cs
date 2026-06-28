@@ -150,10 +150,15 @@ public class HotelBookingsControllerNewCatalogProductValidationTests : IClassFix
         // [ApiController] (ValidationProblemDetails), nunca 500.
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
 
-        // El error tiene que nombrar al campo (key "NewCatalogProduct.Name" en el problem details).
-        // Si la validacion del record dejara de ejecutarse (atributos sueltos en properties), este
-        // request llegaria al service y fallaria por otro mensaje, o peor, con 500.
+        // Hardening 2026-06-28: el [Required] de Name NO tiene mensaje propio, asi que su texto por
+        // defecto ("The Name field is required.") es del FRAMEWORK y en ingles. La fabrica global de
+        // respuestas (ApiValidationErrorResponseFactory) lo reemplaza por un mensaje amable en espanol
+        // y descarta la clave interna del campo. Por eso el body YA NO contiene "NewCatalogProduct.Name":
+        // lo que validamos ahora es que la validacion SIGUE corriendo (400, no 500) y que el usuario ve
+        // SOLO espanol amable, sin filtrar nombre de campo interno ni copy en ingles.
         var body = await response.Content.ReadAsStringAsync();
-        Assert.Contains("NewCatalogProduct.Name", body);
+        Assert.Contains("Hay un dato con un valor inválido", body);
+        Assert.DoesNotContain("NewCatalogProduct.Name", body);
+        Assert.DoesNotContain("field is required", body);
     }
 }

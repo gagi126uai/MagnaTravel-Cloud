@@ -8,13 +8,19 @@ namespace TravelApi.Middleware;
 
 public class GlobalExceptionHandler : IExceptionHandler
 {
-    private readonly ILogger<GlobalExceptionHandler> _logger;
-    private readonly IHostEnvironment _env;
+    // Mensaje generico para CUALQUIER excepcion no controlada. Es el unico texto que ve el usuario:
+    // nunca el mensaje de la excepcion, el stack trace ni el nombre del tipo. El detalle tecnico va
+    // SOLO al logger del servidor (cruzable despues con el "codigo de referencia" que devolvemos).
+    private const string UnexpectedErrorMessage =
+        "Ocurrió un error inesperado. Volvé a intentar; si el problema sigue, escribinos.";
 
-    public GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger, IHostEnvironment env)
+    private const string UnexpectedErrorTitle = "Ocurrió un error inesperado.";
+
+    private readonly ILogger<GlobalExceptionHandler> _logger;
+
+    public GlobalExceptionHandler(ILogger<GlobalExceptionHandler> logger)
     {
         _logger = logger;
-        _env = env;
     }
 
     public async ValueTask<bool> TryHandleAsync(
@@ -80,18 +86,38 @@ public class GlobalExceptionHandler : IExceptionHandler
             return true;
         }
 
-        _logger.LogError(exception, "Exception occurred: {Message}", exception.Message);
+        // "Codigo de referencia" OPACO: NO es un stack, ni un tipo, ni el mensaje de la excepcion.
+        // Es el TraceIdentifier de la request, que tambien queda en el log del servidor. Permite que el
+        // usuario nos pase un codigo y nosotros crucemos con el log para ver el detalle tecnico real.
+        var referenceCode = httpContext.TraceIdentifier;
 
-        var problemDetails = DatabaseExceptionClassifier.IsDatabaseUnavailable(exception)
-            ? DatabaseExceptionClassifier.CreateProblemDetails(_env.IsDevelopment() ? exception.Message : null)
-            : new ProblemDetails
+        // TODO el detalle tecnico (mensaje + stack) va SOLO al logger del servidor, NUNCA al body.
+        _logger.LogError(exception,
+            "Unhandled exception (ref {ReferenceCode}): {Message}", referenceCode, exception.Message);
+
+        ProblemDetails problemDetails;
+        if (DatabaseExceptionClassifier.IsDatabaseUnavailable(exception))
+        {
+            // 503 amable de "base no disponible". NO pasamos exception.Message en NINGUN entorno
+            // (antes en Development se filtraba el texto crudo del driver de la base).
+            problemDetails = DatabaseExceptionClassifier.CreateProblemDetails();
+        }
+        else
+        {
+            // 500 generico en espanol, identico en TODOS los entornos (incluido Development): el body
+            // jamas contiene exception.Message ni stack trace. El detalle vive solo en el log del servidor.
+            problemDetails = new ProblemDetails
             {
                 Status = StatusCodes.Status500InternalServerError,
-                Title = "An error occurred while processing your request.",
-                Detail = _env.IsDevelopment() ? exception.Message : "Please contact support if the problem persists."
+                Title = UnexpectedErrorTitle,
+                Detail = UnexpectedErrorMessage,
             };
+            problemDetails.Extensions["code"] = "internal_error";
+            problemDetails.Extensions["reference"] = referenceCode;
+        }
 
-        httpContext.Response.StatusCode = problemDetails.Status.Value;
+        // Ambas ramas setean Status (500 o el 503 del clasificador); el fallback es solo para el compilador.
+        httpContext.Response.StatusCode = problemDetails.Status ?? StatusCodes.Status500InternalServerError;
 
         await httpContext.Response.WriteAsJsonAsync(problemDetails, cancellationToken);
 

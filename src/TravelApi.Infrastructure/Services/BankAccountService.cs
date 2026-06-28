@@ -75,8 +75,11 @@ public class BankAccountService : IBankAccountService
         // Auditamos el ACCESO al dato sensible DESENMASCARADO (CBU/alias completos). Es una lectura, pero el dato
         // es un destino de transferencia: para el producto multi-agencia queremos saber quien lo vio y cuando.
         // El detalle del log lleva el CBU/alias ENMASCARADOS (no duplicamos el dato en claro en la auditoria).
+        // El dueño queda identificado por el OwnerType + el PublicId de la cuenta (entityId del log, mas abajo).
+        // No incluimos el OwnerId interno: ya no viaja en el DTO (hardening 2026-06-28) y el PublicId alcanza para
+        // rastrear la cuenta en la auditoria.
         var details =
-            $"Owner: {account.OwnerType}#{account.OwnerId}. " +
+            $"Owner: {account.OwnerType}. " +
             $"Currency: {account.Currency}. " +
             $"Holder: {account.HolderName}. " +
             $"CBU: {MaskCbu(account.Cbu) ?? "(sin CBU)"}. " +
@@ -103,10 +106,10 @@ public class BankAccountService : IBankAccountService
     {
         var (cbu, alias, holderName, currency, accountType, holderTaxId) = ValidateAndNormalize(request);
 
-        // El dueño se valida AL CREAR (no en update, donde no cambia): si es Cliente/Proveedor, ese OwnerId tiene
-        // que existir y estar activo (sin esto, podriamos cargar una cuenta colgada de un dueño inexistente). Si
-        // es Agencia, el OwnerId es 0 fijo server-side (NO confiamos en el body: la Agencia es un singleton).
-        var ownerId = await ResolveAndValidateOwnerAsync(request.OwnerType, request.OwnerId, cancellationToken);
+        // El dueño se valida AL CREAR (no en update, donde no cambia): si es Cliente/Proveedor, su PublicId (que
+        // viaja en request.OwnerId) tiene que existir y estar activo (sin esto, podriamos cargar una cuenta colgada
+        // de un dueño inexistente). Si es Agencia, el OwnerId interno es 0 fijo (NO confiamos en el body: singleton).
+        var ownerId = await ResolveOwnerInternalIdAsync(request.OwnerType, request.OwnerId, cancellationToken);
 
         // Decidir si la cuenta nueva queda como principal de su moneda:
         //  - Si el front la pidio principal (request.IsPrimary), se respeta.
@@ -304,37 +307,68 @@ public class BankAccountService : IBankAccountService
     // ============================================================
 
     /// <summary>
-    /// Resuelve y valida el dueño de una cuenta nueva. Agencia -> OwnerId 0 fijo (singleton, no se confia en el
-    /// body). Cliente/Proveedor -> el OwnerId debe existir y estar activo, si no lanza <see cref="ArgumentException"/>
-    /// (el controller lo mapea a 400). NO hay FK fisica, asi que esta es la unica red que evita cuentas huerfanas.
+    /// Traduce el TOKEN PUBLICO del dueño (lo que viaja por la API) al Id INTERNO (int) con el que se persiste y
+    /// consulta, validando que el dueño exista y este activo. Agencia -> 0 fijo (singleton, no se confia en el
+    /// token). Cliente/Proveedor -> el token es su PublicId (GUID); se resuelve al Id interno, exigiendo que exista
+    /// y este activo, si no lanza <see cref="ArgumentException"/> (el controller lo mapea a 400). NO hay FK fisica,
+    /// asi que esta es la unica red que evita cuentas colgadas de un dueño inexistente.
+    ///
+    /// <para>Se direcciona por PublicId (no por Id interno) para mantener la coherencia con el resto de la API de
+    /// cuentas (detalle/editar/borrar usan PublicId) y para no aceptar/exponer ids secuenciales por la API.</para>
     /// </summary>
-    private async Task<int> ResolveAndValidateOwnerAsync(
+    public async Task<int> ResolveOwnerInternalIdAsync(
         BankAccountOwnerType ownerType,
-        int requestedOwnerId,
+        string? ownerToken,
         CancellationToken cancellationToken)
     {
         switch (ownerType)
         {
             case BankAccountOwnerType.Agency:
-                return 0; // La Agencia es un singleton: su OwnerId es 0 fijo, no lo que mande el body.
+                return 0; // La Agencia es un singleton: su OwnerId interno es 0 fijo, no lo que mande el body.
 
             case BankAccountOwnerType.Customer:
-                var customerExists = await _dbContext.Customers
-                    .AnyAsync(c => c.Id == requestedOwnerId && c.IsActive, cancellationToken);
-                if (!customerExists)
-                    throw new ArgumentException("El cliente indicado no existe o está inactivo.");
-                return requestedOwnerId;
+                {
+                    var publicId = ParseOwnerPublicId(ownerToken, "cliente");
+                    var customerId = await _dbContext.Customers
+                        .Where(c => c.PublicId == publicId && c.IsActive)
+                        .Select(c => (int?)c.Id)
+                        .FirstOrDefaultAsync(cancellationToken);
+                    if (customerId is null)
+                        throw new ArgumentException("El cliente indicado no existe o está inactivo.");
+                    return customerId.Value;
+                }
 
             case BankAccountOwnerType.Supplier:
-                var supplierExists = await _dbContext.Suppliers
-                    .AnyAsync(s => s.Id == requestedOwnerId && s.IsActive, cancellationToken);
-                if (!supplierExists)
-                    throw new ArgumentException("El proveedor indicado no existe o está inactivo.");
-                return requestedOwnerId;
+                {
+                    var publicId = ParseOwnerPublicId(ownerToken, "proveedor");
+                    var supplierId = await _dbContext.Suppliers
+                        .Where(s => s.PublicId == publicId && s.IsActive)
+                        .Select(s => (int?)s.Id)
+                        .FirstOrDefaultAsync(cancellationToken);
+                    if (supplierId is null)
+                        throw new ArgumentException("El proveedor indicado no existe o está inactivo.");
+                    return supplierId.Value;
+                }
 
             default:
                 throw new ArgumentException("Tipo de dueño desconocido.");
         }
+    }
+
+    /// <summary>
+    /// Parsea el token publico de un dueño Cliente/Proveedor a su PublicId (GUID). Rechaza vacio, no-GUID y el
+    /// GUID vacio (Guid.Empty) con un <see cref="ArgumentException"/> claro — el controller lo mapea a 400.
+    /// </summary>
+    private static Guid ParseOwnerPublicId(string? ownerToken, string ownerLabel)
+    {
+        if (string.IsNullOrWhiteSpace(ownerToken)
+            || !Guid.TryParse(ownerToken, out var publicId)
+            || publicId == Guid.Empty)
+        {
+            throw new ArgumentException($"El identificador del {ownerLabel} es inválido.");
+        }
+
+        return publicId;
     }
 
     /// <summary>
@@ -378,7 +412,7 @@ public class BankAccountService : IBankAccountService
     private static BankAccountListItemDto ToListItemDto(BankAccount account) => new(
         PublicId: account.PublicId,
         OwnerType: account.OwnerType,
-        OwnerId: account.OwnerId,
+        // OwnerId interno NO se mapea a la respuesta (hardening 2026-06-28): no se expone a la UI.
         CbuMasked: MaskCbu(account.Cbu),
         AliasMasked: MaskAlias(account.Alias),
         HolderName: account.HolderName,
@@ -394,7 +428,7 @@ public class BankAccountService : IBankAccountService
     private static BankAccountDetailDto ToDetailDto(BankAccount account) => new(
         PublicId: account.PublicId,
         OwnerType: account.OwnerType,
-        OwnerId: account.OwnerId,
+        // OwnerId interno NO se mapea a la respuesta (hardening 2026-06-28): no se expone a la UI.
         Cbu: account.Cbu,
         Alias: account.Alias,
         HolderName: account.HolderName,

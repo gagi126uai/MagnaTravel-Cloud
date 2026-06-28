@@ -37,20 +37,38 @@ public class Adr041BankAccountServiceTests
     private static BankAccountService NewService(AppDbContext ctx) =>
         new(ctx, new Mock<IAuditService>().Object);
 
+    // El dueño viaja por la API como su PublicId (GUID), no como el Id interno. Para que los tests sean legibles
+    // generamos PublicIds DETERMINISTAS a partir del Id interno: asi "el proveedor 7" tiene siempre el mismo GUID.
+    // El cuarto grupo del GUID distingue Proveedor (0001) de Cliente (0002); el ultimo grupo lleva el Id en decimal
+    // (los digitos decimales tambien son hex validos).
+    private static Guid SupplierPublicId(int internalId) => new($"00000000-0000-0000-0001-{internalId:000000000000}");
+    private static Guid CustomerPublicId(int internalId) => new($"00000000-0000-0000-0002-{internalId:000000000000}");
+    private static string SupplierToken(int internalId) => SupplierPublicId(internalId).ToString();
+    private static string CustomerToken(int internalId) => CustomerPublicId(internalId).ToString();
+
     // La validacion de existencia del dueño exige que el Cliente/Proveedor exista y este activo. Sembramos un
-    // set estandar para que los caminos felices puedan crear cuentas.
+    // set estandar (con su PublicId determinista) para que los caminos felices puedan crear cuentas.
     private static void SeedStandardOwners(AppDbContext ctx)
     {
-        ctx.Suppliers.Add(new Supplier { Id = 1, Name = "Proveedor 1", IsActive = true });
-        ctx.Suppliers.Add(new Supplier { Id = 5, Name = "Proveedor 5", IsActive = true });
-        ctx.Suppliers.Add(new Supplier { Id = 7, Name = "Proveedor 7", IsActive = true });
-        ctx.Customers.Add(new Customer { Id = 7, FullName = "Cliente 7", IsActive = true });
+        ctx.Suppliers.Add(new Supplier { Id = 1, PublicId = SupplierPublicId(1), Name = "Proveedor 1", IsActive = true });
+        ctx.Suppliers.Add(new Supplier { Id = 5, PublicId = SupplierPublicId(5), Name = "Proveedor 5", IsActive = true });
+        ctx.Suppliers.Add(new Supplier { Id = 7, PublicId = SupplierPublicId(7), Name = "Proveedor 7", IsActive = true });
+        ctx.Customers.Add(new Customer { Id = 7, PublicId = CustomerPublicId(7), FullName = "Cliente 7", IsActive = true });
         ctx.SaveChanges();
     }
 
+    // El token de dueño por defecto: el PublicId del proveedor 1 (el dueño "estandar" de la mayoria de los tests).
+    // Para Agencia mandamos un "0" (se ignora). Los tests que usan otro dueño pasan su token explicito.
+    private static string DefaultOwnerToken(BankAccountOwnerType ownerType) => ownerType switch
+    {
+        BankAccountOwnerType.Supplier => SupplierToken(1),
+        BankAccountOwnerType.Customer => CustomerToken(7),
+        _ => "0",
+    };
+
     private static BankAccountUpsertRequest ValidRequest(
         BankAccountOwnerType ownerType = BankAccountOwnerType.Supplier,
-        int ownerId = 1,
+        string? ownerToken = null,
         string? cbu = "0123456789012345678901",
         string? alias = null,
         string holderName = "Operador Mayorista SA",
@@ -58,7 +76,7 @@ public class Adr041BankAccountServiceTests
         bool isPrimary = false) =>
         new(
             OwnerType: ownerType,
-            OwnerId: ownerId,
+            OwnerId: ownerToken ?? DefaultOwnerToken(ownerType),
             Cbu: cbu,
             Alias: alias,
             HolderName: holderName,
@@ -236,7 +254,7 @@ public class Adr041BankAccountServiceTests
         var service = NewService(ctx);
 
         var created = await service.CreateAsync(
-            ValidRequest(ownerId: 7, cbu: "0123456789012345678901"), "user-1", "User", CancellationToken.None);
+            ValidRequest(ownerToken: SupplierToken(7),cbu: "0123456789012345678901"), "user-1", "User", CancellationToken.None);
 
         var result = await service.SetPrimaryAsync(created.PublicId, "user-1", "User", CancellationToken.None);
 
@@ -275,7 +293,7 @@ public class Adr041BankAccountServiceTests
         var service = NewService(ctx);
 
         // Proveedor 999 no fue sembrado.
-        var request = ValidRequest(ownerType: BankAccountOwnerType.Supplier, ownerId: 999);
+        var request = ValidRequest(ownerType: BankAccountOwnerType.Supplier, ownerToken: SupplierToken(999));
 
         await Assert.ThrowsAsync<ArgumentException>(() =>
             service.CreateAsync(request, "user-1", "User", CancellationToken.None));
@@ -285,11 +303,11 @@ public class Adr041BankAccountServiceTests
     public async Task Create_rechaza_owner_inactivo()
     {
         using var ctx = NewContext();
-        ctx.Customers.Add(new Customer { Id = 42, FullName = "Cliente inactivo", IsActive = false });
+        ctx.Customers.Add(new Customer { Id = 42, PublicId = CustomerPublicId(42), FullName = "Cliente inactivo", IsActive = false });
         ctx.SaveChanges();
         var service = NewService(ctx);
 
-        var request = ValidRequest(ownerType: BankAccountOwnerType.Customer, ownerId: 42);
+        var request = ValidRequest(ownerType: BankAccountOwnerType.Customer, ownerToken: CustomerToken(42));
 
         await Assert.ThrowsAsync<ArgumentException>(() =>
             service.CreateAsync(request, "user-1", "User", CancellationToken.None));
@@ -303,11 +321,122 @@ public class Adr041BankAccountServiceTests
 
         // La Agencia es singleton: aunque el body mande 999, el OwnerId persistido debe ser 0. No se valida
         // existencia (no hay tabla "Agency"), por eso NO sembramos nada.
-        var request = ValidRequest(ownerType: BankAccountOwnerType.Agency, ownerId: 999);
+        var request = ValidRequest(ownerType: BankAccountOwnerType.Agency, ownerToken: "999");
         var created = await service.CreateAsync(request, "user-1", "User", CancellationToken.None);
 
         Assert.Equal(BankAccountOwnerType.Agency, created.OwnerType);
-        Assert.Equal(0, created.OwnerId);
+
+        // El OwnerId interno YA NO viaja en la respuesta (hardening 2026-06-28), asi que verificamos el invariante
+        // "la Agencia fuerza OwnerId=0 ignorando el body" contra la FILA PERSISTIDA, no contra el DTO de respuesta.
+        var persisted = ctx.BankAccounts.Single(a => a.PublicId == created.PublicId);
+        Assert.Equal(0, persisted.OwnerId);
+    }
+
+    // ============================================================
+    // Resolucion del TOKEN PUBLICO (PublicId GUID) -> Id interno (bugfix 2026-06-28)
+    // ============================================================
+
+    [Fact]
+    public async Task Create_resuelve_el_proveedor_por_su_publicId_al_id_interno()
+    {
+        using var ctx = NewContext();
+        SeedStandardOwners(ctx);
+        var service = NewService(ctx);
+
+        // El front manda el PublicId (GUID) del proveedor 7, NO su Id interno. La cuenta debe quedar colgada del
+        // Id interno 7 (lo que despues usa el listado por dueño).
+        var created = await service.CreateAsync(
+            ValidRequest(ownerType: BankAccountOwnerType.Supplier, ownerToken: SupplierToken(7)),
+            "user-1", "User", CancellationToken.None);
+
+        Assert.Equal(BankAccountOwnerType.Supplier, created.OwnerType);
+
+        // La resolucion token (PublicId GUID) -> Id interno se verifica contra la FILA PERSISTIDA: el OwnerId
+        // interno ya no se expone en la respuesta (hardening 2026-06-28).
+        var persisted = ctx.BankAccounts.Single(a => a.PublicId == created.PublicId);
+        Assert.Equal(7, persisted.OwnerId);
+    }
+
+    [Fact]
+    public async Task Create_resuelve_el_cliente_por_su_publicId_al_id_interno()
+    {
+        using var ctx = NewContext();
+        SeedStandardOwners(ctx);
+        var service = NewService(ctx);
+
+        var created = await service.CreateAsync(
+            ValidRequest(ownerType: BankAccountOwnerType.Customer, ownerToken: CustomerToken(7)),
+            "user-1", "User", CancellationToken.None);
+
+        Assert.Equal(BankAccountOwnerType.Customer, created.OwnerType);
+
+        // Mismo invariante de resolucion, verificado contra la fila persistida (el OwnerId interno no viaja).
+        var persisted = ctx.BankAccounts.Single(a => a.PublicId == created.PublicId);
+        Assert.Equal(7, persisted.OwnerId);
+    }
+
+    [Theory]
+    [InlineData("")]                 // vacio
+    [InlineData("   ")]              // en blanco
+    [InlineData("no-es-un-guid")]    // basura
+    [InlineData("123")]              // numero, no GUID
+    public async Task Create_rechaza_token_de_dueño_invalido(string badToken)
+    {
+        using var ctx = NewContext();
+        SeedStandardOwners(ctx);
+        var service = NewService(ctx);
+
+        var request = ValidRequest(ownerType: BankAccountOwnerType.Supplier, ownerToken: badToken);
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.CreateAsync(request, "user-1", "User", CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ResolveOwnerInternalId_agencia_devuelve_0_e_ignora_el_token()
+    {
+        using var ctx = NewContext();
+        var service = NewService(ctx);
+
+        var id = await service.ResolveOwnerInternalIdAsync(BankAccountOwnerType.Agency, "cualquier-cosa", CancellationToken.None);
+
+        Assert.Equal(0, id);
+    }
+
+    [Fact]
+    public async Task ResolveOwnerInternalId_proveedor_traduce_publicId_a_id_interno()
+    {
+        using var ctx = NewContext();
+        SeedStandardOwners(ctx);
+        var service = NewService(ctx);
+
+        var id = await service.ResolveOwnerInternalIdAsync(
+            BankAccountOwnerType.Supplier, SupplierToken(5), CancellationToken.None);
+
+        Assert.Equal(5, id);
+    }
+
+    [Fact]
+    public async Task ResolveOwnerInternalId_dueño_inexistente_lanza_ArgumentException()
+    {
+        using var ctx = NewContext();
+        SeedStandardOwners(ctx);
+        var service = NewService(ctx);
+
+        // GUID con formato valido pero que no corresponde a ningun proveedor sembrado.
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.ResolveOwnerInternalIdAsync(BankAccountOwnerType.Supplier, SupplierToken(999), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ResolveOwnerInternalId_token_no_guid_lanza_ArgumentException()
+    {
+        using var ctx = NewContext();
+        SeedStandardOwners(ctx);
+        var service = NewService(ctx);
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.ResolveOwnerInternalIdAsync(BankAccountOwnerType.Customer, "no-es-guid", CancellationToken.None));
     }
 
     // ============================================================
@@ -322,9 +451,9 @@ public class Adr041BankAccountServiceTests
         var service = NewService(ctx);
 
         await service.CreateAsync(
-            ValidRequest(ownerId: 7, currency: "ARS"), "user-1", "User", CancellationToken.None);
+            ValidRequest(ownerToken: SupplierToken(7),currency: "ARS"), "user-1", "User", CancellationToken.None);
         await service.CreateAsync(
-            ValidRequest(ownerId: 7, currency: "USD"), "user-1", "User", CancellationToken.None);
+            ValidRequest(ownerToken: SupplierToken(7),currency: "USD"), "user-1", "User", CancellationToken.None);
 
         var list = await service.ListAsync(BankAccountOwnerType.Supplier, 7, CancellationToken.None);
 
@@ -338,9 +467,9 @@ public class Adr041BankAccountServiceTests
         SeedStandardOwners(ctx);
         var service = NewService(ctx);
 
-        await service.CreateAsync(ValidRequest(ownerType: BankAccountOwnerType.Supplier, ownerId: 7),
+        await service.CreateAsync(ValidRequest(ownerType: BankAccountOwnerType.Supplier, ownerToken: SupplierToken(7)),
             "user-1", "User", CancellationToken.None);
-        await service.CreateAsync(ValidRequest(ownerType: BankAccountOwnerType.Customer, ownerId: 7),
+        await service.CreateAsync(ValidRequest(ownerType: BankAccountOwnerType.Customer, ownerToken: CustomerToken(7)),
             "user-1", "User", CancellationToken.None);
 
         var supplierList = await service.ListAsync(BankAccountOwnerType.Supplier, 7, CancellationToken.None);
@@ -431,15 +560,18 @@ public class Adr041BankAccountServiceTests
         var service = NewService(ctx);
 
         var created = await service.CreateAsync(
-            ValidRequest(ownerType: BankAccountOwnerType.Supplier, ownerId: 7),
+            ValidRequest(ownerType: BankAccountOwnerType.Supplier, ownerToken: SupplierToken(7)),
             "user-1", "User", CancellationToken.None);
 
         // El request de edicion intenta "mover" la cuenta a un cliente distinto: debe IGNORARSE.
-        var maliciousEdit = ValidRequest(ownerType: BankAccountOwnerType.Customer, ownerId: 999);
+        var maliciousEdit = ValidRequest(ownerType: BankAccountOwnerType.Customer, ownerToken: CustomerToken(999));
         var updated = await service.UpdateAsync(created.PublicId, maliciousEdit, "user-1", "User", CancellationToken.None);
 
         Assert.Equal(BankAccountOwnerType.Supplier, updated.OwnerType);
-        Assert.Equal(7, updated.OwnerId);
+
+        // El dueño persistido NO cambio: lo verificamos contra la fila (el OwnerId interno ya no viaja en la respuesta).
+        var persisted = ctx.BankAccounts.Single(a => a.PublicId == updated.PublicId);
+        Assert.Equal(7, persisted.OwnerId);
     }
 
     [Fact]
@@ -450,7 +582,7 @@ public class Adr041BankAccountServiceTests
         var service = NewService(ctx);
 
         var created = await service.CreateAsync(
-            ValidRequest(ownerId: 5), "user-1", "User", CancellationToken.None);
+            ValidRequest(ownerToken: SupplierToken(5)), "user-1", "User", CancellationToken.None);
 
         await service.DeactivateAsync(created.PublicId, "user-1", "User", CancellationToken.None);
 
@@ -471,7 +603,7 @@ public class Adr041BankAccountServiceTests
         var service = NewService(ctx);
 
         var created = await service.CreateAsync(
-            ValidRequest(ownerId: 5), "user-1", "User", CancellationToken.None);
+            ValidRequest(ownerToken: SupplierToken(5)), "user-1", "User", CancellationToken.None);
 
         await service.DeactivateAsync(created.PublicId, "user-1", "User", CancellationToken.None);
         // Segunda desactivacion: no debe lanzar.
@@ -501,7 +633,7 @@ public class Adr041BankAccountServiceTests
 
         // El front NO pide principal (isPrimary=false), pero al ser la primera de este dueño+moneda queda principal.
         var created = await service.CreateAsync(
-            ValidRequest(ownerId: 7, currency: "ARS", isPrimary: false), "user-1", "User", CancellationToken.None);
+            ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", isPrimary: false), "user-1", "User", CancellationToken.None);
 
         Assert.True(created.IsPrimary);
     }
@@ -514,10 +646,10 @@ public class Adr041BankAccountServiceTests
         var service = NewService(ctx);
 
         await service.CreateAsync(
-            ValidRequest(ownerId: 7, currency: "ARS", isPrimary: false), "user-1", "User", CancellationToken.None);
+            ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", isPrimary: false), "user-1", "User", CancellationToken.None);
         // Ya hay una principal en ARS: la segunda (sin pedir principal) NO debe robar el lugar.
         var second = await service.CreateAsync(
-            ValidRequest(ownerId: 7, currency: "ARS", isPrimary: false, cbu: "1111222233334444555566"),
+            ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", isPrimary: false, cbu: "1111222233334444555566"),
             "user-1", "User", CancellationToken.None);
 
         Assert.False(second.IsPrimary);
@@ -531,9 +663,9 @@ public class Adr041BankAccountServiceTests
         var service = NewService(ctx);
 
         var first = await service.CreateAsync(
-            ValidRequest(ownerId: 7, currency: "ARS", isPrimary: true), "user-1", "User", CancellationToken.None);
+            ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", isPrimary: true), "user-1", "User", CancellationToken.None);
         var second = await service.CreateAsync(
-            ValidRequest(ownerId: 7, currency: "ARS", isPrimary: true, cbu: "1111222233334444555566"),
+            ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", isPrimary: true, cbu: "1111222233334444555566"),
             "user-1", "User", CancellationToken.None);
 
         // La segunda quedo principal; la primera debe haber sido desmarcada (una sola principal por dueño+moneda).
@@ -552,10 +684,10 @@ public class Adr041BankAccountServiceTests
         var service = NewService(ctx);
 
         var ars = await service.CreateAsync(
-            ValidRequest(ownerId: 7, currency: "ARS", isPrimary: true), "user-1", "User", CancellationToken.None);
+            ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", isPrimary: true), "user-1", "User", CancellationToken.None);
         // Marcar principal en USD NO debe tocar la principal de ARS: son monedas distintas.
         var usd = await service.CreateAsync(
-            ValidRequest(ownerId: 7, currency: "USD", isPrimary: true, cbu: "9999888877776666555544"),
+            ValidRequest(ownerToken: SupplierToken(7),currency: "USD", isPrimary: true, cbu: "9999888877776666555544"),
             "user-1", "User", CancellationToken.None);
 
         var arsReloaded = await service.GetByPublicIdAsync(ars.PublicId, CancellationToken.None);
@@ -573,15 +705,15 @@ public class Adr041BankAccountServiceTests
         var service = NewService(ctx);
 
         var first = await service.CreateAsync(
-            ValidRequest(ownerId: 7, currency: "ARS", isPrimary: true), "user-1", "User", CancellationToken.None);
+            ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", isPrimary: true), "user-1", "User", CancellationToken.None);
         var second = await service.CreateAsync(
-            ValidRequest(ownerId: 7, currency: "ARS", isPrimary: false, cbu: "1111222233334444555566"),
+            ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", isPrimary: false, cbu: "1111222233334444555566"),
             "user-1", "User", CancellationToken.None);
 
         // Editar la segunda pidiendo principal: debe quedar principal y desmarcar la primera.
         await service.UpdateAsync(
             second.PublicId,
-            ValidRequest(ownerId: 7, currency: "ARS", isPrimary: true, cbu: "1111222233334444555566"),
+            ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", isPrimary: true, cbu: "1111222233334444555566"),
             "user-1", "User", CancellationToken.None);
 
         var firstReloaded = await service.GetByPublicIdAsync(first.PublicId, CancellationToken.None);
@@ -599,9 +731,9 @@ public class Adr041BankAccountServiceTests
         var service = NewService(ctx);
 
         var first = await service.CreateAsync(
-            ValidRequest(ownerId: 7, currency: "ARS", isPrimary: true), "user-1", "User", CancellationToken.None);
+            ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", isPrimary: true), "user-1", "User", CancellationToken.None);
         var second = await service.CreateAsync(
-            ValidRequest(ownerId: 7, currency: "ARS", isPrimary: false, cbu: "1111222233334444555566"),
+            ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", isPrimary: false, cbu: "1111222233334444555566"),
             "user-1", "User", CancellationToken.None);
 
         var result = await service.SetPrimaryAsync(second.PublicId, "user-1", "User", CancellationToken.None);
@@ -619,7 +751,7 @@ public class Adr041BankAccountServiceTests
         var service = NewService(ctx);
 
         var created = await service.CreateAsync(
-            ValidRequest(ownerId: 5), "user-1", "User", CancellationToken.None);
+            ValidRequest(ownerToken: SupplierToken(5)), "user-1", "User", CancellationToken.None);
         await service.DeactivateAsync(created.PublicId, "user-1", "User", CancellationToken.None);
 
         await Assert.ThrowsAsync<ArgumentException>(() =>
@@ -645,9 +777,9 @@ public class Adr041BankAccountServiceTests
 
         // Primera ARS (auto-principal), segunda ARS no-principal, luego marcamos la SEGUNDA como principal.
         var first = await service.CreateAsync(
-            ValidRequest(ownerId: 7, currency: "ARS"), "user-1", "User", CancellationToken.None);
+            ValidRequest(ownerToken: SupplierToken(7),currency: "ARS"), "user-1", "User", CancellationToken.None);
         var second = await service.CreateAsync(
-            ValidRequest(ownerId: 7, currency: "ARS", cbu: "1111222233334444555566"),
+            ValidRequest(ownerToken: SupplierToken(7),currency: "ARS", cbu: "1111222233334444555566"),
             "user-1", "User", CancellationToken.None);
         await service.SetPrimaryAsync(second.PublicId, "user-1", "User", CancellationToken.None);
 
@@ -729,10 +861,9 @@ public class Adr041BankAccountControllerAuthorizationTests
         };
     }
 
-    private static BankAccountDetailDto OwnedBy(BankAccountOwnerType ownerType, int ownerId = 1) => new(
+    private static BankAccountDetailDto OwnedBy(BankAccountOwnerType ownerType) => new(
         PublicId: Guid.NewGuid(),
         OwnerType: ownerType,
-        OwnerId: ownerId,
         Cbu: "0123456789012345678901",
         Alias: null,
         HolderName: "Titular",
@@ -748,10 +879,9 @@ public class Adr041BankAccountControllerAuthorizationTests
     // Shape ENMASCARADO que devuelven las ESCRITURAS (Create/Update/SetPrimary). El controller solo reenvia lo
     // que devuelve el servicio, asi que para los tests de autorizacion alcanza con un item con CBU tapado.
     private static BankAccountListItemDto MaskedItem(
-        BankAccountOwnerType ownerType, int ownerId = 1, bool isPrimary = false) => new(
+        BankAccountOwnerType ownerType, bool isPrimary = false) => new(
         PublicId: Guid.NewGuid(),
         OwnerType: ownerType,
-        OwnerId: ownerId,
         CbuMasked: "••••••••••••••••••8901",
         AliasMasked: null,
         HolderName: "Titular",
@@ -764,9 +894,11 @@ public class Adr041BankAccountControllerAuthorizationTests
         CreatedAt: DateTime.UtcNow,
         IsPrimary: isPrimary);
 
-    private static BankAccountUpsertRequest Request(BankAccountOwnerType ownerType, int ownerId = 1) => new(
+    // El owner token del body no se ejercita en estos tests de AUTORIZACION (CreateAsync esta mockeado y la
+    // resolucion token->Id vive en el servicio real). Mandamos un GUID cualquiera con el formato correcto.
+    private static BankAccountUpsertRequest Request(BankAccountOwnerType ownerType, string? ownerToken = "11111111-1111-1111-1111-111111111111") => new(
         OwnerType: ownerType,
-        OwnerId: ownerId,
+        OwnerId: ownerToken,
         Cbu: "0123456789012345678901",
         Alias: null,
         HolderName: "Titular",
@@ -776,13 +908,22 @@ public class Adr041BankAccountControllerAuthorizationTests
         HolderTaxId: null,
         Notes: null);
 
+    // Los 400 de este controller devuelven un objeto anonimo { message = "..." }. Para no acoplar los tests a la
+    // forma del objeto, leemos la propiedad "message" por reflexion.
+    private static string? MessageOf(BadRequestObjectResult badRequest)
+    {
+        var value = badRequest.Value;
+        var messageProperty = value?.GetType().GetProperty("message");
+        return messageProperty?.GetValue(value) as string;
+    }
+
     [Fact]
     public async Task Admin_bypassa_la_escritura_de_la_agencia()
     {
         var service = new Mock<IBankAccountService>();
         service
             .Setup(s => s.CreateAsync(It.IsAny<BankAccountUpsertRequest>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(MaskedItem(BankAccountOwnerType.Agency, 0));
+            .ReturnsAsync(MaskedItem(BankAccountOwnerType.Agency));
 
         var controller = NewController(service, isAdmin: true, userId: "admin-1");
 
@@ -904,9 +1045,106 @@ public class Adr041BankAccountControllerAuthorizationTests
         var service = new Mock<IBankAccountService>();
         var controller = NewController(service, isAdmin: true, userId: "admin-1");
 
-        var result = await controller.List((BankAccountOwnerType)99, ownerId: 1, CancellationToken.None);
+        // "99" parsea como numero pero NO es un valor definido del enum -> conserva el guard de Enum.IsDefined.
+        var result = await controller.List("99", ownerId: "1", CancellationToken.None);
 
         Assert.IsType<BadRequestObjectResult>(result.Result);
+        // No resuelve el dueño: el rechazo es por tipo invalido, antes de tocar la BD.
+        service.Verify(s => s.ResolveOwnerInternalIdAsync(It.IsAny<BankAccountOwnerType>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(null)]      // ausente
+    [InlineData("")]        // vacio
+    [InlineData("   ")]     // en blanco
+    [InlineData("abc")]     // basura (el caso que el framework devolveria con su string interno)
+    public async Task List_con_ownerType_malformado_es_bad_request_con_mensaje_amable(string? badOwnerType)
+    {
+        var service = new Mock<IBankAccountService>();
+        var controller = NewController(service, isAdmin: true, userId: "admin-1");
+
+        var result = await controller.List(badOwnerType, ownerId: "1", CancellationToken.None);
+
+        var badRequest = Assert.IsType<BadRequestObjectResult>(result.Result);
+        // El mensaje es el amable de la app, NUNCA el string interno del framework ni el valor recibido.
+        Assert.Equal("Tipo de dueño inválido.", MessageOf(badRequest));
+        service.Verify(s => s.ResolveOwnerInternalIdAsync(It.IsAny<BankAccountOwnerType>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData("2")]          // numerico (lo que envia el front: OWNER_TYPE.Supplier = 2)
+    [InlineData("Supplier")]   // nombre del enum
+    [InlineData("supplier")]   // nombre sin distinguir mayusculas
+    public async Task List_acepta_ownerType_numerico_y_por_nombre(string ownerTypeRaw)
+    {
+        var ownerToken = Guid.NewGuid().ToString();
+        var service = new Mock<IBankAccountService>();
+        service
+            .Setup(s => s.ResolveOwnerInternalIdAsync(BankAccountOwnerType.Supplier, ownerToken, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(7);
+        service
+            .Setup(s => s.ListAsync(BankAccountOwnerType.Supplier, 7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { MaskedItem(BankAccountOwnerType.Supplier) });
+
+        var controller = NewController(service, isAdmin: false, userId: "user-1", Permissions.ProveedoresView);
+
+        var result = await controller.List(ownerTypeRaw, ownerToken, CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result.Result);
+        // Cualquiera de las formas debe resolver al MISMO tipo de dueño (Supplier).
+        service.Verify(s => s.ListAsync(BankAccountOwnerType.Supplier, 7, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task List_resuelve_el_token_del_dueño_y_devuelve_las_cuentas()
+    {
+        // El front manda el PublicId (GUID) del proveedor. El controller debe resolverlo al Id interno y listar.
+        var ownerToken = Guid.NewGuid().ToString();
+        var service = new Mock<IBankAccountService>();
+        service
+            .Setup(s => s.ResolveOwnerInternalIdAsync(BankAccountOwnerType.Supplier, ownerToken, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(7);
+        service
+            .Setup(s => s.ListAsync(BankAccountOwnerType.Supplier, 7, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { MaskedItem(BankAccountOwnerType.Supplier) });
+
+        var controller = NewController(service, isAdmin: false, userId: "user-1", Permissions.ProveedoresView);
+
+        var result = await controller.List("Supplier", ownerToken, CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result.Result);
+        service.Verify(s => s.ListAsync(BankAccountOwnerType.Supplier, 7, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task List_con_token_invalido_es_bad_request()
+    {
+        // Token vacio/no-GUID: el servicio lanza ArgumentException al resolver -> el controller lo mapea a 400.
+        var service = new Mock<IBankAccountService>();
+        service
+            .Setup(s => s.ResolveOwnerInternalIdAsync(BankAccountOwnerType.Supplier, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ArgumentException("El identificador del proveedor es inválido."));
+
+        var controller = NewController(service, isAdmin: false, userId: "user-1", Permissions.ProveedoresView);
+
+        var result = await controller.List("2", "no-es-guid", CancellationToken.None);
+
+        Assert.IsType<BadRequestObjectResult>(result.Result);
+        service.Verify(s => s.ListAsync(It.IsAny<BankAccountOwnerType>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task List_sin_permiso_de_lectura_del_dueño_es_forbidden_y_no_resuelve()
+    {
+        // La autorizacion ocurre ANTES de resolver el dueño: un usuario sin permiso no debe poder distinguir
+        // (por la respuesta) un dueño existente de uno inexistente.
+        var service = new Mock<IBankAccountService>();
+        var controller = NewController(service, isAdmin: false, userId: "user-1", Permissions.ClientesView);
+
+        var result = await controller.List("Supplier", Guid.NewGuid().ToString(), CancellationToken.None);
+
+        Assert.IsType<ForbidResult>(result.Result);
+        service.Verify(s => s.ResolveOwnerInternalIdAsync(It.IsAny<BankAccountOwnerType>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -960,5 +1198,59 @@ public class Adr041BankAccountControllerAuthorizationTests
         var result = await controller.SetPrimary(Guid.NewGuid(), CancellationToken.None);
 
         Assert.IsType<NotFoundResult>(result.Result);
+    }
+}
+
+/// <summary>
+/// Bugfix 2026-06-28: el body de alta/edicion trae <c>ownerId</c> POLIMORFICO — un numero (0) para la Agencia y
+/// un texto (PublicId GUID) para Cliente/Proveedor. Estos tests bloquean el comportamiento del
+/// <see cref="OwnerReferenceJsonConverter"/> deserializando como lo hace la API real (System.Text.Json con
+/// <see cref="System.Text.Json.JsonSerializerDefaults.Web"/>). Sin el converter, el GUID-string rompia el binding
+/// (y la cuenta no se podia listar ni crear para clientes/proveedores).
+/// </summary>
+public class Adr041OwnerReferenceJsonConverterTests
+{
+    // Mismas opciones que usa la API (camelCase, case-insensitive). El converter va atado a la PROPIEDAD del DTO.
+    private static readonly System.Text.Json.JsonSerializerOptions WebOptions =
+        new(System.Text.Json.JsonSerializerDefaults.Web);
+
+    [Fact]
+    public void Deserializa_ownerId_GUID_como_texto_para_cliente_o_proveedor()
+    {
+        var guid = Guid.NewGuid();
+        var json = $"{{\"ownerType\":2,\"ownerId\":\"{guid}\",\"cbu\":\"0123456789012345678901\"," +
+                   "\"holderName\":\"Titular\",\"currency\":\"ARS\"}";
+
+        var request = System.Text.Json.JsonSerializer.Deserialize<BankAccountUpsertRequest>(json, WebOptions);
+
+        Assert.NotNull(request);
+        Assert.Equal(BankAccountOwnerType.Supplier, request!.OwnerType);
+        Assert.Equal(guid.ToString(), request.OwnerId);
+    }
+
+    [Fact]
+    public void Deserializa_ownerId_numerico_de_la_agencia_sin_romper()
+    {
+        // El front manda ownerId: 0 (numero) para la Agencia. Antes esto NO se podia leer en un string -> 400.
+        var json = "{\"ownerType\":0,\"ownerId\":0,\"cbu\":\"0123456789012345678901\"," +
+                   "\"holderName\":\"Titular\",\"currency\":\"ARS\"}";
+
+        var request = System.Text.Json.JsonSerializer.Deserialize<BankAccountUpsertRequest>(json, WebOptions);
+
+        Assert.NotNull(request);
+        Assert.Equal(BankAccountOwnerType.Agency, request!.OwnerType);
+        Assert.Equal("0", request.OwnerId);
+    }
+
+    [Fact]
+    public void Deserializa_ownerId_null_como_null()
+    {
+        var json = "{\"ownerType\":0,\"ownerId\":null,\"cbu\":\"0123456789012345678901\"," +
+                   "\"holderName\":\"Titular\",\"currency\":\"ARS\"}";
+
+        var request = System.Text.Json.JsonSerializer.Deserialize<BankAccountUpsertRequest>(json, WebOptions);
+
+        Assert.NotNull(request);
+        Assert.Null(request!.OwnerId);
     }
 }

@@ -105,6 +105,16 @@ builder.Services.AddControllers()
     {
         options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
     });
+
+// SEGURIDAD (anti fuga de informacion): el 400 automatico de [ApiController] ante un error de
+// model binding/conversion filtra el nombre del tipo .NET interno y el path del campo. Reemplazamos
+// la fabrica de esa respuesta por una que devuelve SOLO mensajes amables en espanol, conservando la
+// forma (errors{}+title) que el front ya parsea. Ver ApiValidationErrorResponseFactory.
+builder.Services.Configure<Microsoft.AspNetCore.Mvc.ApiBehaviorOptions>(options =>
+{
+    options.InvalidModelStateResponseFactory = TravelApi.Errors.ApiValidationErrorResponseFactory.Create;
+});
+
 builder.Services.AddSignalR();
 
 builder.Services.AddExceptionHandler<TravelApi.Middleware.GlobalExceptionHandler>();

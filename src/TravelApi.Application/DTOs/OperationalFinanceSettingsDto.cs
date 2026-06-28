@@ -15,7 +15,7 @@ public class OperationalFinanceSettingsDto
     /// vendedor puede aplicar sin permiso <c>reservas.discount_above_threshold</c>.
     /// Rango valido 0..100. Default 10%.
     /// </summary>
-    [Range(0, 100, ErrorMessage = "MaxDiscountPercentWithoutOverride debe estar entre 0 y 100.")]
+    [Range(0, 100, ErrorMessage = "El porcentaje máximo de descuento debe estar entre 0 y 100.")]
     public decimal MaxDiscountPercentWithoutOverride { get; set; } = 10m;
 
     // ============================================================
@@ -59,7 +59,7 @@ public class OperationalFinanceSettingsDto
     /// Nullable en el DTO: enviar null o omitir en el PUT para no modificar el
     /// valor actual. Solo se actualiza si viene con valor.
     /// </summary>
-    [Range(0.0, 1.0, ErrorMessage = "PartialCreditNoteRoundingTolerance debe estar entre 0 y 1.")]
+    [Range(0.0, 1.0, ErrorMessage = "La tolerancia de redondeo debe estar entre 0 y 1.")]
     public decimal? PartialCreditNoteRoundingTolerance { get; set; }
 
     /// <summary>
@@ -70,7 +70,7 @@ public class OperationalFinanceSettingsDto
     /// Nullable en el DTO: enviar null o omitir en el PUT para no modificar el
     /// valor actual. Solo se actualiza si viene con valor.
     /// </summary>
-    [Range(1, 60, ErrorMessage = "IdempotencyKeyStaleThresholdMinutes debe estar entre 1 y 60.")]
+    [Range(1, 60, ErrorMessage = "La cantidad de minutos debe estar entre 1 y 60.")]
     public int? IdempotencyKeyStaleThresholdMinutes { get; set; }
 
     /// <summary>
@@ -160,7 +160,7 @@ public class OperationalFinanceSettingsDto
     /// <para>Nullable y patch-like (criterio B-002): enviar null u omitir = no se modifica el valor
     /// actual. Rango razonable 1..3650 (un dia a ~diez años); el [Range] solo se evalua si viene valor.</para>
     /// </summary>
-    [Range(1, 3650, ErrorMessage = "StaleCostReferenceDays debe estar entre 1 y 3650.")]
+    [Range(1, 3650, ErrorMessage = "La cantidad de días debe estar entre 1 y 3650.")]
     public int? StaleCostReferenceDays { get; set; }
 
     /// <summary>
@@ -171,7 +171,7 @@ public class OperationalFinanceSettingsDto
     /// Rango razonable 1..60 (mismo que <c>UpcomingUnpaidReservationAlertDays</c>); el [Range] solo se evalua
     /// si viene valor.</para>
     /// </summary>
-    [Range(1, 60, ErrorMessage = "ServiceDeadlineAlertDays debe estar entre 1 y 60.")]
+    [Range(1, 60, ErrorMessage = "Los días de anticipación del aviso deben estar entre 1 y 60.")]
     public int? ServiceDeadlineAlertDays { get; set; }
 
     /// <summary>
@@ -197,7 +197,7 @@ public class OperationalFinanceSettingsDto
     /// u omitir el campo en el PUT = no se modifica el valor actual; solo se persiste si viene con valor. Se
     /// expone read-only en el GET para que el panel lo muestre como input numerico.</para>
     /// </summary>
-    [Range(0, 100, ErrorMessage = "SellerCommissionPercent debe estar entre 0 y 100.")]
+    [Range(0, 100, ErrorMessage = "El porcentaje de comisión debe estar entre 0 y 100.")]
     public decimal? SellerCommissionPercent { get; set; }
 
     /// <summary>
@@ -207,7 +207,7 @@ public class OperationalFinanceSettingsDto
     /// <para>Nullable y patch-like (criterio B-002): enviar null u omitir = no se modifica el valor actual.
     /// Rango 0..3650 (0 = desactivado; el [Range] solo se evalua si viene valor). Se expone read-only en el GET.</para>
     /// </summary>
-    [Range(0, 3650, ErrorMessage = "BudgetExpirationDays debe estar entre 0 y 3650 (0 = desactivado).")]
+    [Range(0, 3650, ErrorMessage = "Los días de caducidad del presupuesto deben estar entre 0 y 3650 (0 = desactivado).")]
     public int? BudgetExpirationDays { get; set; }
 
     /// <summary>
@@ -217,6 +217,6 @@ public class OperationalFinanceSettingsDto
     /// <para>Nullable y patch-like (criterio B-002): enviar null u omitir = no se modifica el valor actual.
     /// Rango 0..3650 (0 = desactivado; el [Range] solo se evalua si viene valor). Se expone read-only en el GET.</para>
     /// </summary>
-    [Range(0, 3650, ErrorMessage = "QuotationExpirationDays debe estar entre 0 y 3650 (0 = desactivado).")]
+    [Range(0, 3650, ErrorMessage = "Los días de caducidad de la cotización deben estar entre 0 y 3650 (0 = desactivado).")]
     public int? QuotationExpirationDays { get; set; }
 }

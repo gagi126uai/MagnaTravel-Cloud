@@ -2,6 +2,10 @@
 
 Use specialized agents based on risk and scope.
 
+### Mandatory data-exposure gate (owner's rule, 2026-06-28)
+
+`data-exposure-reviewer` MUST run after EVERY important backend or frontend change, as a final pass before the change is considered done. It is strict and non-permissive on purpose: it blocks if ANY internal/technical information can reach the end user (a non-programmer) — raw IDs/GUIDs, internal enum integers, exception/stack/framework/DB error strings, internal field/class/table/variable names, debug dumps, developer jargon in the Spanish UI, or over-exposed API responses. This is in addition to the functional reviewers and to `security-data-risk-reviewer` (which covers PII/fiscal/money leaks); the data-exposure gate covers technical-internals exposure that an ERP must never show. A blocking finding must be fixed and re-reviewed before merge/deploy. "Important change" = any change that adds/alters an API response, an error path, a user-facing message/label/table/PDF/voucher/receipt, or a message sent to the customer (WhatsApp/email). Pure internal refactors with zero user-visible/response surface are exempt.
+
 ### Backend work
 
 Use `backend-dotnet-senior` for:

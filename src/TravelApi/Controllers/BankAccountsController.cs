@@ -30,22 +30,42 @@ public class BankAccountsController : ControllerBase
         _permissionResolver = permissionResolver;
     }
 
+    /// <summary>
+    /// Lista las cuentas activas de un dueño. <paramref name="ownerId"/> es el TOKEN PUBLICO del dueño: el
+    /// <c>PublicId</c> (GUID) para Cliente/Proveedor (coherente con el resto de la API), o un 0 para la Agencia
+    /// (singleton, se ignora). El token se resuelve al Id interno DESPUES de autorizar (la autorizacion depende
+    /// solo del tipo de dueño, no del dueño concreto: resolver antes filtraria existencia a quien no tiene permiso).
+    /// </summary>
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<BankAccountListItemDto>>> List(
-        [FromQuery] BankAccountOwnerType ownerType,
-        [FromQuery] int ownerId,
+        [FromQuery] string? ownerType,
+        [FromQuery] string? ownerId,
         CancellationToken cancellationToken)
     {
-        // El binding de un enum desde la query acepta CUALQUIER int (ej. 99) sin error. Validamos que sea un
-        // valor real ANTES de mapearlo a permiso, si no caeria en un 500 mas abajo. 400 es la respuesta correcta.
-        if (!Enum.IsDefined(typeof(BankAccountOwnerType), ownerType))
+        // ownerType llega como TEXTO crudo (no como enum) a proposito: si lo bindeara [ApiController] a
+        // BankAccountOwnerType, un valor malformado (?ownerType=abc) devolveria un 400 automatico cuyo mensaje
+        // es el string interno del framework ("The value 'abc' is not valid for ownerType.") — fuga de detalle
+        // interno. Lo parseamos a mano y devolvemos un mensaje amable, sin nunca repetir el valor recibido.
+        if (!TryParseOwnerType(ownerType, out var ownerTypeValue))
             return BadRequest(new { message = "Tipo de dueño inválido." });
 
-        if (!await CanReadAsync(ownerType, cancellationToken))
+        // Autorizamos ANTES de tocar la BD para resolver el dueño: si resolvieramos primero, un usuario sin permiso
+        // podria distinguir un dueño existente (200) de uno inexistente (400) — una fuga de existencia.
+        if (!await CanReadAsync(ownerTypeValue, cancellationToken))
             return Forbid();
 
-        var accounts = await _bankAccountService.ListAsync(ownerType, ownerId, cancellationToken);
-        return Ok(accounts);
+        try
+        {
+            // El front manda el PublicId (GUID) del Cliente/Proveedor (o 0 para la Agencia). Lo traducimos al Id
+            // interno con el que se consultan las cuentas. Token vacio/invalido o dueño inexistente -> ArgumentException.
+            var internalOwnerId = await _bankAccountService.ResolveOwnerInternalIdAsync(ownerTypeValue, ownerId, cancellationToken);
+            var accounts = await _bankAccountService.ListAsync(ownerTypeValue, internalOwnerId, cancellationToken);
+            return Ok(accounts);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     [HttpGet("{publicId:guid}")]
@@ -170,6 +190,35 @@ public class BankAccountsController : ControllerBase
         {
             return NotFound();
         }
+    }
+
+    /// <summary>
+    /// Parsea el <c>ownerType</c> que llega como texto crudo en la query del listado. Acepta DOS formas, que son
+    /// las que puede mandar el front: el NOMBRE del enum sin distinguir mayusculas ("Agency"/"customer"/...) y el
+    /// VALOR numerico como texto ("0"/"1"/"2", que es lo que envia <c>OWNER_TYPE[...]</c> del front). Cualquier
+    /// otra cosa (vacio, "abc", "99") devuelve false -> el controller responde 400 con mensaje amable.
+    ///
+    /// <para>Se preserva la semantica del viejo guard <c>Enum.IsDefined</c>: <c>Enum.TryParse</c> aceptaria un
+    /// numerico fuera de rango ("99") como un enum sin definir, asi que despues exigimos <c>IsDefined</c> para
+    /// descartarlo. Nunca se repite el valor recibido en la respuesta (anti fuga de input).</para>
+    /// </summary>
+    private static bool TryParseOwnerType(string? raw, out BankAccountOwnerType ownerType)
+    {
+        ownerType = default;
+
+        if (string.IsNullOrWhiteSpace(raw))
+            return false;
+
+        // TryParse(ignoreCase) cubre tanto el nombre ("Customer") como el numerico en texto ("1").
+        if (!Enum.TryParse(raw.Trim(), ignoreCase: true, out BankAccountOwnerType parsed))
+            return false;
+
+        // TryParse acepta numericos fuera de rango (ej. "99"): los rechazamos para conservar el guard original.
+        if (!Enum.IsDefined(typeof(BankAccountOwnerType), parsed))
+            return false;
+
+        ownerType = parsed;
+        return true;
     }
 
     // ============================================================
