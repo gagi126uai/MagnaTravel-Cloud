@@ -10,6 +10,7 @@ using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Exceptions;
+using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Services;
 using Xunit;
@@ -685,5 +686,207 @@ public class CancellationWaivePenaltyTests
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             h.Service.RevertWaivedOperatorPenaltyAsync(
                 bcId, "Flag off.", "admin", "Admin", requesterIsAdmin: true, default));
+    }
+
+    // ============================================================
+    // Fase A (2026-06-28): GetOperatorPenaltyOutcomeAsync — el RESULTADO de la pata del operador que la ficha
+    // de la reserva lee al cargar (None / Pending / Confirmed / Waived).
+    // ============================================================
+
+    [Fact]
+    public async Task Outcome_WhenPendingPenalty_IsPending()
+    {
+        var h = BuildService();
+        var (_, _, _, reserva) = await SeedPostNcAsync(h.Ctx);
+
+        // Recien sembrada (penalidad Estimated, NC con CAE): la pata del operador esta pendiente de resolver.
+        Assert.Equal(
+            OperatorPenaltyOutcome.Pending,
+            await h.Service.GetOperatorPenaltyOutcomeAsync(reserva.PublicId, default));
+    }
+
+    [Fact]
+    public async Task Outcome_AfterWaive_IsWaived()
+    {
+        var h = BuildService();
+        var (bcId, _, _, reserva) = await SeedPostNcAsync(h.Ctx);
+
+        await h.Service.WaiveOperatorPenaltyAsync(
+            bcId, "El operador no cobra multa.", "u", "U", default, userCanClassifyAgencyPenalty: true);
+
+        // Cerrada sin multa -> Waived (lo que el front necesita para "Cerrada sin multa del operador").
+        Assert.Equal(
+            OperatorPenaltyOutcome.Waived,
+            await h.Service.GetOperatorPenaltyOutcomeAsync(reserva.PublicId, default));
+        // Y NO sigue figurando como pendiente.
+        Assert.NotEqual(
+            OperatorPenaltyOutcome.Pending,
+            await h.Service.GetOperatorPenaltyOutcomeAsync(reserva.PublicId, default));
+    }
+
+    [Fact]
+    public async Task Outcome_AfterConfirmRealPenalty_IsConfirmed()
+    {
+        var h = BuildService();
+        var (bcId, _, _, reserva) = await SeedPostNcAsync(h.Ctx);
+        SetupCreateEmitsDebitNote(h);
+
+        await h.Service.ConfirmPenaltyAsync(
+            bcId,
+            new ConfirmPenaltyRequest(
+                ConceptKind: CancellationConceptKind.AgencyManagementFee,
+                ConfirmedPenaltyAmount: 30_000m,
+                OperatorConfirmationDate: DateTime.UtcNow.AddDays(-2),
+                SupportingDocumentReference: "https://docs/mail.pdf"),
+            "u", "U", false, default, userCanClassifyAgencyPenalty: true);
+
+        Assert.Equal(
+            OperatorPenaltyOutcome.Confirmed,
+            await h.Service.GetOperatorPenaltyOutcomeAsync(reserva.PublicId, default));
+    }
+
+    [Fact]
+    public async Task Outcome_WhenNoCancellation_IsNone()
+    {
+        var h = BuildService();
+        var reserva = new Reserva
+        {
+            NumeroReserva = "R-NOCANCEL",
+            Name = "Reserva sin cancelacion",
+            Status = EstadoReserva.Confirmed,
+            Balance = 0m,
+        };
+        h.Ctx.Reservas.Add(reserva);
+        await h.Ctx.SaveChangesAsync();
+
+        Assert.Equal(
+            OperatorPenaltyOutcome.None,
+            await h.Service.GetOperatorPenaltyOutcomeAsync(reserva.PublicId, default));
+    }
+
+    // ============================================================
+    // Issue 2 (2026-06-28): saneo de mensajes — ningun mensaje de cara al usuario debe filtrar el slug del
+    // permiso, nombres de campos internos, ni nombres de enums.
+    // ============================================================
+
+    /// <summary>Cadenas tecnicas que NUNCA deben aparecer en un mensaje mostrado al usuario.</summary>
+    private static readonly string[] ForbiddenLeakTokens =
+    {
+        "cancellations.classify_agency_penalty",
+        "CreditNoteInvoiceId",
+        "DebitNoteInvoiceId",
+        "PenaltyStatus",
+        "DebitNoteStatus",
+        "bc.Status",
+        "Estado actual",
+    };
+
+    private static void AssertNoTechnicalLeak(string message)
+    {
+        foreach (var token in ForbiddenLeakTokens)
+            Assert.DoesNotContain(token, message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Waive_WithoutPermission_MessageHasNoSlug()
+    {
+        var h = BuildService();
+        var (bcId, _, _, _) = await SeedPostNcAsync(h.Ctx);
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.WaiveOperatorPenaltyAsync(
+                bcId, "Sin multa.", "u", "U", default, userCanClassifyAgencyPenalty: false));
+        AssertNoTechnicalLeak(ex.Message);
+        Assert.Contains("permiso", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Confirm_WithoutPermission_MessageHasNoSlug()
+    {
+        var h = BuildService();
+        var (bcId, _, _, _) = await SeedPostNcAsync(h.Ctx);
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.ConfirmPenaltyAsync(
+                bcId,
+                new ConfirmPenaltyRequest(
+                    ConceptKind: CancellationConceptKind.AgencyManagementFee,
+                    ConfirmedPenaltyAmount: 30_000m,
+                    OperatorConfirmationDate: DateTime.UtcNow.AddDays(-2),
+                    SupportingDocumentReference: "https://docs/mail.pdf"),
+                "u", "U", false, default, userCanClassifyAgencyPenalty: false));
+        Assert.Equal("INV-ADR014-PERM", ex.InvariantCode);
+        AssertNoTechnicalLeak(ex.Message);
+    }
+
+    [Fact]
+    public async Task Waive_BeforeCreditNoteIssued_MessageHasNoInternalFields()
+    {
+        var h = BuildService();
+        var (bcId, _, _, _) = await SeedPostNcAsync(
+            h.Ctx, status: BookingCancellationStatus.Drafted, postNc: false);
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.WaiveOperatorPenaltyAsync(
+                bcId, "Sin multa.", "u", "U", default, userCanClassifyAgencyPenalty: true));
+        AssertNoTechnicalLeak(ex.Message);
+    }
+
+    [Fact]
+    public async Task Confirm_BeforeCreditNoteIssued_MessageHasNoInternalFields()
+    {
+        var h = BuildService();
+        var (bcId, _, _, _) = await SeedPostNcAsync(
+            h.Ctx, status: BookingCancellationStatus.Drafted, postNc: false);
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.ConfirmPenaltyAsync(
+                bcId,
+                new ConfirmPenaltyRequest(
+                    ConceptKind: CancellationConceptKind.AgencyManagementFee,
+                    ConfirmedPenaltyAmount: 30_000m,
+                    OperatorConfirmationDate: DateTime.UtcNow.AddDays(-2),
+                    SupportingDocumentReference: "https://docs/mail.pdf"),
+                "u", "U", false, default, userCanClassifyAgencyPenalty: true));
+        Assert.Equal("INV-ADR014-001", ex.InvariantCode);
+        AssertNoTechnicalLeak(ex.Message);
+    }
+
+    [Fact]
+    public async Task Waive_Twice_SecondMessageHasNoEnumNames()
+    {
+        var h = BuildService();
+        var (bcId, _, _, _) = await SeedPostNcAsync(h.Ctx);
+
+        await h.Service.WaiveOperatorPenaltyAsync(
+            bcId, "Sin multa.", "u", "U", default, userCanClassifyAgencyPenalty: true);
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.WaiveOperatorPenaltyAsync(
+                bcId, "Otra vez.", "u", "U", default, userCanClassifyAgencyPenalty: true));
+        Assert.Equal("INV-WAIVE-003", ex.InvariantCode);
+        AssertNoTechnicalLeak(ex.Message);
+    }
+
+    [Fact]
+    public async Task Confirm_AfterResolved_MessageHasNoEnumNames()
+    {
+        var h = BuildService();
+        var (bcId, _, _, _) = await SeedPostNcAsync(h.Ctx);
+
+        await h.Service.WaiveOperatorPenaltyAsync(
+            bcId, "Sin multa.", "u", "U", default, userCanClassifyAgencyPenalty: true);
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.ConfirmPenaltyAsync(
+                bcId,
+                new ConfirmPenaltyRequest(
+                    ConceptKind: CancellationConceptKind.AgencyManagementFee,
+                    ConfirmedPenaltyAmount: 30_000m,
+                    OperatorConfirmationDate: DateTime.UtcNow.AddDays(-2),
+                    SupportingDocumentReference: "https://docs/mail.pdf"),
+                "u", "U", false, default, userCanClassifyAgencyPenalty: true));
+        Assert.Equal("INV-ADR014-003", ex.InvariantCode);
+        AssertNoTechnicalLeak(ex.Message);
     }
 }

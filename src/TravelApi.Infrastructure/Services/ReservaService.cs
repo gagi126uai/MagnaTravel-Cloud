@@ -2653,15 +2653,37 @@ public class ReservaService : IReservaService
         // caja, son rastro de plata que hay que deshacer formalmente. file.Payments ya viene incluido arriba.
         var hasAnyLivePayment = file.Payments.Any(p => !p.IsDeleted);
 
-        // H3 (2026-06-24): ¿hay una multa del operador pendiente de confirmar? Alimenta la capacidad
-        // CanConfirmOperatorPenalty para que el front muestre "Confirmar multa del operador" SOLO cuando realmente
-        // hay algo que confirmar (no por estado: PendingOperatorRefund puede no tener multa pendiente). Se calcula
-        // SOLO en el DETALLE (este metodo), NO en el listado: requiere consultar la cancelacion de la reserva, y
-        // hacerlo por cada fila del listado seria un N+1 (decision: el boton solo vive en la ficha de detalle).
-        // La verdad la define BookingCancellationService (misma derivacion que canConfirmPenalty, fuente unica).
-        // Si no esta inyectado (tests unitarios sin cancelaciones), queda false: el boton no se ofrece (seguro).
-        var hasPendingOperatorPenalty = _cancellationService is not null
-            && await _cancellationService.HasPendingOperatorPenaltyAsync(file.PublicId, CancellationToken.None);
+        // H3 (2026-06-24) + Fase A (2026-06-28): RESULTADO de la pata "multa del operador" de la cancelacion
+        // vigente (None / Pending / Confirmed / Waived). Una sola consulta a la cancelacion alimenta DOS cosas:
+        //   (1) el campo informativo OperatorPenaltyOutcome -> el front pinta "Cerrada sin multa del operador"
+        //       cuando es Waived, al cargar la ficha (antes ese dato solo vivia en el DTO de la cancelacion).
+        //   (2) la capacidad CanConfirmOperatorPenalty -> "Pending" es la unica que ofrece los botones.
+        // Se calcula SOLO en el DETALLE (este metodo), NO en el listado: consultar la cancelacion por cada fila
+        // del listado seria un N+1 (el boton/cartel solo vive en la ficha de detalle). La verdad la define
+        // BookingCancellationService (misma derivacion canonica, fuente unica). Si no esta inyectado (tests
+        // unitarios sin cancelaciones), queda None: ni botones ni cartel (seguro).
+        var operatorPenaltyOutcome = _cancellationService is not null
+            ? await _cancellationService.GetOperatorPenaltyOutcomeAsync(file.PublicId, CancellationToken.None)
+            : OperatorPenaltyOutcome.None;
+
+        // Issue 2a (2026-06-28): el boton "Confirmar multa / Cerrar sin multa" exige el permiso
+        // cancellations.classify_agency_penalty (o Admin). Antes la capacidad ignoraba el permiso: un usuario sin
+        // el permiso VEIA los botones, los clickeaba, y el backend rebotaba 409 (defensa final). Ahora lo gateamos
+        // ACA — el unico lugar del armado de capacidades que conoce la identidad del caller — para que esos
+        // usuarios NO vean los botones. Es una compuerta de UI; el endpoint confirm/waive revalida el permiso
+        // server-side igual (la defensa final no se quita). En tests sin HttpContext/resolver da false (sin
+        // identidad no se ofrece la accion sensible, comportamiento seguro).
+        var httpContextUser = _httpContextAccessor?.HttpContext?.User;
+        var isAdmin = httpContextUser?.IsInRole("Admin") ?? false;
+        var userCanClassifyOperatorPenalty = isAdmin
+            || await CurrentUserHasPermissionAsync(Permissions.CancellationsClassifyAgencyPenalty, CancellationToken.None);
+
+        // Solo "Pending" + permiso habilita los botones. El resto de los outcomes (Confirmed/Waived/None) ya no
+        // son "pendientes": el boton no aplica. Derivar de un unico outcome evita una segunda consulta y mantiene
+        // una sola verdad (no llamamos HasPendingOperatorPenaltyAsync aparte, que daria el mismo Pending).
+        var hasPendingOperatorPenalty =
+            operatorPenaltyOutcome == OperatorPenaltyOutcome.Pending
+            && userCanClassifyOperatorPenalty;
 
         // (2026-06-26): para que canDelete NO mienta, miramos si hay un servicio confirmado con el operador (mismo
         // bloqueo que DeleteGuards). Solo importa en pre-venta (Cotizacion/Presupuesto): es el unico estado donde
@@ -2681,7 +2703,8 @@ public class ReservaService : IReservaService
             HasLiveEditAuth: dto.HasLiveEditAuthorization,
             HasAnyPayment: hasAnyLivePayment,
             HasPendingOperatorPenalty: hasPendingOperatorPenalty,
-            HasOperatorConfirmedService: hasOperatorConfirmedService);
+            HasOperatorConfirmedService: hasOperatorConfirmedService,
+            OperatorPenaltyOutcome: operatorPenaltyOutcome);
         dto.Capabilities = MapCapabilities(ReservaCapabilityPolicy.For(capabilityContext));
 
         // Derivado de "tiene CAE vivo": el front explica por que cancelar exige pasar por la NC primero.
@@ -2809,6 +2832,9 @@ public class ReservaService : IReservaService
             CanEmitVoucher = Map(caps.CanEmitVoucher),
             CanCorrectTravelingEntry = Map(caps.CanCorrectTravelingEntry),
             CanConfirmOperatorPenalty = Map(caps.CanConfirmOperatorPenalty),
+            // Estado de resolucion de la pata del operador (None/Pending/Confirmed/Waived) como string estable
+            // para el front. Es el nombre del enum del dominio; el front compara contra "Waived".
+            OperatorPenaltyOutcome = caps.OperatorPenaltyOutcome.ToString(),
             AllowedForward = caps.AllowedForward.ToList(),
             AllowedRevert = caps.AllowedRevert.ToList(),
         };

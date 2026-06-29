@@ -222,6 +222,15 @@ public class ReservaCapabilitiesDto
     /// </summary>
     public CapabilityDto CanConfirmOperatorPenalty { get; set; } = new();
 
+    /// <summary>
+    /// Fase A (2026-06-28): estado de RESOLUCION de la "multa del operador" de la cancelación vigente.
+    /// Valores: "None" | "Pending" | "Confirmed" | "Waived". El front lo lee al cargar la ficha para mostrar
+    /// "Cerrada sin multa del operador" cuando es "Waived" (sin tener que pedir aparte el detalle de la
+    /// cancelación). Es informativo: la ACCIÓN de confirmar/cerrar la gobierna <see cref="CanConfirmOperatorPenalty"/>.
+    /// Default "None" cuando la reserva no tiene cancelación o su pata de operador no está en juego.
+    /// </summary>
+    public string OperatorPenaltyOutcome { get; set; } = "None";
+
     /// <summary>Estados a los que se puede avanzar manualmente (matriz forward del dominio).</summary>
     public List<string> AllowedForward { get; set; } = new();
 

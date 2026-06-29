@@ -3160,6 +3160,45 @@ public class BookingCancellationService
     }
 
     /// <inheritdoc />
+    public async Task<OperatorPenaltyOutcome> GetOperatorPenaltyOutcomeAsync(Guid reservaPublicId, CancellationToken ct)
+    {
+        // Misma cancelacion vigente y misma proyeccion a tipo anonimo que HasPendingOperatorPenaltyAsync
+        // (ver el comentario de PenaltyConfirmabilityFields sobre por que NO proyectamos a la entidad).
+        var row = await _db.BookingCancellations
+            .AsNoTracking()
+            .Where(b => b.Reserva.PublicId == reservaPublicId
+                     && b.Status != BookingCancellationStatus.Aborted)
+            .OrderByDescending(b => b.DraftedAt)
+            .Select(b => new
+            {
+                b.Status,
+                b.CreditNoteInvoiceId,
+                b.PenaltyStatus,
+                b.DebitNoteInvoiceId,
+                b.DebitNoteStatus,
+            })
+            .FirstOrDefaultAsync(ct);
+        if (row is null) return OperatorPenaltyOutcome.None;
+
+        // Estados TERMINALES de la pata del operador: se leen directo del PenaltyStatus persistido, sin depender
+        // del flag maestro. La resolucion (confirmar con multa / cerrar sin multa) ya ocurrio; aunque manana se
+        // apague el flag, el cartel "Cerrada sin multa" / "Multa confirmada" sigue siendo verdad para esa reserva.
+        if (row.PenaltyStatus == PenaltyStatus.Waived) return OperatorPenaltyOutcome.Waived;
+        if (row.PenaltyStatus == PenaltyStatus.Confirmed) return OperatorPenaltyOutcome.Confirmed;
+
+        // No-terminal: ¿esta PENDIENTE de resolver ahora mismo? Reusa la MISMA regla canonica que
+        // HasPendingOperatorPenaltyAsync (flag ON + NC total con CAE + penalidad aun Estimated + sin ND en juego).
+        var fields = new PenaltyConfirmabilityFields(
+            row.Status, row.CreditNoteInvoiceId, row.PenaltyStatus, row.DebitNoteInvoiceId, row.DebitNoteStatus);
+        var settings = await _settings.GetEntityAsync(ct);
+        var (canConfirm, _) = EvaluateCanConfirmPenalty(fields, settings.EnableCancellationDebitNote);
+
+        // canConfirm => hay algo pendiente de resolver. Si no (NC sin CAE aun, feature off, etc.), no hay pata de
+        // operador "en juego" para mostrar: None (el front no pinta cartel ni boton).
+        return canConfirm ? OperatorPenaltyOutcome.Pending : OperatorPenaltyOutcome.None;
+    }
+
+    /// <inheritdoc />
     public async Task<BookingCancellationDto> ConfirmPenaltyAsync(
         Guid publicId,
         ConfirmPenaltyRequest request,
@@ -3205,16 +3244,14 @@ public class BookingCancellationService
         // sin el permiso que la habilita. ===
         if (!userCanClassifyAgencyPenalty)
             throw new BusinessInvariantViolationException(
-                "Confirmar la penalidad propia de la agencia emite una Nota de Debito fiscal " +
-                "y requiere el permiso 'cancellations.classify_agency_penalty'.",
+                "No tenés permiso para confirmar la multa del operador. Pedíselo a un administrador.",
                 invariantCode: "INV-ADR014-PERM");
 
         // === Precondicion 4: estado post-NC con CAE. Nunca emitir la ND antes que la NC. ===
         if (!PostCreditNoteStatuses.Contains(bc.Status) || bc.CreditNoteInvoiceId is null)
             throw new BusinessInvariantViolationException(
-                $"La confirmacion diferida de la penalidad requiere que la NC total ya tenga " +
-                $"CAE (estado post-NC + CreditNoteInvoiceId seteado). Estado actual: {bc.Status}, " +
-                $"CreditNoteInvoiceId: {(bc.CreditNoteInvoiceId is null ? "null" : "seteado")}.",
+                "Todavía no se puede confirmar la multa del operador: la nota de crédito al cliente " +
+                "aún no está confirmada por la AFIP.",
                 invariantCode: "INV-ADR014-001");
 
         // === Precondicion 5: concepto que emite ND. Resolvemos el concepto efectivo (el
@@ -3250,10 +3287,8 @@ public class BookingCancellationService
             bc.DebitNoteStatus == DebitNoteStatus.Issued;
         if (debitNoteAlreadyInPlay)
             throw new BusinessInvariantViolationException(
-                "La penalidad ya fue confirmada o cerrada sin multa, o la Nota de Debito ya esta en juego para " +
-                $"esta cancelacion (PenaltyStatus={bc.PenaltyStatus}, DebitNoteStatus={bc.DebitNoteStatus}, " +
-                $"DebitNoteInvoiceId={(bc.DebitNoteInvoiceId.HasValue ? "seteado" : "null")}). " +
-                "No se vuelve a emitir.",
+                "La multa del operador de esta cancelación ya fue resuelta (confirmada o cerrada sin multa). " +
+                "No se vuelve a procesar.",
                 invariantCode: "INV-ADR014-003");
 
         // === Precondicion 7: fecha de confirmacion del operador valida (400). No futura;
@@ -3435,17 +3470,15 @@ public class BookingCancellationService
         // penalidad — con o sin multa — es una accion sensible: la EXIGIMOS (no degrada). ===
         if (!userCanClassifyAgencyPenalty)
             throw new BusinessInvariantViolationException(
-                "Cerrar la cancelacion sin multa del operador requiere el permiso " +
-                "'cancellations.classify_agency_penalty'.",
+                "No tenés permiso para registrar el cierre sin multa del operador. Pedíselo a un administrador.",
                 invariantCode: "INV-WAIVE-PERM");
 
         // === Precondicion 4: estado post-NC con CAE. La pata de la penalidad solo se resuelve despues de que la
         // NC total al cliente ya tiene CAE (mismo gate que ConfirmPenaltyAsync). ===
         if (!PostCreditNoteStatuses.Contains(bc.Status) || bc.CreditNoteInvoiceId is null)
             throw new BusinessInvariantViolationException(
-                $"El cierre sin multa requiere que la NC total ya tenga CAE (estado post-NC + " +
-                $"CreditNoteInvoiceId seteado). Estado actual: {bc.Status}, CreditNoteInvoiceId: " +
-                $"{(bc.CreditNoteInvoiceId is null ? "null" : "seteado")}.",
+                "Todavía no se puede cerrar sin multa: la nota de crédito al cliente aún no está " +
+                "confirmada por la AFIP.",
                 invariantCode: "INV-WAIVE-001");
 
         // === Precondicion 5: idempotencia + candado compartido con ConfirmPenaltyAsync. Si la penalidad ya se
@@ -3459,9 +3492,8 @@ public class BookingCancellationService
             bc.DebitNoteStatus == DebitNoteStatus.Issued;
         if (penaltyAlreadyResolved)
             throw new BusinessInvariantViolationException(
-                "La penalidad de esta cancelacion ya fue resuelta (confirmada con multa, cerrada sin multa, o " +
-                $"con Nota de Debito en juego): PenaltyStatus={bc.PenaltyStatus}, DebitNoteStatus={bc.DebitNoteStatus}. " +
-                "No se vuelve a procesar.",
+                "La multa del operador de esta cancelación ya fue resuelta (confirmada con multa o cerrada sin " +
+                "multa). No se vuelve a procesar.",
                 invariantCode: "INV-WAIVE-003");
 
         // === Aplicar el cierre sin multa. Estado terminal propio (Waived) + monto 0. NO tocamos:
@@ -4240,9 +4272,8 @@ public class BookingCancellationService
             !userCanClassifyAgencyPenalty)
         {
             throw new BusinessInvariantViolationException(
-                "Clasificar la penalidad como ingreso propio de la agencia emite una Nota " +
-                "de Debito fiscal y requiere el permiso 'cancellations.classify_agency_penalty'. " +
-                "Tu usuario no lo tiene.",
+                "No tenés permiso para clasificar la penalidad como ingreso propio de la agencia " +
+                "(emite una Nota de Débito). Pedíselo a un administrador.",
                 invariantCode: "INV-ADR013-PERM");
         }
 

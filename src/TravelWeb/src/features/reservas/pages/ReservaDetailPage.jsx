@@ -35,6 +35,8 @@ import { useOperationalFlags } from "../../../contexts/OperationalFlagsContext";
 import { useAlerts } from "../../../contexts/AlertsContext";
 import { CancelarReservaInline } from "../../cancellations/components/CancelarReservaInline";
 import { ConfirmarMultaOperadorInline } from "../../cancellations/components/ConfirmarMultaOperadorInline";
+import { CerrarSinMultaInline } from "../../cancellations/components/CerrarSinMultaInline";
+import { DeshacerCierreSinMultaInline } from "../../cancellations/components/DeshacerCierreSinMultaInline";
 import { cancellationsApi } from "../../cancellations/api/cancellationsApi";
 import { hasPermission, isAdmin } from "../../../auth";
 import { calcularSugerenciaComposicion } from "../lib/pasajeroHint";
@@ -675,6 +677,12 @@ export default function ReservaDetailPage() {
   const [showMultaInline, setShowMultaInline] = useState(false);
   const [multaCancellationPublicId, setMultaCancellationPublicId] = useState(null);
   const [buscandoMulta, setBuscandoMulta] = useState(false);
+  // 2026-06-28: panel "Cerrar sin multa" — segunda opción del flujo post-anulación.
+  // Se abre cuando el agente elige "No cobró nada / devolvió todo".
+  const [showSinMultaInline, setShowSinMultaInline] = useState(false);
+  // 2026-06-28: panel "Deshacer el cierre sin multa" — solo visible para administradores.
+  // Se abre cuando el admin necesita reabrir el paso (el operador terminó cobrando algo).
+  const [showDeshacerWaiveInline, setShowDeshacerWaiveInline] = useState(false);
 
   // ADR-027: estado de carga del botón "Dar OK" (acknowledge-changes).
   // Evita doble click y da feedback visual al usuario mientras espera la respuesta del backend.
@@ -919,6 +927,59 @@ export default function ReservaDetailPage() {
       setAcknowledging(false);
     }
   };
+
+  /**
+   * Flujo compartido: busca la cancelación vigente de la reserva y abre el panel indicado.
+   *
+   * Los tres caminos del paso de multa (Sí cobró / No cobró / Deshacer) necesitan el
+   * GUID de la cancelación para llamar al endpoint correcto. Ese GUID no viene en el DTO
+   * de la reserva, así que lo buscamos con GET by-reserva al momento del clic.
+   *
+   * Si el GUID ya fue cargado (multaCancellationPublicId != null), lo reutilizamos
+   * en lugar de hacer un fetch extra — caso raro pero posible si el usuario cierra
+   * y reabre un panel sin que cambie la cancelación subyacente.
+   *
+   * @param {Function} abrirPanel - Callback que activa el estado del panel específico.
+   */
+  const buscarCancelacionYAbrirPanel = async (abrirPanel) => {
+    setBuscandoMulta(true);
+    try {
+      const cancelacion = await cancellationsApi.getByReserva(publicId);
+      // Defensa ante un 200 anómalo sin publicId: no abrimos el panel en silencio.
+      if (!cancelacion?.publicId) {
+        showError(
+          "No se encontró una cancelación para esta reserva. Si el problema persiste, consultá con administración.",
+          "Sin cancelación"
+        );
+        return;
+      }
+      setMultaCancellationPublicId(cancelacion.publicId);
+      abrirPanel();
+    } catch (error) {
+      if (error?.status === 404) {
+        showError(
+          "No se encontró una cancelación para esta reserva. Si el problema persiste, consultá con administración.",
+          "Sin cancelación"
+        );
+      } else {
+        showError("No se pudo cargar los datos de la cancelación. Intentá de nuevo.");
+      }
+    } finally {
+      setBuscandoMulta(false);
+    }
+  };
+
+  // "Sí, el operador cobró una multa" → abre ConfirmarMultaOperadorInline (naranja, emite ND).
+  const handleAbrirMultaConPenalidad = () =>
+    buscarCancelacionYAbrirPanel(() => setShowMultaInline(true));
+
+  // "No cobró nada / devolvió todo" → abre CerrarSinMultaInline (teal, solo registra motivo).
+  const handleAbrirSinMulta = () =>
+    buscarCancelacionYAbrirPanel(() => setShowSinMultaInline(true));
+
+  // "Deshacer: el operador sí cobró una multa" → abre DeshacerCierreSinMultaInline (Admin only).
+  const handleAbrirDeshacer = () =>
+    buscarCancelacionYAbrirPanel(() => setShowDeshacerWaiveInline(true));
 
   const handleSaveReservaDates = async (payload) => {
     // Lanza si falla para que el modal muestre el error inline.
@@ -1300,90 +1361,166 @@ export default function ReservaDetailPage() {
               se factura directo desde Finalizada (botón "Emitir factura" en la solapa Cuenta). */}
         </div>
       ) : reserva.status === "PendingOperatorRefund" ? (
-        <div className="space-y-3">
-          {/* Cartel de estado: la reserva está anulada y se espera el reembolso del operador.
-              ADR-014: en este estado puede haber una multa del operador pendiente de confirmar.
+        (() => {
+          // 2026-06-28: detectamos el estado "cerrado sin multa" desde el campo dedicado.
+          // Fix 2026-06-29 (reviewer): el campo `canConfirmOperatorPenalty.reason` nunca lleva
+          // "OperatorPenaltyWaived" en el backend — era un campo muerto. El backend ahora expone
+          // `capabilities.operatorPenaltyOutcome` con valores "None"|"Pending"|"Confirmed"|"Waived".
+          // Si el campo no llega (DTO viejo o capabilities ausente) → false → banner genérico (degradación segura).
+          const penaltyCapability = reserva.capabilities?.canConfirmOperatorPenalty;
+          const yaWaived = reserva.capabilities?.operatorPenaltyOutcome === "Waived";
 
-              Fix 2026-06-24 (H3): el botón "Confirmar multa" ahora se muestra SOLO cuando
-              reserva.capabilities.canConfirmOperatorPenalty.allowed === true (fuente de verdad
-              del backend). Antes aparecía para cualquier reserva en PendingOperatorRefund y
-              hacía una llamada extra al backend para determinar si habilitarlo.
+          if (yaWaived) {
+            // ── Estado: cerrado sin multa del operador ─────────────────────────
+            // Los dos botones de elección desaparecen (el paso ya se resolvió).
+            // Solo el admin ve el enlace discreto "Deshacer".
+            return (
+              <div className="space-y-3">
+                <div
+                  className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
+                  data-testid="banner-estado-terminal"
+                  role="status"
+                >
+                  <strong className="font-bold">Anulada — cerrada sin multa del operador.</strong> Solo lectura.
 
-              El clic sigue haciendo GET by-reserva para obtener el cancellationPublicId que
-              necesita el formulario inline (ese ID no viene en el DTO de la reserva). */}
-          <div
-            className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300 flex flex-col sm:flex-row sm:items-center gap-3"
-            data-testid="banner-estado-terminal"
-            role="status"
-          >
-            <span className="flex-1">
-              <strong className="font-bold">Anulada, esperando el reembolso del operador</strong> — solo lectura.
-            </span>
-            {/* El botón se muestra SOLO cuando la capability lo permite (allowed=true).
-                Cuando no hay multa pendiente (allowed=false), no mostramos el botón —
-                evita la confusión de mostrar "Confirmar multa" en reservas sin multa. */}
-            {!showMultaInline && reserva.capabilities?.canConfirmOperatorPenalty?.allowed === true && (
-              <button
-                type="button"
-                onClick={async () => {
-                  // El clic carga el cancellationPublicId que necesita el formulario.
-                  // La capability ya garantiza que hay una multa pendiente, así que
-                  // si el GET falla o devuelve 404 es un caso anómalo que reportamos.
-                  setBuscandoMulta(true);
-                  try {
-                    const cancelacion = await cancellationsApi.getByReserva(publicId);
-                    // Defensa ante un 200 anómalo sin publicId: no abrir el panel en silencio.
-                    if (!cancelacion?.publicId) {
-                      showError(
-                        "No se encontró una cancelación para esta reserva. Si el problema persiste, consultá con administración.",
-                        "Sin cancelación"
-                      );
-                      return;
-                    }
-                    setMultaCancellationPublicId(cancelacion.publicId);
-                    setShowMultaInline(true);
-                  } catch (error) {
-                    if (error?.status === 404) {
-                      showError(
-                        "No se encontró una cancelación para esta reserva. Si el problema persiste, consultá con administración.",
-                        "Sin cancelación"
-                      );
-                    } else {
-                      showError("No se pudo cargar los datos de la multa. Intentá de nuevo.");
-                    }
-                  } finally {
-                    setBuscandoMulta(false);
-                  }
-                }}
-                disabled={buscandoMulta}
-                data-testid="btn-confirmar-multa-operador"
-                className="flex-shrink-0 flex items-center gap-2 rounded-lg border border-orange-400 bg-orange-50 px-3 py-2 text-xs font-bold text-orange-700 hover:bg-orange-100 dark:border-orange-700 dark:bg-orange-950/30 dark:text-orange-300 dark:hover:bg-orange-900/40 transition-colors disabled:opacity-50"
+                  {/* Enlace discreto "Deshacer" — SOLO para administradores.
+                      Separado del texto principal para diferenciarlo visualmente.
+                      Copia el patrón "Sacar de viaje" (2026-06-22): discreto, sobrio,
+                      no se muestra en gris/deshabilitado para no-Admin — directamente no existe. */}
+                  {isAdmin() && !showDeshacerWaiveInline && (
+                    <div className="mt-2 pt-2 border-t border-rose-200/60 dark:border-rose-900/30">
+                      <button
+                        type="button"
+                        onClick={handleAbrirDeshacer}
+                        disabled={buscandoMulta}
+                        data-testid="btn-deshacer-cierre-sin-multa"
+                        className="inline-flex items-center gap-1.5 text-xs text-rose-600/70 hover:text-rose-700 dark:text-rose-400/60 dark:hover:text-rose-300 transition-colors disabled:opacity-50"
+                        aria-label="Deshacer el cierre sin multa del operador"
+                      >
+                        {buscandoMulta && <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />}
+                        · Deshacer: el operador sí cobró una multa
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Panel de deshacer (solo Admin, se monta cuando el admin hace clic) */}
+                {showDeshacerWaiveInline && multaCancellationPublicId && (
+                  <DeshacerCierreSinMultaInline
+                    cancellationPublicId={multaCancellationPublicId}
+                    reservaNumero={reserva.numeroReserva}
+                    onDeshecho={() => {
+                      setShowDeshacerWaiveInline(false);
+                      setMultaCancellationPublicId(null);
+                      showSuccess("Listo. Se reabrió el paso de la multa.");
+                      // Refrescamos para que el banner cambie al estado "pendiente"
+                      // y los dos botones de elección vuelvan a aparecer.
+                      fetchReserva({ showLoading: false, preserveOnError: true });
+                    }}
+                    onCerrar={() => {
+                      setShowDeshacerWaiveInline(false);
+                      setMultaCancellationPublicId(null);
+                    }}
+                  />
+                )}
+              </div>
+            );
+          }
+
+          // ── Estado: paso de multa pendiente (el agente todavía no eligió) ──────
+          // Mostramos la pregunta y las dos opciones solo cuando la capability lo permite.
+          // Si allowed=false por otro motivo (NC sin CAE, ND ya en juego), no mostramos
+          // ni la pregunta ni los botones — el paso no es accionable por el agente.
+          const hayMultaPendiente = penaltyCapability?.allowed === true;
+
+          return (
+            <div className="space-y-3">
+              {/* Cartel de estado: anulada, esperando reembolso del operador.
+                  ADR-014: el paso de multa del operador puede estar pendiente de resolver.
+                  Fix 2026-06-24 (H3): la capability es la fuente de verdad (no el estado).
+                  2026-06-28: ahora hay DOS opciones (Sí cobró / No cobró), no una sola. */}
+              <div
+                className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
+                data-testid="banner-estado-terminal"
+                role="status"
               >
-                {buscandoMulta && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
-                Confirmar multa del operador
-              </button>
-            )}
-          </div>
+                <strong className="font-bold">Anulada, esperando el reembolso del operador</strong> — solo lectura.
 
-          {/* Panel inline de confirmación de multa del operador (ADR-014 diferido).
-              Solo se muestra cuando el usuario activó el botón y se encontró la cancelación activa. */}
-          {showMultaInline && multaCancellationPublicId && (
-            <ConfirmarMultaOperadorInline
-              cancellationPublicId={multaCancellationPublicId}
-              reservaNumero={reserva.numeroReserva}
-              onConfirmado={() => {
-                setShowMultaInline(false);
-                setMultaCancellationPublicId(null);
-                // Refrescamos la reserva para que el estado y el extracto queden al día.
-                fetchReserva({ showLoading: false, preserveOnError: true });
-              }}
-              onCerrar={() => {
-                setShowMultaInline(false);
-                setMultaCancellationPublicId(null);
-              }}
-            />
-          )}
-        </div>
+                {/* ── Elección del agente: ¿cobró multa o no cobró? ──────────────
+                    Solo visible cuando hay un paso pendiente (allowed=true) y ningún
+                    panel inline está abierto (para no mostrar la pregunta encima del form). */}
+                {hayMultaPendiente && !showMultaInline && !showSinMultaInline && (
+                  <div className="mt-3 pt-3 border-t border-rose-200/60 dark:border-rose-900/30">
+                    <p className="text-sm font-semibold text-rose-900 dark:text-rose-200 mb-3">
+                      ¿El operador te cobró una multa por anular?
+                    </p>
+                    <div className="flex flex-wrap gap-3">
+                      {/* Sí cobró: abre el panel naranja (emite Nota de Débito) */}
+                      <button
+                        type="button"
+                        onClick={handleAbrirMultaConPenalidad}
+                        disabled={buscandoMulta}
+                        data-testid="btn-si-cobro-multa"
+                        className="inline-flex items-center gap-2 rounded-lg border border-orange-400 bg-orange-50 px-3 py-2 text-xs font-bold text-orange-700 hover:bg-orange-100 dark:border-orange-700 dark:bg-orange-950/30 dark:text-orange-300 dark:hover:bg-orange-900/40 transition-colors disabled:opacity-50"
+                      >
+                        {buscandoMulta && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
+                        Sí, el operador cobró una multa
+                      </button>
+                      {/* No cobró: abre el panel teal (cierra sin ND) */}
+                      <button
+                        type="button"
+                        onClick={handleAbrirSinMulta}
+                        disabled={buscandoMulta}
+                        data-testid="btn-no-cobro-multa"
+                        className="inline-flex items-center gap-2 rounded-lg border border-teal-400 bg-teal-50 px-3 py-2 text-xs font-bold text-teal-700 hover:bg-teal-100 dark:border-teal-700 dark:bg-teal-950/30 dark:text-teal-300 dark:hover:bg-teal-900/40 transition-colors disabled:opacity-50"
+                      >
+                        {buscandoMulta && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
+                        No cobró nada / devolvió todo
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Panel inline "Sí cobró" — naranja (ADR-014 diferido: emite Nota de Débito). */}
+              {showMultaInline && multaCancellationPublicId && (
+                <ConfirmarMultaOperadorInline
+                  cancellationPublicId={multaCancellationPublicId}
+                  reservaNumero={reserva.numeroReserva}
+                  onConfirmado={() => {
+                    setShowMultaInline(false);
+                    setMultaCancellationPublicId(null);
+                    fetchReserva({ showLoading: false, preserveOnError: true });
+                  }}
+                  onCerrar={() => {
+                    setShowMultaInline(false);
+                    setMultaCancellationPublicId(null);
+                  }}
+                />
+              )}
+
+              {/* Panel inline "No cobró" — teal (2026-06-28: cierra sin nota de débito). */}
+              {showSinMultaInline && multaCancellationPublicId && (
+                <CerrarSinMultaInline
+                  cancellationPublicId={multaCancellationPublicId}
+                  reservaNumero={reserva.numeroReserva}
+                  onCerrado={() => {
+                    setShowSinMultaInline(false);
+                    setMultaCancellationPublicId(null);
+                    showSuccess("Listo. Se cerró sin multa del operador.");
+                    // Refrescamos para que el banner cambie a "cerrada sin multa"
+                    // y la capability se actualice con OperatorPenaltyWaived.
+                    fetchReserva({ showLoading: false, preserveOnError: true });
+                  }}
+                  onCerrar={() => {
+                    setShowSinMultaInline(false);
+                    setMultaCancellationPublicId(null);
+                  }}
+                />
+              )}
+            </div>
+          );
+        })()
       ) : null}
 
       {/* ── Estados activos: orientan al vendedor sobre el siguiente paso ── */}

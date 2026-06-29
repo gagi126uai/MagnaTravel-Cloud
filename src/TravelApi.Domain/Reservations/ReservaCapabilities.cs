@@ -49,6 +49,14 @@ public sealed record Cap(bool Allowed, string? Reason)
 /// (misma query exacta que el guard de borrado, para que capacidad y guard no diverjan). Default false: en el
 /// listado / callers que no lo calculan, la capacidad no agrega este bloqueo (el borrado real lo revalida igual).
 /// </param>
+/// <param name="OperatorPenaltyOutcome">
+/// Fase A (2026-06-28): RESULTADO (estado de resolucion) de la pata "multa del operador" de la cancelacion
+/// vigente: None / Pending / Confirmed / Waived. Es informativo (no es una capacidad de accion): el front lo
+/// lee al cargar la ficha para mostrar "Cerrada sin multa del operador" cuando es Waived, sin pedir aparte el
+/// detalle de la cancelacion. Lo calcula quien arma el contexto (ReservaService en el DETALLE) reusando la
+/// MISMA derivacion canonica de <c>BookingCancellationService</c>. Default None: en el listado / callers que no
+/// lo calculan, no hay info de penalidad que mostrar.
+/// </param>
 public sealed record ReservaCapabilityContext(
     string Status,
     decimal Balance,
@@ -57,7 +65,8 @@ public sealed record ReservaCapabilityContext(
     bool HasLiveEditAuth,
     bool HasAnyPayment,
     bool HasPendingOperatorPenalty = false,
-    bool HasOperatorConfirmedService = false);
+    bool HasOperatorConfirmedService = false,
+    OperatorPenaltyOutcome OperatorPenaltyOutcome = OperatorPenaltyOutcome.None);
 
 /// <summary>
 /// ADR-035 (2026-06-19): conjunto de capacidades de una reserva, ya resueltas. Es la respuesta de
@@ -83,6 +92,7 @@ public sealed record ReservaCapabilities(
     Cap CanEmitVoucher,
     Cap CanCorrectTravelingEntry,
     Cap CanConfirmOperatorPenalty,
+    OperatorPenaltyOutcome OperatorPenaltyOutcome,
     IReadOnlyList<string> AllowedForward,
     IReadOnlyList<string> AllowedRevert);
 
@@ -400,6 +410,9 @@ public static class ReservaCapabilityPolicy
             CanEmitVoucher: EvaluateVoucher(ctx),
             CanCorrectTravelingEntry: EvaluateCorrectTravelingEntry(ctx),
             CanConfirmOperatorPenalty: EvaluateConfirmOperatorPenalty(ctx),
+            // Pasa a traves: el resultado de la pata del operador no se "evalua" aca, lo trae ya resuelto quien
+            // arma el contexto (es un estado leido de la cancelacion, no una regla de capacidad por estado).
+            OperatorPenaltyOutcome: ctx.OperatorPenaltyOutcome,
             AllowedForward: ResolveForwardTargets(ctx.Status),
             AllowedRevert: ResolveRevertTargets(ctx.Status));
     }

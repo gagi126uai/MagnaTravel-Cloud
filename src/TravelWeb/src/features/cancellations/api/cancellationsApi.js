@@ -158,6 +158,36 @@ export const cancellationsApi = {
     api.get(`/cancellations/by-reserva/${reservaPublicId}`),
 
   /**
+   * 2026-06-28: cierra el paso de multa del operador SIN emitir nota de débito.
+   * Se usa cuando el operador NO cobró ninguna penalidad por la anulación.
+   *
+   * Requiere permiso cancellations.classify_agency_penalty (igual que confirmPenalty).
+   * El body exige un motivo obligatorio (5..500 caracteres).
+   *
+   * Tras el éxito, el DTO devuelto tendrá:
+   *   CanConfirmPenalty = false
+   *   ConfirmPenaltyBlockedReason = "OperatorPenaltyWaived"
+   *
+   * @param {string} publicId - GUID del BookingCancellation.
+   * @param {string} reason   - Motivo del cierre sin multa (5..500 chars).
+   * @returns {Promise<BookingCancellationDto>}
+   */
+  waivePenalty: (publicId, reason) =>
+    api.patch(`/cancellations/${publicId}/waive-penalty`, { reason }),
+
+  /**
+   * 2026-06-28: deshace un cierre "sin multa" previamente registrado.
+   * Solo disponible para administradores — el backend devuelve 403 para no-Admin.
+   * Reabre el paso pendiente de multa: CanConfirmPenalty vuelve a true.
+   *
+   * @param {string} publicId - GUID del BookingCancellation.
+   * @param {string} reason   - Motivo del deshacer (5..500 chars).
+   * @returns {Promise<BookingCancellationDto>}
+   */
+  revertWaive: (publicId, reason) =>
+    api.patch(`/cancellations/${publicId}/revert-waive`, { reason }),
+
+  /**
    * Anula una reserva en firme que tiene cobros pero sin factura emitida.
    * Los pagos cobrados al cliente quedan como saldo a favor, reutilizables en otra reserva.
    * Corresponde al caso "PaymentsToCredit" del discriminador cancellationCase del DTO.

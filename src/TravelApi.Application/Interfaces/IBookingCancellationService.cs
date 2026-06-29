@@ -1,5 +1,6 @@
 using TravelApi.Application.DTOs;
 using TravelApi.Application.DTOs.Cancellation;
+using TravelApi.Domain.Reservations;
 
 namespace TravelApi.Application.Interfaces;
 
@@ -380,6 +381,19 @@ public interface IBookingCancellationService
     /// revalida todo server-side, asi que esto es una pista de UI. false si la reserva no tiene cancelacion.</para>
     /// </summary>
     Task<bool> HasPendingOperatorPenaltyAsync(Guid reservaPublicId, CancellationToken ct);
+
+    /// <summary>
+    /// Fase A (2026-06-28): RESULTADO de la pata "multa del operador" de la cancelacion VIGENTE de la reserva:
+    /// None / Pending / Confirmed / Waived. Es la version completa de <see cref="HasPendingOperatorPenaltyAsync"/>
+    /// (que solo dice si es Pending): ademas distingue el cierre SIN multa (Waived) y la multa ya confirmada
+    /// (Confirmed), que el front necesita para mostrar el cartel correcto al cargar la ficha de la reserva.
+    ///
+    /// <para>Pending reusa la MISMA derivacion canonica que <see cref="HasPendingOperatorPenaltyAsync"/> /
+    /// el read-model <c>CanConfirmPenalty</c> (fuente unica, no divergen). Waived/Confirmed se leen directo del
+    /// estado persistido de la penalidad (la resolucion ya ocurrio, independiente del flag). None si la reserva
+    /// no tiene cancelacion o su pata de operador todavia no esta en juego (ej: NC total sin CAE aun).</para>
+    /// </summary>
+    Task<OperatorPenaltyOutcome> GetOperatorPenaltyOutcomeAsync(Guid reservaPublicId, CancellationToken ct);
 
     /// <summary>
     /// ADR-013 §3.10 (M4, 2026-06-01): bandeja "cancelaciones con NC emitida pero sin su
