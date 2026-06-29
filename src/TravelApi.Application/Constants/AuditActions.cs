@@ -271,6 +271,17 @@ public static class AuditActions
     public const string OperatorPenaltyWaived = "OperatorPenaltyWaived";
 
     /// <summary>
+    /// 2026-06-28 (Fase A — reversa del cierre sin multa): un ADMINISTRADOR REABRIO un cierre sin multa
+    /// (<c>PenaltyStatus.Waived</c> -> <c>Estimated</c>), volviendo a dejar la penalidad del operador pendiente de
+    /// resolver. Existe porque el cierre sin multa es terminal y, sin esta reversa, un error de carga o una multa
+    /// tardia del operador no tendria forma de corregirse desde el sistema. Es una accion sensible y poco habitual:
+    /// solo Admin, y este rastro es OBLIGATORIO (el contador debe poder ver quien reabrio, cuando y por que). El
+    /// detail JSON lleva quien/cuando, la referencia del BC y la reserva, y el motivo. NO mueve plata ni emite
+    /// comprobante fiscal (el waive no habia emitido ninguno).
+    /// </summary>
+    public const string OperatorPenaltyWaiveReverted = "OperatorPenaltyWaiveReverted";
+
+    /// <summary>
     /// (2026-06-26): el operador supero el plazo (<c>OperatorRefundDueBy</c>) sin reembolsar. El job nocturno
     /// transiciono la cancelacion <c>AwaitingOperatorRefund</c> -> <c>AbandonedByOperator</c> y cerro la RESERVA
     /// (<c>PendingOperatorRefund</c> -> <c>Cancelled</c>). Antes este estado nunca se asignaba (codigo muerto) y

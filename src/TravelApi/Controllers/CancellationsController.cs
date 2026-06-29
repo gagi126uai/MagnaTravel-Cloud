@@ -397,6 +397,72 @@ public class CancellationsController : ControllerBase
     }
 
     /// <summary>
+    /// Fase A (2026-06-28): REABRE un cierre sin multa del operador. El cierre sin multa
+    /// (<see cref="WaivePenalty"/>) es terminal, pero un error de carga o una multa TARDIA del operador hacen falta
+    /// poder corregirlo. Vuelve la penalidad de "cerrada sin multa" a "pendiente", de modo que tanto "Confirmar
+    /// multa" como "cerrar sin multa" quedan disponibles otra vez. Controller thin: resuelve el rol server-side y
+    /// traduce las excepciones al mismo shape que las demas acciones del modulo.
+    ///
+    /// <para><b>Solo Admin</b>: el owner lo decidio Admin-only (no el permiso <c>classify_agency_penalty</c>). Se
+    /// resuelve por rol server-side; a quien no es Admin se le responde 403 (<c>Forbid</c>) ANTES de tocar nada. El
+    /// service lo EXIGE igual (defensa en profundidad).</para>
+    ///
+    /// <para><b>Mapeo de errores</b>: 403 (no Admin); 404 (BC no existe); 409 INV-WAIVE-REVERT-001 (no esta cerrada
+    /// sin multa — idempotencia); 409 INV-WAIVE-REVERT-002 (tiene ND asociada); 409 CONCURRENT_EDIT (xmin); 400
+    /// (motivo vacio); 503 (DB caida). El flag OFF cae en 409 (InvalidOperationException).</para>
+    /// </summary>
+    [HttpPatch("{publicId:guid}/revert-waive")]
+    [RequirePermission(Permissions.ReservasCancel)]
+    [RequireOwnership(OwnedEntity.BookingCancellation, "publicId", bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<ActionResult<BookingCancellationDto>> RevertWaivePenalty(
+        Guid publicId,
+        RevertWaivePenaltyRequest request,
+        CancellationToken cancellationToken)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
+        var userName = User.FindFirst("FullName")?.Value ?? User.FindFirst(ClaimTypes.Name)?.Value;
+
+        // Solo Admin: rechazamos ANTES de llamar al service. Reabrir un cierre sin multa es una accion sensible y
+        // poco habitual; el owner la limito a Admin por rol (no por permiso). El service ademas lo re-valida.
+        if (!User.IsInRole("Admin"))
+            return Forbid();
+
+        try
+        {
+            var dto = await _bcService.RevertWaivedOperatorPenaltyAsync(
+                publicId, request.Reason, userId, userName, requesterIsAdmin: true, cancellationToken);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return Conflict(new
+            {
+                code = "CONCURRENT_EDIT",
+                message = "Otra edicion fue procesada primero, reintente.",
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Flag OFF, etc. 409.
+            return Conflict(new { message = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            // Motivo vacio. 400.
+            return BadRequest(new { message = ex.Message });
+        }
+        // BusinessInvariantViolationException (INV-WAIVE-REVERT-*) la atrapa GlobalExceptionHandler (409 con invariantCode).
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+        }
+    }
+
+    /// <summary>
     /// Aborta un BC en estado <c>Drafted</c> (el operador se arrepintio antes
     /// de tocar AFIP). Idempotente: si ya esta Aborted, retorna 200 con el DTO.
     /// </summary>
@@ -712,6 +778,18 @@ public record AbortCancellationRequest(
 /// (distinguir "no hubo multa" de un error). Queda en el audit <c>OperatorPenaltyWaived</c>.
 /// </summary>
 public record WaivePenaltyRequest(
+    [System.ComponentModel.DataAnnotations.Required]
+    [System.ComponentModel.DataAnnotations.MinLength(5)]
+    [System.ComponentModel.DataAnnotations.MaxLength(500)]
+    string Reason
+);
+
+/// <summary>
+/// Fase A (2026-06-28): payload de la REVERSA del cierre sin multa. El <c>Reason</c> es OBLIGATORIO porque reabrir
+/// una penalidad ya cerrada es una accion sensible que el contador debe poder rastrear (por que se reabrio: error
+/// de carga vs multa tardia del operador). Queda en el audit <c>OperatorPenaltyWaiveReverted</c>.
+/// </summary>
+public record RevertWaivePenaltyRequest(
     [System.ComponentModel.DataAnnotations.Required]
     [System.ComponentModel.DataAnnotations.MinLength(5)]
     [System.ComponentModel.DataAnnotations.MaxLength(500)]

@@ -473,4 +473,217 @@ public class CancellationWaivePenaltyTests
         Assert.Equal(DebitNoteStatus.Pending, after.DebitNoteStatus);
         Assert.NotNull(after.DebitNoteInvoiceId);
     }
+
+    // ============================================================
+    // Reversa del cierre sin multa (RevertWaivedOperatorPenaltyAsync)
+    // ============================================================
+
+    [Fact]
+    public async Task Revert_FlipsWaivedToEstimated_AndReEnablesPendingPenalty()
+    {
+        var h = BuildService();
+        var (bcId, _, _, reserva) = await SeedPostNcAsync(h.Ctx);
+
+        // Primero cerramos sin multa (queda Waived, sin pendiente).
+        await h.Service.WaiveOperatorPenaltyAsync(
+            bcId, "El operador no cobra multa.", "u", "U", default, userCanClassifyAgencyPenalty: true);
+        Assert.False(await h.Service.HasPendingOperatorPenaltyAsync(reserva.PublicId, default));
+
+        // Un Admin lo reabre.
+        await h.Service.RevertWaivedOperatorPenaltyAsync(
+            bcId, "Cargado por error: el operador si cobro.", "admin", "Admin", requesterIsAdmin: true, default);
+
+        var after = h.Ctx.BookingCancellations.Single();
+        // Vuelve LIMPIO al estado pendiente: Estimated + defaults restaurados (sin monto, sin confirmado-por).
+        Assert.Equal(PenaltyStatus.Estimated, after.PenaltyStatus);
+        Assert.Null(after.PenaltyAmountAtEvent);
+        Assert.Null(after.PenaltyConfirmedByUserId);
+        Assert.Null(after.PenaltyConfirmedByUserName);
+        Assert.Null(after.PenaltyConfirmedAt);
+        // Sin huella de ND (nunca la hubo).
+        Assert.Equal(DebitNoteStatus.NotApplicable, after.DebitNoteStatus);
+        Assert.Null(after.DebitNoteInvoiceId);
+
+        // La multa vuelve a estar pendiente -> "Confirmar multa" disponible otra vez.
+        Assert.True(await h.Service.HasPendingOperatorPenaltyAsync(reserva.PublicId, default));
+    }
+
+    [Fact]
+    public async Task Revert_ReEnablesWaiveAgain()
+    {
+        var h = BuildService();
+        var (bcId, _, _, _) = await SeedPostNcAsync(h.Ctx);
+
+        await h.Service.WaiveOperatorPenaltyAsync(
+            bcId, "Sin multa.", "u", "U", default, userCanClassifyAgencyPenalty: true);
+        await h.Service.RevertWaivedOperatorPenaltyAsync(
+            bcId, "Reabro para corregir.", "admin", "Admin", requesterIsAdmin: true, default);
+
+        // Tras reabrir, volver a cerrar sin multa funciona (la pata quedo pendiente de nuevo).
+        await h.Service.WaiveOperatorPenaltyAsync(
+            bcId, "Confirmado: realmente no cobra multa.", "u", "U", default, userCanClassifyAgencyPenalty: true);
+
+        Assert.Equal(PenaltyStatus.Waived, h.Ctx.BookingCancellations.Single().PenaltyStatus);
+    }
+
+    [Fact]
+    public async Task Revert_EmitsMandatoryAudit_WithReason()
+    {
+        var h = BuildService();
+        var (bcId, _, _, _) = await SeedPostNcAsync(h.Ctx);
+
+        await h.Service.WaiveOperatorPenaltyAsync(
+            bcId, "Sin multa.", "u", "U", default, userCanClassifyAgencyPenalty: true);
+
+        await h.Service.RevertWaivedOperatorPenaltyAsync(
+            bcId, "Multa tardia del operador.", "admin", "Admin", requesterIsAdmin: true, default);
+
+        // Audit OBLIGATORIO OperatorPenaltyWaiveReverted con el actor y el motivo.
+        h.AuditMock.Verify(a => a.LogBusinessEventAsync(
+            AuditActions.OperatorPenaltyWaiveReverted,
+            AuditActions.BookingCancellationEntityName,
+            It.IsAny<string>(),
+            It.Is<string>(details => details.Contains("Multa tardia del operador.")),
+            "admin",
+            "Admin",
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Revert_NonAdmin_Throws()
+    {
+        var h = BuildService();
+        var (bcId, _, _, _) = await SeedPostNcAsync(h.Ctx);
+
+        await h.Service.WaiveOperatorPenaltyAsync(
+            bcId, "Sin multa.", "u", "U", default, userCanClassifyAgencyPenalty: true);
+
+        // Aunque tenga el permiso de clasificar penalidad, sin rol Admin NO puede reabrir (defensa en profundidad).
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.RevertWaivedOperatorPenaltyAsync(
+                bcId, "Intento sin ser admin.", "vendedor", "Vendedor", requesterIsAdmin: false, default));
+        Assert.Equal("INV-WAIVE-REVERT-PERM", ex.InvariantCode);
+
+        // Y el estado NO cambio.
+        Assert.Equal(PenaltyStatus.Waived, h.Ctx.BookingCancellations.Single().PenaltyStatus);
+    }
+
+    [Fact]
+    public async Task Revert_WhenNotWaived_Throws409()
+    {
+        var h = BuildService();
+        // BC recien sembrado: penalidad Estimated (NO cerrada sin multa).
+        var (bcId, _, _, _) = await SeedPostNcAsync(h.Ctx);
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.RevertWaivedOperatorPenaltyAsync(
+                bcId, "No hay nada que reabrir.", "admin", "Admin", requesterIsAdmin: true, default));
+        Assert.Equal("INV-WAIVE-REVERT-001", ex.InvariantCode);
+    }
+
+    [Fact]
+    public async Task Revert_Twice_SecondCallRebounds409()
+    {
+        var h = BuildService();
+        var (bcId, _, _, _) = await SeedPostNcAsync(h.Ctx);
+
+        await h.Service.WaiveOperatorPenaltyAsync(
+            bcId, "Sin multa.", "u", "U", default, userCanClassifyAgencyPenalty: true);
+        await h.Service.RevertWaivedOperatorPenaltyAsync(
+            bcId, "Reabro.", "admin", "Admin", requesterIsAdmin: true, default);
+
+        // Segunda reversa: ya esta Estimated (no Waived) -> rebota 409 idempotente.
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.RevertWaivedOperatorPenaltyAsync(
+                bcId, "Reabro otra vez.", "admin", "Admin", requesterIsAdmin: true, default));
+        Assert.Equal("INV-WAIVE-REVERT-001", ex.InvariantCode);
+    }
+
+    [Fact]
+    public async Task Revert_OnConfirmedPenalty_Throws409()
+    {
+        var h = BuildService();
+        var (bcId, _, _, _) = await SeedPostNcAsync(h.Ctx);
+        SetupCreateEmitsDebitNote(h);
+
+        // Confirmamos una multa REAL (queda Confirmed con ND): la reversa de waive NO aplica aca.
+        await h.Service.ConfirmPenaltyAsync(
+            bcId,
+            new ConfirmPenaltyRequest(
+                ConceptKind: CancellationConceptKind.AgencyManagementFee,
+                ConfirmedPenaltyAmount: 30_000m,
+                OperatorConfirmationDate: DateTime.UtcNow.AddDays(-2),
+                SupportingDocumentReference: "https://docs/mail.pdf"),
+            "u", "U", false, default, userCanClassifyAgencyPenalty: true);
+
+        // No esta Waived -> 409. (El guard INV-WAIVE-REVERT-001 corre antes que el de la ND.)
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.RevertWaivedOperatorPenaltyAsync(
+                bcId, "Intento reabrir una multa confirmada.", "admin", "Admin", requesterIsAdmin: true, default));
+        Assert.Equal("INV-WAIVE-REVERT-001", ex.InvariantCode);
+    }
+
+    [Fact]
+    public async Task FullCycle_WaiveThenRevertThenConfirmRealPenalty_EmitsDebitNote()
+    {
+        var h = BuildService();
+        var (bcId, _, _, _) = await SeedPostNcAsync(h.Ctx);
+        SetupCreateEmitsDebitNote(h);
+
+        // 1) Se cierra sin multa.
+        await h.Service.WaiveOperatorPenaltyAsync(
+            bcId, "Aparentemente no cobra multa.", "u", "U", default, userCanClassifyAgencyPenalty: true);
+
+        // 2) Admin reabre (el operador termino cobrando una multa tardia).
+        await h.Service.RevertWaivedOperatorPenaltyAsync(
+            bcId, "Multa tardia del operador.", "admin", "Admin", requesterIsAdmin: true, default);
+
+        // 3) Se confirma la multa REAL -> emite la ND como en el flujo normal.
+        await h.Service.ConfirmPenaltyAsync(
+            bcId,
+            new ConfirmPenaltyRequest(
+                ConceptKind: CancellationConceptKind.AgencyManagementFee,
+                ConfirmedPenaltyAmount: 25_000m,
+                OperatorConfirmationDate: DateTime.UtcNow.AddDays(-1),
+                SupportingDocumentReference: "https://docs/mail-tardio.pdf"),
+            "u", "U", false, default, userCanClassifyAgencyPenalty: true);
+
+        var after = h.Ctx.BookingCancellations.Single();
+        Assert.Equal(PenaltyStatus.Confirmed, after.PenaltyStatus);
+        Assert.Equal(DebitNoteStatus.Pending, after.DebitNoteStatus);
+        Assert.NotNull(after.DebitNoteInvoiceId);
+    }
+
+    [Fact]
+    public async Task Revert_EmptyReason_Throws()
+    {
+        var h = BuildService();
+        var (bcId, _, _, _) = await SeedPostNcAsync(h.Ctx);
+        await h.Service.WaiveOperatorPenaltyAsync(
+            bcId, "Sin multa.", "u", "U", default, userCanClassifyAgencyPenalty: true);
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            h.Service.RevertWaivedOperatorPenaltyAsync(
+                bcId, "   ", "admin", "Admin", requesterIsAdmin: true, default));
+    }
+
+    [Fact]
+    public async Task Revert_UnknownBc_Throws404()
+    {
+        var h = BuildService();
+        await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+            h.Service.RevertWaivedOperatorPenaltyAsync(
+                Guid.NewGuid(), "Sin BC.", "admin", "Admin", requesterIsAdmin: true, default));
+    }
+
+    [Fact]
+    public async Task Revert_WithFlagOff_Throws()
+    {
+        var h = BuildService(flagOn: false);
+        var (bcId, _, _, _) = await SeedPostNcAsync(h.Ctx);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            h.Service.RevertWaivedOperatorPenaltyAsync(
+                bcId, "Flag off.", "admin", "Admin", requesterIsAdmin: true, default));
+    }
 }

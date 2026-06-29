@@ -313,6 +313,41 @@ public interface IBookingCancellationService
         CancellationToken ct,
         bool userCanClassifyAgencyPenalty = false);
 
+    /// <summary>
+    /// Fase A (2026-06-28): REABRE un cierre sin multa, volviendo la penalidad del operador de
+    /// <c>PenaltyStatus.Waived</c> a <c>Estimated</c> (su estado pendiente). Existe porque el cierre sin multa es
+    /// terminal y, sin esta reversa, un error de carga o una multa TARDIA del operador no se podria corregir desde
+    /// el sistema. Tras revertir, <c>HasPendingOperatorPenalty</c> vuelve a dar true y quedan disponibles otra vez
+    /// tanto "Confirmar multa" como volver a cerrar sin multa.
+    ///
+    /// <para><b>Solo Admin</b>: es una accion sensible y poco habitual. El controller rechaza con 403 a quien no es
+    /// Admin; el service lo EXIGE igual (defensa en profundidad, INV-WAIVE-REVERT-PERM).</para>
+    ///
+    /// <para><b>Reversa limpia</b>: como el waive NO emitio Nota de Debito ni toco las lineas
+    /// (<c>RefundCap</c>/<c>PenaltyAmount</c> intactos, <c>DebitNoteStatus=NotApplicable</c>, sin Invoice), revertir
+    /// es solo restaurar los defaults del estado <c>Estimated</c> (monto, confirmado-por y fecha a null). Si por
+    /// algun motivo el BC tuviera una ND vinculada (no deberia para un waive), se RECHAZA (INV-WAIVE-REVERT-002).</para>
+    ///
+    /// <para><b>Auditoria OBLIGATORIA</b>: deja el evento <c>AuditActions.OperatorPenaltyWaiveReverted</c> con
+    /// quien/cuando + el motivo, atomico con el cambio de estado (mismo SaveChanges).</para>
+    ///
+    /// <para><b>Exceptions</b>: <c>KeyNotFoundException</c> (404) si el BC no existe;
+    /// <c>InvalidOperationException</c> (409) si el flag esta OFF;
+    /// <c>BusinessInvariantViolationException</c> (409) por no ser Admin (INV-WAIVE-REVERT-PERM), no estar cerrada sin
+    /// multa (INV-WAIVE-REVERT-001, idempotencia) o tener una ND en juego (INV-WAIVE-REVERT-002);
+    /// <c>ArgumentException</c> (400) si el motivo es vacio;
+    /// <c>DbUpdateConcurrencyException</c> (409 CONCURRENT_EDIT) por xmin.</para>
+    /// </summary>
+    /// <param name="reason">Motivo OBLIGATORIO de la reapertura (auditoria del contador).</param>
+    /// <param name="requesterIsAdmin">true si el caller es Admin. Lo resuelve el controller. El service lo EXIGE.</param>
+    Task<BookingCancellationDto> RevertWaivedOperatorPenaltyAsync(
+        Guid publicId,
+        string reason,
+        string userId,
+        string? userName,
+        bool requesterIsAdmin,
+        CancellationToken ct);
+
     // ===== Queries =====
 
     /// <summary>Obtiene un BC por su PublicId. Null si no existe.</summary>

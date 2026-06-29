@@ -3506,6 +3506,106 @@ public class BookingCancellationService
             ?? throw new InvalidOperationException($"BC {publicId} no encontrada tras cerrar sin multa.");
     }
 
+    /// <inheritdoc />
+    public async Task<BookingCancellationDto> RevertWaivedOperatorPenaltyAsync(
+        Guid publicId,
+        string reason,
+        string userId,
+        string? userName,
+        bool requesterIsAdmin,
+        CancellationToken ct)
+    {
+        // Fase A (2026-06-28): REVERSA del cierre sin multa. El cierre sin multa (Waived) es terminal, pero el
+        // negocio puede necesitar reabrirlo: o bien fue un error, o bien el operador termino cobrando una multa
+        // TARDIA. Como el waive no emitio ninguna Nota de Debito ni toco las lineas, revertir es un flip de estado
+        // LIMPIO de vuelta a Estimated (el estado pendiente), sin nada fiscal que deshacer.
+
+        // El motivo es obligatorio (lo valida tambien el DataAnnotation del request, esto es defensivo).
+        var trimmedReason = reason?.Trim();
+        if (string.IsNullOrWhiteSpace(trimmedReason))
+            throw new ArgumentException(
+                "Indica un motivo para reabrir la penalidad del operador.", nameof(reason));
+
+        var settings = await _settings.GetEntityAsync(ct);
+
+        // === Precondicion 1: flag maestro. Con OFF todo el subsistema de penalidad esta inerte; rechazamos por
+        // simetria con Waive/Confirm para no mutar estado de un subsistema deshabilitado. ===
+        if (!settings.EnableCancellationDebitNote)
+            throw new InvalidOperationException(
+                "La gestion de penalidades de cancelacion esta deshabilitada " +
+                "(EnableCancellationDebitNote OFF).");
+
+        // === Precondicion 2: solo Admin. Va ANTES de cargar el BC a proposito: asi un usuario sin rol Admin no
+        // puede distinguir un BC existente de uno inexistente por el codigo de error. El controller ya rechaza con
+        // 403 a los no-Admin; este chequeo es defensa en profundidad (el service no confia en el caller). ===
+        if (!requesterIsAdmin)
+            throw new BusinessInvariantViolationException(
+                "Reabrir un cierre sin multa del operador requiere rol de Administrador.",
+                invariantCode: "INV-WAIVE-REVERT-PERM");
+
+        // === Precondicion 3: el BC existe (404). Cargamos la Reserva para el detalle del audit. ===
+        var bc = await _db.BookingCancellations
+            .Include(b => b.Reserva)
+            .FirstOrDefaultAsync(b => b.PublicId == publicId, ct)
+            ?? throw new KeyNotFoundException($"BC {publicId} no encontrada.");
+
+        // === Precondicion 4: solo se puede reabrir lo que esta cerrado sin multa (Waived). Si la penalidad esta
+        // Estimated (ya pendiente) o Confirmed (se resolvio CON multa, hay una ND real de por medio), reabrir no
+        // procede -> 409. Tambien cubre la idempotencia: revert dos veces => la segunda rebota aca. ===
+        if (bc.PenaltyStatus != PenaltyStatus.Waived)
+            throw new BusinessInvariantViolationException(
+                "Esta cancelación no está cerrada sin multa.",
+                invariantCode: "INV-WAIVE-REVERT-001");
+
+        // === Precondicion 5 (defensiva): un waive NUNCA debe tener una ND vinculada. Si por algun motivo la
+        // hubiera, NO revertimos en silencio: habria que tratar primero esa ND. Mantiene la invariante "un cierre
+        // sin multa no tiene comprobante fiscal" antes de tocar el estado. ===
+        if (bc.DebitNoteInvoiceId.HasValue ||
+            bc.DebitNoteStatus == DebitNoteStatus.Pending ||
+            bc.DebitNoteStatus == DebitNoteStatus.Issued)
+            throw new BusinessInvariantViolationException(
+                "No se puede reabrir: la cancelación tiene una Nota de Débito asociada.",
+                invariantCode: "INV-WAIVE-REVERT-002");
+
+        // === Reversa LIMPIA a Estimated. Restauramos exactamente los defaults del estado pendiente que el waive
+        // habia pisado: el waive habia puesto PenaltyAmountAtEvent=0 y los campos de confirmado-por; los volvemos a
+        // null. DebitNoteStatus ya es NotApplicable y DebitNoteInvoiceId null (garantizado en la Precondicion 5),
+        // que es justamente el default del estado Estimated -> no hay nada mas que deshacer. ===
+        bc.PenaltyStatus = PenaltyStatus.Estimated;
+        bc.PenaltyAmountAtEvent = null;          // el waive lo habia puesto en 0; Estimated = aun sin monto
+        bc.PenaltyConfirmedByUserId = null;
+        bc.PenaltyConfirmedByUserName = null;
+        bc.PenaltyConfirmedAt = null;
+
+        // === Auditoria OBLIGATORIA: rastro de quien reabrio, cuando y por que. LogBusinessEventAsync corre antes
+        // del commit de abajo; el orden es aceptable (si el SaveChanges fallara por xmin, el reintento rebota por
+        // INV-WAIVE-REVERT-001 porque el estado ya no seria Waived, o por concurrencia). ===
+        await _auditService.LogBusinessEventAsync(
+            action: AuditActions.OperatorPenaltyWaiveReverted,
+            entityName: AuditActions.BookingCancellationEntityName,
+            entityId: bc.Id.ToString(),
+            details: JsonSerializer.Serialize(new
+            {
+                bc.PublicId,
+                reservaPublicId = bc.Reserva?.PublicId,
+                action = "operator-penalty-waive-reverted",
+                reason = trimmedReason,
+                bcStatus = bc.Status.ToString(),
+            }),
+            userId: userId,
+            userName: userName,
+            ct: ct);
+
+        await _db.SaveChangesAsync(ct);
+
+        _logger.LogInformation(
+            "metric:cancellation_operator_penalty_waive_reverted | BcPublicId={BcPublicId} By={UserId}",
+            bc.PublicId, userId);
+
+        return await MapToDtoAsync(bc.Id, ct)
+            ?? throw new InvalidOperationException($"BC {publicId} no encontrada tras reabrir la penalidad.");
+    }
+
     /// <summary>
     /// ADR-014 (§3.6, M2): valida el 4-eyes de la confirmacion diferida reusando el patron
     /// de approval de <c>Confirm</c>. Si el caller no trae un <c>InvariantOverride</c>
