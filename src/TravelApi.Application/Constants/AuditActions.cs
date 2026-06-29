@@ -262,6 +262,15 @@ public static class AuditActions
     public const string BookingCancellationClosedByOperatorRefund = "BookingCancellationClosedByOperatorRefund";
 
     /// <summary>
+    /// 2026-06-28 (Fase A — cierre sin multa): un usuario confirmo que el OPERADOR NO COBRO MULTA (devuelve todo)
+    /// y cerro la pata de la penalidad de la cancelacion SIN emitir Nota de Debito. Es una DECISION DE NEGOCIO
+    /// explicita, por eso es OBLIGATORIO este rastro: permite al contador distinguir "el operador no cobro multa"
+    /// (real) de "penalidad = 0 por error". El detail JSON lleva quien/cuando, la referencia del BC y la reserva,
+    /// y el motivo que el usuario indico. NO mueve plata ni emite comprobante fiscal.
+    /// </summary>
+    public const string OperatorPenaltyWaived = "OperatorPenaltyWaived";
+
+    /// <summary>
     /// (2026-06-26): el operador supero el plazo (<c>OperatorRefundDueBy</c>) sin reembolsar. El job nocturno
     /// transiciono la cancelacion <c>AwaitingOperatorRefund</c> -> <c>AbandonedByOperator</c> y cerro la RESERVA
     /// (<c>PendingOperatorRefund</c> -> <c>Cancelled</c>). Antes este estado nunca se asignaba (codigo muerto) y

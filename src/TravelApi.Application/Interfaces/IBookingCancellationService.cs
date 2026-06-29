@@ -279,6 +279,40 @@ public interface IBookingCancellationService
         CancellationToken ct,
         bool userCanClassifyAgencyPenalty = false);
 
+    /// <summary>
+    /// Fase A (2026-06-28): cierra la pata de la penalidad del operador SIN multa ("el operador no cobro multa /
+    /// devuelve todo"). Es la rama ALTERNATIVA a <see cref="ConfirmPenaltyAsync"/>: comparten el mismo candado
+    /// (la primera que resuelve la penalidad gana). Deja la penalidad en el estado terminal
+    /// <c>PenaltyStatus.Waived</c> con monto 0, asi <c>HasPendingOperatorPenalty</c> pasa a false y el boton
+    /// pendiente se limpia, SIN emitir ninguna Nota de Debito ni inventar una penalidad.
+    ///
+    /// <para><b>Que NO hace</b>: no emite ND ni ningun comprobante fiscal (la NC total al cliente ya salio al
+    /// anular); no toca <c>RefundCap</c>/<c>PenaltyAmount</c> de las lineas (el operador devuelve TODO, los caps
+    /// quedan completos), por lo que el cierre por reembolso total
+    /// (<c>CloseReservaIfOperatorRefundComplete</c>) sigue funcionando; no cambia por si mismo el estado de la
+    /// reserva (cierra cuando llega el reembolso completo).</para>
+    ///
+    /// <para><b>Auditoria OBLIGATORIA</b>: deja el evento <c>AuditActions.OperatorPenaltyWaived</c> con
+    /// quien/cuando + el motivo (para distinguir "no hubo multa" de "monto 0 por error").</para>
+    ///
+    /// <para><b>Exceptions</b>: <c>KeyNotFoundException</c> (404) si el BC no existe;
+    /// <c>InvalidOperationException</c> (409) si el flag esta OFF;
+    /// <c>BusinessInvariantViolationException</c> (409) por falta de permiso (INV-WAIVE-PERM), estado no post-NC
+    /// (INV-WAIVE-001) o penalidad ya resuelta/ND en juego (INV-WAIVE-003, idempotencia: waive doble rebota);
+    /// <c>DbUpdateConcurrencyException</c> (409 CONCURRENT_EDIT) por xmin.</para>
+    /// </summary>
+    /// <param name="reason">Motivo OBLIGATORIO del cierre sin multa (auditoria del contador).</param>
+    /// <param name="userCanClassifyAgencyPenalty">true si el caller tiene
+    /// <c>cancellations.classify_agency_penalty</c> (o es Admin). Lo resuelve el controller. El service lo EXIGE,
+    /// igual que <see cref="ConfirmPenaltyAsync"/>: resolver la pata fiscal de la penalidad es una accion sensible.</param>
+    Task<BookingCancellationDto> WaiveOperatorPenaltyAsync(
+        Guid publicId,
+        string reason,
+        string userId,
+        string? userName,
+        CancellationToken ct,
+        bool userCanClassifyAgencyPenalty = false);
+
     // ===== Queries =====
 
     /// <summary>Obtiene un BC por su PublicId. Null si no existe.</summary>

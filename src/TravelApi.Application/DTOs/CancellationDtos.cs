@@ -124,6 +124,8 @@ public class BookingCancellationDto
     ///         o sin <c>CreditNoteInvoicePublicId</c>).</item>
     ///   <item><c>DebitNoteAlreadyInPlay</c>: la penalidad ya fue confirmada o la ND ya esta
     ///         emitida/encolada (no se vuelve a emitir).</item>
+    ///   <item><c>OperatorPenaltyWaived</c>: la cancelacion se cerro SIN multa (el operador no cobro
+    ///         penalidad). Estado terminal; no hay nada que confirmar y no se emite ND.</item>
     /// </list>
     /// </summary>
     public string? ConfirmPenaltyBlockedReason { get; set; }

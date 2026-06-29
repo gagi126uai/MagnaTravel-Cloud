@@ -328,6 +328,75 @@ public class CancellationsController : ControllerBase
     }
 
     /// <summary>
+    /// Fase A (2026-06-28): cierre SIN multa de la pata del operador ("el operador no cobro multa / devuelve
+    /// todo"). Es la rama ALTERNATIVA a <see cref="ConfirmPenalty"/>: el front ofrece las dos acciones cuando hay
+    /// una multa pendiente. Limpia el boton pendiente dejando la penalidad en estado terminal "sin multa" y
+    /// registrando el rastro obligatorio, SIN emitir ninguna Nota de Debito. Controller thin: resuelve el permiso
+    /// server-side y traduce las excepciones al mismo shape que <c>ConfirmPenalty</c>.
+    ///
+    /// <para><b>Permiso</b>: <see cref="Permissions.ReservasCancel"/> para llegar al endpoint +
+    /// <see cref="Permissions.CancellationsClassifyAgencyPenalty"/> (o Admin) resuelto server-side (mismo gate que
+    /// confirmar la multa). NO se confia la decision al frontend.</para>
+    ///
+    /// <para><b>Mapeo de errores</b>: 404 (BC no existe); 409 INV-WAIVE-PERM (sin permiso); 409 INV-WAIVE-001
+    /// (estado no post-NC); 409 INV-WAIVE-003 (penalidad ya resuelta — idempotencia); 409 CONCURRENT_EDIT (xmin);
+    /// 400 (motivo vacio); 503 (DB caida).</para>
+    /// </summary>
+    [HttpPatch("{publicId:guid}/waive-penalty")]
+    [RequirePermission(Permissions.ReservasCancel)]
+    [RequireOwnership(OwnedEntity.BookingCancellation, "publicId", bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<ActionResult<BookingCancellationDto>> WaivePenalty(
+        Guid publicId,
+        WaivePenaltyRequest request,
+        CancellationToken cancellationToken)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
+        var userName = User.FindFirst("FullName")?.Value ?? User.FindFirst(ClaimTypes.Name)?.Value;
+        var requesterIsAdmin = User.IsInRole("Admin");
+
+        // Mismo gate que confirmar la multa: Admin siempre; el resto necesita el permiso dedicado. El service
+        // lo EXIGE (no degrada).
+        var userCanClassifyAgencyPenalty = requesterIsAdmin
+            || (await _permissionResolver.GetPermissionsAsync(userId, cancellationToken))
+                .Contains(Permissions.CancellationsClassifyAgencyPenalty);
+
+        try
+        {
+            var dto = await _bcService.WaiveOperatorPenaltyAsync(
+                publicId, request.Reason, userId, userName, cancellationToken,
+                userCanClassifyAgencyPenalty: userCanClassifyAgencyPenalty);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return Conflict(new
+            {
+                code = "CONCURRENT_EDIT",
+                message = "Otra edicion fue procesada primero, reintente.",
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Flag OFF, etc. 409.
+            return Conflict(new { message = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            // Motivo vacio. 400.
+            return BadRequest(new { message = ex.Message });
+        }
+        // BusinessInvariantViolationException (INV-WAIVE-*) la atrapa GlobalExceptionHandler (409 con invariantCode).
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+        }
+    }
+
+    /// <summary>
     /// Aborta un BC en estado <c>Drafted</c> (el operador se arrepintio antes
     /// de tocar AFIP). Idempotente: si ya esta Aborted, retorna 200 con el DTO.
     /// </summary>
@@ -631,6 +700,18 @@ public class CancellationsController : ControllerBase
 /// (queda en BC.Reason o en audit log segun donde el service lo guarde).
 /// </summary>
 public record AbortCancellationRequest(
+    [System.ComponentModel.DataAnnotations.Required]
+    [System.ComponentModel.DataAnnotations.MinLength(5)]
+    [System.ComponentModel.DataAnnotations.MaxLength(500)]
+    string Reason
+);
+
+/// <summary>
+/// Fase A (2026-06-28): payload del cierre SIN multa ("el operador no cobro multa"). El <c>Reason</c> es
+/// OBLIGATORIO porque cerrar sin multa es una DECISION DE NEGOCIO que el contador debe poder rastrear
+/// (distinguir "no hubo multa" de un error). Queda en el audit <c>OperatorPenaltyWaived</c>.
+/// </summary>
+public record WaivePenaltyRequest(
     [System.ComponentModel.DataAnnotations.Required]
     [System.ComponentModel.DataAnnotations.MinLength(5)]
     [System.ComponentModel.DataAnnotations.MaxLength(500)]
