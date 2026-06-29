@@ -1256,6 +1256,24 @@ public class BookingCancellationService
             bc, classification, userId, userName, userCanClassifyAgencyPenalty,
             debitNoteFeatureEnabled: settings.EnableCancellationDebitNote);
 
+        // FASE 0 (2026-06-28): si en el Dia 0 ya se CONFIRMA una multa con monto, bajar el reembolso esperado del
+        // operador igual que en el path diferido (mismo metodo). Guarda triple: flag ON + estado Confirmed + monto
+        // > 0. Con el flag OFF, CaptureDebitNoteClassification hace short-circuit y PenaltyStatus queda en su default
+        // (Estimated), asi que esta rama NO corre -> byte-identidad con el comportamiento previo a ADR-013/014.
+        // ConfirmCancellationRequest no trae PenaltyCurrency, asi que la moneda se infiere de las lineas del operador.
+        if (settings.EnableCancellationDebitNote
+            && bc.PenaltyStatus == PenaltyStatus.Confirmed
+            && request.ConfirmedPenaltyAmount is > 0m)
+        {
+            // El path Dia-0 SIEMPRE pasa requestedPenaltyCurrency: null (ConfirmCancellationRequest no trae moneda).
+            // Por eso, un operador principal MULTIMONEDA en el Dia 0 es un no-op DELIBERADO (no se puede elegir moneda
+            // sin ambiguedad -> el metodo no netea y lo loguea via metric:operator_refund_penalty_currency_ambiguous).
+            // La sobreestimacion de ese caso raro se corrige recien con la confirmacion diferida, que SI puede traer
+            // PenaltyCurrency explicita.
+            await AllocateConfirmedPenaltyToLinesAsync(
+                bc, request.ConfirmedPenaltyAmount.Value, requestedPenaltyCurrency: null, ct);
+        }
+
         // ===================================================================
         // FC1.3.3 (ADR-009 §2.3.5 + §2.9 + §2.11, 2026-05-21): rama NC parcial.
         //
@@ -3317,6 +3335,13 @@ public class BookingCancellationService
         // recibir la moneda por linea.
         await PersistPenaltyCurrencyOnLinesAsync(bc, request.PenaltyCurrency, ct);
 
+        // Paso b-ter (FASE 0, 2026-06-28): bajar el REEMBOLSO ESPERADO del operador por la multa confirmada.
+        // Imputa la multa a la(s) linea(s) del operador principal y recalcula RefundCap = capBeforePenalty − multa
+        // (por moneda, nunca cruzado, nunca negativo). Asi "Reembolsos a cobrar" deja de sobreestimar. NO toca la
+        // ND al cliente (sigue manejada por bc.PenaltyAmountAtEvent, seteado arriba en CaptureDebitNoteClassification).
+        await AllocateConfirmedPenaltyToLinesAsync(
+            bc, request.ConfirmedPenaltyAmount, request.PenaltyCurrency, ct);
+
         await _auditService.LogBusinessEventAsync(
             action: AuditActions.BookingCancellationArcaSucceeded,
             entityName: AuditActions.BookingCancellationEntityName,
@@ -3473,6 +3498,150 @@ public class BookingCancellationService
                 ? Monedas.Normalizar(line.Currency)
                 : Monedas.Normalizar(requestedCurrency);
         }
+    }
+
+    /// <summary>
+    /// FASE 0 (2026-06-28): al CONFIRMAR la penalidad del operador, baja el reembolso que ese operador debe
+    /// devolver por el monto de la multa. Setea <see cref="BookingCancellationLine.PenaltyAmount"/> y recalcula
+    /// <see cref="BookingCancellationLine.RefundCap"/> = capBeforePenalty − multa (nunca negativo), asi el
+    /// read-model "Reembolsos a cobrar" deja de SOBREESTIMAR: pasa a mostrar pagado − multa − ya recibido.
+    ///
+    /// <para><b>Por que existe</b>: antes de esta fase, confirmar la multa escribia solo el escalar del BC padre
+    /// (<see cref="BookingCancellation.PenaltyAmountAtEvent"/>, que alimenta la Nota de Debito al CLIENTE) y NO
+    /// tocaba la(s) linea(s). El reembolso esperado del operador (<see cref="OperatorRefundReadModelService"/>,
+    /// = RefundCap − recibido) seguia mostrando el monto SIN descontar la multa. Esto lo corrige.</para>
+    ///
+    /// <para><b>A que operador se imputa</b>: la confirmacion (sincrona o diferida) lleva UN solo monto de multa
+    /// a nivel BC-padre, sin desagregar por operador ni por servicio. La multa que se confirma corresponde al
+    /// operador PRINCIPAL del evento (<see cref="BookingCancellation.SupplierId"/>), asi que la imputamos SOLO a
+    /// las lineas de ese operador. En una cancelacion multi-operador, los demas operadores conservan su reembolso
+    /// intacto (su multa, si la hay, se confirma por separado — la emision/confirmacion por linea de operador es
+    /// un rediseño aparte, ya documentado en <see cref="TryEmitCancellationDebitNoteAsync"/>).</para>
+    ///
+    /// <para><b>Seguridad de moneda (NUNCA mezclar ARS/USD)</b>: la multa es un solo numero en UNA moneda. Solo
+    /// se netea contra las lineas cuya moneda de servicio coincide con la moneda de la multa. Si no se puede
+    /// determinar UNA moneda sin ambiguedad (operador principal con servicios en varias monedas y sin
+    /// <c>PenaltyCurrency</c> explicita), NO se reduce nada y se loguea — preferimos NO netear a netear cruzado.</para>
+    ///
+    /// <para><b>Invariante preservada</b>: como cada porcion de multa ≤ el cap de su linea, se cumple
+    /// <c>RefundCap + PenaltyAmount == capBeforePenalty</c>, que es justo lo que <see cref="AssignRefundCapsAsync"/>
+    /// usa para descontar el pool del operador en cancelaciones parciales sucesivas. NO tocamos
+    /// <c>line.PenaltyStatus</c> a proposito: cambiarlo activaria el conteo multi-operador del gating de la ND
+    /// (<see cref="CountSuppliersWithConfirmedPenaltyAsync"/>) y podria desviar la ND del cliente — eso es otra
+    /// fase. Aca SOLO corregimos el numero del reembolso esperado del operador.</para>
+    ///
+    /// <para><b>Idempotencia</b>: corre exactamente una vez por confirmacion. La confirmacion es una transicion
+    /// de una sola via (Estimated→Confirmed): la Precondicion 6 de <see cref="ConfirmPenaltyAsync"/> rebota (409)
+    /// si la penalidad ya estaba confirmada, asi que el recalculo nunca se reaplica sobre un cap ya neto.</para>
+    /// </summary>
+    // internal (no private) para que los tests unit ejerciten el reparto directamente, igual que AssignRefundCapsAsync.
+    internal async Task AllocateConfirmedPenaltyToLinesAsync(
+        BookingCancellation bc,
+        decimal confirmedPenaltyAmount,
+        string? requestedPenaltyCurrency,
+        CancellationToken ct)
+    {
+        // Sin multa positiva no hay nada que netear (el request ya valida > 0, esto es defensivo).
+        if (confirmedPenaltyAmount <= 0m) return;
+
+        // Lineas TRACKED del operador PRINCIPAL del evento (a ese operador se le confirma la multa aca).
+        var operatorLines = await _db.BookingCancellationLines
+            .Where(l => l.BookingCancellationId == bc.Id && l.SupplierId == bc.SupplierId)
+            .ToListAsync(ct);
+
+        if (operatorLines.Count == 0) return; // BC legacy sin lineas, o sin lineas del operador principal: no-op.
+
+        // Guarda de IDEMPOTENCIA interna (hardening review 2026-06-28): si alguna linea del operador principal YA
+        // tiene PenaltyAmount cargado, la multa ya fue neteada en una corrida previa. Volver a netear recomputaria
+        // capBeforePenalty desde un RefundCap YA reducido y restaria de nuevo, rompiendo la invariante
+        // RefundCap + PenaltyAmount == capBeforePenalty. Las guardas externas (Precondicion 6 = 409 si
+        // PenaltyStatus==Confirmed, la transicion de una via Drafted->Confirmed y xmin) ya impiden una segunda
+        // llamada, pero hacemos el metodo seguro por si solo: llamarlo dos veces es un no-op.
+        if (operatorLines.Any(l => l.PenaltyAmount.HasValue))
+        {
+            _logger.LogInformation(
+                "FASE0: BC {BcPublicId} ya tiene la multa neteada en las lineas del operador principal " +
+                "(PenaltyAmount cargado). No se vuelve a netear (idempotente).",
+                bc.PublicId);
+            return;
+        }
+
+        // Moneda de la multa. Si no se puede determinar una sola sin ambiguedad, NO neteamos (anti cross-currency).
+        var penaltyCurrency = ResolvePenaltyAllocationCurrency(operatorLines, requestedPenaltyCurrency);
+        if (penaltyCurrency is null)
+        {
+            _logger.LogWarning(
+                "FASE0: BC {BcPublicId} operador principal con servicios en varias monedas y sin PenaltyCurrency " +
+                "explicita: no se puede netear la multa sin elegir moneda. NO se reduce el RefundCap (evita netear " +
+                "cruzado ARS/USD). metric:operator_refund_penalty_currency_ambiguous",
+                bc.PublicId);
+            return;
+        }
+
+        // Solo las lineas cuya moneda de servicio == moneda de la multa (el reembolso esperado vive por moneda).
+        var candidateLines = operatorLines
+            .Where(l => string.Equals(
+                Monedas.Normalizar(l.Currency), penaltyCurrency, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        // capBeforePenalty de cada linea == su RefundCap actual (al confirmar, la multa todavia era null: nada la
+        // habia descontado). Por eso usamos RefundCap como base del reparto.
+        decimal totalCapBeforePenalty = candidateLines.Sum(l => l.RefundCap);
+        if (totalCapBeforePenalty <= 0m)
+        {
+            // El operador no tenia reembolso esperado en esa moneda (no se le pago, o ya era 0). La multa no puede
+            // bajar el reembolso por debajo de cero; no seteamos PenaltyAmount para preservar la invariante
+            // RefundCap + PenaltyAmount == capBeforePenalty (que aca es 0 + 0 == 0).
+            return;
+        }
+
+        // La multa neteada nunca supera lo pagado: si la multa > lo pagado, el reembolso cae a 0 (el operador no
+        // devuelve menos que cero). El excedente NO genera "deuda del cliente hacia el operador" en este read-model.
+        // La ND al cliente sigue usando el monto COMPLETO (bc.PenaltyAmountAtEvent), que NO se toca aca.
+        decimal penaltyToApply = Math.Min(confirmedPenaltyAmount, totalCapBeforePenalty);
+
+        decimal allocatedSoFar = 0m;
+        for (int i = 0; i < candidateLines.Count; i++)
+        {
+            var line = candidateLines[i];
+            bool isLastLine = i == candidateLines.Count - 1;
+
+            // Reparto proporcional al cap de cada linea. La ultima linea absorbe el residuo de redondeo para que
+            // la suma de las porciones == penaltyToApply exacto.
+            decimal share = isLastLine
+                ? penaltyToApply - allocatedSoFar
+                : Math.Round(
+                    penaltyToApply * (line.RefundCap / totalCapBeforePenalty), 2, MidpointRounding.AwayFromZero);
+
+            // Defensa dura: la porcion nunca supera el cap de la linea (preserva RefundCap + PenaltyAmount ==
+            // capBeforePenalty) ni baja de cero.
+            if (share > line.RefundCap) share = line.RefundCap;
+            if (share < 0m) share = 0m;
+
+            line.PenaltyAmount = share;
+            line.RefundCap = line.RefundCap - share;
+            allocatedSoFar += share;
+        }
+    }
+
+    /// <summary>
+    /// Determina la moneda en la que se netea la multa contra el reembolso del operador. Si el request trae
+    /// <c>requestedPenaltyCurrency</c>, esa manda. Si no, se infiere de las lineas del operador SOLO si comparten
+    /// una unica moneda; si el operador tiene servicios en VARIAS monedas y no se informo moneda, devuelve null
+    /// (no se puede elegir sin ambiguedad y no se debe netear cruzado).
+    /// </summary>
+    private static string? ResolvePenaltyAllocationCurrency(
+        List<BookingCancellationLine> operatorLines, string? requestedPenaltyCurrency)
+    {
+        if (!string.IsNullOrWhiteSpace(requestedPenaltyCurrency))
+            return Monedas.Normalizar(requestedPenaltyCurrency);
+
+        var distinctCurrencies = operatorLines
+            .Select(l => Monedas.Normalizar(l.Currency))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        return distinctCurrencies.Count == 1 ? distinctCurrencies[0] : null;
     }
 
     /// <summary>
@@ -4752,9 +4921,13 @@ public class BookingCancellationService
     /// por operador): la suma de caps de un operador nunca supera lo que se le pago.</para>
     ///
     /// <para><b>Penalidad</b>: al armar las lineas (draft) la penalidad todavia no esta confirmada
-    /// (<c>PenaltyStatus=Estimated</c>, <c>PenaltyAmount=null</c>), asi que no se descuenta aca. Cuando el
-    /// operador confirma la penalidad (ADR-014), el flujo de confirmacion ajusta el cap restando el monto
-    /// confirmado. Restamos <c>PenaltyAmount</c> solo si ya viene cargado (defensivo).</para>
+    /// (<c>PenaltyStatus=Estimated</c>, <c>PenaltyAmount=null</c>), asi que aca el cap queda en su valor BRUTO
+    /// (capBeforePenalty = lo pagado topeado por costo). El descuento de la multa NO ocurre en este metodo: se
+    /// aplica cuando el operador confirma la penalidad, en <see cref="AllocateConfirmedPenaltyToLinesAsync"/>
+    /// (FASE 0, 2026-06-28) — ese metodo setea <c>PenaltyAmount</c> y recalcula <c>RefundCap = capBeforePenalty −
+    /// multa</c>, por moneda, nunca negativo. La linea de abajo (<c>cap = capBeforePenalty − PenaltyAmount</c>)
+    /// solo resta una penalidad ya cargada y es defensiva: en el draft normal <c>PenaltyAmount</c> es null (no
+    /// resta nada). NO confiar en este metodo para el neteo de la multa: la fuente de verdad es la confirmacion.</para>
     ///
     /// <para><b>Cancelaciones parciales sucesivas</b> (bug-fix): este metodo recibe SOLO la(s) linea(s) que se
     /// cancelan en esta llamada. En el path parcial cada servicio se cancela por separado, asi que antes de
