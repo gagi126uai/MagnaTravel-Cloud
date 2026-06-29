@@ -719,8 +719,8 @@ public class ClientCreditService : IClientCreditService
         if (request.Amount > settings.Ley25345ThresholdAmount)
         {
             throw new BusinessInvariantViolationException(
-                $"Ley 25.345: no se puede retirar en efectivo mas de ${settings.Ley25345ThresholdAmount:N2}. " +
-                $"Intentaron retirar ${request.Amount:N2}. Usar Transfer en su lugar.",
+                $"Ley 25.345: no se puede retirar en efectivo más de ${settings.Ley25345ThresholdAmount:N2}. " +
+                $"Se intentó retirar ${request.Amount:N2}. Usá transferencia bancaria en su lugar.",
                 invariantCode: "INV-094");
         }
 
@@ -870,8 +870,8 @@ public class ClientCreditService : IClientCreditService
         if (!EstadoReserva.IsSaleFirmStatus(targetReserva.Status))
         {
             throw new BusinessInvariantViolationException(
-                "No se puede aplicar un saldo a favor a una reserva que no esta en gestion de cobro " +
-                $"(estado actual: {targetReserva.Status}). Pasala a En gestion primero.",
+                "No se puede aplicar un saldo a favor a una reserva que no está en gestión de cobro. " +
+                "Pasala a En gestión primero.",
                 invariantCode: "INV-096");
         }
 
@@ -1345,8 +1345,8 @@ public class ClientCreditService : IClientCreditService
         if (!EstadoReserva.IsSaleFirmStatus(targetReserva.Status))
         {
             throw new BusinessInvariantViolationException(
-                "No se puede aplicar un saldo a favor a una reserva que no esta en gestion de cobro " +
-                $"(estado actual: {targetReserva.Status}). Pasala a En gestion primero.",
+                "No se puede aplicar un saldo a favor a una reserva que no está en gestión de cobro. " +
+                "Pasala a En gestión primero.",
                 invariantCode: "INV-096");
         }
 

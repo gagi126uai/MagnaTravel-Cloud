@@ -970,7 +970,7 @@ public class BookingCancellationService
         // futuros de la Fase 2 (NC parcial real). Ante la duda fiscal, rechazamos:
         // el vendedor/admin usa el flujo de remediacion explicito de ese estado.
         throw new BusinessInvariantViolationException(
-            $"La reserva {reserva.NumeroReserva} ya tiene una cancelacion activa ({existingBc.Status}).",
+            $"La reserva {reserva.NumeroReserva} ya tiene una cancelación en curso.",
             invariantCode: "INV-081");
     }
 
@@ -1084,7 +1084,7 @@ public class BookingCancellationService
         // 2) Solo se confirma desde Drafted.
         if (bc.Status != BookingCancellationStatus.Drafted)
             throw new BusinessInvariantViolationException(
-                $"Solo se puede confirmar una cancelacion en estado Drafted (actual: {bc.Status}).",
+                "Esta cancelación ya no se puede confirmar porque cambió de estado. Actualizá la página.",
                 invariantCode: "INV-093");
 
         // 3) MIG2: la Invoice original ya esta anulada → bloquear.
@@ -1103,7 +1103,7 @@ public class BookingCancellationService
         {
             if (string.IsNullOrWhiteSpace(request.OverrideReason) || request.OverrideReason.Trim().Length < 20)
                 throw new BusinessInvariantViolationException(
-                    "OverrideReason requerido (min 20 chars) cuando IsAdminOverride=true.");
+                    "Para forzar la cancelación tenés que indicar un motivo de al menos 20 caracteres.");
 
             if (requesterIsAdmin)
             {
@@ -1185,9 +1185,8 @@ public class BookingCancellationService
             customerCanonical == TaxConditionCanonical.Unknown)
         {
             throw new BusinessInvariantViolationException(
-                "FiscalSnapshot incoherente: alguna de las condiciones fiscales " +
-                "(Agency/Supplier/Customer) no se pudo normalizar a un valor canonico. " +
-                "Revisa los strings enviados.",
+                "No pudimos determinar la condición fiscal de la agencia, del operador o del cliente. " +
+                "Revisá esos datos antes de confirmar la cancelación.",
                 invariantCode: "INV-118");
         }
 
@@ -1196,12 +1195,12 @@ public class BookingCancellationService
         //    - Si Source=Unset, rechazar (no se puede confirmar sin TC explicito).
         if (request.SnapshotData.Source == ExchangeRateSource.Unset)
             throw new BusinessInvariantViolationException(
-                "FiscalSnapshot.Source no puede ser Unset al confirmar la cancelacion.",
+                "Falta indicar el tipo de cambio para poder confirmar la cancelación.",
                 invariantCode: "INV-118");
         if (request.SnapshotData.Source == ExchangeRateSource.Manual &&
             string.IsNullOrWhiteSpace(request.SnapshotData.ManualJustification))
             throw new BusinessInvariantViolationException(
-                "ManualJustification es requerido cuando Source=Manual (INV-120).",
+                "Cuando usás un tipo de cambio manual tenés que indicar una justificación.",
                 invariantCode: "INV-120");
 
         // 7) Completar FiscalSnapshot.
@@ -1327,10 +1326,8 @@ public class BookingCancellationService
                 if (!validOverrideForHotelInvariant)
                 {
                     throw new BusinessInvariantViolationException(
-                        $"FC1.3 Fase 1 solo soporta reservas 100% Hotel. " +
-                        $"Servicios no-Hotel detectados: {string.Join(", ", nonHotelServices.Select(s => s.ProductType ?? "(null)"))}. " +
-                        "Use flujo legacy (apagar EnablePartialCreditNotes para esta operacion) o " +
-                        "solicitar override via InvariantOverride approval con justificacion >= 50 chars.",
+                        "Por ahora la cancelación automática solo está disponible para reservas " +
+                        "compuestas únicamente por hotelería. Esta reserva incluye otros servicios.",
                         invariantCode: "INV-FC1.3-007");
                 }
                 // Si llega aca el override cubre el caso, seguimos adelante.
@@ -1646,7 +1643,7 @@ public class BookingCancellationService
         // Solo se aborta desde Drafted (las otras transiciones tienen side-effects fiscales).
         if (bc.Status != BookingCancellationStatus.Drafted)
             throw new BusinessInvariantViolationException(
-                $"Solo se puede abortar una cancelacion en Drafted (actual: {bc.Status}).",
+                "Esta cancelación ya no se puede abortar en este momento.",
                 invariantCode: "INV-093");
 
         if (string.IsNullOrWhiteSpace(reason))
@@ -1722,8 +1719,7 @@ public class BookingCancellationService
         if (bc.Status != BookingCancellationStatus.AbandonedByOperator)
         {
             throw new BusinessInvariantViolationException(
-                $"Solo se puede reabrir por reembolso tardio una cancelacion abandonada por el operador " +
-                $"(actual: {bc.Status}).",
+                "Esta cancelación solo se puede reabrir por un reembolso tardío cuando quedó sin reembolso del operador.",
                 invariantCode: "INV-093");
         }
 
@@ -1814,7 +1810,7 @@ public class BookingCancellationService
         //    donde tiene sentido este escape hatch).
         if (bc.Status != BookingCancellationStatus.AwaitingFiscalConfirmation)
             throw new BusinessInvariantViolationException(
-                $"ForceArcaConfirmation solo se permite desde AwaitingFiscalConfirmation (actual: {bc.Status}).",
+                "Esta acción no está disponible para el estado actual de la cancelación.",
                 invariantCode: "INV-093");
 
         // 4) Validar la NC referenciada.
@@ -2732,7 +2728,7 @@ public class BookingCancellationService
         if (bc.Status != BookingCancellationStatus.ManualReviewPending)
         {
             throw new BusinessInvariantViolationException(
-                $"EditLiquidation solo se permite desde ManualReviewPending (actual: {bc.Status}).",
+                "Esta liquidación ya no se puede editar porque cambió de estado. Actualizá la página.",
                 invariantCode: "INV-093");
         }
 
@@ -2741,8 +2737,8 @@ public class BookingCancellationService
             // Defensive: el CHECK chk_BookingCancellations_manualreview_approvalref
             // ya garantiza esto. Si llegamos aca, hubo corrupcion o bypass.
             throw new BusinessInvariantViolationException(
-                $"BC {bc.PublicId} en ManualReviewPending sin PartialCreditNoteApprovalRequestId. " +
-                "Estado inconsistente.",
+                "Esta cancelación quedó en un estado inconsistente y no se puede editar. " +
+                "Contactá al administrador del sistema.",
                 invariantCode: "INV-FC1.3-002");
         }
 
@@ -2758,10 +2754,8 @@ public class BookingCancellationService
             if (!bypassApplied)
             {
                 throw new BusinessInvariantViolationException(
-                    "INV-FC1.3-004 violado: el admin que edita no puede ser el mismo " +
-                    "que solicito la cancelacion (4-eyes). Bypass GR-005 no aplica " +
-                    "(setting Allow4EyesBypassWhenSingleAdmin=false, o hay mas de 1 admin " +
-                    "activo, o comentario < 100 chars).",
+                    "Por control interno, quien edita esta liquidación no puede ser la misma persona " +
+                    "que solicitó la cancelación. Tiene que revisarla otro administrador.",
                     invariantCode: "INV-FC1.3-004");
             }
         }
@@ -3268,7 +3262,7 @@ public class BookingCancellationService
         if (!ConceptEmitsDebitNote(effectiveConcept))
             throw new BusinessInvariantViolationException(
                 "Este concepto no emite Nota de Debito automatica (es un seguro u otro caso de " +
-                "revision manual). Este endpoint emite la ND por penalidad/cargo de cancelacion.",
+                "revision manual). Esta acción emite la ND por penalidad/cargo de cancelacion.",
                 invariantCode: "INV-ADR014-002");
 
         // === Precondicion 6: pre-check de idempotencia (B1, §3.4 pieza 1). Rebota con 409
@@ -3322,8 +3316,7 @@ public class BookingCancellationService
                 var bypassReason = request.OverrideReason?.Trim();
                 if (string.IsNullOrWhiteSpace(bypassReason))
                     throw new BusinessInvariantViolationException(
-                        "El Administrador debe indicar un motivo (OverrideReason) para confirmar la penalidad " +
-                        "sin doble firma.",
+                        "El administrador debe indicar un motivo para confirmar la penalidad sin doble firma.",
                         invariantCode: "INV-ADMIN-SELFAUTH");
 
                 await LogAdminSelfAuthorizedAsync(
@@ -4414,8 +4407,8 @@ public class BookingCancellationService
         {
             throw new BusinessInvariantViolationException(
                 "No se puede reclasificar el concepto de la penalidad: ya hay una Nota de " +
-                $"Debito en juego (estado {bc.DebitNoteStatus}). Cambiar el concepto ahora " +
-                "podria producir un doble cobro. Anula la ND antes de reclasificar.",
+                "Débito en juego. Cambiar el concepto ahora podría producir un doble cobro. " +
+                "Anulá la Nota de Débito antes de reclasificar.",
                 invariantCode: "INV-ADR013-002");
         }
     }
@@ -5591,8 +5584,8 @@ public class BookingCancellationService
                 ct: ct);
 
             throw new BusinessInvariantViolationException(
-                $"BC {bc.PublicId}: la suma de la liquidacion fiscal no cuadra con el monto original. " +
-                "No se emite NC parcial. Intervencion manual requerida.",
+                "La suma de la liquidación fiscal no cuadra con el monto original. " +
+                "No se emite la nota de crédito parcial; requiere revisión manual.",
                 invariantCode: "INV-FC1.3-005");
         }
 
@@ -5655,9 +5648,8 @@ public class BookingCancellationService
                 bc.PublicId, bc.OriginatingInvoiceId, currency);
 
             throw new BusinessInvariantViolationException(
-                $"NC parcial real no soportada para moneda {currency}: no esta en el " +
-                $"mapeo de monedas ARCA (solo ARS y USD por ahora). BookingCancellation {bc.PublicId} " +
-                $"queda en ManualReviewApproved sin emision (tratamiento manual).");
+                $"Por ahora la nota de crédito parcial solo está disponible en pesos (ARS) y dólares (USD), " +
+                $"no en {currency}. La cancelación queda pendiente de revisión manual.");
         }
 
         // 2.ter) FC1.3.F2.5 (fix M-1, revision 2026-05-28): GUARD DE COTIZACION COHERENTE,
@@ -5703,9 +5695,8 @@ public class BookingCancellationService
                 bc.PublicId, bc.OriginatingInvoiceId, currency, snapshotExchangeRate);
 
             throw new BusinessInvariantViolationException(
-                $"NC parcial real abortada para moneda {currency}: el tipo de cambio del snapshot es " +
-                $"{snapshotExchangeRate} (incoherente para moneda extranjera). BookingCancellation {bc.PublicId} " +
-                $"queda en ManualReviewApproved sin emision (tratamiento manual).");
+                $"No se puede emitir la nota de crédito parcial en {currency} porque el tipo de cambio " +
+                $"registrado no es válido. La cancelación queda pendiente de revisión manual.");
         }
 
         // 2.quater) FC1.3.F2.5 (GAP-1, defense-in-depth, revision 2026-05-28):
@@ -5785,10 +5776,8 @@ public class BookingCancellationService
                 bc.PublicId, bc.OriginatingInvoiceId, ncArcaCurrencyCode, originInvoiceArcaCurrencyCode);
 
             throw new BusinessInvariantViolationException(
-                $"NC parcial real abortada: la moneda ARCA de la NC ({ncArcaCurrencyCode}) no coincide con " +
-                $"la de la factura origen ({originInvoiceArcaCurrencyCode}). BookingCancellation {bc.PublicId} " +
-                "queda en ManualReviewApproved sin emision (tratamiento manual). " +
-                "Probable factura USD legacy pre-F2.5.");
+                "No se puede emitir la nota de crédito parcial porque la moneda no coincide con la de la " +
+                "factura original. La cancelación queda pendiente de revisión manual.");
         }
 
         // 3) Cargar items de la factura origen para construir Lines.

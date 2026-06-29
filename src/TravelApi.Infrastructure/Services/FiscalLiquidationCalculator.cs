@@ -264,7 +264,7 @@ public class FiscalLiquidationCalculator : IFiscalLiquidationCalculator
                     $"La suma de penalidades ({penalty}) y items no reintegrables ({nonRefundableTotal}) " +
                     $"supera el total de la factura ({input.OriginalInvoiceAmount}). " +
                     $"Esto implicaria un monto fiscal a acreditar negativo ({fiscalAmountToCredit}) — invalido. " +
-                    $"Verificar inputs de penalty y categorias de items.",
+                    $"Revisá los montos de penalidad y la clasificación de los ítems.",
                 invariantCode: "INV-FC1.3-005");
         }
 

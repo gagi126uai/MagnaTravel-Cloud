@@ -299,8 +299,7 @@ public class OperatorRefundService : IOperatorRefundService
         if (!validStates.Contains(bc.Status))
         {
             throw new BusinessInvariantViolationException(
-                $"No se puede allocate refund sobre BC en {bc.Status}. " +
-                "Requiere AwaitingOperatorRefund o ClientCreditApplied.",
+                "Esta cancelación no está en condiciones de recibir el reembolso del operador en este momento.",
                 invariantCode: "INV-093");
         }
 
@@ -354,9 +353,9 @@ public class OperatorRefundService : IOperatorRefundService
         if (!refundCurrencyMatchesAnyLine)
         {
             throw new BusinessInvariantViolationException(
-                $"La moneda del refund ({refund.Currency}) no coincide con la moneda de las " +
-                $"lineas del operador en esta cancelacion ({string.Join("/", operatorLineCurrencies)}). " +
-                "Revisa el ingreso correcto del operador.",
+                $"La moneda del reintegro ({refund.Currency}) no coincide con la moneda de los " +
+                $"servicios del operador en esta cancelación ({string.Join("/", operatorLineCurrencies)}). " +
+                "Revisá que el ingreso del operador sea el correcto.",
                 invariantCode: "INV-118");
         }
 
@@ -425,8 +424,8 @@ public class OperatorRefundService : IOperatorRefundService
         if (netAmount < 0m)
         {
             throw new BusinessInvariantViolationException(
-                $"El monto neto quedaria negativo: gross={request.GrossAmount}, deducciones={totalDeductions}. " +
-                "Las deducciones no pueden superar al gross.",
+                $"El monto neto quedaría negativo: las deducciones ({totalDeductions}) no pueden superar " +
+                $"al monto bruto del reintegro ({request.GrossAmount}).",
                 invariantCode: "INV-112");
         }
 
@@ -687,8 +686,8 @@ public class OperatorRefundService : IOperatorRefundService
             supplierCanonical == TaxConditionCanonical.Unknown)
         {
             throw new BusinessInvariantViolationException(
-                "FiscalSnapshot del BC incoherente (Agency o Supplier tax condition desconocidos). " +
-                "Imposible aplicar matriz fiscal de retenciones.",
+                "No se pudo determinar la condición fiscal de la agencia o del operador. " +
+                "No se pueden calcular las retenciones impositivas.",
                 invariantCode: "INV-118");
         }
 
@@ -706,8 +705,8 @@ public class OperatorRefundService : IOperatorRefundService
                 // INV-105: operador Mono no esta inscripto en el regimen — registrar
                 // una retencion suya seria invent un credito fiscal inexistente.
                 throw new BusinessInvariantViolationException(
-                    $"El operador es Monotributo: no se pueden registrar deducciones del tipo {d.Kind} (retencion AR). " +
-                    "Usar AdministrativeFee/BankingCost/Other con justificacion.",
+                    "El operador es Monotributo: no se pueden registrar retenciones impositivas argentinas sobre su reintegro. " +
+                    "Usá una deducción de gasto administrativo, costo bancario u otro concepto, con justificación.",
                     invariantCode: "INV-105");
             }
 
@@ -716,8 +715,8 @@ public class OperatorRefundService : IOperatorRefundService
                 // INV-115: agencia Mono NO genera credito fiscal IVA, asentar una
                 // retencion seria "regalarsela" al operador sin contrapartida.
                 throw new BusinessInvariantViolationException(
-                    $"La agencia es Monotributo: no se pueden registrar deducciones del tipo {d.Kind} (retencion AR). " +
-                    "El Monotributo no genera credito fiscal IVA.",
+                    "La agencia es Monotributo: no se pueden registrar retenciones impositivas argentinas. " +
+                    "El Monotributo no genera crédito fiscal de IVA.",
                     invariantCode: "INV-115");
             }
         }
@@ -980,21 +979,23 @@ public class OperatorRefundService : IOperatorRefundService
         if (!validStates.Contains(newBc.Status))
         {
             throw new BusinessInvariantViolationException(
-                $"No se puede reasociar a BC destino en {newBc.Status}. " +
-                "Requiere AwaitingOperatorRefund o ClientCreditApplied.",
+                "La cancelación de destino no está en condiciones de recibir este reembolso en este momento.",
                 invariantCode: "INV-093");
         }
 
         // 4) Validar moneda del refund con el snapshot del BC nuevo (puede ser
         //    distinto al viejo BC si vienen de FiscalSnapshots diferentes).
+        // Resolvemos la moneda de destino en una variable local para que el mensaje al usuario no
+        // exponga el camino interno (FiscalSnapshot.CurrencyAtEvent): solo mostramos el codigo de moneda.
+        var destinationCurrency = newBc.FiscalSnapshot?.CurrencyAtEvent;
         if (!string.Equals(
                 oldAllocation.Refund.Currency,
-                newBc.FiscalSnapshot?.CurrencyAtEvent,
+                destinationCurrency,
                 StringComparison.OrdinalIgnoreCase))
         {
             throw new BusinessInvariantViolationException(
-                $"La moneda del refund ({oldAllocation.Refund.Currency}) no coincide con la del " +
-                $"BC destino ({newBc.FiscalSnapshot?.CurrencyAtEvent ?? "<vacio>"}).",
+                $"La moneda del reintegro ({oldAllocation.Refund.Currency}) no coincide con la de la " +
+                $"cancelación de destino ({destinationCurrency ?? "sin definir"}).",
                 invariantCode: "INV-118");
         }
 

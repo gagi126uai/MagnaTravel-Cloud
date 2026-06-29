@@ -639,7 +639,9 @@ public class BookingCancellationServicePartialCreditNoteTests
             svc.ConfirmAsync(bcPublicId, NewConfirmRequest(), "user-1", "Admin", requesterIsAdmin: false, CancellationToken.None));
 
         Assert.Equal("INV-FC1.3-007", ex.InvariantCode);
-        Assert.Contains("Hotel", ex.Message);
+        // El mensaje al usuario es amable y NO expone internos (antes nombraba "Hotel"/flags); el codigo
+        // de invariante es lo que se conserva. Ver CancellationErrorMessageLeakUnitTests.
+        Assert.Contains("hotelería", ex.Message);
 
         // Calculator NUNCA se invoco: validamos antes de correr la formula.
         calculatorMock.Verify(c => c.Calculate(It.IsAny<FiscalLiquidationInput>(), It.IsAny<OperationalFinanceSettings>()), Times.Never);
