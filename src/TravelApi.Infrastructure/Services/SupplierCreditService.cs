@@ -170,6 +170,14 @@ public class SupplierCreditService : ISupplierCreditService
     private Task<bool> CanSeeCostAsync(CancellationToken ct)
         => CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, ct);
 
+    /// <inheritdoc />
+    public Task ReconcileSupplierCreditAsync(int supplierId, CancellationToken ct)
+        // Entrypoint de capa de aplicacion: llama DIRECTO al reconciler estatico (transaction-agnostic, NO abre
+        // execution strategy ni transaccion propia). Sin actor explicito -> el audit del pool queda como "System".
+        => SupplierCreditReconciler.ReconcileAsync(
+            _db, supplierId, sourceSupplierPaymentId: null,
+            actorUserId: null, actorUserName: null, auditService: _auditService, ct);
+
     // =========================================================================
     // ApplyCreditAsync (con retry de concurrencia)
     // =========================================================================
@@ -268,12 +276,14 @@ public class SupplierCreditService : ISupplierCreditService
         decimal pool = currencyEntries.Sum(e => e.RemainingBalance);
 
         // B1 (review, anti "credito fantasma gastable"): el saldo a favor DISPONIBLE para aplicar nunca puede
-        // superar el sobrepago que el Balance DERIVADO todavia respalda. Releemos el Balance FRESCO y topeamos:
-        //   available = min( Σ RemainingBalance del pool , max(0, -Balance) ).
-        // Asi, si un cambio de servicio consumio el sobrepago y el reconciler todavia no corrio (solo corre en
-        // eventos de PAGO), el pool optimista NO se puede gastar: lo que no respalda el sobrepago real se frena.
-        decimal freshBalance = await SupplierBalanceForCurrencyAsync(supplierId, currency, ct);
-        decimal overpaymentBacking = freshBalance < 0m ? -freshBalance : 0m;
+        // superar el sobrepago CONSUMIBLE que respalda el Balance derivado. Pasos B/C (2026-06-29): el respaldo YA
+        // NO es el max(0, -Balance) crudo sino el sobrepago ECONOMICO (= Prepago: descuenta la multa retenida, el
+        // reembolso recibido y el receivable "me tiene que devolver"). Asi un negativo de caja que en realidad es
+        // un reembolso POR COBRAR (anulacion) NO se puede gastar como saldo a favor, aunque el pool este optimista
+        // (stale) o el reconciler todavia no haya corrido. Misma fuente que el reconciler y el extracto.
+        var overpaymentByCurrency = await SupplierCreditReconciler
+            .ComputeConsumableOverpaymentByCurrencyAsync(_db, supplierId, ct);
+        decimal overpaymentBacking = overpaymentByCurrency.TryGetValue(currency, out var backing) ? backing : 0m;
         decimal available = Math.Min(pool, overpaymentBacking);
 
         // (a) No exceder el saldo a favor disponible en ESA moneda. SEGURIDAD (review): el mensaje NO revela la

@@ -47,32 +47,34 @@ internal static class SupplierCreditReconciler
         IAuditService? auditService,
         CancellationToken ct)
     {
-        // 1) Sobrepago por moneda = max(0, -Balance) leido de la tabla hija ya materializada (committed).
-        var balanceRows = await db.SupplierBalanceByCurrency
-            .Where(row => row.SupplierId == supplierId)
-            .Select(row => new { row.Currency, row.Balance })
-            .ToListAsync(ct);
+        // 1) Sobrepago por moneda. Pasos B/C (2026-06-29): YA NO es max(0, -Balance) crudo. Una anulacion deja la
+        //    caja en negativo por el total pagado, pero ese negativo es un REEMBOLSO POR COBRAR (el operador debe
+        //    devolver efectivo), NO un saldo a favor consumible. La formula economica descuenta la multa retenida,
+        //    el reembolso ya recibido y el receivable "me tiene que devolver" (Y):
+        //        overpayment[ccy] = max(0, -( Balance + MultaRetenida + ReembolsoRecibido + Y ))[ccy]
+        //    que es exactamente el "Prepago" (saldo a favor consumible) que muestra el extracto del operador. Asi
+        //    el pool MATERIALIZADO == el numero que el dueño VE (una sola verdad). Donde no hay anulacion el
+        //    circuito y Y son 0 y la formula colapsa a max(0, -Balance) = comportamiento previo identico.
+        // El "Prepago" por moneda del calculador economico ES el sobrepago consumible objetivo del pool. Lo
+        // computa el helper compartido (misma verdad que el extracto del operador y que el tope de ApplyCredit).
+        var overpaymentByCurrency = await ComputeConsumableOverpaymentByCurrencyAsync(db, supplierId, ct);
 
         // 2) Entries vivos (tracked: los vamos a modificar/crear) de este operador.
         var entries = await db.SupplierCreditEntries
             .Where(entry => entry.SupplierId == supplierId)
             .ToListAsync(ct);
 
-        // 3) Union de monedas presentes en el balance o en los entries existentes (a lo sumo ARS + USD).
+        // 3) Union de monedas con sobrepago objetivo o con entries existentes (a lo sumo ARS + USD).
         var currencies = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var row in balanceRows) currencies.Add(Monedas.Normalizar(row.Currency));
+        foreach (var ccy in overpaymentByCurrency.Keys) currencies.Add(ccy);
         foreach (var entry in entries) currencies.Add(Monedas.Normalizar(entry.Currency));
 
         bool anyChange = false;
 
         foreach (var currency in currencies)
         {
-            decimal balance = balanceRows
-                .Where(row => Monedas.Normalizar(row.Currency) == currency)
-                .Sum(row => row.Balance);
-
-            // Sobrepago de ESTA moneda (la deuda negativa). Nunca se mezcla con otra moneda.
-            decimal overpayment = balance < 0m ? -balance : 0m;
+            // Sobrepago consumible de ESTA moneda (= Prepago del extracto). Nunca se mezcla con otra moneda.
+            decimal overpayment = overpaymentByCurrency.TryGetValue(currency, out var prepago) ? prepago : 0m;
             overpayment = Math.Round(overpayment, 2, MidpointRounding.AwayFromZero);
 
             var currencyEntries = entries
@@ -184,5 +186,41 @@ internal static class SupplierCreditReconciler
         {
             await db.SaveChangesAsync(ct);
         }
+    }
+
+    /// <summary>
+    /// Pasos B/C (2026-06-29): sobrepago CONSUMIBLE (saldo a favor) objetivo por moneda del operador =
+    /// <c>max(0, -(Balance + MultaRetenida + ReembolsoRecibido + Y))</c>, que es el "Prepago" del calculador
+    /// economico. Es la FUENTE UNICA del numero: la usa el reconciler para materializar el pool y
+    /// <c>SupplierCreditService.ApplyCreditAsync</c> para topear cuanto se puede aplicar (asi nunca se gasta como
+    /// saldo a favor un negativo de caja que en realidad es un reembolso por cobrar). Sin anulaciones colapsa a
+    /// <c>max(0, -Balance)</c>. SOLO LECTURA: no escribe nada.
+    /// </summary>
+    public static async Task<IReadOnlyDictionary<string, decimal>> ComputeConsumableOverpaymentByCurrencyAsync(
+        AppDbContext db, int supplierId, CancellationToken ct)
+    {
+        var balanceRows = await db.SupplierBalanceByCurrency
+            .AsNoTracking()
+            .Where(row => row.SupplierId == supplierId)
+            .Select(row => new { row.Currency, row.Balance })
+            .ToListAsync(ct);
+
+        var cashClosingByCurrency = new Dictionary<string, decimal>(StringComparer.Ordinal);
+        foreach (var row in balanceRows)
+        {
+            var ccy = Monedas.Normalizar(row.Currency);
+            cashClosingByCurrency.TryGetValue(ccy, out var acc);
+            cashClosingByCurrency[ccy] = acc + row.Balance;
+        }
+
+        var circuit = await SupplierCancellationCircuitReader.LoadAsync(db, supplierId, ct);
+
+        var reconciliation = Domain.Reservations.SupplierAccountReconciliationBuilder.Build(
+            cashClosingByCurrency, circuit.CircuitLines, circuit.ReceivableByCurrency);
+
+        var result = new Dictionary<string, decimal>(StringComparer.Ordinal);
+        foreach (var block in reconciliation.Currencies)
+            result[block.Currency] = block.Prepayment;
+        return result;
     }
 }

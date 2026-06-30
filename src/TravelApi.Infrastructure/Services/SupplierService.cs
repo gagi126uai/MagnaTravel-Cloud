@@ -653,8 +653,22 @@ public class SupplierService : ISupplierService
 
         var statement = SupplierAccountStatementBuilder.Build(inputLines);
 
+        // Pasos B/C cuenta del operador (2026-06-29): ademas de la CAJA, derivamos el "Circuito de cancelacion"
+        // (multa retenida + reembolso recibido) y el receivable "me tiene que devolver" (Y) del estado de las
+        // cancelaciones del operador, y combinamos todo en el calculador economico para producir los DOS numeros
+        // ("Le debo X" / "Me tiene que devolver Y") por moneda. El extracto de caja de arriba NO se toca: la
+        // invariante extracto<->proyeccion sigue intacta. El circuito vive en un bloque SEPARADO.
+        var circuit = await TravelApi.Infrastructure.Reservations.SupplierCancellationCircuitReader.LoadAsync(
+            _dbContext, id, cancellationToken, _logger);
+
+        var cashClosingByCurrency = statement.Currencies.ToDictionary(
+            block => block.Currency, block => block.ClosingBalance, StringComparer.Ordinal);
+
+        var reconciliation = SupplierAccountReconciliationBuilder.Build(
+            cashClosingByCurrency, circuit.CircuitLines, circuit.ReceivableByCurrency);
+
         bool canSeeCost = await CanSeeSupplierCostFiguresAsync(cancellationToken);
-        return MapSupplierAccountStatement(supplier.PublicId, supplier.Name, statement, canSeeCost);
+        return MapSupplierAccountStatement(supplier.PublicId, supplier.Name, statement, reconciliation, canSeeCost);
     }
 
     /// <summary>Texto legible de una linea de compra del extracto: "Tipo: descripcion" (sin costo, eso va aparte).</summary>
@@ -671,7 +685,11 @@ public class SupplierService : ISupplierService
     /// montos (cargo/abono/saldo) a 0 pero conserva la estructura (movimientos, fechas, monedas).
     /// </summary>
     private static SupplierAccountStatementDto MapSupplierAccountStatement(
-        Guid supplierPublicId, string supplierName, SupplierAccountStatement statement, bool canSeeCost)
+        Guid supplierPublicId,
+        string supplierName,
+        SupplierAccountStatement statement,
+        SupplierAccountReconciliation reconciliation,
+        bool canSeeCost)
     {
         var dto = new SupplierAccountStatementDto
         {
@@ -680,28 +698,74 @@ public class SupplierService : ISupplierService
             AmountsVisible = canSeeCost
         };
 
-        foreach (var block in statement.Currencies)
+        // Indexamos los bloques economicos por moneda para colgar los dos numeros + el circuito a cada moneda.
+        var econByCurrency = reconciliation.Currencies.ToDictionary(b => b.Currency, StringComparer.Ordinal);
+
+        // Una BC con receivable o multa puede generar una moneda que la CAJA no tiene (caso de borde). Unimos:
+        // primero las monedas de caja (en su orden), despues las economicas que no aparezcan en caja.
+        var cashCurrencies = statement.Currencies.Select(b => b.Currency).ToList();
+        var orderedCurrencies = new List<string>(cashCurrencies);
+        foreach (var econ in reconciliation.Currencies)
         {
+            if (!cashCurrencies.Contains(econ.Currency))
+                orderedCurrencies.Add(econ.Currency);
+        }
+
+        var cashByCurrency = statement.Currencies.ToDictionary(b => b.Currency, StringComparer.Ordinal);
+
+        foreach (var currency in orderedCurrencies)
+        {
+            econByCurrency.TryGetValue(currency, out var econ);
+
             var blockDto = new SupplierAccountStatementCurrencyBlockDto
             {
-                Currency = block.Currency,
-                ClosingBalance = canSeeCost ? EconomicRulesHelper.RoundCurrency(block.ClosingBalance) : 0m
+                Currency = currency,
+                ClosingBalance = canSeeCost ? EconomicRulesHelper.RoundCurrency(econ?.CashClosingBalance ?? 0m) : 0m,
+                EconomicClosingBalance = canSeeCost ? EconomicRulesHelper.RoundCurrency(econ?.EconomicClosingBalance ?? 0m) : 0m,
+                TheyOweMe = canSeeCost ? EconomicRulesHelper.RoundCurrency(econ?.TheyOweMe ?? 0m) : 0m,
+                ITheyOwe = canSeeCost ? EconomicRulesHelper.RoundCurrency(econ?.ITheyOwe ?? 0m) : 0m,
+                Prepayment = canSeeCost ? EconomicRulesHelper.RoundCurrency(econ?.Prepayment ?? 0m) : 0m,
             };
 
-            foreach (var line in block.Lines)
+            // Lineas de CAJA (running balance intacto).
+            if (cashByCurrency.TryGetValue(currency, out var cashBlock))
             {
-                blockDto.Lines.Add(new SupplierAccountStatementLineDto
+                foreach (var line in cashBlock.Lines)
                 {
-                    Date = line.Date,
-                    Kind = line.Kind,
-                    Description = line.Description,
-                    DocumentRef = line.DocumentRef,
-                    SourcePublicId = line.SourcePublicId,
-                    Currency = line.Currency,
-                    Charge = canSeeCost ? EconomicRulesHelper.RoundCurrency(line.Charge) : 0m,
-                    Credit = canSeeCost ? EconomicRulesHelper.RoundCurrency(line.Credit) : 0m,
-                    RunningBalance = canSeeCost ? EconomicRulesHelper.RoundCurrency(line.RunningBalance) : 0m
-                });
+                    blockDto.Lines.Add(new SupplierAccountStatementLineDto
+                    {
+                        Date = line.Date,
+                        Kind = line.Kind,
+                        Description = line.Description,
+                        DocumentRef = line.DocumentRef,
+                        SourcePublicId = line.SourcePublicId,
+                        Currency = line.Currency,
+                        Charge = canSeeCost ? EconomicRulesHelper.RoundCurrency(line.Charge) : 0m,
+                        Credit = canSeeCost ? EconomicRulesHelper.RoundCurrency(line.Credit) : 0m,
+                        RunningBalance = canSeeCost ? EconomicRulesHelper.RoundCurrency(line.RunningBalance) : 0m
+                    });
+                }
+            }
+
+            // Lineas del CIRCUITO de cancelacion (bloque separado, NO entran al running balance de caja). Cada
+            // movimiento es un cargo (+), por eso lo exponemos en la columna Charge; Credit/RunningBalance en 0.
+            if (econ != null)
+            {
+                foreach (var line in econ.CircuitLines)
+                {
+                    blockDto.CircuitLines.Add(new SupplierAccountStatementLineDto
+                    {
+                        Date = line.Date,
+                        Kind = line.Kind,
+                        Description = line.Description,
+                        DocumentRef = line.DocumentRef,
+                        SourcePublicId = line.SourcePublicId,
+                        Currency = line.Currency,
+                        Charge = canSeeCost ? EconomicRulesHelper.RoundCurrency(line.Amount) : 0m,
+                        Credit = 0m,
+                        RunningBalance = 0m
+                    });
+                }
             }
 
             dto.Currencies.Add(blockDto);

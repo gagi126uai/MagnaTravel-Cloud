@@ -16,6 +16,27 @@ public static class SupplierAccountStatementLineKinds
 
     /// <summary>Pago al operador: RESTA de lo que la agencia le debe (abono).</summary>
     public const string Payment = "Payment";
+
+    // ====================================================================================================
+    // Pasos B/C cuenta del operador (2026-06-29): movimientos del "Circuito de cancelacion". NO entran al
+    // running balance de CAJA (Purchase/Payment) — viven en un bloque APARTE y derivan-en-lectura del estado
+    // de las cancelaciones del operador. Son la CONTRAPARTIDA de visualizacion del pago negativo que deja una
+    // anulacion: explican por que el saldo de caja quedo negativo y hacia donde se va (multa retenida +
+    // reembolso recibido), de modo que la cuenta del operador cierre cuando el operador devuelve / retiene multa.
+    // ====================================================================================================
+
+    /// <summary>
+    /// Circuito de cancelacion: MULTA que el operador RETUVO de una cancelacion (cargo +). Es plata que la
+    /// agencia ya no espera de vuelta porque el operador se la quedo como penalidad pass-through. Reduce el
+    /// "me tiene que devolver", NO infla el "le debo".
+    /// </summary>
+    public const string PenaltyRetained = "PenaltyRetained";
+
+    /// <summary>
+    /// Circuito de cancelacion: REEMBOLSO efectivamente recibido del operador por una cancelacion (cargo +).
+    /// Neutraliza la parte del pago negativo que el operador ya devolvio.
+    /// </summary>
+    public const string RefundReceived = "RefundReceived";
 }
 
 /// <summary>

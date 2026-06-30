@@ -73,6 +73,16 @@ public class OperatorRefundService : IOperatorRefundService
         _logger = logger;
     }
 
+    /// <summary>
+    /// Pasos B/C (2026-06-29): reconcilia el POOL de saldo a favor del operador tras imputar / anular un reembolso
+    /// (que movio el reembolso recibido y el receivable Y). Transaction-agnostic, dentro de la transaccion del
+    /// caller; se llama DESPUES del SaveChanges que persistio el cambio. Idempotente; net-neutral en el caso normal
+    /// (recibido &lt;= cap), asi que no toca el pool — solo lo mantiene coherente si el balance estaba viejo.
+    /// </summary>
+    private Task ReconcileSupplierCreditPoolAsync(int supplierId, string? actorUserId, string? actorUserName, CancellationToken ct)
+        => TravelApi.Infrastructure.Reservations.SupplierCreditReconciler.ReconcileAsync(
+            _db, supplierId, sourceSupplierPaymentId: null, actorUserId, actorUserName, _auditService, ct);
+
     // =========================================================================
     // RecordReceivedAsync
     // =========================================================================
@@ -578,6 +588,12 @@ public class OperatorRefundService : IOperatorRefundService
         //       - audit log
         await _db.SaveChangesAsync(ct);
 
+        // Pasos B/C (2026-06-29): imputar un reembolso movio el REEMBOLSO RECIBIDO(+) y bajo el receivable Y(-) del
+        // operador en igual monto (net-neutral, §4.6), asi que el sobrepago economico no cambia y el reconciler
+        // suele ser no-op; pero lo disparamos para mantener el pool coherente con el estado YA committed. Misma
+        // transaccion del caller. El reconciler hace su propio SaveChanges.
+        await ReconcileSupplierCreditPoolAsync(refund.SupplierId, userId, userName, ct);
+
         // FC1.2.7b counter: una allocation N:M aplicada. Util cruzar contra
         // operator_refund_received para ver si los ingresos quedan "huerfanos"
         // (recibidos pero no allocados a ninguna BC). Si el ratio
@@ -876,6 +892,11 @@ public class OperatorRefundService : IOperatorRefundService
 
         // 9) SaveChanges unico.
         await _db.SaveChangesAsync(ct);
+
+        // Pasos B/C (2026-06-29): anular la imputacion devolvio el receivable Y(+) y bajo el reembolso recibido(-)
+        // del operador en igual monto (net-neutral). Reconciliamos el pool con el estado YA committed. Misma
+        // transaccion del caller.
+        await ReconcileSupplierCreditPoolAsync(allocation.Refund.SupplierId, userId, userName, ct);
 
         return MapAllocation(allocation);
     }

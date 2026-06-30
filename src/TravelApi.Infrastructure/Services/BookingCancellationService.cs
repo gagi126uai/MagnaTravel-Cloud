@@ -396,6 +396,18 @@ public class BookingCancellationService
         if (blockReason is not null)
             throw new InvalidOperationException(blockReason);
 
+        // 0-bis) R1 (Pasos B/C, plata viva, 2026-06-30): NO cancelar un servicio PAGADO al operador si no se puede
+        //    ANCLAR el receivable "me tiene que devolver". El registro del lado-operador (la linea de cancelacion
+        //    con su RefundCap) cuelga de un BookingCancellation, que exige <c>OriginatingInvoiceId</c> (factura de
+        //    venta viva) — es ancla ESTRUCTURAL (FK no-null + indice unico). Si la reserva todavia NO tiene factura
+        //    (ADR-037 desacoplo facturar de cobrar: se le puede pagar al operador antes de facturar al cliente),
+        //    cancelar dejaria la caja del operador en negativo SIN linea que represente el receivable -> el
+        //    reconciler mintearia ese negativo como saldo a favor GASTABLE (no es saldo a favor: el operador te
+        //    debe el reembolso). Hasta que exista la factura que ancle el receivable, BLOQUEAMOS con un mensaje
+        //    claro (la accion se retoma tras facturar o gestionar el reembolso). Solo bloquea el caso con fuga real
+        //    (servicio con plata pagada al operador + sin factura); un servicio impago, o con factura, sigue igual.
+        await EnsurePaidServiceCancellationHasReceivableAnchorAsync(reserva, serviceTable, request.ServicePublicId, ct);
+
         // 1) Cargar el servicio puntual y VALIDAR pertenencia a la reserva (server-side, espejo INV-151:
         //    no se confia en el frontend para que el servicio sea de esta reserva). CancelOneServiceAsync
         //    marca el Status cancelado y devuelve (supplierId, alreadyCancelled).
@@ -447,6 +459,16 @@ public class BookingCancellationService
             _logger.LogInformation(
                 "metric:partial_service_cancelled | ReservaPublicId={ReservaPublicId} ServiceTable={ServiceTable} ServicePublicId={ServicePublicId} SupplierId={SupplierId}",
                 reserva.PublicId, request.ServiceTable, request.ServicePublicId, affectedSupplierId);
+
+            // Pasos B/C (2026-06-29): NO disparamos el reconcile del pool aca a proposito. La cancelacion parcial
+            // deja la caja del operador en negativo, pero el receivable que lo compensa lo ancla la LINEA parcial
+            // (con su RefundCap). El fix de RAIZ (SupplierCancellationCircuitReader, Y atado al servicio cancelado)
+            // hace que el PROXIMO reconcile de ese operador (un pago al operador, u otra cancelacion) cuente ese
+            // receivable y NO mintee — sin importar que la BC siga en Drafted. Disparar el reconcile aca seria
+            // PELIGROSO en el caso de la "limitacion declarada" (RecordPartialCancellationLineAsync OMITE la linea
+            // cuando la reserva no tiene factura viva que ancle el BC): ahi quedaria caja negativa SIN linea, y un
+            // reconcile mintearia el pagado. Mientras NO haya linea, no inventamos un receivable; ese caso
+            // (servicio pagado sin factura de venta) es la limitacion ya declarada del modelo, fuera de este alcance.
         }
 
         // Contadores para el header "N de M servicios cancelado" (decision #1: dato calculado, no estado nuevo).
@@ -663,7 +685,8 @@ public class BookingCancellationService
     /// SI guarda internamente. Cuando este metodo corre dentro de la transaccion de <see cref="ConfirmAsync"/>
     /// (ARREGLO 3), todos esos SaveChanges participan de la misma transaccion -> atomico con la anulacion.</para>
     /// </summary>
-    private async Task RecalculateMoneyAfterTotalCancellationAsync(int reservaId, CancellationToken ct)
+    private async Task RecalculateMoneyAfterTotalCancellationAsync(
+        int reservaId, string? actorUserId, string? actorUserName, CancellationToken ct)
     {
         // 1) Deuda de cada operador afectado. Reusamos el helper compartido (2026-06-26): junta los SupplierId
         //    distintos de los 6 tipos de servicio, recalcula con SupplierDebtPersister por cada uno y hace un
@@ -673,7 +696,32 @@ public class BookingCancellationService
 
         // 2) Plata del cliente (+ comision por el chokepoint de ReservaMoneyPersister). Guarda internamente.
         await TravelApi.Infrastructure.Reservations.ReservaMoneyPersister.PersistAsync(_db, reservaId, ct);
+
+        // 3) Pasos B/C — C0 + C1 (2026-06-29): tras recalcular el balance de cada operador (paso 1, ya committed),
+        //    reconciliamos su POOL de saldo a favor. Anular un servicio pagado deja la caja en negativo por el
+        //    total pagado, pero ese negativo es un REEMBOLSO POR COBRAR (Y), NO un saldo a favor consumible: el
+        //    reconciler con la formula economica lo deja en 0 (no mintea la fuga). Antes, el pool NO se tocaba al
+        //    anular (solo en eventos de pago) -> el negativo de caja quedaba como credito gastable fantasma. Va en
+        //    la MISMA transaccion de la anulacion (caller). Net-neutral: anular nunca BAJA el sobrepago, asi que el
+        //    throw INV-SUPCREDIT-001 es inalcanzable por este camino (diseño rev 2 §4.6).
+        var affectedSuppliers = await TravelApi.Infrastructure.Reservations.SupplierDebtPersister
+            .GetReservaSupplierIdsAsync(_db, reservaId, ct);
+        foreach (var supplierId in affectedSuppliers)
+        {
+            await ReconcileSupplierCreditPoolAsync(supplierId, actorUserId, actorUserName, ct);
+        }
     }
+
+    /// <summary>
+    /// Pasos B/C (2026-06-29): dispara el reconciler del POOL de saldo a favor del operador (transaction-agnostic,
+    /// dentro de la transaccion del caller). Se llama DESPUES de persistir el cambio de estado/balance que movio el
+    /// sobrepago economico (multa confirmada / cierre sin multa / anulacion). Idempotente. El reconciler hace su
+    /// propio SaveChanges con la auditoria staged. Actor null -> el audit del pool queda como "System" (la accion
+    /// de negocio ya queda auditada con el actor real en su propio evento).
+    /// </summary>
+    private Task ReconcileSupplierCreditPoolAsync(int supplierId, string? actorUserId, string? actorUserName, CancellationToken ct)
+        => TravelApi.Infrastructure.Reservations.SupplierCreditReconciler.ReconcileAsync(
+            _db, supplierId, sourceSupplierPaymentId: null, actorUserId, actorUserName, _auditService, ct);
 
     /// <summary>
     /// SEC-B1 (ADR-025 / candado fiscal): devuelve el motivo de bloqueo si NO se puede cancelar el servicio
@@ -715,6 +763,48 @@ public class BookingCancellationService
             _ => "service"
         };
         return await MutationGuards.GetBookingMutationBlockReasonAsync(_db, reservaId, bookingType, ct);
+    }
+
+    /// <summary>
+    /// R1 (Pasos B/C, plata viva, 2026-06-30): impide cancelar un servicio PAGADO al operador cuando NO hay forma de
+    /// ANCLAR el receivable "me tiene que devolver" (no existe factura de venta viva que sostenga el
+    /// <see cref="BookingCancellation"/> padre de la linea). Sin ese ancla, cancelar deja la caja del operador en
+    /// negativo sin linea que represente el receivable y el reconciler mintearia ese negativo como saldo a favor.
+    ///
+    /// <para>Bloquea SOLO el caso con fuga real: el servicio tiene plata pagada al operador (su <c>RefundCap</c>
+    /// reconstruido seria &gt; 0) Y la reserva no tiene factura viva. Un servicio impago (RefundCap 0) o una reserva
+    /// con factura no se bloquean. El <c>RefundCap</c> se calcula con el MISMO armado que el path real
+    /// (<see cref="BuildCancellationLinesAsync"/> + <see cref="AssignRefundCapsAsync"/>), read-only, ANTES de tocar
+    /// el servicio, para no dejar estado a medias. Lanza <see cref="InvalidOperationException"/> -> el controller la
+    /// mapea a 409, igual que los demas candados de esta operacion.</para>
+    /// </summary>
+    private async Task EnsurePaidServiceCancellationHasReceivableAnchorAsync(
+        Reserva reserva, CancellableServiceTable serviceTable, Guid servicePublicId, CancellationToken ct)
+    {
+        // Hay factura de venta viva que ancle el BC? (misma regla que RecordPartialCancellationLineAsync / DraftAsync).
+        bool hasLiveInvoice = await _db.Invoices.AsNoTracking()
+            .AnyAsync(i => i.ReservaId == reserva.Id
+                        && !LiveInvoiceCreditNoteTypes.Contains(i.TipoComprobante)
+                        && !string.IsNullOrEmpty(i.CAE)
+                        && i.AnnulmentStatus != AnnulmentStatus.Succeeded, ct);
+        if (hasLiveInvoice) return; // hay ancla -> el path normal crea la linea, sin fuga.
+
+        // Sin factura: ¿este servicio tiene plata pagada al operador que quedaria sin representar? Reconstruimos el
+        // RefundCap que tendria su linea (read-only, sin persistir). Si es 0 (servicio impago), no hay fuga -> se
+        // permite cancelar (no se necesita linea). Si es > 0, bloqueamos.
+        var serviceId = await ResolveServiceIdAsync(serviceTable, servicePublicId, reserva.Id, ct);
+        if (serviceId is null) return; // el servicio se valida/404ea al marcarlo; aca no bloqueamos.
+
+        var wouldBeLines = await BuildCancellationLinesAsync(
+            reserva, BookingCancellationLineScope.Partial, ct,
+            onlyServiceTable: serviceTable, onlyServiceId: serviceId.Value);
+        decimal wouldBeRefundCap = wouldBeLines.Sum(l => l.RefundCap);
+
+        if (wouldBeRefundCap > 0m)
+            throw new InvalidOperationException(
+                "No se puede cancelar este servicio todavía: ya tiene pagos al operador y la reserva aún no tiene " +
+                "factura emitida para registrar el reembolso a tu favor. Emití la factura de venta o gestioná el " +
+                "reembolso con el operador antes de cancelar el servicio.");
     }
 
     /// <summary>
@@ -1575,7 +1665,7 @@ public class BookingCancellationService
             //        EN EL MISMO request, ahora que los servicios quedaron Cancelado. Antes esto quedaba para
             //        el job de AFIP (que solo tocaba la plata del cliente) -> la deuda con el operador quedaba
             //        inflada y la comision colgada. Reusa los persisters existentes (no inventa calculo).
-            await RecalculateMoneyAfterTotalCancellationAsync(bc.ReservaId, ct);
+            await RecalculateMoneyAfterTotalCancellationAsync(bc.ReservaId, userId, userName, ct);
 
             // 9) Sellar approval consumido + audit stageado. (El estado BC/Reserva + servicios ya se guardaron
             //    en 8-bis.5; los persisters del ARREGLO 1 ya guardaron lo suyo.)
@@ -1870,7 +1960,7 @@ public class BookingCancellationService
         // 6-ter) ARREGLO 1 (2026-06-24): recalcular deuda de operadores + plata del cliente + comision en el
         //        mismo request, ahora que todos los servicios quedaron Cancelado. Defensivo/idempotente igual
         //        que el 6-bis: si ConfirmAsync ya recalculo, este recalculo da el mismo numero (es determinista).
-        await RecalculateMoneyAfterTotalCancellationAsync(bc.ReservaId, ct);
+        await RecalculateMoneyAfterTotalCancellationAsync(bc.ReservaId, userId, userName, ct);
 
         // 7) Consumir approval.
         await _approvalService.MarkConsumedAsync(approval.Id, ct);
@@ -3405,6 +3495,12 @@ public class BookingCancellationService
         // reintentar. NO fusionar con el SaveChanges interno de TryEmit. ===
         await _db.SaveChangesAsync(ct);
 
+        // === Paso c-bis (Pasos B/C, 2026-06-29): reconciliar el POOL de saldo a favor del operador. Confirmar la
+        // multa movio Multa(+) y bajo el RefundCap->Y(-) en igual monto (net-neutral, §4.6), asi que el sobrepago
+        // economico no cambia y el reconciler suele ser no-op; pero lo disparamos para que el pool quede coherente
+        // si el balance estaba viejo. Va con el estado YA committed (paso c) -> el reconciler lee la verdad fresca. ===
+        await ReconcileSupplierCreditPoolAsync(bc.SupplierId, userId, userName, ct);
+
         // === Paso d: disparar la ND reusando el motor existente de ADR-013. TryEmit hace su
         // propio gating (incluye el anti-doble-cobro RE-evaluado en runtime con query fresca
         // del Dia N, §3.8/R13), la emision async, el snapshot y su propio SaveChanges que
@@ -3523,6 +3619,12 @@ public class BookingCancellationService
 
         await _db.SaveChangesAsync(ct);
 
+        // Pasos B/C (2026-06-29): el cierre sin multa deja los RefundCap COMPLETOS (el operador devuelve todo), asi
+        // que el receivable Y sigue contando entero y el reconciler mantiene el pool en 0 (NO mintea la fuga). Lo
+        // disparamos para que el pool quede coherente con el estado nuevo. C5: tras el waive sin reembolso, la BC
+        // sigue esperando el reembolso (su Y vive) -> Prepago 0.
+        await ReconcileSupplierCreditPoolAsync(bc.SupplierId, userId, userName, ct);
+
         _logger.LogInformation(
             "metric:cancellation_operator_penalty_waived | BcPublicId={BcPublicId} By={UserId}",
             bc.PublicId, userId);
@@ -3622,6 +3724,10 @@ public class BookingCancellationService
             ct: ct);
 
         await _db.SaveChangesAsync(ct);
+
+        // Pasos B/C (2026-06-29): reabrir el cierre sin multa vuelve la penalidad a Estimated sin tocar caps; el
+        // pool no deberia cambiar, pero reconciliamos por coherencia (idempotente).
+        await ReconcileSupplierCreditPoolAsync(bc.SupplierId, userId, userName, ct);
 
         _logger.LogInformation(
             "metric:cancellation_operator_penalty_waive_reverted | BcPublicId={BcPublicId} By={UserId}",
@@ -3791,6 +3897,24 @@ public class BookingCancellationService
     {
         // Sin multa positiva no hay nada que netear (el request ya valida > 0, esto es defensivo).
         if (confirmedPenaltyAmount <= 0m) return;
+
+        // C2 (Pasos B/C, 2026-06-29) — fix de plata, concept-aware: la multa SOLO reduce el reembolso esperado
+        // del operador cuando es una penalidad PASS-THROUGH (la retiene el operador, que devuelve NETO). Si la
+        // penalidad es un cargo PROPIO de la agencia (agency-owned: AgencyManagementFee/AgencyCancellationFee/
+        // seguros), el operador debe reembolsar el monto INTEGRO: ese fee es ingreso aparte de la agencia (se le
+        // cobra al cliente con su propia ND), NO plata que el operador se queda. Reducir el RefundCap en ese caso
+        // SUBESTIMARIA el "me tiene que devolver" del operador. Por eso, para agency-owned NO tocamos las lineas:
+        // RefundCap queda integro y PenaltyAmount sin setear (asi la linea "Multa retenida" del circuito tampoco
+        // aparece, porque su gate exige PenaltyAmount > 0 + ConceptKind pass-through). Espejo del gate de
+        // OperatorRefundService:404-408 (que mira bc.ConceptKind, el padre).
+        if (bc.ConceptKind != CancellationConceptKind.OperatorPenaltyPassThrough)
+        {
+            _logger.LogInformation(
+                "FASE0/C2: BC {BcPublicId} con penalidad agency-owned ({ConceptKind}): NO se reduce el RefundCap " +
+                "del operador (debe reembolsar integro; el fee propio se cobra al cliente aparte).",
+                bc.PublicId, bc.ConceptKind);
+            return;
+        }
 
         // Lineas TRACKED del operador PRINCIPAL del evento (a ese operador se le confirma la multa aca).
         var operatorLines = await _db.BookingCancellationLines

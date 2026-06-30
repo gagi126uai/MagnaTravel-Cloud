@@ -314,6 +314,28 @@ public class SupplierAccountStatementCurrencyBlockDto
     /// <c>SupplierBalanceByCurrency.Balance</c> (invariante verificado por test).
     /// </summary>
     public decimal ClosingBalance { get; set; }
+
+    // ====================================================================================================
+    // Pasos B/C cuenta del operador (2026-06-29): campos ADITIVOS (backward-compatible). El bloque de CAJA
+    // de arriba (Lines + ClosingBalance) NO se toca: la invariante extracto<->proyeccion sigue valiendo. Estos
+    // campos son la cara ECONOMICA (caja + circuito de cancelacion) que produce los DOS numeros del header.
+    // Respetan el masking see_cost igual que el resto (0 si el caller no puede ver costos).
+    // ====================================================================================================
+
+    /// <summary>Lineas del "Circuito de cancelacion" (multa retenida + reembolso recibido). Bloque SEPARADO de la caja.</summary>
+    public List<SupplierAccountStatementLineDto> CircuitLines { get; set; } = new();
+
+    /// <summary>Saldo economico = caja + circuito (multa retenida + reembolso recibido). Derivado, solo header.</summary>
+    public decimal EconomicClosingBalance { get; set; }
+
+    /// <summary>"Me tiene que devolver" (Y): reembolso del operador todavia por cobrar en esta moneda.</summary>
+    public decimal TheyOweMe { get; set; }
+
+    /// <summary>"Le debo" (X): lo que la agencia todavia le tiene que pagar al operador en esta moneda. NUNCA se netea con Y.</summary>
+    public decimal ITheyOwe { get; set; }
+
+    /// <summary>Saldo a favor CONSUMIBLE (prepago) con el operador en esta moneda. Convive con Y solo si X = 0.</summary>
+    public decimal Prepayment { get; set; }
 }
 
 /// <summary>

@@ -43,4 +43,15 @@ public interface ISupplierCreditService
         string userId,
         string? userName,
         CancellationToken ct);
+
+    /// <summary>
+    /// Pasos B/C cuenta del operador (2026-06-29): reconcilia el pool de saldo a favor CONSUMIBLE del operador
+    /// contra su sobrepago ECONOMICO actual (= Prepago: caja - multa retenida - reembolso recibido - receivable).
+    /// Crea/drena entries para que el pool refleje SOLO lo que es saldo a favor real, NO un reembolso por cobrar.
+    /// Es transaction-agnostic: el caller decide la transaccion (debe llamarse DESPUES de persistir el cambio de
+    /// estado/balance que movio el sobrepago). Idempotente: si el pool ya esta en su objetivo, es no-op. Pensado
+    /// para orquestadores de capa de aplicacion; los servicios de Infra (anular/confirmar/reembolsar) disparan el
+    /// reconciler directamente dentro de su propia transaccion.
+    /// </summary>
+    Task ReconcileSupplierCreditAsync(int supplierId, CancellationToken ct);
 }
