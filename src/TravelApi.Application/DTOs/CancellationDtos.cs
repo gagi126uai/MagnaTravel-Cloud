@@ -439,7 +439,8 @@ public record RecordOperatorRefundRequest(
     [Range(0.01, double.MaxValue, ErrorMessage = "El monto debe ser mayor a cero.")]
     decimal ReceivedAmount,
 
-    [Required, MaxLength(3, ErrorMessage = "La moneda debe ser un código de 3 letras (por ejemplo: ARS o USD).")]
+    [Required]
+    [RegularExpression("^[A-Za-z]{3}$", ErrorMessage = "La moneda debe ser un código de 3 letras (por ejemplo: ARS o USD).")]
     string Currency,
 
     [Required] DateTime ReceivedAt,
@@ -507,6 +508,51 @@ public record AllocateRefundRequest(
     decimal GrossAmount,
 
     [Required] List<DeductionLineRequest> Deductions
+);
+
+/// <summary>
+/// Conveniencia (2026-07-01): payload del atajo "registrar reembolso recibido e imputarlo a UNA cancelacion" en
+/// UNA sola llamada atomica. Combina <see cref="RecordOperatorRefundRequest"/> + <see cref="AllocateRefundRequest"/>
+/// para el CAMINO SIMPLE (sin deducciones fiscales tipificadas).
+///
+/// <para>
+/// **Decision fiscal (resuelta por investigacion, NO gatea contador)**: este camino asume que el operador devolvio
+/// el NETO, sin retenciones. No hay deducciones: todo el <c>ReceivedAmount</c> se acredita como saldo a favor del
+/// cliente (Net == Gross). Si hubo retenciones tipificadas (IIBB, Ganancias, etc.) se usa el flujo AVANZADO de dos
+/// pasos (registrar + imputar con deducciones), que sigue existiendo por separado.
+/// </para>
+///
+/// <para>
+/// **Por que existe**: hoy registrar + imputar son dos endpoints. Si el segundo falla, queda un ingreso "huerfano"
+/// (plata en caja sin imputar). Este atajo hace las dos cosas en una transaccion: o queda todo, o no queda nada.
+/// </para>
+/// </summary>
+public record RecordAndAllocateRefundRequest(
+    [Required] Guid SupplierPublicId,
+
+    [Required] Guid BookingCancellationPublicId,
+
+    [Range(0.01, double.MaxValue, ErrorMessage = "El monto debe ser mayor a cero.")]
+    decimal ReceivedAmount,
+
+    [Required]
+    [RegularExpression("^[A-Za-z]{3}$", ErrorMessage = "La moneda debe ser un código de 3 letras (por ejemplo: ARS o USD).")]
+    string Currency,
+
+    [Required] DateTime ReceivedAt,
+
+    [MaxLength(50)] string? Method,
+
+    [MaxLength(100)] string? Reference,
+
+    [MaxLength(500)] string? Notes,
+
+    // Idempotencia (2026-07-01): el frontend genera esta llave UNA vez al abrir la ficha del boton y la REUSA en
+    // cada reintento de esa misma accion (doble clic, reintento de red, dos pestañas). El server la usa como
+    // candado: dos requests con la misma llave registran UN solo reembolso y UN solo saldo a favor del cliente.
+    // NOTA: [Required] sobre un Guid (value type) NO rechaza Guid.Empty por si solo (nunca es null); el service
+    // valida ademas que no sea Guid.Empty, para que un request sin llave real no burle la idempotencia.
+    [Required] Guid IdempotencyKey
 );
 
 /// <summary>

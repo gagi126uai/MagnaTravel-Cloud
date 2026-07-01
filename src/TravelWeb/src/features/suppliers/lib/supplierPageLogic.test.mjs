@@ -6,6 +6,8 @@ import {
     construirPayloadPagoProveedor,
     ordenarBloquesPesosPrimero,
     debeMostrarseEnGrisNeutro,
+    aplanarReembolsosPendientesPorMoneda,
+    validarFormularioReembolsoRecibido,
 } from "./supplierPageLogic.js";
 
 // ─── resolverMonedaPrincipalProveedor ────────────────────────────────────────
@@ -370,5 +372,207 @@ describe("debeMostrarseEnGrisNeutro", () => {
         // No debería pasar en la práctica (los tres campos son siempre >= 0), pero la función
         // no debe asumir signo: solo mira si el valor absoluto es ~0.
         assert.equal(debeMostrarseEnGrisNeutro(-5, true), false);
+    });
+});
+
+// ─── aplanarReembolsosPendientesPorMoneda (§4 — selector "Registrar reembolso recibido") ──
+
+describe("aplanarReembolsosPendientesPorMoneda", () => {
+    it("retorna array vacío si el argumento es null, undefined o no-array", () => {
+        assert.deepEqual(aplanarReembolsosPendientesPorMoneda(null), []);
+        assert.deepEqual(aplanarReembolsosPendientesPorMoneda(undefined), []);
+        assert.deepEqual(aplanarReembolsosPendientesPorMoneda("no-es-array"), []);
+    });
+
+    it("retorna array vacío si items es un array vacío", () => {
+        assert.deepEqual(aplanarReembolsosPendientesPorMoneda([]), []);
+    });
+
+    it("una cancelación con UNA moneda estimada genera UNA fila", () => {
+        const items = [
+            {
+                bookingCancellationPublicId: "bc-1",
+                numeroReserva: "R-1050",
+                clienteNombre: "Juan Pérez",
+                amountsMasked: false,
+                estimatedRefundsByCurrency: [{ currency: "ARS", estimatedAmount: 80000 }],
+            },
+        ];
+        const filas = aplanarReembolsosPendientesPorMoneda(items);
+        assert.equal(filas.length, 1);
+        assert.equal(filas[0].key, "bc-1-ARS");
+        assert.equal(filas[0].bookingCancellationPublicId, "bc-1");
+        assert.equal(filas[0].numeroReserva, "R-1050");
+        assert.equal(filas[0].clienteNombre, "Juan Pérez");
+        assert.equal(filas[0].currency, "ARS");
+        assert.equal(filas[0].estimatedAmount, 80000);
+        assert.equal(filas[0].amountsMasked, false);
+    });
+
+    it("una cancelación con DOS monedas estimadas genera DOS filas separadas", () => {
+        const items = [
+            {
+                bookingCancellationPublicId: "bc-2",
+                numeroReserva: "R-2000",
+                clienteNombre: "María López",
+                amountsMasked: false,
+                estimatedRefundsByCurrency: [
+                    { currency: "ARS", estimatedAmount: 50000 },
+                    { currency: "USD", estimatedAmount: 300 },
+                ],
+            },
+        ];
+        const filas = aplanarReembolsosPendientesPorMoneda(items);
+        assert.equal(filas.length, 2);
+        assert.deepEqual(filas.map((f) => f.key), ["bc-2-ARS", "bc-2-USD"]);
+        assert.equal(filas[0].currency, "ARS");
+        assert.equal(filas[1].currency, "USD");
+    });
+
+    it("varias cancelaciones producen filas independientes, cada una con su propia key", () => {
+        const items = [
+            {
+                bookingCancellationPublicId: "bc-1",
+                numeroReserva: "R-1",
+                estimatedRefundsByCurrency: [{ currency: "ARS", estimatedAmount: 1000 }],
+            },
+            {
+                bookingCancellationPublicId: "bc-2",
+                numeroReserva: "R-2",
+                estimatedRefundsByCurrency: [{ currency: "ARS", estimatedAmount: 2000 }],
+            },
+        ];
+        const filas = aplanarReembolsosPendientesPorMoneda(items);
+        assert.equal(filas.length, 2);
+        assert.notEqual(filas[0].key, filas[1].key);
+    });
+
+    it("una cancelación sin estimatedRefundsByCurrency (undefined) no genera filas", () => {
+        const items = [{ bookingCancellationPublicId: "bc-3", numeroReserva: "R-3" }];
+        assert.deepEqual(aplanarReembolsosPendientesPorMoneda(items), []);
+    });
+
+    it("respeta amountsMasked=true por fila (viene del item completo, no de la moneda)", () => {
+        const items = [
+            {
+                bookingCancellationPublicId: "bc-4",
+                numeroReserva: "R-4",
+                amountsMasked: true,
+                estimatedRefundsByCurrency: [{ currency: "ARS", estimatedAmount: 0 }],
+            },
+        ];
+        const filas = aplanarReembolsosPendientesPorMoneda(items);
+        assert.equal(filas[0].amountsMasked, true);
+        assert.equal(filas[0].estimatedAmount, 0);
+    });
+
+    it("usa cadena vacía como fallback cuando numeroReserva/clienteNombre son null", () => {
+        const items = [
+            {
+                bookingCancellationPublicId: "bc-5",
+                numeroReserva: null,
+                clienteNombre: null,
+                estimatedRefundsByCurrency: [{ currency: "ARS", estimatedAmount: 100 }],
+            },
+        ];
+        const filas = aplanarReembolsosPendientesPorMoneda(items);
+        assert.equal(filas[0].numeroReserva, "");
+        assert.equal(filas[0].clienteNombre, "");
+    });
+});
+
+// ─── validarFormularioReembolsoRecibido (§4 — validación local antes de llamar al backend) ──
+
+describe("validarFormularioReembolsoRecibido", () => {
+    const filaValida = {
+        key: "bc-1-ARS",
+        bookingCancellationPublicId: "bc-1",
+        currency: "ARS",
+        estimatedAmount: 80000,
+        amountsMasked: false,
+    };
+
+    it("exige elegir un reembolso pendiente (filaSeleccionada null)", () => {
+        const mensaje = validarFormularioReembolsoRecibido({
+            filaSeleccionada: null,
+            monto: "1000",
+            fecha: "2026-07-01",
+        });
+        assert.match(mensaje, /Elegí a qué reembolso pendiente/);
+    });
+
+    it("rechaza monto vacío", () => {
+        const mensaje = validarFormularioReembolsoRecibido({
+            filaSeleccionada: filaValida,
+            monto: "",
+            fecha: "2026-07-01",
+        });
+        assert.match(mensaje, /mayor a 0/);
+    });
+
+    it("rechaza monto 0 o negativo", () => {
+        assert.match(
+            validarFormularioReembolsoRecibido({ filaSeleccionada: filaValida, monto: "0", fecha: "2026-07-01" }),
+            /mayor a 0/
+        );
+        assert.match(
+            validarFormularioReembolsoRecibido({ filaSeleccionada: filaValida, monto: "-50", fecha: "2026-07-01" }),
+            /mayor a 0/
+        );
+    });
+
+    it("rechaza monto no numérico", () => {
+        const mensaje = validarFormularioReembolsoRecibido({
+            filaSeleccionada: filaValida,
+            monto: "abc",
+            fecha: "2026-07-01",
+        });
+        assert.match(mensaje, /mayor a 0/);
+    });
+
+    it("rechaza un monto mayor al estimado cuando el estimado es conocido", () => {
+        const mensaje = validarFormularioReembolsoRecibido({
+            filaSeleccionada: filaValida,
+            monto: "90000",
+            fecha: "2026-07-01",
+        });
+        assert.match(mensaje, /no puede superar el estimado/);
+    });
+
+    it("acepta un monto igual al estimado (límite exacto)", () => {
+        const mensaje = validarFormularioReembolsoRecibido({
+            filaSeleccionada: filaValida,
+            monto: "80000",
+            fecha: "2026-07-01",
+        });
+        assert.equal(mensaje, null);
+    });
+
+    it("NO compara contra el estimado cuando amountsMasked=true (evita error falso)", () => {
+        const filaEnmascarada = { ...filaValida, amountsMasked: true, estimatedAmount: 0 };
+        const mensaje = validarFormularioReembolsoRecibido({
+            filaSeleccionada: filaEnmascarada,
+            monto: "999999",
+            fecha: "2026-07-01",
+        });
+        assert.equal(mensaje, null);
+    });
+
+    it("exige fecha", () => {
+        const mensaje = validarFormularioReembolsoRecibido({
+            filaSeleccionada: filaValida,
+            monto: "1000",
+            fecha: "",
+        });
+        assert.match(mensaje, /fecha es obligatoria/);
+    });
+
+    it("formulario completo y válido no genera error", () => {
+        const mensaje = validarFormularioReembolsoRecibido({
+            filaSeleccionada: filaValida,
+            monto: "50000",
+            fecha: "2026-07-01",
+        });
+        assert.equal(mensaje, null);
     });
 });

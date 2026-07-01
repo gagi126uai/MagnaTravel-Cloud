@@ -74,4 +74,17 @@ public class OperatorRefundReceived : IHasPublicId
 
     /// <summary>Collection de allocations contra BookingCancellations. Cero al crear, &gt;= 1 antes de operar.</summary>
     public ICollection<OperatorRefundAllocation> Allocations { get; set; } = new List<OperatorRefundAllocation>();
+
+    /// <summary>
+    /// Idempotencia (2026-07-01): llave que genera el frontend UNA vez al abrir la ficha del boton
+    /// "Registrar reembolso recibido" y REUSA en cada reintento (doble clic, reintento de red, dos pestañas).
+    /// La escribe SOLO el atajo <c>RecordAndAllocateAsync</c>; el flujo de 2 pasos la deja null.
+    ///
+    /// <para>Nullable a proposito: las filas historicas (registradas antes de esta columna) quedan en null y no
+    /// participan del candado. El indice UNICO en BD esta FILTRADO a NOT NULL
+    /// (<c>IX_OperatorRefundsReceived_IdempotencyKey</c>): garantiza que dos requests con la MISMA llave no
+    /// puedan crear dos ingresos (uno gana el INSERT, el otro choca 23505 y se resuelve idempotentemente),
+    /// sin chocar entre todas las filas viejas con null.</para>
+    /// </summary>
+    public Guid? IdempotencyKey { get; set; }
 }

@@ -214,6 +214,63 @@ public class OperatorRefundsController : ControllerBase
     }
 
     /// <summary>
+    /// Conveniencia (2026-07-01): registra el ingreso del operador Y lo imputa a UNA cancelacion en UNA sola
+    /// llamada atomica (camino SIMPLE, sin deducciones fiscales: todo el bruto va a saldo a favor del cliente).
+    /// Habilita el boton "Registrar reembolso recibido" del frontend. Combina <see cref="RecordReceived"/> +
+    /// <see cref="Allocate"/>: contra Postgres, si la imputacion falla, el ingreso NO queda registrado (rollback
+    /// total, sin plata huerfana en caja). Para el camino AVANZADO con retenciones tipificadas se usan los dos
+    /// endpoints por separado. Mismo permiso (<c>caja.edit</c>) que los dos que combina.
+    /// </summary>
+    [HttpPost("record-and-allocate")]
+    [RequirePermission(Permissions.CajaEdit)]
+    public async Task<ActionResult<OperatorRefundAllocationDto>> RecordAndAllocate(
+        RecordAndAllocateRefundRequest request,
+        CancellationToken cancellationToken)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
+        var userName = User.FindFirst("FullName")?.Value ?? User.FindFirst(ClaimTypes.Name)?.Value;
+
+        try
+        {
+            var dto = await _refundService.RecordAndAllocateAsync(request, userId, userName, cancellationToken);
+            return CreatedAtAction(
+                actionName: nameof(GetByPublicId),
+                routeValues: new { publicId = dto.RefundPublicId },
+                value: dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (TravelApi.Domain.Exceptions.BusinessInvariantViolationException ex)
+        {
+            // INV-093 (estado / abandonada) / INV-126 (operador) / INV-118 (moneda): el cliente puede corregir
+            // y reintentar. El Message ya viene en español pensado para el usuario final (sin datos internos).
+            return Conflict(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Feature flag off + otras violaciones de estado no-invariante -> 409 (mismo criterio que los otros
+            // endpoints del modulo), nunca 500.
+            return Conflict(new { message = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException)
+        {
+            // Otra operacion modifico la cancelacion o el ingreso entre nuestras lecturas y el commit. Reintentar
+            // es seguro. 409 con mensaje claro en vez de un 500.
+            return Conflict(new { message = "La cancelación fue modificada por otra operación. Volvé a intentar." });
+        }
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+        }
+    }
+
+    /// <summary>
     /// Anula una allocation (soft-void: la fila se preserva con IsVoided=true).
     /// Libera el cap del refund. Rechaza si el ClientCreditEntry asociado tiene
     /// withdrawals consumidos.

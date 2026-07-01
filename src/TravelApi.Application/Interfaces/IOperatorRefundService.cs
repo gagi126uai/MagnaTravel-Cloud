@@ -88,6 +88,29 @@ public interface IOperatorRefundService
         CancellationToken ct);
 
     /// <summary>
+    /// Conveniencia (2026-07-01): registra el ingreso fisico del operador Y lo imputa a UNA cancelacion en
+    /// UNA sola operacion atomica (camino SIMPLE, sin deducciones fiscales: todo el bruto va a saldo a favor
+    /// del cliente). Reusa internamente <see cref="RecordReceivedAsync"/> + <see cref="AllocateAsync"/>.
+    ///
+    /// <para>
+    /// <b>Atomicidad</b>: contra Postgres envuelve ambos pasos en UNA transaccion; si la imputacion falla, el
+    /// ingreso NO queda registrado (rollback total, sin plata huerfana en caja). Antes de registrar corre un
+    /// pre-flight que valida que la cancelacion pueda recibir el reembolso (estado, operador, moneda) para
+    /// fallar temprano con un mensaje claro y no dejar un ingreso a medio crear.
+    /// </para>
+    ///
+    /// <para>
+    /// Para el camino AVANZADO con retenciones tipificadas se siguen usando <see cref="RecordReceivedAsync"/> y
+    /// <see cref="AllocateAsync"/> por separado; este metodo no lo reemplaza.
+    /// </para>
+    /// </summary>
+    Task<OperatorRefundAllocationDto> RecordAndAllocateAsync(
+        RecordAndAllocateRefundRequest request,
+        string userId,
+        string? userName,
+        CancellationToken ct);
+
+    /// <summary>
     /// Anula una allocation existente (soft-void: la fila se preserva con
     /// <c>IsVoided=true</c> + metadata <c>VoidedAt/By/Reason</c>). Libera el cap
     /// del refund (decrementa <c>AllocatedAmount</c>) para permitir reallocate.

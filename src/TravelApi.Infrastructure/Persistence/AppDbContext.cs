@@ -2023,6 +2023,16 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(r => r.ReceivedAt);
             entity.HasIndex(r => r.SupplierId);
 
+            // Idempotencia (2026-07-01) del atajo record-and-allocate: UNICO PARCIAL sobre IdempotencyKey.
+            // Filtrado a NOT NULL para no chocar entre las filas historicas (y las del flujo de 2 pasos) que
+            // la dejan en null. Es la red DURA bajo concurrencia real: dos requests con la misma llave -> uno
+            // gana el INSERT, el otro recibe 23505 (unique_violation) y el service lo resuelve devolviendo la
+            // operacion original. Sin este indice, dos requests simultaneos crearian DOS ingresos y DOS saldos
+            // a favor del cliente (doble cobro silencioso).
+            entity.HasIndex(r => r.IdempotencyKey)
+                  .IsUnique()
+                  .HasFilter("\"IdempotencyKey\" IS NOT NULL");
+
             entity.UseXminAsConcurrencyToken();
         });
 

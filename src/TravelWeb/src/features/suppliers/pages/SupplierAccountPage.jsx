@@ -49,6 +49,7 @@ import { PagarProveedorInline } from "../components/PagarProveedorInline";
 import { UsarSaldoOperadorInline } from "../components/UsarSaldoOperadorInline";
 import { ListaCuentasBancarias } from "../../../features/bank-accounts/components/ListaCuentasBancarias";
 import { OperatorRefundsPendingSection } from "../components/OperatorRefundsPendingSection";
+import { RegistrarReembolsoRecibidoInline } from "../components/RegistrarReembolsoRecibidoInline";
 import { useOperatorRefundsPending } from "../hooks/useOperatorRefundsPending";
 // CURRENCY_OPTIONS se reutiliza del alta de operador para mantener las etiquetas consistentes.
 // No duplicamos el array: si el equipo agrega una moneda, se actualiza en un solo lugar.
@@ -1041,6 +1042,12 @@ export default function SupplierAccountPage() {
     // monedaUsandoSaldo: qué moneda tiene la ficha "Usar saldo a favor" abierta.
     // null = ninguna abierta. Solo una moneda puede estar abierta a la vez.
     const [monedaUsandoSaldo, setMonedaUsandoSaldo] = useState(null);
+    // showReembolsoInline: si la ficha "Registrar reembolso recibido" está abierta (§4, 2026-07-01).
+    const [showReembolsoInline, setShowReembolsoInline] = useState(false);
+    // reembolsosTabRefreshKey: forzamos el remount de OperatorRefundsPendingSection al registrar
+    // un reembolso desde Cuenta corriente, para que la solapa "Reembolsos" quede consistente
+    // sin que el usuario tenga que refrescar la página a mano.
+    const [reembolsosTabRefreshKey, setReembolsosTabRefreshKey] = useState(0);
 
     // ─── Datos de soporte para el extracto ───────────────────────────────────
     // allPayments: lista de hasta 200 pagos del proveedor. Se usa para cruzar
@@ -1060,7 +1067,7 @@ export default function SupplierAccountPage() {
     // Cargamos el conteo de reembolsos al montar para poder mostrar el badge.
     // OperatorRefundsPendingSection también carga sus propios datos internamente
     // cuando el usuario entra a la solapa — este call paralelo es intencional.
-    const { items: pendingRefundsItems } = useOperatorRefundsPending(publicId);
+    const { items: pendingRefundsItems, reload: reloadPendingRefundsBadge } = useOperatorRefundsPending(publicId);
     // Solo mostramos el badge si el usuario tiene permiso (de lo contrario el
     // endpoint habría devuelto 403 o vacío, y no tiene sentido mostrarlo).
     const cantidadReembolsosPendientes = hasPermission("tesoreria.supplier_payments")
@@ -1180,6 +1187,17 @@ export default function SupplierAccountPage() {
         await Promise.all([loadOverview(), loadSupplierCredit()]);
     }, [loadOverview, loadSupplierCredit]);
 
+    // Se llama al registrar (y confirmar) un reembolso recibido del operador (§4, 2026-07-01).
+    // Tiene que dejar consistentes TRES vistas a la vez: el extracto/recuadros de arriba
+    // (vía extractoRefreshKey, misma fuente que ya dispara loadStatementHeader), el badge
+    // numérico de la solapa "Reembolsos", y el contenido de esa misma solapa (remount por key).
+    const handleReembolsoRegistrado = useCallback(async () => {
+        setShowReembolsoInline(false);
+        setExtractoRefreshKey((k) => k + 1);
+        setReembolsosTabRefreshKey((k) => k + 1);
+        await Promise.all([loadOverview(), reloadPendingRefundsBadge()]);
+    }, [loadOverview, reloadPendingRefundsBadge]);
+
     // Abre la ficha de pago en modo edición con el pago seleccionado.
     const handleEditarPago = useCallback((payment) => {
         setPaymentToEdit(payment);
@@ -1224,6 +1242,7 @@ export default function SupplierAccountPage() {
         setAllPayments([]);
         setExtractoRefreshKey(0);
         setMonedaUsandoSaldo(null);
+        setShowReembolsoInline(false);
         setSupplierCreditOverview(null);
         setStatementCurrencies([]);
         // Volvemos siempre a la primera solapa al cambiar de proveedor
@@ -1421,56 +1440,83 @@ export default function SupplierAccountPage() {
                     {activeTab === "cuenta-corriente" && (
                         <div className="space-y-6" id="panel-cuenta-corriente" role="tabpanel">
 
-                            {/* Botones de acción: solo visibles con permiso tesoreria.supplier_payments */}
+                            {/* Botones de acción: cada uno se gatea con SU propio permiso.
+                                "Registrar pago" / "Usar saldo a favor" -> tesoreria.supplier_payments.
+                                "Registrar reembolso recibido" -> necesita AMBOS: caja.edit (registra el
+                                movimiento de caja) Y tesoreria.supplier_payments (lista los reembolsos
+                                pendientes que hay que imputar). Sin los dos, la ficha no puede completarse,
+                                así que el botón no aparece (evita mostrar un botón que lleva a un error de carga). */}
                             {hasPermission("tesoreria.supplier_payments") && (
                                 <div className="flex flex-wrap items-center gap-3">
 
-                                    {/* "Registrar pago": alterna la ficha de pago en línea */}
-                                    <button
-                                        type="button"
-                                        onClick={() => setShowPagoInline((prev) => !prev)}
-                                        data-testid="btn-registrar-pago"
-                                        className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors ${
-                                            showPagoInline
-                                                ? "bg-slate-500 hover:bg-slate-600"
-                                                : "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-500/20"
-                                        }`}
-                                    >
-                                        <Plus className="h-4 w-4" />
-                                        {showPagoInline ? "Cerrar" : "Registrar pago"}
-                                    </button>
-
-                                    {/* "Usar saldo a favor": un botón por cada moneda con saldo verde.
-                                        Si no hay saldo a favor en ninguna moneda, no aparece ningún botón.
-                                        Si hay dos monedas a favor, ambos botones muestran su símbolo. */}
-                                    {monedasAFavor.map((balance) => {
-                                        const simbolo = balance.currency === "USD" ? "US$" : "$";
-                                        const estaAbierto = monedaUsandoSaldo === balance.currency;
-                                        return (
+                                    {hasPermission("tesoreria.supplier_payments") && (
+                                        <>
+                                            {/* "Registrar pago": alterna la ficha de pago en línea */}
                                             <button
-                                                key={balance.currency}
                                                 type="button"
-                                                onClick={() =>
-                                                    setMonedaUsandoSaldo((prev) =>
-                                                        prev === balance.currency ? null : balance.currency
-                                                    )
-                                                }
-                                                data-testid={`btn-usar-saldo-${balance.currency}`}
-                                                className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium shadow-sm transition-colors ${
-                                                    estaAbierto
-                                                        ? "bg-emerald-200 text-emerald-800 hover:bg-emerald-300 dark:bg-emerald-900/60 dark:text-emerald-200"
-                                                        : "bg-emerald-600 text-white hover:bg-emerald-700 shadow-emerald-500/20"
+                                                onClick={() => setShowPagoInline((prev) => !prev)}
+                                                data-testid="btn-registrar-pago"
+                                                className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors ${
+                                                    showPagoInline
+                                                        ? "bg-slate-500 hover:bg-slate-600"
+                                                        : "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-500/20"
                                                 }`}
                                             >
-                                                <TrendingUp className="h-4 w-4" />
-                                                {estaAbierto
-                                                    ? `Cerrar saldo ${simbolo}`
-                                                    : monedasAFavor.length > 1
-                                                        ? `Usar saldo en ${simbolo}`
-                                                        : "Usar saldo a favor"}
+                                                <Plus className="h-4 w-4" />
+                                                {showPagoInline ? "Cerrar" : "Registrar pago"}
                                             </button>
-                                        );
-                                    })}
+
+                                            {/* "Usar saldo a favor": un botón por cada moneda con saldo verde.
+                                                Si no hay saldo a favor en ninguna moneda, no aparece ningún botón.
+                                                Si hay dos monedas a favor, ambos botones muestran su símbolo. */}
+                                            {monedasAFavor.map((balance) => {
+                                                const simbolo = balance.currency === "USD" ? "US$" : "$";
+                                                const estaAbierto = monedaUsandoSaldo === balance.currency;
+                                                return (
+                                                    <button
+                                                        key={balance.currency}
+                                                        type="button"
+                                                        onClick={() =>
+                                                            setMonedaUsandoSaldo((prev) =>
+                                                                prev === balance.currency ? null : balance.currency
+                                                            )
+                                                        }
+                                                        data-testid={`btn-usar-saldo-${balance.currency}`}
+                                                        className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium shadow-sm transition-colors ${
+                                                            estaAbierto
+                                                                ? "bg-emerald-200 text-emerald-800 hover:bg-emerald-300 dark:bg-emerald-900/60 dark:text-emerald-200"
+                                                                : "bg-emerald-600 text-white hover:bg-emerald-700 shadow-emerald-500/20"
+                                                        }`}
+                                                    >
+                                                        <TrendingUp className="h-4 w-4" />
+                                                        {estaAbierto
+                                                            ? `Cerrar saldo ${simbolo}`
+                                                            : monedasAFavor.length > 1
+                                                                ? `Usar saldo en ${simbolo}`
+                                                                : "Usar saldo a favor"}
+                                                    </button>
+                                                );
+                                            })}
+                                        </>
+                                    )}
+
+                                    {/* "Registrar reembolso recibido": alterna la ficha en línea.
+                                        Requiere AMBOS permisos (registrar en caja + ver los pendientes a imputar). */}
+                                    {hasPermission("caja.edit") && hasPermission("tesoreria.supplier_payments") && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowReembolsoInline((prev) => !prev)}
+                                            data-testid="btn-registrar-reembolso"
+                                            className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium shadow-sm transition-colors ${
+                                                showReembolsoInline
+                                                    ? "bg-slate-500 hover:bg-slate-600 text-white"
+                                                    : "bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-500/20"
+                                            }`}
+                                        >
+                                            <RotateCcw className="h-4 w-4" />
+                                            {showReembolsoInline ? "Cerrar" : "Registrar reembolso recibido"}
+                                        </button>
+                                    )}
                                 </div>
                             )}
 
@@ -1482,6 +1528,15 @@ export default function SupplierAccountPage() {
                                     saldoDisponible={getSaldoDisponible(monedaUsandoSaldo)}
                                     onAplicado={handleSaldoAplicado}
                                     onCancelar={() => setMonedaUsandoSaldo(null)}
+                                />
+                            )}
+
+                            {/* Ficha "Registrar reembolso recibido" en línea (debajo de los botones) */}
+                            {showReembolsoInline && (
+                                <RegistrarReembolsoRecibidoInline
+                                    supplierId={getPublicId(supplier)}
+                                    onRegistrado={handleReembolsoRegistrado}
+                                    onCancelar={() => setShowReembolsoInline(false)}
                                 />
                             )}
 
@@ -1750,7 +1805,11 @@ export default function SupplierAccountPage() {
                     ─────────────────────────────────────────────────────────────── */}
                     {activeTab === "reembolsos" && (
                         <div id="panel-reembolsos" role="tabpanel">
+                            {/* key=reembolsosTabRefreshKey: fuerza el remount (y por lo tanto el
+                                refetch) de esta sección cuando se registra un reembolso desde
+                                "Cuenta corriente", para que la solapa no quede con datos viejos. */}
                             <OperatorRefundsPendingSection
+                                key={reembolsosTabRefreshKey}
                                 supplierPublicId={publicId}
                                 showSupplierColumn={false}
                             />

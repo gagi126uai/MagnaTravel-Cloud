@@ -1,3 +1,5 @@
+import { formatCurrency } from "../../../lib/utils.js";
+
 /**
  * Lógica pura para la pantalla de cuenta corriente del proveedor.
  *
@@ -10,6 +12,8 @@
  *   - construirPayloadPagoProveedor: armar el body del POST/PUT de pago
  *   - ordenarBloquesPesosPrimero: orden de los recuadros del encabezado (Fase D)
  *   - debeMostrarseEnGrisNeutro: cuándo un recuadro del encabezado va en gris (Fase D)
+ *   - aplanarReembolsosPendientesPorMoneda: filas seleccionables de "Registrar reembolso recibido" (§4)
+ *   - validarFormularioReembolsoRecibido: validación local antes de llamar al backend (§4)
  */
 
 /**
@@ -174,4 +178,87 @@ export function debeMostrarseEnGrisNeutro(monto, puedeVerMontos) {
     if (!puedeVerMontos) return true;
     const numero = Number(monto ?? 0);
     return Math.abs(numero) < 0.005;
+}
+
+/**
+ * Aplana la lista de "reembolsos pendientes" (OperatorRefundPendingItemDto[]) a filas
+ * seleccionables para el selector obligatorio de la ficha "Registrar reembolso recibido" (§4).
+ *
+ * Por qué aplanar: cada item del backend es UNA cancelación, pero puede tener reembolsos
+ * estimados en VARIAS monedas a la vez (`estimatedRefundsByCurrency[]`). La spec pide que el
+ * usuario elija "una fila = una anulación + una moneda" (no un monto suelto sin destino), así
+ * que una cancelación con estimado en ARS y en USD se convierte en DOS filas seleccionables,
+ * cada una con su propia moneda fija.
+ *
+ * @param {Array<object>} items — OperatorRefundPendingItemDto[] del backend
+ * @returns {Array<{
+ *   key: string,
+ *   bookingCancellationPublicId: string,
+ *   numeroReserva: string,
+ *   clienteNombre: string,
+ *   currency: string,
+ *   estimatedAmount: number,
+ *   amountsMasked: boolean,
+ * }>}
+ */
+export function aplanarReembolsosPendientesPorMoneda(items) {
+    const filas = [];
+    for (const item of Array.isArray(items) ? items : []) {
+        const montosPorMoneda = Array.isArray(item?.estimatedRefundsByCurrency)
+            ? item.estimatedRefundsByCurrency
+            : [];
+        for (const linea of montosPorMoneda) {
+            filas.push({
+                key: `${item.bookingCancellationPublicId}-${linea.currency}`,
+                bookingCancellationPublicId: item.bookingCancellationPublicId,
+                numeroReserva: item.numeroReserva ?? "",
+                clienteNombre: item.clienteNombre ?? "",
+                currency: linea.currency,
+                estimatedAmount: linea.estimatedAmount ?? 0,
+                amountsMasked: Boolean(item.amountsMasked),
+            });
+        }
+    }
+    return filas;
+}
+
+/**
+ * Valida el formulario de "Registrar reembolso recibido" ANTES de llamar al backend.
+ *
+ * Esta validación es solo para UX (mensajes claros e inmediatos); el backend
+ * (RecordAndAllocateRefundRequest) es quien tiene la última palabra sobre lo que
+ * es correcto — nunca hay que confiar solo en esto para la integridad de la plata.
+ *
+ * Reglas (spec §4):
+ *   1. Hay que elegir un reembolso pendiente (no se permite un monto suelto sin destino).
+ *   2. El monto tiene que ser mayor a 0.
+ *   3. Si el estimado del pendiente elegido es conocido (no enmascarado), el monto no
+ *      puede superarlo — es una alerta temprana, no un tope duro (el operador puede
+ *      haber devuelto un poco más por redondeo; el backend decide si lo acepta).
+ *   4. La fecha es obligatoria.
+ *
+ * @param {{ filaSeleccionada: object|null, monto: string|number, fecha: string }} datos
+ * @returns {string|null} mensaje de error en criollo, o null si el formulario es válido
+ */
+export function validarFormularioReembolsoRecibido({ filaSeleccionada, monto, fecha }) {
+    if (!filaSeleccionada) {
+        return "Elegí a qué reembolso pendiente corresponde antes de confirmar.";
+    }
+
+    const montoNumero = parseFloat(monto);
+    if (!monto || isNaN(montoNumero) || montoNumero <= 0) {
+        return "El monto tiene que ser mayor a 0.";
+    }
+
+    // Solo comparamos contra el estimado si lo conocemos (sin permiso de ver costos,
+    // el estimado llega en 0 y compararlo generaría un error falso).
+    if (!filaSeleccionada.amountsMasked && montoNumero > filaSeleccionada.estimatedAmount) {
+        return `El monto no puede superar el estimado de este reembolso (${formatCurrency(filaSeleccionada.estimatedAmount, filaSeleccionada.currency)}).`;
+    }
+
+    if (!fecha) {
+        return "La fecha es obligatoria.";
+    }
+
+    return null;
 }

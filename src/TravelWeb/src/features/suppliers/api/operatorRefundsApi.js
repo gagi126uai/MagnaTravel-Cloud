@@ -52,4 +52,28 @@ export const operatorRefundsApi = {
       `/operator-refunds/cancellations/${cancellationPublicId}/reopen-for-late-refund`,
       { reason }
     ),
+
+  /**
+   * Registra el ingreso del reembolso Y lo imputa a UNA cancelación en una sola llamada
+   * atómica (2026-07-01). Es el camino SIMPLE: todo el bruto recibido va a saldo a favor
+   * del cliente, sin deducciones fiscales tipificadas (para eso existen RecordReceived +
+   * Allocate por separado, que sigue usando la bandeja de reembolsos avanzada).
+   *
+   * Habilita el botón "Registrar reembolso recibido" de la ficha del operador.
+   * Permiso requerido: caja.edit.
+   *
+   * @param {{
+   *   supplierPublicId: string,
+   *   bookingCancellationPublicId: string,
+   *   receivedAmount: number,
+   *   currency: string,
+   *   receivedAt: string,
+   *   method?: string,
+   *   reference?: string,
+   *   notes?: string,
+   *   idempotencyKey: string,
+   * }} payload
+   * @returns {Promise<object>} OperatorRefundAllocationDto
+   */
+  recordAndAllocate: (payload) => api.post("/operator-refunds/record-and-allocate", payload),
 };

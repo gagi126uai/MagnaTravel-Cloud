@@ -87,10 +87,30 @@ public class OperatorRefundService : IOperatorRefundService
     // RecordReceivedAsync
     // =========================================================================
 
-    public async Task<OperatorRefundReceivedDto> RecordReceivedAsync(
+    public Task<OperatorRefundReceivedDto> RecordReceivedAsync(
         RecordOperatorRefundRequest request,
         string userId,
         string? userName,
+        CancellationToken ct)
+        // Flujo publico (2 pasos): NO sella llave de idempotencia, la deja null.
+        => RecordReceivedInternalAsync(request, userId, userName, idempotencyKey: null, ct);
+
+    /// <summary>
+    /// Nucleo de <see cref="RecordReceivedAsync"/>. La <paramref name="idempotencyKey"/> se sella EN EL INSERT del
+    /// ingreso (no en un UPDATE posterior). Esto es clave para la idempotencia del atajo record-and-allocate:
+    /// <list type="bullet">
+    ///   <item>El indice UNICO parcial dispara determinísticamente en el INSERT, ANTES de cualquier conflicto xmin
+    ///         del BookingCancellation aguas abajo (el UPDATE post-insert corria ese riesgo — B1).</item>
+    ///   <item>Si un retry posterior hace <c>ChangeTracker.Clear()</c>, al recargar el refund la llave viene DESDE
+    ///         la fila (no se pierde). Sellarla como cambio pendiente separado la perdia con el Clear.</item>
+    /// </list>
+    /// El flujo de 2 pasos la deja en null (ese camino no tiene candado de idempotencia).
+    /// </summary>
+    private async Task<OperatorRefundReceivedDto> RecordReceivedInternalAsync(
+        RecordOperatorRefundRequest request,
+        string userId,
+        string? userName,
+        Guid? idempotencyKey,
         CancellationToken ct)
     {
         await EnsureFeatureFlagOnAsync(ct);
@@ -99,11 +119,11 @@ public class OperatorRefundService : IOperatorRefundService
         {
             // Defensivo aunque el DataAnnotation ya valida — el service tambien
             // puede ser invocado desde background jobs que no pasan por validator.
-            throw new ArgumentException("ReceivedAmount debe ser > 0.", nameof(request));
+            throw new ArgumentException("El monto recibido debe ser mayor a cero.", nameof(request));
         }
         if (string.IsNullOrWhiteSpace(request.Currency) || request.Currency.Length != 3)
         {
-            throw new ArgumentException("Currency es ISO 4217 (3 chars).", nameof(request));
+            throw new ArgumentException("La moneda debe ser un código de 3 letras (por ejemplo: ARS o USD).", nameof(request));
         }
 
         // 1) Resolver Supplier (Include para que ManualCashMovementBuilder
@@ -129,6 +149,8 @@ public class OperatorRefundService : IOperatorRefundService
             ExchangeRateAtReceipt = 1m,
             ReceivedByUserId = userId,
             ReceivedByUserName = userName ?? string.Empty,
+            // Sello de idempotencia EN EL INSERT (ver doc del metodo). Null en el flujo de 2 pasos.
+            IdempotencyKey = idempotencyKey,
         };
         _db.OperatorRefundReceived.Add(refund);
 
@@ -210,11 +232,35 @@ public class OperatorRefundService : IOperatorRefundService
     // AllocateAsync (concurrencia N:M con retry xmin)
     // =========================================================================
 
-    public async Task<OperatorRefundAllocationDto> AllocateAsync(
+    public Task<OperatorRefundAllocationDto> AllocateAsync(
         Guid refundPublicId,
         AllocateRefundRequest request,
         string userId,
         string? userName,
+        CancellationToken ct)
+        // Flujo publico (2 pasos, SIN transaccion ambiente): SI reintenta internamente el conflicto xmin — es su
+        // unica linea de defensa contra la carrera, y el ChangeTracker.Clear() del retry es seguro porque no hay
+        // otra escritura envolvente que corromper.
+        => AllocateCoreAsync(refundPublicId, request, userId, userName, allowInternalRetry: true, ct);
+
+    /// <summary>
+    /// Nucleo de <see cref="AllocateAsync"/>. <paramref name="allowInternalRetry"/> decide si un conflicto xmin se
+    /// reintenta ACA (con <c>ChangeTracker.Clear()</c>) o si se deja BURBUJEAR al caller.
+    ///
+    /// <para><b>Por que existe el switch (B1, sub-modo b)</b>: cuando el atajo record-and-allocate corre este metodo
+    /// DENTRO de su transaccion ambiente, el retry interno seria peligroso: el <c>ChangeTracker.Clear()</c> tiraria
+    /// tambien las escrituras del ingreso ya hechas en esa transaccion (ingreso, movimiento de caja) y podria
+    /// re-insertar / dejar estado parcial. Por eso el atajo llama con <c>allowInternalRetry=false</c>: un conflicto
+    /// xmin PROPAGA hacia la ExecutionStrategy/transaccion externa -> rollback TOTAL -> el controller responde 409 ->
+    /// el usuario reintenta con la MISMA llave -> el check-previo de idempotencia devuelve la operacion original.
+    /// Asi no hay escrituras parciales ni doble cobro.</para>
+    /// </summary>
+    private async Task<OperatorRefundAllocationDto> AllocateCoreAsync(
+        Guid refundPublicId,
+        AllocateRefundRequest request,
+        string userId,
+        string? userName,
+        bool allowInternalRetry,
         CancellationToken ct)
     {
         await EnsureFeatureFlagOnAsync(ct);
@@ -234,6 +280,13 @@ public class OperatorRefundService : IOperatorRefundService
             {
                 throw new ArgumentException("Cada deduccion debe tener Amount > 0.", nameof(request));
             }
+        }
+
+        // Dentro de la transaccion ambiente del atajo: NO reintentamos aca. Un conflicto xmin debe propagar para que
+        // la transaccion externa haga rollback total (ver doc del metodo). Sin ChangeTracker.Clear() envolvente.
+        if (!allowInternalRetry)
+        {
+            return await TryAllocateOnceAsync(refundPublicId, request, userId, userName, ct);
         }
 
         // Retry loop ante concurrencia xmin. Cada iteracion abre un Detach
@@ -272,8 +325,9 @@ public class OperatorRefundService : IOperatorRefundService
             }
         }
 
-        // Unreachable (el loop o retorna o relanza), pero el compilador lo necesita.
-        throw new InvalidOperationException("AllocateAsync retry loop exhausted sin resultado.");
+        // Unreachable (el loop o retorna o relanza), pero el compilador lo necesita. N1: mensaje generico en espanol,
+        // sin jerga ni nombres de metodo, por si alguna vez llegara al usuario a traves del controller.
+        throw new InvalidOperationException("La operación no pudo completarse, volvé a intentar.");
     }
 
     private async Task<OperatorRefundAllocationDto> TryAllocateOnceAsync(
@@ -300,74 +354,12 @@ public class OperatorRefundService : IOperatorRefundService
             ?? throw new KeyNotFoundException(
                 $"BookingCancellation {request.BookingCancellationPublicId} no encontrado.");
 
-        // 3) Estado valido: solo BCs post-CAE pueden recibir allocations.
-        var validStates = new[]
-        {
-            BookingCancellationStatus.AwaitingOperatorRefund,
-            BookingCancellationStatus.ClientCreditApplied,
-        };
-        if (!validStates.Contains(bc.Status))
-        {
-            throw new BusinessInvariantViolationException(
-                "Esta cancelación no está en condiciones de recibir el reembolso del operador en este momento.",
-                invariantCode: "INV-093");
-        }
-
-        // 4) INV-126 (ADR-025: reformulado a nivel LINEA): el operador del ingreso
-        //    (refund.SupplierId) tiene que coincidir con el operador de AL MENOS UNA
-        //    linea de esta cancelacion. Sin este check un cashier podria allocate por
-        //    error un ingreso de Despegar contra una cancelacion que no tiene a Despegar
-        //    como operador de ninguna linea, contaminando el cap y los reportes por
-        //    operador. La validacion vive aca (no en BD) porque es runtime cross-aggregate.
-        //
-        //    IMPUTACION AGREGADA POR OPERADOR (B2 / decision #2 de Gaston): un operador
-        //    puede tener 2+ servicios cancelados en el mismo evento (hotel + traslado del
-        //    mismo operador). El reintegro del operador es UN monto agregado, no "por
-        //    servicio". Por eso usamos Where(...).ToList() y NUNCA SingleOrDefault: con
-        //    2+ lineas del mismo operador SingleOrDefault tiraria InvalidOperationException
-        //    (500 no controlado). El reembolso se acumula al saldo a favor del cliente por
-        //    moneda (ClientCreditEntry); las lineas de ese operador llevan el agregado.
-        //
-        //    Se resuelve ANTES de la coherencia de moneda (paso 4-bis) porque en
-        //    multi-operador la moneda correcta del refund es la de las LINEAS de ese
-        //    operador (M-B / INV-118), no la del FiscalSnapshot del evento.
-        var operatorLines = bc.Lines
-            .Where(l => l.SupplierId == refund.SupplierId)
-            .ToList();
-        if (operatorLines.Count == 0)
-        {
-            throw new BusinessInvariantViolationException(
-                "El proveedor del reintegro no corresponde a ninguna linea de esta cancelacion.",
-                invariantCode: "INV-126");
-        }
-
-        // 4-bis) INV-118 (M-B, ADR-025): coherencia de moneda del refund contra la moneda de
-        //        las LINEAS del operador que recibe el reintegro, NO contra el FiscalSnapshot
-        //        del evento. Por que: la cara fiscal hacia el cliente (FiscalSnapshot) es UNA
-        //        en la moneda de la factura de venta, pero cada operador cobra/devuelve en SU
-        //        moneda. En multi-operador con monedas mixtas (hotel USD + aereo ARS), validar
-        //        contra el snapshot rechazaria/aceptaria en la moneda equivocada (un refund USD
-        //        del hotel se compararia contra el ARS del snapshot). La moneda real del circuito
-        //        de proveedor vive en la linea.
-        //
-        //        Caso mono-operador (1 linea, misma moneda que el snapshot): byte-equivalente al
-        //        check anterior. Si un operador tuviera lineas en monedas distintas (no deberia:
-        //        un operador factura en una moneda por servicio), exigimos que el refund coincida
-        //        con AL MENOS UNA de ellas.
-        var operatorLineCurrencies = operatorLines
-            .Select(l => l.Currency)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        bool refundCurrencyMatchesAnyLine = operatorLineCurrencies
-            .Any(c => string.Equals(c, refund.Currency, StringComparison.OrdinalIgnoreCase));
-        if (!refundCurrencyMatchesAnyLine)
-        {
-            throw new BusinessInvariantViolationException(
-                $"La moneda del reintegro ({refund.Currency}) no coincide con la moneda de los " +
-                $"servicios del operador en esta cancelación ({string.Join("/", operatorLineCurrencies)}). " +
-                "Revisá que el ingreso del operador sea el correcto.",
-                invariantCode: "INV-118");
-        }
+        // 3-4-bis) Guardas de plata compartidas con el atajo de 1 paso (RecordAndAllocateAsync):
+        //          INV-093 (estado imputable) + INV-126 (operador coincide con alguna linea) + INV-118 (moneda
+        //          coincide). Extraidas a un helper para tener UNA sola fuente de verdad de estas reglas (el atajo
+        //          las reusa sin duplicarlas). Devuelve las lineas del operador del refund, que reusamos abajo
+        //          (paso 10-bis) para imputar el neto recibido. Ver el helper para el detalle de cada regla.
+        var operatorLines = EnsureBookingCancellationCanReceiveOperatorRefund(bc, refund.SupplierId, refund.Currency);
 
         // 5) Validar matriz fiscal Mono/RI usando el FiscalSnapshot cristalizado.
         //    Hacemos PRIMERO la validacion porque rechaza antes de tocar BD:
@@ -605,6 +597,221 @@ public class OperatorRefundService : IOperatorRefundService
         return MapAllocation(allocation);
     }
 
+    // =========================================================================
+    // RecordAndAllocateAsync (atajo atomico: registrar + imputar en 1 llamada)
+    // =========================================================================
+
+    public async Task<OperatorRefundAllocationDto> RecordAndAllocateAsync(
+        RecordAndAllocateRefundRequest request,
+        string userId,
+        string? userName,
+        CancellationToken ct)
+    {
+        await EnsureFeatureFlagOnAsync(ct);
+
+        // Validaciones de payload (defensivo; los DataAnnotations ya validan en el borde HTTP, pero el service
+        // tambien puede invocarse desde otros callers que no pasan por el validator del controller).
+        if (request.ReceivedAmount <= 0m)
+        {
+            throw new ArgumentException("El monto recibido debe ser mayor a cero.", nameof(request));
+        }
+        if (string.IsNullOrWhiteSpace(request.Currency) || request.Currency.Length != 3)
+        {
+            throw new ArgumentException("La moneda debe ser un código de 3 letras (por ejemplo: ARS o USD).", nameof(request));
+        }
+        // [Required] sobre un Guid nunca rechaza Guid.Empty (no es null). Sin una llave real no hay candado de
+        // idempotencia, asi que la exigimos aca. Es la unica proteccion server-side contra el doble cobro.
+        if (request.IdempotencyKey == Guid.Empty)
+        {
+            throw new ArgumentException("Falta la referencia de la operación. Volvé a abrir la ficha e intentá de nuevo.");
+        }
+
+        // Idempotencia — CHECK PREVIO (camino feliz del reintento): si YA registramos un reembolso con esta misma
+        // llave, NO creamos un segundo. Devolvemos la operacion original como EXITO idempotente (misma respuesta que
+        // la primera vez), transparente para el usuario. Un doble clic / reintento de red / dos pestañas no duplica
+        // ni el ingreso ni el saldo a favor del cliente. La red DURA contra la carrera real (dos requests a la vez)
+        // es el indice UNICO parcial de mas abajo; este check evita el trabajo (y el 23505) en el caso comun.
+        var alreadyProcessed = await TryGetExistingAllocationByIdempotencyKeyAsync(request.IdempotencyKey, ct);
+        if (alreadyProcessed is not null)
+        {
+            return alreadyProcessed;
+        }
+
+        // Pre-flight ANTES de registrar plata en caja. Doble proposito:
+        //   (a) Mensaje amable y accionable para el caso "abandonada por vencimiento" (necesita reabrirse primero).
+        //   (b) Atomicidad-por-orden: si la cancelacion no puede recibir el reembolso, no llegamos a crear el
+        //       ingreso fisico -> no queda plata huerfana. Contra Postgres ademas envolvemos todo en una
+        //       transaccion (rollback real); en tests InMemory (sin transacciones) este pre-flight es lo unico
+        //       que garantiza el no-huerfano. La validacion AUTORITATIVA vuelve a correr dentro de AllocateAsync
+        //       (misma guarda compartida) como defensa en profundidad.
+        var currencyUpper = request.Currency.ToUpperInvariant();
+        await PreflightForRecordAndAllocateAsync(
+            request.SupplierPublicId, request.BookingCancellationPublicId, currencyUpper, ct);
+
+        var recordRequest = new RecordOperatorRefundRequest(
+            SupplierPublicId: request.SupplierPublicId,
+            ReceivedAmount: request.ReceivedAmount,
+            Currency: request.Currency,
+            ReceivedAt: request.ReceivedAt,
+            Method: request.Method,
+            Reference: request.Reference,
+            Notes: request.Notes);
+
+        // Camino SIMPLE: sin deducciones fiscales. Todo el bruto va a saldo a favor del cliente (Net == Gross).
+        var allocateRequest = new AllocateRefundRequest(
+            BookingCancellationPublicId: request.BookingCancellationPublicId,
+            GrossAmount: request.ReceivedAmount,
+            Deductions: new List<DeductionLineRequest>());
+
+        // Resultado que devuelve la lambda transaccional.
+        OperatorRefundAllocationDto result = null!;
+
+        async Task RegisterAndAllocateAsync()
+        {
+            // Reusamos los nucleos internos (sin duplicar su logica ni sus validaciones). Cada uno hace su propio
+            // SaveChanges; dentro de la transaccion envolvente ambos escriben a la MISMA transaccion y solo se
+            // materializan en el CommitAsync final.
+            //
+            // B1 fix (2 partes):
+            //  (1) La llave se sella EN EL INSERT del ingreso (idempotencyKey pasada a RecordReceivedInternalAsync),
+            //      NO en un UPDATE post-insert. Asi el indice UNICO parcial dispara determinísticamente en el INSERT
+            //      (23505 capturado afuera y resuelto idempotentemente), antes de cualquier baile de xmin del BC, y
+            //      la llave sobrevive a un eventual ChangeTracker.Clear() (se recarga desde la fila).
+            //  (2) La imputacion corre con allowInternalRetry=false: dentro de esta transaccion ambiente NO queremos
+            //      el retry-con-Clear de AllocateAsync (corromperia/re-insertaria). Un conflicto xmin PROPAGA ->
+            //      rollback total -> controller 409 -> el usuario reintenta con la misma llave -> replay idempotente.
+            var refund = await RecordReceivedInternalAsync(
+                recordRequest, userId, userName, idempotencyKey: request.IdempotencyKey, ct);
+
+            result = await AllocateCoreAsync(
+                refund.PublicId, allocateRequest, userId, userName, allowInternalRetry: false, ct);
+        }
+
+        try
+        {
+            if (_db.Database.IsRelational())
+            {
+                // Mismo patron que ClientCreditService/ReservaService: el ExecutionStrategy reintenta la lambda entera
+                // ante errores TRANSITORIOS de Postgres, y la transaccion garantiza rollback total. Si la imputacion
+                // falla, el ingreso NUNCA queda registrado: no hay plata huerfana en caja. Una violacion de unicidad
+                // (23505) NO es transitoria: el ExecutionStrategy no la reintenta, la relanza — la maneja el catch.
+                var strategy = _db.Database.CreateExecutionStrategy();
+                await strategy.ExecuteAsync(async () =>
+                {
+                    await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+                    await RegisterAndAllocateAsync();
+                    await transaction.CommitAsync(ct);
+                });
+            }
+            else
+            {
+                // Proveedor no-relacional (tests InMemory): no soporta transacciones NI indices unicos. La atomicidad
+                // la cubre el pre-flight de arriba (validamos antes de registrar) y la carrera la cubre el CHECK PREVIO
+                // por llave. El rollback REAL y el candado 23505 se testean en integracion Postgres.
+                await RegisterAndAllocateAsync();
+            }
+        }
+        catch (DbUpdateException ex) when (IsIdempotencyKeyUniqueViolation(ex))
+        {
+            // CARRERA REAL: entre nuestro CHECK PREVIO y nuestro commit, otro request con la MISMA llave gano el
+            // INSERT. La transaccion ya hizo ROLLBACK total, asi que NO quedo ingreso huerfano ni saldo a favor
+            // duplicado. Resolvemos idempotentemente: soltamos el tracker (quedo sucio por el intento abortado),
+            // recargamos la operacion original y la devolvemos como exito — el usuario ve lo mismo que el ganador,
+            // sin un 500 ni un duplicado.
+            _db.ChangeTracker.Clear();
+            var winner = await TryGetExistingAllocationByIdempotencyKeyAsync(request.IdempotencyKey, ct);
+            if (winner is not null)
+            {
+                return winner;
+            }
+
+            // Defensa: si la llave no aparece (no deberia pasar tras un 23505 sobre ese indice), relanzamos para
+            // no devolver un resultado inventado. El controller lo traduce a 409, nunca a un doble cobro.
+            throw;
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Idempotencia (2026-07-01): busca la imputacion YA creada por un request previo con la misma
+    /// <paramref name="idempotencyKey"/>. Devuelve el DTO de esa allocation (exito idempotente) o null si esta llave
+    /// todavia no se proceso. Solo lee (AsNoTracking) — no interfiere con el tracking de la transaccion posterior.
+    ///
+    /// <para>Solo considera allocations NO anuladas: el atajo crea exactamente UNA por ingreso, y si esa se anulara
+    /// despues por otro flujo, el reintento no debe "revivirla".</para>
+    /// </summary>
+    private async Task<OperatorRefundAllocationDto?> TryGetExistingAllocationByIdempotencyKeyAsync(
+        Guid idempotencyKey,
+        CancellationToken ct)
+    {
+        var allocation = await _db.OperatorRefundAllocations
+            .AsNoTracking()
+            .Include(a => a.Refund)
+            .Include(a => a.BookingCancellation)
+            .Include(a => a.Deductions)
+            .FirstOrDefaultAsync(
+                a => a.Refund.IdempotencyKey == idempotencyKey && !a.IsVoided, ct);
+
+        return allocation is null ? null : MapAllocation(allocation);
+    }
+
+    /// <summary>
+    /// Detecta la violacion del indice UNICO de IDEMPOTENCIA (dos requests con la misma llave). ESPECIFICO a ese
+    /// indice a proposito: NO tragamos otras violaciones de unicidad del modulo (p.ej. el unico parcial "una
+    /// allocation activa por refund+cancelacion"), que deben seguir su flujo normal y no representan un reintento.
+    /// Mismo patron de deteccion que <c>AfipService.IsUniqueConstraintViolation</c>.
+    /// </summary>
+    private static bool IsIdempotencyKeyUniqueViolation(DbUpdateException ex)
+    {
+        return ex.InnerException is Npgsql.PostgresException pg
+            && pg.SqlState == Npgsql.PostgresErrorCodes.UniqueViolation
+            && pg.ConstraintName is not null
+            && pg.ConstraintName.Contains("IdempotencyKey", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Pre-flight del atajo: carga la cancelacion y valida que PUEDA recibir el reembolso ANTES de registrar el
+    /// ingreso fisico. Da un mensaje accionable para el caso "abandonada" y reusa la MISMA guarda de plata que la
+    /// imputacion de 2 pasos (estado / operador / moneda). Solo lee (AsNoTracking) — no muta nada.
+    /// </summary>
+    private async Task PreflightForRecordAndAllocateAsync(
+        Guid supplierPublicId,
+        Guid bookingCancellationPublicId,
+        string refundCurrency,
+        CancellationToken ct)
+    {
+        // Resolvemos el operador por PublicId para poder chequear la coincidencia INV-126 (que trabaja con el Id
+        // interno de la linea). Si no existe -> 404, igual que RecordReceivedAsync.
+        var supplier = await _db.Suppliers
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.PublicId == supplierPublicId, ct)
+            ?? throw new KeyNotFoundException($"Supplier {supplierPublicId} no encontrado.");
+
+        var bc = await _db.BookingCancellations
+            .AsNoTracking()
+            .Include(b => b.Lines)
+            .FirstOrDefaultAsync(b => b.PublicId == bookingCancellationPublicId, ct)
+            ?? throw new KeyNotFoundException(
+                $"BookingCancellation {bookingCancellationPublicId} no encontrado.");
+
+        // Caso "abandonada por vencimiento": el job de timeout la cerro porque el operador no reintegro a tiempo.
+        // NO es imputable directo — hay que REABRIRLA primero (transicion controlada que extiende el plazo). En vez
+        // del INV-093 generico devolvemos un mensaje que dice EXACTAMENTE que hacer, sin jerga ni nombres internos.
+        if (bc.Status == BookingCancellationStatus.AbandonedByOperator)
+        {
+            throw new BusinessInvariantViolationException(
+                "Esta cancelación figura como vencida porque el operador no reintegró a tiempo. " +
+                "Para registrar un reembolso tardío, primero reabrila desde la bandeja de reembolsos a cobrar " +
+                "y después registrá el ingreso.",
+                invariantCode: "INV-093");
+        }
+
+        // Resto de guardas (estado imputable / operador coincide / moneda coincide): misma fuente de verdad que
+        // AllocateAsync. Descartamos las lineas devueltas: aca solo validamos.
+        EnsureBookingCancellationCanReceiveOperatorRefund(bc, supplier.Id, refundCurrency);
+    }
+
     /// <summary>
     /// ADR-025 (B2 / decision #2): reparte el neto recibido de un operador entre SUS lineas, agregado.
     /// El operador devuelve UN monto, no "por servicio"; lo distribuimos linea por linea hasta el
@@ -682,6 +889,76 @@ public class OperatorRefundService : IOperatorRefundService
             else
                 line.RefundStatus = BookingCancellationLineRefundStatus.None;
         }
+    }
+
+    /// <summary>
+    /// Guardas de plata que decide si una cancelacion puede recibir un reembolso del operador. UNA sola fuente de
+    /// verdad para la imputacion de 2 pasos (<see cref="AllocateAsync"/>) y para el atajo de 1 paso
+    /// (<see cref="RecordAndAllocateAsync"/>). Devuelve las lineas del operador del refund (se reusan aguas abajo
+    /// para imputar el neto recibido).
+    ///
+    /// <para>NO valida la matriz fiscal ni la disyuncion ADR-013 (esas dependen de las deducciones del request y
+    /// quedan en el caller). Requiere que <c>bc.Lines</c> este cargado.</para>
+    /// </summary>
+    private static List<BookingCancellationLine> EnsureBookingCancellationCanReceiveOperatorRefund(
+        BookingCancellation bc,
+        int refundSupplierId,
+        string refundCurrency)
+    {
+        // INV-093: solo BCs post-CAE (esperando reembolso o con credito ya aplicado) pueden recibir imputaciones.
+        var validStates = new[]
+        {
+            BookingCancellationStatus.AwaitingOperatorRefund,
+            BookingCancellationStatus.ClientCreditApplied,
+        };
+        if (!validStates.Contains(bc.Status))
+        {
+            throw new BusinessInvariantViolationException(
+                "Esta cancelación no está en condiciones de recibir el reembolso del operador en este momento.",
+                invariantCode: "INV-093");
+        }
+
+        // INV-126 (ADR-025: reformulado a nivel LINEA): el operador del ingreso (refundSupplierId) tiene que
+        // coincidir con el operador de AL MENOS UNA linea de esta cancelacion. Sin este check un cashier podria
+        // allocate por error un ingreso de Despegar contra una cancelacion que no tiene a Despegar como operador de
+        // ninguna linea, contaminando el cap y los reportes por operador. Validacion runtime cross-aggregate (no BD).
+        //
+        // IMPUTACION AGREGADA POR OPERADOR (B2 / decision #2 de Gaston): un operador puede tener 2+ servicios
+        // cancelados en el mismo evento (hotel + traslado del mismo operador). El reintegro es UN monto agregado, no
+        // "por servicio". Por eso usamos Where(...).ToList() y NUNCA SingleOrDefault: con 2+ lineas del mismo operador
+        // SingleOrDefault tiraria InvalidOperationException (500 no controlado).
+        var operatorLines = bc.Lines
+            .Where(l => l.SupplierId == refundSupplierId)
+            .ToList();
+        if (operatorLines.Count == 0)
+        {
+            throw new BusinessInvariantViolationException(
+                "El proveedor del reintegro no corresponde a ninguna linea de esta cancelacion.",
+                invariantCode: "INV-126");
+        }
+
+        // INV-118 (M-B, ADR-025): coherencia de moneda del refund contra la moneda de las LINEAS del operador que
+        // recibe el reintegro, NO contra el FiscalSnapshot del evento. Por que: la cara fiscal hacia el cliente
+        // (FiscalSnapshot) es UNA en la moneda de la factura de venta, pero cada operador cobra/devuelve en SU moneda.
+        // En multi-operador con monedas mixtas (hotel USD + aereo ARS), validar contra el snapshot rechazaria/aceptaria
+        // en la moneda equivocada. La moneda real del circuito de proveedor vive en la linea. Caso mono-operador
+        // (1 linea, misma moneda que el snapshot): byte-equivalente al check historico.
+        var operatorLineCurrencies = operatorLines
+            .Select(l => l.Currency)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        bool refundCurrencyMatchesAnyLine = operatorLineCurrencies
+            .Any(c => string.Equals(c, refundCurrency, StringComparison.OrdinalIgnoreCase));
+        if (!refundCurrencyMatchesAnyLine)
+        {
+            throw new BusinessInvariantViolationException(
+                $"La moneda del reintegro ({refundCurrency}) no coincide con la moneda de los " +
+                $"servicios del operador en esta cancelación ({string.Join("/", operatorLineCurrencies)}). " +
+                "Revisá que el ingreso del operador sea el correcto.",
+                invariantCode: "INV-118");
+        }
+
+        return operatorLines;
     }
 
     /// <summary>
@@ -1183,8 +1460,7 @@ public class OperatorRefundService : IOperatorRefundService
         if (!settings.EnableNewCancellationFlow)
         {
             throw new InvalidOperationException(
-                "El modulo de cancelacion/refund no esta habilitado en este ambiente " +
-                "(EnableNewCancellationFlow=false).");
+                "El módulo de cancelaciones no está disponible en este momento.");
         }
     }
 
