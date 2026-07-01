@@ -191,8 +191,11 @@ public class SupplierAccountStatementServiceTests
         });
     }
 
-    private static decimal Closing(SupplierAccountStatementDto dto, string currency)
-        => dto.Currencies.Single(b => b.Currency == currency).ClosingBalance;
+    // Saldo unico (2026-06-30): el invariante caja<->proyeccion vive ahora en CashClosingBalance (el saldo de
+    // SOLO caja), NO en ClosingBalance (que paso a ser el saldo economico = caja + circuito). En estos tests no
+    // hay cancelaciones (circuito vacio), asi que ambos coinciden, pero comparamos contra el campo correcto.
+    private static decimal CashClosing(SupplierAccountStatementDto dto, string currency)
+        => dto.Currencies.Single(b => b.Currency == currency).CashClosingBalance;
 
     private static decimal PersistedBalance(AppDbContext context, int supplierId, string currency)
         => context.SupplierBalanceByCurrency.Single(r => r.SupplierId == supplierId && r.Currency == currency).Balance;
@@ -246,12 +249,18 @@ public class SupplierAccountStatementServiceTests
         // ARS: 1800 comprado - (400 + 600 cruzado + 80 anticipo) = 1800 - 1080 = 720.
         // USD: 1000 comprado - 50 pagado = 950 (el pago cruzado NO descuenta USD: imputa a ARS).
         Assert.True(statement.AmountsVisible);
-        Assert.Equal(720m, Closing(statement, "ARS"));
-        Assert.Equal(950m, Closing(statement, "USD"));
+        Assert.Equal(720m, CashClosing(statement, "ARS"));
+        Assert.Equal(950m, CashClosing(statement, "USD"));
 
-        // El nucleo del invariante: cierre del extracto == Balance persistido, por moneda, con los 6 tipos.
-        Assert.Equal(PersistedBalance(context, supplier.Id, "ARS"), Closing(statement, "ARS"));
-        Assert.Equal(PersistedBalance(context, supplier.Id, "USD"), Closing(statement, "USD"));
+        // El nucleo del invariante: cierre de CAJA del extracto == Balance persistido, por moneda, con los 6 tipos.
+        Assert.Equal(PersistedBalance(context, supplier.Id, "ARS"), CashClosing(statement, "ARS"));
+        Assert.Equal(PersistedBalance(context, supplier.Id, "USD"), CashClosing(statement, "USD"));
+
+        // Sin cancelaciones (circuito vacio), el saldo MOSTRADO (economico) coincide con el de caja.
+        var arsBlock = statement.Currencies.Single(b => b.Currency == "ARS");
+        var usdBlock = statement.Currencies.Single(b => b.Currency == "USD");
+        Assert.Equal(720m, arsBlock.ClosingBalance);
+        Assert.Equal(950m, usdBlock.ClosingBalance);
     }
 
     // ===================== CommissionOnly: las compras NO entran como cargo =====================
@@ -278,8 +287,10 @@ public class SupplierAccountStatementServiceTests
 
         // Ningun cargo (compra), solo el abono (pago) -> cierre -100 (saldo a favor), igual a la proyeccion.
         Assert.DoesNotContain(block.Lines, l => l.Kind == SupplierAccountStatementLineKinds.Purchase);
+        Assert.Equal(-100m, block.CashClosingBalance);
+        Assert.Equal(PersistedBalance(context, supplier.Id, "ARS"), block.CashClosingBalance);
+        // Sin circuito, el saldo mostrado coincide con el de caja.
         Assert.Equal(-100m, block.ClosingBalance);
-        Assert.Equal(PersistedBalance(context, supplier.Id, "ARS"), block.ClosingBalance);
     }
 
     // ===================== Pago anulado (soft-deleted) no abona =====================
@@ -306,8 +317,10 @@ public class SupplierAccountStatementServiceTests
 
         // El pago anulado no aparece y el cierre es la compra completa (1000), igual a la proyeccion.
         Assert.DoesNotContain(block.Lines, l => l.Kind == SupplierAccountStatementLineKinds.Payment);
+        Assert.Equal(1000m, block.CashClosingBalance);
+        Assert.Equal(PersistedBalance(context, supplier.Id, "ARS"), block.CashClosingBalance);
+        // Sin circuito, el saldo mostrado coincide con el de caja.
         Assert.Equal(1000m, block.ClosingBalance);
-        Assert.Equal(PersistedBalance(context, supplier.Id, "ARS"), block.ClosingBalance);
     }
 
     // ===================== Masking: sin see_cost, montos en 0 y AmountsVisible false =====================
@@ -336,6 +349,7 @@ public class SupplierAccountStatementServiceTests
             Assert.Equal(0m, l.RunningBalance);
         });
         Assert.Equal(0m, block.ClosingBalance);
+        Assert.Equal(0m, block.CashClosingBalance);
     }
 
     [Fact]

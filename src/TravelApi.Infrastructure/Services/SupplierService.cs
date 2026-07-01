@@ -680,9 +680,35 @@ public class SupplierService : ISupplierService
     }
 
     /// <summary>
-    /// Mapea el extracto del dominio (value object puro) al DTO de salida, redondeando los montos a 2 decimales
-    /// (coherente con la columna decimal(18,2) de la proyeccion). Si el caller no puede ver costos, anula los
-    /// montos (cargo/abono/saldo) a 0 pero conserva la estructura (movimientos, fechas, monedas).
+    /// Insumo intermedio del MERGE del extracto: un movimiento (de caja o de circuito) listo para ordenar
+    /// cronologicamente y acumular el saldo corriente UNICO. <see cref="OrderGroup"/> es el desempate estable
+    /// ante misma fecha: 0 = caja, 1 = circuito (primero la caja, despues el circuito). El signo lo pone la
+    /// columna (<see cref="Charge"/> suma, <see cref="Credit"/> resta), igual que el resto del extracto.
+    /// </summary>
+    private readonly record struct MergedStatementLine(
+        DateTime Date,
+        int OrderGroup,
+        string Kind,
+        string Description,
+        string? DocumentRef,
+        Guid? SourcePublicId,
+        string Currency,
+        decimal Charge,
+        decimal Credit);
+
+    /// <summary>
+    /// Mapea el extracto del dominio (value object puro) al DTO de salida.
+    ///
+    /// <para><b>Saldo unico (2026-06-30)</b>: en vez de mostrar la caja arriba y el circuito de cancelacion en
+    /// un bloque aparte con saldo 0, FUSIONA ambos en una sola secuencia cronologica por moneda y recalcula un
+    /// running balance de corrido. Ese saldo unico CIERRA en el saldo ECONOMICO (caja + multa retenida +
+    /// reembolso recibido = <c>EconomicClosingBalance</c>), que reconcilia con los dos numeros del header. El
+    /// saldo de SOLO caja (el que iguala la proyeccion <c>SupplierBalanceByCurrency.Balance</c>) se sigue
+    /// exponiendo aparte en <c>CashClosingBalance</c> para el invariante.</para>
+    ///
+    /// <para>Redondea los montos a 2 decimales (coherente con la columna decimal(18,2) de la proyeccion). Si el
+    /// caller no puede ver costos, anula los montos (cargo/abono/saldo) a 0 pero conserva la estructura
+    /// (movimientos, fechas, monedas).</para>
     /// </summary>
     private static SupplierAccountStatementDto MapSupplierAccountStatement(
         Guid supplierPublicId,
@@ -716,62 +742,115 @@ public class SupplierService : ISupplierService
         foreach (var currency in orderedCurrencies)
         {
             econByCurrency.TryGetValue(currency, out var econ);
+            cashByCurrency.TryGetValue(currency, out var cashBlock);
 
             var blockDto = new SupplierAccountStatementCurrencyBlockDto
             {
                 Currency = currency,
-                ClosingBalance = canSeeCost ? EconomicRulesHelper.RoundCurrency(econ?.CashClosingBalance ?? 0m) : 0m,
+                // CashClosingBalance = eco de la proyeccion (SupplierBalanceByCurrency.Balance). Es el que
+                // preserva el invariante extracto-caja <-> proyeccion.
+                CashClosingBalance = canSeeCost ? EconomicRulesHelper.RoundCurrency(econ?.CashClosingBalance ?? 0m) : 0m,
                 EconomicClosingBalance = canSeeCost ? EconomicRulesHelper.RoundCurrency(econ?.EconomicClosingBalance ?? 0m) : 0m,
                 TheyOweMe = canSeeCost ? EconomicRulesHelper.RoundCurrency(econ?.TheyOweMe ?? 0m) : 0m,
                 ITheyOwe = canSeeCost ? EconomicRulesHelper.RoundCurrency(econ?.ITheyOwe ?? 0m) : 0m,
                 Prepayment = canSeeCost ? EconomicRulesHelper.RoundCurrency(econ?.Prepayment ?? 0m) : 0m,
             };
 
-            // Lineas de CAJA (running balance intacto).
-            if (cashByCurrency.TryGetValue(currency, out var cashBlock))
+            var mergedLines = BuildMergedLines(cashBlock, econ);
+
+            // Recalculamos el saldo corriente UNICO sobre la secuencia mergeada (cargo suma, abono resta),
+            // arrancando de 0. Trabajamos con los montos crudos (sin redondear) y redondeamos SOLO al exponer,
+            // igual que la caja lo hacia antes: el running acumula fiel y cada snapshot se redondea al mostrar.
+            decimal runningBalance = 0m;
+            foreach (var line in mergedLines)
             {
-                foreach (var line in cashBlock.Lines)
+                runningBalance += line.Charge;
+                runningBalance -= line.Credit;
+
+                blockDto.Lines.Add(new SupplierAccountStatementLineDto
                 {
-                    blockDto.Lines.Add(new SupplierAccountStatementLineDto
-                    {
-                        Date = line.Date,
-                        Kind = line.Kind,
-                        Description = line.Description,
-                        DocumentRef = line.DocumentRef,
-                        SourcePublicId = line.SourcePublicId,
-                        Currency = line.Currency,
-                        Charge = canSeeCost ? EconomicRulesHelper.RoundCurrency(line.Charge) : 0m,
-                        Credit = canSeeCost ? EconomicRulesHelper.RoundCurrency(line.Credit) : 0m,
-                        RunningBalance = canSeeCost ? EconomicRulesHelper.RoundCurrency(line.RunningBalance) : 0m
-                    });
-                }
+                    Date = line.Date,
+                    Kind = line.Kind,
+                    Description = line.Description,
+                    DocumentRef = line.DocumentRef,
+                    SourcePublicId = line.SourcePublicId,
+                    Currency = line.Currency,
+                    Charge = canSeeCost ? EconomicRulesHelper.RoundCurrency(line.Charge) : 0m,
+                    Credit = canSeeCost ? EconomicRulesHelper.RoundCurrency(line.Credit) : 0m,
+                    RunningBalance = canSeeCost ? EconomicRulesHelper.RoundCurrency(runningBalance) : 0m
+                });
             }
 
-            // Lineas del CIRCUITO de cancelacion (bloque separado, NO entran al running balance de caja). Cada
-            // movimiento es un cargo (+), por eso lo exponemos en la columna Charge; Credit/RunningBalance en 0.
-            if (econ != null)
-            {
-                foreach (var line in econ.CircuitLines)
-                {
-                    blockDto.CircuitLines.Add(new SupplierAccountStatementLineDto
-                    {
-                        Date = line.Date,
-                        Kind = line.Kind,
-                        Description = line.Description,
-                        DocumentRef = line.DocumentRef,
-                        SourcePublicId = line.SourcePublicId,
-                        Currency = line.Currency,
-                        Charge = canSeeCost ? EconomicRulesHelper.RoundCurrency(line.Amount) : 0m,
-                        Credit = 0m,
-                        RunningBalance = 0m
-                    });
-                }
-            }
+            // Saldo MOSTRADO = saldo corriente de la ultima linea de la secuencia mergeada = saldo economico.
+            // Por construccion es CashClosing + multa + reembolso == EconomicClosingBalance (verificado por test).
+            blockDto.ClosingBalance = canSeeCost ? EconomicRulesHelper.RoundCurrency(runningBalance) : 0m;
 
             dto.Currencies.Add(blockDto);
         }
 
         return dto;
+    }
+
+    /// <summary>
+    /// Fusiona las lineas de CAJA (compras / pagos) con las del CIRCUITO de cancelacion (multa retenida +
+    /// reembolso recibido) de UNA moneda en una sola secuencia cronologica.
+    ///
+    /// <para><b>Orden</b>: por fecha ascendente. Desempate estable y deterministico: ante misma fecha va primero
+    /// la linea de caja (<c>OrderGroup=0</c>) y despues la de circuito (<c>OrderGroup=1</c>); dentro del mismo
+    /// grupo y fecha se respeta el orden de origen (OrderBy de LINQ es estable). Asi el saldo corriente es
+    /// reproducible corrida a corrida.</para>
+    ///
+    /// <para><b>Signo</b>: las lineas de circuito son un CARGO (+) —tanto la multa retenida como el reembolso
+    /// recibido neutralizan el pago negativo que dejo la anulacion—, por eso se cargan en <c>Charge</c> con su
+    /// <c>Amount</c> tal cual (positivo). No se les cambia el signo: solo pasan a ACUMULAR en el running balance
+    /// unico (antes se mostraban con saldo 0 en un bloque aparte).</para>
+    /// </summary>
+    private static List<MergedStatementLine> BuildMergedLines(
+        SupplierAccountStatementCurrencyBlock? cashBlock,
+        SupplierAccountReconciliationCurrencyBlock? econ)
+    {
+        var merged = new List<MergedStatementLine>();
+
+        if (cashBlock != null)
+        {
+            foreach (var line in cashBlock.Lines)
+            {
+                merged.Add(new MergedStatementLine(
+                    Date: line.Date,
+                    OrderGroup: 0, // caja primero ante misma fecha
+                    Kind: line.Kind,
+                    Description: line.Description,
+                    DocumentRef: line.DocumentRef,
+                    SourcePublicId: line.SourcePublicId,
+                    Currency: line.Currency,
+                    Charge: line.Charge,
+                    Credit: line.Credit));
+            }
+        }
+
+        if (econ != null)
+        {
+            foreach (var line in econ.CircuitLines)
+            {
+                merged.Add(new MergedStatementLine(
+                    Date: line.Date,
+                    OrderGroup: 1, // circuito despues de la caja ante misma fecha
+                    Kind: line.Kind,
+                    Description: line.Description,
+                    DocumentRef: line.DocumentRef,
+                    SourcePublicId: line.SourcePublicId,
+                    Currency: line.Currency,
+                    Charge: line.Amount, // circuito = cargo (+): multa retenida / reembolso recibido
+                    Credit: 0m));
+            }
+        }
+
+        // OrderBy de LINQ es estable: ante igual (Date, OrderGroup) preserva el orden de insercion (caja en el
+        // orden del extracto; circuito en el orden que lo devolvio el reader).
+        return merged
+            .OrderBy(line => line.Date)
+            .ThenBy(line => line.OrderGroup)
+            .ToList();
     }
 
     public async Task<PagedResponse<SupplierAccountServiceListItemDto>> GetSupplierAccountServicesAsync(

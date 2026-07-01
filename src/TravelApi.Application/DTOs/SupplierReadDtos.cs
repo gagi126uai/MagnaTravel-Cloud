@@ -306,26 +306,49 @@ public class SupplierAccountStatementCurrencyBlockDto
 {
     public string Currency { get; set; } = "ARS";
 
+    /// <summary>
+    /// Movimientos de la moneda en orden cronologico, con saldo corriente. Desde el saldo UNICO (2026-06-30)
+    /// esta es la secuencia MERGEADA: las lineas de CAJA (compras / pagos al operador) intercaladas con las
+    /// del "Circuito de cancelacion" (multa retenida + reembolso recibido), todas ordenadas por fecha. El
+    /// <see cref="SupplierAccountStatementLineDto.RunningBalance"/> se recalcula de corrido sobre la secuencia
+    /// completa y CIERRA en el saldo ECONOMICO (<see cref="ClosingBalance"/> = <see cref="EconomicClosingBalance"/>),
+    /// que reconcilia con los dos numeros del header. Desempate estable: ante misma fecha, primero la linea de
+    /// caja, despues la de circuito.
+    /// </summary>
     public List<SupplierAccountStatementLineDto> Lines { get; set; } = new();
 
     /// <summary>
-    /// Saldo de cierre de la moneda = saldo corriente de la ultima linea (positivo = la agencia le debe al
-    /// operador; negativo = saldo a favor). Coincide con el saldo POR MONEDA de la proyeccion
-    /// <c>SupplierBalanceByCurrency.Balance</c> (invariante verificado por test).
+    /// Saldo de cierre MOSTRADO de la moneda = saldo corriente de la ultima linea de <see cref="Lines"/>.
+    ///
+    /// <para><b>CAMBIO DE SIGNIFICADO (saldo unico, 2026-06-30)</b>: antes reflejaba SOLO la caja (compras -
+    /// pagos). Ahora refleja el saldo ECONOMICO (caja + circuito de cancelacion) e IGUALA a
+    /// <see cref="EconomicClosingBalance"/>, para que el saldo del pie del extracto coincida con los recuadros
+    /// del header. El saldo de SOLO caja (el que iguala la proyeccion <c>SupplierBalanceByCurrency.Balance</c>)
+    /// se movio a <see cref="CashClosingBalance"/>.</para>
     /// </summary>
     public decimal ClosingBalance { get; set; }
 
     // ====================================================================================================
-    // Pasos B/C cuenta del operador (2026-06-29): campos ADITIVOS (backward-compatible). El bloque de CAJA
-    // de arriba (Lines + ClosingBalance) NO se toca: la invariante extracto<->proyeccion sigue valiendo. Estos
-    // campos son la cara ECONOMICA (caja + circuito de cancelacion) que produce los DOS numeros del header.
-    // Respetan el masking see_cost igual que el resto (0 si el caller no puede ver costos).
+    // Cara ECONOMICA de la cuenta del operador (Pasos B/C, 2026-06-29; saldo unico, 2026-06-30). Estos campos
+    // alimentan los DOS numeros del header y el nuevo saldo unico. Respetan el masking see_cost igual que el
+    // resto (0 si el caller no puede ver costos).
     // ====================================================================================================
 
-    /// <summary>Lineas del "Circuito de cancelacion" (multa retenida + reembolso recibido). Bloque SEPARADO de la caja.</summary>
+    /// <summary>
+    /// Saldo de cierre de SOLO CAJA (compras - pagos al operador), SIN el circuito de cancelacion. Es el eco de
+    /// la proyeccion <c>SupplierBalanceByCurrency.Balance</c> por moneda (invariante verificado por test). Se
+    /// expone aparte porque <see cref="ClosingBalance"/> paso a ser el saldo economico.
+    /// </summary>
+    public decimal CashClosingBalance { get; set; }
+
+    /// <summary>
+    /// OBSOLETO desde el saldo unico (2026-06-30): las lineas del circuito ahora viven intercaladas en
+    /// <see cref="Lines"/>. Se conserva vacio por compatibilidad de forma del JSON hasta que el front migre;
+    /// no volver a poblarlo. TODO: eliminar cuando <c>SupplierExtractoSection.jsx</c> deje de leerlo.
+    /// </summary>
     public List<SupplierAccountStatementLineDto> CircuitLines { get; set; } = new();
 
-    /// <summary>Saldo economico = caja + circuito (multa retenida + reembolso recibido). Derivado, solo header.</summary>
+    /// <summary>Saldo economico = caja + circuito (multa retenida + reembolso recibido). Igual a <see cref="ClosingBalance"/>.</summary>
     public decimal EconomicClosingBalance { get; set; }
 
     /// <summary>"Me tiene que devolver" (Y): reembolso del operador todavia por cobrar en esta moneda.</summary>

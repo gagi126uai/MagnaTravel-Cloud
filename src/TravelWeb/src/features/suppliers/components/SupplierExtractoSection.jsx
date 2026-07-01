@@ -13,11 +13,13 @@
  *   devolvió los montos ocultos (sin permiso de costo). Mostramos "—" en gris en vez de
  *   valores para distinguir "sin permiso" de "saldo cero".
  *
- * Circuito de cancelación (Fase D, 2026-07-01):
- *   Debajo de la tabla Cargo/Abono/Saldo de cada moneda se agrega un bloque colapsable
- *   (arranca cerrado) con las multas retenidas por el operador y los reembolsos ya recibidos
- *   de esa moneda (bloque.circuitLines). Si una moneda no tuvo anulaciones, el bloque no
- *   se renderiza (ni siquiera vacío). Ver CircuitoCancelacionBloque más abajo.
+ * Circuito de cancelación — SALDO ÚNICO (Fase D, 2026-07-01):
+ *   La multa retenida por el operador y el reembolso recibido YA vienen como renglones del
+ *   extracto (el backend los fusiona en bloque.lines con su saldo corriente), así que el
+ *   "Saldo" del pie es el saldo económico y cuadra con los recuadros del encabezado. Cada
+ *   renglón de anulación lleva un chip "Anulación" (siempre visible) para no confundirlo con
+ *   una compra. Cuando en una moneda coexisten "Le debo" (viajes vivos) y "Me tiene que
+ *   devolver" (anulaciones), el saldo único es el neto y se aclara con ReconciliacionSaldoOperador.
  *
  * Editar / Eliminar un pago desde el extracto:
  *   Si canEditarEliminar=true, las filas de tipo Payment muestran botones Editar y Eliminar.
@@ -46,7 +48,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { BookOpen, ChevronDown, ChevronRight, Loader2, Pencil, RefreshCw, Trash2, Undo2 } from "lucide-react";
+import { BookOpen, Loader2, Pencil, RefreshCw, Trash2, Undo2 } from "lucide-react";
 import { api } from "../../../api";
 import { hasPermission } from "../../../auth";
 import { getApiErrorMessage } from "../../../lib/errors";
@@ -435,104 +437,57 @@ function BloqueExtractoProveedor({ bloque, montosVisiblesGlobal, allPayments, ca
                 </DataGridBody>
             </DataGrid>
 
-            {/* Circuito de cancelación: bloque aparte, debajo del extracto de caja de esta moneda.
-                Solo existe si hubo anulaciones en esta moneda (si no, CircuitoCancelacionBloque no
-                renderiza nada — ni siquiera un cartel de "vacío", por decisión de Gastón). */}
-            <CircuitoCancelacionBloque
-                currency={bloque.currency}
-                lineas={bloque.circuitLines}
-                montosVisibles={montosVisibles}
-            />
+            {/* Línea de reconciliación (Fase D — saldo único, 2026-07-01): la multa retenida y el reembolso
+                recibido YA vienen como renglones del extracto (el backend los fusiona en `bloque.lines` con su
+                saldo corriente), así que el "Saldo" de arriba ya cuadra 1:1 con "Me tiene que devolver" en el
+                caso normal. Solo cuando en esta moneda COEXISTEN dos cosas distintas (le debo por un viaje vivo
+                Y me tiene que devolver por una anulación, o saldo a favor + reembolso pendiente) el saldo único
+                es el NETO y no representa cada parte: ahí mostramos una línea que lo explica. */}
+            <ReconciliacionSaldoOperador bloque={bloque} montosVisibles={montosVisibles} />
         </div>
     );
 }
 
-// ─── Bloque colapsable "Circuito de cancelación" ─────────────────────────────
+// ─── Línea de reconciliación del saldo (coexistencia "Le debo" + "Me tiene que devolver") ─────
 
 /**
- * Tablita colapsable con los movimientos del "circuito de cancelación" de una moneda:
- * la multa que el operador retuvo y la plata que ya nos devolvió por viajes anulados.
+ * Nota explicativa que aparece SOLO cuando el saldo único de la moneda es una POSICIÓN NETA que
+ * no representa fielmente los tres números del encabezado. Pasa cuando coexisten, con el mismo
+ * operador y moneda, dos conceptos que a propósito NO se netean entre sí: p.ej. le debo por un
+ * viaje vivo (iTheyOwe) y me tiene que devolver por una anulación (theyOweMe). En ese caso el
+ * saldo del extracto (neto) no es "lo mismo que arriba", y esta línea aclara los componentes.
  *
- * Arranca CERRADA (Gastón, 2026-07-01: no abarrotar el extracto con algo que no siempre
- * aplica). Si el operador no tuvo anulaciones en esta moneda, este componente no renderiza
- * nada — ni un cartel de "vacío" (decisión explícita: un operador sin anulaciones no necesita
- * ver un bloque vacío).
+ * En el caso normal (a lo sumo uno de los tres es > 0) NO se muestra nada: el saldo del extracto
+ * ya cuadra 1:1 con el recuadro correspondiente del encabezado.
  *
- * El texto de "Movimiento" (description) viene tal cual del backend, ya en español
- * ("Multa retenida por el operador" / "Reembolso recibido del operador"); no lo derivamos
- * de ningún código interno.
+ * Sin permiso de ver costos no se muestra (no revelamos montos).
  */
-function CircuitoCancelacionBloque({ currency, lineas, montosVisibles }) {
-    const [abierto, setAbierto] = useState(false);
+function ReconciliacionSaldoOperador({ bloque, montosVisibles }) {
+    if (!montosVisibles) return null;
 
-    if (!lineas || lineas.length === 0) return null;
+    const leDebo = bloque.iTheyOwe ?? 0;
+    const meDebe = bloque.theyOweMe ?? 0;
+    const aFavor = bloque.prepayment ?? 0;
 
-    const nombreMoneda = currency === "USD" ? "Dólares" : "Pesos";
-    const simboloMoneda = currency === "USD" ? "US$" : "$";
+    // Coexistencia = dos o más componentes distintos de cero. Con uno solo, el saldo único ya cuadra.
+    const componentes = [leDebo > 0, meDebe > 0, aFavor > 0].filter(Boolean).length;
+    if (componentes < 2) return null;
+
+    const partes = [];
+    if (leDebo > 0) partes.push(`le debés ${formatCurrency(leDebo, bloque.currency)} (viajes vivos)`);
+    if (meDebe > 0) partes.push(`te tiene que devolver ${formatCurrency(meDebe, bloque.currency)} (anulaciones)`);
+    if (aFavor > 0) partes.push(`tenés ${formatCurrency(aFavor, bloque.currency)} de saldo a favor`);
 
     return (
-        <div className="border-t border-slate-100 dark:border-slate-800">
-            <button
-                type="button"
-                onClick={() => setAbierto((anterior) => !anterior)}
-                className="flex w-full items-center justify-between gap-2 px-6 py-3 text-left hover:bg-slate-50/60 dark:hover:bg-slate-800/20 transition-colors"
-                aria-expanded={abierto}
-                data-testid={`circuito-cancelacion-toggle-${currency}`}
-            >
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                    Circuito de cancelación ({nombreMoneda} {simboloMoneda})
-                </span>
-                <span className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 dark:text-indigo-400">
-                    {abierto ? (
-                        <>
-                            <ChevronDown className="h-3.5 w-3.5" />
-                            Ocultar
-                        </>
-                    ) : (
-                        <>
-                            <ChevronRight className="h-3.5 w-3.5" />
-                            Mostrar
-                        </>
-                    )}
-                </span>
-            </button>
-
-            {abierto && (
-                <DataGrid density="compact" minWidth="640px">
-                    <DataGridHeader>
-                        <DataGridHeaderRow>
-                            <DataGridHeaderCell>Fecha</DataGridHeaderCell>
-                            <DataGridHeaderCell>Movimiento</DataGridHeaderCell>
-                            <DataGridHeaderCell>Reserva</DataGridHeaderCell>
-                            <DataGridHeaderCell align="right">Monto</DataGridHeaderCell>
-                        </DataGridHeaderRow>
-                    </DataGridHeader>
-                    <DataGridBody>
-                        {lineas.map((linea, idx) => (
-                            <DataGridRow key={`circuito-${currency}-${idx}`} data-testid={`circuito-cancelacion-linea-${currency}-${idx}`}>
-                                <DataGridCell className="text-slate-500 dark:text-slate-400">
-                                    {linea.date ? new Date(linea.date).toLocaleDateString("es-AR") : "—"}
-                                </DataGridCell>
-                                <DataGridCell>{linea.description || "—"}</DataGridCell>
-                                <DataGridCell className="font-mono text-xs text-slate-500 dark:text-slate-400">
-                                    {linea.documentRef || "—"}
-                                </DataGridCell>
-                                {/* Monto: el backend siempre lo trae en "charge" (cada línea del circuito
-                                    es un cargo positivo; ver nota de mapeo en SupplierService). */}
-                                <DataGridCell align="right">
-                                    {montosVisibles ? (
-                                        <span className="font-bold text-slate-800 dark:text-slate-200">
-                                            {formatCurrency(linea.charge ?? 0, currency)}
-                                        </span>
-                                    ) : (
-                                        <span className="text-muted-foreground" title="Sin permiso para ver montos">—</span>
-                                    )}
-                                </DataGridCell>
-                            </DataGridRow>
-                        ))}
-                    </DataGridBody>
-                </DataGrid>
-            )}
+        <div
+            className="border-t border-amber-100 dark:border-amber-900/30 bg-amber-50/40 dark:bg-amber-950/10 px-6 py-3"
+            data-testid={`reconciliacion-saldo-${bloque.currency}`}
+        >
+            <p className="text-xs text-amber-800 dark:text-amber-300">
+                <span className="font-bold">Este saldo es la posición neta.</span>{" "}
+                Con este operador {partes.join(", y ")}: son cosas distintas y no se cancelan entre sí,
+                por eso arriba se muestran por separado.
+            </p>
         </div>
     );
 }
@@ -544,6 +499,10 @@ function FilaExtractoProveedor({ linea, currency, montosVisibles, allPayments, c
     const esCargo = linea.charge > 0;
     const esAbono = linea.credit > 0;
     const esPago = linea.kind === "Payment";
+    // Renglones del circuito de cancelación (multa retenida / reembolso recibido): son movimientos de una
+    // anulación que REDUCEN lo que el operador te tiene que devolver. Se muestran como "Cargo" por convención
+    // contable (suben el saldo negativo hacia cero), pero NO son una compra nueva — de ahí el aviso.
+    const esCircuito = linea.kind === "PenaltyRetained" || linea.kind === "RefundReceived";
 
     // Cruzamos sourcePublicId de la línea con la lista de pagos completos del padre.
     // Así tenemos el objeto completo (con method, reference, exchangeRate, etc.)
@@ -565,9 +524,21 @@ function FilaExtractoProveedor({ linea, currency, montosVisibles, allPayments, c
             </DataGridCell>
 
             <DataGridCell>
-                <span className={esCargo ? "font-medium text-slate-800 dark:text-slate-200" : "text-slate-600 dark:text-slate-400"}>
+                <span
+                    className={esCargo ? "font-medium text-slate-800 dark:text-slate-200" : "text-slate-600 dark:text-slate-400"}
+                    title={esCircuito ? "Movimiento de una anulación: reduce lo que el operador te tiene que devolver (no es una compra nueva)." : undefined}
+                >
                     {linea.description || "—"}
                 </span>
+                {esCircuito && (
+                    <span
+                        className="ml-2 inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700 dark:bg-amber-950/30 dark:text-amber-300"
+                        title="Movimiento de una anulación: reduce lo que el operador te tiene que devolver (no es una compra nueva)."
+                        data-testid="extracto-anulacion-chip"
+                    >
+                        Anulación
+                    </span>
+                )}
             </DataGridCell>
 
             <DataGridCell className="font-mono text-xs text-slate-500 dark:text-slate-400">
