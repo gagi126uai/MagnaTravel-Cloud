@@ -350,6 +350,137 @@ public class Adr025PartialAndMultiOperatorCancellationTests
     }
 
     // ============================================================
+    // Bug 2026-07-01: INV-100 FALSO cuando la reserva tiene, ademas de su factura
+    // de venta, una Nota de Credito y/o una Nota de Debito. La query de facturas
+    // activas del Draft debe contar SOLO facturas de VENTA vivas (excluir NC y ND).
+    // ============================================================
+
+    /// <summary>
+    /// Siembra una factura de la reserva. Por defecto crea una Factura C (venta) viva.
+    /// Los tests pasan el <paramref name="tipoComprobante"/> para simular NC (13) o ND (12).
+    /// </summary>
+    private static Invoice SeedInvoice(
+        AppDbContext ctx, int reservaId, int tipoComprobante, int numeroComprobante,
+        decimal importeTotal = 80_000m)
+    {
+        var invoice = new Invoice
+        {
+            TipoComprobante = tipoComprobante,
+            PuntoDeVenta = 1,
+            NumeroComprobante = numeroComprobante,
+            CAE = "10000000000000",
+            Resultado = "A",
+            ImporteTotal = importeTotal,
+            ReservaId = reservaId,
+            AnnulmentStatus = AnnulmentStatus.None,
+        };
+        ctx.Invoices.Add(invoice);
+        return invoice;
+    }
+
+    [Fact]
+    public async Task Draft_SaleInvoicePlusCreditNote_DoesNotTriggerInv100_OriginatingIsSaleInvoice()
+    {
+        using var ctx = NewDbContext();
+        var (reserva, _, supplierA, _, _, _) = await SeedAsync(ctx, addSecondOperatorService: false);
+        var service = BuildService(ctx);
+
+        // Factura de venta C (11) + su Nota de Credito C (13). La NC NO es una factura de venta:
+        // no debe contar para INV-100 ni quedar como originatingInvoice.
+        var saleInvoice = SeedInvoice(ctx, reserva.Id, tipoComprobante: 11, numeroComprobante: 60);
+        SeedInvoice(ctx, reserva.Id, tipoComprobante: 13, numeroComprobante: 61);
+        await ctx.SaveChangesAsync();
+
+        var dto = await service.DraftAsync(
+            new DraftCancellationRequest(reserva.PublicId, "Anular reserva con factura + NC"),
+            "vendedor-1", "Vendedor", CancellationToken.None);
+
+        var bc = await ctx.BookingCancellations.FirstAsync(b => b.PublicId == dto.PublicId);
+        Assert.Equal(saleInvoice.Id, bc.OriginatingInvoiceId);
+    }
+
+    [Fact]
+    public async Task Draft_SaleInvoicePlusDebitNote_DoesNotTriggerInv100_OriginatingIsSaleInvoice()
+    {
+        using var ctx = NewDbContext();
+        var (reserva, _, _, _, _, _) = await SeedAsync(ctx, addSecondOperatorService: false);
+        var service = BuildService(ctx);
+
+        // Factura de venta C (11) + una Nota de Debito C (12), ej. por multa del operador.
+        // La ND es mas reciente por CreatedAt; sin la exclusion quedaria como originatingInvoice.
+        var saleInvoice = SeedInvoice(ctx, reserva.Id, tipoComprobante: 11, numeroComprobante: 62);
+        SeedInvoice(ctx, reserva.Id, tipoComprobante: 12, numeroComprobante: 63);
+        await ctx.SaveChangesAsync();
+
+        var dto = await service.DraftAsync(
+            new DraftCancellationRequest(reserva.PublicId, "Anular reserva con factura + ND"),
+            "vendedor-1", "Vendedor", CancellationToken.None);
+
+        var bc = await ctx.BookingCancellations.FirstAsync(b => b.PublicId == dto.PublicId);
+        Assert.Equal(saleInvoice.Id, bc.OriginatingInvoiceId);
+    }
+
+    [Fact]
+    public async Task Draft_SaleInvoicePlusCreditNoteAndDebitNote_DoesNotTriggerInv100()
+    {
+        using var ctx = NewDbContext();
+        var (reserva, _, _, _, _, _) = await SeedAsync(ctx, addSecondOperatorService: false);
+        var service = BuildService(ctx);
+
+        // Caso completo: factura de venta + NC + ND. Solo la factura de venta debe contar.
+        var saleInvoice = SeedInvoice(ctx, reserva.Id, tipoComprobante: 11, numeroComprobante: 64);
+        SeedInvoice(ctx, reserva.Id, tipoComprobante: 13, numeroComprobante: 65);
+        SeedInvoice(ctx, reserva.Id, tipoComprobante: 12, numeroComprobante: 66);
+        await ctx.SaveChangesAsync();
+
+        var dto = await service.DraftAsync(
+            new DraftCancellationRequest(reserva.PublicId, "Anular reserva con factura + NC + ND"),
+            "vendedor-1", "Vendedor", CancellationToken.None);
+
+        var bc = await ctx.BookingCancellations.FirstAsync(b => b.PublicId == dto.PublicId);
+        Assert.Equal(saleInvoice.Id, bc.OriginatingInvoiceId);
+    }
+
+    [Fact]
+    public async Task Draft_TwoLiveSaleInvoices_StillTriggersInv100()
+    {
+        using var ctx = NewDbContext();
+        var (reserva, _, _, _, _, _) = await SeedAsync(ctx, addSecondOperatorService: false);
+        var service = BuildService(ctx);
+
+        // La politica OnePerReservaInvoicePolicy (default true) se mantiene: DOS facturas
+        // de venta vivas SI deben disparar INV-100.
+        SeedInvoice(ctx, reserva.Id, tipoComprobante: 11, numeroComprobante: 67);
+        SeedInvoice(ctx, reserva.Id, tipoComprobante: 11, numeroComprobante: 68);
+        await ctx.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            service.DraftAsync(
+                new DraftCancellationRequest(reserva.PublicId, "Dos facturas de venta vivas"),
+                "vendedor-1", "Vendedor", CancellationToken.None));
+        Assert.Equal("INV-100", ex.InvariantCode);
+    }
+
+    [Fact]
+    public async Task Draft_SingleSaleInvoice_DraftsNormally()
+    {
+        using var ctx = NewDbContext();
+        var (reserva, _, supplierA, _, _, _) = await SeedAsync(ctx, addSecondOperatorService: false);
+        var service = BuildService(ctx);
+
+        var saleInvoice = SeedInvoice(ctx, reserva.Id, tipoComprobante: 11, numeroComprobante: 69);
+        await ctx.SaveChangesAsync();
+
+        var dto = await service.DraftAsync(
+            new DraftCancellationRequest(reserva.PublicId, "Anular reserva con factura unica"),
+            "vendedor-1", "Vendedor", CancellationToken.None);
+
+        var bc = await ctx.BookingCancellations.FirstAsync(b => b.PublicId == dto.PublicId);
+        Assert.Equal(saleInvoice.Id, bc.OriginatingInvoiceId);
+        Assert.Equal(supplierA.Id, bc.SupplierId);
+    }
+
+    // ============================================================
     // Backfill: 1 linea sintetica por BC historico (centinela ServiceId=0)
     // ============================================================
 

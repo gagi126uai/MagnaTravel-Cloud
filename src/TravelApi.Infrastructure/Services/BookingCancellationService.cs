@@ -54,6 +54,17 @@ public class BookingCancellationService
     // SQL); mantener ambos sincronizados si se agrega un tipo de NC.
     private static readonly int[] LiveInvoiceCreditNoteTypes = { 3, 8, 13, 53 };
 
+    // cbteTipo de las Notas de Debito (2=A, 7=B, 12=C, 52=M). Fuente autoritativa:
+    // InvoiceComprobanteHelpers.IsDebitNote / GetDebitNoteTypeForAssociated (ADR-013 §3.9).
+    // Se usa junto con LiveInvoiceCreditNoteTypes para dejar SOLO facturas de VENTA vivas al
+    // decidir INV-100 y elegir la factura originante del BC: una reserva puede tener, ademas de su
+    // factura de venta, una NC (anulacion previa) y/o una ND (ej. multa del operador). Sin esta
+    // exclusion, esas notas se contaban como "facturas" y disparaban un INV-100 FALSO (bug 2026-07-01),
+    // ademas de que la nota mas reciente por CreatedAt podia quedar como originatingInvoice en vez de la
+    // factura de venta. EF Core no traduce InvoiceComprobanteHelpers.IsDebitNote a SQL, por eso se expande
+    // inline; mantener sincronizado con el helper si se agrega un tipo de ND.
+    private static readonly int[] LiveInvoiceDebitNoteTypes = { 2, 7, 12, 52 };
+
     private readonly AppDbContext _db;
     private readonly IInvoiceService _invoiceService;
     private readonly IApprovalRequestService _approvalService;
@@ -145,15 +156,22 @@ public class BookingCancellationService
             .FirstOrDefaultAsync(r => r.PublicId == request.ReservaPublicId, ct)
             ?? throw new KeyNotFoundException($"Reserva {request.ReservaPublicId} no encontrada.");
 
-        // 2) Localizar la Invoice activa de la reserva. Usamos la mas reciente
-        //    no anulada. Si <c>OnePerReservaInvoicePolicy</c> esta on y hay
+        // 2) Localizar la FACTURA DE VENTA activa de la reserva. Usamos la mas
+        //    reciente no anulada. Si <c>OnePerReservaInvoicePolicy</c> esta on y hay
         //    multiples activas: rechazar con INV-100 (review BR4 — el patron
         //    de FC1 deja una Invoice por reserva en estado normal).
+        //
+        //    Se EXCLUYEN Notas de Credito (LiveInvoiceCreditNoteTypes) y Notas de
+        //    Debito (LiveInvoiceDebitNoteTypes): NO son facturas de venta. Contarlas
+        //    disparaba un INV-100 falso cuando la reserva tenia 1 factura + su NC/ND
+        //    (bug 2026-07-01), y podia elegir la nota como originatingInvoice.
         var settings = await _settings.GetEntityAsync(ct);
 
         var activeInvoices = await _db.Invoices
             .Where(i => i.ReservaId == reserva.Id
-                     && i.AnnulmentStatus != AnnulmentStatus.Succeeded)
+                     && i.AnnulmentStatus != AnnulmentStatus.Succeeded
+                     && !LiveInvoiceCreditNoteTypes.Contains(i.TipoComprobante) // excluye NC
+                     && !LiveInvoiceDebitNoteTypes.Contains(i.TipoComprobante)) // excluye ND
             .OrderByDescending(i => i.CreatedAt)
             .ToListAsync(ct);
 
@@ -902,7 +920,8 @@ public class BookingCancellationService
         //     DraftAsync). Si la hay, el path normal crea la línea con su receivable -> no hay fuga.
         bool hasLiveInvoice = await _db.Invoices.AsNoTracking()
             .AnyAsync(i => i.ReservaId == reserva.Id
-                        && !LiveInvoiceCreditNoteTypes.Contains(i.TipoComprobante)
+                        && !LiveInvoiceCreditNoteTypes.Contains(i.TipoComprobante) // NC no es ancla de venta
+                        && !LiveInvoiceDebitNoteTypes.Contains(i.TipoComprobante)  // ND tampoco (misma regla que DraftAsync)
                         && !string.IsNullOrEmpty(i.CAE)
                         && i.AnnulmentStatus != AnnulmentStatus.Succeeded, ct);
         if (hasLiveInvoice) return 0m;
@@ -950,7 +969,8 @@ public class BookingCancellationService
         // Si no hay, no hay ancla fiscal para el BC padre -> no creamos linea (ver limitacion en el doc).
         var originatingInvoiceId = await _db.Invoices.AsNoTracking()
             .Where(i => i.ReservaId == reserva.Id
-                     && !LiveInvoiceCreditNoteTypes.Contains(i.TipoComprobante)
+                     && !LiveInvoiceCreditNoteTypes.Contains(i.TipoComprobante) // no NC
+                     && !LiveInvoiceDebitNoteTypes.Contains(i.TipoComprobante)  // no ND (misma regla que DraftAsync)
                      && !string.IsNullOrEmpty(i.CAE)
                      && i.AnnulmentStatus != AnnulmentStatus.Succeeded)
             .OrderByDescending(i => i.CreatedAt)
