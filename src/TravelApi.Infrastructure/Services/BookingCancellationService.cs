@@ -781,30 +781,138 @@ public class BookingCancellationService
     private async Task EnsurePaidServiceCancellationHasReceivableAnchorAsync(
         Reserva reserva, CancellableServiceTable serviceTable, Guid servicePublicId, CancellationToken ct)
     {
-        // Hay factura de venta viva que ancle el BC? (misma regla que RecordPartialCancellationLineAsync / DraftAsync).
-        bool hasLiveInvoice = await _db.Invoices.AsNoTracking()
-            .AnyAsync(i => i.ReservaId == reserva.Id
-                        && !LiveInvoiceCreditNoteTypes.Contains(i.TipoComprobante)
-                        && !string.IsNullOrEmpty(i.CAE)
-                        && i.AnnulmentStatus != AnnulmentStatus.Succeeded, ct);
-        if (hasLiveInvoice) return; // hay ancla -> el path normal crea la linea, sin fuga.
-
-        // Sin factura: ¿este servicio tiene plata pagada al operador que quedaria sin representar? Reconstruimos el
-        // RefundCap que tendria su linea (read-only, sin persistir). Si es 0 (servicio impago), no hay fuga -> se
-        // permite cancelar (no se necesita linea). Si es > 0, bloqueamos.
+        // Resolver el Id (int) del servicio puntual, validando pertenencia a la reserva. Si no resuelve, no
+        // bloqueamos: el servicio se valida/404ea al marcarlo mas adelante.
         var serviceId = await ResolveServiceIdAsync(serviceTable, servicePublicId, reserva.Id, ct);
-        if (serviceId is null) return; // el servicio se valida/404ea al marcarlo; aca no bloqueamos.
+        if (serviceId is null) return;
 
-        var wouldBeLines = await BuildCancellationLinesAsync(
-            reserva, BookingCancellationLineScope.Partial, ct,
-            onlyServiceTable: serviceTable, onlyServiceId: serviceId.Value);
-        decimal wouldBeRefundCap = wouldBeLines.Sum(l => l.RefundCap);
+        // Nucleo compartido con la anulacion TOTAL: reconstruye, read-only, lo pagado al operador por ESTE servicio
+        // (su RefundCap). 0 = impago o reserva con factura viva -> sin fuga. > 0 = hay plata sin ancla -> bloqueo.
+        decimal wouldBeRefundCap = await ComputeUnanchoredOperatorRefundCapAsync(
+            reserva, BookingCancellationLineScope.Partial, serviceTable, serviceId.Value, ct);
 
         if (wouldBeRefundCap > 0m)
             throw new InvalidOperationException(
                 "No se puede cancelar este servicio todavía: ya tiene pagos al operador y la reserva aún no tiene " +
                 "factura emitida para registrar el reembolso a tu favor. Emití la factura de venta o gestioná el " +
                 "reembolso con el operador antes de cancelar el servicio.");
+    }
+
+    /// <summary>
+    /// R1 — VARIANTE TOTAL (plata viva, gemela de <see cref="EnsurePaidServiceCancellationHasReceivableAnchorAsync"/>,
+    /// 2026-06-30): impide ANULAR una reserva entera ("Anular con saldo a favor", flujo
+    /// <c>ReservaService.AnnulWithPaymentsToCreditAsync</c>) cuando se le pagó al operador por uno o más servicios y
+    /// NO hay factura de venta viva que ancle el receivable "me tiene que devolver".
+    ///
+    /// <para><b>Por que existe</b>: ese flujo cancela TODOS los servicios vivos (caja del operador queda negativa por
+    /// lo pagado) pero, a diferencia de la anulación formal con Nota de Crédito, NO crea ninguna
+    /// <see cref="BookingCancellationLine"/>. Como el receivable Y se deriva EXCLUSIVAMENTE de esas líneas, sin línea
+    /// Y=0 y el reconciler (<c>SupplierCreditReconciler</c>) materializaría el negativo de caja como saldo a favor
+    /// GASTABLE — plata que en realidad el operador debe devolver. Mismo agujero que R1 para un servicio suelto,
+    /// extendido a la anulación total.</para>
+    ///
+    /// <para><b>Que bloquea</b>: SOLO el caso con fuga real (algún servicio con plata pagada al operador + reserva
+    /// SIN factura viva). Reserva con factura (el path normal ancla el receivable), servicios impagos al operador
+    /// (RefundCap 0), o reserva sin ningún servicio con operador (no hay receivable posible) NO se bloquean. El cálculo
+    /// es READ-ONLY (reusa <see cref="ComputeUnanchoredOperatorRefundCapAsync"/>), corre ANTES de mutar nada y lanza
+    /// <see cref="InvalidOperationException"/> -> el controller la mapea a 409, igual que los demás candados de plata.</para>
+    /// </summary>
+    public async Task EnsureReservaAnnulHasReceivableAnchorAsync(int reservaId, CancellationToken ct)
+    {
+        // Carga liviana de la reserva (solo Id/NumeroReserva se usan aguas abajo). AsNoTracking: es solo lectura y
+        // corre dentro de la transaccion de anulacion del caller, antes de cualquier mutacion.
+        var reserva = await _db.Reservas.AsNoTracking()
+            .FirstOrDefaultAsync(r => r.Id == reservaId, ct);
+        if (reserva is null) return; // la reserva se valida en el flujo de anulacion; aca no bloqueamos.
+
+        // Alcance TOTAL (todos los servicios con operador, sin filtro). Suma del RefundCap reconstruido de todas las
+        // líneas; si algún servicio tiene plata pagada al operador y no hay factura, da > 0 y bloqueamos.
+        decimal wouldBeRefundCap = await ComputeUnanchoredOperatorRefundCapAsync(
+            reserva, BookingCancellationLineScope.Full, onlyServiceTable: null, onlyServiceId: null, ct);
+
+        if (wouldBeRefundCap > 0m)
+            throw new InvalidOperationException(
+                "No se puede anular esta reserva con saldo a favor todavía: ya se le pagó al operador por uno o más " +
+                "servicios y la reserva aún no tiene factura emitida para registrar el reembolso a tu favor. Emití la " +
+                "factura de venta o gestioná el reembolso con el operador antes de anular la reserva.");
+    }
+
+    /// <summary>
+    /// R1 — VARIANTE REASIGNACIÓN (plata viva, 2026-07-01): impide REASIGNAR el operador (o cambiar la moneda) de un
+    /// servicio ya pagado al operador saliente cuando no hay factura viva que ancle el receivable. Es la TERCERA cara
+    /// de la misma familia: comparte el núcleo <see cref="ComputeUnanchoredOperatorRefundCapAsync"/> con
+    /// <see cref="EnsurePaidServiceCancellationHasReceivableAnchorAsync"/> (cancelar un servicio) y
+    /// <see cref="EnsureReservaAnnulHasReceivableAnchorAsync"/> (anular la reserva), así los tres candados usan UN
+    /// solo criterio y no pueden divergir.
+    ///
+    /// <para><b>Por qué es preciso (no over-block del prepago a cuenta)</b>: el pool de lo pagado al operador se arma
+    /// con <c>SupplierPayments.Where(p =&gt; p.ReservaId == reservaId ...)</c> (ver <see cref="AssignRefundCapsAsync"/>),
+    /// o sea EXCLUYE el prepago "a cuenta" (pagos con <c>ReservaId == null</c>). Un saldo a favor on-account del
+    /// operador deja su caja GLOBAL negativa, pero NO cuenta como plata colgada de ESTE servicio -> RefundCap 0 -> no
+    /// bloquea. Solo bloquea cuando hay plata imputada a ESTA reserva por este servicio que quedaría sin ancla.</para>
+    ///
+    /// <para>El caller (los <c>Update*Async</c>) es responsable de invocarlo SOLO cuando cambió el operador o la
+    /// moneda y el servicio venía contando como compra confirmada del operador saliente. Corre ANTES de persistir la
+    /// edición: el núcleo lee el servicio con <c>AsNoTracking</c>, así que ve el estado VIEJO (operador/costo/moneda
+    /// previos) mientras el cambio sigue sin flushear.</para>
+    /// </summary>
+    public async Task EnsureServiceOperatorOrCurrencyChangeHasReceivableAnchorAsync(
+        int reservaId, CancellableServiceTable serviceTable, int serviceId, bool isCurrencyChange, CancellationToken ct)
+    {
+        var reserva = await _db.Reservas.AsNoTracking()
+            .FirstOrDefaultAsync(r => r.Id == reservaId, ct);
+        if (reserva is null) return; // la reserva la valida el propio Update; aca no bloqueamos.
+
+        // Mismo núcleo que los otros dos candados de la familia, en alcance PARCIAL filtrado a ESTE servicio: 0 =
+        // impago / con factura viva / sin operador -> sin fuga. > 0 = hay plata pagada al operador IMPUTADA A ESTA
+        // RESERVA por este servicio que quedaría colgada al reasignarlo/cambiarle la moneda.
+        decimal wouldBeRefundCap = await ComputeUnanchoredOperatorRefundCapAsync(
+            reserva, BookingCancellationLineScope.Partial, serviceTable, serviceId, ct);
+
+        if (wouldBeRefundCap > 0m)
+            throw new InvalidOperationException(isCurrencyChange
+                ? "No se puede cambiar la moneda de este servicio: hay pagos a este operador por esta reserva que " +
+                  "todavía no tienen factura que los respalde. Emití la factura de venta o gestioná el reembolso con " +
+                  "el operador antes de cambiar la moneda del servicio."
+                : "No se puede cambiar el operador de este servicio: hay pagos a este operador por esta reserva que " +
+                  "todavía no tienen factura que los respalde. Emití la factura de venta o gestioná el reembolso con " +
+                  "el operador antes de cambiar el operador.");
+    }
+
+    /// <summary>
+    /// Núcleo compartido de la guarda R1 (plata viva), para la cancelación de UN servicio (alcance
+    /// <see cref="BookingCancellationLineScope.Partial"/> + filtro de servicio) y para la anulación TOTAL
+    /// (<see cref="BookingCancellationLineScope.Full"/> sin filtro). UNA sola fuente de verdad: si esto cambia, ambos
+    /// caminos cambian juntos y no pueden divergir.
+    ///
+    /// <para>Devuelve el RefundCap total reconstruido READ-ONLY (lo pagado al operador por los servicios en alcance,
+    /// topeado por su costo), o 0 cuando NO hay fuga posible: (a) la reserva tiene factura de venta viva que ancla el
+    /// receivable por el path normal, o (b) no hay ningún servicio con operador en el alcance (sin operador no hay
+    /// plata que devolver). Reconstruye las líneas con el MISMO armado que el path real
+    /// (<see cref="BuildCancellationLinesAsync"/> + <see cref="AssignRefundCapsAsync"/>); NO persiste nada.</para>
+    /// </summary>
+    private async Task<decimal> ComputeUnanchoredOperatorRefundCapAsync(
+        Reserva reserva,
+        BookingCancellationLineScope scope,
+        CancellableServiceTable? onlyServiceTable,
+        int? onlyServiceId,
+        CancellationToken ct)
+    {
+        // (a) ¿Hay factura de venta viva que ancle el BC? (misma regla que RecordPartialCancellationLineAsync /
+        //     DraftAsync). Si la hay, el path normal crea la línea con su receivable -> no hay fuga.
+        bool hasLiveInvoice = await _db.Invoices.AsNoTracking()
+            .AnyAsync(i => i.ReservaId == reserva.Id
+                        && !LiveInvoiceCreditNoteTypes.Contains(i.TipoComprobante)
+                        && !string.IsNullOrEmpty(i.CAE)
+                        && i.AnnulmentStatus != AnnulmentStatus.Succeeded, ct);
+        if (hasLiveInvoice) return 0m;
+
+        // (b) Reconstruir, sin persistir, las líneas que tendría la cancelación en este alcance, con su RefundCap
+        //     (lo pagado al operador topeado por costo). throwIfNoOperatorService:false -> si no hay servicios con
+        //     operador, devuelve lista vacía (no hay receivable) en vez de lanzar. Sumamos los caps: 0 = sin fuga.
+        var wouldBeLines = await BuildCancellationLinesAsync(
+            reserva, scope, ct, onlyServiceTable, onlyServiceId, throwIfNoOperatorService: false);
+        return wouldBeLines.Sum(line => line.RefundCap);
     }
 
     /// <summary>
@@ -5195,7 +5303,12 @@ public class BookingCancellationService
         BookingCancellationLineScope scope,
         CancellationToken ct,
         CancellableServiceTable? onlyServiceTable = null,
-        int? onlyServiceId = null)
+        int? onlyServiceId = null,
+        // R1 (plata viva): el guard de "ancla del receivable" llama con false. Una reserva (o servicio) SIN
+        // operador no tiene plata pagada al operador -> no hay receivable que anclar -> no hay fuga -> no se
+        // bloquea. En ese caso devolvemos la lista vacia (el guard suma RefundCap=0) en lugar de lanzar. El path
+        // REAL de cancelacion (que SI necesita al menos una linea para registrar el evento) deja el default true.
+        bool throwIfNoOperatorService = true)
     {
         var lines = new List<BookingCancellationLine>();
         // NetCost de cada linea, paralelo a `lines` (mismo indice): se usa para topear el RefundCap por su
@@ -5263,6 +5376,12 @@ public class BookingCancellationService
 
         if (lines.Count == 0)
         {
+            // Sin operador no hay receivable: el guard R1 (throwIfNoOperatorService=false) recibe la lista vacia y
+            // decide "no bloquear" (cap 0), en vez de romper una anulacion/cancelacion legitima de un servicio o
+            // reserva sin proveedor asignado.
+            if (!throwIfNoOperatorService)
+                return lines;
+
             if (wantsOne)
                 throw new InvalidOperationException(
                     $"El servicio indicado de la reserva {reserva.NumeroReserva} no existe o no tiene operador asignado.");

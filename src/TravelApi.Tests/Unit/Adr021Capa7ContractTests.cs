@@ -180,7 +180,10 @@ public class Adr021Capa7ContractTests
         context.Reservas.Add(new Reserva
         {
             Id = 1, NumeroReserva = "F-1", Name = "R1", Status = EstadoReserva.Confirmed,
-            CreatedAt = start.AddDays(1), TotalSale = 1000m, TotalCost = 600m
+            // La venta debe caer DENTRO del mes y en el pasado. Usamos el primer instante del mes
+            // (siempre <= ahora); antes usaba start.AddDays(1), que el dia 1 del mes queda en el
+            // FUTURO (dia 2) y el filtro "ventas del mes hasta hoy" lo excluia -> el .Single() fallaba.
+            CreatedAt = start, TotalSale = 1000m, TotalCost = 600m
         });
         context.ReservaMoneyByCurrency.AddRange(
             new ReservaMoneyByCurrency { ReservaId = 1, Currency = "ARS", TotalSale = 700m, TotalCost = 400m },

@@ -44,6 +44,12 @@ public partial class BookingService : IBookingService
     // Opcional para no romper los ctores de tests existentes; si es null, la limpieza igual ocurre
     // (la integridad NO depende del audit), solo no se registra el evento.
     private readonly IAuditService? _auditService;
+    // Plata viva (familia R1, 2026-07-01): candado de reasignacion de operador/moneda de un servicio pagado sin
+    // factura. Se reusa el criterio PRECISO del flujo de cancelacion (RefundCap del servicio, pool imputado a la
+    // reserva -> excluye prepago a cuenta). Opcional para no romper los ctores de tests existentes; si es null el
+    // candado no corre (mismo patron que ReservaService). En produccion la DI lo inyecta (esta registrado).
+    // No hay ciclo de DI: BookingCancellationService no depende de IBookingService ni de IReservaService.
+    private readonly IBookingCancellationService? _cancellationService;
 
     public BookingService(
         IRepository<FlightSegment> flightRepo,
@@ -61,7 +67,8 @@ public partial class BookingService : IBookingService
         IUserPermissionResolver? permissionResolver = null,
         IHttpContextAccessor? httpContextAccessor = null,
         IOperationalFinanceSettingsService? settingsService = null,
-        IAuditService? auditService = null)
+        IAuditService? auditService = null,
+        IBookingCancellationService? cancellationService = null)
     {
         _flightRepo = flightRepo;
         _hotelRepo = hotelRepo;
@@ -79,6 +86,47 @@ public partial class BookingService : IBookingService
         _httpContextAccessor = httpContextAccessor;
         _settingsService = settingsService;
         _auditService = auditService;
+        _cancellationService = cancellationService;
+    }
+
+    /// <summary>
+    /// Plata viva (familia R1): candado compartido de reasignacion de operador/moneda de un servicio TIPADO. Se
+    /// invoca en los 5 <c>Update*Async</c> tipados ANTES de persistir. Solo evalua cuando (a) cambio el operador
+    /// (A != B, incluye pasar a "sin operador") o la moneda respecto del estado ANTES de editar, y (b) el servicio
+    /// venia contando como compra confirmada del operador saliente (misma regla que la caja,
+    /// <see cref="WorkflowStatusHelper.CountsForSupplierDebtByType"/>). El punto (b) evita un over-block: si el
+    /// servicio no estaba confirmado, moverlo no baja la caja del operador -> no hay fuga, pero el RefundCap topeado
+    /// por costo podria dar &gt; 0 y bloquear de mas. Delega en el nucleo de cancelacion, que lee el servicio VIEJO
+    /// con AsNoTracking (el cambio todavia no se flusheo). Si <c>_cancellationService</c> es null (tests con ctor
+    /// viejo) no corre.
+    /// </summary>
+    private async Task GuardOperatorOrCurrencyReassignmentAsync(
+        int reservaId,
+        CancellableServiceTable serviceTable,
+        int serviceId,
+        int oldSupplierId,
+        int newSupplierId,
+        string? oldCurrency,
+        string? newCurrency,
+        string debtServiceType,
+        string? oldStatus,
+        CancellationToken ct)
+    {
+        if (_cancellationService is null) return;
+        if (oldSupplierId <= 0) return; // sin operador saliente no hay caja que pueda quedar colgada
+
+        bool operatorChanged = newSupplierId != oldSupplierId;
+        bool currencyChanged = !string.Equals(
+            Monedas.Normalizar(oldCurrency), Monedas.Normalizar(newCurrency), StringComparison.Ordinal);
+        if (!operatorChanged && !currencyChanged) return;
+
+        // (b): solo si el servicio venia contando como compra confirmada del operador saliente.
+        if (!WorkflowStatusHelper.CountsForSupplierDebtByType(debtServiceType, oldStatus)) return;
+
+        await _cancellationService.EnsureServiceOperatorOrCurrencyChangeHasReceivableAnchorAsync(
+            reservaId, serviceTable, serviceId,
+            // Si cambio el operador, el mensaje habla del operador; si SOLO cambio la moneda, habla de la moneda.
+            isCurrencyChange: currencyChanged && !operatorChanged, ct);
     }
 
     // === RATE RESOLUTION (Snapshot) ===
@@ -770,6 +818,8 @@ public partial class BookingService : IBookingService
 
         var oldSupplierId = flight.SupplierId;
         var oldStatus = flight.Status;
+        // Plata viva (familia R1): moneda ANTES del map, para la guarda de reasignacion de operador/moneda de abajo.
+        var oldCurrency = flight.Currency;
         // ADR-031: estado de resolucion ANTES de la edicion (para gatear solo la transicion a resuelto).
         var flightWasResolved = ServiceResolutionRules.IsResolved(flight);
         // ADR-027 (hallazgo #10): precio/costo ANTES del map para detectar "el operador confirmo con cambios".
@@ -837,6 +887,12 @@ public partial class BookingService : IBookingService
         await EnsureNominalCoverageBeforeResolvingAsync(
             reservaId, flightWasResolved, ServiceResolutionRules.IsResolved(flight),
             PassengerNominalRules.ServiceKind.Flight, AssignmentServiceType.Flight, flight.Id, ct);
+
+        // Plata viva (familia R1): impedir reasignar operador/moneda de un aereo confirmado (HK/TK/KK/KL) y pagado al
+        // operador saliente sin factura que ancle el receivable. Ver EnsureServiceOperatorOrCurrencyChangeHas...
+        await GuardOperatorOrCurrencyReassignmentAsync(
+            reservaId, CancellableServiceTable.Flight, flight.Id, oldSupplierId, flight.SupplierId,
+            oldCurrency, flight.Currency, debtServiceType: "Vuelo", oldStatus: oldStatus, ct);
 
         await _flightRepo.UpdateAsync(flight, ct);
         if (oldSupplierId > 0 && oldSupplierId == flight.SupplierId)
@@ -1076,6 +1132,9 @@ public partial class BookingService : IBookingService
 
         var oldSupplierId = hotel.SupplierId;
         var oldStatus = hotel.Status;
+        // Plata viva (familia R1): moneda ANTES del map, para detectar reasignacion de operador/moneda. Ver
+        // GuardOperatorOrCurrencyReassignmentAsync mas abajo.
+        var oldCurrency = hotel.Currency;
         // ADR-031: estado de resolucion ANTES de la edicion (para gatear solo la transicion a resuelto).
         var hotelWasResolved = ServiceResolutionRules.IsResolved(hotel);
         // ADR-027 (hallazgo #10): precio/costo ANTES del map para detectar "el operador confirmo con cambios".
@@ -1150,6 +1209,13 @@ public partial class BookingService : IBookingService
         await EnsureNominalCoverageBeforeResolvingAsync(
             reservaId, hotelWasResolved, ServiceResolutionRules.IsResolved(hotel),
             PassengerNominalRules.ServiceKind.Hotel, AssignmentServiceType.Hotel, hotel.Id, ct);
+
+        // Plata viva (familia R1): impedir reasignar operador/moneda de un servicio confirmado y pagado al operador
+        // saliente sin factura que ancle el receivable. Corre ANTES de persistir; el candado post-CAE (MutationGuards,
+        // arriba) ya cubrio la factura viva. hotel.SupplierId ya es el FINAL (tras el eventual revert por tarifa).
+        await GuardOperatorOrCurrencyReassignmentAsync(
+            reservaId, CancellableServiceTable.Hotel, hotel.Id, oldSupplierId, hotel.SupplierId,
+            oldCurrency, hotel.Currency, debtServiceType: "Hotel", oldStatus: oldStatus, ct);
 
         await _hotelRepo.UpdateAsync(hotel, ct);
         if (oldSupplierId > 0 && oldSupplierId == hotel.SupplierId)
@@ -1374,6 +1440,8 @@ public partial class BookingService : IBookingService
         var oldSalePrice = package.SalePrice;
         var oldSupplierId = package.SupplierId;
         var oldStatus = package.Status;
+        // Plata viva (familia R1): moneda ANTES del map, para la guarda de reasignacion de operador/moneda de abajo.
+        var oldCurrency = package.Currency;
         // ADR-031: estado de resolucion ANTES de la edicion (para gatear solo la transicion a resuelto).
         var packageWasResolved = ServiceResolutionRules.IsResolved(package);
         var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
@@ -1415,6 +1483,12 @@ public partial class BookingService : IBookingService
         await EnsureNominalCoverageBeforeResolvingAsync(
             reservaId, packageWasResolved, ServiceResolutionRules.IsResolved(package),
             PassengerNominalRules.ServiceKind.Package, AssignmentServiceType.Package, package.Id, ct);
+
+        // Plata viva (familia R1): impedir reasignar operador/moneda de un paquete confirmado y pagado al operador
+        // saliente sin factura que ancle el receivable. Ver EnsureServiceOperatorOrCurrencyChangeHas...
+        await GuardOperatorOrCurrencyReassignmentAsync(
+            reservaId, CancellableServiceTable.Package, package.Id, oldSupplierId, package.SupplierId,
+            oldCurrency, package.Currency, debtServiceType: "Paquete", oldStatus: oldStatus, ct);
 
         await _packageRepo.UpdateAsync(package, ct);
         if (oldSupplierId > 0 && oldSupplierId == package.SupplierId)
@@ -1643,6 +1717,8 @@ public partial class BookingService : IBookingService
         var oldSalePrice = transfer.SalePrice;
         var oldSupplierId = transfer.SupplierId;
         var oldStatus = transfer.Status;
+        // Plata viva (familia R1): moneda ANTES del map, para la guarda de reasignacion de operador/moneda de abajo.
+        var oldCurrency = transfer.Currency;
         // ADR-031: estado de resolucion ANTES de la edicion (para gatear solo la transicion a resuelto).
         var transferWasResolved = ServiceResolutionRules.IsResolved(transfer);
         var supplierId = await ResolveSupplierIdAsync(req.SupplierId, ct);
@@ -1694,6 +1770,12 @@ public partial class BookingService : IBookingService
         await EnsureNominalCoverageBeforeResolvingAsync(
             reservaId, transferWasResolved, ServiceResolutionRules.IsResolved(transfer),
             PassengerNominalRules.ServiceKind.Transfer, AssignmentServiceType.Transfer, transfer.Id, ct);
+
+        // Plata viva (familia R1): impedir reasignar operador/moneda de un traslado confirmado y pagado al operador
+        // saliente sin factura que ancle el receivable. Ver EnsureServiceOperatorOrCurrencyChangeHas...
+        await GuardOperatorOrCurrencyReassignmentAsync(
+            reservaId, CancellableServiceTable.Transfer, transfer.Id, oldSupplierId, transfer.SupplierId,
+            oldCurrency, transfer.Currency, debtServiceType: "Traslado", oldStatus: oldStatus, ct);
 
         await _transferRepo.UpdateAsync(transfer, ct);
         if (oldSupplierId > 0 && oldSupplierId == transfer.SupplierId)
@@ -1944,6 +2026,8 @@ public partial class BookingService : IBookingService
 
         var oldSupplierId = assistance.SupplierId;
         var oldStatus = assistance.Status;
+        // Plata viva (familia R1): moneda ANTES del map, para la guarda de reasignacion de operador/moneda de abajo.
+        var oldCurrency = assistance.Currency;
         // ADR-031: estado de resolucion ANTES de la edicion (para gatear solo la transicion a resuelto).
         var assistanceWasResolved = ServiceResolutionRules.IsResolved(assistance);
         // ADR-027 (hallazgo #10): precio/costo ANTES del map para detectar "el operador confirmo con cambios".
@@ -1992,6 +2076,12 @@ public partial class BookingService : IBookingService
         await EnsureNominalCoverageBeforeResolvingAsync(
             reservaId, assistanceWasResolved, ServiceResolutionRules.IsResolved(assistance),
             PassengerNominalRules.ServiceKind.Assistance, AssignmentServiceType.Assistance, assistance.Id, ct);
+
+        // Plata viva (familia R1): impedir reasignar operador/moneda de una asistencia confirmada y pagada al operador
+        // saliente sin factura que ancle el receivable. Ver EnsureServiceOperatorOrCurrencyChangeHas...
+        await GuardOperatorOrCurrencyReassignmentAsync(
+            reservaId, CancellableServiceTable.Assistance, assistance.Id, oldSupplierId, assistance.SupplierId,
+            oldCurrency, assistance.Currency, debtServiceType: "Asistencia", oldStatus: oldStatus, ct);
 
         await _assistanceRepo.UpdateAsync(assistance, ct);
         if (oldSupplierId > 0 && oldSupplierId == assistance.SupplierId)

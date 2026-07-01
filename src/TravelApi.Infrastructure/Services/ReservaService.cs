@@ -1274,6 +1274,19 @@ public class ReservaService : IReservaService
                 "La reserva tiene cobros pero no tiene un cliente pagador asignado; no se puede generar saldo a favor.");
         }
 
+        // 7) Precondicion de PLATA AL OPERADOR (R1, gemela de la cancelacion de UN servicio): si a algun servicio se le
+        //    pago al operador y la reserva NO tiene factura que ancle el receivable "me tiene que devolver", anular
+        //    cancelaria todos los servicios (caja del operador negativa) SIN dejar la linea que representa ese
+        //    receivable -> el reconciler del saldo a favor mintearia ese negativo como credito GASTABLE. Bloqueamos
+        //    ANTES de mutar nada. La guarda vive en BookingCancellationService (misma logica, alcance TOTAL) para no
+        //    duplicar el calculo del RefundCap. Solo corre si el service esta cableado (en runtime siempre lo inyecta
+        //    DI; los tests que no anulan con plata al operador no lo inyectan y la guarda queda inerte, comportamiento
+        //    seguro). Lanza InvalidOperationException -> el controller la mapea a 409, igual que las demas precondiciones.
+        if (_cancellationService is not null)
+        {
+            await _cancellationService.EnsureReservaAnnulHasReceivableAnchorAsync(reserva.Id, ct);
+        }
+
         await ApplyAnnulWithPaymentsToCreditAsync(reserva, reason, actorUserId, actorUserName, ct);
     }
 
@@ -3274,6 +3287,11 @@ public class ReservaService : IReservaService
         // se marca "confirmada con cambios" (lo decide UpdateBalanceAsync con el flag de abajo).
         var previousSalePrice = service.SalePrice;
         var previousNetCost = service.NetCost;
+        // Plata viva (familia R1): tipo/estado ANTES de pisarlos, para la guarda de reasignacion de operador
+        // (cambiar el operador de un servicio confirmado y pagado dejaria la caja del saliente negativa sin ancla).
+        // La moneda del generico NO se edita por este path, asi que no se evalua cambio de moneda.
+        var previousServiceType = service.ServiceType;
+        var previousStatus = service.Status;
 
         service.ServiceType = request.ServiceType;
         service.ProductType = request.ServiceType;
@@ -3324,6 +3342,24 @@ public class ReservaService : IReservaService
         // antes), exigir el nombre de TODOS los declarados ANTES de persistir. Defensivo (la edicion del
         // generico no toca el Status hoy), igual que en AddServiceAsync.
         await EnsureGenericNominalCoverageBeforeResolvingAsync(service, genericWasResolved, ct);
+
+        // Plata viva (familia R1): impedir reasignar el operador de un servicio generico confirmado y pagado al
+        // operador saliente sin factura que ancle el receivable (el reconciler lo mintearia como saldo a favor
+        // gastable). Reusa el MISMO nucleo de cancelacion (RefundCap del servicio, pool imputado a ESTA reserva ->
+        // excluye el prepago a cuenta del operador). Corre ANTES del SaveChanges: el nucleo lee el servicio VIEJO con
+        // AsNoTracking (el cambio sigue sin flushear). El candado post-CAE (MutationGuards, arriba) ya cubrio la
+        // factura viva. Solo si (a) cambio el operador (previousSupplierId/supplierId son int?; 0 = sin operador) y
+        // (b) el servicio venia contando como compra confirmada del saliente (si no, moverlo no baja su caja).
+        var previousSupplierIdValue = previousSupplierId ?? 0;
+        if (_cancellationService != null
+            && previousSupplierIdValue > 0
+            && previousSupplierIdValue != (supplierId ?? 0)
+            && WorkflowStatusHelper.CountsForSupplierDebtByType(previousServiceType, previousStatus)
+            && service.ReservaId.HasValue)
+        {
+            await _cancellationService.EnsureServiceOperatorOrCurrencyChangeHasReceivableAnchorAsync(
+                service.ReservaId.Value, CancellableServiceTable.Generic, service.Id, isCurrencyChange: false, ct);
+        }
 
         await _context.SaveChangesAsync();
 

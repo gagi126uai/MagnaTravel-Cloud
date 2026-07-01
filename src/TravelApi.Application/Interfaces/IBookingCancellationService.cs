@@ -1,5 +1,6 @@
 using TravelApi.Application.DTOs;
 using TravelApi.Application.DTOs.Cancellation;
+using TravelApi.Domain.Entities;
 using TravelApi.Domain.Reservations;
 
 namespace TravelApi.Application.Interfaces;
@@ -133,6 +134,44 @@ public interface IBookingCancellationService
         string userId,
         string? userName,
         CancellationToken ct);
+
+    /// <summary>
+    /// R1 — VARIANTE TOTAL (plata viva, 2026-06-30): guarda que <c>ReservaService.AnnulWithPaymentsToCreditAsync</c>
+    /// ("Anular con saldo a favor", sin Nota de Crédito) invoca ANTES de mutar nada. Bloquea la anulación cuando se le
+    /// pagó al operador por uno o más servicios y la reserva todavía NO tiene factura de venta viva que ancle el
+    /// receivable "me tiene que devolver".
+    ///
+    /// <para><b>Por qué</b>: ese flujo cancela todos los servicios vivos (la caja del operador queda negativa) sin
+    /// crear líneas de cancelación; como el receivable se deriva de esas líneas, sin ellas el reconciler del saldo a
+    /// favor materializaría el negativo como crédito GASTABLE (plata que el operador debe devolver). Es la gemela del
+    /// candado que ya protege la cancelación de UN servicio suelto.</para>
+    ///
+    /// <para><b>No bloquea</b> los casos sin fuga: reserva con factura viva (el path normal ancla el receivable),
+    /// servicios impagos al operador, o reserva sin ningún servicio con operador. Lanza
+    /// <c>InvalidOperationException</c> (el controller la mapea a 409) solo cuando hay plata pagada al operador sin
+    /// factura que la ancle. Es READ-ONLY: no persiste nada.</para>
+    /// </summary>
+    Task EnsureReservaAnnulHasReceivableAnchorAsync(int reservaId, CancellationToken ct);
+
+    /// <summary>
+    /// Plata viva (familia R1): impide REASIGNAR el operador (o cambiar la moneda) de UN servicio ya pagado al
+    /// operador saliente cuando NO hay factura viva que ancle el receivable. Reasignar el operador (o mover el
+    /// servicio a otra moneda) hace desaparecer su compra confirmada del bucket del operador saliente, dejando su
+    /// caja en negativo por lo pagado; como ese cambio NO crea ninguna línea de cancelación, el reconciler del saldo
+    /// a favor materializaría ese negativo como crédito GASTABLE (plata que el operador debe devolver).
+    ///
+    /// <para>Usa el MISMO criterio PRECISO que <see cref="EnsureReservaAnnulHasReceivableAnchorAsync"/> y que el
+    /// candado de cancelar un servicio suelto: reconstruye el <c>RefundCap</c> del servicio (lo pagado al operador
+    /// IMPUTADO A ESTA RESERVA, topeado por el costo del servicio). El pool EXCLUYE el prepago "a cuenta"
+    /// (pagos sin reserva imputada), así que un saldo a favor on-account del operador NO dispara este candado.
+    /// Lanza <c>InvalidOperationException</c> (el controller la mapea a 409) solo cuando el cap resultante es &gt; 0;
+    /// no bloquea si hay factura viva, si el servicio está impago al operador, o si no tiene operador. READ-ONLY.</para>
+    ///
+    /// <para>El caller debe invocarlo SOLO cuando efectivamente cambió el operador o la moneda y el servicio venía
+    /// contando como compra confirmada del operador saliente (si no, moverlo no baja su caja y no hay fuga).</para>
+    /// </summary>
+    Task EnsureServiceOperatorOrCurrencyChangeHasReceivableAnchorAsync(
+        int reservaId, CancellableServiceTable serviceTable, int serviceId, bool isCurrencyChange, CancellationToken ct);
 
     // ===== Reacciones internas (llamadas desde otros services del modulo) =====
 
