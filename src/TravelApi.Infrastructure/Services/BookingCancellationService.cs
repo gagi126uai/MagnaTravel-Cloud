@@ -165,13 +165,27 @@ public class BookingCancellationService
         //    Debito (LiveInvoiceDebitNoteTypes): NO son facturas de venta. Contarlas
         //    disparaba un INV-100 falso cuando la reserva tenia 1 factura + su NC/ND
         //    (bug 2026-07-01), y podia elegir la nota como originatingInvoice.
+        //
+        //    Se EXIGE ademas CAE emitido (!string.IsNullOrEmpty(i.CAE)): una fila de
+        //    venta encolada (PENDING) o RECHAZADA por ARCA (Resultado="R", CAE=null) NO
+        //    es una factura fiscal real (nunca tuvo CAE). Sin este filtro, un intento
+        //    de emision fallido/reintento dejaba una fila fantasma que la cuenta sumaba
+        //    y disparaba un INV-100 falso al anular (bug 2026-07-01). Se usa el MISMO
+        //    criterio "CAE presente" que los sitios hermanos que significan "factura de
+        //    venta viva": hasLiveInvoice (mas abajo en esta clase), originatingInvoice de
+        //    la cancelacion parcial, y MutationGuards. Con CAE presente el
+        //    originatingInvoice siempre es una factura emitida (lo que el flujo de NC
+        //    necesita aguas abajo). NOTA: se mantiene deliberadamente el disparo de
+        //    INV-100 cuando hay DOS facturas de venta CON CAE reales (caso multimoneda
+        //    legitimo USD+ARS): ese es el caso "anular multi-factura" que se hara aparte.
         var settings = await _settings.GetEntityAsync(ct);
 
         var activeInvoices = await _db.Invoices
             .Where(i => i.ReservaId == reserva.Id
                      && i.AnnulmentStatus != AnnulmentStatus.Succeeded
                      && !LiveInvoiceCreditNoteTypes.Contains(i.TipoComprobante) // excluye NC
-                     && !LiveInvoiceDebitNoteTypes.Contains(i.TipoComprobante)) // excluye ND
+                     && !LiveInvoiceDebitNoteTypes.Contains(i.TipoComprobante)  // excluye ND
+                     && !string.IsNullOrEmpty(i.CAE))                           // excluye fila fantasma (encolada/rechazada, sin CAE)
             .OrderByDescending(i => i.CreatedAt)
             .ToListAsync(ct);
 

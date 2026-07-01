@@ -154,7 +154,7 @@ function mapearErrorAnnulWithCredit(error) {
     if (error?.status === 409 && code === "INV-100") {
         return {
             tipo: "conflicto",
-            mensaje: "Esta reserva tiene más de una factura emitida. Por ahora no se puede anular toda la reserva de una vez: anulá cada factura desde la solapa Facturas, o contactá a administración.",
+            mensaje: "Esta reserva tiene más de una factura emitida. La anulación de una reserva con varias facturas todavía no está disponible de forma automática; contactá a administración.",
         };
     }
     if (error?.status === 409) {
@@ -485,10 +485,12 @@ test("error 404 → toast, mensaje de reserva no encontrada + instrucción de re
     assert.match(r.mensaje, /recargá/i);
 });
 
-test("error 409 INV-100 (múltiples facturas) → inline, menciona 'solapa Facturas'", () => {
+test("error 409 INV-100 (múltiples facturas) → inline, sin mencionar solapas inexistentes", () => {
     const r = mapearErrorAnnulWithCredit({ status: 409, payload: { invariantCode: "INV-100" } });
     assert.equal(r.tipo, "conflicto");
     assert.match(r.mensaje, /factura/i);
+    // No debe mandar a una "solapa Facturas" que no existe en la ficha de la reserva.
+    assert.ok(!/solapa Facturas/i.test(r.mensaje));
 });
 
 test("error 409 genérico → inline, mensaje de 'no se pudo anular'", () => {

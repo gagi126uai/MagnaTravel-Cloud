@@ -356,20 +356,23 @@ public class Adr025PartialAndMultiOperatorCancellationTests
     // ============================================================
 
     /// <summary>
-    /// Siembra una factura de la reserva. Por defecto crea una Factura C (venta) viva.
-    /// Los tests pasan el <paramref name="tipoComprobante"/> para simular NC (13) o ND (12).
+    /// Siembra una factura de la reserva. Por defecto crea una Factura C (venta) EMITIDA
+    /// (con CAE, Resultado="A"). Los tests pasan el <paramref name="tipoComprobante"/> para
+    /// simular NC (13) o ND (12); y <paramref name="cae"/>=null + <paramref name="resultado"/>="R"/"PENDING"
+    /// para simular la FILA FANTASMA (intento de emision rechazado o encolado, sin CAE) que
+    /// NO debe contar como factura de venta viva (bug 2026-07-01).
     /// </summary>
     private static Invoice SeedInvoice(
         AppDbContext ctx, int reservaId, int tipoComprobante, int numeroComprobante,
-        decimal importeTotal = 80_000m)
+        decimal importeTotal = 80_000m, string? cae = "10000000000000", string resultado = "A")
     {
         var invoice = new Invoice
         {
             TipoComprobante = tipoComprobante,
             PuntoDeVenta = 1,
             NumeroComprobante = numeroComprobante,
-            CAE = "10000000000000",
-            Resultado = "A",
+            CAE = cae,
+            Resultado = resultado,
             ImporteTotal = importeTotal,
             ReservaId = reservaId,
             AnnulmentStatus = AnnulmentStatus.None,
@@ -478,6 +481,122 @@ public class Adr025PartialAndMultiOperatorCancellationTests
         var bc = await ctx.BookingCancellations.FirstAsync(b => b.PublicId == dto.PublicId);
         Assert.Equal(saleInvoice.Id, bc.OriginatingInvoiceId);
         Assert.Equal(supplierA.Id, bc.SupplierId);
+    }
+
+    // ============================================================
+    // Bug 2026-07-01: fila FANTASMA (factura de venta sin CAE, encolada o rechazada por
+    // ARCA) NO debe contar como factura de venta viva para INV-100. El count/seleccion
+    // debe incluir SOLO facturas EMITIDAS (con CAE), igual que los sitios hermanos.
+    // ============================================================
+
+    [Fact]
+    public async Task Draft_LiveSaleInvoicePlusRejectedPhantom_DoesNotTriggerInv100_OriginatingIsLiveInvoice()
+    {
+        using var ctx = NewDbContext();
+        var (reserva, _, _, _, _, _) = await SeedAsync(ctx, addSecondOperatorService: false);
+        var service = BuildService(ctx);
+
+        // Factura de venta EMITIDA (con CAE) + una fila de venta RECHAZADA por ARCA
+        // (Resultado="R", CAE=null) de un intento fallido. La rechazada NO es factura
+        // fiscal real: no debe contar para INV-100 ni quedar como originatingInvoice.
+        var liveInvoice = SeedInvoice(ctx, reserva.Id, tipoComprobante: 11, numeroComprobante: 70);
+        SeedInvoice(ctx, reserva.Id, tipoComprobante: 11, numeroComprobante: 71,
+            cae: null, resultado: "R");
+        await ctx.SaveChangesAsync();
+
+        var dto = await service.DraftAsync(
+            new DraftCancellationRequest(reserva.PublicId, "Anular reserva con factura + fila rechazada"),
+            "vendedor-1", "Vendedor", CancellationToken.None);
+
+        var bc = await ctx.BookingCancellations.FirstAsync(b => b.PublicId == dto.PublicId);
+        Assert.Equal(liveInvoice.Id, bc.OriginatingInvoiceId);
+    }
+
+    [Fact]
+    public async Task Draft_LiveSaleInvoicePlusPendingPhantom_DoesNotTriggerInv100_OriginatingIsLiveInvoice()
+    {
+        using var ctx = NewDbContext();
+        var (reserva, _, _, _, _, _) = await SeedAsync(ctx, addSecondOperatorService: false);
+        var service = BuildService(ctx);
+
+        // Factura de venta EMITIDA (con CAE) + una fila de venta ENCOLADA/PENDIENTE
+        // (Resultado="PENDING", CAE=null) de un reintento en vuelo. Tampoco cuenta.
+        var liveInvoice = SeedInvoice(ctx, reserva.Id, tipoComprobante: 11, numeroComprobante: 72);
+        SeedInvoice(ctx, reserva.Id, tipoComprobante: 11, numeroComprobante: 73,
+            cae: null, resultado: "PENDING");
+        await ctx.SaveChangesAsync();
+
+        var dto = await service.DraftAsync(
+            new DraftCancellationRequest(reserva.PublicId, "Anular reserva con factura + fila pendiente"),
+            "vendedor-1", "Vendedor", CancellationToken.None);
+
+        var bc = await ctx.BookingCancellations.FirstAsync(b => b.PublicId == dto.PublicId);
+        Assert.Equal(liveInvoice.Id, bc.OriginatingInvoiceId);
+    }
+
+    [Fact]
+    public async Task Draft_LiveSaleInvoicePlusCreditNotePlusPhantom_DoesNotTriggerInv100()
+    {
+        using var ctx = NewDbContext();
+        var (reserva, _, _, _, _, _) = await SeedAsync(ctx, addSecondOperatorService: false);
+        var service = BuildService(ctx);
+
+        // Combina con el fix anterior (excluir NC): factura de venta emitida + su NC + una
+        // fila fantasma de venta sin CAE. Solo la factura emitida debe contar.
+        var liveInvoice = SeedInvoice(ctx, reserva.Id, tipoComprobante: 11, numeroComprobante: 74);
+        SeedInvoice(ctx, reserva.Id, tipoComprobante: 13, numeroComprobante: 75); // NC C
+        SeedInvoice(ctx, reserva.Id, tipoComprobante: 11, numeroComprobante: 76,
+            cae: null, resultado: "R"); // fila fantasma
+        await ctx.SaveChangesAsync();
+
+        var dto = await service.DraftAsync(
+            new DraftCancellationRequest(reserva.PublicId, "Anular reserva con factura + NC + fila fantasma"),
+            "vendedor-1", "Vendedor", CancellationToken.None);
+
+        var bc = await ctx.BookingCancellations.FirstAsync(b => b.PublicId == dto.PublicId);
+        Assert.Equal(liveInvoice.Id, bc.OriginatingInvoiceId);
+    }
+
+    [Fact]
+    public async Task Draft_TwoLiveSaleInvoicesWithCae_StillTriggersInv100_MultiCurrencyPreserved()
+    {
+        using var ctx = NewDbContext();
+        var (reserva, _, _, _, _, _) = await SeedAsync(ctx, addSecondOperatorService: false);
+        var service = BuildService(ctx);
+
+        // Caso legitimo multimoneda (USD + ARS): DOS facturas de venta EMITIDAS (con CAE).
+        // El fix NO debe suavizar esto: INV-100 debe seguir disparando (es el caso real
+        // "anular multi-factura" que se construira aparte).
+        SeedInvoice(ctx, reserva.Id, tipoComprobante: 11, numeroComprobante: 77);
+        SeedInvoice(ctx, reserva.Id, tipoComprobante: 11, numeroComprobante: 78);
+        await ctx.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            service.DraftAsync(
+                new DraftCancellationRequest(reserva.PublicId, "Dos facturas emitidas con CAE"),
+                "vendedor-1", "Vendedor", CancellationToken.None));
+        Assert.Equal("INV-100", ex.InvariantCode);
+    }
+
+    [Fact]
+    public async Task Draft_OnlyPhantomInvoiceNoCae_ThrowsNoActiveInvoice()
+    {
+        using var ctx = NewDbContext();
+        var (reserva, _, _, _, _, _) = await SeedAsync(ctx, addSecondOperatorService: false);
+        var service = BuildService(ctx);
+
+        // Solo una fila fantasma (sin CAE) y ninguna factura emitida: no hay factura de
+        // venta activa para anular. Debe caer en activeInvoices.Count==0 con el mensaje ya
+        // existente (no un INV-100 falso).
+        SeedInvoice(ctx, reserva.Id, tipoComprobante: 11, numeroComprobante: 79,
+            cae: null, resultado: "R");
+        await ctx.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.DraftAsync(
+                new DraftCancellationRequest(reserva.PublicId, "Solo fila fantasma"),
+                "vendedor-1", "Vendedor", CancellationToken.None));
+        Assert.Contains("no tiene factura activa para anular", ex.Message);
     }
 
     // ============================================================

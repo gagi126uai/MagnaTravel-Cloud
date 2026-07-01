@@ -162,7 +162,7 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar }) {
                     showError("No encontramos la reserva. Recargá la página.");
                 } else if (error?.status === 409 && code === "INV-100") {
                     setConflictMessage(
-                        "Esta reserva tiene más de una factura emitida. Por ahora no se puede anular toda la reserva de una vez: anulá cada factura desde la solapa Facturas, o contactá a administración."
+                        "Esta reserva tiene más de una factura emitida. La anulación de una reserva con varias facturas todavía no está disponible de forma automática; contactá a administración."
                     );
                 } else if (error?.status === 409) {
                     setConflictMessage(
