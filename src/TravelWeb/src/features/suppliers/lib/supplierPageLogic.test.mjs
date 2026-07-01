@@ -4,6 +4,8 @@ import {
     resolverMonedaPrincipalProveedor,
     calcularEquivalenteProveedor,
     construirPayloadPagoProveedor,
+    ordenarBloquesPesosPrimero,
+    debeMostrarseEnGrisNeutro,
 } from "./supplierPageLogic.js";
 
 // ─── resolverMonedaPrincipalProveedor ────────────────────────────────────────
@@ -287,5 +289,86 @@ describe("construirPayloadPagoProveedor", () => {
         assert.equal(payload.amount, 500);
         assert.equal(payload.currency, "ARS");
         assert.equal(payload.method, "Cash");
+    });
+});
+
+// ─── ordenarBloquesPesosPrimero (Fase D — encabezado de los "dos números") ──
+
+describe("ordenarBloquesPesosPrimero", () => {
+    it("pone ARS antes que USD aunque lleguen en el orden contrario", () => {
+        const bloques = [{ currency: "USD" }, { currency: "ARS" }];
+        const ordenados = ordenarBloquesPesosPrimero(bloques);
+        assert.deepEqual(ordenados.map((b) => b.currency), ["ARS", "USD"]);
+    });
+
+    it("mantiene el orden si ya viene ARS primero", () => {
+        const bloques = [{ currency: "ARS" }, { currency: "USD" }];
+        const ordenados = ordenarBloquesPesosPrimero(bloques);
+        assert.deepEqual(ordenados.map((b) => b.currency), ["ARS", "USD"]);
+    });
+
+    it("con una sola moneda no rompe nada", () => {
+        assert.deepEqual(
+            ordenarBloquesPesosPrimero([{ currency: "USD" }]).map((b) => b.currency),
+            ["USD"]
+        );
+    });
+
+    it("array vacio retorna array vacio", () => {
+        assert.deepEqual(ordenarBloquesPesosPrimero([]), []);
+    });
+
+    it("null/undefined no lanzan, retornan array vacio", () => {
+        assert.deepEqual(ordenarBloquesPesosPrimero(null), []);
+        assert.deepEqual(ordenarBloquesPesosPrimero(undefined), []);
+    });
+
+    it("no muta el array original", () => {
+        const original = [{ currency: "USD" }, { currency: "ARS" }];
+        const copia = JSON.stringify(original);
+        ordenarBloquesPesosPrimero(original);
+        assert.equal(JSON.stringify(original), copia);
+    });
+
+    it("una moneda desconocida (ej. EUR) siempre queda antes que USD", () => {
+        const bloques = [{ currency: "USD" }, { currency: "EUR" }];
+        const ordenados = ordenarBloquesPesosPrimero(bloques);
+        assert.equal(ordenados[0].currency, "EUR");
+        assert.equal(ordenados[1].currency, "USD");
+    });
+});
+
+// ─── debeMostrarseEnGrisNeutro (Fase D — color de los recuadros del encabezado) ──
+
+describe("debeMostrarseEnGrisNeutro", () => {
+    it("sin permiso de ver costos, siempre gris aunque el monto sea grande", () => {
+        assert.equal(debeMostrarseEnGrisNeutro(1250000, false), true);
+    });
+
+    it("sin permiso de ver costos, gris incluso con monto 0", () => {
+        assert.equal(debeMostrarseEnGrisNeutro(0, false), true);
+    });
+
+    it("con permiso y monto positivo, NO va en gris (usa su color propio)", () => {
+        assert.equal(debeMostrarseEnGrisNeutro(1250000, true), false);
+    });
+
+    it("con permiso y monto exactamente 0, va en gris", () => {
+        assert.equal(debeMostrarseEnGrisNeutro(0, true), true);
+    });
+
+    it("con permiso y monto null/undefined, se trata como 0 -> gris", () => {
+        assert.equal(debeMostrarseEnGrisNeutro(null, true), true);
+        assert.equal(debeMostrarseEnGrisNeutro(undefined, true), true);
+    });
+
+    it("con permiso y un resto de redondeo menor a medio centavo, se trata como cero", () => {
+        assert.equal(debeMostrarseEnGrisNeutro(0.001, true), true);
+    });
+
+    it("con permiso y un monto negativo distinto de cero, NO va en gris", () => {
+        // No debería pasar en la práctica (los tres campos son siempre >= 0), pero la función
+        // no debe asumir signo: solo mira si el valor absoluto es ~0.
+        assert.equal(debeMostrarseEnGrisNeutro(-5, true), false);
     });
 });

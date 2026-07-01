@@ -9,8 +9,15 @@
  *   - El saldo corriente acumula línea a línea (positivo = debemos; negativo = pagamos de más).
  *
  * Enmascarado de montos:
- *   Si amountsVisible === false el backend devolvió los montos ocultos (sin permiso de costo).
- *   Mostramos "—" en gris en vez de valores para distinguir "sin permiso" de "saldo cero".
+ *   Si amountsVisible === false (a nivel de TODO el extracto, no por bloque) el backend
+ *   devolvió los montos ocultos (sin permiso de costo). Mostramos "—" en gris en vez de
+ *   valores para distinguir "sin permiso" de "saldo cero".
+ *
+ * Circuito de cancelación (Fase D, 2026-07-01):
+ *   Debajo de la tabla Cargo/Abono/Saldo de cada moneda se agrega un bloque colapsable
+ *   (arranca cerrado) con las multas retenidas por el operador y los reembolsos ya recibidos
+ *   de esa moneda (bloque.circuitLines). Si una moneda no tuvo anulaciones, el bloque no
+ *   se renderiza (ni siquiera vacío). Ver CircuitoCancelacionBloque más abajo.
  *
  * Editar / Eliminar un pago desde el extracto:
  *   Si canEditarEliminar=true, las filas de tipo Payment muestran botones Editar y Eliminar.
@@ -39,7 +46,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { BookOpen, Loader2, Pencil, RefreshCw, Trash2, Undo2 } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronRight, Loader2, Pencil, RefreshCw, Trash2, Undo2 } from "lucide-react";
 import { api } from "../../../api";
 import { hasPermission } from "../../../auth";
 import { getApiErrorMessage } from "../../../lib/errors";
@@ -188,6 +195,12 @@ export function SupplierExtractoSection({
                             <BloqueExtractoProveedor
                                 key={bloque.currency}
                                 bloque={bloque}
+                                // amountsVisible viene del DTO RAIZ (extracto.amountsVisible), no del bloque
+                                // por moneda (SupplierAccountStatementCurrencyBlockDto no tiene ese campo).
+                                // Antes este componente leia bloque.amountsVisible, que siempre daba
+                                // "undefined" y por lo tanto SIEMPRE mostraba los montos aunque el backend
+                                // los hubiera enmascarado a 0 — se corrige leyendo la fuente correcta.
+                                montosVisiblesGlobal={extracto?.amountsVisible !== false}
                                 allPayments={allPayments}
                                 canEditarEliminar={canEditarEliminar}
                                 onEditarPago={onEditarPago}
@@ -350,11 +363,11 @@ export function SupplierExtractoSection({
  * Muestra cabecera con saldo de cierre + tabla de líneas.
  * La columna "Acciones" solo aparece cuando canEditarEliminar=true.
  */
-function BloqueExtractoProveedor({ bloque, allPayments, canEditarEliminar, onEditarPago, onEliminarPago }) {
-    // amountsVisible viene del backend: false = el usuario no tiene permiso de costo.
-    // En ese caso, mostramos "—" en TODOS los montos para que quede claro que es restricción de permisos,
-    // no que la cuenta está en cero.
-    const montosVisibles = bloque.amountsVisible !== false;
+function BloqueExtractoProveedor({ bloque, montosVisiblesGlobal, allPayments, canEditarEliminar, onEditarPago, onEliminarPago }) {
+    // montosVisiblesGlobal viene del DTO raíz (extracto.amountsVisible): false = el usuario no tiene
+    // permiso de costo. En ese caso, mostramos "—" en TODOS los montos para que quede claro que es
+    // restricción de permisos, no que la cuenta está en cero.
+    const montosVisibles = montosVisiblesGlobal !== false;
 
     return (
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -421,6 +434,105 @@ function BloqueExtractoProveedor({ bloque, allPayments, canEditarEliminar, onEdi
                     )}
                 </DataGridBody>
             </DataGrid>
+
+            {/* Circuito de cancelación: bloque aparte, debajo del extracto de caja de esta moneda.
+                Solo existe si hubo anulaciones en esta moneda (si no, CircuitoCancelacionBloque no
+                renderiza nada — ni siquiera un cartel de "vacío", por decisión de Gastón). */}
+            <CircuitoCancelacionBloque
+                currency={bloque.currency}
+                lineas={bloque.circuitLines}
+                montosVisibles={montosVisibles}
+            />
+        </div>
+    );
+}
+
+// ─── Bloque colapsable "Circuito de cancelación" ─────────────────────────────
+
+/**
+ * Tablita colapsable con los movimientos del "circuito de cancelación" de una moneda:
+ * la multa que el operador retuvo y la plata que ya nos devolvió por viajes anulados.
+ *
+ * Arranca CERRADA (Gastón, 2026-07-01: no abarrotar el extracto con algo que no siempre
+ * aplica). Si el operador no tuvo anulaciones en esta moneda, este componente no renderiza
+ * nada — ni un cartel de "vacío" (decisión explícita: un operador sin anulaciones no necesita
+ * ver un bloque vacío).
+ *
+ * El texto de "Movimiento" (description) viene tal cual del backend, ya en español
+ * ("Multa retenida por el operador" / "Reembolso recibido del operador"); no lo derivamos
+ * de ningún código interno.
+ */
+function CircuitoCancelacionBloque({ currency, lineas, montosVisibles }) {
+    const [abierto, setAbierto] = useState(false);
+
+    if (!lineas || lineas.length === 0) return null;
+
+    const nombreMoneda = currency === "USD" ? "Dólares" : "Pesos";
+    const simboloMoneda = currency === "USD" ? "US$" : "$";
+
+    return (
+        <div className="border-t border-slate-100 dark:border-slate-800">
+            <button
+                type="button"
+                onClick={() => setAbierto((anterior) => !anterior)}
+                className="flex w-full items-center justify-between gap-2 px-6 py-3 text-left hover:bg-slate-50/60 dark:hover:bg-slate-800/20 transition-colors"
+                aria-expanded={abierto}
+                data-testid={`circuito-cancelacion-toggle-${currency}`}
+            >
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                    Circuito de cancelación ({nombreMoneda} {simboloMoneda})
+                </span>
+                <span className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 dark:text-indigo-400">
+                    {abierto ? (
+                        <>
+                            <ChevronDown className="h-3.5 w-3.5" />
+                            Ocultar
+                        </>
+                    ) : (
+                        <>
+                            <ChevronRight className="h-3.5 w-3.5" />
+                            Mostrar
+                        </>
+                    )}
+                </span>
+            </button>
+
+            {abierto && (
+                <DataGrid density="compact" minWidth="640px">
+                    <DataGridHeader>
+                        <DataGridHeaderRow>
+                            <DataGridHeaderCell>Fecha</DataGridHeaderCell>
+                            <DataGridHeaderCell>Movimiento</DataGridHeaderCell>
+                            <DataGridHeaderCell>Reserva</DataGridHeaderCell>
+                            <DataGridHeaderCell align="right">Monto</DataGridHeaderCell>
+                        </DataGridHeaderRow>
+                    </DataGridHeader>
+                    <DataGridBody>
+                        {lineas.map((linea, idx) => (
+                            <DataGridRow key={`circuito-${currency}-${idx}`} data-testid={`circuito-cancelacion-linea-${currency}-${idx}`}>
+                                <DataGridCell className="text-slate-500 dark:text-slate-400">
+                                    {linea.date ? new Date(linea.date).toLocaleDateString("es-AR") : "—"}
+                                </DataGridCell>
+                                <DataGridCell>{linea.description || "—"}</DataGridCell>
+                                <DataGridCell className="font-mono text-xs text-slate-500 dark:text-slate-400">
+                                    {linea.documentRef || "—"}
+                                </DataGridCell>
+                                {/* Monto: el backend siempre lo trae en "charge" (cada línea del circuito
+                                    es un cargo positivo; ver nota de mapeo en SupplierService). */}
+                                <DataGridCell align="right">
+                                    {montosVisibles ? (
+                                        <span className="font-bold text-slate-800 dark:text-slate-200">
+                                            {formatCurrency(linea.charge ?? 0, currency)}
+                                        </span>
+                                    ) : (
+                                        <span className="text-muted-foreground" title="Sin permiso para ver montos">—</span>
+                                    )}
+                                </DataGridCell>
+                            </DataGridRow>
+                        ))}
+                    </DataGridBody>
+                </DataGrid>
+            )}
         </div>
     );
 }

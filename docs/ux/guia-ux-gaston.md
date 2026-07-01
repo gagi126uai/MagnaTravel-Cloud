@@ -716,3 +716,42 @@ Ronda 2:
 > las de la agencia y dónde las ve el cliente, si las del cliente sirven para devoluciones, si hay una cuenta
 > "principal/preferida", cómo se elige la cuenta del proveedor al pagar si hay varias, y la validación fina
 > (CBU de 22 dígitos: avisar o frenar) + qué permiso revela el número completo.
+
+## Cuenta del operador — LOS DOS NÚMEROS + Circuito de cancelación (2026-07-01, respuestas de Gastón)
+
+> **Origen:** el backend ya calcula, por operador y por moneda, "Le debo" (X), "Me tiene que devolver" (Y)
+> —lo que el operador debe devolver por anulaciones ya pagadas—, el "Saldo a favor" consumible (prepago),
+> y el "Circuito de cancelación" (multa retenida por el operador / reembolso recibido del operador). La ficha
+> del operador (encabezado + 6 solapas) ya existe; estas decisiones definen CÓMO se muestran esos datos, que
+> hoy la pantalla no muestra. Gastón respondió P1..P6.
+
+- **(2026-07-01, P1+P3 — vista de arriba) Tres recuadros por moneda, con colores distintos.** El encabezado
+  del operador muestra, POR MONEDA y en juegos separados de pesos y dólares, TRES recuadros:
+  **"Le debo" (rojo)** = lo que la agencia le tiene que pagar; **"Me tiene que devolver" (naranja)** = lo que
+  el operador debe devolver por viajes anulados ya pagados; **"Saldo a favor" (verde)** = plata a cuenta,
+  gastable en la próxima compra. **Nunca el mismo verde para "Me tiene que devolver" y "Saldo a favor"**: son
+  cosas distintas (una es plata que reclamás; la otra es plata que ya podés gastar). Pesos y dólares SIEMPRE
+  separados, nunca sumados. **Sin permiso de ver costos (`cobranzas.see_cost`): los tres recuadros van en gris
+  con "—", nunca en color** (no se revela plata a quien no puede verla).
+- **(2026-07-01 — corrección de raíz del bug actual) Los recuadros dejan de derivar "A favor" del saldo de
+  caja en negativo.** Hoy, cuando un viaje anulado ya pagado deja la caja "en negativo", el recuadro lo muestra
+  como "A favor" en verde (como si fuera plata para gastar), y NO lo es. Los recuadros deben leer los tres
+  campos limpios que ya manda el backend por moneda (X / Y / saldo a favor), no el saldo de caja crudo.
+- **(2026-07-01, P2 — unificar con la solapa Reembolsos) "Me tiene que devolver" es el TOTAL; la solapa
+  "Reembolsos" es el DETALLE de ese mismo total.** Un solo número, coherente arriba y adentro: el recuadro
+  "Me tiene que devolver" de una moneda tiene que dar la MISMA cifra que la suma de lo pendiente listado en la
+  solapa "Reembolsos" de esa moneda. No pueden divergir. (Riesgo técnico registrado: hoy salen de dos cálculos
+  distintos; conciliarlos es tarea de backend, ver la spec del 2026-07-01.)
+- **(2026-07-01, P4 — Circuito de cancelación) Tablita dentro de "Cuenta corriente", debajo del extracto,
+  que arranca CERRADA y se abre con un click ("mostrar circuito de cancelación").** Aparece solo si el operador
+  tuvo anulaciones en esa moneda. Un bloque por moneda. Cada línea muestra la **etiqueta en español tal cual**
+  ("Multa retenida por el operador" / "Reembolso recibido del operador"), la fecha, el **número de reserva
+  visible** y el monto. NUNCA códigos internos ni identificadores técnicos. Montos "—" sin permiso de costos.
+- **(2026-07-01, P5 — estado vacío) Operador sin anulaciones: el bloque del circuito no aparece y
+  "Me tiene que devolver" muestra $0 tranquilo, sin ningún cartel.**
+- **(2026-07-01, P6=B — anotar el reembolso recibido) Botón "Registrar reembolso recibido" en "Cuenta
+  corriente", al lado de "Registrar pago".** La acción se dispara desde Cuenta corriente (no desde la solapa
+  Reembolsos). El botón obliga a **ELEGIR a qué reembolso pendiente se imputa** (una reserva/anulación puntual),
+  no acepta un monto suelto sin destino. La solapa "Reembolsos" sigue mostrando el detalle/estado; registrar
+  desde Cuenta corriente tiene que **actualizar lo que se ve en Reembolsos** (ambos lados consistentes). Va
+  EN LÍNEA (ficha que se abre debajo), nunca ventana flotante.

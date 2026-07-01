@@ -8,6 +8,8 @@
  *   - resolverMonedaPrincipalProveedor: qué moneda priorizar al pagar
  *   - calcularEquivalenteProveedor: conversión de moneda cruzada
  *   - construirPayloadPagoProveedor: armar el body del POST/PUT de pago
+ *   - ordenarBloquesPesosPrimero: orden de los recuadros del encabezado (Fase D)
+ *   - debeMostrarseEnGrisNeutro: cuándo un recuadro del encabezado va en gris (Fase D)
  */
 
 /**
@@ -133,4 +135,43 @@ export function construirPayloadPagoProveedor({
         exchangeRateAt: new Date(fechaTC).toISOString(),
         imputedAmount: montoEquivalente,
     };
+}
+
+/**
+ * Ordena los bloques de moneda del encabezado ("Le debo" / "Me tiene que devolver" /
+ * "Saldo a favor") para que pesos aparezca siempre primero y dólares después, como pide
+ * la spec de la Fase D (2026-07-01). Cualquier otra moneda futura queda al final.
+ *
+ * No muta el array de entrada (devuelve uno nuevo).
+ *
+ * @param {Array<{ currency: string }>} currencies — bloques de SupplierAccountStatementDto.currencies
+ * @returns {Array<{ currency: string }>} copia ordenada
+ */
+export function ordenarBloquesPesosPrimero(currencies) {
+    const bloques = Array.isArray(currencies) ? currencies : [];
+    return [...bloques].sort((a, b) => {
+        if (a.currency === "USD" && b.currency !== "USD") return 1;
+        if (b.currency === "USD" && a.currency !== "USD") return -1;
+        return 0;
+    });
+}
+
+/**
+ * Decide si un recuadro del encabezado ("Le debo" / "Me tiene que devolver" / "Saldo a favor")
+ * debe pintarse en gris neutro en vez de con su color propio (rojo/naranja/verde).
+ *
+ * Dos motivos posibles, ambos independientes de qué recuadro sea:
+ *   1. El usuario no tiene permiso de ver costos (cobranzas.see_cost) → SIEMPRE gris,
+ *      nunca revelamos si hay deuda/reembolso/saldo a quien no puede verlo.
+ *   2. El monto es $0 (con tolerancia de redondeo de medio centavo) → gris neutro,
+ *      porque no hay nada que remarcar (regla de la spec: "0 = gris neutro").
+ *
+ * @param {number|null|undefined} monto
+ * @param {boolean} puedeVerMontos
+ * @returns {boolean} true si el recuadro debe ir en gris neutro
+ */
+export function debeMostrarseEnGrisNeutro(monto, puedeVerMontos) {
+    if (!puedeVerMontos) return true;
+    const numero = Number(monto ?? 0);
+    return Math.abs(numero) < 0.005;
 }

@@ -53,6 +53,7 @@ import { useOperatorRefundsPending } from "../hooks/useOperatorRefundsPending";
 // CURRENCY_OPTIONS se reutiliza del alta de operador para mantener las etiquetas consistentes.
 // No duplicamos el array: si el equipo agrega una moneda, se actualiza en un solo lugar.
 import { CURRENCY_OPTIONS } from "../lib/nuevoOperadorLogic.js";
+import { ordenarBloquesPesosPrimero, debeMostrarseEnGrisNeutro } from "../lib/supplierPageLogic.js";
 
 // Estado inicial vacío para la paginación de servicios.
 const emptyPage = {
@@ -74,80 +75,133 @@ const TAX_CONDITION_LABELS = {
     CONSUMIDOR_FINAL: "Cons. Final",
 };
 
-// ─── Chips de saldo en vivo del encabezado ────────────────────────────────────
+// ─── Los "dos números" del encabezado (Fase D, 2026-07-01) ───────────────────
+
+// Rótulo de cada juego de recuadros. Orden de renderizado: pesos primero, dólares después
+// (se ordena en el propio componente; este mapa solo da el texto).
+const ROTULO_GRUPO_MONEDA = {
+    ARS: "PESOS ($)",
+    USD: "DÓLARES (US$)",
+};
+
+// Paleta de color por tipo de recuadro. "neutro" se usa siempre que el monto sea $0
+// (no hay nada que remarcar) o cuando el usuario no tiene permiso de ver costos.
+// Importante: "Me tiene que devolver" (naranja) y "Saldo a favor" (verde) usan colores
+// DISTINTOS a propósito — son conceptos distintos (uno es un reclamo, el otro es plata gastable).
+const PALETA_RECUADRO = {
+    rojo: {
+        caja: "border-rose-200 bg-rose-50/60 dark:border-rose-900/40 dark:bg-rose-950/20",
+        texto: "text-rose-700 dark:text-rose-400",
+    },
+    naranja: {
+        caja: "border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-950/20",
+        texto: "text-amber-700 dark:text-amber-400",
+    },
+    verde: {
+        caja: "border-emerald-200 bg-emerald-50 dark:border-emerald-900/40 dark:bg-emerald-950/20",
+        texto: "text-emerald-700 dark:text-emerald-400",
+    },
+    neutro: {
+        caja: "border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/20",
+        texto: "text-slate-500",
+    },
+};
 
 /**
- * Chips compactos que muestran el saldo con el proveedor por moneda.
+ * Un recuadro individual ("Le debo" / "Me tiene que devolver" / "Saldo a favor").
  *
- * Siempre visibles en el encabezado, sobre las solapas.
- * Reglas clave:
- *   - NUNCA suma ARS + USD (multimoneda dura). Un chip por moneda.
- *   - Sin permiso cobranzas.see_cost → todo gris, monto "—", SIN verde.
- *     No revelar que hay saldo a favor ni saldo a pagar a quien no tiene permiso.
- *   - Con permiso → rojo si le debemos, verde si pagamos de más (a favor).
- *
- * Los botones de acción ("Registrar pago", "Usar saldo a favor") NO van acá;
- * van en la solapa "Cuenta corriente" para no saturar el encabezado.
+ * El color fijo del recuadro (rojo/naranja/verde) se apaga a gris neutro cuando el monto
+ * es $0 (nada que remarcar) o cuando el usuario no tiene permiso de ver costos.
  */
-function BalanceHeaderChips({ balancesByCurrency }) {
-    const puedeVerMontos = hasPermission("cobranzas.see_cost");
-    const balances = Array.isArray(balancesByCurrency) ? balancesByCurrency : [];
-
-    if (balances.length === 0) return null;
+function RecuadroSaldoOperador({ etiqueta, monto, esquema, puedeVerMontos, currency, testId }) {
+    const paleta = debeMostrarseEnGrisNeutro(monto, puedeVerMontos)
+        ? PALETA_RECUADRO.neutro
+        : PALETA_RECUADRO[esquema];
 
     return (
-        <div className="flex flex-wrap gap-2 mt-3">
-            {balances.map((balance) => {
-                const deuda = balance.balance ?? 0;
-                const esAFavor = deuda < 0;
-                const esCero = deuda === 0;
+        <div
+            className={`inline-flex min-w-[9.5rem] flex-col rounded-lg border px-3 py-2 ${paleta.caja}`}
+            data-testid={testId}
+        >
+            <span className={`text-xs font-bold ${paleta.texto}`}>{etiqueta}</span>
+            <span className={`font-mono font-bold text-lg ${paleta.texto}`}>
+                {puedeVerMontos ? formatCurrency(monto ?? 0, currency) : "—"}
+            </span>
+        </div>
+    );
+}
 
-                // Sin permiso: colores neutros para no revelar el estado del saldo.
-                // Con permiso: rojo=le debo, verde=a favor, gris=sin deuda.
-                const chipStyle = !puedeVerMontos
-                    ? "border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/20"
-                    : esAFavor
-                        ? "border-emerald-200 bg-emerald-50 dark:border-emerald-900/40 dark:bg-emerald-950/20"
-                        : esCero
-                            ? "border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/20"
-                            : "border-rose-200 bg-rose-50/60 dark:border-rose-900/40 dark:bg-rose-950/20";
+/**
+ * Los "dos números" de la cuenta del operador + el saldo a favor, en tres recuadros por moneda.
+ *
+ * Reemplaza los chips viejos (BalanceHeaderChips) que leían el saldo de CAJA crudo
+ * (balancesByCurrency[].balance) y pintaban "A favor" en verde cuando la caja quedaba en
+ * negativo — mostrando como "plata para gastar" algo que en realidad el operador nos tiene
+ * que DEVOLVER (bug de raíz corregido acá). Ahora lee los tres campos limpios que ya calcula
+ * el backend por moneda (GET /suppliers/{id}/account/statement → currencies[]):
+ *   - iTheyOwe   → "Le debo"              (rojo)    — lo que la agencia le tiene que pagar.
+ *   - theyOweMe  → "Me tiene que devolver" (naranja) — reembolso pendiente por anulaciones.
+ *                  NO es plata para gastar.
+ *   - prepayment → "Saldo a favor"        (verde)   — plata a cuenta, gastable ya mismo.
+ *
+ * Pesos y dólares SIEMPRE en juegos separados (nunca se suman). Sin permiso de ver costos
+ * (cobranzas.see_cost), los tres recuadros de cada moneda van en gris con "—".
+ *
+ * Props:
+ *   - currencies: array de SupplierAccountStatementCurrencyBlockDto (o [] si no cargó aún)
+ *   - loading: boolean — true mientras se pide /account/statement
+ */
+function SupplierBalanceThreeBoxesHeader({ currencies, loading }) {
+    const puedeVerMontos = hasPermission("cobranzas.see_cost");
 
-                const textStyle = !puedeVerMontos
-                    ? "text-slate-500"
-                    : esAFavor
-                        ? "text-emerald-700 dark:text-emerald-400"
-                        : esCero
-                            ? "text-slate-500"
-                            : "text-rose-700 dark:text-rose-400";
+    // Pesos primero, dólares después (y cualquier otra moneda al final), como pide la spec.
+    const bloquesOrdenados = ordenarBloquesPesosPrimero(currencies);
 
-                const simboloMoneda = balance.currency === "USD" ? "US$" : "$";
+    if (loading) {
+        return (
+            <p className="mt-3 text-xs text-slate-400" data-testid="header-saldos-cargando">
+                Cargando saldos con el operador…
+            </p>
+        );
+    }
 
-                // Etiqueta según el estado (sin permiso: solo indica la moneda, sin revelar deuda/favor)
-                const etiqueta = !puedeVerMontos
-                    ? `En ${simboloMoneda}`
-                    : esAFavor
-                        ? `A favor en ${simboloMoneda}`
-                        : esCero
-                            ? `Sin deuda en ${simboloMoneda}`
-                            : `Le debo en ${simboloMoneda}`;
+    if (bloquesOrdenados.length === 0) return null;
 
-                return (
-                    <div
-                        key={balance.currency}
-                        className={`inline-flex flex-col rounded-lg border px-3 py-2 ${chipStyle}`}
-                        data-testid={`header-saldo-${balance.currency}`}
-                    >
-                        <span className={`text-xs font-bold uppercase tracking-wider ${textStyle}`}>
-                            {etiqueta}
-                        </span>
-                        <span className={`font-mono font-bold text-xl ${textStyle}`}>
-                            {puedeVerMontos
-                                ? formatCurrency(Math.abs(deuda), balance.currency)
-                                : "—"}
-                        </span>
+    return (
+        <div className="mt-3 space-y-3">
+            {bloquesOrdenados.map((bloque) => (
+                <div key={bloque.currency}>
+                    <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                        {ROTULO_GRUPO_MONEDA[bloque.currency] ?? bloque.currency}
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                        <RecuadroSaldoOperador
+                            etiqueta="Le debo"
+                            monto={bloque.iTheyOwe}
+                            esquema="rojo"
+                            puedeVerMontos={puedeVerMontos}
+                            currency={bloque.currency}
+                            testId={`header-le-debo-${bloque.currency}`}
+                        />
+                        <RecuadroSaldoOperador
+                            etiqueta="Me tiene que devolver"
+                            monto={bloque.theyOweMe}
+                            esquema="naranja"
+                            puedeVerMontos={puedeVerMontos}
+                            currency={bloque.currency}
+                            testId={`header-me-tiene-que-devolver-${bloque.currency}`}
+                        />
+                        <RecuadroSaldoOperador
+                            etiqueta="Saldo a favor"
+                            monto={bloque.prepayment}
+                            esquema="verde"
+                            puedeVerMontos={puedeVerMontos}
+                            currency={bloque.currency}
+                            testId={`header-saldo-a-favor-${bloque.currency}`}
+                        />
                     </div>
-                );
-            })}
+                </div>
+            ))}
         </div>
     );
 }
@@ -995,6 +1049,13 @@ export default function SupplierAccountPage() {
     // supplierCreditOverview: saldo a favor y aplicaciones activas.
     const [supplierCreditOverview, setSupplierCreditOverview] = useState(null);
 
+    // ─── Los "dos números" del encabezado (recuadros Le debo / Me tiene que devolver / Saldo a favor) ───
+    // statementCurrencies: bloques por moneda de GET /account/statement, con los campos limpios
+    // iTheyOwe/theyOweMe/prepayment que arma el backend. Es la MISMA fuente que usa el extracto
+    // de abajo para el circuito de cancelación, así que arriba y abajo siempre dan el mismo número.
+    const [statementCurrencies, setStatementCurrencies] = useState([]);
+    const [loadingStatementHeader, setLoadingStatementHeader] = useState(true);
+
     // ─── Badge de reembolsos pendientes (numerito en la solapa) ──────────────
     // Cargamos el conteo de reembolsos al montar para poder mostrar el badge.
     // OperatorRefundsPendingSection también carga sus propios datos internamente
@@ -1049,6 +1110,23 @@ export default function SupplierAccountPage() {
             // pero sin lista de aplicaciones activas ni botón para usar el saldo.
             console.warn("[SupplierAccountPage] No se pudo cargar el overview de crédito del proveedor:", error?.message);
             setSupplierCreditOverview(null);
+        }
+    }, [publicId]);
+
+    // Carga los bloques por moneda del extracto (mismo endpoint que usa SupplierExtractoSection)
+    // para poder pintar los tres recuadros del encabezado con los campos limpios del backend.
+    const loadStatementHeader = useCallback(async () => {
+        setLoadingStatementHeader(true);
+        try {
+            const response = await api.get(`/suppliers/${publicId}/account/statement`);
+            setStatementCurrencies(response?.currencies || []);
+        } catch (error) {
+            // No bloqueante: si falla, los recuadros de arriba simplemente no aparecen;
+            // el resto de la pantalla (extracto, deuda, servicios) sigue funcionando igual.
+            console.warn("[SupplierAccountPage] No se pudo cargar el estado de cuenta para los recuadros del encabezado:", error?.message);
+            setStatementCurrencies([]);
+        } finally {
+            setLoadingStatementHeader(false);
         }
     }, [publicId]);
 
@@ -1147,6 +1225,7 @@ export default function SupplierAccountPage() {
         setExtractoRefreshKey(0);
         setMonedaUsandoSaldo(null);
         setSupplierCreditOverview(null);
+        setStatementCurrencies([]);
         // Volvemos siempre a la primera solapa al cambiar de proveedor
         setActiveTab("cuenta-corriente");
     }, [publicId]);
@@ -1158,6 +1237,11 @@ export default function SupplierAccountPage() {
     useEffect(() => { loadSupplierCredit(); }, [loadSupplierCredit]);
     useEffect(() => { loadServices(); }, [loadServices]);
     useEffect(() => { loadAllPayments(); }, [loadAllPayments]);
+
+    // Los recuadros del encabezado se recargan junto con el extracto (misma fuente de datos):
+    // extractoRefreshKey sube cada vez que se registra/edita/elimina un pago o se usa saldo a
+    // favor, y los recuadros de arriba tienen que reflejar ese mismo momento.
+    useEffect(() => { loadStatementHeader(); }, [loadStatementHeader, extractoRefreshKey]);
 
     // Al cambiar filtros de búsqueda o tipo, volvemos a la página 1 de servicios.
     useEffect(() => {
@@ -1286,8 +1370,11 @@ export default function SupplierAccountPage() {
                         </div>
                     )}
 
-                    {/* Chips de saldo en vivo por moneda */}
-                    <BalanceHeaderChips balancesByCurrency={balancesByCurrency} />
+                    {/* Los "dos números" + saldo a favor, por moneda (Fase D, 2026-07-01) */}
+                    <SupplierBalanceThreeBoxesHeader
+                        currencies={statementCurrencies}
+                        loading={loadingStatementHeader}
+                    />
                 </div>
             </div>
 
