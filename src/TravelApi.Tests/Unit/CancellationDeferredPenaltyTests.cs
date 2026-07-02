@@ -887,6 +887,241 @@ public class CancellationDeferredPenaltyTests
         Assert.Equal("USD", line.PenaltyCurrency);
     }
 
+    // ============================================================
+    // ATOMICIDAD del reconciler + BLINDAJE de la emision (fix 2026-07-01)
+    // ============================================================
+
+    /// <summary>
+    /// Test (a): si el RECONCILER del pool de saldo a favor del operador tira (INV-SUPCREDIT-001), la
+    /// confirmacion NO debe quedar a medias: la marca PenaltyStatus=Confirmed NO se persiste, NO se emite ND, y
+    /// el error sale limpio (409 de negocio). Antes del fix, la marca se committeaba ANTES del reconciler y la
+    /// reserva quedaba trabada.
+    ///
+    /// <para>Forzamos el throw sembrando un saldo a favor del operador YA aplicado (RemainingBalance=0): como el
+    /// sobrepago actual es 0, el reconciler querria drenar el credito pero no puede -> INV-SUPCREDIT-001.</para>
+    /// </summary>
+    [Fact]
+    public async Task ReconcilerThrows_RollsBackConfirmation_NoDebitNote()
+    {
+        var h = BuildService();
+        var (bcId, bc, _) = await SeedPostNcAsync(h.Ctx, ownership: PenaltyOwnership.Agency);
+        SetupCreateEmitsDebitNote(h);
+
+        // Saldo a favor del operador ya consumido (aplicado a otra reserva): CreditedAmount 100k, Remaining 0.
+        h.Ctx.SupplierCreditEntries.Add(new SupplierCreditEntry
+        {
+            SupplierId = bc.SupplierId,
+            Currency = "ARS",
+            CreditedAmount = 100_000m,
+            RemainingBalance = 0m,
+            IsFullyConsumed = true,
+            CreatedAt = DateTime.UtcNow,
+        });
+        await h.Ctx.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.ConfirmPenaltyAsync(bcId, Request(amount: 30_000m), "u", "U", false, default,
+                userCanClassifyAgencyPenalty: true));
+        Assert.Equal("INV-SUPCREDIT-001", ex.InvariantCode);
+
+        // ATOMICIDAD: la marca de no-retorno NO quedo persistida (leemos el estado DURABLE con AsNoTracking).
+        var durable = await h.Ctx.BookingCancellations.AsNoTracking().FirstAsync(b => b.Id == bc.Id);
+        Assert.Equal(PenaltyStatus.Estimated, durable.PenaltyStatus);
+        Assert.Equal(DebitNoteStatus.NotApplicable, durable.DebitNoteStatus);
+        Assert.Null(durable.OperatorPenaltyConfirmedDate);
+
+        // No se emitio ninguna ND (nunca se llego al paso de emision).
+        h.InvoiceMock.Verify(s => s.CreateAsync(
+            It.IsAny<CreateInvoiceRequest>(), It.IsAny<string?>(), It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>
+    /// Test (b): si la EMISION de la ND lanza una excepcion (ej. "ya hay una factura en proceso"), la multa
+    /// queda Confirmed (durable) + la ND en ManualReview, la respuesta es EXITO-con-aviso (NO un 500), y la
+    /// bandeja de NDs por revisar la levanta para poder destrabarla.
+    /// </summary>
+    [Fact]
+    public async Task EmissionThrows_KeepsConfirmed_RoutesManualReview_SuccessAndTrayLevantaIt()
+    {
+        var h = BuildService();
+        var (bcId, bc, _) = await SeedPostNcAsync(h.Ctx, ownership: PenaltyOwnership.Operator);
+
+        // La emision de la ND falla (factura en vuelo, ARCA rebota, etc.).
+        h.InvoiceMock
+            .Setup(s => s.CreateAsync(
+                It.IsAny<CreateInvoiceRequest>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Ya hay una factura en proceso para esta reserva."));
+
+        // NO tira: exito-con-aviso.
+        var dto = await h.Service.ConfirmPenaltyAsync(bcId, Request(concept: null), "u", "U", false, default,
+            userCanClassifyAgencyPenalty: true);
+
+        // Estado DURABLE: multa confirmada + ND en revision manual, sin link.
+        var durable = await h.Ctx.BookingCancellations.AsNoTracking().FirstAsync(b => b.Id == bc.Id);
+        Assert.Equal(PenaltyStatus.Confirmed, durable.PenaltyStatus);
+        Assert.Equal(DebitNoteStatus.ManualReview, durable.DebitNoteStatus);
+        Assert.Null(durable.DebitNoteInvoiceId);
+        Assert.Equal("ManualReview", dto.DebitNoteStatus);
+
+        // La bandeja de NDs por revisar la levanta (rama huerfana: Confirmed + link nulo).
+        var tray = await h.Service.GetCancellationsWithMissingDebitNoteAsync(default);
+        Assert.Contains(tray, r => r.BookingCancellationPublicId == bc.PublicId);
+    }
+
+    // ============================================================
+    // Recuperacion: retry-debit-note (destrabar #F-2026-1025)
+    // ============================================================
+
+    /// <summary>
+    /// Construye el estado real de #F-2026-1025 corriendo <c>ConfirmPenaltyAsync</c> con la emision FALLANDO:
+    /// la multa queda Confirmed (durable) + la ND en ManualReview, sin link, con TODOS los campos de
+    /// auditoria/purpose seteados por el flujo real (que el gating de la ND exige). Devuelve el PublicId del BC.
+    /// </summary>
+    private static async Task<Guid> SeedConfirmedButDebitNoteFailedAsync(Harness h)
+    {
+        var (bcId, _, _) = await SeedPostNcAsync(h.Ctx, ownership: PenaltyOwnership.Operator);
+        h.InvoiceMock
+            .Setup(s => s.CreateAsync(
+                It.IsAny<CreateInvoiceRequest>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Ya hay una factura en proceso para esta reserva."));
+        await h.Service.ConfirmPenaltyAsync(bcId, Request(concept: null), "u", "U", false, default,
+            userCanClassifyAgencyPenalty: true);
+        return bcId;
+    }
+
+    /// <summary>Reintento sobre una cancelacion Confirmed+sin-ND (estado real #F-2026-1025): emite la ND de cero.</summary>
+    [Fact]
+    public async Task RetryDebitNote_EmitsFreshWhenNoPriorNote()
+    {
+        var h = BuildService();
+        var publicId = await SeedConfirmedButDebitNoteFailedAsync(h);
+
+        // Ahora la emision funciona: el reintento emite la ND.
+        SetupCreateEmitsDebitNote(h);
+        var dto = await h.Service.RetryDebitNoteEmissionAsync(
+            publicId, "u", "U", default, userCanClassifyAgencyPenalty: true);
+
+        Assert.Equal("Pending", dto.DebitNoteStatus);
+        var after = await h.Ctx.BookingCancellations.AsNoTracking().SingleAsync();
+        Assert.Equal(DebitNoteStatus.Pending, after.DebitNoteStatus);
+        Assert.NotNull(after.DebitNoteInvoiceId);
+    }
+
+    /// <summary>Reintento cuando ya existe una ND creada sin vincular: la RE-VINCULA, NO emite otra (anti doble).</summary>
+    [Fact]
+    public async Task RetryDebitNote_RelinksExistingOrphan_NoDoubleEmission()
+    {
+        var h = BuildService();
+        var (_, bc, original) = await SeedPostNcAsync(h.Ctx, ownership: PenaltyOwnership.Operator);
+        SetupCreateEmitsDebitNote(h);
+
+        var seeded = h.Ctx.BookingCancellations.Single();
+        seeded.PenaltyStatus = PenaltyStatus.Confirmed;
+        seeded.PenaltyAmountAtEvent = 30_000m;
+        await h.Ctx.SaveChangesAsync();
+
+        // Ya existe una ND (con CAE) para la factura original: un intento previo la creo pero no la vinculo.
+        var orphanNd = new Invoice
+        {
+            TipoComprobante = 12,
+            PuntoDeVenta = 1,
+            NumeroComprobante = 200,
+            Resultado = "A",
+            CAE = "55555555",
+            ReservaId = original.ReservaId,
+            OriginalInvoiceId = original.Id,
+        };
+        h.Ctx.Invoices.Add(orphanNd);
+        await h.Ctx.SaveChangesAsync();
+
+        var dto = await h.Service.RetryDebitNoteEmissionAsync(
+            bc.PublicId, "u", "U", default, userCanClassifyAgencyPenalty: true);
+
+        var after = await h.Ctx.BookingCancellations.AsNoTracking().FirstAsync(b => b.Id == bc.Id);
+        Assert.Equal(orphanNd.Id, after.DebitNoteInvoiceId);
+        Assert.Equal(DebitNoteStatus.Issued, after.DebitNoteStatus);
+        // NO se emitio otra ND.
+        h.InvoiceMock.Verify(s => s.CreateAsync(
+            It.IsAny<CreateInvoiceRequest>(), It.IsAny<string?>(), It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    /// <summary>Reintento sin permiso -> rebota INV-ADR014-RETRY-PERM (gate fiscal server-side).</summary>
+    [Fact]
+    public async Task RetryDebitNote_WithoutPermission_Rejects()
+    {
+        var h = BuildService();
+        var (_, bc, _) = await SeedPostNcAsync(h.Ctx, ownership: PenaltyOwnership.Operator);
+        var seeded = h.Ctx.BookingCancellations.Single();
+        seeded.PenaltyStatus = PenaltyStatus.Confirmed;
+        await h.Ctx.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.RetryDebitNoteEmissionAsync(bc.PublicId, "u", "U", default,
+                userCanClassifyAgencyPenalty: false));
+        Assert.Equal("INV-ADR014-RETRY-PERM", ex.InvariantCode);
+    }
+
+    /// <summary>Reintento cuando la multa aun NO esta confirmada -> rebota INV-ADR014-RETRY-001.</summary>
+    [Fact]
+    public async Task RetryDebitNote_RejectsWhenNotConfirmed()
+    {
+        var h = BuildService();
+        var (_, bc, _) = await SeedPostNcAsync(h.Ctx, ownership: PenaltyOwnership.Operator);
+        // Penalidad sigue Estimated (default).
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.RetryDebitNoteEmissionAsync(bc.PublicId, "u", "U", default,
+                userCanClassifyAgencyPenalty: true));
+        Assert.Equal("INV-ADR014-RETRY-001", ex.InvariantCode);
+    }
+
+    /// <summary>Reintento cuando la ND ya esta vinculada -> rebota INV-ADR014-RETRY-002 (no re-emite).</summary>
+    [Fact]
+    public async Task RetryDebitNote_RejectsWhenAlreadyLinked()
+    {
+        var h = BuildService();
+        var (_, bc, original) = await SeedPostNcAsync(h.Ctx, ownership: PenaltyOwnership.Operator);
+        var nd = new Invoice
+        {
+            TipoComprobante = 12, PuntoDeVenta = 1, NumeroComprobante = 300, Resultado = "A", CAE = "77777777",
+            ReservaId = original.ReservaId, OriginalInvoiceId = original.Id,
+        };
+        h.Ctx.Invoices.Add(nd);
+        await h.Ctx.SaveChangesAsync();
+
+        var seeded = h.Ctx.BookingCancellations.Single();
+        seeded.PenaltyStatus = PenaltyStatus.Confirmed;
+        seeded.DebitNoteInvoiceId = nd.Id;
+        seeded.DebitNoteStatus = DebitNoteStatus.Issued;
+        await h.Ctx.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.RetryDebitNoteEmissionAsync(bc.PublicId, "u", "U", default,
+                userCanClassifyAgencyPenalty: true));
+        Assert.Equal("INV-ADR014-RETRY-002", ex.InvariantCode);
+    }
+
+    /// <summary>Si el reintento vuelve a fallar la emision, sigue devolviendo EXITO (ManualReview), no un 500.</summary>
+    [Fact]
+    public async Task RetryDebitNote_EmissionThrowsAgain_StillSucceedsWithManualReview()
+    {
+        var h = BuildService();
+        // El mock ya esta configurado para FALLAR la emision (dentro del helper) y sigue fallando en el reintento.
+        var publicId = await SeedConfirmedButDebitNoteFailedAsync(h);
+
+        var dto = await h.Service.RetryDebitNoteEmissionAsync(
+            publicId, "u", "U", default, userCanClassifyAgencyPenalty: true);
+
+        Assert.Equal("ManualReview", dto.DebitNoteStatus);
+        var after = await h.Ctx.BookingCancellations.AsNoTracking().SingleAsync();
+        Assert.Equal(DebitNoteStatus.ManualReview, after.DebitNoteStatus);
+        Assert.Null(after.DebitNoteInvoiceId);
+    }
+
     /// <summary>Agrega una linea hija al BC con la moneda indicada (helper para los tests de CAMBIO 3).</summary>
     private static async Task SeedLineAsync(AppDbContext ctx, BookingCancellation bc, string lineCurrency)
     {

@@ -320,6 +320,35 @@ public interface IBookingCancellationService
         bool userCanClassifyAgencyPenalty = false);
 
     /// <summary>
+    /// RECUPERACION (fix 2026-07-01): reintenta EMITIR la Nota de Debito de una cancelacion cuya multa YA quedo
+    /// confirmada (<c>PenaltyStatus=Confirmed</c>) pero cuya ND nunca se llego a emitir/vincular
+    /// (<c>DebitNoteInvoiceId=null</c>) porque un intento anterior fallo (emision o reconciler). Es el camino para
+    /// DESTRABAR una cancelacion que quedo a medias: <see cref="ConfirmPenaltyAsync"/> rebota por idempotencia y
+    /// cerrar sin multa tambien, asi que sin este comando la reserva queda visible en la bandeja de NDs por
+    /// revisar pero sin ninguna accion posible. NO re-confirma la multa: solo re-dispara la ND.
+    ///
+    /// <para><b>Anti doble-emision</b>: si ya existe una ND para la factura original de la cancelacion (creada en
+    /// un intento previo pero no vinculada), la RE-VINCULA en vez de emitir otra. Solo si no hay ninguna, emite de
+    /// cero, con el MISMO blindaje que confirm-penalty: si la emision vuelve a fallar, deja la ND en revision
+    /// manual y devuelve EXITO-con-aviso (nunca un 500).</para>
+    ///
+    /// <para><b>Precondiciones</b> (de ESTADO, sin re-confirmar la multa): flag ON, BC existe, multa ya Confirmed,
+    /// ND aun no vinculada, estado post-NC con CAE. <b>Permiso</b>: mismo gate fiscal que confirm-penalty
+    /// (<c>cancellations.classify_agency_penalty</c> o Admin), resuelto por el controller y EXIGIDO por el service.</para>
+    ///
+    /// <para><b>Exceptions</b>: <c>KeyNotFoundException</c> (404); <c>InvalidOperationException</c> (409, flag OFF);
+    /// <c>BusinessInvariantViolationException</c> (409: INV-ADR014-RETRY-PERM sin permiso; INV-ADR014-RETRY-001
+    /// multa no confirmada; INV-ADR014-RETRY-002 ND ya en juego; INV-ADR014-RETRY-003 NC sin CAE);
+    /// <c>DbUpdateConcurrencyException</c> (409 CONCURRENT_EDIT).</para>
+    /// </summary>
+    Task<BookingCancellationDto> RetryDebitNoteEmissionAsync(
+        Guid publicId,
+        string userId,
+        string? userName,
+        CancellationToken ct,
+        bool userCanClassifyAgencyPenalty = false);
+
+    /// <summary>
     /// Fase A (2026-06-28): cierra la pata de la penalidad del operador SIN multa ("el operador no cobro multa /
     /// devuelve todo"). Es la rama ALTERNATIVA a <see cref="ConfirmPenaltyAsync"/>: comparten el mismo candado
     /// (la primera que resuelve la penalidad gana). Deja la penalidad en el estado terminal

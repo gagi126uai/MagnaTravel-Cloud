@@ -328,6 +328,66 @@ public class CancellationsController : ControllerBase
     }
 
     /// <summary>
+    /// RECUPERACION (fix 2026-07-01): reintenta EMITIR la Nota de Debito de una cancelacion cuya multa ya quedo
+    /// confirmada pero cuya ND no se llego a emitir (quedo a medias por un fallo). Destraba la reserva SIN
+    /// re-confirmar la multa. Idempotente y anti doble-emision (re-vincula una ND ya creada si existe).
+    ///
+    /// <para><b>Permiso</b>: MISMO gate fiscal que <see cref="ConfirmPenalty"/>
+    /// (<see cref="Permissions.ReservasCancel"/> para llegar + <see cref="Permissions.CancellationsClassifyAgencyPenalty"/>
+    /// o Admin resuelto server-side): emite el MISMO comprobante fiscal. La decision NO se confia al frontend.</para>
+    ///
+    /// <para><b>Mapeo de errores</b>: 404 (BC no existe); 409 (flag OFF / INV-ADR014-RETRY-* / CONCURRENT_EDIT);
+    /// 503 (DB caida). Las <c>BusinessInvariantViolationException</c> las mapea el GlobalExceptionHandler a 409.</para>
+    /// </summary>
+    [HttpPost("{publicId:guid}/retry-debit-note")]
+    [RequirePermission(Permissions.ReservasCancel)]
+    [RequireOwnership(OwnedEntity.BookingCancellation, "publicId", bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<ActionResult<BookingCancellationDto>> RetryDebitNote(
+        Guid publicId,
+        CancellationToken cancellationToken)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
+        var userName = User.FindFirst("FullName")?.Value ?? User.FindFirst(ClaimTypes.Name)?.Value;
+        var requesterIsAdmin = User.IsInRole("Admin");
+
+        // Mismo gate que confirmar la multa: Admin siempre; el resto necesita el permiso dedicado. El service lo EXIGE.
+        var userCanClassifyAgencyPenalty = requesterIsAdmin
+            || (await _permissionResolver.GetPermissionsAsync(userId, cancellationToken))
+                .Contains(Permissions.CancellationsClassifyAgencyPenalty);
+
+        try
+        {
+            var dto = await _bcService.RetryDebitNoteEmissionAsync(
+                publicId, userId, userName, cancellationToken,
+                userCanClassifyAgencyPenalty: userCanClassifyAgencyPenalty);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return Conflict(new
+            {
+                code = "CONCURRENT_EDIT",
+                message = "Otra edicion fue procesada primero, reintente.",
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Flag OFF, etc. 409.
+            return Conflict(new { message = ex.Message });
+        }
+        // BusinessInvariantViolationException (INV-ADR014-RETRY-* + permiso) la atrapa el GlobalExceptionHandler
+        // (409 con invariantCode), mismo criterio que ConfirmPenalty.
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+        }
+    }
+
+    /// <summary>
     /// Fase A (2026-06-28): cierre SIN multa de la pata del operador ("el operador no cobro multa / devuelve
     /// todo"). Es la rama ALTERNATIVA a <see cref="ConfirmPenalty"/>: el front ofrece las dos acciones cuando hay
     /// una multa pendiente. Limpia el boton pendiente dejando la penalidad en estado terminal "sin multa" y

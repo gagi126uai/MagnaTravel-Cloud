@@ -3450,8 +3450,8 @@ public class BookingCancellationService
         // nada) -> byte-identidad con el comportamiento previo a ADR-014. ===
         if (!settings.EnableCancellationDebitNote)
             throw new InvalidOperationException(
-                "La emision de Nota de Debito por penalidad esta deshabilitada " +
-                "(EnableCancellationDebitNote OFF).");
+                "La emisión de notas de débito por penalidad no está disponible en este momento. " +
+                "Consultá con administración.");
 
         // === Precondicion 2: el BC existe (404 si no). Cargamos los mismos Includes que
         // el gating necesita: factura original + sus Tributos (IIBB) + Supplier + Reserva.
@@ -3613,7 +3613,13 @@ public class BookingCancellationService
         await AllocateConfirmedPenaltyToLinesAsync(
             bc, request.ConfirmedPenaltyAmount, request.PenaltyCurrency, ct);
 
-        await _auditService.LogBusinessEventAsync(
+        // === Auditoria del "confirmado" STAGED, no guardada de una (fix atomicidad 2026-07-01). Antes esta
+        // llamada era LogBusinessEventAsync, que hace su PROPIO SaveChanges y por lo tanto dejaba
+        // PenaltyStatus=Confirmed DURABLE aca mismo, ANTES del reconciler. Si el reconciler (abajo) despues
+        // fallaba, la cancelacion quedaba a medias: multa confirmada, sin Nota de Debito, y trabada (las guardas
+        // de idempotencia impiden re-confirmar o cerrar sin multa). Al STAGEAR, la marca de no-retorno + esta
+        // auditoria no se hacen durables hasta que el reconciler paso OK y corre la unica SaveChanges de abajo. ===
+        _auditService.StageBusinessEvent(
             action: AuditActions.BookingCancellationArcaSucceeded,
             entityName: AuditActions.BookingCancellationEntityName,
             entityId: bc.Id.ToString(),
@@ -3628,36 +3634,160 @@ public class BookingCancellationService
                 fourEyesApplied = requiresFourEyes,
             }),
             userId: userId,
-            userName: userName,
-            ct: ct);
+            userName: userName);
 
-        // === Paso c (B1, §3.4 pieza 2): COMMIT PROPIO de la marca de no-retorno. Dejamos
-        // PenaltyStatus=Confirmed durable ANTES de crear la ND. Si este commit choca por xmin
-        // (otro proceso toco el BC), todavia NO se creo ninguna ND y el 409 es seguro de
-        // reintentar. NO fusionar con el SaveChanges interno de TryEmit. ===
-        await _db.SaveChangesAsync(ct);
-
-        // === Paso c-bis (Pasos B/C, 2026-06-29): reconciliar el POOL de saldo a favor del operador. Confirmar la
-        // multa movio Multa(+) y bajo el RefundCap->Y(-) en igual monto (net-neutral, §4.6), asi que el sobrepago
-        // economico no cambia y el reconciler suele ser no-op; pero lo disparamos para que el pool quede coherente
-        // si el balance estaba viejo. Va con el estado YA committed (paso c) -> el reconciler lee la verdad fresca. ===
+        // === ATOMICIDAD (fix 2026-07-01): el reconciler del POOL de saldo a favor del operador corre AHORA,
+        // ANTES de persistir la marca de no-retorno. Si tira (INV-SUPCREDIT-001 = ese saldo a favor ya se aplico a
+        // otra reserva y no se puede "destruir" sin revertir esa aplicacion; o un fallo de base en su SaveChanges),
+        // TODAVIA no se guardo NADA de esta confirmacion: la marca Confirmed y la auditoria staged se DESCARTAN y
+        // el error sale limpio (el 409 de negocio con su mensaje claro). Asi la cancelacion NO queda a medias y el
+        // usuario puede corregir (revertir esa aplicacion) y reintentar.
+        //
+        // Por que reordenar es seguro para el pool: confirmar la multa es NET-NEUTRAL (§4.6) — Multa(+) y
+        // RefundCap->Y(-) se cancelan — asi que el pool objetivo es el MISMO leyendo el estado pre-marca o
+        // post-marca. Y por que da atomicidad sin transaccion explicita: la excepcion del reconciler ocurre ANTES
+        // de cualquier SaveChanges (la suya y la de abajo), de modo que la marca no se persiste ni en Postgres ni
+        // en InMemory; y una SaveChanges unica es atomica de por si. ===
         await ReconcileSupplierCreditPoolAsync(bc.SupplierId, userId, userName, ct);
 
-        // === Paso d: disparar la ND reusando el motor existente de ADR-013. TryEmit hace su
-        // propio gating (incluye el anti-doble-cobro RE-evaluado en runtime con query fresca
-        // del Dia N, §3.8/R13), la emision async, el snapshot y su propio SaveChanges que
-        // vincula DebitNoteInvoiceId. NO toca el balance ni el estado de la reserva (B2). ===
-        // Alerta de plazo (§3.5): no bloqueante, solo observabilidad.
+        // === Marca de no-retorno + auditoria staged + cambios de lineas, en una unica SaveChanges. Recien ACA la
+        // penalidad queda Confirmed de forma durable (si el reconciler ya guardo sus cambios de pool, esta flushea
+        // lo que reste; si fue no-op, guarda todo junto). ===
+        await _db.SaveChangesAsync(ct);
+
+        // === Emision de la ND (paso POSTERIOR y RECUPERABLE). TryEmit reusa el motor de ADR-013: su propio
+        // gating (anti-doble-cobro re-evaluado con query fresca del Dia N, §3.8/R13), la emision async, el
+        // snapshot y su propio SaveChanges que vincula DebitNoteInvoiceId. NO toca el balance ni el estado de la
+        // reserva (B2).
+        //
+        // BLINDAJE (fix 2026-07-01): si la emision falla (ARCA rebota, hay una factura en vuelo, un fallo de base),
+        // NO propagamos la excepcion como 500. Un 500 aca dejaria la reserva TRABADA: la multa ya quedo Confirmed
+        // (durable, arriba) y las guardas de idempotencia impiden re-confirmar o cerrar sin multa. En su lugar
+        // dejamos la ND en REVISION MANUAL — estado consistente que la bandeja "Notas de debito por revisar" ya
+        // sabe recuperar (y que el endpoint retry-debit-note puede reintentar) — y devolvemos EXITO-con-aviso. La
+        // combinacion "multa confirmada + ND pendiente de revision" es un estado CONSISTENTE; un 500 con estado a
+        // medias NO lo es. ===
         WarnIfDebitNoteLate(bc, operatorDate, settings);
-        await TryEmitCancellationDebitNoteAsync(bc, ct);
+        try
+        {
+            await TryEmitCancellationDebitNoteAsync(bc, ct);
+        }
+        catch (Exception emissionError) when (emissionError is not OperationCanceledException)
+        {
+            _logger.LogError(emissionError,
+                "metric:cancellation_debit_note_emission_failed | BcPublicId={BcPublicId} | " +
+                "La multa quedo confirmada pero la emision de la Nota de Debito fallo; se deja en revision manual.",
+                bc.PublicId);
+            await MarkDebitNoteEmissionForManualReviewAsync(bc.Id, ct);
+        }
 
         _logger.LogInformation(
-            "metric:cancellation_debit_note_deferred_confirmed | BcPublicId={BcPublicId} " +
-            "Amount={Amount} DebitNoteStatus={DebitNoteStatus}",
-            bc.PublicId, request.ConfirmedPenaltyAmount, bc.DebitNoteStatus);
+            "metric:cancellation_debit_note_deferred_confirmed | BcPublicId={BcPublicId} Amount={Amount}",
+            bc.PublicId, request.ConfirmedPenaltyAmount);
 
         return await MapToDtoAsync(bc.Id, ct)
-            ?? throw new InvalidOperationException($"BC {publicId} no encontrada tras confirmar la penalidad.");
+            ?? throw new InvalidOperationException("No se pudo completar la operación. Volvé a intentar.");
+    }
+
+    /// <inheritdoc />
+    public async Task<BookingCancellationDto> RetryDebitNoteEmissionAsync(
+        Guid publicId,
+        string userId,
+        string? userName,
+        CancellationToken ct,
+        bool userCanClassifyAgencyPenalty = false)
+    {
+        // RECUPERACION (fix 2026-07-01): reintenta EMITIR la Nota de Debito de una cancelacion cuya multa YA quedo
+        // confirmada pero cuya ND nunca se llego a emitir/vincular (quedo a medias por un fallo de emision o del
+        // reconciler). Es el camino para DESTRABAR esa reserva desde la UI: confirm-penalty rebota por idempotencia
+        // (la multa ya esta Confirmed) y cerrar sin multa tambien, asi que sin este endpoint la reserva se queda
+        // visible en la bandeja pero sin ninguna accion posible. NO re-confirma la multa: solo re-dispara la ND.
+
+        var settings = await _settings.GetEntityAsync(ct);
+        if (!settings.EnableCancellationDebitNote)
+            throw new InvalidOperationException(
+                "La emisión de notas de débito por penalidad no está disponible en este momento. " +
+                "Consultá con administración.");
+
+        // Mismo gate fiscal que confirmar la multa: emite el MISMO comprobante. El controller lo resuelve
+        // server-side; lo EXIGIMOS aca tambien (defensa en profundidad, no confiar en el frontend).
+        if (!userCanClassifyAgencyPenalty)
+            throw new BusinessInvariantViolationException(
+                "No tenés permiso para emitir la Nota de Débito del operador. Pedíselo a un administrador.",
+                invariantCode: "INV-ADR014-RETRY-PERM");
+
+        // Mismos Includes que ConfirmPenaltyAsync: el gating de la ND necesita la factura origen + sus Tributos.
+        var bc = await _db.BookingCancellations
+            .Include(b => b.Reserva)
+            .Include(b => b.OriginatingInvoice)
+                .ThenInclude(i => i.Tributes)
+            .Include(b => b.Supplier)
+            .FirstOrDefaultAsync(b => b.PublicId == publicId, ct)
+            ?? throw new KeyNotFoundException($"BC {publicId} no encontrada.");
+
+        // Solo aplica al estado "multa confirmada pero ND sin emitir". Cualquier otro caso rebota claro.
+        if (bc.PenaltyStatus != PenaltyStatus.Confirmed)
+            throw new BusinessInvariantViolationException(
+                "La multa del operador todavía no fue confirmada. Confirmala primero para poder emitir la Nota de Débito.",
+                invariantCode: "INV-ADR014-RETRY-001");
+        if (bc.DebitNoteInvoiceId.HasValue)
+            throw new BusinessInvariantViolationException(
+                "La Nota de Débito de esta cancelación ya fue emitida o encolada. No hace falta reintentar.",
+                invariantCode: "INV-ADR014-RETRY-002");
+        if (!PostCreditNoteStatuses.Contains(bc.Status) || bc.CreditNoteInvoiceId is null)
+            throw new BusinessInvariantViolationException(
+                "Todavía no se puede emitir la Nota de Débito: la nota de crédito al cliente aún no está " +
+                "confirmada por la AFIP.",
+                invariantCode: "INV-ADR014-RETRY-003");
+
+        // (a) ANTI DOBLE-EMISION: si un intento anterior alcanzo a CREAR la ND pero no a vincularla, la
+        //     RE-VINCULAMOS (no emitimos otra). Misma deteccion que la bandeja de NDs huerfanas: buscamos una ND
+        //     (tipos 2/7/12/52) sobre la MISMA factura original y reserva de esta cancelacion.
+        var orphanDebitNote = await _db.Invoices
+            .Where(i => debitNoteTipos.Contains(i.TipoComprobante) &&
+                        i.OriginalInvoiceId == bc.OriginatingInvoiceId &&
+                        i.ReservaId == bc.ReservaId)
+            .OrderByDescending(i => i.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+        if (orphanDebitNote is not null)
+        {
+            bc.DebitNoteInvoiceId = orphanDebitNote.Id;
+            bc.DebitNoteStatus = ResolveDebitNoteStatusFromInvoice(orphanDebitNote);
+            if (bc.DebitNoteStatus == DebitNoteStatus.Failed)
+            {
+                var obs = orphanDebitNote.Observaciones ?? "ARCA rechazo la ND sin mensaje.";
+                bc.DebitNoteArcaErrorMessage = obs.Length > 1000 ? obs[..1000] : obs;
+            }
+            await _db.SaveChangesAsync(ct);
+            _logger.LogWarning(
+                "RETRY-ND: BC {BcPublicId} tenia una ND creada sin vincular (Invoice {InvoiceId}). " +
+                "Re-vinculada, NO re-emitida. Nuevo DebitNoteStatus={Status}.",
+                bc.PublicId, orphanDebitNote.Id, bc.DebitNoteStatus);
+            return await MapToDtoAsync(bc.Id, ct)
+                ?? throw new InvalidOperationException("No se pudo completar la operación. Volvé a intentar.");
+        }
+
+        // (b) No hay ND previa: emitir de cero con el MISMO blindaje que confirm-penalty (si vuelve a fallar,
+        //     revision manual + exito-con-aviso, nunca un 500 que la vuelva a trabar).
+        try
+        {
+            await TryEmitCancellationDebitNoteAsync(bc, ct);
+        }
+        catch (Exception emissionError) when (emissionError is not OperationCanceledException)
+        {
+            _logger.LogError(emissionError,
+                "metric:cancellation_debit_note_emission_failed | BcPublicId={BcPublicId} | " +
+                "reintento de emision fallido; se deja en revision manual.",
+                bc.PublicId);
+            await MarkDebitNoteEmissionForManualReviewAsync(bc.Id, ct);
+        }
+
+        _logger.LogInformation(
+            "metric:cancellation_debit_note_retry | BcPublicId={BcPublicId} By={UserId}",
+            bc.PublicId, userId);
+
+        return await MapToDtoAsync(bc.Id, ct)
+            ?? throw new InvalidOperationException("No se pudo completar la operación. Volvé a intentar.");
     }
 
     /// <inheritdoc />
@@ -3688,8 +3818,8 @@ public class BookingCancellationService
         // ConfirmPenaltyAsync para no mutar estado de un subsistema deshabilitado. ===
         if (!settings.EnableCancellationDebitNote)
             throw new InvalidOperationException(
-                "La gestion de penalidades de cancelacion esta deshabilitada " +
-                "(EnableCancellationDebitNote OFF).");
+                "La gestión de penalidades de cancelación no está disponible en este momento. " +
+                "Consultá con administración.");
 
         // === Precondicion 2: el BC existe (404). Cargamos la Reserva para el detalle del audit. ===
         var bc = await _db.BookingCancellations
@@ -3772,7 +3902,7 @@ public class BookingCancellationService
             bc.PublicId, userId);
 
         return await MapToDtoAsync(bc.Id, ct)
-            ?? throw new InvalidOperationException($"BC {publicId} no encontrada tras cerrar sin multa.");
+            ?? throw new InvalidOperationException("No se pudo completar la operación. Volvé a intentar.");
     }
 
     /// <inheritdoc />
@@ -3801,8 +3931,8 @@ public class BookingCancellationService
         // simetria con Waive/Confirm para no mutar estado de un subsistema deshabilitado. ===
         if (!settings.EnableCancellationDebitNote)
             throw new InvalidOperationException(
-                "La gestion de penalidades de cancelacion esta deshabilitada " +
-                "(EnableCancellationDebitNote OFF).");
+                "La gestión de penalidades de cancelación no está disponible en este momento. " +
+                "Consultá con administración.");
 
         // === Precondicion 2: solo Admin. Va ANTES de cargar el BC a proposito: asi un usuario sin rol Admin no
         // puede distinguir un BC existente de uno inexistente por el codigo de error. El controller ya rechaza con
@@ -3876,7 +4006,7 @@ public class BookingCancellationService
             bc.PublicId, userId);
 
         return await MapToDtoAsync(bc.Id, ct)
-            ?? throw new InvalidOperationException($"BC {publicId} no encontrada tras reabrir la penalidad.");
+            ?? throw new InvalidOperationException("No se pudo completar la operación. Volvé a intentar.");
     }
 
     /// <summary>
@@ -4812,6 +4942,52 @@ public class BookingCancellationService
         _logger.LogInformation(
             "metric:cancellation_debit_note_manual_review | BcPublicId={BcPublicId} Reason={Reason}",
             bc.PublicId, reason);
+    }
+
+    /// <summary>
+    /// BLINDAJE (fix 2026-07-01): red de seguridad para cuando la EMISION de la Nota de Debito falla DESPUES de
+    /// que la multa ya quedo confirmada (durable). Deja el BC en un estado CONSISTENTE y recuperable — la ND en
+    /// <see cref="DebitNoteStatus.ManualReview"/> con un aviso legible — para que la bandeja de NDs por revisar
+    /// (y el endpoint retry-debit-note) la puedan destrabar, en vez de que el request explote con un 500 y la
+    /// reserva quede a medias.
+    ///
+    /// <para><b>Descarta el estado parcial</b>: el intento de emision pudo dejar cambios a medio aplicar en el
+    /// ChangeTracker (por ejemplo un link a una ND que no llego a persistir). El estado DURABLE ya esta en la
+    /// base; limpiamos el tracker y releemos el BC para no arrastrar ese estado parcial (mismo patron
+    /// ChangeTracker.Clear que otros flujos de recuperacion).</para>
+    ///
+    /// <para><b>Solo el caso "ND no vinculada"</b>: si un intento SI alcanzo a vincular una ND (link no nulo), NO
+    /// la tocamos — la bandeja la recupera por su estado real (Pending/Failed). Solo marcamos revision manual el
+    /// caso link-nulo, que ademas la bandeja ya levanta por <c>PenaltyStatus=Confirmed + DebitNoteInvoiceId=null</c>
+    /// independientemente del <c>DebitNoteStatus</c>.</para>
+    /// </summary>
+    private async Task MarkDebitNoteEmissionForManualReviewAsync(int bookingCancellationId, CancellationToken ct)
+    {
+        _db.ChangeTracker.Clear();
+
+        var bc = await _db.BookingCancellations.FirstOrDefaultAsync(b => b.Id == bookingCancellationId, ct);
+        if (bc is null) return;
+
+        // Si la ND SI quedo vinculada antes del fallo, la bandeja la recupera por su estado real: no la pisamos.
+        if (bc.DebitNoteInvoiceId.HasValue) return;
+
+        try
+        {
+            bc.DebitNoteStatus = DebitNoteStatus.ManualReview;
+            bc.DebitNoteArcaErrorMessage =
+                "La multa quedo confirmada, pero la Nota de Debito no se pudo emitir automaticamente. " +
+                "Quedo pendiente de emision manual.";
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (Exception persistError)
+        {
+            // Si ni siquiera podemos marcar la revision (base caida, etc.), NO rompemos la respuesta de exito: el
+            // BC igual queda recuperable por la bandeja (PenaltyStatus=Confirmed + link nulo la levanta, sin
+            // depender del DebitNoteStatus). Solo se pierde la señal fina en la ficha.
+            _logger.LogError(persistError,
+                "No se pudo marcar la ND en revision manual para BC {BcId}; queda igual recuperable por la bandeja.",
+                bookingCancellationId);
+        }
     }
 
     /// <summary>
