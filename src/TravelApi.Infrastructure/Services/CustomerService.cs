@@ -3,6 +3,7 @@ using TravelApi.Application.Constants;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Reservations;
 using TravelApi.Infrastructure.Services.Reservations;
@@ -639,6 +640,234 @@ public class CustomerService : ICustomerService
 
         return BuildCustomerDebtByReserva(customer.PublicId, customer.FullName, rows
             .Select(r => (r.PublicId, r.NumeroReserva, r.Name, r.Currency, r.Balance)));
+    }
+
+    /// <summary>
+    /// EXTRACTO (libro mayor) de la cuenta por cobrar del cliente, calculado EN EL SERVIDOR. Espejo del
+    /// extracto del proveedor pero del lado VENTA y cruzando TODAS las reservas en firme del cliente.
+    ///
+    /// <para><b>Por que en el servidor (y no en el navegador)</b>: el extracto viejo se armaba en el front
+    /// mezclando pagos + facturas con un techo de 500 movimientos, y su saldo NO cerraba con el "Debe" del
+    /// header. Aca el saldo de cierre de cada moneda reconcilia POR CONSTRUCCION con
+    /// <see cref="IFinancePositionService.GetCustomerReceivableByCurrencyAsync"/>: parte de la MISMA fuente
+    /// (venta confirmada como cargo, cobros imputados como abono, con la imputacion de
+    /// <see cref="ReservaMoneyCalculator"/>), asi que Σcargos - Σabonos por moneda = ΣBalance de
+    /// <c>ReservaMoneyByCurrency</c> en firme = el receivable del header.</para>
+    ///
+    /// <para><b>Facturar tarde</b>: el cargo es la venta CONFIRMADA (ConfirmedSale), NO la factura; una venta
+    /// confirmada sin facturar todavia igual cuenta como cargo y el extracto cierra con el receivable (que
+    /// tampoco mira facturas). <b>Saldo a favor</b>: el sobrepago se traslada al bolsillo del cliente
+    /// (ClientCreditEntry) via un cobro puente que deja la reserva en 0; ese bolsillo es un ledger APARTE
+    /// (el "A favor" del header) y NO forma parte del saldo de este extracto.</para>
+    /// </summary>
+    public async Task<CustomerAccountStatementDto> GetCustomerAccountStatementAsync(int id, CancellationToken cancellationToken)
+    {
+        var customer = await _dbContext.Customers
+            .AsNoTracking()
+            .Where(c => c.Id == id)
+            .Select(c => new { c.PublicId, c.FullName })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (customer == null)
+        {
+            throw new KeyNotFoundException("Cliente no encontrado");
+        }
+
+        // Universo IDENTICO al del header receivable: reservas donde el cliente es el PAGADOR y el estado es
+        // venta firme (ReceivableDebtStatuses). Solo la identidad de la reserva; los montos vienen de la
+        // proyeccion (cargos) y de los pagos (abonos).
+        var reservas = await _dbContext.Reservas
+            .AsNoTracking()
+            .Where(r => r.PayerId == id
+                && FinancePositionService.ReceivableDebtStatuses.Contains(r.Status))
+            .Select(r => new ReservaIdentityRow(r.Id, r.PublicId, r.NumeroReserva, r.Name, r.CreatedAt))
+            .ToListAsync(cancellationToken);
+
+        if (reservas.Count == 0)
+        {
+            // Cliente sin reservas en firme: extracto vacio coherente (sin bloques de moneda).
+            return new CustomerAccountStatementDto
+            {
+                CustomerPublicId = customer.PublicId,
+                CustomerName = customer.FullName,
+                AmountsVisible = true,
+            };
+        }
+
+        var reservaIds = reservas.Select(r => r.Id).ToList();
+        var reservaById = reservas.ToDictionary(r => r.Id);
+
+        // CARGOS = venta confirmada por (reserva, moneda), leida de la MISMA proyeccion que usa el header. Solo
+        // filas con ConfirmedSale != 0 (una reserva sin venta resuelta —p.ej. solo con una sena— no aporta
+        // cargo; su cobro igual aparece como abono).
+        var saleRows = await _dbContext.ReservaMoneyByCurrency
+            .AsNoTracking()
+            .Where(m => reservaIds.Contains(m.ReservaId) && m.ConfirmedSale != 0m)
+            .Select(m => new { m.ReservaId, m.Currency, m.ConfirmedSale })
+            .ToListAsync(cancellationToken);
+
+        // ABONOS = cobros VIVOS de esas reservas. El filtro global !IsDeleted ya excluye los borrados; sumamos
+        // Status != "Cancelled" para igualar EXACTAMENTE el universo de ReservaMoneyCalculator (asi la suma de
+        // abonos por moneda == TotalPaid de la proyeccion, y el saldo de cierre cuadra con el Balance). Incluye
+        // los cobros PUENTE (sobrepago / saldo a favor aplicado): no movieron caja pero BAJAN la deuda, por eso
+        // deben estar o el saldo no cerraria. No exponemos sus Notes (llevan un GUID interno): la descripcion la
+        // arma BuildStatementPaymentDescription sin filtrarlo.
+        var paymentRows = await _dbContext.Payments
+            .AsNoTracking()
+            .Where(p => p.ReservaId != null && reservaIds.Contains(p.ReservaId.Value)
+                && p.Status != "Cancelled")
+            .Select(p => new
+            {
+                ReservaId = p.ReservaId!.Value,
+                p.PublicId,
+                p.PaidAt,
+                p.Method,
+                p.Amount,
+                p.Currency,
+                p.ImputedCurrency,
+                p.ImputedAmount,
+                p.AffectsCash,
+                ReceiptNumber = p.Receipt != null ? p.Receipt.ReceiptNumber : null,
+            })
+            .ToListAsync(cancellationToken);
+
+        // Armamos las lineas planas: primero TODAS las ventas, despues TODOS los cobros. El builder ordena por
+        // fecha de forma estable, asi ante misma fecha la venta (cargo) queda antes que el cobro (abono).
+        var inputLines = new List<CustomerAccountStatementInputLine>(saleRows.Count + paymentRows.Count);
+
+        foreach (var sale in saleRows)
+        {
+            var reserva = reservaById[sale.ReservaId];
+            inputLines.Add(new CustomerAccountStatementInputLine(
+                Date: reserva.CreatedAt,
+                Kind: CustomerAccountStatementLineKinds.Sale,
+                Description: BuildStatementSaleDescription(reserva.Name),
+                DocumentRef: null,
+                ReservaPublicId: reserva.PublicId,
+                NumeroReserva: reserva.NumeroReserva,
+                Currency: Monedas.Normalizar(sale.Currency),
+                Charge: sale.ConfirmedSale,
+                Credit: 0m,
+                SourcePublicId: reserva.PublicId));
+        }
+
+        foreach (var payment in paymentRows)
+        {
+            var reserva = reservaById[payment.ReservaId];
+
+            // Misma imputacion que ReservaMoneyCalculator: la moneda y el monto a los que el cobro baja la deuda.
+            string imputedCurrency = Monedas.Normalizar(payment.ImputedCurrency ?? payment.Currency);
+            decimal imputedAmount = payment.ImputedAmount ?? payment.Amount;
+
+            inputLines.Add(new CustomerAccountStatementInputLine(
+                Date: payment.PaidAt,
+                Kind: CustomerAccountStatementLineKinds.Payment,
+                Description: BuildStatementPaymentDescription(payment.AffectsCash, imputedAmount, payment.ReceiptNumber, payment.Method),
+                DocumentRef: payment.ReceiptNumber,
+                ReservaPublicId: reserva.PublicId,
+                NumeroReserva: reserva.NumeroReserva,
+                Currency: imputedCurrency,
+                Charge: 0m,
+                Credit: imputedAmount,
+                SourcePublicId: payment.PublicId));
+        }
+
+        var statement = CustomerAccountStatementBuilder.Build(inputLines);
+
+        return MapCustomerAccountStatement(customer.PublicId, customer.FullName, statement);
+    }
+
+    /// <summary>Identidad minima de una reserva para el extracto (sin montos: esos vienen de proyeccion/pagos).</summary>
+    private readonly record struct ReservaIdentityRow(
+        int Id, Guid PublicId, string NumeroReserva, string Name, DateTime CreatedAt);
+
+    /// <summary>Texto legible de una linea de venta del extracto: el nombre del expediente, o un fallback claro.</summary>
+    private static string BuildStatementSaleDescription(string? reservaName)
+        => string.IsNullOrWhiteSpace(reservaName) ? "Venta confirmada" : reservaName.Trim();
+
+    /// <summary>
+    /// Arma el texto legible de un cobro para el extracto SIN filtrar datos internos. Para un cobro PUENTE
+    /// (no movio caja) distingue por el signo: negativo = excedente que se traslado al saldo a favor; positivo
+    /// = saldo a favor que se aplico a esta reserva. Para un cobro real: nº de recibo si existe, si no el metodo.
+    /// </summary>
+    private static string BuildStatementPaymentDescription(bool affectsCash, decimal imputedAmount, string? receiptNumber, string? method)
+    {
+        if (!affectsCash)
+        {
+            // Puente: sobrepago trasladado (negativo) vs saldo a favor aplicado (positivo). Nunca exponemos Notes.
+            return imputedAmount < 0m ? "Excedente trasladado a saldo a favor" : "Saldo a favor aplicado";
+        }
+
+        if (!string.IsNullOrWhiteSpace(receiptNumber))
+        {
+            return $"Cobro recibo {receiptNumber}";
+        }
+
+        // Cobro sin recibo emitido todavia: mostramos el metodo en ESPAÑOL, nunca el codigo interno
+        // ("Transfer"/"Cash"). Un metodo vacio o desconocido cae a "Cobro" pelado para no filtrar el codigo crudo.
+        var metodoLabel = MetodoCobroLabelEspanol(method);
+        return metodoLabel is null ? "Cobro" : $"Cobro por {metodoLabel}";
+    }
+
+    /// <summary>
+    /// Etiqueta en español del metodo de pago. El modelo guarda claves internas en ingles
+    /// (Transfer/Cash/Check/Card); esta funcion las traduce para el extracto de cara al usuario.
+    /// Devuelve null si el metodo es vacio o desconocido, para NO exponer un codigo crudo.
+    /// </summary>
+    private static string? MetodoCobroLabelEspanol(string? method) => method?.Trim().ToLowerInvariant() switch
+    {
+        "transfer" => "transferencia",
+        "cash" => "efectivo",
+        "check" => "cheque",
+        "card" => "tarjeta",
+        _ => null,
+    };
+
+    /// <summary>
+    /// Mapea el extracto del dominio (value object puro) al DTO de salida, redondeando los montos a 2 decimales
+    /// (coherente con las columnas decimal(18,2)). Lado VENTA: NO se enmascara (no hay costo ni margen), asi que
+    /// <see cref="CustomerAccountStatementDto.AmountsVisible"/> va siempre en true tras el gate de permiso.
+    /// </summary>
+    private static CustomerAccountStatementDto MapCustomerAccountStatement(
+        Guid customerPublicId, string customerName, CustomerAccountStatement statement)
+    {
+        var dto = new CustomerAccountStatementDto
+        {
+            CustomerPublicId = customerPublicId,
+            CustomerName = customerName,
+            AmountsVisible = true,
+        };
+
+        foreach (var block in statement.Currencies)
+        {
+            var blockDto = new CustomerAccountStatementCurrencyBlockDto
+            {
+                Currency = block.Currency,
+                ClosingBalance = EconomicRulesHelper.RoundCurrency(block.ClosingBalance),
+            };
+
+            foreach (var line in block.Lines)
+            {
+                blockDto.Lines.Add(new CustomerAccountStatementLineDto
+                {
+                    Date = line.Date,
+                    Kind = line.Kind,
+                    Description = line.Description,
+                    DocumentRef = line.DocumentRef,
+                    ReservaPublicId = line.ReservaPublicId,
+                    NumeroReserva = line.NumeroReserva,
+                    SourcePublicId = line.SourcePublicId,
+                    Currency = line.Currency,
+                    Charge = EconomicRulesHelper.RoundCurrency(line.Charge),
+                    Credit = EconomicRulesHelper.RoundCurrency(line.Credit),
+                    RunningBalance = EconomicRulesHelper.RoundCurrency(line.RunningBalance),
+                });
+            }
+
+            dto.Currencies.Add(blockDto);
+        }
+
+        return dto;
     }
 
     /// <summary>

@@ -1,52 +1,50 @@
 /**
  * Solapa "Estado de cuenta" de la cuenta corriente del cliente.
  *
- * Muestra un extracto cronológico estilo libro mayor donde:
- *   - Las facturas y Notas de Débito son CARGOS (aumentan la deuda del cliente).
- *   - Los cobros y Notas de Crédito son ABONOS (reducen la deuda del cliente).
+ * Muestra el extracto cronológico estilo libro mayor que devuelve el backend
+ * (GET /customers/{id}/account/statement), YA calculado en el servidor:
+ *   - Las ventas confirmadas son CARGOS (aumentan la deuda del cliente).
+ *   - Los cobros son ABONOS (reducen la deuda del cliente).
  *   - Hay UN BLOQUE POR MONEDA: el saldo en pesos y el saldo en dólares nunca
  *     se suman ni se mezclan (regla multimoneda del sistema).
- *   - Cada bloque muestra su propio saldo corriente acumulado.
+ *   - Cada bloque trae su propio saldo corriente (runningBalance) y saldo de
+ *     cierre (closingBalance), calculados por el servidor — por construcción
+ *     el saldo de cierre reconcilia con el "Debe" del encabezado de la página.
  *
- * Estructura visual (mirroring de SupplierExtractoSection.jsx):
- *   ┌── EXTRACTO — Pesos ($) ──────────────────────────────────┐
- *   │  Fecha | Concepto | Comprobante/Ref. | Cargo | Abono | Saldo │
+ * Estructura visual (mirroring de SupplierExtractoSection.jsx, ya aprobado):
+ *   ┌── Pesos ($) ───────────────────────────────────────────────┐
+ *   │  Fecha | Concepto | Comprobante | Cargo | Abono | Saldo    │
  *   └────────────────────────────────────────────────────────────┘
- *   ┌── EXTRACTO — Dólares (US$) ──────────────────────────────┐
- *   │  ...                                                      │
+ *   ┌── Dólares (US$) ──────────────────────────────────────────┐
+ *   │  ...                                                       │
  *   └────────────────────────────────────────────────────────────┘
  *
- * Si solo hay movimientos en una moneda, solo se muestra ese bloque.
+ * Historia (2026-07-01): antes este componente armaba el extracto EN EL
+ * NAVEGADOR, cruzando /account/payments + /account/invoices con un techo de
+ * 500 movimientos cada uno; por eso el saldo podía no cerrar con el resumen
+ * de arriba. Ahora el servidor ya entrega las líneas con su saldo corriente
+ * (una fuente autoritativa: venta confirmada de las reservas en firme, la
+ * misma que usa el resumen del encabezado), así que no hay techo ni fusión
+ * en el cliente, y el cartel de "puede diferir" ya no es necesario.
  *
- * Por qué la fusión es client-side:
- *   No existe un endpoint GET /customers/{id}/account/statement (a diferencia de
- *   GET /suppliers/{id}/account/statement que sí existe). Este componente carga los
- *   pagos e invoices por separado, los fusiona y agrupa por moneda en el cliente.
- *   La lógica pura de fusión está en lib/estadoCuentaCliente.js (testeable con node --test).
- *   TODO: cuando el backend cree ese endpoint, reemplazar por una llamada directa
- *   (igual que SupplierExtractoSection y EstadoCuentaExtracto de la reserva).
- *
- * Pagos cruzados (imputación multimoneda):
- *   El backend expone `imputedCurrency`/`imputedAmount` en el DTO de pago.
- *   El abono que mueve el saldo de un bloque es el imputedAmount en la imputedCurrency.
- *   Para no confundir al usuario, se muestra un texto secundario ("pagó US$ 50")
- *   cuando el efectivo recibido difiere de la moneda del saldo cancelado.
+ * Sin acciones por renglón (a propósito): este extracto es una vista de
+ * SOLO LECTURA que cruza todas las reservas del cliente (como un resumen
+ * bancario). Para ver el PDF de una factura, eliminar un cobro o anular un
+ * recibo, el usuario entra a la reserva puntual (el link de "Concepto" lo
+ * lleva ahí) — esas acciones ya viven en el extracto de la reserva
+ * (EstadoCuentaExtracto.jsx, dentro de ReservaDetailPage), con el contexto
+ * completo del comprobante/recibo.
  *
  * Props:
- *   - customerPublicId: string — publicId del cliente
- *   - refreshKey: number — el padre lo incrementa al registrar/eliminar un cobro para
- *       que el extracto se recargue automáticamente
- *   - onVerFactura(invoice): abre el PDF del comprobante
- *   - onEliminarPago(payment): muestra confirmación y elimina el pago
- *   - onAnularRecibo(payment): muestra confirmación y anula el recibo de pago
+ *   - estadoCuenta: CustomerAccountStatementDto | null — { currencies: [...] }
+ *   - loading: boolean — el padre está cargando el extracto
+ *   - error: string | null — mensaje de error si falló la carga
+ *   - onRetry: () => void — reintentar la carga tras un error
  *   - onNuevaCobranza(): abre el modal para registrar un nuevo cobro
  *   - canRegistrarCobranza: boolean — si el usuario tiene permiso para registrar cobros
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { BookOpen, Eye, Loader2, Plus, RefreshCw, Trash2, XCircle } from "lucide-react";
-import { api } from "../../../api";
-import { getApiErrorMessage } from "../../../lib/errors";
-import { getPublicId } from "../../../lib/publicIds";
+import { Link } from "react-router-dom";
+import { BookOpen, Loader2, Plus, RefreshCw } from "lucide-react";
 import { formatCurrency } from "../../../lib/utils";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import {
@@ -59,92 +57,23 @@ import {
   DataGridHeaderRow,
   DataGridRow,
 } from "../../../components/ui/DataGrid";
-import {
-  construirLineas,
-  ordenarLineasPorFecha,
-  agruparPorMoneda,
-  calcularSaldoCorrienteDeGrupo,
-} from "../lib/estadoCuentaCliente";
 
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export function EstadoCuentaClienteTab({
-  customerPublicId,
-  refreshKey,
-  onVerFactura,
-  onEliminarPago,
-  onAnularRecibo,
+  estadoCuenta,
+  loading,
+  error,
+  onRetry,
   onNuevaCobranza,
   canRegistrarCobranza,
 }) {
-  const [pagos, setPagos] = useState([]);
-  const [comprobantes, setComprobantes] = useState([]);
-  const [cargando, setCargando] = useState(true);
-  const [error, setError] = useState(null);
+  const bloques = estadoCuenta?.currencies ?? [];
+  const totalLineas = bloques.reduce((acc, bloque) => acc + (bloque.lines?.length ?? 0), 0);
 
-  /**
-   * Carga en paralelo todos los pagos y comprobantes del cliente.
-   * pageSize=500 cubre el volumen típico de un cliente.
-   *
-   * refreshKey como dependencia: el padre lo incrementa al registrar/eliminar un cobro,
-   * lo que dispara una nueva carga aquí sin que el usuario tenga que refrescar la página.
-   */
-  const cargarDatos = useCallback(async () => {
-    setCargando(true);
-    setError(null);
-    try {
-      const paramsPagos = new URLSearchParams({
-        page: "1", pageSize: "500", sortBy: "paidAt", sortDir: "asc",
-      });
-      const paramsComprobantes = new URLSearchParams({
-        page: "1", pageSize: "500", sortBy: "createdAt", sortDir: "asc",
-      });
-
-      // Cargamos pagos y comprobantes en paralelo para no esperar dos requests en serie
-      const [resPagos, resComprobantes] = await Promise.all([
-        api.get(`/customers/${customerPublicId}/account/payments?${paramsPagos.toString()}`),
-        api.get(`/customers/${customerPublicId}/account/invoices?${paramsComprobantes.toString()}`),
-      ]);
-
-      setPagos(resPagos?.items ?? []);
-      setComprobantes(resComprobantes?.items ?? []);
-    } catch (err) {
-      setError(getApiErrorMessage(err) || "No se pudo cargar el estado de cuenta.");
-    } finally {
-      setCargando(false);
-    }
-  }, [customerPublicId, refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Carga al montar y cuando cambia el cliente o refreshKey
-  useEffect(() => {
-    cargarDatos();
-  }, [cargarDatos]);
-
-  /**
-   * Construye los grupos por moneda con saldo corriente por grupo.
-   * useMemo evita recalcular en cada render si los datos no cambiaron.
-   *
-   * Pipeline:
-   *   1. construirLineas: combina pagos+comprobantes en una lista plana, cada una con currency
-   *   2. ordenarLineasPorFecha: ordena cronológicamente (ASC)
-   *   3. agruparPorMoneda: separa en bloques { currency, lineas[] } (ARS primero)
-   *   4. calcularSaldoCorrienteDeGrupo: agrega runningBalance dentro de cada bloque
-   */
-  const grupos = useMemo(() => {
-    const lineasCrudas = construirLineas(pagos, comprobantes);
-    const lineasOrdenadas = ordenarLineasPorFecha(lineasCrudas);
-    const bloques = agruparPorMoneda(lineasOrdenadas);
-    return bloques.map((bloque) => ({
-      currency: bloque.currency,
-      lineas: calcularSaldoCorrienteDeGrupo(bloque.lineas),
-    }));
-  }, [pagos, comprobantes]);
-
-  const totalLineas = grupos.reduce((acc, g) => acc + g.lineas.length, 0);
-
-  if (cargando) {
+  if (loading) {
     return (
-      <div className="flex items-center justify-center gap-2 py-12 text-sm text-slate-400">
+      <div className="flex items-center justify-center gap-2 py-12 text-sm text-slate-400" data-testid="extracto-loading">
         <Loader2 className="h-5 w-5 animate-spin" />
         Cargando estado de cuenta...
       </div>
@@ -153,11 +82,11 @@ export function EstadoCuentaClienteTab({
 
   if (error) {
     return (
-      <div className="flex flex-col items-center gap-3 py-12 text-center">
+      <div className="flex flex-col items-center gap-3 py-12 text-center" data-testid="extracto-error">
         <p className="text-sm text-rose-600 dark:text-rose-400">{error}</p>
         <button
           type="button"
-          onClick={cargarDatos}
+          onClick={onRetry}
           className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
         >
           <RefreshCw className="h-3.5 w-3.5" />
@@ -202,31 +131,13 @@ export function EstadoCuentaClienteTab({
       )}
 
       {/*
-        Un bloque por moneda (ARS primero, luego USD).
+        Un bloque por moneda (el orden lo decide el servidor).
         Regla multimoneda: ARS y USD nunca se mezclan ni se suman.
         Si solo hay movimientos en una moneda, solo aparece ese bloque.
       */}
-      {grupos.map((grupo) => (
-        <BloqueExtractoCliente
-          key={grupo.currency}
-          currency={grupo.currency}
-          lineas={grupo.lineas}
-          onVerFactura={onVerFactura}
-          onEliminarPago={onEliminarPago}
-          onAnularRecibo={onAnularRecibo}
-        />
+      {bloques.map((bloque) => (
+        <BloqueExtractoCliente key={bloque.currency} bloque={bloque} />
       ))}
-
-      {/*
-        Aclaración honesta: el saldo del extracto refleja comprobantes emitidos + cobros registrados.
-        Puede diferir del resumen del encabezado si hay servicios confirmados aún sin facturar.
-      */}
-      {totalLineas > 0 && (
-        <p className="text-[10px] text-slate-400 dark:text-slate-500 text-center">
-          El saldo refleja los comprobantes emitidos y cobros registrados.
-          Puede diferir del resumen superior si hay servicios confirmados aún sin facturar.
-        </p>
-      )}
     </div>
   );
 }
@@ -235,20 +146,19 @@ export function EstadoCuentaClienteTab({
 
 /**
  * Tabla del extracto para una moneda.
- * Muestra cabecera con el saldo de cierre y tabla de líneas.
- * Estructura idéntica al BloqueExtractoProveedor de SupplierExtractoSection.
+ * Muestra cabecera con el saldo de cierre (closingBalance, calculado por el servidor)
+ * y tabla de líneas. Estructura idéntica al BloqueExtractoProveedor de SupplierExtractoSection.
  */
-function BloqueExtractoCliente({ currency, lineas, onVerFactura, onEliminarPago, onAnularRecibo }) {
-  // Saldo de cierre = balance de la última línea del bloque
-  const saldoCierre = lineas.length > 0 ? lineas[lineas.length - 1].runningBalance : 0;
-  const nombreMoneda = currency === "USD" ? "Dólares" : "Pesos";
+function BloqueExtractoCliente({ bloque }) {
+  const saldoCierre = bloque.closingBalance ?? 0;
+  const nombreMoneda = bloque.currency === "USD" ? "Dólares" : "Pesos";
 
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
       {/* Cabecera: badge de moneda + nombre + saldo de cierre */}
       <div className="flex items-center justify-between gap-3 border-b border-slate-100 bg-slate-50/30 px-5 py-3 dark:border-slate-800 dark:bg-slate-800/10">
         <div className="flex items-center gap-2">
-          <CurrencyBadge currency={currency} />
+          <CurrencyBadge currency={bloque.currency} />
           <span className="text-sm font-bold text-slate-700 dark:text-slate-300">
             {nombreMoneda}
           </span>
@@ -263,40 +173,38 @@ function BloqueExtractoCliente({ currency, lineas, onVerFactura, onEliminarPago,
                 ? "text-emerald-600 dark:text-emerald-500"
                 : "text-slate-400 dark:text-slate-600"
             }`}
-            data-testid={`extracto-saldo-${currency}`}
+            data-testid={`extracto-saldo-${bloque.currency}`}
           >
-            {formatCurrency(saldoCierre, currency)}
+            {formatCurrency(saldoCierre, bloque.currency)}
           </span>
         </div>
       </div>
 
       {/* Tabla de movimientos del bloque */}
-      <DataGrid density="compact" minWidth="900px">
+      <DataGrid density="compact" minWidth="820px">
         <DataGridHeader>
           <DataGridHeaderRow>
             <DataGridHeaderCell>Fecha</DataGridHeaderCell>
             <DataGridHeaderCell>Concepto</DataGridHeaderCell>
-            <DataGridHeaderCell>Comprobante / Ref.</DataGridHeaderCell>
+            <DataGridHeaderCell>Comprobante</DataGridHeaderCell>
             <DataGridHeaderCell align="right">Cargo</DataGridHeaderCell>
             <DataGridHeaderCell align="right">Abono</DataGridHeaderCell>
             <DataGridHeaderCell align="right">Saldo</DataGridHeaderCell>
-            <DataGridHeaderCell>Acciones</DataGridHeaderCell>
           </DataGridHeaderRow>
         </DataGridHeader>
         <DataGridBody>
-          {lineas.length === 0 ? (
-            <DataGridEmptyState colSpan={7} title="Sin movimientos en esta moneda." />
-          ) : (
-            lineas.map((linea, idx) => (
+          {bloque.lines?.length > 0 ? (
+            bloque.lines.map((linea, idx) => (
               <FilaExtractoCliente
-                key={`${linea.kind}-${idx}`}
+                // sourcePublicId puede repetirse conceptualmente entre bloques (moneda distinta),
+                // así que la key combina moneda + fuente + índice como último respaldo.
+                key={`${bloque.currency}-${linea.sourcePublicId ?? idx}-${idx}`}
                 linea={linea}
-                currency={currency}
-                onVerFactura={onVerFactura}
-                onEliminarPago={onEliminarPago}
-                onAnularRecibo={onAnularRecibo}
+                currency={bloque.currency}
               />
             ))
+          ) : (
+            <DataGridEmptyState colSpan={6} title="Sin movimientos en esta moneda." />
           )}
         </DataGridBody>
       </DataGrid>
@@ -308,10 +216,11 @@ function BloqueExtractoCliente({ currency, lineas, onVerFactura, onEliminarPago,
 
 /**
  * Una fila del extracto del cliente.
- * Los montos se formatean en la moneda del bloque (prop `currency`).
- * Las acciones dependen del tipo de línea: comprobante → Ver PDF; cobro → acciones de pago.
+ * `kind` ("Sale"/"Payment") solo se usa para decidir estilos (nunca se muestra como texto).
+ * `sourcePublicId`/`reservaPublicId` son GUID internos: solo se usan para key/link,
+ * nunca se muestran como texto — el texto visible de la reserva es `numeroReserva`.
  */
-function FilaExtractoCliente({ linea, currency, onVerFactura, onEliminarPago, onAnularRecibo }) {
+function FilaExtractoCliente({ linea, currency }) {
   const esCargo = linea.charge > 0;
   const esAbono = linea.credit > 0;
 
@@ -323,30 +232,28 @@ function FilaExtractoCliente({ linea, currency, onVerFactura, onEliminarPago, on
       </DataGridCell>
 
       {/* Concepto: negrita para cargos (deuda), normal para abonos.
-          Para pagos cruzados (el cliente pagó en una moneda distinta a la del saldo),
-          se muestra una línea secundaria sutil con el efectivo real recibido.
-          Ej: "Cobro · Transferencia — R-1001" + "(pagó US$ 50)" debajo.
-          El saldo del bloque usa el imputedAmount; este detalle es solo informativo. */}
+          Si el movimiento tiene reserva asociada, un link chiquito lleva a esa reserva
+          (ahí viven las acciones puntuales: ver factura, eliminar cobro, anular recibo). */}
       <DataGridCell>
         <span className={esCargo ? "font-medium text-slate-800 dark:text-slate-200" : "text-slate-600 dark:text-slate-400"}>
           {linea.description || "—"}
         </span>
-        {linea.isCrossCurrency && linea.cashCurrency && (
-          <span
-            className="block text-[10px] text-slate-400 dark:text-slate-500"
-            title={`Efectivo recibido en ${linea.cashCurrency}`}
+        {linea.reservaPublicId && linea.numeroReserva && (
+          <Link
+            to={`/reservas/${linea.reservaPublicId}`}
+            className="block text-[10px] text-indigo-600 hover:underline dark:text-indigo-400"
           >
-            pagó {formatCurrency(linea.cashAmount, linea.cashCurrency)}
-          </span>
+            {linea.numeroReserva}
+          </Link>
         )}
       </DataGridCell>
 
-      {/* Número de comprobante o referencia de pago */}
+      {/* Comprobante (nº de recibo u otra referencia); "—" si no hay */}
       <DataGridCell className="font-mono text-xs text-slate-500 dark:text-slate-400">
         {linea.documentRef || "—"}
       </DataGridCell>
 
-      {/* Cargo: visible solo para facturas/ND; formateado en la moneda del bloque */}
+      {/* Cargo: visible solo para ventas confirmadas; formateado en la moneda del bloque */}
       <DataGridCell align="right">
         {esCargo ? (
           <span className="font-bold text-slate-800 dark:text-slate-200">
@@ -357,7 +264,7 @@ function FilaExtractoCliente({ linea, currency, onVerFactura, onEliminarPago, on
         )}
       </DataGridCell>
 
-      {/* Abono: visible solo para cobros/NC; formateado en la moneda del bloque */}
+      {/* Abono: visible solo para cobros; formateado en la moneda del bloque */}
       <DataGridCell align="right">
         {esAbono ? (
           <span className="font-bold text-emerald-600 dark:text-emerald-500">
@@ -368,7 +275,7 @@ function FilaExtractoCliente({ linea, currency, onVerFactura, onEliminarPago, on
         )}
       </DataGridCell>
 
-      {/* Saldo corriente del bloque: rojo si debe, verde si a favor, gris si cero */}
+      {/* Saldo corriente del bloque (calculado por el servidor): rojo si debe, verde si a favor, gris si cero */}
       <DataGridCell align="right">
         <span
           className={`font-extrabold ${
@@ -381,51 +288,6 @@ function FilaExtractoCliente({ linea, currency, onVerFactura, onEliminarPago, on
         >
           {formatCurrency(linea.runningBalance ?? 0, currency)}
         </span>
-      </DataGridCell>
-
-      {/* Acciones por tipo de línea */}
-      <DataGridCell>
-        {linea.kind === "comprobante" ? (
-          <button
-            type="button"
-            onClick={() => onVerFactura && onVerFactura(linea.source)}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-600 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-            aria-label={`Ver PDF de ${linea.description}`}
-            data-testid={`ver-comprobante-${getPublicId(linea.source)}`}
-          >
-            <Eye className="h-3.5 w-3.5" />
-            Ver
-          </button>
-        ) : linea.kind === "cobro" ? (
-          <div className="flex items-center gap-1">
-            {/* Anular recibo: solo si tiene recibo emitido */}
-            {linea.source?.receiptPublicId && linea.source?.receiptStatus === "Issued" && (
-              <button
-                type="button"
-                onClick={() => onAnularRecibo && onAnularRecibo(linea.source)}
-                className="inline-flex rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-900/20 transition-colors"
-                title="Anular comprobante de pago"
-                aria-label="Anular comprobante de pago"
-                data-testid={`anular-recibo-${getPublicId(linea.source)}`}
-              >
-                <XCircle className="h-3.5 w-3.5" />
-              </button>
-            )}
-            {/* Eliminar cobro */}
-            <button
-              type="button"
-              onClick={() => onEliminarPago && onEliminarPago(linea.source)}
-              className="inline-flex rounded-lg p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-colors"
-              title="Eliminar cobro"
-              aria-label="Eliminar cobro"
-              data-testid={`eliminar-pago-${getPublicId(linea.source)}`}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        ) : (
-          <span className="text-xs text-slate-400">—</span>
-        )}
       </DataGridCell>
     </DataGridRow>
   );

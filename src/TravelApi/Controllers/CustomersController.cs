@@ -213,6 +213,40 @@ public class CustomersController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// EXTRACTO (libro mayor) de la cuenta por cobrar del cliente: una linea por cada venta confirmada (cargo)
+    /// y cada cobro (abono), con saldo corriente POR MONEDA, calculado EN EL SERVIDOR. El saldo de cierre de
+    /// cada moneda reconcilia con el "Debe" por moneda del header (el receivable) por construccion. Reemplaza el
+    /// armado en el navegador (que mezclaba pagos+facturas con techo de 500 y no cerraba con el resumen).
+    /// </summary>
+    // Mismo gate que /account: expone montos de la cuenta del cliente -> clientes.view Y cobranzas.view (AND
+    // apilando atributos). El lado VENTA no enmascara montos (no hay costo ni margen en el extracto).
+    [HttpGet("{publicIdOrLegacyId}/account/statement")]
+    [RequirePermission(Permissions.ClientesView)]
+    [RequirePermission(Permissions.CobranzasView)]
+    public async Task<ActionResult<CustomerAccountStatementDto>> GetCustomerAccountStatement(
+        string publicIdOrLegacyId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Customer>(publicIdOrLegacyId, cancellationToken);
+            return Ok(await _customerService.GetCustomerAccountStatementAsync(id, cancellationToken));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (Exception ex)
+        {
+            if (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+            }
+            return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo obtener el extracto de la cuenta del cliente.");
+        }
+    }
+
     [HttpGet("{publicIdOrLegacyId}/account/reservas")]
     [RequirePermission(Permissions.ClientesView)]
     public async Task<ActionResult<PagedResponse<CustomerAccountReservaListItemDto>>> GetCustomerAccountReservas(

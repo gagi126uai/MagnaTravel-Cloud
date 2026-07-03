@@ -30,11 +30,9 @@ import {
   Wallet,
 } from "lucide-react";
 import { api } from "../../../api";
-import { showConfirm, showError, showSuccess } from "../../../alerts";
+import { showError, showSuccess } from "../../../alerts";
 import { hasPermission } from "../../../auth";
 import CustomerPaymentModal from "../../../components/CustomerPaymentModal";
-import RequestApprovalModal from "../../approvals/components/RequestApprovalModal";
-import { useFinanceActions } from "../../payments/hooks/useFinanceActions";
 import { UsarSaldoAFavorInline } from "../components/UsarSaldoAFavorInline";
 import { ListaCuentasBancarias } from "../../bank-accounts/components/ListaCuentasBancarias";
 import { Button } from "../../../components/ui/button";
@@ -145,8 +143,13 @@ export default function CustomerAccountPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [paymentToEdit, setPaymentToEdit] = useState(null);
 
-  // ── Modal de aprobación ───────────────────────────────────────────────────
-  const [approvalContext, setApprovalContext] = useState(null);
+  // ── Estado de cuenta (extracto libro mayor, GET .../account/statement) ────
+  // Se levanta acá (no dentro de EstadoCuentaClienteTab) porque las tarjetas
+  // "Ventas"/"Cobrado" del encabezado también necesitan el desglose por moneda
+  // que trae este extracto — así se pide UNA sola vez por carga, no dos.
+  const [estadoCuenta, setEstadoCuenta] = useState(null);
+  const [loadingEstadoCuenta, setLoadingEstadoCuenta] = useState(true);
+  const [errorEstadoCuenta, setErrorEstadoCuenta] = useState(null);
 
   // ── Saldo a favor: ficha inline y aplicaciones revertibles ───────────────
   // monedaFichaUsarSaldo: moneda del cartel que disparó la apertura de la ficha (o null)
@@ -216,6 +219,26 @@ export default function CustomerAccountPage() {
     }
   }, [publicId]);
 
+  // Carga el extracto de cuenta (libro mayor) del cliente, calculado en el servidor.
+  // Fuente única: alimenta tanto la tabla de EstadoCuentaClienteTab como las tarjetas
+  // "Ventas"/"Cobrado" del encabezado (desglosadas por moneda), así se pide UNA sola
+  // vez por carga en vez de que cada consumidor haga su propio fetch.
+  const loadEstadoCuenta = useCallback(async () => {
+    setLoadingEstadoCuenta(true);
+    setErrorEstadoCuenta(null);
+    try {
+      const response = await api.get(`/customers/${publicId}/account/statement`);
+      setEstadoCuenta(response);
+    } catch (error) {
+      setEstadoCuenta(null);
+      setErrorEstadoCuenta(getApiErrorMessage(error) || "No se pudo cargar el estado de cuenta.");
+    } finally {
+      setLoadingEstadoCuenta(false);
+    }
+    // extractoRefreshKey como dependencia: el padre lo sube al registrar/eliminar un cobro,
+    // así el extracto se recarga solo sin que el usuario tenga que refrescar la página.
+  }, [publicId, extractoRefreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Carga de la solapa Reservas (paginada) ────────────────────────────────
 
   const loadReservas = useCallback(async () => {
@@ -255,19 +278,6 @@ export default function CustomerAccountPage() {
     ]);
   }, [loadOverview, loadReservaOptions, loadCreditApplications, loadDeudaClientePorReserva]);
 
-  // ── useFinanceActions (maneja anular recibo con flujo de aprobación) ──────
-
-  const { handleVoidReceipt } = useFinanceActions(refreshAll, {
-    onApprovalRequired: ({ requestType, entityType, entityId }) => {
-      setApprovalContext({
-        requestType,
-        entityType,
-        entityId,
-        invoiceLabel: "Comprobante de pago",
-      });
-    },
-  });
-
   // ── Effects de carga ──────────────────────────────────────────────────────
 
   // Resetea el estado cuando cambia el cliente en la URL
@@ -285,6 +295,12 @@ export default function CustomerAccountPage() {
     loadCreditApplications();
     loadDeudaClientePorReserva();
   }, [loadOverview, loadReservaOptions, loadCreditApplications, loadDeudaClientePorReserva]);
+
+  // Carga el extracto (Estado de cuenta) al montar, cuando cambia el cliente,
+  // y cada vez que extractoRefreshKey sube (refreshAll lo incrementa tras un cobro).
+  useEffect(() => {
+    loadEstadoCuenta();
+  }, [loadEstadoCuenta]);
 
   // Carga de la solapa Reservas cuando es la solapa activa
   useEffect(() => {
@@ -305,27 +321,6 @@ export default function CustomerAccountPage() {
   const handleOpenModal = (payment = null) => {
     setPaymentToEdit(payment);
     setIsModalOpen(true);
-  };
-
-  const handleDeletePayment = async (payment) => {
-    // NIT: usar la moneda real del cobro (payment.currency), no asumir ARS
-    const monedaPago = payment.currency ?? "ARS";
-    const confirmed = await showConfirm(
-      "Eliminar cobro",
-      `Se anulará el cobro de ${formatCurrency(payment.amount, monedaPago)} y la deuda volverá a la reserva.`,
-      "Sí, eliminar",
-      "red"
-    );
-    if (!confirmed || !payment.reservaPublicId) return;
-
-    try {
-      await api.delete(`/reservas/${payment.reservaPublicId}/payments/${getPublicId(payment)}`);
-      await refreshAll();
-      showSuccess("El cobro fue eliminado.");
-    } catch (error) {
-      console.error(error);
-      showError("No se pudo eliminar el cobro.");
-    }
   };
 
   const handleOpenInvoicePreview = async (invoice) => {
@@ -403,6 +398,32 @@ export default function CustomerAccountPage() {
     () => reservaOptions.filter((r) => r.status !== "Cancelled"),
     [reservaOptions]
   );
+
+  // "Ventas" y "Cobrado" por moneda para las tarjetas del encabezado.
+  //
+  // Por qué se calculan acá y no vienen de summary: el backend NO expone
+  // TotalSales/TotalPaid desglosados por moneda (summary.TotalSales/TotalPaid son
+  // escalares que MEZCLAN pesos y dólares — el bug original que había que arreglar).
+  // Lo que sí trae desglosado por moneda es el extracto (account/statement): cada
+  // línea de venta confirmada es un "charge" y cada cobro es un "credit" de SU
+  // bloque de moneda. Sumando esos dos campos por bloque se obtiene el mismo total
+  // que "Ventas"/"Cobrado", pero correctamente separado por moneda (nunca sumando
+  // ARS + USD), sin inventar un campo que el backend no tiene.
+  const ventasPorMoneda = useMemo(() => {
+    const bloques = estadoCuenta?.currencies ?? [];
+    return bloques.map((bloque) => ({
+      currency: bloque.currency,
+      amount: (bloque.lines ?? []).reduce((acc, linea) => acc + (linea.charge ?? 0), 0),
+    }));
+  }, [estadoCuenta]);
+
+  const cobradoPorMoneda = useMemo(() => {
+    const bloques = estadoCuenta?.currencies ?? [];
+    return bloques.map((bloque) => ({
+      currency: bloque.currency,
+      amount: (bloque.lines ?? []).reduce((acc, linea) => acc + (linea.credit ?? 0), 0),
+    }));
+  }, [estadoCuenta]);
 
   // Filtra por moneda para el picker de "aplicar saldo a reserva específica"
   const getReservasConDeudaEnMoneda = useCallback((moneda) => {
@@ -487,15 +508,40 @@ export default function CustomerAccountPage() {
             </div>
           </div>
 
-          {/* Tarjetas de resumen: Ventas / Cobrado / Reservas / Facturas (P12=A: fijas) */}
+          {/*
+            Tarjetas de resumen: Ventas / Cobrado / Reservas / Facturas (P12=A: fijas).
+            Ventas y Cobrado ahora muestran UNA línea por moneda (nunca suman ARS+USD).
+            Mientras el extracto todavía no cargó, se ve un "…" en vez de un número que
+            después cambiaría de golpe.
+          */}
           <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-950/60">
               <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">Ventas</div>
-              <div className="mt-1 text-lg font-bold text-slate-900 dark:text-white">{formatCurrency(summary.totalSales, "ARS")}</div>
+              {loadingEstadoCuenta ? (
+                <div className="mt-1 text-lg font-bold text-slate-400">…</div>
+              ) : ventasPorMoneda.length === 0 ? (
+                <div className="mt-1 text-lg font-bold text-slate-900 dark:text-white">{formatCurrency(0, "ARS")}</div>
+              ) : (
+                ventasPorMoneda.map((item) => (
+                  <div key={item.currency} className="mt-1 text-lg font-bold text-slate-900 dark:text-white">
+                    {formatCurrency(item.amount, item.currency)}
+                  </div>
+                ))
+              )}
             </div>
             <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-950/60">
               <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">Cobrado</div>
-              <div className="mt-1 text-lg font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(summary.totalPaid, "ARS")}</div>
+              {loadingEstadoCuenta ? (
+                <div className="mt-1 text-lg font-bold text-slate-400">…</div>
+              ) : cobradoPorMoneda.length === 0 ? (
+                <div className="mt-1 text-lg font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(0, "ARS")}</div>
+              ) : (
+                cobradoPorMoneda.map((item) => (
+                  <div key={item.currency} className="mt-1 text-lg font-bold text-emerald-600 dark:text-emerald-400">
+                    {formatCurrency(item.amount, item.currency)}
+                  </div>
+                ))
+              )}
             </div>
             <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-950/60">
               <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">Reservas</div>
@@ -884,11 +930,10 @@ export default function CustomerAccountPage() {
         {/* ── Contenido de la solapa Estado de cuenta ──────────────────────── */}
         {activeTab === "estadoDeCuenta" && (
           <EstadoCuentaClienteTab
-            customerPublicId={publicId}
-            refreshKey={extractoRefreshKey}
-            onVerFactura={handleOpenInvoicePreview}
-            onEliminarPago={handleDeletePayment}
-            onAnularRecibo={handleVoidReceipt}
+            estadoCuenta={estadoCuenta}
+            loading={loadingEstadoCuenta}
+            error={errorEstadoCuenta}
+            onRetry={loadEstadoCuenta}
             onNuevaCobranza={() => handleOpenModal(null)}
             canRegistrarCobranza={hasPermission("cobranzas.edit")}
           />
@@ -917,12 +962,17 @@ export default function CustomerAccountPage() {
         )}
       </div>
 
-      {/* ── Modales (solo CustomerPaymentModal y RequestApprovalModal) ────── */}
+      {/* ── Modal (solo CustomerPaymentModal) ─────────────────────────────── */}
       {/*
         CustomerPaymentModal: permanece como modal de acción rápida para registrar cobros.
         Se abre desde el botón "Nuevo cobro" dentro de la solapa Estado de cuenta.
         TODO (mejora a futuro): migrar a ficha en línea como el cobro en la reserva
         (RegistrarCobroInline), pero eso es un cambio de mayor envergadura fuera de scope.
+
+        Eliminar cobro / Anular recibo / Ver factura ya NO se ofrecen desde este extracto
+        (que cruza TODAS las reservas del cliente, de solo lectura): esas acciones viven en
+        el extracto de la reserva puntual (EstadoCuentaExtracto dentro de ReservaDetailPage),
+        con el contexto completo del comprobante. El link de cada renglón lleva directo ahí.
       */}
       <CustomerPaymentModal
         isOpen={isModalOpen}
@@ -931,16 +981,6 @@ export default function CustomerAccountPage() {
         customerId={publicId}
         availableReservas={availableReservas}
         onSave={refreshAll}
-      />
-
-      <RequestApprovalModal
-        isOpen={Boolean(approvalContext)}
-        onClose={() => setApprovalContext(null)}
-        onCreated={() => setApprovalContext(null)}
-        requestType={approvalContext?.requestType}
-        entityType={approvalContext?.entityType}
-        entityId={approvalContext?.entityId}
-        entityLabel={approvalContext?.invoiceLabel}
       />
     </div>
   );

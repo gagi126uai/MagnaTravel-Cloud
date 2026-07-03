@@ -151,6 +151,110 @@ public class CustomerDebtReservaLineDto
     public List<CurrencyAmountDto> DebtByCurrency { get; set; } = new();
 }
 
+// ===================================================================================================
+// EXTRACTO (libro mayor) de la CUENTA POR COBRAR del cliente. Espejo del extracto del proveedor
+// (SupplierAccountStatementDto) pero del lado VENTA y CRUZANDO todas las reservas del cliente: una linea
+// cronologica por cada venta confirmada (cargo) y cada cobro (abono), con saldo corriente, SEPARADO por
+// moneda. Se calcula EN EL SERVIDOR y reconcilia por construccion con el "Debe" por moneda del header
+// (ReceivableByCurrency), a diferencia del extracto viejo que se armaba en el navegador con un techo de 500
+// movimientos y no cerraba con el resumen.
+//
+// Fuente autoritativa: el saldo de cierre de cada moneda = suma de ConfirmedSale - TotalPaid (=
+// ReservaMoneyByCurrency.Balance) sobre las reservas EN FIRME del cliente, la MISMA fuente que
+// FinancePositionService.GetCustomerReceivableByCurrencyAsync (el header). Es venta confirmada como cargo (NO
+// facturas): por eso cierra aunque la venta todavia no este facturada ("facturar tarde"). El saldo a favor del
+// cliente (creditBalanceByCurrency del header) es un ledger APARTE (ClientCreditEntry) y NO entra en este
+// extracto: el flujo normal traslada el sobrepago a ese bolsillo dejando cada reserva en 0.
+// ===================================================================================================
+
+/// <summary>
+/// "Estado de Cuenta" del CLIENTE como LIBRO MAYOR (extracto estilo banco). Read-model DERIVADO (no se
+/// persiste): una linea cronologica por cada venta confirmada (cargo) y cada cobro (abono), con saldo
+/// corriente, SEPARADO por moneda.
+///
+/// <para><b>SEGURIDAD</b>: es del lado VENTA (venta/cobros del cliente, sin costo ni margen), asi que NO se
+/// enmascara por <c>see_cost</c> — igual que el resto de la cuenta del cliente. El gate de acceso
+/// (clientes.view + cobranzas.view) vive en el controller. <see cref="AmountsVisible"/> se conserva por
+/// paridad de forma con el extracto del proveedor y viene siempre en true tras pasar el gate.</para>
+/// </summary>
+public class CustomerAccountStatementDto
+{
+    public Guid CustomerPublicId { get; set; }
+    public string CustomerName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Paridad de forma con el extracto del proveedor. En el lado VENTA NO hay masking de costo, asi que tras
+    /// pasar el gate de permiso el caller SIEMPRE ve los montos: viene en true. Se expone para que el front
+    /// comparta el mismo componente de render que el extracto del proveedor.
+    /// </summary>
+    public bool AmountsVisible { get; set; } = true;
+
+    /// <summary>Un bloque por cada moneda presente (ARS/USD/...). Vacio si el cliente no tiene movimientos.</summary>
+    public List<CustomerAccountStatementCurrencyBlockDto> Currencies { get; set; } = new();
+}
+
+/// <summary>
+/// Bloque del extracto del cliente de UNA moneda: sus lineas en orden cronologico y su saldo de cierre.
+/// </summary>
+public class CustomerAccountStatementCurrencyBlockDto
+{
+    public string Currency { get; set; } = Monedas.ARS;
+
+    /// <summary>Movimientos de la moneda en orden cronologico, con saldo corriente.</summary>
+    public List<CustomerAccountStatementLineDto> Lines { get; set; } = new();
+
+    /// <summary>
+    /// Saldo de cierre de la moneda = saldo corriente de la ultima linea. Positivo = el cliente debe;
+    /// 0 = saldado. Reconcilia con el "Debe" de esta moneda del header (ReceivableByCurrency) por construccion.
+    /// </summary>
+    public decimal ClosingBalance { get; set; }
+}
+
+/// <summary>
+/// Una linea del extracto del cliente. Estilo banco: <see cref="Charge"/> SUMA a la deuda (venta confirmada),
+/// <see cref="Credit"/> la RESTA (cobro). Una linea trae uno u otro (el otro en 0). <see cref="RunningBalance"/>
+/// es el saldo acumulado de la moneda hasta esta linea inclusive. Como el extracto cruza varias reservas, cada
+/// linea identifica su reserva (<see cref="ReservaPublicId"/> / <see cref="NumeroReserva"/>).
+/// </summary>
+public class CustomerAccountStatementLineDto
+{
+    /// <summary>Fecha del movimiento (alta de la reserva en la venta; fecha del cobro en el abono).</summary>
+    public DateTime Date { get; set; }
+
+    /// <summary>Tipo de movimiento: "Sale" (venta confirmada) / "Payment" (cobro).</summary>
+    public string Kind { get; set; } = string.Empty;
+
+    /// <summary>Texto legible del movimiento (nombre del expediente; nº de recibo o metodo del cobro).</summary>
+    public string Description { get; set; } = string.Empty;
+
+    /// <summary>Referencia del documento (nº de recibo del cobro), o null.</summary>
+    public string? DocumentRef { get; set; }
+
+    /// <summary>Reserva (expediente) a la que pertenece el movimiento. El front la usa para enlazar la linea.</summary>
+    public Guid ReservaPublicId { get; set; }
+
+    /// <summary>Numero de la reserva del movimiento (para mostrar "Reserva #N").</summary>
+    public string? NumeroReserva { get; set; }
+
+    /// <summary>
+    /// PublicId del documento de origen: la reserva (lineas Sale) o el cobro (lineas Payment). El front lo
+    /// cruza para colgar acciones por renglon. Es solo un identificador.
+    /// </summary>
+    public Guid? SourcePublicId { get; set; }
+
+    /// <summary>Moneda de la linea (igual que la del bloque).</summary>
+    public string Currency { get; set; } = Monedas.ARS;
+
+    /// <summary>Monto que SUMA a la deuda (venta confirmada). 0 si la linea es un cobro.</summary>
+    public decimal Charge { get; set; }
+
+    /// <summary>Monto que RESTA de la deuda (cobro). 0 si la linea es una venta.</summary>
+    public decimal Credit { get; set; }
+
+    /// <summary>Saldo corriente de la moneda hasta esta linea inclusive.</summary>
+    public decimal RunningBalance { get; set; }
+}
+
 public class CustomerAccountPaymentListItemDto
 {
     public Guid PublicId { get; set; }

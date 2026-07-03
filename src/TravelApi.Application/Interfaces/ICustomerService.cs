@@ -45,6 +45,15 @@ public interface ICustomerService
     Task<CustomerDebtByReservaDto> GetCustomerDebtByReservaAsync(int id, CancellationToken cancellationToken);
 
     /// <summary>
+    /// EXTRACTO (libro mayor) de la cuenta por cobrar del cliente: una linea por cada venta confirmada (cargo)
+    /// y cada cobro (abono), con saldo corriente POR MONEDA, calculado EN EL SERVIDOR. El saldo de cierre de
+    /// cada moneda reconcilia por construccion con el "Debe" por moneda del header (ReceivableByCurrency),
+    /// porque parte de la MISMA fuente (ConfirmedSale - TotalPaid de ReservaMoneyByCurrency en firme). Reemplaza
+    /// el armado en el navegador (que mezclaba pagos+facturas con techo de 500 y no cerraba con el resumen).
+    /// </summary>
+    Task<CustomerAccountStatementDto> GetCustomerAccountStatementAsync(int id, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Lista los saldos a favor DISPONIBLES (RemainingBalance &gt; 0) del cliente, ordenados del más
     /// viejo al más nuevo (FIFO de consumo). El front lo usa para que el usuario elija de qué entry
     /// retirar/aplicar. El agregado por moneda para el cartel ya viene en GetCustomerAccountOverviewAsync.
