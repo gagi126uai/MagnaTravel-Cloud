@@ -751,31 +751,6 @@ export default function ReservaDetailPage() {
   // en cada acción de plata, para que la reserva y el extracto queden sincronizados.
   const refrescarExtracto = () => setAccountRefreshKey((k) => k + 1);
 
-  // ADR-042 (2026-07-01): detecta si la anulación de esta reserva quedó "en revisión"
-  // (multi-factura, una nota de crédito salió y otra no). Confirmar la anulación SIEMPRE
-  // pone la reserva en estado "PendingOperatorRefund" (haya salido todo bien o a medias);
-  // por eso el chequeo va scoped a ese estado — no llama al backend en el resto de reservas.
-  // accountRefreshKey en las deps: así se re-consulta después de un reintento exitoso (la
-  // llamada de reintento también refresca el extracto, ver onSilentRefresh más abajo).
-  useEffect(() => {
-    if (!publicId || reserva?.status !== "PendingOperatorRefund") {
-      setStuckCancellation(null);
-      return;
-    }
-    let cancelado = false;
-    (async () => {
-      try {
-        const bc = await cancellationsApi.getByReserva(publicId);
-        if (!cancelado) setStuckCancellation(bc?.canRetryCreditNotes ? bc : null);
-      } catch {
-        // 404 (sin cancelación) o error de red: no mostramos la franja. No es un error visible
-        // para el usuario — el cartel normal de "esperando reembolso" ya cubre ese caso.
-        if (!cancelado) setStuckCancellation(null);
-      }
-    })();
-    return () => { cancelado = true; };
-  }, [publicId, reserva?.status, accountRefreshKey]);
-
   const [confirmConfig, setConfirmConfig] = useState({
     isOpen: false,
     title: "",
@@ -832,6 +807,36 @@ export default function ReservaDetailPage() {
     allServices,
     capacity,
   } = useReservaDetail(publicId, navigate);
+
+  // ADR-042 (2026-07-01): detecta si la anulación de esta reserva quedó "en revisión"
+  // (multi-factura, una nota de crédito salió y otra no). Confirmar la anulación SIEMPRE
+  // pone la reserva en estado "PendingOperatorRefund" (haya salido todo bien o a medias);
+  // por eso el chequeo va scoped a ese estado — no llama al backend en el resto de reservas.
+  // accountRefreshKey en las deps: así se re-consulta después de un reintento exitoso (la
+  // llamada de reintento también refresca el extracto, ver onSilentRefresh más abajo).
+  //
+  // ⚠️ Este useEffect DEBE ir DESPUÉS de useReservaDetail: sus deps evalúan `reserva?.status`
+  // durante el render y `reserva` es const de ese hook — ponerlo antes es TDZ ("Cannot access
+  // before initialization") que CRASHEA toda la página en el bundle de producción (incidente
+  // 2026-07-02, mismo error ya documentado en el useEffect de ADR-031 de acá abajo).
+  useEffect(() => {
+    if (!publicId || reserva?.status !== "PendingOperatorRefund") {
+      setStuckCancellation(null);
+      return;
+    }
+    let cancelado = false;
+    (async () => {
+      try {
+        const bc = await cancellationsApi.getByReserva(publicId);
+        if (!cancelado) setStuckCancellation(bc?.canRetryCreditNotes ? bc : null);
+      } catch {
+        // 404 (sin cancelación) o error de red: no mostramos la franja. No es un error visible
+        // para el usuario — el cartel normal de "esperando reembolso" ya cubre ese caso.
+        if (!cancelado) setStuckCancellation(null);
+      }
+    })();
+    return () => { cancelado = true; };
+  }, [publicId, reserva?.status, accountRefreshKey]);
 
   // ADR-031 v2.1 — Pieza C: cargamos el TransitionReadinessDto cuando el usuario abre
   // la solapa Pasajeros. Este useEffect se coloca DESPUÉS de useReservaDetail para que
