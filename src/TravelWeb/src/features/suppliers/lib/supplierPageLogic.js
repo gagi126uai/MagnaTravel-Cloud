@@ -14,6 +14,8 @@ import { formatCurrency } from "../../../lib/utils.js";
  *   - debeMostrarseEnGrisNeutro: cuándo un recuadro del encabezado va en gris (Fase D)
  *   - aplanarReembolsosPendientesPorMoneda: filas seleccionables de "Registrar reembolso recibido" (§4)
  *   - validarFormularioReembolsoRecibido: validación local antes de llamar al backend (§4)
+ *   - construirTextoCuentaReembolso: desglose "Pagaste − Multa [− Ya devuelto] = te devuelven" o el
+ *     motivo en criollo cuando el estimado da $0 (decisiones 1 y 4, spec 2026-07-03)
  */
 
 /**
@@ -190,15 +192,29 @@ export function debeMostrarseEnGrisNeutro(monto, puedeVerMontos) {
  * que una cancelación con estimado en ARS y en USD se convierte en DOS filas seleccionables,
  * cada una con su propia moneda fija.
  *
+ * Cuenta del operador (2026-07-03): además de lo estimado, cada fila ahora también trae los
+ * campos de la "cuenta completa" (decisiones 1 y 4) y de RESTOS (conciliación) que vienen del
+ * ITEM del backend — paidToOperator/penaltyRetained/amountReceived/zeroRefundReason están POR
+ * MONEDA (vienen de la línea); penaltyPendingConfirmation/rowStatus/canRegisterRefund/
+ * reservaPublicId son del ITEM completo, se copian igual a cada fila de ese item.
+ *
  * @param {Array<object>} items — OperatorRefundPendingItemDto[] del backend
  * @returns {Array<{
  *   key: string,
  *   bookingCancellationPublicId: string,
+ *   reservaPublicId: string,
  *   numeroReserva: string,
  *   clienteNombre: string,
  *   currency: string,
  *   estimatedAmount: number,
  *   amountsMasked: boolean,
+ *   paidToOperator: number,
+ *   penaltyRetained: number,
+ *   amountReceived: number,
+ *   zeroRefundReason: string|null,
+ *   penaltyPendingConfirmation: boolean,
+ *   rowStatus: number,
+ *   canRegisterRefund: boolean,
  * }>}
  */
 export function aplanarReembolsosPendientesPorMoneda(items) {
@@ -211,15 +227,73 @@ export function aplanarReembolsosPendientesPorMoneda(items) {
             filas.push({
                 key: `${item.bookingCancellationPublicId}-${linea.currency}`,
                 bookingCancellationPublicId: item.bookingCancellationPublicId,
+                reservaPublicId: item.reservaPublicId ?? "",
                 numeroReserva: item.numeroReserva ?? "",
                 clienteNombre: item.clienteNombre ?? "",
                 currency: linea.currency,
                 estimatedAmount: linea.estimatedAmount ?? 0,
                 amountsMasked: Boolean(item.amountsMasked),
+                paidToOperator: linea.paidToOperator ?? 0,
+                penaltyRetained: linea.penaltyRetained ?? 0,
+                amountReceived: linea.amountReceived ?? 0,
+                zeroRefundReason: linea.zeroRefundReason ?? null,
+                penaltyPendingConfirmation: Boolean(item.penaltyPendingConfirmation),
+                rowStatus: item.rowStatus ?? 0,
+                canRegisterRefund: Boolean(item.canRegisterRefund),
             });
         }
     }
     return filas;
+}
+
+// ─── Decisiones 1 y 4 (spec 2026-07-03): la "cuenta completa" de un reembolso pendiente ──
+
+/**
+ * Motivos en criollo cuando el estimado da $0 (decisión 4 / P4=A). El backend ya calculó
+ * CUÁL de los tres motivos aplica (ZeroRefundReason) — el front NUNCA resta montos para
+ * adivinarlo, solo traduce el código a texto.
+ */
+const ZERO_REFUND_REASON_LABELS = {
+    NothingPaidToOperator: "Todavía no le pagaste nada al operador por este viaje.",
+    PenaltyCoversAll: "No hay nada para devolver: la multa del operador se quedó con todo lo que le pagaste.",
+    FullyRefunded: "Ya te devolvió todo por este viaje.",
+};
+
+/**
+ * Arma el texto de la "cuenta completa" de una fila de reembolso pendiente (decisión 1 / P3=A):
+ * "Pagaste US$ 500 − Multa del operador US$ 100 = te devuelven US$ 400 (estimado)."
+ *
+ * Con RESTOS (AmountReceived > 0), agrega el término que ya se cobró para que la cuenta
+ * cierre: "Pagaste US$ 500 − Multa del operador US$ 100 − Ya devuelto US$ 50 = te devuelven
+ * US$ 350 (estimado)." — el invariante del backend es Estimado = Pagado − Multa − Recibido.
+ *
+ * Cuando el estimado da $0, en vez de la cuenta se explica el motivo (decisión 4 / P4=A).
+ * Cuando los montos están enmascarados (sin cobranzas.see_cost), se muestra "—" — el motivo
+ * de $0 NO se enmascara (no es un monto, lo expone siempre el backend).
+ *
+ * @param {{ estimatedAmount:number, paidToOperator:number, penaltyRetained:number, amountReceived:number, zeroRefundReason:string|null, currency:string, amountsMasked:boolean }} fila
+ * @returns {string}
+ */
+export function construirTextoCuentaReembolso(fila) {
+    if (!fila) return "";
+
+    if (fila.amountsMasked) {
+        return "—";
+    }
+
+    if (fila.estimatedAmount === 0) {
+        return ZERO_REFUND_REASON_LABELS[fila.zeroRefundReason] ?? "No hay reembolso estimado por este viaje.";
+    }
+
+    let texto = `Pagaste ${formatCurrency(fila.paidToOperator, fila.currency)}`
+        + ` − Multa del operador ${formatCurrency(fila.penaltyRetained, fila.currency)}`;
+
+    if (fila.amountReceived > 0) {
+        texto += ` − Ya devuelto ${formatCurrency(fila.amountReceived, fila.currency)}`;
+    }
+
+    texto += ` = te devuelven ${formatCurrency(fila.estimatedAmount, fila.currency)} (estimado).`;
+    return texto;
 }
 
 /**
@@ -236,6 +310,9 @@ export function aplanarReembolsosPendientesPorMoneda(items) {
  *      puede superarlo — es una alerta temprana, no un tope duro (el operador puede
  *      haber devuelto un poco más por redondeo; el backend decide si lo acepta).
  *   4. La fecha es obligatoria.
+ *   5. (2026-07-03, RESTOS) La fila elegida tiene que admitir el registro (canRegisterRefund).
+ *      El selector ya deshabilita las filas no registrables, esto es defensa en profundidad
+ *      por si algo cambia de estado mientras la ficha estaba abierta.
  *
  * @param {{ filaSeleccionada: object|null, monto: string|number, fecha: string }} datos
  * @returns {string|null} mensaje de error en criollo, o null si el formulario es válido
@@ -243,6 +320,10 @@ export function aplanarReembolsosPendientesPorMoneda(items) {
 export function validarFormularioReembolsoRecibido({ filaSeleccionada, monto, fecha }) {
     if (!filaSeleccionada) {
         return "Elegí a qué reembolso pendiente corresponde antes de confirmar.";
+    }
+
+    if (filaSeleccionada.canRegisterRefund === false) {
+        return "Este reembolso todavía no se puede registrar. Revisá el estado de la anulación.";
     }
 
     const montoNumero = parseFloat(monto);

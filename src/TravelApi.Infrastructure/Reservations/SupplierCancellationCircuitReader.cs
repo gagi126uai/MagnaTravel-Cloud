@@ -153,15 +153,14 @@ internal static class SupplierCancellationCircuitReader
             // el). Si el servicio TODAVIA cuenta (draft total no confirmado: servicios vivos), NO contamos Y: no hay
             // receivable real y la caja no es negativa por esta linea. En una BC Closed sub-reembolsada el servicio
             // sigue cancelado, asi que el residuo (cap - recibido) sigue contando como "me tiene que devolver".
-            bool serviceStillCountsAsDebt = ResolveServiceCountsAsDebt(line, serviceCountsAsDebt, bc, supplierId, logger);
-            if (!serviceStillCountsAsDebt)
+            // La formula vive en LiveReceivableForLine para compartirla EXACTA con el read-model de reembolsos
+            // pendientes (OperatorRefundReadModelService), asi la solapa "Reembolsos" cuadra por CONSTRUCCION con
+            // este "me tiene que devolver".
+            decimal pending = LiveReceivableForLine(line, bc, serviceCountsAsDebt, supplierId, logger);
+            if (pending > 0m)
             {
-                decimal pending = line.RefundCap - line.ReceivedRefundAmount;
-                if (pending > 0m)
-                {
-                    receivableByCurrency.TryGetValue(currency, out var acc);
-                    receivableByCurrency[currency] = acc + pending;
-                }
+                receivableByCurrency.TryGetValue(currency, out var acc);
+                receivableByCurrency[currency] = acc + pending;
             }
         }
 
@@ -174,7 +173,7 @@ internal static class SupplierCancellationCircuitReader
     /// La clave es (tabla, id del servicio). El centinela legacy (Generic, id=0) NO apunta a un servicio puntual:
     /// no entra en el diccionario y se resuelve aparte (<see cref="ResolveServiceCountsAsDebt"/>).
     /// </summary>
-    private static async Task<Dictionary<(CancellableServiceTable Table, int ServiceId), bool>> LoadServiceDebtCountingAsync(
+    internal static async Task<Dictionary<(CancellableServiceTable Table, int ServiceId), bool>> LoadServiceDebtCountingAsync(
         AppDbContext db, List<BookingCancellationLine> lines, CancellationToken ct)
     {
         var result = new Dictionary<(CancellableServiceTable, int), bool>();
@@ -263,6 +262,40 @@ internal static class SupplierCancellationCircuitReader
     /// falla futuro es "sobre-declarar Y" (seguro, cuadra con la caja) o "log ruidoso", NUNCA "mintear saldo a favor".
     /// La guarda solo AGREGA Y-counting; nunca lo quita (no re-rompe el feature para Cancelled/PendingOperatorRefund).</para>
     /// </summary>
+    /// <summary>
+    /// ¿El servicio de ESTA linea ya dejo de contar como compra confirmada del operador? (true => su caja cayo por
+    /// esta linea => su receivable Y cuenta; false => el servicio sigue vivo => Y no cuenta). Es el MISMO predicado
+    /// que usa <see cref="LoadAsync"/>. Se expone para que el read-model de reembolsos pendientes
+    /// (<c>OperatorRefundReadModelService</c>) filtre el desglose con la MISMA regla y cuadre por construccion.
+    /// </summary>
+    internal static bool IsReceivableEligible(
+        BookingCancellationLine line,
+        BookingCancellation bc,
+        IReadOnlyDictionary<(CancellableServiceTable Table, int ServiceId), bool> serviceCountsAsDebt,
+        int supplierId,
+        ILogger? logger)
+        => !ResolveServiceCountsAsDebt(line, serviceCountsAsDebt, bc, supplierId, logger);
+
+    /// <summary>
+    /// Receivable Y VIVO de UNA linea = <c>max(0, RefundCap − Recibido)</c> si su servicio ya no cuenta como compra
+    /// (<see cref="IsReceivableEligible"/>); 0 si el servicio sigue vivo (draft total sin confirmar) o no quedo
+    /// residuo. Es EXACTAMENTE la formula que suma <see cref="LoadAsync"/> al receivable por moneda — fuente UNICA
+    /// para que "me tiene que devolver" (extracto) y la solapa "Reembolsos" (read-model) no puedan divergir.
+    /// </summary>
+    internal static decimal LiveReceivableForLine(
+        BookingCancellationLine line,
+        BookingCancellation bc,
+        IReadOnlyDictionary<(CancellableServiceTable Table, int ServiceId), bool> serviceCountsAsDebt,
+        int supplierId,
+        ILogger? logger)
+    {
+        if (!IsReceivableEligible(line, bc, serviceCountsAsDebt, supplierId, logger))
+            return 0m;
+
+        decimal pending = line.RefundCap - line.ReceivedRefundAmount;
+        return pending > 0m ? pending : 0m;
+    }
+
     private static bool ResolveServiceCountsAsDebt(
         BookingCancellationLine line,
         IReadOnlyDictionary<(CancellableServiceTable Table, int ServiceId), bool> serviceCountsAsDebt,

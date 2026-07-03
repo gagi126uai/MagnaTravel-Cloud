@@ -598,7 +598,11 @@ public class BookingCancellationServicePartialCreditNoteTests
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             svc.ConfirmAsync(bcPublicId, NewConfirmRequest(), "user-1", "Admin", requesterIsAdmin: false, CancellationToken.None));
 
-        Assert.Contains("FC1.3 Fase 2", ex.Message);
+        // FUGA B2 data-exposure (2026-07-03): el mensaje al usuario ya es de NEGOCIO (sin
+        // CreditNoteKind / EnablePartialCreditNotes / FC1.3 — eso va al log).
+        Assert.Contains("requiere revisión manual", ex.Message);
+        Assert.DoesNotContain("CreditNoteKind", ex.Message);
+        Assert.DoesNotContain("FC1.3", ex.Message);
 
         // El BC SIGUE en Drafted: GR-001 rechaza ANTES de cualquier SaveChanges
         // que persista el summary FC1.3. Usamos un nuevo DbContext para evitar

@@ -8,6 +8,7 @@ import {
     debeMostrarseEnGrisNeutro,
     aplanarReembolsosPendientesPorMoneda,
     validarFormularioReembolsoRecibido,
+    construirTextoCuentaReembolso,
 } from "./supplierPageLogic.js";
 
 // ─── resolverMonedaPrincipalProveedor ────────────────────────────────────────
@@ -479,6 +480,199 @@ describe("aplanarReembolsosPendientesPorMoneda", () => {
         assert.equal(filas[0].numeroReserva, "");
         assert.equal(filas[0].clienteNombre, "");
     });
+
+    // ─── Cuenta del operador (2026-07-03): campos nuevos de decisiones 1/4/RESTOS ──
+
+    it("copia paidToOperator/penaltyRetained/amountReceived/zeroRefundReason DE LA LÍNEA (por moneda)", () => {
+        const items = [
+            {
+                bookingCancellationPublicId: "bc-6",
+                numeroReserva: "R-6",
+                estimatedRefundsByCurrency: [
+                    {
+                        currency: "USD",
+                        estimatedAmount: 400,
+                        paidToOperator: 500,
+                        penaltyRetained: 100,
+                        amountReceived: 0,
+                        zeroRefundReason: null,
+                    },
+                ],
+            },
+        ];
+        const filas = aplanarReembolsosPendientesPorMoneda(items);
+        assert.equal(filas[0].paidToOperator, 500);
+        assert.equal(filas[0].penaltyRetained, 100);
+        assert.equal(filas[0].amountReceived, 0);
+        assert.equal(filas[0].zeroRefundReason, null);
+    });
+
+    it("copia penaltyPendingConfirmation/rowStatus/canRegisterRefund/reservaPublicId DEL ITEM (no de la línea)", () => {
+        const items = [
+            {
+                bookingCancellationPublicId: "bc-7",
+                reservaPublicId: "reserva-7",
+                penaltyPendingConfirmation: true,
+                rowStatus: 4,
+                canRegisterRefund: false,
+                estimatedRefundsByCurrency: [
+                    { currency: "ARS", estimatedAmount: 0 },
+                    { currency: "USD", estimatedAmount: 0 },
+                ],
+            },
+        ];
+        const filas = aplanarReembolsosPendientesPorMoneda(items);
+        assert.equal(filas.length, 2);
+        for (const fila of filas) {
+            assert.equal(fila.reservaPublicId, "reserva-7");
+            assert.equal(fila.penaltyPendingConfirmation, true);
+            assert.equal(fila.rowStatus, 4);
+            assert.equal(fila.canRegisterRefund, false);
+        }
+    });
+
+    it("campos nuevos ausentes en el item (DTO viejo) caen a defaults conservadores", () => {
+        const items = [
+            {
+                bookingCancellationPublicId: "bc-8",
+                numeroReserva: "R-8",
+                estimatedRefundsByCurrency: [{ currency: "ARS", estimatedAmount: 1000 }],
+            },
+        ];
+        const filas = aplanarReembolsosPendientesPorMoneda(items);
+        assert.equal(filas[0].paidToOperator, 0);
+        assert.equal(filas[0].penaltyRetained, 0);
+        assert.equal(filas[0].amountReceived, 0);
+        assert.equal(filas[0].zeroRefundReason, null);
+        assert.equal(filas[0].penaltyPendingConfirmation, false);
+        assert.equal(filas[0].rowStatus, 0);
+        assert.equal(filas[0].canRegisterRefund, false);
+        assert.equal(filas[0].reservaPublicId, "");
+    });
+});
+
+// ─── construirTextoCuentaReembolso (decisiones 1 y 4, spec 2026-07-03) ───────
+
+describe("construirTextoCuentaReembolso", () => {
+    it("null/undefined → string vacío (no rompe)", () => {
+        assert.equal(construirTextoCuentaReembolso(null), "");
+        assert.equal(construirTextoCuentaReembolso(undefined), "");
+    });
+
+    it("amountsMasked=true → '—' (nunca el motivo ni la cuenta, aunque vengan)", () => {
+        const fila = {
+            amountsMasked: true,
+            estimatedAmount: 0,
+            paidToOperator: 500,
+            penaltyRetained: 100,
+            amountReceived: 0,
+            zeroRefundReason: "NothingPaidToOperator",
+            currency: "USD",
+        };
+        assert.equal(construirTextoCuentaReembolso(fila), "—");
+    });
+
+    it("decisión 1 (P3=A): copy EXACTO de la spec sin restos", () => {
+        const fila = {
+            amountsMasked: false,
+            estimatedAmount: 400,
+            paidToOperator: 500,
+            penaltyRetained: 100,
+            amountReceived: 0,
+            currency: "USD",
+        };
+        const texto = construirTextoCuentaReembolso(fila);
+        assert.match(texto, /^Pagaste US\$500,00 − Multa del operador US\$100,00 = te devuelven US\$400,00 \(estimado\)\.$/);
+    });
+
+    it("con restos (AmountReceived > 0): agrega '− Ya devuelto X' para que la cuenta cierre", () => {
+        const fila = {
+            amountsMasked: false,
+            estimatedAmount: 350,
+            paidToOperator: 500,
+            penaltyRetained: 100,
+            amountReceived: 50,
+            currency: "USD",
+        };
+        const texto = construirTextoCuentaReembolso(fila);
+        assert.match(texto, /Ya devuelto US\$50,00/);
+        // El orden respeta la spec: Pagado, Multa, Ya devuelto, y recién el resultado.
+        const idxPagaste = texto.indexOf("Pagaste");
+        const idxMulta = texto.indexOf("Multa del operador");
+        const idxDevuelto = texto.indexOf("Ya devuelto");
+        const idxTeDevuelven = texto.indexOf("te devuelven");
+        assert.ok(idxPagaste < idxMulta && idxMulta < idxDevuelto && idxDevuelto < idxTeDevuelven);
+    });
+
+    it("sin restos (AmountReceived = 0): NO menciona 'Ya devuelto'", () => {
+        const fila = {
+            amountsMasked: false,
+            estimatedAmount: 400,
+            paidToOperator: 500,
+            penaltyRetained: 100,
+            amountReceived: 0,
+            currency: "USD",
+        };
+        assert.ok(!construirTextoCuentaReembolso(fila).includes("Ya devuelto"));
+    });
+
+    it("decisión 4 (P4=A): estimado 0 + NothingPaidToOperator → motivo exacto de la spec", () => {
+        const fila = {
+            amountsMasked: false,
+            estimatedAmount: 0,
+            zeroRefundReason: "NothingPaidToOperator",
+            currency: "ARS",
+        };
+        assert.equal(
+            construirTextoCuentaReembolso(fila),
+            "Todavía no le pagaste nada al operador por este viaje."
+        );
+    });
+
+    it("decisión 4 (P4=A): estimado 0 + PenaltyCoversAll → motivo exacto de la spec", () => {
+        const fila = {
+            amountsMasked: false,
+            estimatedAmount: 0,
+            zeroRefundReason: "PenaltyCoversAll",
+            currency: "ARS",
+        };
+        assert.equal(
+            construirTextoCuentaReembolso(fila),
+            "No hay nada para devolver: la multa del operador se quedó con todo lo que le pagaste."
+        );
+    });
+
+    it("decisión 4 (P4=A): estimado 0 + FullyRefunded → texto sugerido por la spec", () => {
+        const fila = {
+            amountsMasked: false,
+            estimatedAmount: 0,
+            zeroRefundReason: "FullyRefunded",
+            currency: "ARS",
+        };
+        assert.equal(construirTextoCuentaReembolso(fila), "Ya te devolvió todo por este viaje.");
+    });
+
+    it("estimado 0 sin zeroRefundReason reconocido → fallback neutro (no rompe, no inventa)", () => {
+        const fila = { amountsMasked: false, estimatedAmount: 0, zeroRefundReason: null, currency: "ARS" };
+        const texto = construirTextoCuentaReembolso(fila);
+        assert.equal(typeof texto, "string");
+        assert.ok(texto.length > 0);
+    });
+
+    it("nunca expone el código crudo del enum (NothingPaidToOperator/PenaltyCoversAll/FullyRefunded) en el texto visible", () => {
+        for (const reason of ["NothingPaidToOperator", "PenaltyCoversAll", "FullyRefunded"]) {
+            const texto = construirTextoCuentaReembolso({ amountsMasked: false, estimatedAmount: 0, zeroRefundReason: reason, currency: "ARS" });
+            assert.ok(!texto.includes(reason), `El texto no debe exponer el código crudo '${reason}': ${texto}`);
+        }
+    });
+
+    it("todos los montos de la cuenta usan la MISMA moneda de la fila (nunca mezcla ARS/USD)", () => {
+        const filaUSD = { amountsMasked: false, estimatedAmount: 400, paidToOperator: 500, penaltyRetained: 100, amountReceived: 50, currency: "USD" };
+        const texto = construirTextoCuentaReembolso(filaUSD);
+        // Los 3 montos (pagado, multa, ya devuelto, resultado) están en US$; ninguno "se escapó" a ARS.
+        const cantidadUSD = (texto.match(/US\$/g) || []).length;
+        assert.equal(cantidadUSD, 4, `Esperaba 4 montos en US$ (pagado/multa/devuelto/resultado): ${texto}`);
+    });
 });
 
 // ─── validarFormularioReembolsoRecibido (§4 — validación local antes de llamar al backend) ──
@@ -570,6 +764,37 @@ describe("validarFormularioReembolsoRecibido", () => {
     it("formulario completo y válido no genera error", () => {
         const mensaje = validarFormularioReembolsoRecibido({
             filaSeleccionada: filaValida,
+            monto: "50000",
+            fecha: "2026-07-01",
+        });
+        assert.equal(mensaje, null);
+    });
+
+    // ─── RESTOS (2026-07-03): defensa en profundidad — canRegisterRefund ────────
+
+    it("rechaza una fila con canRegisterRefund=false (defensa en profundidad, el selector ya la deshabilita)", () => {
+        const filaNoRegistrable = { ...filaValida, canRegisterRefund: false };
+        const mensaje = validarFormularioReembolsoRecibido({
+            filaSeleccionada: filaNoRegistrable,
+            monto: "50000",
+            fecha: "2026-07-01",
+        });
+        assert.match(mensaje, /todavía no se puede registrar/i);
+    });
+
+    it("acepta una fila con canRegisterRefund=true", () => {
+        const filaRegistrable = { ...filaValida, canRegisterRefund: true };
+        const mensaje = validarFormularioReembolsoRecibido({
+            filaSeleccionada: filaRegistrable,
+            monto: "50000",
+            fecha: "2026-07-01",
+        });
+        assert.equal(mensaje, null);
+    });
+
+    it("acepta una fila SIN canRegisterRefund (DTO viejo, undefined) — degradación segura", () => {
+        const mensaje = validarFormularioReembolsoRecibido({
+            filaSeleccionada: filaValida, // filaValida no trae canRegisterRefund
             monto: "50000",
             fecha: "2026-07-01",
         });

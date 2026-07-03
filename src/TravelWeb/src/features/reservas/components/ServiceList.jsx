@@ -27,6 +27,7 @@
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Link } from "react-router-dom";
 import { AlertTriangle, Plus, Plane, Hotel, Car, Package, ShieldCheck, Edit2, Trash2, CheckCircle2, Clock, X, Loader2, FileText, Ban, XSquare, UserX } from "lucide-react";
 import { isAdmin, hasPermission } from "../../../auth";
 import { CancelarVariosServiciosInline } from "./CancelarVariosServiciosInline";
@@ -676,6 +677,37 @@ function ServiceIcon({ service, className = "w-4 h-4 mr-2" }) {
     return <Package className={`${className} text-violet-500`} />;
 }
 
+/**
+ * Chip discreto "Operador: X" debajo del nombre del servicio (decisión 3, spec 2026-07-03).
+ * Con permiso de ver proveedores es un link a la ficha del operador; sin permiso, el mismo
+ * texto pero SIN link (el nombre del operador no es un dato de costo, no se enmascara — la
+ * única diferencia por permiso es si se puede navegar a la ficha o no).
+ *
+ * No se muestra nada si el servicio no tiene operador asignado (svc.supplierName vacío).
+ */
+function ServiceSupplierChip({ supplierName, supplierPublicId, puedeVerProveedores, testId }) {
+    if (!supplierName) return null;
+
+    // Sin publicId no hay a dónde linkear (dato legacy/incompleto): degrada a texto plano
+    // aunque el usuario tenga permiso, en vez de armar un link roto.
+    if (puedeVerProveedores && supplierPublicId) {
+        return (
+            <Link
+                to={`/suppliers/${supplierPublicId}/account`}
+                className="mt-0.5 inline-flex w-fit items-center gap-1 text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline"
+                data-testid={testId}
+            >
+                Operador: {supplierName}
+            </Link>
+        );
+    }
+
+    return (
+        <div className="mt-0.5 text-[10px] text-slate-400 dark:text-slate-500" data-testid={testId}>
+            Operador: {supplierName}
+        </div>
+    );
+}
 
 /**
  * Mini-formulario inline que aparece debajo de un servicio cuando faltan datos de pasajeros.
@@ -893,6 +925,11 @@ export function ServiceList({
 
     // Solo quien ve costos Y tiene flag ON puede interactuar con confirm-cost.
     const puedeConfirmarCosto = isCatalogFindOrCreateEnabled && mostrarCosto;
+
+    // Decisión 3 (spec 2026-07-03): gate del chip "Operador: X" — mismo permiso que muestra/oculta
+    // la entrada "Operadores" en el menú principal (proveedores.view). El nombre del operador NO es
+    // un dato de costo (no usa cobranzas.see_cost); solo decide si el chip es un link o texto plano.
+    const puedeVerProveedores = hasPermission("proveedores.view");
 
     const collectionErrorMessages = Object.values(serviceCollectionErrors).filter(Boolean);
 
@@ -1117,6 +1154,12 @@ export function ServiceList({
                                                 }`}>
                                                     {svc.name}
                                                 </div>
+                                                <ServiceSupplierChip
+                                                    supplierName={svc.supplierName}
+                                                    supplierPublicId={svc.supplierPublicId}
+                                                    puedeVerProveedores={puedeVerProveedores}
+                                                    testId={`chip-operador-desktop-${getReservationServicePublicId(svc)}`}
+                                                />
                                                 {/* Línea de auditoría de cancelación: quién y cuándo.
                                                     cancelledAt y cancelledByUserName son proyectados por el backend
                                                     en los 6 DTOs de servicio (vuelo, hotel, traslado, paquete,
@@ -1527,6 +1570,12 @@ export function ServiceList({
                                     }`}>
                                         {svc.name}
                                     </div>
+                                    <ServiceSupplierChip
+                                        supplierName={svc.supplierName}
+                                        supplierPublicId={svc.supplierPublicId}
+                                        puedeVerProveedores={puedeVerProveedores}
+                                        testId={`chip-operador-mobile-${getReservationServicePublicId(svc)}`}
+                                    />
                                     {/* Auditoria de cancelacion en mobile: quién y cuándo (campos opcionales del backend) */}
                                     {(svc.workflowStatus || svc.status) === 'Cancelado' &&
                                         (svc.cancelledAt || svc.cancelledByUserName) && (

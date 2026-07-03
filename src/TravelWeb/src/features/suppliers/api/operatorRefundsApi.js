@@ -13,23 +13,19 @@ import { api } from "../../../api";
 
 export const operatorRefundsApi = {
   /**
-   * Bandeja GLOBAL: todos los reembolsos pendientes de todos los operadores.
+   * Reembolsos pendientes de UN proveedor específico (para la ficha del proveedor).
    * Permiso requerido: tesoreria.supplier_payments.
    *
+   * (El wrapper del endpoint GLOBAL /operator-refunds/pending se eliminó junto con la
+   * bandeja global — decisión 5, spec 2026-07-03 P1=C. El endpoint del backend sigue
+   * existiendo por si algún día se agrega un aviso agregado en Cobranzas.)
+   *
+   * @param {string} supplierPublicId - GUID del proveedor.
    * @returns {Promise<OperatorRefundPendingItemDto[]>}
    *   Cada item tiene: bookingCancellationPublicId, reservaPublicId, numeroReserva,
    *   clienteNombre, supplierPublicId, supplierName, semaphore (0-3 integer),
    *   operatorRefundDueBy, daysOverdue, estimatedRefundsByCurrency (array),
-   *   amountsMasked.
-   */
-  getPending: () => api.get("/operator-refunds/pending"),
-
-  /**
-   * Reembolsos pendientes de UN proveedor específico (para la ficha del proveedor).
-   * Mismo permiso que el endpoint global: tesoreria.supplier_payments.
-   *
-   * @param {string} supplierPublicId - GUID del proveedor.
-   * @returns {Promise<OperatorRefundPendingItemDto[]>}
+   *   amountsMasked, penaltyPendingConfirmation, rowStatus, canRegisterRefund.
    */
   getPendingBySupplier: (supplierPublicId) =>
     api.get(`/suppliers/${supplierPublicId}/operator-refunds/pending`),

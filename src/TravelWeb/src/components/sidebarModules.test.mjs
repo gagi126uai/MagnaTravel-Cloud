@@ -41,8 +41,10 @@ const MODULE_DEFS = [
     id: "compras",
     title: "COMPRAS",
     links: [
-      { to: "/suppliers",        label: "Operadores",          requiredPermission: "proveedores.view" },
-      { to: "/operator-refunds", label: "Reembolsos operador", requiredPermission: "tesoreria.supplier_payments" },
+      { to: "/suppliers", label: "Operadores", requiredPermission: "proveedores.view" },
+      // "Reembolsos operador" sacado del menú (decisión 5, spec 2026-07-03 P1=C): los reembolsos
+      // pendientes se ven operador por operador, en la solapa "Reembolsos" de cada ficha. Sin
+      // vista global de reemplazo (elección consciente de Gastón). Ver test más abajo.
     ],
   },
   {
@@ -199,10 +201,17 @@ test("agrupamiento: NC por revisar y Reconciliación NC están en VENTAS", () =>
   assert.ok(routes.includes("/credit-note-reconciliation/inbox"), "Reconciliación NC debe estar en VENTAS");
 });
 
-test("agrupamiento: /operator-refunds está en COMPRAS", () => {
+test("agrupamiento (decisión 5, spec 2026-07-03): /operator-refunds NO está en ningún módulo del menú", () => {
+  // La pantalla global de reembolsos sale del menú principal (P1=C: sin vista de reemplazo).
+  // Los reembolsos se ven operador por operador, en la solapa "Reembolsos" de cada ficha.
+  const allRoutes = MODULE_DEFS.flatMap((m) => m.links.map((l) => l.to));
+  assert.ok(!allRoutes.includes("/operator-refunds"), "/operator-refunds no debe estar en el menú");
+});
+
+test("agrupamiento (decisión 5): COMPRAS solo tiene 'Operadores', sin 'Reembolsos operador'", () => {
   const compras = MODULE_DEFS.find((m) => m.id === "compras");
-  const routes = compras.links.map((l) => l.to);
-  assert.ok(routes.includes("/operator-refunds"), "/operator-refunds debe estar en COMPRAS");
+  const labels = compras.links.map((l) => l.label);
+  assert.deepEqual(labels, ["Operadores"]);
 });
 
 test("agrupamiento: /cash está en CAJA Y BANCOS", () => {

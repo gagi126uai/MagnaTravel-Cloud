@@ -1629,7 +1629,14 @@ public class InvoiceService : IInvoiceService
                 // siga bloqueando hasta que el back-office reintente o resuelva.
                 original.AnnulmentStatus = AnnulmentStatus.Failed;
                 await _context.SaveChangesAsync();
-                await CreateNotification(userId, $"La anulación falló en AFIP: {newInvoice.Observaciones}", "Error", invoiceId);
+                // FUGA 2 data-exposure (2026-07-03): Observaciones de ARCA puede traer XML/tecnico. Si el motivo
+                // es texto plano legible se muestra; si es ruido tecnico, un mensaje generico (el crudo NO va a
+                // la notificacion del usuario). El log de arriba/abajo conserva el detalle tecnico.
+                var failureReason = ArcaErrorSanitizer.SanitizeArcaError(newInvoice.Observaciones);
+                var failureMessage = failureReason is null
+                    ? "La anulación falló en AFIP. Revisá los datos de la factura o reintentá."
+                    : $"La anulación falló en AFIP: {failureReason}";
+                await CreateNotification(userId, failureMessage, "Error", invoiceId);
 
                 // FC1.2.1 v3 §6.2: notificar al BC asociado. Mismo patron try/catch:
                 // el commit Failed ya quedo, no podemos rethrow. El BC quedaria en

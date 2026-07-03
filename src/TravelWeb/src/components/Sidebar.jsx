@@ -35,7 +35,6 @@ import {
   FileMinus2,
   FileText,
   TrendingUp,
-  Wallet,
   ChevronRight,
   X,
 } from "lucide-react";
@@ -105,8 +104,12 @@ export const MODULE_DEFS = [
     title: "COMPRAS",
     links: [
       // "Proveedores" renombrado a "Operadores" — spec 2026-06-28 §5. Ruta y permisos sin cambio.
-      { to: "/suppliers",        label: "Operadores",          icon: Building2, requiredPermission: "proveedores.view" },
-      { to: "/operator-refunds", label: "Reembolsos operador", icon: Wallet,    requiredPermission: "tesoreria.supplier_payments" },
+      { to: "/suppliers", label: "Operadores", icon: Building2, requiredPermission: "proveedores.view" },
+      // "Reembolsos operador" sacado del menú (decisión 5, spec 2026-07-03 P1=C): los reembolsos
+      // pendientes se ven operador por operador, en la solapa "Reembolsos" de cada ficha
+      // (OperatorRefundsPendingSection dentro de SupplierAccountPage). NO se reemplaza por ninguna
+      // vista global — Gastón lo eligió así a sabiendas (el trade-off queda anotado en la spec).
+      // La ruta /operator-refunds y su página se eliminaron junto con esta entrada (misma spec).
     ],
   },
   {

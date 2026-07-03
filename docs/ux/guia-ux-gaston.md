@@ -784,3 +784,44 @@ Ronda 2:
   no acepta un monto suelto sin destino. La solapa "Reembolsos" sigue mostrando el detalle/estado; registrar
   desde Cuenta corriente tiene que **actualizar lo que se ve en Reembolsos** (ambos lados consistentes). Va
   EN LÍNEA (ficha que se abre debajo), nunca ventana flotante.
+
+## Cuenta del operador — la multa a la vista, chip Operador y navegación de reembolsos (2026-07-03, respuestas de Gastón)
+
+> **Origen:** 5 decisiones de dirección de Gastón (2026-07-02) bajadas a pantalla; se cerraron con 6
+> preguntas (P1=C, P2..P6=A). El "estimado" de reembolso hoy se ve pelado (no se entiende que ya tiene
+> descontada la multa), la multa no tiene puente desde el lado del operador, el servicio no muestra su
+> operador, el $0 confunde, y "Reembolsos operador" estaba en el menú principal. Componentes reales:
+> `RegistrarReembolsoRecibidoInline.jsx`, `OperatorRefundsPendingSection.jsx`, `ServiceList.jsx`,
+> `SupplierAccountPage.jsx`, `OperatorRefundsPage.jsx`. Spec: `docs/ux/2026-07-03-cuenta-operador-reembolsos-multa.md`.
+
+- **(2026-07-03, decisión 1 + P3=A) "Registrar reembolso recibido": la multa a la vista con la cuenta completa.**
+  En el renglón **elegido** del panel se muestra de dónde sale el estimado: **"Pagaste US$ 500 − Multa del
+  operador US$ 100 = te devuelven US$ 400 (estimado)."** (con los montos y la moneda reales). El estimado
+  sigue etiquetado "estimado" (sujeto a deducciones). Sin permiso de ver costos, el renglón muestra "—".
+- **(2026-07-03, decisión 4 + P4=A) Reembolso $0: se explica el porqué, no se muestra "$0" seco.** En lugar
+  del "US$ 0" va el motivo en criollo, según el caso que informe el backend: **"Todavía no le pagaste nada al
+  operador por este viaje."** / **"No hay nada para devolver: la multa del operador se quedó con todo lo que
+  le pagaste."** / (si aplica) **"Ya te devolvió todo por este viaje."** El front NO deduce el motivo restando
+  montos; lo dice el backend.
+- **(2026-07-03, decisión 2 + P2=A) La multa se GESTIONA desde la reserva; desde el operador solo hay puente.**
+  En la solapa "Reembolsos" del operador, los casos con **multa sin confirmar** muestran el aviso **"Falta
+  confirmar la multa de esta anulación."** + botón **"Ir a la reserva a confirmar"** (lleva a la reserva). La
+  acción fiscal de confirmar la multa vive en **un solo lugar: la reserva**. No se confirma la multa desde la
+  ficha del operador (no se duplica una acción fiscal).
+- **(2026-07-03, decisión 3 + P5=A) Chip "Operador: X" en el renglón del servicio.** Debajo del nombre del
+  servicio, un chip discreto **"Operador: Despegar"** que es **link a la ficha del operador** (`/suppliers/{id}/account`)
+  **solo si el usuario puede ver proveedores**; si no tiene ese permiso, se ve el texto plano sin link. Aplica
+  en desktop y mobile.
+- **(2026-07-03, decisión 5 + P1=C) "Reembolsos operador" sale del menú principal, SIN vista global de
+  reemplazo.** Los reembolsos se ven **operador por operador**, en la solapa "Reembolsos" de cada ficha (que ya
+  existe). **Trade-off aceptado a sabiendas por Gastón (eligió C contra la recomendación):** ya no hay una
+  pantalla que junte los reembolsos **vencidos de todos los operadores**; para detectarlos hay que entrar
+  operador por operador. Mitigación futura POSIBLE (no diseñada, no comprometida): un aviso en las **tarjetas
+  de Cobranzas** (donde ya viven avisos tipo "deuda con proveedores"), reusando ese patrón existente.
+- **(2026-07-03, P6=A) La multa y "lo pagado al operador" se tapan como todo costo.** Quien no tiene
+  `cobranzas.see_cost` ve "—" y el aviso único; nunca el monto de la multa ni lo pagado. Coherente con la regla
+  general de enmascarado de costos (2026-06-05).
+- **(2026-07-03 — dependencia técnica, NO es UX)** las decisiones 1 y 4 requieren que el backend exponga por
+  caso y moneda: **lo pagado al operador**, **la multa retenida** y el **motivo del $0**, todos enmascarados por
+  `cobranzas.see_cost`, con `estimado = pagado − multa`. Y la decisión 2 requiere un flag "multa pendiente de
+  confirmar" por caso. Detalle en la spec del 2026-07-03.

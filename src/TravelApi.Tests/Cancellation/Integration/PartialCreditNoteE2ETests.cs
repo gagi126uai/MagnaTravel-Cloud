@@ -497,8 +497,9 @@ public class PartialCreditNoteE2ETests : IClassFixture<CustomWebApplicationFacto
 
     /// <summary>
     /// GR-001: si el calculator devuelve <c>TotalPlusNewInvoice</c> (caso 4 o 7),
-    /// el Confirm DEBE rechazar con error claro "Caso fiscal requiere FC1.3 Fase 2 -
-    /// use flujo legacy". El BC queda en Drafted (rollback EF).
+    /// el Confirm DEBE rechazar 409 con un mensaje de NEGOCIO ("requiere revisión manual"),
+    /// sin jerga interna en el body (FUGA B2 data-exposure 2026-07-03; el detalle tecnico
+    /// va al log). El BC queda en Drafted (rollback EF).
     ///
     /// <para><b>Como forzamos el caso 4</b>: necesitamos que la heuristica
     /// OriginalInvoiceUnclear se dispare. La heuristica esta OFF por default
@@ -569,7 +570,12 @@ public class PartialCreditNoteE2ETests : IClassFixture<CustomWebApplicationFacto
         // ASSERT
         Assert.Equal(HttpStatusCode.Conflict, confirmResp.StatusCode);
         var body = await confirmResp.Content.ReadAsStringAsync();
-        Assert.Contains("FC1.3 Fase 2", body);
+        // FUGA B2 data-exposure (2026-07-03): el body ya NO expone jerga interna (CreditNoteKind /
+        // EnablePartialCreditNotes / FC1.3 / flujo legacy); al usuario le llega el mensaje de negocio.
+        Assert.Contains("requiere revisión manual", body);
+        Assert.DoesNotContain("CreditNoteKind", body);
+        Assert.DoesNotContain("EnablePartialCreditNotes", body);
+        Assert.DoesNotContain("FC1.3", body);
 
         // El BC sigue en Drafted (rollback EF porque el throw es antes de SaveChanges FC1.3).
         using (var scope = _factory.Services.CreateScope())

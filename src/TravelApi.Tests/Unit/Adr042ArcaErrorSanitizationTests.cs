@@ -12,17 +12,23 @@ namespace TravelApi.Tests.Unit;
 /// </summary>
 public class Adr042ArcaErrorSanitizationTests
 {
-    private const string Generic = "AFIP rechazó la nota de crédito. Revisá los datos fiscales de la factura o reintentá.";
+    // Generico NEUTRO compartido (2026-07-03): sirve para NC y ND (ver ArcaErrorSanitizer.GenericArcaMessage).
+    private const string Generic = "AFIP rechazó el comprobante. Revisá los datos fiscales de la factura o reintentá.";
 
     [Theory]
     // XML / SOAP fault de ARCA.
     [InlineData("<soap:Fault><faultstring>Server was unable to process request.</faultstring></soap:Fault>")]
     [InlineData("<Errors><Err Code=\"600\">Token invalido</Err></Errors>")]
-    // Mensajes .NET/EF SIN tokens tecnicos clasicos (los nuevos del refuerzo).
+    // Mensajes .NET/EF SIN tokens tecnicos clasicos.
     [InlineData("Error técnico: Object reference not set to an instance of an object.")]
     [InlineData("Value cannot be null. (Parameter 'invoice')")]
     [InlineData("duplicate key value violates unique constraint \"IX_Invoices_CAE\"")]
     [InlineData("System.NullReferenceException: Object reference not set")]
+    // EF/Npgsql por carreras (tokens nuevos del helper compartido, 2026-07-03).
+    [InlineData("Sequence contains no elements.")]
+    [InlineData("The instance of entity type 'BookingCancellation' cannot be tracked because another instance with the key value '{Id: 42}' is already being tracked.")]
+    [InlineData("An error occurred while saving the entity changes. See the inner exception for details.")]
+    [InlineData("Npgsql.PostgresException: 40001: could not serialize access")]
     // Stack trace.
     [InlineData("at TravelApi.Infrastructure.Services.AfipService.Post() in D:\\repo\\AfipService.cs:line 42")]
     [InlineData("Se produjo un error. Ver detalle.cs:line 10")]
@@ -32,6 +38,8 @@ public class Adr042ArcaErrorSanitizationTests
     public void Tecnico_seReemplazaPorGenerico(string raw)
     {
         Assert.Equal(Generic, BookingCancellationService.SanitizeArcaErrorForUser(raw));
+        // Y el helper compartido lo clasifica como tecnico (misma deteccion que usan InvoiceService y el controller).
+        Assert.True(TravelApi.Domain.Helpers.ArcaErrorSanitizer.IsLikelyTechnical(raw));
     }
 
     [Theory]
@@ -43,6 +51,8 @@ public class Adr042ArcaErrorSanitizationTests
     public void TextoAfipPlano_pasaTalCual(string raw)
     {
         Assert.Equal(raw, BookingCancellationService.SanitizeArcaErrorForUser(raw));
+        // No es tecnico -> el helper compartido no lo bloquea (business/AFIP plano pasa igual en todos los usos).
+        Assert.False(TravelApi.Domain.Helpers.ArcaErrorSanitizer.IsLikelyTechnical(raw));
     }
 
     [Theory]

@@ -5,9 +5,8 @@
  * queda debiendo devolver esa plata. Este componente lista esas deudas con un
  * semáforo visual y permite gestionar casos atrasados.
  *
- * Se usa en DOS lugares:
- *   1. La bandeja global (/operator-refunds): todas las deudas de todos los operadores.
- *   2. La ficha del proveedor (SupplierAccountPage): solo las de ese operador.
+ * Vive en la ficha del proveedor (SupplierAccountPage), solapa "Reembolsos". (La bandeja global
+ * /operator-refunds se eliminó — decisión 5, spec 2026-07-03 P1=C.)
  *
  * Comportamiento del semáforo (viene como entero del backend, sin JsonStringEnumConverter):
  *   0 = OnTime → gris neutro "A tiempo"
@@ -15,22 +14,38 @@
  *   2 = Overdue → rojo "Vencido" (NO desaparece de la lista — es un requerimiento explícito)
  *   3 = Abandoned → pizarra "Abandonado" (el job lo dio por perdido, pero el operador puede pagar tarde)
  *
+ * Cuenta del operador (2026-07-03, decisión 2 / P2=A): cuando PenaltyPendingConfirmation=true
+ * la fila NO muestra el desglose de plata (el estimado todavía sería engañoso, la multa recién
+ * confirmada lo va a corregir) — en su lugar se ve el aviso "Falta confirmar la multa de esta
+ * anulación." + el botón "Ir a la reserva a confirmar" (la confirmación fiscal se sigue haciendo
+ * SOLO en la reserva; acá solo se salta a ella).
+ *
+ * Cuenta del operador (2026-07-03, decisión 1 / mockup B de la spec): cada línea de moneda muestra
+ * la CUENTA COMPLETA ("Pagaste X − Multa del operador Y = te devuelven Z (estimado)."), el mismo
+ * copy del panel "Registrar reembolso recibido" (construirTextoCuentaReembolso, fuente única).
+ * Si el estimado da $0, en su lugar va el motivo en criollo que informa el backend (P4).
+ *
+ * Cuenta del operador (2026-07-03, RESTOS — conciliación): una fila con AmountReceived > 0 o
+ * RowStatus residual (parcialmente devuelto / cerrado con resto / en proceso) es un RESIDUO, no
+ * un pendiente nuevo. Se rotula con una etiqueta de estado en español (RowStatus, NUNCA el enum
+ * crudo) y la cuenta incluye el "− Ya devuelto {recibido}" en el desglose.
+ *
  * Props:
- *   - supplierPublicId (string|null): si se pasa, filtra por ese proveedor.
- *     Si es null (default), muestra todos.
- *   - showSupplierColumn (bool): muestra la columna "Operador" — true en la bandeja global,
- *     false en la ficha del proveedor (donde el operador ya está en el encabezado).
+ *   - supplierPublicId (string): GUID del operador cuya solapa se está mostrando (obligatorio).
+ *   - showSupplierColumn (bool): muestra el nombre del operador en cada fila (false en la ficha,
+ *     donde el operador ya está en el encabezado).
  */
 
 import { useState, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { RefreshCw, ExternalLink, AlertTriangle, Clock, Check } from "lucide-react";
 import { hasPermission } from "../../../auth";
-import { formatCurrency, formatDate } from "../../../lib/utils";
+import { formatDate } from "../../../lib/utils";
 import { showError } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { useOperatorRefundsPending } from "../hooks/useOperatorRefundsPending";
 import { operatorRefundsApi } from "../api/operatorRefundsApi";
+import { construirTextoCuentaReembolso } from "../lib/supplierPageLogic";
 
 // ─── Configuración del semáforo ───────────────────────────────────────────────
 
@@ -75,6 +90,22 @@ const SEMAPHORE_UNKNOWN = {
   badgeClass: "bg-slate-100 text-slate-500",
   rowClass: "",
   icon: null,
+};
+
+// ─── Configuración de RowStatus (RESTOS, 2026-07-03) ──────────────────────────
+
+/**
+ * Mapeo de OperatorRefundRowStatus (integer, sin JsonStringEnumConverter) a la etiqueta EN
+ * ESPAÑOL que se muestra en la fila. NUNCA se muestra el enum crudo.
+ *
+ * AwaitingRefund=0 y Abandoned=2 quedan AFUERA a propósito: 0 es el estado normal (ya lo cuenta
+ * el semáforo, un badge extra sería ruido); 2 ya tiene su propio badge "Abandonado" vía el
+ * semáforo (mostrar los dos sería duplicar la misma información con dos palabras distintas).
+ */
+const ROW_STATUS_LABELS = {
+  1: "Parcialmente devuelto",
+  3: "Cerrada con resto",
+  4: "En proceso",
 };
 
 // ─── Componente: mini-form de reembolso tardío ────────────────────────────────
@@ -264,6 +295,10 @@ function FilaReembolsoPendiente({ item, showSupplierColumn, canEdit, onReload })
   // Semáforo 3 = Abandoned: único estado que permite reembolso tardío
   const esAbandonado = item.semaphore === 3;
 
+  // RESTOS (2026-07-03): etiqueta de estado en español, solo para los valores que agregan
+  // información nueva sobre el semáforo (ver el comentario de ROW_STATUS_LABELS).
+  const rowStatusLabel = ROW_STATUS_LABELS[item.rowStatus] ?? null;
+
   const fechaLimite = item.operatorRefundDueBy
     ? formatDate(item.operatorRefundDueBy)
     : "—";
@@ -302,6 +337,19 @@ function FilaReembolsoPendiente({ item, showSupplierColumn, canEdit, onReload })
                 {item.daysOverdue} día{item.daysOverdue !== 1 ? "s" : ""} vencido
               </span>
             )}
+
+            {/* RESTOS (2026-07-03): etiqueta de estado en español (RowStatus), NUNCA el enum
+                crudo. Distinta del semáforo — el semáforo dice "cuándo vence", esta dice "en
+                qué estado quedó la cancelación" (parcialmente devuelto / cerrada con resto /
+                en proceso). Ej. "Parcialmente devuelto", "Cerrada con resto". */}
+            {rowStatusLabel && (
+              <span
+                className="inline-flex items-center rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300"
+                data-testid={`row-status-${item.bookingCancellationPublicId}`}
+              >
+                {rowStatusLabel}
+              </span>
+            )}
           </div>
 
           {/* Detalle de la fila */}
@@ -323,41 +371,61 @@ function FilaReembolsoPendiente({ item, showSupplierColumn, canEdit, onReload })
             )}
           </div>
 
-          {/* Montos estimados por moneda.
-              Regla clave: SIEMPRE etiquetados como "estimado, sujeto a deducciones".
-              Si amountsMasked=true, el backend envió 0 en todos los montos → mostramos "—". */}
-          {(item.estimatedRefundsByCurrency ?? []).length > 0 && (
-            <div className="mt-1 flex flex-wrap gap-2">
-              {item.estimatedRefundsByCurrency.map((linea) => (
-                <div
-                  key={linea.currency}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 dark:border-slate-700 dark:bg-slate-800/40"
-                  data-testid={`refund-amount-${item.bookingCancellationPublicId}-${linea.currency}`}
-                >
-                  <span className="text-[9px] font-black uppercase tracking-wider text-muted-foreground">
-                    {linea.currency}
-                  </span>
-                  <span className="font-mono font-semibold text-xs text-slate-800 dark:text-slate-200">
-                    {item.amountsMasked
-                      ? "—"
-                      : formatCurrency(linea.estimatedAmount, linea.currency)
-                    }
-                  </span>
-                  {/* Etiqueta "estimado": requerimiento explícito del dominio.
-                      NUNCA presentar este monto como cifra firme (el operador puede deducir penalidades, etc.) */}
-                  <span className="text-[9px] text-amber-600 dark:text-amber-400 font-medium italic">
-                    estimado
-                  </span>
-                </div>
-              ))}
+          {/* Decisión 2 / P2=A (2026-07-03): la multa todavía no está confirmada — el estimado de
+              plata sería engañoso (la multa recién confirmada lo va a corregir), así que en vez
+              del desglose se ve el aviso + el salto a la reserva para confirmarla. La confirmación
+              fiscal se sigue haciendo SOLO en la reserva; acá no se dispara ninguna acción nueva. */}
+          {item.penaltyPendingConfirmation ? (
+            <div
+              className="mt-1 flex flex-col sm:flex-row sm:items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900/40 dark:bg-amber-950/20"
+              data-testid={`penalty-pending-${item.bookingCancellationPublicId}`}
+            >
+              <p className="flex items-center gap-1.5 text-xs text-amber-800 dark:text-amber-300">
+                <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
+                Falta confirmar la multa de esta anulación.
+              </p>
+              <Link
+                to={`/reservas/${item.reservaPublicId}`}
+                className="inline-flex items-center gap-1 rounded-lg border border-amber-400 bg-white px-2.5 py-1 text-xs font-bold text-amber-800 hover:bg-amber-100 dark:border-amber-700 dark:bg-slate-900 dark:text-amber-300 dark:hover:bg-amber-950/40 transition-colors flex-shrink-0"
+                data-testid={`btn-ir-a-confirmar-multa-${item.bookingCancellationPublicId}`}
+              >
+                Ir a la reserva a confirmar
+                <ExternalLink className="h-3 w-3" />
+              </Link>
             </div>
-          )}
+          ) : (
+            <>
+              {/* Desglose por moneda (decisión 1 / mockup B): la cuenta completa "Pagaste X − Multa Y
+                  = te devuelven Z (estimado)." — el MISMO copy del panel de registrar (fuente única:
+                  construirTextoCuentaReembolso). Incluye "− Ya devuelto" en residuos, el motivo en
+                  criollo cuando da $0 (P4), y "—" cuando los montos están enmascarados. El texto ya
+                  trae la etiqueta "estimado" (nunca se presenta como cifra firme). */}
+              {(item.estimatedRefundsByCurrency ?? []).length > 0 && (
+                <div className="mt-1 flex flex-col gap-1">
+                  {item.estimatedRefundsByCurrency.map((linea) => (
+                    <div
+                      key={linea.currency}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 dark:border-slate-700 dark:bg-slate-800/40 w-fit"
+                      data-testid={`refund-amount-${item.bookingCancellationPublicId}-${linea.currency}`}
+                    >
+                      <span className="text-[9px] font-black uppercase tracking-wider text-muted-foreground">
+                        {linea.currency}
+                      </span>
+                      <span className="text-xs text-slate-800 dark:text-slate-200">
+                        {construirTextoCuentaReembolso({ ...linea, amountsMasked: item.amountsMasked })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
 
-          {/* Aviso de montos enmascarados: sin permiso cobranzas.see_cost */}
-          {item.amountsMasked && (
-            <p className="text-[10px] text-muted-foreground mt-0.5">
-              No tenés permiso para ver los montos.
-            </p>
+              {/* Aviso de montos enmascarados: sin permiso cobranzas.see_cost */}
+              {item.amountsMasked && (
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  No tenés permiso para ver los montos.
+                </p>
+              )}
+            </>
           )}
         </div>
 

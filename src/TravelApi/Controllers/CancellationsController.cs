@@ -9,6 +9,7 @@ using TravelApi.Application.Exceptions;
 using TravelApi.Application.Interfaces;
 using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Helpers;
 using TravelApi.Errors;
 
 namespace TravelApi.Controllers;
@@ -106,14 +107,13 @@ public class CancellationsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            // Feature flag off, reserva sin invoice activa, multiples invoices
-            // con OnePerReservaInvoicePolicy on, etc. 409 expresa "estado actual
-            // incompatible con la operacion" — coherente con PaymentsController.
-            return Conflict(new { message = ex.Message });
+            // Feature flag off, reserva sin invoice activa, etc. 409 = "estado actual incompatible". El texto
+            // de negocio limpio se muestra; el ruido tecnico .NET/EF se sanea (FUGA 3).
+            return SanitizedConflict(ex, request.ReservaPublicId);
         }
         catch (ArgumentException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            return SanitizedBadRequest(ex);
         }
         // BusinessInvariantViolationException lo atrapa GlobalExceptionHandler
         // (409 con invariantCode + constraintName). No la catcheamos aca.
@@ -161,11 +161,11 @@ public class CancellationsController : ControllerBase
         }
         catch (ArgumentException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            return SanitizedBadRequest(ex);
         }
         catch (InvalidOperationException ex)
         {
-            return Conflict(new { message = ex.Message });
+            return SanitizedConflict(ex, request.ReservaPublicId);
         }
         // BusinessInvariantViolationException la atrapa GlobalExceptionHandler (409 con invariantCode).
         catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
@@ -226,11 +226,12 @@ public class CancellationsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Conflict(new { message = ex.Message });
+            // Business limpio se muestra; ruido tecnico .NET/EF se sanea (FUGA 3).
+            return SanitizedConflict(ex, publicId);
         }
         catch (ArgumentException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            return SanitizedBadRequest(ex);
         }
         catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
         {
@@ -313,13 +314,13 @@ public class CancellationsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            // Flag OFF, etc. 409.
-            return Conflict(new { message = ex.Message });
+            // Flag OFF / estado incompatible. Business limpio se muestra; ruido tecnico .NET/EF se sanea (FUGA 3).
+            return SanitizedConflict(ex, publicId);
         }
         catch (ArgumentException ex)
         {
             // Fecha de confirmacion invalida (futura / anterior a la cancelacion).
-            return BadRequest(new { message = ex.Message });
+            return SanitizedBadRequest(ex);
         }
         // BusinessInvariantViolationException (INV-ADR014-* + permiso) la atrapa
         // GlobalExceptionHandler (409 con invariantCode). No la catcheamos aca, mismo
@@ -379,8 +380,8 @@ public class CancellationsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            // Flag OFF, etc. 409.
-            return Conflict(new { message = ex.Message });
+            // Flag OFF / estado incompatible. Business limpio se muestra; ruido tecnico .NET/EF se sanea (FUGA 3).
+            return SanitizedConflict(ex, publicId);
         }
         // BusinessInvariantViolationException (INV-ADR014-RETRY-* + permiso) la atrapa el GlobalExceptionHandler
         // (409 con invariantCode), mismo criterio que ConfirmPenalty.
@@ -503,13 +504,13 @@ public class CancellationsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            // Flag OFF, etc. 409.
-            return Conflict(new { message = ex.Message });
+            // Flag OFF / estado incompatible. Business limpio se muestra; ruido tecnico .NET/EF se sanea (FUGA 3).
+            return SanitizedConflict(ex, publicId);
         }
         catch (ArgumentException ex)
         {
             // Motivo vacio. 400.
-            return BadRequest(new { message = ex.Message });
+            return SanitizedBadRequest(ex);
         }
         // BusinessInvariantViolationException (INV-WAIVE-*) la atrapa GlobalExceptionHandler (409 con invariantCode).
         catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
@@ -569,13 +570,13 @@ public class CancellationsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            // Flag OFF, etc. 409.
-            return Conflict(new { message = ex.Message });
+            // Flag OFF / estado incompatible. Business limpio se muestra; ruido tecnico .NET/EF se sanea (FUGA 3).
+            return SanitizedConflict(ex, publicId);
         }
         catch (ArgumentException ex)
         {
             // Motivo vacio. 400.
-            return BadRequest(new { message = ex.Message });
+            return SanitizedBadRequest(ex);
         }
         // BusinessInvariantViolationException (INV-WAIVE-REVERT-*) la atrapa GlobalExceptionHandler (409 con invariantCode).
         catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
@@ -609,11 +610,12 @@ public class CancellationsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Conflict(new { message = ex.Message });
+            // Business limpio se muestra; ruido tecnico .NET/EF se sanea (FUGA 3).
+            return SanitizedConflict(ex, publicId);
         }
         catch (ArgumentException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            return SanitizedBadRequest(ex);
         }
         catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
         {
@@ -661,11 +663,12 @@ public class CancellationsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            return Conflict(new { message = ex.Message });
+            // Business limpio se muestra; ruido tecnico .NET/EF se sanea (FUGA 3).
+            return SanitizedConflict(ex, publicId);
         }
         catch (ArgumentException ex)
         {
-            return BadRequest(new { message = ex.Message });
+            return SanitizedBadRequest(ex);
         }
         catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
         {
@@ -813,15 +816,14 @@ public class CancellationsController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            // Re-clasificacion a TotalPlusNewInvoice (no soportado Fase 1),
-            // feature flag off, supplier no encontrado, etc. 409 expresa
-            // "estado actual incompatible con la operacion".
-            return Conflict(new { message = ex.Message });
+            // Re-clasificacion a TotalPlusNewInvoice (no soportado Fase 1), feature flag off, etc. Business
+            // limpio se muestra; ruido tecnico .NET/EF (ej. "supplier no encontrado" del EF) se sanea (FUGA 3).
+            return SanitizedConflict(ex, publicId);
         }
         catch (ArgumentException ex)
         {
             // ArgumentNullException(req) o validacion de argumentos del service.
-            return BadRequest(new { message = ex.Message });
+            return SanitizedBadRequest(ex);
         }
         catch (DbUpdateConcurrencyException)
         {
@@ -847,6 +849,58 @@ public class CancellationsController : ControllerBase
     // =========================================================================
     // Helpers
     // =========================================================================
+
+    /// <summary>
+    /// FUGA 3 data-exposure (2026-07-03): 409 saneado para un <see cref="InvalidOperationException"/>. CRITERIO
+    /// (blocklist, no allowlist): el texto de NEGOCIO en espanol limpio SI se muestra (ej. "La reserva X no
+    /// tiene factura activa para anular." — util para el vendedor); solo el RUIDO TECNICO (.NET/EF por carreras
+    /// como "Sequence contains no elements." o "The instance of entity type 'BookingCancellation' cannot be
+    /// tracked ... {Id: 42}", XML/SOAP de ARCA) se reemplaza por un generico. El crudo SIEMPRE va al log (con
+    /// identificadores seguros), nunca al body. La deteccion la centraliza <see cref="ArcaErrorSanitizer"/>.
+    /// </summary>
+    private ConflictObjectResult SanitizedConflict(InvalidOperationException ex, object? identifier)
+    {
+        // RouteData puede no estar seteada (ej. tests que construyen el controller a mano) -> null-safe.
+        var routeValues = ControllerContext?.RouteData?.Values;
+        var endpoint = routeValues is not null && routeValues.TryGetValue("action", out var a)
+            ? a?.ToString()
+            : "cancellation";
+        _logger.LogWarning(ex,
+            "{Endpoint}: InvalidOperationException para {Identifier} (usuario {UserId}).",
+            endpoint, identifier, User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System");
+
+        var message = ArcaErrorSanitizer.IsLikelyTechnical(ex.Message)
+            ? "No se pudo completar la operación. Volvé a intentar."
+            : ex.Message;
+        return Conflict(new { message });
+    }
+
+    /// <summary>
+    /// FUGA B6 data-exposure (2026-07-03): 400 saneado para un <see cref="ArgumentException"/>, mismo criterio
+    /// blocklist que <see cref="SanitizedConflict"/>. Detalle propio de esta rama: ArgumentException con
+    /// paramName agrega el sufijo del framework " (Parameter 'request')" al final del mensaje — se RECORTA ese
+    /// sufijo primero (si no, el "Parameter '" del blocklist taparia tambien los mensajes de negocio limpios) y
+    /// recien despues se evalua el resto. Un ArgumentNullException del binding ("Value cannot be null. ...")
+    /// queda sin texto al recortar -> cae al generico. El crudo va al log, nunca al body.
+    /// </summary>
+    private BadRequestObjectResult SanitizedBadRequest(ArgumentException ex)
+    {
+        var routeValues = ControllerContext?.RouteData?.Values;
+        var endpoint = routeValues is not null && routeValues.TryGetValue("action", out var a)
+            ? a?.ToString()
+            : "cancellation";
+        _logger.LogWarning(ex,
+            "{Endpoint}: ArgumentException (usuario {UserId}).",
+            endpoint, User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System");
+
+        var stripped = System.Text.RegularExpressions.Regex
+            .Replace(ex.Message, @"\s*\(Parameter '[^']*'\)\s*$", "")
+            .Trim();
+        var message = stripped.Length == 0 || ArcaErrorSanitizer.IsLikelyTechnical(stripped)
+            ? "Los datos enviados no son válidos. Revisá el formulario y volvé a intentar."
+            : stripped;
+        return BadRequest(new { message });
+    }
 
     /// <summary>
     /// Validacion manual de ownership para endpoints sin id en la ruta (POST).

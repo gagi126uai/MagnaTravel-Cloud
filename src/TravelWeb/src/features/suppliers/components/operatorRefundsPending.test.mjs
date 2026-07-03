@@ -7,6 +7,7 @@
  *   - Validación del motivo de reembolso tardío
  *   - Construcción del payload para POST reopen-for-late-refund
  *   - Identificación de items abandonados (candidatos a reembolso tardío)
+ *   - RESTOS (2026-07-03): etiqueta de RowStatus en español
  *
  * Cómo correr: node --test src/features/suppliers/components/operatorRefundsPending.test.mjs
  *
@@ -72,6 +73,19 @@ function validarMotivoReembolsoTardio(motivo) {
 function armarPayloadReopenForLateRefund(motivo) {
   return { reason: (motivo ?? "").trim() };
 }
+
+// ─── RESTOS (2026-07-03): réplica de ROW_STATUS_LABELS ──────────────────────────
+// AwaitingRefund=0 y Abandoned=2 quedan afuera del mapeo a propósito (ver el comentario real
+// en OperatorRefundsPendingSection.jsx): 0 es el estado normal, 2 ya tiene su badge del semáforo.
+// El desglose de la línea de moneda ("Pagaste X − Multa Y = te devuelven Z (estimado).") ya NO
+// se replica acá: la solapa usa la función REAL construirTextoCuentaReembolso (fuente única con
+// el panel de registrar), testeada contra la exportación real en supplierPageLogic.test.mjs.
+
+const ROW_STATUS_LABELS = {
+  1: "Parcialmente devuelto",
+  3: "Cerrada con resto",
+  4: "En proceso",
+};
 
 /**
  * Devuelve los items de la lista que son abandonados (semaphore = 3).
@@ -282,3 +296,40 @@ test("filtrarAbandonados y filtrarVencidos son mutuamente excluyentes", () => {
   const interseccion = abandonados.filter((id) => vencidos.includes(id));
   assert.equal(interseccion.length, 0);
 });
+
+// ============================================================================
+// RESTOS (2026-07-03): ROW_STATUS_LABELS — etiqueta EN ESPAÑOL, nunca el enum crudo
+// ============================================================================
+
+test("ROW_STATUS_LABELS — 1 (PartiallyRefunded) da 'Parcialmente devuelto'", () => {
+  assert.equal(ROW_STATUS_LABELS[1], "Parcialmente devuelto");
+});
+
+test("ROW_STATUS_LABELS — 3 (ClosedWithResidue) da 'Cerrada con resto'", () => {
+  assert.equal(ROW_STATUS_LABELS[3], "Cerrada con resto");
+});
+
+test("ROW_STATUS_LABELS — 4 (InProcess) da 'En proceso'", () => {
+  assert.equal(ROW_STATUS_LABELS[4], "En proceso");
+});
+
+test("ROW_STATUS_LABELS — 0 (AwaitingRefund) NO tiene label (estado normal, ya lo cuenta el semáforo)", () => {
+  assert.equal(ROW_STATUS_LABELS[0], undefined);
+});
+
+test("ROW_STATUS_LABELS — 2 (Abandoned) NO tiene label (ya tiene su propio badge de semáforo)", () => {
+  assert.equal(ROW_STATUS_LABELS[2], undefined);
+});
+
+test("ROW_STATUS_LABELS — ningún label es el nombre crudo del enum en inglés", () => {
+  for (const label of Object.values(ROW_STATUS_LABELS)) {
+    assert.ok(!/PartiallyRefunded|ClosedWithResidue|InProcess|Abandoned|AwaitingRefund/.test(label));
+  }
+});
+
+// ============================================================================
+// Desglose de la línea de moneda de la solapa (decisión 1 / mockup B): usa la función REAL
+// construirTextoCuentaReembolso — sus casos (cuenta completa, residuo con "− Ya devuelto",
+// motivo del $0, enmascarado "—") están testeados contra la exportación real en
+// supplierPageLogic.test.mjs. No se replica acá para no derivar en silencio.
+// ============================================================================

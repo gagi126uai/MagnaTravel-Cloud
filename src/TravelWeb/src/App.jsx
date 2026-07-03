@@ -52,8 +52,6 @@ import CancellationDebitNoteInboxPage from "./features/cancellations/pages/Cance
 import CancellationCreditNoteInboxPage from "./features/cancellations/pages/CancellationCreditNoteInboxPage";
 // Comisiones de vendedor: solo visible para el dueño/admin.
 import CommissionsPage from "./features/commissions/pages/CommissionsPage";
-// ADR-041 Tanda 4: bandeja de reembolsos pendientes del operador (plata que el operador debe devolver al anular).
-import OperatorRefundsPage from "./features/suppliers/pages/OperatorRefundsPage";
 // Pantalla global de Facturación (spec 2026-06-28 §4/P14): todos los comprobantes de la agencia.
 // Requiere cobranzas.view_all (quien no lo tiene solo ve los suyos desde la cuenta del cliente).
 import FacturacionPage from "./features/invoices/pages/FacturacionPage";
@@ -327,12 +325,8 @@ export default function App() {
                       path="/commissions"
                       element={isAdmin() ? <CommissionsPage /> : <Navigate to="/dashboard" replace />}
                     />
-                    {/* ADR-041 Tanda 4: bandeja de reembolsos a cobrar del operador.
-                        Permiso tesoreria.supplier_payments (mismo que el endpoint del backend). */}
-                    <Route
-                      path="/operator-refunds"
-                      element={hasPermission("tesoreria.supplier_payments") ? <OperatorRefundsPage /> : <Navigate to="/dashboard" replace />}
-                    />
+                    {/* La bandeja global /operator-refunds se eliminó (decisión 5, spec 2026-07-03 P1=C):
+                        los reembolsos del operador se ven en la solapa "Reembolsos" de cada ficha. */}
                     {/* Pantalla global de Facturación: todos los comprobantes de la agencia.
                         Permiso cobranzas.view_all (un vendedor sin él solo ve los suyos desde
                         la solapa de facturación de cada cliente). El backend también hace cumplir

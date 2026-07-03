@@ -324,7 +324,9 @@ public class OperatorRefundLateRefundAndReadModelTests
         // re-apunta SupplierId del BC a B para coherencia, pero el read-model agrupa por linea:
         AddLine(onlyB.Id, supplierB.Id, 200m, 0m);
 
-        // BC que NO debe aparecer (estado fuera de los 2 relevantes).
+        // BC Closed con RESIDUO vivo (cap 999, recibido 0 => el operador no devolvio nada): con la ampliacion
+        // RESTOS (2026-07-03) esta fila SI aparece, rotulada "cerrada con resto", para que la solapa cuadre con el
+        // "me tiene que devolver" del extracto.
         var closed = await AddBcAsync(BookingCancellationStatus.Closed, DateTime.UtcNow.AddDays(-1), "R-CLOSED");
         AddLine(closed.Id, supplierA.Id, 999m, 0m);
 
@@ -341,10 +343,16 @@ public class OperatorRefundLateRefundAndReadModelTests
         var svc = new OperatorRefundReadModelService(ctx, AdminAccessor(), permissionResolver: null);
         var items = await svc.GetSupplierPendingRefundsAsync(supplierAId, CancellationToken.None);
 
-        // 4 cancelaciones de A en estados relevantes (OnTime/DueSoon/Overdue/Abandoned). El BC Closed y el de B se excluyen.
-        Assert.Equal(4, items.Count);
+        // 4 cancelaciones activas de A (OnTime/DueSoon/Overdue/Abandoned) + la Closed con residuo = 5. El BC de B
+        // se excluye (otro operador).
+        Assert.Equal(5, items.Count);
         Assert.DoesNotContain(items, i => i.NumeroReserva == "R-ONLYB");
-        Assert.DoesNotContain(items, i => i.NumeroReserva == "R-CLOSED");
+
+        // RESTOS: la Closed con residuo aparece como "cerrada con resto" y NO admite registro directo de reembolso.
+        var closed = items.Single(i => i.NumeroReserva == "R-CLOSED");
+        Assert.Equal(OperatorRefundRowStatus.ClosedWithResidue, closed.RowStatus);
+        Assert.False(closed.CanRegisterRefund);
+        Assert.Equal(999m, closed.EstimatedRefundsByCurrency.Single().EstimatedAmount);
 
         var dueSoon = items.Single(i => i.NumeroReserva == "R-DUESOON");
         Assert.Equal(OperatorRefundPendingSemaphore.DueSoon, dueSoon.Semaphore);
@@ -385,10 +393,10 @@ public class OperatorRefundLateRefundAndReadModelTests
         var svc = new OperatorRefundReadModelService(ctx, AdminAccessor(), permissionResolver: null);
         var items = await svc.GetAllPendingRefundsAsync(CancellationToken.None);
 
-        // 4 de A + 1 de B = 5 (el Closed se excluye en ambos).
-        Assert.Equal(5, items.Count);
+        // RESTOS: 4 activas de A + 1 de B + la Closed con residuo de A = 6.
+        Assert.Equal(6, items.Count);
         Assert.Contains(items, i => i.NumeroReserva == "R-ONLYB");
-        Assert.DoesNotContain(items, i => i.NumeroReserva == "R-CLOSED");
+        Assert.Contains(items, i => i.NumeroReserva == "R-CLOSED");
     }
 
     // =====================================================================================

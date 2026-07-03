@@ -32,11 +32,11 @@ import { Loader2, RotateCcw, X } from "lucide-react";
 import { hasPermission } from "../../../auth";
 import { showSuccess } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
-import { formatCurrency } from "../../../lib/utils";
 import { operatorRefundsApi } from "../api/operatorRefundsApi";
 import {
     aplanarReembolsosPendientesPorMoneda,
     validarFormularioReembolsoRecibido,
+    construirTextoCuentaReembolso,
 } from "../lib/supplierPageLogic";
 
 // Mismo set de métodos que PagarProveedorInline: el reembolso también es un movimiento
@@ -255,6 +255,13 @@ export function RegistrarReembolsoRecibidoInline({ supplierId, onRegistrado, onC
                 <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">
                     ¿A qué reembolso pendiente corresponde? *
                 </label>
+                {/* Aviso ÚNICO por pantalla cuando los montos están enmascarados (regla de la guía
+                    2026-06-05): los renglones muestran "—", esto explica el porqué una sola vez. */}
+                {!puedeVerMontos && (
+                    <p className="text-[10px] text-muted-foreground" data-testid="aviso-montos-enmascarados">
+                        No tenés permiso para ver los montos.
+                    </p>
+                )}
                 <div
                     className="max-h-48 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-800"
                     role="listbox"
@@ -262,41 +269,53 @@ export function RegistrarReembolsoRecibidoInline({ supplierId, onRegistrado, onC
                 >
                     {filas.map((fila, idx) => {
                         const estaSeleccionada = filaSeleccionada?.key === fila.key;
+                        // Enmascarado defensivo: si por algún motivo amountsMasked no llegó pero
+                        // el usuario tampoco tiene el permiso, igual ocultamos (mismo criterio
+                        // que el resto de la app: nunca confiar solo en lo que manda el backend).
+                        const filaParaTexto = { ...fila, amountsMasked: fila.amountsMasked || !puedeVerMontos };
+                        // Decisión "RESTOS" (2026-07-03): una fila puede ser informativa nada más
+                        // (todavía no admite el registro directo, ej. abandonada sin reabrir, o
+                        // cerrada/en proceso). Se ve igual mismo, pero no se puede elegir.
+                        const noRegistrable = fila.canRegisterRefund === false;
                         return (
                             <button
                                 key={fila.key}
                                 type="button"
                                 onClick={() => handleSeleccionarFila(fila)}
-                                disabled={guardando}
+                                disabled={guardando || noRegistrable}
                                 role="option"
                                 aria-selected={estaSeleccionada}
-                                className={`w-full text-left px-4 py-2.5 flex items-center justify-between gap-3 transition-colors ${
+                                title={noRegistrable ? "Este reembolso todavía no se puede registrar." : undefined}
+                                className={`w-full text-left px-4 py-2.5 flex flex-col gap-1 transition-colors ${
                                     estaSeleccionada
                                         ? "bg-indigo-100 dark:bg-indigo-900/30"
                                         : "bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700/50"
-                                } disabled:opacity-50`}
+                                } disabled:opacity-50 disabled:cursor-not-allowed`}
                                 data-testid={`reembolso-pendiente-${idx}`}
                             >
-                                <div className="min-w-0">
-                                    <p className="text-sm font-semibold text-slate-800 dark:text-slate-200 truncate">
-                                        Reserva {fila.numeroReserva || "—"}
-                                    </p>
-                                    {fila.clienteNombre && (
-                                        <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
-                                            {fila.clienteNombre}
+                                <div className="flex items-center justify-between gap-3">
+                                    <div className="min-w-0">
+                                        <p className="text-sm font-semibold text-slate-800 dark:text-slate-200 truncate">
+                                            Reserva {fila.numeroReserva || "—"}
+                                            {fila.clienteNombre && (
+                                                <span className="font-normal text-slate-500 dark:text-slate-400"> · {fila.clienteNombre}</span>
+                                            )}
                                         </p>
-                                    )}
-                                </div>
-                                <div className="flex-shrink-0 text-right">
-                                    <span className="text-[10px] font-black uppercase tracking-wider text-muted-foreground">
+                                    </div>
+                                    <span className="flex-shrink-0 text-[10px] font-black uppercase tracking-wider text-muted-foreground">
                                         {fila.currency}
                                     </span>
-                                    <p className="text-xs font-bold text-indigo-700 dark:text-indigo-400">
-                                        {fila.amountsMasked || !puedeVerMontos
-                                            ? "—"
-                                            : `Estimado: ${formatCurrency(fila.estimatedAmount, fila.currency)}`}
-                                    </p>
                                 </div>
+                                {/* Decisiones 1 y 4 (P3=A / P4=A): la cuenta completa, o el motivo
+                                    en criollo cuando el estimado da $0. Nunca el monto pelado. */}
+                                <p className="text-xs text-slate-600 dark:text-slate-400">
+                                    {construirTextoCuentaReembolso(filaParaTexto)}
+                                </p>
+                                {noRegistrable && (
+                                    <p className="text-[10px] text-amber-600 dark:text-amber-400" data-testid={`reembolso-no-registrable-${idx}`}>
+                                        Todavía no se puede registrar (revisá el estado de la anulación).
+                                    </p>
+                                )}
                             </button>
                         );
                     })}

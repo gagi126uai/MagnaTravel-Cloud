@@ -1614,10 +1614,15 @@ public class BookingCancellationService
             var invoiceItems = await _db.Set<InvoiceItem>()
                 .Where(i => i.InvoiceId == bc.OriginatingInvoiceId)
                 .ToListAsync(ct);
-            var supplier = await _db.Suppliers
-                .FirstOrDefaultAsync(s => s.Id == bc.SupplierId, ct)
-                ?? throw new InvalidOperationException(
-                    $"No se encontro el Supplier {bc.SupplierId} del BC {bc.PublicId}.");
+            // FUGA B3 data-exposure (2026-07-03): mensaje al usuario SIN ids/GUIDs internos; detalle al log.
+            var supplier = await _db.Suppliers.FirstOrDefaultAsync(s => s.Id == bc.SupplierId, ct);
+            if (supplier is null)
+            {
+                _logger.LogError("Confirm: no se encontro el Supplier {SupplierId} del BC {BcPublicId}.",
+                    bc.SupplierId, bc.PublicId);
+                throw new InvalidOperationException(
+                    "No se encontró el operador de esta anulación. Consultá con administración.");
+            }
 
             // (c) Armar input. CancellationAmount = ImporteTotal por defecto:
             // Fase 1 solo soporta cancelacion total (cancelacion parcial sub-monto
@@ -1643,11 +1648,15 @@ public class BookingCancellationService
             // verifican que `bc.CreditNoteKind` sigue null post-throw.
             if (liquidation.Kind == CreditNoteKind.TotalPlusNewInvoice)
             {
+                // FUGA B2 data-exposure (2026-07-03): el mensaje viaja al usuario via SanitizedConflict —
+                // sin flags/tipos internos (CreditNoteKind, EnablePartialCreditNotes). Detalle tecnico al log.
+                _logger.LogWarning(
+                    "Confirm BC {BcPublicId}: calculator devolvio CreditNoteKind=TotalPlusNewInvoice " +
+                    "(case {Case}, motivos {Motivos}) — requiere FC1.3 Fase 2 / flujo legacy.",
+                    bc.PublicId, liquidation.Case, liquidation.ReviewRequiredReason);
                 throw new InvalidOperationException(
-                    "Caso fiscal requiere FC1.3 Fase 2 - use flujo legacy. " +
-                    $"Calculator devolvio CreditNoteKind=TotalPlusNewInvoice " +
-                    $"(case {liquidation.Case}, motivos {liquidation.ReviewRequiredReason}). " +
-                    "Apague EnablePartialCreditNotes para esta operacion o espere a Fase 2.");
+                    "Este caso fiscal todavía no se puede resolver automáticamente y requiere revisión manual. " +
+                    "Consultá con administración.");
             }
 
             // (f) Persistir summary (GR-004) + detalle completo (FC1.3 Fase 2, RH-002).
@@ -3113,7 +3122,9 @@ public class BookingCancellationService
             PenaltyAmount = b.PenaltyAmountAtEvent,
             PenaltyCurrency = b.PenaltyCurrencyAtEvent,
             DebitNoteCbteTipo = b.DebitNoteCbteTipoAtEvent,
-            ArcaErrorMessage = b.DebitNoteArcaErrorMessage,
+            // FUGA 1 data-exposure (2026-07-03): el motivo de rechazo de la ND (DebitNoteArcaErrorMessage) puede
+            // traer XML/tecnico de ARCA. Se SANEA antes de exponerlo en la bandeja (el crudo queda en la entidad).
+            ArcaErrorMessage = SanitizeArcaErrorForUser(b.DebitNoteArcaErrorMessage),
             ConfirmedAt = b.ConfirmedWithClientAt,
         };
 
@@ -3242,9 +3253,15 @@ public class BookingCancellationService
         var invoiceItems = await _db.Set<InvoiceItem>()
             .Where(i => i.InvoiceId == bc.OriginatingInvoiceId)
             .ToListAsync(ct);
-        var supplier = await _db.Suppliers
-            .FirstOrDefaultAsync(s => s.Id == bc.SupplierId, ct)
-            ?? throw new InvalidOperationException($"Supplier {bc.SupplierId} no encontrado.");
+        // FUGA B3 data-exposure (2026-07-03): mensaje al usuario SIN ids internos; detalle al log.
+        var supplier = await _db.Suppliers.FirstOrDefaultAsync(s => s.Id == bc.SupplierId, ct);
+        if (supplier is null)
+        {
+            _logger.LogError("EditLiquidation: no se encontro el Supplier {SupplierId} del BC {BcPublicId}.",
+                bc.SupplierId, bc.PublicId);
+            throw new InvalidOperationException(
+                "No se encontró el operador de esta anulación. Consultá con administración.");
+        }
 
         // 5) Aplicar overrides del admin sobre el input.
         var penaltyOverride = req.OperatorPenaltyAmountOverride ?? 0m;
@@ -3266,9 +3283,15 @@ public class BookingCancellationService
         //    TotalPlusNewInvoice (cambio de inputs). Misma politica que Confirm.
         if (newLiquidation.Kind == CreditNoteKind.TotalPlusNewInvoice)
         {
+            // FUGA B4 data-exposure (2026-07-03): sin jerga interna (CreditNoteKind/Fase 1/Reject/BC)
+            // en el mensaje al usuario; el detalle tecnico va al log.
+            _logger.LogWarning(
+                "EditLiquidation BC {BcPublicId}: re-clasificacion dio CreditNoteKind=TotalPlusNewInvoice " +
+                "(no soportado en Fase 1; corresponde rechazo del admin y abortar).",
+                bc.PublicId);
             throw new InvalidOperationException(
-                "Re-clasificacion despues del edit dio CreditNoteKind=TotalPlusNewInvoice. " +
-                "Fase 1 no soporta este caso. Pedir Reject del admin y abortar el BC.");
+                "Con estos cambios el caso fiscal ya no se puede resolver automáticamente: hay que " +
+                "rechazar la edición y anular por el circuito manual. Consultá con administración.");
         }
 
         // 7) Capturar snapshot anterior para construir el diff (RH-012).
@@ -4309,14 +4332,16 @@ public class BookingCancellationService
 
         // === Precondicion 7: fecha de confirmacion del operador valida (400). No futura;
         // no anterior a la fecha de la cancelacion (ConfirmedWithClientAt). ===
+        // FUGA B5 data-exposure (2026-07-03): el mensaje llega al usuario (400) — en criollo, sin el
+        // nombre interno del campo (OperatorConfirmationDate).
         var operatorDate = request.OperatorConfirmationDate;
         if (operatorDate.Date > DateTime.UtcNow.Date)
             throw new ArgumentException(
-                "OperatorConfirmationDate no puede ser una fecha futura.", nameof(request));
+                "La fecha de confirmación no puede ser una fecha futura.", nameof(request));
         if (bc.ConfirmedWithClientAt.HasValue &&
             operatorDate.Date < bc.ConfirmedWithClientAt.Value.Date)
             throw new ArgumentException(
-                "OperatorConfirmationDate no puede ser anterior a la fecha de la cancelacion.",
+                "La fecha de confirmación no puede ser anterior a la fecha de la anulación.",
                 nameof(request));
 
         // === 4-eyes (M2, §3.6). Obligatorio si NO hay soporte documental O si el monto
@@ -6221,9 +6246,13 @@ public class BookingCancellationService
     {
         var settings = await _settings.GetEntityAsync(ct);
         if (!settings.EnableNewCancellationFlow)
+        {
+            // FUGA B1 data-exposure (2026-07-03): el mensaje viaja al usuario via SanitizedConflict —
+            // NO nombrar el flag interno. El detalle tecnico va al log.
+            _logger.LogWarning("Anulacion rechazada: EnableNewCancellationFlow=false en este ambiente.");
             throw new InvalidOperationException(
-                "El modulo de cancelacion/refund no esta habilitado en este ambiente " +
-                "(EnableNewCancellationFlow=false).");
+                "La anulación de reservas no está disponible en este momento. Consultá con administración.");
+        }
     }
 
     /// <summary>
@@ -7572,36 +7601,13 @@ public class BookingCancellationService
             .ToList();
     }
 
-    // B3 (2026-07-02): ruido tecnico que ARCA/SOAP/.NET/EF puede devolver y que NUNCA debe llegar al vendedor
-    // (XML, excepciones, stack, URLs, JSON, mensajes .NET/EF sin tokens obvios). Si el mensaje lo contiene, se
-    // reemplaza por un copy generico. SE MANTIENE COMO BLOCKLIST a proposito (no allowlist): un allowlist
-    // mataria los motivos AFIP en texto plano legitimos aprobados en H2 (ej. "CUIT del emisor sin
-    // habilitacion"). Refuerzo data-exposure (2026-07-02): se suman tokens de mensajes .NET/EF que no traen
-    // ninguno de los tokens tecnicos clasicos (ej. "Object reference not set", "Value cannot be null.
-    // (Parameter 'x')", "duplicate key value violates unique constraint", stack con ".cs:" / " at TravelApi").
-    private static readonly System.Text.RegularExpressions.Regex ArcaTechnicalNoiseRegex = new(
-        @"(<[^>]+>|Exception|System\.|SOAP|Traceback|stack\s*trace|https?://|[{}]" +
-        @"|Error t[eé]cnico|Object reference not set|Value cannot be null|duplicate key value|violates" +
-        @"| at TravelApi|\.cs:|Parameter ')",
-        System.Text.RegularExpressions.RegexOptions.IgnoreCase
-        | System.Text.RegularExpressions.RegexOptions.Compiled);
-
     /// <summary>
-    /// B3 (ADR-042 §3.7, 2026-07-02): sanea el mensaje de error de ARCA para mostrarlo al vendedor. Un rechazo
-    /// de AFIP en texto plano (ej. "CUIT del emisor sin habilitacion") es info util y se muestra tal cual
-    /// (aprobado en H2). Pero ARCA a veces devuelve XML/excepciones/URLs: en ese caso NO se expone el crudo
-    /// (queda solo en log/auditoria via la entidad) y se devuelve un mensaje generico amable.
-    /// <para><c>internal</c> para poder testearlo directo desde TravelApi.Tests (InternalsVisibleTo).</para>
+    /// B3 (ADR-042 §3.7): sanea el mensaje de error de ARCA para mostrarlo al vendedor. Delega en el helper
+    /// compartido <see cref="ArcaErrorSanitizer"/> (2026-07-03): un rechazo de AFIP en texto plano se muestra
+    /// tal cual (aprobado en H2); XML/excepciones/ruido tecnico -&gt; copy generico. El crudo queda en la
+    /// entidad (log/auditoria). <c>internal</c> para testearlo directo desde TravelApi.Tests (InternalsVisibleTo).
     /// </summary>
-    internal static string? SanitizeArcaErrorForUser(string? raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw)) return null;
-        var trimmed = raw.Trim();
-        if (ArcaTechnicalNoiseRegex.IsMatch(trimmed))
-            return "AFIP rechazó la nota de crédito. Revisá los datos fiscales de la factura o reintentá.";
-        // Motivo de AFIP legible: se muestra acotado (no dumps largos).
-        return trimmed.Length > 300 ? trimmed[..300] : trimmed;
-    }
+    internal static string? SanitizeArcaErrorForUser(string? raw) => ArcaErrorSanitizer.SanitizeArcaError(raw);
 
     /// <summary>
     /// ADR-042 §3.7 (2026-07-01, B1c 2026-07-02): true si la anulacion quedo a medias y se puede reintentar SOLO

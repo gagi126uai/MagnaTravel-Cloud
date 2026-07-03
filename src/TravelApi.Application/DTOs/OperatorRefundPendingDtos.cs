@@ -21,6 +21,46 @@ public enum OperatorRefundPendingSemaphore
 }
 
 /// <summary>
+/// Cuenta del operador (2026-07-03): motivo por el que el reembolso estimado da $0, para explicarlo en criollo
+/// en vez del "$0" seco (P4). Se deriva de PaidToOperator/PenaltyRetained/AmountReceived; NO es un monto -> NO se enmascara.
+/// </summary>
+public enum OperatorRefundZeroReason
+{
+    /// <summary>No se le pagó nada al operador por este viaje -> no hay base para devolver.</summary>
+    NothingPaidToOperator = 0,
+
+    /// <summary>Se le pagó, pero la multa retenida por el operador se quedó con TODO lo pagado.</summary>
+    PenaltyCoversAll = 1,
+
+    /// <summary>Se le pagó, y el operador YA devolvió todo lo que correspondía (no queda residuo).</summary>
+    FullyRefunded = 2,
+}
+
+/// <summary>
+/// Cuenta del operador (2026-07-03, RESTOS): naturaleza de la fila del read-model de reembolsos, para que el
+/// front la rotule distinto (la solapa muestra tanto lo pendiente completo como los RESIDUOS de cancelaciones
+/// parcialmente reembolsadas o cerradas con resto). Es SOLO una pista de UI; la verdad vive en
+/// <c>BookingCancellationStatus</c>. El front mapea cada valor a su texto en español.
+/// </summary>
+public enum OperatorRefundRowStatus
+{
+    /// <summary>Esperando el reembolso del operador; todavía no entró nada.</summary>
+    AwaitingRefund = 0,
+
+    /// <summary>El operador ya devolvió una parte; queda un residuo por cobrar ("parcialmente devuelto").</summary>
+    PartiallyRefunded = 1,
+
+    /// <summary>El plazo se venció y se dio por perdida; solo entra plata por reembolso tardío.</summary>
+    Abandoned = 2,
+
+    /// <summary>La cancelación se cerró pero el operador devolvió de menos: quedó un resto vivo ("cerrado con resto").</summary>
+    ClosedWithResidue = 3,
+
+    /// <summary>La anulación todavía está en proceso (falta confirmar la Nota de Crédito); el reembolso aún no se puede registrar.</summary>
+    InProcess = 4,
+}
+
+/// <summary>
 /// ADR-041 TANDA 4: monto ESTIMADO de reembolso esperado del operador en UNA moneda.
 ///
 /// <para><b>IMPORTANTE</b>: <see cref="EstimatedAmount"/> es un ESTIMADO (lo pagado al operador menos su
@@ -35,6 +75,39 @@ public class OperatorRefundEstimatedAmountDto
 
     /// <summary>Estimado del reembolso pendiente en esta moneda. SUJETO A DEDUCCIONES del operador. 0 si esta enmascarado.</summary>
     public decimal EstimatedAmount { get; set; }
+
+    /// <summary>
+    /// Cuenta del operador (2026-07-03, decision 1): BASE REEMBOLSABLE pagada al operador por los servicios de
+    /// esta cancelacion en esta moneda (el "Pagaste US$ 500" del desglose). Es la base topeada al costo del
+    /// servicio (<c>capBeforePenalty = RefundCap + multa retenida</c>), NO el bruto pagado. Es COSTO -> se
+    /// enmascara: 0 si el caller no tiene <c>cobranzas.see_cost</c> (con <see cref="OperatorRefundPendingItemDto.AmountsMasked"/> true).
+    /// Invariante: <c>EstimatedAmount == PaidToOperator - PenaltyRetained - AmountReceived</c> (ver el builder).
+    /// </summary>
+    public decimal PaidToOperator { get; set; }
+
+    /// <summary>
+    /// Cuenta del operador (2026-07-03, decision 1): MULTA CONFIRMADA que el operador retuvo y que YA descuenta
+    /// el estimado (el "− Multa del operador US$ 100"). Es COSTO -> se enmascara igual que PaidToOperator.
+    /// </summary>
+    public decimal PenaltyRetained { get; set; }
+
+    /// <summary>
+    /// Cuenta del operador (2026-07-03, RESTOS): REEMBOLSO YA RECIBIDO del operador en esta moneda (el
+    /// "Ya te devolvió US$ 200"). En las filas con residuo (parcialmente devuelto / cerrado con resto) es &gt; 0.
+    /// El front arma "quedan {EstimatedAmount} de {EstimatedAmount + AmountReceived}". Es COSTO -> se enmascara
+    /// igual que los demás montos.
+    /// </summary>
+    public decimal AmountReceived { get; set; }
+
+    /// <summary>
+    /// Cuenta del operador (2026-07-03, decision 4 / P4): cuando <see cref="EstimatedAmount"/> es 0, el motivo
+    /// para explicarlo en criollo (<c>NothingPaidToOperator</c> / <c>PenaltyCoversAll</c> / <c>FullyRefunded</c>);
+    /// null si el estimado es &gt; 0. Derivado por el backend de los montos anteriores (el front NO resta).
+    /// <para><b>Enmascarado (security review 2026-07-03)</b>: el motivo es CUALITATIVO sobre costos
+    /// (<c>PenaltyCoversAll</c> revela que hubo multa &gt;= lo pagado), asi que sin <c>cobranzas.see_cost</c> viaja
+    /// null (<see cref="OperatorRefundPendingItemDto.AmountsMasked"/> true) — enmascarado completo server-side.</para>
+    /// </summary>
+    public string? ZeroRefundReason { get; set; }
 }
 
 /// <summary>
@@ -70,6 +143,31 @@ public class OperatorRefundPendingItemDto
 
     /// <summary>true si el caller no tiene <c>cobranzas.see_cost</c>: los montos van en 0 (la estructura se ve igual).</summary>
     public bool AmountsMasked { get; set; }
+
+    /// <summary>
+    /// Cuenta del operador (2026-07-03, decision 2 / P2): true si la multa del operador de esta cancelacion
+    /// esta TODAVIA SIN CONFIRMAR (<c>bc.PenaltyStatus == Estimated</c>, ni confirmada ni waived). Alimenta el
+    /// aviso "Falta confirmar la multa de esta anulación." + boton "Ir a la reserva a confirmar" (que navega a
+    /// <see cref="ReservaPublicId"/>). NO es un monto -> se expone SIEMPRE (visible aun con montos enmascarados).
+    /// La confirmacion fiscal se sigue haciendo SOLO en la reserva; desde aca solo se salta a ella.
+    /// </summary>
+    public bool PenaltyPendingConfirmation { get; set; }
+
+    /// <summary>
+    /// Cuenta del operador (2026-07-03, RESTOS): naturaleza de la fila para que el front la rotule
+    /// (esperando / parcialmente devuelto / abandonada / cerrada con resto / en proceso). NO es un monto ->
+    /// se expone SIEMPRE. Ver <see cref="OperatorRefundRowStatus"/>.
+    /// </summary>
+    public OperatorRefundRowStatus RowStatus { get; set; }
+
+    /// <summary>
+    /// Cuenta del operador (2026-07-03, RESTOS): true si HOY se puede registrar un reembolso recibido contra esta
+    /// cancelación desde el endpoint normal (estados <c>AwaitingOperatorRefund</c> / <c>ClientCreditApplied</c>,
+    /// la MISMA capacidad server-side que valida el registro del ingreso). Si es false la fila es solo informativa
+    /// (p.ej. una cancelación abandonada primero hay que reabrirla; una cerrada o en proceso no admite el registro
+    /// directo). El backend NO cambia por este flag: es la lectura fiel de lo que el endpoint aceptaría.
+    /// </summary>
+    public bool CanRegisterRefund { get; set; }
 }
 
 /// <summary>
