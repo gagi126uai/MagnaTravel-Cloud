@@ -73,6 +73,38 @@ tarjetas Ventas/Cobrado ya no suman ARS+USD en un escalar.
   PREEXISTENTE, anotado como follow-up.
 - Front: verde + build de producción.
 
+## Segunda tanda del día (dogfood de Gastón sobre lo desplegado)
+
+Gastón probó y encontró dos bugs reales más; se arreglaron, revisaron y desplegaron en el día:
+
+### 1. El limbo de la anulación sin plata pagada al operador (`109f827`)
+
+Al quedar firme una anulación, el sistema SIEMPRE pasaba a "esperando el reembolso del operador",
+aunque nunca se le hubiera pagado nada (nada que esperar). Sin salida posible: no se puede
+registrar un reembolso que no existe, ni pagarle a un operador de una reserva anulada; el timeout
+solo la marcaba "Abandonada" sin sacarla de la vista. Decisión de Gastón: **cierre automático**.
+- En la transición (NC con CAE): si la anulación nunca tuvo circuito de reembolso (todas las
+  líneas con base reembolsable $0 y nada recibido) y no hay multa pendiente → se cierra directo
+  (anulación Cerrada, reserva Cancelada, rastro en criollo + auditoría).
+- Barrido nocturno (mismo job del timeout) cierra las ya trabadas (#F-2026-1025 cuando resuelva
+  su multa desde la bandeja de NDs).
+- La review de seguridad acotó el alcance (M1): las anulaciones totalmente reembolsadas NO se
+  cierran por el barrido (cerrarlas dejaría sin camino de UI el void de ese reembolso).
+
+### 2. El saldo a favor aplicado no se veía en ningún lado (`6f4974b`)
+
+Al usar el saldo a favor en $ para cubrir deudas: el recuadro verde no bajaba y las reservas
+saldadas seguían diciendo "Operador impago". La plata estaba bien cuidada (el pool se drenaba y
+el tope anti doble-gasto funcionaba); el problema era que los LECTORES no descontaban las
+aplicaciones. Fix solo en lectores: el extracto suma la línea "Saldo a favor aplicado a la
+reserva N° X" y los recuadros van netos (recuadro verde == pool restante por construcción); el
+estado "operador impago" ahora cuenta el crédito aplicado (FIFO por moneda), con el campo nuevo
+enmascarado por permiso de costos como todo costo.
+
+Ambos con la cadena completa: backend + security + data-exposure (Approved), suites unit
+3202/3202 + integración 207/207, y las condiciones de las reviews aplicadas (alcance M1,
+LogWarning de consistencia, AsNoTracking, 3 tests extra pedidos).
+
 ## Pendientes que NO bloquean (anotados)
 
 - Verificar en prod que la #F-2026-1025 aparezca en la bandeja de NDs pendientes y reintentarla
