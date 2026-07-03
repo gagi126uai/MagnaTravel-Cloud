@@ -37,6 +37,16 @@ public static class SupplierAccountStatementLineKinds
     /// Neutraliza la parte del pago negativo que el operador ya devolvio.
     /// </summary>
     public const string RefundReceived = "RefundReceived";
+
+    /// <summary>
+    /// Bug de lectura (2026-07-03): SALDO A FAVOR consumido con el operador APLICADO a la deuda de una reserva
+    /// (cargo +). Cuando la agencia usa su saldo a favor (sobrepago) para cubrir la deuda de otra reserva del
+    /// mismo operador, el saldo a favor disponible BAJA. Esta linea es la contrapartida de visualizacion: mueve
+    /// el saldo economico hacia 0 (reduce el sobrepago) para que el saldo a favor MOSTRADO en el header coincida
+    /// con lo que realmente queda para gastar (el pool). NO mueve la CAJA (no hubo movimiento de efectivo), igual
+    /// que las lineas de circuito: vive solo en el saldo economico intercalado, no en el saldo de caja.
+    /// </summary>
+    public const string CreditApplied = "CreditApplied";
 }
 
 /// <summary>

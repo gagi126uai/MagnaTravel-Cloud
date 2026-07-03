@@ -667,8 +667,62 @@ public class SupplierService : ISupplierService
         var reconciliation = SupplierAccountReconciliationBuilder.Build(
             cashClosingByCurrency, circuit.CircuitLines, circuit.ReceivableByCurrency);
 
+        // Bug de lectura (2026-07-03): el "Prepago" del calculador economico es el sobrepago BRUTO (no sabe cuanto
+        // saldo a favor ya se APLICO a otras reservas). Cargamos las aplicaciones VIVAS de saldo a favor del
+        // operador y se las damos al mapper como lineas del extracto: mueven el saldo economico hacia 0 y hacen que
+        // el "Saldo a favor" mostrado en el header baje exactamente hasta lo que queda por gastar (== pool).
+        // El reconciler sigue usando el Prepago BRUTO para mintear el pool: NO se toca esa fuente.
+        var creditApplicationLines = await LoadLiveSupplierCreditApplicationLinesAsync(id, cancellationToken);
+
         bool canSeeCost = await CanSeeSupplierCostFiguresAsync(cancellationToken);
-        return MapSupplierAccountStatement(supplier.PublicId, supplier.Name, statement, reconciliation, canSeeCost);
+        return MapSupplierAccountStatement(
+            supplier.PublicId, supplier.Name, statement, reconciliation, creditApplicationLines, canSeeCost);
+    }
+
+    /// <summary>
+    /// Una aplicacion VIVA de saldo a favor con el operador, lista para intercalar como linea del extracto
+    /// economico. <see cref="Amount"/> es POSITIVO y entra como CARGO (+): reduce el sobrepago (mueve el saldo
+    /// economico hacia 0), igual que las lineas de circuito. No es una linea de CAJA.
+    /// </summary>
+    private readonly record struct SupplierCreditApplicationStatementLine(
+        DateTime Date,
+        string Currency,
+        decimal Amount,
+        string? TargetReservaNumber,
+        Guid ApplicationPublicId);
+
+    /// <summary>
+    /// Lee las aplicaciones VIVAS (Kind=Applied sin su contra-fila Reversed) de saldo a favor de ESTE operador.
+    /// Una reversa deja neteada a cero su aplicacion (ni el Applied ni el Reversed aparecen), asi que revertir una
+    /// aplicacion la hace desaparecer del extracto de forma simetrica. Proyeccion unica (sin N+1): trae el numero
+    /// de la reserva destino para describir la linea.
+    /// </summary>
+    private async Task<List<SupplierCreditApplicationStatementLine>> LoadLiveSupplierCreditApplicationLinesAsync(
+        int supplierId, CancellationToken cancellationToken)
+    {
+        var rows = await _dbContext.SupplierCreditApplications
+            .AsNoTracking()
+            .Where(a => a.Entry.SupplierId == supplierId
+                     && a.Kind == SupplierCreditApplicationKind.Applied
+                     && !_dbContext.SupplierCreditApplications.Any(r => r.ReversesApplicationId == a.Id))
+            .Select(a => new
+            {
+                a.Entry.Currency,
+                a.Amount,
+                AppliedAt = a.CreatedAt,
+                a.PublicId,
+                TargetReservaNumber = a.TargetReserva != null ? a.TargetReserva.NumeroReserva : null,
+            })
+            .ToListAsync(cancellationToken);
+
+        return rows
+            .Select(r => new SupplierCreditApplicationStatementLine(
+                Date: r.AppliedAt,
+                Currency: Monedas.Normalizar(r.Currency),
+                Amount: r.Amount,
+                TargetReservaNumber: r.TargetReservaNumber,
+                ApplicationPublicId: r.PublicId))
+            .ToList();
     }
 
     /// <summary>Texto legible de una linea de compra del extracto: "Tipo: descripcion" (sin costo, eso va aparte).</summary>
@@ -715,6 +769,7 @@ public class SupplierService : ISupplierService
         string supplierName,
         SupplierAccountStatement statement,
         SupplierAccountReconciliation reconciliation,
+        IReadOnlyList<SupplierCreditApplicationStatementLine> creditApplicationLines,
         bool canSeeCost)
     {
         var dto = new SupplierAccountStatementDto
@@ -727,14 +782,26 @@ public class SupplierService : ISupplierService
         // Indexamos los bloques economicos por moneda para colgar los dos numeros + el circuito a cada moneda.
         var econByCurrency = reconciliation.Currencies.ToDictionary(b => b.Currency, StringComparer.Ordinal);
 
-        // Una BC con receivable o multa puede generar una moneda que la CAJA no tiene (caso de borde). Unimos:
-        // primero las monedas de caja (en su orden), despues las economicas que no aparezcan en caja.
+        // Aplicaciones vivas de saldo a favor agrupadas por moneda (2026-07-03). Preservamos el orden de llegada
+        // (el loader ya las trajo listas) para intercalarlas cronologicamente en el extracto.
+        var creditAppsByCurrency = creditApplicationLines
+            .GroupBy(l => l.Currency, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
+
+        // Una BC con receivable o multa (o una aplicacion de saldo a favor) puede generar una moneda que la CAJA
+        // no tiene (caso de borde). Unimos: primero las monedas de caja (en su orden), despues las economicas y
+        // las de aplicaciones que no aparezcan en caja.
         var cashCurrencies = statement.Currencies.Select(b => b.Currency).ToList();
         var orderedCurrencies = new List<string>(cashCurrencies);
         foreach (var econ in reconciliation.Currencies)
         {
             if (!cashCurrencies.Contains(econ.Currency))
                 orderedCurrencies.Add(econ.Currency);
+        }
+        foreach (var appCurrency in creditAppsByCurrency.Keys)
+        {
+            if (!orderedCurrencies.Contains(appCurrency))
+                orderedCurrencies.Add(appCurrency);
         }
 
         var cashByCurrency = statement.Currencies.ToDictionary(b => b.Currency, StringComparer.Ordinal);
@@ -743,20 +810,37 @@ public class SupplierService : ISupplierService
         {
             econByCurrency.TryGetValue(currency, out var econ);
             cashByCurrency.TryGetValue(currency, out var cashBlock);
+            creditAppsByCurrency.TryGetValue(currency, out var currencyAppLines);
+
+            // Total de saldo a favor APLICADO en esta moneda: baja el sobrepago mostrado. Cada aplicacion es un
+            // cargo (+) que acerca el saldo economico a 0.
+            decimal appliedCreditTotal = currencyAppLines?.Sum(l => l.Amount) ?? 0m;
+
+            // Cara economica AJUSTADA por las aplicaciones. El calculador economico (builder) devuelve el sobrepago
+            // BRUTO (no conoce las aplicaciones): aca le restamos lo ya aplicado para que los DOS numeros del header
+            // reflejen lo que realmente queda. Por construccion, el "Saldo a favor" resultante == pool RemainingBalance
+            // (el reconciler mintea el pool = Prepago bruto; cada aplicacion drena RemainingBalance sin tocar el bruto).
+            decimal economicWithApplications = (econ?.EconomicClosingBalance ?? 0m) + appliedCreditTotal;
+            decimal receivableY = econ?.TheyOweMe ?? 0m;
+            decimal economicPlusReceivable = economicWithApplications + receivableY;
+            decimal iTheyOweAdjusted = economicPlusReceivable > 0m ? economicPlusReceivable : 0m;
+            decimal prepaymentAdjusted = economicPlusReceivable < 0m ? -economicPlusReceivable : 0m;
 
             var blockDto = new SupplierAccountStatementCurrencyBlockDto
             {
                 Currency = currency,
-                // CashClosingBalance = eco de la proyeccion (SupplierBalanceByCurrency.Balance). Es el que
-                // preserva el invariante extracto-caja <-> proyeccion.
+                // CashClosingBalance = eco de la proyeccion (SupplierBalanceByCurrency.Balance). NO lo tocan las
+                // aplicaciones (no hubo movimiento de caja): preserva el invariante extracto-caja <-> proyeccion.
                 CashClosingBalance = canSeeCost ? EconomicRulesHelper.RoundCurrency(econ?.CashClosingBalance ?? 0m) : 0m,
-                EconomicClosingBalance = canSeeCost ? EconomicRulesHelper.RoundCurrency(econ?.EconomicClosingBalance ?? 0m) : 0m,
-                TheyOweMe = canSeeCost ? EconomicRulesHelper.RoundCurrency(econ?.TheyOweMe ?? 0m) : 0m,
-                ITheyOwe = canSeeCost ? EconomicRulesHelper.RoundCurrency(econ?.ITheyOwe ?? 0m) : 0m,
-                Prepayment = canSeeCost ? EconomicRulesHelper.RoundCurrency(econ?.Prepayment ?? 0m) : 0m,
+                // EconomicClosingBalance ahora incluye las aplicaciones (caja + circuito + saldo a favor aplicado),
+                // para que siga coincidiendo con el saldo unico del pie del extracto y con el header.
+                EconomicClosingBalance = canSeeCost ? EconomicRulesHelper.RoundCurrency(economicWithApplications) : 0m,
+                TheyOweMe = canSeeCost ? EconomicRulesHelper.RoundCurrency(receivableY) : 0m,
+                ITheyOwe = canSeeCost ? EconomicRulesHelper.RoundCurrency(iTheyOweAdjusted) : 0m,
+                Prepayment = canSeeCost ? EconomicRulesHelper.RoundCurrency(prepaymentAdjusted) : 0m,
             };
 
-            var mergedLines = BuildMergedLines(cashBlock, econ);
+            var mergedLines = BuildMergedLines(cashBlock, econ, currencyAppLines);
 
             // Recalculamos el saldo corriente UNICO sobre la secuencia mergeada (cargo suma, abono resta),
             // arrancando de 0. Trabajamos con los montos crudos (sin redondear) y redondeamos SOLO al exponer,
@@ -807,7 +891,8 @@ public class SupplierService : ISupplierService
     /// </summary>
     private static List<MergedStatementLine> BuildMergedLines(
         SupplierAccountStatementCurrencyBlock? cashBlock,
-        SupplierAccountReconciliationCurrencyBlock? econ)
+        SupplierAccountReconciliationCurrencyBlock? econ,
+        List<SupplierCreditApplicationStatementLine>? creditApplicationLines)
     {
         var merged = new List<MergedStatementLine>();
 
@@ -845,8 +930,31 @@ public class SupplierService : ISupplierService
             }
         }
 
+        if (creditApplicationLines != null)
+        {
+            foreach (var line in creditApplicationLines)
+            {
+                // Descripcion legible: a que reserva se aplico el saldo a favor (el nº de reserva no es dato de
+                // costo, se muestra igual que el resto de la estructura). Sin numero, texto generico.
+                string description = string.IsNullOrWhiteSpace(line.TargetReservaNumber)
+                    ? "Saldo a favor aplicado"
+                    : $"Saldo a favor aplicado a la reserva N° {line.TargetReservaNumber}";
+
+                merged.Add(new MergedStatementLine(
+                    Date: line.Date,
+                    OrderGroup: 2, // saldo a favor aplicado despues de caja y circuito ante misma fecha
+                    Kind: SupplierAccountStatementLineKinds.CreditApplied,
+                    Description: description,
+                    DocumentRef: line.TargetReservaNumber,
+                    SourcePublicId: line.ApplicationPublicId,
+                    Currency: line.Currency,
+                    Charge: line.Amount, // aplicar saldo a favor = cargo (+): reduce el sobrepago
+                    Credit: 0m));
+            }
+        }
+
         // OrderBy de LINQ es estable: ante igual (Date, OrderGroup) preserva el orden de insercion (caja en el
-        // orden del extracto; circuito en el orden que lo devolvio el reader).
+        // orden del extracto; circuito y aplicaciones en el orden que los devolvieron sus readers).
         return merged
             .OrderBy(line => line.Date)
             .ThenBy(line => line.OrderGroup)
@@ -2278,6 +2386,16 @@ public class SupplierService : ISupplierService
             paidByService[servicePublicId] = current + imputedAmount;
         }
 
+        // 3) Saldo a favor con el operador APLICADO a ESTA reserva (bug 2026-07-03). La aplicacion se hace a nivel
+        //    RESERVA (SupplierCreditApplication.TargetReservaId), pero el estado "pagado al operador" es POR
+        //    SERVICIO. Atribuimos el monto aplicado a los servicios de la MISMA moneda y el MISMO operador en
+        //    orden cronologico (FIFO por CreatedAt), mismo espiritu que el drenaje FIFO del pool. Si el saldo a
+        //    favor aplicado cubre toda la deuda de la reserva, todos sus servicios quedan "paid" (el caso reportado
+        //    por el dueño: cubrio la deuda con saldo a favor y los servicios seguian "impagos"). Va DESPUES de los
+        //    pagos de caja: el credito solo cubre lo que el efectivo dejo pendiente.
+        var creditAppliedByService = await AttributeSupplierCreditToServicesAsync(
+            reservaId, serviceRows, paidByService, cancellationToken);
+
         var dto = new ReservaSupplierPaymentStatusDto
         {
             ReservaPublicId = reserva.PublicId,
@@ -2298,12 +2416,19 @@ public class SupplierService : ISupplierService
             }
 
             paidByService.TryGetValue(service.PublicId, out var paid);
+            creditAppliedByService.TryGetValue(service.PublicId, out var creditApplied);
             decimal netCost = EconomicRulesHelper.RoundCurrency(service.NetCost);
             paid = EconomicRulesHelper.RoundCurrency(paid);
-            decimal outstanding = EconomicRulesHelper.RoundCurrency(netCost - paid);
+            creditApplied = EconomicRulesHelper.RoundCurrency(creditApplied);
+
+            // "Cubierto" = pagos de caja + saldo a favor aplicado. El estado y el pendiente se derivan de este
+            // total: un servicio cubierto por saldo a favor esta saldado con el operador (paid), aunque no haya
+            // efectivo. PaidToOperator sigue siendo SOLO caja; el credito se expone aparte para no confundir.
+            decimal covered = EconomicRulesHelper.RoundCurrency(paid + creditApplied);
+            decimal outstanding = EconomicRulesHelper.RoundCurrency(netCost - covered);
 
             // El estado se deriva ANTES de enmascarar (no depende de ver montos): cubierto / algo / nada.
-            string status = DeriveOperatorPaymentStatus(netCost, paid);
+            string status = DeriveOperatorPaymentStatus(netCost, covered);
 
             var line = new ServiceSupplierPaymentStatusDto
             {
@@ -2314,6 +2439,7 @@ public class SupplierService : ISupplierService
                 Currency = Monedas.Normalizar(service.Currency),
                 NetCost = netCost,
                 PaidToOperator = paid,
+                CreditAppliedToOperator = creditApplied,
                 OutstandingToOperator = outstanding,
                 Status = status
             };
@@ -2323,6 +2449,7 @@ public class SupplierService : ISupplierService
             {
                 line.NetCost = 0m;
                 line.PaidToOperator = 0m;
+                line.CreditAppliedToOperator = 0m;
                 line.OutstandingToOperator = 0m;
             }
 
@@ -2330,6 +2457,76 @@ public class SupplierService : ISupplierService
         }
 
         return dto;
+    }
+
+    /// <summary>
+    /// Atribuye a cada servicio el saldo a favor con el operador aplicado a la reserva (bug 2026-07-03). Las
+    /// aplicaciones (<see cref="SupplierCreditApplication"/>) son a nivel RESERVA + moneda + operador; aca las
+    /// reparte entre los servicios de la MISMA moneda y operador, en orden cronologico (FIFO por CreatedAt),
+    /// cubriendo primero lo que el efectivo dejo pendiente en cada servicio. El total repartido nunca supera el
+    /// saldo a favor aplicado (que a su vez, por el tope de <c>ApplyCreditAsync</c>, nunca supera la deuda viva de
+    /// la reserva). Devuelve un mapa servicioPublicId -> monto de saldo a favor atribuido (0 si no le toco).
+    /// </summary>
+    private async Task<Dictionary<Guid, decimal>> AttributeSupplierCreditToServicesAsync(
+        int reservaId,
+        List<ReservaServicePaymentRow> serviceRows,
+        Dictionary<Guid, decimal> paidByService,
+        CancellationToken cancellationToken)
+    {
+        var result = new Dictionary<Guid, decimal>();
+
+        // Saldo a favor NETO (Applied - Reversed) aplicado a esta reserva, por (operador, moneda). Una reversa
+        // deja su aplicacion en cero, asi que revertir devuelve el estado del servicio a impago (simetria).
+        var applicationRows = await _dbContext.SupplierCreditApplications
+            .AsNoTracking()
+            .Where(a => a.TargetReservaId == reservaId)
+            .Select(a => new { a.Kind, a.Amount, a.Entry.SupplierId, a.Entry.Currency })
+            .ToListAsync(cancellationToken);
+        if (applicationRows.Count == 0) return result;
+
+        var remainingByKey = new Dictionary<(int SupplierId, string Currency), decimal>();
+        foreach (var row in applicationRows)
+        {
+            var key = (row.SupplierId, Monedas.Normalizar(row.Currency));
+            decimal signed = row.Kind == SupplierCreditApplicationKind.Applied ? row.Amount : -row.Amount;
+            remainingByKey.TryGetValue(key, out var acc);
+            remainingByKey[key] = acc + signed;
+        }
+
+        // Solo claves con saldo positivo quedan para repartir.
+        var keysToDrain = remainingByKey
+            .Where(kvp => Math.Round(kvp.Value, 2, MidpointRounding.AwayFromZero) > 0m)
+            .Select(kvp => kvp.Key)
+            .ToHashSet();
+        if (keysToDrain.Count == 0) return result;
+
+        // FIFO cronologico: se cubren primero los servicios mas antiguos (mismo espiritu que el drenaje del pool).
+        // Un servicio de operador CommissionOnly no genera deuda: no recibe credito (coherente con el loop que
+        // arma la respuesta, que tambien lo excluye). Un servicio sin operador no tiene clave: se ignora.
+        var orderedServices = serviceRows
+            .Where(s => s.SupplierId.HasValue)
+            .Where(s => !s.SupplierInvoicingMode.HasValue
+                     || SupplierDebtCalculator.SupplierGeneratesPurchaseDebt(s.SupplierInvoicingMode.Value))
+            .OrderBy(s => s.CreatedAt)
+            .ThenBy(s => s.PublicId);
+
+        foreach (var service in orderedServices)
+        {
+            var key = (service.SupplierId!.Value, Monedas.Normalizar(service.Currency));
+            if (!remainingByKey.TryGetValue(key, out var remaining)) continue;
+            remaining = Math.Round(remaining, 2, MidpointRounding.AwayFromZero);
+            if (remaining <= 0m) continue;
+
+            paidByService.TryGetValue(service.PublicId, out var cashPaid);
+            decimal outstandingAfterCash = Math.Round(service.NetCost - cashPaid, 2, MidpointRounding.AwayFromZero);
+            if (outstandingAfterCash <= 0m) continue;
+
+            decimal take = Math.Min(remaining, outstandingAfterCash);
+            result[service.PublicId] = take;
+            remainingByKey[key] = Math.Round(remaining - take, 2, MidpointRounding.AwayFromZero);
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -2352,8 +2549,9 @@ public class SupplierService : ISupplierService
     /// en servicios de proveedores CommissionOnly (intermediacion: no hay deuda con el operador).
     /// </summary>
     private readonly record struct ReservaServicePaymentRow(
-        string RecordKind, Guid PublicId, Guid? SupplierPublicId, string? SupplierName,
-        decimal NetCost, string? Currency, string Status, SupplierInvoicingMode? SupplierInvoicingMode);
+        string RecordKind, Guid PublicId, Guid? SupplierPublicId, int? SupplierId, string? SupplierName,
+        decimal NetCost, string? Currency, string Status, SupplierInvoicingMode? SupplierInvoicingMode,
+        DateTime CreatedAt);
 
     /// <summary>
     /// Reune todos los servicios de una reserva (6 tablas) con su (recordKind, publicId, proveedor, costo,
@@ -2367,63 +2565,81 @@ public class SupplierService : ISupplierService
 
         var flights = await _dbContext.FlightSegments.AsNoTracking()
             .Where(s => s.ReservaId == reservaId)
-            .Select(s => new { s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status })
+            .Select(s => new { s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status, s.CreatedAt })
             .ToListAsync(cancellationToken);
         rows.AddRange(flights.Select(s => new ReservaServicePaymentRow(
             ServicePaymentRecordKinds.Flight, s.PublicId,
-            s.Supplier != null ? (Guid?)s.Supplier.PublicId : null, s.Supplier != null ? s.Supplier.Name : null,
+            s.Supplier != null ? (Guid?)s.Supplier.PublicId : null,
+            s.Supplier != null ? (int?)s.Supplier.Id : null,
+            s.Supplier != null ? s.Supplier.Name : null,
             s.NetCost, s.Currency, s.Status,
-            s.Supplier != null ? (SupplierInvoicingMode?)s.Supplier.InvoicingMode : null)));
+            s.Supplier != null ? (SupplierInvoicingMode?)s.Supplier.InvoicingMode : null,
+            s.CreatedAt)));
 
         var hotels = await _dbContext.HotelBookings.AsNoTracking()
             .Where(s => s.ReservaId == reservaId)
-            .Select(s => new { s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status })
+            .Select(s => new { s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status, s.CreatedAt })
             .ToListAsync(cancellationToken);
         rows.AddRange(hotels.Select(s => new ReservaServicePaymentRow(
             ServicePaymentRecordKinds.Hotel, s.PublicId,
-            s.Supplier != null ? (Guid?)s.Supplier.PublicId : null, s.Supplier != null ? s.Supplier.Name : null,
+            s.Supplier != null ? (Guid?)s.Supplier.PublicId : null,
+            s.Supplier != null ? (int?)s.Supplier.Id : null,
+            s.Supplier != null ? s.Supplier.Name : null,
             s.NetCost, s.Currency, s.Status,
-            s.Supplier != null ? (SupplierInvoicingMode?)s.Supplier.InvoicingMode : null)));
+            s.Supplier != null ? (SupplierInvoicingMode?)s.Supplier.InvoicingMode : null,
+            s.CreatedAt)));
 
         var transfers = await _dbContext.TransferBookings.AsNoTracking()
             .Where(s => s.ReservaId == reservaId)
-            .Select(s => new { s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status })
+            .Select(s => new { s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status, s.CreatedAt })
             .ToListAsync(cancellationToken);
         rows.AddRange(transfers.Select(s => new ReservaServicePaymentRow(
             ServicePaymentRecordKinds.Transfer, s.PublicId,
-            s.Supplier != null ? (Guid?)s.Supplier.PublicId : null, s.Supplier != null ? s.Supplier.Name : null,
+            s.Supplier != null ? (Guid?)s.Supplier.PublicId : null,
+            s.Supplier != null ? (int?)s.Supplier.Id : null,
+            s.Supplier != null ? s.Supplier.Name : null,
             s.NetCost, s.Currency, s.Status,
-            s.Supplier != null ? (SupplierInvoicingMode?)s.Supplier.InvoicingMode : null)));
+            s.Supplier != null ? (SupplierInvoicingMode?)s.Supplier.InvoicingMode : null,
+            s.CreatedAt)));
 
         var packages = await _dbContext.PackageBookings.AsNoTracking()
             .Where(s => s.ReservaId == reservaId)
-            .Select(s => new { s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status })
+            .Select(s => new { s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status, s.CreatedAt })
             .ToListAsync(cancellationToken);
         rows.AddRange(packages.Select(s => new ReservaServicePaymentRow(
             ServicePaymentRecordKinds.Package, s.PublicId,
-            s.Supplier != null ? (Guid?)s.Supplier.PublicId : null, s.Supplier != null ? s.Supplier.Name : null,
+            s.Supplier != null ? (Guid?)s.Supplier.PublicId : null,
+            s.Supplier != null ? (int?)s.Supplier.Id : null,
+            s.Supplier != null ? s.Supplier.Name : null,
             s.NetCost, s.Currency, s.Status,
-            s.Supplier != null ? (SupplierInvoicingMode?)s.Supplier.InvoicingMode : null)));
+            s.Supplier != null ? (SupplierInvoicingMode?)s.Supplier.InvoicingMode : null,
+            s.CreatedAt)));
 
         var assistances = await _dbContext.AssistanceBookings.AsNoTracking()
             .Where(s => s.ReservaId == reservaId)
-            .Select(s => new { s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status })
+            .Select(s => new { s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status, s.CreatedAt })
             .ToListAsync(cancellationToken);
         rows.AddRange(assistances.Select(s => new ReservaServicePaymentRow(
             ServicePaymentRecordKinds.Assistance, s.PublicId,
-            s.Supplier != null ? (Guid?)s.Supplier.PublicId : null, s.Supplier != null ? s.Supplier.Name : null,
+            s.Supplier != null ? (Guid?)s.Supplier.PublicId : null,
+            s.Supplier != null ? (int?)s.Supplier.Id : null,
+            s.Supplier != null ? s.Supplier.Name : null,
             s.NetCost, s.Currency, s.Status,
-            s.Supplier != null ? (SupplierInvoicingMode?)s.Supplier.InvoicingMode : null)));
+            s.Supplier != null ? (SupplierInvoicingMode?)s.Supplier.InvoicingMode : null,
+            s.CreatedAt)));
 
         var generics = await _dbContext.Servicios.AsNoTracking()
             .Where(s => s.ReservaId == reservaId)
-            .Select(s => new { s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status })
+            .Select(s => new { s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status, s.CreatedAt })
             .ToListAsync(cancellationToken);
         rows.AddRange(generics.Select(s => new ReservaServicePaymentRow(
             ServicePaymentRecordKinds.Generic, s.PublicId,
-            s.Supplier != null ? (Guid?)s.Supplier.PublicId : null, s.Supplier != null ? s.Supplier.Name : null,
+            s.Supplier != null ? (Guid?)s.Supplier.PublicId : null,
+            s.Supplier != null ? (int?)s.Supplier.Id : null,
+            s.Supplier != null ? s.Supplier.Name : null,
             s.NetCost, s.Currency, s.Status,
-            s.Supplier != null ? (SupplierInvoicingMode?)s.Supplier.InvoicingMode : null)));
+            s.Supplier != null ? (SupplierInvoicingMode?)s.Supplier.InvoicingMode : null,
+            s.CreatedAt)));
 
         return rows;
     }

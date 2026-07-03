@@ -253,7 +253,19 @@ public class ServiceSupplierPaymentStatusDto
     /// <summary>Suma de pagos vivos al operador imputados a ESTE servicio (equivalente imputado). Enmascarado a 0 sin see_cost.</summary>
     public decimal PaidToOperator { get; set; }
 
-    /// <summary>Saldo pendiente con el operador por este servicio = NetCost - PaidToOperator. Enmascarado a 0 sin see_cost.</summary>
+    /// <summary>
+    /// Saldo A FAVOR con el operador aplicado a ESTE servicio (2026-07-03). Cuando la agencia usa su saldo a
+    /// favor (sobrepago con el operador) para cubrir la deuda de la reserva, esa aplicacion es a nivel RESERVA;
+    /// aca se atribuye a los servicios de la misma moneda en orden cronologico (FIFO). Se expone aparte de
+    /// <see cref="PaidToOperator"/> (que sigue siendo SOLO pagos de caja) para no confundir "pagado en efectivo"
+    /// con "cubierto con saldo a favor". Enmascarado a 0 sin see_cost.
+    /// </summary>
+    public decimal CreditAppliedToOperator { get; set; }
+
+    /// <summary>
+    /// Saldo pendiente con el operador por este servicio = NetCost - PaidToOperator - CreditAppliedToOperator.
+    /// Enmascarado a 0 sin see_cost.
+    /// </summary>
     public decimal OutstandingToOperator { get; set; }
 
     /// <summary>
@@ -348,7 +360,11 @@ public class SupplierAccountStatementCurrencyBlockDto
     /// </summary>
     public List<SupplierAccountStatementLineDto> CircuitLines { get; set; } = new();
 
-    /// <summary>Saldo economico = caja + circuito (multa retenida + reembolso recibido). Igual a <see cref="ClosingBalance"/>.</summary>
+    /// <summary>
+    /// Saldo economico = caja + circuito (multa retenida + reembolso recibido) + saldo a favor APLICADO a otras
+    /// reservas (2026-07-03). Igual a <see cref="ClosingBalance"/>. El saldo a favor aplicado se incluye para que
+    /// el pie del extracto y los recuadros del header reflejen lo que realmente queda tras usar el saldo a favor.
+    /// </summary>
     public decimal EconomicClosingBalance { get; set; }
 
     /// <summary>"Me tiene que devolver" (Y): reembolso del operador todavia por cobrar en esta moneda.</summary>
@@ -357,7 +373,10 @@ public class SupplierAccountStatementCurrencyBlockDto
     /// <summary>"Le debo" (X): lo que la agencia todavia le tiene que pagar al operador en esta moneda. NUNCA se netea con Y.</summary>
     public decimal ITheyOwe { get; set; }
 
-    /// <summary>Saldo a favor CONSUMIBLE (prepago) con el operador en esta moneda. Convive con Y solo si X = 0.</summary>
+    /// <summary>
+    /// Saldo a favor CONSUMIBLE (prepago) con el operador en esta moneda: lo que queda para GASTAR tras descontar
+    /// las aplicaciones vivas (== el pool disponible, una sola verdad). Convive con Y solo si X = 0.
+    /// </summary>
     public decimal Prepayment { get; set; }
 }
 
