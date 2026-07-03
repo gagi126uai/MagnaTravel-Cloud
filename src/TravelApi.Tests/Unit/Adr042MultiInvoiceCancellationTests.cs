@@ -46,7 +46,9 @@ public class Adr042MultiInvoiceCancellationTests
         Mock<IApprovalRequestService> ApprovalMock,
         Mock<IAuditService> AuditMock);
 
-    private static Harness BuildService(bool requireApprovalForInvoiceAnnulment = false)
+    private static Harness BuildService(
+        bool requireApprovalForInvoiceAnnulment = false,
+        IApprovalPolicyService? approvalPolicy = null)
     {
         var ctx = NewDbContext();
         var invoiceMock = new Mock<IInvoiceService>();
@@ -85,7 +87,8 @@ public class Adr042MultiInvoiceCancellationTests
         var service = new BookingCancellationService(
             ctx, invoiceMock.Object, approvalMock.Object, auditMock.Object,
             NullLogger<BookingCancellationService>.Instance, settingsMock.Object,
-            calculatorMock.Object, adminCountMock.Object);
+            calculatorMock.Object, adminCountMock.Object,
+            approvalPolicyService: approvalPolicy);
 
         return new Harness(service, ctx, invoiceMock, approvalMock, auditMock);
     }
@@ -547,6 +550,47 @@ public class Adr042MultiInvoiceCancellationTests
         h.InvoiceMock.Verify(s => s.EnqueueAnnulmentAsync(
             ars.Id, It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(),
             true, It.IsAny<CancellationToken>(), 777), Times.Once);
+    }
+
+    [Fact]
+    public async Task N10_MultiFactura_PolicyDiceNoRequiere_AunConSettingLegacyTrue_NoExigeApproval_Encola()
+    {
+        // BUG de Gaston (2026-07-02): el setting legacy RequireApprovalForInvoiceAnnulment quedo en TRUE, PERO la
+        // ApprovalPolicy configurable (la que usa InvoiceService) dice que NO requiere approval — por eso el
+        // mono-factura siempre le funciono. El pre-check N10 debe resolver via la POLICY (equivalencia mono<->multi),
+        // NO el setting crudo -> NO tira ApprovalRequiredException y encola las N facturas.
+        var policyMock = new Mock<IApprovalPolicyService>();
+        policyMock
+            .Setup(p => p.RequiresApprovalAsync(
+                ApprovalRequestType.InvoiceAnnulment, It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        var h = BuildService(requireApprovalForInvoiceAnnulment: true, approvalPolicy: policyMock.Object);
+        var (reserva, _, _) = await SeedReservaAsync(h);
+        var usd = await AddSaleInvoiceAsync(h, reserva.Id, 6, 21001, "DOL", 1000m, 200m);
+        var ars = await AddSaleInvoiceAsync(h, reserva.Id, 6, 21002, "PES", 1m, 150_000m);
+
+        var draft = await h.Service.DraftAsync(
+            new DraftCancellationRequest(reserva.PublicId, "Multi-factura, la policy no requiere approval"),
+            "admin-1", "Admin Uno", CancellationToken.None);
+
+        // NO debe tirar (antes tiraba ApprovalRequiredException por leer el setting legacy crudo).
+        await h.Service.ConfirmAsync(draft.PublicId, NewConfirmRequest(), "admin-1", "Admin Uno", false, CancellationToken.None);
+
+        // Se crearon las 2 hijas y se encolo una anulacion por factura.
+        var children = await h.Ctx.BookingCancellationCreditNotes.AsNoTracking()
+            .Where(c => c.OriginatingInvoiceId == usd.Id || c.OriginatingInvoiceId == ars.Id).ToListAsync();
+        Assert.Equal(2, children.Count);
+        h.InvoiceMock.Verify(s => s.EnqueueAnnulmentAsync(
+            usd.Id, It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(),
+            It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<int?>()), Times.Once);
+        h.InvoiceMock.Verify(s => s.EnqueueAnnulmentAsync(
+            ars.Id, It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(),
+            It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<int?>()), Times.Once);
+        // Y NO se busco ningun approval (la policy ya dijo que no hace falta).
+        h.ApprovalMock.Verify(a => a.FindActiveApprovedAsync(
+            It.IsAny<ApprovalRequestType>(), It.IsAny<string>(), It.IsAny<int>(),
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ============================================================

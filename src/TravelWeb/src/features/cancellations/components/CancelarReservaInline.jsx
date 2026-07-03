@@ -70,6 +70,7 @@ import {
     TEXTO_SALDO_A_FAVOR_MULTI_PREFIJO,
     TEXTO_BOTON_REINTENTAR_FALTANTE,
     TEXTO_TIMEOUT_MULTI,
+    TEXTO_REQUIERE_APROBACION_MULTI,
 } from "./cancelarReservaCopy";
 
 // Intervalo y tope de intentos del polling de notas de crédito (mismo molde que H2/EmitirFacturaInline).
@@ -325,7 +326,15 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
             // (regla dura de la spec — "en revisión" es solo si el backend llegó a intentar emitir).
             // Volvemos al formulario con el motivo intacto para que el usuario reintente.
             setEstadoMulti("form");
-            if (error?.status === 409) {
+            // Fix bug prod (2026-07-02): 409 requiresApproval = el workflow de aprobaciones exige
+            // autorización previa para anular esta factura. Mensaje específico ANTES del genérico
+            // (el genérico "probá de nuevo" no le decía al usuario qué pasaba ni qué hacer).
+            // El flujo completo de pedir la autorización (RequestApprovalModal) queda para otra
+            // pasada; acá solo evitamos el mensaje mudo. NUNCA exponemos requestType/entityType/
+            // entityId — son internos del backend.
+            if (error?.status === 409 && error?.payload?.requiresApproval === true) {
+                setConflictMessage(TEXTO_REQUIERE_APROBACION_MULTI);
+            } else if (error?.status === 409) {
                 setConflictMessage(
                     "No se pudo confirmar la anulación. Probá de nuevo; si el problema sigue, contactá a administración."
                 );
@@ -346,9 +355,19 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
             const bc = await cancellationsApi.retryCreditNotes(bcActivo.publicId);
             setBcActivo(bc);
             iniciarPollingMulti(bc.publicId);
-        } catch {
-            setEstadoMulti("revision-multi");
-            showError("No se pudo reintentar la anulación. Probá de nuevo en unos segundos.");
+        } catch (error) {
+            // Fix bug prod (2026-07-02): mismo caso que handleConfirmarMulti. Acá el error normal
+            // vuelve a "revision-multi" (el usuario puede reintentar de nuevo desde ahí), pero
+            // requiresApproval necesita el cartel de "form" porque es el único lugar del panel
+            // donde conflictMessage tiene dónde mostrarse (revision-multi solo usa toasts, que
+            // desaparecen solos — este mensaje necesita quedarse a la vista).
+            if (error?.status === 409 && error?.payload?.requiresApproval === true) {
+                setEstadoMulti("form");
+                setConflictMessage(TEXTO_REQUIERE_APROBACION_MULTI);
+            } else {
+                setEstadoMulti("revision-multi");
+                showError("No se pudo reintentar la anulación. Probá de nuevo en unos segundos.");
+            }
         } finally {
             setAccionMultiEnCurso(false);
         }

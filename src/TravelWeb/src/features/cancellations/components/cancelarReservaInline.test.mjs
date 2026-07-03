@@ -12,11 +12,17 @@
  *   6. Coherencia entre discriminador, cartel y mensaje.
  *   7. Textos anclados: las constantes del módulo de copy contienen el texto exacto de la guía.
  *   8. Mapeo de errores para el caso PaymentsToCredit (400/403/404/409).
+ *   9. Mapeo de errores del flujo multi-factura (confirmar y reintentar): 409 requiresApproval
+ *      vs 409 genérico vs otros errores.
  *
  * ADR-042 (2026-07-01): la lógica del flujo "anular con VARIAS facturas" (aviso previo,
  * "¿Seguro?", avance por nota, éxito/revisión, franja "en revisión") vive en un módulo
  * aparte — multiCreditNoteFlow.js — con sus propios tests en multiCreditNoteFlow.test.mjs.
  * Acá solo se actualizó el mapeo de errores: el mensaje especial de INV-100 desapareció.
+ *
+ * Fix bug prod (2026-07-02): 409 requiresApproval en el confirm/retry multi-factura caía al
+ * mensaje genérico "probá de nuevo" — no explicaba qué pasaba. Sección 9 cubre el mensaje
+ * específico nuevo.
  *
  * Cómo correr:
  *   node --test src/features/cancellations/components/cancelarReservaInline.test.mjs
@@ -42,6 +48,7 @@ import {
     MENSAJE_EXITO_DIRECT_CANCEL,
     MENSAJE_EXITO_PAYMENTS_TO_CREDIT,
     MENSAJE_EXITO_CREDIT_NOTE,
+    TEXTO_REQUIERE_APROBACION_MULTI,
 } from "./cancelarReservaCopy.js";
 
 // ─── Réplica de determinarCasoAnulacion (CancelarReservaInline.jsx) ───────────
@@ -168,6 +175,54 @@ function mapearErrorAnnulWithCredit(error) {
         };
     }
     return { tipo: "toast", mensaje: "No se pudo anular la reserva. Probá de nuevo en unos segundos." };
+}
+
+// ─── Réplica del mapeo de errores del flujo multi-factura (ADR-042) ──────────
+// Fix bug prod (2026-07-02): 409 requiresApproval necesita un mensaje específico, no el
+// genérico "probá de nuevo". Réplicas de los catch de handleConfirmarMulti y
+// handleReintentarDesdeRevision (CancelarReservaInline.jsx).
+
+/**
+ * Réplica del catch de handleConfirmarMulti (Estado 1 → 2, confirma la anulación multi-factura).
+ * Siempre vuelve a estadoMulti="form" (regla existente: si no se emitió ninguna nota todavía,
+ * no hay "en revisión" posible — el usuario corrige y reintenta desde el formulario).
+ *
+ * @returns {{ estadoMulti: string, conflictMessage?: string, toast?: string }}
+ */
+function mapearErrorConfirmarMulti(error) {
+    if (error?.status === 409 && error?.payload?.requiresApproval === true) {
+        return { estadoMulti: "form", conflictMessage: TEXTO_REQUIERE_APROBACION_MULTI };
+    }
+    if (error?.status === 409) {
+        return {
+            estadoMulti: "form",
+            conflictMessage: "No se pudo confirmar la anulación. Probá de nuevo; si el problema sigue, contactá a administración.",
+        };
+    }
+    return { estadoMulti: "form", toast: "No se pudo confirmar la anulación. Probá de nuevo en unos segundos." };
+}
+
+/**
+ * Réplica del catch de handleReintentarDesdeRevision (Estado 4, "Reintentar la que falta").
+ * A diferencia de confirmar, el error genérico se queda en "revision-multi" (con un toast que
+ * desaparece solo) — pero requiresApproval necesita "form" porque es el único estado del panel
+ * donde conflictMessage tiene dónde mostrarse de forma persistente.
+ *
+ * NOTA: verificado contra el backend (RetryCreditNotesAsync usa requesterIsAdmin:true) que este
+ * caso hoy no debería dispararse en la práctica — el reintento no vuelve a pedir aprobación,
+ * solo COMPLETA lo ya autorizado al confirmar. Se deja igual por simetría y como defensa ante un
+ * cambio futuro del backend.
+ *
+ * @returns {{ estadoMulti: string, conflictMessage?: string, toast?: string }}
+ */
+function mapearErrorReintentarMulti(error) {
+    if (error?.status === 409 && error?.payload?.requiresApproval === true) {
+        return { estadoMulti: "form", conflictMessage: TEXTO_REQUIERE_APROBACION_MULTI };
+    }
+    return {
+        estadoMulti: "revision-multi",
+        toast: "No se pudo reintentar la anulación. Probá de nuevo en unos segundos.",
+    };
 }
 
 // ============================================================================
@@ -525,4 +580,68 @@ test("error 400/403/404 nunca tienen el mismo mensaje (no se confunden entre sí
     assert.notEqual(e400, e403);
     assert.notEqual(e400, e404);
     assert.notEqual(e403, e404);
+});
+
+// ============================================================================
+// Sección 9: mapeo de errores del flujo multi-factura (confirmar y reintentar)
+//
+// Fix bug prod (2026-07-02): 409 requiresApproval necesita un mensaje específico que le
+// diga al usuario qué pasa y qué hacer — el genérico "probá de nuevo" no servía.
+// ============================================================================
+
+test("confirmarMulti: 409 requiresApproval=true → vuelve a 'form' con el mensaje específico", () => {
+    const r = mapearErrorConfirmarMulti({ status: 409, payload: { requiresApproval: true } });
+    assert.equal(r.estadoMulti, "form");
+    assert.equal(r.conflictMessage, TEXTO_REQUIERE_APROBACION_MULTI);
+    assert.equal(r.toast, undefined);
+});
+
+test("confirmarMulti: mensaje de requiresApproval no expone requestType/entityType/entityId ni códigos internos", () => {
+    // Data-exposure: el mensaje es fijo y neutro, nunca arma el texto a partir del payload crudo.
+    assert.ok(!/requestType|entityType|entityId/i.test(TEXTO_REQUIERE_APROBACION_MULTI));
+    assert.ok(!/INV-|[0-9a-f]{8}-[0-9a-f]{4}/i.test(TEXTO_REQUIERE_APROBACION_MULTI));
+});
+
+test("confirmarMulti: 409 sin requiresApproval → mensaje genérico de confirmar (no el de requiresApproval)", () => {
+    const r = mapearErrorConfirmarMulti({ status: 409, payload: {} });
+    assert.equal(r.estadoMulti, "form");
+    assert.match(r.conflictMessage, /no se pudo confirmar/i);
+    assert.notEqual(r.conflictMessage, TEXTO_REQUIERE_APROBACION_MULTI);
+});
+
+test("confirmarMulti: requiresApproval=true pero status !== 409 → NO dispara el mensaje específico (degradación segura)", () => {
+    const r = mapearErrorConfirmarMulti({ status: 500, payload: { requiresApproval: true } });
+    assert.notEqual(r.conflictMessage, TEXTO_REQUIERE_APROBACION_MULTI);
+});
+
+test("confirmarMulti: error sin status (network error) → toast genérico, no conflictMessage", () => {
+    const r = mapearErrorConfirmarMulti(undefined);
+    assert.equal(r.estadoMulti, "form");
+    assert.equal(r.conflictMessage, undefined);
+    assert.match(r.toast, /probá de nuevo/i);
+});
+
+test("reintentarMulti: 409 requiresApproval=true → vuelve a 'form' con el mensaje específico (no se queda en revision-multi)", () => {
+    const r = mapearErrorReintentarMulti({ status: 409, payload: { requiresApproval: true } });
+    assert.equal(r.estadoMulti, "form");
+    assert.equal(r.conflictMessage, TEXTO_REQUIERE_APROBACION_MULTI);
+});
+
+test("reintentarMulti: error genérico → se queda en 'revision-multi' con toast (el usuario puede reintentar de nuevo ahí mismo)", () => {
+    const r = mapearErrorReintentarMulti({ status: 500 });
+    assert.equal(r.estadoMulti, "revision-multi");
+    assert.match(r.toast, /no se pudo reintentar/i);
+    assert.equal(r.conflictMessage, undefined);
+});
+
+test("reintentarMulti: 409 sin requiresApproval → igual que cualquier otro error, se queda en revision-multi", () => {
+    const r = mapearErrorReintentarMulti({ status: 409, payload: {} });
+    assert.equal(r.estadoMulti, "revision-multi");
+    assert.notEqual(r.toast, undefined);
+});
+
+test("confirmarMulti y reintentarMulti dan el MISMO conflictMessage para requiresApproval (mensaje único, sin divergencia)", () => {
+    const a = mapearErrorConfirmarMulti({ status: 409, payload: { requiresApproval: true } });
+    const b = mapearErrorReintentarMulti({ status: 409, payload: { requiresApproval: true } });
+    assert.equal(a.conflictMessage, b.conflictMessage);
 });

@@ -100,3 +100,15 @@ export const TEXTO_BOTON_REINTENTAR_ANULACION = "Reintentar anulación";
  */
 export const TEXTO_TIMEOUT_MULTI =
     "Sigue en proceso, podés cerrar y volver más tarde. El resultado va a aparecer en la reserva.";
+
+/**
+ * Fix bug de producción (2026-07-02): cuando el backend responde 409 con `requiresApproval:
+ * true` (el workflow de aprobaciones exige autorización previa para anular esta factura), el
+ * mensaje NO puede ser el genérico de "probá de nuevo" — no le dice al usuario qué hacer.
+ * Texto fijo y neutro: NUNCA expone requestType/entityType/entityId ni códigos internos.
+ * El flujo completo de pedir la autorización desde acá (RequestApprovalModal) queda como
+ * mejora aparte; por ahora solo se explica la causa y el camino a seguir.
+ */
+export const TEXTO_REQUIERE_APROBACION_MULTI =
+    "Esta anulación necesita una autorización previa según la política de aprobaciones de la agencia. " +
+    "Pedila desde el circuito de autorizaciones y volvé a intentar.";

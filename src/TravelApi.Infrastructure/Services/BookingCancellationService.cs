@@ -89,6 +89,13 @@ public class BookingCancellationService
     // comportamiento, ya que el evaluator solo depende de ese servicio).
     private readonly IFourEyesBypassEvaluator _fourEyesBypassEvaluator;
 
+    // ADR-042 N10 fix (2026-07-02): el pre-check de approval multi-factura debe resolver "¿requiere approval?"
+    // EXACTAMENTE como InvoiceService.EnqueueAnnulmentAsync — via la ApprovalPolicy configurable (B1.15 Fase B'',
+    // 2026-05-11), NO el setting global viejo (deprecado). Opcional en el ctor (default null) para no romper los
+    // tests unit/integration que construyen el service a mano: si no se inyecta, se cae al fallback del setting
+    // (mismo comportamiento que InvoiceService cuando la policy no esta presente).
+    private readonly IApprovalPolicyService? _approvalPolicyService;
+
     public BookingCancellationService(
         AppDbContext db,
         IInvoiceService invoiceService,
@@ -98,7 +105,8 @@ public class BookingCancellationService
         IOperationalFinanceSettingsService settings,
         IFiscalLiquidationCalculator calculator,
         IAdminUserCountService adminUserCount,
-        IFourEyesBypassEvaluator? fourEyesBypassEvaluator = null)
+        IFourEyesBypassEvaluator? fourEyesBypassEvaluator = null,
+        IApprovalPolicyService? approvalPolicyService = null)
     {
         _db = db;
         _invoiceService = invoiceService;
@@ -110,6 +118,7 @@ public class BookingCancellationService
         _adminUserCount = adminUserCount;
         _fourEyesBypassEvaluator = fourEyesBypassEvaluator
             ?? new FourEyesBypassEvaluator(adminUserCount);
+        _approvalPolicyService = approvalPolicyService;
     }
 
     // =========================================================================
@@ -1786,18 +1795,40 @@ public class BookingCancellationService
         // El caso MONO-factura NO pasa por aca: hay un unico enqueue, y su gate de approval lo resuelve
         // EnqueueAnnulmentAsync como siempre (comportamiento byte-identico al previo a ADR-042; no se toca).
         int? annulmentApprovalId = approvalRequest?.Id;
-        if (invoicesToAnnul.Count > 1 && !bypassNcApproval && settings.RequireApprovalForInvoiceAnnulment)
+        if (invoicesToAnnul.Count > 1 && !bypassNcApproval)
         {
-            var principalInvoiceId = bc.OriginatingInvoiceId;
-            var annulmentApproval = await _approvalService.FindActiveApprovedAsync(
-                ApprovalRequestType.InvoiceAnnulment, "Invoice", principalInvoiceId, userId, ct);
-            if (annulmentApproval is null)
-                throw new ApprovalRequiredException(
-                    ApprovalRequestType.InvoiceAnnulment, "Invoice", principalInvoiceId);
+            // BUG FIX (2026-07-02): resolver "¿requiere approval?" IGUAL que InvoiceService.EnqueueAnnulmentAsync
+            // (:1144-1155): via la ApprovalPolicy configurable por Admin (B1.15 Fase B''), con el setting global
+            // como MERO fallback. Usar el setting CRUDO rompia el dogfood: en prod la policy dice "no requiere"
+            // (por eso el mono-factura siempre funciono) pero el setting legacy quedo en true, y el pre-check
+            // multi exigia un approval que la politica real no pide -> 409 a un Admin que nunca lo necesito.
+            bool requiresApproval;
+            if (_approvalPolicyService is not null)
+            {
+                requiresApproval = await _approvalPolicyService.RequiresApprovalAsync(
+                    ApprovalRequestType.InvoiceAnnulment,
+                    fallback: settings.RequireApprovalForInvoiceAnnulment,
+                    ct);
+            }
+            else
+            {
+                // Sin policy inyectada (unit tests que construyen el service a mano): fallback al setting.
+                requiresApproval = settings.RequireApprovalForInvoiceAnnulment;
+            }
 
-            // Autorizacion encontrada: cubre la anulacion de la reserva completa (sus N facturas).
-            annulmentApprovalId = annulmentApproval.Id;
-            bypassNcApproval = true;
+            if (requiresApproval)
+            {
+                var principalInvoiceId = bc.OriginatingInvoiceId;
+                var annulmentApproval = await _approvalService.FindActiveApprovedAsync(
+                    ApprovalRequestType.InvoiceAnnulment, "Invoice", principalInvoiceId, userId, ct);
+                if (annulmentApproval is null)
+                    throw new ApprovalRequiredException(
+                        ApprovalRequestType.InvoiceAnnulment, "Invoice", principalInvoiceId);
+
+                // Autorizacion encontrada: cubre la anulacion de la reserva completa (sus N facturas).
+                annulmentApprovalId = annulmentApproval.Id;
+                bypassNcApproval = true;
+            }
         }
 
         if (_db.Database.IsRelational())
