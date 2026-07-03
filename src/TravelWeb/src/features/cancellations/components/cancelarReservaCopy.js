@@ -64,3 +64,39 @@ export const MENSAJE_EXITO_PAYMENTS_TO_CREDIT =
  */
 export const MENSAJE_EXITO_CREDIT_NOTE =
     "Reserva anulada. La nota de crédito se está generando.";
+
+// ─── Anulación con VARIAS facturas (ADR-042, 2026-07-01) ─────────────────────
+// Textos exactos de docs/ux/2026-07-01-anulacion-multifactura.md. Los que llevan
+// datos dinámicos (cantidad de facturas, monedas, resultado por nota) se arman con
+// funciones puras en multiCreditNoteFlow.js — acá solo viven las partes 100% fijas.
+
+/**
+ * Encabezado del estado PROCESANDO (Estado 2): mismo texto sea cual sea la cantidad de notas.
+ */
+export const TEXTO_PROCESANDO_MULTI =
+    "Estamos emitiendo las notas de crédito en AFIP. En unos instantes vas a ver el resultado.";
+
+/**
+ * Prefijo fijo de la línea de saldo a favor del Estado 3 (éxito total). Va seguido de los
+ * montos por moneda (formateados con formatCurrency, nunca sumados). Solo aparece si hubo
+ * cobros que se conviertan en saldo a favor.
+ */
+export const TEXTO_SALDO_A_FAVOR_MULTI_PREFIJO = "Lo cobrado quedó como saldo a favor del cliente:";
+
+/**
+ * Botón que reintenta SOLO las notas faltantes desde dentro del panel (Estado 4, mismo intento).
+ */
+export const TEXTO_BOTON_REINTENTAR_FALTANTE = "Reintentar la que falta";
+
+/**
+ * Botón de la franja "en revisión" al reabrir la reserva (Estado 5, sesión nueva).
+ */
+export const TEXTO_BOTON_REINTENTAR_ANULACION = "Reintentar anulación";
+
+/**
+ * Mensaje cuando el polling se agota sin que AFIP resuelva todas las notas (variante
+ * defensiva, no forma parte de los 6 estados de la spec pero evita dejar al usuario
+ * mirando un spinner infinito si algo se cuelga).
+ */
+export const TEXTO_TIMEOUT_MULTI =
+    "Sigue en proceso, podés cerrar y volver más tarde. El resultado va a aparecer en la reserva.";

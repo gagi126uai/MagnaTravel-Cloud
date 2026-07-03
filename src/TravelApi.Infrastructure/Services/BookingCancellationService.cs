@@ -177,9 +177,7 @@ public class BookingCancellationService
         //    originatingInvoice siempre es una factura emitida (lo que el flujo de NC
         //    necesita aguas abajo). NOTA: se mantiene deliberadamente el disparo de
         //    INV-100 cuando hay DOS facturas de venta CON CAE reales (caso multimoneda
-        //    legitimo USD+ARS): ese es el caso "anular multi-factura" que se hara aparte.
-        var settings = await _settings.GetEntityAsync(ct);
-
+        //    legitimo USD+ARS): ADR-042 lo levanta (ver mas abajo).
         var activeInvoices = await _db.Invoices
             .Where(i => i.ReservaId == reserva.Id
                      && i.AnnulmentStatus != AnnulmentStatus.Succeeded
@@ -193,14 +191,12 @@ public class BookingCancellationService
             throw new InvalidOperationException(
                 $"La reserva {reserva.NumeroReserva} no tiene factura activa para anular.");
 
-        if (settings.OnePerReservaInvoicePolicy && activeInvoices.Count > 1)
-            throw new BusinessInvariantViolationException(
-                // Mensaje NEUTRO para el usuario (sin nombres de flags ni internos): el frontend
-                // mapea INV-100 a copy amigable. Ver memoria frontend-nunca-exponer-internos.
-                "Esta reserva tiene más de una factura emitida. Por ahora la anulación automática " +
-                "no está disponible en ese caso.",
-                invariantCode: "INV-100");
-
+        // ADR-042 (2026-07-01): se LEVANTA el freno INV-100 para el caso multi-factura CON CAE (varias
+        // facturas de venta vivas, ej. una USD + una ARS). Al anular se emite UNA NC por factura, cada una
+        // en su moneda; la completitud se maneja con las filas hijas BookingCancellationCreditNote. El
+        // caso verdaderamente ambiguo (ninguna factura) ya se rechazo arriba (activeInvoices.Count == 0).
+        // El puntero PRINCIPAL (bc.OriginatingInvoiceId) queda en la factura mas reciente por CreatedAt
+        // (criterio ya vigente); las demas viajan como hijas al confirmar.
         var originatingInvoice = activeInvoices[0];
 
         // 3) INV-081: una sola cancelacion ACTIVA por reserva.
@@ -235,9 +231,9 @@ public class BookingCancellationService
         //    El UNIQUE parcial de la BD (migracion B1_AddBookingCancellationPartialUniqueIndexes)
         //    excluye Status=6 (Aborted), por eso tras (b)/(c) el INSERT de mas abajo
         //    no colisiona: en (c) primero movemos la fila vieja a Aborted=6.
-        var reuseDto = await TryResolveExistingBcAsync(reserva, userId, userName, ct);
+        var reuseDto = await TryResolveExistingBcAsync(reserva, userId, userName, request.Reason, ct);
         if (reuseDto is not null)
-            return reuseDto; // caso (a): devolvimos el draft existente, no creamos fila nueva.
+            return reuseDto; // caso (a): devolvimos el draft existente (con el motivo actualizado si cambio).
 
         // PreviousBcPublicId: si hubo una fila previa liberada (Aborted preexistente
         // o ArcaRejected auto-abortada), guardamos su PublicId para registrar el
@@ -332,7 +328,7 @@ public class BookingCancellationService
             // y un proximo SaveChanges la reintentaria. EF Detached la descarta.
             _db.Entry(bc).State = EntityState.Detached;
 
-            var winnerDto = await TryResolveExistingBcAsync(reserva, userId, userName, ct);
+            var winnerDto = await TryResolveExistingBcAsync(reserva, userId, userName, request.Reason, ct);
             if (winnerDto is not null)
                 return winnerDto; // el ganador quedo en Drafted puro -> idempotencia real.
 
@@ -1122,6 +1118,7 @@ public class BookingCancellationService
         Reserva reserva,
         string userId,
         string? userName,
+        string newReason,
         CancellationToken ct)
     {
         var existingBc = await _db.BookingCancellations
@@ -1148,6 +1145,21 @@ public class BookingCancellationService
                 "la reserva {ReservaPublicId}. Devolvemos el draft existente (reintento idempotente).",
                 existingBc.PublicId, reserva.PublicId);
 
+            // F2 (2026-07-02): si el vendedor edito el motivo entre el draft original y este re-draft
+            // (toca "Volver", cambia el texto, vuelve a "Anular"), ACTUALIZAMOS el motivo del draft reusado.
+            // Sin esto la anulacion quedaba auditada con el motivo VIEJO. El motivo es el del acto real; el
+            // request nuevo manda. Dejamos rastro del cambio en el audit del reuse.
+            var trimmedNewReason = newReason?.Trim() ?? string.Empty;
+            string? previousReason = null;
+            bool reasonChanged = trimmedNewReason.Length > 0
+                && !string.Equals(existingBc.Reason, trimmedNewReason, StringComparison.Ordinal);
+            if (reasonChanged)
+            {
+                previousReason = existingBc.Reason;
+                existingBc.Reason = trimmedNewReason;
+                await _db.SaveChangesAsync(ct);
+            }
+
             // FIX 3: auditoria de negocio del reuse (antes solo habia LogInformation).
             await _auditService.LogBusinessEventAsync(
                 action: AuditActions.BookingCancellationDraftReused,
@@ -1157,6 +1169,8 @@ public class BookingCancellationService
                 {
                     existingBc.PublicId,
                     ReservaPublicId = reserva.PublicId,
+                    reasonUpdated = reasonChanged,
+                    previousReason,
                 }),
                 userId: userId,
                 userName: userName,
@@ -1178,14 +1192,23 @@ public class BookingCancellationService
         // la fila vieja (asi el UNIQUE parcial la deja salir y queda traza del intento
         // fallido) y devolvemos null para que el caller cree el BC nuevo.
         //
-        // BLINDAJE FISCAL: SOLO si CreditNoteInvoiceId is null. Un ArcaRejected con NC
-        // viva (situacion teorica, no deberia ocurrir porque el rechazo implica que no
-        // hubo CAE) cae al rechazo INV-081 de abajo: jamas liberamos algo con NC viva.
-        if (existingBc.Status == BookingCancellationStatus.ArcaRejected
-            && existingBc.CreditNoteInvoiceId is null)
+        // BLINDAJE FISCAL: SOLO si NO dejo ninguna NC viva. Un ArcaRejected con NC viva cae al rechazo
+        // INV-081 de abajo: jamas liberamos algo con NC viva (segunda NC sobre la misma factura = incidente).
+        //
+        // ADR-042 §3.4 (2026-07-01): con multi-factura, el puntero principal (CreditNoteInvoiceId) puede ser
+        // null y AUN ASI existir una hija con NC viva (una NC salio OK y otra fallo -> BC ArcaRejected parcial).
+        // Por eso el guard mira TAMBIEN las hijas: "ninguna con NC viva". Sin hijas (legacy) = check del
+        // puntero singular (comportamiento historico), plegado dentro del mismo guard (fallback B4).
+        if (existingBc.Status == BookingCancellationStatus.ArcaRejected)
         {
-            await AutoAbortArcaRejectedAsync(existingBc, reserva, userId, userName, ct);
-            return null;
+            bool hasLiveCreditNote = existingBc.CreditNoteInvoiceId is not null
+                || await BcHasLiveCreditNoteChildAsync(existingBc.Id, ct);
+            if (!hasLiveCreditNote)
+            {
+                await AutoAbortArcaRejectedAsync(existingBc, reserva, userId, userName, ct);
+                return null;
+            }
+            // hasLiveCreditNote -> cae al rechazo INV-081 de abajo (no liberar con NC viva).
         }
 
         // Caso (d): cualquier otro estado = cancelacion REALMENTE activa o con efecto
@@ -1270,6 +1293,19 @@ public class BookingCancellationService
     {
         return ex.InnerException is PostgresException pg
             && pg.SqlState == PostgresErrorCodes.UniqueViolation;
+    }
+
+    /// <summary>
+    /// ADR-042 §3.4 (2026-07-01): true si el BC tiene AL MENOS UNA hija con NC viva. "NC viva" = hija
+    /// <c>Succeeded</c> (CAE aprobado) o <c>Pending</c> con una NC ya creada (<c>CreditNoteInvoiceId</c>
+    /// seteado). Se usa para NUNCA liberar un BC que dejo una NC viva (blindaje fiscal contra doble NC).
+    /// </summary>
+    private async Task<bool> BcHasLiveCreditNoteChildAsync(int bookingCancellationId, CancellationToken ct)
+    {
+        return await _db.BookingCancellationCreditNotes
+            .AnyAsync(c => c.BookingCancellationId == bookingCancellationId
+                        && (c.Status == BookingCancellationCreditNoteStatus.Succeeded
+                            || c.CreditNoteInvoiceId != null), ct);
     }
 
     public async Task<BookingCancellationDto> ConfirmAsync(
@@ -1688,6 +1724,14 @@ public class BookingCancellationService
                 invariantCode: "INV-156");
         }
 
+        // 7-ter) ADR-042 §3.5 step 1 (2026-07-01): PRE-FLIGHT multi-factura, ANTES de la transaccion y de
+        //         encolar nada. Se listan TODAS las facturas de venta vivas con CAE de la reserva y se valida
+        //         CADA UNA (todo-o-nada al frente): si alguna extranjera tiene cotizacion sospechosa (TC<=0 o
+        //         ==1) o moneda no soportada, NO se emite NINGUNA NC (INV-156). Generaliza el guard de la
+        //         factura principal (step 7-bis, snapshot) a todas las facturas por su propio MonId/MonCotiz.
+        //         En el caso mono-factura devuelve la unica factura (byte-equivalente).
+        var invoicesToAnnul = await ResolveAndPreflightInvoicesToAnnulAsync(bc.ReservaId, ct);
+
         // ===================================================================
         // ARREGLO 3 (2026-06-24, integridad): confirmacion de anulacion "todo o nada".
         //
@@ -1728,6 +1772,34 @@ public class BookingCancellationService
                 ? $"BC admin self-authorized override: {request.OverrideReason!.Trim()}"
                 : $"BC cancellation: {bc.Reason}";
 
+        // N10 (ADR-042, 2026-07-02): SOLO para el caso MULTI-FACTURA, resolver el approval del InvoiceAnnulment
+        // UNA sola vez ANTES de la transaccion. Motivo: el loop de EnqueueAnnulmentAsync es POST-commit; si una
+        // factura secundaria tirara ApprovalRequiredException a mitad del loop, el BC ya quedo committeado con
+        // hijas Pending sin job (feed de B1). La regla de negocio (sancionada 2026-07-02): la autorizacion para
+        // anular la RESERVA cubre las N facturas de esa anulacion — no se pide un approval por cada comprobante.
+        //  - Si el requester ya puede bypassear (override del BC o Admin), nada que hacer.
+        //  - Si NO puede y el annulment requiere approval, EXIGIMOS aca (pre-commit) UNA autorizacion sobre la
+        //    factura principal; si existe, bypasseamos el re-check por-factura del loop y la usamos como
+        //    cross-reference fiscal de todas; si no existe, tiramos ApprovalRequiredException ANTES de tocar
+        //    nada (el front pide la aprobacion y re-confirma). Nunca una excepcion de aprobacion post-commit.
+        //
+        // El caso MONO-factura NO pasa por aca: hay un unico enqueue, y su gate de approval lo resuelve
+        // EnqueueAnnulmentAsync como siempre (comportamiento byte-identico al previo a ADR-042; no se toca).
+        int? annulmentApprovalId = approvalRequest?.Id;
+        if (invoicesToAnnul.Count > 1 && !bypassNcApproval && settings.RequireApprovalForInvoiceAnnulment)
+        {
+            var principalInvoiceId = bc.OriginatingInvoiceId;
+            var annulmentApproval = await _approvalService.FindActiveApprovedAsync(
+                ApprovalRequestType.InvoiceAnnulment, "Invoice", principalInvoiceId, userId, ct);
+            if (annulmentApproval is null)
+                throw new ApprovalRequiredException(
+                    ApprovalRequestType.InvoiceAnnulment, "Invoice", principalInvoiceId);
+
+            // Autorizacion encontrada: cubre la anulacion de la reserva completa (sus N facturas).
+            annulmentApprovalId = annulmentApproval.Id;
+            bypassNcApproval = true;
+        }
+
         if (_db.Database.IsRelational())
         {
             var strategy = _db.Database.CreateExecutionStrategy();
@@ -1746,14 +1818,38 @@ public class BookingCancellationService
 
         // 10) BR-V2-03 cross-reference: encolar la anulacion en AFIP. DESPUES del commit (ver bloque ARREGLO 3
         //     arriba): el job de Hangfire NO debe quedar agendado si la transaccion revierte.
-        await _invoiceService.EnqueueAnnulmentAsync(
-            id: bc.OriginatingInvoiceId,
-            userId: userId,
-            userName: userName,
-            reason: crossRefReason,
-            requesterIsAdmin: bypassNcApproval,
-            ct: ct,
-            approvalRequestId: approvalRequest?.Id);
+        //
+        //     ADR-042 §3.5 step 3: un EnqueueAnnulmentAsync POR CADA factura (una NC por factura). Cada job
+        //     POSTea a ARCA con su idempotency key por-comprobante. Para el caso mono-factura es un unico
+        //     enqueue = byte-equivalente.
+        //
+        //     B1 (2026-07-02): CADA iteracion va en try/catch. El BC ya esta committeado con sus hijas Pending;
+        //     si un enqueue falla (red, Hangfire, etc.) NO debe abortar el loop (dejando las demas facturas sin
+        //     encolar) ni escapar como excepcion (dejaria la reserva trabada con la NC parcial ya emitida). La
+        //     hija fallida queda Pending SIN job: el endpoint retry-credit-notes la re-encola (idempotente). El
+        //     approval ya se resolvio pre-commit (N10), asi que aca NO puede saltar ApprovalRequiredException.
+        foreach (var invoice in invoicesToAnnul)
+        {
+            try
+            {
+                await _invoiceService.EnqueueAnnulmentAsync(
+                    id: invoice.Id,
+                    userId: userId,
+                    userName: userName,
+                    reason: crossRefReason,
+                    requesterIsAdmin: bypassNcApproval,
+                    ct: ct,
+                    approvalRequestId: annulmentApprovalId);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // La hija quedo Pending sin job -> recuperable por retry-credit-notes. Log + seguir con las demas.
+                _logger.LogError(ex,
+                    "ADR-042: fallo al encolar la anulacion de la factura {InvoiceId} para BC {BcPublicId} " +
+                    "(la hija queda Pending, recuperable con retry-credit-notes).",
+                    invoice.Id, bc.PublicId);
+            }
+        }
 
         // FC1.2.7b counter: marcamos confirm + flag with_override para que el
         // dashboard pueda distinguir "cuantas cancelaciones fueron normales vs
@@ -1783,6 +1879,24 @@ public class BookingCancellationService
             bc.ConfirmedByUserId = userId;
             bc.ConfirmedByUserName = userName;
             bc.OperatorRefundDueBy = DateTime.UtcNow.AddDays(settings.OperatorRefundTimeoutDays);
+
+            // 8-pre) ADR-042 §3.5 step 2: persistir UNA fila hija Pending por factura a anular, en el mismo
+            //        commit que la transicion. La completitud (todas OK / parcial / todas fallan) se decide
+            //        contando estas hijas en los callbacks de ARCA. Defensivo: no duplicar si ya existe una
+            //        hija para esa factura (un draft reusado no tiene hijas, pero el guard es barato).
+            foreach (var invoice in invoicesToAnnul)
+            {
+                bool alreadyHasChild = bc.CreditNotes.Any(c => c.OriginatingInvoiceId == invoice.Id);
+                if (alreadyHasChild) continue;
+
+                bc.CreditNotes.Add(new BookingCancellationCreditNote
+                {
+                    OriginatingInvoiceId = invoice.Id,
+                    ArcaCurrency = string.IsNullOrWhiteSpace(invoice.MonId) ? "PES" : invoice.MonId,
+                    Status = BookingCancellationCreditNoteStatus.Pending,
+                    CreatedAt = DateTime.UtcNow,
+                });
+            }
 
             // HC2 plan v3 §6.1 step 5: bypass UpdateStatusAsync porque AllowedRevertTransitions no contempla
             // esta salida. La transicion queda visible en el audit log + la query de Reservas filtra por status.
@@ -2051,15 +2165,30 @@ public class BookingCancellationService
             ?? throw new InvalidOperationException(
                 $"La Invoice {request.CreditNoteInvoicePublicId} no existe.");
 
+        // ADR-042 §3.5.3 (2026-07-01): Force opera POR-HIJA. Cargamos las hijas del BC y localizamos la que
+        // corresponde a la factura origen de la NC forzada. Si el BC no tiene hijas (legacy pre-backfill),
+        // la NC debe corresponder al puntero singular (comportamiento historico).
+        var children = await _db.BookingCancellationCreditNotes
+            .Where(c => c.BookingCancellationId == bc.Id)
+            .ToListAsync(ct);
+
         // NC tipos: 3 (NC A), 8 (NC B), 13 (NC C).
         var ncTipos = new[] { 3, 8, 13 };
-        var isValidNc = creditNote.OriginalInvoiceId == bc.OriginatingInvoiceId
+        bool ncBasicsValid = creditNote.OriginalInvoiceId != null
                      && ncTipos.Contains(creditNote.TipoComprobante)
                      && creditNote.Resultado == "A"
                      && !string.IsNullOrWhiteSpace(creditNote.CAE);
-        if (!isValidNc)
+
+        // La NC tiene que anular una factura de ESTA cancelacion: una hija con esa OriginatingInvoiceId,
+        // o (legacy sin hijas) el puntero singular del BC.
+        var matchingChild = children.FirstOrDefault(c => c.OriginatingInvoiceId == creditNote.OriginalInvoiceId);
+        bool ncTargetsThisBc = children.Count > 0
+            ? matchingChild is not null
+            : creditNote.OriginalInvoiceId == bc.OriginatingInvoiceId;
+
+        if (!ncBasicsValid || !ncTargetsThisBc)
             throw new InvalidOperationException(
-                "La Invoice referenciada no es una NC valida de la factura original del BC " +
+                "La Invoice referenciada no es una NC valida de una factura de esta cancelacion " +
                 "(verificar OriginalInvoiceId, TipoComprobante en {3,8,13}, Resultado=A, CAE presente).");
 
         // 5) Validar approval InvariantOverride scoped al BC.
@@ -2078,7 +2207,94 @@ public class BookingCancellationService
             throw new ApprovalRequiredException(
                 ApprovalRequestType.InvariantOverride, "BookingCancellation", bc.Id);
 
-        // 6) Transicion fiscal manual.
+        // 5-bis) ADR-042 §3.5.3 (B2, 2026-07-02): Force POR-HIJA BAJO EL LOCK PESIMISTA del padre, con recuento
+        //        FRESCO de BD. Antes se mutaba la hija y se contaba sobre la lista cargada en memoria (STALE):
+        //        un callback intercalado podia dejar A y B Succeeded en BD pero el BC atascado en
+        //        AwaitingFiscalConfirmation (el lost-update que el lock previene; la rama StillPending del
+        //        callback no toca el xmin del padre, asi que la concurrencia optimista no salvaba). Ahora la
+        //        mutacion de la hija + la reevaluacion corren serializadas por el mismo FOR UPDATE que los
+        //        callbacks, guardado sobre Status == AwaitingFiscalConfirmation dentro del lock.
+        if (matchingChild is not null)
+        {
+            var forceOutcome = await RunUnderParentLockAsync(bc.Id, async () =>
+            {
+                // Re-cargar la hija FRESH dentro del lock, exigiendo que el BC siga AwaitingFiscalConfirmation.
+                // Si un callback ya lo avanzo entre la validacion y el lock, no re-transicionamos (NoOp).
+                var lockedChild = await _db.BookingCancellationCreditNotes
+                    .Include(c => c.BookingCancellation)
+                        .ThenInclude(b => b.Reserva)
+                    .FirstOrDefaultAsync(c => c.Id == matchingChild.Id
+                        && c.BookingCancellation.Status == BookingCancellationStatus.AwaitingFiscalConfirmation, ct);
+                if (lockedChild is null)
+                    return MultiNcOutcome.NoOp;
+
+                var lockedBc = lockedChild.BookingCancellation;
+                if (lockedChild.Status != BookingCancellationCreditNoteStatus.Succeeded)
+                {
+                    lockedChild.Status = BookingCancellationCreditNoteStatus.Succeeded;
+                    lockedChild.CreditNoteInvoiceId = creditNote.Id;
+                }
+                lockedBc.ArcaConfirmedManuallyAt = DateTime.UtcNow;
+                lockedBc.ArcaConfirmedManuallyByUserId = userId;
+                await _db.SaveChangesAsync(ct);
+
+                // Reevaluacion con conteo FRESCO (mismo core que los callbacks): StillPending, AllSucceeded o
+                // PartialFailed. Setea status/principal/reserva segun corresponda.
+                return await ReevaluateBcCompletenessAndTransitionAsync(lockedBc, lockedChild.OriginatingInvoiceId, ct);
+            }, ct);
+
+            switch (forceOutcome)
+            {
+                case MultiNcOutcome.NoOp:
+                    _logger.LogWarning(
+                        "ForceArcaConfirmationAsync: el flujo automatico ya cerro el BC {BcPublicId} bajo el lock. No-op.",
+                        bc.PublicId);
+                    return (await MapToDtoAsync(bc.Id, ct))!;
+
+                case MultiNcOutcome.StillPending:
+                    // Se forzo UNA NC pero faltan otras: la anulacion NO se cierra (todo-o-nada). Rastro + return.
+                    await _auditService.LogBusinessEventAsync(
+                        action: AuditActions.BookingCancellationArcaConfirmedManually,
+                        entityName: AuditActions.BookingCancellationEntityName,
+                        entityId: bc.Id.ToString(),
+                        details: JsonSerializer.Serialize(new
+                        {
+                            bc.PublicId,
+                            forcedCreditNoteInvoiceId = creditNote.Id,
+                            forcedOriginatingInvoiceId = creditNote.OriginalInvoiceId,
+                            request.Reason,
+                            manuallyConfirmedByUserId = userId,
+                            stillPending = true,
+                        }),
+                        userId: userId,
+                        userName: userName,
+                        ct: ct);
+                    _logger.LogInformation(
+                        "metric:cancellation_force_arca_partial | BcPublicId={BcPublicId} AdminUserId={AdminUserId}",
+                        bc.PublicId, userId);
+                    return (await MapToDtoAsync(bc.Id, ct))!;
+
+                case MultiNcOutcome.PartialFailed:
+                    // Alguna hija quedo Failed: forzar una sola no cierra la anulacion (el reevaluate dejo
+                    // ArcaRejected). El admin debe reintentar/forzar las falladas.
+                    throw new BusinessInvariantViolationException(
+                        "No se puede completar la anulacion: hay notas de credito rechazadas por AFIP. " +
+                        "Reintentá las notas de credito faltantes antes de forzar el cierre.",
+                        invariantCode: "INV-093");
+
+                case MultiNcOutcome.AllSucceeded:
+                    // El reevaluate YA seteo Status=AwaitingOperatorRefund + puntero principal + reserva. Falta
+                    // el cierre pesado (servicios cancelados + recalculo + consumir approval + audit dedicado).
+                    await FinalizeForceCloseAsync(bc, approval, creditNote, request.Reason, userId, userName, ct);
+                    _logger.LogInformation(
+                        "metric:cancellation_force_arca_executed | BcPublicId={BcPublicId} AdminUserId={AdminUserId}",
+                        bc.PublicId, userId);
+                    return (await MapToDtoAsync(bc.Id, ct))!;
+            }
+        }
+
+        // 6) LEGACY (sin hijas): transicion fiscal manual DIRECTA (comportamiento historico, single-factura). El
+        //    puntero principal es la NC forzada. Sin lock: es el mismo camino sin hijas que el callback legacy.
         bc.Status = BookingCancellationStatus.AwaitingOperatorRefund;
         bc.CreditNoteInvoiceId = creditNote.Id;
         bc.ArcaConfirmedManuallyAt = DateTime.UtcNow;
@@ -2089,25 +2305,34 @@ public class BookingCancellationService
         LogReservaStatusChange(bc.Reserva, reservaFromStatusForce, EstadoReserva.PendingOperatorRefund,
             userId, userName, "Cancelacion (ADR-002): confirmacion fiscal forzada por admin, a la espera del reembolso del operador.");
 
-        // 6-bis) CAMBIO 2 (2026-06-24): asegurar que TODOS los servicios queden Cancelado. ConfirmAsync ya los
-        //        cancela al pasar a AwaitingFiscalConfirmation; esto es defensivo/idempotente y ademas cubre
-        //        BCs legacy confirmados antes de este cambio (servicios todavia en "Confirmado").
+        await FinalizeForceCloseAsync(bc, approval, creditNote, request.Reason, userId, userName, ct);
+
+        _logger.LogInformation(
+            "metric:cancellation_force_arca_executed | BcPublicId={BcPublicId} AdminUserId={AdminUserId}",
+            bc.PublicId, userId);
+
+        return (await MapToDtoAsync(bc.Id, ct))!;
+    }
+
+    /// <summary>
+    /// ADR-042 §3.5.3 (2026-07-02): pasos PESADOS del cierre de una confirmacion forzada (Force), compartidos
+    /// por el camino multi-factura (tras el lock) y el legacy. Cancela todos los servicios, recalcula la plata,
+    /// consume el approval y deja el audit dedicado <c>ArcaConfirmedManually</c>. Corre FUERA del lock (I/O +
+    /// SaveChanges propios). Precondicion: el BC ya quedo en <c>AwaitingOperatorRefund</c> con su puntero principal.
+    /// </summary>
+    private async Task FinalizeForceCloseAsync(
+        BookingCancellation bc, ApprovalRequest approval, Invoice creditNote,
+        string? reason, string userId, string? userName, CancellationToken ct)
+    {
+        // Servicios -> Cancelado (idempotente; ademas cubre BCs legacy confirmados antes de CAMBIO 2).
         await CancelAllReservaServicesAsync(bc.ReservaId, userId, userName, ct);
-
-        // 6-bis.5) Persistir estado + servicios cancelados ANTES de recalcular: los persisters leen con
-        //          AsNoTracking (desde la base), asi que sin este guardado recalcularian sobre datos viejos
-        //          y la deuda no bajaria. Mismo motivo que en ConfirmAsync (paso 8-bis.5).
+        // Persistir estado + servicios ANTES de recalcular (los persisters leen AsNoTracking desde la base).
         await _db.SaveChangesAsync(ct);
-
-        // 6-ter) ARREGLO 1 (2026-06-24): recalcular deuda de operadores + plata del cliente + comision en el
-        //        mismo request, ahora que todos los servicios quedaron Cancelado. Defensivo/idempotente igual
-        //        que el 6-bis: si ConfirmAsync ya recalculo, este recalculo da el mismo numero (es determinista).
+        // Recalcular deuda de operadores + plata del cliente + comision (determinista/idempotente).
         await RecalculateMoneyAfterTotalCancellationAsync(bc.ReservaId, userId, userName, ct);
-
-        // 7) Consumir approval.
+        // Consumir el approval del override.
         await _approvalService.MarkConsumedAsync(approval.Id, ct);
-
-        // 8) Audit dedicado para discriminar manual vs automatico.
+        // Audit dedicado para discriminar manual vs automatico.
         await _auditService.LogBusinessEventAsync(
             action: AuditActions.BookingCancellationArcaConfirmedManually,
             entityName: AuditActions.BookingCancellationEntityName,
@@ -2119,24 +2344,13 @@ public class BookingCancellationService
                 creditNoteInvoicePublicId = creditNote.PublicId,
                 approvalRequestId = approval.Id,
                 approvalRequestPublicId = approval.PublicId,
-                request.Reason,
+                reason,
                 manuallyConfirmedByUserId = userId,
             }),
             userId: userId,
             userName: userName,
             ct: ct);
-
         await _db.SaveChangesAsync(ct);
-
-        // OPS4 (plan v3 §11) + FC1.2.7b: counter para alerting. Si supera
-        // N/semana en produccion, indica que el callback automatico esta fallando
-        // sistematicamente. Usamos el mismo formato "metric:nombre | k=v k=v" que
-        // los demas counters del modulo para que el parser de logs los junte.
-        _logger.LogInformation(
-            "metric:cancellation_force_arca_executed | BcPublicId={BcPublicId} AdminUserId={AdminUserId}",
-            bc.PublicId, userId);
-
-        return (await MapToDtoAsync(bc.Id, ct))!;
     }
 
     // =========================================================================
@@ -3190,95 +3404,640 @@ public class BookingCancellationService
 
     public async Task OnArcaSucceededAsync(int originatingInvoiceId, int creditNoteInvoiceId, CancellationToken ct)
     {
-        // MR-04 plan v3: buscar SOLO BCs en AwaitingFiscalConfirmation. Si el
-        // BC ya transiciono (Force manual antes que el callback) no hacemos nada.
-        //
-        // ADR-013: incluimos OriginatingInvoice + Supplier porque el gating de la ND
-        // (despues de transicionar) los necesita (tipo de comprobante de la factura
-        // original, "quien se queda la penalidad" del operador). Con el flag OFF estos
-        // Includes solo cargan datos que ya se usan en otros lados; no cambian el
-        // comportamiento.
-        var bc = await _db.BookingCancellations
-            .Include(b => b.Reserva)
-            .Include(b => b.OriginatingInvoice)
-                // ADR-013 (fix falso negativo de Tributos): el gating de la ND rutea a
-                // revision manual las facturas con tributos provinciales (IIBB). SIN este
-                // ThenInclude, EF deja Invoice.Tributes con su default del constructor (lista
-                // VACIA, no null), asi que el gating leeria "0 tributos" aunque la BD tenga
-                // IIBB -> emitiria una ND sobre una factura que debia ir a manual. Con el
-                // Include, el gating ve los tributos reales. (El proyecto NO usa lazy loading,
-                // ver Program.cs AddDbContext, por eso el Include es obligatorio.)
-                .ThenInclude(i => i.Tributes)
-            .Include(b => b.Supplier)
-            .FirstOrDefaultAsync(b =>
-                b.OriginatingInvoiceId == originatingInvoiceId &&
-                b.Status == BookingCancellationStatus.AwaitingFiscalConfirmation, ct);
+        // ADR-042 §3.5.1 (2026-07-01): el callback puede ser uno de VARIOS (una NC por factura). Ya no cierra
+        // la anulacion en el primer exito: actualiza SU fila hija y solo transiciona el BC cuando NO quedan
+        // hijas Pending (todas OK -> AwaitingOperatorRefund; alguna Failed -> ArcaRejected). Ver el core.
+        await HandleArcaAnnulmentCallbackAsync(
+            originatingInvoiceId, succeeded: true, creditNoteInvoiceId: creditNoteInvoiceId,
+            afipErrorMessage: null, ct: ct);
+    }
 
-        if (bc is null)
+    /// <summary>
+    /// ADR-042 §3.5.1 (2026-07-01): resultado de reevaluar la completitud de las NCs de una cancelacion tras
+    /// un callback de ARCA.
+    /// </summary>
+    private enum MultiNcOutcome
+    {
+        /// <summary>Quedan hijas Pending: el BC no se mueve (sigue AwaitingFiscalConfirmation).</summary>
+        StillPending,
+        /// <summary>Todas las hijas OK: anulacion COMPLETA -> AwaitingOperatorRefund + puntero principal + ND.</summary>
+        AllSucceeded,
+        /// <summary>Todas resueltas y al menos una fallo: ArcaRejected (revision + retry).</summary>
+        PartialFailed,
+        /// <summary>Redelivery/carrera: la hija ya estaba en el estado destino o el BC ya avanzo. No-op.</summary>
+        NoOp,
+    }
+
+    /// <summary>
+    /// ADR-042 §3.5.1 (2026-07-01): nucleo comun de los callbacks de ARCA (exito/fallo) para el caso
+    /// multi-factura. Localiza la fila hija de esta factura, la actualiza y REEVALUA la completitud del BC
+    /// bajo un LOCK PESIMISTA del padre (serializa callbacks concurrentes del mismo BC — mitiga el lost-update
+    /// B1). La ND (si la anulacion queda completa) se dispara POST-commit, nunca sosteniendo el lock.
+    ///
+    /// <para><b>Fallback legacy</b>: un BC sin filas hijas (pre-backfill / post-rollback §6) cae al
+    /// comportamiento historico single-factura via <see cref="LegacyHandleArcaCallbackAsync"/>.</para>
+    /// </summary>
+    private async Task HandleArcaAnnulmentCallbackAsync(
+        int originatingInvoiceId, bool succeeded, int creditNoteInvoiceId, string? afipErrorMessage, CancellationToken ct)
+    {
+        // 1) Localizar la fila hija de esta factura cuya cancelacion espera confirmacion fiscal. Esta lectura
+        //    es fuera del lock: solo decide QUE BC lockear. El FOR UPDATE serializa la lectura-decision real.
+        var childRef = await _db.BookingCancellationCreditNotes
+            .AsNoTracking()
+            .Where(c => c.OriginatingInvoiceId == originatingInvoiceId
+                     && c.BookingCancellation.Status == BookingCancellationStatus.AwaitingFiscalConfirmation)
+            .Select(c => new { c.BookingCancellationId })
+            .FirstOrDefaultAsync(ct);
+
+        if (childRef is null)
         {
-            _logger.LogWarning(
-                "OnArcaSucceededAsync: no se encontro BC AwaitingFiscalConfirmation para Invoice {InvoiceId}. " +
-                "Probablemente ya transiciono via ForceArcaConfirmation o no existe. No-op.",
-                originatingInvoiceId);
+            // Sin hija para esta factura en un BC AwaitingFiscalConfirmation: puede ser un BC legacy sin hijas
+            // (pre-backfill), o que ya transiciono (Force manual). El fallback legacy cubre ambos: replica el
+            // comportamiento historico (busca el BC por su puntero singular).
+            await LegacyHandleArcaCallbackAsync(originatingInvoiceId, succeeded, creditNoteInvoiceId, afipErrorMessage, ct);
             return;
         }
 
-        bc.Status = BookingCancellationStatus.AwaitingOperatorRefund;
-        bc.CreditNoteInvoiceId = creditNoteInvoiceId;
-        var reservaFromStatusArca = bc.Reserva.Status;
-        bc.Reserva.Status = EstadoReserva.PendingOperatorRefund;
-        // ADR-020 F6 (M7): rastro aditivo. Lo dispara el callback de exito de ARCA (sistema), sin actor humano.
-        LogReservaStatusChange(bc.Reserva, reservaFromStatusArca, EstadoReserva.PendingOperatorRefund,
-            actorUserId: null, actorUserName: null,
-            reason: "Cancelacion (ADR-002): ARCA confirmo la NC, a la espera del reembolso del operador (sistema).");
+        var bcId = childRef.BookingCancellationId;
 
-        await _auditService.LogBusinessEventAsync(
-            action: AuditActions.BookingCancellationArcaSucceeded,
+        // 2) Reevaluar bajo lock pesimista del padre (relacional) o directo (InMemory, sin lock).
+        var outcome = await RunUnderParentLockAsync(bcId, () =>
+            ApplyChildResultAndReevaluateAsync(originatingInvoiceId, succeeded, creditNoteInvoiceId, afipErrorMessage, ct), ct);
+
+        // 3) POST-commit, ya sin lock: si la anulacion quedo COMPLETA, disparar la ND una sola vez (ORDEN NO
+        //    NEGOCIABLE ADR-013: la ND sale despues de que TODAS las NCs tienen CAE). Nunca dentro del lock.
+        if (outcome == MultiNcOutcome.AllSucceeded)
+        {
+            await TryEmitDebitNotePostCompletionAsync(bcId, ct);
+        }
+    }
+
+    /// <summary>
+    /// ADR-042 §3.5.1.b (2026-07-01): ejecuta <paramref name="body"/> bajo un lock pesimista del padre
+    /// (<c>SELECT ... FOR UPDATE</c> por Id, con <c>lock_timeout</c> acotado). Un solo lock, por Id, sin I/O
+    /// externa adentro, liberado al commit. En InMemory (tests unit) corre el cuerpo SIN lock ni transaccion
+    /// (la serializacion real se valida en integracion Postgres). Patron NUEVO en el repo (0 usos previos de
+    /// FOR UPDATE): mantener acotado y simple.
+    /// </summary>
+    private async Task<T> RunUnderParentLockAsync<T>(
+        int bcId, Func<Task<T>> body, CancellationToken ct)
+    {
+        if (!_db.Database.IsRelational())
+        {
+            // InMemory: no soporta FOR UPDATE ni transacciones. Corremos el cuerpo directo.
+            return await body();
+        }
+
+        var strategy = _db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync(ct);
+
+            // lock_timeout acotado: si otro worker retiene el lock del padre > 5s, el FOR UPDATE tira una
+            // excepcion; el job falla limpio y Hangfire lo reintenta re-leyendo fresco (flujo idempotente).
+            await _db.Database.ExecuteSqlRawAsync("SET LOCAL lock_timeout = '5s'", ct);
+
+            // FOR UPDATE del padre por Id: serializa la lectura-decision de completitud de callbacks
+            // concurrentes del MISMO BC. Es un unico lock, por Id, sin segundo recurso -> sin deadlock.
+            await _db.Database.ExecuteSqlRawAsync(
+                "SELECT 1 FROM \"BookingCancellations\" WHERE \"Id\" = {0} FOR UPDATE",
+                new object[] { bcId }, ct);
+
+            var result = await body();
+
+            await tx.CommitAsync(ct); // libera el lock al commitear
+            return result;
+        });
+    }
+
+    /// <summary>
+    /// ADR-042 §3.5.1 pasos 2-4 (2026-07-01): dentro del lock, actualiza la fila hija de esta factura y
+    /// reevalua la completitud del BC con una lectura FRESCA de BD (no del ChangeTracker). Un solo cuerpo para
+    /// exito y fallo. NO dispara la ND (eso es post-commit). Devuelve el <see cref="MultiNcOutcome"/>.
+    /// </summary>
+    private async Task<MultiNcOutcome> ApplyChildResultAndReevaluateAsync(
+        int originatingInvoiceId, bool succeeded, int creditNoteInvoiceId, string? afipErrorMessage, CancellationToken ct)
+    {
+        // Cargar la hija fresca (dentro del lock) + su BC + la Reserva (para transicionar/loguear estado).
+        var child = await _db.BookingCancellationCreditNotes
+            .Include(c => c.BookingCancellation)
+                .ThenInclude(b => b.Reserva)
+            .FirstOrDefaultAsync(c => c.OriginatingInvoiceId == originatingInvoiceId
+                     && c.BookingCancellation.Status == BookingCancellationStatus.AwaitingFiscalConfirmation, ct);
+        if (child is null)
+        {
+            // Entre la primera lectura y el lock el BC ya avanzo (Force manual, otro callback). No-op.
+            _logger.LogWarning(
+                "OnArca*: no hay hija AwaitingFiscalConfirmation para Invoice {InvoiceId} bajo el lock. No-op.",
+                originatingInvoiceId);
+            return MultiNcOutcome.NoOp;
+        }
+
+        var bc = child.BookingCancellation;
+
+        // Idempotencia de callback (redelivery de Hangfire): si la hija ya esta en el estado destino, no-op.
+        if (succeeded && child.Status == BookingCancellationCreditNoteStatus.Succeeded)
+        {
+            _logger.LogInformation("OnArcaSucceeded: hija de Invoice {InvoiceId} ya Succeeded. No-op.", originatingInvoiceId);
+            return MultiNcOutcome.NoOp;
+        }
+        if (!succeeded && child.Status == BookingCancellationCreditNoteStatus.Failed)
+        {
+            _logger.LogInformation("OnArcaFailed: hija de Invoice {InvoiceId} ya Failed. No-op.", originatingInvoiceId);
+            return MultiNcOutcome.NoOp;
+        }
+
+        // Actualizar la fila hija segun el resultado de ARCA.
+        if (succeeded)
+        {
+            child.Status = BookingCancellationCreditNoteStatus.Succeeded;
+            child.CreditNoteInvoiceId = creditNoteInvoiceId;
+        }
+        else
+        {
+            child.Status = BookingCancellationCreditNoteStatus.Failed;
+            var err = afipErrorMessage ?? "AFIP rechazo la NC sin mensaje.";
+            child.ArcaErrorMessage = err.Length > 1000 ? err[..1000] : err;
+        }
+        // Persistir la hija DENTRO de la tx antes de contar: asi el conteo fresco ve este resultado.
+        await _db.SaveChangesAsync(ct);
+
+        // Reevaluar la completitud del BC (conteo fresco) y transicionar. Compartido con el retry.
+        return await ReevaluateBcCompletenessAndTransitionAsync(bc, originatingInvoiceId, ct);
+    }
+
+    /// <summary>
+    /// ADR-042 §3.5.1 pasos 3-4 (2026-07-01): con una lectura FRESCA de las hijas (ya serializada por el lock),
+    /// decide y aplica la transicion del BC: quedan Pending -> AwaitingFiscalConfirmation (resume una anulacion
+    /// que estaba en ArcaRejected si se reintento); todas OK -> AwaitingOperatorRefund + puntero principal +
+    /// reserva; alguna Failed -> ArcaRejected. Persiste (SaveChanges). Lo comparten el callback y el retry.
+    /// </summary>
+    private async Task<MultiNcOutcome> ReevaluateBcCompletenessAndTransitionAsync(
+        BookingCancellation bc, int triggeringOriginatingInvoiceId, CancellationToken ct)
+    {
+        var pending = await _db.BookingCancellationCreditNotes
+            .CountAsync(c => c.BookingCancellationId == bc.Id
+                          && c.Status == BookingCancellationCreditNoteStatus.Pending, ct);
+        var failed = await _db.BookingCancellationCreditNotes
+            .CountAsync(c => c.BookingCancellationId == bc.Id
+                          && c.Status == BookingCancellationCreditNoteStatus.Failed, ct);
+
+        if (pending > 0)
+        {
+            // Faltan NCs por confirmar: la anulacion esta EN CURSO. Aseguramos AwaitingFiscalConfirmation
+            // (importante cuando venimos de un retry que reabrio un ArcaRejected: sin esto el callback de la
+            // NC reintentada no encontraria el BC). Limpiamos el error observable.
+            if (bc.Status != BookingCancellationStatus.AwaitingFiscalConfirmation)
+            {
+                bc.Status = BookingCancellationStatus.AwaitingFiscalConfirmation;
+                bc.ArcaErrorMessage = null;
+                await _db.SaveChangesAsync(ct);
+            }
+            _logger.LogInformation(
+                "ADR-042: BC {BcPublicId} en AwaitingFiscalConfirmation ({Pending} NC pendientes).",
+                bc.PublicId, pending);
+            return MultiNcOutcome.StillPending;
+        }
+
+        if (failed == 0)
+        {
+            // TODAS las hijas OK -> anulacion COMPLETA. Recien aca se setea el puntero principal, se
+            // transiciona la reserva y (post-commit) se dispara la ND. Idempotente si ya estaba completa.
+            bc.Status = BookingCancellationStatus.AwaitingOperatorRefund;
+            bc.ArcaErrorMessage = null;
+
+            // Puntero principal = NC de la factura principal (bc.OriginatingInvoiceId). Byte-equivalente al
+            // caso mono-factura (una sola hija que ES la principal).
+            var principalNc = await _db.BookingCancellationCreditNotes
+                .Where(c => c.BookingCancellationId == bc.Id && c.OriginatingInvoiceId == bc.OriginatingInvoiceId)
+                .Select(c => c.CreditNoteInvoiceId)
+                .FirstOrDefaultAsync(ct);
+            // Defensa: si la principal (por lo que sea) no tuviera NC, tomar la de cualquier hija OK. Con
+            // failed==0 y pending==0 todas tienen NC, asi que esto casi nunca aplica.
+            bc.CreditNoteInvoiceId = principalNc ?? await _db.BookingCancellationCreditNotes
+                .Where(c => c.BookingCancellationId == bc.Id && c.CreditNoteInvoiceId != null)
+                .Select(c => c.CreditNoteInvoiceId)
+                .FirstOrDefaultAsync(ct);
+
+            var reservaFromStatusArca = bc.Reserva.Status;
+            bc.Reserva.Status = EstadoReserva.PendingOperatorRefund;
+            LogReservaStatusChange(bc.Reserva, reservaFromStatusArca, EstadoReserva.PendingOperatorRefund,
+                actorUserId: null, actorUserName: null,
+                reason: "Cancelacion (ADR-002/042): ARCA confirmo todas las NC, a la espera del reembolso del operador (sistema).");
+
+            _auditService.StageBusinessEvent(
+                action: AuditActions.BookingCancellationArcaSucceeded,
+                entityName: AuditActions.BookingCancellationEntityName,
+                entityId: bc.Id.ToString(),
+                details: JsonSerializer.Serialize(new
+                {
+                    bc.PublicId,
+                    triggeringOriginatingInvoiceId,
+                    creditNoteInvoiceId = bc.CreditNoteInvoiceId,
+                    multiInvoice = true,
+                }),
+                userId: bc.ConfirmedByUserId ?? bc.DraftedByUserId,
+                userName: bc.ConfirmedByUserName ?? bc.DraftedByUserName);
+
+            await _db.SaveChangesAsync(ct);
+
+            _logger.LogInformation(
+                "metric:cancellation_arca_succeeded | BcPublicId={BcPublicId} OriginatingInvoiceId={OriginatingInvoiceId} CreditNoteInvoiceId={CreditNoteInvoiceId}",
+                bc.PublicId, triggeringOriginatingInvoiceId, bc.CreditNoteInvoiceId);
+            return MultiNcOutcome.AllSucceeded;
+        }
+
+        // 0 Pending y >= 1 Failed -> ArcaRejected (revision + retry). La(s) NC que salieron NO se revierten.
+        bc.Status = BookingCancellationStatus.ArcaRejected;
+        // Mensaje observable del BC: el error de una hija fallada (para la bandeja / observabilidad).
+        var failedChildError = await _db.BookingCancellationCreditNotes
+            .Where(c => c.BookingCancellationId == bc.Id
+                     && c.Status == BookingCancellationCreditNoteStatus.Failed
+                     && c.ArcaErrorMessage != null)
+            .Select(c => c.ArcaErrorMessage)
+            .FirstOrDefaultAsync(ct);
+        bc.ArcaErrorMessage = failedChildError ?? "Una o mas notas de credito fueron rechazadas por AFIP.";
+
+        _auditService.StageBusinessEvent(
+            action: AuditActions.BookingCancellationArcaRejected,
             entityName: AuditActions.BookingCancellationEntityName,
             entityId: bc.Id.ToString(),
             details: JsonSerializer.Serialize(new
             {
                 bc.PublicId,
-                originatingInvoiceId,
-                creditNoteInvoiceId,
+                triggeringOriginatingInvoiceId,
+                afipErrorMessage = bc.ArcaErrorMessage,
+                partialFailure = true,
             }),
             userId: bc.ConfirmedByUserId ?? bc.DraftedByUserId,
-            userName: bc.ConfirmedByUserName ?? bc.DraftedByUserName,
-            ct: ct);
+            userName: bc.ConfirmedByUserName ?? bc.DraftedByUserName);
 
         await _db.SaveChangesAsync(ct);
 
-        _logger.LogInformation(
-            "BC {BcPublicId} transitioned to AwaitingOperatorRefund via OnArcaSucceededAsync (auto).",
-            bc.PublicId);
+        _logger.LogError(
+            "metric:cancellation_arca_failed | BcPublicId={BcPublicId} OriginatingInvoiceId={OriginatingInvoiceId} FailedChildren={Failed}",
+            bc.PublicId, triggeringOriginatingInvoiceId, failed);
+        return MultiNcOutcome.PartialFailed;
+    }
 
-        // FC1.2.7b counter: callback AFIP exitoso. Si crece muy despacio comparado
-        // con cancellation_confirmed, hay backlog en Hangfire o AFIP esta lento.
-        _logger.LogInformation(
-            "metric:cancellation_arca_succeeded | BcPublicId={BcPublicId} OriginatingInvoiceId={OriginatingInvoiceId} CreditNoteInvoiceId={CreditNoteInvoiceId}",
-            bc.PublicId, originatingInvoiceId, creditNoteInvoiceId);
+    /// <summary>
+    /// ADR-042 §3.5.1.b minor 1 (2026-07-01): dispara la ND POST-commit (fuera del lock), tras completarse
+    /// TODAS las NCs. Recarga el BC con los includes que el gating de la ND necesita. Blindado: si la ND falla,
+    /// NO re-lanza (la cancelacion ya esta correcta con las NC; la bandeja "NC sin su ND" la recupera).
+    /// </summary>
+    private async Task TryEmitDebitNotePostCompletionAsync(int bcId, CancellationToken ct)
+    {
+        var bc = await _db.BookingCancellations
+            .Include(b => b.Reserva)
+            .Include(b => b.OriginatingInvoice)
+                .ThenInclude(i => i.Tributes)
+            .Include(b => b.Supplier)
+            .FirstOrDefaultAsync(b => b.Id == bcId, ct);
+        if (bc is null) return;
 
-        // ADR-013 (2026-06-01): ORDEN NO NEGOCIABLE — la ND se dispara SOLO ahora, despues
-        // de que la NC total obtuvo CAE (este callback es exactamente ese momento). Si la
-        // NC hubiera fallado, este metodo nunca corre (corre OnArcaFailedAsync), asi que la
-        // ND no se dispara sobre una NC fallida. Con el flag OFF, TryEmit... retorna sin
-        // tocar nada (byte-identico a hoy). Va envuelto en try/catch porque una falla al
-        // emitir la ND NO debe revertir la cancelacion: la NC ya quedo correcta.
         try
         {
             await TryEmitCancellationDebitNoteAsync(bc, ct);
         }
         catch (Exception ex)
         {
-            // No re-lanzamos: la cancelacion ya esta correcta con la NC. La ND quedo en
-            // Failed (o sin tocar) y la bandeja "NC sin su ND" la levanta para reintento/
-            // manual. Re-lanzar pondria al job de Hangfire en retry-loop sobre una NC que
-            // ya esta commiteada (peor).
             _logger.LogError(ex,
-                "ADR-013: fallo al intentar emitir la ND para BC {BcPublicId} tras NC exitosa. " +
-                "La cancelacion queda correcta (NC emitida); la ND queda pendiente de revision.",
+                "ADR-013/042: fallo al emitir la ND para BC {BcPublicId} tras completarse las NC. " +
+                "La cancelacion queda correcta; la ND queda pendiente de revision.",
                 bc.PublicId);
         }
+    }
+
+    /// <summary>
+    /// ADR-042 §6 (2026-07-01): comportamiento HISTORICO single-factura para BCs SIN filas hijas (legacy
+    /// pre-backfill o post-rollback). Byte-identico al OnArcaSucceeded/Failed previo a ADR-042: busca el BC por
+    /// su puntero singular <c>OriginatingInvoiceId</c> y transiciona directo en el primer (y unico) callback.
+    /// </summary>
+    private async Task LegacyHandleArcaCallbackAsync(
+        int originatingInvoiceId, bool succeeded, int creditNoteInvoiceId, string? afipErrorMessage, CancellationToken ct)
+    {
+        if (succeeded)
+        {
+            var bc = await _db.BookingCancellations
+                .Include(b => b.Reserva)
+                .Include(b => b.OriginatingInvoice)
+                    .ThenInclude(i => i.Tributes)
+                .Include(b => b.Supplier)
+                .FirstOrDefaultAsync(b =>
+                    b.OriginatingInvoiceId == originatingInvoiceId &&
+                    b.Status == BookingCancellationStatus.AwaitingFiscalConfirmation, ct);
+
+            if (bc is null)
+            {
+                _logger.LogWarning(
+                    "OnArcaSucceededAsync (legacy): no se encontro BC AwaitingFiscalConfirmation para Invoice {InvoiceId}. No-op.",
+                    originatingInvoiceId);
+                return;
+            }
+
+            bc.Status = BookingCancellationStatus.AwaitingOperatorRefund;
+            bc.CreditNoteInvoiceId = creditNoteInvoiceId;
+            var reservaFromStatusArca = bc.Reserva.Status;
+            bc.Reserva.Status = EstadoReserva.PendingOperatorRefund;
+            LogReservaStatusChange(bc.Reserva, reservaFromStatusArca, EstadoReserva.PendingOperatorRefund,
+                actorUserId: null, actorUserName: null,
+                reason: "Cancelacion (ADR-002): ARCA confirmo la NC, a la espera del reembolso del operador (sistema).");
+
+            await _auditService.LogBusinessEventAsync(
+                action: AuditActions.BookingCancellationArcaSucceeded,
+                entityName: AuditActions.BookingCancellationEntityName,
+                entityId: bc.Id.ToString(),
+                details: JsonSerializer.Serialize(new { bc.PublicId, originatingInvoiceId, creditNoteInvoiceId }),
+                userId: bc.ConfirmedByUserId ?? bc.DraftedByUserId,
+                userName: bc.ConfirmedByUserName ?? bc.DraftedByUserName,
+                ct: ct);
+
+            await _db.SaveChangesAsync(ct);
+
+            _logger.LogInformation(
+                "metric:cancellation_arca_succeeded | BcPublicId={BcPublicId} OriginatingInvoiceId={OriginatingInvoiceId} CreditNoteInvoiceId={CreditNoteInvoiceId}",
+                bc.PublicId, originatingInvoiceId, creditNoteInvoiceId);
+
+            try
+            {
+                await TryEmitCancellationDebitNoteAsync(bc, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "ADR-013: fallo al emitir la ND para BC {BcPublicId} tras NC exitosa (legacy). " +
+                    "La cancelacion queda correcta; la ND queda pendiente de revision.",
+                    bc.PublicId);
+            }
+            return;
+        }
+
+        // Fallo (legacy): idem OnArcaFailedAsync historico.
+        var failedBc = await _db.BookingCancellations
+            .FirstOrDefaultAsync(b =>
+                b.OriginatingInvoiceId == originatingInvoiceId &&
+                b.Status == BookingCancellationStatus.AwaitingFiscalConfirmation, ct);
+
+        if (failedBc is null)
+        {
+            _logger.LogWarning(
+                "OnArcaFailedAsync (legacy): no se encontro BC AwaitingFiscalConfirmation para Invoice {InvoiceId}. No-op.",
+                originatingInvoiceId);
+            return;
+        }
+
+        failedBc.Status = BookingCancellationStatus.ArcaRejected;
+        var errorMessage = afipErrorMessage ?? "AFIP rechazo la NC sin mensaje.";
+        failedBc.ArcaErrorMessage = errorMessage.Length > 1000 ? errorMessage[..1000] : errorMessage;
+
+        await _auditService.LogBusinessEventAsync(
+            action: AuditActions.BookingCancellationArcaRejected,
+            entityName: AuditActions.BookingCancellationEntityName,
+            entityId: failedBc.Id.ToString(),
+            details: JsonSerializer.Serialize(new { failedBc.PublicId, originatingInvoiceId, afipErrorMessage = failedBc.ArcaErrorMessage }),
+            userId: failedBc.ConfirmedByUserId ?? failedBc.DraftedByUserId,
+            userName: failedBc.ConfirmedByUserName ?? failedBc.DraftedByUserName,
+            ct: ct);
+
+        await _db.SaveChangesAsync(ct);
+
+        _logger.LogError("BC {BcPublicId} marked as ArcaRejected (legacy). AFIP error: {Error}",
+            failedBc.PublicId, failedBc.ArcaErrorMessage);
+        _logger.LogInformation(
+            "metric:cancellation_arca_failed | BcPublicId={BcPublicId} OriginatingInvoiceId={OriginatingInvoiceId} ErrorTruncated={ErrorPreview}",
+            failedBc.PublicId, originatingInvoiceId,
+            failedBc.ArcaErrorMessage.Length > 80 ? failedBc.ArcaErrorMessage[..80] : failedBc.ArcaErrorMessage);
+    }
+
+    /// <inheritdoc />
+    public async Task<BookingCancellationDto> RetryCreditNotesAsync(
+        Guid publicId, string userId, string? userName, CancellationToken ct)
+    {
+        // ADR-042 §3.6 (2026-07-01): reintenta SOLO las NC faltantes de una anulacion multi-factura que
+        // quedo a medias (ArcaRejected, o AwaitingFiscalConfirmation con hijas Failed/atascadas). Idempotente:
+        // no re-emite las NC que ya salieron. Serializado por el MISMO lock del padre que los callbacks (B1/M1):
+        // un segundo retry concurrente ve la hija ya Pending -> no-op. Molde: RetryDebitNoteEmissionAsync.
+        //
+        // Permiso: el endpoint exige ReservasCancel (mismo permiso que anular) server-side. No es "deshacer",
+        // es COMPLETAR lo ya autorizado en el confirm; por eso cualquier vendedor que podia anular puede reintentar.
+        await EnsureFeatureFlagOnAsync(ct);
+
+        var bc = await _db.BookingCancellations
+            .FirstOrDefaultAsync(b => b.PublicId == publicId, ct)
+            ?? throw new KeyNotFoundException($"BC {publicId} no encontrada.");
+
+        // Solo aplica a una anulacion a medias. En cualquier otro estado rebota claro (idempotente si ya cerro).
+        if (bc.Status != BookingCancellationStatus.ArcaRejected
+            && bc.Status != BookingCancellationStatus.AwaitingFiscalConfirmation)
+        {
+            throw new BusinessInvariantViolationException(
+                "Esta anulacion no esta en un estado que se pueda reintentar.",
+                invariantCode: "INV-042-RETRY-001");
+        }
+
+        // S1 (2026-07-02): AUDITORIA del actor humano. El retry es una operacion fiscal iniciada por un
+        // usuario; aunque solo re-encole (la NC sigue en emision), debe dejar rastro auditable de quien lo
+        // disparo, cuando y sobre que BC (mismo criterio que el Force). NO commitea el estado de las hijas
+        // (eso pasa bajo el lock); LogBusinessEventAsync hace su propio commit del audit.
+        await _auditService.LogBusinessEventAsync(
+            action: AuditActions.BookingCancellationCreditNotesRetried,
+            entityName: AuditActions.BookingCancellationEntityName,
+            entityId: bc.Id.ToString(),
+            details: JsonSerializer.Serialize(new
+            {
+                bc.PublicId,
+                statusAtRetry = bc.Status.ToString(),
+                retriedByUserId = userId,
+            }),
+            userId: userId,
+            userName: userName,
+            ct: ct);
+
+        // Bajo el lock del padre: por cada hija NO Succeeded, re-vincular una NC huerfana ya creada (anti
+        // doble-emision) o dejarla Pending BAJO el lock antes de encolar. Reevalua la completitud (puede
+        // reabrir el BC a AwaitingFiscalConfirmation para que los callbacks reintentados lo encuentren, o
+        // completarlo si todas las faltantes ya tenian NC con CAE). Devuelve las facturas a encolar (fuera
+        // del lock: nada de I/O de Hangfire sosteniendo el FOR UPDATE) + si quedo completo por re-vinculacion.
+        var (invoicesToEnqueue, completedAllSucceeded) = await RunUnderParentLockAsync(bc.Id,
+            () => PrepareCreditNoteRetryUnderLockAsync(bc.Id, ct), ct);
+
+        // Si la anulacion quedo COMPLETA por re-vinculacion de NC huerfanas (todas las faltantes ya tenian
+        // CAE), disparar la ND POST-commit (fuera del lock), una sola vez. Igual que el callback.
+        if (completedAllSucceeded)
+        {
+            await TryEmitDebitNotePostCompletionAsync(bc.Id, ct);
+        }
+
+        // Fuera del lock: encolar las NC faltantes. requesterIsAdmin: true para que EnqueueAnnulmentAsync NO
+        // re-exija el approval del InvoiceAnnulment: la anulacion YA fue autorizada al confirmar; reintentar
+        // una NC fallida es COMPLETAR esa accion autorizada, no una nueva. El gate de permiso del endpoint
+        // (ReservasCancel) ya corrio server-side.
+        //
+        // F1 (2026-07-02): la factura YA quedo AnnulmentStatus=Pending DENTRO del lock
+        // (PrepareCreditNoteRetryUnderLockAsync), asi que un segundo retry concurrente, al tomar el lock, ve
+        // Pending y no re-encola (ventana de doble-CAE cerrada). El enqueue de Hangfire queda afuera del lock.
+        // Usamos EnqueueAnnulmentRetryAsync (no EnqueueAnnulmentAsync): no re-aplica el guard "Pending -> throw"
+        // (la marca es propia del retry) y no re-exige approval (la anulacion ya se autorizo al confirmar).
+        foreach (var invoiceId in invoicesToEnqueue)
+        {
+            try
+            {
+                await _invoiceService.EnqueueAnnulmentRetryAsync(
+                    id: invoiceId,
+                    userId: userId,
+                    userName: userName,
+                    reason: $"BC retry-credit-notes: {bc.Reason}",
+                    approvalRequestId: null,
+                    ct: ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Nunca un 500 que trabe la reserva: si el enqueue de una NC falla, la hija queda Pending y
+                // el proximo retry la vuelve a tomar. Log + seguir con las demas.
+                _logger.LogError(ex,
+                    "ADR-042 retry-credit-notes: fallo al encolar la anulacion de la factura {InvoiceId} " +
+                    "para BC {BcPublicId}. Queda pendiente para el proximo reintento.",
+                    invoiceId, bc.PublicId);
+            }
+        }
+
+        _logger.LogInformation(
+            "metric:cancellation_credit_notes_retry | BcPublicId={BcPublicId} Enqueued={Count} By={UserId}",
+            bc.PublicId, invoicesToEnqueue.Count, userId);
+
+        return await MapToDtoAsync(bc.Id, ct)
+            ?? throw new InvalidOperationException("No se pudo completar la operacion. Volve a intentar.");
+    }
+
+    /// <summary>
+    /// ADR-042 §3.6 (2026-07-01): dentro del lock del padre, prepara el reintento de las NC faltantes. Por
+    /// cada hija NO Succeeded: si ya existe una NC creada para su factura (huerfana de un intento previo) la
+    /// RE-VINCULA (no re-emite); si no, la deja Pending BAJO el lock. Devuelve las facturas cuyas NC hay que
+    /// encolar (fuera del lock). Un segundo retry concurrente, al tomar el lock, ve la hija ya Pending -> no
+    /// la re-encola (no-op).
+    /// </summary>
+    private async Task<(List<int> ToEnqueue, bool CompletedAllSucceeded)> PrepareCreditNoteRetryUnderLockAsync(
+        int bcId, CancellationToken ct)
+    {
+        var bc = await _db.BookingCancellations
+            .Include(b => b.Reserva)
+            .FirstAsync(b => b.Id == bcId, ct);
+
+        // Concurrencia (2026-07-02): el caller (RetryCreditNotesAsync) cargo el BC ANTES de tomar el lock, asi
+        // que la instancia trackeada tiene un xmin PRE-lock. Bajo el FOR UPDATE ya estamos serializados; si otro
+        // retry commiteo mientras esperabamos el lock, esta instancia quedo stale (Status + xmin viejos) y el
+        // SaveChanges tiraria DbUpdateConcurrencyException espuria. La RE-CARGAMOS FRESCA (dentro del lock) para
+        // que refleje el estado actual (el segundo retry ve el BC ya AwaitingFiscalConfirmation -> StillPending
+        // sin re-escribir) y el xmin coincida. La Reserva incluida se refresca por separado si hiciera falta.
+        await _db.Entry(bc).ReloadAsync(ct);
+        await _db.Entry(bc).Reference(b => b.Reserva).LoadAsync(ct);
+        var reservaId = bc.ReservaId;
+
+        var children = await _db.BookingCancellationCreditNotes
+            .Where(c => c.BookingCancellationId == bcId
+                     && c.Status != BookingCancellationCreditNoteStatus.Succeeded)
+            .ToListAsync(ct);
+
+        // B1b (2026-07-02): AnnulmentStatus de las facturas origen para distinguir "job en vuelo" (Pending)
+        // de "atascada" (None/Failed). Una hija Pending SIN job vivo hay que re-encolarla; con job vivo NO
+        // (seria un doble job). Es la senal que EnqueueAnnulmentAsync ya usa (rechaza re-anular si Pending).
+        var originatingIds = children.Select(c => c.OriginatingInvoiceId).Distinct().ToList();
+        var annulmentStatusByInvoice = originatingIds.Count == 0
+            ? new Dictionary<int, AnnulmentStatus>()
+            : await _db.Invoices
+                .Where(i => originatingIds.Contains(i.Id))
+                .Select(i => new { i.Id, i.AnnulmentStatus })
+                .ToDictionaryAsync(x => x.Id, x => x.AnnulmentStatus, ct);
+
+        var toEnqueue = new List<int>();
+
+        foreach (var child in children)
+        {
+            // (a) ANTI DOBLE-EMISION: buscar una NC ya creada (tipos 3/8/13/53) sobre la MISMA factura origen
+            //     de esta reserva. Si existe, RE-VINCULAR (no re-emitir). Misma deteccion que la ND huerfana.
+            var orphanCreditNote = await _db.Invoices
+                .Where(i => LiveInvoiceCreditNoteTypes.Contains(i.TipoComprobante)
+                         && i.OriginalInvoiceId == child.OriginatingInvoiceId
+                         && i.ReservaId == reservaId)
+                .OrderByDescending(i => i.CreatedAt)
+                .FirstOrDefaultAsync(ct);
+
+            if (orphanCreditNote is not null)
+            {
+                // S3 (2026-07-02): derivar el estado real del Invoice NC:
+                //  - CAE aprobado (Resultado="A" + CAE) -> Succeeded.
+                //  - RECHAZADA por ARCA (Resultado="R") -> Failed (con motivo).
+                //  - EN VUELO (Resultado null/"PENDING", sin CAE) -> la dejamos Pending (NO Failed): la NC
+                //    todavia se esta procesando; marcarla Failed seria prematuro. La re-vinculamos igual (para
+                //    no emitir otra) y esperamos su callback. NO la re-encolamos (hay un job/comprobante vivo).
+                child.CreditNoteInvoiceId = orphanCreditNote.Id;
+                if (orphanCreditNote.Resultado == "A" && !string.IsNullOrWhiteSpace(orphanCreditNote.CAE))
+                {
+                    child.Status = BookingCancellationCreditNoteStatus.Succeeded;
+                    child.ArcaErrorMessage = null;
+                }
+                else if (orphanCreditNote.Resultado == "R")
+                {
+                    child.Status = BookingCancellationCreditNoteStatus.Failed;
+                    var obs = orphanCreditNote.Observaciones ?? "ARCA rechazo la NC sin mensaje.";
+                    child.ArcaErrorMessage = obs.Length > 1000 ? obs[..1000] : obs;
+                }
+                else
+                {
+                    // NC en vuelo: no la tocamos mas que el vinculo. Queda Pending esperando su callback.
+                    child.Status = BookingCancellationCreditNoteStatus.Pending;
+                }
+                _logger.LogWarning(
+                    "ADR-042 retry: hija de la factura {InvoiceId} re-vinculada a una NC ya creada {NcId} (no re-emitida). Estado={Status}.",
+                    child.OriginatingInvoiceId, orphanCreditNote.Id, child.Status);
+                continue;
+            }
+
+            // (b) No hay NC previa. Re-encolamos las hijas que NO tienen un job de anulacion vivo:
+            //     - Failed: la flipeamos a Pending y la encolamos.
+            //     - Pending SIN job en vuelo (AnnulmentStatus != Pending): quedo atascada (el confirm no llego
+            //       a encolar, o el enqueue fallo) -> la encolamos (sigue Pending, ya lo esta).
+            //     Una hija Pending CON job en vuelo (AnnulmentStatus == Pending) NO se re-encola: hay un job
+            //     vivo -> es el no-op del segundo retry concurrente / del estado "procesando".
+            annulmentStatusByInvoice.TryGetValue(child.OriginatingInvoiceId, out var annulmentStatus);
+            bool hasLiveJob = annulmentStatus == AnnulmentStatus.Pending;
+
+            if (child.Status == BookingCancellationCreditNoteStatus.Failed)
+            {
+                child.Status = BookingCancellationCreditNoteStatus.Pending;
+                child.ArcaErrorMessage = null;
+                toEnqueue.Add(child.OriginatingInvoiceId);
+            }
+            else if (child.Status == BookingCancellationCreditNoteStatus.Pending && !hasLiveJob)
+            {
+                // Atascada: sigue Pending pero sin job -> re-encolar. (No cambia el estado de la hija.)
+                toEnqueue.Add(child.OriginatingInvoiceId);
+            }
+        }
+
+        // F1 (2026-07-02): marcar AnnulmentStatus=Pending de las facturas a encolar DENTRO del lock (write de
+        // BD, permitido; el enqueue de Hangfire queda afuera). Asi un segundo retry concurrente, ya serializado
+        // por el FOR UPDATE, lee Pending FRESCO y NO re-encola (cierra la ventana de doble-CAE: antes la señal
+        // la escribia EnqueueAnnulmentAsync post-commit, despues de soltar el lock). Se persiste en el mismo
+        // SaveChanges de abajo. EnqueueAnnulmentAsync se llama con preMarkedPending: true para no rebotar por su
+        // propio guard "Pending".
+        if (toEnqueue.Count > 0)
+        {
+            var invoicesToMark = await _db.Invoices
+                .Where(i => toEnqueue.Contains(i.Id))
+                .ToListAsync(ct);
+            foreach (var inv in invoicesToMark)
+                inv.AnnulmentStatus = AnnulmentStatus.Pending;
+        }
+
+        // Persistir los cambios de las hijas + la señal AnnulmentStatus antes de reevaluar (conteo fresco).
+        await _db.SaveChangesAsync(ct);
+
+        // Reevaluar la completitud: reabre a AwaitingFiscalConfirmation si quedan Pending (para que los
+        // callbacks reintentados encuentren el BC), o completa si todas las faltantes ya tenian CAE.
+        var outcome = await ReevaluateBcCompletenessAndTransitionAsync(bc, bc.OriginatingInvoiceId, ct);
+
+        return (toEnqueue, outcome == MultiNcOutcome.AllSucceeded);
     }
 
     // =========================================================================
@@ -4892,6 +5651,69 @@ public class BookingCancellationService
     }
 
     /// <summary>
+    /// ADR-042 §3.5 step 1 (2026-07-01): lista TODAS las facturas de venta vivas con CAE de la reserva y
+    /// valida CADA UNA (todo-o-nada al frente). Si alguna factura extranjera tiene cotizacion sospechosa
+    /// (TC&lt;=0 o ==1) o moneda no soportada, tira INV-156 y NO se emite ninguna NC. Devuelve la lista para
+    /// crear las hijas y encolar una anulacion por factura. Mismo filtro de "factura de venta viva" que
+    /// DraftAsync (excluye NC/ND y filas fantasma sin CAE).
+    /// </summary>
+    private async Task<List<Invoice>> ResolveAndPreflightInvoicesToAnnulAsync(int reservaId, CancellationToken ct)
+    {
+        var activeInvoices = await _db.Invoices
+            .Where(i => i.ReservaId == reservaId
+                     && i.AnnulmentStatus != AnnulmentStatus.Succeeded
+                     && !LiveInvoiceCreditNoteTypes.Contains(i.TipoComprobante)
+                     && !LiveInvoiceDebitNoteTypes.Contains(i.TipoComprobante)
+                     && !string.IsNullOrEmpty(i.CAE))
+            .OrderByDescending(i => i.CreatedAt)
+            .ToListAsync(ct);
+
+        if (activeInvoices.Count == 0)
+            throw new BusinessInvariantViolationException(
+                "La reserva no tiene una factura activa para anular.",
+                invariantCode: "INV-100");
+
+        // Pre-flight por factura: si UNA falla, no se emite NINGUNA (todo-o-nada al frente, premisa #4 del ADR).
+        foreach (var invoice in activeInvoices)
+        {
+            if (IsForeignInvoiceWithoutReliableArcaData(invoice))
+            {
+                _logger.LogCritical(
+                    "ADR-042 PRE-FLIGHT abort: factura {InvoiceId} en moneda {MonId} con cotizacion {MonCotiz} " +
+                    "no confiable/no soportada. No se emite NINGUNA NC de la reserva {ReservaId}.",
+                    invoice.Id, invoice.MonId, invoice.MonCotiz, reservaId);
+
+                throw new BusinessInvariantViolationException(
+                    "Una de las facturas de la reserva esta en moneda extranjera sin una cotizacion confiable " +
+                    "(saldria con cotizacion 1, error fiscal). No se emite ninguna nota de credito. Gestionala " +
+                    "manualmente: revisa/recarga la cotizacion de esa factura antes de anular.",
+                    invariantCode: "INV-156");
+            }
+        }
+
+        return activeInvoices;
+    }
+
+    /// <summary>
+    /// ADR-042 §3.5: true si la factura esta en moneda extranjera pero su propio dato ARCA no es emitible
+    /// (moneda no soportada, o cotizacion &lt;= 0 o == 1). Es el guard POR FACTURA (usa el MonId/MonCotiz de la
+    /// factura, no el snapshot del BC) que generaliza <see cref="IsForeignCurrencyInvoiceWithoutReliableRate"/>
+    /// a todas las facturas. Espeja el guard de <c>EnqueueAnnulmentAsync</c> (defensa en profundidad).
+    /// </summary>
+    private static bool IsForeignInvoiceWithoutReliableArcaData(Invoice invoice)
+    {
+        bool isForeign =
+            !string.IsNullOrWhiteSpace(invoice.MonId)
+            && !string.Equals(invoice.MonId, "PES", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(invoice.MonId, "ARS", StringComparison.OrdinalIgnoreCase);
+        if (!isForeign) return false;
+
+        // Moneda extranjera: la tratamos como no emitible si no es un codigo ARCA soportado o el TC es dudoso.
+        if (!ArcaCurrencyMapper.IsValidArcaCurrencyCode(invoice.MonId)) return true;
+        return invoice.MonCotiz <= 0m || invoice.MonCotiz == 1m;
+    }
+
+    /// <summary>
     /// ADR-013 §3.8/§3.11: congela el snapshot fiscal de la ND al momento del evento. Sirve
     /// para auditoria: prueba con que reglas (monto, moneda, tipo de comprobante, condicion
     /// fiscal, quien confirmo/clasifico) se emitio. El tipo de la ND se deriva del
@@ -5013,56 +5835,12 @@ public class BookingCancellationService
 
     public async Task OnArcaFailedAsync(int originatingInvoiceId, string? afipErrorMessage, CancellationToken ct)
     {
-        var bc = await _db.BookingCancellations
-            .FirstOrDefaultAsync(b =>
-                b.OriginatingInvoiceId == originatingInvoiceId &&
-                b.Status == BookingCancellationStatus.AwaitingFiscalConfirmation, ct);
-
-        if (bc is null)
-        {
-            _logger.LogWarning(
-                "OnArcaFailedAsync: no se encontro BC AwaitingFiscalConfirmation para Invoice {InvoiceId}. No-op.",
-                originatingInvoiceId);
-            return;
-        }
-
-        bc.Status = BookingCancellationStatus.ArcaRejected;
-        // Truncamos para no romper el MaxLength=1000. AFIP a veces devuelve
-        // mensajes con XML completo; preferimos cortar a perder el commit.
-        var errorMessage = afipErrorMessage ?? "AFIP rechazo la NC sin mensaje.";
-        bc.ArcaErrorMessage = errorMessage.Length > 1000
-            ? errorMessage[..1000]
-            : errorMessage;
-
-        await _auditService.LogBusinessEventAsync(
-            action: AuditActions.BookingCancellationArcaRejected,
-            entityName: AuditActions.BookingCancellationEntityName,
-            entityId: bc.Id.ToString(),
-            details: JsonSerializer.Serialize(new
-            {
-                bc.PublicId,
-                originatingInvoiceId,
-                afipErrorMessage = bc.ArcaErrorMessage,
-            }),
-            userId: bc.ConfirmedByUserId ?? bc.DraftedByUserId,
-            userName: bc.ConfirmedByUserName ?? bc.DraftedByUserName,
-            ct: ct);
-
-        await _db.SaveChangesAsync(ct);
-
-        _logger.LogError(
-            "BC {BcPublicId} marked as ArcaRejected. AFIP error: {Error}",
-            bc.PublicId, bc.ArcaErrorMessage);
-
-        // FC1.2.7b counter: callback AFIP rechazado. Si supera N/dia, hay un
-        // problema sistematico con AFIP (CUITs invalidos, fechas mal, etc.).
-        // El admin puede recurrir a ForceArcaConfirmation manualmente para
-        // destrabar (genera otro counter "cancellation_force_arca_executed").
-        _logger.LogInformation(
-            "metric:cancellation_arca_failed | BcPublicId={BcPublicId} OriginatingInvoiceId={OriginatingInvoiceId} ErrorTruncated={ErrorPreview}",
-            bc.PublicId, originatingInvoiceId,
-            // Truncamos a 80 chars para que el log no se ensucie con XML completo.
-            bc.ArcaErrorMessage.Length > 80 ? bc.ArcaErrorMessage[..80] : bc.ArcaErrorMessage);
+        // ADR-042 §3.5.1 (2026-07-01): delega al nucleo comun. Actualiza la fila hija de esta factura a
+        // Failed y, si ya no quedan Pending, transiciona el BC a ArcaRejected (revision + retry). Las NC que
+        // salieron OK NO se revierten. En BCs legacy sin hijas cae al comportamiento historico.
+        await HandleArcaAnnulmentCallbackAsync(
+            originatingInvoiceId, succeeded: false, creditNoteInvoiceId: 0,
+            afipErrorMessage: afipErrorMessage, ct: ct);
     }
 
     // =========================================================================
@@ -6589,8 +7367,31 @@ public class BookingCancellationService
             // sin lazy proxies, una navigation collection no incluida no es null, es vacia.
             .Include(b => b.OriginatingInvoice)
             .Include(b => b.CreditNoteInvoice)
+            // ADR-042: hijas (una por factura -> su NC) + la Invoice NC de cada una (para el numero de comprobante).
+            .Include(b => b.CreditNotes)
+                .ThenInclude(c => c.CreditNoteInvoice)
             .FirstOrDefaultAsync(b => b.Id == bcId, ct);
         if (bc is null) return null;
+
+        // ADR-042 (2026-07-01): armar los read-models multi-factura (lista de facturas de la reserva, estado
+        // por NC, saldo a favor por moneda, canRetry). Se hace en helpers para no engordar el mapeo base.
+        //
+        // B1c (2026-07-02): para distinguir una hija Pending "procesando" (job de ARCA en vuelo) de una
+        // "atascada" (Pending sin job), consultamos el AnnulmentStatus de las facturas origen de las hijas.
+        // AnnulmentStatus == Pending = job vivo (no ofrecer retry); != Pending = sin job (atascada, ofrecer retry).
+        var childOriginatingIds = bc.CreditNotes.Select(c => c.OriginatingInvoiceId).ToList();
+        var inFlightOriginatingIds = childOriginatingIds.Count == 0
+            ? new List<int>()
+            : await _db.Invoices
+                .AsNoTracking()
+                .Where(i => childOriginatingIds.Contains(i.Id) && i.AnnulmentStatus == AnnulmentStatus.Pending)
+                .Select(i => i.Id)
+                .ToListAsync(ct);
+
+        var saleInvoicesDto = await BuildSaleInvoicesDtoAsync(bc.Reserva.Id, ct);
+        var creditNotesDto = BuildCreditNotesDto(bc);
+        var canRetryCreditNotes = EvaluateCanRetryCreditNotes(bc, inFlightOriginatingIds);
+        var clientCreditByCurrency = await BuildClientCreditByCurrencyAsync(bc.Id, ct);
 
         // ADR-014 (read-model, 2026-06-23): pista de UI para el boton "Confirmar multa del
         // operador". Refleja SOLO las precondiciones de ESTADO que valida ConfirmPenaltyAsync
@@ -6668,13 +7469,174 @@ public class BookingCancellationService
             FiscalLiquidation = liquidationDto,
             ArcaConfirmedManuallyAt = bc.ArcaConfirmedManuallyAt,
             ArcaConfirmedManuallyByUserId = bc.ArcaConfirmedManuallyByUserId,
-            ArcaErrorMessage = bc.ArcaErrorMessage,
+            // B3 gemelo (2026-07-02): el campo del PADRE tambien va SANEADO. En multi-NC ArcaRejected,
+            // ReevaluateBcCompleteness copia aca el error crudo de la hija fallida (posible XML/tecnico de ARCA);
+            // sin sanear, el mismo ruido llegaria al front por el padre aunque el per-NC ya este saneado. El
+            // crudo queda en la entidad (log/auditoria); al front va copy legible. Ver SanitizeArcaErrorForUser.
+            ArcaErrorMessage = SanitizeArcaErrorForUser(bc.ArcaErrorMessage),
             // ADR-013/014: estado de la penalidad + de la ND, como string (igual que Status).
             PenaltyStatus = bc.PenaltyStatus.ToString(),
             DebitNoteStatus = bc.DebitNoteStatus.ToString(),
             // ADR-014 (read-model, 2026-06-23): pista de UI para el boton de confirmar multa.
             CanConfirmPenalty = canConfirmPenalty,
             ConfirmPenaltyBlockedReason = confirmPenaltyBlockedReason,
+            // ADR-042 (2026-07-01): read-models multi-factura.
+            SaleInvoices = saleInvoicesDto,
+            CreditNotes = creditNotesDto,
+            CanRetryCreditNotes = canRetryCreditNotes,
+            ClientCreditByCurrency = clientCreditByCurrency,
         };
+    }
+
+    /// <summary>
+    /// ADR-042 §3.7 (2026-07-01): lista de las facturas de venta vivas de la reserva para el aviso previo del
+    /// panel de anular (tipo legible + numero + moneda ISO + monto). Mismo filtro de "factura de venta viva"
+    /// que DraftAsync/pre-flight (excluye NC/ND y filas fantasma sin CAE).
+    /// </summary>
+    private async Task<List<CancellationSaleInvoiceDto>> BuildSaleInvoicesDtoAsync(int reservaId, CancellationToken ct)
+    {
+        var invoices = await _db.Invoices
+            .AsNoTracking()
+            .Where(i => i.ReservaId == reservaId
+                     && i.AnnulmentStatus != AnnulmentStatus.Succeeded
+                     && !LiveInvoiceCreditNoteTypes.Contains(i.TipoComprobante)
+                     && !LiveInvoiceDebitNoteTypes.Contains(i.TipoComprobante)
+                     && !string.IsNullOrEmpty(i.CAE))
+            .OrderByDescending(i => i.CreatedAt)
+            .Select(i => new { i.TipoComprobante, i.PuntoDeVenta, i.NumeroComprobante, i.MonId, i.ImporteTotal })
+            .ToListAsync(ct);
+
+        return invoices.Select(i => new CancellationSaleInvoiceDto
+        {
+            ComprobanteLabel = FormatComprobanteLabel(i.TipoComprobante, i.PuntoDeVenta, i.NumeroComprobante),
+            // Moneda en ISO legible para el front (ARS/USD). Fallback ARS para datos sin MonId (legacy).
+            Currency = ArcaCurrencyMapper.ToIso(i.MonId) ?? "ARS",
+            Amount = i.ImporteTotal,
+        }).ToList();
+    }
+
+    /// <summary>
+    /// ADR-042 §3.7 (2026-07-01): estado por NC (una por factura) a partir de las hijas. Moneda en ISO, numero
+    /// del comprobante cuando ya salio, y el motivo de AFIP si fallo (info util para el vendedor, aprobado H2).
+    /// </summary>
+    private static List<BookingCancellationCreditNoteDto> BuildCreditNotesDto(BookingCancellation bc)
+    {
+        return bc.CreditNotes
+            .OrderBy(c => c.Id)
+            .Select(c => new BookingCancellationCreditNoteDto
+            {
+                Currency = ArcaCurrencyMapper.ToIso(c.ArcaCurrency) ?? "ARS",
+                Status = c.Status.ToString(),
+                NumeroComprobante = c.CreditNoteInvoice != null
+                    ? FormatComprobanteLabel(c.CreditNoteInvoice.TipoComprobante, c.CreditNoteInvoice.PuntoDeVenta, c.CreditNoteInvoice.NumeroComprobante)
+                    : null,
+                // B3 (2026-07-02): solo cuando la NC fallo, y SANEADO. ARCA a veces devuelve XML/errores
+                // tecnicos; el crudo queda solo en la entidad (log/auditoria). Al front va un motivo legible
+                // por un vendedor (si el rechazo de AFIP es texto plano se muestra tal cual, aprobado H2; si es
+                // ruido tecnico se reemplaza por un mensaje generico amable). Ver SanitizeArcaErrorForUser.
+                ArcaErrorMessage = c.Status == BookingCancellationCreditNoteStatus.Failed
+                    ? SanitizeArcaErrorForUser(c.ArcaErrorMessage)
+                    : null,
+            })
+            .ToList();
+    }
+
+    // B3 (2026-07-02): ruido tecnico que ARCA/SOAP/.NET/EF puede devolver y que NUNCA debe llegar al vendedor
+    // (XML, excepciones, stack, URLs, JSON, mensajes .NET/EF sin tokens obvios). Si el mensaje lo contiene, se
+    // reemplaza por un copy generico. SE MANTIENE COMO BLOCKLIST a proposito (no allowlist): un allowlist
+    // mataria los motivos AFIP en texto plano legitimos aprobados en H2 (ej. "CUIT del emisor sin
+    // habilitacion"). Refuerzo data-exposure (2026-07-02): se suman tokens de mensajes .NET/EF que no traen
+    // ninguno de los tokens tecnicos clasicos (ej. "Object reference not set", "Value cannot be null.
+    // (Parameter 'x')", "duplicate key value violates unique constraint", stack con ".cs:" / " at TravelApi").
+    private static readonly System.Text.RegularExpressions.Regex ArcaTechnicalNoiseRegex = new(
+        @"(<[^>]+>|Exception|System\.|SOAP|Traceback|stack\s*trace|https?://|[{}]" +
+        @"|Error t[eé]cnico|Object reference not set|Value cannot be null|duplicate key value|violates" +
+        @"| at TravelApi|\.cs:|Parameter ')",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase
+        | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// B3 (ADR-042 §3.7, 2026-07-02): sanea el mensaje de error de ARCA para mostrarlo al vendedor. Un rechazo
+    /// de AFIP en texto plano (ej. "CUIT del emisor sin habilitacion") es info util y se muestra tal cual
+    /// (aprobado en H2). Pero ARCA a veces devuelve XML/excepciones/URLs: en ese caso NO se expone el crudo
+    /// (queda solo en log/auditoria via la entidad) y se devuelve un mensaje generico amable.
+    /// <para><c>internal</c> para poder testearlo directo desde TravelApi.Tests (InternalsVisibleTo).</para>
+    /// </summary>
+    internal static string? SanitizeArcaErrorForUser(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var trimmed = raw.Trim();
+        if (ArcaTechnicalNoiseRegex.IsMatch(trimmed))
+            return "AFIP rechazó la nota de crédito. Revisá los datos fiscales de la factura o reintentá.";
+        // Motivo de AFIP legible: se muestra acotado (no dumps largos).
+        return trimmed.Length > 300 ? trimmed[..300] : trimmed;
+    }
+
+    /// <summary>
+    /// ADR-042 §3.7 (2026-07-01, B1c 2026-07-02): true si la anulacion quedo a medias y se puede reintentar SOLO
+    /// las NC faltantes. Vale para: ArcaRejected (siempre que quede algo no-Succeeded), o AwaitingFiscalConfirmation
+    /// con alguna hija Failed O una hija Pending ATASCADA (sin job de ARCA en vuelo). NO se ofrece retry cuando
+    /// todas las Pending tienen su job vivo (estado "procesando"): reintentar ahi duplicaria jobs.
+    /// </summary>
+    /// <param name="inFlightOriginatingIds">Ids de facturas origen cuyo AnnulmentStatus == Pending (job vivo).</param>
+    private static bool EvaluateCanRetryCreditNotes(BookingCancellation bc, IReadOnlyCollection<int> inFlightOriginatingIds)
+    {
+        bool hasNonSucceededChild = bc.CreditNotes.Any(c => c.Status != BookingCancellationCreditNoteStatus.Succeeded);
+        if (!hasNonSucceededChild) return false;
+
+        if (bc.Status == BookingCancellationStatus.ArcaRejected) return true;
+
+        if (bc.Status == BookingCancellationStatus.AwaitingFiscalConfirmation)
+        {
+            bool hasFailed = bc.CreditNotes.Any(c => c.Status == BookingCancellationCreditNoteStatus.Failed);
+            // Atascada = hija Pending cuyo job de anulacion NO esta en vuelo (AnnulmentStatus != Pending).
+            bool hasStuckPending = bc.CreditNotes.Any(c =>
+                c.Status == BookingCancellationCreditNoteStatus.Pending
+                && !inFlightOriginatingIds.Contains(c.OriginatingInvoiceId));
+            return hasFailed || hasStuckPending;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// ADR-042 §3.3.2 (2026-07-01): saldo a favor del cliente por MONEDA generado por esta cancelacion. Suma
+    /// el saldo remanente de los <c>ClientCreditEntry</c> del BC agrupado por moneda (nunca se suman monedas).
+    /// </summary>
+    private async Task<Dictionary<string, decimal>> BuildClientCreditByCurrencyAsync(int bcId, CancellationToken ct)
+    {
+        var rows = await _db.ClientCreditEntries
+            .AsNoTracking()
+            .Where(e => e.BookingCancellationId == bcId && e.RemainingBalance > 0m)
+            .GroupBy(e => e.Currency)
+            .Select(g => new { Currency = g.Key, Total = g.Sum(e => e.RemainingBalance) })
+            .ToListAsync(ct);
+
+        return rows.ToDictionary(r => r.Currency, r => r.Total, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// ADR-042 (2026-07-01): etiqueta legible de un comprobante para el front ("Factura B 0001-00012345"),
+    /// sin exponer IDs internos. El numero se formatea PtoVta(4)-Numero(8) como en los comprobantes de ARCA.
+    /// </summary>
+    private static string FormatComprobanteLabel(int tipoComprobante, int puntoDeVenta, long numeroComprobante)
+    {
+        string tipoLabel = tipoComprobante switch
+        {
+            1 => "Factura A",
+            6 => "Factura B",
+            11 => "Factura C",
+            51 => "Factura M",
+            3 => "Nota de credito A",
+            8 => "Nota de credito B",
+            13 => "Nota de credito C",
+            53 => "Nota de credito M",
+            2 => "Nota de debito A",
+            7 => "Nota de debito B",
+            12 => "Nota de debito C",
+            52 => "Nota de debito M",
+            _ => "Comprobante",
+        };
+        return $"{tipoLabel} {puntoDeVenta:D4}-{numeroComprobante:D8}";
     }
 }

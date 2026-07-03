@@ -558,8 +558,9 @@ public sealed class BookingCancellationServicePartialCreditNoteIntegrationTests
                 bcPublicId, BuildValidConfirm(), "vendedor-1", "Juan", false, CancellationToken.None));
 
         Assert.Equal("INV-FC1.3-007", ex.InvariantCode);
-        // El mensaje debe explicar al admin que necesita override o usar flujo legacy.
-        Assert.Contains("Hotel", ex.Message);
+        // El mensaje debe explicar al admin que el caso automatico es solo hoteleria. (El copy se reescribio
+        // a "hotelería" en minuscula por el saneo de data-exposure; antes el test buscaba "Hotel".)
+        Assert.Contains("hotelería", ex.Message);
 
         // El BC sigue en Drafted: la excepcion se tira ANTES de persistir el snapshot
         // FC1.3 (rollback EF porque nunca llamamos SaveChanges del FC1.3 path).

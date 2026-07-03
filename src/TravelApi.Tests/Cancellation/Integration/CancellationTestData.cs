@@ -53,8 +53,11 @@ internal static class CancellationTestData
         ctx.Reservas.Add(reserva);
         await ctx.SaveChangesAsync();
 
-        // Invoice original — minima: solo los campos requeridos. No genera CAE
-        // real (los tests no llaman a AFIP).
+        // Invoice original — factura de venta EMITIDA. Lleva CAE + Resultado="A" (no se llama a AFIP: es un
+        // CAE de mentira, pero PRESENTE) porque DraftAsync/pre-flight cuentan como "factura activa para anular"
+        // SOLO las que tienen CAE (fix fiscal 7abb84f: una fila sin CAE es una factura fantasma, no una venta
+        // real). Sin el CAE, todo Draft/Confirm de estos tests de integracion rebota con "no tiene factura
+        // activa". El valor del CAE es irrelevante para la logica (solo se chequea que NO este vacio).
         var invoice = new Invoice
         {
             TipoComprobante = 1, // A
@@ -64,6 +67,8 @@ internal static class CancellationTestData
             ImporteNeto = 826.45m,
             ImporteIva = 173.55m,
             ReservaId = reserva.Id,
+            CAE = "68000000000000",
+            Resultado = "A",
             CreatedAt = DateTime.UtcNow,
         };
         ctx.Invoices.Add(invoice);

@@ -345,11 +345,15 @@ public sealed class BookingCancellationServiceTests
             new DraftCancellationRequest(seed.ReservaPublicId, "Test override sin approval"),
             "user-vendor", null, CancellationToken.None);
 
+        // requesterIsAdmin: FALSE. Un vendedor NO-admin que pide un override (IsAdminOverride) con un
+        // ApprovalRequestPublicId invalido -> ApprovalRequiredException (el override necesita approval real).
+        // NOTA: con requesterIsAdmin=true este caso NO rechaza: el Admin se auto-autoriza el override
+        // (bypass 4-eyes con audit, 2026-06-24). Este test cubre el camino que SI exige approval (no-admin).
         await Assert.ThrowsAsync<ApprovalRequiredException>(() =>
             service.ConfirmAsync(
                 draft.PublicId,
                 BuildValidConfirm(isOverride: true, approvalPublicId: Guid.NewGuid()),
-                "user-vendor", null, true, CancellationToken.None));
+                "user-vendor", null, false, CancellationToken.None));
     }
 
     [Fact]

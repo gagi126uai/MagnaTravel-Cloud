@@ -339,6 +339,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<BookingCancellation> BookingCancellations => Set<BookingCancellation>();
     // ADR-025: lineas hijas de la cancelacion (una por servicio cancelado). Ver BookingCancellationLine.
     public DbSet<BookingCancellationLine> BookingCancellationLines => Set<BookingCancellationLine>();
+    // ADR-042: hijas de la cancelacion (una por factura -> su NC). Caso multi-factura multimoneda.
+    public DbSet<BookingCancellationCreditNote> BookingCancellationCreditNotes => Set<BookingCancellationCreditNote>();
     public DbSet<OperatorRefundReceived> OperatorRefundReceived => Set<OperatorRefundReceived>();
     public DbSet<OperatorRefundAllocation> OperatorRefundAllocations => Set<OperatorRefundAllocation>();
     public DbSet<DeductionLine> DeductionLines => Set<DeductionLine>();
@@ -729,6 +731,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .HasConversion<int>();
             entity.Property(i => i.ExchangeRateJustification)
                   .HasMaxLength(500);
+
+            // ADR-042 §3.3.1 (2026-07-01): CanMisMonExt congelado al emitir. NULLABLE y SIN default:
+            // pesos/facturas historicas quedan NULL (no se emite el nodo, byte-identico). Divisa emite 'N'.
+            entity.Property(i => i.CanMisMonExt)
+                  .HasMaxLength(1);
 
             // B1.15 Fase 1: trazabilidad de quien emitio la factura.
             entity.Property(i => i.IssuedByUserId).HasMaxLength(450);
@@ -1645,6 +1652,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         // Public IDs (Guid uuid en BD + unique index, patron del repo).
         ConfigurePublicEntity<BookingCancellation>(modelBuilder);
         ConfigurePublicEntity<BookingCancellationLine>(modelBuilder);   // ADR-025
+        ConfigurePublicEntity<BookingCancellationCreditNote>(modelBuilder);   // ADR-042
         ConfigurePublicEntity<OperatorRefundReceived>(modelBuilder);
         ConfigurePublicEntity<OperatorRefundAllocation>(modelBuilder);
         ConfigurePublicEntity<DeductionLine>(modelBuilder);
@@ -1907,6 +1915,47 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .HasDatabaseName("IX_BookingCancellationLines_SupplierId");
 
             // Concurrencia igual que el padre: cancelar un servicio y editar la reserva en paralelo -> 409.
+            entity.UseXminAsConcurrencyToken();
+        });
+
+        // ===== BookingCancellationCreditNote (hija del BC, ADR-042) =====
+        modelBuilder.Entity<BookingCancellationCreditNote>(entity =>
+        {
+            entity.ToTable("BookingCancellationCreditNotes");
+
+            entity.Property(c => c.Status).HasConversion<int>();
+            entity.Property(c => c.ArcaCurrency).HasMaxLength(3).IsRequired();
+            entity.Property(c => c.ArcaErrorMessage).HasMaxLength(1000);
+
+            // FK al padre. Cascade: la hija no tiene sentido sin su cancelacion (mismo criterio que Lines).
+            entity.HasOne(c => c.BookingCancellation)
+                  .WithMany(b => b.CreditNotes)
+                  .HasForeignKey(c => c.BookingCancellationId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            // FK a la factura de venta anulada. Restrict para preservar el rastro fiscal (mismo patron
+            // que OriginatingInvoice del padre).
+            entity.HasOne(c => c.OriginatingInvoice)
+                  .WithMany()
+                  .HasForeignKey(c => c.OriginatingInvoiceId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            // NC opcional (existe cuando ARCA devuelve el CAE). SetNull, mismo patron que el padre.
+            entity.HasOne(c => c.CreditNoteInvoice)
+                  .WithMany()
+                  .HasForeignKey(c => c.CreditNoteInvoiceId)
+                  .OnDelete(DeleteBehavior.SetNull);
+
+            // UNIQUE (BookingCancellationId, OriginatingInvoiceId): una factura se anula una sola vez por BC.
+            entity.HasIndex(c => new { c.BookingCancellationId, c.OriginatingInvoiceId })
+                  .IsUnique()
+                  .HasDatabaseName("IX_BookingCancellationCreditNotes_Bc_OriginatingInvoice");
+
+            // Indice por factura origen: los callbacks de ARCA llegan keyeados por OriginatingInvoiceId
+            // y buscan la hija por esa columna. Sin este indice el lookup del callback seria seq scan.
+            entity.HasIndex(c => c.OriginatingInvoiceId)
+                  .HasDatabaseName("IX_BookingCancellationCreditNotes_OriginatingInvoiceId");
+
             entity.UseXminAsConcurrencyToken();
         });
 

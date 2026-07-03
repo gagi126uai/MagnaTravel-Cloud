@@ -534,17 +534,19 @@ public sealed class CancellationDebitNoteDeferredIntegrationTests
     }
 
     // =========================================================================
-    // Caso 1 — pass-through: confirm-penalty rebota, NO se emite ND, no muta nada fiscal.
-    // (El reverso: cuando el operador retiene la penalidad, el endpoint diferido no aplica.)
+    // Caso 1 — pass-through: confirm-penalty EMITE la ND (regla fiscal firmada 72c4452).
+    // La penalidad pass-through del operador se le cobra al cliente con una ND NO gravada.
     // =========================================================================
 
     /// <summary>
-    /// Cuando el concepto es pass-through (la penalidad la retiene el operador), confirm-penalty
-    /// rebota con INV-ADR014-002 y NO se persiste ninguna ND ni se confirma la penalidad.
-    /// Cubre el caso 1 del ADR-014 §6 (solo NC, sin ND) desde el flujo diferido.
+    /// REGLA FISCAL FIRMADA (72c4452 / passthrough_penalty_debit_note): cuando el concepto es pass-through
+    /// (el operador retiene la penalidad y se le replica al cliente), confirm-penalty SI emite la Nota de
+    /// Debito (no gravada) — <c>ConceptEmitsDebitNote</c> devuelve true para pass-through. Antes este test
+    /// esperaba un rechazo INV-ADR014-002; esa expectativa quedo obsoleta cuando la regla se invirtio. Se
+    /// actualiza para verificar el comportamiento vigente: la penalidad queda Confirmed y la ND emitida+vinculada.
     /// </summary>
     [Fact]
-    public async Task ConfirmPenalty_PassThroughConcept_Rejects_NoDebitNoteEmitted()
+    public async Task ConfirmPenalty_PassThroughConcept_EmitsAndLinksRealDebitNote()
     {
         // ARRANGE — operador retiene la penalidad; pedimos confirm SIN concepto explicito
         // (el default por operador es pass-through).
@@ -553,24 +555,23 @@ public sealed class CancellationDebitNoteDeferredIntegrationTests
             bundle.Ctx,
             supplierOwnership: PenaltyOwnership.Operator,
             conceptKind: CancellationConceptKind.OperatorPenaltyPassThrough);
-        // El mock esta configurado, pero la emision NO debe llegar a llamarse (rebota antes).
         SetupCreateEmitsRealDebitNote(bundle, originalInvoiceId, reservaId);
 
-        // ACT + ASSERT — rebota por concepto no agency-owned.
-        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
-            bundle.Service.ConfirmPenaltyAsync(
-                bcPublicId, PenaltyRequest(concept: null),
-                "backoffice", "Back Office", false, CancellationToken.None,
-                userCanClassifyAgencyPenalty: true));
-        Assert.Equal("INV-ADR014-002", ex.InvariantCode);
+        // ACT — pass-through con monto confirmado: emite la ND (no rebota).
+        await bundle.Service.ConfirmPenaltyAsync(
+            bcPublicId, PenaltyRequest(concept: null),
+            "backoffice", "Back Office", requesterIsAdmin: false, CancellationToken.None,
+            userCanClassifyAgencyPenalty: true);
 
-        // NADA muto en la BD: ni ND emitida ni penalidad confirmada.
+        // ASSERT — estado DURABLE desde un context fresco: penalidad Confirmed + ND emitida y vinculada.
         await using var verifyCtx = _fixture.CreateDbContext();
         var bcAfter = await verifyCtx.BookingCancellations.AsNoTracking().FirstAsync(b => b.Id == bcId);
-        Assert.NotEqual(PenaltyStatus.Confirmed, bcAfter.PenaltyStatus);
-        Assert.Null(bcAfter.DebitNoteInvoiceId);
-        var ndCount = await verifyCtx.Invoices.AsNoTracking().CountAsync(i => i.TipoComprobante == 12);
-        Assert.Equal(0, ndCount);
+        Assert.Equal(PenaltyStatus.Confirmed, bcAfter.PenaltyStatus);
+        Assert.Equal(DebitNoteStatus.Pending, bcAfter.DebitNoteStatus);
+        Assert.NotNull(bcAfter.DebitNoteInvoiceId);
+        var ndCount = await verifyCtx.Invoices.AsNoTracking()
+            .CountAsync(i => i.TipoComprobante == 12 && i.OriginalInvoiceId == originalInvoiceId);
+        Assert.Equal(1, ndCount);
     }
 
     // =========================================================================

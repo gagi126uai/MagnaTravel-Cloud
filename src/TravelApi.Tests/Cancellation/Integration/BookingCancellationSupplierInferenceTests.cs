@@ -141,6 +141,10 @@ public sealed class BookingCancellationSupplierInferenceTests
             ImporteNeto = 826.45m,
             ImporteIva = 173.55m,
             ReservaId = reserva.Id,
+            // Factura EMITIDA: DraftAsync cuenta como "activa" solo las que tienen CAE (fix 7abb84f). Sin CAE
+            // rebota con "no tiene factura activa". El valor es irrelevante (solo se chequea que no este vacio).
+            CAE = "68000000000000",
+            Resultado = "A",
             CreatedAt = DateTime.UtcNow,
         };
         ctx.Invoices.Add(invoice);

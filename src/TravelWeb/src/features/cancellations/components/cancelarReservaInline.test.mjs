@@ -13,6 +13,11 @@
  *   7. Textos anclados: las constantes del módulo de copy contienen el texto exacto de la guía.
  *   8. Mapeo de errores para el caso PaymentsToCredit (400/403/404/409).
  *
+ * ADR-042 (2026-07-01): la lógica del flujo "anular con VARIAS facturas" (aviso previo,
+ * "¿Seguro?", avance por nota, éxito/revisión, franja "en revisión") vive en un módulo
+ * aparte — multiCreditNoteFlow.js — con sus propios tests en multiCreditNoteFlow.test.mjs.
+ * Acá solo se actualizó el mapeo de errores: el mensaje especial de INV-100 desapareció.
+ *
  * Cómo correr:
  *   node --test src/features/cancellations/components/cancelarReservaInline.test.mjs
  *
@@ -138,10 +143,15 @@ function determinarCartelVisible(caso) {
  * presentación (conflicto inline vs toast) y el mensaje amigable.
  * Réplica de la cadena if/else del catch en handleCancelar (caso PaymentsToCredit).
  *
+ * ADR-042 (2026-07-01): se sacó el mensaje especial de INV-100 ("más de una factura
+ * emitida... contactá a administración") — esa política vieja ya no aplica: ahora se
+ * puede anular una reserva con varias facturas (ver multiCreditNoteFlow.js). Si el
+ * backend igual devolviera INV-100 por otra causa, cae al mensaje 409 genérico (neutro,
+ * nunca menciona facturas ni solapas inexistentes).
+ *
  * @returns {{ tipo: "conflicto"|"toast", mensaje: string }}
  */
 function mapearErrorAnnulWithCredit(error) {
-    const code = error?.payload?.invariantCode || error?.payload?.code || "";
     if (error?.status === 400) {
         return { tipo: "conflicto", mensaje: "Revisá el motivo de la anulación (mínimo 10 caracteres)." };
     }
@@ -150,12 +160,6 @@ function mapearErrorAnnulWithCredit(error) {
     }
     if (error?.status === 404) {
         return { tipo: "toast", mensaje: "No encontramos la reserva. Recargá la página." };
-    }
-    if (error?.status === 409 && code === "INV-100") {
-        return {
-            tipo: "conflicto",
-            mensaje: "Esta reserva tiene más de una factura emitida. La anulación de una reserva con varias facturas todavía no está disponible de forma automática; contactá a administración.",
-        };
     }
     if (error?.status === 409) {
         return {
@@ -485,11 +489,14 @@ test("error 404 → toast, mensaje de reserva no encontrada + instrucción de re
     assert.match(r.mensaje, /recargá/i);
 });
 
-test("error 409 INV-100 (múltiples facturas) → inline, sin mencionar solapas inexistentes", () => {
+test("error 409 INV-100 (código viejo, si el backend lo devolviera igual) → mensaje neutro genérico, sin mencionar facturas ni solapas", () => {
+    // ADR-042: ya no existe el mensaje especial de INV-100. Si el backend devolviera ese código
+    // por cualquier otra causa, cae al 409 genérico — nunca menciona "más de una factura" ni
+    // manda a una solapa Facturas inexistente.
     const r = mapearErrorAnnulWithCredit({ status: 409, payload: { invariantCode: "INV-100" } });
     assert.equal(r.tipo, "conflicto");
-    assert.match(r.mensaje, /factura/i);
-    // No debe mandar a una "solapa Facturas" que no existe en la ficha de la reserva.
+    assert.equal(r.mensaje, "No se pudo anular la reserva. Probá de nuevo; si el problema sigue, contactá a administración.");
+    assert.ok(!/más de una factura/i.test(r.mensaje));
     assert.ok(!/solapa Facturas/i.test(r.mensaje));
 });
 

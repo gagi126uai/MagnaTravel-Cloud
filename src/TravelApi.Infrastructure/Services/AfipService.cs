@@ -776,6 +776,13 @@ public class AfipService : IAfipService
              // ("PES", 1) -> comportamiento identico a antes de F2.5.
              MonId = request.MonId,
              MonCotiz = request.MonCotiz,
+             // ADR-042 §3.3.1 (2026-07-01): CanMisMonExt CONGELADO al emitir. Si el comprobante ES una NC/ND
+             // (tiene original), ESPEJA el valor congelado del original (regla de espejado estricto: el par
+             // NC/original debe compartir CanMisMonExt o rompe el libro IVA). Si es una factura de venta, se
+             // deriva de su propia moneda (PES -> null; divisa -> "N"). Deterministico: hoy toda divisa da "N".
+             CanMisMonExt = originalInvoice != null
+                 ? originalInvoice.CanMisMonExt
+                 : TravelApi.Domain.Reservations.CanMisMonExtResolver.Resolve(request.MonId),
              // ADR-012 MVP (facturar en dolares, 2026-05-29): trazabilidad del TC. Los
              // callers de pesos no setean estos campos -> quedan NULL (factura en pesos).
              // Para moneda extranjera, InvoiceService.ValidateMultiCurrencyInvoicingAsync
@@ -1065,6 +1072,22 @@ public class AfipService : IAfipService
         // Moneda extranjera: MVP fijo "N" (factura en USD, cobra en pesos). Ver TODO arriba
         // para el caso "S" (cobro en la misma moneda extranjera) cuando exista el dato de cobro.
         return "<CanMisMonExt>N</CanMisMonExt>";
+    }
+
+    /// <summary>
+    /// ADR-042 §3.3.1 (2026-07-01): arma el nodo &lt;CanMisMonExt&gt; a partir del valor CONGELADO en la
+    /// factura (<c>Invoice.CanMisMonExt</c>), no re-derivandolo. Asi la NC/ND ESPEJA el valor de su original.
+    /// <c>null</c> (pesos/no aplica) -> string vacio (envelope byte-identico al historico); <c>"S"</c>/<c>"N"</c>
+    /// -> el nodo con ese valor. Es el que usa el envelope real; la variante por MonId queda para los tests.
+    /// </summary>
+    /// <param name="canMisMonExt">Valor congelado ('S'/'N'/null). Ver <c>CanMisMonExtResolver</c>.</param>
+    internal static string BuildCanMisMonExtFragmentFromValue(string? canMisMonExt)
+    {
+        if (string.IsNullOrWhiteSpace(canMisMonExt))
+        {
+            return string.Empty;
+        }
+        return $"<CanMisMonExt>{canMisMonExt}</CanMisMonExt>";
     }
 
     [AutomaticRetry(Attempts = 0)] // Don't auto-retry AFIP calls blindly
@@ -1388,8 +1411,13 @@ public class AfipService : IAfipService
                          fragmento es BYTE-IDENTICO al hardcoded historico; el formato de 6 decimales
                          se usa SOLO para moneda extranjera (ver el metodo). -->
                     {BuildMonedaSoapFragment(invoice.MonId, invoice.MonCotiz)}
-                    <!-- FC1.3.F2.5: CanMisMonExt (solo moneda extranjera). Ver nota arriba del envelope. -->
-                    {BuildCanMisMonExtFragment(invoice.MonId)}
+                    <!-- FC1.3.F2.5 / ADR-042: CanMisMonExt CONGELADO en la factura (la NC/ND espeja el del
+                         original). Fallback a la derivacion por MonId para facturas legacy sin el valor
+                         persistido (backfill Adr042_M1 pone 'N' a las divisas existentes). Orden verificado
+                         contra el XSD del WSFEv1 (docs/architecture/wsfev1-service.xsd, test
+                         Adr042CanMisMonExtSchemaTests): CanMisMonExt va DESPUES de MonId/MonCotiz y ANTES
+                         de CondicionIVAReceptorId. -->
+                    {BuildCanMisMonExtFragmentFromValue(invoice.CanMisMonExt ?? TravelApi.Domain.Reservations.CanMisMonExtResolver.Resolve(invoice.MonId))}
                     <!-- ADR-024 §4: CondicionIVAReceptorId resuelto desde el snapshot del cliente
                          (ArcaReceptorResolver), NO mas fijado en Consumidor Final. Obligatorio RG 5616. -->
                     <CondicionIVAReceptorId>{condicionIvaReceptorId}</CondicionIVAReceptorId>

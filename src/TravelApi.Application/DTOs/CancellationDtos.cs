@@ -129,6 +129,76 @@ public class BookingCancellationDto
     /// </list>
     /// </summary>
     public string? ConfirmPenaltyBlockedReason { get; set; }
+
+    // ===================================================================
+    // ADR-042 (2026-07-01): anular reserva con VARIAS facturas en distintas monedas.
+    // El front usa estos campos para: el aviso previo (lista de facturas), el avance
+    // por nota (procesando/emitida/rechazada), el saldo a favor por moneda y el retry.
+    // ===================================================================
+
+    /// <summary>
+    /// ADR-042 §3.7: lista de las facturas de venta vivas de la reserva (para el aviso previo del panel de
+    /// anular: "esta reserva tiene N facturas emitidas..."). Una por factura, con su moneda y monto SEPARADOS
+    /// (multimoneda dura: nunca sumar $ + US$). Se llena siempre que la reserva tiene facturas anulables.
+    /// </summary>
+    public List<CancellationSaleInvoiceDto> SaleInvoices { get; set; } = new();
+
+    /// <summary>
+    /// ADR-042 §3.7: estado de CADA nota de credito (una por factura). El front pinta PROCESANDO / EMITIDA /
+    /// RECHAZADA + motivo de AFIP a partir de esta coleccion (mismo patron que fiscal-status de H2). Vacia en
+    /// una cancelacion mono-factura pre-confirmacion o legacy sin hijas.
+    /// </summary>
+    public List<BookingCancellationCreditNoteDto> CreditNotes { get; set; } = new();
+
+    /// <summary>
+    /// ADR-042 §3.7: pista de UI. True si la anulacion quedo a medias (alguna NC fallo o esta atascada) y se
+    /// puede reintentar SOLO las faltantes (idempotente). El endpoint revalida server-side.
+    /// </summary>
+    public bool CanRetryCreditNotes { get; set; }
+
+    /// <summary>
+    /// ADR-042 §3.3.2: saldo a favor del cliente generado por esta cancelacion, POR MONEDA (moneda de la
+    /// factura anulada). Clave = codigo de moneda (ARS/USD), valor = saldo remanente. Nunca se suman monedas.
+    /// Vacio si todavia no hubo cobros que se vuelvan saldo a favor.
+    /// </summary>
+    public Dictionary<string, decimal> ClientCreditByCurrency { get; set; } = new();
+}
+
+/// <summary>
+/// ADR-042 §3.7 (2026-07-01): una factura de venta viva de la reserva, para el aviso previo del panel de
+/// anular. Solo lo que el front necesita mostrar (tipo legible + numero + moneda + monto), nada interno.
+/// </summary>
+public class CancellationSaleInvoiceDto
+{
+    /// <summary>Etiqueta legible del comprobante, ej. "Factura B 0001-00012345". Sin IDs internos.</summary>
+    public string ComprobanteLabel { get; set; } = string.Empty;
+
+    /// <summary>Moneda del comprobante en codigo ISO legible para el front (ARS/USD). Derivada del MonId ARCA.</summary>
+    public string Currency { get; set; } = string.Empty;
+
+    /// <summary>Monto total del comprobante en su moneda (nunca sumado con otra moneda).</summary>
+    public decimal Amount { get; set; }
+}
+
+/// <summary>
+/// ADR-042 §3.7 (2026-07-01): estado de UNA nota de credito de la cancelacion, para el avance por nota.
+/// </summary>
+public class BookingCancellationCreditNoteDto
+{
+    /// <summary>Moneda de la NC en codigo ISO legible (ARS/USD). Derivada del MonId ARCA de la factura origen.</summary>
+    public string Currency { get; set; } = string.Empty;
+
+    /// <summary>Estado de la NC: "Pending" (emitiendo), "Succeeded" (emitida), "Failed" (rechazada). String como Status.</summary>
+    public string Status { get; set; } = string.Empty;
+
+    /// <summary>Numero del comprobante NC cuando ya salio (ej. "0003-00000123"). Null mientras no tiene CAE.</summary>
+    public string? NumeroComprobante { get; set; }
+
+    /// <summary>
+    /// Motivo de AFIP cuando la NC fue rechazada (ej. "CUIT del emisor sin habilitacion"). Es info util para
+    /// el vendedor (aprobado en H2). Null si no fallo. El front no debe renderizar claves/campos internos.
+    /// </summary>
+    public string? ArcaErrorMessage { get; set; }
 }
 
 /// <summary>

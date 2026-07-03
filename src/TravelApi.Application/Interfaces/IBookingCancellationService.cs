@@ -349,6 +349,25 @@ public interface IBookingCancellationService
         bool userCanClassifyAgencyPenalty = false);
 
     /// <summary>
+    /// ADR-042 §3.6 (2026-07-01): reintenta SOLO las notas de credito faltantes de una anulacion multi-factura
+    /// que quedo a medias (una NC salio y otra fallo, o quedo atascada). Idempotente: NO re-emite las NC que
+    /// ya salieron (anti doble-emision: re-vincula una NC huerfana ya creada). Serializado por el mismo lock
+    /// pesimista del padre que los callbacks de ARCA (un segundo retry concurrente ve la hija ya Pending -> no-op).
+    ///
+    /// <para><b>Permiso</b>: MISMO que anular la reserva (<c>ReservasCancel</c>), resuelto server-side por el
+    /// controller (defensa en profundidad). No es "deshacer", es COMPLETAR lo ya autorizado al confirmar; por
+    /// eso cualquier vendedor que podia anular puede reintentar (no se restringe a Admin).</para>
+    ///
+    /// <para><b>Exceptions</b>: <c>KeyNotFoundException</c> (404); <c>BusinessInvariantViolationException</c>
+    /// (409 INV-042-RETRY-001 si el estado no es reintentable); nunca un 500 que trabe la reserva.</para>
+    /// </summary>
+    Task<BookingCancellationDto> RetryCreditNotesAsync(
+        Guid publicId,
+        string userId,
+        string? userName,
+        CancellationToken ct);
+
+    /// <summary>
     /// Fase A (2026-06-28): cierra la pata de la penalidad del operador SIN multa ("el operador no cobro multa /
     /// devuelve todo"). Es la rama ALTERNATIVA a <see cref="ConfirmPenaltyAsync"/>: comparten el mismo candado
     /// (la primera que resuelve la penalidad gana). Deja la penalidad en el estado terminal

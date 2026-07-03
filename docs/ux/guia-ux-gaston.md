@@ -627,11 +627,40 @@ Ronda 2:
 - **(2026-06-25) Todo lo demás ya estaba decidido y se mantiene:** panel **EN LÍNEA** (nunca ventana flotante), **motivo obligatorio** (mín. 10 caracteres) — ADR-035 C; en reserva con plata viva el botón **"Eliminar" no aparece**, solo "Anular", y la explicación va recién al abrir el panel — ADR-036 P3=A; tras anular, la reserva queda en estado terminal de **solo lectura** con cartel chico arriba y sus servicios muestran **"Anulado"** — ADR-036 puntos 3 y 8.
 
 - **(2026-06-25) Bloqueos legítimos (qué se muestra si NO se puede anular):**
-  - **Más de una factura emitida:** no se puede anular toda la reserva de una; mensaje claro ("anulá cada factura desde la solapa Facturas, o contactá a administración") — patrón ya existente.
+  - **Más de una factura emitida:** ~~no se puede anular toda la reserva de una…~~ **DEROGADO (2026-07-01):** SÍ se puede anular; al confirmar sale **una nota de crédito por cada factura, cada una en su moneda**. Ver la sección propia **"Anular una reserva con VARIAS facturas en distintas monedas (2026-07-01)"** más abajo. (Se elimina el viejo mensaje que mandaba a una "solapa Facturas" que no existe.)
   - **En viaje:** el botón "Anular" NO aparece (regla 2026-06-22, 2da tanda punto 1). Si entró por error, va por "Sacar de viaje" (Admin).
   - **Ya terminal (Perdida / Anulada / Esperando reembolso):** el botón "Anular" NO aparece; pantalla de solo lectura.
 
 - **(2026-06-25 — dependencia técnica, NO es decisión de UX):** para mostrar el cartel correcto, el front necesita distinguir el caso 3 del caso 2 cuando NO hay factura → el backend debe exponer en el DTO de la reserva un dato tipo **"tiene cobros sin factura"** (bool) **+ el monto cobrado por moneda** (el backend ya lo acumula en `PorMoneda`). El campo `requiresInvoiceAnnulmentToCancel` que ya existe sigue marcando el caso 4. Esto solo habilita elegir el cartel; no cambia ninguna decisión de UX.
+
+## Anular una reserva con VARIAS facturas en distintas monedas (2026-07-01, respuestas de Gastón)
+
+> **Origen:** hasta hoy, una reserva con más de una factura NO se podía anular (cartel de freno que
+> mandaba a una "solapa Facturas" inexistente). Se saca ese bloqueo: ahora al anular sale **una nota de
+> crédito por CADA factura, cada una en su moneda** (ej. una NC en $ y otra en US$). Es asincrónico contra
+> AFIP/ARCA (tarda unos segundos por cada una) y **todo-o-nada a nivel ESTADO**: la reserva queda Anulada
+> solo cuando salieron TODAS; si una sale y otra falla, queda **"En revisión"** (la que salió NO se
+> revierte) y hay que **reintentar** la que falta. Sesión de 7 preguntas; Gastón eligió TODAS las
+> recomendadas (P1-A … P7-A). Se apoya en el molde asíncrono de H2 (2026-06-24) y en las reglas duras de
+> multimoneda (2026-06-09). Componente: `CancelarReservaInline.jsx`. Spec: `docs/ux/2026-07-01-anulacion-multifactura.md`.
+
+- **(2026-07-01, P1=A) Aviso previo con la lista de facturas.** Cuando la reserva tiene 2+ facturas, el panel de anular muestra un cartel **ámbar** que anticipa cuántas notas de crédito van a salir y en qué moneda, **más la lista de cada factura con su monto**. Texto: **"Esta reserva tiene N facturas emitidas (una en $ y una en US$). Al anular se emite una nota de crédito por cada factura, cada una en su moneda."** + lista `· Factura B 0001-00012345 — $ 150.000` / `· Factura B 0001-00012346 — US$ 200`. (Reemplaza el viejo cartel de freno. Multimoneda dura: los montos NUNCA se suman.)
+
+- **(2026-07-01, P2=A) Confirmación extra "¿Seguro?" antes de largar las notas.** Como son varias notas de crédito irreversibles, tras escribir el motivo y apretar "Anular reserva" aparece un último cartel de confirmación: **"¿Seguro? Se van a emitir N notas de crédito en AFIP (una en $ y una en US$). Una vez emitidas no se pueden deshacer."** Botones: **[Volver]** / **[Sí, anular]**. (Mismo patrón del "¿seguro?" de emitir factura, H2 2026-06-24; la anulación de UNA sola factura NO tiene este paso, solo la multi-factura.)
+
+- **(2026-07-01, P3=A) Mientras salen (una por una): avance por nota.** Estado **PROCESANDO** con texto en criollo + una **listita que muestra el avance de cada nota**: la ya emitida con tilde ✔, la que está saliendo con relojito ⏳, y un contador **"1 de N"**. Texto: **"Estamos emitiendo las notas de crédito en AFIP. En unos instantes vas a ver el resultado."** Se auto-actualiza sin refrescar la página (el front consulta el estado del backend, igual que H2).
+
+- **(2026-07-01, P4=A) Éxito total: detalle por moneda + saldo a favor en la MONEDA DE CADA FACTURA.** Cuando salieron TODAS, cartel **verde**: **"✔ Reserva anulada. Se emitieron N notas de crédito (una en $ y una en US$)."** Si el cliente había pagado, se agrega la línea del **saldo a favor separado por moneda**, y **la moneda del saldo a favor es la de la FACTURA anulada, no la de lo que el cliente pagó** (decisión de negocio cerrada 2026-07-01): ej. **"Lo cobrado quedó como saldo a favor del cliente: US$ 200."** Si hay saldo en dos monedas: `$ 150.000 · US$ 200`. (No se explica ninguna ley en pantalla; solo se muestra el saldo a favor por moneda.)
+
+- **(2026-07-01, P5=A) Falla parcial → "En revisión", con detalle de cuál salió y cuál no.** Si una nota salió y otra no, la reserva NO queda anulada del todo: queda **"En revisión"** y la nota que ya salió **NO se deshace**. Cartel **naranja**: **"La reserva quedó EN REVISIÓN: una nota de crédito salió bien y la otra no. La que salió no se deshace."** + la lista mostrando **cuál salió** (✔ "Nota de crédito en $ — emitida") y **cuál no** (✗ "Nota de crédito en US$ — no salió"), con el **motivo que devuelve AFIP tal cual** debajo de la que falló ("Motivo de AFIP: «…»", igual que el rechazo de emisión H2). Botón: **[Reintentar la que falta]**. El reintento es **seguro (idempotente): no re-emite la que ya salió ni duplica** (garantía del backend).
+
+- **(2026-07-01, P6=A) Al cerrar y volver a entrar en "En revisión": franja arriba + botón a la vista.** La anulación a medias tiene que cantar apenas se abre la reserva: **franja naranja arriba** **"En revisión — anulación a medias, falta emitir N nota(s) de crédito."** con el botón **[Reintentar anulación]** a la vista. La reserva queda de **solo lectura** salvo ese botón. (Coherente con la franja del candado 2026-06-08 y el chip "En corrección" de "Sacar de viaje" 2026-06-22.)
+
+- **(2026-07-01, P7=A) Quién puede reintentar: cualquier vendedor que ya podía anular esa reserva.** Reintentar no es deshacer nada, es completar lo que ya empezó; no se restringe a admin.
+
+- **(2026-07-01) Lo demás se mantiene:** panel EN LÍNEA (nunca ventana flotante, salvo el "¿Seguro?" de P2), motivo obligatorio (mín. 10 caracteres), nada de jerga/IDs/códigos internos/texto crudo de error, y **ningún mensaje vuelve a nombrar la "solapa Facturas"** (no existe). Si la reserva es de una sola factura/moneda, sigue el flujo de la sección 2026-06-25 (Caso 4), sin nada de esto.
+
+- **(2026-07-01 — dependencia técnica, NO es decisión de UX):** el DTO debe exponer la **lista de facturas con su moneda y monto** (para el aviso de P1) y el **estado de progreso/resultado de cada nota de crédito** (procesando / emitida / rechazada + motivo de AFIP) que el front consulta para pintar PROCESANDO/ÉXITO/FALLA PARCIAL (mismo patrón que `GET /invoices/reserva/{id}/fiscal-status` de H2). El reintento debe ser **idempotente** en el backend.
 
 ## Fase 4 — "La pantalla obedece al backend": KPI del mes, botón ya-cumplido, aviso de Factura A (2026-06-26, respuestas de Gastón)
 

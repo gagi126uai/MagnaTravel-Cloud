@@ -1191,6 +1191,52 @@ public class InvoiceService : IInvoiceService
         _backgroundJobClient.Enqueue<IInvoiceService>(service => service.ProcessAnnulmentJob(id, userId, consumedApprovalRequestId));
     }
 
+    /// <inheritdoc />
+    public async Task EnqueueAnnulmentRetryAsync(
+        int id,
+        string userId,
+        string? userName,
+        string? reason,
+        int? approvalRequestId,
+        CancellationToken ct)
+    {
+        // ADR-042 F1 (2026-07-02): el retry de NC multi-factura ya marco esta factura AnnulmentStatus=Pending
+        // BAJO EL LOCK del BC (para que un segundo retry concurrente vea la señal y no re-encole). Aca NO
+        // re-aplicamos el guard "Pending -> throw" de EnqueueAnnulmentAsync (la marca es propia del retry, no un
+        // doble-click); solo agendamos el job. La anulacion ya fue autorizada al confirmar (no se pide approval).
+        var invoice = await _context.Invoices.FirstOrDefaultAsync(i => i.Id == id, ct)
+            ?? throw new KeyNotFoundException($"Factura {id} no encontrada.");
+
+        // Se sigue rechazando Succeeded: jamas re-anular una factura ya anulada (NC con CAE).
+        if (invoice.AnnulmentStatus == AnnulmentStatus.Succeeded)
+        {
+            throw new InvalidOperationException(
+                "La factura ya fue anulada (NC aprobada). No se puede re-anular.");
+        }
+
+        // Solo A/B/C soportan anulacion automatica (mismo criterio que EnqueueAnnulmentAsync). El resto de los
+        // guards fiscales (moneda/cotizacion) los RE-VALIDA ProcessAnnulmentJob por defensa en profundidad.
+        if (!InvoiceComprobanteHelpers.IsSupportedForAnnulment(invoice.TipoComprobante))
+        {
+            throw new InvalidOperationException(
+                $"El tipo de comprobante {invoice.TipoComprobante} no soporta anulacion automatica.");
+        }
+
+        invoice.AnnulledByUserId = userId;
+        invoice.AnnulledByUserName = userName;
+        invoice.AnnulmentReason = reason;
+        // Re-afirmar Pending (idempotente: el retry ya lo dejo asi bajo el lock; cubre tambien la hija atascada
+        // que hubiera quedado en otro estado). NO se toca AnnulledAt (lo setea el job al confirmar la NC).
+        invoice.AnnulmentStatus = AnnulmentStatus.Pending;
+        if (approvalRequestId.HasValue)
+        {
+            invoice.AnnulmentApprovalRequestId = approvalRequestId.Value;
+        }
+        await _context.SaveChangesAsync(ct);
+
+        _backgroundJobClient.Enqueue<IInvoiceService>(service => service.ProcessAnnulmentJob(id, userId, approvalRequestId));
+    }
+
     public async Task ProcessAnnulmentJob(int invoiceId, string userId, int? approvalRequestId = null)
     {
         try

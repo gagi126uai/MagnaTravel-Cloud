@@ -1,0 +1,936 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:schema xmlns:s="http://www.w3.org/2001/XMLSchema" xmlns:tns="http://ar.gov.afip.dif.FEV1/" elementFormDefault="qualified" targetNamespace="http://ar.gov.afip.dif.FEV1/">
+      <s:element name="FECAESolicitar">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="Auth" type="tns:FEAuthRequest" />
+            <s:element minOccurs="0" maxOccurs="1" name="FeCAEReq" type="tns:FECAERequest" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:complexType name="FEAuthRequest">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="Token" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="Sign" type="s:string" />
+          <s:element minOccurs="1" maxOccurs="1" name="Cuit" type="s:long" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="FECAERequest">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="FeCabReq" type="tns:FECAECabRequest" />
+          <s:element minOccurs="0" maxOccurs="1" name="FeDetReq" type="tns:ArrayOfFECAEDetRequest" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="FECAECabRequest">
+        <s:complexContent mixed="false">
+          <s:extension base="tns:FECabRequest" />
+        </s:complexContent>
+      </s:complexType>
+      <s:complexType name="FECabRequest">
+        <s:sequence>
+          <s:element minOccurs="1" maxOccurs="1" name="CantReg" type="s:int" />
+          <s:element minOccurs="1" maxOccurs="1" name="PtoVta" type="s:int" />
+          <s:element minOccurs="1" maxOccurs="1" name="CbteTipo" type="s:int" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="ArrayOfFECAEDetRequest">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="unbounded" name="FECAEDetRequest" nillable="true" type="tns:FECAEDetRequest" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="FECAEDetRequest">
+        <s:complexContent mixed="false">
+          <s:extension base="tns:FEDetRequest" />
+        </s:complexContent>
+      </s:complexType>
+      <s:complexType name="FEDetRequest">
+        <s:sequence>
+          <s:element minOccurs="1" maxOccurs="1" name="Concepto" type="s:int" />
+          <s:element minOccurs="1" maxOccurs="1" name="DocTipo" type="s:int" />
+          <s:element minOccurs="1" maxOccurs="1" name="DocNro" type="s:long" />
+          <s:element minOccurs="1" maxOccurs="1" name="CbteDesde" type="s:long" />
+          <s:element minOccurs="1" maxOccurs="1" name="CbteHasta" type="s:long" />
+          <s:element minOccurs="0" maxOccurs="1" name="CbteFch" type="s:string" />
+          <s:element minOccurs="1" maxOccurs="1" name="ImpTotal" type="s:double" />
+          <s:element minOccurs="1" maxOccurs="1" name="ImpTotConc" type="s:double" />
+          <s:element minOccurs="1" maxOccurs="1" name="ImpNeto" type="s:double" />
+          <s:element minOccurs="1" maxOccurs="1" name="ImpOpEx" type="s:double" />
+          <s:element minOccurs="1" maxOccurs="1" name="ImpTrib" type="s:double" />
+          <s:element minOccurs="1" maxOccurs="1" name="ImpIVA" type="s:double" />
+          <s:element minOccurs="0" maxOccurs="1" name="FchServDesde" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="FchServHasta" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="FchVtoPago" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="MonId" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="MonCotiz" type="s:double" />
+          <s:element minOccurs="0" maxOccurs="1" name="CanMisMonExt" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="CondicionIVAReceptorId" type="s:int" />
+          <s:element minOccurs="0" maxOccurs="1" name="CbtesAsoc" type="tns:ArrayOfCbteAsoc" />
+          <s:element minOccurs="0" maxOccurs="1" name="Tributos" type="tns:ArrayOfTributo" />
+          <s:element minOccurs="0" maxOccurs="1" name="Iva" type="tns:ArrayOfAlicIva" />
+          <s:element minOccurs="0" maxOccurs="1" name="Opcionales" type="tns:ArrayOfOpcional" />
+          <s:element minOccurs="0" maxOccurs="1" name="Compradores" type="tns:ArrayOfComprador" />
+          <s:element minOccurs="0" maxOccurs="1" name="PeriodoAsoc" type="tns:Periodo" />
+          <s:element minOccurs="0" maxOccurs="1" name="Actividades" type="tns:ArrayOfActividad" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="ArrayOfCbteAsoc">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="unbounded" name="CbteAsoc" nillable="true" type="tns:CbteAsoc" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="CbteAsoc">
+        <s:sequence>
+          <s:element minOccurs="1" maxOccurs="1" name="Tipo" type="s:int" />
+          <s:element minOccurs="1" maxOccurs="1" name="PtoVta" type="s:int" />
+          <s:element minOccurs="1" maxOccurs="1" name="Nro" type="s:long" />
+          <s:element minOccurs="0" maxOccurs="1" name="Cuit" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="CbteFch" type="s:string" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="ArrayOfTributo">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="unbounded" name="Tributo" nillable="true" type="tns:Tributo" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="Tributo">
+        <s:sequence>
+          <s:element minOccurs="1" maxOccurs="1" name="Id" type="s:short" />
+          <s:element minOccurs="0" maxOccurs="1" name="Desc" type="s:string" />
+          <s:element minOccurs="1" maxOccurs="1" name="BaseImp" type="s:double" />
+          <s:element minOccurs="1" maxOccurs="1" name="Alic" type="s:double" />
+          <s:element minOccurs="1" maxOccurs="1" name="Importe" type="s:double" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="ArrayOfAlicIva">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="unbounded" name="AlicIva" nillable="true" type="tns:AlicIva" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="AlicIva">
+        <s:sequence>
+          <s:element minOccurs="1" maxOccurs="1" name="Id" type="s:int" />
+          <s:element minOccurs="1" maxOccurs="1" name="BaseImp" type="s:double" />
+          <s:element minOccurs="1" maxOccurs="1" name="Importe" type="s:double" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="ArrayOfOpcional">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="unbounded" name="Opcional" nillable="true" type="tns:Opcional" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="Opcional">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="Id" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="Valor" type="s:string" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="ArrayOfComprador">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="unbounded" name="Comprador" nillable="true" type="tns:Comprador" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="Comprador">
+        <s:sequence>
+          <s:element minOccurs="1" maxOccurs="1" name="DocTipo" type="s:int" />
+          <s:element minOccurs="1" maxOccurs="1" name="DocNro" type="s:long" />
+          <s:element minOccurs="1" maxOccurs="1" name="Porcentaje" type="s:double" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="Periodo">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="FchDesde" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="FchHasta" type="s:string" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="ArrayOfActividad">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="unbounded" name="Actividad" nillable="true" type="tns:Actividad" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="Actividad">
+        <s:sequence>
+          <s:element minOccurs="1" maxOccurs="1" name="Id" type="s:long" />
+        </s:sequence>
+      </s:complexType>
+      <s:element name="FECAESolicitarResponse">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="FECAESolicitarResult" type="tns:FECAEResponse" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:complexType name="FECAEResponse">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="FeCabResp" type="tns:FECAECabResponse" />
+          <s:element minOccurs="0" maxOccurs="1" name="FeDetResp" type="tns:ArrayOfFECAEDetResponse" />
+          <s:element minOccurs="0" maxOccurs="1" name="Events" type="tns:ArrayOfEvt" />
+          <s:element minOccurs="0" maxOccurs="1" name="Errors" type="tns:ArrayOfErr" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="FECAECabResponse">
+        <s:complexContent mixed="false">
+          <s:extension base="tns:FECabResponse" />
+        </s:complexContent>
+      </s:complexType>
+      <s:complexType name="FECabResponse">
+        <s:sequence>
+          <s:element minOccurs="1" maxOccurs="1" name="Cuit" type="s:long" />
+          <s:element minOccurs="1" maxOccurs="1" name="PtoVta" type="s:int" />
+          <s:element minOccurs="1" maxOccurs="1" name="CbteTipo" type="s:int" />
+          <s:element minOccurs="0" maxOccurs="1" name="FchProceso" type="s:string" />
+          <s:element minOccurs="1" maxOccurs="1" name="CantReg" type="s:int" />
+          <s:element minOccurs="0" maxOccurs="1" name="Resultado" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="Reproceso" type="s:string" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="ArrayOfFECAEDetResponse">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="unbounded" name="FECAEDetResponse" nillable="true" type="tns:FECAEDetResponse" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="FECAEDetResponse">
+        <s:complexContent mixed="false">
+          <s:extension base="tns:FEDetResponse">
+            <s:sequence>
+              <s:element minOccurs="0" maxOccurs="1" name="CAE" type="s:string" />
+              <s:element minOccurs="0" maxOccurs="1" name="CAEFchVto" type="s:string" />
+            </s:sequence>
+          </s:extension>
+        </s:complexContent>
+      </s:complexType>
+      <s:complexType name="FEDetResponse">
+        <s:sequence>
+          <s:element minOccurs="1" maxOccurs="1" name="Concepto" type="s:int" />
+          <s:element minOccurs="1" maxOccurs="1" name="DocTipo" type="s:int" />
+          <s:element minOccurs="1" maxOccurs="1" name="DocNro" type="s:long" />
+          <s:element minOccurs="1" maxOccurs="1" name="CbteDesde" type="s:long" />
+          <s:element minOccurs="1" maxOccurs="1" name="CbteHasta" type="s:long" />
+          <s:element minOccurs="0" maxOccurs="1" name="CbteFch" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="Resultado" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="Observaciones" type="tns:ArrayOfObs" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="ArrayOfObs">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="unbounded" name="Obs" nillable="true" type="tns:Obs" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="Obs">
+        <s:sequence>
+          <s:element minOccurs="1" maxOccurs="1" name="Code" type="s:int" />
+          <s:element minOccurs="0" maxOccurs="1" name="Msg" type="s:string" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="ArrayOfEvt">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="unbounded" name="Evt" nillable="true" type="tns:Evt" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="Evt">
+        <s:sequence>
+          <s:element minOccurs="1" maxOccurs="1" name="Code" type="s:int" />
+          <s:element minOccurs="0" maxOccurs="1" name="Msg" type="s:string" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="ArrayOfErr">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="unbounded" name="Err" nillable="true" type="tns:Err" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="Err">
+        <s:sequence>
+          <s:element minOccurs="1" maxOccurs="1" name="Code" type="s:int" />
+          <s:element minOccurs="0" maxOccurs="1" name="Msg" type="s:string" />
+        </s:sequence>
+      </s:complexType>
+      <s:element name="FECompTotXRequest">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="Auth" type="tns:FEAuthRequest" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:element name="FECompTotXRequestResponse">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="FECompTotXRequestResult" type="tns:FERegXReqResponse" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:complexType name="FERegXReqResponse">
+        <s:sequence>
+          <s:element minOccurs="1" maxOccurs="1" name="RegXReq" type="s:int" />
+          <s:element minOccurs="0" maxOccurs="1" name="Errors" type="tns:ArrayOfErr" />
+          <s:element minOccurs="0" maxOccurs="1" name="Events" type="tns:ArrayOfEvt" />
+        </s:sequence>
+      </s:complexType>
+      <s:element name="FEDummy">
+        <s:complexType />
+      </s:element>
+      <s:element name="FEDummyResponse">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="FEDummyResult" type="tns:DummyResponse" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:complexType name="DummyResponse">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="AppServer" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="DbServer" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="AuthServer" type="s:string" />
+        </s:sequence>
+      </s:complexType>
+      <s:element name="FECompUltimoAutorizado">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="Auth" type="tns:FEAuthRequest" />
+            <s:element minOccurs="1" maxOccurs="1" name="PtoVta" type="s:int" />
+            <s:element minOccurs="1" maxOccurs="1" name="CbteTipo" type="s:int" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:element name="FECompUltimoAutorizadoResponse">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="FECompUltimoAutorizadoResult" type="tns:FERecuperaLastCbteResponse" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:complexType name="FERecuperaLastCbteResponse">
+        <s:sequence>
+          <s:element minOccurs="1" maxOccurs="1" name="PtoVta" type="s:int" />
+          <s:element minOccurs="1" maxOccurs="1" name="CbteTipo" type="s:int" />
+          <s:element minOccurs="1" maxOccurs="1" name="CbteNro" type="s:int" />
+          <s:element minOccurs="0" maxOccurs="1" name="Errors" type="tns:ArrayOfErr" />
+          <s:element minOccurs="0" maxOccurs="1" name="Events" type="tns:ArrayOfEvt" />
+        </s:sequence>
+      </s:complexType>
+      <s:element name="FECompConsultar">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="Auth" type="tns:FEAuthRequest" />
+            <s:element minOccurs="0" maxOccurs="1" name="FeCompConsReq" type="tns:FECompConsultaReq" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:complexType name="FECompConsultaReq">
+        <s:sequence>
+          <s:element minOccurs="1" maxOccurs="1" name="CbteTipo" type="s:int" />
+          <s:element minOccurs="1" maxOccurs="1" name="CbteNro" type="s:long" />
+          <s:element minOccurs="1" maxOccurs="1" name="PtoVta" type="s:int" />
+        </s:sequence>
+      </s:complexType>
+      <s:element name="FECompConsultarResponse">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="FECompConsultarResult" type="tns:FECompConsultaResponse" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:complexType name="FECompConsultaResponse">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="ResultGet" type="tns:FECompConsResponse" />
+          <s:element minOccurs="0" maxOccurs="1" name="Errors" type="tns:ArrayOfErr" />
+          <s:element minOccurs="0" maxOccurs="1" name="Events" type="tns:ArrayOfEvt" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="FECompConsResponse">
+        <s:complexContent mixed="false">
+          <s:extension base="tns:FECAEDetRequest">
+            <s:sequence>
+              <s:element minOccurs="0" maxOccurs="1" name="Resultado" type="s:string" />
+              <s:element minOccurs="0" maxOccurs="1" name="CodAutorizacion" type="s:string" />
+              <s:element minOccurs="0" maxOccurs="1" name="EmisionTipo" type="s:string" />
+              <s:element minOccurs="0" maxOccurs="1" name="FchVto" type="s:string" />
+              <s:element minOccurs="0" maxOccurs="1" name="FchProceso" type="s:string" />
+              <s:element minOccurs="0" maxOccurs="1" name="Observaciones" type="tns:ArrayOfObs" />
+              <s:element minOccurs="1" maxOccurs="1" name="PtoVta" type="s:int" />
+              <s:element minOccurs="1" maxOccurs="1" name="CbteTipo" type="s:int" />
+            </s:sequence>
+          </s:extension>
+        </s:complexContent>
+      </s:complexType>
+      <s:element name="FECAEARegInformativo">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="Auth" type="tns:FEAuthRequest" />
+            <s:element minOccurs="0" maxOccurs="1" name="FeCAEARegInfReq" type="tns:FECAEARequest" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:complexType name="FECAEARequest">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="FeCabReq" type="tns:FECAEACabRequest" />
+          <s:element minOccurs="0" maxOccurs="1" name="FeDetReq" type="tns:ArrayOfFECAEADetRequest" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="FECAEACabRequest">
+        <s:complexContent mixed="false">
+          <s:extension base="tns:FECabRequest" />
+        </s:complexContent>
+      </s:complexType>
+      <s:complexType name="ArrayOfFECAEADetRequest">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="unbounded" name="FECAEADetRequest" nillable="true" type="tns:FECAEADetRequest" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="FECAEADetRequest">
+        <s:complexContent mixed="false">
+          <s:extension base="tns:FEDetRequest">
+            <s:sequence>
+              <s:element minOccurs="0" maxOccurs="1" name="CAEA" type="s:string" />
+              <s:element minOccurs="0" maxOccurs="1" name="CbteFchHsGen" type="s:string" />
+            </s:sequence>
+          </s:extension>
+        </s:complexContent>
+      </s:complexType>
+      <s:element name="FECAEARegInformativoResponse">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="FECAEARegInformativoResult" type="tns:FECAEAResponse" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:complexType name="FECAEAResponse">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="FeCabResp" type="tns:FECAEACabResponse" />
+          <s:element minOccurs="0" maxOccurs="1" name="FeDetResp" type="tns:ArrayOfFECAEADetResponse" />
+          <s:element minOccurs="0" maxOccurs="1" name="Events" type="tns:ArrayOfEvt" />
+          <s:element minOccurs="0" maxOccurs="1" name="Errors" type="tns:ArrayOfErr" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="FECAEACabResponse">
+        <s:complexContent mixed="false">
+          <s:extension base="tns:FECabResponse" />
+        </s:complexContent>
+      </s:complexType>
+      <s:complexType name="ArrayOfFECAEADetResponse">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="unbounded" name="FECAEADetResponse" nillable="true" type="tns:FECAEADetResponse" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="FECAEADetResponse">
+        <s:complexContent mixed="false">
+          <s:extension base="tns:FEDetResponse">
+            <s:sequence>
+              <s:element minOccurs="0" maxOccurs="1" name="CAEA" type="s:string" />
+            </s:sequence>
+          </s:extension>
+        </s:complexContent>
+      </s:complexType>
+      <s:element name="FECAEASolicitar">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="Auth" type="tns:FEAuthRequest" />
+            <s:element minOccurs="1" maxOccurs="1" name="Periodo" type="s:int" />
+            <s:element minOccurs="1" maxOccurs="1" name="Orden" type="s:short" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:element name="FECAEASolicitarResponse">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="FECAEASolicitarResult" type="tns:FECAEAGetResponse" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:complexType name="FECAEAGetResponse">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="ResultGet" type="tns:FECAEAGet" />
+          <s:element minOccurs="0" maxOccurs="1" name="Errors" type="tns:ArrayOfErr" />
+          <s:element minOccurs="0" maxOccurs="1" name="Events" type="tns:ArrayOfEvt" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="FECAEAGet">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="CAEA" type="s:string" />
+          <s:element minOccurs="1" maxOccurs="1" name="Periodo" type="s:int" />
+          <s:element minOccurs="1" maxOccurs="1" name="Orden" type="s:short" />
+          <s:element minOccurs="0" maxOccurs="1" name="FchVigDesde" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="FchVigHasta" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="FchTopeInf" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="FchProceso" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="Observaciones" type="tns:ArrayOfObs" />
+        </s:sequence>
+      </s:complexType>
+      <s:element name="FECAEASinMovimientoConsultar">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="Auth" type="tns:FEAuthRequest" />
+            <s:element minOccurs="0" maxOccurs="1" name="CAEA" type="s:string" />
+            <s:element minOccurs="1" maxOccurs="1" name="PtoVta" type="s:int" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:element name="FECAEASinMovimientoConsultarResponse">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="FECAEASinMovimientoConsultarResult" type="tns:FECAEASinMovConsResponse" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:complexType name="FECAEASinMovConsResponse">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="ResultGet" type="tns:ArrayOfFECAEASinMov" />
+          <s:element minOccurs="0" maxOccurs="1" name="Errors" type="tns:ArrayOfErr" />
+          <s:element minOccurs="0" maxOccurs="1" name="Events" type="tns:ArrayOfEvt" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="ArrayOfFECAEASinMov">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="unbounded" name="FECAEASinMov" nillable="true" type="tns:FECAEASinMov" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="FECAEASinMov">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="CAEA" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="FchProceso" type="s:string" />
+          <s:element minOccurs="1" maxOccurs="1" name="PtoVta" type="s:int" />
+        </s:sequence>
+      </s:complexType>
+      <s:element name="FECAEASinMovimientoInformar">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="Auth" type="tns:FEAuthRequest" />
+            <s:element minOccurs="1" maxOccurs="1" name="PtoVta" type="s:int" />
+            <s:element minOccurs="0" maxOccurs="1" name="CAEA" type="s:string" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:element name="FECAEASinMovimientoInformarResponse">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="FECAEASinMovimientoInformarResult" type="tns:FECAEASinMovResponse" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:complexType name="FECAEASinMovResponse">
+        <s:complexContent mixed="false">
+          <s:extension base="tns:FECAEASinMov">
+            <s:sequence>
+              <s:element minOccurs="0" maxOccurs="1" name="Resultado" type="s:string" />
+              <s:element minOccurs="0" maxOccurs="1" name="Errors" type="tns:ArrayOfErr" />
+              <s:element minOccurs="0" maxOccurs="1" name="Events" type="tns:ArrayOfEvt" />
+            </s:sequence>
+          </s:extension>
+        </s:complexContent>
+      </s:complexType>
+      <s:element name="FECAEAConsultar">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="Auth" type="tns:FEAuthRequest" />
+            <s:element minOccurs="1" maxOccurs="1" name="Periodo" type="s:int" />
+            <s:element minOccurs="1" maxOccurs="1" name="Orden" type="s:short" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:element name="FECAEAConsultarResponse">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="FECAEAConsultarResult" type="tns:FECAEAGetResponse" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:element name="FEParamGetCotizacion">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="Auth" type="tns:FEAuthRequest" />
+            <s:element minOccurs="0" maxOccurs="1" name="MonId" type="s:string" />
+            <s:element minOccurs="0" maxOccurs="1" name="FchCotiz" type="s:string" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:element name="FEParamGetCotizacionResponse">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="FEParamGetCotizacionResult" type="tns:FECotizacionResponse" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:complexType name="FECotizacionResponse">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="ResultGet" type="tns:Cotizacion" />
+          <s:element minOccurs="0" maxOccurs="1" name="Errors" type="tns:ArrayOfErr" />
+          <s:element minOccurs="0" maxOccurs="1" name="Events" type="tns:ArrayOfEvt" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="Cotizacion">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="MonId" type="s:string" />
+          <s:element minOccurs="1" maxOccurs="1" name="MonCotiz" type="s:double" />
+          <s:element minOccurs="0" maxOccurs="1" name="FchCotiz" type="s:string" />
+        </s:sequence>
+      </s:complexType>
+      <s:element name="FEParamGetTiposTributos">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="Auth" type="tns:FEAuthRequest" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:element name="FEParamGetTiposTributosResponse">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="FEParamGetTiposTributosResult" type="tns:FETributoResponse" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:complexType name="FETributoResponse">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="ResultGet" type="tns:ArrayOfTributoTipo" />
+          <s:element minOccurs="0" maxOccurs="1" name="Errors" type="tns:ArrayOfErr" />
+          <s:element minOccurs="0" maxOccurs="1" name="Events" type="tns:ArrayOfEvt" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="ArrayOfTributoTipo">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="unbounded" name="TributoTipo" nillable="true" type="tns:TributoTipo" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="TributoTipo">
+        <s:sequence>
+          <s:element minOccurs="1" maxOccurs="1" name="Id" type="s:short" />
+          <s:element minOccurs="0" maxOccurs="1" name="Desc" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="FchDesde" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="FchHasta" type="s:string" />
+        </s:sequence>
+      </s:complexType>
+      <s:element name="FEParamGetTiposMonedas">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="Auth" type="tns:FEAuthRequest" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:element name="FEParamGetTiposMonedasResponse">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="FEParamGetTiposMonedasResult" type="tns:MonedaResponse" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:complexType name="MonedaResponse">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="ResultGet" type="tns:ArrayOfMoneda" />
+          <s:element minOccurs="0" maxOccurs="1" name="Errors" type="tns:ArrayOfErr" />
+          <s:element minOccurs="0" maxOccurs="1" name="Events" type="tns:ArrayOfEvt" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="ArrayOfMoneda">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="unbounded" name="Moneda" nillable="true" type="tns:Moneda" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="Moneda">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="Id" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="Desc" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="FchDesde" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="FchHasta" type="s:string" />
+        </s:sequence>
+      </s:complexType>
+      <s:element name="FEParamGetTiposIva">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="Auth" type="tns:FEAuthRequest" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:element name="FEParamGetTiposIvaResponse">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="FEParamGetTiposIvaResult" type="tns:IvaTipoResponse" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:complexType name="IvaTipoResponse">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="ResultGet" type="tns:ArrayOfIvaTipo" />
+          <s:element minOccurs="0" maxOccurs="1" name="Errors" type="tns:ArrayOfErr" />
+          <s:element minOccurs="0" maxOccurs="1" name="Events" type="tns:ArrayOfEvt" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="ArrayOfIvaTipo">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="unbounded" name="IvaTipo" nillable="true" type="tns:IvaTipo" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="IvaTipo">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="Id" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="Desc" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="FchDesde" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="FchHasta" type="s:string" />
+        </s:sequence>
+      </s:complexType>
+      <s:element name="FEParamGetTiposOpcional">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="Auth" type="tns:FEAuthRequest" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:element name="FEParamGetTiposOpcionalResponse">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="FEParamGetTiposOpcionalResult" type="tns:OpcionalTipoResponse" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:complexType name="OpcionalTipoResponse">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="ResultGet" type="tns:ArrayOfOpcionalTipo" />
+          <s:element minOccurs="0" maxOccurs="1" name="Errors" type="tns:ArrayOfErr" />
+          <s:element minOccurs="0" maxOccurs="1" name="Events" type="tns:ArrayOfEvt" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="ArrayOfOpcionalTipo">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="unbounded" name="OpcionalTipo" nillable="true" type="tns:OpcionalTipo" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="OpcionalTipo">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="Id" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="Desc" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="FchDesde" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="FchHasta" type="s:string" />
+        </s:sequence>
+      </s:complexType>
+      <s:element name="FEParamGetTiposConcepto">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="Auth" type="tns:FEAuthRequest" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:element name="FEParamGetTiposConceptoResponse">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="FEParamGetTiposConceptoResult" type="tns:ConceptoTipoResponse" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:complexType name="ConceptoTipoResponse">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="ResultGet" type="tns:ArrayOfConceptoTipo" />
+          <s:element minOccurs="0" maxOccurs="1" name="Errors" type="tns:ArrayOfErr" />
+          <s:element minOccurs="0" maxOccurs="1" name="Events" type="tns:ArrayOfEvt" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="ArrayOfConceptoTipo">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="unbounded" name="ConceptoTipo" nillable="true" type="tns:ConceptoTipo" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="ConceptoTipo">
+        <s:sequence>
+          <s:element minOccurs="1" maxOccurs="1" name="Id" type="s:int" />
+          <s:element minOccurs="0" maxOccurs="1" name="Desc" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="FchDesde" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="FchHasta" type="s:string" />
+        </s:sequence>
+      </s:complexType>
+      <s:element name="FEParamGetPtosVenta">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="Auth" type="tns:FEAuthRequest" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:element name="FEParamGetPtosVentaResponse">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="FEParamGetPtosVentaResult" type="tns:FEPtoVentaResponse" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:complexType name="FEPtoVentaResponse">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="ResultGet" type="tns:ArrayOfPtoVenta" />
+          <s:element minOccurs="0" maxOccurs="1" name="Errors" type="tns:ArrayOfErr" />
+          <s:element minOccurs="0" maxOccurs="1" name="Events" type="tns:ArrayOfEvt" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="ArrayOfPtoVenta">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="unbounded" name="PtoVenta" nillable="true" type="tns:PtoVenta" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="PtoVenta">
+        <s:sequence>
+          <s:element minOccurs="1" maxOccurs="1" name="Nro" type="s:int" />
+          <s:element minOccurs="0" maxOccurs="1" name="EmisionTipo" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="Bloqueado" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="FchBaja" type="s:string" />
+        </s:sequence>
+      </s:complexType>
+      <s:element name="FEParamGetTiposCbte">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="Auth" type="tns:FEAuthRequest" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:element name="FEParamGetTiposCbteResponse">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="FEParamGetTiposCbteResult" type="tns:CbteTipoResponse" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:complexType name="CbteTipoResponse">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="ResultGet" type="tns:ArrayOfCbteTipo" />
+          <s:element minOccurs="0" maxOccurs="1" name="Errors" type="tns:ArrayOfErr" />
+          <s:element minOccurs="0" maxOccurs="1" name="Events" type="tns:ArrayOfEvt" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="ArrayOfCbteTipo">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="unbounded" name="CbteTipo" nillable="true" type="tns:CbteTipo" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="CbteTipo">
+        <s:sequence>
+          <s:element minOccurs="1" maxOccurs="1" name="Id" type="s:int" />
+          <s:element minOccurs="0" maxOccurs="1" name="Desc" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="FchDesde" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="FchHasta" type="s:string" />
+        </s:sequence>
+      </s:complexType>
+      <s:element name="FEParamGetCondicionIvaReceptor">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="Auth" type="tns:FEAuthRequest" />
+            <s:element minOccurs="0" maxOccurs="1" name="ClaseCmp" type="s:string" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:element name="FEParamGetCondicionIvaReceptorResponse">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="FEParamGetCondicionIvaReceptorResult" type="tns:CondicionIvaReceptorResponse" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:complexType name="CondicionIvaReceptorResponse">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="ResultGet" type="tns:ArrayOfCondicionIvaReceptor" />
+          <s:element minOccurs="0" maxOccurs="1" name="Errors" type="tns:ArrayOfErr" />
+          <s:element minOccurs="0" maxOccurs="1" name="Events" type="tns:ArrayOfEvt" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="ArrayOfCondicionIvaReceptor">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="unbounded" name="CondicionIvaReceptor" nillable="true" type="tns:CondicionIvaReceptor" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="CondicionIvaReceptor">
+        <s:sequence>
+          <s:element minOccurs="1" maxOccurs="1" name="Id" type="s:int" />
+          <s:element minOccurs="0" maxOccurs="1" name="Desc" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="Cmp_Clase" type="s:string" />
+        </s:sequence>
+      </s:complexType>
+      <s:element name="FEParamGetTiposDoc">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="Auth" type="tns:FEAuthRequest" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:element name="FEParamGetTiposDocResponse">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="FEParamGetTiposDocResult" type="tns:DocTipoResponse" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:complexType name="DocTipoResponse">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="ResultGet" type="tns:ArrayOfDocTipo" />
+          <s:element minOccurs="0" maxOccurs="1" name="Errors" type="tns:ArrayOfErr" />
+          <s:element minOccurs="0" maxOccurs="1" name="Events" type="tns:ArrayOfEvt" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="ArrayOfDocTipo">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="unbounded" name="DocTipo" nillable="true" type="tns:DocTipo" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="DocTipo">
+        <s:sequence>
+          <s:element minOccurs="1" maxOccurs="1" name="Id" type="s:int" />
+          <s:element minOccurs="0" maxOccurs="1" name="Desc" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="FchDesde" type="s:string" />
+          <s:element minOccurs="0" maxOccurs="1" name="FchHasta" type="s:string" />
+        </s:sequence>
+      </s:complexType>
+      <s:element name="FEParamGetTiposPaises">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="Auth" type="tns:FEAuthRequest" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:element name="FEParamGetTiposPaisesResponse">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="FEParamGetTiposPaisesResult" type="tns:FEPaisResponse" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:complexType name="FEPaisResponse">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="ResultGet" type="tns:ArrayOfPaisTipo" />
+          <s:element minOccurs="0" maxOccurs="1" name="Errors" type="tns:ArrayOfErr" />
+          <s:element minOccurs="0" maxOccurs="1" name="Events" type="tns:ArrayOfEvt" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="ArrayOfPaisTipo">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="unbounded" name="PaisTipo" nillable="true" type="tns:PaisTipo" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="PaisTipo">
+        <s:sequence>
+          <s:element minOccurs="1" maxOccurs="1" name="Id" type="s:short" />
+          <s:element minOccurs="0" maxOccurs="1" name="Desc" type="s:string" />
+        </s:sequence>
+      </s:complexType>
+      <s:element name="FEParamGetActividades">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="Auth" type="tns:FEAuthRequest" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:element name="FEParamGetActividadesResponse">
+        <s:complexType>
+          <s:sequence>
+            <s:element minOccurs="0" maxOccurs="1" name="FEParamGetActividadesResult" type="tns:FEActividadesResponse" />
+          </s:sequence>
+        </s:complexType>
+      </s:element>
+      <s:complexType name="FEActividadesResponse">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="1" name="ResultGet" type="tns:ArrayOfActividadesTipo" />
+          <s:element minOccurs="0" maxOccurs="1" name="Errors" type="tns:ArrayOfErr" />
+          <s:element minOccurs="0" maxOccurs="1" name="Events" type="tns:ArrayOfEvt" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="ArrayOfActividadesTipo">
+        <s:sequence>
+          <s:element minOccurs="0" maxOccurs="unbounded" name="ActividadesTipo" nillable="true" type="tns:ActividadesTipo" />
+        </s:sequence>
+      </s:complexType>
+      <s:complexType name="ActividadesTipo">
+        <s:sequence>
+          <s:element minOccurs="1" maxOccurs="1" name="Id" type="s:long" />
+          <s:element minOccurs="1" maxOccurs="1" name="Orden" type="s:short" />
+          <s:element minOccurs="0" maxOccurs="1" name="Desc" type="s:string" />
+        </s:sequence>
+      </s:complexType>
+    </s:schema>

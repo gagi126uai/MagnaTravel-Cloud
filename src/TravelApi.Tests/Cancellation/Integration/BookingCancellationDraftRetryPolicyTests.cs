@@ -163,6 +163,10 @@ public sealed class BookingCancellationDraftRetryPolicyTests
             ImporteNeto = 826.45m,
             ImporteIva = 173.55m,
             ReservaId = reserva.Id,
+            // Factura EMITIDA: DraftAsync cuenta como "activa" solo las que tienen CAE (fix 7abb84f). Sin CAE
+            // rebota con "no tiene factura activa". El valor es irrelevante (solo se chequea que no este vacio).
+            CAE = "68000000000000",
+            Resultado = "A",
             CreatedAt = DateTime.UtcNow,
         };
         ctx.Invoices.Add(invoice);
@@ -371,16 +375,12 @@ public sealed class BookingCancellationDraftRetryPolicyTests
         var seed = await SeedReservaAsync(ctx);
         var ncId = await SeedLiveCreditNoteAsync(ctx, seed);
 
-        // Una NC total VIVA anula la factura original: si la dejaramos activa, la
-        // reserva tendria DOS comprobantes activos (FC + NC) y el guard de multi-factura
-        // (INV-100, OnePerReservaInvoicePolicy) dispararia antes que el blindaje que este
-        // test verifica. Anulamos la original para que quede UNA sola factura activa (la NC)
-        // y el flujo llegue de verdad al caso (d) de TryResolveExistingBcAsync: ArcaRejected
-        // con NC viva -> rechazo INV-081.
-        var original = await ctx.Invoices.FirstAsync(i => i.Id == seed.InvoiceId);
-        original.AnnulmentStatus = AnnulmentStatus.Succeeded;
-        await ctx.SaveChangesAsync();
-
+        // La factura original queda ACTIVA (con CAE, no anulada): DraftAsync la cuenta como la unica factura
+        // de venta viva y llega a TryResolveExistingBcAsync. La NC (ncId) NO cuenta como factura de venta
+        // (fix 7773063: se excluyen NC/ND), asi que NO hay INV-100 por multi-comprobante. El caso que este
+        // test verifica es el (d): un BC ArcaRejected con NC viva (CreditNoteInvoiceId seteado) NO se libera
+        // -> rechazo INV-081. (Antes se anulaba la original creyendo que la NC contaba como factura; con la NC
+        // ya excluida, anularla dejaba CERO facturas activas y DraftAsync rebotaba por "sin factura activa".)
         var rejected = await SeedBcAsync(
             ctx, seed, BookingCancellationStatus.ArcaRejected, creditNoteInvoiceId: ncId);
 

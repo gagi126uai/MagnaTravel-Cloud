@@ -459,4 +459,13 @@ public class BookingCancellation : IHasPublicId
     // asi que el path mono-operador es byte-equivalente: 1 linea con bc.SupplierId.
     // ============================================================
     public ICollection<BookingCancellationLine> Lines { get; set; } = new List<BookingCancellationLine>();
+
+    // ============================================================
+    // ADR-042 (2026-07-01): hijas (una por factura de venta -> su NC) para el caso
+    // multi-factura multimoneda. El caso mono-factura tiene UNA hija que espeja el
+    // puntero principal (OriginatingInvoiceId/CreditNoteInvoiceId), byte-equivalente.
+    // La completitud de la anulacion (todas OK / parcial / todas fallan) se decide
+    // contando estas hijas. Ver BookingCancellationCreditNote.
+    // ============================================================
+    public ICollection<BookingCancellationCreditNote> CreditNotes { get; set; } = new List<BookingCancellationCreditNote>();
 }

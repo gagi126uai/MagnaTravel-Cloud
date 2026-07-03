@@ -136,6 +136,13 @@ public static class AuditActions
     /// </summary>
     public const string BookingCancellationArcaConfirmedManuallyNoOp = "BookingCancellationArcaConfirmedManually_NoOp";
 
+    /// <summary>
+    /// ADR-042 §3.6 (2026-07-02): un usuario reintento las notas de credito faltantes de una anulacion
+    /// multi-factura a medias (endpoint retry-credit-notes). Es una operacion fiscal iniciada por una persona:
+    /// deja rastro del actor aunque el retry solo re-encole (la NC sigue en emision).
+    /// </summary>
+    public const string BookingCancellationCreditNotesRetried = "BookingCancellationCreditNotesRetried";
+
     // ===== Modulo OperatorRefund (FC1.2.2) =====
 
     /// <summary>

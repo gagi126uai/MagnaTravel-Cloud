@@ -1029,9 +1029,11 @@ public sealed class BookingCancellationServiceF2_3IntegrationTests
                 "Aprobado: factura USD legacy registrada en PES debe bloquearse para no desfasar la NC",
                 CancellationToken.None));
 
-        // El mensaje menciona los dos codigos ARCA (DOL derivado del snapshot vs PES del origen).
-        Assert.Contains("DOL", ex.Message);
-        Assert.Contains("PES", ex.Message);
+        // El mensaje explica el desfasaje de moneda y que queda en revision manual. (Antes buscaba los codigos
+        // ARCA internos "DOL"/"PES"; el saneo de data-exposure los quito del mensaje de cara al usuario. Los
+        // codigos siguen en el audit/log, no en el Message.)
+        Assert.Contains("moneda", ex.Message);
+        Assert.Contains("revisión manual", ex.Message);
 
         // Audit del aborto GAP-1.
         var audit = await bundle.Ctx.AuditLogs.AsNoTracking()

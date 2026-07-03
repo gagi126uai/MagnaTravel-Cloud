@@ -38,6 +38,7 @@ import { ConfirmarMultaOperadorInline } from "../../cancellations/components/Con
 import { CerrarSinMultaInline } from "../../cancellations/components/CerrarSinMultaInline";
 import { DeshacerCierreSinMultaInline } from "../../cancellations/components/DeshacerCierreSinMultaInline";
 import { cancellationsApi } from "../../cancellations/api/cancellationsApi";
+import { contarNotasFaltantes, construirTextoFranjaEnRevision } from "../../cancellations/lib/multiCreditNoteFlow";
 import { hasPermission, isAdmin } from "../../../auth";
 import { calcularSugerenciaComposicion } from "../lib/pasajeroHint";
 import { EstadoCuentaResumen } from "../components/EstadoCuentaResumen";
@@ -684,6 +685,22 @@ export default function ReservaDetailPage() {
   // Se abre cuando el admin necesita reabrir el paso (el operador terminó cobrando algo).
   const [showDeshacerWaiveInline, setShowDeshacerWaiveInline] = useState(false);
 
+  // ADR-042 (2026-07-01): anulación con VARIAS facturas que quedó A MEDIAS (una nota de
+  // crédito salió y otra no). stuckCancellation guarda el BookingCancellationDto solo cuando
+  // el backend dice que se puede reintentar (canRetryCreditNotes=true); en cualquier otro caso
+  // queda en null y la franja "en revisión" no aparece. showRetryCancelInline abre el panel
+  // de reintento (Estado 5 → Estado 2 en adelante).
+  //
+  // Fix reviewer (2026-07-02): bcSiendoReintentado es una FOTO fija del BC tomada al hacer
+  // click en "Reintentar anulación", independiente de stuckCancellation. Es necesaria porque
+  // el propio panel de reintento refresca la reserva en cuanto sabe el resultado (onSilentRefresh),
+  // y ESE refresco puede volver stuckCancellation=null (si terminó de resolverse bien) — sin esta
+  // foto separada, el panel se quedaría sin la prop bookingCancellationToRetry a mitad de camino
+  // y el cartel de éxito/revisión nunca llegaría a verse.
+  const [stuckCancellation, setStuckCancellation] = useState(null);
+  const [showRetryCancelInline, setShowRetryCancelInline] = useState(false);
+  const [bcSiendoReintentado, setBcSiendoReintentado] = useState(null);
+
   // ADR-027: estado de carga del botón "Dar OK" (acknowledge-changes).
   // Evita doble click y da feedback visual al usuario mientras espera la respuesta del backend.
   const [acknowledging, setAcknowledging] = useState(false);
@@ -733,6 +750,31 @@ export default function ReservaDetailPage() {
   // Incrementa la clave de refresco del extracto. Se llama JUNTO a fetchReserva
   // en cada acción de plata, para que la reserva y el extracto queden sincronizados.
   const refrescarExtracto = () => setAccountRefreshKey((k) => k + 1);
+
+  // ADR-042 (2026-07-01): detecta si la anulación de esta reserva quedó "en revisión"
+  // (multi-factura, una nota de crédito salió y otra no). Confirmar la anulación SIEMPRE
+  // pone la reserva en estado "PendingOperatorRefund" (haya salido todo bien o a medias);
+  // por eso el chequeo va scoped a ese estado — no llama al backend en el resto de reservas.
+  // accountRefreshKey en las deps: así se re-consulta después de un reintento exitoso (la
+  // llamada de reintento también refresca el extracto, ver onSilentRefresh más abajo).
+  useEffect(() => {
+    if (!publicId || reserva?.status !== "PendingOperatorRefund") {
+      setStuckCancellation(null);
+      return;
+    }
+    let cancelado = false;
+    (async () => {
+      try {
+        const bc = await cancellationsApi.getByReserva(publicId);
+        if (!cancelado) setStuckCancellation(bc?.canRetryCreditNotes ? bc : null);
+      } catch {
+        // 404 (sin cancelación) o error de red: no mostramos la franja. No es un error visible
+        // para el usuario — el cartel normal de "esperando reembolso" ya cubre ese caso.
+        if (!cancelado) setStuckCancellation(null);
+      }
+    })();
+    return () => { cancelado = true; };
+  }, [publicId, reserva?.status, accountRefreshKey]);
 
   const [confirmConfig, setConfirmConfig] = useState({
     isOpen: false,
@@ -1362,6 +1404,76 @@ export default function ReservaDetailPage() {
         </div>
       ) : reserva.status === "PendingOperatorRefund" ? (
         (() => {
+          // ADR-042 (2026-07-01, Estado 5 de la spec): anulación multi-factura que quedó A
+          // MEDIAS. Reemplaza el cartel normal de "esperando reembolso": acá lo único accionable
+          // es completar la anulación, no el paso de la multa del operador (eso viene DESPUÉS,
+          // cuando termine de resolverse). La reserva queda de solo lectura salvo este botón.
+          //
+          // Fix reviewer (2026-07-02, punto 1): el panel de reintento usa bcSiendoReintentado
+          // (una FOTO fija tomada al abrirlo), NUNCA el stuckCancellation "vivo" — ese vive
+          // refrescándose y puede volverse null apenas el reintento resuelve bien, lo que
+          // desmontaría el panel antes de que el vendedor llegue a ver el cartel de éxito.
+          //
+          // Fix reviewer (2026-07-02, punto 3): la franja NUNCA se muestra al mismo tiempo que
+          // un panel de anulación abierto (ni el de reintento, ni el principal de "Anular
+          // reserva" en la solapa Cuenta) — ese panel ya está mostrando su propio cartel de
+          // resultado; duplicar la franja sería mostrar dos veces la misma información.
+          const mostrarFranjaEnRevision = Boolean(stuckCancellation) && !showRetryCancelInline && !showCancelInline;
+          const mostrarPanelDeReintento = showRetryCancelInline && bcSiendoReintentado;
+
+          if (mostrarFranjaEnRevision || mostrarPanelDeReintento) {
+            return (
+              <div className="space-y-3">
+                {mostrarFranjaEnRevision && (
+                  <div
+                    className="rounded-xl border border-orange-300 bg-orange-50 p-4 text-sm text-orange-900 dark:border-orange-700/50 dark:bg-orange-950/30 dark:text-orange-200"
+                    data-testid="banner-anulacion-en-revision"
+                    role="status"
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                      <span>
+                        <span aria-hidden="true">🟠</span>{" "}
+                        <strong className="font-bold">
+                          {construirTextoFranjaEnRevision(contarNotasFaltantes(stuckCancellation.creditNotes))}
+                        </strong>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          // Foto fija del BC en el momento del click (ver comentario de arriba).
+                          setBcSiendoReintentado(stuckCancellation);
+                          setShowRetryCancelInline(true);
+                        }}
+                        data-testid="btn-reintentar-anulacion"
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-orange-400 bg-orange-100 px-3 py-2 text-xs font-bold text-orange-800 hover:bg-orange-200 dark:border-orange-700 dark:bg-orange-900/40 dark:text-orange-200 dark:hover:bg-orange-900/60 transition-colors flex-shrink-0"
+                      >
+                        Reintentar anulación
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {mostrarPanelDeReintento && (
+                  // bookingCancellationToRetry=set → el panel arranca DIRECTO en "procesando"
+                  // reintentando esa cancelación puntual; nunca pasa por el formulario, así que
+                  // no necesita onCancelado (ese callback solo lo usa el flujo normal de anular).
+                  <CancelarReservaInline
+                    reserva={reserva}
+                    bookingCancellationToRetry={bcSiendoReintentado}
+                    onSilentRefresh={() => {
+                      refrescarExtracto();
+                      fetchReserva({ showLoading: false, preserveOnError: true });
+                    }}
+                    onCerrar={() => {
+                      setShowRetryCancelInline(false);
+                      setBcSiendoReintentado(null);
+                    }}
+                  />
+                )}
+              </div>
+            );
+          }
+
           // 2026-06-28: detectamos el estado "cerrado sin multa" desde el campo dedicado.
           // Fix 2026-06-29 (reviewer): el campo `canConfirmOperatorPenalty.reason` nunca lleva
           // "OperatorPenaltyWaived" en el backend — era un campo muerto. El backend ahora expone
@@ -2009,6 +2121,13 @@ export default function ReservaDetailPage() {
                     fetchReserva({ showLoading: false, preserveOnError: true });
                   }}
                   onCerrar={() => setShowCancelInline(false)}
+                  // ADR-042: en el flujo multi-factura, el panel queda abierto mostrando el
+                  // cartel de éxito/revisión (no se cierra solo) — este callback refresca la
+                  // reserva/extracto en segundo plano apenas se sabe el resultado de las notas.
+                  onSilentRefresh={() => {
+                    refrescarExtracto();
+                    fetchReserva({ showLoading: false, preserveOnError: true });
+                  }}
                 />
               )}
 

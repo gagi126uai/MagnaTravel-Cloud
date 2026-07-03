@@ -445,23 +445,25 @@ public class Adr025PartialAndMultiOperatorCancellationTests
     }
 
     [Fact]
-    public async Task Draft_TwoLiveSaleInvoices_StillTriggersInv100()
+    public async Task Draft_TwoLiveSaleInvoices_DoesNotTriggerInv100_Adr042()
     {
         using var ctx = NewDbContext();
         var (reserva, _, _, _, _, _) = await SeedAsync(ctx, addSecondOperatorService: false);
         var service = BuildService(ctx);
 
-        // La politica OnePerReservaInvoicePolicy (default true) se mantiene: DOS facturas
-        // de venta vivas SI deben disparar INV-100.
+        // ADR-042 (2026-07-01): se LEVANTA INV-100 para el caso multi-factura con CAE. DOS facturas de venta
+        // vivas ahora DRAFTEA normal (al confirmar se emite una NC por factura). El puntero PRINCIPAL queda en
+        // la mas reciente por CreatedAt (numero 68).
         SeedInvoice(ctx, reserva.Id, tipoComprobante: 11, numeroComprobante: 67);
-        SeedInvoice(ctx, reserva.Id, tipoComprobante: 11, numeroComprobante: 68);
+        var mostRecent = SeedInvoice(ctx, reserva.Id, tipoComprobante: 11, numeroComprobante: 68);
         await ctx.SaveChangesAsync();
 
-        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
-            service.DraftAsync(
-                new DraftCancellationRequest(reserva.PublicId, "Dos facturas de venta vivas"),
-                "vendedor-1", "Vendedor", CancellationToken.None));
-        Assert.Equal("INV-100", ex.InvariantCode);
+        var dto = await service.DraftAsync(
+            new DraftCancellationRequest(reserva.PublicId, "Dos facturas de venta vivas (multi-factura)"),
+            "vendedor-1", "Vendedor", CancellationToken.None);
+
+        var bc = await ctx.BookingCancellations.FirstAsync(b => b.PublicId == dto.PublicId);
+        Assert.Equal(mostRecent.Id, bc.OriginatingInvoiceId);
     }
 
     [Fact]
@@ -558,24 +560,25 @@ public class Adr025PartialAndMultiOperatorCancellationTests
     }
 
     [Fact]
-    public async Task Draft_TwoLiveSaleInvoicesWithCae_StillTriggersInv100_MultiCurrencyPreserved()
+    public async Task Draft_TwoLiveSaleInvoicesWithCae_DoesNotTriggerInv100_MultiCurrencyEnabled_Adr042()
     {
         using var ctx = NewDbContext();
         var (reserva, _, _, _, _, _) = await SeedAsync(ctx, addSecondOperatorService: false);
         var service = BuildService(ctx);
 
-        // Caso legitimo multimoneda (USD + ARS): DOS facturas de venta EMITIDAS (con CAE).
-        // El fix NO debe suavizar esto: INV-100 debe seguir disparando (es el caso real
-        // "anular multi-factura" que se construira aparte).
+        // ADR-042 (2026-07-01): caso legitimo multimoneda (USD + ARS). DOS facturas de venta EMITIDAS (con CAE)
+        // ahora se anulan con una NC por factura -> DRAFTEA normal (ya NO dispara INV-100). Es exactamente el
+        // caso "anular multi-factura" que este ADR habilita.
         SeedInvoice(ctx, reserva.Id, tipoComprobante: 11, numeroComprobante: 77);
-        SeedInvoice(ctx, reserva.Id, tipoComprobante: 11, numeroComprobante: 78);
+        var mostRecent = SeedInvoice(ctx, reserva.Id, tipoComprobante: 11, numeroComprobante: 78);
         await ctx.SaveChangesAsync();
 
-        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
-            service.DraftAsync(
-                new DraftCancellationRequest(reserva.PublicId, "Dos facturas emitidas con CAE"),
-                "vendedor-1", "Vendedor", CancellationToken.None));
-        Assert.Equal("INV-100", ex.InvariantCode);
+        var dto = await service.DraftAsync(
+            new DraftCancellationRequest(reserva.PublicId, "Dos facturas emitidas con CAE (multimoneda)"),
+            "vendedor-1", "Vendedor", CancellationToken.None);
+
+        var bc = await ctx.BookingCancellations.FirstAsync(b => b.PublicId == dto.PublicId);
+        Assert.Equal(mostRecent.Id, bc.OriginatingInvoiceId);
     }
 
     [Fact]

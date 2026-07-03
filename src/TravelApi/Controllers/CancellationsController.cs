@@ -53,15 +53,18 @@ public class CancellationsController : ControllerBase
     // ADR-013: para resolver server-side si el usuario puede clasificar la penalidad
     // como ingreso propio de la agencia (permiso elevado que dispara la ND fiscal).
     private readonly IUserPermissionResolver _permissionResolver;
+    private readonly ILogger<CancellationsController> _logger;
 
     public CancellationsController(
         IBookingCancellationService bcService,
         IOwnershipResolver ownershipResolver,
-        IUserPermissionResolver permissionResolver)
+        IUserPermissionResolver permissionResolver,
+        ILogger<CancellationsController> logger)
     {
         _bcService = bcService;
         _ownershipResolver = ownershipResolver;
         _permissionResolver = permissionResolver;
+        _logger = logger;
     }
 
     /// <summary>
@@ -381,6 +384,65 @@ public class CancellationsController : ControllerBase
         }
         // BusinessInvariantViolationException (INV-ADR014-RETRY-* + permiso) la atrapa el GlobalExceptionHandler
         // (409 con invariantCode), mismo criterio que ConfirmPenalty.
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+        }
+    }
+
+    /// <summary>
+    /// ADR-042 §3.6 (2026-07-01): reintenta SOLO las notas de credito faltantes de una anulacion multi-factura
+    /// que quedo a medias (una NC salio y otra no). Idempotente: no re-emite la NC que ya salio; serializado
+    /// bajo el mismo lock del padre que los callbacks de ARCA. Destraba la reserva desde la UI ("Reintentar la
+    /// que falta" / "Reintentar anulacion").
+    ///
+    /// <para><b>Permiso</b>: MISMO que anular la reserva (<see cref="Permissions.ReservasCancel"/> + ownership),
+    /// enforzado por los atributos server-side. No se restringe a Admin: reintentar no es deshacer nada, es
+    /// COMPLETAR lo que ya empezo (P7 de la spec UX).</para>
+    ///
+    /// <para><b>Mapeo de errores</b>: 404 (BC no existe); 409 (INV-042-RETRY-001 estado no reintentable /
+    /// CONCURRENT_EDIT); 503 (DB caida). Las <c>BusinessInvariantViolationException</c> las mapea el
+    /// GlobalExceptionHandler a 409.</para>
+    /// </summary>
+    [HttpPost("{publicId:guid}/retry-credit-notes")]
+    [RequirePermission(Permissions.ReservasCancel)]
+    [RequireOwnership(OwnedEntity.BookingCancellation, "publicId", bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<ActionResult<BookingCancellationDto>> RetryCreditNotes(
+        Guid publicId,
+        CancellationToken cancellationToken)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
+        var userName = User.FindFirst("FullName")?.Value ?? User.FindFirst(ClaimTypes.Name)?.Value;
+
+        try
+        {
+            var dto = await _bcService.RetryCreditNotesAsync(publicId, userId, userName, cancellationToken);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return Conflict(new
+            {
+                code = "CONCURRENT_EDIT",
+                message = "Otra edicion fue procesada primero, reintente.",
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Data-exposure (2026-07-02): NUNCA devolver ex.Message crudo en el body. Un InvalidOperationException
+            // aca puede venir de .NET/EF por una carrera (ej. "Sequence contains no elements." si el BC
+            // desaparece, o "The instance of entity type 'BookingCancellation' cannot be tracked ... {Id: 42}"
+            // — nombre de entidad + Id interno). El crudo va SOLO al log; al usuario un generico en criollo.
+            _logger.LogWarning(ex,
+                "retry-credit-notes: InvalidOperationException para BC {PublicId} (usuario {UserId}).",
+                publicId, userId);
+            return Conflict(new { message = "No se pudo completar la operación. Volvé a intentar." });
+        }
+        // BusinessInvariantViolationException (INV-042-RETRY-001) la atrapa el GlobalExceptionHandler (409).
         catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
         {
             return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());

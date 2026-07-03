@@ -7,6 +7,7 @@ using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Exceptions;
 using TravelApi.Domain.Helpers;
+using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Infrastructure.Services;
@@ -524,6 +525,44 @@ public class OperatorRefundService : IOperatorRefundService
                 nameof(request));
         }
 
+        // ADR-042 §3.3.2 (C1, 2026-07-01): resolver la moneda del saldo a favor. El minteo es 1:1 con lo que
+        // devolvio el operador (allocation.NetAmount, en refund.Currency) — NUNCA se inventa FX ni se mintea
+        // plata que no entro. Pero SOLO se mintea si esa moneda coincide con la de alguna obligacion imputada
+        // del cliente. Divergencia (operador reembolsa en moneda != obligacion) -> revision manual, mismo
+        // criterio conservador que el pre-flight de TC=1. Sin obligaciones imputadas (solo pagos a cuenta) ->
+        // a cuenta = moneda de pago, se mintea. El discriminador de la obligacion es Payment.ImputedCurrency
+        // (ADR-021), no un vinculo pago<->factura (LinkedInvoiceId es informativo).
+        //
+        // TOPE del credito (S2 review 2026-07-02): el MONTO minteado (allocation.NetAmount) lo acota el cap del
+        // operator-refund — refund.AllocatedAmount += NetAmount con CHECK SQL AllocatedAmount <= ReceivedAmount
+        // (chk_OperatorRefundsReceived_allocated_not_exceeds, aplicado en el SaveChanges final). O sea, el saldo
+        // a favor esta acotado por lo EFECTIVAMENTE DEVUELTO por el operador. En el caso normal eso es <= lo
+        // cobrado al cliente por construccion (markup). El "tope = cobrado" estricto por-moneda de §3.3.2 NO se
+        // enforce como segundo candado aca (seria redundante en el caso normal y un cambio de politica del
+        // operator-refund fuera del alcance de C1). Ver CreditAllocationCurrencyResolver para el detalle.
+        var obligationCurrencies = await _db.Payments
+            .Where(p => p.ReservaId == bc.ReservaId
+                     && !p.IsDeleted
+                     && p.Status != "Cancelled"
+                     && p.ImputedCurrency != null)
+            .Select(p => p.ImputedCurrency!)
+            .Distinct()
+            .ToListAsync(ct);
+
+        var creditDecision = CreditAllocationCurrencyResolver.ResolveCreditCurrency(
+            refund.Currency, obligationCurrencies);
+        if (creditDecision.RequiresManualReview)
+        {
+            _logger.LogWarning(
+                "metric:operator_refund_credit_currency_divergence | BcId={BcId} RefundCurrency={RefundCurrency} " +
+                "ObligationCurrencies={ObligationCurrencies}",
+                bc.Id, refund.Currency, string.Join("/", obligationCurrencies));
+            throw new BusinessInvariantViolationException(
+                "El reembolso del operador esta en una moneda distinta de la que el cliente tiene registrada. " +
+                "Revisalo manualmente antes de generar el saldo a favor.",
+                invariantCode: "INV-042-CREDIT-CURRENCY");
+        }
+
         // Pasamos la entidad y NO el Id, porque al momento de esta llamada
         // allocation.Id == 0 (todavia no se persistio — HC1 plan v3: un solo
         // SaveChanges al final). EF8 resuelve la FK al hacer SaveChanges en
@@ -535,7 +574,7 @@ public class OperatorRefundService : IOperatorRefundService
             operatorRefundAllocation: allocation,
             customerId: bc.CustomerId,
             netAmount: allocation.NetAmount,
-            currency: refund.Currency,
+            currency: creditDecision.Currency,
             userId: userId,
             userName: userName,
             ct: ct);

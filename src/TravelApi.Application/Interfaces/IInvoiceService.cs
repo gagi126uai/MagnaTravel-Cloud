@@ -55,6 +55,22 @@ public interface IInvoiceService
         CancellationToken ct,
         int? approvalRequestId = null);
 
+    /// <summary>
+    /// ADR-042 F1 (2026-07-02): agenda la anulacion de una factura que el caller YA marco
+    /// <c>AnnulmentStatus=Pending</c> BAJO SU PROPIO LOCK (retry de NC multi-factura serializado por el
+    /// <c>FOR UPDATE</c> del BC). A diferencia de <see cref="EnqueueAnnulmentAsync"/>, NO re-aplica el guard
+    /// "Pending -&gt; throw" (la marca es propia del retry, no un doble-click) ni re-escribe AnnulmentStatus:
+    /// solo agenda el job de Hangfire (I/O fuera del lock). Sigue rechazando Succeeded (no re-anular una
+    /// factura ya anulada). Es <c>requesterIsAdmin</c> por definicion (la anulacion se autorizo al confirmar).
+    /// </summary>
+    Task EnqueueAnnulmentRetryAsync(
+        int id,
+        string userId,
+        string? userName,
+        string? reason,
+        int? approvalRequestId,
+        CancellationToken ct);
+
     // Background Job method
     // approvalRequestId nullable: si null el job no consume approval (caso Admin
     // o setting off). Si tiene valor, se marca Consumed al confirmar NC en AFIP.

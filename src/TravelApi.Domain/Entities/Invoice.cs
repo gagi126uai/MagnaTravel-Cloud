@@ -108,6 +108,19 @@ public class Invoice : IHasPublicId
     [MaxLength(500)]
     public string? ExchangeRateJustification { get; set; }
 
+    /// <summary>
+    /// ADR-042 §3.3.1 (2026-07-01): valor fiscal <c>CanMisMonExt</c> ("Cancela en Misma Moneda
+    /// Extranjera", RG 5616/2024) CONGELADO al emitir este comprobante. <c>null</c> = pesos/no aplica
+    /// (no se emite el nodo, byte-identico al historico); <c>'S'</c>/<c>'N'</c> para divisa. Hoy toda
+    /// divisa emite <c>'N'</c> (factura USD, cobra pesos); el camino <c>'S'</c> no se construye aun.
+    ///
+    /// <para><b>Espejado</b>: la NC/ND ESPEJA este valor de su comprobante original (igual que hereda
+    /// <c>MonId</c>/<c>MonCotiz</c>), nunca lo redecide. Un par NC/original con distinto valor rompe el
+    /// libro IVA y puede rebotar el CAE. Ver <see cref="TravelApi.Domain.Reservations.CanMisMonExtResolver"/>.</para>
+    /// </summary>
+    [MaxLength(1)]
+    public string? CanMisMonExt { get; set; }
+
     public bool WasForced { get; set; }
     public string? ForceReason { get; set; }
     public string? ForcedByUserId { get; set; }

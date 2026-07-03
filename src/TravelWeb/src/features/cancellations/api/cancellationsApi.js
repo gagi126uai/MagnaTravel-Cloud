@@ -12,6 +12,7 @@
  *   - GET    /api/cancellations/:id           (estado actual)
  *   - GET    /api/cancellations/by-reserva/:reservaPublicId (cancelacion vigente de una reserva)
  *   - GET    /api/cancellations/debit-notes/pending (bandeja back-office)
+ *   - POST   /api/cancellations/:id/retry-credit-notes (ADR-042: reintenta NC faltantes de anulacion multi-factura)
  */
 
 import { api } from "../../../api";
@@ -208,6 +209,18 @@ export const cancellationsApi = {
    */
   annulWithCredit: (reservaPublicId, reason) =>
     api.post(`/reservas/${reservaPublicId}/annul-with-credit`, { reason }),
+
+  /**
+   * ADR-042 (2026-07-01): reintenta SOLO las notas de crédito faltantes de una anulación
+   * multi-factura que quedó a medias (una NC salió y otra no). Idempotente: no re-emite la
+   * NC que ya salió ni duplica. Mismo permiso que anular (reservas.cancel + ownership) —
+   * reintentar no es "deshacer", es completar lo que ya se autorizó al confirmar.
+   *
+   * @param {string} publicId - GUID del BookingCancellation.
+   * @returns {Promise<BookingCancellationDto>} - El BC actualizado (CreditNotes con los nuevos Pending).
+   */
+  retryCreditNotes: (publicId) =>
+    api.post(`/cancellations/${publicId}/retry-credit-notes`),
 };
 
 // ============================================================================
