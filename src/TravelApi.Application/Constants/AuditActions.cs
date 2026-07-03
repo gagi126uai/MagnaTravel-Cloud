@@ -299,6 +299,20 @@ public static class AuditActions
     public const string BookingCancellationAbandonedByOperator = "BookingCancellationAbandonedByOperator";
 
     /// <summary>
+    /// (2026-07-03): una anulacion quedo firme (NC total con CAE) pero el operador NO tiene NADA que devolver
+    /// (receivable vivo $0 en TODAS las monedas — tipico cuando la agencia nunca le pago nada al operador por ese
+    /// viaje). En vez de dejarla colgada en <c>AwaitingOperatorRefund</c> para siempre (un limbo: no se puede
+    /// registrar reembolso porque no hay plata a recibir, ni pagar al operador porque la reserva ya esta anulada),
+    /// se cierra DIRECTO: BC <c>AwaitingOperatorRefund</c>/<c>AbandonedByOperator</c> -> <c>Closed</c> y la RESERVA
+    /// <c>PendingOperatorRefund</c> -> <c>Cancelled</c>. Se dispara en la transicion post-CAE (la reserva nace sin
+    /// receivable) o en el barrido nocturno (cierra las que ya quedaron trabadas asi). NO mueve plata ni emite/anula
+    /// comprobantes fiscales (la NC ya salio). El detail JSON lleva la cancelacion, la reserva, <c>zeroReceivable</c>
+    /// y el <c>origin</c> (transicion|barrido) — NUNCA datos sensibles. NO se cierra si la multa del operador sigue
+    /// pendiente de gestion (su Nota de Debito puede tener que emitirse primero).
+    /// </summary>
+    public const string BookingCancellationClosedNoOperatorRefundDue = "BookingCancellationClosedNoOperatorRefundDue";
+
+    /// <summary>
     /// ADR-041 TANDA 4 (2026-06-28): se REABRIO una cancelacion <c>AbandonedByOperator</c> para registrar un
     /// REEMBOLSO TARDIO del operador (el operador devolvio plata DESPUES de que el plazo venció y la cuenta se
     /// dio por perdida). La cancelacion vuelve a <c>AwaitingOperatorRefund</c> con un nuevo plazo; la RESERVA NO

@@ -12,6 +12,7 @@ using TravelApi.Domain.Exceptions;
 using TravelApi.Domain.Helpers;
 using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
+using TravelApi.Infrastructure.Reservations; // SupplierCancellationCircuitReader (fuente unica del receivable del operador)
 using TravelApi.Infrastructure.Services.Reservations; // MutationGuards (candado fiscal CAE/voucher, SEC-B1)
 
 namespace TravelApi.Infrastructure.Services;
@@ -2339,11 +2340,24 @@ public class BookingCancellationService
         bc.CreditNoteInvoiceId = creditNote.Id;
         bc.ArcaConfirmedManuallyAt = DateTime.UtcNow;
         bc.ArcaConfirmedManuallyByUserId = userId;
-        var reservaFromStatusForce = bc.Reserva.Status;
-        bc.Reserva.Status = EstadoReserva.PendingOperatorRefund;
-        // ADR-020 F6 (M7): rastro aditivo del cambio de estado (escape hatch fiscal manual).
-        LogReservaStatusChange(bc.Reserva, reservaFromStatusForce, EstadoReserva.PendingOperatorRefund,
-            userId, userName, "Cancelacion (ADR-002): confirmacion fiscal forzada por admin, a la espera del reembolso del operador.");
+
+        // (2026-07-03) ¿Cerrar directo por no haber reembolso pendiente del operador? (mismo criterio que los
+        // callbacks automaticos). Usamos la guarda anti-timing por RefundCap (no depende de que el servicio ya este
+        // Cancelado), asi es correcto aunque FinalizeForceCloseAsync recien cancele los servicios mas abajo.
+        // FinalizeForceCloseAsync corre igual (cancela servicios + recalcula plata + consume el approval); no lee
+        // bc.Status, asi que dejar el BC en Closed es compatible.
+        if (await ShouldAutoCloseWithoutOperatorRefundAsync(bc, ct))
+        {
+            ApplyAutoCloseWithoutOperatorRefund(bc, origin: "transicion");
+        }
+        else
+        {
+            var reservaFromStatusForce = bc.Reserva.Status;
+            bc.Reserva.Status = EstadoReserva.PendingOperatorRefund;
+            // ADR-020 F6 (M7): rastro aditivo del cambio de estado (escape hatch fiscal manual).
+            LogReservaStatusChange(bc.Reserva, reservaFromStatusForce, EstadoReserva.PendingOperatorRefund,
+                userId, userName, "Cancelacion (ADR-002): confirmacion fiscal forzada por admin, a la espera del reembolso del operador.");
+        }
 
         await FinalizeForceCloseAsync(bc, approval, creditNote, request.Reason, userId, userName, ct);
 
@@ -2586,9 +2600,6 @@ public class BookingCancellationService
             .Select(bc => bc.Id)
             .ToListAsync(ct);
 
-        if (expiredIds.Count == 0)
-            return 0;
-
         var abandoned = 0;
         foreach (var bcId in expiredIds)
         {
@@ -2620,6 +2631,11 @@ public class BookingCancellationService
                 "ProcessExpiredOperatorRefunds: {Abandoned} cancelacion(es) marcadas AbandonedByOperator por plazo de reembolso vencido (de {Candidates} candidatas).",
                 abandoned, expiredIds.Count);
         }
+
+        // (2026-07-03) MISMA corrida: cerrar las anulaciones trabadas sin reembolso pendiente del operador
+        // (receivable $0). Se corre DESPUES del abandono: una Awaiting vencida con $0 pasa a Abandoned arriba y aca
+        // se cierra en el mismo barrido. Es independiente y defensivo (no aborta si el paso anterior no cerro nada).
+        await CloseZeroReceivableCancellationsAsync(ct);
 
         return abandoned;
     }
@@ -2690,6 +2706,240 @@ public class BookingCancellationService
         _logger.LogWarning(
             "BC {BcPublicId}: marcada AbandonedByOperator (plazo de reembolso {DueBy:o} vencido). Reserva cerrada (Cancelled).",
             bc.PublicId, bc.OperatorRefundDueBy);
+
+        return true;
+    }
+
+    // =========================================================================
+    // (2026-07-03) Cierre AUTOMATICO de anulaciones SIN reembolso pendiente del operador.
+    //
+    // Problema (caso real prod #F-2026-1025): cuando una anulacion queda firme (la NC total obtiene CAE) el BC
+    // pasaba SIEMPRE a AwaitingOperatorRefund y la reserva a PendingOperatorRefund, sin chequear si el operador
+    // realmente debe devolver algo. Si la agencia NUNCA le pago nada al operador por ese viaje (receivable $0), la
+    // anulacion quedaba en un LIMBO permanente: no se puede registrar reembolso (no hay plata a recibir), no se puede
+    // pagar al operador (la reserva ya esta anulada), y la reserva mostraba el chip "Esperando reembolso" para
+    // siempre. La decision del dueño (2026-07-03): en ese caso cerrar DIRECTO (BC -> Closed, reserva -> Cancelled),
+    // tanto en la transicion post-CAE como con un barrido nocturno que cierra las que ya quedaron trabadas.
+    //
+    // NO se toca el circuito fiscal: el cierre NO emite ni anula NC/ND. Solo cambia estados + auditoria.
+    // =========================================================================
+
+    /// <summary>
+    /// (2026-07-03) ¿Esta anulacion, ya firme, quedaria en un limbo "esperando reembolso" eterno porque el operador
+    /// NO tiene NADA que devolver? true cuando el receivable vivo es $0 en TODAS las monedas (tipico si la agencia
+    /// nunca le pago nada al operador por ese viaje) Y no hay una multa del operador pendiente de gestion.
+    ///
+    /// <para><b>Guard de la multa</b>: devuelve false (NO cerrar) si todavia hay una multa del operador pendiente de
+    /// confirmar (la confirmacion diferida que emite la Nota de Debito) o una ND a medio emitir esperando reintento.
+    /// Aunque no haya plata que recuperar, cerrar antes sacaria esa multa del radar de las bandejas que filtran por
+    /// estado. Primero se resuelve la multa (bandeja de NDs); recien despues el barrido cierra la anulacion.</para>
+    ///
+    /// <para>Usa la MISMA fuente unica del receivable que el extracto y la solapa "Reembolsos"
+    /// (<see cref="SupplierCancellationCircuitReader.LiveReceivableForLine"/>), asi los tres numeros no pueden
+    /// divergir. Requiere <c>bc.Reserva</c> cargada; las lineas se leen frescas (los caminos de transicion no las
+    /// incluyen). READ-ONLY: no persiste nada.</para>
+    /// </summary>
+    private async Task<bool> ShouldAutoCloseWithoutOperatorRefundAsync(BookingCancellation bc, CancellationToken ct)
+    {
+        // 1) Guard de la multa: si sigue pendiente de gestion, NO cerramos (ver el resumen).
+        if (await HasPendingOperatorPenaltyManagementAsync(bc, ct))
+            return false;
+
+        // 2) ¿Queda algo que el operador deba devolver? El receivable "me tiene que devolver" se DERIVA de las
+        //    lineas (fuente unica del extracto). En los caminos de transicion las lineas no vienen cargadas: las
+        //    leemos frescas por Id (AsNoTracking, solo lectura, no interfiere con el ChangeTracker del flujo).
+        var lines = await _db.BookingCancellationLines
+            .AsNoTracking()
+            .Where(l => l.BookingCancellationId == bc.Id)
+            .ToListAsync(ct);
+
+        // Sin lineas NO cerramos (conservador): una cancelacion moderna (ADR-025/042) o backfilleada siempre tiene
+        // lineas, asi que "cero lineas" es una BC legacy vieja cuyo reembolso esperado se registro a nivel del BC
+        // (<c>EstimatedRefundAmount</c>), no en lineas. Ahi el receivable-por-linea NO es la fuente correcta y podria
+        // haber plata que el operador debe: dejamos esa BC como esta (se resuelve a mano) en vez de cerrarla a ciegas.
+        if (lines.Count == 0)
+            return false;
+
+        var serviceCountsAsDebt = await SupplierCancellationCircuitReader
+            .LoadServiceDebtCountingAsync(_db, lines, ct);
+
+        // Receivable vivo total con la MISMA formula del extracto / solapa "Reembolsos" (fuente unica, no divergen).
+        decimal liveReceivable = lines.Sum(l =>
+            SupplierCancellationCircuitReader.LiveReceivableForLine(l, bc, serviceCountsAsDebt, l.SupplierId, _logger));
+
+        // Guarda anti-timing + alcance EXACTO del cierre (security review M1, 2026-07-03): solo cerramos cuando
+        // NUNCA hubo circuito de reembolso con el operador — todas las lineas con RefundCap == 0 (no se le pago
+        // nada reembolsable) y ReceivedRefundAmount == 0 (nunca entro un reembolso). Esto:
+        //  (a) cubre el caso decidido por el dueño ("nunca le pagaste nada al operador" -> limbo);
+        //  (b) evita el corner de timing (un cap > 0 con servicio aun no cancelado bloquea el cierre); y
+        //  (c) EXCLUYE a proposito las BCs totalmente reembolsadas (cap == recibido > 0): cerrarlas dejaria sin
+        //      camino de UI el void de esa allocation (OnAllocationVoidedAsync no reabre desde Closed) — si el
+        //      reembolso registrado despues rebota, el receivable resucitado quedaria varado. Esas BCs se cierran
+        //      por su via normal (aplicacion del credito al cliente -> OnAllCreditConsumedAsync).
+        bool neverHadOperatorRefundCircuit = lines.All(l => l.RefundCap == 0m && l.ReceivedRefundAmount == 0m);
+
+        return liveReceivable <= 0m && neverHadOperatorRefundCircuit;
+    }
+
+    /// <summary>
+    /// (2026-07-03) ¿La multa del operador de esta cancelacion sigue pendiente de gestion? true si (a) hay una multa
+    /// pendiente de CONFIRMAR (la confirmacion diferida que emite la ND, misma regla que
+    /// <see cref="EvaluateCanConfirmPenalty"/>) o (b) hay una Nota de Debito a medio emitir (Pending/Failed)
+    /// esperando reintento. En cualquiera de esos casos NO se debe cerrar la anulacion todavia (la multa se resuelve
+    /// primero desde la bandeja de NDs). Requiere <c>bc.Status</c> ya en un estado post-NC (lo esta en los sitios que
+    /// la llaman: transicion recien-firme y barrido sobre Awaiting/Abandoned).
+    /// </summary>
+    private async Task<bool> HasPendingOperatorPenaltyManagementAsync(BookingCancellation bc, CancellationToken ct)
+    {
+        var settings = await _settings.GetEntityAsync(ct);
+        var fields = new PenaltyConfirmabilityFields(
+            bc.Status, bc.CreditNoteInvoiceId, bc.PenaltyStatus, bc.DebitNoteInvoiceId, bc.DebitNoteStatus);
+
+        // (a) Multa pendiente de confirmar (emitiria la ND). Misma derivacion canonica H3 que usa la reserva.
+        var (canConfirm, _) = EvaluateCanConfirmPenalty(fields, settings.EnableCancellationDebitNote);
+        if (canConfirm)
+            return true;
+
+        // (b) ND ya en juego pero incompleta (encolada o fallida esperando reintento): el caso #F-2026-1025 tipico.
+        //     No cerrar hasta que la ND se emita o se resuelva por la bandeja / el endpoint de reintento.
+        if (bc.DebitNoteStatus == DebitNoteStatus.Pending || bc.DebitNoteStatus == DebitNoteStatus.Failed)
+            return true;
+
+        return false;
+    }
+
+    /// <summary>
+    /// (2026-07-03) Aplica el cierre directo de una anulacion sin reembolso pendiente: BC -> <c>Closed</c> (con
+    /// <c>ClosedAt</c>) y la reserva <c>PendingOperatorRefund</c> -> <c>Cancelled</c>, con su rastro de cambio de
+    /// estado (motivo en criollo, se ve en el historial de la reserva) y el audit de negocio. NO persiste (el caller
+    /// cierra con su SaveChanges) NI toca comprobantes fiscales. Precondicion: el cierre corresponde
+    /// (<see cref="ShouldAutoCloseWithoutOperatorRefundAsync"/> dio true) y <c>bc.Reserva</c> esta cargada.
+    ///
+    /// <para><paramref name="origin"/> distingue en la auditoria si el cierre lo disparo la transicion post-CAE
+    /// ("transicion") o el barrido nocturno ("barrido").</para>
+    /// </summary>
+    private void ApplyAutoCloseWithoutOperatorRefund(BookingCancellation bc, string origin)
+    {
+        bc.Status = BookingCancellationStatus.Closed;
+        bc.ClosedAt = DateTime.UtcNow;
+
+        // Cierre de la reserva. Guard por estado para idempotencia: si ya quedo Cancelled por otra via (ej. el
+        // cliente consumio su saldo a favor antes), NO la re-movemos ni re-logueamos.
+        if (bc.Reserva is not null && bc.Reserva.Status == EstadoReserva.PendingOperatorRefund)
+        {
+            bc.Reserva.Status = EstadoReserva.Cancelled;
+            LogReservaStatusChange(bc.Reserva, EstadoReserva.PendingOperatorRefund, EstadoReserva.Cancelled,
+                actorUserId: null, actorUserName: null,
+                // Motivo user-facing: criollo, sin jerga ni IDs (gate data-exposure). Se ve en el historial.
+                reason: "Anulación cerrada: no había pagos al operador para recuperar.");
+        }
+        else if (bc.Reserva is not null && bc.Reserva.Status != EstadoReserva.Cancelled)
+        {
+            // Robustez (review backend, 2026-07-03): hoy este camino es inalcanzable (todo confirm deja la reserva
+            // en PendingOperatorRefund antes de llegar aca), pero si un flujo futuro llegara con la reserva en un
+            // estado activo, cerrariamos el BC dejando la reserva viva. Que sea RUIDOSO, no mudo.
+            _logger.LogWarning(
+                "ApplyAutoCloseWithoutOperatorRefund: BC {BcPublicId} cerrado pero la reserva {ReservaPublicId} " +
+                "esta en {Status} (ni PendingOperatorRefund ni Cancelled). Revisar consistencia.",
+                bc.PublicId, bc.Reserva.PublicId, bc.Reserva.Status);
+        }
+
+        // Audit STAGEADO (se commitea con el SaveChanges del caller): atomico con el cambio de estado.
+        _auditService.StageBusinessEvent(
+            action: AuditActions.BookingCancellationClosedNoOperatorRefundDue,
+            entityName: AuditActions.BookingCancellationEntityName,
+            entityId: bc.Id.ToString(),
+            details: JsonSerializer.Serialize(new
+            {
+                bc.PublicId,
+                reservaPublicId = bc.Reserva?.PublicId,
+                zeroReceivable = true,
+                origin,
+            }),
+            userId: bc.ConfirmedByUserId ?? bc.DraftedByUserId,
+            userName: bc.ConfirmedByUserName ?? bc.DraftedByUserName);
+    }
+
+    /// <inheritdoc />
+    public async Task<int> CloseZeroReceivableCancellationsAsync(CancellationToken ct)
+    {
+        // Candidatas: los 2 estados que dejan el chip "esperando reembolso" en la reserva. Traemos solo los IDs y
+        // procesamos una por una (aislamiento de fila veneno + idempotencia por estado), igual criterio que el
+        // abandono por timeout.
+        var candidateIds = await _db.BookingCancellations
+            .AsNoTracking()
+            .Where(bc => bc.Status == BookingCancellationStatus.AwaitingOperatorRefund
+                      || bc.Status == BookingCancellationStatus.AbandonedByOperator)
+            .Select(bc => bc.Id)
+            .ToListAsync(ct);
+
+        if (candidateIds.Count == 0)
+            return 0;
+
+        var closed = 0;
+        foreach (var bcId in candidateIds)
+        {
+            try
+            {
+                if (await CloseOneZeroReceivableCancellationAsync(bcId, ct))
+                    closed++;
+            }
+            catch (OperationCanceledException)
+            {
+                throw; // shutdown del job: propagar, no es fila veneno
+            }
+            catch (Exception ex)
+            {
+                // Una cancelacion que falla (fila inconsistente, xmin, etc.) NO debe frenar al resto. Logueamos,
+                // limpiamos lo que haya quedado a medias en el ChangeTracker y seguimos. La proxima corrida reintenta.
+                _logger.LogError(ex,
+                    "CloseZeroReceivableCancellations: fallo al cerrar la cancelacion {BcId}. Se saltea; las demas siguen.",
+                    bcId);
+                _db.ChangeTracker.Clear();
+            }
+        }
+
+        if (closed > 0)
+        {
+            _logger.LogWarning(
+                "CloseZeroReceivableCancellations: {Closed} anulacion(es) cerradas por no tener reembolso pendiente del operador (de {Candidates} candidatas).",
+                closed, candidateIds.Count);
+        }
+
+        return closed;
+    }
+
+    /// <summary>
+    /// (2026-07-03) Cierra UNA anulacion trabada sin reembolso pendiente, persistiendo en su propio SaveChanges (asi
+    /// una falla no arrastra a las demas). Devuelve false si ya no aplica (idempotencia / carrera: cambio de estado,
+    /// aparecio receivable, o hay multa pendiente). Comparte el guard y el cierre con la transicion post-CAE.
+    /// </summary>
+    private async Task<bool> CloseOneZeroReceivableCancellationAsync(int bcId, CancellationToken ct)
+    {
+        var bc = await _db.BookingCancellations
+            .Include(b => b.Reserva)
+            .FirstOrDefaultAsync(b => b.Id == bcId, ct);
+
+        // Idempotencia / carrera: re-chequeo bajo la instancia trackeada. Solo cerramos desde los 2 estados limbo.
+        if (bc is null
+            || (bc.Status != BookingCancellationStatus.AwaitingOperatorRefund
+                && bc.Status != BookingCancellationStatus.AbandonedByOperator))
+        {
+            return false;
+        }
+
+        if (!await ShouldAutoCloseWithoutOperatorRefundAsync(bc, ct))
+            return false;
+
+        ApplyAutoCloseWithoutOperatorRefund(bc, origin: "barrido");
+
+        // Commit explicito de la transicion (BC + reserva + ReservaStatusChangeLog + audit staged) en su propia
+        // transaccion, independiente de la implementacion de la auditoria (en tests el IAuditService esta mockeado).
+        await _db.SaveChangesAsync(ct);
+
+        _logger.LogInformation(
+            "BC {BcPublicId}: cerrada por barrido (sin reembolso pendiente del operador). Reserva cerrada (Cancelled).",
+            bc.PublicId);
 
         return true;
     }
@@ -3673,11 +3923,23 @@ public class BookingCancellationService
                 .Select(c => c.CreditNoteInvoiceId)
                 .FirstOrDefaultAsync(ct);
 
-            var reservaFromStatusArca = bc.Reserva.Status;
-            bc.Reserva.Status = EstadoReserva.PendingOperatorRefund;
-            LogReservaStatusChange(bc.Reserva, reservaFromStatusArca, EstadoReserva.PendingOperatorRefund,
-                actorUserId: null, actorUserName: null,
-                reason: "Cancelacion (ADR-002/042): ARCA confirmo todas las NC, a la espera del reembolso del operador (sistema).");
+            // (2026-07-03) ¿Cerrar DIRECTO por no haber reembolso pendiente del operador? Si la agencia nunca le
+            // pago nada al operador por este viaje (receivable $0) y no hay multa pendiente, dejar la anulacion en
+            // "esperando reembolso" la manda a un limbo eterno -> cerramos directo. Sino, camino normal a
+            // AwaitingOperatorRefund. bc.Status ya quedo en AwaitingOperatorRefund (post-NC) y el puntero seteado,
+            // que es lo que el guard de la multa necesita para evaluar bien.
+            if (await ShouldAutoCloseWithoutOperatorRefundAsync(bc, ct))
+            {
+                ApplyAutoCloseWithoutOperatorRefund(bc, origin: "transicion");
+            }
+            else
+            {
+                var reservaFromStatusArca = bc.Reserva.Status;
+                bc.Reserva.Status = EstadoReserva.PendingOperatorRefund;
+                LogReservaStatusChange(bc.Reserva, reservaFromStatusArca, EstadoReserva.PendingOperatorRefund,
+                    actorUserId: null, actorUserName: null,
+                    reason: "Cancelacion (ADR-002/042): ARCA confirmo todas las NC, a la espera del reembolso del operador (sistema).");
+            }
 
             _auditService.StageBusinessEvent(
                 action: AuditActions.BookingCancellationArcaSucceeded,
@@ -3791,11 +4053,21 @@ public class BookingCancellationService
 
             bc.Status = BookingCancellationStatus.AwaitingOperatorRefund;
             bc.CreditNoteInvoiceId = creditNoteInvoiceId;
-            var reservaFromStatusArca = bc.Reserva.Status;
-            bc.Reserva.Status = EstadoReserva.PendingOperatorRefund;
-            LogReservaStatusChange(bc.Reserva, reservaFromStatusArca, EstadoReserva.PendingOperatorRefund,
-                actorUserId: null, actorUserName: null,
-                reason: "Cancelacion (ADR-002): ARCA confirmo la NC, a la espera del reembolso del operador (sistema).");
+
+            // (2026-07-03) ¿Cerrar directo por no haber reembolso pendiente del operador? (mismo criterio que el
+            // camino multi-factura). bc.Status ya quedo post-NC y el puntero seteado, que es lo que el guard necesita.
+            if (await ShouldAutoCloseWithoutOperatorRefundAsync(bc, ct))
+            {
+                ApplyAutoCloseWithoutOperatorRefund(bc, origin: "transicion");
+            }
+            else
+            {
+                var reservaFromStatusArca = bc.Reserva.Status;
+                bc.Reserva.Status = EstadoReserva.PendingOperatorRefund;
+                LogReservaStatusChange(bc.Reserva, reservaFromStatusArca, EstadoReserva.PendingOperatorRefund,
+                    actorUserId: null, actorUserName: null,
+                    reason: "Cancelacion (ADR-002): ARCA confirmo la NC, a la espera del reembolso del operador (sistema).");
+            }
 
             await _auditService.LogBusinessEventAsync(
                 action: AuditActions.BookingCancellationArcaSucceeded,
