@@ -210,7 +210,10 @@ public sealed class BookingCancellationServiceTests
             service.DraftAsync(
                 new DraftCancellationRequest(seed.ReservaPublicId, "Cliente cambio de plan"),
                 "user-vendor", "Vendor", CancellationToken.None));
-        Assert.Contains("no esta habilitado", ex.Message);
+        // FUGA B1 data-exposure (2026-07-03): el mensaje al usuario ya no nombra el flag interno
+        // (EnableNewCancellationFlow) — es texto de negocio; el detalle tecnico va al log.
+        Assert.Contains("no está disponible en este momento", ex.Message);
+        Assert.DoesNotContain("EnableNewCancellationFlow", ex.Message);
     }
 
     [Fact]

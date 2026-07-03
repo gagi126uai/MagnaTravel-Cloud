@@ -138,6 +138,19 @@ public class Adr042MultiInvoiceCancellationTests
         });
         await h.Ctx.SaveChangesAsync();
 
+        // (2026-07-03) Pago al operador imputado a esta reserva: le da al servicio un RefundCap > 0, o sea un
+        // receivable "me tiene que devolver" real. Sin esto el cierre automatico por receivable $0 (nuevo) cerraria
+        // la anulacion directo y estos tests no llegarian a AwaitingOperatorRefund, que es lo que quieren verificar.
+        h.Ctx.SupplierPayments.Add(new SupplierPayment
+        {
+            SupplierId = supplier.Id,
+            ReservaId = reserva.Id,
+            Amount = 40_000m,
+            Currency = "ARS",
+            Method = "T",
+        });
+        await h.Ctx.SaveChangesAsync();
+
         return (reserva, customer, supplier);
     }
 

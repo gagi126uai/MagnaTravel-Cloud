@@ -225,8 +225,30 @@ public interface IBookingCancellationService
     /// persiste por separado; si una falla, las demas siguen. Deja rastro de auditoria
     /// (<c>BookingCancellationAbandonedByOperator</c>) y log de cambio de estado de la reserva. Devuelve cuantas
     /// cancelaciones se marcaron como abandonadas.</para>
+    ///
+    /// <para>(2026-07-03) En la MISMA corrida invoca ademas <see cref="CloseZeroReceivableCancellationsAsync"/>
+    /// para cerrar las anulaciones trabadas sin reembolso pendiente del operador (ver ese metodo). El valor que
+    /// devuelve sigue siendo SOLO la cantidad de abandonadas por timeout (no incluye las cerradas por $0).</para>
     /// </summary>
     Task<int> ProcessExpiredOperatorRefundsAsync(CancellationToken ct);
+
+    /// <summary>
+    /// (2026-07-03) Cierra las anulaciones que quedaron trabadas "esperando reembolso" cuando el operador NO tiene
+    /// nada que devolver (receivable vivo $0 en TODAS las monedas — tipico cuando la agencia nunca le pago nada al
+    /// operador por ese viaje). Candidatas: las que estan en <c>AwaitingOperatorRefund</c> o
+    /// <c>AbandonedByOperator</c>; las que cumplen la regla pasan a <c>Closed</c> y su RESERVA
+    /// <c>PendingOperatorRefund</c> -> <c>Cancelled</c>.
+    ///
+    /// <para><b>No cierra</b> si el operador todavia debe algo (receivable &gt; 0) ni si la multa del operador sigue
+    /// pendiente de gestion (su Nota de Debito puede tener que emitirse primero). NO toca comprobantes fiscales.</para>
+    ///
+    /// <para><b>Idempotente</b> (re-ejecutarla no reprocesa: una ya <c>Closed</c> deja de ser candidata) y
+    /// <b>defensivo</b> (aisla fila veneno: cada cierre en su propio SaveChanges; si uno falla, los demas siguen).
+    /// Deja auditoria <c>BookingCancellationClosedNoOperatorRefundDue</c> + log de cambio de estado por cada una.
+    /// Lo invoca el job nocturno de timeouts (misma corrida que <see cref="ProcessExpiredOperatorRefundsAsync"/>).
+    /// Devuelve cuantas se cerraron.</para>
+    /// </summary>
+    Task<int> CloseZeroReceivableCancellationsAsync(CancellationToken ct);
 
     /// <summary>
     /// ADR-041 TANDA 4 (2026-06-28): REABRE una cancelacion <c>AbandonedByOperator</c> para registrar un
