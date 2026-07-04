@@ -251,6 +251,28 @@ public interface IBookingCancellationService
     Task<int> CloseZeroReceivableCancellationsAsync(CancellationToken ct);
 
     /// <summary>
+    /// FIX B (2026-07-04): RED DE SEGURIDAD para el aviso de AFIP perdido en la NC TOTAL. La transicion
+    /// <c>AwaitingFiscalConfirmation</c> -&gt; <c>AwaitingOperatorRefund</c> depende 100% del callback de Hangfire
+    /// (<c>OnArcaSucceededAsync</c>/<c>OnArcaFailedAsync</c>) que dispara <c>ProcessAnnulmentJob</c> al terminar
+    /// AFIP. Si la NC obtiene CAE (o es rechazada) pero ese callback muere de forma permanente, la cancelacion
+    /// queda trabada en <c>AwaitingFiscalConfirmation</c> y la reserva en <c>PendingOperatorRefund</c>, INVISIBLE a
+    /// todos los barridos y alertas (filtran Awaiting/Abandoned). Es el equivalente TOTAL del
+    /// <c>PartialCreditNoteBridgeReconciliationJob</c> que ya existe para la NC parcial.
+    ///
+    /// <para>Busca cancelaciones en <c>AwaitingFiscalConfirmation</c> mas viejas que un umbral prudente (reusa
+    /// <c>BridgeReconciliationStalenessMinutes</c>, el mismo del job parcial) cuya(s) Invoice de NC ya tiene
+    /// resultado FINAL de AFIP (aprobado "A" con CAE, o rechazo "R") y RE-INVOCA el MISMO callback del bridge que
+    /// habria corrido (no duplica logica). El callback es idempotente; al transicionar, la BC puede auto-cerrarse
+    /// de una si no hubo plata al operador (correcto y deseado, misma logica que el flujo normal).</para>
+    ///
+    /// <para><b>Idempotente</b> (una BC que ya salio de <c>AwaitingFiscalConfirmation</c> deja de ser candidata;
+    /// correr dos veces no duplica NC ni ND — el callback re-chequea el estado) y <b>defensivo</b> (aisla fila
+    /// veneno: cada BC en su propio intento; si una falla, las demas siguen). Lo invoca un recurring job
+    /// (<c>TotalCreditNoteBridgeReconciliationJob</c>). Devuelve cuantas cancelaciones se reconciliaron.</para>
+    /// </summary>
+    Task<int> ReconcileStuckFiscalConfirmationsAsync(CancellationToken ct);
+
+    /// <summary>
     /// ADR-041 TANDA 4 (2026-06-28): REABRE una cancelacion <c>AbandonedByOperator</c> para registrar un
     /// REEMBOLSO TARDIO (el operador devolvio plata DESPUES de que el plazo venció y la cuenta se dio por perdida).
     /// La transicion es CONTROLADA y AUDITADA: la cancelacion vuelve a <c>AwaitingOperatorRefund</c> con un plazo
@@ -262,10 +284,17 @@ public interface IBookingCancellationService
     /// <para><b>La RESERVA NO se resucita</b>: el viaje sigue cancelado (<c>Cancelled</c>). Reabrir es solo para
     /// el circuito de plata del operador; el reembolso tardio se vuelve saldo a favor del cliente al imputarse.</para>
     ///
+    /// <para><b>FIX A (2026-07-04)</b>: ademas de <c>AbandonedByOperator</c>, tambien reabre una cancelacion
+    /// <c>Closed</c> CON RESIDUO real del operador (reembolso parcial: el operador devolvio de menos, el cliente
+    /// consumio su saldo y la BC se cerro, pero el operador todavia debe plata — receivable vivo &gt; 0 con la
+    /// MISMA formula del extracto). Sin residuo, una <c>Closed</c> sigue rechazando. El neto del reembolso tardio
+    /// sigue el circuito NORMAL de allocation; al consumirse el saldo del cliente la BC vuelve a <c>Closed</c>.</para>
+    ///
     /// <para><b>Idempotencia</b>: si la cancelacion ya esta en <c>AwaitingOperatorRefund</c> o
     /// <c>ClientCreditApplied</c> (ya esta abierta / ya recibio algo), es no-op y devuelve el DTO actual sin
-    /// re-auditar. Si esta en cualquier otro estado que no sea <c>AbandonedByOperator</c> (Drafted, Closed,
-    /// Aborted, etc.), rechaza con <c>BusinessInvariantViolationException</c>.</para>
+    /// re-auditar. Si esta en cualquier otro estado que no sea <c>AbandonedByOperator</c> ni <c>Closed</c>-con-residuo
+    /// (Drafted, Aborted, AwaitingFiscalConfirmation, etc.), rechaza con <c>BusinessInvariantViolationException</c>.
+    /// La auditoria distingue el origen por <c>previousStatus</c> en el detalle del evento.</para>
     ///
     /// <para><b>Permiso</b>: lo gatea el controller con <c>caja.edit</c> (mismo permiso que registrar el reembolso).
     /// El motivo (&gt;= 10 chars) es obligatorio para la auditoria. Marca durable del "tardio" = el audit log

@@ -104,6 +104,24 @@ export function isStatusLocked(status) {
     return LOCKED_STATUSES.has(status);
 }
 
+/**
+ * Estados "vivos" del ciclo de la reserva: el viaje todavia esta en curso normal
+ * (se esta gestionando, ya esta confirmado, o el cliente ya esta viajando).
+ * Mismo criterio que usa la campanita de avisos del backend para decidir si
+ * corresponde mostrar alertas de seguimiento sobre la reserva.
+ *
+ * Fuera de este conjunto quedan los estados de "borrador" (Quotation/Budget) y
+ * los terminales (Closed/Lost/Cancelled/PendingOperatorRefund/Archived): en esos
+ * casos no tiene sentido pedirle al vendedor que "revise" o "confirme" cambios,
+ * porque el viaje ya no esta en curso (o todavia ni arranco a gestionarse).
+ */
+export const LIVE_RESERVA_STATUSES = new Set(['InManagement', 'Confirmed', 'Traveling']);
+
+/** Devuelve true si la reserva esta en un estado vivo (ver LIVE_RESERVA_STATUSES). */
+export function isReservaEnEstadoVivo(status) {
+    return LIVE_RESERVA_STATUSES.has(status);
+}
+
 /** Devuelve el label en espanol para mostrar en la UI. Si el status no existe, devuelve el string crudo. */
 export function translateStatus(status) {
     return statusConfig[status]?.label ?? status ?? '';

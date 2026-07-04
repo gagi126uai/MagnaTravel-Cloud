@@ -375,7 +375,7 @@ Ronda 2:
   - **Perdida:** "Reserva perdida — solo lectura."
   - **Cancelada:** "Reserva cancelada — solo lectura."
   - **Finalizada:** ~~"Reserva finalizada — solo lectura. Reabrila para facturar."~~ **⚠️ SUPERSEDIDO por ADR-037 (2026-06-21):** el cartel ahora dice solo **"Reserva finalizada — solo lectura."** y se factura DIRECTO desde Finalizada (ya no se reabre ni se destraba). Ver sección ADR-037 al final.
-  - **Esperando reembolso:** "Cancelada, esperando el reembolso del operador — solo lectura."
+  - **Esperando reembolso:** "Anulada, esperando el reembolso del operador — solo lectura." (corregido 2026-07-04: antes decía "Cancelada"; se alinea a ADR-036 punto 1 — el usuario ve "Anulada", nunca "Cancelada", para deshacer el viaje).
 - Los estados activos (Budget, InManagement, etc.) conservan sus carteles orientativos de siempre.
 - El texto "Tiene que haber al menos 1 pasajero" debajo de "El cliente aceptó" **sí se mantiene** — es un requisito previo de acción, no un motivo de bloqueo de estado.
 
@@ -825,3 +825,39 @@ Ronda 2:
   caso y moneda: **lo pagado al operador**, **la multa retenida** y el **motivo del $0**, todos enmascarados por
   `cobranzas.see_cost`, con `estimado = pagado − multa`. Y la decisión 2 requiere un flag "multa pendiente de
   confirmar" por caso. Detalle en la spec del 2026-07-03.
+
+## El paso de la multa del operador vive también en la reserva ya Anulada (2026-07-04, coherencia validada)
+
+> **Origen:** decisión de negocio CERRADA de Gastón (2026-07-03): cuando se anula una reserva y NUNCA se le
+> pagó nada al operador, la reserva se cierra sola (queda **"Anulada"**) aunque la pregunta "¿el operador
+> cobra multa?" siga sin responder. Esa pregunta queda como **tarea pendiente que se responde DESPUÉS, desde
+> la ficha de la reserva ya anulada**. Antes, ese paso (el bloque con los botones "Sí cobró" / "No cobró" y el
+> "Deshacer") solo aparecía en el estado interno "esperando reembolso del operador". Como ahora la reserva
+> puede quedar Anulada con la multa todavía sin decidir, el paso tenía que poder verse también ahí, o la tarea
+> quedaba invisible. Componente reusado (sin duplicar UI): `ConfirmarMultaOperadorInline` + el bloque de
+> elección en `ReservaDetailPage`. Validación de este agente, sin nuevas preguntas: todo deriva de la guía y de
+> la decisión cerrada.
+
+- **(2026-07-04) EXCEPCIÓN acotada a la "pantalla muerta" de Anulada (ADR-036 punto 3).** La regla general
+  sigue firme: una reserva **Anulada** es pantalla de solo lectura, con el cartel chico arriba y **sin botones**.
+  La **única excepción** es el **paso de la multa del operador** cuando quedó pendiente (o se cerró sin multa y
+  se puede deshacer): ese bloque —y solo ese— sí aparece en la reserva Anulada, porque es una **tarea fiscal
+  pendiente que Gastón decidió resolver desde la ficha ya anulada**. No habilita editar, cobrar ni nada más: la
+  reserva sigue siendo de solo lectura en todo lo demás. Coherente con "la acción fiscal de confirmar la multa
+  vive en un solo lugar: la reserva" (2026-07-03).
+- **(2026-07-04) Es el MISMO bloque, no uno nuevo.** El bloque de la multa (cartel + "Sí cobró" / "No cobró" +
+  "Deshacer", este último solo para administradores) es exactamente el que ya existía en "esperando reembolso".
+  No se duplica pantalla ni se inventa un diseño paralelo: se muestra el mismo, gobernado por la capability y el
+  resultado que expone el backend (no por re-derivar el estado en el front).
+- **(2026-07-04) Título del cartel según el estado real (copy VALIDADO).** El cartel de arriba dice cosas
+  distintas según lo que de verdad esté pendiente, para no mentir:
+  - Si la reserva ya se cerró (**Anulada / Cancelled**) porque no había nada que reembolsar y lo único pendiente
+    es la multa → **"Anulada — falta decidir la multa del operador — solo lectura."**
+  - Si todavía se espera plata del operador (**esperando reembolso / PendingOperatorRefund**) → se mantiene
+    **"Anulada, esperando el reembolso del operador — solo lectura."**
+  - **Las dos usan "Anulada"**, nunca "Cancelada" (ADR-036 punto 1). Decir "esperando el reembolso" cuando no
+    hay nada para reembolsar sería falso; por eso el título cambia. Copy en criollo, sin jerga, con el sufijo
+    "— solo lectura." igual que todos los carteles terminales (ADR-035 A).
+- **(2026-07-04) Cuando el paso ya se resolvió sin multa** el cartel pasa a **"Anulada — cerrada sin multa del
+  operador. Solo lectura."** y desaparecen los dos botones; queda solo el enlace discreto **"Deshacer"** para
+  administradores (ya estaba así; se conserva).

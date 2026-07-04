@@ -9,6 +9,7 @@ using TravelApi.Application.Constants;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Tests.Fixtures;
@@ -739,6 +740,90 @@ public sealed class CancellationFlowE2ETests
     }
 
     // =========================================================================
+    // Variante 6: anulacion SIN plata al operador → cierre automatico post-CAE
+    // =========================================================================
+
+    /// <summary>
+    /// (2026-07-03) Cubre la decision del dueño: una anulacion a la que NUNCA se le pago plata al
+    /// operador (no hay nada que el operador deba devolver) NO debe quedar "esperando reembolso" para
+    /// siempre — se CIERRA SOLA en la transicion post-CAE (BC → Closed, Reserva → Cancelled), aunque la
+    /// multa del operador siga sin decidir.
+    ///
+    /// <para>Escenario: seed SIN pago al operador (todas las lineas nacen con RefundCap == 0). Draft +
+    /// Confirm + callback AFIP OK. Verificamos el cierre automatico y ademas que un intento tardio de
+    /// imputar un reembolso rebota con INV-093 en criollo — el escenario "el operador devuelve plata que
+    /// nunca le pagaste" ya no es representable ni deseado.</para>
+    /// </summary>
+    [Fact]
+    public async Task Variante6_AnulacionSinPlataAlOperador_PostCae_CierraSolaYAllocateRebotaConInv093()
+    {
+        // ARRANGE — anulacion sin ningun pago al operador (RefundCap 0 en todas las lineas).
+        var seed = await SeedE2EScenarioAsync(seedOperatorPayment: false);
+
+        var provider = _fixture.BuildServiceProvider();
+
+        Guid bcPublicId;
+        using (var scope = provider.CreateScope())
+        {
+            var bcSvc = scope.ServiceProvider.GetRequiredService<IBookingCancellationService>();
+            var draft = await bcSvc.DraftAsync(
+                new DraftCancellationRequest(seed.ReservaPublicId, "Anulacion sin plata al operador"),
+                "user-vendor", "Vendedor", CancellationToken.None);
+            bcPublicId = draft.PublicId;
+
+            await bcSvc.ConfirmAsync(
+                draft.PublicId, BuildValidConfirm(),
+                "user-vendor", "Vendedor",
+                requesterIsAdmin: false, ct: CancellationToken.None);
+        }
+
+        int creditNoteId = await CreateNcInvoiceAsync(
+            seed.ReservaId, seed.InvoiceId, tipoNc: 3, numeroComprobante: 2);
+
+        // ACT — el callback AFIP OK dispara la transicion post-CAE. Como no hubo plata al operador,
+        // la anulacion se cierra sola en vez de quedar AwaitingOperatorRefund.
+        using (var scope = provider.CreateScope())
+        {
+            var bridge = scope.ServiceProvider.GetRequiredService<IInvoiceAnnulmentBcBridge>();
+            await bridge.OnArcaSucceededAsync(seed.InvoiceId, creditNoteId, CancellationToken.None);
+        }
+
+        // ASSERT — cierre automatico: BC Closed + Reserva Cancelled (sin pasar por esperar-reembolso).
+        await using (var verifyCtx = _fixture.CreateDbContext())
+        {
+            var bc = await verifyCtx.BookingCancellations.AsNoTracking()
+                .FirstAsync(b => b.PublicId == bcPublicId);
+            Assert.Equal(BookingCancellationStatus.Closed, bc.Status);
+            Assert.NotNull(bc.ClosedAt);
+
+            var reserva = await verifyCtx.Reservas.AsNoTracking()
+                .FirstAsync(r => r.Id == seed.ReservaId);
+            Assert.Equal(EstadoReserva.Cancelled, reserva.Status);
+        }
+
+        // ASSERT — intentar imputar un reembolso del operador ahora rebota: la BC ya cerro, no esta en
+        // condiciones de recibir plata (INV-093). El mensaje va en criollo, sin jerga ni codigos internos.
+        using (var scope = provider.CreateScope())
+        {
+            var refundSvc = scope.ServiceProvider.GetRequiredService<IOperatorRefundService>();
+            var refund = await refundSvc.RecordReceivedAsync(
+                new RecordOperatorRefundRequest(
+                    seed.SupplierPublicId, 1_000m, "ARS", DateTime.UtcNow,
+                    "Transfer", null, null),
+                "user-cashier", null, CancellationToken.None);
+
+            var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+                refundSvc.AllocateAsync(
+                    refund.PublicId,
+                    new AllocateRefundRequest(bcPublicId, 1_000m, new List<DeductionLineRequest>()),
+                    "user-cashier", null, CancellationToken.None));
+
+            Assert.Equal("INV-093", ex.InvariantCode);
+            Assert.Contains("no está en condiciones de recibir el reembolso", ex.Message);
+        }
+    }
+
+    // =========================================================================
     // Helpers privados de seed y flujos compartidos
     // =========================================================================
 
@@ -762,7 +847,9 @@ public sealed class CancellationFlowE2ETests
     ///         exige CAE en la original; solo en la NC.</item>
     /// </list>
     /// </summary>
-    private async Task<E2ESeedResult> SeedE2EScenarioAsync(int invoiceTipoComprobante = 1)
+    private async Task<E2ESeedResult> SeedE2EScenarioAsync(
+        int invoiceTipoComprobante = 1,
+        bool seedOperatorPayment = true)
     {
         await using var ctx = _fixture.CreateDbContext();
 
@@ -777,17 +864,31 @@ public sealed class CancellationFlowE2ETests
             await ctx.SaveChangesAsync();
         }
 
-        // ServicioReserva es el unico campo que DraftAsync busca para inferir
-        // SupplierId; sin esto el draft tira "no tiene servicios con Supplier
-        // asignado" y los tests rompen con NullReferenceException.
+        // ServicioReserva es el campo que DraftAsync busca para inferir SupplierId; sin esto el draft
+        // tira "no tiene servicios con Supplier asignado". Ademas le damos NetCost/Currency en ARS: el
+        // RefundCap de la linea se topea por el NetCost del servicio, asi que si NetCost quedara en 0
+        // (el default) el cap seria 0 aunque le hayamos pagado al operador, y la anulacion se
+        // auto-cerraria post-CAE (ver SeedSupplierPaymentAsync). NetCost 50.000 cubre holgado el mayor
+        // monto que imputa cualquier variante (5.000 en el happy path).
         ctx.Servicios.Add(new ServicioReserva
         {
             ReservaId = resId,
             SupplierId = supId,
             ServiceType = "Hotel",
             Description = "Hotel test E2E",
+            Currency = "ARS",
+            SalePrice = 60_000m,
+            NetCost = seedOperatorPayment ? 50_000m : 0m,
         });
         await ctx.SaveChangesAsync();
+
+        // (2026-07-03) Le PAGAMOS al operador ANTES de armar la anulacion: asi la linea nace con
+        // RefundCap > 0 y el circuito "esperando reembolso" es real. Sin este pago la anulacion se
+        // auto-cierra en la transicion post-CAE ("sin plata al operador cierra sola") y el flujo de
+        // abajo (RecordReceived → Allocate → Withdraw) dejaria de ser representable. El unico test que
+        // pide seedOperatorPayment: false es el que cubre justamente ese cierre automatico.
+        if (seedOperatorPayment)
+            await CancellationTestData.SeedSupplierPaymentAsync(ctx, supId, resId, 50_000m);
 
         // Leemos los PublicIds que asigno la BD.
         var reserva = await ctx.Reservas.AsNoTracking().FirstAsync(r => r.Id == resId);

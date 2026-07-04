@@ -29,7 +29,7 @@ import { EditAuthorizationModal } from "../components/EditAuthorizationModal";
 import { MarkLostModal } from "../components/MarkLostModal";
 import { CorregirEntradaViajeModal } from "../components/CorregirEntradaViajeModal";
 import { ReprogramarViajeModal } from "../components/ReprogramarViajeModal";
-import { isStatusLocked } from "../components/ReservaStatusBadge";
+import { isStatusLocked, isReservaEnEstadoVivo } from "../components/ReservaStatusBadge";
 import { useReservaDetail } from "../hooks/useReservaDetail";
 import { useOperationalFlags } from "../../../contexts/OperationalFlagsContext";
 import { useAlerts } from "../../../contexts/AlertsContext";
@@ -1251,8 +1251,14 @@ export default function ReservaDetailPage() {
           mostramos el mensaje general (fallback seguro para versiones de API sin ese campo).
 
           El botón "Dar OK" es SOLO para administradores (isAdmin()); un no-admin ve la franja
-          pero sin botón — ya puede ver el saldo actualizado y los servicios. */}
-      {reserva.hasUnacknowledgedChanges && (
+          pero sin botón — ya puede ver el saldo actualizado y los servicios.
+
+          Bug fix 2026-07-03: el flag hasUnacknowledgedChanges puede llegar en true
+          incluso en reservas Anuladas / Esperando reembolso (el backend todavia no lo
+          limpia al anular). Por eso ademas del flag exigimos que el estado sea "vivo"
+          (InManagement/Confirmed/Traveling) — asi el cartel no confunde diciendo
+          "confirmá este cambio" sobre un viaje que ya quedo sin efecto. */}
+      {reserva.hasUnacknowledgedChanges && isReservaEnEstadoVivo(reserva.status) && (
         <div
           className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-200"
           data-testid="banner-con-cambios"
@@ -1379,7 +1385,18 @@ export default function ReservaDetailPage() {
       ) : null}
 
       {/* ── Estados terminales: solo lectura, sin botones ni mensajitos (ADR-036 puntos 3 y 4) ── */}
-      {reserva.status === "Lost" ? (
+      {(() => {
+        // (2026-07-04) Coherencia con el auto-cierre: una anulacion SIN plata al operador ahora se cierra de una
+        // aunque la multa siga sin decidir. Eso deja la reserva ya "Anulada" (Cancelled) con la pregunta de la
+        // multa todavia pendiente (Pending) o ya cerrada sin multa (Waived). El paso de la multa (los dos botones
+        // "Sí cobró / No cobró" y el "Deshacer") vivia SOLO dentro del cartel de "esperando reembolso"
+        // (PendingOperatorRefund); si no lo mostramos tambien en Cancelled, la tarea de la multa quedaba invisible.
+        // El backend ya expone la capacidad y el outcome sin importar el estado; esto es solo la compuerta de UI.
+        const operatorPenaltyOutcome = reserva.capabilities?.operatorPenaltyOutcome;
+        const tienePasoDeMultaOperador =
+          operatorPenaltyOutcome === "Pending" || operatorPenaltyOutcome === "Waived";
+
+        return reserva.status === "Lost" ? (
         <div
           className="rounded-xl border border-slate-200 bg-slate-100 p-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-400"
           data-testid="banner-estado-terminal"
@@ -1387,9 +1404,11 @@ export default function ReservaDetailPage() {
         >
           <strong className="font-bold">Reserva perdida</strong> — solo lectura.
         </div>
-      ) : reserva.status === "Cancelled" ? (
+      ) : (reserva.status === "Cancelled" && !tienePasoDeMultaOperador) ? (
         // ADR-036: el estado interno sigue siendo "Cancelled" pero el usuario ve "Anulada".
         // "Cancelar" en este producto = saldar una deuda; "Anular" = deshacer el viaje.
+        // (2026-07-04) Solo este cartel simple cuando NO queda paso de multa: si la multa sigue pendiente o se
+        // cerro sin multa, cae en la rama de mas abajo (junto con PendingOperatorRefund) para mostrar el paso.
         <div
           className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
           data-testid="banner-estado-terminal"
@@ -1407,7 +1426,9 @@ export default function ReservaDetailPage() {
           {/* ADR-037: ya no hay "Reabrila para facturar". La facturación se desacopló del estado:
               se factura directo desde Finalizada (botón "Emitir factura" en la solapa Cuenta). */}
         </div>
-      ) : reserva.status === "PendingOperatorRefund" ? (
+      ) : (reserva.status === "PendingOperatorRefund" || reserva.status === "Cancelled") ? (
+        // (2026-07-04) Llega Cancelled aca SOLO cuando tiene paso de multa (la rama simple de arriba ya se lo
+        // llevo si no lo tenia). Reusa exactamente el mismo bloque que "esperando reembolso" para no duplicar UI.
         (() => {
           // ADR-042 (2026-07-01, Estado 5 de la spec): anulación multi-factura que quedó A
           // MEDIAS. Reemplaza el cartel normal de "esperando reembolso": acá lo único accionable
@@ -1561,7 +1582,15 @@ export default function ReservaDetailPage() {
                 data-testid="banner-estado-terminal"
                 role="status"
               >
-                <strong className="font-bold">Anulada, esperando el reembolso del operador</strong> — solo lectura.
+                {/* (2026-07-04) El titulo depende del estado real: si la reserva ya se cerro (Anulada/Cancelled)
+                    porque no habia nada que reembolsar, decir "esperando el reembolso" seria falso — ahi el unico
+                    pendiente es decidir la multa. Si sigue esperando plata del operador (PendingOperatorRefund),
+                    se mantiene el texto de siempre. */}
+                <strong className="font-bold">
+                  {reserva.status === "Cancelled"
+                    ? "Anulada — falta decidir la multa del operador"
+                    : "Anulada, esperando el reembolso del operador"}
+                </strong> — solo lectura.
 
                 {/* ── Elección del agente: ¿cobró multa o no cobró? ──────────────
                     Solo visible cuando hay un paso pendiente (allowed=true) y ningún
@@ -1638,7 +1667,8 @@ export default function ReservaDetailPage() {
             </div>
           );
         })()
-      ) : null}
+        ) : null;
+      })()}
 
       {/* ── Estados activos: orientan al vendedor sobre el siguiente paso ── */}
       {reserva.status === "Quotation" ? (

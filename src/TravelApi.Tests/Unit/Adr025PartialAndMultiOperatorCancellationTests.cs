@@ -1195,6 +1195,65 @@ public class Adr025PartialAndMultiOperatorCancellationTests
         Assert.Equal(50_000m, newLine.RefundCap); // sin lineas previas, el cap es el normal
     }
 
+    // ===== FIX D (2026-07-04): el RefundStatus de la linea nace coherente con el cap =====
+
+    [Fact]
+    public async Task AssignRefundCaps_CapPositive_SetsRefundStatusPendingOperatorRefund()
+    {
+        using var ctx = NewDbContext();
+        // Se le pago 50.000 al operador A y el servicio cuesta 50.000 -> cap 50.000 > 0.
+        var (reserva, _, supplierA, _, _, _) = await SeedAsync(ctx, paidToSupplierA: 0m);
+        await SeedPaymentImputedToReservaAsync(ctx, supplierA.Id, reserva.Id, amount: 50_000m);
+
+        var service = BuildService(ctx);
+
+        var newLine = new BookingCancellationLine
+        {
+            SupplierId = supplierA.Id,
+            ServiceTable = CancellableServiceTable.Hotel,
+            ServiceId = 9301,
+            Scope = BookingCancellationLineScope.Full,
+            Currency = "ARS",
+            LineSaleAmount = 80_000m,
+        };
+        var lines = new System.Collections.Generic.List<BookingCancellationLine> { newLine };
+        var netCosts = new System.Collections.Generic.List<decimal> { 50_000m };
+
+        await service.AssignRefundCapsAsync(reserva.Id, lines, netCosts, CancellationToken.None);
+
+        Assert.True(newLine.RefundCap > 0m);
+        // FIX D: la linea con cap > 0 nace "esperando el reembolso del operador", no en None (default enganoso).
+        Assert.Equal(BookingCancellationLineRefundStatus.PendingOperatorRefund, newLine.RefundStatus);
+    }
+
+    [Fact]
+    public async Task AssignRefundCaps_CapZero_SetsRefundStatusNone()
+    {
+        using var ctx = NewDbContext();
+        // NO se le pago nada al operador A (sin SupplierPayment) -> el pool es 0 -> cap 0.
+        var (reserva, _, supplierA, _, _, _) = await SeedAsync(ctx, paidToSupplierA: 0m);
+
+        var service = BuildService(ctx);
+
+        var newLine = new BookingCancellationLine
+        {
+            SupplierId = supplierA.Id,
+            ServiceTable = CancellableServiceTable.Hotel,
+            ServiceId = 9302,
+            Scope = BookingCancellationLineScope.Full,
+            Currency = "ARS",
+            LineSaleAmount = 80_000m,
+        };
+        var lines = new System.Collections.Generic.List<BookingCancellationLine> { newLine };
+        var netCosts = new System.Collections.Generic.List<decimal> { 50_000m };
+
+        await service.AssignRefundCapsAsync(reserva.Id, lines, netCosts, CancellationToken.None);
+
+        Assert.Equal(0m, newLine.RefundCap);
+        // Sin cap no hay nada que esperar del operador -> None (coherente con el doc del enum).
+        Assert.Equal(BookingCancellationLineRefundStatus.None, newLine.RefundStatus);
+    }
+
     [Fact]
     public async Task AssignRefundCaps_DifferentOperators_DoNotAffectEachOther()
     {

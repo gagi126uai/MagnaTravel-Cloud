@@ -207,6 +207,12 @@ public class OperatorRefundReadModelService : IOperatorRefundReadModelService
             // Capacidad REAL del endpoint de registrar reembolso recibido (INV-093): solo esos 2 estados lo aceptan.
             CanRegisterRefund = bc.Status == BookingCancellationStatus.AwaitingOperatorRefund
                              || bc.Status == BookingCancellationStatus.ClientCreditApplied,
+            // FIX A (2026-07-04): habilita el botón "Registrar reembolso tardío" del front. Se puede reabrir una
+            // cancelacion abandonada (siempre) o una CERRADA CON RESIDUO real (el operador devolvio de menos y
+            // quedo plata viva por cobrar). Usamos el MISMO receivable que decide la visibilidad de la fila
+            // (realReceivable, formula compartida del extracto), asi "cerrada con resto" y "reabrible" no divergen.
+            CanReopenForLateRefund = bc.Status == BookingCancellationStatus.AbandonedByOperator
+                                  || (bc.Status == BookingCancellationStatus.Closed && realReceivable > 0m),
         };
     }
 

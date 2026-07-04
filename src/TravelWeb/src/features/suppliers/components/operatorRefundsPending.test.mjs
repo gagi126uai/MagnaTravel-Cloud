@@ -89,10 +89,20 @@ const ROW_STATUS_LABELS = {
 
 /**
  * Devuelve los items de la lista que son abandonados (semaphore = 3).
- * Solo estos tienen el botón de "Registrar reembolso tardío".
+ * (Solo afecta el badge visual "Abandonado"; el botón de reembolso tardío lo decide
+ *  puedeReabrirTardio, ver abajo — FIX A 2026-07-04.)
  */
 function filtrarAbandonados(items) {
   return items.filter((i) => i.semaphore === 3);
+}
+
+/**
+ * FIX A (2026-07-04): decide si la fila muestra el botón "Registrar reembolso tardío".
+ * Lo manda el backend (canReopenForLateRefund), NO el semáforo: es true para una cancelación
+ * abandonada O para una CERRADA que quedó con un resto que el operador todavía debe.
+ */
+function puedeReabrirTardio(item) {
+  return item.canReopenForLateRefund === true;
 }
 
 /**
@@ -281,6 +291,25 @@ test("filtrarVencidos — vencidos NUNCA desaparecen: filtro no los excluye", ()
   const resultado = filtrarVencidos(itemsVencidos);
   // Todos los vencidos siguen en la lista, sin importar cuántos días llevan
   assert.equal(resultado.length, 2);
+});
+
+// ─── FIX A (2026-07-04): gate del botón de reembolso tardío (canReopenForLateRefund) ────────
+
+test("puedeReabrirTardio — true cuando canReopenForLateRefund=true (abandonada)", () => {
+  assert.equal(puedeReabrirTardio({ semaphore: 3, canReopenForLateRefund: true }), true);
+});
+
+test("puedeReabrirTardio — true para una CERRADA con resto (semaphore no es 3)", () => {
+  // Cerrada con residuo: el semáforo NO es Abandoned (3), pero el backend igual la marca reabrible.
+  assert.equal(puedeReabrirTardio({ semaphore: 2, canReopenForLateRefund: true }), true);
+});
+
+test("puedeReabrirTardio — false cuando canReopenForLateRefund=false (esperando/registrable directo)", () => {
+  assert.equal(puedeReabrirTardio({ semaphore: 0, canReopenForLateRefund: false }), false);
+});
+
+test("puedeReabrirTardio — false cuando el flag no viene (no se asume reabrible)", () => {
+  assert.equal(puedeReabrirTardio({ semaphore: 3 }), false);
 });
 
 test("filtrarAbandonados y filtrarVencidos son mutuamente excluyentes", () => {

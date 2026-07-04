@@ -168,6 +168,17 @@ public class OperatorRefundPendingItemDto
     /// directo). El backend NO cambia por este flag: es la lectura fiel de lo que el endpoint aceptaría.
     /// </summary>
     public bool CanRegisterRefund { get; set; }
+
+    /// <summary>
+    /// FIX A (2026-07-04): true si esta cancelación se puede REABRIR para registrar un reembolso TARDÍO del operador
+    /// (endpoint <c>reopen-for-late-refund</c>). Es true en DOS casos: la cancelación fue dada por perdida
+    /// (<c>AbandonedByOperator</c>), o quedó CERRADA pero el operador todavía debe plata de verdad
+    /// (<c>Closed</c> con residuo vivo &gt; 0, la MISMA fórmula del "me tiene que devolver" del extracto).
+    /// El front usa este flag (no el semáforo) para mostrar el botón "Registrar reembolso tardío". NO es un monto
+    /// -&gt; se expone SIEMPRE. Reabrir NO resucita la reserva (sigue cancelada); solo reabre el circuito de plata
+    /// del operador para que después el cajero impute el ingreso con el flujo normal.
+    /// </summary>
+    public bool CanReopenForLateRefund { get; set; }
 }
 
 /// <summary>

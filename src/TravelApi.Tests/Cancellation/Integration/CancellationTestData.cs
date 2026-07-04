@@ -78,6 +78,40 @@ internal static class CancellationTestData
     }
 
     /// <summary>
+    /// (2026-07-03) Siembra un pago VIVO al operador imputado a la reserva. Es la pieza que hace que
+    /// una anulacion tenga un circuito REAL de reembolso: al armar las lineas, <c>AssignRefundCapsAsync</c>
+    /// les asigna <see cref="BookingCancellationLine.RefundCap"/> &gt; 0 (= min(pool pagado al operador,
+    /// NetCost del servicio)).
+    ///
+    /// <para><b>Por que hace falta</b> (decision del dueño 2026-07-03): una anulacion a la que NUNCA se le
+    /// pago plata al operador (todas las lineas con RefundCap == 0 y ReceivedRefundAmount == 0) ahora se
+    /// AUTO-CIERRA en la transicion post-CAE — no queda "esperando reembolso" para siempre, porque no hay
+    /// nada que el operador deba devolver. Para poder ejercer el flujo de esperar/imputar un reembolso del
+    /// operador, el seed tiene que PAGARLE al operador primero (esta fila), o el <c>OnArcaSucceededAsync</c>
+    /// cerraria la BC y el allocate posterior rebotaria con INV-093.</para>
+    ///
+    /// <para>El caller ademas debe darle <c>NetCost</c> al servicio (el cap se topea por el costo), en ARS y
+    /// &gt;= al monto que despues va a imputar. Pago NO cruzado (Currency == ImputedCurrency == ARS), mismo
+    /// patron que los tests unit que ya siembran <see cref="SupplierPayment"/> directo al DbContext.</para>
+    /// </summary>
+    public static async Task SeedSupplierPaymentAsync(
+        AppDbContext ctx, int supplierId, int reservaId, decimal amount)
+    {
+        ctx.SupplierPayments.Add(new SupplierPayment
+        {
+            SupplierId = supplierId,
+            ReservaId = reservaId,
+            Amount = amount,
+            Currency = "ARS",
+            ImputedCurrency = "ARS",
+            ImputedAmount = amount,
+            PaidAt = DateTime.UtcNow,
+            Method = "Transfer",
+        });
+        await ctx.SaveChangesAsync();
+    }
+
+    /// <summary>
     /// Construye una <see cref="BookingCancellation"/> con <see cref="FiscalSnapshot"/>
     /// COMPLETO (apto para AwaitingFiscalConfirmation+). El status default
     /// queda en Drafted; los tests lo cambian segun el escenario.

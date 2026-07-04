@@ -111,10 +111,11 @@ const ROW_STATUS_LABELS = {
 // ─── Componente: mini-form de reembolso tardío ────────────────────────────────
 
 /**
- * Mini-formulario en línea para reabrir una cancelación abandonada.
+ * Mini-formulario en línea para reabrir una cancelación y registrar un reembolso tardío del operador.
  *
- * Aparece solo cuando el item tiene semaphore = 3 (Abandoned) y el usuario tiene
- * permiso caja.edit (que es el permiso del endpoint de reopen).
+ * Aparece cuando el backend marca la fila como reabrible (item.canReopenForLateRefund = true) y el usuario tiene
+ * permiso caja.edit (el permiso del endpoint de reopen). Eso pasa en dos casos: una cancelación abandonada (dada
+ * por perdida) o una cerrada que quedó con un resto que el operador todavía debe (FIX A, 2026-07-04).
  *
  * El motivo es OBLIGATORIO (mínimo 10 caracteres). El backend también lo valida.
  *
@@ -216,8 +217,8 @@ function FormReembolsoTardio({ cancellationPublicId, onReopenSuccess }) {
         Registrar reembolso tardío
       </p>
       <p className="text-xs text-slate-600 dark:text-slate-400 mb-2">
-        Esta cancelación fue dada por perdida. Al reabrirla, vas a poder registrar
-        el ingreso del reembolso desde Caja. Explicá brevemente por qué el operador pagó tarde.
+        El operador todavía tiene plata para devolverte de esta cancelación. Al reabrirla, vas a poder
+        registrar el ingreso del reembolso desde Caja. Explicá brevemente por qué el operador pagó tarde.
       </p>
 
       <textarea
@@ -292,8 +293,11 @@ function FilaReembolsoPendiente({ item, showSupplierColumn, canEdit, onReload })
   const semaphoreConfig = SEMAPHORE_CONFIG[item.semaphore] ?? SEMAPHORE_UNKNOWN;
   const SemaphoreIcon = semaphoreConfig.icon;
 
-  // Semáforo 3 = Abandoned: único estado que permite reembolso tardío
-  const esAbandonado = item.semaphore === 3;
+  // FIX A (2026-07-04): la posibilidad de registrar un reembolso TARDÍO la decide el backend (canReopenForLateRefund),
+  // no el semáforo. Es true para una cancelación abandonada (dada por perdida) O para una CERRADA que quedó con un
+  // resto que el operador todavía debe. Antes se ataba a `item.semaphore === 3` (solo abandonadas), lo que dejaba las
+  // "cerradas con resto" sin forma de registrar el ingreso tardío.
+  const puedeReabrirTardio = item.canReopenForLateRefund === true;
 
   // RESTOS (2026-07-03): etiqueta de estado en español, solo para los valores que agregan
   // información nueva sobre el semáforo (ver el comentario de ROW_STATUS_LABELS).
@@ -429,8 +433,8 @@ function FilaReembolsoPendiente({ item, showSupplierColumn, canEdit, onReload })
           )}
         </div>
 
-        {/* Acción: reembolso tardío solo para abandonados con permiso caja.edit */}
-        {esAbandonado && canEdit && (
+        {/* Acción: reembolso tardío para cancelaciones reabribles (abandonadas o cerradas con resto) con permiso caja.edit */}
+        {puedeReabrirTardio && canEdit && (
           <div className="flex-shrink-0">
             <FormReembolsoTardio
               cancellationPublicId={item.bookingCancellationPublicId}

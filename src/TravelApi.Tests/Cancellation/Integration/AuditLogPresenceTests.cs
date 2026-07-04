@@ -599,15 +599,26 @@ public sealed class AuditLogPresenceTests
         await using var ctx = _fixture.CreateDbContext();
         var (custId, supId, resId, invId) = await CancellationTestData.SeedBaseAsync(ctx);
 
-        // ServicioReserva: sin esto DraftAsync no puede inferir SupplierId.
+        // ServicioReserva: sin esto DraftAsync no puede inferir SupplierId. Le damos NetCost/Currency
+        // en ARS porque el RefundCap de la linea se topea por el NetCost del servicio (con NetCost 0 el
+        // cap seria 0 aunque le paguemos al operador).
         ctx.Servicios.Add(new ServicioReserva
         {
             ReservaId = resId,
             SupplierId = supId,
             ServiceType = "Hotel",
             Description = "Hotel test audit",
+            Currency = "ARS",
+            SalePrice = 60_000m,
+            NetCost = 50_000m,
         });
         await ctx.SaveChangesAsync();
+
+        // (2026-07-03) Le pagamos al operador para que la anulacion tenga circuito real de reembolso
+        // (RefundCap > 0). Sin esto la BC se auto-cerraria en la transicion post-CAE ("sin plata al
+        // operador cierra sola") y los tests de Allocate/Void/Withdraw no llegarian a
+        // AwaitingOperatorRefund: el allocate rebotaria con INV-093.
+        await CancellationTestData.SeedSupplierPaymentAsync(ctx, supId, resId, 50_000m);
 
         var reserva = await ctx.Reservas.AsNoTracking().FirstAsync(r => r.Id == resId);
         var supplier = await ctx.Suppliers.AsNoTracking().FirstAsync(s => s.Id == supId);

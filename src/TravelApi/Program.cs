@@ -579,6 +579,12 @@ builder.Services.AddScoped<TravelApi.Infrastructure.Services.PartialCreditNotePo
 // (2026-06-26): job nocturno que cierra el ciclo del reembolso del operador. Las cancelaciones trabadas en
 // AwaitingOperatorRefund con OperatorRefundDueBy vencido pasan a AbandonedByOperator (reserva -> Cancelled).
 builder.Services.AddScoped<TravelApi.Infrastructure.Services.OperatorRefundTimeoutJob>();
+// (2026-07-04): barrido propio de cierre de anulaciones sin reembolso pendiente del operador (receivable $0).
+// Desacoplado del job de timeouts para que corra aunque aquel falle (ver ZeroReceivableCancellationCloseJob).
+builder.Services.AddScoped<TravelApi.Infrastructure.Services.ZeroReceivableCancellationCloseJob>();
+// FIX B (2026-07-04): red de seguridad para el aviso de AFIP perdido en la NC TOTAL (analogo total del job bridge
+// parcial). Re-aplica el callback del bridge cuando la NC ya tiene resultado final pero el aviso se perdio.
+builder.Services.AddScoped<TravelApi.Infrastructure.Services.TotalCreditNoteBridgeReconciliationJob>();
 builder.Services.AddScoped<ISearchService, SearchService>();
 builder.Services.AddScoped<IRateService, RateService>();
 builder.Services.AddScoped<ICountryService, CountryService>();
@@ -974,6 +980,27 @@ if (hangfireSchedulerEnabled)
         "operator-refund-timeout",
         job => job.RunAsync(CancellationToken.None),
         Cron.Daily(4));
+
+    // (2026-07-04): barrido PROPIO de cierre de anulaciones sin reembolso pendiente del operador (receivable $0).
+    // Antes corria SOLO como cola del job de timeouts de arriba; si la query de vencidas de aquel explotaba, esa
+    // noche no se barria. Ahora es un job independiente (red de seguridad): corre 5am UTC, una hora DESPUES del de
+    // timeouts, para no solaparse. El barrido sigue ademas invocandose al final de ProcessExpiredOperatorRefunds
+    // (4am) para cerrar en la misma corrida lo recien abandonado; ambas pasadas son idempotentes (ver el job).
+    RecurringJob.AddOrUpdate<TravelApi.Infrastructure.Services.ZeroReceivableCancellationCloseJob>(
+        "cancellation-zero-receivable-close",
+        job => job.RunAsync(CancellationToken.None),
+        Cron.Daily(5));
+
+    // FIX B (2026-07-04): red de seguridad para el aviso de AFIP perdido en la NC TOTAL. Cada 30 min (misma cron
+    // que el job bridge PARCIAL, del que es el analogo total): la "ventana de gracia" para considerar trabada una
+    // BC corre EN LA QUERY (setting BridgeReconciliationStalenessMinutes, compartido), no en la cron. Es no-op si
+    // EnableNewCancellationFlow=false. Re-aplica el callback del bridge (idempotente) cuando la NC ya tiene
+    // resultado final de AFIP pero el aviso se perdio; al destrabar, la BC puede auto-cerrarse si no hubo plata al
+    // operador (correcto). El BC sale de AwaitingFiscalConfirmation y deja de ser candidato -> self-healing.
+    RecurringJob.AddOrUpdate<TravelApi.Infrastructure.Services.TotalCreditNoteBridgeReconciliationJob>(
+        "total-credit-note-bridge-reconciliation",
+        job => job.RunAsync(CancellationToken.None),
+        "*/30 * * * *");
 }
 
 // 3. Health Check

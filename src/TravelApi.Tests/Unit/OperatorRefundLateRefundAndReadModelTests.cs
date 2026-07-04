@@ -175,11 +175,103 @@ public class OperatorRefundLateRefundAndReadModelTests
     {
         await using var ctx = NewDbContext();
         var (service, _) = BuildService(ctx);
+        // Closed SIN lineas -> receivable $0 -> no reabrible (sigue rechazando).
         var bc = await SeedCancellationAsync(ctx, BookingCancellationStatus.Closed);
 
         await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
             service.ReopenAbandonedForLateRefundAsync(
-                bc.PublicId, "No deberia poder reabrirse desde Closed", "cajero-1", null, CancellationToken.None));
+                bc.PublicId, "No deberia poder reabrirse desde Closed sin residuo", "cajero-1", null, CancellationToken.None));
+    }
+
+    // =====================================================================================
+    // FIX A (2026-07-04): reembolso tardio contra una anulacion CERRADA CON RESIDUO
+    // =====================================================================================
+
+    /// <summary>Agrega una linea al BC (servicio inexistente -> el circuit reader la cuenta como cancelada).</summary>
+    private static async Task AddLineWithResidueAsync(
+        AppDbContext ctx, BookingCancellation bc, decimal cap, decimal received)
+    {
+        ctx.Set<BookingCancellationLine>().Add(new BookingCancellationLine
+        {
+            BookingCancellationId = bc.Id,
+            SupplierId = bc.SupplierId,
+            ServiceTable = CancellableServiceTable.Hotel,
+            ServiceId = 987654, // no existe HotelBooking con este Id -> servicio cancelado -> residuo cuenta
+            Scope = BookingCancellationLineScope.Full,
+            Currency = "ARS",
+            LineSaleAmount = cap,
+            RefundCap = cap,
+            ReceivedRefundAmount = received,
+        });
+        await ctx.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task ReopenForLateRefund_fromClosedWithResidue_reopensAndKeepsReservaCancelled()
+    {
+        await using var ctx = NewDbContext();
+        var (service, auditMock) = BuildService(ctx);
+        var bc = await SeedCancellationAsync(ctx,
+            BookingCancellationStatus.Closed,
+            reservaStatus: EstadoReserva.Cancelled,
+            closedAt: DateTime.UtcNow.AddDays(-10));
+        // El operador reembolso de menos: cap 1000, recibido 300 -> residuo vivo 700.
+        await AddLineWithResidueAsync(ctx, bc, cap: 1000m, received: 300m);
+
+        var dto = await service.ReopenAbandonedForLateRefundAsync(
+            bc.PublicId, "El operador devolvio el resto fuera de plazo", "cajero-1", "Cajero Uno", CancellationToken.None);
+
+        Assert.Equal(BookingCancellationStatus.AwaitingOperatorRefund.ToString(), dto.Status);
+
+        var bcAfter = await ctx.BookingCancellations.AsNoTracking().FirstAsync(b => b.Id == bc.Id);
+        Assert.Equal(BookingCancellationStatus.AwaitingOperatorRefund, bcAfter.Status);
+        Assert.Null(bcAfter.ClosedAt);                              // se limpio el cierre
+        Assert.True(bcAfter.OperatorRefundDueBy > DateTime.UtcNow); // plazo nuevo en el futuro
+
+        // La reserva NO se resucita: el viaje sigue cancelado.
+        var reserva = await ctx.Reservas.AsNoTracking().FirstAsync(r => r.Id == bc.ReservaId);
+        Assert.Equal(EstadoReserva.Cancelled, reserva.Status);
+
+        // Auditoria del evento de reapertura (distinguible por previousStatus = Closed en el detalle).
+        auditMock.Verify(a => a.LogBusinessEventAsync(
+            AuditActions.BookingCancellationReopenedForLateRefund,
+            AuditActions.BookingCancellationEntityName,
+            bc.Id.ToString(),
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ReopenForLateRefund_fromClosedFullyRefunded_isRejected()
+    {
+        await using var ctx = NewDbContext();
+        var (service, _) = BuildService(ctx);
+        var bc = await SeedCancellationAsync(ctx, BookingCancellationStatus.Closed);
+        // Sin residuo: cap 500, recibido 500 -> receivable $0 -> no reabrible.
+        await AddLineWithResidueAsync(ctx, bc, cap: 500m, received: 500m);
+
+        await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            service.ReopenAbandonedForLateRefundAsync(
+                bc.PublicId, "No hay residuo, no deberia reabrirse", "cajero-1", null, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ReopenForLateRefund_fromClosedWithResidue_thenReadModelShowsRegistrable()
+    {
+        await using var ctx = NewDbContext();
+        var (service, _) = BuildService(ctx);
+        var bc = await SeedCancellationAsync(ctx, BookingCancellationStatus.Closed, closedAt: DateTime.UtcNow.AddDays(-5));
+        await AddLineWithResidueAsync(ctx, bc, cap: 1000m, received: 300m);
+
+        await service.ReopenAbandonedForLateRefundAsync(
+            bc.PublicId, "El operador devolvio el resto fuera de plazo", "cajero-1", "Cajero Uno", CancellationToken.None);
+
+        // Tras reabrir, la fila del read-model ya admite el registro directo y ya NO ofrece reabrir.
+        var readModel = new OperatorRefundReadModelService(ctx, AdminAccessor(), permissionResolver: null);
+        var items = await readModel.GetSupplierPendingRefundsAsync(bc.SupplierId, CancellationToken.None);
+        var row = items.Single(i => i.BookingCancellationPublicId == bc.PublicId);
+        Assert.True(row.CanRegisterRefund);
+        Assert.False(row.CanReopenForLateRefund);
     }
 
     [Fact]
@@ -365,6 +457,24 @@ public class OperatorRefundLateRefundAndReadModelTests
             items.Single(i => i.NumeroReserva == "R-OVERDUE").Semaphore);
         Assert.Equal(OperatorRefundPendingSemaphore.OnTime,
             items.Single(i => i.NumeroReserva == "R-ONTIME").Semaphore);
+    }
+
+    [Fact]
+    public async Task ReadModel_canReopenForLateRefund_trueForAbandonedAndClosedWithResidue()
+    {
+        await using var ctx = NewDbContext();
+        var (supplierAId, _) = await SeedReadModelAsync(ctx);
+
+        var svc = new OperatorRefundReadModelService(ctx, AdminAccessor(), permissionResolver: null);
+        var items = await svc.GetSupplierPendingRefundsAsync(supplierAId, CancellationToken.None);
+
+        // Abandonada -> reabrible.
+        Assert.True(items.Single(i => i.NumeroReserva == "R-ABANDONED").CanReopenForLateRefund);
+        // Cerrada CON residuo (cap 999, recibido 0) -> reabrible por reembolso tardio (FIX A).
+        Assert.True(items.Single(i => i.NumeroReserva == "R-CLOSED").CanReopenForLateRefund);
+        // Esperando (activa, no terminal) -> NO se reabre (ya esta abierta, se registra directo).
+        Assert.False(items.Single(i => i.NumeroReserva == "R-ONTIME").CanReopenForLateRefund);
+        Assert.True(items.Single(i => i.NumeroReserva == "R-ONTIME").CanRegisterRefund);
     }
 
     [Fact]

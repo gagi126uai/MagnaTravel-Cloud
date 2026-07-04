@@ -9,6 +9,7 @@ using Moq;
 using TravelApi.Application.Constants;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Services;
 using Xunit;
@@ -77,7 +78,11 @@ public class BookingCancellationZeroReceivableCloseTests
         PenaltyStatus penaltyStatus = PenaltyStatus.Confirmed,
         DebitNoteStatus debitNoteStatus = DebitNoteStatus.NotApplicable,
         int? creditNoteInvoiceId = 999,
-        string numero = "R-ZERO")
+        string numero = "R-ZERO",
+        // (2026-07-04) Reembolso a nivel CABECERA: SOLO relevante para las BC legacy SIN lineas (pre-backfill),
+        // donde el esperado/recibido se registro en el BC padre en vez de en lineas.
+        decimal estimatedRefundAmount = 0m,
+        decimal receivedRefundAmount = 0m)
     {
         var customer = new Customer { FullName = "Cliente", IsActive = true };
         var supplier = new Supplier { Name = "Operador", IsActive = true };
@@ -105,6 +110,8 @@ public class BookingCancellationZeroReceivableCloseTests
             DraftedByUserId = "vendedor-1",
             DraftedByUserName = "Juan Vendedor",
             OperatorRefundDueBy = DateTime.UtcNow.AddDays(30),
+            EstimatedRefundAmount = estimatedRefundAmount,
+            ReceivedRefundAmount = receivedRefundAmount,
         };
         ctx.BookingCancellations.Add(bc);
         await ctx.SaveChangesAsync();
@@ -193,16 +200,56 @@ public class BookingCancellationZeroReceivableCloseTests
     }
 
     [Fact]
-    public async Task Transicion_ReceivableCero_PeroMultaPendiente_NoCierra()
+    public async Task Transicion_ReceivableCero_ConMultaSinDecidir_CierraIgual()
     {
-        // Receivable $0 PERO la multa del operador sigue pendiente de confirmar (PenaltyStatus.Estimated con el flag
-        // de ND encendido, NC con CAE, sin ND en juego). NO se cierra: primero hay que resolver la multa.
+        // (2026-07-04, DECISION DEL DUEÑO) Antes: receivable $0 + multa sin decidir (Estimated, flag ON) NO cerraba
+        // porque la multa bloqueaba. Ahora: cuando NUNCA hubo circuito con el operador, se cierra IGUAL y la
+        // pregunta de la multa queda como TAREA pendiente (se resuelve despues, desde el estado Closed). Solo una ND
+        // a medio emitir (Pending/Failed) sigue bloqueando — este caso no la tiene.
         await using var ctx = NewDbContext();
         var (service, auditMock) = BuildService(ctx, debitNoteEnabled: true);
         var (bc, invoice) = await SeedAsync(ctx,
             lines: new[] { (RefundCap: 0m, Received: 0m) },
             bcStatus: BookingCancellationStatus.AwaitingFiscalConfirmation,
             penaltyStatus: PenaltyStatus.Estimated);
+
+        await service.OnArcaSucceededAsync(invoice.Id, creditNoteInvoiceId: 555, CancellationToken.None);
+
+        var bcAfter = await ctx.BookingCancellations.AsNoTracking().FirstAsync(b => b.Id == bc.Id);
+        // Cierre directo (la multa ya no bloquea).
+        Assert.Equal(BookingCancellationStatus.Closed, bcAfter.Status);
+        Assert.NotNull(bcAfter.ClosedAt);
+        // La multa NO se toca: sigue sin decidir (se resuelve despues del cierre).
+        Assert.Equal(PenaltyStatus.Estimated, bcAfter.PenaltyStatus);
+
+        var reserva = await ctx.Reservas.AsNoTracking().FirstAsync(r => r.Id == bc.ReservaId);
+        Assert.Equal(EstadoReserva.Cancelled, reserva.Status);
+
+        // La pata de la multa SIGUE operable: el outcome del read-model da "Pending" aun con la reserva cerrada
+        // (el cartel "falta decidir la multa" se muestra igual).
+        Assert.Equal(
+            OperatorPenaltyOutcome.Pending,
+            await service.GetOperatorPenaltyOutcomeAsync(reserva.PublicId, CancellationToken.None));
+
+        auditMock.Verify(a => a.StageBusinessEvent(
+            AuditActions.BookingCancellationClosedNoOperatorRefundDue,
+            AuditActions.BookingCancellationEntityName,
+            bc.Id.ToString(),
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Transicion_ReceivableCero_ConNdAMedioEmitir_NoCierra()
+    {
+        // Contra-caso: una ND a medio emitir (Failed) SIGUE bloqueando el cierre (documento fiscal a medias). Se
+        // resuelve por la bandeja / el reintento; recien ahi se cierra.
+        await using var ctx = NewDbContext();
+        var (service, auditMock) = BuildService(ctx, debitNoteEnabled: true);
+        var (bc, invoice) = await SeedAsync(ctx,
+            lines: new[] { (RefundCap: 0m, Received: 0m) },
+            bcStatus: BookingCancellationStatus.AwaitingFiscalConfirmation,
+            penaltyStatus: PenaltyStatus.Confirmed,
+            debitNoteStatus: DebitNoteStatus.Failed);
 
         await service.OnArcaSucceededAsync(invoice.Id, creditNoteInvoiceId: 555, CancellationToken.None);
 
@@ -325,6 +372,66 @@ public class BookingCancellationZeroReceivableCloseTests
             numero: "R-JOB-ZERO");
 
         await service.ProcessExpiredOperatorRefundsAsync(CancellationToken.None);
+
+        await AssertClosedAsync(ctx, bc.Id);
+    }
+
+    // ============================ BC legacy SIN lineas (esperado a nivel cabecera) ============================
+
+    [Fact]
+    public async Task Barrido_SinLineas_EsperadoCabeceraCero_Cierra()
+    {
+        // (2026-07-04, CAMBIO 2) BC legacy pre-backfill: sin lineas, el esperado/recibido se registro en la CABECERA.
+        // Con esperado 0 y recibido 0 tampoco hubo circuito con el operador -> se cierra igual que las modernas $0.
+        await using var ctx = NewDbContext();
+        var (service, _) = BuildService(ctx, debitNoteEnabled: false);
+        var (bc, _) = await SeedAsync(ctx,
+            lines: System.Array.Empty<(decimal, decimal)>(),
+            bcStatus: BookingCancellationStatus.AwaitingOperatorRefund,
+            estimatedRefundAmount: 0m,
+            receivedRefundAmount: 0m,
+            numero: "R-LEGACY-ZERO");
+
+        var closed = await service.CloseZeroReceivableCancellationsAsync(CancellationToken.None);
+        Assert.Equal(1, closed);
+        await AssertClosedAsync(ctx, bc.Id);
+    }
+
+    [Fact]
+    public async Task Barrido_SinLineas_EsperadoCabeceraPositivo_NoCierra()
+    {
+        // Contra-caso: la cabecera esperaba un reembolso real (> 0) que la vista por-linea no ve (no hay lineas).
+        // NO se cierra: hay un receivable real; se resuelve a mano.
+        await using var ctx = NewDbContext();
+        var (service, _) = BuildService(ctx, debitNoteEnabled: false);
+        var (bc, _) = await SeedAsync(ctx,
+            lines: System.Array.Empty<(decimal, decimal)>(),
+            bcStatus: BookingCancellationStatus.AwaitingOperatorRefund,
+            estimatedRefundAmount: 250_000m,
+            receivedRefundAmount: 0m,
+            numero: "R-LEGACY-OWED");
+
+        var closed = await service.CloseZeroReceivableCancellationsAsync(CancellationToken.None);
+        Assert.Equal(0, closed);
+        await AssertNotClosedAsync(ctx, bc.Id, BookingCancellationStatus.AwaitingOperatorRefund);
+    }
+
+    // ============================ Job dedicado (recurring propio) ============================
+
+    [Fact]
+    public async Task JobDedicado_CorreElBarrido()
+    {
+        // (2026-07-04, CAMBIO 3) El barrido tiene su propio job recurrente (desacoplado del de timeouts). Verificamos
+        // que el wrapper de Hangfire ejecuta el barrido de dominio y cierra las trabadas sin receivable.
+        await using var ctx = NewDbContext();
+        var (service, _) = BuildService(ctx, debitNoteEnabled: false);
+        var (bc, _) = await SeedAsync(ctx,
+            lines: new[] { (0m, 0m) }, bcStatus: BookingCancellationStatus.AwaitingOperatorRefund,
+            numero: "R-JOBPROPIO-ZERO");
+
+        var job = new ZeroReceivableCancellationCloseJob(
+            service, NullLogger<ZeroReceivableCancellationCloseJob>.Instance);
+        await job.RunAsync(CancellationToken.None);
 
         await AssertClosedAsync(ctx, bc.Id);
     }

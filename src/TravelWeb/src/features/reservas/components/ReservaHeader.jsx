@@ -1,7 +1,7 @@
 import React from 'react';
 import { ArrowLeft, Trash2, Archive, AlertTriangle, Undo2, Calendar, Pencil, Ban, Lock, XCircle, RefreshCw, CornerUpLeft, FastForward } from "lucide-react";
 import { getReservaArchiveBlockReason } from "../archiveRules";
-import { getStatusConfig, translateStatus, isStatusLocked } from "./ReservaStatusBadge";
+import { getStatusConfig, translateStatus, isStatusLocked, isReservaEnEstadoVivo } from "./ReservaStatusBadge";
 import { ReservaStatusChips } from "./ReservaStatusChips";
 import { isAdmin } from "../../../auth";
 
@@ -250,8 +250,13 @@ export function ReservaHeader({
                         )}
                         {/* ADR-027: etiqueta "Con cambios" al lado del estado.
                             Aparece cuando el vendedor editó precio/costo de un servicio
-                            en una reserva viva y el dueño todavía no acusó el cambio. */}
-                        {reserva.hasUnacknowledgedChanges && (
+                            en una reserva viva y el dueño todavía no acusó el cambio.
+
+                            Bug fix 2026-07-03: el flag hasUnacknowledgedChanges puede quedar en
+                            true por error del backend en reservas Anuladas / Esperando reembolso.
+                            Exigimos ademas que el estado sea "vivo" para no mostrar la etiqueta
+                            sobre un viaje que ya quedo sin efecto. */}
+                        {reserva.hasUnacknowledgedChanges && isReservaEnEstadoVivo(reserva.status) && (
                             <span
                                 className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-900/40 dark:text-amber-200 dark:border-amber-700"
                                 data-testid="badge-con-cambios"

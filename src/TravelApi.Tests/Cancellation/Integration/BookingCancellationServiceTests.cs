@@ -123,14 +123,25 @@ public sealed class BookingCancellationServiceTests
     {
         var (custId, supId, resId, invId) = await CancellationTestData.SeedBaseAsync(ctx);
 
+        // NetCost/Currency en ARS: el RefundCap de la linea de anulacion se topea por el NetCost del
+        // servicio, asi que con NetCost 0 (el default) el cap quedaria en 0 aunque le paguemos al operador.
         ctx.Servicios.Add(new ServicioReserva
         {
             ReservaId = resId,
             SupplierId = supId,
             ServiceType = "Hotel",
             Description = "Hotel test",
+            Currency = "ARS",
+            SalePrice = 60_000m,
+            NetCost = 50_000m,
         });
         await ctx.SaveChangesAsync();
+
+        // (2026-07-03) Le pagamos al operador para que la anulacion tenga circuito real de reembolso
+        // (RefundCap > 0). Sin esto, tras el CAE la BC se auto-cierra ("sin plata al operador cierra sola")
+        // en vez de quedar AwaitingOperatorRefund, que es la transicion que verifican los tests de
+        // ForceArca y OnArcaSucceeded.
+        await CancellationTestData.SeedSupplierPaymentAsync(ctx, supId, resId, 50_000m);
 
         var reservaPublicId = (await ctx.Reservas.AsNoTracking().FirstAsync(r => r.Id == resId)).PublicId;
         return (custId, supId, resId, invId, reservaPublicId);
