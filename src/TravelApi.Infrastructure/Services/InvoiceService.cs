@@ -315,6 +315,19 @@ public class InvoiceService : IInvoiceService
             .FirstOrDefaultAsync(r => r.Id == reservaId, ct)
             ?? throw new InvalidOperationException("Reserva no encontrada.");
 
+        // Guard de importe (2026-07-04): ningún comprobante puede emitirse por total cero. Un escenario real es la
+        // anulación que arma una factura sin líneas con valor: sin este guard se crearía una factura PENDING en $0
+        // y se la mandaría a AFIP para nada. Corremos ANTES de tocar AFIP y de crear la Invoice. El total efectivo
+        // es el del override (NC/ND ya cuadradas por el caller) o la suma de las líneas + tributos. Mensaje apto
+        // para el usuario final: sin jerga ni nombres internos (gate data-exposure del proyecto).
+        var comprobanteTotal = request.TotalsOverride is { } totalsOverride
+            ? totalsOverride.ImpTotal
+            : request.Items.Sum(item => item.Total) + request.Tributes.Sum(tribute => tribute.Importe);
+        if (comprobanteTotal <= 0m)
+        {
+            throw new InvalidOperationException("El total del comprobante debe ser mayor a cero.");
+        }
+
         // ADR-020 (2026-06-07, guard fiscal C1) + fix 2026-06-17 (auditoria de logica): la FACTURA de
         // venta normal solo se emite desde un estado FACTURABLE. Es una ALLOW-LIST, no una deny-list: la
         // version vieja (NonInvoiceableStatuses) frenaba Cotizacion/Presupuesto/En gestion/Perdido pero

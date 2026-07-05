@@ -125,79 +125,12 @@ public class BookingCancellationService
     // =========================================================================
     // Comandos publicos (IBookingCancellationService)
     // =========================================================================
-
-    /// <summary>
-    /// ADR-020 F6 (M7): deja rastro auditable ADITIVO de un cambio de <c>Reserva.Status</c> hecho por
-    /// el flujo de cancelacion (ADR-002). Estos sitios escriben <c>bc.Reserva.Status</c> por FUERA de
-    /// <c>UpdateStatusAsync</c>/<c>RevertStatusAsync</c>, asi que no quedaban en <c>ReservaStatusChangeLog</c>.
-    /// No persiste: el caller hace el <c>SaveChanges</c>. NO cambia la logica de cancelacion, solo registra
-    /// el cambio (de -> a, quien, cuando). Cuando el cambio lo dispara un callback sin actor humano (ARCA,
-    /// consumo de credito), <paramref name="actorUserId"/> va null y la razon lo documenta como del sistema.
-    /// </summary>
-    private void LogReservaStatusChange(
-        Reserva reserva, string fromStatus, string toStatus,
-        string? actorUserId, string? actorUserName, string reason)
-    {
-        _db.ReservaStatusChangeLogs.Add(new ReservaStatusChangeLog
-        {
-            ReservaId = reserva.Id,
-            FromStatus = fromStatus,
-            ToStatus = toStatus,
-            Direction = "Forward",
-            ByUserId = actorUserId,
-            ByUserName = actorUserName,
-            Reason = reason,
-            OccurredAt = DateTime.UtcNow,
-        });
-    }
-
-    /// <summary>
-    /// (2026-07-03, ADR-027) Al anular una reserva, DESCARTA la marca "confirmada con cambios" que hubiera quedado
-    /// pendiente de revisar. Cuando el vendedor edita el precio/costo de un servicio en un estado vivo, la reserva
-    /// queda marcada (<c>HasUnacknowledgedChanges</c>) para que el dueño revise y de su OK. Si despues se ANULA la
-    /// reserva, esos cambios pendientes ya no tienen sentido (el viaje se deja sin efecto): la ficha no debe seguir
-    /// mostrando el cartel "Se editaron precios..." ni el badge "Con cambios" en una reserva anulada.
-    ///
-    /// <para>A diferencia del OK humano (<c>AcknowledgeChangesAsync</c>), esto NO registra
-    /// <c>ChangesAckBy*</c>/<c>ChangesAckAt</c>: nadie "revisó" los cambios, la anulación los descarta. Tampoco toca
-    /// <c>LastRegressionReason/At</c> (ese par lo maneja el motor de estados / el OK, y su limpieza no depende de la
-    /// anulación).</para>
-    ///
-    /// <para>Idempotente: si la reserva no tenía nada marcado ni filas pendientes, es un no-op silencioso (no
-    /// loguea). NO persiste por si mismo: el caller cierra con su propio <c>SaveChanges</c>, asi la limpieza es
-    /// atomica con la transicion de estado de la anulacion. Borra las filas hijas <c>ReservaPendingChanges</c> (el
-    /// detalle de "qué cambió") porque ya no son un pendiente.</para>
-    /// </summary>
-    private async Task DiscardUnacknowledgedChangesOnCancellationAsync(Reserva reserva, CancellationToken ct)
-    {
-        // Traemos las filas de detalle ANTES de decidir si hay algo que limpiar: la marca puede estar en false pero
-        // igual quedar filas huerfanas de un flujo viejo, o viceversa. Query de solo lectura; RemoveRange las marca
-        // Deleted en el ChangeTracker y se borran con el SaveChanges del caller (no hacemos SaveChanges aca).
-        var pendingChanges = await _db.ReservaPendingChanges
-            .Where(c => c.ReservaId == reserva.Id)
-            .ToListAsync(ct);
-
-        bool hadSomethingToClear =
-            reserva.HasUnacknowledgedChanges ||
-            reserva.ChangesPendingSince is not null ||
-            pendingChanges.Count > 0;
-
-        // Sin marca ni filas: nada que hacer. Salir sin loguear evita ruido en las anulaciones normales (que son
-        // la mayoria: reservas anuladas que nunca tuvieron un cambio pendiente de revisar).
-        if (!hadSomethingToClear)
-            return;
-
-        reserva.HasUnacknowledgedChanges = false;
-        reserva.ChangesPendingSince = null;
-
-        if (pendingChanges.Count > 0)
-            _db.ReservaPendingChanges.RemoveRange(pendingChanges);
-
-        _logger.LogInformation(
-            "ADR-027: Reserva {ReservaId} anulada -> se descartaron los cambios pendientes de revisar " +
-            "({PendingRows} fila(s) de detalle borradas). NO cuenta como un OK humano.",
-            reserva.Id, pendingChanges.Count);
-    }
+    //
+    // NOTA (2026-07-04): los ex-helpers privados LogReservaStatusChange (rastro auditable) y
+    // DiscardUnacknowledgedChangesOnCancellationAsync (descarte de la marca "confirmada con cambios") MURIERON:
+    // sus dos responsabilidades quedaron absorbidas por el PUNTO ÚNICO de transición
+    // (TravelApi.Infrastructure.Reservations.ReservaStatusTransitioner.ApplyAsync), que ahora escribe el log y
+    // limpia las marcas de revisión de forma consistente en TODOS los cambios de Reserva.Status del sistema.
 
     public async Task<BookingCancellationDto> DraftAsync(
         DraftCancellationRequest request,
@@ -1989,14 +1922,13 @@ public class BookingCancellationService
 
             // HC2 plan v3 §6.1 step 5: bypass UpdateStatusAsync porque AllowedRevertTransitions no contempla
             // esta salida. La transicion queda visible en el audit log + la query de Reservas filtra por status.
-            var reservaFromStatusConfirm = bc.Reserva.Status;
-            bc.Reserva.Status = EstadoReserva.PendingOperatorRefund;
-            // ADR-020 F6 (M7): rastro aditivo del cambio de estado (este path lo escribe por fuera de la maquina).
-            LogReservaStatusChange(bc.Reserva, reservaFromStatusConfirm, EstadoReserva.PendingOperatorRefund,
-                userId, userName, "Cancelacion (ADR-002): confirmada con el cliente, a la espera del reembolso del operador.");
-            // ADR-027: la reserva sale de un estado vivo -> descartar la marca "confirmada con cambios" si quedo
-            // pendiente (una reserva anulada no debe mostrar el cartel/badge de revision). Atomico con la transicion.
-            await DiscardUnacknowledgedChangesOnCancellationAsync(bc.Reserva, ct);
+            // Transición de estado + rastro auditable + descarte de la marca "confirmada con cambios" por el PUNTO
+            // ÚNICO de transición. Antes: set a mano + LogReservaStatusChange + Discard; ahora unificado (la regla de
+            // limpieza para PendingOperatorRefund apaga la marca + borra el detalle de cambios). Atómico con la
+            // transición (el caller cierra el SaveChanges).
+            await ReservaStatusTransitioner.ApplyAsync(
+                _db, bc.Reserva, EstadoReserva.PendingOperatorRefund, "Forward",
+                userId, userName, "Cancelacion (ADR-002): confirmada con el cliente, a la espera del reembolso del operador.", ct);
 
             // 8-bis) CAMBIO 2 (2026-06-24): anulacion TOTAL -> marcar TODOS los servicios de la reserva como
             //        Cancelado, en la MISMA transaccion que la transicion de estado (atomico). Idempotente.
@@ -2433,13 +2365,11 @@ public class BookingCancellationService
         }
         else
         {
-            var reservaFromStatusForce = bc.Reserva.Status;
-            bc.Reserva.Status = EstadoReserva.PendingOperatorRefund;
-            // ADR-020 F6 (M7): rastro aditivo del cambio de estado (escape hatch fiscal manual).
-            LogReservaStatusChange(bc.Reserva, reservaFromStatusForce, EstadoReserva.PendingOperatorRefund,
-                userId, userName, "Cancelacion (ADR-002): confirmacion fiscal forzada por admin, a la espera del reembolso del operador.");
-            // ADR-027: descartar la marca "confirmada con cambios" pendiente (ver DiscardUnacknowledgedChangesOnCancellationAsync).
-            await DiscardUnacknowledgedChangesOnCancellationAsync(bc.Reserva, ct);
+            // Transición + rastro + descarte de la marca "confirmada con cambios" por el PUNTO ÚNICO de transición
+            // (escape hatch fiscal manual). La regla de limpieza para PendingOperatorRefund apaga la marca.
+            await ReservaStatusTransitioner.ApplyAsync(
+                _db, bc.Reserva, EstadoReserva.PendingOperatorRefund, "Forward",
+                userId, userName, "Cancelacion (ADR-002): confirmacion fiscal forzada por admin, a la espera del reembolso del operador.", ct);
         }
 
         await FinalizeForceCloseAsync(bc, approval, creditNote, request.Reason, userId, userName, ct);
@@ -2620,16 +2550,13 @@ public class BookingCancellationService
         // Cierre de la reserva. NO tocamos el Status del BC ni el ClientCreditEntry:
         // el cliente puede seguir teniendo saldo a favor vivo (ADR-033 lo desacopla del
         // estado de la reserva). Solo la reserva pasa a Cancelled.
-        var reservaFromStatus = bc.Reserva.Status;
-        bc.Reserva.Status = EstadoReserva.Cancelled;
-
-        // Rastro aditivo (ADR-020 F6). Disparado por un callback del sistema (sin actor humano):
-        // ByUserId/ByUserName null, la razon lo documenta.
-        LogReservaStatusChange(bc.Reserva, reservaFromStatus, EstadoReserva.Cancelled,
+        // Transición a Cancelled + rastro + descarte de la marca "confirmada con cambios" por el PUNTO ÚNICO de
+        // transición. Disparado por un callback del sistema (sin actor humano): ByUserId/ByUserName null, la razón
+        // lo documenta. La regla de limpieza para Cancelled apaga la marca + borra el detalle (idempotente).
+        await ReservaStatusTransitioner.ApplyAsync(
+            _db, bc.Reserva, EstadoReserva.Cancelled, "Forward",
             actorUserId: null, actorUserName: null,
-            reason: "Cancelacion (ADR-002): operador reembolso el total esperado, reserva cerrada (sistema).");
-        // ADR-027: la reserva queda anulada -> descartar la marca "confirmada con cambios" pendiente (idempotente).
-        await DiscardUnacknowledgedChangesOnCancellationAsync(bc.Reserva, ct);
+            reason: "Cancelacion (ADR-002): operador reembolso el total esperado, reserva cerrada (sistema).", ct: ct);
 
         // Audit dedicado: via de cierre DISTINTA a BookingCancellationClosed (esa cierra
         // tambien el BC por consumo de credito; aca el BC sigue vivo). El contador puede
@@ -2757,13 +2684,12 @@ public class BookingCancellationService
         // credito antes), NO la volvemos a mover ni re-logueamos. El saldo a favor del cliente queda intacto.
         if (bc.Reserva is not null && bc.Reserva.Status == EstadoReserva.PendingOperatorRefund)
         {
-            var reservaFromStatus = bc.Reserva.Status;
-            bc.Reserva.Status = EstadoReserva.Cancelled;
-            LogReservaStatusChange(bc.Reserva, reservaFromStatus, EstadoReserva.Cancelled,
+            // Transición a Cancelled + rastro + descarte de la marca por el PUNTO ÚNICO de transición (callback del
+            // sistema, sin actor humano). El guard por estado de arriba ya garantizó que es un cambio real.
+            await ReservaStatusTransitioner.ApplyAsync(
+                _db, bc.Reserva, EstadoReserva.Cancelled, "Forward",
                 actorUserId: null, actorUserName: null,
-                reason: "Cancelacion (ADR-002): el operador no reembolso dentro del plazo (timeout), reserva cerrada (sistema).");
-            // ADR-027: la reserva queda anulada -> descartar la marca "confirmada con cambios" pendiente (idempotente).
-            await DiscardUnacknowledgedChangesOnCancellationAsync(bc.Reserva, ct);
+                reason: "Cancelacion (ADR-002): el operador no reembolso dentro del plazo (timeout), reserva cerrada (sistema).", ct: ct);
         }
 
         await _auditService.LogBusinessEventAsync(
@@ -2957,13 +2883,14 @@ public class BookingCancellationService
         // cliente consumio su saldo a favor antes), NO la re-movemos ni re-logueamos.
         if (bc.Reserva is not null && bc.Reserva.Status == EstadoReserva.PendingOperatorRefund)
         {
-            bc.Reserva.Status = EstadoReserva.Cancelled;
-            LogReservaStatusChange(bc.Reserva, EstadoReserva.PendingOperatorRefund, EstadoReserva.Cancelled,
+            // Transición a Cancelled + rastro + descarte de la marca por el PUNTO ÚNICO de transición. El guard por
+            // estado de arriba garantiza que venimos de PendingOperatorRefund (cambio real). Motivo user-facing:
+            // criollo, sin jerga ni IDs (gate data-exposure). OJO: hoy el Reason NO se muestra en ninguna
+            // pantalla (es solo rastro de auditoría en DB); si algún día se expone, revisar TODOS los reasons.
+            await ReservaStatusTransitioner.ApplyAsync(
+                _db, bc.Reserva, EstadoReserva.Cancelled, "Forward",
                 actorUserId: null, actorUserName: null,
-                // Motivo user-facing: criollo, sin jerga ni IDs (gate data-exposure). Se ve en el historial.
-                reason: "Anulación cerrada: no había pagos al operador para recuperar.");
-            // ADR-027: la reserva queda anulada -> descartar la marca "confirmada con cambios" pendiente (idempotente).
-            await DiscardUnacknowledgedChangesOnCancellationAsync(bc.Reserva, ct);
+                reason: "Anulación cerrada: no había pagos al operador para recuperar.", ct: ct);
         }
         else if (bc.Reserva is not null && bc.Reserva.Status != EstadoReserva.Cancelled)
         {
@@ -3463,15 +3390,12 @@ public class BookingCancellationService
 
         bc.Status = BookingCancellationStatus.Closed;
         bc.ClosedAt = DateTime.UtcNow;
-        var reservaFromStatusClosed = bc.Reserva.Status;
-        bc.Reserva.Status = EstadoReserva.Cancelled;
-        // ADR-020 F6 (M7): rastro aditivo. Lo dispara el consumo total del credito (callback del sistema),
-        // sin actor humano -> ByUserId null, documentado en la razon.
-        LogReservaStatusChange(bc.Reserva, reservaFromStatusClosed, EstadoReserva.Cancelled,
+        // Transición a Cancelled + rastro + descarte de la marca por el PUNTO ÚNICO de transición. Lo dispara el
+        // consumo total del crédito (callback del sistema), sin actor humano -> ByUserId null, documentado en la razón.
+        await ReservaStatusTransitioner.ApplyAsync(
+            _db, bc.Reserva, EstadoReserva.Cancelled, "Forward",
             actorUserId: null, actorUserName: null,
-            reason: "Cancelacion (ADR-002): credito del cliente consumido en su totalidad, cancelacion cerrada (sistema).");
-        // ADR-027: la reserva queda anulada -> descartar la marca "confirmada con cambios" pendiente (idempotente).
-        await DiscardUnacknowledgedChangesOnCancellationAsync(bc.Reserva, ct);
+            reason: "Cancelacion (ADR-002): credito del cliente consumido en su totalidad, cancelacion cerrada (sistema).", ct: ct);
 
         // Audit dedicado del cierre del BC para que el contador pueda buscar
         // "cuando se cerro la cancelacion #X" sin tener que mirar el ultimo
@@ -4298,13 +4222,11 @@ public class BookingCancellationService
             }
             else
             {
-                var reservaFromStatusArca = bc.Reserva.Status;
-                bc.Reserva.Status = EstadoReserva.PendingOperatorRefund;
-                LogReservaStatusChange(bc.Reserva, reservaFromStatusArca, EstadoReserva.PendingOperatorRefund,
+                // Transición + rastro + descarte de la marca por el PUNTO ÚNICO de transición (callback ARCA, sistema).
+                await ReservaStatusTransitioner.ApplyAsync(
+                    _db, bc.Reserva, EstadoReserva.PendingOperatorRefund, "Forward",
                     actorUserId: null, actorUserName: null,
-                    reason: "Cancelacion (ADR-002/042): ARCA confirmo todas las NC, a la espera del reembolso del operador (sistema).");
-                // ADR-027: descartar la marca "confirmada con cambios" pendiente (ver DiscardUnacknowledgedChangesOnCancellationAsync).
-                await DiscardUnacknowledgedChangesOnCancellationAsync(bc.Reserva, ct);
+                    reason: "Cancelacion (ADR-002/042): ARCA confirmo todas las NC, a la espera del reembolso del operador (sistema).", ct: ct);
             }
 
             _auditService.StageBusinessEvent(
@@ -4428,13 +4350,11 @@ public class BookingCancellationService
             }
             else
             {
-                var reservaFromStatusArca = bc.Reserva.Status;
-                bc.Reserva.Status = EstadoReserva.PendingOperatorRefund;
-                LogReservaStatusChange(bc.Reserva, reservaFromStatusArca, EstadoReserva.PendingOperatorRefund,
+                // Transición + rastro + descarte de la marca por el PUNTO ÚNICO de transición (callback ARCA, sistema).
+                await ReservaStatusTransitioner.ApplyAsync(
+                    _db, bc.Reserva, EstadoReserva.PendingOperatorRefund, "Forward",
                     actorUserId: null, actorUserName: null,
-                    reason: "Cancelacion (ADR-002): ARCA confirmo la NC, a la espera del reembolso del operador (sistema).");
-                // ADR-027: descartar la marca "confirmada con cambios" pendiente (ver DiscardUnacknowledgedChangesOnCancellationAsync).
-                await DiscardUnacknowledgedChangesOnCancellationAsync(bc.Reserva, ct);
+                    reason: "Cancelacion (ADR-002): ARCA confirmo la NC, a la espera del reembolso del operador (sistema).", ct: ct);
             }
 
             await _auditService.LogBusinessEventAsync(
@@ -6744,13 +6664,11 @@ public class BookingCancellationService
                 bc.ConfirmedByUserId ??= resolverUserId;
                 bc.ConfirmedByUserName ??= resolverUserName;
                 bc.OperatorRefundDueBy ??= DateTime.UtcNow.AddDays(settings.OperatorRefundTimeoutDays);
-                var reservaFromStatusFase1 = bc.Reserva.Status;
-                bc.Reserva.Status = EstadoReserva.PendingOperatorRefund;
-                // ADR-020 F6 (M7): rastro aditivo del cambio de estado (path FC1.3 Fase 1, NC total real).
-                LogReservaStatusChange(bc.Reserva, reservaFromStatusFase1, EstadoReserva.PendingOperatorRefund,
-                    resolverUserId, resolverUserName, "Cancelacion (ADR-002 / FC1.3 Fase 1): aprobada, a la espera del reembolso del operador.");
-                // ADR-027: la reserva sale de un estado vivo -> descartar la marca "confirmada con cambios" pendiente.
-                await DiscardUnacknowledgedChangesOnCancellationAsync(bc.Reserva, ct);
+                // Transición + rastro + descarte de la marca por el PUNTO ÚNICO de transición (path FC1.3 Fase 1, NC total real).
+                await ReservaStatusTransitioner.ApplyAsync(
+                    _db, bc.Reserva, EstadoReserva.PendingOperatorRefund, "Forward",
+                    resolverUserId, resolverUserName,
+                    "Cancelacion (ADR-002 / FC1.3 Fase 1): aprobada, a la espera del reembolso del operador.", ct);
 
                 await _db.SaveChangesAsync(ct);
 
@@ -7794,13 +7712,11 @@ public class BookingCancellationService
         bc.ConfirmedByUserId ??= resolverUserId;
         bc.ConfirmedByUserName ??= resolverUserName;
         bc.OperatorRefundDueBy ??= DateTime.UtcNow.AddDays(settings.OperatorRefundTimeoutDays);
-        var reservaFromStatusFase2 = bc.Reserva.Status;
-        bc.Reserva.Status = EstadoReserva.PendingOperatorRefund;
-        // ADR-020 F6 (M7): rastro aditivo del cambio de estado (path F2.2, NC parcial real).
-        LogReservaStatusChange(bc.Reserva, reservaFromStatusFase2, EstadoReserva.PendingOperatorRefund,
-            resolverUserId, resolverUserName, "Cancelacion (ADR-002 / F2.2 NC parcial): aprobada, a la espera del reembolso del operador.");
-        // ADR-027: la reserva sale de un estado vivo -> descartar la marca "confirmada con cambios" pendiente.
-        await DiscardUnacknowledgedChangesOnCancellationAsync(bc.Reserva, ct);
+        // Transición + rastro + descarte de la marca por el PUNTO ÚNICO de transición (path F2.2, NC parcial real).
+        await ReservaStatusTransitioner.ApplyAsync(
+            _db, bc.Reserva, EstadoReserva.PendingOperatorRefund, "Forward",
+            resolverUserId, resolverUserName,
+            "Cancelacion (ADR-002 / F2.2 NC parcial): aprobada, a la espera del reembolso del operador.", ct);
 
         await _db.SaveChangesAsync(ct);
 

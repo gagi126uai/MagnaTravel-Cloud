@@ -1312,21 +1312,16 @@ public class ReservaService : IReservaService
         var convertedByCurrency = CancellationToClientCreditConverter.Convert(
             _context, reserva, actorUserId, actorUserName, _logger);
 
-        // c) Pasar la reserva a Cancelled + dejar el rastro de transicion (mismo patron que UpdateStatusAsync).
-        var isRealChange = !string.Equals(fromStatus, EstadoReserva.Cancelled, StringComparison.OrdinalIgnoreCase);
-        if (isRealChange)
-        {
-            _context.ReservaStatusChangeLogs.Add(new ReservaStatusChangeLog
-            {
-                ReservaId = reserva.Id,
-                FromStatus = fromStatus,
-                ToStatus = EstadoReserva.Cancelled,
-                Direction = "Forward",
-                ByUserId = actorUserId,
-                OccurredAt = DateTime.UtcNow
-            });
-        }
-        reserva.Status = EstadoReserva.Cancelled;
+        // c) Pasar la reserva a Cancelled por el PUNTO ÚNICO de transición: rastro auditable + limpieza de la marca
+        //    "confirmada con cambios" (FIX B1, 2026-07-04). Antes este camino seteaba el estado a mano y NO limpiaba
+        //    la marca: una anulación simple sin factura dejaba pegado el cartel "Se editaron precios..."; si la
+        //    reserva se reabría, reaparecía y trababa el pase a viaje. La regla de limpieza para Cancelled apaga la
+        //    marca + borra el detalle de cambios pendientes, atómico con el resto (el caller cierra la transacción).
+        //    Enriquecemos el log respecto del código viejo agregando ByUserName y el motivo (mismos datos que ya
+        //    lleva el evento de auditoría de abajo); son campos aditivos del rastro, no cambian la lógica.
+        await TravelApi.Infrastructure.Reservations.ReservaStatusTransitioner.ApplyAsync(
+            _context, reserva, EstadoReserva.Cancelled, "Forward",
+            actorUserId, actorUserName, reason, ct);
 
         // d) Audit STAGEADO (no guarda): entra en el mismo commit que el resto. El detail lleva la reserva, el
         //    cliente, el estado origen/destino, el MOTIVO declarado (justificacion de negocio, no es dato
@@ -1754,27 +1749,22 @@ public class ReservaService : IReservaService
             if (string.IsNullOrWhiteSpace(reason)) reason = "(reversion por admin sin motivo declarado)";
         }
 
-        var fromStatus = reserva.Status;
-        reserva.Status = request.TargetStatus;
         // Re-abrir una reserva cerrada borra el ClosedAt. ADR-036 (2026-06-21): el unico revert de Closed es
         // a Traveling (Closed->ToSettle murio junto con el estado). Sino la reserva figura "cerrada el dia X"
         // pero esta abierta -> dato inconsistente.
         if (request.TargetStatus == EstadoReserva.Traveling && reserva.ClosedAt.HasValue)
             reserva.ClosedAt = null;
 
-        _context.ReservaStatusChangeLogs.Add(new ReservaStatusChangeLog
-        {
-            ReservaId = id,
-            FromStatus = fromStatus,
-            ToStatus = request.TargetStatus,
-            Direction = "Revert",
-            ByUserId = actorUserId,
-            ByUserName = actorUserName,
-            AuthorizedBySuperiorUserId = authSuperiorId,
-            AuthorizedBySuperiorUserName = authSuperiorName,
-            Reason = reason,
-            OccurredAt = DateTime.UtcNow
-        });
+        // Cambio de estado + rastro auditable (Direction="Revert", con el supervisor autorizante) + limpieza de
+        // marcas por el PUNTO ÚNICO de transición. FIX B2 (2026-07-04): antes este revert seteaba el estado a mano
+        // y NO limpiaba la marca "confirmada con cambios" -> volver a Presupuesto dejaba pegado el cartel de
+        // revisión. Ahora la regla de limpieza para Budget/Quotation apaga la marca + borra el detalle + limpia el
+        // motivo de revisión (la reserva vuelve a pre-venta desde cero).
+        await TravelApi.Infrastructure.Reservations.ReservaStatusTransitioner.ApplyAsync(
+            _context, reserva, request.TargetStatus, "Revert",
+            actorUserId, actorUserName, reason, ct,
+            authorizedBySuperiorUserId: authSuperiorId,
+            authorizedBySuperiorUserName: authSuperiorName);
 
         // CRM leads (fix de fondo 2026-06-18): un revert puede llevar la reserva a un estado FIRME — el
         // caso real es reabrir una Cancelada de vuelta a En gestion. Si esa reserva nacio de un lead, ese
@@ -1850,39 +1840,24 @@ public class ReservaService : IReservaService
         if (reason.Length < 10)
             throw new ArgumentException("Indicá un motivo para sacar de viaje (al menos 10 caracteres).");
 
-        var fromStatus = reserva.Status;
-
-        // (6) Vuelve a Confirmed y se le BORRA StartDate. Por que null y no recomputar: la fecha de salida es
-        // derivada de los servicios; ponerla en null saca la reserva del filtro de candidatos del job
-        // (AutoTransitionConfirmedToTravelingAsync exige StartDate.HasValue && StartDate <= hoy), evitando que
-        // esa misma noche la vuelva a promover. Ademas refleja la realidad: entro por error y falta recargar la
-        // fecha del servicio. Cuando se corrija la fecha del servicio, RecalculateReservationScheduleAsync
-        // recomputa StartDate desde los servicios (si queda futura, el job no la toma). Verificado (grep
-        // 2026-06-22): nada calcula plata/comision/vencimiento sobre Reserva.StartDate — solo filtros de
-        // urgencia/worklist y display; borrarla no descuadra ningun monto.
-        reserva.Status = EstadoReserva.Confirmed;
+        // (6) Se le BORRA StartDate. Por que null y no recomputar: la fecha de salida es derivada de los servicios;
+        // ponerla en null saca la reserva del filtro de candidatos del job (AutoTransitionConfirmedToTravelingAsync
+        // exige StartDate.HasValue && StartDate <= hoy), evitando que esa misma noche la vuelva a promover. Ademas
+        // refleja la realidad: entro por error y falta recargar la fecha del servicio. Cuando se corrija la fecha
+        // del servicio, RecalculateReservationScheduleAsync recomputa StartDate desde los servicios (si queda
+        // futura, el job no la toma). Verificado (grep 2026-06-22): nada calcula plata/comision/vencimiento sobre
+        // Reserva.StartDate — solo filtros de urgencia/worklist y display; borrarla no descuadra ningun monto.
         reserva.StartDate = null;
 
-        // (7) Limpiar la franja naranja de regresion si quedo seteada: esta accion NO pasa por el motor
-        // (ReservaAutoStateService) que normalmente la limpia, asi que la limpiamos a mano para no dejar un
-        // aviso huerfano "volvio sola de Confirmada" sobre una reserva que acabamos de poner Confirmed a mano.
-        reserva.LastRegressionReason = null;
-        reserva.LastRegressionAt = null;
-
-        // (8) Rastro auditable con Direction = "Correction" (valor NUEVO, exclusivo de esta accion; ningun
-        // consumidor backend ramifica sobre Direction, verificado en el review). Queda quien la saco de viaje,
-        // cuando y por que. No hay autorizante: el permiso (Admin) ya gateo en el controller.
-        _context.ReservaStatusChangeLogs.Add(new ReservaStatusChangeLog
-        {
-            ReservaId = id,
-            FromStatus = fromStatus,
-            ToStatus = EstadoReserva.Confirmed,
-            Direction = "Correction",
-            ByUserId = actorUserId,
-            ByUserName = actorUserName,
-            Reason = reason,
-            OccurredAt = DateTime.UtcNow
-        });
+        // (7/8) Vuelve a Confirmed por el PUNTO ÚNICO de transición: rastro auditable con Direction = "Correction"
+        // (valor NUEVO, exclusivo de esta accion; ningun consumidor backend ramifica sobre Direction) + limpieza del
+        // motivo de revision. La regla de limpieza para Confirmed limpia SOLO LastRegression* (la franja "volvio sola
+        // de Confirmada"): NO apaga la marca "confirmada con cambios", que solo baja una persona con el OK. Antes esta
+        // accion limpiaba LastRegression* a mano; ahora esa limpieza vive en la tabla unica de reglas. No hay
+        // autorizante: el permiso (Admin) ya gateo en el controller.
+        await TravelApi.Infrastructure.Reservations.ReservaStatusTransitioner.ApplyAsync(
+            _context, reserva, EstadoReserva.Confirmed, "Correction",
+            actorUserId, actorUserName, reason, ct);
 
         await _context.SaveChangesAsync(ct);
         return await GetReservaByIdAsync(id);
@@ -4044,20 +4019,15 @@ public class ReservaService : IReservaService
         // ADR-020 (INV-020-06): toda transicion manual REAL escribe ReservaStatusChangeLog. El set
         // idempotente (mismo estado, no-op en ApplyTransitionAsync) no genera log.
         var isRealChange = !string.Equals(fromStatus, status, StringComparison.OrdinalIgnoreCase);
-        if (isRealChange)
-        {
-            _context.ReservaStatusChangeLogs.Add(new ReservaStatusChangeLog
-            {
-                ReservaId = id,
-                FromStatus = fromStatus,
-                ToStatus = status,
-                Direction = "Forward",
-                ByUserId = actorUserId,
-                OccurredAt = DateTime.UtcNow
-            });
-        }
 
-        file.Status = status;
+        // Cambio de estado + rastro auditable + limpieza de marcas por el PUNTO ÚNICO de transición. El log solo se
+        // escribe si es un cambio real (mismo criterio de antes). Novedad util: pasar manualmente a un estado
+        // terminal (Cancelled/Lost/Closed) ahora DESCARTA la marca "confirmada con cambios" que hubiera quedado
+        // colgada (antes esta transicion no limpiaba nada). Este overload no recibe nombre de actor ni motivo, asi
+        // que el log conserva exactamente los mismos campos que antes (solo ByUserId).
+        await TravelApi.Infrastructure.Reservations.ReservaStatusTransitioner.ApplyAsync(
+            _context, file, status, "Forward",
+            actorUserId, actorUserName: null, reason: null, ct: CancellationToken.None);
 
         // CRM leads (auditoria ERP 2026-06-13, decision del dueño): el lead de origen pasa a Ganado
         // recien cuando la reserva linkeada llega a un estado EN FIRME (el cliente acepto el presupuesto),

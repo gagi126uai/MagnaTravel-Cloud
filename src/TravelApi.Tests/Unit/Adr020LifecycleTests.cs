@@ -423,4 +423,44 @@ public class Adr020LifecycleTests
 
         Assert.Equal(EstadoReserva.Budget, result.Status);
     }
+
+    // ===================== FIX B2 (2026-07-04) — revertir a Budget descarta la marca "confirmada con cambios" =====
+
+    [Fact]
+    public async Task RevertToBudget_DiscardsUnacknowledgedChangesMark_AndRegression_AndDetail()
+    {
+        // Antes del fix, RevertStatusAsync seteaba el estado a mano y NO limpiaba la marca "confirmada con cambios":
+        // volver a Presupuesto dejaba pegado el cartel "Se editaron precios...". Ahora la transición pasa por el
+        // PUNTO ÚNICO, que para Budget descarta la marca + el detalle + el motivo de revisión.
+        await using var ctx = NewContext();
+        ctx.Reservas.Add(new Reserva
+        {
+            Id = 1, NumeroReserva = "F-1", Name = "Reserva 1", Status = EstadoReserva.InManagement,
+            HasUnacknowledgedChanges = true,
+            ChangesPendingSince = DateTime.UtcNow.AddDays(-1),
+            LastRegressionReason = "El operador cambió un precio",
+            LastRegressionAt = DateTime.UtcNow.AddDays(-1),
+        });
+        ctx.ReservaPendingChanges.Add(new ReservaPendingChange
+        {
+            ReservaId = 1, ServiceType = "Hotel", ServiceDescription = "Hotel",
+            Field = "SalePrice", OldValue = 100m, NewValue = 120m, Currency = "ARS",
+            ChangedAt = DateTime.UtcNow.AddDays(-1),
+        });
+        await ctx.SaveChangesAsync();
+
+        var result = await NewReservaService(ctx).RevertStatusAsync(
+            "1",
+            new RevertStatusRequest(EstadoReserva.Budget, null, "el cliente volvio a interesarse"),
+            actorUserId: "admin-1", actorUserName: "Admin", actorIsAdmin: true, CancellationToken.None);
+
+        Assert.Equal(EstadoReserva.Budget, result.Status);
+
+        var after = await ctx.Reservas.AsNoTracking().FirstAsync(r => r.Id == 1);
+        Assert.False(after.HasUnacknowledgedChanges);
+        Assert.Null(after.ChangesPendingSince);
+        Assert.Null(after.LastRegressionReason);
+        Assert.Null(after.LastRegressionAt);
+        Assert.Equal(0, await ctx.ReservaPendingChanges.AsNoTracking().CountAsync(c => c.ReservaId == 1));
+    }
 }

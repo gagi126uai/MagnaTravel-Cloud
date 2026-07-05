@@ -774,4 +774,45 @@ public class AnnulWithPaymentsToCreditTests
         var credit = await context.ClientCreditEntries.AsNoTracking().SingleAsync(c => c.CustomerId == 1);
         Assert.Equal(100m, credit.RemainingBalance);
     }
+
+    // ===================== FIX B1 (2026-07-04) — anular descarta la marca "confirmada con cambios" =====================
+
+    [Fact]
+    public async Task AnnulWithCredit_DiscardsUnacknowledgedChangesMark_AndDetail()
+    {
+        // Antes del fix, la baja simple (ApplyAnnulWithPaymentsToCreditAsync) seteaba el estado a mano y NO limpiaba
+        // la marca "confirmada con cambios": la reserva anulada seguía mostrando el cartel "Se editaron precios..." y,
+        // si se reabría, el pase a viaje quedaba trabado. Ahora la transición pasa por el PUNTO ÚNICO, que descarta
+        // la marca + el detalle al entrar a Cancelled.
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedFirmReservaAsync(context, EstadoReserva.Confirmed, arsSale: 100m);
+        AddLivePayment(context, 100m, "ARS");
+        // Sembramos la marca colgada + una fila de detalle.
+        var reservaTracked = await context.Reservas.FirstAsync(r => r.Id == 1);
+        reservaTracked.HasUnacknowledgedChanges = true;
+        reservaTracked.ChangesPendingSince = DateTime.UtcNow.AddDays(-2);
+        context.ReservaPendingChanges.Add(new ReservaPendingChange
+        {
+            ReservaId = 1, ServiceType = "Hotel", ServiceDescription = "S-ARS",
+            Field = "SalePrice", OldValue = 100m, NewValue = 120m, Currency = "ARS",
+            ChangedAt = DateTime.UtcNow.AddDays(-2),
+        });
+        await context.SaveChangesAsync();
+
+        var reservaPublicId = await context.Reservas.AsNoTracking()
+            .Where(r => r.Id == 1).Select(r => r.PublicId).FirstAsync();
+
+        var dto = await BuildReservaService(context).AnnulWithPaymentsToCreditAsync(
+            reservaPublicId.ToString(), reason: ValidReason, actorUserId: "u1", actorUserName: "User One");
+
+        Assert.Equal(EstadoReserva.Cancelled, dto.Status);
+
+        var after = await context.Reservas.AsNoTracking().FirstAsync(r => r.Id == 1);
+        Assert.False(after.HasUnacknowledgedChanges);
+        Assert.Null(after.ChangesPendingSince);
+        // NO es un OK humano: no se registra quién acusó.
+        Assert.Null(after.ChangesAckByUserId);
+        var detail = await context.ReservaPendingChanges.AsNoTracking().CountAsync(c => c.ReservaId == 1);
+        Assert.Equal(0, detail);
+    }
 }

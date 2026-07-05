@@ -937,7 +937,18 @@ public class ReservaLifecycleAutomationService
                             operation, reserva.Id, decision.Warning);
                 }
 
-                reserva.Status = transition.ToStatus;
+                // Cambio de estado + rastro auditable + limpieza de marcas por el PUNTO ÚNICO de transición. Se hace
+                // ANTES de StampClosedAt / Finalizer / SourceLeadWonHook para que esos pasos vean el estado nuevo.
+                // stampChangeLog = transition.WriteForwardLog conserva la decisión por-transición de dejar rastro
+                // (FIX 5 A1); occurredAt = now comparte el instante con el resto de la tanda. Para el cierre
+                // (Traveling -> Closed) la regla de limpieza descarta la marca "confirmada con cambios" si quedara
+                // colgada (en la práctica no llega marcada: el gate no promueve una reserva marcada).
+                await TravelApi.Infrastructure.Reservations.ReservaStatusTransitioner.ApplyAsync(
+                    _db, reserva, transition.ToStatus, "Forward",
+                    SystemActorUserId, SystemActorUserName, transition.Reason, ct,
+                    stampChangeLog: transition.WriteForwardLog,
+                    occurredAt: now);
+
                 if (transition.StampClosedAt)
                     reserva.ClosedAt = now;
 
@@ -960,21 +971,8 @@ public class ReservaLifecycleAutomationService
                 // propio: se persiste en el SaveChanges unico al final de la tanda.
                 await Reservations.SourceLeadWonHook.MarkSourceLeadAsWonIfReservaIsFirmAsync(_db, reserva, ct);
 
-                // FIX 5 (A1): rastro auditable solo para transiciones de la cadena nueva.
-                if (transition.WriteForwardLog)
-                {
-                    _db.ReservaStatusChangeLogs.Add(new ReservaStatusChangeLog
-                    {
-                        ReservaId = reserva.Id,
-                        FromStatus = transition.FromStatus,
-                        ToStatus = transition.ToStatus,
-                        Direction = "Forward",
-                        ByUserId = SystemActorUserId,
-                        ByUserName = SystemActorUserName,
-                        Reason = transition.Reason,
-                        OccurredAt = now
-                    });
-                }
+                // FIX 5 (A1): el rastro auditable (solo para transiciones de la cadena nueva) ya lo escribió el
+                // PUNTO ÚNICO de transición de arriba, gobernado por stampChangeLog = transition.WriteForwardLog.
 
                 applied++;
             }

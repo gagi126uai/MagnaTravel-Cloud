@@ -359,7 +359,10 @@ public class InvoiceServiceFilteringAndAnnulmentTests
             CbteTipo = 6,
             Concepto = 3,
             DocTipo = 99,
-            DocNro = 0
+            DocNro = 0,
+            // Total > 0: el guard de importe (2026-07-04) rechaza comprobantes en $0. Estos tests ejercitan otra
+            // logica (guard anti-doble-emision, traduccion de errores, sello del emisor), no el importe.
+            Items = { new InvoiceItemDto { Description = "Servicio", Quantity = 1, UnitPrice = 100m, Total = 100m, AlicuotaIvaId = 3 } }
         };
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -429,7 +432,10 @@ public class InvoiceServiceFilteringAndAnnulmentTests
             CbteTipo = 6,
             Concepto = 3,
             DocTipo = 99,
-            DocNro = 0
+            DocNro = 0,
+            // Total > 0: el guard de importe (2026-07-04) rechaza comprobantes en $0. Estos tests ejercitan otra
+            // logica (guard anti-doble-emision, traduccion de errores, sello del emisor), no el importe.
+            Items = { new InvoiceItemDto { Description = "Servicio", Quantity = 1, UnitPrice = 100m, Total = 100m, AlicuotaIvaId = 3 } }
         };
 
         // No debe tirar. El guard solo bloquea invoices PENDING no anuladas.
@@ -485,7 +491,10 @@ public class InvoiceServiceFilteringAndAnnulmentTests
             CbteTipo = 6,
             Concepto = 3,
             DocTipo = 99,
-            DocNro = 0
+            DocNro = 0,
+            // Total > 0: el guard de importe (2026-07-04) rechaza comprobantes en $0. Estos tests ejercitan otra
+            // logica (guard anti-doble-emision, traduccion de errores, sello del emisor), no el importe.
+            Items = { new InvoiceItemDto { Description = "Servicio", Quantity = 1, UnitPrice = 100m, Total = 100m, AlicuotaIvaId = 3 } }
         };
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -536,7 +545,10 @@ public class InvoiceServiceFilteringAndAnnulmentTests
             CbteTipo = 6,
             Concepto = 3,
             DocTipo = 99,
-            DocNro = 0
+            DocNro = 0,
+            // Total > 0: el guard de importe (2026-07-04) rechaza comprobantes en $0. Estos tests ejercitan otra
+            // logica (guard anti-doble-emision, traduccion de errores, sello del emisor), no el importe.
+            Items = { new InvoiceItemDto { Description = "Servicio", Quantity = 1, UnitPrice = 100m, Total = 100m, AlicuotaIvaId = 3 } }
         };
 
         // Debe propagar la DbUpdateException original — no atrapar 23503 como si fuera 23505.
@@ -1022,7 +1034,9 @@ public class InvoiceServiceFilteringAndAnnulmentTests
             CbteTipo = 11,
             // El cliente intenta spoofear el actor: debe ser ignorado.
             IssuedByUserId = "atacante",
-            IssuedByUserName = "Atacante"
+            IssuedByUserName = "Atacante",
+            // Total > 0: el guard de importe (2026-07-04) rechaza comprobantes en $0.
+            Items = { new InvoiceItemDto { Description = "Servicio", Quantity = 1, UnitPrice = 100m, Total = 100m, AlicuotaIvaId = 3 } }
         };
 
         await service.CreateAsync(request, "user-real", "Usuario Real", CancellationToken.None);

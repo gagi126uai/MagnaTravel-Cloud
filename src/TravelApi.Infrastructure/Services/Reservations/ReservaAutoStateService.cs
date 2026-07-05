@@ -92,13 +92,15 @@ public class ReservaAutoStateService
 
             if (string.Equals(reserva.Status, EstadoReserva.InManagement, StringComparison.OrdinalIgnoreCase) && allResolved)
             {
-                ApplyTransition(reserva, EstadoReserva.Confirmed, "Forward", now,
-                    "Todos los servicios resueltos: confirmacion automatica");
+                await ApplyTransitionAsync(reserva, EstadoReserva.Confirmed, "Forward", now,
+                    "Todos los servicios resueltos: confirmacion automatica", ct);
                 anyChange = true;
-                // OJO: NO se limpia aca la marca "confirmada con cambios" (HasUnacknowledgedChanges) ni su
-                // motivo. Esa marca representa "el dueño todavia no reviso un cambio" y solo la baja una
+                // OJO: NO se limpia aca la marca "confirmada con cambios" (HasUnacknowledgedChanges).
+                // Esa marca representa "el dueño todavia no reviso un cambio" y solo la baja una
                 // PERSONA (endpoint acknowledge-changes). Que los servicios se vuelvan a resolver solos no
                 // significa que el dueño ya vio lo que paso; el aviso queda hasta que de el OK.
+                // Lo que SI limpia el transicionador al entrar a Confirmed es LastRegression* (el motivo
+                // de una regresion anterior ya cumplio su ciclo) — regla declarativa en ReservaStateCleanupRules.
             }
             else if (string.Equals(reserva.Status, EstadoReserva.Confirmed, StringComparison.OrdinalIgnoreCase) && !allResolved)
             {
@@ -280,21 +282,20 @@ public class ReservaAutoStateService
             || AnyLive(reserva.Servicios, ServiceResolutionRules.IsCancelled);
     }
 
-    private void ApplyTransition(Reserva reserva, string toStatus, string direction, DateTime now, string reason)
+    private async Task ApplyTransitionAsync(
+        Reserva reserva, string toStatus, string direction, DateTime now, string reason, CancellationToken ct)
     {
         var fromStatus = reserva.Status;
-        reserva.Status = toStatus;
-        _context.ReservaStatusChangeLogs.Add(new ReservaStatusChangeLog
-        {
-            ReservaId = reserva.Id,
-            FromStatus = fromStatus,
-            ToStatus = toStatus,
-            Direction = direction,
-            ByUserId = SystemActorUserId,
-            ByUserName = SystemActorUserName,
-            Reason = reason,
-            OccurredAt = now
-        });
+
+        // Cambio de estado + rastro auditable + limpieza de marcas por el PUNTO ÚNICO de transición. La única
+        // transicion que dispara este motor es InManagement -> Confirmed: su regla de limpieza toca SOLO el motivo
+        // de revision (LastRegression*) y NUNCA la marca "confirmada con cambios" (ver la nota en el call-site: esa
+        // marca la baja una persona con el OK). Le pasamos el `now` de la tanda para que la fila del log comparta el
+        // mismo instante que el resto de la evaluacion.
+        await TravelApi.Infrastructure.Reservations.ReservaStatusTransitioner.ApplyAsync(
+            _context, reserva, toStatus, direction, SystemActorUserId, SystemActorUserName, reason, ct,
+            occurredAt: now);
+
         _logger.LogInformation(
             "Auto-state: Reserva {ReservaId} {From} -> {To} ({Direction}). {Reason}",
             reserva.Id, fromStatus, toStatus, direction, reason);
