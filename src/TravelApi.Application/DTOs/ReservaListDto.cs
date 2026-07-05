@@ -29,6 +29,14 @@ public class ReservaListDto
     public bool HasOverdueDebt { get; set; }
 
     /// <summary>
+    /// Contexto de PLATA REAL en una reserva anulada. Null salvo en estados de cancelacion (Cancelled /
+    /// PendingOperatorRefund). Mismo criterio y tokens que el detalle (ver <c>ReservaDto.CancelledMoneyContext</c>
+    /// y <c>ReservationDebtRules</c>): "SaldoAFavorPendiente" | "MultaPorCobrar" | "Inconsistente" | null.
+    /// Se llena en una query batcheada por pagina (sin N+1), solo para las filas anuladas.
+    /// </summary>
+    public string? CancelledMoneyContext { get; set; }
+
+    /// <summary>
     /// ADR-021 Capa 5: detalle de plata por moneda para la fila del listado. Se llena leyendo la tabla
     /// hija materializada (no recalcula on-read fila por fila). Una sola linea = reserva mono-moneda.
     /// El <c>TotalCost</c> de cada linea se enmascara igual que el escalar para usuarios sin ver-costos.

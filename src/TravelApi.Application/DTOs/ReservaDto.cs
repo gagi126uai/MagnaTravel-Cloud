@@ -261,6 +261,17 @@ public class ReservaDto
     /// <summary>True si el viaje termino y todavia hay deuda (EndDate &lt; hoy AND Balance &gt; 0). Chip rojo "Vencida con deuda".</summary>
     public bool HasOverdueDebt { get; set; }
 
+    /// <summary>
+    /// Contexto de PLATA REAL en una reserva anulada. Null salvo en estados de cancelacion (Cancelled /
+    /// PendingOperatorRefund). Una reserva anulada NO muestra "deuda" generica: muestra solo plata con
+    /// contexto. Tokens (castellano, consistente con collectionStatus; el front los traduce a la etiqueta
+    /// final): "SaldoAFavorPendiente" (quedo saldo a favor del cliente sin devolver), "MultaPorCobrar" (la
+    /// deuda es la multa por anulacion, respaldada por una Nota de Debito viva), "Inconsistente" (saldo
+    /// positivo sin comprobante que lo justifique = dato roto). null = sin plata pendiente. Ver
+    /// <c>ReservationDebtRules</c>.
+    /// </summary>
+    public string? CancelledMoneyContext { get; set; }
+
     public string? CustomerName { get; set; } // Flattened
     public CustomerDto? Payer { get; set; } // Nested for frontend convenience
     public decimal TotalCost { get; set; }

@@ -2270,6 +2270,10 @@ public class ReservaService : IReservaService
         // que ya se muestra en el cuadre del detalle).
         await FillInvoicingStatusForListAsync(paged.Items, cancellationToken);
 
+        // Contexto de plata real en las filas ANULADAS (saldo a favor pendiente / multa cobrable / dato roto).
+        // Una sola query batcheada por pagina, y solo si hay filas anuladas (ver el helper). Ver ReservationDebtRules.
+        await FillCancelledMoneyContextForListAsync(paged.Items, cancellationToken);
+
         var page = ReservaListPageDto.Create(paged.Items, paged.Page, paged.PageSize, paged.TotalCount, summary);
         return (page, ownerFilterUserId);
     }
@@ -2487,6 +2491,13 @@ public class ReservaService : IReservaService
 
         var dto = _mapper.Map<ReservaDto>(file);
         ApplyEconomicFlags(dto, settings);
+
+        // Contexto de plata real en reservas ANULADAS (saldo a favor pendiente / multa cobrable / dato roto).
+        // Null para el resto de los estados. Ver ReservationDebtRules. Necesita saber si hay una Nota de Debito
+        // de multa viva -> una query chica al aggregate de cancelacion (el detalle no es hot path y ya hace
+        // varias queries pequenas). Se hace SOLO si la reserva esta anulada (adentro del helper).
+        dto.CancelledMoneyContext = await DeriveCancelledMoneyContextAsync(
+            file.Id, file.Status, file.Balance, CancellationToken.None);
 
         // ADR-021 Capa 5: detalle de plata por moneda. Se recalcula on-read con el calculator (fuente
         // unica de la cuenta) desde las colecciones ya cargadas; no toca la tabla hija (eso es solo para
@@ -5011,9 +5022,11 @@ public class ReservaService : IReservaService
         // NO se toca IsEconomicallySettled (lo usa el gate de facturacion AFIP; cambiarlo es riesgoso).
         bool hadCollectibleActivity = dto.ConfirmedSale > 0m || dto.TotalPaid > 0m;
         dto.IsFullyPaid = dto.IsEconomicallySettled && hadCollectibleActivity;
-        dto.HasOverdueDebt = dto.EndDate.HasValue
-            && dto.EndDate.Value.Date < DateTime.UtcNow.Date
-            && !dto.IsEconomicallySettled;
+        // "Vencida con deuda" es una regla de dominio ÚNICA (ReservationDebtRules): mira ADEMAS el ESTADO.
+        // Una reserva ANULADA (estado no cobrable) NUNCA muestra deuda vencida por un saldo congelado.
+        // NO se toca IsEconomicallySettled (gate AFIP), se recibe ya calculado.
+        dto.HasOverdueDebt = ReservationDebtRules.HasOverdueDebt(
+            dto.Status, dto.EndDate, dto.IsEconomicallySettled, DateTime.UtcNow);
     }
 
     private static void ApplyEconomicFlags(ReservaListDto dto, OperationalFinanceSettings settings)
@@ -5038,9 +5051,87 @@ public class ReservaService : IReservaService
         // NO se toca IsEconomicallySettled (lo usa el gate de facturacion AFIP).
         bool hadCollectibleActivity = dto.Balance != 0m || dto.TotalPaid > 0m;
         dto.IsFullyPaid = dto.IsEconomicallySettled && hadCollectibleActivity;
-        dto.HasOverdueDebt = dto.EndDate.HasValue
-            && dto.EndDate.Value.Date < DateTime.UtcNow.Date
-            && !dto.IsEconomicallySettled;
+        // "Vencida con deuda" es una regla de dominio ÚNICA (ReservationDebtRules): mira ADEMAS el ESTADO.
+        // Una reserva ANULADA (estado no cobrable) NUNCA muestra deuda vencida por un saldo congelado.
+        // NO se toca IsEconomicallySettled (gate AFIP), se recibe ya calculado.
+        dto.HasOverdueDebt = ReservationDebtRules.HasOverdueDebt(
+            dto.Status, dto.EndDate, dto.IsEconomicallySettled, DateTime.UtcNow);
+    }
+
+    /// <summary>
+    /// Estados de reserva "anulada" donde tiene sentido calcular el contexto de plata real
+    /// (<see cref="ReservationDebtRules.CancelledMoneyContext"/>). Fuera de estos estados el contexto es null:
+    /// una reserva viva usa el chip de deuda normal, no el de plata de anulacion.
+    /// </summary>
+    private static bool IsCancelledLikeStatus(string? status)
+        => status == EstadoReserva.Cancelled || status == EstadoReserva.PendingOperatorRefund;
+
+    // Definicion UNICA de "Nota de Debito de multa VIVA" para el contexto de plata de una anulada. Se cumple si:
+    //   - hay una penalidad CONFIRMADA (la multa es real; la ND puede estar emitiendose de forma diferida/async), O
+    //   - ya hay una ND EN JUEGO (encolada / emitida / fallida / en revision = cualquier estado != NotApplicable), O
+    //   - quedo vinculada la factura de la ND (DebitNoteInvoiceId).
+    // Con esta definicion amplia, un saldo positivo en una anulada CON multa se muestra como "multa cobrable"
+    // (PenaltyReceivable) y NO como dato roto durante la ventana de confirmacion diferida de la multa (ADR-014).
+    // Solo un saldo positivo SIN ningun rastro de multa cae en "Inconsistent" (lo detectara el vigia, pieza futura).
+    // Es un Expression para reusarse identico en el detalle (una reserva) y en el listado (batch), sin divergir.
+    private static readonly System.Linq.Expressions.Expression<Func<BookingCancellation, bool>>
+        LiveCancellationDebitNotePredicate = bc =>
+            bc.PenaltyStatus == PenaltyStatus.Confirmed
+            || bc.DebitNoteStatus != DebitNoteStatus.NotApplicable
+            || bc.DebitNoteInvoiceId != null;
+
+    /// <summary>
+    /// Deriva el contexto de plata de UNA reserva anulada (camino de detalle). Devuelve null si la reserva NO
+    /// esta anulada (asi el campo del DTO queda vacio en el resto de los estados). Para las anuladas, consulta si
+    /// hay una Nota de Debito de multa viva (una query chica al aggregate de cancelacion) y aplica la regla de
+    /// dominio <see cref="ReservationDebtRules.DeriveForCancelled"/>.
+    /// </summary>
+    private async Task<string?> DeriveCancelledMoneyContextAsync(
+        int reservaId, string? status, decimal balance, CancellationToken cancellationToken)
+    {
+        if (!IsCancelledLikeStatus(status))
+            return null;
+
+        bool hasLiveDebitNote = await _context.BookingCancellations
+            .AsNoTracking()
+            .Where(bc => bc.ReservaId == reservaId)
+            .Where(LiveCancellationDebitNotePredicate)
+            .AnyAsync(cancellationToken);
+
+        var context = ReservationDebtRules.DeriveForCancelled(balance, hasLiveDebitNote);
+        return ReservationDebtRules.ToDtoString(context);
+    }
+
+    /// <summary>
+    /// Llena <c>CancelledMoneyContext</c> de las filas ANULADAS del listado en UNA query batcheada (sin N+1).
+    /// Solo se ejecuta si la pagina trae filas anuladas; el resto de las filas queda con el contexto en null.
+    /// Mismo criterio y misma regla de dominio que el detalle (<see cref="DeriveCancelledMoneyContextAsync"/>).
+    /// </summary>
+    private async Task FillCancelledMoneyContextForListAsync(
+        IReadOnlyList<ReservaListDto> items, CancellationToken cancellationToken)
+    {
+        // Solo las filas anuladas necesitan contexto de plata; el resto se deja en null (sin tocar la DB).
+        var cancelledItems = items.Where(i => IsCancelledLikeStatus(i.Status)).ToList();
+        if (cancelledItems.Count == 0) return;
+
+        var publicIds = cancelledItems.Select(i => i.PublicId).ToList();
+
+        // UNA query: los PublicId (de esta pagina) que tienen una Nota de Debito de multa viva. Join explicito
+        // contra Reservas (no nav implicita) para resolver el PublicId y correr igual en Postgres e InMemory.
+        var reservasConNdViva = await (
+            from bc in _context.BookingCancellations.AsNoTracking().Where(LiveCancellationDebitNotePredicate)
+            join reservaPadre in _context.Reservas.AsNoTracking() on bc.ReservaId equals reservaPadre.Id
+            where publicIds.Contains(reservaPadre.PublicId)
+            select reservaPadre.PublicId).Distinct().ToListAsync(cancellationToken);
+
+        var withLiveDebitNote = reservasConNdViva.ToHashSet();
+
+        foreach (var item in cancelledItems)
+        {
+            bool hasLiveDebitNote = withLiveDebitNote.Contains(item.PublicId);
+            var context = ReservationDebtRules.DeriveForCancelled(item.Balance, hasLiveDebitNote);
+            item.CancelledMoneyContext = ReservationDebtRules.ToDtoString(context);
+        }
     }
 
     private static bool ComputeIsInProgress(string status, DateTime? startDate, DateTime? endDate)

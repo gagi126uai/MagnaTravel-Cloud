@@ -192,6 +192,17 @@ public class AlertService : IAlertService
         //      sin tope de ventana (igual que el caso B). El front distingue el rotulo por el Status que ya
         //      viaja en la proyeccion ("terminado y debe" vs "en viaje y debe"); sin cambio de contrato.
         //
+        // ALINEACION CON LA DEUDA COBRABLE (2026-07-04): el whitelist de estados de abajo (InManagement,
+        // Confirmed, Traveling, Closed) es COHERENTE con el predicado canonico
+        // ReservationDebtRules.IsDebtCollectableStatus (= EstadoReserva.SaleFirmStatuses: En gestion, Confirmada,
+        // Finalizada): NINGUN estado de cancelacion (Cancelled / PendingOperatorRefund) ni de pre-venta/descarte
+        // (Quotation / Budget / Lost) entra aca. Asi, una reserva ANULADA con una deuda "congelada" (saldo
+        // positivo que nunca se resolvio) NO aparece en alertas de cobranza, mientras que una Finalizada con
+        // deuda real SI. La UNICA diferencia con el set canonico es que aca se AGREGA Traveling a proposito, para
+        // el caso de negocio "en viaje y debe" (B), que no es una cuenta por cobrar del AR pero si una urgencia
+        // operativa. Se listan los estados explicitos (y no un Contains sobre el helper) porque este es un
+        // predicado LINQ-to-SQL y EF no traduce el helper del dominio.
+        //
         // Visibilidad por DUEÑO (privacidad 2026-06-17, mismo borde que UpcomingStarts/CostsToConfirm):
         // admin ve todas; el vendedor SOLO sus reservas. Un no-admin SIN identidad (UserId null) corta a
         // vacio ANTES de tocar la query: sin esta guarda el predicado "ResponsibleUserId == caller.UserId"

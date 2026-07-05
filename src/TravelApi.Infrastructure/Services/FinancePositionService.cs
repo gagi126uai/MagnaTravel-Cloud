@@ -34,6 +34,12 @@ public class FinancePositionService : IFinancePositionService
     //
     // Historia: antes (ADR-022/023) se llamaba "ActiveReceivableStatuses" y NO incluia Closed -> la deuda en
     // reservas Finalizadas quedaba invisible (el deadlock que ADR-033 resuelve).
+    //
+    // FUENTE CANONICA del predicado "deuda cobrable por estado": TravelApi.Domain.Reservations.ReservationDebtRules
+    // .IsDebtCollectableStatus (que a su vez delega en EstadoReserva.IsSaleFirmStatus / SaleFirmStatuses). Esta
+    // lista es el MISMO set expresado como array (lo necesita EF para traducir Contains a SQL, no puede llamar al
+    // helper del dominio). No divergen: ambos apuntan a EstadoReserva.SaleFirmStatuses. El test cruzado de
+    // coherencia bloquea cualquier divergencia futura.
     public static readonly string[] ReceivableDebtStatuses = EstadoReserva.SaleFirmStatuses;
 
     public FinancePositionService(AppDbContext dbContext)
