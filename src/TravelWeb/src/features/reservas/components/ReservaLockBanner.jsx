@@ -17,6 +17,13 @@ import { Lock, LockOpen, AlertTriangle } from 'lucide-react';
  *    El vendedor ve "Pedir autorizacion"; el admin puede abrir el modal para destrabar.
  *    (Decision #1 y #2 guia UX 2026-06-08).
  *
+ * Formato UNA LÍNEA (spec UX 2026-07-05, respuesta 4B — "arriba la foto, abajo solo lo
+ * que hay que hacer"): las tres variantes usan la misma franja fina de un solo renglón
+ * (icono + texto corto + botón a la derecha si corresponde), en vez del bloque tipo
+ * párrafo que tenían antes. El contenido esencial de cada variante no cambia, solo el
+ * formato visual — así no compite en altura con el banner "con cambios" (ADR-027) que
+ * queda arriba, grande y accionable.
+ *
  * Props:
  * - isLocked: boolean — true cuando el status esta en {Confirmed, Traveling, Closed} (ADR-036: ToSettle eliminado)
  * - onRequestEdit: callback — el vendedor/admin hizo clic en el boton de autorizacion
@@ -39,18 +46,14 @@ export function ReservaLockBanner({
         return (
             <div
                 data-testid="reserva-regression-banner"
-                className="flex items-start gap-3 rounded-xl border border-orange-300 bg-orange-50 px-4 py-3 text-sm text-orange-900 dark:border-orange-800/50 dark:bg-orange-950/30 dark:text-orange-200"
+                className="flex items-center gap-2 rounded-xl border border-orange-300 bg-orange-50 px-3 py-2 text-sm text-orange-900 dark:border-orange-800/50 dark:bg-orange-950/30 dark:text-orange-200"
             >
-                <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-orange-500" aria-hidden="true" />
-                <div>
-                    <span className="font-bold">Esta reserva volvió a En gestión.</span>
-                    {regressionReason ? (
-                        <span className="ml-1">{regressionReason}</span>
-                    ) : (
-                        <span className="ml-1">Un servicio cambió de estado y la reserva ya no tiene todos los servicios resueltos.</span>
-                    )}
-                    <span className="ml-1">Revisá los servicios.</span>
-                </div>
+                <AlertTriangle className="h-4 w-4 flex-shrink-0 text-orange-500" aria-hidden="true" />
+                <span>
+                    <span className="font-bold">Volvió a En gestión.</span>{' '}
+                    {regressionReason || 'Un servicio cambió de estado y la reserva ya no tiene todos los servicios resueltos.'}{' '}
+                    Revisá los servicios.
+                </span>
             </div>
         );
     }
@@ -72,7 +75,7 @@ export function ReservaLockBanner({
         return (
             <div
                 data-testid="reserva-unlocked-banner"
-                className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 dark:border-emerald-800/50 dark:bg-emerald-950/30 dark:text-emerald-200"
+                className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900 dark:border-emerald-800/50 dark:bg-emerald-950/30 dark:text-emerald-200"
             >
                 <LockOpen className="h-4 w-4 flex-shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
                 <span>
@@ -83,11 +86,12 @@ export function ReservaLockBanner({
         );
     }
 
-    // Franja ambar: reserva bloqueada sin autorizacion activa.
+    // Franja ambar: reserva bloqueada sin autorizacion activa. Achicada a una línea
+    // fina (spec 2026-07-05, respuesta 4B): texto corto + botón a la derecha.
     return (
         <div
             data-testid="reserva-lock-banner"
-            className="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-200"
+            className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-200"
         >
             <Lock className="h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
             <span>

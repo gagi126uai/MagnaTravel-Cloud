@@ -16,6 +16,8 @@ import { ReservaVoucherTab } from "../../../components/ReservaVoucherTab";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { getPublicId, getRelatedPublicId } from "../../../lib/publicIds";
 import { CapacityWarning } from "../components/CapacityWarning";
+import { AvisosPlegadosBar } from "../components/AvisosPlegadosBar";
+import { getServiciosSinConfirmar, construirAvisosInformativos } from "../avisosFicha";
 import { EditReservaDatesModal } from "../components/EditReservaDatesModal";
 import { PassengerList } from "../components/PassengerList";
 import { ReservaHeader } from "../components/ReservaHeader";
@@ -529,30 +531,14 @@ function PaymentReceiptActions({ payment, onView, onIssue, onVoid, congelado, ca
  *
  * Sin jerga ni códigos internos — el texto está pensado para el vendedor, no para el técnico.
  * La info de qué falta se lee del workflowStatus visible en la tabla de servicios.
+ *
+ * (2026-07-05) Es un aviso INFORMATIVO (spec 5A): no pide ninguna acción inmediata,
+ * por eso vive plegado dentro de "N avisos más" (ver AvisosPlegadosBar). La decisión
+ * de "hay servicios sin confirmar" vive en avisosFicha.js para que el contador del
+ * plegado y este banner nunca diverjan entre sí.
  */
 function UnconfirmedServicesBanner({ reserva }) {
-  // Solo mostramos en Confirmed: en InManagement el resumen de ResumenServiciosResueltos
-  // ya cubre esta información de forma más específica.
-  if (reserva.status !== "Confirmed") return null;
-
-  // Reunimos todos los servicios para detectar cuáles no están resueltos todavía.
-  // "resuelto" = el operador confirmó o el ticket fue emitido (equivalente a esServicioResuelto de ServiceList).
-  const estadosResueltos = new Set(["Confirmado", "Emitido", "HK", "TK", "KK", "KL", "NoConfirmation"]);
-
-  const todosLosServicios = [
-    ...(reserva.hotelBookings || []).map(b => ({ nombre: b.name || b.hotelName || "Hotel", workflowStatus: b.workflowStatus || b.status })),
-    ...(reserva.transferBookings || []).map(b => ({ nombre: b.name || "Traslado", workflowStatus: b.workflowStatus || b.status })),
-    ...(reserva.packageBookings || []).map(b => ({ nombre: b.name || b.packageName || "Paquete", workflowStatus: b.workflowStatus || b.status })),
-    ...(reserva.flightSegments || []).map(b => ({ nombre: b.name || "Aéreo", workflowStatus: b.workflowStatus || b.status })),
-    ...(reserva.assistanceBookings || []).map(b => ({ nombre: b.name || "Asistencia", workflowStatus: b.workflowStatus || b.status })),
-    ...(reserva.servicios || []).map(b => ({ nombre: b.description || "Servicio adicional", workflowStatus: b.workflowStatus || b.status })),
-  ];
-
-  // Excluimos los cancelados — no cuentan para la confirmación.
-  const serviciosSinResolver = todosLosServicios.filter(
-    s => s.workflowStatus !== "Cancelado" && !estadosResueltos.has(s.workflowStatus)
-  );
-
+  const serviciosSinResolver = getServiciosSinConfirmar(reserva);
   if (serviciosSinResolver.length === 0) return null;
 
   return (
@@ -1192,179 +1178,15 @@ export default function ReservaDetailPage() {
 
       <ReservaSummaryStrip reserva={reserva} />
 
-      {/* Banner ADR-020:
-          - Modo regresion (naranja): cuando la reserva volvio sola a En gestion por cambio del operador.
-            Se activa desde lastRegressionReason del DTO (B2 del reviewer).
-          - Modo destrabada (verde): cuando hasLiveEditAuthorization=true — hay autorizacion vigente (N3).
-          - Modo candado (ambar): reserva bloqueada sin autorizacion activa (decision #1).
-          Prioridad: regresion > destrabada > candado.
-
-          Cambio UX 2026-06-22: "Pedí autorización" solo aparece en Confirmada.
-          En Traveling y Closed el vendedor solo ve el cartel de solo-lectura (arriba).
-          NO se toca isStatusLocked: sigue bloqueando edicion en Traveling/Closed,
-          pero esos estados no llegan al banner (isLocked=false les llega). */}
-      <ReservaLockBanner
-        isLocked={reserva.status === "Confirmed"}
-        onRequestEdit={() => setShowEditAuthModal(true)}
-        hasRegressionWarning={
-          // B2: franja naranja cuando la reserva esta en InManagement Y tiene motivo de regresion del backend.
-          // Solo se muestra en InManagement porque es el estado al que regresa automaticamente.
-          reserva.status === 'InManagement' && Boolean(reserva.lastRegressionReason)
-        }
-        regressionReason={reserva.lastRegressionReason ?? null}
-        hasLiveEditAuthorization={reserva.hasLiveEditAuthorization ?? false}
-        editAuthorizationExpiresAt={reserva.editAuthorizationExpiresAt ?? null}
-      />
-
-      {/* Banner "En corrección" (Tanda 2, 2026-06-22):
-          Aparece cuando la reserva fue sacada de viaje por corrección (isUnderCorrection=true).
-          La reserva volvió a Confirmada pero está CONGELADA para el pase automático a viaje
-          hasta que se corrija la fecha del servicio.
-          Importante: NO convierte la pantalla en solo-lectura — la reserva es Confirmada operativa,
-          con todas sus acciones disponibles. Solo es un aviso de que hay algo pendiente de revisar.
-          Texto exacto de la spec UX 2026-06-22. */}
-      {reserva.isUnderCorrection && (
-        <div
-          className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-200"
-          data-testid="banner-en-correccion"
-          role="status"
-          aria-live="polite"
-        >
-          <div className="flex items-start gap-2">
-            <span className="text-amber-600 dark:text-amber-400 flex-shrink-0" aria-hidden="true">🔧</span>
-            <div>
-              <span className="font-bold">En corrección — pendiente revisar fechas.</span>{' '}
-              Se sacó de viaje por una corrección. Está congelada: no va a volver a viaje sola.
-              Revisá la fecha del servicio y, si está bien, seguí normal.
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ADR-027: franja amarilla "Confirmada con cambios".
-          Aparece cuando el vendedor edito precio o costo de un servicio en una reserva viva
-          (InManagement/Confirmed/Traveling) y el dueño todavía no revisó el cambio.
-          ADR-036: ToSettle fue eliminado.
-
-          Detalle de pendingChanges[]: si el backend manda la lista, mostramos cada cambio
-          con su descripción, campo, valores viejo→nuevo y moneda. Si no viene o viene vacía,
-          mostramos el mensaje general (fallback seguro para versiones de API sin ese campo).
-
-          El botón "Dar OK" es SOLO para administradores (isAdmin()); un no-admin ve la franja
-          pero sin botón — ya puede ver el saldo actualizado y los servicios.
-
-          Bug fix 2026-07-03: el flag hasUnacknowledgedChanges puede llegar en true
-          incluso en reservas Anuladas / Esperando reembolso (el backend todavia no lo
-          limpia al anular). Por eso ademas del flag exigimos que el estado sea "vivo"
-          (InManagement/Confirmed/Traveling) — asi el cartel no confunde diciendo
-          "confirmá este cambio" sobre un viaje que ya quedo sin efecto. */}
-      {reserva.hasUnacknowledgedChanges && isReservaEnEstadoVivo(reserva.status) && (
-        <div
-          className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-200"
-          data-testid="banner-con-cambios"
-          role="status"
-          aria-live="polite"
-        >
-          {/* Encabezado de la franja */}
-          <div className="flex flex-col sm:flex-row sm:items-start gap-3">
-            <RefreshCw className="h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" aria-hidden="true" />
-            <div className="flex-1 min-w-0">
-              <span className="font-bold">Se editaron precios o costos de esta reserva.</span>
-              {' '}El saldo a cobrar se actualizó automáticamente.
-              {reserva.changesPendingSince && (
-                <span className="ml-1 text-amber-700 dark:text-amber-300 text-xs">
-                  (desde el {new Date(reserva.changesPendingSince).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" })})
-                </span>
-              )}
-
-              {/* Detalle de cada cambio — solo si el backend los manda y hay al menos uno.
-                  Si pendingChanges viene vacío o undefined, el fallback (mensaje general) ya está arriba. */}
-              {Array.isArray(reserva.pendingChanges) && reserva.pendingChanges.length > 0 && (
-                <ul
-                  className="mt-2 space-y-1"
-                  aria-label="Detalle de cambios pendientes de revisión"
-                  data-testid="pending-changes-list"
-                >
-                  {reserva.pendingChanges.map((change, index) => {
-                    // "SalePrice" → "precio de venta"; "NetCost" → "costo".
-                    const campoLabel = change.field === "SalePrice" ? "precio de venta" : "costo";
-
-                    // Formato de valor con moneda, o "—" si el cambio está enmascarado
-                    // (el vendedor editó un costo que este usuario no puede ver).
-                    const formatearValor = (value) => {
-                      if (change.valuesMasked) return "—";
-                      if (value == null) return "—";
-                      // Usamos Intl para formatear con símbolo de moneda.
-                      // No mezclamos monedas: cada cambio tiene su propia currency.
-                      const currency = change.currency ?? "ARS";
-                      return new Intl.NumberFormat("es-AR", {
-                        style: "currency",
-                        currency,
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      }).format(value);
-                    };
-
-                    return (
-                      <li
-                        key={index}
-                        className="text-xs text-amber-800 dark:text-amber-300"
-                        data-testid={`pending-change-${index}`}
-                      >
-                        {/* Nombre del servicio + campo + valores viejo y nuevo */}
-                        <span className="font-semibold">
-                          {change.serviceDescription ?? "Servicio"}
-                        </span>
-                        {" — "}
-                        {campoLabel}:{" "}
-                        <span className="line-through opacity-70">
-                          {formatearValor(change.oldValue)}
-                        </span>
-                        {" → "}
-                        <span className="font-semibold">
-                          {formatearValor(change.newValue)}
-                        </span>
-                        {/* Quién y cuándo hizo el cambio */}
-                        {change.changedByUserName && (
-                          <span className="ml-1 opacity-60">
-                            ({change.changedByUserName})
-                          </span>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
-
-            {/* Botón "Dar OK": solo visible para administradores.
-                Un no-admin puede VER el saldo actualizado en los servicios pero no puede
-                "limpiar" la marca — esa decisión la toma el dueño. */}
-            {isAdmin() && (
-              <button
-                type="button"
-                onClick={handleAcknowledgeChanges}
-                disabled={acknowledging}
-                className="flex-shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-amber-700 disabled:opacity-60 dark:bg-amber-700 dark:hover:bg-amber-600"
-                data-testid="btn-dar-ok-cambios"
-                aria-label="Marcar cambios como revisados"
-              >
-                {acknowledging ? (
-                  <>
-                    <RefreshCw className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                    Revisando...
-                  </>
-                ) : (
-                  <>
-                    <Check className="h-3.5 w-3.5" aria-hidden="true" />
-                    Dar OK
-                  </>
-                )}
-              </button>
-            )}
-          </div>
-        </div>
-      )}
+      {/* ═══ TIRA DE AVISOS (spec UX 2026-07-05, respuestas 1C/2B/3A/4B/5A) ═══════════
+          "Arriba la foto, abajo solo lo que hay que hacer": primero la FOTO del estado
+          (carteles de estado terminal / en viaje — no cambian, van primero), después lo
+          ACCIONABLE siempre visible (banner "con cambios" grande, candado en una línea),
+          y al final lo INFORMATIVO plegado ("N avisos más"). Orden de abajo hacia abajo:
+            1) Carteles de estado terminal / en viaje / pregunta de multa (sin cambios).
+            2) Banner "con cambios" (ADR-027) — accionable, grande, con botón "Dar OK".
+            3) Franja del candado en una línea — accionable, con botón "Pedí autorización".
+            4) Barra plegada "N avisos más" — informativos (servicios sin confirmar, capacidad). */}
 
       {/* ─── Carteles de estado ────────────────────────────────────────────────────
           Feedback 2026-06-19: UN SOLO cartel que explica el estado actual.
@@ -1670,6 +1492,166 @@ export default function ReservaDetailPage() {
         ) : null;
       })()}
 
+      {/* ADR-027: franja amarilla "Confirmada con cambios".
+          Aparece cuando el vendedor edito precio o costo de un servicio en una reserva viva
+          (InManagement/Confirmed/Traveling) y el dueño todavía no revisó el cambio.
+          ADR-036: ToSettle fue eliminado.
+
+          Detalle de pendingChanges[]: si el backend manda la lista, mostramos cada cambio
+          con su descripción, campo, valores viejo→nuevo y moneda. Si no viene o viene vacía,
+          mostramos el mensaje general (fallback seguro para versiones de API sin ese campo).
+
+          El botón "Dar OK" es SOLO para administradores (isAdmin()); un no-admin ve la franja
+          pero sin botón — ya puede ver el saldo actualizado y los servicios.
+
+          Bug fix 2026-07-03: el flag hasUnacknowledgedChanges puede llegar en true
+          incluso en reservas Anuladas / Esperando reembolso (el backend todavia no lo
+          limpia al anular). Por eso ademas del flag exigimos que el estado sea "vivo"
+          (InManagement/Confirmed/Traveling) — asi el cartel no confunde diciendo
+          "confirmá este cambio" sobre un viaje que ya quedo sin efecto. */}
+      {reserva.hasUnacknowledgedChanges && isReservaEnEstadoVivo(reserva.status) && (
+        <div
+          className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-200"
+          data-testid="banner-con-cambios"
+          role="status"
+          aria-live="polite"
+        >
+          {/* Encabezado de la franja */}
+          <div className="flex flex-col sm:flex-row sm:items-start gap-3">
+            <RefreshCw className="h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" aria-hidden="true" />
+            <div className="flex-1 min-w-0">
+              <span className="font-bold">Se editaron precios o costos de esta reserva.</span>
+              {' '}El saldo a cobrar se actualizó automáticamente.
+              {reserva.changesPendingSince && (
+                <span className="ml-1 text-amber-700 dark:text-amber-300 text-xs">
+                  (desde el {new Date(reserva.changesPendingSince).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" })})
+                </span>
+              )}
+
+              {/* Detalle de cada cambio — solo si el backend los manda y hay al menos uno.
+                  Si pendingChanges viene vacío o undefined, el fallback (mensaje general) ya está arriba. */}
+              {Array.isArray(reserva.pendingChanges) && reserva.pendingChanges.length > 0 && (
+                <ul
+                  className="mt-2 space-y-1"
+                  aria-label="Detalle de cambios pendientes de revisión"
+                  data-testid="pending-changes-list"
+                >
+                  {reserva.pendingChanges.map((change, index) => {
+                    // "SalePrice" → "precio de venta"; "NetCost" → "costo".
+                    const campoLabel = change.field === "SalePrice" ? "precio de venta" : "costo";
+
+                    // Formato de valor con moneda, o "—" si el cambio está enmascarado
+                    // (el vendedor editó un costo que este usuario no puede ver).
+                    const formatearValor = (value) => {
+                      if (change.valuesMasked) return "—";
+                      if (value == null) return "—";
+                      // Usamos Intl para formatear con símbolo de moneda.
+                      // No mezclamos monedas: cada cambio tiene su propia currency.
+                      const currency = change.currency ?? "ARS";
+                      return new Intl.NumberFormat("es-AR", {
+                        style: "currency",
+                        currency,
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      }).format(value);
+                    };
+
+                    return (
+                      <li
+                        key={index}
+                        className="text-xs text-amber-800 dark:text-amber-300"
+                        data-testid={`pending-change-${index}`}
+                      >
+                        {/* Nombre del servicio + campo + valores viejo y nuevo */}
+                        <span className="font-semibold">
+                          {change.serviceDescription ?? "Servicio"}
+                        </span>
+                        {" — "}
+                        {campoLabel}:{" "}
+                        <span className="line-through opacity-70">
+                          {formatearValor(change.oldValue)}
+                        </span>
+                        {" → "}
+                        <span className="font-semibold">
+                          {formatearValor(change.newValue)}
+                        </span>
+                        {/* Quién y cuándo hizo el cambio */}
+                        {change.changedByUserName && (
+                          <span className="ml-1 opacity-60">
+                            ({change.changedByUserName})
+                          </span>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+
+            {/* Botón "Dar OK": solo visible para administradores.
+                Un no-admin puede VER el saldo actualizado en los servicios pero no puede
+                "limpiar" la marca — esa decisión la toma el dueño. */}
+            {isAdmin() && (
+              <button
+                type="button"
+                onClick={handleAcknowledgeChanges}
+                disabled={acknowledging}
+                className="flex-shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-amber-700 disabled:opacity-60 dark:bg-amber-700 dark:hover:bg-amber-600"
+                data-testid="btn-dar-ok-cambios"
+                aria-label="Marcar cambios como revisados"
+              >
+                {acknowledging ? (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                    Revisando...
+                  </>
+                ) : (
+                  <>
+                    <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                    Dar OK
+                  </>
+                )}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Banner ADR-020:
+          - Modo regresion (naranja): cuando la reserva volvio sola a En gestion por cambio del operador.
+            Se activa desde lastRegressionReason del DTO (B2 del reviewer).
+          - Modo destrabada (verde): cuando hasLiveEditAuthorization=true — hay autorizacion vigente (N3).
+          - Modo candado (ambar): reserva bloqueada sin autorizacion activa (decision #1).
+          Prioridad: regresion > destrabada > candado.
+
+          Cambio UX 2026-06-22: "Pedí autorización" solo aparece en Confirmada.
+          En Traveling y Closed el vendedor solo ve el cartel de solo-lectura (arriba).
+          NO se toca isStatusLocked: sigue bloqueando edicion en Traveling/Closed,
+          pero esos estados no llegan al banner (isLocked=false les llega).
+
+          (2026-07-05) Franja de UNA LÍNEA (spec 4B): va DESPUÉS del banner "con cambios" y
+          ANTES de los avisos plegados — es lo último accionable de la tira, antes de lo
+          puramente informativo. */}
+      <ReservaLockBanner
+        isLocked={reserva.status === "Confirmed"}
+        onRequestEdit={() => setShowEditAuthModal(true)}
+        hasRegressionWarning={
+          // B2: franja naranja cuando la reserva esta en InManagement Y tiene motivo de regresion del backend.
+          // Solo se muestra en InManagement porque es el estado al que regresa automaticamente.
+          reserva.status === 'InManagement' && Boolean(reserva.lastRegressionReason)
+        }
+        regressionReason={reserva.lastRegressionReason ?? null}
+        hasLiveEditAuthorization={reserva.hasLiveEditAuthorization ?? false}
+        editAuthorizationExpiresAt={reserva.editAuthorizationExpiresAt ?? null}
+      />
+
+      {/* (2026-07-05) Banner "En corrección" ELIMINADO (spec UX, respuesta 2B): quedaba
+          duplicado con el chip "En corrección" del header (ReservaStatusChips), que ya
+          se enciende con la MISMA condición exacta (reserva.isUnderCorrection === true —
+          verificado antes de borrar, sin achicar la condición). El aviso completo ("Se
+          sacó de viaje por una corrección...") vive ahora solo como title/tooltip del
+          chip; no hace falta repetirlo en un banner aparte. */}
+
       {/* ── Estados activos: orientan al vendedor sobre el siguiente paso ── */}
       {reserva.status === "Quotation" ? (
         <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/30 dark:text-slate-300">
@@ -1718,26 +1700,35 @@ export default function ReservaDetailPage() {
         );
       })()}
 
-      {/* ── "Debe — no viaja": cartel arriba para reservas Confirmadas con saldo pendiente (ADR-036, punto 7) ──
-          Aparece cuando la reserva está Confirmada, el cliente todavía debe Y la salida está dentro de la
-          ventana de aviso configurada. El backend no permite que pase a "En viaje" hasta que esté 100% pagada.
-          NO muestra montos de costo ni deuda al operador — solo que el cliente debe.
+      {/* (2026-07-05) Banner "Debe — no viaja" ELIMINADO (spec UX, respuesta 2B): quedaba
+          duplicado con el chip rojo "Debe — no viaja" del header (ReservaStatusChips),
+          que lee la MISMA fuente única de plata (getMoneyStatus, ver moneyStatus.js) con
+          la MISMA condición (Confirmed + deuda + dentro de la ventana de aviso) —
+          verificado antes de borrar. Caso límite revisado: si además el viaje ya venció
+          (hasOverdueDebt), el chip del eje Viaje muestra "Vencida con deuda" en su lugar
+          — sigue avisando, con más precisión que el banner viejo (que no distinguía). */}
 
-          ADR-037: el backend ya expone `isWithinUnpaidAlertWindow` (calculado contra StartDate y la config
-          existente upcomingUnpaidReservationAlertDays). El cartel respeta esa ventana: fuera de ella no aparece. */}
-      {reserva.status === "Confirmed" && !reserva.isFullyPaid && reserva.isWithinUnpaidAlertWindow ? (
-        <div
-          className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
-          data-testid="banner-debe-no-viaja"
-          role="status"
-        >
-          <strong className="font-bold">No puede viajar todavía:</strong> hay saldo pendiente del cliente.
-        </div>
-      ) : null}
+      {/* Tira de avisos INFORMATIVOS (spec UX 2026-07-05, respuesta 5A): "servicios sin
+          confirmar" y "capacidad excedida" no piden ninguna acción inmediata, así que
+          van plegados por defecto en "N avisos más" — no compiten con el candado ni con
+          el banner "con cambios" de arriba. Si hay uno solo, se muestra directo (menos
+          fricción que abrir un plegado de un solo ítem). */}
+      {(() => {
+        const paxCount = reserva.passengers?.length || 0;
+        // Una sola llamada al helper puro: decide qué avisos corresponden sin repetir
+        // la lógica de "hay que mostrar esto" (esa lógica vive en avisosFicha.js).
+        const clavesAvisos = construirAvisosInformativos({ reserva, paxCount, capacity });
 
-      <UnconfirmedServicesBanner reserva={reserva} />
+        const avisos = [];
+        if (clavesAvisos.includes("serviciosSinConfirmar")) {
+          avisos.push({ key: "servicios-sin-confirmar", node: <UnconfirmedServicesBanner reserva={reserva} /> });
+        }
+        if (clavesAvisos.includes("capacidad")) {
+          avisos.push({ key: "capacidad", node: <CapacityWarning paxCount={paxCount} capacity={capacity} /> });
+        }
 
-      <CapacityWarning paxCount={reserva.passengers?.length || 0} capacity={capacity} />
+        return <AvisosPlegadosBar avisos={avisos} />;
+      })()}
 
       {(getRelatedPublicId(reserva, "sourceLeadPublicId", "sourceLeadId") || getRelatedPublicId(reserva, "sourceQuotePublicId", "sourceQuoteId")) ? (
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">

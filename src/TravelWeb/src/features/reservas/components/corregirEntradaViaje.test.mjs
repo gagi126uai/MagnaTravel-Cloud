@@ -238,44 +238,48 @@ test("Contador de caracteres faltantes: más de 10 chars → faltan 0 (nunca neg
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 3. CHIP/BANNER "EN CORRECCIÓN"
+// 3. CHIP "EN CORRECCIÓN"
 //
-// Replica de las condiciones que muestran el chip y el banner.
+// Replica de la condición que muestra el chip.
 //
 // Chip (ReservaStatusChips): visible cuando reserva.isUnderCorrection === true.
-// Banner (ReservaDetailPage): visible cuando reserva.isUnderCorrection === true.
+//
+// (2026-07-05, spec UX respuesta 2B) El banner separado que existía en
+// ReservaDetailPage se ELIMINÓ: quedaba duplicado con este chip, que se enciende
+// con la MISMA condición exacta. Ahora "En corrección" se ve SOLO acá (chip del
+// header); el aviso completo vive en su title/tooltip.
 //
 // La reserva en estado "En corrección" ES Confirmada y operativa.
 // No convierte la pantalla en solo-lectura: solo avisa que hay algo pendiente.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Replica de la condición para mostrar el chip/banner "En corrección".
+ * Replica de la condición para mostrar el chip "En corrección".
  * Es exactamente reserva.isUnderCorrection === true.
  */
 function debeVerseIndicadorCorreccion(reserva) {
     return reserva?.isUnderCorrection === true;
 }
 
-test("Chip/banner visible: isUnderCorrection=true", () => {
+test("Chip visible: isUnderCorrection=true", () => {
     assert.equal(debeVerseIndicadorCorreccion({ isUnderCorrection: true }), true);
 });
 
-test("Chip/banner oculto: isUnderCorrection=false (reserva normal en viaje o confirmada)", () => {
+test("Chip oculto: isUnderCorrection=false (reserva normal en viaje o confirmada)", () => {
     assert.equal(debeVerseIndicadorCorreccion({ isUnderCorrection: false }), false);
 });
 
-test("Chip/banner oculto: isUnderCorrection no existe en el DTO (DTO viejo)", () => {
+test("Chip oculto: isUnderCorrection no existe en el DTO (DTO viejo)", () => {
     // Degradación elegante: si el campo no viene, asumimos false.
     assert.equal(debeVerseIndicadorCorreccion({ status: 'Traveling' }), false);
 });
 
-test("Chip/banner oculto: reserva undefined", () => {
+test("Chip oculto: reserva undefined", () => {
     // Protección contra undefined en el componente (optional chaining).
     assert.equal(debeVerseIndicadorCorreccion(undefined), false);
 });
 
-test("Chip/banner oculto: isUnderCorrection=null (no es true)", () => {
+test("Chip oculto: isUnderCorrection=null (no es true)", () => {
     assert.equal(debeVerseIndicadorCorreccion({ isUnderCorrection: null }), false);
 });
 

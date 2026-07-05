@@ -1,20 +1,15 @@
 import React from 'react';
 import { AlertTriangle } from "lucide-react";
+import { getAdvertenciaCapacidad } from "../avisosFicha";
 
 export function CapacityWarning({ paxCount, capacity }) {
-    // Backwards compatibility: capacity puede ser un objeto {hotel, transfer, package, total} o un numero plano (legacy hotelCapacity)
-    const cap = typeof capacity === "number"
-        ? { hotel: capacity, transfer: 0, package: 0, total: capacity }
-        : (capacity || { hotel: 0, transfer: 0, package: 0, total: 0 });
+    // La decisión de "hay que avisar" vive en avisosFicha.js: la usa también el
+    // plegado "N avisos más" de la ficha para contar este aviso sin duplicar la regla.
+    const advertencia = getAdvertenciaCapacidad(paxCount, capacity);
+    if (!advertencia) return null;
 
-    if (paxCount <= 0 || cap.total <= 0 || paxCount <= cap.total) {
-        return null;
-    }
-
-    const detalle = [];
-    if (cap.hotel > 0 && paxCount > cap.hotel) detalle.push(`hotel para ${cap.hotel}`);
-    if (cap.transfer > 0 && paxCount > cap.transfer) detalle.push(`transfer para ${cap.transfer}`);
-    if (cap.package > 0 && paxCount > cap.package) detalle.push(`paquete para ${cap.package}`);
+    const cap = advertencia;
+    const detalle = advertencia.detalle;
 
     return (
         <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-4 dark:bg-yellow-950/20 dark:border-yellow-700">

@@ -37,7 +37,57 @@
 
 ## Ventanas emergentes y avisos
 
-_(pendiente)_
+**Regla general: "arriba la foto, abajo solo lo que hay que hacer" (2026-07-05, respuestas 1C/2B/3A/4B/5A).**
+
+> **Origen:** la ficha de reserva (`ReservaDetailPage`) había llegado a apilar hasta 5 banners
+> full-width + badges del header que decían lo mismo dos veces (chip Y banner para el mismo dato).
+> Gastón aprobó un diseño concreto para ordenar eso, respondiendo por opciones (1C, 2B, 3A, 4B, 5A).
+
+- **(2026-07-05, respuesta 1C — "mixto")** La ficha muestra, debajo del header, una **tira de avisos**
+  con dos categorías, nunca mezcladas:
+  - **ACCIONABLES**: piden que el vendedor haga algo AHORA (ej. "Dar OK" a un cambio de precio, "Pedí
+    autorización" para editar). **Siempre visibles**, nunca plegados.
+  - **INFORMATIVOS**: no piden ninguna acción inmediata (ej. "3 servicios sin confirmar", "capacidad
+    excedida"). Van **plegados por defecto** en una barra **"N avisos más [Ver ▾]"**. Al hacer clic se
+    despliegan en la misma página (sin modal), con un chevron que rota. El plegado **no se persiste**:
+    arranca cerrado en cada carga de la ficha (más simple, y el vendedor lo abre en dos clics si hace
+    falta). **Si hay un solo aviso informativo, se muestra DIRECTO, sin el plegado** — pedirle un clic
+    extra para ver un único aviso es más fricción que mostrarlo de una.
+- **(2026-07-05, respuesta 2B — "sin duplicados chip-vs-banner")** Ningún dato de la reserva se dice
+  DOS VECES entre un chip del header y un banner de la ficha. Se **eliminan** dos banners que quedaban
+  duplicados con su chip equivalente (misma condición de encendido, verificada antes de borrar):
+  - El banner rojo **"No puede viajar todavía: hay saldo pendiente del cliente"** — queda SOLO el chip
+    rojo **"Debe — no viaja"** del header (`ReservaStatusChips`), que ya decidía con la misma condición.
+    **Esto CAMBIA lo decidido el 2026-06-21** (sección ADR-037, punto 3), que pedía cartel **+** chip: a
+    partir de acá, **solo el chip**.
+  - El banner ámbar **"🔧 En corrección — pendiente revisar fechas"** — queda SOLO el chip **"En
+    corrección"** del header, misma condición exacta (`reserva.isUnderCorrection === true`). **Esto
+    CAMBIA lo decidido el 2026-06-22** (sección "Tanda 2 — Sacar de viaje"), que agregaba chip **y**
+    cartel: a partir de acá, **solo el chip** (el texto completo del aviso pasa a vivir en el
+    title/tooltip del chip).
+- **(2026-07-05, respuesta 3A — "accionable grande")** El banner ADR-027 **"Se editaron precios o
+  costos..."** (con el detalle de cambios y el botón **"Dar OK"**) **queda exactamente como estaba**:
+  grande, siempre visible, arriba de la franja del candado. Es el aviso más importante de la tira
+  (afecta el saldo a cobrar) y no compite con nada más.
+- **(2026-07-05, respuesta 4B — "candado a una línea")** La franja del candado (`ReservaLockBanner`) se
+  achica a **una línea fina**: ícono + texto corto ("Reserva confirmada. Para cambiar algo, pedí
+  autorización.") + botón **"Pedí autorización"** a la derecha. Las otras dos variantes del mismo
+  componente (regresión naranja, destrabada verde) pasan al mismo formato de una línea, con su mismo
+  contenido esencial — sigue valiendo la prioridad regresión > destrabada > candado.
+- **(2026-07-05, respuesta 5A — "informativos plegados")** Van DENTRO del plegado "N avisos más": el
+  aviso de **servicios sin confirmar** (`UnconfirmedServicesBanner`) y el de **capacidad excedida**
+  (`CapacityWarning`). Los carteles de **estado terminal / en viaje / pregunta de multa** (Perdida,
+  Anulada, Finalizada, En viaje, esperando reembolso) **NO** se pliegan: son "la foto" del estado, son
+  mutuamente excluyentes entre sí y van primero en el orden visual. Los avisos de guía de flujo en
+  etapas tempranas (Cotización, Presupuesto, franja de nombres de pasajeros en En gestión) tampoco se
+  pliegan: son orientación normal del flujo, no alertas.
+- **Orden visual resultante (de arriba hacia abajo, cuando aplican):**
+  1. Carteles de estado terminal / en viaje / pregunta de multa (sin cambios de contenido).
+  2. Banner "con cambios" + "Dar OK" (accionable, grande — respuesta 3A).
+  3. Franja del candado en una línea (accionable — respuesta 4B).
+  4. Barra plegada "N avisos más" (informativos — respuesta 5A). Si no hay ninguno, la barra no aparece.
+- **Implementación de referencia:** la decisión de qué aviso es informativo vive en un helper puro
+  (`avisosFicha.js`) para que el contador de la barra y el propio aviso nunca diverjan entre sí.
 
 ## Navegación
 
@@ -490,6 +540,7 @@ Ronda 2:
 
 **3) "Debe — no viaja" SOLO dentro de la ventana de días (ajuste del front de ADR-036).**
 - **(2026-06-21)** El **chip rojo "Debe — no viaja"** y el **cartel de arriba** del mismo tema (ADR-036 punto 7) ahora se muestran **SOLO cuando `isWithinUnpaidAlertWindow` es true** — es decir, cuando la salida está dentro de la ventana de días configurada en "Alertas por reservas próximas con deuda" Y hay deuda del cliente. **Ya NO se muestra para toda reserva Confirmada con deuda.**
+- **⚠️ CAMBIO 2026-07-05 (respuesta 2B, sección "Ventanas emergentes y avisos"):** el **cartel de arriba** se ELIMINA por quedar duplicado con el chip (misma condición). A partir de acá, **"Debe — no viaja" se ve SOLO como chip** en el header.
 - **(2026-06-21)** Esto completa lo que ADR-036 dejó pendiente: aquella regla se apoyaba en la config existente de días de aviso, pero el dato no llegaba al front. Ahora `isWithinUnpaidAlertWindow` lo trae resuelto del backend (que ya cruza la config con la fecha de salida). El front solo lo lee.
 - **(2026-06-21)** Sigue valiendo todo lo demás de ADR-036 punto 7: el chip lleva el prefijo "Pago:" en gris (no es estado operativo), no muestra montos de costo ni deuda al operador (puede mostrar lo que el cliente debe), y la reserva sigue sin pasar a "En viaje" hasta cobrarse el total. Lo único que cambia es **CUÁNDO se muestra el aviso**: dentro de la ventana, no siempre.
 
@@ -544,6 +595,7 @@ Ronda 2:
 - **(2026-06-22)** **Bloqueado si la reserva tiene factura con CAE vivo**: ahí no se saca de viaje, se corrige por Nota de Crédito/ajuste (mismo candado fiscal que ya existe).
 - **(2026-06-22)** El modal pide: **motivo obligatorio** (siempre, hasta para Admin) + (si hiciera falta autorizante, mismo patrón que el "volver atrás"). Un cartel explica la consecuencia y recuerda: **"si la fecha estaba mal cargada, después de sacarla de viaje hay que corregir la fecha del servicio; si no, el sistema podría volver a ponerla en viaje"** (la fecha de salida sale de los servicios, no se escribe a mano).
 - **(2026-06-22)** Para que el sistema NO la vuelva a meter en viaje esa misma noche, la reserva queda con una **marca "En corrección"** (chip/cartel visible) que la congela para el proceso automático hasta que se corrija la fecha del servicio o avance de estado. Mientras tanto se ve claramente que está "En corrección — pendiente revisar fechas".
+  - **⚠️ CAMBIO 2026-07-05 (respuesta 2B, sección "Ventanas emergentes y avisos"):** el cartel se ELIMINA por quedar duplicado con el chip (misma condición exacta). A partir de acá, **"En corrección" se ve SOLO como chip** en el header; el texto completo pasa al title/tooltip del chip.
 - **(2026-06-22)** Queda registrado en el historial como **corrección** (distinto de un "volver atrás" normal): quién, cuándo y por qué.
 
 ## Tanda 3 — Pagado al operador por servicio: registrar desde la ficha del proveedor (2026-06-23, respuesta de Gastón)
