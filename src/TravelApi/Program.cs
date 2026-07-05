@@ -561,6 +561,9 @@ builder.Services.AddScoped<OperationalFinanceMonitorService>();
 // ADR-020 F3: motor de estados automatico (confirmacion/regresion automatica + estampado ConfirmedAt).
 builder.Services.AddScoped<TravelApi.Infrastructure.Services.Reservations.ReservaAutoStateService>();
 builder.Services.AddScoped<TravelApi.Infrastructure.Services.ReservaLifecycleAutomationService>();
+// (2026-07-04, hallazgo A1) Recalculador de coherencia de plata de reservas anuladas. Servicio inyectable
+// para que lo pueda llamar tanto el endpoint admin de mantenimiento como el vigía nocturno (pieza futura).
+builder.Services.AddScoped<TravelApi.Infrastructure.Services.CoherenceMoneyRecalculator>();
 // FC1.3.6 (ADR-009 §2.10, 2026-05-21): job que alerta a Admins cuando un BC
 // queda mucho tiempo en ManualReviewPending (riesgo plazo RG 4540 fiscal).
 builder.Services.AddScoped<TravelApi.Infrastructure.Services.PartialCreditNoteReviewAlertJob>();

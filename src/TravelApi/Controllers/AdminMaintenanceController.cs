@@ -15,13 +15,16 @@ namespace TravelApi.Controllers;
 public class AdminMaintenanceController : ControllerBase
 {
     private readonly ReservaLifecycleAutomationService _lifecycle;
+    private readonly CoherenceMoneyRecalculator _coherenceMoneyRecalculator;
     private readonly ILogger<AdminMaintenanceController> _logger;
 
     public AdminMaintenanceController(
         ReservaLifecycleAutomationService lifecycle,
+        CoherenceMoneyRecalculator coherenceMoneyRecalculator,
         ILogger<AdminMaintenanceController> logger)
     {
         _lifecycle = lifecycle;
+        _coherenceMoneyRecalculator = coherenceMoneyRecalculator;
         _logger = logger;
     }
 
@@ -52,11 +55,73 @@ public class AdminMaintenanceController : ControllerBase
         }
         catch (Exception ex)
         {
+            // No se filtra el detalle técnico al usuario: el mensaje es de negocio y el error real queda en el log.
             _logger.LogError(ex, "Lifecycle manual run failed");
             return Problem(
                 statusCode: StatusCodes.Status500InternalServerError,
-                title: "No se pudo ejecutar el lifecycle.",
-                detail: ex.Message);
+                title: "No se pudo actualizar el estado de las reservas.",
+                detail: "Ocurrió un problema al procesar. Volvé a intentarlo; si persiste, avisá al equipo.");
         }
     }
+
+    /// <summary>
+    /// (2026-07-04, hallazgo A1) Recalcula la plata de las reservas ANULADAS cuya cuenta quedó desactualizada, para
+    /// que dejen de mostrar deuda fantasma. Es el PASO 2 de la reparación: la migración
+    /// <c>RepairLegacyAnnulledReservaServices</c> ya canceló en la base los servicios que habían quedado vivos; este
+    /// endpoint corre los recálculos de dominio (los mismos que una anulación moderna) para bajar la venta confirmada
+    /// y el saldo a lo real.
+    ///
+    /// <para>Idempotente: correrlo de nuevo sobre reservas ya sanas no cambia nada (0 corregidas). Devuelve un
+    /// resumen en lenguaje de negocio; ante un error interno responde un mensaje amable, sin detalle técnico.</para>
+    /// </summary>
+    [HttpPost("coherence/recalculate-money")]
+    public async Task<ActionResult<CoherenceRecalculationResponse>> RecalculateAnnulledReservasMoney(CancellationToken ct)
+    {
+        try
+        {
+            var actor = User?.Identity?.Name ?? "unknown";
+            _logger.LogInformation("Coherence money recalculation triggered manually by {User}", actor);
+
+            var result = await _coherenceMoneyRecalculator.RecalculateAnnulledReservasMoneyAsync(ct);
+
+            var summary = BuildRecalculationSummary(result);
+            return Ok(new CoherenceRecalculationResponse(
+                ReservasRevisadas: result.Reviewed,
+                ReservasCorregidas: result.Corrected,
+                ReservasConError: result.Failed,
+                Resumen: summary));
+        }
+        catch (Exception ex)
+        {
+            // No se filtra el detalle técnico al usuario: el mensaje es de negocio y el error real queda en el log.
+            _logger.LogError(ex, "Coherence money recalculation failed");
+            return Problem(
+                statusCode: StatusCodes.Status500InternalServerError,
+                title: "No se pudo recalcular la coherencia de la plata.",
+                detail: "Ocurrió un problema al recalcular. Volvé a intentarlo; si persiste, avisá al equipo.");
+        }
+    }
+
+    /// <summary>Arma el resumen en castellano que ve el usuario, según cuántas reservas se revisaron/corrigieron.</summary>
+    private static string BuildRecalculationSummary(
+        CoherenceMoneyRecalculator.CoherenceRecalculationResult result)
+    {
+        if (result.Reviewed == 0)
+            return "No había reservas anuladas con la cuenta desactualizada. Todo en orden.";
+
+        var summary = $"Se revisaron {result.Reviewed} reservas anuladas y se corrigieron {result.Corrected}.";
+        if (result.Failed > 0)
+            summary += $" Quedaron {result.Failed} sin poder recalcular; se pueden reintentar.";
+        return summary;
+    }
 }
+
+/// <summary>
+/// Respuesta del recálculo de coherencia de plata: números y un resumen en lenguaje de negocio. NO expone nada
+/// técnico (ids, nombres internos, estados crudos): solo lo que un usuario no programador necesita entender.
+/// </summary>
+public sealed record CoherenceRecalculationResponse(
+    int ReservasRevisadas,
+    int ReservasCorregidas,
+    int ReservasConError,
+    string Resumen);
