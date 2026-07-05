@@ -564,6 +564,10 @@ builder.Services.AddScoped<TravelApi.Infrastructure.Services.ReservaLifecycleAut
 // (2026-07-04, hallazgo A1) Recalculador de coherencia de plata de reservas anuladas. Servicio inyectable
 // para que lo pueda llamar tanto el endpoint admin de mantenimiento como el vigía nocturno (pieza futura).
 builder.Services.AddScoped<TravelApi.Infrastructure.Services.CoherenceMoneyRecalculator>();
+// (Tanda 4, 2026-07-04) Vigía de coherencia: job nocturno que detecta datos incoherentes, auto-repara lo seguro
+// (marcas colgadas, plata desactualizada) y reporta el resto (anuladas con servicios vivos / deuda sin comprobante)
+// con UNA notificación urgente. Reusa el CoherenceMoneyRecalculator de arriba. Ver CoherenceWatchdogJob.
+builder.Services.AddScoped<TravelApi.Infrastructure.Services.CoherenceWatchdogJob>();
 // FC1.3.6 (ADR-009 §2.10, 2026-05-21): job que alerta a Admins cuando un BC
 // queda mucho tiempo en ManualReviewPending (riesgo plazo RG 4540 fiscal).
 builder.Services.AddScoped<TravelApi.Infrastructure.Services.PartialCreditNoteReviewAlertJob>();
@@ -1004,6 +1008,16 @@ if (hangfireSchedulerEnabled)
         "total-credit-note-bridge-reconciliation",
         job => job.RunAsync(CancellationToken.None),
         "*/30 * * * *");
+
+    // (Tanda 4, 2026-07-04): vigía de coherencia. Corre 6am UTC, DESPUÉS de todo el housekeeping nocturno (lifecycle
+    // 3am, timeouts de reembolso 4am, cierre de anulaciones sin receivable 5am), para que su recálculo de plata vea
+    // el estado ya asentado por esos jobs y no reporte falsos positivos que aquellos estaban por arreglar. Repara lo
+    // seguro y, si queda algo para revisar, deja una única notificación urgente lista para cuando el dueño abre el
+    // sistema a la mañana. Ver CoherenceWatchdogJob.
+    RecurringJob.AddOrUpdate<TravelApi.Infrastructure.Services.CoherenceWatchdogJob>(
+        "coherence-watchdog",
+        job => job.RunScheduledAsync(CancellationToken.None),
+        Cron.Daily(6));
 }
 
 // 3. Health Check
