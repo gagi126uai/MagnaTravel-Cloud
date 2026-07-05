@@ -15,6 +15,7 @@ using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Application.Mappings;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Reservations;
 using TravelApi.Errors;
 using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
@@ -163,6 +164,131 @@ public class BugFixes20260608Tests
         var dto = await service.UpdateFlightAsync(reserva.Id, 60, request, CancellationToken.None);
 
         Assert.NotNull(dto);
+    }
+
+    // ---------- Tanda 6: anti-clobber de estado al editar servicios catalogados ----------
+    // Bug del "$0 mudo": editar un servicio confirmado SIN mandar estado NO debe revertirlo a "Solicitado"
+    // (eso lo sacaba de la facturacion). Se prueba en "En gestion" (En Presupuesto el estado se fuerza a
+    // Solicitado y enmascararia el fix). El guard de downgrade con pagos al proveedor no aplica: no hay pagos.
+
+    [Fact]
+    public async Task UpdateHotel_WithoutWorkflowStatus_OnLiveReserva_KeepsConfirmed()
+    {
+        await using var context = NewContext();
+        var mapper = NewMapper();
+        var (reserva, supplier) = await SeedReservaAndSupplierAsync(context, status: EstadoReserva.InManagement);
+        context.HotelBookings.Add(new HotelBooking
+        {
+            Id = 51, ReservaId = reserva.Id, SupplierId = supplier.Id, HotelName = "Hotel X",
+            City = "Bariloche", RoomType = "Doble", MealPlan = "Desayuno",
+            CheckIn = DateTime.UtcNow.Date.AddDays(10), CheckOut = DateTime.UtcNow.Date.AddDays(12),
+            Adults = 2, Children = 0, Rooms = 1, Status = "Confirmado", ConfirmedAt = DateTime.UtcNow,
+            NetCost = 100m, SalePrice = 180m
+        });
+        await context.SaveChangesAsync();
+        var service = NewBookingService(context, mapper);
+
+        // El form no manda WorkflowStatus (null). Editamos solo pax, SIN cambiar precio.
+        var request = new UpdateHotelRequest(
+            SupplierId: supplier.PublicId.ToString(), HotelName: "Hotel X", StarRating: null,
+            City: "Bariloche", Country: null,
+            CheckIn: DateTime.UtcNow.Date.AddDays(10), CheckOut: DateTime.UtcNow.Date.AddDays(12),
+            RoomType: "Doble", MealPlan: "Desayuno",
+            Adults: 3, Children: 0, Rooms: 1, ConfirmationNumber: null,
+            NetCost: 100m, SalePrice: 180m, Commission: 80m);
+
+        await service.UpdateHotelAsync(reserva.Id, 51, request, CancellationToken.None);
+
+        var stored = await context.HotelBookings.SingleAsync(h => h.Id == 51);
+        // Sin estado en el request se CONSERVA "Confirmado": el hotel sigue resuelto y facturable.
+        Assert.Equal("Confirmado", stored.Status);
+        Assert.True(ServiceResolutionRules.IsResolved(stored));
+    }
+
+    [Fact]
+    public async Task UpdateHotel_WithExplicitWorkflowStatus_AppliesIt()
+    {
+        await using var context = NewContext();
+        var mapper = NewMapper();
+        var (reserva, supplier) = await SeedReservaAndSupplierAsync(context, status: EstadoReserva.InManagement);
+        context.HotelBookings.Add(new HotelBooking
+        {
+            Id = 52, ReservaId = reserva.Id, SupplierId = supplier.Id, HotelName = "Hotel X",
+            City = "Bariloche", RoomType = "Doble", MealPlan = "Desayuno",
+            CheckIn = DateTime.UtcNow.Date.AddDays(10), CheckOut = DateTime.UtcNow.Date.AddDays(12),
+            Adults = 2, Children = 0, Rooms = 1, Status = "Confirmado", ConfirmedAt = DateTime.UtcNow,
+            NetCost = 100m, SalePrice = 180m
+        });
+        await context.SaveChangesAsync();
+        var service = NewBookingService(context, mapper);
+
+        // El usuario cambio el desplegable a "Solicitado" a proposito: el valor explicito SI se aplica.
+        var request = new UpdateHotelRequest(
+            SupplierId: supplier.PublicId.ToString(), HotelName: "Hotel X", StarRating: null,
+            City: "Bariloche", Country: null,
+            CheckIn: DateTime.UtcNow.Date.AddDays(10), CheckOut: DateTime.UtcNow.Date.AddDays(12),
+            RoomType: "Doble", MealPlan: "Desayuno",
+            Adults: 2, Children: 0, Rooms: 1, ConfirmationNumber: null,
+            NetCost: 100m, SalePrice: 180m, Commission: 80m, Status: null, Notes: null,
+            RoomingAssignments: null, RateId: null, WorkflowStatus: "Solicitado");
+
+        await service.UpdateHotelAsync(reserva.Id, 52, request, CancellationToken.None);
+
+        var stored = await context.HotelBookings.SingleAsync(h => h.Id == 52);
+        Assert.Equal("Solicitado", stored.Status);
+    }
+
+    [Fact]
+    public async Task UpdateFlight_WithoutWorkflowStatus_OnLiveReserva_KeepsIataStatus()
+    {
+        await using var context = NewContext();
+        var mapper = NewMapper();
+        var (reserva, supplier) = await SeedReservaAndSupplierAsync(context, status: EstadoReserva.InManagement);
+        context.FlightSegments.Add(new FlightSegment
+        {
+            Id = 61, ReservaId = reserva.Id, SupplierId = supplier.Id,
+            AirlineCode = "AR", FlightNumber = "1234", Origin = "EZE", Destination = "BRC",
+            DepartureTime = DateTime.UtcNow.AddDays(10), ArrivalTime = DateTime.UtcNow.AddDays(10).AddHours(2),
+            Status = "HK", TicketIssuedAt = DateTime.UtcNow, NetCost = 300m, SalePrice = 550m
+        });
+        await context.SaveChangesAsync();
+        var service = NewBookingService(context, mapper);
+
+        // Sin WorkflowStatus: antes el vuelo pasaba a "HL" (perdia la confirmacion). Ahora se conserva "HK".
+        var request = new UpdateFlightRequest(
+            SupplierId: supplier.PublicId.ToString(), AirlineCode: "AR", AirlineName: "Aerolineas", FlightNumber: "1234",
+            Origin: "EZE", OriginCity: "Buenos Aires", Destination: "BRC", DestinationCity: "Bariloche",
+            DepartureTime: DateTime.UtcNow.AddDays(10), ArrivalTime: DateTime.UtcNow.AddDays(10).AddHours(2),
+            CabinClass: null, Baggage: null, TicketNumber: null, PNR: null,
+            NetCost: 300m, SalePrice: 550m, Commission: 250m, Tax: 0m);
+
+        await service.UpdateFlightAsync(reserva.Id, 61, request, CancellationToken.None);
+
+        var stored = await context.FlightSegments.SingleAsync(f => f.Id == 61);
+        Assert.Equal("HK", stored.Status);
+    }
+
+    [Fact]
+    public async Task CreateHotel_WithoutWorkflowStatus_DefaultsToSolicitado()
+    {
+        // En el CREATE el default sigue siendo "Solicitado" (el anti-clobber es solo del UPDATE).
+        await using var context = NewContext();
+        var mapper = NewMapper();
+        var (reserva, supplier) = await SeedReservaAndSupplierAsync(context, status: EstadoReserva.InManagement);
+        var service = NewBookingService(context, mapper);
+
+        var request = new CreateHotelRequest(
+            SupplierId: supplier.PublicId.ToString(), HotelName: "Hotel Nuevo", StarRating: null,
+            City: "Bariloche", Country: null,
+            CheckIn: DateTime.UtcNow.Date.AddDays(10), CheckOut: DateTime.UtcNow.Date.AddDays(12),
+            RoomType: "Doble", MealPlan: "Desayuno",
+            Adults: 2, Children: 0, Rooms: 1, ConfirmationNumber: null,
+            NetCost: 100m, SalePrice: 180m, Commission: 80m, Notes: null);
+
+        var dto = await service.CreateHotelAsync(reserva.Id, request, CancellationToken.None);
+
+        var stored = await context.HotelBookings.SingleAsync(h => h.PublicId == dto.PublicId);
+        Assert.Equal("Solicitado", stored.Status);
     }
 
     // ---------- BUG 2: vuelo solo de ida (ArrivalTime null) ----------

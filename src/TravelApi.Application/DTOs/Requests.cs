@@ -89,7 +89,12 @@ public record UpdateFlightRequest(
     // BookingService lo fuerza a "Solicitado". Mantenerlo solo por compatibilidad de forma del request.
     decimal NetCost, decimal SalePrice, decimal Commission, decimal Tax, string? Status = null, string? Notes = null,
     string? RateId = null,
-    string WorkflowStatus = "Solicitado",
+    // Tanda 6 (anti-clobber de estado, 2026-07-05): en el UPDATE el default es null (NO "Solicitado").
+    // Ausencia del campo != "volve a Solicitado": si el request no trae estado, el map lo IGNORA y se
+    // CONSERVA el estado actual del servicio (fix del "$0 mudo": un vuelo emitido no se des-emite solo por
+    // editarlo). Un valor explicito (el usuario cambio el desplegable) SI se aplica. En el CREATE el default
+    // sigue siendo "Solicitado" (ver CreateFlightRequest). Ver MappingProfile (map de UpdateFlightRequest).
+    string? WorkflowStatus = null,
     string? ConfirmationNumber = null,
     // Cantidad de pasajeros de ESTE segmento. Opcional (nullable) para no romper
     // las llamadas existentes que no lo mandaban: si llega null, queda sin informar.
@@ -144,7 +149,10 @@ public record UpdateHotelRequest(
     decimal NetCost, decimal SalePrice, decimal Commission, string? Status = null, string? Notes = null,
     string? RoomingAssignments = null,
     string? RateId = null,
-    string WorkflowStatus = "Solicitado",
+    // Tanda 6 (anti-clobber de estado, 2026-07-05): default null en el UPDATE (NO "Solicitado"). Si el
+    // request no trae estado, el map lo IGNORA y se CONSERVA el estado actual del hotel; un valor explicito
+    // se aplica. En el CREATE el default sigue "Solicitado" (ver CreateHotelRequest). Ver MappingProfile.
+    string? WorkflowStatus = null,
     // Impuesto INCLUIDO en el costo (no suma al precio del cliente). Opcional con default 0 para
     // no romper los callers posicionales existentes. Ver HotelBooking.Tax.
     decimal Tax = 0,
@@ -201,7 +209,9 @@ public record UpdateTransferRequest(
     // BUG 1 (2026-06-08): Status OPCIONAL (string? = null). Ver UpdateHotelRequest / MappingProfile.
     decimal NetCost, decimal SalePrice, decimal Commission, string? Status = null, string? Notes = null,
     string? RateId = null,
-    string WorkflowStatus = "Solicitado",
+    // Tanda 6 (anti-clobber de estado, 2026-07-05): default null en el UPDATE (NO "Solicitado"). Ver
+    // UpdateHotelRequest: sin estado en el request se CONSERVA el actual del traslado. Ver MappingProfile.
+    string? WorkflowStatus = null,
     // Impuesto INCLUIDO en el costo (no suma al precio del cliente). Opcional con default 0 para
     // no romper los callers posicionales existentes. Ver TransferBooking.Tax.
     decimal Tax = 0,
@@ -254,7 +264,9 @@ public record UpdateAssistanceRequest(
     string? PolicyNumber = null, string? PlanType = null, string? CoverageLimit = null,
     string? CoverageZone = null, string? ConfirmationNumber = null, string? Notes = null,
     string? RateId = null,
-    string WorkflowStatus = "Solicitado",
+    // Tanda 6 (anti-clobber de estado, 2026-07-05): default null en el UPDATE (NO "Solicitado"). Ver
+    // UpdateHotelRequest: sin estado en el request se CONSERVA el actual de la asistencia. Ver MappingProfile.
+    string? WorkflowStatus = null,
     // Impuesto INCLUIDO en el costo (no suma al precio del cliente). Opcional con default 0 para
     // no romper los callers posicionales existentes. Ver AssistanceBooking.Tax.
     decimal Tax = 0,
@@ -299,7 +311,9 @@ public record UpdatePackageRequest(
     // BUG 1 (2026-06-08): Status OPCIONAL (string? = null). Ver UpdateHotelRequest / MappingProfile.
     decimal NetCost, decimal SalePrice, decimal Commission, string? Status = null, string? Notes = null,
     string? RateId = null,
-    string WorkflowStatus = "Solicitado",
+    // Tanda 6 (anti-clobber de estado, 2026-07-05): default null en el UPDATE (NO "Solicitado"). Ver
+    // UpdateHotelRequest: sin estado en el request se CONSERVA el actual del paquete. Ver MappingProfile.
+    string? WorkflowStatus = null,
     // Impuesto INCLUIDO en el costo (no suma al precio del cliente). Opcional con default 0 para
     // no romper los callers posicionales existentes. Ver PackageBooking.Tax.
     decimal Tax = 0,

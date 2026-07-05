@@ -568,10 +568,13 @@ public class InvoiceService : IInvoiceService
             .FirstOrDefaultAsync(r => r.Id == reservaId, ct)
             ?? throw new InvalidOperationException("Reserva no encontrada.");
 
-        var groups = InvoiceSuggestedItemsBuilder.Build(reserva);
+        // Tanda 6: BuildWithDiagnostics devuelve los MISMOS grupos que Build MAS el diagnostico de servicios
+        // excluidos, para que el modal explique el "$0 mudo" (un servicio que quedo sin resolver / cancelado /
+        // en $0 y por eso no aparece en la sugerencia).
+        var suggestion = InvoiceSuggestedItemsBuilder.BuildWithDiagnostics(reserva);
 
         var response = new InvoiceSuggestedItemsResponse();
-        foreach (var group in groups)
+        foreach (var group in suggestion.Groups)
         {
             var groupDto = new InvoiceSuggestedItemGroupDto
             {
@@ -590,6 +593,17 @@ public class InvoiceService : IInvoiceService
             };
             response.Groups.Add(groupDto);
         }
+
+        foreach (var excluded in suggestion.ExcludedServices)
+        {
+            response.ExcludedServices.Add(new ExcludedSuggestedServiceDto
+            {
+                Description = excluded.Description,
+                Currency = excluded.Currency,
+                Reason = excluded.Reason
+            });
+        }
+
         return response;
     }
 

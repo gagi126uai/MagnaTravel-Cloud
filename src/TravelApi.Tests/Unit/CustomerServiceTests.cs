@@ -349,5 +349,68 @@ namespace TravelApi.Tests.Unit
             Assert.Equal("ARS", arsInvoice.Currency);
             Assert.Equal("USD", usdInvoice.Currency);
         }
+
+        /// <summary>
+        /// Tanda 6 (C4): la fila de reserva de la cuenta del cliente ahora expone la plata REAL por moneda
+        /// (PorMoneda/EsMultimoneda) leyendo ReservaMoneyByCurrency, para que el front deje de mostrar "ARS"
+        /// hardcodeado. Aca una reserva multimoneda (ARS + USD) debe traer ambas lineas, marcada como multimoneda.
+        /// </summary>
+        [Fact]
+        public async Task GetCustomerAccountReservasAsync_ShouldExposeMoneyByCurrency()
+        {
+            // Arrange: un cliente con una reserva multimoneda y sus filas de plata materializadas.
+            using var context = new AppDbContext(_dbOptions);
+            var customer = new Customer { Id = 1, FullName = "Multi", IsActive = true };
+            context.Customers.Add(customer);
+            var reserva = new Reserva { Id = 10, NumeroReserva = "F-10", Name = "Reserva 10", Status = EstadoReserva.Confirmed, PayerId = customer.Id };
+            context.Reservas.Add(reserva);
+            context.ReservaMoneyByCurrency.AddRange(
+                new ReservaMoneyByCurrency { ReservaId = 10, Currency = "ARS", TotalSale = 1000m, TotalPaid = 400m, Balance = 600m },
+                new ReservaMoneyByCurrency { ReservaId = 10, Currency = "USD", TotalSale = 500m, TotalPaid = 500m, Balance = 0m });
+            await context.SaveChangesAsync();
+            context.ChangeTracker.Clear();
+
+            var service = new CustomerService(context, new FinancePositionService(context));
+
+            // Act
+            var result = await service.GetCustomerAccountReservasAsync(customer.Id, new PagedQuery(), CancellationToken.None);
+
+            // Assert
+            var row = Assert.Single(result.Items);
+            Assert.True(row.EsMultimoneda);
+            Assert.Equal(2, row.PorMoneda.Count);
+
+            var ars = row.PorMoneda.Single(line => line.Currency == "ARS");
+            Assert.Equal(1000m, ars.TotalSale);
+            Assert.Equal(400m, ars.Paid);
+            Assert.Equal(600m, ars.Balance);
+
+            var usd = row.PorMoneda.Single(line => line.Currency == "USD");
+            Assert.Equal(500m, usd.TotalSale);
+            Assert.Equal(0m, usd.Balance);
+        }
+
+        /// <summary>
+        /// Tanda 6 (C4): una reserva SIN filas de plata materializadas (nueva o legacy sin backfill) queda con
+        /// PorMoneda vacio; el front cae al escalar. El endpoint no debe romperse ni inventar lineas.
+        /// </summary>
+        [Fact]
+        public async Task GetCustomerAccountReservasAsync_NoMoneyRows_LeavesPorMonedaEmpty()
+        {
+            using var context = new AppDbContext(_dbOptions);
+            var customer = new Customer { Id = 1, FullName = "Sin plata", IsActive = true };
+            context.Customers.Add(customer);
+            context.Reservas.Add(new Reserva { Id = 11, NumeroReserva = "F-11", Name = "Reserva 11", Status = EstadoReserva.Budget, PayerId = customer.Id, TotalSale = 0m, Balance = 0m, TotalPaid = 0m });
+            await context.SaveChangesAsync();
+            context.ChangeTracker.Clear();
+
+            var service = new CustomerService(context, new FinancePositionService(context));
+
+            var result = await service.GetCustomerAccountReservasAsync(customer.Id, new PagedQuery(), CancellationToken.None);
+
+            var row = Assert.Single(result.Items);
+            Assert.Empty(row.PorMoneda);
+            Assert.False(row.EsMultimoneda);
+        }
     }
 }

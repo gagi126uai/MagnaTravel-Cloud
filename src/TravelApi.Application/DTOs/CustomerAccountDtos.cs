@@ -107,6 +107,41 @@ public class CustomerAccountReservaListItemDto
     public DateTime CreatedAt { get; set; }
     public DateTime? StartDate { get; set; }
     public decimal Paid { get; set; }
+
+    // ADR-021 / Tanda 6 (C4, 2026-07-05): los escalares TotalSale/Balance/Paid de arriba son legacy
+    // mono-moneda; el front los mostraba SIEMPRE como "ARS" (hardcodeado), lo cual miente en una reserva
+    // en USD o multimoneda. Esta lista ADITIVA trae la plata REAL por moneda (misma fuente que el listado
+    // de reservas: ReservaMoneyByCurrency). El front la usa para etiquetar cada fila con su moneda real.
+
+    /// <summary>
+    /// Venta/cobrado/saldo del cliente en ESTA reserva, abierto por moneda (lado VENTA, sin costo). Una sola
+    /// linea = reserva mono-moneda. Vacia si la reserva no tiene filas de plata materializadas (nueva/legacy):
+    /// en ese caso el front cae a los escalares. Nunca mezcla monedas en un total.
+    /// </summary>
+    public List<CustomerAccountReservaMoneyLineDto> PorMoneda { get; set; } = new();
+
+    /// <summary>True si la reserva mueve mas de una moneda (el front muestra las lineas separadas).</summary>
+    public bool EsMultimoneda { get; set; }
+}
+
+/// <summary>
+/// Tanda 6 (C4): plata del cliente en una reserva, en UNA moneda. Es el espejo SOLO-VENTA de
+/// <c>ReservaMoneyLineDto</c>: a proposito NO incluye costo ni margen, porque la cuenta del cliente es del
+/// lado venta y no debe exponer cifras de costo (a diferencia de la cuenta del proveedor).
+/// </summary>
+public class CustomerAccountReservaMoneyLineDto
+{
+    /// <summary>Moneda ISO de la linea ("ARS"/"USD").</summary>
+    public string Currency { get; set; } = Monedas.ARS;
+
+    /// <summary>Venta total cotizada en esta moneda.</summary>
+    public decimal TotalSale { get; set; }
+
+    /// <summary>Cobrado (imputado) en esta moneda.</summary>
+    public decimal Paid { get; set; }
+
+    /// <summary>Saldo pendiente del cliente en esta moneda (venta exigible - cobrado). Positivo = debe.</summary>
+    public decimal Balance { get; set; }
 }
 
 // ===================================================================================================

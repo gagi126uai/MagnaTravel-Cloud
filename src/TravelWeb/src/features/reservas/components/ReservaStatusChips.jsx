@@ -1,17 +1,21 @@
 import React from 'react';
+import { getMoneyStatus } from "../moneyStatus";
 
 /**
  * Chips complementarios de la reserva: tres ejes independientes + corrección opcional.
  *
  * Un rótulo = un solo eje. Regla de Gastón 2026-06-22 (refinamiento por review):
- *   - Eje Pago:    Pagada / Sin movimientos / Debe — no viaja
+ *   - Eje Pago:    Pagada / Sin movimientos / Debe — no viaja (+ Saldo a favor / Multa, en anuladas)
  *   - Eje Viaje:   Vencida con deuda  ← SOLO este caso; "En viaje" lo dice el badge grande.
  *   - Eje Factura: Sin facturar / Facturada en parte / Facturada total
  *
- * "Pagada" aparece cuando collectionStatus === "Saldado".
- * "Sin movimientos" aparece cuando collectionStatus === "SinMovimientos" (reserva nueva, sin pagos).
- * "Debe — no viaja" aparece solo en Confirmed dentro de la ventana de aviso.
- * "Vencida con deuda" aparece cuando hasOverdueDebt === true (el viaje terminó con saldo).
+ * Tanda 6 (2026-07-05): el Eje Pago YA NO decide mirando collectionStatus/balance acá —
+ * delega en getMoneyStatus (../moneyStatus.js), la fuente ÚNICA de esta categorización
+ * en toda la app (ver ese archivo para la lista completa de reglas, incluida la de
+ * reservas ANULADAS: nunca muestran "Debe", solo su saldo a favor o multa con contexto).
+ *
+ * "Vencida con deuda" (Eje Viaje) sigue leyendo reserva.hasOverdueDebt directamente:
+ * es un eje aparte (no compite con el Eje Pago) y no estaba duplicado en otro lugar.
  * "En viaje" NO se chip-ea — el badge grande "EN VIAJE" ya lo dice, repetirlo agrega ruido.
  *
  * Eje Factura: siempre visible (ADR-037). Lee reserva.invoicingStatus.
@@ -21,15 +25,9 @@ import React from 'react';
  *   Indica que la reserva fue sacada de viaje por corrección y está congelada para
  *   el pase automático; no compite con el badge de estado operativo grande.
  *
- * Flags que provee el backend en ReservaDto:
- *   collectionStatus, isFullyPaid, hasOverdueDebt, isWithinUnpaidAlertWindow,
- *   invoicingStatus, isUnderCorrection.
- *
- * collectionStatus posibles: "ConDeuda" | "SaldoAFavor" | "Saldado" | "SinMovimientos".
- * Fix 2026-06-24 (SinMovimientos): "SinMovimientos" ya no se muestra como "Pagada".
- * Fix 2026-06-24 (BUG MENOR-1): se eliminó el fallback a isFullyPaid — "Pagada" SOLO
- *   cuando collectionStatus === "Saldado" (explícito del backend). Sin collectionStatus
- *   no se muestra chip para no mostrar información incorrecta.
+ * Flags que provee el backend en ReservaDto (leídos por getMoneyStatus, no acá):
+ *   collectionStatus, hasOverdueDebt, isWithinUnpaidAlertWindow, cancelledMoneyContext.
+ * Flags propios de este componente: invoicingStatus, isUnderCorrection.
  *
  * Feedback 2026-06-19 (cambio 6): chips más chicos para no competir con el badge de estado.
  */
@@ -56,52 +54,61 @@ export function ReservaStatusChips({ reserva }) {
     if (!reserva) return null;
 
     // ── Eje PAGO ──────────────────────────────────────────────────────────────────
-    // Usamos collectionStatus (nueva derivación del backend) como fuente de verdad
-    // del estado de cobro. Valores posibles:
-    //   "Saldado"        → el cliente no debe nada (chip verde "Pagada")
-    //   "SinMovimientos" → reserva nueva sin cargos ni cobros (chip gris "Sin movimientos")
-    //   "ConDeuda"       → debe algo (chip rojo solo en Confirmed + ventana de aviso)
-    //   "SaldoAFavor"    → cobró de más (no generamos chip de pago; se muestra en otro lado)
+    // Fix C2 (Tanda 6, saneamiento 2026-07-05): esta rama YA NO decide sola leyendo
+    // collectionStatus/isWithinUnpaidAlertWindow — delega en getMoneyStatus (moneyStatus.js),
+    // que es la MISMA función que usan ReservaSummaryStrip/ReservaTable/CustomerAccountPage.
+    // Acá solo se traduce el "kind" devuelto a la forma visual del chip (className/title).
     //
-    // Fix 2026-06-24 (SinMovimientos): antes llegaba como "Saldado" (bug del backend ya corregido).
-    // Fix 2026-06-24 (BUG MENOR-1): eliminado el fallback a isFullyPaid — solo se muestra "Pagada"
-    // cuando collectionStatus===Saldado explícito. Sin collectionStatus → sin chip (más seguro).
+    // Se muestra chip SOLO para los casos que ya mostraba (comportamiento sin cambios en
+    // reservas vivas): Pagada / Sin movimientos / Debe — no viaja. "SaldoAFavor" sigue sin
+    // chip acá (se muestra en otro lado, ver EstadoCuentaResumen). Los kinds "debe" y
+    // "vencidaConDeuda" tampoco generan chip de Pago (ese último lo cubre el eje Viaje, abajo).
+    //
+    // NUEVO (Tanda 6): en una reserva ANULADA se agregan dos chips propios —
+    // "Saldo a favor" (verde) y "Multa por anulación pendiente de cobro" (ámbar) — para que
+    // la ficha nunca insinúe una "deuda" genérica sobre un viaje que ya quedó sin efecto.
     let chipPago = null;
-    const collectionStatus = reserva.collectionStatus;
+    const moneyStatus = getMoneyStatus(reserva);
 
-    if (collectionStatus === 'SinMovimientos') {
+    if (moneyStatus.kind === 'sinMovimientos') {
         // Sin movimientos: la reserva existe pero no hay cargos ni cobros todavía.
         // Gris neutro: no alarma ni confirma nada.
-        // Q10 (2026-06-24): el rótulo visible cambia a "Sin movimientos" (spec guia-ux-gaston.md).
         // El key/data-testid "sin-cobros" se mantiene para no romper selectores de QA.
         chipPago = {
             key: 'sin-cobros',
-            label: 'Sin movimientos',
+            label: moneyStatus.label,
             className: 'bg-slate-100 text-slate-500 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700',
             title: 'Todavía no hay movimientos de plata registrados para esta reserva.',
         };
-    } else if (collectionStatus === 'Saldado') {
-        // Saldado: el cliente pagó todo lo que debía (el backend lo afirmó explícitamente).
-        //
-        // BUG MENOR-1 fix 2026-06-24: se elimina el fallback a isFullyPaid.
-        // Antes: si collectionStatus no venía en el DTO, isFullyPaid=true hacía aparecer "Pagada"
-        // aunque la reserva no tuviera ningún cobro (balance=0 por defecto, sin movimientos).
-        // Ahora: "Pagada" SOLO cuando el backend dice Saldado de forma explícita.
-        // Si collectionStatus no viene → no mostramos chip de pago (caso raro/legacy).
+    } else if (moneyStatus.kind === 'pagada') {
         chipPago = {
             key: 'paid',
-            label: 'Pagada',
+            label: moneyStatus.label,
             className: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-800',
             title: 'El cliente no debe nada.',
         };
-    } else if (reserva.status === 'Confirmed' && reserva.isWithinUnpaidAlertWindow === true) {
+    } else if (moneyStatus.kind === 'debeNoViaja') {
         // ADR-036/037: chip rojo "Debe — no viaja", SOLO dentro de la ventana de aviso
         // y SOLO en Confirmed (si ya pasó a Traveling, el cliente pagó — invariante del sistema).
         chipPago = {
             key: 'debe-no-viaja',
-            label: 'Debe — no viaja',
+            label: moneyStatus.label,
             className: 'bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-900/30 dark:text-rose-300 dark:border-rose-800',
             title: 'El cliente tiene saldo pendiente. No puede viajar hasta que pague el total.',
+        };
+    } else if (moneyStatus.kind === 'saldoAFavorAnulada') {
+        chipPago = {
+            key: 'saldo-a-favor-anulada',
+            label: moneyStatus.label,
+            className: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-800',
+            title: 'Quedó plata del cliente sin devolver ni aplicar a otra reserva.',
+        };
+    } else if (moneyStatus.kind === 'multaPorCobrar') {
+        chipPago = {
+            key: 'multa-por-cobrar',
+            label: moneyStatus.label,
+            className: 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-800',
+            title: 'La multa por anulación tiene una Nota de Débito viva y todavía no se cobró.',
         };
     }
 

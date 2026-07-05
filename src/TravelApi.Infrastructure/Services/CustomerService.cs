@@ -995,7 +995,7 @@ public class CustomerService : ICustomerService
             ? reservasQuery.OrderByDescending(reserva => reserva.CreatedAt).ThenByDescending(reserva => reserva.Id)
             : reservasQuery.OrderBy(reserva => reserva.CreatedAt).ThenBy(reserva => reserva.Id);
 
-        return await reservasQuery
+        var paged = await reservasQuery
             .Select(reserva => new CustomerAccountReservaListItemDto
             {
                 PublicId = reserva.PublicId,
@@ -1009,6 +1009,64 @@ public class CustomerService : ICustomerService
                 Paid = reserva.TotalPaid
             })
             .ToPagedResponseAsync(query, cancellationToken);
+
+        // Tanda 6 (C4): completamos la plata REAL por moneda de cada fila de la pagina, para que el front deje
+        // de mostrar "ARS" hardcodeado. Una sola query batcheada por los PublicId de la pagina (sin N+1).
+        await FillReservaMoneyByCurrencyAsync(paged.Items, cancellationToken);
+
+        return paged;
+    }
+
+    /// <summary>
+    /// Tanda 6 (C4): llena <c>PorMoneda</c>/<c>EsMultimoneda</c> de cada fila de la cuenta del cliente leyendo
+    /// la tabla materializada <c>ReservaMoneyByCurrency</c>. Es el espejo SOLO-VENTA de
+    /// <c>ReservaService.FillPorMonedaForListAsync</c>: NO expone costo ni margen (la cuenta del cliente es del
+    /// lado venta). Una sola query por los PublicId de la pagina (evita N+1). Una reserva sin filas de plata
+    /// materializadas (nueva o legacy sin backfill) queda con <c>PorMoneda</c> vacio y el front cae al escalar.
+    /// </summary>
+    private async Task FillReservaMoneyByCurrencyAsync(
+        IReadOnlyList<CustomerAccountReservaListItemDto> items, CancellationToken cancellationToken)
+    {
+        if (items.Count == 0) return;
+
+        var publicIds = items.Select(item => item.PublicId).ToList();
+
+        // Join explicito contra Reservas (no nav implicita) para resolver el PublicId con el que matchear el
+        // DTO y correr igual en Postgres e InMemory. Solo campos de VENTA: no traemos TotalCost.
+        var rows = await (
+            from row in _dbContext.ReservaMoneyByCurrency.AsNoTracking()
+            join reservaPadre in _dbContext.Reservas.AsNoTracking() on row.ReservaId equals reservaPadre.Id
+            where publicIds.Contains(reservaPadre.PublicId)
+            select new
+            {
+                ReservaPublicId = reservaPadre.PublicId,
+                row.Currency,
+                row.TotalSale,
+                row.TotalPaid,
+                row.Balance
+            }).ToListAsync(cancellationToken);
+
+        var byReserva = rows
+            .GroupBy(row => row.ReservaPublicId)
+            .ToDictionary(group => group.Key, group => group.ToList());
+
+        foreach (var item in items)
+        {
+            if (!byReserva.TryGetValue(item.PublicId, out var reservaRows)) continue;
+
+            item.PorMoneda = reservaRows
+                .OrderBy(row => row.Currency, StringComparer.Ordinal)
+                .Select(row => new CustomerAccountReservaMoneyLineDto
+                {
+                    Currency = row.Currency,
+                    TotalSale = row.TotalSale,
+                    Paid = row.TotalPaid,
+                    Balance = row.Balance
+                })
+                .ToList();
+
+            item.EsMultimoneda = item.PorMoneda.Count > 1;
+        }
     }
 
     public async Task<PagedResponse<CustomerAccountPaymentListItemDto>> GetCustomerAccountPaymentsAsync(int id, PagedQuery query, CancellationToken cancellationToken)

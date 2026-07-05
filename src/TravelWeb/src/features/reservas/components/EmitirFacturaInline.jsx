@@ -193,6 +193,27 @@ export function labelFacturaEmitida(factura) {
   );
 }
 
+// Tanda 6 (C6, 2026-07-05): traduce el motivo técnico de exclusión (ExcludedSuggestedServiceDto.Reason)
+// a una frase en criollo para el aviso del formulario. Los tokens son internos del backend
+// (nunca deben llegar crudos a la pantalla — gate de exposición de datos internos).
+const MOTIVOS_EXCLUSION_SUGERENCIA = {
+  NoResuelto: "todavía no está confirmado",
+  Cancelado: "está cancelado",
+  PrecioCero: "tiene precio $0",
+};
+
+/**
+ * Describe en criollo por qué un servicio no entró en la sugerencia de factura.
+ * Si el motivo no se reconoce (token nuevo del backend que el front no mapeó todavía),
+ * cae a un texto genérico en vez de mostrar el token crudo.
+ *
+ * @param {string} reason - "NoResuelto" | "Cancelado" | "PrecioCero" (u otro, defensivo)
+ * @returns {string}
+ */
+export function describirMotivoExclusion(reason) {
+  return MOTIVOS_EXCLUSION_SUGERENCIA[reason] || "no se pudo incluir en la factura";
+}
+
 // ─── Constantes de polling ────────────────────────────────────────────────────
 
 // Intervalo en ms entre cada consulta al endpoint de estado fiscal.
@@ -271,6 +292,10 @@ export function EmitirFacturaInline({
   const [afipSettings, setAfipSettings] = useState(null);
   const [cargandoSugeridos, setCargandoSugeridos] = useState(true);
   const [gruposSugeridos, setGruposSugeridos] = useState([]); // InvoiceSuggestedItemGroupDto[]
+  // Tanda 6 (C6, 2026-07-05): servicios que quedaron AFUERA de la sugerencia (o entraron en
+  // $0), con el motivo. Antes esto pasaba en silencio: el vendedor veía un renglón en $0 o
+  // menos renglones de los que esperaba, sin ninguna pista de por qué.
+  const [excludedServices, setExcludedServices] = useState([]); // ExcludedSuggestedServiceDto[]
 
   // ── Estado del formulario ──────────────────────────────────────────────────
   const [items, setItems] = useState([]);
@@ -380,6 +405,8 @@ export function EmitirFacturaInline({
         if (!cancelado) {
           const grupos = response?.groups ?? [];
           setGruposSugeridos(grupos);
+          // C6: servicios que el backend dejó afuera de la sugerencia, con el motivo.
+          setExcludedServices(response?.excludedServices ?? []);
 
           // Fix B1: elegirGrupoPrecarga aplica la regla de seguridad fiscal:
           // con flag OFF nunca se precarga un grupo USD (eso facturaría dólares como pesos).
@@ -871,6 +898,45 @@ export function EmitirFacturaInline({
                     <span className="font-semibold">Esta reserva tiene servicios en dólares.</span>
                     {" "}Para facturarla en dólares hay que activar multimoneda en la configuración de AFIP.
                     Podés ingresar los renglones manualmente en pesos si corresponde.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Aviso de servicios excluidos de la sugerencia (C6, Tanda 6, 2026-07-05) ─
+                Antes esto pasaba en silencio: un servicio no confirmado, cancelado o en $0
+                simplemente no generaba renglón (o generaba uno en $0 sin explicación), y el
+                vendedor no entendía por qué el total no cerraba. Acá se lo contamos en criollo,
+                servicio por servicio, con el motivo mapeado por describirMotivoExclusion
+                (nunca el token técnico crudo del backend). */}
+            {excludedServices.length > 0 && (
+              <div
+                data-testid="aviso-servicios-excluidos"
+                className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-900/20 dark:text-amber-200"
+                role="status"
+              >
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <div className="space-y-1">
+                    <span className="font-semibold">
+                      {excludedServices.length === 1
+                        ? "Un servicio no entró en esta factura:"
+                        : `${excludedServices.length} servicios no entraron en esta factura:`}
+                    </span>
+                    <ul className="list-disc space-y-0.5 pl-5">
+                      {excludedServices.map((excluido, index) => (
+                        <li key={`${excluido.description}-${index}`} data-testid={`item-excluido-${index}`}>
+                          «{excluido.description}» no entra en la factura porque {describirMotivoExclusion(excluido.reason)}.
+                        </li>
+                      ))}
+                    </ul>
+                    {/* Si por esto el total propuesto quedó en $0, lo decimos explícito para
+                        que el vendedor no piense que es un error del sistema. */}
+                    {totales.total <= 0 && (
+                      <p className="pt-1 font-medium">
+                        Por eso el monto propuesto quedó en $0 — confirmá el servicio o cargá el importe a mano.
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>

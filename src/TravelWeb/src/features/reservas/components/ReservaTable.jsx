@@ -16,6 +16,7 @@ import { ReservaStatusBadge } from "./ReservaStatusBadge";
 import { formatCurrency, formatDate } from "../../../lib/utils";
 import { getPublicId } from "../../../lib/publicIds";
 import { getReservaArchiveBlockReason } from "../archiveRules";
+import { getMoneyStatus } from "../moneyStatus";
 
 export function ReservaTable({ reservas, onRowClick, onArchive }) {
   return (
@@ -42,6 +43,13 @@ export function ReservaTable({ reservas, onRowClick, onArchive }) {
           reservas.map((reserva) => {
             const archiveBlockReason = getReservaArchiveBlockReason(reserva);
             const canArchive = !archiveBlockReason;
+            // Fix C2 (Tanda 6, 2026-07-05): la columna "Finanzas" ya NO decide mirando
+            // reserva.balance > 0 a mano — delega en getMoneyStatus (moneyStatus.js), la
+            // MISMA función que usan ReservaSummaryStrip/ReservaStatusChips/CustomerAccountPage.
+            // Esto también arregla una reserva ANULADA con deuda "congelada": antes mostraba
+            // "Debe: $X" en rojo como si fuera cobrable; ahora muestra su saldo a favor o la
+            // multa por anulación con contexto (o nada, si el dato es inconsistente).
+            const moneyStatus = getMoneyStatus(reserva);
 
             return (
               <DataGridRow
@@ -93,33 +101,39 @@ export function ReservaTable({ reservas, onRowClick, onArchive }) {
                 <DataGridCell align="right">
                   <div className="flex flex-col items-end gap-1">
                     <span className="text-sm font-bold text-slate-900 dark:text-white">{formatCurrency(reserva.totalSale)}</span>
-                    {reserva.balance > 0 ? (
+                    {(moneyStatus.kind === "debe" || moneyStatus.kind === "vencidaConDeuda" || moneyStatus.kind === "debeNoViaja") ? (
                       <div className="flex items-center gap-1 rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600 dark:bg-rose-900/20 dark:text-rose-400">
                         <DollarSign className="h-2.5 w-2.5" />
                         Debe: {formatCurrency(reserva.balance)}
                       </div>
-                    ) : reserva.collectionStatus === "SinMovimientos" ? (
+                    ) : moneyStatus.kind === "sinMovimientos" ? (
                       // Sin movimientos: reserva nueva, sin cargos ni cobros todavía.
-                      // Fix 2026-06-24: antes aparecía como "Saldado" porque balance=0
-                      // y el backend no distinguía "sin movimientos" de "pagada".
                       <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400">
                         Sin movimientos
                       </span>
-                    ) : reserva.collectionStatus === "Saldado" ? (
+                    ) : moneyStatus.kind === "pagada" ? (
                       // Saldado: el backend lo confirmó explícitamente.
-                      // BUG MENOR-3 fix 2026-06-24: antes el else final asumía "Saldado" verde
-                      // para cualquier caso desconocido (SaldoAFavor, null, etc.) — incorrecto.
                       <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400">
                         Saldado
                       </span>
-                    ) : reserva.collectionStatus === "SaldoAFavor" ? (
+                    ) : moneyStatus.kind === "saldoAFavor" ? (
                       // El cliente pagó de más: hay saldo a favor en su cuenta.
                       <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400">
                         A favor
                       </span>
+                    ) : moneyStatus.kind === "saldoAFavorAnulada" ? (
+                      // Reserva anulada: quedó plata del cliente sin devolver ni aplicar.
+                      <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400">
+                        Saldo a favor: {formatCurrency(Math.abs(reserva.balance ?? 0))}
+                      </span>
+                    ) : moneyStatus.kind === "multaPorCobrar" ? (
+                      // Reserva anulada: la multa por anulación todavía no se cobró.
+                      <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/20 dark:text-amber-400">
+                        Multa: {formatCurrency(reserva.balance)}
+                      </span>
                     ) : (
-                      // Estado desconocido o DTO sin collectionStatus: gris neutro.
-                      // Nunca mostrar "Saldado" verde si el backend no lo afirmó.
+                      // kind === "none": reserva anulada sin plata pendiente que mostrar
+                      // (o dato "Inconsistente" — eso lo revisa un vigía interno, no esta pantalla).
                       <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500 dark:bg-slate-800 dark:text-slate-400">
                         Sin movimientos
                       </span>

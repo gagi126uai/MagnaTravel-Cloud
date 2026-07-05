@@ -42,8 +42,29 @@ public static class InvoiceSuggestedItemsBuilder
     /// Recorre los servicios confirmados de la reserva y devuelve un grupo de sugerencia por cada
     /// moneda presente. Cada grupo trae sus lineas (una por servicio) y el total sugerido de esa moneda.
     /// Si no hay servicios confirmados, devuelve lista vacia (el front cae al armado manual de hoy).
+    ///
+    /// <para>Es un atajo sobre <see cref="BuildWithDiagnostics"/>: devuelve SOLO los grupos, sin el
+    /// diagnostico de servicios excluidos. Delegamos para no duplicar la logica de inclusion (asi los
+    /// grupos de <c>Build</c> y de <c>BuildWithDiagnostics</c> son, por construccion, identicos).</para>
     /// </summary>
     public static IReadOnlyList<InvoiceSuggestedItemGroup> Build(Reserva reserva)
+        => BuildWithDiagnostics(reserva).Groups;
+
+    /// <summary>
+    /// Tanda 6 (bug "$0 mudo", 2026-07-05): igual que <see cref="Build"/> pero ADEMAS explica por que
+    /// cada servicio que NO aporto a la sugerencia quedo afuera. Nace de un caso real: el dueño editó un
+    /// servicio en pesos, el servicio dejo de estar "resuelto" y desaparecio de la sugerencia; el modal
+    /// precargaba el grupo vacio y mostraba un renglon en $0 SIN explicar nada. Este diagnostico deja que
+    /// el modal diga "este servicio no aparece porque esta sin resolver / cancelado / en $0".
+    ///
+    /// <para><b>La logica de INCLUSION en los grupos NO cambia</b> respecto de <c>Build</c>: entra en un
+    /// grupo exactamente el mismo conjunto de servicios que antes (resueltos y no cancelados). Lo NUEVO es
+    /// que, en la misma pasada, juntamos los que quedaron afuera con su motivo. Un servicio resuelto con
+    /// venta &lt;= 0 SIGUE entrando al grupo como linea $0 (igual que antes) y ADEMAS se reporta como
+    /// <see cref="SuggestedServiceExclusionReasons.ZeroPrice"/>, para que el modal explique ese $0 en vez
+    /// de mostrarlo mudo.</para>
+    /// </summary>
+    public static InvoiceSuggestedItemsResult BuildWithDiagnostics(Reserva reserva)
     {
         ArgumentNullException.ThrowIfNull(reserva);
 
@@ -51,41 +72,32 @@ public static class InvoiceSuggestedItemsBuilder
         // el orden de salida sea estable (primer servicio confirmado de cada moneda define el orden).
         var linesByCurrency = new Dictionary<string, List<InvoiceSuggestedItem>>(StringComparer.Ordinal);
 
-        AddIfConfirmed(reserva.FlightSegments, linesByCurrency,
-            flight => ServiceResolutionRules.IsResolved(flight),
-            flight => flight.Currency,
-            flight => flight.SalePrice,
-            DescribeFlight);
+        // Servicios que NO aportaron a la sugerencia (o que aportaron una linea $0), con su motivo.
+        var excludedServices = new List<ExcludedSuggestedService>();
 
-        AddIfConfirmed(reserva.HotelBookings, linesByCurrency,
-            hotel => ServiceResolutionRules.IsResolved(hotel),
-            hotel => hotel.Currency,
-            hotel => hotel.SalePrice,
-            DescribeHotel);
+        Classify(reserva.FlightSegments, linesByCurrency, excludedServices,
+            ServiceResolutionRules.IsResolved, ServiceResolutionRules.IsCancelled,
+            flight => flight.Currency, flight => flight.SalePrice, DescribeFlight);
 
-        AddIfConfirmed(reserva.TransferBookings, linesByCurrency,
-            transfer => ServiceResolutionRules.IsResolved(transfer),
-            transfer => transfer.Currency,
-            transfer => transfer.SalePrice,
-            DescribeTransfer);
+        Classify(reserva.HotelBookings, linesByCurrency, excludedServices,
+            ServiceResolutionRules.IsResolved, ServiceResolutionRules.IsCancelled,
+            hotel => hotel.Currency, hotel => hotel.SalePrice, DescribeHotel);
 
-        AddIfConfirmed(reserva.PackageBookings, linesByCurrency,
-            package => ServiceResolutionRules.IsResolved(package),
-            package => package.Currency,
-            package => package.SalePrice,
-            DescribePackage);
+        Classify(reserva.TransferBookings, linesByCurrency, excludedServices,
+            ServiceResolutionRules.IsResolved, ServiceResolutionRules.IsCancelled,
+            transfer => transfer.Currency, transfer => transfer.SalePrice, DescribeTransfer);
 
-        AddIfConfirmed(reserva.AssistanceBookings, linesByCurrency,
-            assistance => ServiceResolutionRules.IsResolved(assistance),
-            assistance => assistance.Currency,
-            assistance => assistance.SalePrice,
-            DescribeAssistance);
+        Classify(reserva.PackageBookings, linesByCurrency, excludedServices,
+            ServiceResolutionRules.IsResolved, ServiceResolutionRules.IsCancelled,
+            package => package.Currency, package => package.SalePrice, DescribePackage);
 
-        AddIfConfirmed(reserva.Servicios, linesByCurrency,
-            service => ServiceResolutionRules.IsResolved(service),
-            service => service.Currency,
-            service => service.SalePrice,
-            DescribeGeneric);
+        Classify(reserva.AssistanceBookings, linesByCurrency, excludedServices,
+            ServiceResolutionRules.IsResolved, ServiceResolutionRules.IsCancelled,
+            assistance => assistance.Currency, assistance => assistance.SalePrice, DescribeAssistance);
+
+        Classify(reserva.Servicios, linesByCurrency, excludedServices,
+            ServiceResolutionRules.IsResolved, ServiceResolutionRules.IsCancelled,
+            service => service.Currency, service => service.SalePrice, DescribeGeneric);
 
         var groups = new List<InvoiceSuggestedItemGroup>();
         foreach (var (currency, lines) in linesByCurrency)
@@ -97,19 +109,34 @@ public static class InvoiceSuggestedItemsBuilder
             }
             groups.Add(new InvoiceSuggestedItemGroup(currency, lines, Math.Round(total, 2)));
         }
-        return groups;
+        return new InvoiceSuggestedItemsResult(groups, excludedServices);
     }
 
     /// <summary>
-    /// Agrega una linea sugerida por cada servicio CONFIRMADO de la coleccion, a la lista de su moneda.
-    /// Cada linea es Quantity=1, UnitPrice=Total=SalePrice (una factura turistica describe el servicio,
-    /// no desglosa por noche/pax — eso ya vive en el detalle del servicio). El servicio no confirmado o
-    /// cancelado simplemente no entra (el predicado <paramref name="isConfirmed"/> ya excluye cancelados).
+    /// Clasifica cada servicio de una coleccion: o entra al grupo de su moneda (una linea sugerida), o
+    /// va a la lista de excluidos con su motivo. Reemplaza al viejo <c>AddIfConfirmed</c>: ademas de
+    /// agregar los confirmados, explica por que los demas no aparecen.
+    ///
+    /// <para><b>Orden de evaluacion del motivo</b> (decidido en Tanda 6):
+    /// <list type="number">
+    /// <item><b>Cancelado</b> gana sobre "no resuelto": un servicio cancelado se reporta como
+    ///   <see cref="SuggestedServiceExclusionReasons.Cancelled"/>, que es la causa que el usuario
+    ///   reconoce, aunque tecnicamente tambien sea "no resuelto".</item>
+    /// <item><b>No resuelto</b>: vivo (no cancelado) pero todavia no asegurado para viajar
+    ///   (<see cref="ServiceResolutionRules.IsResolved"/> = false). Es la causa mas comun del "$0 mudo".</item>
+    /// <item><b>Precio cero</b>: resuelto y no cancelado pero con venta &lt;= 0. SIGUE entrando al grupo
+    ///   como linea $0 (no cambiamos la inclusion) y ADEMAS se marca para que el modal explique el $0.</item>
+    /// </list></para>
+    ///
+    /// <para>Cada linea que entra es Quantity=1, UnitPrice=Total=SalePrice (una factura turistica describe
+    /// el servicio, no desglosa por noche/pax — eso ya vive en el detalle del servicio).</para>
     /// </summary>
-    private static void AddIfConfirmed<T>(
+    private static void Classify<T>(
         IEnumerable<T>? items,
         Dictionary<string, List<InvoiceSuggestedItem>> linesByCurrency,
-        Func<T, bool> isConfirmed,
+        List<ExcludedSuggestedService> excludedServices,
+        Func<T, bool> isResolved,
+        Func<T, bool> isCancelled,
         Func<T, string?> currencyOf,
         Func<T, decimal> salePriceOf,
         Func<T, string> describe)
@@ -118,18 +145,42 @@ public static class InvoiceSuggestedItemsBuilder
 
         foreach (var item in items)
         {
-            if (!isConfirmed(item)) continue;
-
             string currency = Monedas.Normalizar(currencyOf(item));
+            string description = describe(item);
+
+            // 1) Cancelado gana sobre no-resuelto.
+            if (isCancelled(item))
+            {
+                excludedServices.Add(new ExcludedSuggestedService(
+                    description, currency, SuggestedServiceExclusionReasons.Cancelled));
+                continue;
+            }
+
+            // 2) Vivo pero sin resolver: no entra al grupo (misma exclusion que el Build historico).
+            if (!isResolved(item))
+            {
+                excludedServices.Add(new ExcludedSuggestedService(
+                    description, currency, SuggestedServiceExclusionReasons.NotResolved));
+                continue;
+            }
+
+            // 3) Resuelto y no cancelado: ENTRA al grupo, igual que siempre. Si quedo en venta <= 0, lo
+            // marcamos PrecioCero (la linea $0 igual entra: no cambiamos la logica de inclusion).
+            decimal salePrice = Math.Round(salePriceOf(item), 2);
+            if (salePrice <= 0m)
+            {
+                excludedServices.Add(new ExcludedSuggestedService(
+                    description, currency, SuggestedServiceExclusionReasons.ZeroPrice));
+            }
+
             if (!linesByCurrency.TryGetValue(currency, out var lines))
             {
                 lines = new List<InvoiceSuggestedItem>();
                 linesByCurrency[currency] = lines;
             }
 
-            decimal salePrice = Math.Round(salePriceOf(item), 2);
             lines.Add(new InvoiceSuggestedItem(
-                Description: describe(item),
+                Description: description,
                 Quantity: 1m,
                 UnitPrice: salePrice,
                 Total: salePrice,
@@ -252,3 +303,44 @@ public record InvoiceSuggestedItem(
     decimal UnitPrice,
     decimal Total,
     int AlicuotaIvaId);
+
+/// <summary>
+/// Tanda 6 (bug "$0 mudo"): resultado completo de <see cref="InvoiceSuggestedItemsBuilder.BuildWithDiagnostics"/>.
+/// Trae los grupos sugeridos (lo mismo que devuelve <see cref="InvoiceSuggestedItemsBuilder.Build"/>) MAS la
+/// lista de servicios que quedaron afuera de la sugerencia, con el motivo, para que el modal de factura pueda
+/// explicar por que un servicio no aparece (en vez de mostrar un renglon en $0 sin explicacion).
+/// </summary>
+/// <param name="Groups">Grupos de items sugeridos, uno por moneda. Identico a <see cref="InvoiceSuggestedItemsBuilder.Build"/>.</param>
+/// <param name="ExcludedServices">Servicios que no aportaron a la sugerencia (o aportaron una linea $0), con su motivo.</param>
+public record InvoiceSuggestedItemsResult(
+    IReadOnlyList<InvoiceSuggestedItemGroup> Groups,
+    IReadOnlyList<ExcludedSuggestedService> ExcludedServices);
+
+/// <summary>
+/// Tanda 6: un servicio que NO aporto una linea "normal" a la sugerencia de factura, con el motivo por el que
+/// quedo afuera. Es informativo para el usuario final (no lleva IDs ni datos internos): solo el nombre visible
+/// del servicio, su moneda y el motivo. La moneda ayuda al modal a explicar por que un grupo de moneda quedo vacio.
+/// </summary>
+/// <param name="Description">Nombre del servicio como lo ve el usuario (misma descripcion que tendria la linea).</param>
+/// <param name="Currency">Moneda ISO del servicio ("ARS"/"USD"). Sirve para explicar por moneda.</param>
+/// <param name="Reason">Motivo de exclusion: uno de <see cref="SuggestedServiceExclusionReasons"/>.</param>
+public record ExcludedSuggestedService(
+    string Description,
+    string Currency,
+    string Reason);
+
+/// <summary>
+/// Tanda 6: motivos por los que un servicio no aporta una linea "normal" a la sugerencia de factura. Son
+/// tokens en castellano (mismo estilo que <c>CancelledMoneyContext</c>): el front los mapea a un texto amable.
+/// </summary>
+public static class SuggestedServiceExclusionReasons
+{
+    /// <summary>Vivo (no cancelado) pero todavia no asegurado para viajar (no resuelto). Causa mas comun del "$0 mudo".</summary>
+    public const string NotResolved = "NoResuelto";
+
+    /// <summary>El servicio esta cancelado: no se factura. Gana sobre "no resuelto".</summary>
+    public const string Cancelled = "Cancelado";
+
+    /// <summary>Resuelto pero con venta &lt;= 0: entra al grupo como linea $0. Se marca para explicar ese $0.</summary>
+    public const string ZeroPrice = "PrecioCero";
+}

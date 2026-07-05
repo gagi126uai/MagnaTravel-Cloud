@@ -211,13 +211,22 @@ export function ReservaHeader({
     const endLabel = formatTripDate(reserva.endDate);
 
     // Gate de cierre: el viaje tiene que haber terminado y no quedar saldo.
+    //
+    // Fix C5 (Tanda 6, 2026-07-05): antes solo miraba reserva.balance (el escalar), que en
+    // una reserva MULTIMONEDA suma ARS + USD — podía dar ~0 y dejar cerrar la reserva aunque
+    // quedara deuda real en una sola moneda (ej: debe USD 500 pero tiene a favor un ARS
+    // equivalente). Ahora exige que TODAS las líneas de porMoneda estén saldadas o a favor.
+    // Fallback al escalar si el DTO no trae porMoneda (reserva vieja sin filas materializadas).
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const endHasPast = reserva.endDate ? new Date(reserva.endDate) < today : false;
-    const canClose = endHasPast && reserva.balance <= 0;
+    const todasLasMonedasSaldadas = Array.isArray(reserva.porMoneda) && reserva.porMoneda.length > 0
+        ? reserva.porMoneda.every((linea) => (linea.balance ?? 0) <= 0)
+        : (reserva.balance ?? 0) <= 0;
+    const canClose = endHasPast && todasLasMonedasSaldadas;
     const closeTooltip = !endHasPast
         ? "El viaje todavia no termino"
-        : reserva.balance > 0
+        : !todasLasMonedasSaldadas
             ? "No se puede cerrar con saldo pendiente"
             : "Cerrar reserva";
 

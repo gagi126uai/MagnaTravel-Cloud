@@ -8,6 +8,7 @@
  *   - elegirGrupoPrecarga: la regla de seguridad B1 (nunca cargar USD como ARS)
  *   - hayDescuadre: si el total del formulario difiere del sugerido
  *   - validarCamposUSD: validación del tipo de cambio para facturas en dólares
+ *   - describirMotivoExclusion: texto en criollo para servicios excluidos de la sugerencia (C6)
  *
  * Cómo correr: node --test src/features/reservas/components/emitirFacturaInline.test.mjs
  */
@@ -727,4 +728,41 @@ test("regla B1 end-to-end: flag OFF + solo USD → soloServiciosUSD=true + items
   // el grupo de la moneda EFECTIVA, que es ARS, no USD → suggestedTotal ARS = 0).
   const suggestedTotalARS = 0; // No hay grupo ARS
   assert.equal(hayDescuadre(0, suggestedTotalARS, 0.5), false, "Sin sugerido ARS no hay descuadre falso");
+});
+
+// ─── Tests: describirMotivoExclusion (C6, Tanda 6, 2026-07-05) ───────────────
+// Traduce el motivo técnico de ExcludedSuggestedServiceDto.Reason a una frase en criollo
+// para el aviso "«X» no entra en la factura porque ...". Nunca debe devolver el token crudo.
+
+const MOTIVOS_EXCLUSION_SUGERENCIA = {
+  NoResuelto: "todavía no está confirmado",
+  Cancelado: "está cancelado",
+  PrecioCero: "tiene precio $0",
+};
+
+function describirMotivoExclusion(reason) {
+  return MOTIVOS_EXCLUSION_SUGERENCIA[reason] || "no se pudo incluir en la factura";
+}
+
+test("describirMotivoExclusion: NoResuelto → 'todavía no está confirmado'", () => {
+  assert.equal(describirMotivoExclusion("NoResuelto"), "todavía no está confirmado");
+});
+
+test("describirMotivoExclusion: Cancelado → 'está cancelado'", () => {
+  assert.equal(describirMotivoExclusion("Cancelado"), "está cancelado");
+});
+
+test("describirMotivoExclusion: PrecioCero → 'tiene precio $0'", () => {
+  assert.equal(describirMotivoExclusion("PrecioCero"), "tiene precio $0");
+});
+
+test("describirMotivoExclusion: motivo desconocido → texto genérico, NUNCA el token crudo", () => {
+  const resultado = describirMotivoExclusion("MotivoNuevoQueElFrontNoMapeoTodavia");
+  assert.equal(resultado, "no se pudo incluir en la factura");
+  assert.notEqual(resultado, "MotivoNuevoQueElFrontNoMapeoTodavia");
+});
+
+test("describirMotivoExclusion: sin motivo (undefined/null) → texto genérico, no revienta", () => {
+  assert.equal(describirMotivoExclusion(undefined), "no se pudo incluir en la factura");
+  assert.equal(describirMotivoExclusion(null), "no se pudo incluir en la factura");
 });

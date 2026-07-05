@@ -209,4 +209,97 @@ public class InvoiceSuggestedItemsBuilderTests
         // ARCA exige descripcion no vacia por item: nunca debe salir en blanco.
         Assert.False(string.IsNullOrWhiteSpace(item.Description));
     }
+
+    // ===================== Tanda 6: diagnostico de servicios excluidos (bug "$0 mudo") =====================
+
+    [Fact]
+    public void BuildWithDiagnostics_RequestedHotel_ReportedAsNotResolved()
+    {
+        var reserva = new Reserva();
+        // "Solicitado" no mapea a Confirmado -> vivo pero no resuelto -> NoResuelto (causa del "$0 mudo").
+        reserva.HotelBookings.Add(new HotelBooking { Status = "Solicitado", HotelName = "Sheraton", SalePrice = 100m });
+
+        var result = InvoiceSuggestedItemsBuilder.BuildWithDiagnostics(reserva);
+
+        Assert.Empty(result.Groups);
+        var excluded = Assert.Single(result.ExcludedServices);
+        Assert.Equal(SuggestedServiceExclusionReasons.NotResolved, excluded.Reason);
+        Assert.Contains("Sheraton", excluded.Description);
+        Assert.Equal(Monedas.ARS, excluded.Currency);
+    }
+
+    [Fact]
+    public void BuildWithDiagnostics_CancelledHotel_ReportedAsCancelled()
+    {
+        var reserva = new Reserva();
+        reserva.HotelBookings.Add(new HotelBooking { Status = "Cancelado", HotelName = "Sheraton", SalePrice = 100m });
+
+        var result = InvoiceSuggestedItemsBuilder.BuildWithDiagnostics(reserva);
+
+        Assert.Empty(result.Groups);
+        var excluded = Assert.Single(result.ExcludedServices);
+        // Cancelado gana sobre no-resuelto: un cancelado tambien es "no resuelto", pero reportamos Cancelado.
+        Assert.Equal(SuggestedServiceExclusionReasons.Cancelled, excluded.Reason);
+    }
+
+    [Fact]
+    public void BuildWithDiagnostics_ResolvedZeroPrice_ReportedAsZeroPriceAndStaysInGroup()
+    {
+        var reserva = new Reserva();
+        // Resuelto (Confirmado) pero con venta 0: SIGUE entrando al grupo como linea $0 (no cambiamos la
+        // inclusion) y ADEMAS se marca PrecioCero para que el modal explique ese $0.
+        reserva.HotelBookings.Add(new HotelBooking { Status = "Confirmado", HotelName = "Cortesia", SalePrice = 0m });
+
+        var result = InvoiceSuggestedItemsBuilder.BuildWithDiagnostics(reserva);
+
+        var group = Assert.Single(result.Groups);
+        var line = Assert.Single(group.Items);
+        Assert.Equal(0m, line.Total);
+
+        var excluded = Assert.Single(result.ExcludedServices);
+        Assert.Equal(SuggestedServiceExclusionReasons.ZeroPrice, excluded.Reason);
+        Assert.Contains("Cortesia", excluded.Description);
+    }
+
+    [Fact]
+    public void BuildWithDiagnostics_ResolvedNormalService_NotExcludedAndStaysInGroup()
+    {
+        var reserva = new Reserva();
+        reserva.HotelBookings.Add(new HotelBooking { Status = "Confirmado", HotelName = "Sheraton", SalePrice = 200m });
+
+        var result = InvoiceSuggestedItemsBuilder.BuildWithDiagnostics(reserva);
+
+        // Un servicio resuelto y con venta > 0 NO aparece en excluidos y SI en los grupos.
+        Assert.Empty(result.ExcludedServices);
+        var group = Assert.Single(result.Groups);
+        Assert.Equal(200m, group.SuggestedTotal);
+    }
+
+    [Fact]
+    public void BuildWithDiagnostics_GroupsAreIdenticalToBuild()
+    {
+        var reserva = new Reserva();
+        reserva.HotelBookings.Add(new HotelBooking { Status = "Confirmado", HotelName = "Confirmado", Currency = "ARS", SalePrice = 100m });
+        reserva.HotelBookings.Add(new HotelBooking { Status = "Solicitado", HotelName = "Pendiente", SalePrice = 999m });
+        reserva.HotelBookings.Add(new HotelBooking { Status = "Cancelado", HotelName = "Cancelado", SalePrice = 999m });
+        reserva.FlightSegments.Add(new FlightSegment { Status = "HK", TicketIssuedAt = DateTime.UtcNow, Currency = "USD", SalePrice = 500m });
+
+        var build = InvoiceSuggestedItemsBuilder.Build(reserva);
+        var diagnostics = InvoiceSuggestedItemsBuilder.BuildWithDiagnostics(reserva);
+
+        // Equivalencia: los grupos de BuildWithDiagnostics son exactamente los de Build (mismas monedas,
+        // mismos totales), porque Build delega en BuildWithDiagnostics.
+        Assert.Equal(build.Count, diagnostics.Groups.Count);
+        foreach (var expected in build)
+        {
+            var actual = diagnostics.Groups.Single(g => g.Currency == expected.Currency);
+            Assert.Equal(expected.SuggestedTotal, actual.SuggestedTotal);
+            Assert.Equal(expected.Items.Count, actual.Items.Count);
+        }
+
+        // Y el diagnostico ademas nombra los dos que no entraron: el Solicitado y el Cancelado.
+        Assert.Equal(2, diagnostics.ExcludedServices.Count);
+        Assert.Contains(diagnostics.ExcludedServices, e => e.Reason == SuggestedServiceExclusionReasons.NotResolved);
+        Assert.Contains(diagnostics.ExcludedServices, e => e.Reason == SuggestedServiceExclusionReasons.Cancelled);
+    }
 }

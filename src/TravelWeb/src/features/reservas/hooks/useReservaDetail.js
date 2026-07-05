@@ -291,7 +291,17 @@ export function useReservaDetail(reservaId, navigate) {
 
             const nextReserva = { ...res, ...collections, passengers: nextPassengers, payments: nextPayments };
 
-            // Inject authoritative service data if provided (fixes RabbitMQ/Cache sync lag)
+            // Inyecta el servicio recién guardado en su colección (fixes RabbitMQ/Cache sync lag):
+            // la lista de servicios puede tardar un instante en reflejar el cambio, así que lo
+            // insertamos/actualizamos nosotros para que aparezca de inmediato en la pantalla.
+            //
+            // Fix C3 (Tanda 6, 2026-07-05): ACÁ ANTES había un parche manual que sumaba/restaba
+            // totalSale/totalCost/balance "a mano" usando los datos del servicio recién guardado.
+            // Ese parche se ELIMINÓ: `res` (unas líneas más arriba) YA es la respuesta autoritativa
+            // de GET /reservas/{id}, que YA incluye el servicio nuevo/editado en sus totales. Sumarle
+            // un delta encima podía DOBLAR el número (bug real de la auditoría) hasta el próximo
+            // fetch. La plata SIEMPRE sale del fetch autoritativo; acá solo tocamos la lista de
+            // servicios para que la fila aparezca sin esperar a un segundo round-trip.
             if (service && serviceType) {
                 const collectionKey = getReservationCollectionKeyForServiceType(serviceType);
                 if (collectionKey) {
@@ -299,39 +309,9 @@ export function useReservaDetail(reservaId, navigate) {
                     const serviceId = getReservationServicePublicId(service);
                     const prevService = currentCollection.find(s => getReservationServicePublicId(s) === serviceId);
 
-                    // D2 del reviewer: determinamos si el servicio está confirmado por el operador.
-                    // Solo los servicios confirmados/resueltos generan deuda (ADR-020: "balance nace por servicio confirmado").
-                    // Un servicio recién agregado nace en estado Solicitado → NO suma al balance (saldo a cobrar).
-                    // Sí suma al totalSale (venta presupuestada), que es el acumulado de todos los servicios.
-                    const ESTADOS_CONFIRMADOS = new Set(['Confirmado', 'Emitido', 'HK', 'TK', 'KK', 'KL', 'NoConfirmation']);
-                    const workflowStatus = service.workflowStatus || service.status || '';
-                    const servicioEstaConfirmado = ESTADOS_CONFIRMADOS.has(workflowStatus);
-
-                    if (!prevService) {
-                        nextReserva[collectionKey] = [...currentCollection, service];
-                        // totalSale suma siempre (presupuestado = confirmados + solicitados).
-                        nextReserva.totalSale = (nextReserva.totalSale || 0) + (service.salePrice || 0);
-                        nextReserva.totalCost = (nextReserva.totalCost || 0) + (service.netCost || 0);
-                        // balance solo suma si el servicio ya está confirmado (deuda real del cliente).
-                        // Un servicio recién agregado nace Solicitado: no suma al saldo.
-                        if (servicioEstaConfirmado) {
-                            nextReserva.balance = (nextReserva.balance || 0) + (service.salePrice || 0);
-                        }
-                    } else {
-                        // Delta para servicios existentes que cambiaron (edicion de precio/estado).
-                        const deltaSale = (service.salePrice || 0) - (prevService.salePrice || 0);
-                        const deltaCost = (service.netCost || 0) - (prevService.netCost || 0);
-                        nextReserva.totalSale = (nextReserva.totalSale || 0) + deltaSale;
-                        nextReserva.totalCost = (nextReserva.totalCost || 0) + deltaCost;
-                        // balance solo aplica el delta si el servicio actualizado sigue confirmado.
-                        if (servicioEstaConfirmado) {
-                            nextReserva.balance = (nextReserva.balance || 0) + deltaSale;
-                        }
-
-                        nextReserva[collectionKey] = currentCollection.map(s =>
-                            getReservationServicePublicId(s) === serviceId ? service : s
-                        );
-                    }
+                    nextReserva[collectionKey] = prevService
+                        ? currentCollection.map(s => getReservationServicePublicId(s) === serviceId ? service : s)
+                        : [...currentCollection, service];
                 }
             }
 

@@ -58,6 +58,7 @@ import { getApiErrorMessage, isDatabaseUnavailableError } from "../../../lib/err
 import { getPublicId } from "../../../lib/publicIds";
 import { formatCurrency } from "../../../lib/utils";
 import { ReservaStatusBadge } from "../../reservas/components/ReservaStatusBadge";
+import { getMoneyStatus, isReservaAnulada } from "../../reservas/moneyStatus";
 import { formatTipoComprobante } from "../lib/facturacionFilters";
 import { EstadoCuentaClienteTab } from "../components/EstadoCuentaClienteTab";
 import { FacturacionClienteTab } from "../components/FacturacionClienteTab";
@@ -80,6 +81,66 @@ const formatDate = (dateString) => {
   if (!dateString) return "-";
   return new Date(dateString).toLocaleDateString("es-AR");
 };
+
+/**
+ * Tanda 6 (C4, 2026-07-05): plata REAL de una reserva por moneda, para la solapa Reservas.
+ *
+ * Antes esta pantalla mostraba SIEMPRE "ARS" hardcodeado, lo cual mentía en una reserva
+ * en dólares o multimoneda. Ahora lee `reserva.porMoneda` (CustomerAccountReservaListItemDto,
+ * misma fuente de plata que usa la ficha de la reserva) y solo cae al escalar legacy en ARS
+ * si el backend todavía no trae esa lista (reserva muy vieja sin filas materializadas).
+ */
+function getLineasMonedaCuenta(reserva) {
+  if (Array.isArray(reserva.porMoneda) && reserva.porMoneda.length > 0) {
+    return reserva.porMoneda;
+  }
+  return [{ currency: "ARS", totalSale: reserva.totalSale, paid: reserva.paid, balance: reserva.balance }];
+}
+
+/**
+ * Una línea de saldo de UNA moneda, en la solapa Reservas de la cuenta del cliente.
+ * Mismo criterio visual que EstadoCuentaResumen (EjeBalanceMono/ColumnaBalanceMulti):
+ * saldo negativo = "a favor" en verde (el cliente pagó de más), nunca rojo.
+ */
+function SaldoLineaCuenta({ balance, currency }) {
+  const valor = balance ?? 0;
+  if (valor < -0.01) {
+    return (
+      <div className="text-emerald-600 dark:text-emerald-400">
+        {formatCurrency(Math.abs(valor), currency)}
+        <span className="ml-1 text-[9px] font-semibold uppercase tracking-wider text-emerald-500 dark:text-emerald-600">
+          a favor
+        </span>
+      </div>
+    );
+  }
+  if (valor > 0.01) {
+    return <div className="text-rose-600 dark:text-rose-400">{formatCurrency(valor, currency)}</div>;
+  }
+  return <div className="text-slate-400 dark:text-slate-500">{formatCurrency(valor, currency)}</div>;
+}
+
+/**
+ * Reemplaza la columna Saldo cuando la reserva de la fila está ANULADA (Tanda 6, C2+C4).
+ * Nunca muestra "deuda" genérica: el contexto sale de getMoneyStatus (misma fuente que
+ * ReservaTable/ReservaSummaryStrip/ReservaStatusChips). Si el dato es "Inconsistente"
+ * (o no hay contexto explícito y el balance no permite afirmar nada), no se muestra plata.
+ */
+function ContextoAnuladaCuenta({ moneyStatus, reserva }) {
+  if (moneyStatus.kind === "none") {
+    return <div className="text-slate-400 dark:text-slate-500">—</div>;
+  }
+  const esMulta = moneyStatus.kind === "multaPorCobrar";
+  const moneda = reserva.porMoneda?.[0]?.currency ?? "ARS";
+  return (
+    <div className={esMulta ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}>
+      {formatCurrency(Math.abs(reserva.balance ?? 0), moneda)}
+      <span className="ml-1 text-[9px] font-semibold uppercase tracking-wider">
+        {esMulta ? "multa por anulación" : "a favor"}
+      </span>
+    </div>
+  );
+}
 
 /**
  * Renderiza el PDF de la factura en una pestaña nueva del navegador.
@@ -844,33 +905,51 @@ export default function CustomerAccountPage() {
                     {reservas.length === 0 ? (
                       <DataGridEmptyState colSpan={7} title="No hay reservas para mostrar." />
                     ) : (
-                      reservas.map((reserva) => (
-                        <DataGridRow key={getPublicId(reserva)}>
-                          <DataGridCell>{formatDate(reserva.startDate || reserva.createdAt)}</DataGridCell>
-                          <DataGridCell>
-                            <div className="font-semibold text-slate-900 dark:text-white">{reserva.numeroReserva}</div>
-                            <div className="text-xs text-slate-500 dark:text-slate-400">{reserva.name}</div>
-                          </DataGridCell>
-                          <DataGridCell><ReservaStatusBadge status={reserva.status} /></DataGridCell>
-                          <DataGridCell align="right" className="font-semibold text-slate-900 dark:text-white">
-                            {formatCurrency(reserva.totalSale, "ARS")}
-                          </DataGridCell>
-                          <DataGridCell align="right" className="font-semibold text-emerald-600 dark:text-emerald-400">
-                            {formatCurrency(reserva.paid, "ARS")}
-                          </DataGridCell>
-                          <DataGridCell align="right" className="font-semibold text-rose-600 dark:text-rose-400">
-                            {formatCurrency(reserva.balance, "ARS")}
-                          </DataGridCell>
-                          <DataGridActionCell>
-                            <Link
-                              to={`/reservas/${getPublicId(reserva)}`}
-                              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-indigo-600 hover:bg-indigo-50 dark:border-slate-700 dark:hover:bg-slate-800"
-                            >
-                              Ver
-                            </Link>
-                          </DataGridActionCell>
-                        </DataGridRow>
-                      ))
+                      reservas.map((reserva) => {
+                        // C4: plata real por moneda (fallback a escalares+ARS si el DTO no la trae).
+                        // C2: getMoneyStatus decide si esta fila "debe" de verdad o es una reserva
+                        // anulada con su propio contexto — nunca recalculamos balance>0 acá.
+                        const lineasMoneda = getLineasMonedaCuenta(reserva);
+                        const moneyStatus = getMoneyStatus(reserva);
+                        const esAnuladaFila = isReservaAnulada(reserva.status);
+                        return (
+                          <DataGridRow key={getPublicId(reserva)}>
+                            <DataGridCell>{formatDate(reserva.startDate || reserva.createdAt)}</DataGridCell>
+                            <DataGridCell>
+                              <div className="font-semibold text-slate-900 dark:text-white">{reserva.numeroReserva}</div>
+                              <div className="text-xs text-slate-500 dark:text-slate-400">{reserva.name}</div>
+                            </DataGridCell>
+                            <DataGridCell><ReservaStatusBadge status={reserva.status} /></DataGridCell>
+                            <DataGridCell align="right" className="font-semibold text-slate-900 dark:text-white">
+                              {lineasMoneda.map((linea) => (
+                                <div key={linea.currency}>{formatCurrency(linea.totalSale, linea.currency)}</div>
+                              ))}
+                            </DataGridCell>
+                            <DataGridCell align="right" className="font-semibold text-emerald-600 dark:text-emerald-400">
+                              {lineasMoneda.map((linea) => (
+                                <div key={linea.currency}>{formatCurrency(linea.paid, linea.currency)}</div>
+                              ))}
+                            </DataGridCell>
+                            <DataGridCell align="right" className="font-semibold">
+                              {esAnuladaFila ? (
+                                <ContextoAnuladaCuenta moneyStatus={moneyStatus} reserva={reserva} />
+                              ) : (
+                                lineasMoneda.map((linea) => (
+                                  <SaldoLineaCuenta key={linea.currency} balance={linea.balance} currency={linea.currency} />
+                                ))
+                              )}
+                            </DataGridCell>
+                            <DataGridActionCell>
+                              <Link
+                                to={`/reservas/${getPublicId(reserva)}`}
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-indigo-600 hover:bg-indigo-50 dark:border-slate-700 dark:hover:bg-slate-800"
+                              >
+                                Ver
+                              </Link>
+                            </DataGridActionCell>
+                          </DataGridRow>
+                        );
+                      })
                     )}
                   </DataGridBody>
                 </DataGrid>
@@ -882,33 +961,50 @@ export default function CustomerAccountPage() {
                   />
                 ) : (
                   <MobileRecordList>
-                    {reservas.map((reserva) => (
-                      <MobileRecordCard
-                        key={getPublicId(reserva)}
-                        statusSlot={<ReservaStatusBadge status={reserva.status} />}
-                        title={reserva.numeroReserva}
-                        subtitle={reserva.name}
-                        meta={
-                          <>
-                            <div className="text-xs text-slate-500 dark:text-slate-400">
-                              Fecha: {formatDate(reserva.startDate || reserva.createdAt)}
+                    {reservas.map((reserva) => {
+                      const lineasMoneda = getLineasMonedaCuenta(reserva);
+                      const moneyStatus = getMoneyStatus(reserva);
+                      const esAnuladaFila = isReservaAnulada(reserva.status);
+                      return (
+                        <MobileRecordCard
+                          key={getPublicId(reserva)}
+                          statusSlot={<ReservaStatusBadge status={reserva.status} />}
+                          title={reserva.numeroReserva}
+                          subtitle={reserva.name}
+                          meta={
+                            <>
+                              <div className="text-xs text-slate-500 dark:text-slate-400">
+                                Fecha: {formatDate(reserva.startDate || reserva.createdAt)}
+                              </div>
+                              {lineasMoneda.map((linea) => (
+                                <div key={linea.currency} className="text-xs text-slate-500 dark:text-slate-400">
+                                  Venta {formatCurrency(linea.totalSale, linea.currency)} · Cobrado {formatCurrency(linea.paid, linea.currency)}
+                                </div>
+                              ))}
+                            </>
+                          }
+                          footer={
+                            <div className="text-sm font-semibold">
+                              {esAnuladaFila ? (
+                                <ContextoAnuladaCuenta moneyStatus={moneyStatus} reserva={reserva} />
+                              ) : (
+                                lineasMoneda.map((linea) => (
+                                  <SaldoLineaCuenta key={linea.currency} balance={linea.balance} currency={linea.currency} />
+                                ))
+                              )}
                             </div>
-                            <div className="text-xs text-slate-500 dark:text-slate-400">
-                              Venta {formatCurrency(reserva.totalSale, "ARS")} · Cobrado {formatCurrency(reserva.paid, "ARS")}
-                            </div>
-                          </>
-                        }
-                        footer={<span className="text-sm font-semibold text-rose-600 dark:text-rose-400">Saldo {formatCurrency(reserva.balance, "ARS")}</span>}
-                        footerActions={
-                          <Link
-                            to={`/reservas/${getPublicId(reserva)}`}
-                            className="inline-flex rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-indigo-600 hover:bg-indigo-50 dark:border-slate-700 dark:hover:bg-slate-800"
-                          >
-                            Ver
-                          </Link>
-                        }
-                      />
-                    ))}
+                          }
+                          footerActions={
+                            <Link
+                              to={`/reservas/${getPublicId(reserva)}`}
+                              className="inline-flex rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-indigo-600 hover:bg-indigo-50 dark:border-slate-700 dark:hover:bg-slate-800"
+                            >
+                              Ver
+                            </Link>
+                          }
+                        />
+                      );
+                    })}
                   </MobileRecordList>
                 )}
 

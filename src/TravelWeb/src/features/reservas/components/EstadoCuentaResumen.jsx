@@ -464,9 +464,12 @@ function ChipInvoicingStatus({ status }) {
     );
   }
   if (status === "PartiallyInvoiced") {
+    // Fix C5 (Tanda 6, 2026-07-05): unificamos el rótulo con ReservaStatusChips
+    // ("Facturada en parte"). Antes decía "Facturada parcial" acá y distinto en el chip
+    // de la ficha — mismo estado, dos textos, confundía a quien comparaba las dos pantallas.
     return (
       <span className="rounded-full bg-amber-100 px-3 py-1 text-[10px] font-black uppercase text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-        Facturada parcial
+        Facturada en parte
       </span>
     );
   }

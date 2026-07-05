@@ -97,7 +97,16 @@ public class MappingProfile : Profile
             // service los asigna a mano solo cuando vienen con valor (ver UpdateFlightAsync).
             .ForMember(dest => dest.TicketingDeadline, opt => opt.Ignore())
             .ForMember(dest => dest.OperatorPaymentDeadline, opt => opt.Ignore())
-            .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus == "Confirmado" ? "HK" : src.WorkflowStatus == "Cancelado" ? "UN" : "HL"));
+            // Tanda 6 (anti-clobber de estado, 2026-07-05): SOLO pisamos el estado si el request trae
+            // WorkflowStatus con valor. Si viene null/vacio, PreCondition corta y NO se toca dest.Status: se
+            // CONSERVA el estado actual del vuelo. Esto evita que editar un vuelo emitido sin mandar estado lo
+            // revierta a "Solicitado" (HL) y desaparezca de la facturacion. Un valor explicito se aplica igual
+            // que antes (el guard de downgrade con pagos al proveedor sigue vigente en BookingService).
+            .ForMember(dest => dest.Status, opt =>
+            {
+                opt.PreCondition(src => !string.IsNullOrWhiteSpace(src.WorkflowStatus));
+                opt.MapFrom(src => src.WorkflowStatus == "Confirmado" ? "HK" : src.WorkflowStatus == "Cancelado" ? "UN" : "HL");
+            });
 
         CreateMap<HotelBooking, HotelBookingDto>()
             .ForMember(dest => dest.PublicId, opt => opt.MapFrom(src => src.PublicId))
@@ -130,7 +139,13 @@ public class MappingProfile : Profile
             // Auditoria ERP item 5 (anti-clobber): el deadline NO se mapea por convencion en el UPDATE
             // (ver Flight). El service lo asigna a mano solo cuando viene con valor (ver UpdateHotelAsync).
             .ForMember(dest => dest.OperatorPaymentDeadline, opt => opt.Ignore())
-            .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus))
+            // Tanda 6 (anti-clobber de estado): si el request no trae WorkflowStatus, se CONSERVA el estado
+            // actual del hotel (ver map de UpdateFlightRequest arriba). Un valor explicito se aplica como antes.
+            .ForMember(dest => dest.Status, opt =>
+            {
+                opt.PreCondition(src => !string.IsNullOrWhiteSpace(src.WorkflowStatus));
+                opt.MapFrom(src => src.WorkflowStatus);
+            })
             .ForMember(dest => dest.Nights, opt => opt.MapFrom(src => (src.CheckOut - src.CheckIn).Days))
             .ForMember(dest => dest.RoomingAssignmentsJson, opt => opt.MapFrom(src => src.RoomingAssignments));
 
@@ -153,7 +168,13 @@ public class MappingProfile : Profile
             
         CreateMap<UpdateTransferRequest, TransferBooking>()
             .ForMember(dest => dest.SupplierId, opt => opt.Ignore())
-            .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus))
+            // Tanda 6 (anti-clobber de estado): si el request no trae WorkflowStatus, se CONSERVA el estado
+            // actual del traslado (ver map de UpdateFlightRequest). Un valor explicito se aplica como antes.
+            .ForMember(dest => dest.Status, opt =>
+            {
+                opt.PreCondition(src => !string.IsNullOrWhiteSpace(src.WorkflowStatus));
+                opt.MapFrom(src => src.WorkflowStatus);
+            })
             .ForMember(dest => dest.RateId, opt => opt.Ignore())
             // Fuga 3 (F1b): costos asignados a mano segun permiso (ver UpdateFlightRequest arriba).
             .ForMember(dest => dest.NetCost, opt => opt.Ignore())
@@ -193,7 +214,13 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.NetCost, opt => opt.Ignore())
             .ForMember(dest => dest.Tax, opt => opt.Ignore())
             .ForMember(dest => dest.Commission, opt => opt.Ignore())
-            .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus))
+            // Tanda 6 (anti-clobber de estado): si el request no trae WorkflowStatus, se CONSERVA el estado
+            // actual del paquete (ver map de UpdateFlightRequest). Un valor explicito se aplica como antes.
+            .ForMember(dest => dest.Status, opt =>
+            {
+                opt.PreCondition(src => !string.IsNullOrWhiteSpace(src.WorkflowStatus));
+                opt.MapFrom(src => src.WorkflowStatus);
+            })
             // Auditoria ERP item 5 (anti-clobber): deadline asignado a mano solo si viene con valor.
             .ForMember(dest => dest.OperatorPaymentDeadline, opt => opt.Ignore())
             // ADR-018: EndDate puede venir null (ficha "producto-primero"). Se coalesce a StartDate
@@ -228,7 +255,13 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.Commission, opt => opt.Ignore())
             // Auditoria ERP item 5 (anti-clobber): deadline asignado a mano solo si viene con valor.
             .ForMember(dest => dest.OperatorPaymentDeadline, opt => opt.Ignore())
-            .ForMember(dest => dest.Status, opt => opt.MapFrom(src => src.WorkflowStatus));
+            // Tanda 6 (anti-clobber de estado): si el request no trae WorkflowStatus, se CONSERVA el estado
+            // actual de la asistencia (ver map de UpdateFlightRequest). Un valor explicito se aplica como antes.
+            .ForMember(dest => dest.Status, opt =>
+            {
+                opt.PreCondition(src => !string.IsNullOrWhiteSpace(src.WorkflowStatus));
+                opt.MapFrom(src => src.WorkflowStatus);
+            });
 
         // Customers
         CreateMap<Customer, CustomerDto>();
