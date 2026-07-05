@@ -385,6 +385,19 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
         modelBuilder.HasPostgresExtension("pgcrypto");
 
+        // (Tanda 5, 2026-07-05) Notificaciones con auto-resolucion por causa.
+        modelBuilder.Entity<Notification>(entity =>
+        {
+            // IsLive es una propiedad CALCULADA (get-only, sin backing field): no es una columna. Sin este Ignore
+            // EF intentaria mapearla y romperia el build del modelo. El filtro "vivo" se escribe inline en las
+            // queries (ResolvedAt == null && !IsRead && !IsDismissed) para que EF lo traduzca a SQL.
+            entity.Ignore(n => n.IsLive);
+
+            // Indice por clave de resolucion: el auto-resolutor y el dedup entre dias buscan "vivas con esta clave".
+            // Sin indice ese lookup seria un seq scan de toda la tabla de notificaciones en cada cobro/anulacion/job.
+            entity.HasIndex(n => n.ResolutionKey);
+        });
+
         ConfigurePublicEntity<Customer>(modelBuilder);
         ConfigurePublicEntity<Reserva>(modelBuilder);
         ConfigurePublicEntity<Supplier>(modelBuilder);

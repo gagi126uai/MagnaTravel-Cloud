@@ -137,8 +137,6 @@ public class PartialCreditNoteReviewAlertJob
             return;
         }
 
-        var today = DateTime.UtcNow.Date;
-
         foreach (var bookingCancellation in staleBookingCancellations)
         {
             // Log warning siempre (auditoria operativa, queda en Serilog aunque
@@ -169,18 +167,21 @@ public class PartialCreditNoteReviewAlertJob
                 $"esta esperando revision manual hace {daysSinceConfirmation} dia(s). " +
                 $"Plazo RG 4540 (15 dias) en riesgo: emitir NC o rechazar lo antes posible.";
 
+            // D5 (2026-07-05): dedup por AVISO VIVO con la misma clave ("PartialCreditNoteReviewPending:{bcId}"),
+            // no por "creado hoy". Antes, con CreatedAt.Date == today y cron diaria, el mismo aviso se re-creaba
+            // cada noche mientras el BC siguiera trabado (acumulacion). Ahora solo se re-crea si el anterior ya se
+            // atendio (leido/descartado) o se resolvio y el BC sigue stale (recordatorio legitimo).
+            var resolutionKey = NotificationResolutionKeys.ForEntity(
+                "PartialCreditNoteReviewPending", bookingCancellation.Id);
+
             foreach (var admin in adminUsers)
             {
-                // Dedup intra-dia: si ya notificamos este BC a este admin hoy,
-                // no creamos otra Notification. Esto evita spam cuando el job
-                // corre cada hora (config), aunque la cron por default es diaria.
-                var alreadyExistsToday = await _dbContext.Notifications.AnyAsync(n =>
+                var hasLiveAlert = await _dbContext.Notifications.AnyAsync(n =>
                     n.UserId == admin.Id
-                    && n.RelatedEntityType == "PartialCreditNoteReviewPending"
-                    && n.RelatedEntityId == bookingCancellation.Id
-                    && n.CreatedAt.Date == today, ct);
+                    && n.ResolutionKey == resolutionKey
+                    && n.ResolvedAt == null && !n.IsRead && !n.IsDismissed, ct);
 
-                if (alreadyExistsToday)
+                if (hasLiveAlert)
                     continue;
 
                 await _notificationService.CreateAndSendAsync(new Notification

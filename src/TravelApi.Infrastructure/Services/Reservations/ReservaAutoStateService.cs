@@ -310,17 +310,20 @@ public class ReservaAutoStateService
     /// </summary>
     private async Task NotifyNeedsReviewAsync(Reserva reserva, DateTime now, CancellationToken ct)
     {
-        var today = now.Date;
-        var tomorrow = today.AddDays(1);
+        // D5 (2026-07-05): la marca "confirmada con cambios" comparte RelatedEntityType="Reserva" con otros avisos
+        // de la misma reserva, por eso su clave lleva un prefijo dedicado ("ReservaNeedsReview:{id}"): asi el
+        // auto-resolutor (W4) y el dedup la distinguen de "sale pronto y debe". El aviso se apaga solo cuando la
+        // reserva deja de tener cambios sin reconocer (ver NotificationCauseResolutionRules).
+        var resolutionKey = NotificationResolutionKeys.ForTyped(
+            NotificationTypes.ReservaNeedsReview, reserva.Id);
 
-        // Dedup por Type DEDICADO: el filtro matchea SOLO este aviso (no cualquier Warning urgente de la
-        // misma reserva, que podria suprimirlo o ser suprimido por el).
-        bool alreadyNotifiedToday = await _context.Notifications.AnyAsync(n =>
-            n.RelatedEntityType == "Reserva"
-            && n.RelatedEntityId == reserva.Id
-            && n.Type == NotificationTypes.ReservaNeedsReview
-            && n.CreatedAt >= today && n.CreatedAt < tomorrow, ct);
-        if (alreadyNotifiedToday) return;
+        // Dedup por AVISO VIVO (no por "creado hoy"): no re-avisar mientras siga vivo un aviso con esta clave para
+        // algun destinatario. Si el dueno ya lo vio (leido/descartado) o se resolvio, un cambio nuevo puede volver
+        // a avisar. Chequeo global por clave (no por usuario) para no duplicar cuando el mismo evento avisa a varios.
+        bool hasLiveAlert = await _context.Notifications.AnyAsync(n =>
+            n.ResolutionKey == resolutionKey
+            && n.ResolvedAt == null && !n.IsRead && !n.IsDismissed, ct);
+        if (hasLiveAlert) return;
 
         var message =
             $"La reserva {reserva.NumeroReserva} quedo 'confirmada con cambios': un servicio dejo de estar " +
@@ -352,7 +355,8 @@ public class ReservaAutoStateService
                 Type = NotificationTypes.ReservaNeedsReview,
                 Priority = "Urgent",
                 RelatedEntityId = reserva.Id,
-                RelatedEntityType = "Reserva",
+                RelatedEntityType = NotificationRelatedEntityTypes.Reserva,
+                ResolutionKey = resolutionKey,
                 CreatedAt = now
             });
         }

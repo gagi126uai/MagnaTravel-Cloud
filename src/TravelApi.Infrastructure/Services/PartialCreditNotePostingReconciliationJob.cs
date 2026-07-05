@@ -314,8 +314,6 @@ public class PartialCreditNotePostingReconciliationJob
             return;
         }
 
-        var today = DateTime.UtcNow.Date;
-
         // Etiqueta canonica del numero de factura origen: "PV-NNNNN" (igual que el alert job).
         var originalInvoice = creditNote.OriginalInvoice;
         var originalInvoiceLabel = originalInvoice is not null
@@ -331,17 +329,19 @@ public class PartialCreditNotePostingReconciliationJob
             "ARCA no confirma que se haya emitido y la reconciliacion automatica no pudo resolverla. " +
             "Requiere revision manual: verificar el comprobante en ARCA y reconciliar o re-emitir desde back-office.";
 
+        // D5 (2026-07-05): dedup por AVISO VIVO con la misma clave ("PartialCreditNotePostingStuck:{ncId}"), no por
+        // "creado hoy". El job corre cada 30 min y la NC puede quedar colgada dias: antes eso re-creaba el aviso cada
+        // dia (spam). Ahora solo se re-crea si el anterior ya se atendio/resolvio y la NC sigue trabada.
+        var resolutionKey = NotificationResolutionKeys.ForEntity("PartialCreditNotePostingStuck", creditNote.Id);
+
         foreach (var admin in adminUsers)
         {
-            // Dedup intra-dia: si ya notificamos esta NC a este admin hoy, no creamos otra.
-            // Evita spam: el job corre cada 30 min y la NC puede quedar colgada varios dias.
-            var alreadyNotifiedToday = await _dbContext.Notifications.AnyAsync(n =>
+            var hasLiveAlert = await _dbContext.Notifications.AnyAsync(n =>
                 n.UserId == admin.Id
-                && n.RelatedEntityType == "PartialCreditNotePostingStuck"
-                && n.RelatedEntityId == creditNote.Id
-                && n.CreatedAt.Date == today, ct);
+                && n.ResolutionKey == resolutionKey
+                && n.ResolvedAt == null && !n.IsRead && !n.IsDismissed, ct);
 
-            if (alreadyNotifiedToday)
+            if (hasLiveAlert)
                 continue;
 
             await _notificationService.CreateAndSendAsync(new Notification

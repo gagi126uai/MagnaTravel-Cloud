@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Reservations;
+using TravelApi.Infrastructure.Notifications;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Infrastructure.Reservations;
@@ -157,6 +158,45 @@ public static class CoherenceChecks
                 EntityType: "Reserva",
                 EntityId: reserva.Id,
                 Detail: detail,
+                AutoRepaired: true));
+        }
+
+        return findings;
+    }
+
+    // ============================================================================================
+    // W4 — NOTIFICACIÓN ZOMBIE (auto-resuelve).
+    // Un aviso que sigue "vivo" pero cuya causa ya murió (factura anulada OK, reserva saldada, marca de revisión
+    // bajada) confundiría al dueño con un problema que ya no existe. Normalmente el aviso se apaga en el acto donde
+    // la causa se resuelve; W4 es la red de seguridad si algún camino no lo hizo. Se AUTO-RESUELVE (marca ResolvedAt)
+    // porque no toca plata: solo apaga un aviso derivado, igual que W1/W3 recalculan datos derivados.
+    // ============================================================================================
+
+    /// <summary>
+    /// Detecta avisos VIVOS cuya causa ya murió (según <see cref="NotificationCauseResolutionRules"/>) y los apaga
+    /// marcándoles <see cref="Notification.ResolvedAt"/>. Cubre "confirmada con cambios", "sale pronto y debe" y el
+    /// error de anulación de factura. NO hace SaveChanges (deja los cambios en el tracker; el job los persiste).
+    /// Devuelve un finding AutoRepaired=true por aviso apagado.
+    /// </summary>
+    public static async Task<IReadOnlyList<CoherenceFinding>> ResolveZombieNotificationsAsync(
+        AppDbContext db, CancellationToken ct)
+    {
+        var zombies = await NotificationCauseResolutionRules.FindZombieNotificationsAsync(db, ct);
+        if (zombies.Count == 0)
+            return Array.Empty<CoherenceFinding>();
+
+        var now = DateTime.UtcNow;
+        var findings = new List<CoherenceFinding>();
+        foreach (var notification in zombies)
+        {
+            notification.ResolvedAt = now;
+
+            findings.Add(new CoherenceFinding(
+                Code: "W4",
+                EntityType: "Notification",
+                EntityId: notification.Id,
+                Detail: $"Aviso '{notification.Type}' sobre {notification.RelatedEntityType} " +
+                        $"{notification.RelatedEntityId} seguía activo con la causa ya resuelta; se apagó.",
                 AutoRepaired: true));
         }
 

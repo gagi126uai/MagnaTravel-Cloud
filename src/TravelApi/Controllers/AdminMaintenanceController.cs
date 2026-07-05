@@ -123,7 +123,10 @@ public class AdminMaintenanceController : ControllerBase
 
             var result = await _coherenceWatchdogJob.RunAsync(ct);
 
-            var repaired = result.AutoRepairedMarks + result.AutoRepairedMoney + result.AnnulledMoneyRecalculated;
+            // "Reparadas" = todo lo que el vigía dejó sano solo: marcas colgadas (W1), plata recalculada (W3 +
+            // recalculador legacy) y avisos zombie apagados (W4). Todo dato derivado, cero decisión humana.
+            var repaired = result.AutoRepairedMarks + result.AutoRepairedMoney
+                + result.AutoResolvedNotifications + result.AnnulledMoneyRecalculated;
             var toReview = result.AnnulledWithLiveServices + result.AnnulledWithUnjustifiedDebt;
 
             return Ok(new CoherenceWatchdogResponse(

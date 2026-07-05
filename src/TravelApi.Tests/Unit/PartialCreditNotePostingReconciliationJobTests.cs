@@ -269,11 +269,18 @@ public class PartialCreditNotePostingReconciliationJobTests
         userManagerMock.Setup(u => u.GetUsersInRoleAsync("Admin"))
             .ReturnsAsync(AdminList("admin-1", "admin-2"));
 
-        // Persistir las notifications en el ctx para que el dedup intra-dia funcione en la 2da corrida.
+        // Persistir las notifications en el ctx para que el dedup por AVISO VIVO funcione en la 2da corrida.
+        // El mock simula al service real: deriva la ResolutionKey si el productor no la seteo (asi el dedup
+        // "vivo con esta clave" encuentra el aviso previo, igual que en produccion).
         notificationMock.Setup(n => n.CreateAndSendAsync(
                 It.IsAny<Notification>(), It.IsAny<CancellationToken>()))
             .Returns<Notification, CancellationToken>(async (notif, token) =>
             {
+                if (string.IsNullOrWhiteSpace(notif.ResolutionKey))
+                {
+                    notif.ResolutionKey = NotificationResolutionKeys.ForEntity(
+                        notif.RelatedEntityType, notif.RelatedEntityId);
+                }
                 ctx.Notifications.Add(notif);
                 await ctx.SaveChangesAsync(token);
                 return notif;

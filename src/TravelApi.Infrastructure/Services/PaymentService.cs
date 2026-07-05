@@ -33,6 +33,9 @@ public class PaymentService : IPaymentService
     private readonly IApprovalRequestService? _approvalService;
     private readonly IApprovalPolicyService? _approvalPolicyService;
     private readonly IAuditService? _auditService;
+    // (Tanda 5) Opcional para no romper unit tests con ctor previo: se usa solo para apagar el aviso "sale pronto
+    // y debe" cuando un cobro salda la reserva. Si es null (tests sin contenedor), ese apagado lo cubre el vigia.
+    private readonly INotificationService? _notificationService;
 
     // Estados de Reserva que tienen DEUDA COBRABLE (cuenta por cobrar viva). Lo usan la worklist y el summary
     // de cobranza para listar a quien se le puede cobrar.
@@ -54,7 +57,8 @@ public class PaymentService : IPaymentService
         IHttpContextAccessor? httpContextAccessor = null,
         IApprovalRequestService? approvalService = null,
         IApprovalPolicyService? approvalPolicyService = null,
-        IAuditService? auditService = null)
+        IAuditService? auditService = null,
+        INotificationService? notificationService = null)
     {
         _dbContext = dbContext;
         _entityReferenceResolver = entityReferenceResolver;
@@ -66,6 +70,7 @@ public class PaymentService : IPaymentService
         _approvalService = approvalService;
         _approvalPolicyService = approvalPolicyService;
         _auditService = auditService;
+        _notificationService = notificationService;
         QuestPDF.Settings.License = LicenseType.Community;
     }
 
@@ -1346,6 +1351,36 @@ public class PaymentService : IPaymentService
         // de la reserva). Persiste escalar surrogate + tabla hija ReservaMoneyByCurrency en la misma
         // SaveChangesAsync. La fuente de la cuenta sigue siendo ReservaMoneyCalculator.
         await TravelApi.Infrastructure.Reservations.ReservaMoneyPersister.PersistAsync(_dbContext, reservaId, cancellationToken);
+
+        // (Tanda 5, 2026-07-05) Si el cobro dejo la reserva SALDADA, apagamos el aviso "sale pronto y todavia debe":
+        // su causa (deuda con viaje proximo) ya no existe. El vigia nocturno (W4) es la red de seguridad; esto lo
+        // apaga en el acto para que el dueno no vea un aviso de deuda de una reserva que acaba de pagar. Idempotente
+        // (si no habia aviso vivo, no hace nada) y best-effort (en unit tests sin contenedor no hay servicio).
+        await ResolveUnpaidDepartureAlertIfSettledAsync(reservaId, cancellationToken);
+    }
+
+    /// <summary>
+    /// Apaga el aviso "sale pronto y debe" de una reserva cuando quedo con saldo &lt;= 0 (saldada). Corre despues del
+    /// recalculo de plata para leer el saldo fresco. No falla la operacion de cobro si algo sale mal: el aviso, en el
+    /// peor caso, lo apaga igual el vigia nocturno.
+    /// </summary>
+    private async Task ResolveUnpaidDepartureAlertIfSettledAsync(int reservaId, CancellationToken cancellationToken)
+    {
+        if (_notificationService is null)
+            return;
+
+        var balance = await _dbContext.Reservas
+            .Where(r => r.Id == reservaId)
+            .Select(r => (decimal?)r.Balance)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        // Balance > 0 = sigue debiendo → el aviso conserva su causa, no se toca.
+        if (!balance.HasValue || balance.Value > 0m)
+            return;
+
+        var resolutionKey = NotificationResolutionKeys.ForEntity(
+            NotificationRelatedEntityTypes.ReservaUnpaidDeparture, reservaId);
+        await _notificationService.ResolveByKeyAsync(resolutionKey, cancellationToken);
     }
 
     /// <summary>

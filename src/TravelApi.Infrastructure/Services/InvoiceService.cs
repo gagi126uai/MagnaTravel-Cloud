@@ -117,6 +117,17 @@ public class InvoiceService : IInvoiceService
     }
 
     /// <summary>
+    /// (Tanda 5, 2026-07-05 — D4) Resuelve el servicio de notificaciones de forma LAZY (igual que el bridge, para
+    /// no tocar el ctor ni crear ciclos de DI). Se usa para que los avisos de factura salgan por SignalR en el acto
+    /// (antes se escribian directo al DbContext y no llegaban hasta recargar la pagina). Devuelve null en unit tests
+    /// que arman el service a mano sin contenedor → en ese caso se cae al Add directo (comportamiento legacy).
+    /// </summary>
+    private INotificationService? GetNotificationService()
+    {
+        return _serviceProvider.GetService<INotificationService>();
+    }
+
+    /// <summary>
     /// IServiceProvider vacio para los unit tests que construyen InvoiceService sin contenedor.
     /// Su GetService siempre devuelve null, asi GetBcBridge() se comporta como "sin bridge".
     /// </summary>
@@ -1580,6 +1591,37 @@ public class InvoiceService : IInvoiceService
                 {
                     await _approvalService.MarkConsumedAsync(approvalRequestId.Value);
                 }
+
+                // D3 (2026-07-05): apagar los avisos de ERROR de anulacion PREVIOS de esta misma factura. La
+                // anulacion pudo haber fallado antes (error tecnico "se reintentara automaticamente") y dejado un
+                // aviso vivo; ahora que salio bien, ese aviso ya no tiene causa. Se resuelve por la clave del invoice
+                // ORIGINAL ("Invoice:{invoiceId}"), no la de la NC nueva. Va ANTES de crear el aviso de exito para que
+                // el usuario no vea "error" y "exito" conviviendo. Idempotente: si no habia error previo, no hace nada.
+                // IMPORTANTE (mismo contrato que el bridge de abajo): en este punto el commit fiscal YA quedo
+                // (AnnulmentStatus=Succeeded, CAE emitido). Por eso este apagado va en try/catch y NUNCA hace
+                // rethrow: si tirara, la excepcion subiria al catch del job -> Hangfire reintentaria -> aunque el
+                // guard "Avoid double processing" evita re-emitir la NC, dejaria un aviso "error tecnico, se
+                // reintentara" fantasma sobre una anulacion que en realidad salio bien (justo el sintoma que esta
+                // tanda vino a matar). Si falla, la red de seguridad es W4: el vigia nocturno apaga el error de
+                // anulacion porque la factura ya quedo Succeeded.
+                var annulmentNotificationService = GetNotificationService();
+                if (annulmentNotificationService is not null)
+                {
+                    try
+                    {
+                        await annulmentNotificationService.ResolveByKeyAsync(
+                            NotificationResolutionKeys.ForEntity(NotificationRelatedEntityTypes.Invoice, invoiceId));
+                    }
+                    catch (Exception resolveEx)
+                    {
+                        _logger.LogError(
+                            resolveEx,
+                            "No se pudo apagar el aviso de error de anulacion previo para Invoice {InvoiceId}. " +
+                            "La anulacion quedo Succeeded; el vigia (W4) lo apagara esa noche.",
+                            invoiceId);
+                    }
+                }
+
                 await CreateNotification(userId, $"Anulación exitosa. Se generó el comprobante {newInvoice.NumeroComprobante}.", "Success", newInvoice.Id);
 
                 // FC1.2.1 v3 §6.2 / HC3 (BR-V2-04, 2026-05-17): sincronizar el BC
@@ -3158,14 +3200,28 @@ public class InvoiceService : IInvoiceService
 
     private async Task CreateNotification(string userId, string message, string type, int relatedId)
     {
-        _context.Notifications.Add(new Notification
+        var notification = new Notification
         {
             UserId = userId,
             Message = message,
             Type = type,
             RelatedEntityId = relatedId,
-            RelatedEntityType = "Invoice"
-        });
+            RelatedEntityType = NotificationRelatedEntityTypes.Invoice
+        };
+
+        // D4 (2026-07-05): despachar por el servicio de notificaciones para que ademas de persistir salga por
+        // SignalR (el aviso de AFIP aparece en la campanita sin recargar la pagina). El servicio ademas le pone la
+        // clave de resolucion ("Invoice:{relatedId}"). Si no hay contenedor (unit tests) caemos al Add legacy.
+        var notificationService = GetNotificationService();
+        if (notificationService is not null)
+        {
+            await notificationService.CreateAndSendAsync(notification);
+            return;
+        }
+
+        notification.ResolutionKey =
+            NotificationResolutionKeys.ForEntity(notification.RelatedEntityType, notification.RelatedEntityId);
+        _context.Notifications.Add(notification);
         await _context.SaveChangesAsync();
     }
 
@@ -3178,19 +3234,36 @@ public class InvoiceService : IInvoiceService
         var actor = string.IsNullOrWhiteSpace(request.ForcedByUserName) ? "Un agente" : request.ForcedByUserName;
         var message = $"{actor} emitio AFIP por excepcion para la reserva #{invoice.ReservaId} con saldo pendiente de {invoice.OutstandingBalanceAtIssuance:C2}.";
 
+        // D4 (2026-07-05): mismo criterio que CreateNotification — despachar por el servicio (SignalR + clave de
+        // resolucion) si hay contenedor; caer al Add directo en unit tests sin DI.
+        var notificationService = GetNotificationService();
+
         foreach (var admin in adminUsers)
         {
-            _context.Notifications.Add(new Notification
+            var notification = new Notification
             {
                 UserId = admin.Id,
                 Message = message,
                 Type = "Warning",
                 RelatedEntityId = invoice.Id,
-                RelatedEntityType = "Invoice"
-            });
+                RelatedEntityType = NotificationRelatedEntityTypes.Invoice
+            };
+
+            if (notificationService is not null)
+            {
+                await notificationService.CreateAndSendAsync(notification, ct);
+            }
+            else
+            {
+                notification.ResolutionKey =
+                    NotificationResolutionKeys.ForEntity(notification.RelatedEntityType, notification.RelatedEntityId);
+                _context.Notifications.Add(notification);
+            }
         }
 
-        await _context.SaveChangesAsync(ct);
+        // Solo hace falta el SaveChanges del fallback legacy: CreateAndSendAsync ya guarda por su cuenta.
+        if (notificationService is null)
+            await _context.SaveChangesAsync(ct);
     }
 
     private IQueryable<InvoicingWorkItemDto> BuildInvoicingWorkItemsQuery(OperationalFinanceSettings settings, string? ownerScope = null)

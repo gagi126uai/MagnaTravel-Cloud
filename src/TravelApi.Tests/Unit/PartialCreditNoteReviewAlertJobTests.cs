@@ -300,11 +300,11 @@ public class PartialCreditNoteReviewAlertJobTests
     }
 
     // ============================================================
-    // 5) Dedup intra-dia: si ya notifique hoy al admin, no notifico de nuevo
+    // 5) Dedup (Tanda 5): si ya hay un aviso VIVO con la misma clave, no notifico de nuevo
     // ============================================================
 
     [Fact]
-    public async Task RunAsync_AlreadyNotifiedToday_DoesNotDuplicate()
+    public async Task RunAsync_AlreadyHasLiveAlert_DoesNotDuplicate()
     {
         var (job, ctx, notificationMock, userManagerMock, _) = BuildJob(
             enablePartialCreditNotes: true,
@@ -315,13 +315,16 @@ public class PartialCreditNoteReviewAlertJobTests
             BookingCancellationStatus.ManualReviewPending,
             confirmedWithClientAt: DateTime.UtcNow.AddDays(-11));
 
-        // Pre-existente: ya hay una Notification de hoy para admin-1 sobre este BC.
+        // Pre-existente: ya hay un aviso VIVO para admin-1 sobre este BC (misma clave de resolucion). El dedup ahora
+        // mira "vivo con esta clave", no "creado hoy": mientras siga vivo no se re-crea (aunque pasen dias).
         ctx.Notifications.Add(new Notification
         {
             UserId = "admin-1",
             RelatedEntityType = "PartialCreditNoteReviewPending",
             RelatedEntityId = bookingCancellation.Id,
-            CreatedAt = DateTime.UtcNow,
+            ResolutionKey = NotificationResolutionKeys.ForEntity(
+                "PartialCreditNoteReviewPending", bookingCancellation.Id),
+            CreatedAt = DateTime.UtcNow.AddDays(-2),
             Message = "(seed) ya notificado",
             Type = "Warning",
             Priority = "Urgent",

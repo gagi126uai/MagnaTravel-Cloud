@@ -13,8 +13,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { Bell, CheckCircle2 } from "lucide-react";
-import * as signalR from "@microsoft/signalr";
-import { api, buildAppUrl } from "../api";
+import { api } from "../api";
 import { Link } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
 import { es } from "date-fns/locale";
@@ -300,11 +299,8 @@ function SeccionCostosAConfirmar({ costos, onClose }) {
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export default function NotificationBell() {
-    const [notifications, setNotifications] = useState([]);
-    const [unreadCount, setUnreadCount] = useState(0);
     const [isOpen, setIsOpen] = useState(false);
     const containerRef = useRef(null);
-    const connectionRef = useRef(null);
 
     // Set local de publicIds descartados optimistamente.
     // Al hacer clic en "Listo", el ítem desaparece al instante del panel y del badge.
@@ -313,9 +309,9 @@ export default function NotificationBell() {
     // Set de publicIds cuyo botón "Listo" está en vuelo (disabled mientras el POST va).
     const [descartando, setDescartando] = useState(new Set());
 
-    // Consumimos alertas del contexto compartido (upcomingStarts + costsToConfirm).
-    // El contexto ya hace el fetch y el poll por su cuenta.
-    const { alerts, refreshAlerts } = useAlerts();
+    // Todo viene del contexto compartido (Tanda 5): alertas + notificaciones + conexión SignalR única.
+    // La campanita ya no hace su propio fetch ni abre su propia conexión (eso desincronizaba el badge con la página).
+    const { alerts, refreshAlerts, notifications, unreadCount, markAsRead, markAllAsRead } = useAlerts();
 
     const upcomingStarts = alerts?.upcomingStarts || [];
     const costsToConfirm = alerts?.costsToConfirm || [];
@@ -396,45 +392,6 @@ export default function NotificationBell() {
         }
     };
 
-    // Initial load de notificaciones del sistema (separadas del contexto de alertas)
-    useEffect(() => {
-        const fetchNotifications = async () => {
-            try {
-                const data = await api.get("/notifications?unreadOnly=true");
-                setNotifications(data || []);
-                setUnreadCount(data?.length || 0);
-            } catch (error) {
-                console.error("Error fetching notifications:", error);
-            }
-        };
-
-        fetchNotifications();
-    }, []);
-
-    // SignalR: recibe notificaciones en tiempo real
-    useEffect(() => {
-        const url = buildAppUrl("/hubs/notifications");
-
-        const newConnection = new signalR.HubConnectionBuilder()
-            .withUrl(url, { withCredentials: true })
-            .withAutomaticReconnect()
-            .build();
-
-        newConnection.on("ReceiveNotification", (notification) => {
-            setNotifications((prev) => [notification, ...prev]);
-            setUnreadCount((prev) => prev + 1);
-        });
-
-        newConnection.start().catch((err) => console.error("SignalR Connection Error: ", err));
-        connectionRef.current = newConnection;
-
-        return () => {
-            if (connectionRef.current) {
-                connectionRef.current.stop();
-            }
-        };
-    }, []);
-
     // Click fuera del panel → cerrar
     useEffect(() => {
         const handleClickOutside = (event) => {
@@ -448,29 +405,19 @@ export default function NotificationBell() {
 
     const cerrarPanel = () => setIsOpen(false);
 
-    const markAsRead = async (id, e) => {
+    // Marcar una como leída: el contexto hace el POST y actualiza el estado compartido (campanita + página).
+    const handleMarkAsRead = async (id, e) => {
         if (e) {
             e.preventDefault();
             e.stopPropagation();
         }
-        try {
-            await api.post(`/notifications/${id}/read`);
-            setNotifications((prev) => prev.filter((n) => n.id !== id));
-            setUnreadCount((prev) => Math.max(0, prev - 1));
-        } catch (error) {
-            console.error("Error marking notification as read:", error);
-        }
+        await markAsRead(id);
     };
 
-    const markAllAsRead = async () => {
-        try {
-            await Promise.all(notifications.map(n => api.post(`/notifications/${n.id}/read`)));
-            setNotifications([]);
-            setUnreadCount(0);
-            setIsOpen(false);
-        } catch (error) {
-            console.error("Error marking all as read:", error);
-        }
+    // Marcar todas: delega en el contexto y cierra el panel.
+    const handleMarkAllAsRead = async () => {
+        await markAllAsRead();
+        setIsOpen(false);
     };
 
     const getDotColor = (notification) => {
@@ -513,7 +460,7 @@ export default function NotificationBell() {
                         <h3 className="font-semibold text-slate-800 dark:text-slate-200">Notificaciones</h3>
                         {unreadCount > 0 && (
                             <button
-                                onClick={markAllAsRead}
+                                onClick={handleMarkAllAsRead}
                                 className="text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline"
                             >
                                 Marcar todas leídas
@@ -574,7 +521,7 @@ export default function NotificationBell() {
                                             </p>
                                         </div>
                                         <button
-                                            onClick={(e) => markAsRead(notification.id, e)}
+                                            onClick={(e) => handleMarkAsRead(notification.id, e)}
                                             className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-indigo-600 transition-opacity"
                                             title="Marcar como leída"
                                         >

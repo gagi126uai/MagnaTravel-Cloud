@@ -63,15 +63,22 @@ public class OperationalFinanceMonitorService
             if (!string.IsNullOrWhiteSpace(reserva.ResponsibleUserId))
                 userIds.Add(reserva.ResponsibleUserId);
 
+            // D5 (2026-07-05): dedup por AVISO VIVO con la misma clave de resolucion, NO por "creado hoy". Antes el
+            // guard era CreatedAt.Date == today con cron diario → cada noche se re-creaba el MISMO aviso (acumulacion
+            // infinita). Ahora solo se re-crea si el anterior ya se resolvio/leyo/descarto Y la causa (deuda + viaje
+            // proximo) sigue viva → recordatorio legitimo, no spam. La clave la pone CreateAndSendAsync sola, pero la
+            // derivamos aca para el dedup ("ReservaUnpaidDeparture:{id}").
+            var resolutionKey = NotificationResolutionKeys.ForEntity(
+                NotificationRelatedEntityTypes.ReservaUnpaidDeparture, reserva.Id);
+
             foreach (var userId in userIds)
             {
-                var alreadyExists = await _dbContext.Notifications.AnyAsync(n =>
+                var hasLiveAlert = await _dbContext.Notifications.AnyAsync(n =>
                     n.UserId == userId &&
-                    n.RelatedEntityType == "ReservaUnpaidDeparture" &&
-                    n.RelatedEntityId == reserva.Id &&
-                    n.CreatedAt.Date == today);
+                    n.ResolutionKey == resolutionKey &&
+                    n.ResolvedAt == null && !n.IsRead && !n.IsDismissed);
 
-                if (alreadyExists)
+                if (hasLiveAlert)
                     continue;
 
                 await _notificationService.CreateAndSendAsync(new Notification
@@ -80,7 +87,7 @@ public class OperationalFinanceMonitorService
                     Type = "Warning",
                     Priority = "Urgent",
                     RelatedEntityId = reserva.Id,
-                    RelatedEntityType = "ReservaUnpaidDeparture",
+                    RelatedEntityType = NotificationRelatedEntityTypes.ReservaUnpaidDeparture,
                     Message = $"La reserva {reserva.NumeroReserva} sale el {reserva.StartDate:dd/MM/yyyy} y mantiene un saldo pendiente de {reserva.Balance:C2}."
                 });
             }

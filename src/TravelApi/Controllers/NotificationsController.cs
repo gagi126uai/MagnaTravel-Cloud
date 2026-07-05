@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
 using TravelApi.Application.Interfaces;
-using TravelApi.Domain.Entities;
+using TravelApi.Contracts;
 
 namespace TravelApi.Controllers;
 
@@ -19,23 +19,23 @@ public class NotificationsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<Notification>>> GetUnread(CancellationToken ct)
+    public async Task<ActionResult<IEnumerable<NotificationDto>>> GetUnread(CancellationToken ct)
     {
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (userId == null) return Unauthorized();
 
         var notifications = await _notificationService.GetUnreadNotificationsAsync(userId, ct);
-        return Ok(notifications);
+        return Ok(notifications.Select(NotificationDto.FromEntity));
     }
 
     [HttpGet("urgent")]
-    public async Task<ActionResult<IEnumerable<Notification>>> GetUrgent(CancellationToken ct)
+    public async Task<ActionResult<IEnumerable<NotificationDto>>> GetUrgent(CancellationToken ct)
     {
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         if (userId == null) return Unauthorized();
 
         var notifications = await _notificationService.GetUrgentNotificationsAsync(userId, ct);
-        return Ok(notifications);
+        return Ok(notifications.Select(NotificationDto.FromEntity));
     }
 
     [HttpPost("{id}/read")]

@@ -43,9 +43,14 @@ public class CoherenceWatchdogJob
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly ILogger<CoherenceWatchdogJob> _logger;
 
-    // Tipo de notificación del vigía. Se usa para deduplicar: no se crea una nueva si ya hay una NO leída con el
-    // mismo tipo y el mismo mensaje (mismo resumen/códigos) para ese admin.
+    // Tipo de notificación del vigía (RelatedEntityType del aviso agregado, sin entidad puntual).
     private const string WatchdogNotificationType = "CoherenceWatchdogReport";
+
+    // (Tanda 5) Clave de resolución ESTABLE del aviso del vigía. No lleva id de entidad (el hallazgo es agregado):
+    // sin una clave fija, cada corrida con conteos distintos creaba un aviso nuevo y se acumulaban. Con una clave
+    // fija hay a lo sumo UN aviso vivo del vigía por admin: si el mensaje cambia, se apaga el viejo y se crea el
+    // nuevo (así el dueño ve los números actuales, no una pila de resúmenes viejos). Ver NotifyAdminsAsync.
+    private const string WatchdogResolutionKey = "CoherenceWatchdog:daily";
 
     // Guard de concurrencia PROCESS-WIDE (0 = libre, 1 = corriendo). El [DisableConcurrentExecution] de Hangfire solo
     // cubre la vía programada; este flag cubre TAMBIÉN el endpoint manual y el cruce manual-vs-programada, para que
@@ -72,6 +77,7 @@ public class CoherenceWatchdogJob
     /// </summary>
     /// <param name="AutoRepairedMarks">Reservas terminales con marca colgada que se limpiaron (W1).</param>
     /// <param name="AutoRepairedMoney">Reservas con proyección de plata desactualizada que se recalcularon (W3).</param>
+    /// <param name="AutoResolvedNotifications">Avisos zombie (vivos con la causa ya muerta) que se apagaron (W4).</param>
     /// <param name="AnnulledMoneyRecalculated">Reservas anuladas que el recalculador dejó con otro saldo (paso legacy).</param>
     /// <param name="AnnulledWithLiveServices">Reservas anuladas con servicios sin cancelar reportadas (W2).</param>
     /// <param name="AnnulledWithUnjustifiedDebt">Reservas anuladas con deuda sin comprobante reportadas (W5).</param>
@@ -79,6 +85,7 @@ public class CoherenceWatchdogJob
     public sealed record CoherenceWatchdogResult(
         int AutoRepairedMarks,
         int AutoRepairedMoney,
+        int AutoResolvedNotifications,
         int AnnulledMoneyRecalculated,
         int AnnulledWithLiveServices,
         int AnnulledWithUnjustifiedDebt,
@@ -160,6 +167,15 @@ public class CoherenceWatchdogJob
         var moneyFindings = await CoherenceChecks.RepairStaleMoneyProjectionAsync(_db, _logger, ct);
         _db.ChangeTracker.Clear();
 
+        // W4: avisos zombie (vivos con la causa ya muerta). Va DESPUÉS de W1/W3/recalculador porque esas reparaciones
+        // pueden haber matado la causa de un aviso (ej. W1 bajó la marca "confirmada con cambios", el recálculo dejó
+        // la reserva saldada) — así en la misma corrida el aviso derivado también se apaga. Muta el tracker; se
+        // persiste acá.
+        var zombieNotificationFindings = await CoherenceChecks.ResolveZombieNotificationsAsync(_db, ct);
+        if (zombieNotificationFindings.Count > 0)
+            await _db.SaveChangesAsync(ct);
+        _db.ChangeTracker.Clear();
+
         // ---- Fase de reporte (sobre datos ya reparados) ----
 
         var liveServiceFindings = await CoherenceChecks.DetectAnnulledWithLiveServicesAsync(_db, ct);
@@ -168,7 +184,7 @@ public class CoherenceWatchdogJob
         var reportable = liveServiceFindings.Concat(unjustifiedDebtFindings).ToList();
 
         // El detalle técnico de cada hallazgo va SOLO al log del servidor (nunca a la notificación del usuario).
-        LogFindings(markFindings, moneyFindings, liveServiceFindings, unjustifiedDebtFindings);
+        LogFindings(markFindings, moneyFindings, zombieNotificationFindings, liveServiceFindings, unjustifiedDebtFindings);
 
         var notificationSent = false;
         if (reportable.Count > 0)
@@ -180,13 +196,14 @@ public class CoherenceWatchdogJob
         {
             _logger.LogInformation(
                 "CoherenceWatchdog: corrida sin hallazgos para revisar (W1 reparadas={W1}, W3 reparadas={W3}, " +
-                "anuladas recalculadas={Recalc}). Sin notificación.",
-                markFindings.Count, moneyFindings.Count, annulledMoneyResult.Corrected);
+                "avisos apagados={W4}, anuladas recalculadas={Recalc}). Sin notificación.",
+                markFindings.Count, moneyFindings.Count, zombieNotificationFindings.Count, annulledMoneyResult.Corrected);
         }
 
         return new CoherenceWatchdogResult(
             AutoRepairedMarks: markFindings.Count,
             AutoRepairedMoney: moneyFindings.Count,
+            AutoResolvedNotifications: zombieNotificationFindings.Count,
             AnnulledMoneyRecalculated: annulledMoneyResult.Corrected,
             AnnulledWithLiveServices: liveServiceFindings.Count,
             AnnulledWithUnjustifiedDebt: unjustifiedDebtFindings.Count,
@@ -214,16 +231,26 @@ public class CoherenceWatchdogJob
         var createdAny = false;
         foreach (var admin in admins)
         {
-            // Dedup: no repetir si ya hay una notificación del vigía NO leída con el mismo mensaje para este admin.
-            // El mensaje codifica los conteos/códigos, así que "mismo mensaje" = "misma situación aún sin atender".
-            var alreadyPending = await _db.Notifications.AnyAsync(n =>
-                n.UserId == admin.Id
-                && n.RelatedEntityType == WatchdogNotificationType
-                && !n.IsRead
-                && n.Message == message, ct);
+            // Aviso VIVO del vigía para este admin (a lo sumo uno, por la clave estable).
+            var liveForAdmin = await _db.Notifications
+                .Where(n => n.UserId == admin.Id
+                            && n.ResolutionKey == WatchdogResolutionKey
+                            && n.ResolvedAt == null && !n.IsRead && !n.IsDismissed)
+                .ToListAsync(ct);
 
-            if (alreadyPending)
+            // Misma situación aún sin atender (mismo mensaje) → no repetir.
+            if (liveForAdmin.Any(n => n.Message == message))
                 continue;
+
+            // Situación cambió (otros conteos) o el admin ya vio el anterior: apagamos cualquier aviso vivo del vigía
+            // que haya quedado con números viejos y creamos el nuevo. Así nunca se acumulan resúmenes desactualizados.
+            if (liveForAdmin.Count > 0)
+            {
+                var now = DateTime.UtcNow;
+                foreach (var stale in liveForAdmin)
+                    stale.ResolvedAt = now;
+                await _db.SaveChangesAsync(ct);
+            }
 
             await _notificationService.CreateAndSendAsync(new Notification
             {
@@ -231,7 +258,9 @@ public class CoherenceWatchdogJob
                 Type = "Warning",
                 Priority = "Urgent",
                 RelatedEntityType = WatchdogNotificationType,
-                // Sin RelatedEntityId: el hallazgo es agregado (varias reservas), no una entidad puntual.
+                // Sin RelatedEntityId: el hallazgo es agregado (varias reservas), no una entidad puntual. La clave de
+                // resolución es fija (no derivable de la entidad), por eso se setea a mano.
+                ResolutionKey = WatchdogResolutionKey,
                 Message = message,
             }, ct);
 
@@ -267,10 +296,11 @@ public class CoherenceWatchdogJob
     private void LogFindings(
         IReadOnlyList<CoherenceFinding> markFindings,
         IReadOnlyList<CoherenceFinding> moneyFindings,
+        IReadOnlyList<CoherenceFinding> zombieNotificationFindings,
         IReadOnlyList<CoherenceFinding> liveServiceFindings,
         IReadOnlyList<CoherenceFinding> unjustifiedDebtFindings)
     {
-        foreach (var finding in markFindings.Concat(moneyFindings))
+        foreach (var finding in markFindings.Concat(moneyFindings).Concat(zombieNotificationFindings))
         {
             _logger.LogInformation(
                 "CoherenceWatchdog auto-reparó [{Code}] {EntityType} {EntityId}: {Detail}",
