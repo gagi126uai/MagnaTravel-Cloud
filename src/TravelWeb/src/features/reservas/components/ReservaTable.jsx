@@ -128,8 +128,11 @@ export function ReservaTable({ reservas, onRowClick, onArchive }) {
                       </span>
                     ) : moneyStatus.kind === "multaPorCobrar" ? (
                       // Reserva anulada: la multa por anulación todavía no se cobró.
+                      // Tanda "multa fantasma" (2026-07-06): el monto sale de moneyStatus (la multa
+                      // exacta, con fallback al balance si el backend todavía no la manda) —
+                      // ya no se recalcula acá con el balance total de la reserva.
                       <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/20 dark:text-amber-400">
-                        Multa: {formatCurrency(reserva.balance)}
+                        Multa: {formatCurrency(moneyStatus.amount, moneyStatus.amountCurrency)}
                       </span>
                     ) : (
                       // kind === "none": reserva anulada sin plata pendiente que mostrar

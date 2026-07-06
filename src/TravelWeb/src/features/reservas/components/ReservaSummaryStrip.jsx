@@ -171,8 +171,11 @@ export function ReservaSummaryStrip({ reserva }) {
  * o directamente nada si moneyStatus.kind === "none" (dato inconsistente — lo revisa
  * un vigía interno, no se le muestra al vendedor una cifra que podría estar mal).
  *
- * El monto sale de reserva.balance porque el contexto de anulación es a nivel de TODA
- * la reserva (no por moneda) — mismo criterio que usa el backend para derivarlo.
+ * Tanda "multa fantasma" (2026-07-06): con multa, el monto SALE de moneyStatus
+ * (amount/amountCurrency = el monto exacto de la multa, con su propio fallback al
+ * balance si el backend todavía no lo manda) — este componente ya no recalcula nada.
+ * Con saldo a favor, el monto sigue siendo el balance de la reserva (no cambia: el
+ * contexto de anulación es a nivel de TODA la reserva, no por moneda).
  */
 function BloqueContextoAnulado({ moneyStatus, reserva }) {
     if (moneyStatus.kind === 'none') {
@@ -189,8 +192,9 @@ function BloqueContextoAnulado({ moneyStatus, reserva }) {
     }
 
     const esMultaEnAmbar = moneyStatus.kind === 'multaPorCobrar';
-    const moneda = reserva.porMoneda?.[0]?.currency;
-    const monto = formatCurrency(Math.abs(reserva.balance ?? 0), moneda);
+    const monto = esMultaEnAmbar
+        ? formatCurrency(moneyStatus.amount, moneyStatus.amountCurrency)
+        : formatCurrency(Math.abs(reserva.balance ?? 0), reserva.porMoneda?.[0]?.currency);
 
     return (
         <>

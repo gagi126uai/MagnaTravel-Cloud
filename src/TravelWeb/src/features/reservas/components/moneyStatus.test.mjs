@@ -48,6 +48,54 @@ test("Anulada + MultaPorCobrar: label de multa, tono warning (nunca 'Debe')", ()
   assert.notEqual(result.label, "Debe");
 });
 
+// ─── Tanda "multa fantasma" (2026-07-06): monto de la multa vs. fallback a balance ──
+
+test("Anulada + MultaPorCobrar CON cancelledPenaltyAmount/Currency: el monto es el de LA MULTA, no el balance", () => {
+  // El balance de la reserva (8000) puede incluir otra plata mezclada — el monto a
+  // mostrar tiene que ser el de la multa (3500 USD), tomado de los campos nuevos.
+  const reserva = {
+    status: "Cancelled",
+    cancelledMoneyContext: "MultaPorCobrar",
+    balance: 8000,
+    cancelledPenaltyAmount: 3500,
+    cancelledPenaltyCurrency: "USD",
+  };
+  const result = getMoneyStatus(reserva);
+  assert.equal(result.kind, "multaPorCobrar");
+  assert.equal(result.amount, 3500);
+  assert.equal(result.amountCurrency, "USD");
+});
+
+test("Anulada + MultaPorCobrar SIN cancelledPenaltyAmount/Currency (DTO legacy/cacheado): fallback al balance", () => {
+  const reserva = {
+    status: "Cancelled",
+    cancelledMoneyContext: "MultaPorCobrar",
+    balance: 8000,
+    porMoneda: [{ currency: "ARS" }],
+  };
+  const result = getMoneyStatus(reserva);
+  assert.equal(result.kind, "multaPorCobrar");
+  assert.equal(result.amount, 8000);
+  assert.equal(result.amountCurrency, "ARS");
+});
+
+test("Anulada + MultaEnRevision: NUNCA se muestra cartel (la Nota de Débito falló o está en revisión manual)", () => {
+  const reserva = { status: "Cancelled", cancelledMoneyContext: "MultaEnRevision", balance: 8000 };
+  const result = getMoneyStatus(reserva);
+  assert.equal(result.kind, "none");
+  assert.equal(result.label, null);
+});
+
+test("Anulada + token DESCONOCIDO (backend nuevo, front viejo): kind none, jamás el token crudo como label", () => {
+  // Si el backend agrega un contexto nuevo que este front todavía no conoce, NO debemos
+  // mostrar el token crudo ni inventar un cartel: se cae al fallback seguro (balance >= 0 -> none).
+  const reserva = { status: "Cancelled", cancelledMoneyContext: "AlgoNuevo", balance: 4000 };
+  const result = getMoneyStatus(reserva);
+  assert.equal(result.kind, "none");
+  assert.equal(result.label, null);
+  assert.notEqual(result.label, "AlgoNuevo");
+});
+
 test("Anulada + Inconsistente: NUNCA se muestra nada al usuario (lo maneja el vigía interno)", () => {
   const reserva = { status: "Cancelled", cancelledMoneyContext: "Inconsistente", balance: 3000 };
   const result = getMoneyStatus(reserva);
@@ -188,6 +236,7 @@ test("Ningún label devuelto es un token crudo del backend (camelCase/PascalCase
   const casosAnulados = [
     { status: "Cancelled", cancelledMoneyContext: "SaldoAFavorPendiente" },
     { status: "Cancelled", cancelledMoneyContext: "MultaPorCobrar" },
+    { status: "Cancelled", cancelledMoneyContext: "MultaEnRevision" },
     { status: "Cancelled", cancelledMoneyContext: "Inconsistente" },
   ];
   const casosVivos = [
@@ -199,6 +248,7 @@ test("Ningún label devuelto es un token crudo del backend (camelCase/PascalCase
   const tokensCrudos = [
     "SaldoAFavorPendiente",
     "MultaPorCobrar",
+    "MultaEnRevision",
     "Inconsistente",
     "SinMovimientos",
     "Saldado",

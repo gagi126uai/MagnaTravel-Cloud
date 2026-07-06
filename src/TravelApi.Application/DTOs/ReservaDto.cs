@@ -266,11 +266,28 @@ public class ReservaDto
     /// PendingOperatorRefund). Una reserva anulada NO muestra "deuda" generica: muestra solo plata con
     /// contexto. Tokens (castellano, consistente con collectionStatus; el front los traduce a la etiqueta
     /// final): "SaldoAFavorPendiente" (quedo saldo a favor del cliente sin devolver), "MultaPorCobrar" (la
-    /// deuda es la multa por anulacion, respaldada por una Nota de Debito viva), "Inconsistente" (saldo
-    /// positivo sin comprobante que lo justifique = dato roto). null = sin plata pendiente. Ver
-    /// <c>ReservationDebtRules</c>.
+    /// deuda es la multa por anulacion, respaldada por una Nota de Debito viva), "MultaEnRevision" (la multa se
+    /// confirmo pero su Nota de Debito quedo fallida / en resolucion manual: la destraba el back-office, no es
+    /// una cuenta por cobrar firme), "Inconsistente" (saldo positivo sin comprobante que lo justifique = dato
+    /// roto). null = sin plata pendiente. Ver <c>ReservationDebtRules</c>.
     /// </summary>
     public string? CancelledMoneyContext { get; set; }
+
+    /// <summary>
+    /// Monto de la multa por anulacion PENDIENTE de cobro, para mostrar junto al cartel "Multa pendiente de cobro".
+    /// Es NETO: la multa bruta congelada al confirmar MENOS lo ya pagado en su misma moneda (si el cliente pago
+    /// parte de la multa, no se sobreestima). Solo tiene valor cuando <see cref="CancelledMoneyContext"/> es
+    /// "MultaPorCobrar"; null en cualquier otro caso (saldo a favor, multa en revision, dato roto, o reserva no
+    /// anulada).
+    /// </summary>
+    public decimal? CancelledPenaltyAmount { get; set; }
+
+    /// <summary>
+    /// Moneda ISO 4217 ("ARS"/"USD") del monto de <see cref="CancelledPenaltyAmount"/>. Solo con valor cuando el
+    /// contexto es "MultaPorCobrar"; null en el resto. Se normaliza desde el codigo ARCA congelado ("PES"/"DOL")
+    /// al codigo ISO del negocio.
+    /// </summary>
+    public string? CancelledPenaltyCurrency { get; set; }
 
     public string? CustomerName { get; set; } // Flattened
     public CustomerDto? Payer { get; set; } // Nested for frontend convenience

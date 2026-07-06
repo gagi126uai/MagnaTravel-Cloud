@@ -122,6 +122,46 @@ public class ReservationDebtRulesTests
     }
 
     [Fact]
+    public void DeriveForCancelled_PositiveBalance_LiveBacking_IsPenaltyReceivable()
+    {
+        var context = ReservationDebtRules.DeriveForCancelled(
+            balance: 300m, backing: ReservationDebtRules.DebitNoteBacking.Live);
+
+        Assert.Equal(ReservationDebtRules.CancelledMoneyContext.PenaltyReceivable, context);
+    }
+
+    [Fact]
+    public void DeriveForCancelled_PositiveBalance_UnderReviewBacking_IsPenaltyUnderReview()
+    {
+        // Multa confirmada con ND fallida / manual: ni "por cobrar" ni "dato roto" -> "en revisión".
+        var context = ReservationDebtRules.DeriveForCancelled(
+            balance: 300m, backing: ReservationDebtRules.DebitNoteBacking.UnderReview);
+
+        Assert.Equal(ReservationDebtRules.CancelledMoneyContext.PenaltyUnderReview, context);
+    }
+
+    [Fact]
+    public void DeriveForCancelled_PositiveBalance_NoneBacking_IsInconsistent()
+    {
+        var context = ReservationDebtRules.DeriveForCancelled(
+            balance: 300m, backing: ReservationDebtRules.DebitNoteBacking.None);
+
+        Assert.Equal(ReservationDebtRules.CancelledMoneyContext.Inconsistent, context);
+    }
+
+    [Fact]
+    public void DeriveForCancelled_BoolOverload_DelegatesTrueToLive_FalseToNone()
+    {
+        // La sobrecarga histórica (bool) sigue existiendo: true = multa viva, false = sin respaldo.
+        Assert.Equal(
+            ReservationDebtRules.CancelledMoneyContext.PenaltyReceivable,
+            ReservationDebtRules.DeriveForCancelled(balance: 300m, hasOutstandingDebitNote: true));
+        Assert.Equal(
+            ReservationDebtRules.CancelledMoneyContext.Inconsistent,
+            ReservationDebtRules.DeriveForCancelled(balance: 300m, hasOutstandingDebitNote: false));
+    }
+
+    [Fact]
     public void DeriveForCancelled_ZeroBalance_IsNone()
     {
         var context = ReservationDebtRules.DeriveForCancelled(balance: 0m, hasOutstandingDebitNote: false);
@@ -145,6 +185,7 @@ public class ReservationDebtRulesTests
     [InlineData(ReservationDebtRules.CancelledMoneyContext.None, null)]
     [InlineData(ReservationDebtRules.CancelledMoneyContext.ClientCreditPending, "SaldoAFavorPendiente")]
     [InlineData(ReservationDebtRules.CancelledMoneyContext.PenaltyReceivable, "MultaPorCobrar")]
+    [InlineData(ReservationDebtRules.CancelledMoneyContext.PenaltyUnderReview, "MultaEnRevision")]
     [InlineData(ReservationDebtRules.CancelledMoneyContext.Inconsistent, "Inconsistente")]
     public void ToDtoString_MapsContractStrings(ReservationDebtRules.CancelledMoneyContext context, string? expected)
     {

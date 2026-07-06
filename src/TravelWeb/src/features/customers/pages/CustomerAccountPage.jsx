@@ -125,16 +125,24 @@ function SaldoLineaCuenta({ balance, currency }) {
  * Nunca muestra "deuda" genérica: el contexto sale de getMoneyStatus (misma fuente que
  * ReservaTable/ReservaSummaryStrip/ReservaStatusChips). Si el dato es "Inconsistente"
  * (o no hay contexto explícito y el balance no permite afirmar nada), no se muestra plata.
+ *
+ * Tanda "multa fantasma" (2026-07-06): con multa, el monto sale de moneyStatus (el monto
+ * exacto de la multa), no del balance total de la reserva. Nota: esta solapa usa
+ * CustomerAccountReservaListItemDto, un DTO legacy que hoy NO manda cancelledMoneyContext
+ * (ver moneyStatus.js) — en la práctica esta fila solo puede llegar acá con "saldoAFavorAnulada"
+ * o "none"; la rama de multa queda lista para el día que el backend extienda este DTO.
  */
 function ContextoAnuladaCuenta({ moneyStatus, reserva }) {
   if (moneyStatus.kind === "none") {
     return <div className="text-slate-400 dark:text-slate-500">—</div>;
   }
   const esMulta = moneyStatus.kind === "multaPorCobrar";
-  const moneda = reserva.porMoneda?.[0]?.currency ?? "ARS";
+  const monto = esMulta
+    ? formatCurrency(moneyStatus.amount, moneyStatus.amountCurrency ?? reserva.porMoneda?.[0]?.currency ?? "ARS")
+    : formatCurrency(Math.abs(reserva.balance ?? 0), reserva.porMoneda?.[0]?.currency ?? "ARS");
   return (
     <div className={esMulta ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}>
-      {formatCurrency(Math.abs(reserva.balance ?? 0), moneda)}
+      {monto}
       <span className="ml-1 text-[9px] font-semibold uppercase tracking-wider">
         {esMulta ? "multa por anulación" : "a favor"}
       </span>

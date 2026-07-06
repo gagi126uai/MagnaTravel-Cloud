@@ -18,6 +18,13 @@
  * Decisión del dueño (2026-07-04): un "Inconsistente" (deuda en una anulada sin
  * Nota de Débito de multa que la respalde) es un problema para el vigía interno de
  * datos, NUNCA algo que vea el vendedor. Por eso ese caso devuelve `kind: "none"`.
+ *
+ * Tanda "multa fantasma" (2026-07-06): "MultaPorCobrar" ahora trae el monto EXACTO
+ * de la multa (amount/amountCurrency), no el balance total de la reserva — puede haber
+ * otra plata mezclada en el balance que no es la multa. Se sumó también "MultaEnRevision":
+ * una multa confirmada cuya Nota de Débito falló o quedó en revisión manual todavía no
+ * tiene comprobante válido, así que tampoco se muestra al vendedor (mismo tratamiento
+ * que "Inconsistente"; la diferencia la maneja el back-office desde su propia bandeja).
  */
 
 // Estados donde la reserva quedó "sin efecto" por un proceso de anulación. Fuera de
@@ -39,13 +46,21 @@ export function isReservaAnulada(status) {
  *   - collectionStatus: "SinMovimientos" | "Saldado" | "ConDeuda" | "SaldoAFavor" | undefined
  *   - hasOverdueDebt: boolean|undefined
  *   - isWithinUnpaidAlertWindow: boolean|undefined
- *   - cancelledMoneyContext: "SaldoAFavorPendiente" | "MultaPorCobrar" | "Inconsistente" | null | undefined
+ *   - cancelledMoneyContext: "SaldoAFavorPendiente" | "MultaPorCobrar" | "MultaEnRevision" |
+ *     "Inconsistente" | null | undefined
  *     (solo tiene sentido en reservas anuladas; en el resto de los estados el backend lo manda en null)
+ *   - cancelledPenaltyAmount / cancelledPenaltyCurrency: monto y moneda de LA MULTA (no el balance
+ *     total de la reserva). Solo vienen con valor cuando cancelledMoneyContext es "MultaPorCobrar".
+ *     Si faltan (DTO legacy o respuesta cacheada de antes de este campo), se usa el balance como
+ *     aproximación — ver comentario dentro de "MultaPorCobrar" más abajo.
  *
- * @returns {{ kind: string, label: string|null, tone: "success"|"warning"|"danger"|"neutral" }}
+ * @returns {{ kind: string, label: string|null, tone: "success"|"warning"|"danger"|"neutral",
+ *   amount?: number, amountCurrency?: string }}
  *   kind identifica el caso exacto (útil para tests y para que cada componente decida
  *   si le corresponde mostrar chip/color propio). label es el texto listo para mostrar
- *   (o null si no hay que mostrar nada). tone es la paleta de color a aplicar.
+ *   (o null si no hay que mostrar nada). tone es la paleta de color a aplicar. amount/amountCurrency
+ *   SOLO vienen en el caso "multaPorCobrar" — los demás casos no traen monto propio porque cada
+ *   consumidor ya sabe de dónde sacarlo (balance de la reserva, saldo a favor, etc).
  */
 export function getMoneyStatus(reserva) {
   if (!reserva) {
@@ -67,7 +82,33 @@ function getMoneyStatusAnulada(reserva) {
   }
 
   if (contexto === "MultaPorCobrar") {
-    return { kind: "multaPorCobrar", label: "Multa por anulación pendiente de cobro", tone: "warning" };
+    // El backend manda el monto EXACTO de la multa en cancelledPenaltyAmount/cancelledPenaltyCurrency
+    // (Tanda "multa fantasma", 2026-07-06). Antes de que existiera este campo, lo único que había para
+    // mostrar era el balance de la reserva — lo mantenemos como FALLBACK por si llega un DTO viejo o una
+    // respuesta cacheada del browser que todavía no lo trae. La moneda del fallback sale de la primera
+    // línea de porMoneda (mismo criterio que usaban los componentes antes de este cambio).
+    const tieneMontoExplicito =
+      reserva.cancelledPenaltyAmount !== null && reserva.cancelledPenaltyAmount !== undefined;
+
+    return {
+      kind: "multaPorCobrar",
+      label: "Multa por anulación pendiente de cobro",
+      tone: "warning",
+      amount: tieneMontoExplicito
+        ? Number(reserva.cancelledPenaltyAmount)
+        : Math.abs(Number(reserva.balance ?? 0)),
+      amountCurrency: tieneMontoExplicito
+        ? reserva.cancelledPenaltyCurrency
+        : reserva.porMoneda?.[0]?.currency,
+    };
+  }
+
+  if (contexto === "MultaEnRevision") {
+    // La multa quedó CONFIRMADA pero su Nota de Débito falló o quedó en revisión manual —
+    // todavía no hay un comprobante válido que respalde cobrarle nada al cliente. Por eso NO
+    // se muestra ningún cartel al vendedor (sería una promesa de cobro sin papel). El caso se
+    // atiende desde la bandeja de notas de débito pendientes (back-office), no desde la ficha.
+    return { kind: "none", label: null, tone: "neutral" };
   }
 
   if (contexto === "Inconsistente") {

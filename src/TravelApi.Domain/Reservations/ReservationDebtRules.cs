@@ -77,6 +77,33 @@ public static class ReservationDebtRules
         /// vigía de consistencia (pieza futura, fuera de alcance acá) — se marca para no ocultarlo.
         /// </summary>
         Inconsistent = 3,
+
+        /// <summary>
+        /// La multa por anulación se confirmó, pero su Nota de Débito quedó EN REVISIÓN (falló su emisión o se
+        /// derivó a resolución manual). El saldo positivo existe por una multa real, pero todavía NO hay un
+        /// comprobante fiscal firme que la respalde: no es "por cobrar" (no se le exige al cliente aún) ni es un
+        /// dato roto (sí hay rastro de la multa). La destraba la bandeja de back-office de Notas de Débito
+        /// pendientes; por eso el vigía de coherencia NO la reporta como inconsistencia.
+        /// </summary>
+        PenaltyUnderReview = 4,
+    }
+
+    /// <summary>
+    /// Respaldo fiscal de la multa de una reserva anulada, resuelto por el consumidor a partir de los predicados
+    /// compartidos de <c>CancellationPenaltyRules</c> (Infraestructura). Se pasa como enum (y no como un bool) para
+    /// distinguir los TRES casos que cambian el contexto de plata: sin respaldo, respaldo vivo (por cobrar) y
+    /// respaldo en revisión (ND fallida / manual).
+    /// </summary>
+    public enum DebitNoteBacking
+    {
+        /// <summary>No hay ninguna Nota de Débito de multa viva ni en revisión sobre la anulada.</summary>
+        None = 0,
+
+        /// <summary>Hay una multa VIVA (ND emitida y no anulada, o multa confirmada en emisión diferida).</summary>
+        Live = 1,
+
+        /// <summary>Hay una multa confirmada cuya ND quedó EN REVISIÓN (fallida o derivada a manual).</summary>
+        UnderReview = 2,
     }
 
     /// <summary>
@@ -92,7 +119,7 @@ public static class ReservationDebtRules
     /// <para>El saldo "cero" usa una tolerancia de centavo para no marcar como inconsistente un resto de
     /// redondeo de cambio de moneda.</para>
     /// </summary>
-    public static CancelledMoneyContext DeriveForCancelled(decimal balance, bool hasOutstandingDebitNote)
+    public static CancelledMoneyContext DeriveForCancelled(decimal balance, DebitNoteBacking backing)
     {
         // Tolerancia de redondeo: un resto de centavo (p. ej. por conversión de moneda) NO es deuda ni saldo
         // a favor real. Mismo espíritu que la tolerancia del gate económico canónico.
@@ -103,13 +130,30 @@ public static class ReservationDebtRules
 
         if (balance > roundingTolerance)
         {
-            return hasOutstandingDebitNote
-                ? CancelledMoneyContext.PenaltyReceivable
-                : CancelledMoneyContext.Inconsistent;
+            // Un saldo positivo se interpreta según el respaldo fiscal de la multa:
+            //   - Live       -> multa por cobrar (hay ND viva o multa confirmada emitiéndose);
+            //   - UnderReview -> multa en revisión (ND fallida / manual): la destraba el back-office, no el cartel;
+            //   - None        -> deuda sin ningún rastro de multa = dato roto (lo reporta el vigía).
+            return backing switch
+            {
+                DebitNoteBacking.Live => CancelledMoneyContext.PenaltyReceivable,
+                DebitNoteBacking.UnderReview => CancelledMoneyContext.PenaltyUnderReview,
+                _ => CancelledMoneyContext.Inconsistent,
+            };
         }
 
         return CancelledMoneyContext.None;
     }
+
+    /// <summary>
+    /// Sobrecarga histórica (bool) preservada para no romper llamadores existentes: <c>true</c> = multa VIVA
+    /// (<see cref="DebitNoteBacking.Live"/>), <c>false</c> = sin respaldo (<see cref="DebitNoteBacking.None"/>).
+    /// El caso "en revisión" solo se obtiene por la sobrecarga que recibe <see cref="DebitNoteBacking"/>.
+    /// </summary>
+    public static CancelledMoneyContext DeriveForCancelled(decimal balance, bool hasOutstandingDebitNote)
+        => DeriveForCancelled(
+            balance,
+            hasOutstandingDebitNote ? DebitNoteBacking.Live : DebitNoteBacking.None);
 
     /// <summary>
     /// Token del contrato del DTO/front. Los tokens van en CASTELLANO por consistencia con el precedente del
@@ -122,6 +166,7 @@ public static class ReservationDebtRules
     {
         CancelledMoneyContext.ClientCreditPending => "SaldoAFavorPendiente",
         CancelledMoneyContext.PenaltyReceivable => "MultaPorCobrar",
+        CancelledMoneyContext.PenaltyUnderReview => "MultaEnRevision",
         CancelledMoneyContext.Inconsistent => "Inconsistente",
         _ => null,
     };

@@ -404,13 +404,14 @@ public class CoherenceWatchdogTests
         ctx.ReservaMoneyByCurrency.Add(ArsRow(id: 9000, reservaId: 9,
             totalSale: 0m, confirmedSale: 0m, totalPaid: -500m, balance: 500m));
 
-        // Nota de Débito de multa viva: la penalidad quedó confirmada → el predicado de "ND viva" matchea.
+        // Multa viva: penalidad confirmada con monto positivo (rama de emisión diferida del predicado compartido).
         ctx.BookingCancellations.Add(new BookingCancellation
         {
             Id = 9, PublicId = Guid.NewGuid(), ReservaId = 9,
             CustomerId = 1, SupplierId = 1,
             Status = BookingCancellationStatus.ManualReviewPending,
             PenaltyStatus = PenaltyStatus.Confirmed,
+            PenaltyAmountAtEvent = 500m,
             Reason = "test", DraftedAt = DateTime.UtcNow, DraftedByUserId = "tester",
             FiscalSnapshot = new FiscalSnapshot(),
         });
@@ -423,6 +424,46 @@ public class CoherenceWatchdogTests
         Assert.Equal(0, result.AnnulledWithLiveServices);
         Assert.False(result.NotificationSent);
 
+        notificationMock.Verify(n => n.CreateAndSendAsync(It.IsAny<Notification>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task AnnulledWithPenaltyUnderReview_AndPositiveBalance_IsNotReportedAsW5()
+    {
+        // Fix "multa fantasma": una anulada con saldo positivo cuya multa se CONFIRMÓ pero su Nota de Débito quedó
+        // FALLIDA (o en resolución manual) NO es un dato roto para W5: la vigila la bandeja de back-office. W5 solo
+        // reporta el caso sin NINGÚN rastro de multa (Inconsistente).
+        var (job, ctx, notificationMock, _) = BuildJob();
+
+        ctx.Reservas.Add(new Reserva
+        {
+            Id = 12, NumeroReserva = "F-ENREVISION", Name = "Anulada con multa en revisión",
+            Status = EstadoReserva.Cancelled, AdultCount = 1,
+            TotalSale = 0m, ConfirmedSale = 0m, TotalPaid = -500m, Balance = 500m
+        });
+        ctx.HotelBookings.Add(Hotel(id: 120, reservaId: 12, status: WorkflowStatuses.Cancelado, salePrice: 1000m));
+        ctx.Payments.Add(new Payment { Id = 1200, ReservaId = 12, Amount = 500m, Currency = Monedas.ARS, Status = "Paid" });
+        ctx.Payments.Add(new Payment { Id = 1201, ReservaId = 12, Amount = -1000m, Currency = Monedas.ARS, Status = "Paid" });
+        ctx.ReservaMoneyByCurrency.Add(ArsRow(id: 12000, reservaId: 12,
+            totalSale: 0m, confirmedSale: 0m, totalPaid: -500m, balance: 500m));
+
+        ctx.BookingCancellations.Add(new BookingCancellation
+        {
+            Id = 12, PublicId = Guid.NewGuid(), ReservaId = 12,
+            CustomerId = 1, SupplierId = 1,
+            Status = BookingCancellationStatus.ManualReviewPending,
+            PenaltyStatus = PenaltyStatus.Confirmed,
+            PenaltyAmountAtEvent = 500m,
+            DebitNoteStatus = DebitNoteStatus.Failed, // ND fallida = "en revisión", no dato roto.
+            Reason = "test", DraftedAt = DateTime.UtcNow, DraftedByUserId = "tester",
+            FiscalSnapshot = new FiscalSnapshot(),
+        });
+        await ctx.SaveChangesAsync();
+
+        var result = await job.RunAsync(CancellationToken.None);
+
+        Assert.Equal(0, result.AnnulledWithUnjustifiedDebt); // NO reportada por W5.
         notificationMock.Verify(n => n.CreateAndSendAsync(It.IsAny<Notification>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }

@@ -359,11 +359,229 @@ public class CancellationWaivePenaltyTests
                 SupportingDocumentReference: "https://docs/mail.pdf"),
             "u", "U", false, default, userCanClassifyAgencyPenalty: true);
 
-        // Ahora cerrar sin multa debe rebotar: la pata ya se resolvio (con multa).
+        // Ahora cerrar sin multa debe rebotar: la multa quedo confirmada CON su Nota de Debito emitida (Pending +
+        // factura vinculada). Ese comprobante fiscal en juego se resuelve desde administracion, no por este boton.
         var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
             h.Service.WaiveOperatorPenaltyAsync(
-                bcId, "Sin multa.", "u", "U", default, userCanClassifyAgencyPenalty: true));
-        Assert.Equal("INV-WAIVE-003", ex.InvariantCode);
+                bcId, "Sin multa.", "u", "U", default, userCanClassifyAgencyPenalty: true, requesterIsAdmin: true));
+        Assert.Equal("INV-WAIVE-004", ex.InvariantCode);
+    }
+
+    // ============================================================
+    // Fix "multa fantasma" (2026-07-05): cerrar sin multa DESDE una multa ya confirmada cuya Nota de Debito nunca
+    // llego a existir (NotApplicable / Failed / ManualReview, sin factura vinculada). Apaga el cartel pegado y
+    // RESTAURA los topes de reembolso que la confirmacion habia reducido. Exige Admin.
+    // ============================================================
+
+    /// <summary>
+    /// Deja el BC en el estado "multa fantasma": penalidad Confirmed pass-through, ND en <paramref name="debitNote"/>
+    /// (sin factura vinculada), con una linea del operador cuyo RefundCap YA fue reducido por la multa
+    /// (RefundCap = capBeforePenalty − multa; PenaltyAmount = multa), como lo dejaria AllocateConfirmedPenaltyToLines.
+    /// </summary>
+    private static async Task<BookingCancellationLine> SeedConfirmedPenaltyWithoutDebitNoteAsync(
+        Harness h, BookingCancellation bc, Supplier supplier,
+        decimal capBeforePenalty, decimal penalty, DebitNoteStatus debitNote)
+    {
+        bc.ConceptKind = CancellationConceptKind.OperatorPenaltyPassThrough;
+        bc.PenaltyStatus = PenaltyStatus.Confirmed;
+        bc.PenaltyAmountAtEvent = penalty;
+        bc.DebitNoteStatus = debitNote;
+        bc.DebitNoteInvoiceId = null;
+        bc.DebitNoteArcaErrorMessage =
+            debitNote == DebitNoteStatus.NotApplicable ? null : "ARCA rechazo la Nota de Debito.";
+        bc.PenaltyConfirmedByUserId = "u";
+        bc.PenaltyConfirmedAt = DateTime.UtcNow.AddDays(-1);
+
+        var line = new BookingCancellationLine
+        {
+            BookingCancellationId = bc.Id,
+            SupplierId = supplier.Id,
+            Currency = Monedas.ARS,
+            RefundCap = capBeforePenalty - penalty, // ya reducido por la multa (como dejaria el Allocate).
+            PenaltyAmount = penalty,
+            ReceivedRefundAmount = 0m,
+            RefundStatus = BookingCancellationLineRefundStatus.PendingOperatorRefund,
+        };
+        h.Ctx.BookingCancellationLines.Add(line);
+        await h.Ctx.SaveChangesAsync();
+        return line;
+    }
+
+    [Fact]
+    public async Task WaiveFromConfirmed_WithoutDebitNote_AsAdmin_ClosesAndRestoresCaps()
+    {
+        var h = BuildService();
+        var (bcId, bc, supplier, _) = await SeedPostNcAsync(h.Ctx);
+        var line = await SeedConfirmedPenaltyWithoutDebitNoteAsync(
+            h, bc, supplier, capBeforePenalty: 100_000m, penalty: 30_000m,
+            debitNote: DebitNoteStatus.ManualReview);
+
+        await h.Service.WaiveOperatorPenaltyAsync(
+            bcId, "El operador finalmente no cobra la multa.", "admin", "Admin", default,
+            userCanClassifyAgencyPenalty: true, requesterIsAdmin: true);
+
+        var after = h.Ctx.BookingCancellations.Single();
+        Assert.Equal(PenaltyStatus.Waived, after.PenaltyStatus);
+        Assert.Equal(0m, after.PenaltyAmountAtEvent);
+        Assert.Equal(DebitNoteStatus.NotApplicable, after.DebitNoteStatus);
+        Assert.Null(after.DebitNoteArcaErrorMessage); // se limpio el error de la ND fallida.
+
+        // CRITICO: el tope de reembolso del operador vuelve INTEGRO (100.000) y la linea queda sin penalidad, asi
+        // "Reembolsos a cobrar" deja de estar subestimado.
+        var afterLine = h.Ctx.BookingCancellationLines.Single(l => l.Id == line.Id);
+        Assert.Equal(100_000m, afterLine.RefundCap);
+        Assert.Null(afterLine.PenaltyAmount);
+        Assert.Equal(BookingCancellationLineRefundStatus.PendingOperatorRefund, afterLine.RefundStatus);
+    }
+
+    [Fact]
+    public async Task WaiveFromConfirmed_EmitsAuditWithRestoredCaps()
+    {
+        var h = BuildService();
+        var (bcId, bc, supplier, _) = await SeedPostNcAsync(h.Ctx);
+        await SeedConfirmedPenaltyWithoutDebitNoteAsync(
+            h, bc, supplier, capBeforePenalty: 100_000m, penalty: 30_000m,
+            debitNote: DebitNoteStatus.Failed);
+
+        await h.Service.WaiveOperatorPenaltyAsync(
+            bcId, "No cobra multa.", "admin", "Admin", default,
+            userCanClassifyAgencyPenalty: true, requesterIsAdmin: true);
+
+        // El audit distingue el cierre DESDE una multa confirmada e incluye los caps restaurados.
+        h.AuditMock.Verify(a => a.LogBusinessEventAsync(
+            AuditActions.OperatorPenaltyWaived,
+            AuditActions.BookingCancellationEntityName,
+            It.IsAny<string>(),
+            It.Is<string>(details =>
+                details.Contains("operator-penalty-waived-from-confirmed") &&
+                details.Contains("restoredRefundCaps")),
+            "admin",
+            "Admin",
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task WaiveFromConfirmed_WithoutAdmin_Rejected()
+    {
+        var h = BuildService();
+        var (bcId, bc, supplier, _) = await SeedPostNcAsync(h.Ctx);
+        await SeedConfirmedPenaltyWithoutDebitNoteAsync(
+            h, bc, supplier, capBeforePenalty: 100_000m, penalty: 30_000m,
+            debitNote: DebitNoteStatus.ManualReview);
+
+        // Aunque tenga el permiso de clasificar penalidad, cerrar sin multa una penalidad CONFIRMADA exige Admin.
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.WaiveOperatorPenaltyAsync(
+                bcId, "Intento sin ser admin.", "u", "U", default,
+                userCanClassifyAgencyPenalty: true, requesterIsAdmin: false));
+        Assert.Equal("INV-WAIVE-005", ex.InvariantCode);
+
+        // Estado sin cambios: sigue Confirmed y el cap sigue reducido.
+        var after = h.Ctx.BookingCancellations.Single();
+        Assert.Equal(PenaltyStatus.Confirmed, after.PenaltyStatus);
+        Assert.Equal(70_000m, h.Ctx.BookingCancellationLines.Single().RefundCap);
+    }
+
+    [Fact]
+    public async Task WaiveFromConfirmed_ThenRevert_ReturnsToEstimated()
+    {
+        var h = BuildService();
+        var (bcId, bc, supplier, reserva) = await SeedPostNcAsync(h.Ctx);
+        await SeedConfirmedPenaltyWithoutDebitNoteAsync(
+            h, bc, supplier, capBeforePenalty: 100_000m, penalty: 30_000m,
+            debitNote: DebitNoteStatus.ManualReview);
+
+        await h.Service.WaiveOperatorPenaltyAsync(
+            bcId, "No cobra.", "admin", "Admin", default,
+            userCanClassifyAgencyPenalty: true, requesterIsAdmin: true);
+
+        // La reversa del waive-desde-Confirmed vuelve LIMPIO a Estimated (la multa se re-confirma por el camino normal).
+        await h.Service.RevertWaivedOperatorPenaltyAsync(
+            bcId, "El operador si cobra la multa.", "admin", "Admin", requesterIsAdmin: true, default);
+
+        var after = h.Ctx.BookingCancellations.Single();
+        Assert.Equal(PenaltyStatus.Estimated, after.PenaltyStatus);
+        Assert.Null(after.PenaltyAmountAtEvent);
+        // La multa vuelve a estar pendiente de confirmar.
+        Assert.True(await h.Service.HasPendingOperatorPenaltyAsync(reserva.PublicId, default));
+    }
+
+    [Fact]
+    public async Task ReverseConfirmedPenaltyFromLines_AgencyOwnedConcept_IsNoOp()
+    {
+        // Para concepto agency-owned el Allocate no habia tocado las lineas (el operador reembolsa integro): la
+        // reversa no debe deshacer nada. Verifica el espejo del gate directamente.
+        var h = BuildService();
+        var (_, bc, supplier, _) = await SeedPostNcAsync(h.Ctx);
+        bc.ConceptKind = CancellationConceptKind.AgencyManagementFee;
+        var line = new BookingCancellationLine
+        {
+            BookingCancellationId = bc.Id,
+            SupplierId = supplier.Id,
+            Currency = Monedas.ARS,
+            RefundCap = 100_000m,
+            PenaltyAmount = null,
+            ReceivedRefundAmount = 0m,
+            RefundStatus = BookingCancellationLineRefundStatus.PendingOperatorRefund,
+        };
+        h.Ctx.BookingCancellationLines.Add(line);
+        await h.Ctx.SaveChangesAsync();
+
+        var restored = await h.Service.ReverseConfirmedPenaltyFromLinesAsync(bc, default);
+
+        Assert.Empty(restored);
+        Assert.Equal(100_000m, h.Ctx.BookingCancellationLines.Single().RefundCap);
+    }
+
+    [Fact]
+    public async Task ReverseConfirmedPenaltyFromLines_ResidualZeroLine_IsResetToNull_SoReAllocateNetsAgain()
+    {
+        // Pase final Tanda 1: el Allocate puede dejar una línea con PenaltyAmount = 0 (residuo del reparto
+        // proporcional/redondeo). La reversa DEBE resetearla a null igual, porque la guarda de idempotencia del
+        // Allocate es Any(l => l.PenaltyAmount.HasValue): un 0 pegado (HasValue == true) haría que un re-confirm NO
+        // vuelva a netear el cap -> reembolso sobreestimado para siempre.
+        var h = BuildService();
+        var (_, bc, supplier, _) = await SeedPostNcAsync(h.Ctx);
+        bc.ConceptKind = CancellationConceptKind.OperatorPenaltyPassThrough;
+        await h.Ctx.SaveChangesAsync();
+
+        // Dos líneas del operador principal: una con multa positiva, otra con un 0 residual.
+        var lineWithPenalty = new BookingCancellationLine
+        {
+            BookingCancellationId = bc.Id, SupplierId = supplier.Id, Currency = Monedas.ARS,
+            RefundCap = 70_000m, PenaltyAmount = 30_000m, ReceivedRefundAmount = 0m,
+            RefundStatus = BookingCancellationLineRefundStatus.PendingOperatorRefund,
+        };
+        var lineWithZeroResidual = new BookingCancellationLine
+        {
+            BookingCancellationId = bc.Id, SupplierId = supplier.Id, Currency = Monedas.ARS,
+            RefundCap = 10_000m, PenaltyAmount = 0m, ReceivedRefundAmount = 0m,
+            RefundStatus = BookingCancellationLineRefundStatus.PendingOperatorRefund,
+        };
+        h.Ctx.BookingCancellationLines.AddRange(lineWithPenalty, lineWithZeroResidual);
+        await h.Ctx.SaveChangesAsync();
+
+        var restored = await h.Service.ReverseConfirmedPenaltyFromLinesAsync(bc, default);
+
+        // La línea con multa positiva: cap restaurado (+30.000) y penalidad limpiada.
+        var afterPenalty = h.Ctx.BookingCancellationLines.Single(l => l.Id == lineWithPenalty.Id);
+        Assert.Equal(100_000m, afterPenalty.RefundCap);
+        Assert.Null(afterPenalty.PenaltyAmount);
+
+        // La línea con 0 residual: cap intacto (no había nada que devolver) pero penalidad reseteada a null.
+        var afterZero = h.Ctx.BookingCancellationLines.Single(l => l.Id == lineWithZeroResidual.Id);
+        Assert.Equal(10_000m, afterZero.RefundCap);
+        Assert.Null(afterZero.PenaltyAmount);
+
+        // El audit solo lista la restauración positiva (un 0 no aporta nada al reembolso).
+        Assert.Single(restored);
+        Assert.Equal(lineWithPenalty.Id, restored[0].LineId);
+
+        // Clave para el re-neteo: NINGUNA línea quedó con PenaltyAmount seteado -> la guarda de idempotencia del
+        // Allocate (Any(l => l.PenaltyAmount.HasValue)) es false, así que un re-confirm vuelve a reducir el cap.
+        var operatorLines = h.Ctx.BookingCancellationLines
+            .Where(l => l.BookingCancellationId == bc.Id && l.SupplierId == bc.SupplierId).ToList();
+        Assert.DoesNotContain(operatorLines, l => l.PenaltyAmount.HasValue);
     }
 
     // ============================================================
@@ -787,6 +1005,15 @@ public class CancellationWaivePenaltyTests
             Assert.DoesNotContain(token, message, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>Un mensaje de negocio jamás debe traer rastros de una excepción técnica ni de un stack trace.</summary>
+    private static void AssertNoExceptionOrStack(string message)
+    {
+        Assert.DoesNotContain("Exception", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("StackTrace", message, StringComparison.Ordinal);
+        Assert.DoesNotContain(".cs:line", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("   at ", message, StringComparison.Ordinal); // línea típica de stack trace .NET
+    }
+
     [Fact]
     public async Task Waive_WithoutPermission_MessageHasNoSlug()
     {
@@ -866,6 +1093,54 @@ public class CancellationWaivePenaltyTests
                 bcId, "Otra vez.", "u", "U", default, userCanClassifyAgencyPenalty: true));
         Assert.Equal("INV-WAIVE-003", ex.InvariantCode);
         AssertNoTechnicalLeak(ex.Message);
+    }
+
+    [Fact]
+    public async Task WaiveFromConfirmed_WithDebitNoteInPlay_MessageHasNoTechnicalLeakOrStack()
+    {
+        // INV-WAIVE-004: la multa tiene una ND emitida/en emisión -> 409. El mensaje que llega al usuario
+        // (ProblemDetails.Detail) debe ser copy amigable: sin exception/stack ni nombres de campos internos.
+        var h = BuildService();
+        var (bcId, _, _, _) = await SeedPostNcAsync(h.Ctx);
+        SetupCreateEmitsDebitNote(h);
+
+        // Confirmamos una multa real (queda Confirmed con ND vinculada) para gatillar INV-WAIVE-004 al waivear.
+        await h.Service.ConfirmPenaltyAsync(
+            bcId,
+            new ConfirmPenaltyRequest(
+                ConceptKind: CancellationConceptKind.AgencyManagementFee,
+                ConfirmedPenaltyAmount: 30_000m,
+                OperatorConfirmationDate: DateTime.UtcNow.AddDays(-2),
+                SupportingDocumentReference: "https://docs/mail.pdf"),
+            "u", "U", false, default, userCanClassifyAgencyPenalty: true);
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.WaiveOperatorPenaltyAsync(
+                bcId, "Sin multa.", "u", "U", default,
+                userCanClassifyAgencyPenalty: true, requesterIsAdmin: true));
+        Assert.Equal("INV-WAIVE-004", ex.InvariantCode);
+        AssertNoTechnicalLeak(ex.Message);
+        AssertNoExceptionOrStack(ex.Message);
+    }
+
+    [Fact]
+    public async Task WaiveFromConfirmed_WithoutAdmin_MessageHasNoTechnicalLeakOrStack()
+    {
+        // INV-WAIVE-005: cerrar sin multa una penalidad ya confirmada sin ser Admin -> 409. Mensaje amigable, sin
+        // fuga técnica ni stack.
+        var h = BuildService();
+        var (bcId, bc, supplier, _) = await SeedPostNcAsync(h.Ctx);
+        await SeedConfirmedPenaltyWithoutDebitNoteAsync(
+            h, bc, supplier, capBeforePenalty: 100_000m, penalty: 30_000m,
+            debitNote: DebitNoteStatus.ManualReview);
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.WaiveOperatorPenaltyAsync(
+                bcId, "Intento sin ser admin.", "u", "U", default,
+                userCanClassifyAgencyPenalty: true, requesterIsAdmin: false));
+        Assert.Equal("INV-WAIVE-005", ex.InvariantCode);
+        AssertNoTechnicalLeak(ex.Message);
+        AssertNoExceptionOrStack(ex.Message);
     }
 
     [Fact]

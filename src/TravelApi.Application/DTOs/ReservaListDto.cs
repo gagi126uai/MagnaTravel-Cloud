@@ -31,10 +31,24 @@ public class ReservaListDto
     /// <summary>
     /// Contexto de PLATA REAL en una reserva anulada. Null salvo en estados de cancelacion (Cancelled /
     /// PendingOperatorRefund). Mismo criterio y tokens que el detalle (ver <c>ReservaDto.CancelledMoneyContext</c>
-    /// y <c>ReservationDebtRules</c>): "SaldoAFavorPendiente" | "MultaPorCobrar" | "Inconsistente" | null.
-    /// Se llena en una query batcheada por pagina (sin N+1), solo para las filas anuladas.
+    /// y <c>ReservationDebtRules</c>): "SaldoAFavorPendiente" | "MultaPorCobrar" | "MultaEnRevision" |
+    /// "Inconsistente" | null. Se llena en una query batcheada por pagina (sin N+1), solo para las filas anuladas.
     /// </summary>
     public string? CancelledMoneyContext { get; set; }
+
+    /// <summary>
+    /// Monto de la multa por anulacion PENDIENTE de cobro (neto: multa bruta menos lo ya pagado en su moneda), para
+    /// mostrar junto al cartel "Multa pendiente de cobro" en la fila. Solo con valor cuando
+    /// <see cref="CancelledMoneyContext"/> es "MultaPorCobrar"; null en el resto. Mismo criterio que el detalle
+    /// (<c>ReservaDto.CancelledPenaltyAmount</c>).
+    /// </summary>
+    public decimal? CancelledPenaltyAmount { get; set; }
+
+    /// <summary>
+    /// Moneda ISO 4217 ("ARS"/"USD") de <see cref="CancelledPenaltyAmount"/>. Solo con valor cuando el contexto
+    /// es "MultaPorCobrar"; null en el resto.
+    /// </summary>
+    public string? CancelledPenaltyCurrency { get; set; }
 
     /// <summary>
     /// ADR-021 Capa 5: detalle de plata por moneda para la fila del listado. Se llena leyendo la tabla

@@ -438,8 +438,16 @@ public static class CoherenceChecks
     /// <summary>
     /// Detecta reservas anuladas cuyo contexto de plata, según la regla de dominio
     /// <see cref="ReservationDebtRules.DeriveForCancelled"/>, cae en
-    /// <see cref="ReservationDebtRules.CancelledMoneyContext.Inconsistent"/> (saldo positivo sin Nota de Débito viva
-    /// que lo respalde). Solo REPORTA (finding AutoRepaired=false); no modifica la reserva.
+    /// <see cref="ReservationDebtRules.CancelledMoneyContext.Inconsistent"/> (saldo positivo sin NINGÚN rastro de
+    /// multa que lo respalde). Solo REPORTA (finding AutoRepaired=false); no modifica la reserva.
+    ///
+    /// <para><b>Qué reporta y qué NO</b>: W5 reporta ÚNICAMENTE el caso <c>Inconsistent</c> (saldo a cobrar sin
+    /// multa viva ni multa en revisión = dato roto sin explicación). NO reporta el caso
+    /// <see cref="ReservationDebtRules.CancelledMoneyContext.PenaltyUnderReview"/> (multa confirmada con Nota de
+    /// Débito fallida / en resolución manual): ese caso YA lo vigila la bandeja de back-office
+    /// GET /cancellations/debit-notes/pending, que es quien la puede destrabar. Por eso, para separar "sin ningún
+    /// rastro" de "en revisión", W5 consulta los DOS predicados compartidos (viva + en revisión) y solo levanta
+    /// cuando no cae en ninguno.</para>
     ///
     /// <para>Se evalúa DESPUÉS de las reparaciones de plata del job (W3 + recalculador de anuladas), así el saldo que
     /// mira es el fresco: si la "deuda" era solo una proyección vieja, ya se recalculó y no cae acá.</para>
@@ -458,17 +466,26 @@ public static class CoherenceChecks
         if (annulledReservas.Count == 0)
             return Array.Empty<CoherenceFinding>();
 
-        // Reservas anuladas que SÍ tienen una Nota de Débito de multa viva, en UNA query (evita N+1). El predicado es
-        // el mismo criterio "amplio" de ReservaService.LiveCancellationDebitNotePredicate: penalidad confirmada, O una
-        // ND en cualquier estado != NotApplicable, O la factura de la ND ya vinculada. No se puede reusar la constante
-        // (es privada de ese service); se replica con este comentario para no divergir.
         var annulledIds = annulledReservas.Select(r => r.Id).ToList();
+
+        // Reservas anuladas con multa VIVA, en UNA query (evita N+1). Reusa el predicado compartido
+        // CancellationPenaltyRules.LiveDebitNotePredicate (misma definición que usa el contexto de plata de la ficha),
+        // así el vigía y la pantalla no divergen.
         var reservaIdsWithLiveDebitNote = (await db.BookingCancellations
                 .AsNoTracking()
                 .Where(bc => annulledIds.Contains(bc.ReservaId))
-                .Where(bc => bc.PenaltyStatus == PenaltyStatus.Confirmed
-                             || bc.DebitNoteStatus != DebitNoteStatus.NotApplicable
-                             || bc.DebitNoteInvoiceId != null)
+                .Where(CancellationPenaltyRules.LiveDebitNotePredicate)
+                .Select(bc => bc.ReservaId)
+                .Distinct()
+                .ToListAsync(ct))
+            .ToHashSet();
+
+        // Reservas anuladas con multa EN REVISIÓN (ND fallida / manual). No son dato roto: las vigila la bandeja de
+        // back-office, no W5. Las excluimos del reporte.
+        var reservaIdsWithPenaltyUnderReview = (await db.BookingCancellations
+                .AsNoTracking()
+                .Where(bc => annulledIds.Contains(bc.ReservaId))
+                .Where(CancellationPenaltyRules.PenaltyUnderReviewPredicate)
                 .Select(bc => bc.ReservaId)
                 .Distinct()
                 .ToListAsync(ct))
@@ -479,9 +496,18 @@ public static class CoherenceChecks
         {
             ct.ThrowIfCancellationRequested();
 
-            var hasLiveDebitNote = reservaIdsWithLiveDebitNote.Contains(reserva.Id);
-            var context = ReservationDebtRules.DeriveForCancelled(reserva.Balance, hasLiveDebitNote);
+            // Live tiene prioridad; luego UnderReview; si no está en ninguno, no hay respaldo.
+            ReservationDebtRules.DebitNoteBacking backing;
+            if (reservaIdsWithLiveDebitNote.Contains(reserva.Id))
+                backing = ReservationDebtRules.DebitNoteBacking.Live;
+            else if (reservaIdsWithPenaltyUnderReview.Contains(reserva.Id))
+                backing = ReservationDebtRules.DebitNoteBacking.UnderReview;
+            else
+                backing = ReservationDebtRules.DebitNoteBacking.None;
 
+            var context = ReservationDebtRules.DeriveForCancelled(reserva.Balance, backing);
+
+            // Solo el dato roto sin explicación (Inconsistent). PenaltyUnderReview NO se reporta acá (la bandeja lo mira).
             if (context != ReservationDebtRules.CancelledMoneyContext.Inconsistent)
                 continue;
 

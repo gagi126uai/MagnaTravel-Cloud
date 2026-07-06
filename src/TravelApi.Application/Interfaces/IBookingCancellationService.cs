@@ -434,23 +434,37 @@ public interface IBookingCancellationService
     /// <para><b>Auditoria OBLIGATORIA</b>: deja el evento <c>AuditActions.OperatorPenaltyWaived</c> con
     /// quien/cuando + el motivo (para distinguir "no hubo multa" de "monto 0 por error").</para>
     ///
+    /// <para><b>Cierre sin multa DESDE una multa ya confirmada</b> (fix "multa fantasma", 2026-07-05): si la multa
+    /// se confirmo pero su Nota de Debito nunca llego a existir (quedo <c>NotApplicable</c>, <c>Failed</c> o
+    /// <c>ManualReview</c>, y sin factura de ND vinculada), el usuario puede decidir NO cobrarla. Esa rama
+    /// exige rol Admin (misma sensibilidad que reabrir un cierre) y, ademas de dejar la penalidad en
+    /// <c>Waived</c>, RESTAURA los topes de reembolso del operador que la confirmacion habia reducido (espejo de
+    /// la imputacion de la multa a las lineas). Si en cambio ya hay un comprobante fiscal en juego (ND vinculada,
+    /// o en estado <c>Pending</c>/<c>Issued</c>), NO se puede cerrar sin multa por este camino: se resuelve desde
+    /// administracion (INV-WAIVE-004).</para>
+    ///
     /// <para><b>Exceptions</b>: <c>KeyNotFoundException</c> (404) si el BC no existe;
     /// <c>InvalidOperationException</c> (409) si el flag esta OFF;
     /// <c>BusinessInvariantViolationException</c> (409) por falta de permiso (INV-WAIVE-PERM), estado no post-NC
-    /// (INV-WAIVE-001) o penalidad ya resuelta/ND en juego (INV-WAIVE-003, idempotencia: waive doble rebota);
-    /// <c>DbUpdateConcurrencyException</c> (409 CONCURRENT_EDIT) por xmin.</para>
+    /// (INV-WAIVE-001), penalidad ya cerrada sin multa (INV-WAIVE-003, idempotencia: waive doble rebota),
+    /// comprobante fiscal de la multa en juego (INV-WAIVE-004) o cierre desde multa confirmada sin ser Admin
+    /// (INV-WAIVE-005); <c>DbUpdateConcurrencyException</c> (409 CONCURRENT_EDIT) por xmin.</para>
     /// </summary>
     /// <param name="reason">Motivo OBLIGATORIO del cierre sin multa (auditoria del contador).</param>
     /// <param name="userCanClassifyAgencyPenalty">true si el caller tiene
     /// <c>cancellations.classify_agency_penalty</c> (o es Admin). Lo resuelve el controller. El service lo EXIGE,
     /// igual que <see cref="ConfirmPenaltyAsync"/>: resolver la pata fiscal de la penalidad es una accion sensible.</param>
+    /// <param name="requesterIsAdmin">true si el caller es Admin. Solo se EXIGE para cerrar sin multa DESDE una
+    /// multa ya confirmada (rama sensible); el cierre desde el estado pendiente normal no lo requiere. Lo resuelve
+    /// el controller.</param>
     Task<BookingCancellationDto> WaiveOperatorPenaltyAsync(
         Guid publicId,
         string reason,
         string userId,
         string? userName,
         CancellationToken ct,
-        bool userCanClassifyAgencyPenalty = false);
+        bool userCanClassifyAgencyPenalty = false,
+        bool requesterIsAdmin = false);
 
     /// <summary>
     /// Fase A (2026-06-28): REABRE un cierre sin multa, volviendo la penalidad del operador de

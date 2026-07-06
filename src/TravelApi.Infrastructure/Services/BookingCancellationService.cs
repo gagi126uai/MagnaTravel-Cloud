@@ -5180,7 +5180,8 @@ public class BookingCancellationService
         string userId,
         string? userName,
         CancellationToken ct,
-        bool userCanClassifyAgencyPenalty = false)
+        bool userCanClassifyAgencyPenalty = false,
+        bool requesterIsAdmin = false)
     {
         // Fase A (2026-06-28): cierre SIN multa. Es la rama ALTERNATIVA a ConfirmPenaltyAsync para el caso mas
         // comun del negocio: el operador no cobro ninguna multa y devuelve todo. Reusa las precondiciones de
@@ -5225,37 +5226,71 @@ public class BookingCancellationService
                 "confirmada por la AFIP.",
                 invariantCode: "INV-WAIVE-001");
 
-        // === Precondicion 5: idempotencia + candado compartido con ConfirmPenaltyAsync. Si la penalidad ya se
-        // resolvio (Confirmed o Waived) o la ND ya esta en juego, rebota 409. Waive doble => 409 (no-op seguro).
-        // La primera accion que resuelve la penalidad (confirmar O cerrar sin multa) gana; la segunda rebota. ===
-        var penaltyAlreadyResolved =
-            bc.PenaltyStatus == PenaltyStatus.Confirmed ||
-            bc.PenaltyStatus == PenaltyStatus.Waived ||
+        // === Precondicion 5: idempotencia. Si la penalidad YA se cerro sin multa (Waived), rebota 409 (no-op
+        // seguro). Waive doble => 409. ===
+        if (bc.PenaltyStatus == PenaltyStatus.Waived)
+            throw new BusinessInvariantViolationException(
+                "La multa del operador de esta cancelación ya fue cerrada sin multa. No se vuelve a procesar.",
+                invariantCode: "INV-WAIVE-003");
+
+        // === Precondicion 6: comprobante fiscal de la multa EN JUEGO. Si ya hay una Nota de Debito vinculada, o
+        // encolada (Pending), o con CAE (Issued), NO se puede "cerrar sin multa" por este boton: habria que anular
+        // ese comprobante desde administracion primero. Cerrar sin multa dejaria una ND viva sin su multa =
+        // incoherencia fiscal. ===
+        var debitNoteInPlay =
             bc.DebitNoteInvoiceId.HasValue ||
             bc.DebitNoteStatus == DebitNoteStatus.Pending ||
             bc.DebitNoteStatus == DebitNoteStatus.Issued;
-        if (penaltyAlreadyResolved)
+        if (debitNoteInPlay)
             throw new BusinessInvariantViolationException(
-                "La multa del operador de esta cancelación ya fue resuelta (confirmada con multa o cerrada sin " +
-                "multa). No se vuelve a procesar.",
-                invariantCode: "INV-WAIVE-003");
+                "La multa tiene una nota de débito emitida o en emisión; se resuelve desde administración.",
+                invariantCode: "INV-WAIVE-004");
 
-        // === Aplicar el cierre sin multa. Estado terminal propio (Waived) + monto 0. NO tocamos:
-        //   - DebitNoteInvoiceId / DebitNoteStatus: quedan en NotApplicable -> NO hay ND (ni la bandeja de NDs
-        //     huerfanas, que keyea por PenaltyStatus==Confirmed, lo levanta).
-        //   - las lineas (PenaltyAmount / RefundCap): el operador devuelve TODO, los caps quedan completos, asi
-        //     el cierre por reembolso total (CloseReservaIfOperatorRefundComplete) sigue funcionando.
-        //   - el estado de la reserva: no lo cambia por si mismo; cierra cuando llega el reembolso completo. ===
+        // === Precondicion 7: cierre sin multa DESDE una multa ya confirmada. Es la rama que apaga el cartel de
+        // "multa fantasma": la multa se confirmo (Confirmed) pero su ND nunca llego a existir (NotApplicable / Failed
+        // / ManualReview, sin factura vinculada — garantizado por la Precondicion 6). Decidir NO cobrarla es una
+        // accion sensible (revierte una confirmacion y restaura topes de reembolso), asi que la EXIGIMOS a Admin,
+        // igual que reabrir un cierre (RevertWaivedOperatorPenaltyAsync). El cierre desde el estado pendiente normal
+        // (Estimated) NO requiere Admin. ===
+        var waivingFromConfirmed = bc.PenaltyStatus == PenaltyStatus.Confirmed;
+        if (waivingFromConfirmed && !requesterIsAdmin)
+            throw new BusinessInvariantViolationException(
+                "Cerrar sin multa una penalidad ya confirmada requiere rol de Administrador.",
+                invariantCode: "INV-WAIVE-005");
+
+        // === Si venimos de una multa confirmada, DESHACEMOS la imputacion de la multa a las lineas del operador
+        // ANTES de cambiar el estado. Al confirmar (AllocateConfirmedPenaltyToLinesAsync) en concepto pass-through se
+        // REDUJO el RefundCap de las lineas del operador principal (invariante RefundCap + PenaltyAmount ==
+        // capBeforePenalty). Si no lo restauramos, "Reembolsos a cobrar" queda subestimado para siempre. La lista de
+        // caps restaurados va al audit. Para el estado pendiente (Estimated) esto es no-op (no hubo imputacion). ===
+        var restoredCaps = waivingFromConfirmed
+            ? await ReverseConfirmedPenaltyFromLinesAsync(bc, ct)
+            : new List<PenaltyCapRestore>();
+
+        // === Snapshot de la huella de ND ANTES de limpiarla, para el audit. Guardar el estado de ND previo (p.ej.
+        // Failed / ManualReview) y el mensaje de error de ARCA que se borra deja la historia AUTOCONTENIDA en el evento:
+        // se reconstruye "de que estado veniamos" sin tener que correlacionar timestamps con otros registros. ===
+        var previousDebitNoteStatus = bc.DebitNoteStatus.ToString();
+        var clearedArcaErrorMessage = bc.DebitNoteArcaErrorMessage;
+
+        // === Aplicar el cierre sin multa. Estado terminal propio (Waived) + monto 0, y limpieza de cualquier huella
+        // de ND que hubiera quedado (Failed/ManualReview + su mensaje de error): la cara fiscal al cliente por la
+        // multa pasa a cero, sin comprobante. NO tocamos el estado de la reserva: cierra cuando llega el reembolso
+        // completo (los post-pasos de abajo reevaluan el auto-cierre). ===
         bc.PenaltyStatus = PenaltyStatus.Waived;
         bc.PenaltyAmountAtEvent = 0m; // "no hubo multa" explicito (la cara fiscal al cliente es cero, sin ND).
+        bc.DebitNoteStatus = DebitNoteStatus.NotApplicable; // sin ND (limpia un Failed/ManualReview previo).
+        bc.DebitNoteArcaErrorMessage = null;                // el error de la ND que fallo ya no aplica.
+        bc.DebitNotePurpose = null;                         // no hay finalidad de ND: la multa se cerro sin comprobante.
         bc.PenaltyConfirmedByUserId = userId;
         bc.PenaltyConfirmedByUserName = userName;
         bc.PenaltyConfirmedAt = DateTime.UtcNow;
 
         // === Auditoria OBLIGATORIA (Condicion 1 del review): rastro que distingue "el operador no cobro multa"
-        // (decision de negocio) de "penalidad = 0 por error". LogBusinessEventAsync hace su propio SaveChanges,
-        // pero corre antes del commit de abajo; el orden es aceptable (el audit nunca queda huerfano del cambio:
-        // si el SaveChanges de abajo fallara por xmin, el reintento rebota por INV-WAIVE-003). ===
+        // (decision de negocio) de "penalidad = 0 por error". El campo `action` distingue el cierre normal del cierre
+        // DESDE una multa confirmada, y en ese caso deja los caps restaurados (viejo->nuevo) para el contador.
+        // LogBusinessEventAsync hace su propio SaveChanges, pero corre antes del commit de abajo; el orden es
+        // aceptable (si el SaveChanges de abajo fallara por xmin, el reintento rebota por INV-WAIVE-003). ===
         await _auditService.LogBusinessEventAsync(
             action: AuditActions.OperatorPenaltyWaived,
             entityName: AuditActions.BookingCancellationEntityName,
@@ -5264,9 +5299,14 @@ public class BookingCancellationService
             {
                 bc.PublicId,
                 reservaPublicId = bc.Reserva?.PublicId,
-                action = "operator-penalty-waived",
+                action = waivingFromConfirmed ? "operator-penalty-waived-from-confirmed" : "operator-penalty-waived",
                 reason = trimmedReason,
                 bcStatus = bc.Status.ToString(),
+                restoredRefundCaps = restoredCaps,
+                // Huella de ND ANTES de limpiarla (autocontencion del evento): estado previo + error de ARCA borrado.
+                // Va SOLO al audit interno; nunca se expone al usuario final.
+                previousDebitNoteStatus,
+                clearedArcaErrorMessage,
             }),
             userId: userId,
             userName: userName,
@@ -5358,7 +5398,13 @@ public class BookingCancellationService
         // === Reversa LIMPIA a Estimated. Restauramos exactamente los defaults del estado pendiente que el waive
         // habia pisado: el waive habia puesto PenaltyAmountAtEvent=0 y los campos de confirmado-por; los volvemos a
         // null. DebitNoteStatus ya es NotApplicable y DebitNoteInvoiceId null (garantizado en la Precondicion 5),
-        // que es justamente el default del estado Estimated -> no hay nada mas que deshacer. ===
+        // que es justamente el default del estado Estimated -> no hay nada mas que deshacer.
+        //
+        // NOTA (fix "multa fantasma", 2026-07-05): si el waive vino DESDE una multa confirmada, ese waive ya habia
+        // restaurado los topes de reembolso de las lineas (ReverseConfirmedPenaltyFromLinesAsync dejo PenaltyAmount
+        // en null). Por eso aca NO hay que tocar las lineas: la reversa vuelve a Estimated y, si el operador termino
+        // cobrando la multa, se RE-CONFIRMA por el camino normal (ConfirmPenaltyAsync), que vuelve a imputar la multa
+        // a las lineas. La secuencia waive-desde-Confirmed -> revert -> confirmar es coherente y no descuadra caps. ===
         bc.PenaltyStatus = PenaltyStatus.Estimated;
         bc.PenaltyAmountAtEvent = null;          // el waive lo habia puesto en 0; Estimated = aun sin monto
         bc.PenaltyConfirmedByUserId = null;
@@ -5662,6 +5708,87 @@ public class BookingCancellationService
 
             allocatedSoFar += share;
         }
+    }
+
+    /// <summary>
+    /// Detalle de un tope de reembolso restaurado al cerrar sin multa una penalidad confirmada (para el audit):
+    /// que linea, cuanta multa se le devolvio al reembolso, y el cap resultante (viejo -> nuevo).
+    /// </summary>
+    internal sealed record PenaltyCapRestore(int LineId, decimal RestoredPenalty, decimal OldRefundCap, decimal NewRefundCap);
+
+    /// <summary>
+    /// ESPEJO de <see cref="AllocateConfirmedPenaltyToLinesAsync"/>: deshace la imputacion de la multa a las lineas
+    /// del operador principal cuando se cierra sin multa una penalidad YA confirmada (fix "multa fantasma"). Por cada
+    /// linea del operador principal con <c>PenaltyAmount</c> seteado: si la porcion era positiva le devuelve ese monto
+    /// al <c>RefundCap</c> (RefundCap += PenaltyAmount), y en TODOS los casos borra la penalidad de la linea. Asi
+    /// "Reembolsos a cobrar" vuelve a mostrar el monto integro que el operador debe devolver (ya no retiene multa).
+    ///
+    /// <para><b>Concepto agency-owned = no-op</b>: para conceptos propios de la agencia, el Allocate NO habia tocado
+    /// las lineas (el operador debia reembolsar integro), asi que aca no hay nada que deshacer. Espeja el mismo gate
+    /// del Allocate.</para>
+    ///
+    /// <para><b>Por que <c>PenaltyAmount = null</c> y no 0, para TODA linea con valor (incluido un 0 residual)</b>:
+    /// null es el estado canonico "sin penalidad" de la linea (su default). Ademas es lo que la guarda de idempotencia
+    /// del Allocate (<c>operatorLines.Any(l =&gt; l.PenaltyAmount.HasValue)</c>) espera: si dejaramos un 0 (HasValue
+    /// == true), un re-confirm posterior (revert-waive -&gt; Estimated -&gt; confirmar de nuevo) creeria que la multa
+    /// "ya esta neteada" y NO volveria a reducir el cap -&gt; reembolso sobreestimado. Por eso el reset a null se hace
+    /// aunque la porcion fuera 0 (y esa linea 0 no suma nada al cap ni entra al audit). La spec pedia
+    /// "PenaltyAmount = 0"; se usa null a proposito por esta interaccion con el Allocate.</para>
+    ///
+    /// <para>NO hace <c>SaveChanges</c>: corre dentro de la unidad de trabajo del waive (commit unico).</para>
+    /// </summary>
+    // internal (no private) para que los tests unit ejerciten la restauracion directamente, igual que Allocate.
+    internal async Task<List<PenaltyCapRestore>> ReverseConfirmedPenaltyFromLinesAsync(
+        BookingCancellation bc, CancellationToken ct)
+    {
+        var restored = new List<PenaltyCapRestore>();
+
+        // Espejo del gate de AllocateConfirmedPenaltyToLinesAsync: para agency-owned el reparto fue no-op.
+        if (bc.ConceptKind != CancellationConceptKind.OperatorPenaltyPassThrough)
+            return restored;
+
+        var operatorLines = await _db.BookingCancellationLines
+            .Where(l => l.BookingCancellationId == bc.Id && l.SupplierId == bc.SupplierId)
+            .ToListAsync(ct);
+
+        foreach (var line in operatorLines)
+        {
+            // Solo tocamos lineas que el Allocate haya marcado con una porcion de multa (PenaltyAmount seteado). Una
+            // linea con PenaltyAmount null nunca recibio multa: no hay nada que deshacer ni que limpiar.
+            if (!line.PenaltyAmount.HasValue)
+                continue;
+
+            var restoredPenalty = line.PenaltyAmount.Value;
+            var oldCap = line.RefundCap;
+
+            // Devolver la multa al tope SOLO si la porcion era positiva. Un 0 residual (linea que el Allocate dejo en
+            // 0 por el reparto/redondeo) no aporta nada al cap; no lo sumamos ni lo auditamos, pero IGUAL hay que
+            // limpiarlo a null (ver el reset de abajo).
+            if (restoredPenalty > 0m)
+            {
+                // El operador ya no retiene la multa: debe reembolsar el monto integro otra vez.
+                line.RefundCap = oldCap + restoredPenalty;
+
+                // El circuito de reembolso del operador vuelve a esperar la plata (si aun no se recibio todo). Si el
+                // Allocate lo habia dejado en None por cap 0, aca revive; si ya se cobro todo, Settled.
+                if (line.RefundCap > 0m)
+                {
+                    line.RefundStatus = line.ReceivedRefundAmount >= line.RefundCap
+                        ? BookingCancellationLineRefundStatus.Settled
+                        : BookingCancellationLineRefundStatus.PendingOperatorRefund;
+                }
+
+                restored.Add(new PenaltyCapRestore(line.Id, restoredPenalty, oldCap, line.RefundCap));
+            }
+
+            // SIEMPRE resetear a null, tanto la porcion positiva ya restaurada como un 0 residual. Es clave para el
+            // re-neteo futuro: la guarda de idempotencia del Allocate es operatorLines.Any(l => l.PenaltyAmount.HasValue).
+            // Si dejaramos un 0 (HasValue == true), un re-confirm posterior (revert-waive -> Estimated -> confirmar de
+            // nuevo) creeria que la multa "ya esta neteada" y NO volveria a reducir el cap -> reembolso sobreestimado.
+            line.PenaltyAmount = null;
+        }
+
+        return restored;
     }
 
     /// <summary>

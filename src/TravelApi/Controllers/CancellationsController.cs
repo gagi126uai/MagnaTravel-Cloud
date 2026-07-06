@@ -462,8 +462,9 @@ public class CancellationsController : ControllerBase
     /// confirmar la multa). NO se confia la decision al frontend.</para>
     ///
     /// <para><b>Mapeo de errores</b>: 404 (BC no existe); 409 INV-WAIVE-PERM (sin permiso); 409 INV-WAIVE-001
-    /// (estado no post-NC); 409 INV-WAIVE-003 (penalidad ya resuelta — idempotencia); 409 CONCURRENT_EDIT (xmin);
-    /// 400 (motivo vacio); 503 (DB caida).</para>
+    /// (estado no post-NC); 409 INV-WAIVE-003 (ya cerrada sin multa — idempotencia); 409 INV-WAIVE-004 (la multa
+    /// tiene una Nota de Débito en juego — se resuelve desde administración); 409 INV-WAIVE-005 (cerrar sin multa
+    /// una penalidad ya confirmada sin ser Admin); 409 CONCURRENT_EDIT (xmin); 400 (motivo vacio); 503 (DB caida).</para>
     /// </summary>
     [HttpPatch("{publicId:guid}/waive-penalty")]
     [RequirePermission(Permissions.ReservasCancel)]
@@ -487,7 +488,8 @@ public class CancellationsController : ControllerBase
         {
             var dto = await _bcService.WaiveOperatorPenaltyAsync(
                 publicId, request.Reason, userId, userName, cancellationToken,
-                userCanClassifyAgencyPenalty: userCanClassifyAgencyPenalty);
+                userCanClassifyAgencyPenalty: userCanClassifyAgencyPenalty,
+                requesterIsAdmin: requesterIsAdmin);
             return Ok(dto);
         }
         catch (KeyNotFoundException)
