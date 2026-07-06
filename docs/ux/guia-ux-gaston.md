@@ -913,3 +913,88 @@ Ronda 2:
 - **(2026-07-04) Cuando el paso ya se resolvió sin multa** el cartel pasa a **"Anulada — cerrada sin multa del
   operador. Solo lectura."** y desaparecen los dos botones; queda solo el enlace discreto **"Deshacer"** para
   administradores (ya estaba así; se conserva).
+
+## Listado de reservas: pestaña "Anuladas" aparte + buscador global (2026-07-05, respuestas de Gastón)
+
+> **Origen:** Gastón reportó que "hoy la vista las mezcla". Verificado en código: la pestaña
+> "Finalizadas" traía por dentro Finalizadas (Closed) **y** Anuladas (Cancelled) juntas, y las
+> "Esperando reembolso" no caían en ninguna pestaña. Además el buscador ya encontraba por número de
+> reserva y por cliente, pero solo dentro de la pestaña y el período. Sesión de 5 preguntas; Gastón
+> eligió todas las recomendadas (P1-A … P5-A). Spec: `docs/ux/2026-07-06-listado-finalizadas-vs-anuladas.md`
+> y `docs/ux/2026-07-06-buscador-reserva-y-cliente.md`.
+
+- **(2026-07-05, P1=A) Las Anuladas salen a su PROPIA pestaña "Anuladas".** Se separan de las
+  Finalizadas: la pestaña "Finalizadas" pasa a mostrar **solo** las reservas finalizadas de verdad
+  (Closed), y se agrega una pestaña nueva **"Anuladas"** con su contador, al lado de Finalizadas,
+  con la misma mecánica que el resto de las pestañas. La palabra es **"Anuladas"**, nunca "Canceladas"
+  (vocabulario duro ADR-036 punto 1).
+- **(2026-07-05, P2=A) La pestaña "Anuladas" incluye también las "Esperando el reembolso del operador".**
+  Son anuladas con la multa del operador sin decidir; van en el mismo cajón (hoy no aparecían en
+  ninguna pestaña). El contador de "Anuladas" las suma.
+- **(2026-07-05, P3=A) Diferenciación visual: con el badge alcanza.** Dentro de la lista, el badge
+  ya distingue **Finalizada** (gris, ✅) de **Anulada** (rojo/rosa, 🚫) y **Esperando reembolso**
+  (rosa, ⏳). NO se atenúa ni se tacha la fila de la anulada: el cartelito de estado es suficiente.
+  (Coherente con "las etapas que ya existían no cambian de color".)
+- **(2026-07-05, P4=A) El buscador del listado busca en TODAS las reservas.** Cuando el vendedor
+  escribe en el casillero de búsqueda, se busca en **cualquier estado y cualquier fecha**, ignorando
+  la pestaña y el período que estén puestos. Así encontrar a un cliente o una reserva vieja no depende
+  de estar parado en la pestaña correcta. (El buscador ya cruzaba número de reserva + nombre de la
+  reserva + nombre del cliente/pagador; esto solo amplía el alcance.) Al limpiar la búsqueda, la lista
+  vuelve a respetar la pestaña y el período elegidos.
+- **(2026-07-05, P5=A) Texto del casillero de búsqueda: "Buscar por N° de reserva o cliente…"**
+  (reemplaza "Buscar reservas…", para que se note que también encuentra por cliente). Un solo
+  casillero, nunca dos separados.
+
+## Servicios cancelados de la reserva: escondidos por defecto + historial de estados (2026-07-05, respuestas de Gastón)
+
+> **Origen:** Gastón quiere trackear qué se compró / solicitó / confirmó / canceló sin que la lista
+> de servicios se llene de tachados. Los cancelados ya se mostraban tachados con "Cancelado por X".
+> Sesión de 3 preguntas; Gastón eligió todas las recomendadas (P6-A, P7-A, P8-A). Componente:
+> `ServiceList.jsx`. Spec: `docs/ux/2026-07-06-servicios-cancelados-filtro-e-historial.md`.
+
+- **(2026-07-05, P6=A) Los servicios cancelados van ESCONDIDOS por defecto.** La lista arranca
+  mostrando solo los servicios vivos. Un control **"Ver también los cancelados (N)"** los muestra
+  (y "Ocultar cancelados" los vuelve a esconder). El número N reusa el mismo conteo que el contador
+  "N de M servicios cancelados" ya existente (nunca dos números que puedan diferir). Si no hay
+  ningún cancelado, el control no aparece.
+- **(2026-07-05, P6=A) Cuando se muestran, los cancelados se ven como hasta ahora:** tachados, con
+  motivo + quién + cuándo (regla 2026-06-13, ciclo de vida #9). El total al pie sigue **sin contarlos**.
+- **(2026-07-05, P7=A) El control va ARRIBA de la lista de servicios, al lado del título "Servicios".**
+- **(2026-07-05, P8=A) Historial de estados por servicio: enlace "Ver historial" desplegable EN LÍNEA.**
+  Cada servicio tiene un enlace chico **"Ver historial"** que, al tocarlo, despliega debajo (dentro de
+  la página, NUNCA ventana flotante) la lista de pasos por los que pasó: **estado + fecha + quién**
+  (ej. "04/07 Solicitado al operador — Juan", "06/07 Confirmado por el operador — Juan", "08/07
+  Cancelado — María · Motivo: …"). La línea corta "Cancelado por X" de la fila **se mantiene** como
+  resumen rápido; el historial es el detalle completo, opcional. (Depende de que el backend exponga
+  los pasos por servicio; hoy solo hay `workflowStatus`/`cancelledAt`/`cancelledByUserName`.)
+
+## Pasajeros: alta y edición EN LÍNEA (muere el modal) (2026-07-05, respuestas de Gastón)
+
+> **Origen:** decisión cerrada de Gastón — sacar el modal de pasajeros (`PassengerFormModal`), todo en
+> línea, coherente con "el modal me parece horrible" y con servicios/cobro/cancelación/pago a proveedor.
+> Sesión de 2 preguntas; Gastón eligió las recomendadas (P9-A, P10-A). El doble autocompletado ya estaba
+> decidido en la guía (2026-06-23 "Pasajero reutilizable", más arriba). Componentes: `PasajeroInlineForm.jsx`
+> (a extender), `PassengerFormModal.jsx` (a jubilar como ventana). Spec:
+> `docs/ux/2026-07-06-pasajeros-alta-edicion-en-linea.md`.
+
+- **(2026-07-05) El alta y la edición de pasajeros dejan de abrir una ventana.** Se usan EN LÍNEA, con
+  el mismo mini-formulario que ya existe para los renglones vacíos (`PasajeroInlineForm`), una sola
+  ficha para crear y editar (mismo patrón que los servicios). El modal `PassengerFormModal` muere como
+  ventana flotante.
+- **(2026-07-05, P9=A) Editar un pasajero ya cargado: la FILA se abre en el lugar.** Al tocar "Editar",
+  la propia fila del pasajero se vuelve editable ahí mismo (mismo patrón que "Confirmar costo en la
+  misma fila"), no se abre una ficha aparte abajo. El alta de un pasajero nuevo (botón "Agregar
+  Pasajero" o "[Cargar]" de un renglón vacío) abre la misma ficha vacía en línea.
+- **(2026-07-05, P10=A) Qué campos se ven de entrada: SOLO nombre + tipo y N° de documento.** El resto
+  (fecha de nacimiento, nacionalidad, teléfono, email, género, notas) va detrás de **"Más detalles"**,
+  cerrado por defecto (regla general 2026-06-05: solo lo imprescindible a la vista; sin textos
+  aclarativos ni "(opcional)"). Los obligatorios reales por tipo de servicio siguen siendo los de la
+  regla 2026-06-15 (aéreo pide nombre + documento de todos; hotel/traslado, solo el titular).
+- **(2026-07-05) El doble autocompletado SE CONSERVA en el inline** (ya decidido, guía 2026-06-23
+  "Pasajero reutilizable"): al tipear nombre o documento, sugerir pasajeros que ya viajaron antes
+  (base propia de la agencia) + el botón de lupa del padrón AFIP en el campo documento (manual, como en
+  el modal), + el aviso suave de duplicado si el mismo documento ya está en la reserva. No se pierde
+  nada de lo que hacía el modal.
+- **(2026-07-05) En estados de solo lectura** (Perdida / Anulada / En viaje / Finalizada) los botones
+  Agregar / Editar / Borrar pasajero se ocultan y la lista queda informativa (regla ADR-035 A-ter,
+  2026-06-19). Sin cambios.
