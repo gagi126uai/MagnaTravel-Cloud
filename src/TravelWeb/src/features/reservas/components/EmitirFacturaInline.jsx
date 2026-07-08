@@ -14,6 +14,12 @@
  * Si hay grupos de ambas monedas, el usuario elige cuál facturar. NUNCA se mezclan
  * renglones de monedas distintas en un mismo comprobante.
  *
+ * Default de moneda (pedido de Gaston, 2026-07-07): si TODOS los servicios de la
+ * reserva están en una única moneda, esa moneda se preselecciona sola al abrir la
+ * ficha (ver elegirGrupoPrecarga en lib/invoiceCurrencyDefault.js). Si hay mezcla
+ * de monedas, no se adivina: se mantiene ARS como punto de partida y el usuario
+ * elige con el selector. Siempre se puede cambiar a mano.
+ *
  * Franja amarilla: aparece arriba de los renglones cuando el total de los items NO
  * coincide con lo vendido confirmado en esa moneda. NO bloquea la emisión.
  *
@@ -27,10 +33,10 @@
  * solo se corrige o anula con una Nota de Crédito."
  *
  * Funciones puras exportadas (testeable sin React):
- *   - elegirGrupoPrecarga(grupos, flagMultimonedaOn)
  *   - hayDescuadre(totalItems, suggestedTotal, tolerancia)
  *   - validarCamposUSD(tipoCambio, justificacion) → null | string de error
  *   - resolverEstadoFiscal(statusItems) → { estado, factura }
+ * (elegirGrupoPrecarga vive en lib/invoiceCurrencyDefault.js — se importa acá.)
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -42,6 +48,11 @@ import { formatCurrency } from "../../../lib/utils";
 // Paso 3 (H2 2026-06-24): helper compartido con ReservaDetailPage para formatear
 // el número de comprobante. Evita que el formato "Factura B 0001-00012345" diverga.
 import { formatearEtiquetaFactura } from "../lib/invoiceFormatUtils";
+// Pedido de Gaston (2026-07-07): default automático de moneda según los servicios
+// de la reserva. Función pura movida a un archivo .js aparte (sin JSX) para poder
+// testearla directo con Node, igual que moneyStatus.js — evita que el test tenga
+// una copia manual de la lógica que se puede desactualizar sola.
+import { elegirGrupoPrecarga } from "../lib/invoiceCurrencyDefault";
 
 // ─── Funciones puras exportables ─────────────────────────────────────────────
 // Están fuera del componente para poder testearlas con Node sin necesidad de React.
@@ -74,36 +85,6 @@ export function resolverPreflightBloqueo(preflight) {
 
   // allowed=true o severity="ok"/"warn": sin bloqueo.
   return null;
-}
-
-/**
- * Elige qué grupo de items precargar al abrir el formulario.
- *
- * Regla de seguridad fiscal (fix B1):
- *   Con flag OFF la moneda efectiva siempre es ARS. Por lo tanto SOLO se puede
- *   precargar el grupo ARS. Si la reserva solo tiene servicios en USD, devolvemos
- *   null → el componente arranca con un renglón en cero y muestra un aviso.
- *   NUNCA se carga un grupo USD cuando la moneda efectiva es ARS porque eso
- *   emitiría montos en dólares como si fueran pesos (comprobante fiscal incorrecto).
- *
- *   Con flag ON, la regla original aplica: ARS preferido o el primero disponible.
- *
- * @param {Array}   grupos           - grupos de InvoiceSuggestedItemsResponse
- * @param {boolean} flagMultimonedaOn - valor de enableMultiCurrencyInvoicing
- * @returns {{ currency: string, items: Array, suggestedTotal: number } | null}
- */
-export function elegirGrupoPrecarga(grupos, flagMultimonedaOn) {
-  if (!Array.isArray(grupos) || grupos.length === 0) return null;
-
-  if (!flagMultimonedaOn) {
-    // Con flag OFF: SOLO cargar ARS. Si no hay grupo ARS devolvemos null.
-    // No cargar el grupo USD "por defecto" → eso generaría montos en dólares facturados como pesos.
-    return grupos.find((g) => g.currency === "ARS") ?? null;
-  }
-
-  // Con flag ON: preferir ARS, pero si no existe cargar el primero disponible.
-  const grupoARS = grupos.find((g) => g.currency === "ARS");
-  return grupoARS ?? grupos[0];
 }
 
 /**

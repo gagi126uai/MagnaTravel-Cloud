@@ -5,7 +5,8 @@
  * críticas de facturación fiscal. Corren con Node puro sin bundler.
  *
  * Decisiones cubiertas:
- *   - elegirGrupoPrecarga: la regla de seguridad B1 (nunca cargar USD como ARS)
+ *   - elegirGrupoPrecarga: default automático de moneda (pedido Gaston 2026-07-07)
+ *     + la regla de seguridad B1 (nunca cargar USD como ARS)
  *   - hayDescuadre: si el total del formulario difiere del sugerido
  *   - validarCamposUSD: validación del tipo de cambio para facturas en dólares
  *   - describirMotivoExclusion: texto en criollo para servicios excluidos de la sugerencia (C6)
@@ -16,29 +17,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+// elegirGrupoPrecarga vive en un archivo .js aparte (sin JSX), así que se puede
+// importar directo con Node sin necesidad de bundler — mismo patrón que
+// moneyStatus.js. Esto evita tener una copia manual de la lógica en el test
+// que se puede desactualizar sola si cambia el original.
+import { elegirGrupoPrecarga } from "../lib/invoiceCurrencyDefault.js";
+
 // ─── Lógica pura: copiada de EmitirFacturaInline.jsx ─────────────────────────
-// El runner es Node puro (sin Vite/JSX), así que replicamos las funciones aquí.
-// Si cambia la función original en el JSX, actualizar acá también.
-// (Este patrón es el mismo que usan el resto de los tests .mjs del proyecto.)
-
-/**
- * Elige qué grupo de items precargar al abrir el formulario.
- *
- * Regla de seguridad fiscal (B1):
- *   Con flag OFF la moneda efectiva es ARS → SOLO cargar grupo ARS.
- *   Si no hay grupo ARS → null (no cargar USD como ARS).
- *   Con flag ON → ARS preferido, si no existe el primero disponible.
- */
-function elegirGrupoPrecarga(grupos, flagMultimonedaOn) {
-  if (!Array.isArray(grupos) || grupos.length === 0) return null;
-
-  if (!flagMultimonedaOn) {
-    return grupos.find((g) => g.currency === "ARS") ?? null;
-  }
-
-  const grupoARS = grupos.find((g) => g.currency === "ARS");
-  return grupoARS ?? grupos[0];
-}
+// El resto de las funciones de este archivo (hayDescuadre, validarCamposUSD)
+// todavía viven dentro del .jsx del componente, así que se replican acá porque
+// el runner es Node puro (sin Vite/JSX). Si cambian en el original, actualizar acá también.
 
 /**
  * Determina si hay un descuadre entre el total armado y el sugerido.
@@ -131,6 +119,38 @@ test("elegirGrupoPrecarga — flag ON + solo USD → devuelve USD (no hay ARS, e
 test("elegirGrupoPrecarga — flag ON + lista vacía → null", () => {
   const resultado = elegirGrupoPrecarga([], true);
   assert.equal(resultado, null);
+});
+
+// ─── Tests: pedido textual de Gaston (2026-07-07) ────────────────────────────
+// "Si detecta servicios en dólares, elige automáticamente dólares; si detecta
+// servicios en pesos, elige automáticamente pesos." Con flag ON (la config
+// "Facturar en más de una moneda" prendida, que es la que Gaston tiene activa
+// en el uso real — ver ADR-042).
+
+test("Gaston 2026-07-07 — reserva con TODOS los servicios en dólares → preselecciona USD", () => {
+  const grupos = [
+    { currency: "USD", items: [{ description: "Paquete Cancún" }], suggestedTotal: 2000 },
+  ];
+  const resultado = elegirGrupoPrecarga(grupos, true);
+  assert.equal(resultado?.currency, "USD", "Reserva 100% en dólares debe precargar USD, no ARS");
+});
+
+test("Gaston 2026-07-07 — reserva con TODOS los servicios en pesos → preselecciona ARS", () => {
+  const grupos = [
+    { currency: "ARS", items: [{ description: "Traslado aeropuerto" }], suggestedTotal: 45000 },
+  ];
+  const resultado = elegirGrupoPrecarga(grupos, true);
+  assert.equal(resultado?.currency, "ARS", "Reserva 100% en pesos debe precargar ARS");
+});
+
+test("Gaston 2026-07-07 — reserva con servicios en ambas monedas → NO adivina, deja ARS como punto de partida", () => {
+  // Con mezcla de monedas no hay una única respuesta correcta: se mantiene el
+  // comportamiento de siempre (ARS como default) y el selector queda disponible
+  // para que el usuario elija manualmente cuál facturar primero.
+  const grupoARS = { currency: "ARS", items: [{ description: "Hotel" }], suggestedTotal: 80000 };
+  const grupoUSD = { currency: "USD", items: [{ description: "Vuelo" }], suggestedTotal: 500 };
+  const resultado = elegirGrupoPrecarga([grupoARS, grupoUSD], true);
+  assert.equal(resultado?.currency, "ARS", "Con mezcla de monedas no se adivina: se mantiene ARS como default editable");
 });
 
 // ─── Tests: hayDescuadre ─────────────────────────────────────────────────────
