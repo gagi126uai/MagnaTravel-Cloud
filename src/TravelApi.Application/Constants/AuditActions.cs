@@ -289,6 +289,16 @@ public static class AuditActions
     public const string OperatorPenaltyWaiveReverted = "OperatorPenaltyWaiveReverted";
 
     /// <summary>
+    /// Spec "el paso de multa vive en la ficha" (A4, 2026-07-08): un usuario CORRIGIO el monto + moneda de una
+    /// multa YA CONFIRMADA cuya Nota de Debito habia quedado trabada (revision manual por moneda distinta, o
+    /// fallida) y SIN comprobante emitido con CAE. Es una accion fiscalmente sensible (cambia el numero que va a
+    /// una ND que se re-encola), por eso lleva su PROPIA accion de auditoria (no se mezcla con la emision normal
+    /// de ND) para que el contador la pueda filtrar. El detail JSON lleva quien/cuando, la referencia del BC y la
+    /// reserva, el motivo, y el antes/despues de monto y moneda.
+    /// </summary>
+    public const string OperatorPenaltyCorrected = "OperatorPenaltyCorrected";
+
+    /// <summary>
     /// (2026-06-26): el operador supero el plazo (<c>OperatorRefundDueBy</c>) sin reembolsar. El job nocturno
     /// transiciono la cancelacion <c>AwaitingOperatorRefund</c> -> <c>AbandonedByOperator</c> y cerro la RESERVA
     /// (<c>PendingOperatorRefund</c> -> <c>Cancelled</c>). Antes este estado nunca se asignaba (codigo muerto) y

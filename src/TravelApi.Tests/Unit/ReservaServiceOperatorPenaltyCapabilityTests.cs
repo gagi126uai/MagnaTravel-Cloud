@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Application.Mappings;
 using TravelApi.Domain.Entities;
@@ -79,12 +80,36 @@ public class ReservaServiceOperatorPenaltyCapabilityTests
         return mock.Object;
     }
 
-    /// <summary>Mock de la cancelacion que devuelve el outcome pedido para CUALQUIER reserva.</summary>
+    /// <summary>
+    /// Mock de la cancelacion que devuelve el outcome pedido para CUALQUIER reserva. Stubea DOS metodos:
+    /// el viejo <c>GetOperatorPenaltyOutcomeAsync</c> (que estos tests ya usaban) y el nuevo
+    /// <c>GetOperatorPenaltySituationAsync</c> de la spec "el paso de multa vive en la ficha" (2026-07-08), que
+    /// <c>ReservaService.GetReservaByIdAsync</c> ahora tambien llama para armar el read-model detallado. Si solo se
+    /// stubea el metodo viejo, Moq (MockBehavior.Loose) devuelve null para el nuevo -> el service lo detecta y cae
+    /// al DTO por defecto en "None", lo que haria que estos tests reciban SIEMPRE "None" sin importar el outcome
+    /// pedido. Por eso mapeamos el outcome grueso al <see cref="OperatorPenaltySituationState"/> fino equivalente
+    /// (la relacion inversa de <see cref="OperatorPenaltySituationRules.ToOutcome"/>), para que ambos metodos
+    /// cuenten la misma historia.
+    /// </summary>
     private static IBookingCancellationService BuildCancellationService(OperatorPenaltyOutcome outcome)
     {
         var mock = new Mock<IBookingCancellationService>();
         mock.Setup(s => s.GetOperatorPenaltyOutcomeAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(outcome);
+
+        var situationState = outcome switch
+        {
+            OperatorPenaltyOutcome.Pending => OperatorPenaltySituationState.PendingDecision,
+            OperatorPenaltyOutcome.Waived => OperatorPenaltySituationState.Waived,
+            // Confirmed colapsa a varios sub-estados finos; "Done" (ND emitida) alcanza para estos tests, que solo
+            // miran el outcome grueso resultante, no el detalle de la ND.
+            OperatorPenaltyOutcome.Confirmed => OperatorPenaltySituationState.Done,
+            _ => OperatorPenaltySituationState.None,
+        };
+        mock.Setup(s => s.GetOperatorPenaltySituationAsync(
+                It.IsAny<Guid>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OperatorPenaltySituationDto { State = situationState.ToString() });
+
         return mock.Object;
     }
 

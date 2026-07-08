@@ -493,3 +493,87 @@ test("H3: allowed=true en estado distinto de PendingOperatorRefund → botón vi
     };
     assert.equal(mostrarBotonConfirmarMulta({ reserva, showMultaInline: false }), true);
 });
+
+// ============================================================================
+// Sección I: modo "corregir" (spec "el paso de multa vive en la ficha", 2026-07-08)
+// Réplica de validarMonto / validarMotivoCorregir / validarCamposCorregir /
+// puedeEnviarCorregir en ConfirmarMultaOperadorInline.jsx.
+// ============================================================================
+
+const MOTIVO_CORREGIR_MIN = 5;
+const MOTIVO_CORREGIR_MAX = 500;
+
+function validarMonto(montoStr) {
+    const monto = parseFloat(montoStr);
+    if (!montoStr || isNaN(monto) || monto <= 0) {
+        return "El monto debe ser mayor a cero.";
+    }
+    return null;
+}
+
+function validarMotivoCorregir(motivo) {
+    const trimmed = (motivo ?? "").trim();
+    if (trimmed.length < MOTIVO_CORREGIR_MIN) {
+        return `El motivo debe tener al menos ${MOTIVO_CORREGIR_MIN} caracteres.`;
+    }
+    if (trimmed.length > MOTIVO_CORREGIR_MAX) {
+        return `El motivo no puede superar los ${MOTIVO_CORREGIR_MAX} caracteres.`;
+    }
+    return null;
+}
+
+function validarCamposCorregir({ montoStr, motivo }) {
+    return {
+        montoError: validarMonto(montoStr),
+        motivoError: validarMotivoCorregir(motivo),
+    };
+}
+
+function puedeEnviarCorregir({ montoStr, motivo, submitting }) {
+    if (submitting) return false;
+    const { montoError, motivoError } = validarCamposCorregir({ montoStr, motivo });
+    return montoError === null && motivoError === null;
+}
+
+test("corregir: monto válido + motivo válido → sin errores", () => {
+    const { montoError, motivoError } = validarCamposCorregir({ montoStr: "120.50", motivo: "Era en dólares, no en pesos" });
+    assert.equal(montoError, null);
+    assert.equal(motivoError, null);
+});
+
+test("corregir: motivo corto (menos de 5 caracteres) → error", () => {
+    const { motivoError } = validarCamposCorregir({ montoStr: "100", motivo: "abc" });
+    assert.notEqual(motivoError, null);
+});
+
+test("corregir: motivo vacío → error", () => {
+    const { motivoError } = validarCamposCorregir({ montoStr: "100", motivo: "" });
+    assert.notEqual(motivoError, null);
+});
+
+test("corregir: no pide fecha (a diferencia del modo confirmar)", () => {
+    // validarCamposCorregir no tiene parámetro `fecha` — la firma en sí ya lo garantiza.
+    const resultado = validarCamposCorregir({ montoStr: "100", motivo: "Motivo válido de sobra" });
+    assert.ok(!("fechaError" in resultado));
+});
+
+test("puedeEnviarCorregir: false mientras está enviando (evita doble submit)", () => {
+    assert.equal(
+        puedeEnviarCorregir({ montoStr: "100", motivo: "Motivo válido de sobra", submitting: true }),
+        false
+    );
+});
+
+test("puedeEnviarCorregir: true con monto y motivo válidos, sin submit en curso", () => {
+    assert.equal(
+        puedeEnviarCorregir({ montoStr: "100", motivo: "Motivo válido de sobra", submitting: false }),
+        true
+    );
+});
+
+test("puedeEnviarCorregir: false si el motivo es muy corto aunque el monto sea válido", () => {
+    assert.equal(
+        puedeEnviarCorregir({ montoStr: "100", motivo: "no", submitting: false }),
+        false
+    );
+});

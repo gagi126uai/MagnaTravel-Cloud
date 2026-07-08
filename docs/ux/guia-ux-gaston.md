@@ -132,6 +132,40 @@
 - **(2026-07-08) La acción es un botón "Ir a resolver" que lleva al monitor "Pendientes con AFIP" con la
   solapa de multas ya abierta.** No se arma un resolver-en-línea nuevo en la ficha: el monitor ya tiene
   los botones para confirmar el monto o reintentar la emisión.
+  **⚠️ SUPERSEDED esa misma madrugada — ver abajo "El paso de multa vive en la ficha".**
+
+## El paso de multa vive en la ficha; las bandejas son listas pasivas (2026-07-08, madrugada)
+
+> Origen: Gastón chocó contra el flujo actual. La bandeja le abrió un formulario que le pedía un "tipo de
+> cargo" que no entiende, solo aceptaba pesos con su multa en dólares, y le respondió "Este cargo ya fue
+> confirmado... hablá con administración" — **a él, que ES la administración**. Dijo: "ni sé para qué
+> sirve esa bandeja y para qué la quiere un usuario". Diseño de fondo CERRADO por él.
+
+**Principios cerrados (no reabrir):**
+1. **El producto contempla todo, pero la complejidad se esconde con defaults; jamás se pregunta.** El
+   "tipo de cargo" NO se pregunta nunca en el camino normal: por dentro va el default = **multa del
+   operador trasladada 1:1 al cliente**. La capacidad "cargo propio de la agencia" existe, pero como
+   **acción secundaria separada y clara, fuera del camino normal**.
+2. **La resolución vive en la FICHA**, con la única acción que aplica al estado real. Las **bandejas son
+   listas pasivas**: cada fila = link a la ficha, SIN botones de acción propios.
+3. **Ningún mensaje deriva a un rol que el usuario ya es** (nada de "hablá con administración").
+
+- **(2026-07-08) UNA sola experiencia para la multa, venga de donde venga: la de la ficha**
+  (`ConfirmarMultaOperadorInline` — monto + moneda **precargada de la factura de la reserva**, editable;
+  SIN pregunta de tipo de cargo). El modal de la bandeja (`ConfirmPenaltyModal`, que pedía tipo de cargo y
+  solo pesos) **se saca del camino normal**.
+- **(2026-07-08) La moneda de la multa manda la moneda de la nota de débito.** Se elimina la letra chica
+  que decía que "la moneda elegida es solo para registrar" y que la ND salía en otra moneda: la ND al
+  cliente sale en la MISMA moneda que se registró (era la causa del bloqueo "moneda DOL").
+- **(2026-07-08) Cada estado trabado se resuelve EN la ficha con UNA acción puntual**, en criollo, sin
+  mecánica interna: "Emitir la nota de débito ahora" / "Corregir monto y moneda" (un solo paso que
+  reemplaza el circuito waive→deshacer→re-confirmar) / "Reintentar". Un cartel por estado.
+- **(2026-07-08) La solapa "Multas y cargos" es una lista pasiva:** columnas mínimas (reserva · qué falta
+  en criollo · hace cuánto), cada fila linkea a la ficha. Se le sacan los botones de acción y el "tipo de
+  cargo". Nunca muestra el texto crudo del error de AFIP: muestra "qué falta" en criollo.
+- **(2026-07-08) "Cobrar un cargo propio de la agencia" es una acción secundaria** en la sección de
+  facturación de la ficha (link discreto "Cobrar un cargo de la agencia…"), gateada por su permiso. NO
+  vive en la bandeja ni en el camino normal.
 
 ## Colores y estilo
 
@@ -1045,3 +1079,47 @@ Ronda 2:
 - **(2026-07-05) En estados de solo lectura** (Perdida / Anulada / En viaje / Finalizada) los botones
   Agregar / Editar / Borrar pasajero se ocultan y la lista queda informativa (regla ADR-035 A-ter,
   2026-06-19). Sin cambios.
+
+## Voz de los avisos y notificaciones (2026-07-08)
+
+Regla de escritura para TODO mensaje que el sistema le muestra al usuario: avisos de la campanita,
+notificaciones, textos de éxito y de error, carteles de la ficha. Nace de la auditoría de
+`ux-ui-travel-retail` + 2 decisiones del dueño (ver abajo). Aplica a texto nuevo y a todo texto que se
+toque.
+
+Las 8 reglas de voz:
+
+1. **El sujeto es la reserva o el agente, nunca "el sistema".** Se habla de la reserva (F-2026-xxxx) o
+   de la persona que hizo la acción. Nada de "el proceso", "el job", "la tarea".
+2. **Primero qué pasó, después qué hacer; nunca el CÓMO interno.** El usuario quiere saber el estado y
+   el próximo paso, no cómo funciona por dentro.
+3. **Prohibido nombrar la maquinaria.** Nada de "chequeo nocturno", "job", "se reintentará
+   automáticamente" (se dice "la estamos reintentando por vos"), "error técnico", "revisión manual",
+   "anulación automática".
+4. **Nada de contaduría ni leyes en los avisos.** "nota de crédito" → "devolución"; "nota de débito" →
+   "cargo de la agencia" o "multa"; sin "CAE", sin "RG ...". El término fiscal (nota de crédito, CAE)
+   vive SOLO en las pantallas de facturación, no en la campanita.
+5. **Nada de internos.** "DOL"/"PES" → "dólares"/"pesos"; NUNCA el id interno de la reserva (siempre el
+   número de negocio F-2026-xxxx); sin estados crudos en inglés.
+6. **Rioplatense (vos), una sola voz** en todo el producto.
+7. **Corto.** El aviso es un aviso, no un informe.
+8. **El detalle técnico va al log, jamás a la campanita.**
+
+Dos decisiones del dueño que fijan el criterio (2026-07-08):
+
+- **Los avisos dicen "devolución", no "nota de crédito".** El término fiscal queda reservado a las
+  pantallas de facturación.
+- **Los avisos de éxito llevan SOLO el número de reserva (F-2026-xxxx), sin número fiscal** (sin número
+  de comprobante ni CAE).
+
+Glosario de palabras que SÍ se usan con el usuario:
+
+- **Reserva**: siempre por su número de negocio F-2026-xxxx. Nunca el id interno.
+- **Anular ≠ Cancelar**: "Cancelar" = el cliente abona el total; "Anular" = dejar sin efecto el viaje.
+- **Factura**: el comprobante de venta.
+- **Devolución**: es la nota de crédito. El término "nota de crédito" solo aparece en las pantallas de
+  facturación, nunca en los avisos.
+- **Cargo de la agencia** o **Multa**: es la nota de débito.
+- **Operador**: el proveedor mayorista.
+- **saldo sin cobrar**: lo que el cliente todavía debe.
+- **saldo a favor**: plata a favor del cliente (o del operador, según el caso).

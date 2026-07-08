@@ -460,6 +460,18 @@ public class ReservaDto
     public ReservaCapabilitiesDto Capabilities { get; set; } = new();
 
     /// <summary>
+    /// Spec "el paso de multa vive en la ficha" (2026-07-08): read-model del PASO en que esta la multa del operador
+    /// de la cancelacion vigente (encolada / fallida / trabada por moneda / emitida / cerrada sin multa / pendiente),
+    /// con monto, moneda y los botones habilitados segun estado + permiso. Es mas fino que
+    /// <see cref="ReservaCapabilitiesDto.OperatorPenaltyOutcome"/> (que solo distingue None/Pending/Confirmed/Waived):
+    /// desglosa el "Confirmed" para que la ficha muestre EL PASO exacto y ofrezca la accion correcta.
+    ///
+    /// <para>Solo se calcula en el DETALLE (no en el listado, para no hacer N+1). Cuando la reserva no tiene
+    /// cancelacion vigente o su pata de operador no esta en juego, <c>State = "None"</c> (nunca null en el detalle).</para>
+    /// </summary>
+    public OperatorPenaltySituationDto OperatorPenaltySituation { get; set; } = new();
+
+    /// <summary>
     /// ADR-035 (2026-06-19): true si la reserva tiene una factura AFIP con CAE vivo, por lo que NO se puede
     /// cancelar directamente: primero hay que anular la factura con una Nota de Credito. El front lo usa para
     /// explicar por que el flujo de cancelacion pide pasar por la NC. Derivado de "tiene CAE vivo".

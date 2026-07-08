@@ -13,7 +13,7 @@ namespace TravelApi.Tests.Unit;
 public class Adr042ArcaErrorSanitizationTests
 {
     // Generico NEUTRO compartido (2026-07-03): sirve para NC y ND (ver ArcaErrorSanitizer.GenericArcaMessage).
-    private const string Generic = "AFIP rechazó el comprobante. Revisá los datos fiscales de la factura o reintentá.";
+    private const string Generic = "AFIP rechazó la factura. Revisá los datos fiscales o volvé a intentar.";
 
     [Theory]
     // XML / SOAP fault de ARCA.

@@ -3655,6 +3655,8 @@ public class BookingCancellationService
         => new CancellationDebitNotePendingDto
         {
             BookingCancellationPublicId = b.PublicId,
+            // (A5, 2026-07-08) PublicId de la reserva para que la bandeja linkee a la ficha (donde vive el paso de multa).
+            ReservaPublicId = b.Reserva?.PublicId,
             ReservaNumero = b.Reserva?.NumeroReserva ?? string.Empty,
             DebitNoteStatus = overrideStatus ?? b.DebitNoteStatus.ToString(),
             PenaltyAmount = b.PenaltyAmountAtEvent,
@@ -4279,7 +4281,7 @@ public class BookingCancellationService
                      && c.ArcaErrorMessage != null)
             .Select(c => c.ArcaErrorMessage)
             .FirstOrDefaultAsync(ct);
-        bc.ArcaErrorMessage = failedChildError ?? "Una o mas notas de credito fueron rechazadas por AFIP.";
+        bc.ArcaErrorMessage = failedChildError ?? "AFIP rechazó una o más devoluciones de esta cancelación. Volvé a intentar desde la reserva.";
 
         _auditService.StageBusinessEvent(
             action: AuditActions.BookingCancellationArcaRejected,
@@ -4817,6 +4819,102 @@ public class BookingCancellationService
     }
 
     /// <inheritdoc />
+    public async Task<OperatorPenaltySituationDto> GetOperatorPenaltySituationAsync(
+        Guid reservaPublicId, bool userCanClassifyOperatorPenalty, CancellationToken ct)
+    {
+        // Spec "el paso de multa vive en la ficha" (A2, 2026-07-08): read-model DETALLADO del paso de la multa del
+        // operador, para que la ficha muestre el cartel/boton exacto sin pedir aparte el detalle de la cancelacion.
+        // Misma cancelacion vigente y misma proyeccion a tipo anonimo que GetOperatorPenaltyOutcomeAsync (ver el
+        // comentario de PenaltyConfirmabilityFields sobre por que NO proyectamos a la entidad), pero traemos algunos
+        // campos mas (monto, moneda, fechas, quien cerro sin multa) para armar el DTO completo.
+        var row = await _db.BookingCancellations
+            .AsNoTracking()
+            .Where(b => b.Reserva.PublicId == reservaPublicId
+                     && b.Status != BookingCancellationStatus.Aborted)
+            .OrderByDescending(b => b.DraftedAt)
+            .Select(b => new
+            {
+                b.Status,
+                b.CreditNoteInvoiceId,
+                b.PenaltyStatus,
+                b.DebitNoteInvoiceId,
+                b.DebitNoteStatus,
+                b.PenaltyAmountAtEvent,
+                b.PenaltyCurrencyAtEvent,
+                b.PenaltyConfirmedAt,
+                b.PenaltyConfirmedByUserName,
+                b.OperatorPenaltyConfirmedDate,
+                b.ConfirmedWithClientAt,
+            })
+            .FirstOrDefaultAsync(ct);
+
+        // Sin cancelacion vigente: paso None, sin acciones. El front no pinta nada.
+        if (row is null)
+            return new OperatorPenaltySituationDto { State = OperatorPenaltySituationState.None.ToString() };
+
+        // "Pendiente de decidir ahora" reusa la MISMA regla canonica que el boton confirmar/cerrar (flag ON + NC
+        // total con CAE + penalidad aun Estimated + sin ND en juego), para no divergir de esa verdad.
+        var fields = new PenaltyConfirmabilityFields(
+            row.Status, row.CreditNoteInvoiceId, row.PenaltyStatus, row.DebitNoteInvoiceId, row.DebitNoteStatus);
+        var settings = await _settings.GetEntityAsync(ct);
+        var (isPendingDecision, _) = EvaluateCanConfirmPenalty(fields, settings.EnableCancellationDebitNote);
+
+        // Derivacion del paso: regla de dominio PURA (testeable caso por caso).
+        var state = OperatorPenaltySituationRules.Derive(new OperatorPenaltySituationRules.Fields(
+            HasLiveCancellation: true,
+            PenaltyStatus: row.PenaltyStatus,
+            DebitNoteStatus: row.DebitNoteStatus,
+            HasDebitNoteInvoice: row.DebitNoteInvoiceId.HasValue,
+            IsPendingDecision: isPendingDecision));
+
+        // Monto/moneda: solo tienen sentido cuando hay una multa con monto real. En None no hay cancelacion en juego;
+        // en Waived el monto quedo en 0 ("no hubo multa") -> null para que el front no muestre "$0".
+        var showAmount = state is not (OperatorPenaltySituationState.None or OperatorPenaltySituationState.Waived);
+        decimal? amount = showAmount ? row.PenaltyAmountAtEvent : null;
+        // La moneda se muestra en ISO ("ARS"/"USD"), NUNCA el codigo ARCA interno. Solo si hay monto.
+        var currency = amount.HasValue ? ProjectPenaltyCurrencyToIsoOrNull(row.PenaltyCurrencyAtEvent) : null;
+
+        // "Desde cuando" del paso: el timestamp mas razonable disponible. Si ya se resolvio la penalidad
+        // (confirmada / cerrada sin multa) usamos PenaltyConfirmedAt; si no hay, la fecha fiscal que confirmo el
+        // operador; y como ultimo recurso la fecha de la anulacion (util para PendingDecision, que aun no confirmo).
+        var since = row.PenaltyConfirmedAt ?? row.OperatorPenaltyConfirmedDate ?? row.ConfirmedWithClientAt;
+
+        // Rastro del cierre sin multa: el waive SI persiste PenaltyConfirmedAt / PenaltyConfirmedByUserName (esos
+        // campos se reusan para "quien resolvio la penalidad"). Solo los exponemos en el estado Waived.
+        var waivedAt = state == OperatorPenaltySituationState.Waived ? row.PenaltyConfirmedAt : (DateTime?)null;
+        var waivedByName = state == OperatorPenaltySituationState.Waived ? row.PenaltyConfirmedByUserName : null;
+
+        // Acciones: combinan ESTADO + PERMISO del usuario (ya resuelto por el caller). El endpoint revalida todo
+        // server-side; estos booleanos solo deciden que boton se OFRECE en la ficha.
+        //   - Confirmar: solo cuando esta pendiente de decidir.
+        //   - Reintentar la ND: cuando fallo el CAE o quedo confirmada sin encolar (un retry a secas puede destrabarla).
+        //   - Corregir monto/moneda: cuando la ND quedo trabada por moneda (revision manual) o fallida — se re-captura
+        //     monto + moneda y se re-emite (correct-penalty). Una Failed admite ambas (reintentar tal cual, o corregir).
+        var canConfirm = state == OperatorPenaltySituationState.PendingDecision && userCanClassifyOperatorPenalty;
+        var canRetryDebitNote = userCanClassifyOperatorPenalty && state is
+            OperatorPenaltySituationState.DebitNoteFailed or OperatorPenaltySituationState.ConfirmedNoDebitNote;
+        var canCorrectAmountCurrency = userCanClassifyOperatorPenalty && state is
+            OperatorPenaltySituationState.DebitNoteNeedsAmountCurrency or OperatorPenaltySituationState.DebitNoteFailed;
+
+        return new OperatorPenaltySituationDto
+        {
+            State = state.ToString(),
+            Amount = amount,
+            Currency = currency,
+            Since = state == OperatorPenaltySituationState.None ? null : since,
+            CanConfirm = canConfirm,
+            CanRetryDebitNote = canRetryDebitNote,
+            CanCorrectAmountCurrency = canCorrectAmountCurrency,
+            WaivedAt = waivedAt,
+            WaivedByName = waivedByName,
+            // GAP conocido (2026-07-08): el revert-waive no persiste rastro en la entidad (solo audit log). Sin
+            // migracion (fuera de alcance de esta noche), estos van null. El campo existe para no romper el contrato.
+            RevertedAt = null,
+            RevertedByName = null,
+        };
+    }
+
+    /// <inheritdoc />
     public async Task<BookingCancellationDto> ConfirmPenaltyAsync(
         Guid publicId,
         ConfirmPenaltyRequest request,
@@ -5074,9 +5172,10 @@ public class BookingCancellationService
         // combinacion "multa confirmada + ND pendiente de revision" es un estado CONSISTENTE; un 500 con estado a
         // medias NO lo es. ===
         WarnIfDebitNoteLate(bc, operatorDate, settings);
+        // A3 (2026-07-08): la ND se atribuye a quien CONFIRMA la multa (userId/userName), no al confirmador de la anulacion.
         try
         {
-            await TryEmitCancellationDebitNoteAsync(bc, ct);
+            await TryEmitCancellationDebitNoteAsync(bc, ct, actorUserId: userId, actorUserName: userName);
         }
         catch (Exception emissionError) when (emissionError is not OperationCanceledException)
         {
@@ -5136,7 +5235,12 @@ public class BookingCancellationService
             throw new BusinessInvariantViolationException(
                 "La multa del operador todavía no fue confirmada. Confirmala primero para poder emitir la Nota de Débito.",
                 invariantCode: "INV-ADR014-RETRY-001");
-        if (bc.DebitNoteInvoiceId.HasValue)
+        // Una ND ya EMITIDA (Issued, con CAE) o EN VUELO (Pending) no se reintenta -> rebota. PERO una ND FALLIDA
+        // (rechazada por AFIP, sin CAE, job terminado) SI se reintenta (funcional B1, 2026-07-08): el link apunta a
+        // un comprobante MUERTO que hay que reemplazar por uno nuevo. Ese caso lo destraba la seccion critica del lock
+        // (suelta el link muerto y re-emite). Sin esto, el boton "Reintentar" del cartel de ND fallida devolvia un 409
+        // falso ("ya fue emitida o encolada"), porque una Failed SIEMPRE tiene DebitNoteInvoiceId seteado.
+        if (bc.DebitNoteInvoiceId.HasValue && bc.DebitNoteStatus != DebitNoteStatus.Failed)
             throw new BusinessInvariantViolationException(
                 "La Nota de Débito de esta cancelación ya fue emitida o encolada. No hace falta reintentar.",
                 invariantCode: "INV-ADR014-RETRY-002");
@@ -5160,20 +5264,49 @@ public class BookingCancellationService
             await _db.Entry(bc).ReloadAsync(ct);
             if (bc.DebitNoteInvoiceId.HasValue)
             {
-                // Otro reintento gano la carrera y ya dejo la ND vinculada: NO emitimos otra (idempotente, no-op).
-                _logger.LogInformation(
-                    "RETRY-ND: BC {BcPublicId} ya quedo con ND vinculada por otro reintento concurrente. No-op.",
+                // Mirar el estado REAL de la ND vinculada DENTRO del lock. Una ND VIVA (con CAE, o Pending en vuelo,
+                // o cualquier link no-rechazado) significa que otro reintento concurrente ya la resolvio -> NO
+                // emitimos otra (idempotente, no-op). SOLO una ND RECHAZADA (Failed: Resultado="R" y sin CAE) es
+                // segura de reemplazar: soltamos ese link muerto y seguimos a re-emitir una nueva (funcional B1).
+                var linked = await _db.Invoices
+                    .Where(i => i.Id == bc.DebitNoteInvoiceId.Value)
+                    .Select(i => new { i.Resultado, i.CAE })
+                    .FirstOrDefaultAsync(ct);
+                var linkedHasCae = linked is not null && !string.IsNullOrWhiteSpace(linked.CAE);
+                var linkedRejected = linked is not null
+                    && string.Equals(linked.Resultado, "R", StringComparison.OrdinalIgnoreCase);
+
+                if (linkedHasCae || !linkedRejected)
+                {
+                    _logger.LogInformation(
+                        "RETRY-ND: BC {BcPublicId} ya quedo con ND viva vinculada (otro reintento concurrente). No-op.",
+                        bc.PublicId);
+                    return true;
+                }
+
+                // ND rechazada: soltamos el link muerto y limpiamos el error viejo de ARCA (A7). El comprobante
+                // rechazado NUNCA obtuvo CAE (no existe documento fiscal), asi que emitir uno nuevo NO duplica nada.
+                bc.DebitNoteInvoiceId = null;
+                bc.DebitNoteStatus = DebitNoteStatus.NotApplicable;
+                bc.DebitNoteArcaErrorMessage = null;
+                await _db.SaveChangesAsync(ct);
+                _logger.LogWarning(
+                    "RETRY-ND: BC {BcPublicId} tenia una ND RECHAZADA vinculada. Se solto el link muerto para re-emitir.",
                     bc.PublicId);
-                return true;
             }
 
             // (a) ANTI DOBLE-EMISION: si un intento anterior alcanzo a CREAR la ND pero no a vincularla, la
             //     RE-VINCULAMOS (no emitimos otra). Misma deteccion que la bandeja de NDs huerfanas: buscamos una
             //     ND (tipos 2/7/12/52) sobre la MISMA factura original y reserva de esta cancelacion.
+            //     EXCLUIMOS las RECHAZADAS (Resultado="R"): una ND rechazada esta muerta (nunca tuvo CAE), re-vincularla
+            //     solo volveria a dejar el BC en Failed (bucle infinito del boton Reintentar). Ante una rechazada hay
+            //     que emitir una NUEVA, no re-atarla. (El OR con null es defensivo: en Postgres "Resultado <> 'R'"
+            //     excluiria las filas con Resultado NULL, que si son huerfanas validas a re-vincular.)
             var orphanDebitNote = await _db.Invoices
                 .Where(i => debitNoteTipos.Contains(i.TipoComprobante) &&
                             i.OriginalInvoiceId == bc.OriginatingInvoiceId &&
-                            i.ReservaId == bc.ReservaId)
+                            i.ReservaId == bc.ReservaId &&
+                            (i.Resultado == null || i.Resultado != "R"))
                 .OrderByDescending(i => i.CreatedAt)
                 .FirstOrDefaultAsync(ct);
             if (orphanDebitNote is not null)
@@ -5203,9 +5336,11 @@ public class BookingCancellationService
 
             // (b) No hay ND previa: emitir de cero con el MISMO blindaje que confirm-penalty (si vuelve a fallar,
             //     revision manual + exito-con-aviso, nunca un 500 que la vuelva a trabar).
+            // A3 (2026-07-08): pasamos el ACTOR del reintento para que la ND y su auditoria queden atribuidas a
+            // quien apreto "Reintentar", no al confirmador de la anulacion.
             try
             {
-                await TryEmitCancellationDebitNoteAsync(bc, ct);
+                await TryEmitCancellationDebitNoteAsync(bc, ct, actorUserId: userId, actorUserName: userName);
             }
             catch (Exception emissionError) when (emissionError is not OperationCanceledException)
             {
@@ -5224,6 +5359,211 @@ public class BookingCancellationService
 
         return await MapToDtoAsync(bc.Id, ct)
             ?? throw new InvalidOperationException("No se pudo completar la operación. Volvé a intentar.");
+    }
+
+    /// <inheritdoc />
+    public async Task<BookingCancellationDto> CorrectPenaltyAsync(
+        Guid publicId,
+        decimal amount,
+        string currency,
+        string reason,
+        string userId,
+        string? userName,
+        CancellationToken ct,
+        bool userCanClassifyAgencyPenalty = false)
+    {
+        // Spec "el paso de multa vive en la ficha" (A4, 2026-07-08): corrige el MONTO + MONEDA de una multa YA
+        // CONFIRMADA cuya Nota de Debito quedo TRABADA (revision manual por moneda distinta, o fallida) y todavia NO
+        // tiene comprobante fiscal emitido con CAE. Es la version ATOMICA del circuito que hoy existe pieza por
+        // pieza (cerrar sin multa -> reabrir -> volver a confirmar con la moneda nueva): deshace la imputacion vieja,
+        // graba el monto/moneda nuevos, y re-encola la ND, TODO bajo el MISMO lock FOR UPDATE del padre.
+
+        // === Validaciones de entrada (400). El monto debe ser > 0 y la moneda una ISO soportada (ARS/USD). ===
+        if (amount <= 0m)
+            throw new ArgumentException("El monto de la multa debe ser mayor a cero.", nameof(amount));
+        if (!Monedas.EsSoportada(currency))
+            throw new ArgumentException(
+                "La moneda debe ser pesos (ARS) o dólares (USD).", nameof(currency));
+        var normalizedCurrency = Monedas.Normalizar(currency);
+
+        var trimmedReason = reason?.Trim();
+        if (string.IsNullOrWhiteSpace(trimmedReason))
+            throw new ArgumentException("Indicá un motivo para corregir la multa.", nameof(reason));
+
+        var settings = await _settings.GetEntityAsync(ct);
+        if (!settings.EnableCancellationDebitNote)
+            // Voz de los avisos (regla del dueño 2026-07-08): quien llama a esta accion YA tiene el permiso
+            // elevado de clasificar multas (userCanClassifyAgencyPenalty), asi que derivarlo a "administracion"
+            // no tiene sentido — probablemente ES un administrador. El mensaje queda autocontenido.
+            throw new InvalidOperationException(
+                "No se pudo completar la corrección de la multa. Volvé a intentar más tarde.");
+
+        // === El BC existe (404). Mismos Includes que ConfirmPenaltyAsync: el gating de la ND necesita la factura
+        // origen + sus Tributos + Supplier. ===
+        var bc = await _db.BookingCancellations
+            .Include(b => b.Reserva)
+            .Include(b => b.OriginatingInvoice)
+                .ThenInclude(i => i.Tributes)
+            .Include(b => b.Supplier)
+            .FirstOrDefaultAsync(b => b.PublicId == publicId, ct)
+            ?? throw new KeyNotFoundException($"BC {publicId} no encontrada.");
+
+        // === Permiso elevado (B2 security 2026-07-08): correct-penalty re-emite el MISMO comprobante fiscal que
+        // confirm-penalty/retry Y ademas cambia el monto/moneda, asi que lleva el MISMO gate en el eje de la decision
+        // de plata: cancellations.classify_agency_penalty (o Admin), ya resuelto server-side por el controller. Lo
+        // EXIGIMOS aca tambien (defensa en profundidad, no confiar en el frontend). ===
+        if (!userCanClassifyAgencyPenalty)
+            throw new BusinessInvariantViolationException(
+                "No tenés permiso para corregir la multa del operador. Pedíselo a un administrador.",
+                invariantCode: "INV-CORRECT-PERM");
+
+        // === Solo aplica a una multa CONFIRMADA. Si aun esta Estimated (pendiente) o se cerro sin multa (Waived),
+        // no hay nada que "corregir": el flujo correcto es confirmar / reabrir. ===
+        if (bc.PenaltyStatus != PenaltyStatus.Confirmed)
+            throw new BusinessInvariantViolationException(
+                "Esta multa todavía no fue confirmada, así que no hay nada para corregir. Confirmala primero.",
+                invariantCode: "INV-CORRECT-001");
+
+        // === GUARD DURO: NO corregir si ya hay un comprobante fiscal emitido/en vuelo. Se evalua aca (fuera de
+        // transaccion) para el 409 rapido, y SE RE-EVALUA IDENTICO dentro del lock (ver abajo, B1). ===
+        await EnsureDebitNoteNotBlockingCorrectionAsync(bc, ct);
+
+        var previousAmount = bc.PenaltyAmountAtEvent;
+        var previousCurrency = ProjectPenaltyCurrencyToIsoOrNull(bc.PenaltyCurrencyAtEvent);
+
+        // === Unidad de trabajo ATOMICA bajo el mismo lock FOR UPDATE del padre que los callbacks/retry: deshacer la
+        // imputacion vieja de la multa, grabar el monto/moneda nuevos, resetear la huella de ND, y re-encolar. Serializa
+        // contra un retry o un callback concurrente del mismo BC. En InMemory (tests) corre directo. ===
+        await RunUnderParentLockAsync<bool>(bc.Id, async () =>
+        {
+            // Re-leer el estado DURABLE dentro del lock y RE-EVALUAR LOS TRES guards (B1 security 2026-07-08): entre
+            // el guard de arriba (fuera de transaccion) y aca, un retry concurrente pudo dejar la ND en Pending (link
+            // seteado, sin CAE aun). Si solo mirasemos "link con CAE", clobbeariamos ese link y re-encolariamos otra
+            // ND -> cuando el job de la vieja saque CAE quedarian DOS ND con CAE por la MISMA multa (irreversible).
+            // Un Failed si es seguro de clobbear (nunca va a sacar CAE); un Pending o un Issued NO -> rebotamos.
+            await _db.Entry(bc).ReloadAsync(ct);
+
+            // GUARD adicional (fix carrera 2026-07-08, hallado en review): el ReloadAsync de arriba refresca TODO
+            // el estado del BC (incluido el xmin), asi que si entre el chequeo de PenaltyStatus de mas arriba (fuera
+            // del lock) y este punto otro admin ejecuto "cerrar sin multa" (WaiveOperatorPenaltyAsync, que NO usa
+            // este mismo lock por Id), el Reload trae PenaltyStatus=Waived sin que nada lo detecte: la concurrencia
+            // optimista por xmin NO salva esto, porque el Reload la neutraliza (adopta el xmin nuevo como si fuera
+            // nuestro punto de partida). Sin este re-chequeo, la correccion seguiria de largo, pisaria
+            // PenaltyAmountAtEvent/PenaltyCurrencyAtEvent de una multa que ya NO existe, y
+            // AllocateConfirmedPenaltyToLinesAsync le recortaria el RefundCap a una linea que el waive ya habia
+            // restaurado -> queda Waived con el reembolso del operador recortado igual = descuadre contable
+            // silencioso (viola RefundCap + PenaltyAmount == capBeforePenalty). Por eso volvemos a exigir
+            // Confirmed ACA ADENTRO, con la MISMA invariante que el chequeo de afuera (mismo codigo => mismo 409
+            // para el usuario, sin importar en que momento exacto se cruzo el waive).
+            if (bc.PenaltyStatus != PenaltyStatus.Confirmed)
+                throw new BusinessInvariantViolationException(
+                    "Esta multa todavía no fue confirmada, así que no hay nada para corregir. Confirmala primero.",
+                    invariantCode: "INV-CORRECT-001");
+
+            await EnsureDebitNoteNotBlockingCorrectionAsync(bc, ct);
+
+            // (1) DESHACER la imputacion vieja de la multa a las lineas del operador (restaura los RefundCap). Igual
+            //     que hace el cierre sin multa desde Confirmed. Es no-op para agency-owned (no hubo imputacion).
+            await ReverseConfirmedPenaltyFromLinesAsync(bc, ct);
+
+            // (2) Grabar el monto/moneda NUEVOS. PenaltyAmountAtEvent alimenta la ND al cliente; PenaltyCurrencyAtEvent
+            //     es la moneda DECLARADA que el gating compara contra la factura (evita la ND por el numero equivocado).
+            bc.PenaltyAmountAtEvent = amount;
+            bc.PenaltyCurrencyAtEvent = normalizedCurrency;
+            bc.PenaltyConfirmedByUserId = userId;
+            bc.PenaltyConfirmedByUserName = userName;
+            bc.PenaltyConfirmedAt = DateTime.UtcNow;
+
+            // (3) Registrar la moneda en las lineas + re-imputar la multa nueva a los RefundCap (por moneda, nunca cruzado).
+            await PersistPenaltyCurrencyOnLinesAsync(bc, normalizedCurrency, ct);
+            await AllocateConfirmedPenaltyToLinesAsync(bc, amount, normalizedCurrency, ct);
+
+            // (4) Resetear la huella de la ND trabada para que TryEmit la re-encole desde cero: soltamos el link a
+            //     cualquier ND fallida vieja (su monto ya no aplica), volvemos a NotApplicable y limpiamos el error
+            //     viejo de ARCA (A7). NO re-vinculamos huerfanos: el monto cambio, hay que emitir una ND nueva.
+            bc.DebitNoteInvoiceId = null;
+            bc.DebitNoteStatus = DebitNoteStatus.NotApplicable;
+            bc.DebitNoteArcaErrorMessage = null;
+
+            // (5) Auditoria PROPIA de la correccion (menor review 2026-07-08): accion dedicada OperatorPenaltyCorrected
+            //     (no la de emision normal de ND) para que el contador la pueda filtrar. STAGED (no LogBusinessEventAsync
+            //     que hace su propio SaveChanges): asi la auditoria entra en la MISMA SaveChanges que la mutacion ->
+            //     atomico (o commitea todo, o nada; nunca audit-sin-efecto). Antes/despues de monto y moneda + motivo.
+            _auditService.StageBusinessEvent(
+                action: AuditActions.OperatorPenaltyCorrected,
+                entityName: AuditActions.BookingCancellationEntityName,
+                entityId: bc.Id.ToString(),
+                details: JsonSerializer.Serialize(new
+                {
+                    bc.PublicId,
+                    reservaPublicId = bc.Reserva?.PublicId,
+                    action = "operator-penalty-corrected",
+                    reason = trimmedReason,
+                    previousAmount,
+                    previousCurrency,
+                    newAmount = amount,
+                    newCurrency = normalizedCurrency,
+                }),
+                userId: userId,
+                userName: userName);
+
+            // Mutacion + auditoria staged en una UNICA SaveChanges (atomica).
+            await _db.SaveChangesAsync(ct);
+
+            // (6) Re-encolar la ND con la moneda NUEVA. Si ahora es coherente con la factura -> Pending; si sigue
+            //     trabada (u otro fallo) -> revision manual + exito-con-aviso (nunca un 500 que la vuelva a trabar).
+            //     Atribuida al actor real de la correccion (A3).
+            try
+            {
+                await TryEmitCancellationDebitNoteAsync(bc, ct, actorUserId: userId, actorUserName: userName);
+            }
+            catch (Exception emissionError) when (emissionError is not OperationCanceledException)
+            {
+                _logger.LogError(emissionError,
+                    "metric:cancellation_debit_note_emission_failed | BcPublicId={BcPublicId} | " +
+                    "correccion de multa: la re-emision fallo; se deja en revision manual.",
+                    bc.PublicId);
+                await MarkDebitNoteEmissionForManualReviewAsync(bc.Id, ct);
+            }
+            return true;
+        }, ct);
+
+        _logger.LogInformation(
+            "metric:cancellation_debit_note_corrected | BcPublicId={BcPublicId} By={UserId} Amount={Amount} Currency={Currency}",
+            bc.PublicId, userId, amount, normalizedCurrency);
+
+        return await MapToDtoAsync(bc.Id, ct)
+            ?? throw new InvalidOperationException("No se pudo completar la operación. Volvé a intentar.");
+    }
+
+    /// <summary>
+    /// A4 (2026-07-08): GUARD DURO compartido de <see cref="CorrectPenaltyAsync"/>. Rechaza corregir la multa si su
+    /// Nota de Debito ya esta EMITIDA o EN VUELO. Se llama DOS veces: fuera de transaccion (409 rapido) y —critico
+    /// (B1 security)— DENTRO del lock tras <c>ReloadAsync</c>, para no clobbear una ND que un retry concurrente dejo
+    /// Pending entre medio (evita dos ND con CAE por la misma multa). Un Failed NO bloquea (nunca sacara CAE, es
+    /// seguro re-emitir); un Issued o un Pending SI.
+    /// </summary>
+    private async Task EnsureDebitNoteNotBlockingCorrectionAsync(BookingCancellation bc, CancellationToken ct)
+    {
+        if (bc.DebitNoteStatus == DebitNoteStatus.Issued)
+            throw new BusinessInvariantViolationException(
+                "La multa ya tiene una Nota de Débito emitida. Para cambiarla hay que anular ese comprobante primero.",
+                invariantCode: "INV-CORRECT-002");
+        if (bc.DebitNoteStatus == DebitNoteStatus.Pending)
+            throw new BusinessInvariantViolationException(
+                "La Nota de Débito de esta multa se está emitiendo. Esperá a que termine para poder corregirla.",
+                invariantCode: "INV-CORRECT-003");
+        // Por robustez: una ND vinculada cuyo Invoice YA tenga CAE (aunque el DebitNoteStatus escalar no lo refleje).
+        if (bc.DebitNoteInvoiceId.HasValue)
+        {
+            var linkedHasCae = await _db.Invoices
+                .Where(i => i.Id == bc.DebitNoteInvoiceId.Value)
+                .AnyAsync(i => i.CAE != null && i.CAE != "", ct);
+            if (linkedHasCae)
+                throw new BusinessInvariantViolationException(
+                    "La multa ya tiene una Nota de Débito emitida. Para cambiarla hay que anular ese comprobante primero.",
+                    invariantCode: "INV-CORRECT-002");
+        }
     }
 
     /// <inheritdoc />
@@ -5447,6 +5787,38 @@ public class BookingCancellationService
             throw new BusinessInvariantViolationException(
                 "No se puede reabrir: la cancelación tiene una Nota de Débito asociada.",
                 invariantCode: "INV-WAIVE-REVERT-002");
+
+        // === Precondicion 6 (A6, freno de consistencia, 2026-07-08): NO reabrir si el saldo a favor del cliente
+        // originado por ESTA anulacion ya se uso/retiro por completo. Motivo: reabrir es el paso previo a confirmar
+        // una multa; confirmar una multa recorta los RefundCap (lo que el operador debe reembolsar) y, en el neto de
+        // la cancelacion, se apoya en que ese saldo a favor del cliente todavia exista para absorberla. Si el cliente
+        // YA gasto todo ese saldo (lo aplico a otra reserva o lo retiro en efectivo), confirmar la multa despues
+        // dejaria la cuenta descuadrada sin forma de recortar nada.
+        //
+        // CRITERIO conservador y simple (el "monto posible de multa" es DESCONOCIDO al deshacer): miramos solo el
+        // caso sin retorno -> el saldo a favor DISPONIBLE de esta cancelacion quedo en CERO (todo consumido). Si
+        // todavia queda algo, permitimos reabrir (la multa que se confirme despues queda capeada por los RefundCap,
+        // como hoy). La info de "cuanto queda" ya vive en ClientCreditEntries.RemainingBalance (columna denormalizada,
+        // suma de lo no consumido/retirado por moneda).
+        //
+        // OJO (no sobre-bloquear): si esta anulacion NUNCA genero saldo a favor del cliente (ej. multa pura, el
+        // cliente no tenia plata a favor), no hay nada que proteger -> se permite. Por eso el bloqueo exige que
+        // HAYA existido saldo (alguna entry) Y que hoy este todo en cero, no simplemente "suma cero" (que tambien
+        // daria una anulacion sin ninguna entry).
+        var clientCredit = await _db.ClientCreditEntries
+            .AsNoTracking()
+            .Where(e => e.BookingCancellationId == bc.Id)
+            .GroupBy(e => 1)
+            .Select(g => new { HadCredit = true, Available = g.Sum(e => e.RemainingBalance) })
+            .FirstOrDefaultAsync(ct);
+        if (clientCredit is not null && clientCredit.Available <= 0m)
+            // Voz de los avisos (regla del dueño 2026-07-08): "registrala con quien maneje la cuenta del cliente"
+            // derivaba a un rol que quien esta viendo este cartel probablemente ES. Texto coordinado con el
+            // fallback que pone el front cuando le llega este mismo code (SALDO_YA_USADO): mismo texto en los dos
+            // lados para que nunca se vean mensajes distintos segun de donde vino el cartel.
+            throw new ClientCreditAlreadyUsedException(
+                "El cliente ya usó ese saldo a favor, por eso no se puede deshacer este cierre. Si el operador " +
+                "te cobró una multa ahora, cobrásela al cliente como un cargo de la agencia desde la ficha.");
 
         // === Reversa LIMPIA a Estimated. Restauramos exactamente los defaults del estado pendiente que el waive
         // habia pisado: el waive habia puesto PenaltyAmountAtEvent=0 y los campos de confirmado-por; los volvemos a
@@ -5909,7 +6281,15 @@ public class BookingCancellationService
     /// <para><b>Idempotencia</b>: si el BC ya tiene <c>DebitNoteInvoiceId</c>, no crea otra
     /// ND (guard duro). El pipeline de emision ademas tiene su propio anti-doble-POST.</para>
     /// </summary>
-    private async Task TryEmitCancellationDebitNoteAsync(BookingCancellation bc, CancellationToken ct)
+    /// <param name="actorUserId">
+    /// (A3, review 2026-07-08) Actor REAL que dispara la emision (el que apreto "Confirmar multa" o "Reintentar"),
+    /// para atribuir bien la ND y su auditoria. Antes se atribuia SIEMPRE a <c>bc.ConfirmedByUserId</c> (quien
+    /// confirmo la ANULACION, no quien emite la ND) — el reviewer de seguridad lo marco como atribucion incorrecta.
+    /// null (callbacks async de ARCA, sin usuario) -> cae al fallback historico <c>bc.ConfirmedByUserId</c>.
+    /// </param>
+    /// <param name="actorUserName">Nombre del actor real, par de <paramref name="actorUserId"/>.</param>
+    private async Task TryEmitCancellationDebitNoteAsync(
+        BookingCancellation bc, CancellationToken ct, string? actorUserId = null, string? actorUserName = null)
     {
         var settings = await _settings.GetEntityAsync(ct);
 
@@ -6085,8 +6465,12 @@ public class BookingCancellationService
 
         // Emitir via el pipeline existente (CreateAsync -> CreatePendingInvoice +
         // ProcessInvoiceJob async). Reusamos toda la infra de emision/idempotencia/CAE.
+        // A3 (2026-07-08): atribuimos la ND al ACTOR REAL que la dispara (confirmar / reintentar). Fallback al
+        // confirmador de la anulacion solo para los callbacks async sin usuario (actorUserId == null).
+        var emissionUserId = actorUserId ?? bc.ConfirmedByUserId;
+        var emissionUserName = actorUserName ?? bc.ConfirmedByUserName;
         var debitNoteDto = await _invoiceService.CreateAsync(
-            debitNoteRequest, bc.ConfirmedByUserId, bc.ConfirmedByUserName, ct);
+            debitNoteRequest, emissionUserId, emissionUserName, ct);
 
         // Resolver el Id (legacy int) de la ND recien creada para vincularla al BC.
         var debitNoteId = await _db.Invoices
@@ -6109,6 +6493,10 @@ public class BookingCancellationService
         //     (la ND se emite async por ProcessInvoiceJob).
         bc.DebitNoteInvoiceId = debitNoteId.Value;
         bc.DebitNoteStatus = DebitNoteStatus.Pending;
+        // A7 (2026-07-08): al re-encolar la ND, limpiamos el motivo de rechazo VIEJO de ARCA que hubiera quedado de
+        // un intento fallido anterior. Sin esto, una ND que ahora vuelve a Pending seguiria arrastrando el texto de
+        // error de la vez que fallo (dato viejo enganoso). El crudo ya quedo en el log/auditoria de aquella falla.
+        bc.DebitNoteArcaErrorMessage = null;
         FreezeDebitNoteSnapshot(bc, originatingInvoice, penaltyAmount);
 
         await _auditService.LogBusinessEventAsync(
@@ -6124,8 +6512,10 @@ public class BookingCancellationService
                 conceptKind = bc.ConceptKind.ToString(),
                 debitNoteCbteTipo = bc.DebitNoteCbteTipoAtEvent,
             }),
-            userId: bc.ConfirmedByUserId ?? bc.DraftedByUserId,
-            userName: bc.ConfirmedByUserName ?? bc.DraftedByUserName,
+            // A3 (2026-07-08): auditoria atribuida al actor real (confirmar/reintentar); fallback al confirmador/
+            // drafter de la anulacion solo para los callbacks async sin usuario.
+            userId: actorUserId ?? bc.ConfirmedByUserId ?? bc.DraftedByUserId,
+            userName: actorUserName ?? bc.ConfirmedByUserName ?? bc.DraftedByUserName,
             ct: ct);
 
         await _db.SaveChangesAsync(ct);

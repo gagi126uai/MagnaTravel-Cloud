@@ -1310,10 +1310,14 @@ public class InvoiceService : IInvoiceService
             if (original.Reserva == null)
                 throw new Exception($"La factura {invoiceId} no tiene reserva asociada (ReservaId={original.ReservaId}). No se puede emitir NC.");
 
+            // Voz de los avisos (2026-07-08): el usuario identifica la factura por el NÚMERO DE RESERVA (F-2026-xxxx),
+            // nunca por el id interno. La reserva viene cargada con Include, así que la leemos sin query extra.
+            var numeroReserva = original.Reserva.NumeroReserva;
+
             // Avoid double processing
             if (await _context.Invoices.AnyAsync(i => i.OriginalInvoiceId == invoiceId && i.Resultado == "A"))
             {
-                await CreateNotification(userId, $"El comprobante {original.NumeroComprobante} ya fue anulado.", "Warning", invoiceId);
+                await CreateNotification(userId, $"Esta factura de la reserva {numeroReserva} ya estaba anulada.", "Warning", invoiceId);
                 return;
             }
 
@@ -1359,8 +1363,8 @@ public class InvoiceService : IInvoiceService
                 original.AnnulmentStatus = AnnulmentStatus.Failed;
                 await _context.SaveChangesAsync();
 
-                var reason = $"El tipo de comprobante {original.TipoComprobante} no soporta anulacion automatica. " +
-                             "Generar la Nota de Credito (o ajuste correspondiente) manualmente desde AFIP.";
+                var reason = $"Esta factura de la reserva {numeroReserva} hay que anularla a mano. " +
+                             "Hacé la devolución desde la reserva.";
                 _logger.LogWarning(
                     "Annulment job aborted for Invoice {InvoiceId}: tipo {Tipo} no soportado.",
                     invoiceId, original.TipoComprobante);
@@ -1442,12 +1446,11 @@ public class InvoiceService : IInvoiceService
                     original.AnnulmentStatus = AnnulmentStatus.Failed;
                     await _context.SaveChangesAsync();
 
+                    // Etiqueta de moneda amable (MonedaLabel = fuente única, nunca filtra el código "DOL"/"PES").
                     var foreignReason =
-                        $"La factura {original.NumeroComprobante} esta en moneda {original.MonId} (cotizacion " +
-                        $"{original.MonCotiz.ToString("0.######", CultureInfo.InvariantCulture)}). La anulacion total " +
-                        "automatica solo emite Notas de Credito en pesos, asi que se bloqueo para no generar un " +
-                        "comprobante con moneda incorrecta. Emitir la NC en moneda extranjera (NC parcial F2.5) o " +
-                        "resolver manualmente desde ARCA.";
+                        $"No pudimos anular sola la factura de la reserva {numeroReserva} porque está en " +
+                        $"{BookingCancellationService.MonedaLabel(original.MonId)}. Hacé la devolución de esa factura " +
+                        "a mano para que quede en la moneda correcta.";
                     _logger.LogWarning(
                         "Annulment job aborted for Invoice {InvoiceId}: moneda {MonId} != PES y flag multimoneda OFF.",
                         invoiceId, original.MonId);
@@ -1467,10 +1470,8 @@ public class InvoiceService : IInvoiceService
                     await _context.SaveChangesAsync();
 
                     var incoherentReason =
-                        $"La factura {original.NumeroComprobante} esta en moneda {original.MonId} con cotizacion " +
-                        $"{original.MonCotiz.ToString("0.######", CultureInfo.InvariantCulture)}, que es incoherente " +
-                        "(debe ser mayor a 0 y distinta de 1). No se emite la Nota de Credito para no valuar un " +
-                        "dolar como un peso. Resolver manualmente: cargar el tipo de cambio correcto de la factura origen.";
+                        $"No pudimos anular la factura de la reserva {numeroReserva} porque le falta cargar bien el " +
+                        "valor del dólar. Corregí el tipo de cambio de esa factura y volvé a intentar.";
                     _logger.LogWarning(
                         "Annulment job aborted for Invoice {InvoiceId}: moneda {MonId} con cotizacion incoherente {MonCotiz}.",
                         invoiceId, original.MonId, original.MonCotiz);
@@ -1490,9 +1491,8 @@ public class InvoiceService : IInvoiceService
                     await _context.SaveChangesAsync();
 
                     var unsupportedCurrencyReason =
-                        $"La factura {original.NumeroComprobante} esta en moneda {original.MonId}, que no es una de " +
-                        "las monedas que el sistema sabe emitir al ARCA (hoy solo PES y DOL). Se bloqueo la anulacion " +
-                        "automatica para no generar un comprobante que ARCA rechazaria. Resolver manualmente desde ARCA.";
+                        $"No pudimos anular sola la factura de la reserva {numeroReserva} por la moneda en que está " +
+                        "emitida. Hacé la devolución a mano.";
                     _logger.LogWarning(
                         "Annulment job aborted for Invoice {InvoiceId}: moneda {MonId} no es un codigo ARCA soportado.",
                         invoiceId, original.MonId);
@@ -1696,21 +1696,59 @@ public class InvoiceService : IInvoiceService
                 _logger.LogError(saveEx, "No se pudo persistir AnnulmentStatus=Failed para Invoice {InvoiceId}", invoiceId);
             }
 
-            if (ex.Message.Contains("AFIP RECHAZADO"))
+            // Voz de los avisos: al usuario le hablamos de la RESERVA (F-2026-xxxx). Acá `original` ya no está en
+            // scope (se declaró dentro del try), así que traemos SOLO el número con una query liviana (Select del
+            // campo, sin cargar la factura entera). Si por algún dato legacy no hubiera número, queda vacío antes
+            // que filtrar un id interno.
+            //
+            // N1 (review 2026-07-08, defensivo): esta query corre DESPUÉS del ChangeTracker.Clear() y SIN protección
+            // propia. Si la excepción original fue una caída real de conexión a la base, esta lectura volvería a
+            // explotar con una excepción NUEVA — y eso rompería la semántica de las dos ramas de abajo: la rama "AFIP
+            // RECHAZADO" hace `return` (error permanente, NO se reintenta) y la rama general manda el aviso; un throw
+            // acá haría que Hangfire reintente para siempre un rechazo permanente, o que se saltee el aviso. La
+            // envolvemos best-effort: el aviso puede salir sin número de reserva, pero el return/throw de abajo
+            // mantienen su semántica original aunque la base esté caída.
+            string numeroReserva = string.Empty;
+            try
             {
-                 // Permanent error (Validation), do not retry
-                 await CreateNotification(userId, $"La anulación fue rechazada por AFIP: {ex.Message.Replace("AFIP RECHAZADO: ", "")}", "Error", invoiceId);
-                 return; // Job finishes effectively "Failed" but successfully handled
+                numeroReserva = await _context.Invoices
+                    .Where(i => i.Id == invoiceId)
+                    .Select(i => i.Reserva!.NumeroReserva)
+                    .FirstOrDefaultAsync() ?? string.Empty;
+            }
+            catch (Exception numEx)
+            {
+                _logger.LogWarning(numEx,
+                    "No se pudo leer NumeroReserva para el aviso de anulación de Invoice {InvoiceId}", invoiceId);
             }
 
-            // F2/data-exposure (2026-07-07): el aviso al usuario SIEMPRE es texto de negocio. Solo el mensaje de
-            // nuestra excepcion controlada (InvoiceAnnulmentPendingRetryException, "AFIP no respondio...") es seguro
-            // de mostrar; lo generamos nosotros. Cualquier OTRA excepcion puede traer detalle tecnico crudo — el
-            // caso real fue "Name or service not known (wsaahomo.afip.gov.ar:443)" cuando se cae el DNS de AFIP, que
-            // NO debe llegar al vendedor. El detalle tecnico ya quedo en el log de arriba.
-            var userFacingError = ex is InvoiceAnnulmentPendingRetryException
-                ? $"Error técnico al anular: {ex.Message}. Se reintentará automáticamente."
-                : "Error técnico al anular: no se pudo conectar con AFIP. Se reintentará automáticamente.";
+            if (ex.Message.Contains("AFIP RECHAZADO"))
+            {
+                // Rechazo fiscal REAL de AFIP (permanente, no se reintenta solo). El detalle que viene en la
+                // excepción PUEDE traer XML/SOAP técnico: lo pasamos por el saneador y solo lo sumamos si es un
+                // motivo de negocio legible (si el saneador lo reemplazó por el copy genérico, no lo repetimos
+                // porque nuestro propio texto ya dice lo mismo).
+                var rawDetail = ex.Message.Replace("AFIP RECHAZADO: ", "");
+                var sanitizedDetail = ArcaErrorSanitizer.SanitizeArcaError(rawDetail);
+                var showDetail = sanitizedDetail is not null
+                    && !string.Equals(sanitizedDetail, ArcaErrorSanitizer.GenericArcaMessage, StringComparison.Ordinal);
+
+                var rechazoMessage = showDetail
+                    ? $"AFIP rechazó la anulación de la reserva {numeroReserva}. Revisá los datos fiscales de la factura o volvé a intentar. {sanitizedDetail}"
+                    : $"AFIP rechazó la anulación de la reserva {numeroReserva}. Revisá los datos fiscales de la factura o volvé a intentar.";
+                await CreateNotification(userId, rechazoMessage, "Error", invoiceId);
+                return; // Job finishes effectively "Failed" but successfully handled
+            }
+
+            // F2/data-exposure: el aviso al usuario SIEMPRE es texto de negocio, NUNCA ex.Message crudo (el caso real
+            // fue "Name or service not known (wsaahomo.afip.gov.ar:443)" al caerse el DNS de AFIP). Este catch cubre
+            // tanto nuestra excepción controlada (InvoiceAnnulmentPendingRetryException, "AFIP no respondió") como
+            // cualquier otra falla de conexión: en ambos casos la anulación no se perdió, Hangfire la retoma sola (F1
+            // RETOMA la NC pendiente en vez de duplicarla), así que se lo contamos al usuario sin jerga de "job/reintento
+            // automático". El detalle técnico ya quedó en el log de arriba.
+            var userFacingError =
+                $"La anulación de la reserva {numeroReserva} quedó en camino: AFIP no respondió en este momento. " +
+                "La estamos reintentando por vos, no hace falta que hagas nada.";
             await CreateNotification(userId, userFacingError, "Error", invoiceId);
             throw; // Hangfire reintenta; gracias a F1 el reintento RETOMA la NC pendiente en vez de duplicarla.
         }
@@ -1735,6 +1773,11 @@ public class InvoiceService : IInvoiceService
     private async Task HandleCreditNoteAnnulmentResultAsync(
         Invoice original, Invoice newInvoice, int invoiceId, string userId, int? approvalRequestId)
     {
+        // Voz de los avisos: al usuario le hablamos de la RESERVA (F-2026-xxxx), no del comprobante fiscal.
+        // `original.Reserva` viene cargado con Include desde el job; el guard de arriba garantiza que no es null.
+        // Fallback a vacío (gate data-exposure): el id interno jamás se muestra como número de reserva.
+        var numeroReserva = original.Reserva?.NumeroReserva ?? string.Empty;
+
         if (newInvoice.Resultado == "A")
         {
             // B1.15 Fase 2a (FIX 6): NC aprobada por AFIP — la factura original
@@ -1781,7 +1824,8 @@ public class InvoiceService : IInvoiceService
                 }
             }
 
-            await CreateNotification(userId, $"Anulación exitosa. Se generó el comprobante {newInvoice.NumeroComprobante}.", "Success", newInvoice.Id);
+            // Éxito sin número fiscal (decisión del dueño, 2026-07-08): el aviso lleva solo el número de reserva.
+            await CreateNotification(userId, $"Anulaste la factura de la reserva {numeroReserva}. Se hizo la devolución.", "Success", newInvoice.Id);
 
             // FC1.2.1 v3 §6.2 / HC3 (BR-V2-04, 2026-05-17): sincronizar el BC
             // asociado (si existe). El try/catch envolvente es CRITICO: el
@@ -1847,9 +1891,13 @@ public class InvoiceService : IInvoiceService
             // es texto plano legible se muestra; si es ruido tecnico, un mensaje generico (el crudo NO va a
             // la notificacion del usuario). El log de arriba/abajo conserva el detalle tecnico.
             var failureReason = ArcaErrorSanitizer.SanitizeArcaError(newInvoice.Observaciones);
-            var failureMessage = failureReason is null
-                ? "La anulación falló en AFIP. Revisá los datos de la factura o reintentá."
-                : $"La anulación falló en AFIP: {failureReason}";
+            // Solo sumamos el motivo si es texto de negocio real; si el saneador lo reemplazó por el copy genérico
+            // (ruido técnico), no lo repetimos porque nuestro propio texto ya dice lo mismo.
+            var showFailureReason = failureReason is not null
+                && !string.Equals(failureReason, ArcaErrorSanitizer.GenericArcaMessage, StringComparison.Ordinal);
+            var failureMessage = showFailureReason
+                ? $"AFIP no aceptó la anulación de la reserva {numeroReserva}. Revisá los datos de la factura y volvé a intentar. {failureReason}"
+                : $"AFIP no aceptó la anulación de la reserva {numeroReserva}. Revisá los datos de la factura y volvé a intentar.";
             await CreateNotification(userId, failureMessage, "Error", invoiceId);
 
             // FC1.2.1 v3 §6.2: notificar al BC asociado. Mismo patron try/catch:
@@ -2896,9 +2944,17 @@ public class InvoiceService : IInvoiceService
                 await _approvalService.MarkConsumedAsync(approvalRequestId, ct);
             }
 
+            // Voz de los avisos: el aviso de éxito lleva SOLO el número de reserva (sin CAE ni número fiscal,
+            // decisión del dueño 2026-07-08). `originalInvoice` acá NO trae la Reserva cargada, así que traemos
+            // el número con una query liviana (Select del campo).
+            var numeroReserva = await _context.Reservas
+                .Where(r => r.Id == originalInvoice.ReservaId)
+                .Select(r => r.NumeroReserva)
+                .FirstOrDefaultAsync(ct) ?? string.Empty;
+
             await CreateNotification(
                 userId,
-                $"NC parcial emitida. Comprobante {newCreditNote.NumeroComprobante} (CAE {newCreditNote.CAE}).",
+                $"Listo: se hizo la devolución de la reserva {numeroReserva}.",
                 "Success",
                 newCreditNote.Id);
 
@@ -3374,7 +3430,14 @@ public class InvoiceService : IInvoiceService
             return;
 
         var actor = string.IsNullOrWhiteSpace(request.ForcedByUserName) ? "Un agente" : request.ForcedByUserName;
-        var message = $"{actor} emitio AFIP por excepcion para la reserva #{invoice.ReservaId} con saldo pendiente de {invoice.OutstandingBalanceAtIssuance:C2}.";
+
+        // Voz de los avisos: identificamos la reserva por su número (F-2026-xxxx), no por el id interno. `invoice`
+        // no trae la Reserva cargada acá, así que la traemos con una query liviana (Select del campo).
+        var numeroReserva = await _context.Reservas
+            .Where(r => r.Id == invoice.ReservaId)
+            .Select(r => r.NumeroReserva)
+            .FirstOrDefaultAsync(ct) ?? string.Empty;
+        var message = $"{actor} facturó la reserva {numeroReserva} aunque todavía tenía un saldo pendiente de {invoice.OutstandingBalanceAtIssuance:C2}.";
 
         // D4 (2026-07-05): mismo criterio que CreateNotification — despachar por el servicio (SignalR + clave de
         // resolucion) si hay contenedor; caer al Add directo en unit tests sin DI.

@@ -280,44 +280,73 @@ public class CoherenceWatchdogJob
     private const int MaxReferencesPerCategory = 10;
 
     /// <summary>
-    /// Arma el resumen en castellano de negocio que ve el admin. Solo menciona las categorías que realmente tienen
-    /// hallazgos, y agrega entre paréntesis los NÚMEROS DE RESERVA de cada categoría (para que el dueño sepa CUÁLES
-    /// revisar, no solo cuántas). NO expone nada técnico (ids internos, estados crudos, nombres de clases/campos).
+    /// Arma el resumen en castellano de negocio que ve el admin. Habla en la voz de los avisos (2026-07-08): le
+    /// dice al dueño QUÉ revisar ("Revisá estas reservas anuladas..."), no CÓMO se detectó. Solo menciona las
+    /// categorías que realmente tienen hallazgos y agrega entre paréntesis los NÚMEROS DE RESERVA de cada una
+    /// (para que sepa CUÁLES abrir). NO expone nada técnico (ids internos, estados crudos, "chequeo nocturno").
     /// </summary>
     private static string BuildBusinessSummary(
         IReadOnlyList<CoherenceFinding> liveServiceFindings,
         IReadOnlyList<CoherenceFinding> unjustifiedDebtFindings)
     {
-        var parts = new List<string>();
-        if (liveServiceFindings.Count > 0)
-            parts.Add(BuildCategoryPhrase(liveServiceFindings.Count, "con servicios sin cancelar", liveServiceFindings));
-        if (unjustifiedDebtFindings.Count > 0)
-            parts.Add(BuildCategoryPhrase(
-                unjustifiedDebtFindings.Count, "con una deuda sin comprobante que la justifique", unjustifiedDebtFindings));
-
         var total = liveServiceFindings.Count + unjustifiedDebtFindings.Count;
 
-        // Concordancia singular/plural: con una sola reserva el texto va en singular ("reserva anulada" / "Revisala").
-        var reservaWord = total == 1 ? "reserva anulada" : "reservas anuladas";
-        var closing = total == 1 ? "Revisala cuando puedas." : "Revisalas cuando puedas.";
+        // Caso de una sola reserva: el texto va en singular y sin repetir el conteo, porque "en 1 figura..." suena
+        // raro. Ej: "Revisá esta reserva anulada: figura una deuda que no cierra (F-2026-3001)."
+        if (total == 1)
+        {
+            var singularPhrase = unjustifiedDebtFindings.Count == 1
+                ? BuildSingularDebtPhrase(unjustifiedDebtFindings)
+                : BuildSingularServicePhrase(liveServiceFindings);
+            return $"Revisá esta reserva anulada: {singularPhrase}.";
+        }
 
-        return $"El chequeo nocturno encontró {total} {reservaWord} con datos para revisar: " +
-               string.Join(" y ", parts) + ". " + closing;
+        // Caso de varias reservas: se listan las categorías con hallazgos, deuda primero. Ej.:
+        // "Revisá estas reservas anuladas: en 3 figura una deuda que no cierra (...) y 2 tienen servicios que
+        // quedaron sin cancelar (...)."
+        var parts = new List<string>();
+        if (unjustifiedDebtFindings.Count > 0)
+            parts.Add(BuildPluralDebtPhrase(unjustifiedDebtFindings.Count, unjustifiedDebtFindings));
+        if (liveServiceFindings.Count > 0)
+            parts.Add(BuildPluralServicePhrase(liveServiceFindings.Count, liveServiceFindings));
+
+        return "Revisá estas reservas anuladas: " + string.Join(" y ", parts) + ".";
     }
 
-    /// <summary>
-    /// Arma la frase de UNA categoría: el conteo + la descripción + (entre paréntesis) los números de reserva. Ej.:
-    /// "3 con una deuda sin comprobante que la justifique (F-2026-1010, F-2026-1012 y F-2026-1020)". Si ningún
-    /// hallazgo de la categoría trae número mostrable, la frase queda sin paréntesis (solo el conteo + descripción).
-    /// </summary>
-    private static string BuildCategoryPhrase(
-        int count, string description, IReadOnlyList<CoherenceFinding> findings)
+    /// <summary>Frase singular de deuda: "figura una deuda que no cierra (F-…)". Sin conteo (siempre es 1).</summary>
+    private static string BuildSingularDebtPhrase(IReadOnlyList<CoherenceFinding> findings)
     {
         var references = BuildReferenceList(findings);
-        if (references.Length == 0)
-            return $"{count} {description}";
+        return references.Length == 0
+            ? "figura una deuda que no cierra"
+            : $"figura una deuda que no cierra ({references})";
+    }
 
-        return $"{count} {description} ({references})";
+    /// <summary>Frase singular de servicios: "tiene servicios que quedaron sin cancelar (F-…)". Sin conteo.</summary>
+    private static string BuildSingularServicePhrase(IReadOnlyList<CoherenceFinding> findings)
+    {
+        var references = BuildReferenceList(findings);
+        return references.Length == 0
+            ? "tiene servicios que quedaron sin cancelar"
+            : $"tiene servicios que quedaron sin cancelar ({references})";
+    }
+
+    /// <summary>Frase plural de deuda: "en {count} figura una deuda que no cierra (F-…, F-… y F-…)".</summary>
+    private static string BuildPluralDebtPhrase(int count, IReadOnlyList<CoherenceFinding> findings)
+    {
+        var references = BuildReferenceList(findings);
+        return references.Length == 0
+            ? $"en {count} figura una deuda que no cierra"
+            : $"en {count} figura una deuda que no cierra ({references})";
+    }
+
+    /// <summary>Frase plural de servicios: "{count} tienen servicios que quedaron sin cancelar (F-…)".</summary>
+    private static string BuildPluralServicePhrase(int count, IReadOnlyList<CoherenceFinding> findings)
+    {
+        var references = BuildReferenceList(findings);
+        return references.Length == 0
+            ? $"{count} tienen servicios que quedaron sin cancelar"
+            : $"{count} tienen servicios que quedaron sin cancelar ({references})";
     }
 
     /// <summary>

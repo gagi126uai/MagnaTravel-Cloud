@@ -10,9 +10,19 @@
  *
  * Especificación UX aprobada: docs/ux/2026-06-28c-cierre-sin-multa-operador.md (mockup 3).
  *
+ * E2 (spec "el paso de multa vive en la ficha", 2026-07-08): antes de mandar el motivo al
+ * backend, el panel pide una confirmación explícita ("Volver" / "Sí, reabrir") — reabrir
+ * el paso de la multa no es gratis: puede terminar en otra Nota de Débito o en un cambio
+ * de lo que el cliente ya considera "cerrado". El motivo ya cargado no se pierde si el
+ * admin toca "Volver": sigue en el campo.
+ *
+ * E1 (misma spec): si el backend contesta 409 SALDO_YA_USADO (el cliente ya usó el saldo
+ * a favor que generó el cierre sin multa), el panel muestra ese mensaje y NO deja
+ * reintentar — hay que resolverlo por otro lado (ver mensaje del backend) antes de reabrir.
+ *
  * Props:
  *   cancellationPublicId - GUID del BookingCancellation (obtenido de GET by-reserva).
- *   reservaNumero        - Número de la reserva (para mostrar en el header).
+ *   reservaNumero        - Número de la reserva (para mostrar en el header y la confirmación).
  *   onDeshecho           - Callback tras deshacer exitosamente; el padre muestra el toast de éxito.
  *   onCerrar             - Callback para cerrar el panel sin guardar.
  */
@@ -45,6 +55,19 @@ export function validarMotivoDeshacer(motivo) {
 }
 
 /**
+ * E1 (2026-07-08): detecta si el error de la API es el 409 SALDO_YA_USADO — el cliente
+ * ya usó el saldo a favor que había generado este cierre sin multa, así que reabrir el
+ * paso no tiene sentido hasta que alguien resuelva la plata por otro lado.
+ * Se exporta para poder testearse sin DOM (lógica pura).
+ *
+ * @param {{ status?: number, payload?: { code?: string } }} error
+ * @returns {boolean}
+ */
+export function esErrorSaldoYaUsado(error) {
+    return error?.status === 409 && error?.payload?.code === "SALDO_YA_USADO";
+}
+
+/**
  * Determina si el formulario de "deshacer" puede enviarse.
  * Se exporta para poder testearse sin DOM (lógica pura).
  *
@@ -69,13 +92,25 @@ export function DeshacerCierreSinMultaInline({
     const [submitting, setSubmitting] = useState(false);
     // Error de API: se muestra inline; el panel permanece abierto con los datos intactos.
     const [errorMensaje, setErrorMensaje] = useState(null);
+    // E2: paso intermedio de confirmación explícita antes de llamar al backend.
+    const [mostrarConfirmacion, setMostrarConfirmacion] = useState(false);
+    // E1: si el backend dice SALDO_YA_USADO, el reintento no tiene sentido hasta que
+    // alguien resuelva la plata por otro lado — bloqueamos el submit para no insistir.
+    const [bloqueadoPorSaldoUsado, setBloqueadoPorSaldoUsado] = useState(false);
 
     const motivoError = validarMotivoDeshacer(motivo);
-    const canSubmit = puedeDeshacer({ motivo, submitting });
+    const canSubmit = puedeDeshacer({ motivo, submitting }) && !bloqueadoPorSaldoUsado;
 
-    const handleDeshacer = async () => {
-        // Forzamos la validación visual antes de intentar enviar.
+    // Primer click en "Deshacer": valida el motivo y, si está OK, pide la confirmación
+    // explícita en vez de llamar al backend directamente (E2).
+    const handlePedirConfirmacion = () => {
         setMotivoTocado(true);
+        if (!canSubmit) return;
+        setMostrarConfirmacion(true);
+    };
+
+    // Segundo click, ya en la pantalla de confirmación ("Sí, reabrir"): ahí sí se llama al backend.
+    const handleDeshacer = async () => {
         if (!canSubmit) return;
 
         setSubmitting(true);
@@ -89,14 +124,26 @@ export function DeshacerCierreSinMultaInline({
         } catch (error) {
             const statusCode = error?.status ?? error?.response?.status ?? 0;
 
-            if (statusCode === 403) {
+            if (esErrorSaldoYaUsado(error)) {
+                // E1: el cliente ya usó el saldo a favor que generó el cierre sin multa.
+                // El mensaje ya viene listo del backend en criollo — lo mostramos tal cual
+                // y bloqueamos el submit (reintentar no cambia nada hasta resolver la plata).
+                setErrorMensaje(
+                    error?.payload?.message ||
+                    "El cliente ya usó ese saldo a favor, por eso no se puede deshacer este cierre. Si el operador te cobró una multa ahora, cobrásela al cliente como un cargo de la agencia desde la ficha."
+                );
+                setBloqueadoPorSaldoUsado(true);
+                setMostrarConfirmacion(false);
+            } else if (statusCode === 403) {
                 // 403 es anómalo: el enlace "Deshacer" solo se muestra para Admin.
                 // Si el backend lo rechaza con 403, el token puede haber cambiado.
                 setErrorMensaje("No tenés permiso para deshacer este cierre. Solo administradores pueden realizar esta acción.");
+                setMostrarConfirmacion(false);
             } else {
                 setErrorMensaje(
                     getApiErrorMessage(error, "No se pudo deshacer el cierre. Intentá de nuevo.")
                 );
+                setMostrarConfirmacion(false);
             }
             setSubmitting(false);
         }
@@ -129,88 +176,131 @@ export function DeshacerCierreSinMultaInline({
                 </button>
             </div>
 
-            {/* ── Explicación de la consecuencia — el usuario entiende qué va a pasar ── */}
-            <div
-                className="rounded-lg border border-slate-200 bg-white p-3.5 text-xs text-slate-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
-                data-testid="deshacer-explicacion"
-            >
-                Esto reabre el paso de la multa del operador. Vas a poder volver a elegir
-                entre cargar la multa (con nota de débito) o cerrar sin multa otra vez.
-            </div>
-
-            {/* ── Banner de error de API — datos intactos, el usuario puede reintentar ── */}
-            {errorMensaje && (
-                <div
-                    role="alert"
-                    className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200 flex items-start gap-2"
-                    data-testid="deshacer-error"
-                >
-                    <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" aria-hidden="true" />
-                    <span>{errorMensaje}</span>
-                </div>
-            )}
-
-            {/* ── Campo: motivo ── */}
-            <div>
-                <label
-                    className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5"
-                    htmlFor="deshacer-motivo"
-                >
-                    ¿Por qué lo deshacés?{" "}
-                    <span className="text-rose-500" aria-hidden="true">*</span>
-                </label>
-                <textarea
-                    id="deshacer-motivo"
-                    rows={3}
-                    value={motivo}
-                    onChange={(e) => setMotivo(e.target.value)}
-                    onBlur={() => setMotivoTocado(true)}
-                    maxLength={MOTIVO_MAX}
-                    disabled={submitting}
-                    placeholder="El operador finalmente informó una penalidad de US$ 80..."
-                    data-testid="deshacer-motivo-input"
-                    className={`w-full rounded-xl border px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400 dark:bg-slate-800 dark:text-white disabled:opacity-50 resize-none ${
-                        motivoTocado && motivoError
-                            ? "border-rose-400"
-                            : "border-slate-300 dark:border-slate-600"
-                    }`}
-                />
-                {/* Error de validación — solo visible después de tocar el campo */}
-                {motivoTocado && motivoError && (
+            {mostrarConfirmacion ? (
+                <>
+                    {/* ── E2: confirmación explícita antes de tocar el backend ──
+                        Reabrir el paso de la multa no es gratis (puede terminar en otra ND
+                        o cambiar algo que el cliente ya daba por cerrado) — un solo click
+                        en "Deshacer" no alcanza. */}
                     <div
-                        className="mt-1 text-xs text-rose-600"
+                        className="rounded-lg border border-amber-200 bg-amber-50 p-3.5 text-sm text-amber-900 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-200"
+                        data-testid="deshacer-confirmacion-explicita"
                         role="alert"
-                        data-testid="deshacer-motivo-error"
                     >
-                        {motivoError}
+                        Esto reabre el paso de la multa de la reserva {reservaNumero}. Vas a poder
+                        cargar la multa o cerrar sin multa otra vez.
                     </div>
-                )}
-                <div className="mt-1 text-xs text-slate-400">
-                    {motivo.length}/{MOTIVO_MAX} caracteres
-                </div>
-            </div>
 
-            {/* ── Acciones ── */}
-            <div className="flex justify-end gap-3 pt-1">
-                <button
-                    type="button"
-                    onClick={onCerrar}
-                    disabled={submitting}
-                    className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
-                >
-                    Volver
-                </button>
-                <button
-                    type="button"
-                    onClick={handleDeshacer}
-                    disabled={!canSubmit}
-                    data-testid="deshacer-confirmar-btn"
-                    className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 transition-colors disabled:opacity-50 flex items-center gap-2 dark:bg-slate-600 dark:hover:bg-slate-500"
-                >
-                    {submitting && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-                    {submitting ? "Deshaciendo..." : "Deshacer"}
-                </button>
-            </div>
+                    <div className="flex justify-end gap-3 pt-1">
+                        <button
+                            type="button"
+                            onClick={() => setMostrarConfirmacion(false)}
+                            disabled={submitting}
+                            data-testid="deshacer-confirmacion-volver-btn"
+                            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+                        >
+                            Volver
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleDeshacer}
+                            disabled={submitting}
+                            data-testid="deshacer-confirmar-btn"
+                            className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 transition-colors disabled:opacity-50 flex items-center gap-2 dark:bg-slate-600 dark:hover:bg-slate-500"
+                        >
+                            {submitting && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+                            {submitting ? "Reabriendo..." : "Sí, reabrir"}
+                        </button>
+                    </div>
+                </>
+            ) : (
+                <>
+                    {/* ── Explicación de la consecuencia — el usuario entiende qué va a pasar ── */}
+                    <div
+                        className="rounded-lg border border-slate-200 bg-white p-3.5 text-xs text-slate-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
+                        data-testid="deshacer-explicacion"
+                    >
+                        Esto reabre el paso de la multa del operador. Vas a poder volver a elegir
+                        entre cargar la multa o cerrar sin multa otra vez.
+                    </div>
+
+                    {/* ── Banner de error de API — datos intactos, el usuario puede reintentar ──
+                        E1: si vino de un 409 SALDO_YA_USADO, bloqueadoPorSaldoUsado queda en true
+                        y el botón de abajo se deshabilita — no tiene sentido reintentar sin
+                        resolver la plata primero. */}
+                    {errorMensaje && (
+                        <div
+                            role="alert"
+                            className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200 flex items-start gap-2"
+                            data-testid="deshacer-error"
+                        >
+                            <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" aria-hidden="true" />
+                            <span>{errorMensaje}</span>
+                        </div>
+                    )}
+
+                    {/* ── Campo: motivo ── */}
+                    <div>
+                        <label
+                            className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5"
+                            htmlFor="deshacer-motivo"
+                        >
+                            ¿Por qué lo deshacés?{" "}
+                            <span className="text-rose-500" aria-hidden="true">*</span>
+                        </label>
+                        <textarea
+                            id="deshacer-motivo"
+                            rows={3}
+                            value={motivo}
+                            onChange={(e) => setMotivo(e.target.value)}
+                            onBlur={() => setMotivoTocado(true)}
+                            maxLength={MOTIVO_MAX}
+                            disabled={submitting || bloqueadoPorSaldoUsado}
+                            placeholder="El operador finalmente informó una penalidad de US$ 80..."
+                            data-testid="deshacer-motivo-input"
+                            className={`w-full rounded-xl border px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-400 dark:bg-slate-800 dark:text-white disabled:opacity-50 resize-none ${
+                                motivoTocado && motivoError
+                                    ? "border-rose-400"
+                                    : "border-slate-300 dark:border-slate-600"
+                            }`}
+                        />
+                        {/* Error de validación — solo visible después de tocar el campo */}
+                        {motivoTocado && motivoError && (
+                            <div
+                                className="mt-1 text-xs text-rose-600"
+                                role="alert"
+                                data-testid="deshacer-motivo-error"
+                            >
+                                {motivoError}
+                            </div>
+                        )}
+                        <div className="mt-1 text-xs text-slate-400">
+                            {motivo.length}/{MOTIVO_MAX} caracteres
+                        </div>
+                    </div>
+
+                    {/* ── Acciones ── */}
+                    <div className="flex justify-end gap-3 pt-1">
+                        <button
+                            type="button"
+                            onClick={onCerrar}
+                            disabled={submitting}
+                            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-200 dark:border-slate-700 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+                        >
+                            Volver
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handlePedirConfirmacion}
+                            disabled={!canSubmit}
+                            data-testid="deshacer-siguiente-btn"
+                            className="rounded-lg bg-slate-700 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 transition-colors disabled:opacity-50 flex items-center gap-2 dark:bg-slate-600 dark:hover:bg-slate-500"
+                        >
+                            Deshacer
+                        </button>
+                    </div>
+                </>
+            )}
         </div>
     );
 }

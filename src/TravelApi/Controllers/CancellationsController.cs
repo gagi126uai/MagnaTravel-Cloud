@@ -392,6 +392,76 @@ public class CancellationsController : ControllerBase
     }
 
     /// <summary>
+    /// Spec "el paso de multa vive en la ficha" (A4, 2026-07-08): corrige el MONTO + MONEDA de una multa YA
+    /// CONFIRMADA cuya Nota de Debito quedo TRABADA (revision manual por moneda distinta, o fallida) y SIN
+    /// comprobante fiscal emitido con CAE. Es la version ATOMICA del circuito cerrar-sin-multa -> reabrir -> volver a
+    /// confirmar (deshacer imputacion vieja + grabar monto/moneda + re-encolar la ND, todo bajo el lock del padre).
+    ///
+    /// <para><b>Permiso</b> (B2 security 2026-07-08): MISMO gate que confirm-penalty / retry / waive
+    /// (<see cref="Permissions.ReservasCancel"/> para llegar + <see cref="Permissions.CancellationsClassifyAgencyPenalty"/>
+    /// o Admin, resuelto server-side + ownership). Correct es un SUPERSET de retry (re-emite la ND Y cambia
+    /// monto/moneda), asi que no puede estar gateado mas debil en el eje de la decision de plata. NO se usa
+    /// <c>cobranzas.invoice_annul</c>: ese permiso anula comprobantes con CAE, no clasifica la multa del operador.</para>
+    ///
+    /// <para><b>Mapeo de errores</b>: 400 (monto &lt;= 0 / moneda no ARS-USD / motivo vacio); 404 (BC no existe);
+    /// 409 INV-CORRECT-PERM (sin permiso); 409 INV-CORRECT-001 (multa no confirmada); 409 INV-CORRECT-002 (ND ya
+    /// emitida con CAE); 409 INV-CORRECT-003 (ND en vuelo); 409 CONCURRENT_EDIT (xmin); 409 (flag OFF); 503 (DB caida).</para>
+    /// </summary>
+    [HttpPatch("{publicId:guid}/correct-penalty")]
+    [RequirePermission(Permissions.ReservasCancel)]
+    [RequireOwnership(OwnedEntity.BookingCancellation, "publicId", bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<ActionResult<BookingCancellationDto>> CorrectPenalty(
+        Guid publicId,
+        CorrectPenaltyRequest request,
+        CancellationToken cancellationToken)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
+        var userName = User.FindFirst("FullName")?.Value ?? User.FindFirst(ClaimTypes.Name)?.Value;
+        var requesterIsAdmin = User.IsInRole("Admin");
+
+        // Mismo gate fiscal que confirmar/reintentar la multa: Admin siempre; el resto necesita el permiso dedicado.
+        // Se resuelve server-side (no se confia en el frontend) y el service lo EXIGE (defensa en profundidad).
+        var userCanClassifyAgencyPenalty = requesterIsAdmin
+            || (await _permissionResolver.GetPermissionsAsync(userId, cancellationToken))
+                .Contains(Permissions.CancellationsClassifyAgencyPenalty);
+
+        try
+        {
+            var dto = await _bcService.CorrectPenaltyAsync(
+                publicId, request.Amount, request.Currency, request.Reason, userId, userName, cancellationToken,
+                userCanClassifyAgencyPenalty: userCanClassifyAgencyPenalty);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return Conflict(new
+            {
+                code = "CONCURRENT_EDIT",
+                message = "Otra edicion fue procesada primero, reintente.",
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Flag OFF / estado incompatible. Business limpio se muestra; ruido tecnico .NET/EF se sanea (FUGA 3).
+            return SanitizedConflict(ex, publicId);
+        }
+        catch (ArgumentException ex)
+        {
+            // Monto <= 0, moneda no ISO ARS/USD, motivo vacio. 400.
+            return SanitizedBadRequest(ex);
+        }
+        // BusinessInvariantViolationException (INV-CORRECT-*) la atrapa GlobalExceptionHandler (409 con invariantCode).
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+        }
+    }
+
+    /// <summary>
     /// ADR-042 §3.6 (2026-07-01): reintenta SOLO las notas de credito faltantes de una anulacion multi-factura
     /// que quedo a medias (una NC salio y otra no). Idempotente: no re-emite la NC que ya salio; serializado
     /// bajo el mismo lock del padre que los callbacks de ARCA. Destraba la reserva desde la UI ("Reintentar la
@@ -561,6 +631,17 @@ public class CancellationsController : ControllerBase
         catch (KeyNotFoundException)
         {
             return NotFound();
+        }
+        catch (ClientCreditAlreadyUsedException ex)
+        {
+            // A6 (2026-07-08): freno de consistencia. El saldo a favor del cliente originado por esta anulacion ya se
+            // uso/retiro por completo -> no se puede reabrir para cobrar una multa. Body de negocio con code estable
+            // para que el front muestre el cartel exacto (registrar la multa con quien maneje la cuenta del cliente).
+            return Conflict(new
+            {
+                code = ClientCreditAlreadyUsedException.ErrorCode,
+                message = ex.Message,
+            });
         }
         catch (DbUpdateConcurrencyException)
         {
@@ -968,6 +1049,27 @@ public record WaivePenaltyRequest(
 /// de carga vs multa tardia del operador). Queda en el audit <c>OperatorPenaltyWaiveReverted</c>.
 /// </summary>
 public record RevertWaivePenaltyRequest(
+    [System.ComponentModel.DataAnnotations.Required]
+    [System.ComponentModel.DataAnnotations.MinLength(5)]
+    [System.ComponentModel.DataAnnotations.MaxLength(500)]
+    string Reason
+);
+
+/// <summary>
+/// Spec "el paso de multa vive en la ficha" (A4, 2026-07-08): payload de la correccion de monto + moneda de una
+/// multa confirmada con la ND trabada. El <c>Reason</c> es OBLIGATORIO (rastro para el contador de por que se
+/// corrigio). El service valida ademas monto &gt; 0 y moneda ISO ARS/USD (defensa server-side, no confiamos en el front).
+/// </summary>
+public record CorrectPenaltyRequest(
+    [System.ComponentModel.DataAnnotations.Range(0.01, double.MaxValue,
+        ErrorMessage = "El monto de la multa debe ser mayor a cero.")]
+    decimal Amount,
+
+    [System.ComponentModel.DataAnnotations.Required]
+    [System.ComponentModel.DataAnnotations.MaxLength(3,
+        ErrorMessage = "La moneda debe ser un código de 3 letras (por ejemplo: ARS o USD).")]
+    string Currency,
+
     [System.ComponentModel.DataAnnotations.Required]
     [System.ComponentModel.DataAnnotations.MinLength(5)]
     [System.ComponentModel.DataAnnotations.MaxLength(500)]

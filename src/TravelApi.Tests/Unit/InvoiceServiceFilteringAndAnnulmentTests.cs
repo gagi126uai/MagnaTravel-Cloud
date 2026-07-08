@@ -647,7 +647,9 @@ public class InvoiceServiceFilteringAndAnnulmentTests
         var notif = await context.Notifications.FirstOrDefaultAsync(n => n.RelatedEntityId == 1);
         Assert.NotNull(notif);
         Assert.Equal("Error", notif!.Type);
-        Assert.Contains("no soporta anulacion automatica", notif.Message);
+        // Voz de los avisos (2026-07-08): mensaje de negocio ("anularla a mano"), sin jerga técnica.
+        Assert.Contains("hay que anularla a mano", notif.Message);
+        Assert.Contains("Hacé la devolución", notif.Message);
     }
 
     /// <summary>
@@ -735,7 +737,9 @@ public class InvoiceServiceFilteringAndAnnulmentTests
         var notif = await context.Notifications.FirstOrDefaultAsync(n => n.RelatedEntityId == 1);
         Assert.NotNull(notif);
         Assert.Equal("Error", notif!.Type);
-        Assert.Contains("DOL", notif.Message);
+        // Voz de los avisos (2026-07-08): al usuario le hablamos de "dólares", nunca del código ARCA "DOL".
+        Assert.Contains("dólares", notif.Message);
+        Assert.DoesNotContain("DOL", notif.Message);
     }
 
     /// <summary>
@@ -881,7 +885,8 @@ public class InvoiceServiceFilteringAndAnnulmentTests
         var notif = await context.Notifications.FirstOrDefaultAsync(n => n.RelatedEntityId == 1);
         Assert.NotNull(notif);
         Assert.Equal("Error", notif!.Type);
-        Assert.Contains("incoherente", notif.Message);
+        // Voz de los avisos (2026-07-08): mensaje de negocio, sin la palabra técnica "incoherente".
+        Assert.Contains("le falta cargar bien el valor del dólar", notif.Message);
     }
 
     /// <summary>
@@ -962,7 +967,10 @@ public class InvoiceServiceFilteringAndAnnulmentTests
         var notif = await context.Notifications.FirstOrDefaultAsync(n => n.RelatedEntityId == 1);
         Assert.NotNull(notif);
         Assert.Equal("Error", notif!.Type);
-        Assert.Contains("EUR", notif.Message);
+        // Voz de los avisos (2026-07-08): NO se filtra el código de moneda ("EUR") al usuario; el aviso
+        // habla de "la moneda en que está emitida" y lo deriva a la devolución manual.
+        Assert.Contains("por la moneda en que está emitida", notif.Message);
+        Assert.DoesNotContain("EUR", notif.Message);
         Assert.DoesNotContain("incoherente", notif.Message);
     }
 

@@ -153,19 +153,19 @@ public class PartialCreditNoteReviewAlertJob
                 ? (int)(DateTime.UtcNow - bookingCancellation.ConfirmedWithClientAt.Value).TotalDays
                 : alertDays;
 
-            // El formato canonico de "numero de factura" en este repo es
-            // "PV-NNNNN" (PuntoDeVenta + NumeroComprobante). Lo armamos asi
-            // porque Invoice NO tiene una columna unica con el numero formateado.
-            var invoice = bookingCancellation.OriginatingInvoice;
-            var invoiceLabel = invoice is null
-                ? "s/n"
-                : $"{invoice.PuntoDeVenta:D5}-{invoice.NumeroComprobante:D8}";
-            var reservaNumero = bookingCancellation.Reserva?.NumeroReserva ?? bookingCancellation.ReservaId.ToString();
+            // El aviso solo identifica la reserva por su número de negocio (F-2026-xxxx). El número de factura
+            // ya NO se muestra al usuario (voz de los avisos 2026-07-08): es dato fiscal que vive en la pantalla
+            // de facturación, no en la campanita.
+            // Fallback a vacío (gate data-exposure): el id interno jamás se muestra como número de reserva.
+            var reservaNumero = bookingCancellation.Reserva?.NumeroReserva ?? string.Empty;
 
+            // Voz de los avisos (2026-07-08): le hablamos al dueño de la reserva y de la ACCIÓN ("confirmá la
+            // devolución o marcá que no corresponde"), no del trámite fiscal. Nada de "revisión manual", "NC" ni
+            // "RG 4540": eso queda en el log de arriba (auditoría), no en la campanita del usuario.
             var message =
-                $"La cancelacion de la reserva {reservaNumero} (factura {invoiceLabel}) " +
-                $"esta esperando revision manual hace {daysSinceConfirmation} dia(s). " +
-                $"Plazo RG 4540 (15 dias) en riesgo: emitir NC o rechazar lo antes posible.";
+                $"La cancelación de la reserva {reservaNumero} está esperando que la resuelvas hace " +
+                $"{daysSinceConfirmation} días. Entrá y confirmá la devolución o marcá que no corresponde, " +
+                $"antes de que se te pase el plazo.";
 
             // D5 (2026-07-05): dedup por AVISO VIVO con la misma clave ("PartialCreditNoteReviewPending:{bcId}"),
             // no por "creado hoy". Antes, con CreatedAt.Date == today y cron diaria, el mismo aviso se re-creaba

@@ -13,6 +13,8 @@
  *   - GET    /api/cancellations/by-reserva/:reservaPublicId (cancelacion vigente de una reserva)
  *   - GET    /api/cancellations/debit-notes/pending (bandeja back-office)
  *   - POST   /api/cancellations/:id/retry-credit-notes (ADR-042: reintenta NC faltantes de anulacion multi-factura)
+ *   - POST   /api/cancellations/:id/retry-debit-note (reintenta la ND de la multa trabada/fallida)
+ *   - PATCH  /api/cancellations/:id/correct-penalty (corrige monto/moneda de la multa trabada)
  */
 
 import { api } from "../../../api";
@@ -221,6 +223,36 @@ export const cancellationsApi = {
    */
   retryCreditNotes: (publicId) =>
     api.post(`/cancellations/${publicId}/retry-credit-notes`),
+
+  /**
+   * Spec "el paso de multa vive en la ficha" (2026-07-08): reintenta la emisión de la
+   * Nota de Débito de la multa del operador cuando quedó "Failed" (falló en AFIP/ARCA)
+   * o "ConfirmedNoDebitNote" (la multa está confirmada pero la ND nunca llegó a crearse).
+   * Mismo botón sirve para los dos casos — el backend decide qué corresponde según el
+   * estado real de operatorPenaltySituation.
+   *
+   * @param {string} publicId - GUID del BookingCancellation.
+   * @returns {Promise<BookingCancellationDto>}
+   */
+  retryDebitNote: (publicId) =>
+    api.post(`/cancellations/${publicId}/retry-debit-note`),
+
+  /**
+   * Spec "el paso de multa vive en la ficha" (2026-07-08): corrige el monto y la moneda
+   * de una multa que quedó trabada en revisión manual (operatorPenaltySituation.state ===
+   * "DebitNoteNeedsAmountCurrency"). Se usa cuando el monto o la moneda originales eran
+   * incorrectos y por eso la Nota de Débito no pudo terminar de emitirse.
+   *
+   * Errores posibles: 400 (datos invalidos, el body trae {message}); 409 con
+   * {invariantCode} (regla de negocio) o {code:"CONCURRENT_EDIT"} (otro usuario lo tocó
+   * al mismo tiempo).
+   *
+   * @param {string} publicId - GUID del BookingCancellation.
+   * @param {object} payload - { amount: number, currency: "ARS"|"USD", reason: string }
+   * @returns {Promise<BookingCancellationDto>}
+   */
+  correctPenalty: (publicId, payload) =>
+    api.patch(`/cancellations/${publicId}/correct-penalty`, payload),
 };
 
 // ============================================================================

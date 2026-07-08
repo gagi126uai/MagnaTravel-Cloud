@@ -17,7 +17,7 @@ public static class ArcaErrorSanitizer
 {
     /// <summary>Copy generico neutro (sirve para NC y ND) cuando el motivo de AFIP es ruido tecnico.</summary>
     public const string GenericArcaMessage =
-        "AFIP rechazó el comprobante. Revisá los datos fiscales de la factura o reintentá.";
+        "AFIP rechazó la factura. Revisá los datos fiscales o volvé a intentar.";
 
     // Ruido tecnico que NUNCA debe llegar al usuario. Case-insensitive. Tokens en ingles/simbolos que el texto
     // de negocio en espanol no contiene, para no dar falsos positivos:

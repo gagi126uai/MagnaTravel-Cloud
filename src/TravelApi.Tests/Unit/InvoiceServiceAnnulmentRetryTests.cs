@@ -362,7 +362,8 @@ public class InvoiceServiceAnnulmentRetryTests
 
         var notif = await context.Notifications.AsNoTracking().FirstOrDefaultAsync(n => n.RelatedEntityId == original.Id);
         Assert.NotNull(notif);
-        Assert.Contains("falló en AFIP", notif!.Message);
+        // Voz de los avisos (2026-07-08): rechazo fiscal contado en negocio, con el número de reserva.
+        Assert.Contains("AFIP no aceptó la anulación de la reserva", notif!.Message);
     }
 
     /// <summary>
@@ -396,7 +397,7 @@ public class InvoiceServiceAnnulmentRetryTests
         var notif = await context.Notifications.AsNoTracking().FirstOrDefaultAsync(n => n.RelatedEntityId == original.Id);
         Assert.NotNull(notif);
         Assert.Contains("AFIP no respondió", notif!.Message);
-        Assert.Contains("Se reintentará automáticamente", notif.Message);
+        Assert.Contains("La estamos reintentando por vos", notif.Message);
         Assert.DoesNotContain("PENDING", notif.Message);
     }
 
@@ -433,10 +434,71 @@ public class InvoiceServiceAnnulmentRetryTests
         Assert.NotNull(notif);
         // El aviso es el copy generico de negocio; el hostname/host tecnico jamas aparece.
         Assert.Equal(
-            "Error técnico al anular: no se pudo conectar con AFIP. Se reintentará automáticamente.",
+            "La anulación de la reserva F-ANNUL-0001 quedó en camino: AFIP no respondió en este momento. " +
+            "La estamos reintentando por vos, no hace falta que hagas nada.",
             notif!.Message);
         Assert.DoesNotContain("wsaahomo", notif.Message);
         Assert.DoesNotContain("Name or service not known", notif.Message);
+    }
+
+    /// <summary>
+    /// Data-exposure (gate 2026-07-08): rama "AFIP RECHAZADO" del catch (rechazo fiscal permanente que llega como
+    /// EXCEPCION, no como Resultado="R" — distinto camino del test de arriba). Si el detalle que trae la excepcion
+    /// es tecnico (XML/SOAP de ARCA), el saneador lo tiene que tapar: el aviso al usuario nunca debe mostrar ese
+    /// crudo, solo el copy de negocio.
+    /// </summary>
+    [Fact]
+    public async Task ProcessAnnulmentJob_AfipRechazadoException_ConDetalleTecnico_NoFiltraElXml()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        var original = await SeedSaleInvoicePendingAnnulmentAsync(context);
+
+        SetupAfipCreatePendingCreditNote(context, original.Id, creditNoteId: 505);
+        _afipMock
+            .Setup(a => a.ProcessInvoiceJob(It.IsAny<int>()))
+            .ThrowsAsync(new Exception(
+                "AFIP RECHAZADO: <soap:Fault><faultstring>Object reference not set to an instance of an object.</faultstring></soap:Fault>"));
+
+        var service = BuildService(context);
+
+        // Rechazo permanente: el job NO re-tira (termina "manejado" con return, no throw).
+        var error = await Record.ExceptionAsync(() =>
+            service.ProcessAnnulmentJob(original.Id, "vendedor-A", approvalRequestId: null));
+        Assert.Null(error);
+
+        var notif = await context.Notifications.AsNoTracking().FirstOrDefaultAsync(n => n.RelatedEntityId == original.Id);
+        Assert.NotNull(notif);
+        Assert.Contains("AFIP rechazó la anulación de la reserva F-ANNUL-0001", notif!.Message);
+        // El XML/SOAP tecnico NUNCA llega al usuario: el saneador lo reemplaza por el copy generico.
+        Assert.DoesNotContain("<soap", notif.Message);
+        Assert.DoesNotContain("faultstring", notif.Message);
+        Assert.DoesNotContain("Object reference", notif.Message);
+    }
+
+    /// <summary>
+    /// Espejo del test de arriba: si el detalle de la excepcion "AFIP RECHAZADO" es texto de negocio legible (no
+    /// XML), el saneador lo deja pasar tal cual — es informacion util para el vendedor.
+    /// </summary>
+    [Fact]
+    public async Task ProcessAnnulmentJob_AfipRechazadoException_ConMotivoDeNegocio_SeConserva()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        var original = await SeedSaleInvoicePendingAnnulmentAsync(context);
+
+        SetupAfipCreatePendingCreditNote(context, original.Id, creditNoteId: 506);
+        _afipMock
+            .Setup(a => a.ProcessInvoiceJob(It.IsAny<int>()))
+            .ThrowsAsync(new Exception("AFIP RECHAZADO: CUIT del emisor sin habilitación"));
+
+        var service = BuildService(context);
+
+        var error = await Record.ExceptionAsync(() =>
+            service.ProcessAnnulmentJob(original.Id, "vendedor-A", approvalRequestId: null));
+        Assert.Null(error);
+
+        var notif = await context.Notifications.AsNoTracking().FirstOrDefaultAsync(n => n.RelatedEntityId == original.Id);
+        Assert.NotNull(notif);
+        Assert.Contains("CUIT del emisor sin habilitación", notif!.Message);
     }
 
     // =========================================================================================

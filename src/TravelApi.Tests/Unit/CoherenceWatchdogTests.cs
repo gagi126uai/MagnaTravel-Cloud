@@ -504,7 +504,7 @@ public class CoherenceWatchdogTests
         Assert.DoesNotContain("Cancelled", message);
 
         // Sí el texto de negocio esperado.
-        Assert.Contains("servicios sin cancelar", message);
+        Assert.Contains("servicios que quedaron sin cancelar", message);
     }
 
     // ============================================================
@@ -651,10 +651,9 @@ public class CoherenceWatchdogTests
         var message = await RunAndGetMessage(job, ctx);
 
         Assert.Equal(
-            "El chequeo nocturno encontró 5 reservas anuladas con datos para revisar: " +
-            "2 con servicios sin cancelar (F-2026-1001 y F-2026-1002) y " +
-            "3 con una deuda sin comprobante que la justifique (F-2026-1010, F-2026-1012 y F-2026-1020). " +
-            "Revisalas cuando puedas.",
+            "Revisá estas reservas anuladas: " +
+            "en 3 figura una deuda que no cierra (F-2026-1010, F-2026-1012 y F-2026-1020) y " +
+            "2 tienen servicios que quedaron sin cancelar (F-2026-1001 y F-2026-1002).",
             message);
     }
 
@@ -673,9 +672,62 @@ public class CoherenceWatchdogTests
         var message = await RunAndGetMessage(job, ctx);
 
         Assert.Equal(
-            "El chequeo nocturno encontró 1 reserva anulada con datos para revisar: " +
-            "1 con una deuda sin comprobante que la justifique (F-2026-3001). " +
-            "Revisala cuando puedas.",
+            "Revisá esta reserva anulada: figura una deuda que no cierra (F-2026-3001).",
+            message);
+    }
+
+    // ============================================================
+    // (f) N3 (review 2026-07-08): formatos EXACTOS que faltaban.
+    //     Singular-servicio + plural de UNA sola categoría (deuda-sola y servicio-sola).
+    // ============================================================
+
+    [Fact]
+    public async Task Message_SingleReserva_ServiceOnly_ExactFormat()
+    {
+        var (job, ctx, _, _) = BuildJob();
+
+        // Una sola reserva, y el hallazgo es de SERVICIOS (no deuda) -> singular de servicio.
+        SeedAnnulledWithLiveService(ctx, reservaId: 4001, numeroReserva: "F-2026-4001");
+        await ctx.SaveChangesAsync();
+
+        var message = await RunAndGetMessage(job, ctx);
+
+        Assert.Equal(
+            "Revisá esta reserva anulada: tiene servicios que quedaron sin cancelar (F-2026-4001).",
+            message);
+    }
+
+    [Fact]
+    public async Task Message_DebtOnly_Plural_ExactFormat()
+    {
+        var (job, ctx, _, _) = BuildJob();
+
+        // Varias reservas, TODAS de la misma categoría (deuda) -> plural de una sola categoría, sin " y ".
+        SeedAnnulledWithUnjustifiedDebt(ctx, reservaId: 1010, numeroReserva: "F-2026-1010");
+        SeedAnnulledWithUnjustifiedDebt(ctx, reservaId: 1012, numeroReserva: "F-2026-1012");
+        await ctx.SaveChangesAsync();
+
+        var message = await RunAndGetMessage(job, ctx);
+
+        Assert.Equal(
+            "Revisá estas reservas anuladas: en 2 figura una deuda que no cierra (F-2026-1010 y F-2026-1012).",
+            message);
+    }
+
+    [Fact]
+    public async Task Message_ServiceOnly_Plural_ExactFormat()
+    {
+        var (job, ctx, _, _) = BuildJob();
+
+        // Varias reservas, TODAS de la misma categoría (servicios) -> plural de una sola categoría, sin " y ".
+        SeedAnnulledWithLiveService(ctx, reservaId: 1001, numeroReserva: "F-2026-1001");
+        SeedAnnulledWithLiveService(ctx, reservaId: 1002, numeroReserva: "F-2026-1002");
+        await ctx.SaveChangesAsync();
+
+        var message = await RunAndGetMessage(job, ctx);
+
+        Assert.Equal(
+            "Revisá estas reservas anuladas: 2 tienen servicios que quedaron sin cancelar (F-2026-1001 y F-2026-1002).",
             message);
     }
 }

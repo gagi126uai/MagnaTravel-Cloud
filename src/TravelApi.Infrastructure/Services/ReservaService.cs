@@ -2662,19 +2662,6 @@ public class ReservaService : IReservaService
         // caja, son rastro de plata que hay que deshacer formalmente. file.Payments ya viene incluido arriba.
         var hasAnyLivePayment = file.Payments.Any(p => !p.IsDeleted);
 
-        // H3 (2026-06-24) + Fase A (2026-06-28): RESULTADO de la pata "multa del operador" de la cancelacion
-        // vigente (None / Pending / Confirmed / Waived). Una sola consulta a la cancelacion alimenta DOS cosas:
-        //   (1) el campo informativo OperatorPenaltyOutcome -> el front pinta "Cerrada sin multa del operador"
-        //       cuando es Waived, al cargar la ficha (antes ese dato solo vivia en el DTO de la cancelacion).
-        //   (2) la capacidad CanConfirmOperatorPenalty -> "Pending" es la unica que ofrece los botones.
-        // Se calcula SOLO en el DETALLE (este metodo), NO en el listado: consultar la cancelacion por cada fila
-        // del listado seria un N+1 (el boton/cartel solo vive en la ficha de detalle). La verdad la define
-        // BookingCancellationService (misma derivacion canonica, fuente unica). Si no esta inyectado (tests
-        // unitarios sin cancelaciones), queda None: ni botones ni cartel (seguro).
-        var operatorPenaltyOutcome = _cancellationService is not null
-            ? await _cancellationService.GetOperatorPenaltyOutcomeAsync(file.PublicId, CancellationToken.None)
-            : OperatorPenaltyOutcome.None;
-
         // Issue 2a (2026-06-28): el boton "Confirmar multa / Cerrar sin multa" exige el permiso
         // cancellations.classify_agency_penalty (o Admin). Antes la capacidad ignoraba el permiso: un usuario sin
         // el permiso VEIA los botones, los clickeaba, y el backend rebotaba 409 (defensa final). Ahora lo gateamos
@@ -2687,9 +2674,37 @@ public class ReservaService : IReservaService
         var userCanClassifyOperatorPenalty = isAdmin
             || await CurrentUserHasPermissionAsync(Permissions.CancellationsClassifyAgencyPenalty, CancellationToken.None);
 
+        // Spec "el paso de multa vive en la ficha" (A2, 2026-07-08): read-model DETALLADO del paso de la multa del
+        // operador (encolada / fallida / trabada por moneda / emitida / cerrada sin multa / pendiente) con monto,
+        // moneda y los botones habilitados. Es la UNICA consulta a la cancelacion en el detalle: de su State
+        // DERIVAMOS el RESULTADO grueso (None/Pending/Confirmed/Waived) que consumen las capacidades, en vez de
+        // re-consultar la cancelacion por segunda vez (N2, 2026-07-08). Solo en el DETALLE (no en el listado: seria
+        // N+1). Si el service no esta inyectado (tests unitarios sin cancelaciones), queda State="None" -> outcome
+        // None: ni botones ni cartel (seguro).
+        var operatorPenaltyOutcome = OperatorPenaltyOutcome.None;
+        if (_cancellationService is not null)
+        {
+            // Defensa (2026-07-08): la interfaz promete "nunca null" (la implementacion real siempre devuelve
+            // al menos { State = "None" }), pero un doble de test (mock parcial que solo configura el metodo
+            // VIEJO GetOperatorPenaltyOutcomeAsync) puede devolver null igual con MockBehavior.Loose. Si eso pasa,
+            // nos quedamos con el DTO por defecto de dto.OperatorPenaltySituation (ya viene en "None" desde el
+            // constructor de ReservaDto) en vez de pisarlo con null: la ficha no debe reventar por un dato
+            // faltante, simplemente no muestra el paso de la multa (comportamiento seguro, igual que "sin
+            // cancelacion vigente").
+            var situation = await _cancellationService.GetOperatorPenaltySituationAsync(
+                file.PublicId, userCanClassifyOperatorPenalty, CancellationToken.None);
+            if (situation is not null)
+            {
+                dto.OperatorPenaltySituation = situation;
+                // El State del DTO es el token que produjo OperatorPenaltySituationState.ToString() (lo controlamos
+                // nosotros): parsearlo de vuelta al enum y colapsarlo al outcome grueso es la fuente unica del mapeo.
+                if (Enum.TryParse<OperatorPenaltySituationState>(situation.State, out var situationState))
+                    operatorPenaltyOutcome = OperatorPenaltySituationRules.ToOutcome(situationState);
+            }
+        }
+
         // Solo "Pending" + permiso habilita los botones. El resto de los outcomes (Confirmed/Waived/None) ya no
-        // son "pendientes": el boton no aplica. Derivar de un unico outcome evita una segunda consulta y mantiene
-        // una sola verdad (no llamamos HasPendingOperatorPenaltyAsync aparte, que daria el mismo Pending).
+        // son "pendientes": el boton no aplica. Derivar de un unico outcome mantiene una sola verdad.
         var hasPendingOperatorPenalty =
             operatorPenaltyOutcome == OperatorPenaltyOutcome.Pending
             && userCanClassifyOperatorPenalty;

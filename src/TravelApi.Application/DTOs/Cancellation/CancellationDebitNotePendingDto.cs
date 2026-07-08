@@ -38,6 +38,12 @@ public class CancellationDebitNotePendingDto
     /// <summary>PublicId del BookingCancellation (la UI navega por PublicId, nunca por Id int).</summary>
     public Guid BookingCancellationPublicId { get; set; }
 
+    /// <summary>
+    /// (A5, 2026-07-08) PublicId de la RESERVA, para que la bandeja pueda linkear directo a la ficha (donde ahora
+    /// vive el paso de multa). null si el dato de reserva no vino cargado (defensivo; en la practica siempre viene).
+    /// </summary>
+    public Guid? ReservaPublicId { get; set; }
+
     /// <summary>Numero de reserva (legible para el operador de la bandeja).</summary>
     public string ReservaNumero { get; set; } = string.Empty;
 

@@ -88,7 +88,7 @@ public class OperationalFinanceMonitorService
                     Priority = "Urgent",
                     RelatedEntityId = reserva.Id,
                     RelatedEntityType = NotificationRelatedEntityTypes.ReservaUnpaidDeparture,
-                    Message = $"La reserva {reserva.NumeroReserva} sale el {reserva.StartDate:dd/MM/yyyy} y mantiene un saldo pendiente de {reserva.Balance:C2}."
+                    Message = $"La reserva {reserva.NumeroReserva} sale el {reserva.StartDate:dd/MM/yyyy} y todavía tiene {reserva.Balance:C2} sin cobrar."
                 });
             }
         }

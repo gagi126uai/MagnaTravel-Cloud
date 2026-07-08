@@ -8,6 +8,7 @@
  *   - detección del estado "waived" desde capabilities (lógica replicada de ReservaDetailPage).
  *   - visibilidad de la pregunta "¿El operador cobró multa?" y sus dos botones.
  *   - visibilidad del enlace "Deshacer" solo para Admin.
+ *   - esErrorSaldoYaUsado (E1, 2026-07-08): detección del 409 SALDO_YA_USADO.
  *
  * Cómo correr:
  *   node --test src/features/cancellations/components/cierreSinMultaLogic.test.mjs
@@ -486,4 +487,36 @@ test("payload revert-waive: solo la clave 'reason' (Admin solo explica por qué 
     const payload = construirPayloadRevertWaive("Motivo del deshacer");
     assert.equal(Object.keys(payload).length, 1);
     assert.equal(Object.keys(payload)[0], "reason");
+});
+
+// ============================================================================
+// Sección 6: esErrorSaldoYaUsado (E1, spec "el paso de multa vive en la ficha", 2026-07-08)
+// Réplica de la función homónima en DeshacerCierreSinMultaInline.jsx.
+// ============================================================================
+
+function esErrorSaldoYaUsado(error) {
+    return error?.status === 409 && error?.payload?.code === "SALDO_YA_USADO";
+}
+
+test("esErrorSaldoYaUsado: 409 + code SALDO_YA_USADO → true", () => {
+    const error = { status: 409, payload: { code: "SALDO_YA_USADO", message: "El cliente ya usó ese saldo a favor." } };
+    assert.equal(esErrorSaldoYaUsado(error), true);
+});
+
+test("esErrorSaldoYaUsado: 409 con otro code → false", () => {
+    const error = { status: 409, payload: { code: "CONCURRENT_EDIT" } };
+    assert.equal(esErrorSaldoYaUsado(error), false);
+});
+
+test("esErrorSaldoYaUsado: 409 sin payload → false", () => {
+    assert.equal(esErrorSaldoYaUsado({ status: 409 }), false);
+});
+
+test("esErrorSaldoYaUsado: otro status con code SALDO_YA_USADO → false (el código solo aplica al 409)", () => {
+    const error = { status: 400, payload: { code: "SALDO_YA_USADO" } };
+    assert.equal(esErrorSaldoYaUsado(error), false);
+});
+
+test("esErrorSaldoYaUsado: error sin status ni payload → false", () => {
+    assert.equal(esErrorSaldoYaUsado({}), false);
 });

@@ -400,6 +400,40 @@ public interface IBookingCancellationService
         bool userCanClassifyAgencyPenalty = false);
 
     /// <summary>
+    /// Spec "el paso de multa vive en la ficha" (A4, 2026-07-08): corrige el MONTO + MONEDA de una multa YA
+    /// CONFIRMADA cuya Nota de Debito quedo TRABADA (revision manual por moneda distinta, o fallida) y SIN
+    /// comprobante fiscal emitido con CAE. Es la version ATOMICA del circuito que hoy existe pieza por pieza
+    /// (cerrar sin multa -> reabrir -> volver a confirmar con la moneda nueva): deshace la imputacion vieja, graba
+    /// el monto/moneda nuevos, y re-encola la ND, TODO bajo el MISMO lock FOR UPDATE del padre.
+    ///
+    /// <para><b>Guard duro</b>: si ya hay una ND emitida con CAE (o encolada en vuelo), NO se corrige por este
+    /// camino (409 INV-CORRECT-002/003): habria que anular ese comprobante desde administracion primero. El
+    /// re-check se hace tambien DENTRO del lock FOR UPDATE (anti carrera con un retry concurrente).</para>
+    ///
+    /// <para><b>Permiso</b>: MISMO gate que confirm-penalty/retry (<c>cancellations.classify_agency_penalty</c> o
+    /// Admin), resuelto server-side por el controller y EXIGIDO por el service (INV-CORRECT-PERM).</para>
+    ///
+    /// <para><b>Exceptions</b>: <c>ArgumentException</c> (400: monto &lt;= 0, moneda no ISO ARS/USD, motivo vacio);
+    /// <c>KeyNotFoundException</c> (404); <c>InvalidOperationException</c> (409, flag OFF);
+    /// <c>BusinessInvariantViolationException</c> (409: INV-CORRECT-PERM sin permiso; INV-CORRECT-001 multa no
+    /// confirmada; INV-CORRECT-002 ND ya emitida con CAE; INV-CORRECT-003 ND en vuelo);
+    /// <c>DbUpdateConcurrencyException</c> (409 CONCURRENT_EDIT).</para>
+    /// </summary>
+    /// <param name="amount">Monto corregido de la multa. Obligatorio &gt; 0.</param>
+    /// <param name="currency">Moneda ISO 4217 corregida (ARS/USD).</param>
+    /// <param name="reason">Motivo OBLIGATORIO de la correccion (auditoria del contador).</param>
+    /// <param name="userCanClassifyAgencyPenalty">true si el caller puede resolver la pata fiscal (permiso o Admin).</param>
+    Task<BookingCancellationDto> CorrectPenaltyAsync(
+        Guid publicId,
+        decimal amount,
+        string currency,
+        string reason,
+        string userId,
+        string? userName,
+        CancellationToken ct,
+        bool userCanClassifyAgencyPenalty = false);
+
+    /// <summary>
     /// ADR-042 §3.6 (2026-07-01): reintenta SOLO las notas de credito faltantes de una anulacion multi-factura
     /// que quedo a medias (una NC salio y otra fallo, o quedo atascada). Idempotente: NO re-emite las NC que
     /// ya salieron (anti doble-emision: re-vincula una NC huerfana ya creada). Serializado por el mismo lock
@@ -546,6 +580,23 @@ public interface IBookingCancellationService
     /// no tiene cancelacion o su pata de operador todavia no esta en juego (ej: NC total sin CAE aun).</para>
     /// </summary>
     Task<OperatorPenaltyOutcome> GetOperatorPenaltyOutcomeAsync(Guid reservaPublicId, CancellationToken ct);
+
+    /// <summary>
+    /// Spec "el paso de multa vive en la ficha" (A2, 2026-07-08): read-model DETALLADO del PASO de la multa del
+    /// operador de la cancelacion vigente, para que la ficha (ReservaDetailPage) muestre el cartel/boton exacto sin
+    /// pedir aparte el detalle de la cancelacion. Mas fino que <see cref="GetOperatorPenaltyOutcomeAsync"/>: desglosa
+    /// el "Confirmed" segun donde quedo la ND (encolada / fallida / trabada por moneda / emitida) y trae monto,
+    /// moneda (ISO), timestamp y los botones habilitados segun estado + permiso.
+    ///
+    /// <para>Solo se usa en el DETALLE (no en el listado: seria N+1). State="None" si la reserva no tiene
+    /// cancelacion vigente o su pata de operador no esta en juego. Los endpoints revalidan todo server-side.</para>
+    /// </summary>
+    /// <param name="userCanClassifyOperatorPenalty">
+    /// true si el usuario puede resolver la pata fiscal de la penalidad (permiso <c>cancellations.classify_agency_penalty</c>
+    /// o Admin), ya resuelto por el caller. Decide que botones se OFRECEN (canConfirm/canRetry/canCorrect).
+    /// </param>
+    Task<OperatorPenaltySituationDto> GetOperatorPenaltySituationAsync(
+        Guid reservaPublicId, bool userCanClassifyOperatorPenalty, CancellationToken ct);
 
     /// <summary>
     /// ADR-013 §3.10 (M4, 2026-06-01): bandeja "cancelaciones con NC emitida pero sin su

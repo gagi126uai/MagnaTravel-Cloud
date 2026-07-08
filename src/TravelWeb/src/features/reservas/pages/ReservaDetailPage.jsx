@@ -39,8 +39,14 @@ import { CancelarReservaInline } from "../../cancellations/components/CancelarRe
 import { ConfirmarMultaOperadorInline } from "../../cancellations/components/ConfirmarMultaOperadorInline";
 import { CerrarSinMultaInline } from "../../cancellations/components/CerrarSinMultaInline";
 import { DeshacerCierreSinMultaInline } from "../../cancellations/components/DeshacerCierreSinMultaInline";
+import { OperatorPenaltyStepPanel } from "../../cancellations/components/OperatorPenaltyStepPanel";
 import { cancellationsApi } from "../../cancellations/api/cancellationsApi";
 import { contarNotasFaltantes, construirTextoFranjaEnRevision } from "../../cancellations/lib/multiCreditNoteFlow";
+// Spec "el paso de multa vive en la ficha" (2026-07-08): helpers puros que traducen
+// reserva.operatorPenaltySituation a la "familia" de cartel a mostrar (ver el propio
+// archivo para el detalle de las 5 familias) y el rastro textual del cierre sin multa.
+import { familiaDeEstadoMulta, textoRastroWaived, tienePasoDeMultaOperador } from "../../cancellations/operatorPenaltyBanner";
+import { elegirMonedaSugeridaParaMulta } from "../lib/operatorPenaltyCurrency";
 import { hasPermission, isAdmin } from "../../../auth";
 import { calcularSugerenciaComposicion } from "../lib/pasajeroHint";
 import { EstadoCuentaResumen } from "../components/EstadoCuentaResumen";
@@ -981,7 +987,7 @@ export default function ReservaDetailPage() {
       // Defensa ante un 200 anómalo sin publicId: no abrimos el panel en silencio.
       if (!cancelacion?.publicId) {
         showError(
-          "No se encontró una cancelación para esta reserva. Si el problema persiste, consultá con administración.",
+          "No se encontró la cancelación de esta reserva. Actualizá la página y volvé a intentar.",
           "Sin cancelación"
         );
         return;
@@ -991,7 +997,7 @@ export default function ReservaDetailPage() {
     } catch (error) {
       if (error?.status === 404) {
         showError(
-          "No se encontró una cancelación para esta reserva. Si el problema persiste, consultá con administración.",
+          "No se encontró la cancelación de esta reserva. Actualizá la página y volvé a intentar.",
           "Sin cancelación"
         );
       } else {
@@ -1214,22 +1220,32 @@ export default function ReservaDetailPage() {
         // "Sí cobró / No cobró" y el "Deshacer") vivia SOLO dentro del cartel de "esperando reembolso"
         // (PendingOperatorRefund); si no lo mostramos tambien en Cancelled, la tarea de la multa quedaba invisible.
         // El backend ya expone la capacidad y el outcome sin importar el estado; esto es solo la compuerta de UI.
-        const operatorPenaltyOutcome = reserva.capabilities?.operatorPenaltyOutcome;
-        const tienePasoDeMultaOperador =
-          operatorPenaltyOutcome === "Pending" || operatorPenaltyOutcome === "Waived";
+        //
+        // Spec "el paso de multa vive en la ficha" (2026-07-08): reemplaza el cálculo legado
+        // (que solo distinguía Pending/Waived, ignorando los estados nuevos de la Nota de
+        // Débito) por el helper degradación-segura tienePasoDeMultaOperador(reserva): lee
+        // reserva.operatorPenaltySituation cuando el DTO lo trae (cubre TODOS los estados
+        // activos) y cae al campo legado si no lo trae.
+        const hayPasoDeMultaOperadorActivo = tienePasoDeMultaOperador(reserva);
 
-        // (spec "fin de las bandejas", 2026-07-08) La multa que le cobramos AL CLIENTE quedó
-        // confirmada, pero su Nota de Débito falló o quedó trabada en revisión manual — sin ese
-        // papel, la agencia todavía no puede cobrarle nada. Este caso puntual (cancelledMoneyContext
-        // === "MultaEnRevision") lo resuelve back-office desde /pendientes-afip, así que solo tiene
-        // sentido mostrar el atajo a quien tiene el permiso de esa bandeja (cobranzas.invoice_annul).
-        // Sin ese permiso, el vendedor sigue viendo el cartel de siempre ("Reserva anulada").
-        // Guard de estado (reviewer 2026-07-08): MultaEnRevision tambien puede derivarse en
-        // PendingOperatorRefund; ahi el cartel prioritario es el de "esperando reembolso" /
-        // reintento de anulacion (mas urgente). Este atajo solo aplica a la anulada cerrada.
-        const ndDeMultaTrabada =
+        // situacionMulta: la "foto" completa del paso de la multa que manda el backend.
+        // familiaMulta agrupa sus 7 estados posibles en 5 familias visuales (ver
+        // operatorPenaltyBanner.js) — acá solo nos interesan "accionTrabada" (algo quedó
+        // trabado y hay UNA acción puntual para destrabarlo: reintentar / corregir / emitir)
+        // y "procesando" (se está cobrando, sin nada para hacer todavía). Las familias
+        // "pregunta" (PendingDecision) y "waived" ya tienen su propio bloque más abajo en
+        // este mismo IIFE — no se duplican acá.
+        const situacionMulta = reserva.operatorPenaltySituation;
+        const familiaMulta = situacionMulta ? familiaDeEstadoMulta(situacionMulta.state) : null;
+
+        // Reemplaza al viejo cartel "Ir a resolver" (mandaba a la bandeja back-office
+        // /pendientes-afip): ahora se resuelve DIRECTO en la ficha, con OperatorPenaltyStepPanel.
+        // Guard de estado (heredado del cartel viejo): solo en la anulada YA CERRADA (Cancelled).
+        // En PendingOperatorRefund el cartel prioritario sigue siendo el de "esperando
+        // reembolso" / reintento de anulación (más urgente) — ver la rama de más abajo.
+        const mostrarPasoDeMultaTrabadoOProcesando =
           reserva.status === "Cancelled" &&
-          reserva.cancelledMoneyContext === "MultaEnRevision" && hasPermission("cobranzas.invoice_annul");
+          (familiaMulta === "accionTrabada" || familiaMulta === "procesando");
 
         return reserva.status === "Lost" ? (
         <div
@@ -1239,31 +1255,18 @@ export default function ReservaDetailPage() {
         >
           <strong className="font-bold">Reserva perdida</strong> — solo lectura.
         </div>
-      ) : ndDeMultaTrabada ? (
-        <div
-          className="rounded-xl border border-orange-300 bg-orange-50 p-4 text-sm text-orange-900 dark:border-orange-700/50 dark:bg-orange-950/30 dark:text-orange-200"
-          data-testid="banner-nd-trabada"
-          role="status"
-        >
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <span>
-              <strong className="font-bold">
-                Anulada — la multa quedó confirmada, pero todavía no se pudo emitir su nota de débito.
-              </strong>
-              <br />
-              Entrá a resolverla para destrabar el cobro al cliente.
-            </span>
-            <button
-              type="button"
-              onClick={() => navigate("/pendientes-afip?tab=multas")}
-              data-testid="btn-ir-pendientes-afip"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-orange-400 bg-orange-100 px-3 py-2 text-xs font-bold text-orange-800 hover:bg-orange-200 dark:border-orange-700 dark:bg-orange-900/40 dark:text-orange-200 dark:hover:bg-orange-900/60 transition-colors flex-shrink-0"
-            >
-              Ir a resolver
-            </button>
-          </div>
-        </div>
-      ) : (reserva.status === "Cancelled" && !tienePasoDeMultaOperador) ? (
+      ) : mostrarPasoDeMultaTrabadoOProcesando ? (
+        <OperatorPenaltyStepPanel
+          reservaPublicId={publicId}
+          reservaNumero={reserva.numeroReserva}
+          situacion={situacionMulta}
+          monedaSugerida={elegirMonedaSugeridaParaMulta({
+            situacionCurrency: situacionMulta?.currency,
+            porMoneda: reserva.porMoneda,
+          })}
+          onResuelto={() => fetchReserva({ showLoading: false, preserveOnError: true })}
+        />
+      ) : (reserva.status === "Cancelled" && !hayPasoDeMultaOperadorActivo) ? (
         // ADR-036: el estado interno sigue siendo "Cancelled" pero el usuario ve "Anulada".
         // "Cancelar" en este producto = saldar una deuda; "Anular" = deshacer el viaje.
         // (2026-07-04) Solo este cartel simple cuando NO queda paso de multa: si la multa sigue pendiente o se
@@ -1380,6 +1383,18 @@ export default function ReservaDetailPage() {
                 >
                   <strong className="font-bold">Anulada — cerrada sin multa del operador.</strong> Solo lectura.
 
+                  {/* Rastro de CUÁNDO y QUIÉN cerró sin multa (spec "el paso de multa vive
+                      en la ficha", 2026-07-08). textoRastroWaived degrada solo si el DTO
+                      no trae operatorPenaltySituation (nunca rompe, muestra texto genérico). */}
+                  <div className="mt-1 text-xs text-rose-700/80 dark:text-rose-300/70" data-testid="multa-waived-rastro">
+                    {textoRastroWaived({
+                      waivedAt: reserva.operatorPenaltySituation?.waivedAt,
+                      waivedByName: reserva.operatorPenaltySituation?.waivedByName,
+                      revertedAt: reserva.operatorPenaltySituation?.revertedAt,
+                      revertedByName: reserva.operatorPenaltySituation?.revertedByName,
+                    })}
+                  </div>
+
                   {/* Enlace discreto "Deshacer" — SOLO para administradores.
                       Separado del texto principal para diferenciarlo visualmente.
                       Copia el patrón "Sacar de viaje" (2026-06-22): discreto, sobrio,
@@ -1487,11 +1502,20 @@ export default function ReservaDetailPage() {
                 )}
               </div>
 
-              {/* Panel inline "Sí cobró" — naranja (ADR-014 diferido: emite Nota de Débito). */}
+              {/* Panel inline "Sí cobró" — naranja (ADR-014 diferido: emite Nota de Débito).
+                  monedaSugerida (2026-07-08): acá la multa TODAVÍA no tiene monto/moneda
+                  propios (recién se está por cargar), así que situacionMulta.currency viene
+                  null — elegirMonedaSugeridaParaMulta cae a la moneda de la factura ya
+                  emitida de la reserva. Nunca se deja el default USD en silencio si hay
+                  factura de la cual precargar. */}
               {showMultaInline && multaCancellationPublicId && (
                 <ConfirmarMultaOperadorInline
                   cancellationPublicId={multaCancellationPublicId}
                   reservaNumero={reserva.numeroReserva}
+                  monedaSugerida={elegirMonedaSugeridaParaMulta({
+                    situacionCurrency: situacionMulta?.currency,
+                    porMoneda: reserva.porMoneda,
+                  })}
                   onConfirmado={() => {
                     setShowMultaInline(false);
                     setMultaCancellationPublicId(null);

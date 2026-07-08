@@ -18,10 +18,24 @@
  *     el monto supera un umbral). Se avisa y se ofrece reintentar con approvalRequestPublicId.
  *   - 400: fecha inválida (futura o anterior a la cancelación).
  *
+ * MODO "corregir" (spec "el paso de multa vive en la ficha", 2026-07-08): cuando la
+ * multa quedó trabada en revisión manual porque el monto o la moneda originales eran
+ * incorrectos (operatorPenaltySituation.state === "DebitNoteNeedsAmountCurrency"), este
+ * mismo componente se reutiliza con `modo="corregir"`: mismos campos (monto, moneda,
+ * motivo), pero el submit llama a PATCH /cancellations/:id/correct-penalty en vez de
+ * a confirm-penalty. No emite una ND nueva "desde cero": corrige la que ya está en
+ * curso para que pueda terminar de salir.
+ *
  * Props:
  *   - cancellationPublicId: GUID del BookingCancellation (obtenido de GET by-reserva).
  *   - reservaNumero: número de reserva (para mostrar en el header).
- *   - onConfirmado: callback luego de confirmar exitosamente.
+ *   - monedaSugerida: moneda ("ARS"|"USD") con la que arranca el selector — viene de la
+ *     factura/porMoneda de la reserva. Sigue siendo editable; es solo el valor inicial.
+ *   - montoInicial: número opcional con el que arranca el campo "Monto" — se usa en modo
+ *     "corregir" (2026-07-08), donde ya existe un monto cargado (operatorPenaltySituation.
+ *     amount) que el usuario viene a CORREGIR, no a cargar desde cero. Sigue siendo editable.
+ *   - modo: "confirmar" (default) | "corregir". Ver arriba.
+ *   - onConfirmado: callback luego de confirmar/corregir exitosamente.
  *   - onCerrar: callback para cerrar el panel sin confirmar.
  */
 
@@ -45,7 +59,24 @@ const MONEDAS_MULTA = [
 ];
 
 /**
- * Valida los campos del mini-form de multa del operador.
+ * Valida solo el monto (regla compartida por los dos modos del panel: "confirmar" y
+ * "corregir"). Se separó de validarCamposMulta para no duplicar esta regla.
+ *
+ * Se exporta para poder testearse sin DOM (lógica pura).
+ *
+ * @param {string} montoStr
+ * @returns {string|null}
+ */
+export function validarMonto(montoStr) {
+    const monto = parseFloat(montoStr);
+    if (!montoStr || isNaN(monto) || monto <= 0) {
+        return "El monto debe ser mayor a cero.";
+    }
+    return null;
+}
+
+/**
+ * Valida los campos del mini-form de multa del operador (modo "confirmar").
  *
  * Se exporta para poder testearse sin DOM (lógica pura).
  *
@@ -53,13 +84,8 @@ const MONEDAS_MULTA = [
  * @returns {{ montoError: string|null, fechaError: string|null }}
  */
 export function validarCamposMulta({ montoStr, fecha }) {
-    const monto = parseFloat(montoStr);
-    let montoError = null;
+    const montoError = validarMonto(montoStr);
     let fechaError = null;
-
-    if (!montoStr || isNaN(monto) || monto <= 0) {
-        montoError = "El monto debe ser mayor a cero.";
-    }
 
     if (!fecha) {
         fechaError = "La fecha es obligatoria.";
@@ -73,6 +99,7 @@ export function validarCamposMulta({ montoStr, fecha }) {
 
 /**
  * Determina si el formulario puede enviarse (sin errores y sin llamada en curso).
+ * Modo "confirmar" únicamente — ver puedeEnviarCorregir para el modo "corregir".
  *
  * Se exporta para testearse sin DOM.
  *
@@ -85,15 +112,76 @@ export function puedeEnviar({ montoStr, fecha, submitting }) {
     return montoError === null && fechaError === null;
 }
 
+// Límites del campo motivo en modo "corregir" — mismo criterio que el resto de los
+// paneles de cancelación (CerrarSinMultaInline, DeshacerCierreSinMultaInline): 5..500.
+const MOTIVO_CORREGIR_MIN = 5;
+const MOTIVO_CORREGIR_MAX = 500;
+
+/**
+ * Valida el motivo del modo "corregir" (por qué se corrige el monto/moneda de la multa).
+ * Se exporta para testearse sin DOM.
+ *
+ * @param {string} motivo
+ * @returns {string|null}
+ */
+export function validarMotivoCorregir(motivo) {
+    const trimmed = (motivo ?? "").trim();
+    if (trimmed.length < MOTIVO_CORREGIR_MIN) {
+        return `El motivo debe tener al menos ${MOTIVO_CORREGIR_MIN} caracteres.`;
+    }
+    if (trimmed.length > MOTIVO_CORREGIR_MAX) {
+        return `El motivo no puede superar los ${MOTIVO_CORREGIR_MAX} caracteres.`;
+    }
+    return null;
+}
+
+/**
+ * Valida los campos del modo "corregir": monto + motivo (no pide fecha, a diferencia
+ * del modo "confirmar" — correct-penalty no usa operatorConfirmationDate).
+ * Se exporta para testearse sin DOM.
+ *
+ * @param {{ montoStr: string, motivo: string }} campos
+ * @returns {{ montoError: string|null, motivoError: string|null }}
+ */
+export function validarCamposCorregir({ montoStr, motivo }) {
+    return {
+        montoError: validarMonto(montoStr),
+        motivoError: validarMotivoCorregir(motivo),
+    };
+}
+
+/**
+ * Determina si el formulario del modo "corregir" puede enviarse.
+ * Se exporta para testearse sin DOM.
+ *
+ * @param {{ montoStr: string, motivo: string, submitting: boolean }} estado
+ * @returns {boolean}
+ */
+export function puedeEnviarCorregir({ montoStr, motivo, submitting }) {
+    if (submitting) return false;
+    const { montoError, motivoError } = validarCamposCorregir({ montoStr, motivo });
+    return montoError === null && motivoError === null;
+}
+
 export function ConfirmarMultaOperadorInline({
     cancellationPublicId,
     reservaNumero,
+    monedaSugerida,
+    montoInicial,
+    modo = "confirmar",
     onConfirmado,
     onCerrar,
 }) {
-    const [montoStr, setMontoStr] = useState("");
-    // Default USD: los operadores turísticos suelen retener en dólares.
-    const [moneda, setMoneda] = useState("USD");
+    const esModoCorregir = modo === "corregir";
+
+    // 2026-07-08: en modo "corregir" arranca con el monto que ya estaba cargado
+    // (operatorPenaltySituation.amount) — el usuario viene a CORREGIRLO, no a tipearlo
+    // de cero. Sigue siendo 100% editable.
+    const [montoStr, setMontoStr] = useState(montoInicial != null ? String(montoInicial) : "");
+    // B1 (2026-07-08): arranca con la moneda de la factura/porMoneda de la reserva si
+    // el padre la pasó; si no vino (reserva sin factura todavía), cae a USD como antes.
+    // Sigue siendo 100% editable — esto solo cambia el valor con el que abre el select.
+    const [moneda, setMoneda] = useState(monedaSugerida ?? "USD");
     const [fecha, setFecha] = useState(getTodayString());
     const [referencia, setReferencia] = useState("");
     const [submitting, setSubmitting] = useState(false);
@@ -105,17 +193,25 @@ export function ConfirmarMultaOperadorInline({
     // Resetea el formulario al montar el componente o si cambia la cancelación.
     // useEffect con [cancellationPublicId]: útil si el componente se reutiliza.
     useEffect(() => {
-        setMontoStr("");
-        setMoneda("USD"); // reset a default USD cada vez que se abre para una cancelación nueva
+        setMontoStr(montoInicial != null ? String(montoInicial) : "");
+        setMoneda(monedaSugerida ?? "USD");
         setFecha(getTodayString());
         setReferencia("");
         setConflictMessage(null);
         setApprovalContext(null);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [cancellationPublicId]);
 
-    const { montoError, fechaError } = validarCamposMulta({ montoStr, fecha });
+    // Las reglas de validación difieren según el modo: "confirmar" pide fecha (y no pide
+    // motivo), "corregir" pide motivo (y no pide fecha — correct-penalty no usa esa fecha).
+    const { montoError, fechaError } = esModoCorregir
+        ? { montoError: validarMonto(montoStr), fechaError: null }
+        : validarCamposMulta({ montoStr, fecha });
+    const motivoError = esModoCorregir ? validarMotivoCorregir(referencia) : null;
     const montoTocado = montoStr.length > 0;
-    const canSubmit = puedeEnviar({ montoStr, fecha, submitting });
+    const canSubmit = esModoCorregir
+        ? puedeEnviarCorregir({ montoStr, motivo: referencia, submitting })
+        : puedeEnviar({ montoStr, fecha, submitting });
 
     const handleConfirmar = async () => {
         if (!canSubmit) return;
@@ -125,49 +221,67 @@ export function ConfirmarMultaOperadorInline({
 
         const monto = parseFloat(montoStr);
 
-        // conceptKind: null = OperatorPenaltyPassThrough (regla fiscal cerrada ADR-014).
-        // La agencia es intermediaria: NO emite un cargo propio, solo traslada la multa
-        // del operador al cliente vía ND. El backend lo identifica por conceptKind=null.
-        const payload = {
-            conceptKind: null,
-            confirmedPenaltyAmount: monto,
-            // penaltyCurrency: campo nuevo — contrato PATCH /cancellations/{id}/confirm-penalty.
-            // El backend lo acepta como opcional; si no llega, asume ARS (legado).
-            penaltyCurrency: moneda,
-            // El input type=date devuelve "YYYY-MM-DD". El backend espera DateTime:
-            // se agrega "T00:00:00Z" para que el parsing no falle (igual que ConfirmPenaltyModal).
-            operatorConfirmationDate: fecha + "T00:00:00Z",
-            debitNotePurpose: null, // el backend usa PenaltyOrCancellationCharge por default
-            supportingDocumentReference: referencia.trim() || null,
-            overrideReason: null,
-            approvalRequestPublicId: null,
-        };
-
         try {
-            const resultado = await cancellationsApi.confirmPenalty(cancellationPublicId, payload);
+            let resultado;
 
-            // Mostramos el resultado según debitNoteStatus del DTO devuelto.
-            // "Pending" = encolada para procesar, "Issued" = ya emitida, "ManualReview" = fue a revisión.
-            const estado = resultado?.debitNoteStatus;
-            if (estado === "ManualReview") {
+            if (esModoCorregir) {
+                // Corrige el monto/moneda de una multa que quedó trabada en revisión manual
+                // (DebitNoteNeedsAmountCurrency). No confirma una multa nueva: ajusta la que
+                // ya está en curso para que el backend pueda reintentar su emisión.
+                resultado = await cancellationsApi.correctPenalty(cancellationPublicId, {
+                    amount: monto,
+                    currency: moneda,
+                    reason: referencia.trim(),
+                });
+            } else {
+                // conceptKind: null = OperatorPenaltyPassThrough (regla fiscal cerrada ADR-014).
+                // La agencia es intermediaria: NO emite un cargo propio, solo traslada la multa
+                // del operador al cliente vía ND. El backend lo identifica por conceptKind=null.
+                resultado = await cancellationsApi.confirmPenalty(cancellationPublicId, {
+                    conceptKind: null,
+                    confirmedPenaltyAmount: monto,
+                    // penaltyCurrency: campo nuevo — contrato PATCH /cancellations/{id}/confirm-penalty.
+                    // El backend lo acepta como opcional; si no llega, asume ARS (legado).
+                    penaltyCurrency: moneda,
+                    // El input type=date devuelve "YYYY-MM-DD". El backend espera DateTime:
+                    // se agrega "T00:00:00Z" para que el parsing no falle (igual que ConfirmPenaltyModal).
+                    operatorConfirmationDate: fecha + "T00:00:00Z",
+                    debitNotePurpose: null, // el backend usa PenaltyOrCancellationCharge por default
+                    supportingDocumentReference: referencia.trim() || null,
+                    overrideReason: null,
+                    approvalRequestPublicId: null,
+                });
+            }
+
+            if (esModoCorregir) {
                 showSuccess(
-                    "El monto quedó registrado, pero la nota de débito fue derivada a revisión manual por el equipo de administración.",
-                    "Multa registrada — en revisión"
+                    "Listo. Se está cobrando la multa al cliente.",
+                    "Corrección guardada"
                 );
             } else {
-                showSuccess(
-                    "Multa del operador confirmada. La nota de débito se está generando en AFIP/ARCA.",
-                    "Nota de débito en proceso"
-                );
+                // Mostramos el resultado según debitNoteStatus del DTO devuelto.
+                // "Pending" = encolada para procesar, "Issued" = ya emitida, "ManualReview" = fue a revisión.
+                const estado = resultado?.debitNoteStatus;
+                if (estado === "ManualReview") {
+                    showSuccess(
+                        "El monto quedó registrado, pero el cobro al cliente quedó en revisión manual.",
+                        "Multa registrada — en revisión"
+                    );
+                } else {
+                    showSuccess(
+                        "Listo. Se está cobrando la multa al cliente.",
+                        "Cobro en proceso"
+                    );
+                }
             }
 
             onConfirmado();
         } catch (error) {
             const errorPayload = error?.payload;
 
-            // 409 requiresApproval: redirige al flujo de 4-eyes.
-            // Esto ocurre cuando no hay respaldo documental o el monto supera un umbral.
-            if (error?.status === 409 && errorPayload?.requiresApproval) {
+            // 409 requiresApproval: redirige al flujo de 4-eyes. Solo aplica al modo
+            // "confirmar" — correct-penalty no tiene ese contrato de 4-eyes.
+            if (!esModoCorregir && error?.status === 409 && errorPayload?.requiresApproval) {
                 setApprovalContext({
                     requestType: errorPayload.requestType,
                     entityType: errorPayload.entityType,
@@ -183,13 +297,18 @@ export function ConfirmarMultaOperadorInline({
                 const code = errorPayload?.code || "";
                 let humanMessage;
 
-                if (invariantCode === "INV-ADR014-001") {
+                if (esModoCorregir) {
+                    humanMessage = code === "CONCURRENT_EDIT"
+                        ? "Otro usuario modificó esta cancelación al mismo tiempo. Esperá unos segundos y volvé a intentar."
+                        : getApiErrorMessage(error, "No se pudo guardar la corrección del monto y la moneda. Intentá de nuevo.");
+                } else if (invariantCode === "INV-ADR014-001") {
                     // La NC todavía no tiene CAE aprobado: hay que esperar antes de emitir la ND.
-                    humanMessage = "La nota de crédito todavía no tiene CAE aprobado en AFIP/ARCA. Esperá unos minutos y volvé a intentar.";
+                    // Regla de voz (2026-07-08): sin "CAE"/"AFIP/ARCA" en un cartel de la ficha.
+                    humanMessage = "La devolución al cliente todavía se está confirmando. Probá de nuevo en un rato.";
                 } else if (invariantCode === "INV-ADR014-003") {
-                    humanMessage = "La multa de este operador ya fue confirmada o la nota de débito ya está en proceso. Si hay un problema, consultá con administración.";
+                    humanMessage = "Esta multa ya está cargada o su cobro ya está en curso. Mirá el estado en la ficha.";
                 } else if (invariantCode === "INV-ADR014-002") {
-                    humanMessage = "Esta penalidad está configurada como cargo propio de la agencia, no como pass-through del operador. No se puede emitir desde acá.";
+                    humanMessage = "Este cargo es propio de la agencia, no es una multa del operador. Se cobra desde la sección de facturación de la ficha, no desde acá.";
                 } else if (code === "CONCURRENT_EDIT") {
                     humanMessage = "Otro usuario modificó esta cancelación al mismo tiempo. Esperá unos segundos y volvé a intentar.";
                 } else {
@@ -201,11 +320,13 @@ export function ConfirmarMultaOperadorInline({
                 setConflictMessage(
                     getApiErrorMessage(
                         error,
-                        "La fecha de confirmación es inválida. Tiene que ser una fecha pasada o de hoy, no anterior a la cancelación."
+                        esModoCorregir
+                            ? "El monto o la moneda ingresados no son válidos."
+                            : "La fecha de confirmación es inválida. Tiene que ser una fecha pasada o de hoy, no anterior a la cancelación."
                     )
                 );
             } else {
-                showError(getApiErrorMessage(error, "No se pudo confirmar la multa del operador."));
+                showError(getApiErrorMessage(error, esModoCorregir ? "No se pudo guardar la corrección." : "No se pudo confirmar la multa del operador."));
             }
 
             setSubmitting(false);
@@ -222,7 +343,9 @@ export function ConfirmarMultaOperadorInline({
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                         <FileCheck2 className="w-4 h-4 text-orange-600" aria-hidden="true" />
-                        <h4 className="text-sm font-bold text-slate-900 dark:text-white">Confirmar multa del operador</h4>
+                        <h4 className="text-sm font-bold text-slate-900 dark:text-white">
+                            {esModoCorregir ? "Corregir el monto y la moneda de la multa" : "Confirmar multa del operador"}
+                        </h4>
                         <span className="text-xs text-slate-500 dark:text-slate-400">
                             Reserva #{reservaNumero}
                         </span>
@@ -238,17 +361,28 @@ export function ConfirmarMultaOperadorInline({
                     </button>
                 </div>
 
-                {/* ── Explicación del flujo (UX: el usuario tiene que entender qué va a pasar) ── */}
+                {/* ── Explicación del flujo (UX: el usuario tiene que entender qué va a pasar) ──
+                    B3 (2026-07-08): la copy vieja hablaba de "la nota de crédito" sin aclarar
+                    que la devolución al cliente ya había pasado — sonaba a que faltaba algo del
+                    lado del cliente. Reescrita para separar las dos plata en juego: lo que ya se
+                    le devolvió al cliente (hecho) vs. lo que el operador retiene (a cargo ahora). */}
                 <div
                     className="rounded-lg border border-orange-200 bg-orange-50 p-3.5 text-xs text-orange-800 dark:bg-orange-950/30 dark:border-orange-800 dark:text-orange-200 space-y-1"
                     data-testid="multa-explicacion-banner"
                 >
-                    <p>
-                        <strong>¿Qué va a pasar?</strong> La nota de crédito total ya fue emitida cuando se anuló la reserva.
-                        Ahora confirmás la multa que el operador te comunicó: se va a emitir una <strong>Nota de Débito</strong> en AFIP/ARCA por ese monto.
-                    </p>
+                    {esModoCorregir ? (
+                        <p>
+                            <strong>¿Qué va a pasar?</strong> Vas a corregir el monto o la moneda que quedaron mal cargados.
+                            Al guardar, el sistema reintenta cobrarle la <strong>multa</strong> al cliente con estos datos corregidos.
+                        </p>
+                    ) : (
+                        <p>
+                            <strong>¿Qué va a pasar?</strong> La devolución total al cliente ya se hizo cuando anulaste.
+                            Ahora cargás la multa que te cobró el operador: se le cobra ese mismo monto al cliente como un <strong>cargo</strong>.
+                        </p>
+                    )}
                     <p className="text-orange-700 dark:text-orange-300">
-                        Esta acción no se puede deshacer. Solo confirmá si el operador ya te informó el monto definitivo.
+                        Esta acción no se puede deshacer. Solo {esModoCorregir ? "guardá" : "confirmá"} si {esModoCorregir ? "estás seguro del dato correcto" : "el operador ya te informó el monto definitivo"}.
                     </p>
                 </div>
 
@@ -318,50 +452,58 @@ export function ConfirmarMultaOperadorInline({
                                 </option>
                             ))}
                         </select>
-                        {/* Aclaración importante: la moneda elegida acá es solo para registrar
-                            cómo informó el operador la multa. La moneda de emisión de la Nota
-                            de Débito al cliente la define la configuración fiscal (no este campo). */}
+                        {/* B2 (2026-07-08): la aclaración anterior decía que la moneda de la ND la
+                            definía "la configuración fiscal" — contradecía lo que en realidad hace
+                            el backend (usa esta misma moneda). Corregido para no confundir. */}
                         <div className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">
-                            Indicá la moneda en la que el operador te informó la multa. La nota de débito al cliente se emite según la configuración fiscal vigente.
+                            El cargo al cliente sale en esta misma moneda.
                         </div>
                     </div>
                 </div>
 
-                {/* ── Fecha en que el operador confirmó el monto ── */}
-                <div>
-                    <label
-                        className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5"
-                        htmlFor="multa-fecha"
-                    >
-                        Fecha en que el operador te informó el monto <span className="text-rose-500" aria-hidden="true">*</span>
-                    </label>
-                    <input
-                        id="multa-fecha"
-                        type="date"
-                        value={fecha}
-                        onChange={(e) => setFecha(e.target.value)}
-                        max={getTodayString()}
-                        disabled={submitting}
-                        data-testid="multa-fecha-input"
-                        className="w-full rounded-xl border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 disabled:opacity-50"
-                    />
-                    {fechaError && (
-                        <div className="mt-1 text-xs text-rose-600" role="alert" data-testid="multa-fecha-error">
-                            {fechaError}
+                {/* ── Fecha en que el operador confirmó el monto ──
+                    Solo en modo "confirmar": correct-penalty no usa esta fecha. */}
+                {!esModoCorregir && (
+                    <div>
+                        <label
+                            className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5"
+                            htmlFor="multa-fecha"
+                        >
+                            Fecha en que el operador te informó el monto <span className="text-rose-500" aria-hidden="true">*</span>
+                        </label>
+                        <input
+                            id="multa-fecha"
+                            type="date"
+                            value={fecha}
+                            onChange={(e) => setFecha(e.target.value)}
+                            max={getTodayString()}
+                            disabled={submitting}
+                            data-testid="multa-fecha-input"
+                            className="w-full rounded-xl border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 disabled:opacity-50"
+                        />
+                        {fechaError && (
+                            <div className="mt-1 text-xs text-rose-600" role="alert" data-testid="multa-fecha-error">
+                                {fechaError}
+                            </div>
+                        )}
+                        <div className="mt-1 text-xs text-slate-400">
+                            Podés ingresar una fecha anterior a hoy si el operador te avisó antes.
                         </div>
-                    )}
-                    <div className="mt-1 text-xs text-slate-400">
-                        Podés ingresar una fecha anterior a hoy si el operador te avisó antes.
                     </div>
-                </div>
+                )}
 
-                {/* ── Referencia documental (opcional pero recomendada) ── */}
+                {/* ── Referencia documental (modo "confirmar", opcional) o motivo de la
+                    corrección (modo "corregir", obligatorio) — mismo campo, distinto propósito. */}
                 <div>
                     <label
                         className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5"
                         htmlFor="multa-referencia"
                     >
-                        Referencia del aviso del operador <span className="text-slate-400 font-normal">(opcional)</span>
+                        {esModoCorregir ? (
+                            <>¿Por qué corregís el monto o la moneda? <span className="text-rose-500" aria-hidden="true">*</span></>
+                        ) : (
+                            <>Referencia del aviso del operador <span className="text-slate-400 font-normal">(opcional)</span></>
+                        )}
                     </label>
                     <input
                         id="multa-referencia"
@@ -370,12 +512,24 @@ export function ConfirmarMultaOperadorInline({
                         onChange={(e) => setReferencia(e.target.value)}
                         maxLength={500}
                         disabled={submitting}
-                        placeholder="Número de nota, email, referencia del PDF del operador..."
+                        placeholder={esModoCorregir
+                            ? "El operador informó el monto en dólares, no en pesos..."
+                            : "Número de nota, email, referencia del PDF del operador..."}
                         data-testid="multa-referencia-input"
-                        className="w-full rounded-xl border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 disabled:opacity-50"
+                        className={`w-full rounded-xl border px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 dark:bg-slate-800 dark:text-white disabled:opacity-50 ${
+                            esModoCorregir && referencia.length > 0 && motivoError
+                                ? "border-rose-400"
+                                : "border-slate-300 dark:border-slate-600"
+                        }`}
                     />
-                    {/* Sin respaldo documental el backend puede exigir aprobación de 4-eyes. */}
-                    {!referencia.trim() && (
+                    {esModoCorregir && referencia.length > 0 && motivoError && (
+                        <div className="mt-1 text-xs text-rose-600" role="alert" data-testid="multa-motivo-error">
+                            {motivoError}
+                        </div>
+                    )}
+                    {/* Sin respaldo documental el backend puede exigir aprobación de 4-eyes.
+                        Solo aplica al modo "confirmar" — correct-penalty no tiene ese flujo. */}
+                    {!esModoCorregir && !referencia.trim() && (
                         <div className="mt-1.5 text-xs text-amber-700 dark:text-amber-300 flex items-start gap-1">
                             <AlertTriangle className="h-3 w-3 flex-shrink-0 mt-0.5" />
                             <span>Sin referencia documental puede requerirse autorización adicional del administrador.</span>
@@ -401,7 +555,9 @@ export function ConfirmarMultaOperadorInline({
                         className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-bold text-white hover:bg-orange-700 transition-colors disabled:opacity-50 flex items-center gap-2"
                     >
                         {submitting && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-                        {submitting ? "Confirmando..." : "Confirmar y emitir nota de débito"}
+                        {esModoCorregir
+                            ? (submitting ? "Guardando..." : "Guardar corrección")
+                            : (submitting ? "Confirmando..." : "Confirmar y cobrarle la multa al cliente")}
                     </button>
                 </div>
             </div>
@@ -414,7 +570,7 @@ export function ConfirmarMultaOperadorInline({
                 onCreated={() => {
                     setApprovalContext(null);
                     showSuccess(
-                        "Solicitud enviada al administrador. La nota de débito quedará pendiente hasta que lo autoricen.",
+                        "Solicitud enviada al administrador. El cobro al cliente quedará pendiente hasta que lo autoricen.",
                         "Solicitud enviada"
                     );
                     onCerrar();

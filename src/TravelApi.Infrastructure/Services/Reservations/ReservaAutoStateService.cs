@@ -326,9 +326,8 @@ public class ReservaAutoStateService
         if (hasLiveAlert) return;
 
         var message =
-            $"La reserva {reserva.NumeroReserva} quedo 'confirmada con cambios': un servicio dejo de estar " +
-            "resuelto (el operador cancelo/reprogramo o se agrego un servicio nuevo) o se quedo sin servicios. " +
-            "Sigue confirmada, pero revisala antes de que avance al viaje.";
+            $"Revisá la reserva {reserva.NumeroReserva}: cambió algo de los servicios (el operador movió algo o " +
+            "se agregó/quitó un servicio). Sigue confirmada, pero chequeala antes de que salga el viaje.";
 
         var recipients = new List<string>();
         if (!string.IsNullOrEmpty(reserva.ResponsibleUserId))
