@@ -1,0 +1,235 @@
+name: Ops - Diagnostico (SOLO LECTURA)
+
+# ============================================================================
+# QUE ES ESTO
+# ----------------------------------------------------------------------------
+# Herramienta de DIAGNOSTICO del VPS de produccion, 100% SOLO LECTURA.
+# Permite mirar el servidor sin tener llave SSH propia: se dispara A MANO
+# (workflow_dispatch / `gh workflow run`) y usa la misma llave SSH que el
+# deploy (secrets VPS_*) para conectarse al VPS y ejecutar comandos de lectura.
+#
+# QUIEN LO DISPARA
+#   Solo manual. NO corre en push. Lo lanza una persona desde la pestania
+#   Actions o con `gh workflow run ops-diagnostico.yml`.
+#
+# QUE PUEDE HACER (nada que mute estado):
+#   - estado       : commit desplegado + estado de contenedores + disco + RAM.
+#   - logs-api     : ultimas lineas del log de travel_api (con filtro opcional).
+#   - logs-worker  : ultimas lineas del log de travel_worker (con filtro opcional).
+#   - sql          : una consulta SELECT/WITH, en transaccion de SOLO LECTURA.
+#
+# ADVERTENCIA DE PRIVACIDAD
+#   La salida de cada corrida QUEDA GUARDADA en los logs del run de Actions.
+#   Esa salida puede contener datos de reservas / clientes / pasajeros.
+#   Por eso el repositorio DEBE seguir siendo PRIVADO. No hacer publico el repo.
+#   El workflow nunca imprime secretos ni variables de entorno (no printenv,
+#   no cat .env). Aun asi, no pegar consultas que devuelvan documentos, mails
+#   o telefonos si no es estrictamente necesario para el diagnostico.
+#
+# SEGURIDAD TECNICA
+#   - No ejecuta NINGUN comando que mute (nada de restart/up/down/prune/rm,
+#     nada de UPDATE/DELETE). El SQL pasa por un guard en bash (solo SELECT/WITH,
+#     una sola sentencia) y ademas corre con default_transaction_read_only=on.
+#   - Las entradas del usuario NO se interpolan directo en el script: viajan
+#     como variables de entorno (envs:) para evitar inyeccion de comandos.
+# ============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      accion:
+        description: "Que quiero ver"
+        type: choice
+        required: true
+        options:
+          - estado
+          - logs-api
+          - logs-worker
+          - sql
+      filtro:
+        description: "Regex para grep -E sobre los logs (vacio = sin filtrar)"
+        type: string
+        required: false
+        default: ""
+      lineas:
+        description: "Cuantas lineas de --tail traer antes de filtrar (numero)"
+        type: string
+        required: false
+        default: "800"
+      contexto:
+        description: "Lineas de contexto -C del grep (numero)"
+        type: string
+        required: false
+        default: "3"
+      consulta:
+        description: "SQL SOLO SELECT/WITH (solo para accion=sql)"
+        type: string
+        required: false
+        default: ""
+
+# Solo lectura del repo: no necesita escribir nada.
+permissions:
+  contents: read
+
+# Grupo propio para NO encolarse contra los deploys (ci-cd-main).
+# cancel-in-progress: false => si hay otro diagnostico corriendo, espera.
+concurrency:
+  group: ops-diagnostico
+  cancel-in-progress: false
+
+jobs:
+  diagnostico:
+    name: Diagnostico VPS (solo lectura)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ejecutar diagnostico por SSH
+        uses: appleboy/ssh-action@v1.2.0
+        # Las entradas del usuario se pasan como variables de entorno del step
+        # y se reenvian al VPS via `envs:`. Asi el texto que escribio la persona
+        # NUNCA se interpola directo en el script remoto (evita inyeccion).
+        env:
+          ACCION: ${{ inputs.accion }}
+          FILTRO: ${{ inputs.filtro }}
+          LINEAS: ${{ inputs.lineas }}
+          CONTEXTO: ${{ inputs.contexto }}
+          CONSULTA: ${{ inputs.consulta }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          command_timeout: 10m
+          envs: ACCION,FILTRO,LINEAS,CONTEXTO,CONSULTA
+          script: |
+            set -euo pipefail
+            cd "${{ secrets.VPS_PROJECT_DIR }}"
+
+            echo "== Diagnostico: accion='${ACCION}' — $(date -u +%Y-%m-%dT%H:%M:%SZ) =="
+            echo
+
+            # ----------------------------------------------------------------
+            # Valida que un valor sea un entero (sin signo). Se usa para
+            # 'lineas' y 'contexto' porque van dentro del comando: si dejaramos
+            # pasar texto arbitrario, podria colarse una inyeccion.
+            # ----------------------------------------------------------------
+            es_numero() {
+              case "$1" in
+                ''|*[!0-9]*) return 1 ;;
+                *) return 0 ;;
+              esac
+            }
+
+            # ----------------------------------------------------------------
+            # Muestra los logs de un contenedor (solo lectura: docker logs).
+            # $1 = nombre del contenedor. Filtra con grep -E si FILTRO no esta vacio.
+            # ----------------------------------------------------------------
+            mostrar_logs() {
+              contenedor="$1"
+
+              if ! es_numero "${LINEAS}"; then
+                echo "ERROR: 'lineas' debe ser un numero entero. Valor recibido: '${LINEAS}'"
+                exit 1
+              fi
+              if ! es_numero "${CONTEXTO}"; then
+                echo "ERROR: 'contexto' debe ser un numero entero. Valor recibido: '${CONTEXTO}'"
+                exit 1
+              fi
+
+              echo "== Logs de ${contenedor} (ultimas ${LINEAS} lineas) =="
+              if [ -n "${FILTRO}" ]; then
+                echo "== Filtro grep -E -C ${CONTEXTO}: ${FILTRO} =="
+                echo
+                docker logs "${contenedor}" --tail "${LINEAS}" 2>&1 \
+                  | grep -E -C "${CONTEXTO}" -- "${FILTRO}" \
+                  || echo "(sin coincidencias)"
+              else
+                echo
+                docker logs "${contenedor}" --tail "${LINEAS}" 2>&1
+              fi
+            }
+
+            case "${ACCION}" in
+              # --------------------------------------------------------------
+              # ESTADO: foto rapida del servidor. Nada que mute.
+              # --------------------------------------------------------------
+              estado)
+                echo "== Commit desplegado =="
+                git log -1 --oneline
+                echo
+                echo "== Contenedores =="
+                docker compose ps \
+                  || docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+                echo
+                echo "== Disco (/) =="
+                df -h /
+                echo
+                echo "== Memoria (MB) =="
+                free -m
+                ;;
+
+              logs-api)
+                mostrar_logs travel_api
+                ;;
+
+              logs-worker)
+                mostrar_logs travel_worker
+                ;;
+
+              # --------------------------------------------------------------
+              # SQL: una sola consulta de SOLO LECTURA.
+              #   Defensa en profundidad:
+              #     1) guard en bash: debe empezar con SELECT o WITH, y una
+              #        sola sentencia (sin ';' interno).
+              #     2) la consulta corre con default_transaction_read_only=on,
+              #        asi el propio Postgres rechaza cualquier escritura.
+              #   La consulta se pasa al contenedor como env var (-e SQL=...),
+              #   NO se interpola dentro del comando psql: evita romper comillas.
+              #   El usuario/base/clave salen de las env vars del propio
+              #   contenedor db (no se hardcodean aca).
+              # --------------------------------------------------------------
+              sql)
+                # Normaliza: saca espacios al inicio y al final.
+                q="$(printf '%s' "${CONSULTA}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+                if [ -z "${q}" ]; then
+                  echo "ERROR: 'consulta' esta vacia. Para accion=sql hay que pasar un SELECT/WITH."
+                  exit 1
+                fi
+
+                # A minusculas para chequear el prefijo.
+                qlow="$(printf '%s' "${q}" | tr '[:upper:]' '[:lower:]')"
+                case "${qlow}" in
+                  select|select[!a-z0-9_]*|with|with[!a-z0-9_]*) : ;;
+                  *)
+                    echo "ERROR: la consulta debe empezar con SELECT o WITH (solo lectura)."
+                    exit 1
+                    ;;
+                esac
+
+                # Saca un ';' final opcional; si todavia queda un ';', es mas de
+                # una sentencia => rechazar.
+                qsinfinal="$(printf '%s' "${q}" | sed -e 's/[[:space:]]*;[[:space:]]*$//')"
+                case "${qsinfinal}" in
+                  *";"*)
+                    echo "ERROR: solo se permite UNA sentencia (no puede haber ';' en el medio)."
+                    exit 1
+                    ;;
+                esac
+
+                echo "== Consulta (transaccion de solo lectura) =="
+                echo "${q}"
+                echo
+                docker exec \
+                  -e PGOPTIONS='-c default_transaction_read_only=on' \
+                  -e SQL="${q}" \
+                  travel_db \
+                  sh -lc 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -P pager=off -c "$SQL"'
+                ;;
+
+              *)
+                echo "ERROR: accion desconocida: '${ACCION}'"
+                exit 1
+                ;;
+            esac
+
+            echo
+            echo "== Diagnostico OK =="
