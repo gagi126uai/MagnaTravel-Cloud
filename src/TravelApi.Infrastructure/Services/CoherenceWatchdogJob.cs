@@ -190,7 +190,7 @@ public class CoherenceWatchdogJob
         if (reportable.Count > 0)
         {
             notificationSent = await NotifyAdminsAsync(
-                liveServiceFindings.Count, unjustifiedDebtFindings.Count, ct);
+                liveServiceFindings, unjustifiedDebtFindings, ct);
         }
         else
         {
@@ -215,16 +215,19 @@ public class CoherenceWatchdogJob
     /// si ese admin ya tiene una notificación NO leída del vigía con el mismo mensaje, no se crea otra. Devuelve
     /// true si se creó al menos una notificación nueva.
     /// </summary>
-    private async Task<bool> NotifyAdminsAsync(int liveServicesCount, int unjustifiedDebtCount, CancellationToken ct)
+    private async Task<bool> NotifyAdminsAsync(
+        IReadOnlyList<CoherenceFinding> liveServiceFindings,
+        IReadOnlyList<CoherenceFinding> unjustifiedDebtFindings,
+        CancellationToken ct)
     {
-        var message = BuildBusinessSummary(liveServicesCount, unjustifiedDebtCount);
+        var message = BuildBusinessSummary(liveServiceFindings, unjustifiedDebtFindings);
 
         var admins = await _userManager.GetUsersInRoleAsync("Admin");
         if (admins.Count == 0)
         {
             _logger.LogWarning(
                 "CoherenceWatchdog: hay {Count} reserva(s) anulada(s) para revisar pero NO hay usuarios Admin a quién avisar.",
-                liveServicesCount + unjustifiedDebtCount);
+                liveServiceFindings.Count + unjustifiedDebtFindings.Count);
             return false;
         }
 
@@ -238,7 +241,9 @@ public class CoherenceWatchdogJob
                             && n.ResolvedAt == null && !n.IsRead && !n.IsDismissed)
                 .ToListAsync(ct);
 
-            // Misma situación aún sin atender (mismo mensaje) → no repetir.
+            // Misma situación aún sin atender (mismo mensaje) → no repetir. Ojo: los números de reserva viajan DENTRO
+            // del mensaje, así que participan de esta comparación A PROPÓSITO: si el set de reservas cambia, el mensaje
+            // cambia y el aviso viejo se apaga para dar lugar a uno con los números frescos (ver bloque de abajo).
             if (liveForAdmin.Any(n => n.Message == message))
                 continue;
 
@@ -270,19 +275,27 @@ public class CoherenceWatchdogJob
         return createdAny;
     }
 
+    // Tope de números de reserva que se listan por categoría. Más que esto y el resumen se convierte en un listado
+    // interminable; a partir del tope se agrega "... y N más". Es una notificación, no un reporte completo.
+    private const int MaxReferencesPerCategory = 10;
+
     /// <summary>
     /// Arma el resumen en castellano de negocio que ve el admin. Solo menciona las categorías que realmente tienen
-    /// hallazgos. NO expone nada técnico (ids, estados crudos, nombres internos).
+    /// hallazgos, y agrega entre paréntesis los NÚMEROS DE RESERVA de cada categoría (para que el dueño sepa CUÁLES
+    /// revisar, no solo cuántas). NO expone nada técnico (ids internos, estados crudos, nombres de clases/campos).
     /// </summary>
-    private static string BuildBusinessSummary(int liveServicesCount, int unjustifiedDebtCount)
+    private static string BuildBusinessSummary(
+        IReadOnlyList<CoherenceFinding> liveServiceFindings,
+        IReadOnlyList<CoherenceFinding> unjustifiedDebtFindings)
     {
         var parts = new List<string>();
-        if (liveServicesCount > 0)
-            parts.Add($"{liveServicesCount} con servicios sin cancelar");
-        if (unjustifiedDebtCount > 0)
-            parts.Add($"{unjustifiedDebtCount} con una deuda sin comprobante que la justifique");
+        if (liveServiceFindings.Count > 0)
+            parts.Add(BuildCategoryPhrase(liveServiceFindings.Count, "con servicios sin cancelar", liveServiceFindings));
+        if (unjustifiedDebtFindings.Count > 0)
+            parts.Add(BuildCategoryPhrase(
+                unjustifiedDebtFindings.Count, "con una deuda sin comprobante que la justifique", unjustifiedDebtFindings));
 
-        var total = liveServicesCount + unjustifiedDebtCount;
+        var total = liveServiceFindings.Count + unjustifiedDebtFindings.Count;
 
         // Concordancia singular/plural: con una sola reserva el texto va en singular ("reserva anulada" / "Revisala").
         var reservaWord = total == 1 ? "reserva anulada" : "reservas anuladas";
@@ -290,6 +303,62 @@ public class CoherenceWatchdogJob
 
         return $"El chequeo nocturno encontró {total} {reservaWord} con datos para revisar: " +
                string.Join(" y ", parts) + ". " + closing;
+    }
+
+    /// <summary>
+    /// Arma la frase de UNA categoría: el conteo + la descripción + (entre paréntesis) los números de reserva. Ej.:
+    /// "3 con una deuda sin comprobante que la justifique (F-2026-1010, F-2026-1012 y F-2026-1020)". Si ningún
+    /// hallazgo de la categoría trae número mostrable, la frase queda sin paréntesis (solo el conteo + descripción).
+    /// </summary>
+    private static string BuildCategoryPhrase(
+        int count, string description, IReadOnlyList<CoherenceFinding> findings)
+    {
+        var references = BuildReferenceList(findings);
+        if (references.Length == 0)
+            return $"{count} {description}";
+
+        return $"{count} {description} ({references})";
+    }
+
+    /// <summary>
+    /// Arma la lista de números de reserva mostrables de una categoría, con comas y "y" antes del último, topada en
+    /// <see cref="MaxReferencesPerCategory"/> (con "... y N más" si hay más). Ignora hallazgos sin número mostrable
+    /// (DisplayReference null/vacío): eso puede pasar con datos legacy aunque NumeroReserva sea obligatorio; en ese
+    /// caso el hallazgo igual cuenta en el conteo de la categoría, solo que no se lista su número.
+    /// </summary>
+    private static string BuildReferenceList(IReadOnlyList<CoherenceFinding> findings)
+    {
+        var references = findings
+            .Select(f => f.DisplayReference)
+            .Where(reference => !string.IsNullOrWhiteSpace(reference))
+            .Select(reference => reference!.Trim())
+            .ToList();
+
+        if (references.Count == 0)
+            return string.Empty;
+
+        // Si hay más números que el tope, se muestran los primeros y se resume el resto con "... y N más".
+        if (references.Count > MaxReferencesPerCategory)
+        {
+            var shown = references.Take(MaxReferencesPerCategory).ToList();
+            var remaining = references.Count - MaxReferencesPerCategory;
+            return string.Join(", ", shown) + $", ... y {remaining} más";
+        }
+
+        return JoinWithSpanishConjunction(references);
+    }
+
+    /// <summary>
+    /// Une una lista de textos en castellano natural: "A" | "A y B" | "A, B y C" (comas y "y" antes del último).
+    /// Se asume que la lista NO está vacía (la valida el llamador).
+    /// </summary>
+    private static string JoinWithSpanishConjunction(IReadOnlyList<string> items)
+    {
+        if (items.Count == 1)
+            return items[0];
+
+        var allButLast = string.Join(", ", items.Take(items.Count - 1));
+        return $"{allButLast} y {items[items.Count - 1]}";
     }
 
     /// <summary>Vuelca el detalle técnico de cada hallazgo al log del servidor (nunca al usuario).</summary>

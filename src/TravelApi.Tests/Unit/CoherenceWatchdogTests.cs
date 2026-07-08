@@ -506,4 +506,176 @@ public class CoherenceWatchdogTests
         // Sí el texto de negocio esperado.
         Assert.Contains("servicios sin cancelar", message);
     }
+
+    // ============================================================
+    // Números de reserva en el mensaje: helpers de seed.
+    // ============================================================
+
+    /// <summary>
+    /// Seedea una reserva anulada con un servicio VIVO y saldo 0 (cae en W2, no en W5). La plata queda consistente
+    /// para que W3 no dispare. Cada tabla tiene su propio espacio de claves en InMemory, por eso se derivan ids únicos
+    /// del id de reserva.
+    /// </summary>
+    private static void SeedAnnulledWithLiveService(AppDbContext ctx, int reservaId, string numeroReserva)
+    {
+        ctx.Reservas.Add(new Reserva
+        {
+            Id = reservaId, NumeroReserva = numeroReserva, Name = "Anulada con servicio vivo",
+            Status = EstadoReserva.Cancelled, AdultCount = 1,
+            TotalSale = 1000m, ConfirmedSale = 1000m, TotalPaid = 1000m, Balance = 0m
+        });
+        ctx.HotelBookings.Add(Hotel(id: reservaId * 10, reservaId: reservaId,
+            status: WorkflowStatuses.Confirmado, salePrice: 1000m));
+        ctx.Payments.Add(new Payment
+        {
+            Id = reservaId * 10, ReservaId = reservaId, Amount = 1000m, Currency = Monedas.ARS, Status = "Paid"
+        });
+        ctx.ReservaMoneyByCurrency.Add(ArsRow(id: reservaId * 100, reservaId: reservaId,
+            totalSale: 1000m, confirmedSale: 1000m, totalPaid: 1000m, balance: 0m));
+    }
+
+    /// <summary>
+    /// Seedea una reserva anulada con saldo POSITIVO sin Nota de Débito que lo respalde (cae en W5, no en W2). Mismo
+    /// patrón que el test W5 individual: hotel cancelado + puente negativo que deja el saldo en +500.
+    /// </summary>
+    private static void SeedAnnulledWithUnjustifiedDebt(AppDbContext ctx, int reservaId, string numeroReserva)
+    {
+        ctx.Reservas.Add(new Reserva
+        {
+            Id = reservaId, NumeroReserva = numeroReserva, Name = "Anulada con deuda sin comprobante",
+            Status = EstadoReserva.Cancelled, AdultCount = 1,
+            TotalSale = 0m, ConfirmedSale = 0m, TotalPaid = -500m, Balance = 500m
+        });
+        ctx.HotelBookings.Add(Hotel(id: reservaId * 10, reservaId: reservaId,
+            status: WorkflowStatuses.Cancelado, salePrice: 1000m));
+        ctx.Payments.Add(new Payment
+        {
+            Id = reservaId * 10, ReservaId = reservaId, Amount = 500m, Currency = Monedas.ARS, Status = "Paid"
+        });
+        ctx.Payments.Add(new Payment
+        {
+            Id = reservaId * 10 + 1, ReservaId = reservaId, Amount = -1000m, Currency = Monedas.ARS, Status = "Paid"
+        });
+        ctx.ReservaMoneyByCurrency.Add(ArsRow(id: reservaId * 100, reservaId: reservaId,
+            totalSale: 0m, confirmedSale: 0m, totalPaid: -500m, balance: 500m));
+    }
+
+    private static async Task<string> RunAndGetMessage(CoherenceWatchdogJob job, AppDbContext ctx)
+    {
+        var result = await job.RunAsync(CancellationToken.None);
+        Assert.True(result.NotificationSent);
+        var notification = await ctx.Notifications.AsNoTracking().FirstAsync();
+        return notification.Message;
+    }
+
+    // ============================================================
+    // (a) El mensaje incluye los números de reserva de W2 y W5.
+    // ============================================================
+
+    [Fact]
+    public async Task Message_IncludesReservaNumbers_OfW2AndW5()
+    {
+        var (job, ctx, _, _) = BuildJob();
+
+        SeedAnnulledWithLiveService(ctx, reservaId: 101, numeroReserva: "F-2026-1001");
+        SeedAnnulledWithUnjustifiedDebt(ctx, reservaId: 110, numeroReserva: "F-2026-1010");
+        await ctx.SaveChangesAsync();
+
+        var message = await RunAndGetMessage(job, ctx);
+
+        Assert.Contains("F-2026-1001", message);
+        Assert.Contains("F-2026-1010", message);
+    }
+
+    // ============================================================
+    // (b) El mensaje NO expone el Id interno de la reserva.
+    // ============================================================
+
+    [Fact]
+    public async Task Message_DoesNotContainInternalId()
+    {
+        var (job, ctx, _, _) = BuildJob();
+
+        // Id interno "987654" elegido para que no colisione con el número de reserva mostrable ("F-2026-1500").
+        SeedAnnulledWithUnjustifiedDebt(ctx, reservaId: 987654, numeroReserva: "F-2026-1500");
+        await ctx.SaveChangesAsync();
+
+        var message = await RunAndGetMessage(job, ctx);
+
+        Assert.DoesNotContain("987654", message); // el id interno nunca se muestra
+        Assert.Contains("F-2026-1500", message);   // el número de negocio sí
+    }
+
+    // ============================================================
+    // (c) Tope de 10 números por categoría + "... y N más".
+    // ============================================================
+
+    [Fact]
+    public async Task Message_CapsReferencesAtTen_AndSummarizesRest()
+    {
+        var (job, ctx, _, _) = BuildJob();
+
+        // 11 anuladas con deuda sin comprobante (misma categoría W5). Ids ascendentes 2001..2011 → se listan las
+        // primeras 10 y la 11ª se resume como "y 1 más".
+        for (var i = 1; i <= 11; i++)
+        {
+            var reservaId = 2000 + i;
+            SeedAnnulledWithUnjustifiedDebt(ctx, reservaId: reservaId, numeroReserva: $"F-2026-{reservaId}");
+        }
+        await ctx.SaveChangesAsync();
+
+        var message = await RunAndGetMessage(job, ctx);
+
+        Assert.Contains("... y 1 más", message);
+        Assert.Contains("F-2026-2001", message);          // la primera sí se lista
+        Assert.DoesNotContain("F-2026-2011", message);    // la 11ª queda fuera del listado (resumida)
+    }
+
+    // ============================================================
+    // (d) Dos categorías juntas con el formato exacto esperado.
+    // ============================================================
+
+    [Fact]
+    public async Task Message_TwoCategories_ExactFormat()
+    {
+        var (job, ctx, _, _) = BuildJob();
+
+        // 2 con servicios sin cancelar (W2) + 3 con deuda sin comprobante (W5). Ids ascendentes para orden estable.
+        SeedAnnulledWithLiveService(ctx, reservaId: 1001, numeroReserva: "F-2026-1001");
+        SeedAnnulledWithLiveService(ctx, reservaId: 1002, numeroReserva: "F-2026-1002");
+        SeedAnnulledWithUnjustifiedDebt(ctx, reservaId: 1010, numeroReserva: "F-2026-1010");
+        SeedAnnulledWithUnjustifiedDebt(ctx, reservaId: 1012, numeroReserva: "F-2026-1012");
+        SeedAnnulledWithUnjustifiedDebt(ctx, reservaId: 1020, numeroReserva: "F-2026-1020");
+        await ctx.SaveChangesAsync();
+
+        var message = await RunAndGetMessage(job, ctx);
+
+        Assert.Equal(
+            "El chequeo nocturno encontró 5 reservas anuladas con datos para revisar: " +
+            "2 con servicios sin cancelar (F-2026-1001 y F-2026-1002) y " +
+            "3 con una deuda sin comprobante que la justifique (F-2026-1010, F-2026-1012 y F-2026-1020). " +
+            "Revisalas cuando puedas.",
+            message);
+    }
+
+    // ============================================================
+    // (e) Singular intacto con una sola reserva.
+    // ============================================================
+
+    [Fact]
+    public async Task Message_SingleReserva_KeepsSingularConcordance()
+    {
+        var (job, ctx, _, _) = BuildJob();
+
+        SeedAnnulledWithUnjustifiedDebt(ctx, reservaId: 3001, numeroReserva: "F-2026-3001");
+        await ctx.SaveChangesAsync();
+
+        var message = await RunAndGetMessage(job, ctx);
+
+        Assert.Equal(
+            "El chequeo nocturno encontró 1 reserva anulada con datos para revisar: " +
+            "1 con una deuda sin comprobante que la justifique (F-2026-3001). " +
+            "Revisala cuando puedas.",
+            message);
+    }
 }

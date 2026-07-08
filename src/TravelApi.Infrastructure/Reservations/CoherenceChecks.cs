@@ -24,7 +24,14 @@ namespace TravelApi.Infrastructure.Reservations;
 /// true si el vigía ya lo dejó sano en esta misma corrida (W1/W3). false si solo lo reporta porque tocar la plata o
 /// la multa lo decide una persona (W2/W5).
 /// </param>
-public sealed record CoherenceFinding(string Code, string EntityType, int EntityId, string Detail, bool AutoRepaired);
+/// <param name="DisplayReference">
+/// Número de negocio de la entidad, apto para MOSTRARLE al usuario (ej. el número de reserva "F-2026-1025"). Es lo
+/// ÚNICO de este record que puede aparecer en la notificación: a diferencia de <paramref name="EntityId"/> (interno,
+/// nunca se muestra), este identifica la reserva en el lenguaje que el dueño ve en pantalla. Queda en null en los
+/// hallazgos que no son de una reserva (ej. W4 sobre notificaciones): esos no van al aviso de negocio.
+/// </param>
+public sealed record CoherenceFinding(
+    string Code, string EntityType, int EntityId, string Detail, bool AutoRepaired, string? DisplayReference = null);
 
 /// <summary>
 /// Detectores del "vigía de coherencia" (Tanda 4): funciones que barren la base buscando combinaciones de datos
@@ -379,6 +386,10 @@ public static class CoherenceChecks
         var reservas = await db.Reservas
             .AsNoTracking()
             .Where(r => AnnulledStatuses.Contains(r.Status))
+            // Orden estable por número de reserva: los números viajan DENTRO del mensaje del aviso y la dedup compara
+            // el mensaje entero; sin OrderBy, Postgres podría devolver las mismas reservas en otro orden y el aviso
+            // se apagaría/recrearía idéntico cada noche sin que nada haya cambiado.
+            .OrderBy(r => r.NumeroReserva)
             .Include(r => r.Servicios)
             .Include(r => r.FlightSegments)
             .Include(r => r.HotelBookings)
@@ -400,7 +411,9 @@ public static class CoherenceChecks
                 EntityType: "Reserva",
                 EntityId: reserva.Id,
                 Detail: $"Reserva anulada ({reserva.Status}) con al menos un servicio sin cancelar.",
-                AutoRepaired: false));
+                AutoRepaired: false,
+                // El número de reserva es lo ÚNICO mostrable: el aviso al dueño lo lista para que sepa CUÁL revisar.
+                DisplayReference: reserva.NumeroReserva));
         }
 
         return findings;
@@ -460,7 +473,11 @@ public static class CoherenceChecks
         var annulledReservas = await db.Reservas
             .AsNoTracking()
             .Where(r => AnnulledStatuses.Contains(r.Status))
-            .Select(r => new { r.Id, r.Balance })
+            // Orden estable por número de reserva (mismo motivo que en W2): los números van dentro del mensaje del
+            // aviso y la dedup compara el mensaje entero; un orden no determinístico recrearía el aviso sin cambios.
+            .OrderBy(r => r.NumeroReserva)
+            // Se agrega NumeroReserva a la proyección: es el número mostrable que va al aviso (DisplayReference).
+            .Select(r => new { r.Id, r.Balance, r.NumeroReserva })
             .ToListAsync(ct);
 
         if (annulledReservas.Count == 0)
@@ -516,7 +533,9 @@ public static class CoherenceChecks
                 EntityType: "Reserva",
                 EntityId: reserva.Id,
                 Detail: "Reserva anulada con saldo a cobrar sin Nota de Débito de multa que lo respalde.",
-                AutoRepaired: false));
+                AutoRepaired: false,
+                // El número de reserva es lo ÚNICO mostrable: el aviso al dueño lo lista para que sepa CUÁL revisar.
+                DisplayReference: reserva.NumeroReserva));
         }
 
         return findings;
