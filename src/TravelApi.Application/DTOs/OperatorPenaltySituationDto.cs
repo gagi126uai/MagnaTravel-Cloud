@@ -40,6 +40,14 @@ public class OperatorPenaltySituationDto
     /// <summary>true si se puede CORREGIR monto + moneda de una multa con la ND trabada (revision manual / fallida + permiso).</summary>
     public bool CanCorrectAmountCurrency { get; set; }
 
+    /// <summary>
+    /// true si se puede CERRAR SIN MULTA una penalidad ya confirmada cuya Nota de Debito no llego a existir
+    /// (fix "multa fantasma": estados DebitNoteFailed sin ND vinculada / DebitNoteNeedsAmountCurrency /
+    /// ConfirmedNoDebitNote + permiso). Misma condicion que valida <c>WaiveOperatorPenaltyAsync</c> antes de
+    /// aplicar el cierre; si esto da true, el endpoint de waive lo va a aceptar.
+    /// </summary>
+    public bool CanWaive { get; set; }
+
     /// <summary>Cuando se cerro sin multa (solo con valor en estado "Waived"). Persistido en el confirm del waive.</summary>
     public DateTime? WaivedAt { get; set; }
 

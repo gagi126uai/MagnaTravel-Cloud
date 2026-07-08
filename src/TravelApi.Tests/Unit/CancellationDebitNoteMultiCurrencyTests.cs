@@ -349,6 +349,18 @@ public class CancellationDebitNoteMultiCurrencyTests
         Assert.NotNull(captured.Request);
         Assert.Equal("PES", captured.Request!.MonId);
         Assert.Equal(1m, captured.Request.MonCotiz);
+
+        // Regresion del bug de produccion (2026-07-08): CreateInvoiceRequest.ReservaId viaja a
+        // EntityReferenceResolver.ResolveRequiredIdAsync<Reserva>, que SOLO sabe parsear un GUID (Guid.TryParse
+        // adentro). Antes del fix se mandaba el Id interno (un int como string, ej. "31"), que el resolvedor
+        // JAMAS entendia -> KeyNotFoundException -> la ND terminaba siempre en revision manual. Este assert
+        // blinda el contrato: el campo tiene que ser SIEMPRE un GUID parseable, nunca un numero.
+        Assert.True(
+            Guid.TryParse(captured.Request.ReservaId, out _),
+            $"CreateInvoiceRequest.ReservaId debe ser el PublicId (GUID) de la reserva, no el Id interno. Valor recibido: '{captured.Request.ReservaId}'.");
+        Assert.True(
+            Guid.TryParse(captured.Request.OriginalInvoiceId, out _),
+            $"CreateInvoiceRequest.OriginalInvoiceId debe ser el PublicId (GUID) de la factura original. Valor recibido: '{captured.Request.OriginalInvoiceId}'.");
     }
 
     // ============================================================

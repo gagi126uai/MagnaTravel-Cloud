@@ -154,6 +154,24 @@ export function textoRastroWaived({ waivedAt, waivedByName, revertedAt, reverted
 }
 
 /**
+ * True si, en la familia "accionTrabada" (S3/S4/S5 — un intento de cobro que quedó
+ * trabado), hay que mostrar el link secundario "El operador no cobró esta multa".
+ *
+ * Por qué existe (hallazgo de Gastón, 2026-07-08): antes, cuando la multa quedaba
+ * trabada, el cartel SOLO ofrecía resolver el cobro (Reintentar/Corregir/Emitir) —
+ * no había salida para el caso real "el operador en realidad no cobró nada" (dato de
+ * prueba, confirmación cargada por error, etc.). El backend ya resuelve TODAS las
+ * condiciones de negocio en un solo booleano (`canWaive`: multa Confirmed + la ND no
+ * está en juego + el usuario tiene permiso) — acá solo lo leemos, no repetimos la regla.
+ *
+ * @param {{ canWaive?: boolean }} situacion
+ * @returns {boolean}
+ */
+export function debeMostrarWaiveEnAccionTrabada(situacion) {
+  return situacion?.canWaive === true;
+}
+
+/**
  * True si, según la situación de la multa, sigue habiendo un paso ACTIVO que atender
  * en la ficha (cualquier estado que no sea None/Done). Reemplaza al viejo cálculo
  * `capabilities.operatorPenaltyOutcome === "Pending" || "Waived"` cuando el DTO ya trae

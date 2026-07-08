@@ -107,7 +107,7 @@ public class ReservaServiceOperatorPenaltyCapabilityTests
             _ => OperatorPenaltySituationState.None,
         };
         mock.Setup(s => s.GetOperatorPenaltySituationAsync(
-                It.IsAny<Guid>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                It.IsAny<Guid>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new OperatorPenaltySituationDto { State = situationState.ToString() });
 
         return mock.Object;

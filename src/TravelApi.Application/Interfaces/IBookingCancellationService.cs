@@ -595,8 +595,13 @@ public interface IBookingCancellationService
     /// true si el usuario puede resolver la pata fiscal de la penalidad (permiso <c>cancellations.classify_agency_penalty</c>
     /// o Admin), ya resuelto por el caller. Decide que botones se OFRECEN (canConfirm/canRetry/canCorrect).
     /// </param>
+    /// <param name="isCallerAdmin">
+    /// true si el caller tiene rol ADMIN. Se usa SOLO para <c>CanWaive</c> (cerrar sin multa una penalidad ya
+    /// confirmada): esa accion exige Admin (INV-WAIVE-005), no basta el permiso classify. Sin este dato, un no-admin
+    /// con el permiso veria el boton y al apretarlo rebotaria 409 (el anti-patron "boton que rebota").
+    /// </param>
     Task<OperatorPenaltySituationDto> GetOperatorPenaltySituationAsync(
-        Guid reservaPublicId, bool userCanClassifyOperatorPenalty, CancellationToken ct);
+        Guid reservaPublicId, bool userCanClassifyOperatorPenalty, bool isCallerAdmin, CancellationToken ct);
 
     /// <summary>
     /// ADR-013 §3.10 (M4, 2026-06-01): bandeja "cancelaciones con NC emitida pero sin su

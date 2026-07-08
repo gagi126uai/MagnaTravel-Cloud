@@ -554,12 +554,15 @@ public class CancellationCorrectPenaltyAndSituationTests
         var (_, _, _, reserva) = await SeedPostNcAsync(h.Ctx);
 
         var sit = await h.Service.GetOperatorPenaltySituationAsync(
-            reserva.PublicId, userCanClassifyOperatorPenalty: true, default);
+            reserva.PublicId, userCanClassifyOperatorPenalty: true, isCallerAdmin: true, default);
 
         Assert.Equal(OperatorPenaltySituationState.PendingDecision.ToString(), sit.State);
         Assert.True(sit.CanConfirm);
         Assert.False(sit.CanRetryDebitNote);
         Assert.False(sit.CanCorrectAmountCurrency);
+        // Pendiente de decidir todavia no es "Confirmed" -> el cierre sin multa de ESTE boton no aplica aca aunque
+        // el caller sea Admin (ese caso ya lo cubre el flujo confirmar/cerrar-sin-multa desde pendiente, no CanWaive).
+        Assert.False(sit.CanWaive);
     }
 
     [Fact]
@@ -569,7 +572,7 @@ public class CancellationCorrectPenaltyAndSituationTests
         var (_, _, _, reserva) = await SeedPostNcAsync(h.Ctx);
 
         var sit = await h.Service.GetOperatorPenaltySituationAsync(
-            reserva.PublicId, userCanClassifyOperatorPenalty: false, default);
+            reserva.PublicId, userCanClassifyOperatorPenalty: false, isCallerAdmin: false, default);
 
         Assert.Equal(OperatorPenaltySituationState.PendingDecision.ToString(), sit.State);
         Assert.False(sit.CanConfirm); // el estado permite, pero sin permiso no se ofrece el boton
@@ -583,13 +586,33 @@ public class CancellationCorrectPenaltyAndSituationTests
         await SeedConfirmedManualReviewAsync(h, bc, supplier, penalty: 30_000m, declaredCurrency: "USD");
 
         var sit = await h.Service.GetOperatorPenaltySituationAsync(
-            reserva.PublicId, userCanClassifyOperatorPenalty: true, default);
+            reserva.PublicId, userCanClassifyOperatorPenalty: true, isCallerAdmin: true, default);
 
         Assert.Equal(OperatorPenaltySituationState.DebitNoteNeedsAmountCurrency.ToString(), sit.State);
         Assert.True(sit.CanCorrectAmountCurrency);
         Assert.False(sit.CanConfirm);
         Assert.Equal(30_000m, sit.Amount);
         Assert.Equal("USD", sit.Currency); // ISO para mostrar
+        // Confirmed + ND trabada en revision manual (sin factura vinculada) + caller Admin -> se puede cerrar sin multa.
+        Assert.True(sit.CanWaive);
+    }
+
+    [Fact]
+    public async Task Situation_WhenManualReview_PermissionButNotAdmin_CanWaiveFalse()
+    {
+        // Anti-patron "boton que rebota" (review 2026-07-08): cerrar sin multa una multa YA confirmada exige rol
+        // ADMIN (INV-WAIVE-005), no basta el permiso classify. Un no-admin CON el permiso classify puede confirmar/
+        // corregir/reintentar, pero NO debe ver el boton "cerrar sin multa": si lo viera, al apretarlo rebotaria 409.
+        var h = BuildService();
+        var (_, bc, supplier, reserva) = await SeedPostNcAsync(h.Ctx);
+        await SeedConfirmedManualReviewAsync(h, bc, supplier, penalty: 30_000m, declaredCurrency: "USD");
+
+        var sit = await h.Service.GetOperatorPenaltySituationAsync(
+            reserva.PublicId, userCanClassifyOperatorPenalty: true, isCallerAdmin: false, default);
+
+        // Corregir SI (tiene el permiso classify), pero cerrar sin multa NO (no es Admin).
+        Assert.True(sit.CanCorrectAmountCurrency);
+        Assert.False(sit.CanWaive);
     }
 
     /// <summary>Lleva el BC a Confirmed con un DebitNoteStatus dado (y opcionalmente una ND vinculada), para cubrir la matriz.</summary>
@@ -627,12 +650,34 @@ public class CancellationCorrectPenaltyAndSituationTests
         var (_, bc, _, reserva) = await SeedPostNcAsync(h.Ctx);
         await SeedConfirmedStateAsync(h, bc, DebitNoteStatus.Failed, withLinkedInvoice: false);
 
-        var sit = await h.Service.GetOperatorPenaltySituationAsync(reserva.PublicId, true, default);
+        var sit = await h.Service.GetOperatorPenaltySituationAsync(
+            reserva.PublicId, userCanClassifyOperatorPenalty: true, isCallerAdmin: true, default);
 
         Assert.Equal(OperatorPenaltySituationState.DebitNoteFailed.ToString(), sit.State);
         Assert.True(sit.CanRetryDebitNote);
         Assert.True(sit.CanCorrectAmountCurrency);
         Assert.False(sit.CanConfirm);
+        // Failed SIN factura vinculada (el link ya se solto) + caller Admin -> se puede cerrar sin multa.
+        Assert.True(sit.CanWaive);
+    }
+
+    [Fact]
+    public async Task Situation_WhenDebitNoteFailed_ButStillLinkedToDeadInvoice_CanWaiveFalse()
+    {
+        // Caso "ND en juego" distinto al de arriba: una Failed que TODAVIA tiene la factura muerta vinculada
+        // (asi queda justo despues de que ProcessInvoiceJob reconcilia el rechazo de ARCA, antes de que alguien
+        // toque "Reintentar" y suelte el link). Mientras el link exista, cerrar sin multa dejaria una ND
+        // rechazada colgada sin resolver -> se bloquea, misma condicion que WaiveOperatorPenaltyAsync.
+        var h = BuildService();
+        var (_, bc, _, reserva) = await SeedPostNcAsync(h.Ctx);
+        await SeedConfirmedStateAsync(h, bc, DebitNoteStatus.Failed, withLinkedInvoice: true);
+
+        // Admin, para probar que el false es por la ND-en-juego y NO por falta de rol.
+        var sit = await h.Service.GetOperatorPenaltySituationAsync(
+            reserva.PublicId, userCanClassifyOperatorPenalty: true, isCallerAdmin: true, default);
+
+        Assert.Equal(OperatorPenaltySituationState.DebitNoteFailed.ToString(), sit.State);
+        Assert.False(sit.CanWaive);
     }
 
     [Fact]
@@ -642,11 +687,13 @@ public class CancellationCorrectPenaltyAndSituationTests
         var (_, bc, _, reserva) = await SeedPostNcAsync(h.Ctx);
         await SeedConfirmedStateAsync(h, bc, DebitNoteStatus.NotApplicable, withLinkedInvoice: false);
 
-        var sit = await h.Service.GetOperatorPenaltySituationAsync(reserva.PublicId, true, default);
+        var sit = await h.Service.GetOperatorPenaltySituationAsync(
+            reserva.PublicId, userCanClassifyOperatorPenalty: true, isCallerAdmin: true, default);
 
         Assert.Equal(OperatorPenaltySituationState.ConfirmedNoDebitNote.ToString(), sit.State);
         Assert.True(sit.CanRetryDebitNote);
         Assert.False(sit.CanCorrectAmountCurrency);
+        Assert.True(sit.CanWaive);
     }
 
     [Fact]
@@ -656,12 +703,15 @@ public class CancellationCorrectPenaltyAndSituationTests
         var (_, bc, _, reserva) = await SeedPostNcAsync(h.Ctx);
         await SeedConfirmedStateAsync(h, bc, DebitNoteStatus.Pending, withLinkedInvoice: true);
 
-        var sit = await h.Service.GetOperatorPenaltySituationAsync(reserva.PublicId, true, default);
+        var sit = await h.Service.GetOperatorPenaltySituationAsync(
+            reserva.PublicId, userCanClassifyOperatorPenalty: true, isCallerAdmin: true, default);
 
         Assert.Equal(OperatorPenaltySituationState.DebitNoteQueued.ToString(), sit.State);
         Assert.False(sit.CanConfirm);
         Assert.False(sit.CanRetryDebitNote);
         Assert.False(sit.CanCorrectAmountCurrency);
+        // ND encolada (Pending) es una ND EN JUEGO -> nunca se ofrece cerrar sin multa, ni siquiera al Admin.
+        Assert.False(sit.CanWaive);
     }
 
     [Fact]
@@ -671,12 +721,15 @@ public class CancellationCorrectPenaltyAndSituationTests
         var (_, bc, _, reserva) = await SeedPostNcAsync(h.Ctx);
         await SeedConfirmedStateAsync(h, bc, DebitNoteStatus.Issued, withLinkedInvoice: true);
 
-        var sit = await h.Service.GetOperatorPenaltySituationAsync(reserva.PublicId, true, default);
+        var sit = await h.Service.GetOperatorPenaltySituationAsync(
+            reserva.PublicId, userCanClassifyOperatorPenalty: true, isCallerAdmin: true, default);
 
         Assert.Equal(OperatorPenaltySituationState.Done.ToString(), sit.State);
         Assert.False(sit.CanConfirm);
         Assert.False(sit.CanRetryDebitNote);
         Assert.False(sit.CanCorrectAmountCurrency);
+        // ND ya emitida con CAE -> la pata quedo resuelta, nunca se ofrece cerrar sin multa, ni siquiera al Admin.
+        Assert.False(sit.CanWaive);
     }
 
     [Fact]
@@ -688,13 +741,15 @@ public class CancellationCorrectPenaltyAndSituationTests
             bcId, "El operador no cobra multa.", "cerrador", "Cerrador", default, userCanClassifyAgencyPenalty: true);
 
         var sit = await h.Service.GetOperatorPenaltySituationAsync(
-            reserva.PublicId, userCanClassifyOperatorPenalty: true, default);
+            reserva.PublicId, userCanClassifyOperatorPenalty: true, isCallerAdmin: true, default);
 
         Assert.Equal(OperatorPenaltySituationState.Waived.ToString(), sit.State);
         Assert.Equal("Cerrador", sit.WaivedByName);
         Assert.NotNull(sit.WaivedAt);
         Assert.Null(sit.Amount); // "no hubo multa": no se muestra $0
         Assert.False(sit.CanConfirm);
+        // Ya se cerro sin multa (PenaltyStatus=Waived, no Confirmed) -> no se vuelve a ofrecer el boton.
+        Assert.False(sit.CanWaive);
         // GAP conocido: el rastro de reversa no se persiste -> siempre null.
         Assert.Null(sit.RevertedAt);
         Assert.Null(sit.RevertedByName);
@@ -715,10 +770,11 @@ public class CancellationCorrectPenaltyAndSituationTests
         await h.Ctx.SaveChangesAsync();
 
         var sit = await h.Service.GetOperatorPenaltySituationAsync(
-            reserva.PublicId, userCanClassifyOperatorPenalty: true, default);
+            reserva.PublicId, userCanClassifyOperatorPenalty: true, isCallerAdmin: true, default);
 
         Assert.Equal(OperatorPenaltySituationState.None.ToString(), sit.State);
         Assert.False(sit.CanConfirm);
+        Assert.False(sit.CanWaive);
         Assert.Null(sit.Amount);
         Assert.Null(sit.Since);
     }

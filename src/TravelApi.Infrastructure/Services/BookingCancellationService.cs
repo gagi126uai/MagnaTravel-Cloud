@@ -4820,7 +4820,7 @@ public class BookingCancellationService
 
     /// <inheritdoc />
     public async Task<OperatorPenaltySituationDto> GetOperatorPenaltySituationAsync(
-        Guid reservaPublicId, bool userCanClassifyOperatorPenalty, CancellationToken ct)
+        Guid reservaPublicId, bool userCanClassifyOperatorPenalty, bool isCallerAdmin, CancellationToken ct)
     {
         // Spec "el paso de multa vive en la ficha" (A2, 2026-07-08): read-model DETALLADO del paso de la multa del
         // operador, para que la ficha muestre el cartel/boton exacto sin pedir aparte el detalle de la cancelacion.
@@ -4895,6 +4895,19 @@ public class BookingCancellationService
             OperatorPenaltySituationState.DebitNoteFailed or OperatorPenaltySituationState.ConfirmedNoDebitNote;
         var canCorrectAmountCurrency = userCanClassifyOperatorPenalty && state is
             OperatorPenaltySituationState.DebitNoteNeedsAmountCurrency or OperatorPenaltySituationState.DebitNoteFailed;
+        //   - Cerrar sin multa desde una multa ya confirmada (fix "multa fantasma"): componemos las DOS
+        //     precondiciones que WaiveOperatorPenaltyAsync exige para el waive-desde-Confirmed:
+        //       * Precondicion 6 (ND NO en juego): via IsOperatorPenaltyDebitNoteInPlay.
+        //       * Precondicion 7 (INV-WAIVE-005): waivear una multa YA confirmada exige rol ADMIN, no solo el
+        //         permiso classify. Por eso CanWaive se compone con isCallerAdmin y NO con
+        //         userCanClassifyOperatorPenalty: un no-admin con el permiso classify NO debe ver el boton (si lo
+        //         viera, al apretarlo rebotaria 409 por INV-WAIVE-005 — el anti-patron "boton que rebota").
+        //     En la practica solo aplica a los sub-estados "confirmada sin ND en juego" (DebitNoteFailed con el link
+        //     ya suelto, DebitNoteNeedsAmountCurrency, ConfirmedNoDebitNote): Done/DebitNoteQueued SIEMPRE tienen la
+        //     ND en juego, asi que ahi da false aunque el estado no se liste explicitamente.
+        var canWaive = row.PenaltyStatus == PenaltyStatus.Confirmed
+            && !IsOperatorPenaltyDebitNoteInPlay(row.DebitNoteInvoiceId.HasValue, row.DebitNoteStatus)
+            && isCallerAdmin;
 
         return new OperatorPenaltySituationDto
         {
@@ -4905,6 +4918,7 @@ public class BookingCancellationService
             CanConfirm = canConfirm,
             CanRetryDebitNote = canRetryDebitNote,
             CanCorrectAmountCurrency = canCorrectAmountCurrency,
+            CanWaive = canWaive,
             WaivedAt = waivedAt,
             WaivedByName = waivedByName,
             // GAP conocido (2026-07-08): el revert-waive no persiste rastro en la entidad (solo audit log). Sin
@@ -5566,6 +5580,21 @@ public class BookingCancellationService
         }
     }
 
+    /// <summary>
+    /// ADR-013/Waive (2026-07-08): true si la Nota de Debito de la multa esta "EN JUEGO" (ya vinculada a una
+    /// factura, encolada esperando CAE, o emitida con CAE). Mientras este en juego, "cerrar sin multa" no puede
+    /// tocarla: haria falta anular ese comprobante fiscal desde administracion primero.
+    ///
+    /// <para>Se extrae a un metodo puro porque la usan DOS lugares que TIENEN que coincidir: la precondicion real
+    /// de <see cref="WaiveOperatorPenaltyAsync"/> (bloquea la accion con 409) y el read-model
+    /// <see cref="GetOperatorPenaltySituationAsync"/> (decide si la ficha OFRECE el boton "cerrar sin multa" via
+    /// <c>CanWaive</c>). Si divergieran, la ficha mostraria un boton que despues rebota 409 al tocarlo.</para>
+    /// </summary>
+    private static bool IsOperatorPenaltyDebitNoteInPlay(bool hasDebitNoteInvoiceId, DebitNoteStatus debitNoteStatus) =>
+        hasDebitNoteInvoiceId ||
+        debitNoteStatus == DebitNoteStatus.Pending ||
+        debitNoteStatus == DebitNoteStatus.Issued;
+
     /// <inheritdoc />
     public async Task<BookingCancellationDto> WaiveOperatorPenaltyAsync(
         Guid publicId,
@@ -5629,11 +5658,10 @@ public class BookingCancellationService
         // === Precondicion 6: comprobante fiscal de la multa EN JUEGO. Si ya hay una Nota de Debito vinculada, o
         // encolada (Pending), o con CAE (Issued), NO se puede "cerrar sin multa" por este boton: habria que anular
         // ese comprobante desde administracion primero. Cerrar sin multa dejaria una ND viva sin su multa =
-        // incoherencia fiscal. ===
-        var debitNoteInPlay =
-            bc.DebitNoteInvoiceId.HasValue ||
-            bc.DebitNoteStatus == DebitNoteStatus.Pending ||
-            bc.DebitNoteStatus == DebitNoteStatus.Issued;
+        // incoherencia fiscal. Esta MISMA condicion la reusa el read-model GetOperatorPenaltySituationAsync (via
+        // IsOperatorPenaltyDebitNoteInPlay) para decidir si la ficha OFRECE el boton "cerrar sin multa": si
+        // divergieran, la ficha mostraria un boton que despues rebota 409 aca. ===
+        var debitNoteInPlay = IsOperatorPenaltyDebitNoteInPlay(bc.DebitNoteInvoiceId.HasValue, bc.DebitNoteStatus);
         if (debitNoteInPlay)
             throw new BusinessInvariantViolationException(
                 "La multa tiene una nota de débito emitida o en emisión; se resuelve desde administración.",
@@ -6409,6 +6437,36 @@ public class BookingCancellationService
             return;
         }
 
+        // (3-bis) BUG HISTORICO (desde el commit original de ADR-013, encontrado en produccion
+        //     2026-07-08): CreateInvoiceRequest.ReservaId espera el PublicId (GUID) de la reserva,
+        //     porque EntityReferenceResolver.ResolveRequiredIdAsync SOLO sabe parsear un GUID
+        //     (adentro usa Guid.TryParse; si no matchea, devuelve null y el resolvedor tira
+        //     KeyNotFoundException). Aca se estaba mandando el Id INTERNO (un int, ej. "31") como
+        //     si fuera el PublicId. El resolvedor jamas lo entendio: TODA emision automatica de
+        //     ND por multa terminaba en KeyNotFoundException -> catch -> ManualReview, sin
+        //     excepcion, desde que existe esta feature. Por eso la ficha quedaba con "Corregir
+        //     monto y moneda" para siempre aunque todo estuviera bien cargado.
+        //
+        //     Fix: resolvemos el PublicId REAL de la reserva contra la base antes de armar el
+        //     request. Si por algun motivo no lo encontramos (no deberia pasar: la factura ya
+        //     tiene ReservaId cargado), no explotamos: ruteamos a revision manual con un motivo
+        //     claro, igual que el resto de los guards de esta funcion.
+        var reservaPublicId = await _db.Reservas
+            .AsNoTracking()
+            .Where(r => r.Id == originatingInvoice.ReservaId!.Value)
+            .Select(r => (Guid?)r.PublicId)
+            .FirstOrDefaultAsync(ct);
+        if (reservaPublicId is null)
+        {
+            _logger.LogError(
+                "ADR-013: BC {BcPublicId} no se pudo resolver el PublicId de la reserva {ReservaId} " +
+                "para emitir la ND. Rutea a revision manual.",
+                bc.PublicId, originatingInvoice.ReservaId);
+            await RouteDebitNoteToManualReviewAsync(
+                bc, "No se pudo resolver la reserva asociada para emitir la Nota de Debito.", ct);
+            return;
+        }
+
         // (4) Construir el request de la ND y emitir por el pipeline existente.
         //     - IsDebitNote=true + OriginalInvoiceId=factura original -> el pipeline arma
         //       el <CbtesAsoc> y deriva CbteTipo=12 (ND C) con el fix M1 (§3.9).
@@ -6418,7 +6476,7 @@ public class BookingCancellationService
         var penaltyAmount = bc.PenaltyAmountAtEvent!.Value; // gating garantizo > 0
         var debitNoteRequest = new CreateInvoiceRequest
         {
-            ReservaId = originatingInvoice.ReservaId!.Value.ToString(),
+            ReservaId = reservaPublicId.Value.ToString(),
             Concepto = 3, // Productos y Servicios (mismo default que la NC total).
             OriginalInvoiceId = originatingInvoice.PublicId.ToString(),
             IsCreditNote = false,

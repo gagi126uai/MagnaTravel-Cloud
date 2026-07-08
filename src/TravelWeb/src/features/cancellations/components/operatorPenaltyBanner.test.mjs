@@ -13,6 +13,7 @@ import {
   slugDeEstadoMulta,
   familiaDeEstadoMulta,
   copyAccionTrabada,
+  debeMostrarWaiveEnAccionTrabada,
   textoRastroWaived,
   tienePasoDeMultaOperador,
 } from "../operatorPenaltyBanner.js";
@@ -107,6 +108,26 @@ test("copyAccionTrabada: ConfirmedNoDebitNote con permiso → botón Cobrarle la
 test("copyAccionTrabada: ConfirmedNoDebitNote sin permiso → sin botón", () => {
   const r = copyAccionTrabada({ state: "ConfirmedNoDebitNote", canRetryDebitNote: false, canCorrectAmountCurrency: false });
   assert.equal(r.accion, null);
+});
+
+// ============================================================================
+// debeMostrarWaiveEnAccionTrabada
+// ============================================================================
+
+test("debeMostrarWaiveEnAccionTrabada: canWaive=true → visible", () => {
+  assert.equal(debeMostrarWaiveEnAccionTrabada({ canWaive: true }), true);
+});
+
+test("debeMostrarWaiveEnAccionTrabada: canWaive=false → oculto", () => {
+  assert.equal(debeMostrarWaiveEnAccionTrabada({ canWaive: false }), false);
+});
+
+test("debeMostrarWaiveEnAccionTrabada: canWaive ausente (DTO viejo) → oculto, degradación segura", () => {
+  assert.equal(debeMostrarWaiveEnAccionTrabada({}), false);
+});
+
+test("debeMostrarWaiveEnAccionTrabada: situacion nula no rompe (defensivo)", () => {
+  assert.equal(debeMostrarWaiveEnAccionTrabada(null), false);
 });
 
 // ============================================================================

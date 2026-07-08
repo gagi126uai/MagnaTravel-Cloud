@@ -2692,7 +2692,7 @@ public class ReservaService : IReservaService
             // faltante, simplemente no muestra el paso de la multa (comportamiento seguro, igual que "sin
             // cancelacion vigente").
             var situation = await _cancellationService.GetOperatorPenaltySituationAsync(
-                file.PublicId, userCanClassifyOperatorPenalty, CancellationToken.None);
+                file.PublicId, userCanClassifyOperatorPenalty, isCallerAdmin: isAdmin, CancellationToken.None);
             if (situation is not null)
             {
                 dto.OperatorPenaltySituation = situation;
