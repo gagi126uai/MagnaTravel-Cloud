@@ -33,8 +33,8 @@ const MODULE_DEFS = [
       { to: "/customers", label: "Clientes",               requiredPermission: "clientes.view" },
       { to: "/crm",       label: "Posibles clientes",      requiredPermission: "crm.view" },
       { to: "/payments",  label: "Cobranza y Facturación", requiredPermission: "cobranzas.view" },
-      { to: "/cancellations/credit-notes/inbox", label: "NC por revisar",    requiredPermission: "cobranzas.view_all" },
-      { to: "/credit-note-reconciliation/inbox", label: "Reconciliación NC", requiredPermission: "approvals.review" },
+      // "NC por revisar" y "Reconciliación NC" se sacaron de acá — ahora viven unificadas en
+      // /pendientes-afip, dentro del módulo GESTIÓN (spec "fin de las bandejas", 2026-07-08).
     ],
   },
   {
@@ -75,6 +75,11 @@ const MODULE_DEFS = [
     links: [
       { to: "/approvals/inbox",       label: "Aprobaciones",   requiredPermission: "approvals.review" },
       { to: "/approvals/my-requests", label: "Mis solicitudes", requiredPermission: "approvals.request" },
+      {
+        to: "/pendientes-afip",
+        label: "Pendientes con AFIP",
+        anyPermission: ["cobranzas.invoice_annul", "cobranzas.view_all", "approvals.review"],
+      },
       { to: "/commissions",           label: "Comisiones",     adminOnly: true },
       { to: "/admin",    label: "Administración", requiredPermission: "auditoria.view" },
       { to: "/settings", label: "Configuración",  requiredPermission: "configuracion.view" },
@@ -91,6 +96,7 @@ const LOOSE_LINKS = [
 
 function isLinkVisible(link, isAdminUser, permissionFn) {
   if (link.adminOnly) return isAdminUser;
+  if (Array.isArray(link.anyPermission)) return link.anyPermission.some(permissionFn);
   if (link.requiredPermission) return permissionFn(link.requiredPermission);
   return true;
 }
@@ -194,11 +200,22 @@ test("agrupamiento: /customers, /crm y /payments están en VENTAS", () => {
   assert.ok(routes.includes("/payments"),  "/payments debe estar en VENTAS");
 });
 
-test("agrupamiento: NC por revisar y Reconciliación NC están en VENTAS", () => {
+test("agrupamiento (spec 'fin de las bandejas', 2026-07-08): NC por revisar y Reconciliación NC ya NO están sueltas en VENTAS", () => {
   const ventas = MODULE_DEFS.find((m) => m.id === "ventas");
   const routes = ventas.links.map((l) => l.to);
-  assert.ok(routes.includes("/cancellations/credit-notes/inbox"), "NC por revisar debe estar en VENTAS");
-  assert.ok(routes.includes("/credit-note-reconciliation/inbox"), "Reconciliación NC debe estar en VENTAS");
+  assert.ok(!routes.includes("/cancellations/credit-notes/inbox"), "NC por revisar no debe estar en VENTAS");
+  assert.ok(!routes.includes("/credit-note-reconciliation/inbox"), "Reconciliación NC no debe estar en VENTAS");
+});
+
+test("agrupamiento (spec 'fin de las bandejas'): /pendientes-afip está en GESTIÓN con los 3 permisos como anyPermission", () => {
+  const gestion = MODULE_DEFS.find((m) => m.id === "gestion");
+  const link = gestion.links.find((l) => l.to === "/pendientes-afip");
+  assert.ok(link, "/pendientes-afip debe estar en GESTIÓN");
+  assert.deepEqual(
+    link.anyPermission,
+    ["cobranzas.invoice_annul", "cobranzas.view_all", "approvals.review"],
+    "/pendientes-afip debe listar los 3 permisos de las bandejas que unifica"
+  );
 });
 
 test("agrupamiento (decisión 5, spec 2026-07-03): /operator-refunds NO está en ningún módulo del menú", () => {
@@ -242,6 +259,7 @@ test("agrupamiento: /approvals, /commissions, /admin y /settings están en GESTI
   const routes = gestion.links.map((l) => l.to);
   assert.ok(routes.includes("/approvals/inbox"),       "/approvals/inbox debe estar en GESTIÓN");
   assert.ok(routes.includes("/approvals/my-requests"), "/approvals/my-requests debe estar en GESTIÓN");
+  assert.ok(routes.includes("/pendientes-afip"),        "/pendientes-afip debe estar en GESTIÓN");
   assert.ok(routes.includes("/commissions"),            "/commissions debe estar en GESTIÓN");
   assert.ok(routes.includes("/admin"),                  "/admin debe estar en GESTIÓN");
   assert.ok(routes.includes("/settings"),               "/settings debe estar en GESTIÓN");
@@ -281,6 +299,26 @@ test("isLinkVisible: sin permiso ni adminOnly → visible para cualquier usuario
   const link = { to: "/dashboard", label: "Inicio" };
   assert.equal(isLinkVisible(link, false, () => false), true);
   assert.equal(isLinkVisible(link, true,  () => false), true);
+});
+
+test("isLinkVisible: anyPermission con UNO de los permisos en true → visible", () => {
+  const link = { to: "/pendientes-afip", label: "Pendientes con AFIP", anyPermission: ["a.x", "b.y", "c.z"] };
+  // El usuario solo tiene "b.y" — alcanza para verlo (es un OR).
+  assert.equal(isLinkVisible(link, false, (p) => p === "b.y"), true);
+});
+
+test("isLinkVisible: anyPermission sin NINGUNO de los permisos → oculto", () => {
+  const link = { to: "/pendientes-afip", label: "Pendientes con AFIP", anyPermission: ["a.x", "b.y", "c.z"] };
+  assert.equal(isLinkVisible(link, false, () => false), false);
+});
+
+test("isLinkVisible: adminOnly tiene prioridad sobre anyPermission (no se evalúa permissionFn)", () => {
+  const link = { to: "/admin-only", label: "Solo admin", adminOnly: true, anyPermission: ["a.x"] };
+  let permissionFnCalled = false;
+  const permFn = () => { permissionFnCalled = true; return true; };
+  const result = isLinkVisible(link, false, permFn);
+  assert.equal(result, false, "adminOnly=false + isAdmin=false debe ocultar el link");
+  assert.equal(permissionFnCalled, false, "permissionFn no debe llamarse cuando adminOnly aplica");
 });
 
 test("isLinkVisible: adminOnly tiene prioridad sobre requiredPermission (no se evalúa permissionFn)", () => {
@@ -339,8 +377,8 @@ test("findActiveModuleId: /payments → módulo 'ventas'", () => {
   assert.equal(findActiveModuleId("/payments"), "ventas");
 });
 
-test("findActiveModuleId: /cancellations/credit-notes/inbox → módulo 'ventas'", () => {
-  assert.equal(findActiveModuleId("/cancellations/credit-notes/inbox"), "ventas");
+test("findActiveModuleId: /pendientes-afip → módulo 'gestion'", () => {
+  assert.equal(findActiveModuleId("/pendientes-afip"), "gestion");
 });
 
 test("findActiveModuleId: ruta desconocida → null", () => {

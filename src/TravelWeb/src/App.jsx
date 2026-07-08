@@ -44,12 +44,10 @@ import AdminHubPage from "./pages/AdminHubPage";
 import ApprovalsInboxPage from "./features/approvals/pages/ApprovalsInboxPage";
 import MyApprovalRequestsPage from "./features/approvals/pages/MyApprovalRequestsPage";
 import MovementsPreviewPage from "./features/movements/pages/MovementsPreviewPage";
-// FC1.3 Fase 3: bandeja de reconciliacion de NC parciales con recibos vivos.
-import CreditNoteReconciliationInboxPage from "./features/creditNoteReconciliation/pages/CreditNoteReconciliationInboxPage";
-// ADR-013/ADR-014: bandeja de cargos de cancelacion pendientes (ND sin emitir o fallida).
-import CancellationDebitNoteInboxPage from "./features/cancellations/pages/CancellationDebitNoteInboxPage";
-// ADR-025: bandeja de notas de credito por revisar (NC parciales de servicios cancelados).
-import CancellationCreditNoteInboxPage from "./features/cancellations/pages/CancellationCreditNoteInboxPage";
+// Spec "fin de las bandejas" (2026-07-08): las 3 bandejas back-office (reconciliacion NC,
+// ND de cancelacion pendientes, NC por revisar) ahora viven como solapas DENTRO de esta
+// pagina unica — ya no se importan sueltas en App.jsx (PendientesAfipPage.jsx las importa).
+import PendientesAfipPage from "./features/afip-pending/pages/PendientesAfipPage";
 // Comisiones de vendedor: solo visible para el dueño/admin.
 import CommissionsPage from "./features/commissions/pages/CommissionsPage";
 // Pantalla global de Facturación (spec 2026-06-28 §4/P14): todos los comprobantes de la agencia.
@@ -294,23 +292,25 @@ export default function App() {
                       path="/approvals/inbox"
                       element={hasPermission("approvals.review") ? <ApprovalsInboxPage /> : <Navigate to="/dashboard" replace />}
                     />
-                    {/* FC1.3 Fase 3: bandeja de reconciliacion. Mismo permiso que inbox de aprobaciones. */}
+                    {/* Spec "fin de las bandejas" (2026-07-08): las 3 bandejas back-office (reconciliacion NC,
+                        ND de cancelacion pendientes, NC por revisar) se unificaron en /pendientes-afip con
+                        solapas. El guard de la ruta pide AL MENOS UNO de los 3 permisos; cada solapa adentro
+                        se ocupa de mostrarse solo si el usuario tiene el permiso especifico de ESA bandeja. */}
                     <Route
-                      path="/credit-note-reconciliation/inbox"
-                      element={hasPermission("approvals.review") ? <CreditNoteReconciliationInboxPage /> : <Navigate to="/dashboard" replace />}
+                      path="/pendientes-afip"
+                      element={
+                        hasPermission("cobranzas.invoice_annul") ||
+                        hasPermission("cobranzas.view_all") ||
+                        hasPermission("approvals.review")
+                          ? <PendientesAfipPage />
+                          : <Navigate to="/dashboard" replace />
+                      }
                     />
-                    {/* ADR-013/ADR-014: bandeja de cargos de cancelacion pendientes.
-                        Permiso cobranzas.invoice_annul (back-office fiscal, mismo dominio que annul de facturas). */}
-                    <Route
-                      path="/cancellations/debit-notes/inbox"
-                      element={hasPermission("cobranzas.invoice_annul") ? <CancellationDebitNoteInboxPage /> : <Navigate to="/dashboard" replace />}
-                    />
-                    {/* ADR-025: bandeja de NC por revisar (NC parciales de servicios cancelados).
-                        Permiso cobranzas.view_all (back-office, solo personal de facturacion). */}
-                    <Route
-                      path="/cancellations/credit-notes/inbox"
-                      element={hasPermission("cobranzas.view_all") ? <CancellationCreditNoteInboxPage /> : <Navigate to="/dashboard" replace />}
-                    />
+                    {/* Rutas viejas de las 3 bandejas: quedan como redirects para que ningun link/bookmark
+                        existente se rompa. El guard de permisos vive ahora en /pendientes-afip y en cada solapa. */}
+                    <Route path="/credit-note-reconciliation/inbox" element={<Navigate to="/pendientes-afip?tab=recibos" replace />} />
+                    <Route path="/cancellations/debit-notes/inbox" element={<Navigate to="/pendientes-afip?tab=multas" replace />} />
+                    <Route path="/cancellations/credit-notes/inbox" element={<Navigate to="/pendientes-afip?tab=notasCredito" replace />} />
                     <Route
                       path="/approvals/my-requests"
                       element={hasPermission("approvals.request") ? <MyApprovalRequestsPage /> : <Navigate to="/dashboard" replace />}

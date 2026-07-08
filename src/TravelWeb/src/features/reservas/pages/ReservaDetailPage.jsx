@@ -1218,6 +1218,19 @@ export default function ReservaDetailPage() {
         const tienePasoDeMultaOperador =
           operatorPenaltyOutcome === "Pending" || operatorPenaltyOutcome === "Waived";
 
+        // (spec "fin de las bandejas", 2026-07-08) La multa que le cobramos AL CLIENTE quedó
+        // confirmada, pero su Nota de Débito falló o quedó trabada en revisión manual — sin ese
+        // papel, la agencia todavía no puede cobrarle nada. Este caso puntual (cancelledMoneyContext
+        // === "MultaEnRevision") lo resuelve back-office desde /pendientes-afip, así que solo tiene
+        // sentido mostrar el atajo a quien tiene el permiso de esa bandeja (cobranzas.invoice_annul).
+        // Sin ese permiso, el vendedor sigue viendo el cartel de siempre ("Reserva anulada").
+        // Guard de estado (reviewer 2026-07-08): MultaEnRevision tambien puede derivarse en
+        // PendingOperatorRefund; ahi el cartel prioritario es el de "esperando reembolso" /
+        // reintento de anulacion (mas urgente). Este atajo solo aplica a la anulada cerrada.
+        const ndDeMultaTrabada =
+          reserva.status === "Cancelled" &&
+          reserva.cancelledMoneyContext === "MultaEnRevision" && hasPermission("cobranzas.invoice_annul");
+
         return reserva.status === "Lost" ? (
         <div
           className="rounded-xl border border-slate-200 bg-slate-100 p-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-400"
@@ -1225,6 +1238,30 @@ export default function ReservaDetailPage() {
           role="status"
         >
           <strong className="font-bold">Reserva perdida</strong> — solo lectura.
+        </div>
+      ) : ndDeMultaTrabada ? (
+        <div
+          className="rounded-xl border border-orange-300 bg-orange-50 p-4 text-sm text-orange-900 dark:border-orange-700/50 dark:bg-orange-950/30 dark:text-orange-200"
+          data-testid="banner-nd-trabada"
+          role="status"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <span>
+              <strong className="font-bold">
+                Anulada — la multa quedó confirmada, pero todavía no se pudo emitir su nota de débito.
+              </strong>
+              <br />
+              Entrá a resolverla para destrabar el cobro al cliente.
+            </span>
+            <button
+              type="button"
+              onClick={() => navigate("/pendientes-afip?tab=multas")}
+              data-testid="btn-ir-pendientes-afip"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-orange-400 bg-orange-100 px-3 py-2 text-xs font-bold text-orange-800 hover:bg-orange-200 dark:border-orange-700 dark:bg-orange-900/40 dark:text-orange-200 dark:hover:bg-orange-900/60 transition-colors flex-shrink-0"
+            >
+              Ir a resolver
+            </button>
+          </div>
         </div>
       ) : (reserva.status === "Cancelled" && !tienePasoDeMultaOperador) ? (
         // ADR-036: el estado interno sigue siendo "Cancelled" pero el usuario ve "Anulada".

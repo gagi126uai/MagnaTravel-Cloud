@@ -91,7 +91,47 @@
 
 ## Navegación
 
-_(pendiente)_
+- **(2026-07-08) FIN DE LAS BANDEJAS POR TIPO DE COMPROBANTE — un solo monitor de excepciones fuera
+  del menú de vender.** Origen: Gastón, probando en vivo, "no hay ningún lado donde ver las multas".
+  La investigación del erp-systems-expert validó su reclamo: tener TRES puertas de menú distintas por
+  tipo de comprobante (NC por revisar / ND por revisar / Reconciliación NC) es un anti-patrón; los ERP
+  reales usan **UN monitor de excepciones** (lo que quedó trabado con AFIP), fuera del flujo de vender,
+  + estado visible en el propio documento + auto-reintento. Decidido por Gastón ("dale") el 2026-07-08:
+  - **DESAPARECEN del módulo VENTAS** las entradas **"NC por revisar"** y **"Reconciliación NC"**.
+    (La "ND por revisar" que se había propuesto horas antes NO llega a existir: era una cuarta puerta.)
+  - **ENTRA UNA sola entrada: "Pendientes con AFIP"** (nombre aprobado por Gastón), en el módulo
+    **GESTIÓN** (el de back-office/administración: Aprobaciones, Mis solicitudes, Comisiones,
+    Administración, Configuración). NO va en un módulo de vender: es una pantalla de vigilancia de
+    back-office, no una acción de venta.
+  - **Visible para quien pueda ver AL MENOS una de las tres solapas** (`cobranzas.invoice_annul` O
+    `cobranzas.view_all` O `approvals.review`). Adentro, cada solapa respeta su propio permiso.
+  - Es un **contenedor liviano con solapas** que por ahora muestra las tres pantallas existentes tal
+    cual (multas y cargos / notas de crédito / recibos por regularizar). La fusión REAL en una sola
+    lista de excepciones con auto-reintento queda para la fase 2 (rediseño). Esto de esta noche es solo
+    juntar las tres puertas en una y sacarlas del camino de vender.
+
+## Monitor "Pendientes con AFIP" y el aviso de multa trabada en la ficha (2026-07-08)
+
+> La multa del operador (que en este producto SIEMPRE se traslada 1:1 al cliente) se resuelve desde la
+> ficha con los botones "Sí cobró / No cobró". Cuando Gastón elige "Sí cobró" se emite una nota de
+> débito; si esa nota de débito se traba (queda en revisión o falla), ANTES la multa desaparecía de la
+> ficha (caía en el cartel simple "Reserva anulada — solo lectura") y no había dónde retomarla. Estas
+> decisiones tapan ese agujero y viven junto al nuevo monitor.
+
+- **(2026-07-08) Una nota de débito de multa que quedó trabada se ve TAMBIÉN en la ficha de la
+  reserva anulada, con un cartel accionable y un botón para ir a resolverla.** Gastón lo eligió
+  explícitamente ("en la ficha también", contra "solo en administración"). Es la excepción a la
+  "pantalla muerta" de la anulada, igual que el paso de la multa (familia de decisiones del 2026-07-04).
+- **(2026-07-08 — CERRADO) El cartel lo ve solo quien puede resolverlo** (`cobranzas.invoice_annul`,
+  back-office fiscal). Un vendedor común sin ese permiso NO lo ve — sigue viendo el cartel simple
+  "Reserva anulada — solo lectura", como hasta ahora. (Gastón aprobó el paquete con la recomendación A:
+  "quien puede resolver", no "solo Admin".)
+- **(2026-07-08) Color del cartel: naranja** (el de "algo se trabó, hay que hacer algo"), distinto del
+  rosa de "anulada / solo lectura" (estado terminal, sin acción). Coherente con la franja naranja de
+  "anulación en revisión".
+- **(2026-07-08) La acción es un botón "Ir a resolver" que lleva al monitor "Pendientes con AFIP" con la
+  solapa de multas ya abierta.** No se arma un resolver-en-línea nuevo en la ficha: el monitor ya tiene
+  los botones para confirmar el monto o reintentar la emisión.
 
 ## Colores y estilo
 
@@ -622,7 +662,14 @@ Ronda 2:
 
 - **(2026-06-24, P1=A) Cartel de confirmación ANTES de emitir.** Al apretar "Emitir factura" (el botón final de la ficha), antes de mandarla a AFIP aparece un cartel que resume **a quién se factura** y **por cuánto total**, y pide confirmar. **Texto fiscal correcto (verificado contra ARCA — NO usar "no se puede borrar"):** "Una vez emitida no se puede eliminar; solo se corrige o anula con una Nota de Crédito." Botones: "Volver" / "Sí, emitir". Es el último paso antes de algo irreversible.
 
-- **(2026-06-24, P2=A+B) Mientras AFIP procesa: texto en criollo + indicador de progreso, juntos.** Apenas se manda, se muestra (en el mismo lugar, sin cerrar de golpe ni dejar un toast suelto): un **spinner/indicador de progreso** + el texto **"Estamos emitiendo la factura en AFIP. En unos instantes vas a ver el número."** Se elimina el viejo "Comprobante AFIP encolado correctamente" (jerga). Este es el estado **PROCESANDO**.
+- **(2026-06-24, P2=A+B) Mientras AFIP procesa: texto en criollo + indicador de progreso, juntos.** Apenas se manda, se muestra (en el mismo lugar, sin cerrar de golpe ni dejar un toast suelto): un **spinner/indicador de progreso** + el texto **"Estamos emitiendo la factura en AFIP. En unos instantes vas a ver el número."** Se elimina el viejo "Comprobante AFIP encolado correctamente" (jerga). Este es el estado **PROCESANDO**. **⚠️ EVOLUCIONADO el 2026-07-08 — ver abajo: el estado PROCESANDO ya NO atrapa al usuario esperando.**
+
+- **(2026-07-08) El "en proceso" NO atrapa al usuario: confirmación inmediata + puede seguir trabajando.** Palabra textual de Gastón (probando en vivo, con AFIP caída y 30 minutos mirando el spinner): *"se queda ahí esperando la factura como un tarado y da a entender que el sistema es lento, no puede dar esa sensación."* **Esto CAMBIA el P2/P3 del 2026-06-24 en una cosa:** apenas AFIP acepta el envío (la factura queda encolada), la ficha da una **confirmación inmediata** de que quedó en proceso y **libera al usuario en el acto** — nunca más un spinner a pantalla completa sin salida.
+  - **Confirmación inmediata (verde, apenas se manda):** **"La factura quedó en proceso en AFIP. Podés seguir trabajando: te avisamos apenas salga."** (copy PENDIENTE de confirmar por Gastón — Q1 del 2026-07-08; ver nota de la campanita).
+  - **Botón para irse desde el segundo cero:** el usuario puede cerrar la ficha al instante (**"Listo" / "Seguir trabajando"**). No hay estado sin botón de salida.
+  - **Se mantiene lo bueno del caso rápido:** si el CAE llega en segundos mientras la confirmación sigue en pantalla, esta se transforma sola (sin refrescar) en el cartel verde de ÉXITO con el número — igual que el P3. La diferencia es que **ahora es opcional mirarlo**, no una espera obligada.
+  - **Dónde queda visible el "en proceso" tras cerrar:** en la barra de acciones de la ficha ya aparece el pill ámbar **"Factura en proceso (esperando AFIP/ARCA)"** (mientras `hasInvoiceInProgress`), y el resultado final cae en el Estado de Cuenta cuando llega el CAE. Ese pill es el ancla del estado; no hace falta que el usuario espere en la ficha de emisión.
+  - **Cómo se entera cuando sale (campanita):** para que el **"te avisamos apenas salga"** sea real, hace falta que el sistema mande un aviso a la campanita cuando la factura obtiene el número (o si AFIP la rechaza). **Hoy ese aviso NO existe todavía** (es una pieza de motor pendiente, no de pantalla). Si esa pieza no está lista, el copy no debe prometer el aviso: usar **"La factura quedó en proceso en AFIP. Podés seguir trabajando: apenas salga la vas a ver en el Estado de Cuenta."** (Decisión de cuál copy va = Q2 del 2026-07-08.)
 
 - **(2026-06-24, P3=A+C) Cuando AFIP devuelve el número: éxito verde + auto-actualización en pantalla.** Cuando llega el CAE, el estado "Estamos emitiendo…" se transforma **solo, sin refrescar la página**, en el resultado emitido, y se muestra un **cartel verde de éxito** con el dato concreto: **tipo + número de factura** (ej. "✔ ¡Factura emitida! Factura B 0001-00012345"). El front consulta el estado del backend para saber cuándo pasó de procesando a emitida. Este es el estado **ÉXITO**.
 

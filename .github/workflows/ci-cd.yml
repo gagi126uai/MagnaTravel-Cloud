@@ -6,6 +6,13 @@ name: CI/CD
 on:
   push:
     branches: [main]
+    # (2026-07-08) Un push SOLO de documentacion no debe redeployar la app: el deploy
+    # reinicia el worker y puede interrumpir un trabajo fiscal en curso (paso con una
+    # factura USD a mitad de emision). paths-ignore saltea el run unicamente cuando
+    # TODOS los archivos del push matchean; un push mixto codigo+docs corre igual.
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
   workflow_dispatch:
 
 # Un solo deploy a la vez. cancel-in-progress: false => si ya hay un run corriendo,

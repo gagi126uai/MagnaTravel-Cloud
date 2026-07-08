@@ -305,7 +305,10 @@ export function EmitirFacturaInline({
   //   "preflight-bloqueado" → el preflight devolvió un bloqueo (ej: Factura A sin CUIT).
   //                           Se muestra el aviso y solo el botón "Volver".
   //   "confirmando"         → modal de confirmación abierto (paso 2 de la spec).
-  //   "procesando"          → POST enviado, polling activo (paso 3).
+  //   "procesando"          → POST enviado, polling activo en segundo plano (paso 3).
+  //                           Directiva del dueño (2026-07-08): la vista muestra una
+  //                           confirmación inmediata con salida ("Listo"), no un spinner
+  //                           que retiene al usuario. Ver el bloque de render más abajo.
   //   "exito"               → AFIP aprobó, mostramos el número y CAE (paso 4a).
   //   "rechazo"             → AFIP rechazó, mostramos motivo y botón de reintento (paso 4b).
   //   "timeout"             → polling superó el máximo sin respuesta de AFIP.
@@ -325,6 +328,14 @@ export function EmitirFacturaInline({
   const pollIntentosRef = useRef(0);
   // publicId de la factura que acabamos de encolar (para filtrar el poll).
   const facturaEncoladaPublicIdRef = useRef(null);
+  // Mejora de higiene (review 2026-07-08): mismo patrón "cancelado" que usan los
+  // useEffect de carga de más abajo, pero para el poll (que no vive dentro de un
+  // useEffect con cleanup automático por tick, sino en un setInterval manual).
+  // Se pone en true al desmontar el componente O al clickear "Listo" (el usuario
+  // ya se fue de esta pantalla). El callback del poll lo chequea antes de tocar
+  // estado o de llamar a onFacturaEmitida, para no pisar un componente que ya no
+  // está montado si un fetch quedó en vuelo justo cuando el usuario cerró.
+  const cerradoRef = useRef(false);
 
   // ── Derivados de afipSettings ──────────────────────────────────────────────
   const isMonotributista =
@@ -518,6 +529,7 @@ export function EmitirFacturaInline({
   // mientras el polling está activo (ej: navega a otra página).
   useEffect(() => {
     return () => {
+      cerradoRef.current = true;
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
       }
@@ -547,6 +559,11 @@ export function EmitirFacturaInline({
     }
 
     pollIntervalRef.current = setInterval(async () => {
+      // Guard de higiene (review 2026-07-08): si el usuario ya clickeó "Listo" o el
+      // componente se desmontó, no seguimos. Cubre el caso en que un tick ya estaba
+      // corriendo (por ejemplo esperando el fetch de más abajo) justo cuando eso pasó.
+      if (cerradoRef.current) return;
+
       pollIntentosRef.current += 1;
 
       // Límite de intentos: si se agota sin respuesta de AFIP, mostramos el timeout.
@@ -559,6 +576,13 @@ export function EmitirFacturaInline({
 
       try {
         const statusItems = await api.get(`/invoices/reserva/${reservaId}/fiscal-status`);
+
+        // Mismo guard, pero DESPUÉS del await: acá es donde puede haber pasado la
+        // carrera real — el fetch ya estaba en vuelo cuando el usuario clickeó
+        // "Listo" (desmontaje). Sin este chequeo, ejecutaríamos setEstadoEmision u
+        // onFacturaEmitida sobre un componente que ya no está en pantalla.
+        if (cerradoRef.current) return;
+
         const { estado, factura } = resolverEstadoFiscal(statusItems, facturaEncoladaPublicIdRef.current);
 
         if (estado === "Issued") {
@@ -741,6 +765,26 @@ export function EmitirFacturaInline({
   // Este botón solo cierra la ficha inline visualmente.
   const handleCerrarExito = () => {
     onCancelar();
+  };
+
+  // ── Directiva del dueño (2026-07-08): "Listo" en el estado procesando ─────
+  // Antes el usuario quedaba mirando un spinner sin salida hasta que el poll
+  // detectaba el CAE o se agotaban los intentos (hasta 60 segundos). Eso daba
+  // la sensación de que el sistema estaba trabado. El POST a /invoices ya
+  // devolvió 200/201 en este punto: la factura QUEDÓ ENCOLADA en AFIP, así que
+  // no hay motivo para retener al usuario. "Listo" avisa al padre que refresque
+  // la reserva y el extracto (onFacturaEmitida) y cierra la ficha inline de una.
+  // Si el CAE todavía no llegó, el pill ámbar "Factura en proceso" de la ficha
+  // de la reserva (ReservaDetailPage) se lo va a mostrar cuando vuelva a entrar.
+  //
+  // Marcamos cerradoRef acá mismo (no solo en el cleanup del useEffect de
+  // desmontaje): el padre puede tardar un tick en desmontarnos después de
+  // onFacturaEmitida(), y en ese ratito un fetch del poll que ya estaba en
+  // vuelo podría resolver y pisar estado de una pantalla que el usuario ya dio
+  // por cerrada.
+  const handleListoFacturaEnProceso = () => {
+    cerradoRef.current = true;
+    onFacturaEmitida();
   };
 
   // ── Cargando ───────────────────────────────────────────────────────────────
@@ -1483,21 +1527,41 @@ export function EmitirFacturaInline({
         </div>
       )}
 
-      {/* ── H2: Estado PROCESANDO (Paso 3) ───────────────────────────────────
-          Se muestra en el mismo lugar que la ficha, sin cerrar ni navegar.
-          role="status" + aria-live="polite" para que los lectores de pantalla lo anuncien.
+      {/* ── H2 + directiva del dueño (2026-07-08): Estado PROCESANDO (Paso 3) ──
+          Directiva textual: "el front se queda ahí esperando la factura como
+          un tarado y da a entender que el sistema es lento, no puede dar esa
+          sensación". Antes acá había un spinner sin salida durante todo el
+          polling. Ahora, apenas el POST a /invoices vuelve OK, mostramos una
+          confirmación inmediata: la factura ya quedó encolada, el usuario
+          puede seguir trabajando sin esperar a AFIP.
+
+          El polling (iniciarPolling) sigue corriendo en segundo plano con un
+          setInterval, independiente de lo que se renderiza acá: si el CAE
+          llega mientras esta pantalla sigue abierta, el estado pasa solo a
+          "exito" (más abajo) y se transforma el cartel sin que el usuario
+          haga nada. Si el usuario ya clickeó "Listo" y cerró la ficha, el
+          useEffect de limpieza (arriba) frena el intervalo al desmontar —
+          no queda corriendo huérfano.
+
+          role="status" + aria-live="polite" para que los lectores de pantalla
+          anuncien la confirmación apenas aparece.
           ─────────────────────────────────────────────────────────────────── */}
       {estadoEmision === "procesando" && (
         <div
           className="px-6 py-10 flex flex-col items-center gap-4 text-center"
           role="status"
           aria-live="polite"
-          data-testid="estado-procesando-factura"
+          data-testid="factura-en-proceso-confirmacion"
         >
-          <Loader2 className="h-8 w-8 text-indigo-500 animate-spin" aria-hidden="true" />
-          <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
-            Estamos emitiendo la factura en AFIP. En unos instantes vas a ver el número.
-          </p>
+          <CheckCircle2 className="h-10 w-10 text-emerald-500" aria-hidden="true" />
+          <div className="space-y-1">
+            <p className="text-base font-bold text-emerald-700 dark:text-emerald-400">
+              La factura quedó en proceso en AFIP.
+            </p>
+            <p className="text-sm text-slate-600 dark:text-slate-400">
+              Podés seguir trabajando: apenas salga la vas a ver en el Estado de Cuenta.
+            </p>
+          </div>
           {/* Warning del backend (si vino) — no bloquea, solo informa */}
           {warningEmision && (
             <div
@@ -1510,6 +1574,19 @@ export function EmitirFacturaInline({
               </div>
             </div>
           )}
+          <button
+            type="button"
+            onClick={handleListoFacturaEnProceso}
+            // autoFocus (review 2026-07-08): el botón "Sí, emitir" del modal de
+            // confirmación se desmonta al pasar a este estado, así que el foco del
+            // teclado cae al body. Lo recuperamos acá para que quien navega con
+            // teclado pueda seguir con Tab/Enter sin ir a buscar el botón con el mouse.
+            autoFocus
+            data-testid="btn-listo-factura-en-proceso"
+            className="mt-2 px-5 py-2 text-sm font-semibold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 transition-colors"
+          >
+            Listo
+          </button>
         </div>
       )}
 

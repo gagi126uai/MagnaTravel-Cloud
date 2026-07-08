@@ -32,7 +32,6 @@ import {
   ShieldCheck,
   Inbox,
   FileWarning,
-  FileMinus2,
   FileText,
   TrendingUp,
   ChevronRight,
@@ -95,8 +94,9 @@ export const MODULE_DEFS = [
       // Requiere cobranzas.view_all (un vendedor sin ese permiso no la ve aquí; accede a sus propios
       // comprobantes desde la solapa de facturación de cada cliente).
       { to: "/facturacion", label: "Facturación",             icon: FileText,   requiredPermission: "cobranzas.view_all" },
-      { to: "/cancellations/credit-notes/inbox",  label: "NC por revisar",    icon: FileMinus2,  requiredPermission: "cobranzas.view_all" },
-      { to: "/credit-note-reconciliation/inbox",  label: "Reconciliación NC", icon: FileWarning, requiredPermission: "approvals.review" },
+      // "NC por revisar" y "Reconciliación NC" se sacaron de acá (spec "fin de las bandejas",
+      // 2026-07-08): las 3 bandejas back-office se unificaron en /pendientes-afip, con acceso
+      // desde el módulo GESTIÓN (ver más abajo).
     ],
   },
   {
@@ -142,6 +142,15 @@ export const MODULE_DEFS = [
     links: [
       { to: "/approvals/inbox",       label: "Aprobaciones",   icon: ShieldCheck, requiredPermission: "approvals.review" },
       { to: "/approvals/my-requests", label: "Mis solicitudes", icon: Inbox,      requiredPermission: "approvals.request" },
+      // Bandeja unificada de las 3 bandejas back-office que antes vivían sueltas en VENTAS
+      // (spec "fin de las bandejas", 2026-07-08). Visible si el usuario tiene AL MENOS UNO
+      // de los 3 permisos (ve solo las solapas que le correspondan dentro de la página).
+      {
+        to: "/pendientes-afip",
+        label: "Pendientes con AFIP",
+        icon: FileWarning,
+        anyPermission: ["cobranzas.invoice_annul", "cobranzas.view_all", "approvals.review"],
+      },
       // Comisiones: solo el dueño/admin la ve (decisión del dueño, guia-ux 2026-06-13).
       { to: "/commissions",           label: "Comisiones",     icon: TrendingUp,  adminOnly: true },
       // TODO: cuando se construya la pantalla global de Reportes (spec 2026-06-28),
@@ -157,12 +166,15 @@ export const MODULE_DEFS = [
 /**
  * Determina si un ítem del menú es visible para el usuario actual.
  *
- * - adminOnly=true: solo admin/dueño. No se revisa requiredPermission.
+ * - adminOnly=true: solo admin/dueño. No se revisa requiredPermission ni anyPermission.
+ * - anyPermission=[...]: visible si tiene AL MENOS UNO de esos permisos (OR). Se usa en
+ *   ítems "paraguas" que agrupan varias bandejas con permisos distintos (ej: /pendientes-afip).
  * - requiredPermission: verifica con hasPermission() (que devuelve true para admin).
- * - sin ninguno de los dos: visible para cualquier usuario autenticado.
+ * - sin ninguno de los tres: visible para cualquier usuario autenticado.
  */
 export function isLinkVisible(link, isAdminUser, permissionFn = hasPermission) {
   if (link.adminOnly) return isAdminUser;
+  if (Array.isArray(link.anyPermission)) return link.anyPermission.some(permissionFn);
   if (link.requiredPermission) return permissionFn(link.requiredPermission);
   return true;
 }
