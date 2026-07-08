@@ -3658,13 +3658,32 @@ public class BookingCancellationService
             ReservaNumero = b.Reserva?.NumeroReserva ?? string.Empty,
             DebitNoteStatus = overrideStatus ?? b.DebitNoteStatus.ToString(),
             PenaltyAmount = b.PenaltyAmountAtEvent,
-            PenaltyCurrency = b.PenaltyCurrencyAtEvent,
+            // Proyectamos la moneda a ISO ("ARS"/"USD") para el front (data-exposure 2026-07-08). Hoy el confirm
+            // ya graba ISO, pero una fila legacy podria traer el codigo ARCA ("DOL") o algo no reconocido: la
+            // conversion normaliza ARCA->ISO y devuelve null si no se reconoce (asi el front muestra solo el monto
+            // sin romper Intl.NumberFormat con un codigo invalido).
+            PenaltyCurrency = ProjectPenaltyCurrencyToIsoOrNull(b.PenaltyCurrencyAtEvent),
             DebitNoteCbteTipo = b.DebitNoteCbteTipoAtEvent,
             // FUGA 1 data-exposure (2026-07-03): el motivo de rechazo de la ND (DebitNoteArcaErrorMessage) puede
             // traer XML/tecnico de ARCA. Se SANEA antes de exponerlo en la bandeja (el crudo queda en la entidad).
             ArcaErrorMessage = SanitizeArcaErrorForUser(b.DebitNoteArcaErrorMessage),
             ConfirmedAt = b.ConfirmedWithClientAt,
         };
+
+    /// <summary>
+    /// Data-exposure (2026-07-08): proyecta la moneda de la multa a ISO ("ARS"/"USD") para el front. Acepta
+    /// tanto ISO (lo que graba el confirm hoy) como un codigo ARCA legacy ("DOL"/"PES"). Devuelve <c>null</c> si
+    /// esta vacia o no se reconoce, para que el front muestre solo el monto (sin romper Intl.NumberFormat con un
+    /// codigo de moneda invalido).
+    /// </summary>
+    private static string? ProjectPenaltyCurrencyToIsoOrNull(string? stored)
+    {
+        if (string.IsNullOrWhiteSpace(stored))
+            return null;
+        if (Monedas.EsSoportada(stored))        // ya es ISO soportada ("ARS"/"USD")
+            return stored.Trim().ToUpperInvariant();
+        return ArcaCurrencyMapper.ToIso(stored); // ARCA ("DOL"/"PES") -> ISO, o null si no reconoce
+    }
 
     /// <summary>
     /// ADR-009/ADR-025 (read-model, 2026-06-13): estados del BC que representan "NC parcial esperando
@@ -4981,6 +5000,18 @@ public class BookingCancellationService
         // recibir la moneda por linea.
         await PersistPenaltyCurrencyOnLinesAsync(bc, request.PenaltyCurrency, ct);
 
+        // Paso b-quater (B1 security, 2026-07-08): persistir la MONEDA DECLARADA de la multa en el snapshot del
+        // BC (PenaltyCurrencyAtEvent), NO solo en las lineas. Es la moneda en la que el usuario dijo que el
+        // operador retuvo la multa (ISO "USD"/"ARS"; el front la manda con default USD). El gating de la ND la
+        // compara contra la moneda de la factura para NO estampar la ND por el numero equivocado: una multa
+        // tipeada "en pesos" sobre una factura en dolares saldria como una ND en dolares por el mismo numero
+        // (~1500x). Solo la seteamos si el request la trae: si viene vacia (confirmaciones VIEJAS, como el caso
+        // real que quedo pendiente), la dejamos null a proposito y el gating rutea a revision manual cuando la
+        // factura es extranjera (conservador: NO adivinamos la moneda). Nunca convertimos con TC (eso es del
+        // contador). Esto tambien es lo que hace que FreezeDebitNoteSnapshot NO tenga que inventar la moneda.
+        if (!string.IsNullOrWhiteSpace(request.PenaltyCurrency))
+            bc.PenaltyCurrencyAtEvent = Monedas.Normalizar(request.PenaltyCurrency);
+
         // Paso b-ter (FASE 0, 2026-06-28): bajar el REEMBOLSO ESPERADO del operador por la multa confirmada.
         // Imputa la multa a la(s) linea(s) del operador principal y recalcula RefundCap = capBeforePenalty − multa
         // (por moneda, nunca cruzado, nunca negativo). Asi "Reembolsos a cobrar" deja de sobreestimar. NO toca la
@@ -5115,55 +5146,77 @@ public class BookingCancellationService
                 "confirmada por la AFIP.",
                 invariantCode: "INV-ADR014-RETRY-003");
 
-        // (a) ANTI DOBLE-EMISION: si un intento anterior alcanzo a CREAR la ND pero no a vincularla, la
-        //     RE-VINCULAMOS (no emitimos otra). Misma deteccion que la bandeja de NDs huerfanas: buscamos una ND
-        //     (tipos 2/7/12/52) sobre la MISMA factura original y reserva de esta cancelacion.
-        var orphanDebitNote = await _db.Invoices
-            .Where(i => debitNoteTipos.Contains(i.TipoComprobante) &&
-                        i.OriginalInvoiceId == bc.OriginatingInvoiceId &&
-                        i.ReservaId == bc.ReservaId)
-            .OrderByDescending(i => i.CreatedAt)
-            .FirstOrDefaultAsync(ct);
-        if (orphanDebitNote is not null)
+        // CANDADO anti doble-retry (security 2026-07-08): dos reintentos SIMULTANEOS pasan el guard
+        // DebitNoteInvoiceId==null de arriba (leido FUERA de transaccion) y ambos llegarian a CreateAsync -> DOS
+        // Notas de Debito con CAE por la misma multa. Serializamos la seccion critica (re-chequeo del guard +
+        // emision/vinculacion) bajo el FOR UPDATE del padre — el MISMO molde que ya usan los callbacks de ARCA
+        // (RunUnderParentLockAsync). En InMemory (tests unit) corre directo, sin lock ni transaccion.
+        await RunUnderParentLockAsync<bool>(bc.Id, async () =>
         {
-            bc.DebitNoteInvoiceId = orphanDebitNote.Id;
-            bc.DebitNoteStatus = ResolveDebitNoteStatusFromInvoice(orphanDebitNote);
-            if (bc.DebitNoteStatus == DebitNoteStatus.Failed)
+            // Re-leer el estado DURABLE del BC DENTRO del lock: un reintento concurrente que ya vinculo/emitio la
+            // ND habra commiteado DebitNoteInvoiceId; sin este reload leeriamos el valor viejo (null) y
+            // doble-emitiriamos. ReloadAsync refresca los escalares del BC; las navegaciones ya cargadas
+            // (OriginatingInvoice/Tributes/Supplier) que usa el gating siguen disponibles.
+            await _db.Entry(bc).ReloadAsync(ct);
+            if (bc.DebitNoteInvoiceId.HasValue)
             {
-                var obs = orphanDebitNote.Observaciones ?? "ARCA rechazo la ND sin mensaje.";
-                bc.DebitNoteArcaErrorMessage = obs.Length > 1000 ? obs[..1000] : obs;
+                // Otro reintento gano la carrera y ya dejo la ND vinculada: NO emitimos otra (idempotente, no-op).
+                _logger.LogInformation(
+                    "RETRY-ND: BC {BcPublicId} ya quedo con ND vinculada por otro reintento concurrente. No-op.",
+                    bc.PublicId);
+                return true;
             }
-            await _db.SaveChangesAsync(ct);
-            _logger.LogWarning(
-                "RETRY-ND: BC {BcPublicId} tenia una ND creada sin vincular (Invoice {InvoiceId}). " +
-                "Re-vinculada, NO re-emitida. Nuevo DebitNoteStatus={Status}.",
-                bc.PublicId, orphanDebitNote.Id, bc.DebitNoteStatus);
 
-            // (2026-07-03) Cierre INMEDIATO: si la ND re-vinculada YA estaba emitida (Issued), la pata de la multa
-            // quedo resuelta en este mismo request -> re-evaluamos el cierre por no haber reembolso pendiente del
-            // operador, sin esperar al barrido nocturno. Si quedo Pending/Failed sigue habiendo multa por resolver
-            // (guard interno) y es no-op.
-            if (bc.DebitNoteStatus == DebitNoteStatus.Issued)
-                await TryAutoCloseAfterOperatorPenaltyResolvedAsync(bc, ct);
+            // (a) ANTI DOBLE-EMISION: si un intento anterior alcanzo a CREAR la ND pero no a vincularla, la
+            //     RE-VINCULAMOS (no emitimos otra). Misma deteccion que la bandeja de NDs huerfanas: buscamos una
+            //     ND (tipos 2/7/12/52) sobre la MISMA factura original y reserva de esta cancelacion.
+            var orphanDebitNote = await _db.Invoices
+                .Where(i => debitNoteTipos.Contains(i.TipoComprobante) &&
+                            i.OriginalInvoiceId == bc.OriginatingInvoiceId &&
+                            i.ReservaId == bc.ReservaId)
+                .OrderByDescending(i => i.CreatedAt)
+                .FirstOrDefaultAsync(ct);
+            if (orphanDebitNote is not null)
+            {
+                bc.DebitNoteInvoiceId = orphanDebitNote.Id;
+                bc.DebitNoteStatus = ResolveDebitNoteStatusFromInvoice(orphanDebitNote);
+                if (bc.DebitNoteStatus == DebitNoteStatus.Failed)
+                {
+                    var obs = orphanDebitNote.Observaciones ?? "ARCA rechazo la ND sin mensaje.";
+                    bc.DebitNoteArcaErrorMessage = obs.Length > 1000 ? obs[..1000] : obs;
+                }
+                await _db.SaveChangesAsync(ct);
+                _logger.LogWarning(
+                    "RETRY-ND: BC {BcPublicId} tenia una ND creada sin vincular (Invoice {InvoiceId}). " +
+                    "Re-vinculada, NO re-emitida. Nuevo DebitNoteStatus={Status}.",
+                    bc.PublicId, orphanDebitNote.Id, bc.DebitNoteStatus);
 
-            return await MapToDtoAsync(bc.Id, ct)
-                ?? throw new InvalidOperationException("No se pudo completar la operación. Volvé a intentar.");
-        }
+                // (2026-07-03) Cierre INMEDIATO: si la ND re-vinculada YA estaba emitida (Issued), la pata de la
+                // multa quedo resuelta en este mismo request -> re-evaluamos el cierre por no haber reembolso
+                // pendiente del operador, sin esperar al barrido nocturno. Si quedo Pending/Failed sigue habiendo
+                // multa por resolver (guard interno) y es no-op.
+                if (bc.DebitNoteStatus == DebitNoteStatus.Issued)
+                    await TryAutoCloseAfterOperatorPenaltyResolvedAsync(bc, ct);
 
-        // (b) No hay ND previa: emitir de cero con el MISMO blindaje que confirm-penalty (si vuelve a fallar,
-        //     revision manual + exito-con-aviso, nunca un 500 que la vuelva a trabar).
-        try
-        {
-            await TryEmitCancellationDebitNoteAsync(bc, ct);
-        }
-        catch (Exception emissionError) when (emissionError is not OperationCanceledException)
-        {
-            _logger.LogError(emissionError,
-                "metric:cancellation_debit_note_emission_failed | BcPublicId={BcPublicId} | " +
-                "reintento de emision fallido; se deja en revision manual.",
-                bc.PublicId);
-            await MarkDebitNoteEmissionForManualReviewAsync(bc.Id, ct);
-        }
+                return true;
+            }
+
+            // (b) No hay ND previa: emitir de cero con el MISMO blindaje que confirm-penalty (si vuelve a fallar,
+            //     revision manual + exito-con-aviso, nunca un 500 que la vuelva a trabar).
+            try
+            {
+                await TryEmitCancellationDebitNoteAsync(bc, ct);
+            }
+            catch (Exception emissionError) when (emissionError is not OperationCanceledException)
+            {
+                _logger.LogError(emissionError,
+                    "metric:cancellation_debit_note_emission_failed | BcPublicId={BcPublicId} | " +
+                    "reintento de emision fallido; se deja en revision manual.",
+                    bc.PublicId);
+                await MarkDebitNoteEmissionForManualReviewAsync(bc.Id, ct);
+            }
+            return true;
+        }, ct);
 
         _logger.LogInformation(
             "metric:cancellation_debit_note_retry | BcPublicId={BcPublicId} By={UserId}",
@@ -5940,7 +5993,11 @@ public class BookingCancellationService
 
         // (2) Gating P3 (§3.4.1): ante la duda, NO emitir -> revision manual. Evaluamos
         //     cada condicion y juntamos los motivos para dejarlos en el log/auditoria.
-        var manualReason = EvaluateDebitNoteGating(bc, originatingInvoice);
+        //     El flag EnableMultiCurrencyInvoicing habilita la moneda extranjera dentro del gating (los guards
+        //     de TC/moneda soportada viven adentro, mismo criterio que la NC total). Con OFF, la factura no-ARS
+        //     vuelve a revision manual.
+        var manualReason = EvaluateDebitNoteGating(
+            bc, originatingInvoice, multiCurrencyInvoicingEnabled: settings.EnableMultiCurrencyInvoicing);
         if (manualReason is not null)
         {
             _logger.LogInformation(
@@ -5999,8 +6056,31 @@ public class BookingCancellationService
                 },
             },
             Tributes = new List<InvoiceTributeDto>(),
-            // MVP: solo ARS (el gating ya rechazo no-ARS). MonId/MonCotiz quedan en su
-            // default (PES/1), igual que la NC total.
+            // ADR-012/013 (multimoneda ND, 2026-07-08): la ND HEREDA la moneda y el TC CONGELADOS de la
+            // factura original, igual que la NC total (ADR-012 §3.3). Para una factura en pesos esto copia
+            // los defaults del original ("PES"/1) -> byte-identico al comportamiento de siempre. Para una
+            // factura extranjera (ej. USD) copia "DOL" + el TC real, que el gating ya valido como coherente
+            // (>0 y !=1) y como moneda soportada. NO recotizamos al dia de hoy: la ND ajusta un comprobante
+            // ya emitido con CAE; recotizar rompe el cuadre fiscal del set factura+NC+ND.
+            //
+            // CanMisMonExt (RG 5616): NO se setea aca ni se toca AfipService. CreatePendingInvoice congela
+            // CanMisMonExt ESPEJANDO el valor de la factura original (es una ND: tiene OriginalInvoiceId), asi
+            // la ND replica exactamente el "N"/"S"/null del comprobante asociado — mismo mecanismo que la NC.
+            MonId = originatingInvoice.MonId,
+            MonCotiz = originatingInvoice.MonCotiz,
+            // Trazabilidad del TC: la ND pasa por CreateAsync -> ValidateMultiCurrencyInvoicingAsync, que para
+            // moneda extranjera EXIGE fuente/fecha/justificacion del tipo de cambio (patron INV-120). Las
+            // HEREDAMOS del comprobante original (que ya las tenia obligatoriamente al emitirse en divisa), asi
+            // la ND queda valuada con EXACTAMENTE la misma trazabilidad que la factura que ajusta. Para pesos
+            // el original las tiene en null y la validacion ni las mira. Si por un dato legacy faltaran, la
+            // validacion frena y el blindaje del caller rutea a revision manual (nunca un comprobante mal valuado).
+            ExchangeRateSource = originatingInvoice.ExchangeRateSource,
+            ExchangeRateFetchedAt = originatingInvoice.ExchangeRateFetchedAt,
+            // N1 (review 2026-07-08): dejamos explicito en la justificacion que este TC es HEREDADO del
+            // comprobante original (no recotizado), asi el contador ve de un vistazo por que la ND lleva ese TC.
+            ExchangeRateJustification = string.IsNullOrWhiteSpace(originatingInvoice.ExchangeRateJustification)
+                ? originatingInvoice.ExchangeRateJustification
+                : $"ND por multa de anulación s/ comprobante original — TC heredado: {originatingInvoice.ExchangeRateJustification}",
         };
 
         // Emitir via el pipeline existente (CreateAsync -> CreatePendingInvoice +
@@ -6334,7 +6414,16 @@ public class BookingCancellationService
 
     // internal (no private) para que los tests unit puedan validar el gating sin DB:
     // el proyecto tiene InternalsVisibleTo("TravelApi.Tests"). Es una funcion pura.
-    internal static string? EvaluateDebitNoteGating(BookingCancellation bc, Invoice originatingInvoice)
+    internal static string? EvaluateDebitNoteGating(
+        BookingCancellation bc,
+        Invoice originatingInvoice,
+        // ADR-012/013 (multimoneda ND, 2026-07-08): estado del flag EnableMultiCurrencyInvoicing.
+        // Lo inyecta el caller de produccion (TryEmit lee OperationalFinanceSettings y lo pasa NOMBRADO); la
+        // funcion sigue PURA/testeable sin DB. Con el flag OFF (tambien el DEFAULT), una factura en moneda
+        // extranjera vuelve a rutear a revision manual: es el comportamiento conservador previo a este cambio,
+        // byte-identico para todo el gating ARS (donde el flag ni se mira). NO es un flag nuevo: es el MISMO
+        // que ya gobierna la NC total en InvoiceService.
+        bool multiCurrencyInvoicingEnabled = false)
     {
         // Concepto: emiten ND tanto el cargo propio de la agencia (gravado) COMO la penalidad
         // pass-through del operador (no gravada, se replica al cliente). Solo los conceptos de
@@ -6374,11 +6463,66 @@ public class BookingCancellationService
         if (originatingInvoice.TipoComprobante is not (11 or 12))
             return $"Factura original tipo {originatingInvoice.TipoComprobante} no es C (11/12): revision manual.";
 
-        // Moneda ARS (la factura original en pesos). MonId "PES" o vacio = pesos.
-        var isArs = string.IsNullOrWhiteSpace(originatingInvoice.MonId) ||
-                    string.Equals(originatingInvoice.MonId, "PES", StringComparison.OrdinalIgnoreCase);
-        if (!isArs)
-            return $"Factura original en moneda {originatingInvoice.MonId} (no ARS): revision manual.";
+        // ===================== MONEDA DE LA ND (dos controles independientes) =====================
+        // La ND HEREDA la moneda y el TC congelado de la factura original (mismo criterio ADR-012 §3.3 que la
+        // NC total: el set factura+NC+ND habla la misma moneda y el mismo tipo de cambio). Antes de dejarla
+        // emitir hacemos DOS chequeos distintos:
+        //   (A) COHERENCIA: la moneda DECLARADA de la multa (lo que el usuario dijo que retuvo el operador)
+        //       debe coincidir con la moneda de la factura. Si no, la ND saldria por el numero equivocado.
+        //   (B) CAPACIDAD de emitir en divisa: si la factura es extranjera, exigimos los guards multimoneda.
+
+        // La factura en pesos = MonId "PES" o vacio (convencion legacy). "ARS" tambien, por las dudas.
+        var invoiceIsArs = string.IsNullOrWhiteSpace(originatingInvoice.MonId) ||
+                           string.Equals(originatingInvoice.MonId, "PES", StringComparison.OrdinalIgnoreCase) ||
+                           string.Equals(originatingInvoice.MonId, "ARS", StringComparison.OrdinalIgnoreCase);
+
+        // (A) COHERENCIA declarado-vs-factura (B1 security 2026-07-08). Comparamos en el eje ARCA usando
+        //     ArcaCurrencyMapper (NUNCA comparacion de strings directa: la declarada viene en ISO "USD"/"ARS"
+        //     y la factura en ARCA "DOL"/"PES"; "USD" != "DOL" como string aunque sean la misma moneda).
+        //     - Declarada NULL: para factura en pesos es seguro (la ND sale en pesos igual, sin riesgo de
+        //       escala); para factura extranjera NO adivinamos -> revision manual.
+        //     - Declarada != moneda de la factura: NO emitimos (numero equivocado). NO convertimos con TC.
+        var declaredPenaltyArca = NormalizeCurrencyToArcaOrNull(bc.PenaltyCurrencyAtEvent);
+        var invoiceArca = NormalizeCurrencyToArcaOrNull(originatingInvoice.MonId) ?? (invoiceIsArs ? "PES" : null);
+        if (declaredPenaltyArca is null)
+        {
+            if (!invoiceIsArs)
+                return $"No quedó registrado en qué moneda se cargó la multa y la factura original está en " +
+                       $"{MonedaLabel(originatingInvoice.MonId)}: queda para revisión manual.";
+        }
+        else if (!string.Equals(declaredPenaltyArca, invoiceArca, StringComparison.OrdinalIgnoreCase))
+        {
+            return $"La multa se cargó en {MonedaLabel(bc.PenaltyCurrencyAtEvent)} pero la factura original está " +
+                   $"en {MonedaLabel(originatingInvoice.MonId)}: lo tiene que revisar una persona.";
+        }
+
+        // (B) CAPACIDAD de emitir en divisa. Una factura en pesos sigue el camino de siempre. Una factura
+        //     extranjera solo se automatiza con los MISMOS guards multimoneda que la NC total
+        //     (InvoiceService.ProcessAnnulmentJob); ante cualquier duda -> revision manual (conservador).
+        if (!invoiceIsArs)
+        {
+            // Guard 1: flag maestro. Con OFF, la moneda extranjera vuelve a revision manual (byte-identico a
+            // antes de este cambio). Sin flag no emitimos comprobantes valuados en divisa.
+            if (!multiCurrencyInvoicingEnabled)
+                return $"La factura original está en {MonedaLabel(originatingInvoice.MonId)} y la facturación en " +
+                       "moneda extranjera no está habilitada: queda para revisión manual.";
+
+            // Guard 2: moneda soportada por el catalogo ARCA que sabemos emitir (mismo criterio que la NC
+            // total). Una moneda fuera del catalogo (ej. "EUR" legacy) la rebotaria ARCA -> revision manual.
+            // NO reflejamos el codigo desconocido al usuario (data-exposure).
+            if (!ArcaCurrencyMapper.IsValidArcaCurrencyCode(originatingInvoice.MonId))
+                return "La factura original está en una moneda que todavía no se puede facturar automáticamente: " +
+                       "queda para revisión manual.";
+
+            // Guard 3: cotizacion coherente (> 0 y != 1). Un TC <= 0 o == 1 en una factura extranjera es un
+            // dato corrupto (valuar un dolar como un peso). Mismo candado de incoherencia que la NC total.
+            // NO mostramos el numero crudo al usuario (data-exposure); el crudo queda en el log/entidad.
+            if (originatingInvoice.MonCotiz <= 0m || originatingInvoice.MonCotiz == 1m)
+                return $"La factura original está en {MonedaLabel(originatingInvoice.MonId)} pero su cotización " +
+                       "quedó mal cargada: queda para revisión manual.";
+
+            // Pasa los guards: la ND se emite en la moneda extranjera heredando MonId/MonCotiz del original.
+        }
 
         // La factura con tributos provinciales (IIBB/percepciones) -> manual (R6).
         if (originatingInvoice.Tributes is { Count: > 0 })
@@ -6392,6 +6536,49 @@ public class BookingCancellationService
                    $"({originatingInvoice.ImporteTotal}): revision manual (M2).";
 
         return null; // Pasa todo el gating: puede emitir.
+    }
+
+    /// <summary>
+    /// B1 (security 2026-07-08): normaliza una moneda al codigo ARCA ("PES"/"DOL"), venga en ISO ("ARS"/"USD")
+    /// o ya en ARCA ("PES"/"DOL"). Es el puente para comparar la moneda DECLARADA de la multa (ISO, la manda el
+    /// front) contra la moneda de la factura (ARCA) en el MISMO eje. Devuelve <c>null</c> si esta vacia o si la
+    /// moneda no es reconocida (ej. "EUR" legacy): el caller trata el null como "no comparable" -> revision manual.
+    /// </summary>
+    internal static string? NormalizeCurrencyToArcaOrNull(string? currency)
+    {
+        if (string.IsNullOrWhiteSpace(currency))
+            return null;
+
+        // TryMap traduce ISO -> ARCA ("USD"->"DOL", "ARS"->"PES"). Si ya viene en ARCA, TryMap da null y
+        // caemos al chequeo de codigo ARCA valido.
+        var fromIso = ArcaCurrencyMapper.TryMap(currency);
+        if (fromIso is not null)
+            return fromIso;
+
+        return ArcaCurrencyMapper.IsValidArcaCurrencyCode(currency)
+            ? ArcaCurrencyMapper.NormalizeArcaCurrencyCode(currency)
+            : null;
+    }
+
+    /// <summary>
+    /// Etiqueta de moneda para el USUARIO final, sin codigos tecnicos (data-exposure). Acepta ISO o ARCA:
+    /// "PES"/"ARS"/vacio -> "pesos" (vacio = pesos por convencion legacy), "DOL"/"USD" -> "dolares (US$)",
+    /// cualquier otra -> "una moneda no reconocida" (no filtramos el codigo crudo al usuario).
+    /// </summary>
+    internal static string MonedaLabel(string? currencyCode)
+    {
+        if (string.IsNullOrWhiteSpace(currencyCode))
+            return "pesos"; // MonId vacio = pesos (convencion legacy del dominio).
+
+        var code = currencyCode.Trim();
+        if (string.Equals(code, "PES", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(code, "ARS", StringComparison.OrdinalIgnoreCase))
+            return "pesos";
+        if (string.Equals(code, "DOL", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(code, "USD", StringComparison.OrdinalIgnoreCase))
+            return "dólares (US$)";
+
+        return "una moneda no reconocida";
     }
 
     /// <summary>
@@ -6487,9 +6674,15 @@ public class BookingCancellationService
         BookingCancellation bc, Invoice originatingInvoice, decimal penaltyAmount)
     {
         bc.PenaltyAmountAtEvent = penaltyAmount;
-        bc.PenaltyCurrencyAtEvent = string.IsNullOrWhiteSpace(originatingInvoice.MonId)
-            ? "ARS"
-            : (string.Equals(originatingInvoice.MonId, "PES", StringComparison.OrdinalIgnoreCase) ? "ARS" : originatingInvoice.MonId);
+        // Moneda del evento: NO pisamos la moneda DECLARADA que ya persistio el confirm (B1 security 2026-07-08).
+        // El confirm guarda en PenaltyCurrencyAtEvent la moneda en la que el usuario dijo que el operador retuvo
+        // la multa; el gating YA validó que coincida con la moneda de la factura antes de dejar emitir. Pisarla
+        // aca borraria esa evidencia. Solo la completamos si quedo VACIA (confirmaciones viejas sin moneda
+        // declarada): en ese caso la derivamos de la factura que la ND ajusta, en ISO ("ARS"/"USD") para ser
+        // consistentes con el formato que graba el confirm. (Con el gating nuevo este fallback solo se da en
+        // facturas en pesos: la divisa sin moneda declarada ya ruteo a revision manual y no llega hasta aca.)
+        if (string.IsNullOrWhiteSpace(bc.PenaltyCurrencyAtEvent))
+            bc.PenaltyCurrencyAtEvent = ArcaCurrencyMapper.ToIso(originatingInvoice.MonId) ?? Monedas.ARS;
         bc.OriginalInvoiceCbteTipoAtEvent = originatingInvoice.TipoComprobante;
         // ND C = 12 (derivado del tipo de la factura original via el helper, M1/M3).
         bc.DebitNoteCbteTipoAtEvent =

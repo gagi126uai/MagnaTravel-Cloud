@@ -107,13 +107,140 @@ public class CancellationDebitNoteGatingTests
         Assert.NotNull(BookingCancellationService.EvaluateDebitNoteGating(HappyBc(), invoice));
     }
 
-    [Fact]
-    public void NonArsCurrency_RoutesToManual()
+    /// <summary>BC del caso feliz PERO con la multa declarada en USD (para factura USD).</summary>
+    private static BookingCancellation HappyBcUsd()
     {
-        // Multimoneda -> futuro, manual en el MVP.
+        var bc = HappyBc();
+        bc.PenaltyCurrencyAtEvent = "USD"; // moneda declarada de la multa (ISO), coincide con la factura DOL
+        return bc;
+    }
+
+    /// <summary>Factura del caso feliz PERO en USD con TC coherente.</summary>
+    private static Invoice HappyInvoiceUsd(decimal rate = 1500m)
+    {
         var invoice = HappyInvoice();
         invoice.MonId = "DOL";
-        Assert.NotNull(BookingCancellationService.EvaluateDebitNoteGating(HappyBc(), invoice));
+        invoice.MonCotiz = rate;
+        return invoice;
+    }
+
+    [Fact]
+    public void NonArsCurrency_FlagOff_RoutesToManual()
+    {
+        // Moneda extranjera (declarada coherente) con la facturacion multimoneda DESHABILITADA (flag OFF, tambien
+        // el default): vuelve a revision manual. No-regresion de "sin flag no se emite en divisa".
+        Assert.NotNull(BookingCancellationService.EvaluateDebitNoteGating(
+            HappyBcUsd(), HappyInvoiceUsd(), multiCurrencyInvoicingEnabled: false));
+    }
+
+    [Fact]
+    public void NonArsCurrency_FlagOn_CoherentRate_DeclaredMatches_CanEmit()
+    {
+        // ADR-012/013 (2026-07-08): factura USD con TC coherente (1500), multa DECLARADA en USD + flag ON -> la
+        // ND se emite en USD heredando MonId/MonCotiz del original. null = puede emitir.
+        Assert.Null(BookingCancellationService.EvaluateDebitNoteGating(
+            HappyBcUsd(), HappyInvoiceUsd(), multiCurrencyInvoicingEnabled: true));
+    }
+
+    [Theory]
+    [InlineData(0)]   // TC 0: dato corrupto
+    [InlineData(1)]   // TC 1: valuaria un dolar como un peso
+    [InlineData(-5)]  // TC negativo: imposible
+    public void NonArsCurrency_FlagOn_IncoherentRate_RoutesToManual(decimal incoherentRate)
+    {
+        // Guard 3 del gating multimoneda: aun con el flag ON y la moneda declarada coherente, un TC <= 0 o == 1
+        // en una factura extranjera es incoherente -> revision manual (no emitimos un comprobante mal valuado).
+        Assert.NotNull(BookingCancellationService.EvaluateDebitNoteGating(
+            HappyBcUsd(), HappyInvoiceUsd(incoherentRate), multiCurrencyInvoicingEnabled: true));
+    }
+
+    [Fact]
+    public void NonArsCurrency_FlagOn_UnsupportedCurrency_RoutesToManual()
+    {
+        // Una moneda fuera del catalogo ARCA soportado (ej. "EUR" legacy) va a revision manual aun con el flag ON.
+        var invoice = HappyInvoice();
+        invoice.MonId = "EUR";
+        invoice.MonCotiz = 1100m;
+        Assert.NotNull(BookingCancellationService.EvaluateDebitNoteGating(
+            HappyBcUsd(), invoice, multiCurrencyInvoicingEnabled: true));
+    }
+
+    [Fact]
+    public void ArsInvoice_FlagOn_UnaffectedByMultiCurrency_StillEmits()
+    {
+        // No-regresion ARS: una factura en pesos pasa el gating igual con el flag ON (la rama de moneda
+        // extranjera ni se toca para ARS). El flag no altera el camino en pesos.
+        Assert.Null(BookingCancellationService.EvaluateDebitNoteGating(
+            HappyBc(), HappyInvoice(), multiCurrencyInvoicingEnabled: true));
+    }
+
+    // ---- B1 (security 2026-07-08): coherencia de la moneda DECLARADA vs la moneda de la factura ----
+
+    [Fact]
+    public void DeclaredArs_OnUsdInvoice_RoutesToManual_Mismatch()
+    {
+        // La multa se cargo "en pesos" pero la factura esta en dolares: NO emitir (la ND saldria por el numero
+        // equivocado, ~1500x). El motivo es de negocio, con etiqueta amigable y sin codigos tecnicos.
+        var bc = HappyBc();
+        bc.PenaltyCurrencyAtEvent = "ARS"; // declarada en pesos
+        var reason = BookingCancellationService.EvaluateDebitNoteGating(
+            bc, HappyInvoiceUsd(), multiCurrencyInvoicingEnabled: true);
+        Assert.NotNull(reason);
+        Assert.Contains("dólares (US$)", reason);
+        Assert.Contains("pesos", reason);
+        Assert.DoesNotContain("DOL", reason);
+    }
+
+    [Fact]
+    public void DeclaredUsd_OnArsInvoice_RoutesToManual_Mismatch()
+    {
+        // Espejo del anterior: multa declarada en USD sobre factura en pesos -> mismatch -> manual.
+        var bc = HappyBc();
+        bc.PenaltyCurrencyAtEvent = "USD";
+        var reason = BookingCancellationService.EvaluateDebitNoteGating(
+            bc, HappyInvoice(), multiCurrencyInvoicingEnabled: true);
+        Assert.NotNull(reason);
+        Assert.Contains("dólares (US$)", reason);
+    }
+
+    [Fact]
+    public void DeclaredNull_OnUsdInvoice_RoutesToManual_NoCurrencyOnRecord()
+    {
+        // Confirmaciones VIEJAS (como el caso real que quedo pendiente): no quedo registrada la moneda de la
+        // multa. Sobre una factura extranjera NO adivinamos -> revision manual, con motivo claro.
+        var bc = HappyBc();
+        bc.PenaltyCurrencyAtEvent = null;
+        var reason = BookingCancellationService.EvaluateDebitNoteGating(
+            bc, HappyInvoiceUsd(), multiCurrencyInvoicingEnabled: true);
+        Assert.NotNull(reason);
+        Assert.Contains("No quedó registrado", reason);
+        Assert.Contains("dólares (US$)", reason);
+    }
+
+    [Fact]
+    public void DeclaredNull_OnArsInvoice_CanEmit_NoScaleRisk()
+    {
+        // Sobre una factura en pesos, no registrar la moneda de la multa es seguro (la ND sale en pesos igual):
+        // sigue emitiendo, byte-identico a como venia (no rompe los flujos ARS existentes).
+        var bc = HappyBc();
+        bc.PenaltyCurrencyAtEvent = null;
+        Assert.Null(BookingCancellationService.EvaluateDebitNoteGating(
+            bc, HappyInvoice(), multiCurrencyInvoicingEnabled: true));
+    }
+
+    // ---- MonedaLabel: etiquetas amigables sin codigos tecnicos (data-exposure) ----
+
+    [Theory]
+    [InlineData("PES", "pesos")]
+    [InlineData("ARS", "pesos")]
+    [InlineData("", "pesos")]      // MonId vacio = pesos (convencion legacy)
+    [InlineData(null, "pesos")]
+    [InlineData("DOL", "dólares (US$)")]
+    [InlineData("USD", "dólares (US$)")]
+    [InlineData("EUR", "una moneda no reconocida")]
+    public void MonedaLabel_MapsToFriendlyLabel(string? code, string expected)
+    {
+        Assert.Equal(expected, BookingCancellationService.MonedaLabel(code));
     }
 
     [Theory]
