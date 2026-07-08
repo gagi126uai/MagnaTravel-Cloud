@@ -188,6 +188,14 @@ jobs:
               #   contenedor db (no se hardcodean aca).
               # --------------------------------------------------------------
               sql)
+                # Soporte "b64:...": la cadena de transporte (gh -> inputs -> envs -> ssh)
+                # come las comillas dobles, que en Postgres son obligatorias para
+                # identificadores con mayusculas ("Invoices"). Si la consulta llega
+                # con el prefijo b64:, se decodifica aca y llega intacta.
+                if [ "${CONSULTA#b64:}" != "${CONSULTA}" ]; then
+                  CONSULTA="$(printf '%s' "${CONSULTA#b64:}" | base64 -d)"
+                fi
+
                 # Normaliza: saca espacios al inicio y al final.
                 q="$(printf '%s' "${CONSULTA}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
                 if [ -z "${q}" ]; then
