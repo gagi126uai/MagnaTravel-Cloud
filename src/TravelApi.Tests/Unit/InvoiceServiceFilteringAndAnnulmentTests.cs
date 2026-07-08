@@ -773,9 +773,10 @@ public class InvoiceServiceFilteringAndAnnulmentTests
         // El job necesita una reserva con PublicId resoluble (el Include(Reserva) ya esta seedeado).
         await context.SaveChangesAsync();
 
-        // Capturamos el request que el job arma para ARCA. Como CreatePendingInvoice devuelve una
-        // Invoice con Resultado != "A", el job no entra al bloque de exito (bridge/notif success);
-        // solo nos importa que el request herede la moneda correcta.
+        // Capturamos el request que el job arma para ARCA. La NC se emite OK (Resultado="A") para que el job
+        // complete el camino feliz; a este test solo le importa que el request herede la moneda correcta.
+        // (Antes se devolvia "PENDING" a proposito; desde el fix F2, "PENDING" significa "AFIP no respondio"
+        // y dispara reintento, no un cierre benigno — por eso ahora modelamos una emision completa.)
         CreateInvoiceRequest? capturedRequest = null;
         _afipMock
             .Setup(a => a.CreatePendingInvoice(It.IsAny<int>(), It.IsAny<CreateInvoiceRequest>()))
@@ -785,7 +786,8 @@ public class InvoiceServiceFilteringAndAnnulmentTests
                 Id = 500,
                 ReservaId = 1,
                 TipoComprobante = 8, // NC B
-                Resultado = "PENDING",
+                Resultado = "A",
+                CAE = "CAE-NC-DOL",
                 MonId = "DOL",
                 MonCotiz = originalRate
             });
@@ -994,7 +996,9 @@ public class InvoiceServiceFilteringAndAnnulmentTests
                 Id = 501,
                 ReservaId = 1,
                 TipoComprobante = 8,
-                Resultado = "PENDING",
+                // NC emitida OK: a este test solo le importa el request; desde F2 un "PENDING" dispararia reintento.
+                Resultado = "A",
+                CAE = "CAE-NC-PES",
                 MonId = "PES",
                 MonCotiz = 1m
             });
@@ -1074,7 +1078,9 @@ public class InvoiceServiceFilteringAndAnnulmentTests
                 Id = 700,
                 ReservaId = 1,
                 TipoComprobante = 8,
-                Resultado = "PENDING",
+                // NC emitida OK: a este test solo le importa el request; desde F2 un "PENDING" dispararia reintento.
+                Resultado = "A",
+                CAE = "CAE-NC-STAMP",
                 MonId = "PES",
                 MonCotiz = 1m
             });

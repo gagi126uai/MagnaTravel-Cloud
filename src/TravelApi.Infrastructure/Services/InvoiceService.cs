@@ -138,6 +138,20 @@ public class InvoiceService : IInvoiceService
     }
 
     /// <summary>
+    /// F2 (2026-07-07): se lanza cuando AFIP NO da una respuesta definitiva al emitir la Nota de Credito de
+    /// una anulacion (respuesta de red vacia / sin CAE / Resultado="PENDING"). NO es un rechazo fiscal ("R"):
+    /// es un error TECNICO transitorio. Sirve para caer al catch de <see cref="ProcessAnnulmentJob"/> (marca
+    /// Failed best-effort + aviso "se reintentara" + rethrow para que Hangfire reintente), pero SIN avisarle al
+    /// BookingCancellation que la anulacion fue rechazada (el BC debe seguir esperando la confirmacion fiscal).
+    /// Su <see cref="Exception.Message"/> ya es texto de negocio: es la UNICA excepcion cuyo mensaje el job
+    /// considera seguro para mostrar al usuario (el resto se reemplaza por un copy generico anti fuga tecnica).
+    /// </summary>
+    private sealed class InvoiceAnnulmentPendingRetryException : Exception
+    {
+        public InvoiceAnnulmentPendingRetryException(string message) : base(message) { }
+    }
+
+    /// <summary>
     /// B1.15 Fase 2a (FIX 6): null si Admin o user con cobranzas.view_all (=> ve todo);
     /// si no, devuelve currentUserId (filter mine via Reserva.ResponsibleUserId).
     /// Si no hay user resoluble, devuelve sentinel "__no_user__" (no expone nada).
@@ -1303,6 +1317,106 @@ public class InvoiceService : IInvoiceService
                 return;
             }
 
+            // Determine Type (Credit or Debit Note)
+            // 2026-05-11 (fix arca-tax-expert, fiscal critico): el switch heredado
+            // tenia un default que dejaba cbteTipo=0 para tipos no mapeados (2, 7, 12,
+            // 51, 52, 53). Eso se enviaba a AFIP y fallaba con error tecnico opaco
+            // (WSFE rechaza CbteTipo=0). Ahora se valida explicitamente antes del
+            // switch. El guard duplica el de EnqueueAnnulmentAsync por defensa en
+            // profundidad: el job tambien puede ser invocado por Hangfire retry o
+            // reschedule despues de un cambio de tipo, asi que no podemos asumir
+            // que el guard de entrada se ejecuto.
+            //
+            // F1 (2026-07-07): este calculo se ADELANTO a aca (antes vivia despues de los guards de moneda)
+            // porque el reuso idempotente de mas abajo NECESITA cbteTipo para filtrar la NC total correcta.
+            // Es un fallo TERMINAL puro (no toca ARCA): moverlo antes de los guards de moneda no cambia el
+            // resultado de los tests de tipo no soportado (la factura de venta nace en pesos por defecto, asi
+            // que no dispara los guards de moneda). Para una factura de venta A/B/C soportada, cbteTipo es
+            // 3/8/13 respectivamente.
+            int cbteTipo = 0;
+            switch (original.TipoComprobante)
+            {
+                case 1: cbteTipo = 3; break; // Fac A -> NC A
+                case 6: cbteTipo = 8; break; // Fac B -> NC B
+                case 11: cbteTipo = 13; break; // Fac C -> NC C
+                // INALCANZABLES HOY: el guard upstream en EnqueueAnnulmentAsync
+                // (InvoiceComprobanteHelpers.IsSupportedForAnnulment) solo permite
+                // tipos 1/6/11 y rechaza 3/8/13 con InvalidOperationException antes
+                // de encolar el job. Estos cases se conservan como documentacion
+                // del mapeo historico "anular NC con ND" (cliente devuelve el
+                // ajuste). Si en el futuro se decide habilitar ese flujo, el guard
+                // upstream debe ampliarse y deben sumarse tests de regresion antes
+                // de confiar en estos cases.
+                case 3: cbteTipo = 2; break; // NC A -> ND A (inalcanzable)
+                case 8: cbteTipo = 7; break; // NC B -> ND B (inalcanzable)
+                case 13: cbteTipo = 12; break; // NC C -> ND C (inalcanzable)
+            }
+            if (cbteTipo == 0)
+            {
+                // No se llamo a AFIP. Marcar Failed y notificar para que el operador
+                // tenga visibilidad. AnnulmentStatus = Failed mantiene el bloqueo de
+                // cancel de reserva (FIX 7) hasta que back-office resuelva manual.
+                original.AnnulmentStatus = AnnulmentStatus.Failed;
+                await _context.SaveChangesAsync();
+
+                var reason = $"El tipo de comprobante {original.TipoComprobante} no soporta anulacion automatica. " +
+                             "Generar la Nota de Credito (o ajuste correspondiente) manualmente desde AFIP.";
+                _logger.LogWarning(
+                    "Annulment job aborted for Invoice {InvoiceId}: tipo {Tipo} no soportado.",
+                    invoiceId, original.TipoComprobante);
+                await CreateNotification(userId, reason, "Error", invoiceId);
+                return;
+            }
+
+            // F1 (reintento idempotente anti doble-NC, 2026-07-07): ANTES de construir una NC nueva,
+            // buscar una NC TOTAL PENDING previa de ESTA misma factura. Escenario real de produccion: un
+            // primer intento creo la NC pero AFIP no respondio (DNS caido) y quedo PENDING; despues Hangfire
+            // reintenta el job ENTERO. Sin esta busqueda, el reintento arma OTRO request y vuelve a llamar
+            // CreatePendingInvoice -> choca contra el unique index "una sola factura PENDING por reserva",
+            // envenena el contexto y deja la anulacion a medias para siempre. Si la NC total pendiente ya
+            // existe, la RETOMAMOS (la reprocesamos directo) en vez de duplicarla.
+            //
+            // El guard "Avoid double processing" de arriba ya cubre la NC aprobada (Resultado="A"); esta
+            // cubre la NC pendiente (Resultado="PENDING"). Buscamos por OriginalInvoiceId (la NC de ESTA
+            // factura), NO por el unique index que es por reserva: es correcto, solo retomamos la NC de esta
+            // factura. Una NC pendiente de OTRA factura de la misma reserva queda fuera de alcance a proposito.
+            //
+            // FILTRO CRITICO (fix reviewer 2026-07-07): sobre una MISMA factura origen pueden convivir varios
+            // comprobantes PENDING con el mismo OriginalInvoiceId — la NC total, una NC PARCIAL
+            // (ProcessPartialCreditNoteJob) y hasta una ND de multa (pass-through). Si no discriminamos,
+            // retomariamos el comprobante equivocado y lo procesariamos como si fuera la NC total (marcando
+            // Succeeded + bridge con el id incorrecto). Dos candados:
+            //   1. TipoComprobante == cbteTipo: descarta las ND de multa (tipos 2/7/12), que NUNCA comparten
+            //      el tipo de la NC total (3/8/13).
+            //   2. IdempotencyKey == null: descarta las NC PARCIALES. La NC parcial graba su huella real en
+            //      Invoice.IdempotencyKey (ver ProcessPartialCreditNoteJob) ANTES de POSTear a ARCA, asi que
+            //      esta presente incluso mientras la NC parcial esta PENDING. La NC TOTAL nunca la setea ->
+            //      queda null. Usamos este discriminador semantico y NO el linkage PartialCreditNoteReconciliation
+            //      (esa fila se crea recien post-CAE, no existe para una NC parcial todavia PENDING) ni el monto
+            //      (fragil por redondeos).
+            var existingPendingCreditNote = await _context.Invoices
+                .FirstOrDefaultAsync(i =>
+                    i.OriginalInvoiceId == invoiceId
+                    && i.Resultado == "PENDING"
+                    && i.TipoComprobante == cbteTipo
+                    && i.IdempotencyKey == null);
+            if (existingPendingCreditNote is not null)
+            {
+                _logger.LogInformation(
+                    "ProcessAnnulmentJob: se encontro una NC pendiente previa (CreditNoteId={CreditNoteId}) para la " +
+                    "factura {InvoiceId}. Se RETOMA sin crear una nueva (reintento idempotente F1).",
+                    existingPendingCreditNote.Id, invoiceId);
+
+                // Reprocesar la NC pendiente tal cual y compartir EXACTAMENTE el mismo manejo de resultado
+                // que una NC nueva (rama "A" -> Succeeded + bridge; rama "R" -> Failed + OnArcaFailed;
+                // rama PENDING -> reintento). No armamos request ni llamamos CreatePendingInvoice.
+                await _afipService.ProcessInvoiceJob(existingPendingCreditNote.Id);
+                await _context.Entry(existingPendingCreditNote).ReloadAsync();
+                await HandleCreditNoteAnnulmentResultAsync(
+                    original, existingPendingCreditNote, invoiceId, userId, approvalRequestId);
+                return;
+            }
+
             // ADR-012 §3.3 (multimoneda, 2026-05-29) — DEFENSE IN DEPTH (capa job, punto de entrada
             // INDEPENDIENTE): moneda extranjera en la anulacion total.
             //
@@ -1389,50 +1503,7 @@ public class InvoiceService : IInvoiceService
                 // original mas abajo.
             }
 
-            // Determine Type (Credit or Debit Note)
-            // 2026-05-11 (fix arca-tax-expert, fiscal critico): el switch heredado
-            // tenia un default que dejaba cbteTipo=0 para tipos no mapeados (2, 7, 12,
-            // 51, 52, 53). Eso se enviaba a AFIP y fallaba con error tecnico opaco
-            // (WSFE rechaza CbteTipo=0). Ahora se valida explicitamente antes del
-            // switch. El guard duplica el de EnqueueAnnulmentAsync por defensa en
-            // profundidad: el job tambien puede ser invocado por Hangfire retry o
-            // reschedule despues de un cambio de tipo, asi que no podemos asumir
-            // que el guard de entrada se ejecuto.
-            int cbteTipo = 0;
-            switch (original.TipoComprobante)
-            {
-                case 1: cbteTipo = 3; break; // Fac A -> NC A
-                case 6: cbteTipo = 8; break; // Fac B -> NC B
-                case 11: cbteTipo = 13; break; // Fac C -> NC C
-                // INALCANZABLES HOY: el guard upstream en EnqueueAnnulmentAsync
-                // (InvoiceComprobanteHelpers.IsSupportedForAnnulment) solo permite
-                // tipos 1/6/11 y rechaza 3/8/13 con InvalidOperationException antes
-                // de encolar el job. Estos cases se conservan como documentacion
-                // del mapeo historico "anular NC con ND" (cliente devuelve el
-                // ajuste). Si en el futuro se decide habilitar ese flujo, el guard
-                // upstream debe ampliarse y deben sumarse tests de regresion antes
-                // de confiar en estos cases.
-                case 3: cbteTipo = 2; break; // NC A -> ND A (inalcanzable)
-                case 8: cbteTipo = 7; break; // NC B -> ND B (inalcanzable)
-                case 13: cbteTipo = 12; break; // NC C -> ND C (inalcanzable)
-            }
-            if (cbteTipo == 0)
-            {
-                // No se llamo a AFIP. Marcar Failed y notificar para que el operador
-                // tenga visibilidad. AnnulmentStatus = Failed mantiene el bloqueo de
-                // cancel de reserva (FIX 7) hasta que back-office resuelva manual.
-                original.AnnulmentStatus = AnnulmentStatus.Failed;
-                await _context.SaveChangesAsync();
-
-                var reason = $"El tipo de comprobante {original.TipoComprobante} no soporta anulacion automatica. " +
-                             "Generar la Nota de Credito (o ajuste correspondiente) manualmente desde AFIP.";
-                _logger.LogWarning(
-                    "Annulment job aborted for Invoice {InvoiceId}: tipo {Tipo} no soportado.",
-                    invoiceId, original.TipoComprobante);
-                await CreateNotification(userId, reason, "Error", invoiceId);
-                return;
-            }
-
+            // (cbteTipo ya se calculo y valido arriba, antes del reuso idempotente F1.)
             var request = new CreateInvoiceRequest
             {
                 ReservaId = original.Reserva?.PublicId.ToString() ?? string.Empty,
@@ -1590,160 +1661,27 @@ public class InvoiceService : IInvoiceService
             // Reload to get the result updated by ProcessInvoiceJob
             await _context.Entry(newInvoice).ReloadAsync();
 
-            if (newInvoice.Resultado == "A")
-            {
-                // B1.15 Fase 2a (FIX 6): NC aprobada por AFIP — la factura original
-                // queda definitivamente anulada. Levanta el bloqueo fiscal de cancel
-                // de reserva (FIX 7). AnnulledAt toma el momento de aprobacion.
-                original.AnnulmentStatus = AnnulmentStatus.Succeeded;
-                original.AnnulledAt = newInvoice.IssuedAt ?? DateTime.UtcNow;
-                await _context.SaveChangesAsync();
-                // B1.15 Fase D (2026-05-11): consumir la aprobacion ahora que la
-                // accion solicitada se ejecuto. Si el caller era Admin, no hay
-                // approvalRequestId (no-op).
-                if (approvalRequestId.HasValue && _approvalService is not null)
-                {
-                    await _approvalService.MarkConsumedAsync(approvalRequestId.Value);
-                }
-
-                // D3 (2026-07-05): apagar los avisos de ERROR de anulacion PREVIOS de esta misma factura. La
-                // anulacion pudo haber fallado antes (error tecnico "se reintentara automaticamente") y dejado un
-                // aviso vivo; ahora que salio bien, ese aviso ya no tiene causa. Se resuelve por la clave del invoice
-                // ORIGINAL ("Invoice:{invoiceId}"), no la de la NC nueva. Va ANTES de crear el aviso de exito para que
-                // el usuario no vea "error" y "exito" conviviendo. Idempotente: si no habia error previo, no hace nada.
-                // IMPORTANTE (mismo contrato que el bridge de abajo): en este punto el commit fiscal YA quedo
-                // (AnnulmentStatus=Succeeded, CAE emitido). Por eso este apagado va en try/catch y NUNCA hace
-                // rethrow: si tirara, la excepcion subiria al catch del job -> Hangfire reintentaria -> aunque el
-                // guard "Avoid double processing" evita re-emitir la NC, dejaria un aviso "error tecnico, se
-                // reintentara" fantasma sobre una anulacion que en realidad salio bien (justo el sintoma que esta
-                // tanda vino a matar). Si falla, la red de seguridad es W4: el vigia nocturno apaga el error de
-                // anulacion porque la factura ya quedo Succeeded.
-                var annulmentNotificationService = GetNotificationService();
-                if (annulmentNotificationService is not null)
-                {
-                    try
-                    {
-                        await annulmentNotificationService.ResolveByKeyAsync(
-                            NotificationResolutionKeys.ForEntity(NotificationRelatedEntityTypes.Invoice, invoiceId));
-                    }
-                    catch (Exception resolveEx)
-                    {
-                        _logger.LogError(
-                            resolveEx,
-                            "No se pudo apagar el aviso de error de anulacion previo para Invoice {InvoiceId}. " +
-                            "La anulacion quedo Succeeded; el vigia (W4) lo apagara esa noche.",
-                            invoiceId);
-                    }
-                }
-
-                await CreateNotification(userId, $"Anulación exitosa. Se generó el comprobante {newInvoice.NumeroComprobante}.", "Success", newInvoice.Id);
-
-                // FC1.2.1 v3 §6.2 / HC3 (BR-V2-04, 2026-05-17): sincronizar el BC
-                // asociado (si existe). El try/catch envolvente es CRITICO: el
-                // commit fiscal arriba ya quedo (AnnulmentStatus=Succeeded), por
-                // lo tanto NO podemos hacer rethrow → Hangfire reintentaria el
-                // job entero y llamaria AFIP de nuevo (NC duplicada). Si el bridge
-                // falla, el path de remediacion es manual via
-                // ForceArcaConfirmationAsync (BR-V2-01).
-                //
-                // Contrato del bridge (FC1.2.1 v3, leer antes de modificar este bloque):
-                //   1. En este punto la NC YA quedo commiteada — el SaveChangesAsync
-                //      anterior (linea original.AnnulmentStatus=Succeeded) ya ejecuto
-                //      y AFIP ya emitio el comprobante (CAE devuelto). No hay vuelta atras.
-                //   2. El bridge (BookingCancellationService.OnArcaSucceededAsync)
-                //      abre su PROPIA unidad de trabajo / transaccion: carga el BC,
-                //      lo transiciona a AwaitingOperatorRefund, escribe audit log y
-                //      hace SaveChangesAsync. NO comparte la transaccion con este service.
-                //   3. NO se debe tocar el DbContext entre el SaveChanges anterior y
-                //      esta llamada — el bridge asume que el contexto esta limpio
-                //      (Include necesarios, sin entidades tracked stale).
-                //   4. Si el bridge falla, el escape hatch documentado es
-                //      BookingCancellationService.ForceArcaConfirmationAsync (BR-V2-01),
-                //      que requiere approval InvariantOverride.
-                var bcBridge = GetBcBridge();
-                if (bcBridge is not null)
-                {
-                    try
-                    {
-                        await bcBridge.OnArcaSucceededAsync(invoiceId, newInvoice.Id, CancellationToken.None);
-                    }
-                    catch (Exception bridgeEx)
-                    {
-                        // Log humano: mismo nivel que antes para que el ops/back-office
-                        // vea el contexto completo en el log de la app.
-                        _logger.LogError(
-                            bridgeEx,
-                            "Bridge BC.OnArcaSucceededAsync fallo para Invoice {InvoiceId} (CN={CreditNoteId}). " +
-                            "La NC quedo Succeeded en AFIP. Remediacion: ForceArcaConfirmationAsync manual.",
-                            invoiceId, newInvoice.Id);
-
-                        // Log estructurado para metricas/alerting. El prefijo "metric:"
-                        // permite que un pipeline (Grafana/Loki/Datadog) extraiga el
-                        // evento bc_bridge_failed y arme una alerta si se dispara N
-                        // veces por semana — sintoma de que el bridge esta roto a
-                        // nivel sistema, no caso aislado. NO incluye stack trace ni
-                        // mensaje del usuario, solo identificadores estables y el
-                        // tipo de excepcion.
-                        _logger.LogError(
-                            "metric:bc_bridge_failed | originatingInvoiceId={OriginatingInvoiceId} creditNoteInvoiceId={CreditNoteInvoiceId} errorType={ErrorType} stage=OnArcaSucceeded",
-                            invoiceId,
-                            newInvoice.Id,
-                            bridgeEx.GetType().Name);
-                    }
-                }
-            }
-            else
-            {
-                // AFIP rechazo la NC — marcar Failed para que el guard de cancel
-                // siga bloqueando hasta que el back-office reintente o resuelva.
-                original.AnnulmentStatus = AnnulmentStatus.Failed;
-                await _context.SaveChangesAsync();
-                // FUGA 2 data-exposure (2026-07-03): Observaciones de ARCA puede traer XML/tecnico. Si el motivo
-                // es texto plano legible se muestra; si es ruido tecnico, un mensaje generico (el crudo NO va a
-                // la notificacion del usuario). El log de arriba/abajo conserva el detalle tecnico.
-                var failureReason = ArcaErrorSanitizer.SanitizeArcaError(newInvoice.Observaciones);
-                var failureMessage = failureReason is null
-                    ? "La anulación falló en AFIP. Revisá los datos de la factura o reintentá."
-                    : $"La anulación falló en AFIP: {failureReason}";
-                await CreateNotification(userId, failureMessage, "Error", invoiceId);
-
-                // FC1.2.1 v3 §6.2: notificar al BC asociado. Mismo patron try/catch:
-                // el commit Failed ya quedo, no podemos rethrow. El BC quedaria en
-                // AwaitingFiscalConfirmation indefinidamente — el remediation es
-                // manual (back-office decide reintentar o abandonar).
-                var bcBridge = GetBcBridge();
-                if (bcBridge is not null)
-                {
-                    try
-                    {
-                        await bcBridge.OnArcaFailedAsync(invoiceId, newInvoice.Observaciones, CancellationToken.None);
-                    }
-                    catch (Exception bridgeEx)
-                    {
-                        _logger.LogError(
-                            bridgeEx,
-                            "Bridge BC.OnArcaFailedAsync fallo para Invoice {InvoiceId}. La NC esta Failed en AFIP.",
-                            invoiceId);
-
-                        // Mismo prefijo metric:bc_bridge_failed que el caso Succeeded
-                        // para que el alerting capture ambos modos de falla con la
-                        // misma regla. stage=OnArcaFailed diferencia el contexto.
-                        _logger.LogError(
-                            "metric:bc_bridge_failed | originatingInvoiceId={OriginatingInvoiceId} creditNoteInvoiceId={CreditNoteInvoiceId} errorType={ErrorType} stage=OnArcaFailed",
-                            invoiceId,
-                            (int?)null,
-                            bridgeEx.GetType().Name);
-                    }
-                }
-            }
+            // F1 (2026-07-07): el manejo del resultado se centralizo en el helper para compartirlo
+            // EXACTAMENTE con el camino "NC retomada" (reintento idempotente) de mas arriba.
+            await HandleCreditNoteAnnulmentResultAsync(original, newInvoice, invoiceId, userId, approvalRequestId);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error crítico en Job de Anulación");
+            // F3 (2026-07-07): despoisonar el ChangeTracker ANTES de cualquier SaveChanges de remediacion.
+            // Si la excepcion vino de un INSERT que fallo (ej. el unique index UX_Invoices_OnePendingPerReserva
+            // rechazando una segunda NC PENDING en un reintento), la entidad de ese INSERT sigue TRACKEADA en el
+            // contexto y envenena TODOS los SaveChanges posteriores: marcar Failed y crear el aviso volverian a
+            // intentar el mismo INSERT y a explotar. Limpiar el tracker deja el contexto sano para la remediacion
+            // best-effort de abajo. Descartamos los cambios sin guardar a proposito: en este punto son el estado
+            // corrupto que causo el error.
+            _context.ChangeTracker.Clear();
+
+            _logger.LogError(ex, "Error crítico en Job de Anulación para Invoice {InvoiceId}", invoiceId);
 
             // B1.15 Fase 2a (FIX 6): cualquier excepcion del job marca Failed.
             // Se hace en transaccion separada para no perder la marca si SaveChanges
-            // posterior falla (best-effort).
+            // posterior falla (best-effort). Con el tracker ya limpio, el re-load trae
+            // una entidad fresca y el SaveChanges no arrastra el INSERT envenenado.
             try
             {
                 var failed = await _context.Invoices.FirstOrDefaultAsync(i => i.Id == invoiceId);
@@ -1758,16 +1696,206 @@ public class InvoiceService : IInvoiceService
                 _logger.LogError(saveEx, "No se pudo persistir AnnulmentStatus=Failed para Invoice {InvoiceId}", invoiceId);
             }
 
-            var errorMsg = ex.Message;
-            if (errorMsg.Contains("AFIP RECHAZADO"))
+            if (ex.Message.Contains("AFIP RECHAZADO"))
             {
                  // Permanent error (Validation), do not retry
-                 await CreateNotification(userId, $"La anulación fue rechazada por AFIP: {errorMsg.Replace("AFIP RECHAZADO: ", "")}", "Error", invoiceId);
+                 await CreateNotification(userId, $"La anulación fue rechazada por AFIP: {ex.Message.Replace("AFIP RECHAZADO: ", "")}", "Error", invoiceId);
                  return; // Job finishes effectively "Failed" but successfully handled
             }
 
-            await CreateNotification(userId, $"Error técnico al anular: {errorMsg}. Se reintentará automáticamente.", "Error", invoiceId);
-            throw; // Retry job for network/transient errors
+            // F2/data-exposure (2026-07-07): el aviso al usuario SIEMPRE es texto de negocio. Solo el mensaje de
+            // nuestra excepcion controlada (InvoiceAnnulmentPendingRetryException, "AFIP no respondio...") es seguro
+            // de mostrar; lo generamos nosotros. Cualquier OTRA excepcion puede traer detalle tecnico crudo — el
+            // caso real fue "Name or service not known (wsaahomo.afip.gov.ar:443)" cuando se cae el DNS de AFIP, que
+            // NO debe llegar al vendedor. El detalle tecnico ya quedo en el log de arriba.
+            var userFacingError = ex is InvoiceAnnulmentPendingRetryException
+                ? $"Error técnico al anular: {ex.Message}. Se reintentará automáticamente."
+                : "Error técnico al anular: no se pudo conectar con AFIP. Se reintentará automáticamente.";
+            await CreateNotification(userId, userFacingError, "Error", invoiceId);
+            throw; // Hangfire reintenta; gracias a F1 el reintento RETOMA la NC pendiente en vez de duplicarla.
+        }
+    }
+
+    /// <summary>
+    /// Maneja el resultado de AFIP para la Nota de Credito de una anulacion total, sea una NC recien creada
+    /// o una NC pendiente RETOMADA por un reintento idempotente (F1). Centraliza las 3 ramas para no
+    /// duplicarlas entre ambos caminos:
+    ///  - <b>Resultado "A"</b> (aprobada): marca la factura original como anulada (Succeeded), consume el
+    ///    approval, apaga avisos de error de anulacion previos y sincroniza el BookingCancellation asociado
+    ///    (bridge <c>OnArcaSucceededAsync</c>).
+    ///  - <b>Resultado "R"</b> (rechazo fiscal REAL de AFIP): marca Failed, avisa con mensaje saneado y notifica
+    ///    al BC que el ARCA rechazo (<c>OnArcaFailedAsync</c>) para que quede en revision + retry.
+    ///  - <b>Cualquier otro</b> (PENDING u otro no-A no-R): AFIP NO dio una respuesta definitiva (respuesta de
+    ///    red vacia / sin CAE). NO es un rechazo, es un error TECNICO transitorio. Lanzamos una excepcion
+    ///    controlada para caer al catch del job (Failed best-effort + aviso "se reintentara" + rethrow ->
+    ///    Hangfire reintenta -> F1 RETOMA esta misma NC pendiente en vez de duplicarla). Deliberadamente NO
+    ///    llamamos <c>OnArcaFailedAsync</c>: el BC debe seguir esperando la confirmacion fiscal, no marcarse
+    ///    rechazado.
+    /// </summary>
+    private async Task HandleCreditNoteAnnulmentResultAsync(
+        Invoice original, Invoice newInvoice, int invoiceId, string userId, int? approvalRequestId)
+    {
+        if (newInvoice.Resultado == "A")
+        {
+            // B1.15 Fase 2a (FIX 6): NC aprobada por AFIP — la factura original
+            // queda definitivamente anulada. Levanta el bloqueo fiscal de cancel
+            // de reserva (FIX 7). AnnulledAt toma el momento de aprobacion.
+            original.AnnulmentStatus = AnnulmentStatus.Succeeded;
+            original.AnnulledAt = newInvoice.IssuedAt ?? DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+            // B1.15 Fase D (2026-05-11): consumir la aprobacion ahora que la
+            // accion solicitada se ejecuto. Si el caller era Admin, no hay
+            // approvalRequestId (no-op).
+            if (approvalRequestId.HasValue && _approvalService is not null)
+            {
+                await _approvalService.MarkConsumedAsync(approvalRequestId.Value);
+            }
+
+            // D3 (2026-07-05): apagar los avisos de ERROR de anulacion PREVIOS de esta misma factura. La
+            // anulacion pudo haber fallado antes (error tecnico "se reintentara automaticamente") y dejado un
+            // aviso vivo; ahora que salio bien, ese aviso ya no tiene causa. Se resuelve por la clave del invoice
+            // ORIGINAL ("Invoice:{invoiceId}"), no la de la NC nueva. Va ANTES de crear el aviso de exito para que
+            // el usuario no vea "error" y "exito" conviviendo. Idempotente: si no habia error previo, no hace nada.
+            // IMPORTANTE (mismo contrato que el bridge de abajo): en este punto el commit fiscal YA quedo
+            // (AnnulmentStatus=Succeeded, CAE emitido). Por eso este apagado va en try/catch y NUNCA hace
+            // rethrow: si tirara, la excepcion subiria al catch del job -> Hangfire reintentaria -> aunque el
+            // guard "Avoid double processing" evita re-emitir la NC, dejaria un aviso "error tecnico, se
+            // reintentara" fantasma sobre una anulacion que en realidad salio bien (justo el sintoma que esta
+            // tanda vino a matar). Si falla, la red de seguridad es W4: el vigia nocturno apaga el error de
+            // anulacion porque la factura ya quedo Succeeded.
+            var annulmentNotificationService = GetNotificationService();
+            if (annulmentNotificationService is not null)
+            {
+                try
+                {
+                    await annulmentNotificationService.ResolveByKeyAsync(
+                        NotificationResolutionKeys.ForEntity(NotificationRelatedEntityTypes.Invoice, invoiceId));
+                }
+                catch (Exception resolveEx)
+                {
+                    _logger.LogError(
+                        resolveEx,
+                        "No se pudo apagar el aviso de error de anulacion previo para Invoice {InvoiceId}. " +
+                        "La anulacion quedo Succeeded; el vigia (W4) lo apagara esa noche.",
+                        invoiceId);
+                }
+            }
+
+            await CreateNotification(userId, $"Anulación exitosa. Se generó el comprobante {newInvoice.NumeroComprobante}.", "Success", newInvoice.Id);
+
+            // FC1.2.1 v3 §6.2 / HC3 (BR-V2-04, 2026-05-17): sincronizar el BC
+            // asociado (si existe). El try/catch envolvente es CRITICO: el
+            // commit fiscal arriba ya quedo (AnnulmentStatus=Succeeded), por
+            // lo tanto NO podemos hacer rethrow → Hangfire reintentaria el
+            // job entero y llamaria AFIP de nuevo (NC duplicada). Si el bridge
+            // falla, el path de remediacion es manual via
+            // ForceArcaConfirmationAsync (BR-V2-01).
+            //
+            // Contrato del bridge (FC1.2.1 v3, leer antes de modificar este bloque):
+            //   1. En este punto la NC YA quedo commiteada — el SaveChangesAsync
+            //      anterior (linea original.AnnulmentStatus=Succeeded) ya ejecuto
+            //      y AFIP ya emitio el comprobante (CAE devuelto). No hay vuelta atras.
+            //   2. El bridge (BookingCancellationService.OnArcaSucceededAsync)
+            //      abre su PROPIA unidad de trabajo / transaccion: carga el BC,
+            //      lo transiciona a AwaitingOperatorRefund, escribe audit log y
+            //      hace SaveChangesAsync. NO comparte la transaccion con este service.
+            //   3. NO se debe tocar el DbContext entre el SaveChanges anterior y
+            //      esta llamada — el bridge asume que el contexto esta limpio
+            //      (Include necesarios, sin entidades tracked stale).
+            //   4. Si el bridge falla, el escape hatch documentado es
+            //      BookingCancellationService.ForceArcaConfirmationAsync (BR-V2-01),
+            //      que requiere approval InvariantOverride.
+            var bcBridge = GetBcBridge();
+            if (bcBridge is not null)
+            {
+                try
+                {
+                    await bcBridge.OnArcaSucceededAsync(invoiceId, newInvoice.Id, CancellationToken.None);
+                }
+                catch (Exception bridgeEx)
+                {
+                    // Log humano: mismo nivel que antes para que el ops/back-office
+                    // vea el contexto completo en el log de la app.
+                    _logger.LogError(
+                        bridgeEx,
+                        "Bridge BC.OnArcaSucceededAsync fallo para Invoice {InvoiceId} (CN={CreditNoteId}). " +
+                        "La NC quedo Succeeded en AFIP. Remediacion: ForceArcaConfirmationAsync manual.",
+                        invoiceId, newInvoice.Id);
+
+                    // Log estructurado para metricas/alerting. El prefijo "metric:"
+                    // permite que un pipeline (Grafana/Loki/Datadog) extraiga el
+                    // evento bc_bridge_failed y arme una alerta si se dispara N
+                    // veces por semana — sintoma de que el bridge esta roto a
+                    // nivel sistema, no caso aislado. NO incluye stack trace ni
+                    // mensaje del usuario, solo identificadores estables y el
+                    // tipo de excepcion.
+                    _logger.LogError(
+                        "metric:bc_bridge_failed | originatingInvoiceId={OriginatingInvoiceId} creditNoteInvoiceId={CreditNoteInvoiceId} errorType={ErrorType} stage=OnArcaSucceeded",
+                        invoiceId,
+                        newInvoice.Id,
+                        bridgeEx.GetType().Name);
+                }
+            }
+        }
+        else if (newInvoice.Resultado == "R")
+        {
+            // AFIP rechazo la NC (rechazo fiscal REAL, "R") — marcar Failed para que el guard de cancel
+            // siga bloqueando hasta que el back-office reintente o resuelva.
+            original.AnnulmentStatus = AnnulmentStatus.Failed;
+            await _context.SaveChangesAsync();
+            // FUGA 2 data-exposure (2026-07-03): Observaciones de ARCA puede traer XML/tecnico. Si el motivo
+            // es texto plano legible se muestra; si es ruido tecnico, un mensaje generico (el crudo NO va a
+            // la notificacion del usuario). El log de arriba/abajo conserva el detalle tecnico.
+            var failureReason = ArcaErrorSanitizer.SanitizeArcaError(newInvoice.Observaciones);
+            var failureMessage = failureReason is null
+                ? "La anulación falló en AFIP. Revisá los datos de la factura o reintentá."
+                : $"La anulación falló en AFIP: {failureReason}";
+            await CreateNotification(userId, failureMessage, "Error", invoiceId);
+
+            // FC1.2.1 v3 §6.2: notificar al BC asociado. Mismo patron try/catch:
+            // el commit Failed ya quedo, no podemos rethrow. El BC quedaria en
+            // AwaitingFiscalConfirmation indefinidamente — el remediation es
+            // manual (back-office decide reintentar o abandonar).
+            var bcBridge = GetBcBridge();
+            if (bcBridge is not null)
+            {
+                try
+                {
+                    await bcBridge.OnArcaFailedAsync(invoiceId, newInvoice.Observaciones, CancellationToken.None);
+                }
+                catch (Exception bridgeEx)
+                {
+                    _logger.LogError(
+                        bridgeEx,
+                        "Bridge BC.OnArcaFailedAsync fallo para Invoice {InvoiceId}. La NC esta Failed en AFIP.",
+                        invoiceId);
+
+                    // Mismo prefijo metric:bc_bridge_failed que el caso Succeeded
+                    // para que el alerting capture ambos modos de falla con la
+                    // misma regla. stage=OnArcaFailed diferencia el contexto.
+                    _logger.LogError(
+                        "metric:bc_bridge_failed | originatingInvoiceId={OriginatingInvoiceId} creditNoteInvoiceId={CreditNoteInvoiceId} errorType={ErrorType} stage=OnArcaFailed",
+                        invoiceId,
+                        (int?)null,
+                        bridgeEx.GetType().Name);
+                }
+            }
+        }
+        else
+        {
+            // F2 (2026-07-07): AFIP NO dio respuesta definitiva (Resultado="PENDING" u otro no-A no-R). Esto lo
+            // setea AfipService.ProcessInvoiceJob cuando la respuesta de red vino vacia o sin CAE. NO es un rechazo
+            // fiscal ("R"): es un error TECNICO transitorio. Antes esta rama caia en el "else" de rechazo y llamaba
+            // OnArcaFailedAsync -> el BC quedaba marcado como rechazado por AFIP cuando en realidad solo hubo un
+            // problema de red. Ahora lanzamos una excepcion controlada: cae al catch del job (Failed best-effort +
+            // aviso "se reintentara" + rethrow) para que Hangfire reintente, y gracias a F1 el reintento RETOMA
+            // esta misma NC pendiente en vez de duplicarla. NO tocamos el BC: debe seguir esperando la confirmacion.
+            _logger.LogWarning(
+                "ProcessAnnulmentJob: AFIP no dio respuesta definitiva (Resultado={Resultado}) para la NC {CreditNoteId} " +
+                "de la factura {InvoiceId}. Se trata como error tecnico transitorio y se reintentara (no se marca el BC como rechazado).",
+                newInvoice.Resultado ?? "(null)", newInvoice.Id, invoiceId);
+            throw new InvoiceAnnulmentPendingRetryException(
+                "AFIP no respondió al emitir la Nota de Crédito");
         }
     }
 
