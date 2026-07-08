@@ -76,6 +76,34 @@ vez → el job retoma la NC 64 pendiente → AFIP (ya accesible) la aprueba → 
 anulación se completa sola (bridge + estados). Si AFIP volviera a no responder,
 ahora reintenta sin romperse.
 
+## 4-bis. Segunda tanda de la madrugada: la ND por multa aprende dólares (`487c7d7`)
+
+Al reintentar, la anulación de Gastón completó (NC 64 aprobada) pero su multa
+confirmada quedó en "revisión manual": el gating ADR-013 no emitía ND automática
+en moneda != ARS. Se habilitó, con criterio fiscal del experto contable
+(cotización CONGELADA heredada de la factura, como la NC; diferencia de cambio
+del cobro aparte; CanMisMonExt espejado) y tres decisiones de producto que
+Gastón cerró esta noche: la multa SIEMPRE se traslada 1:1 al cliente; quiere ver
+en la ficha lo que le costó a él; y las ND trabadas se ven también en la ficha
+(esto último alimenta la tarjeta "Anulación", aún no construida).
+
+Lo importante del pase de reviews: security BLOQUEÓ con un hallazgo real (B1) —
+el monto de la multa se tipea eligiendo moneda en la pantalla, y la emisión no
+comparaba esa moneda contra la de la factura: una multa "pensada en pesos" sobre
+factura USD hubiera salido como ND de USD por ese número (~1500x), con CAE,
+irreversible. Cerrado: la moneda declarada ahora se persiste y el gating la
+compara (en eje ARCA, "USD"=="DOL"); distinta o desconocida → revisión manual,
+sin conversión automática. Además: candado FOR UPDATE en el "Reintentar" de la
+bandeja (dos clicks = UNA sola ND) y textos en fácil ("dólares (US$)", nunca
+códigos ARCA).
+
+**Cómo se destraba el caso real de Gastón** (multa confirmada antes del fix, sin
+moneda registrada → queda en manual a propósito): en la ficha, "no cobrar" →
+"Deshacer" → volver a confirmar la multa cargando los USD 200. Esa
+re-confirmación ya registra la moneda y emite la ND sola. Ese va a ser el primer
+test real en homologación de la validación de cotización de ARCA con TC
+congelado.
+
 ## 5. Hallazgos anotados para después (no de esta madrugada)
 
 - El servidor apunta a **AFIP homologación** (wsaahomo) — los comprobantes del
