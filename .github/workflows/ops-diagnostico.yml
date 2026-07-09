@@ -45,6 +45,8 @@ on:
           - estado
           - logs-api
           - logs-worker
+          - logs-migrate
+          - logs-web
           - sql
       filtro:
         description: "Regex para grep -E sobre los logs (vacio = sin filtrar)"
@@ -173,6 +175,19 @@ jobs:
 
               logs-worker)
                 mostrar_logs travel_worker
+                ;;
+
+              # (2026-07-09) Sumados durante el incidente del deploy 2124221: el contenedor
+              # one-shot de migraciones salia con exito sin aplicar la migracion nueva y NO
+              # habia forma de leer sus logs desde aca (solo api/worker). docker logs funciona
+              # igual sobre un contenedor ya salido (Exited), que es el estado normal de
+              # travel_migrate. logs-web para cuando nginx no levanta.
+              logs-migrate)
+                mostrar_logs travel_migrate
+                ;;
+
+              logs-web)
+                mostrar_logs travel_web
                 ;;
 
               # --------------------------------------------------------------
