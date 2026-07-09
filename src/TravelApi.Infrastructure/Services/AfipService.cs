@@ -1707,6 +1707,14 @@ public class AfipService : IAfipService
         {
             ReservaId = invoice.ReservaId,
             Amount = -invoice.ImporteTotal,
+            // BUG DE PLATA (2026-07-08, confirmado con datos de prod, ej. F-2026-1044): antes esta linea
+            // no seteaba Currency, y quedaba pegado al default del entity ("ARS") SIEMPRE, aunque la NC
+            // fuera en dolares. Resultado: una NC parcial en USD generaba un asiento de reversion en ARS,
+            // el saldo bajaba en el bucket de pesos (que nunca subio) y quedaba una "deuda fantasma" en
+            // ARS mientras la plata real (USD) seguia mostrando saldo a favor. Invoice.MonId ya trae la
+            // moneda real de la NC, pero en formato ARCA ("PES"/"DOL"); ArcaCurrencyMapper.ToIso la pasa
+            // al ISO ("ARS"/"USD") que habla el resto del modulo de plata (Payment.Currency).
+            Currency = ArcaCurrencyMapper.ToIso(invoice.MonId) ?? Monedas.ARS,
             PaidAt = DateTime.UtcNow,
             Method = "CreditNote",
             Reference = $"NC parcial AFIP {invoice.PuntoDeVenta:D5}-{invoice.NumeroComprobante:D8}",
@@ -1855,6 +1863,10 @@ public class AfipService : IAfipService
         {
             ReservaId = invoice.ReservaId,
             Amount = -invoice.ImporteTotal,
+            // Mismo bug/mismo fix que en ApplyPartialCreditNoteReversalAsync (ver comentario ahi arriba):
+            // sin este mapeo, una NC TOTAL en dolares tambien generaba su reversion en ARS por el default
+            // del entity, dejando la misma deuda fantasma cuando la reserva se anula en USD.
+            Currency = ArcaCurrencyMapper.ToIso(invoice.MonId) ?? Monedas.ARS,
             PaidAt = DateTime.UtcNow,
             Method = "CreditNote",
             Reference = $"NC AFIP {invoice.PuntoDeVenta:D5}-{invoice.NumeroComprobante:D8}",

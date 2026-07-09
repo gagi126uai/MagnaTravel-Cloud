@@ -60,7 +60,11 @@ public class AfipServicePartialCreditNoteReversalTests
         decimal originalAmount,
         decimal ncAmount,
         CreditNoteKind? bcCreditNoteKind, // null = no hay BC asociado (NCs pre-FC1.3)
-        (decimal amount, bool receiptIssued)[]? payments = null)
+        (decimal amount, bool receiptIssued)[]? payments = null,
+        // 2026-07-08 (fix moneda fantasma): moneda ARCA de la NC ("PES"/"DOL"). null = no se
+        // toca el campo -> queda el default del entity Invoice.MonId ("PES"), que es el escenario
+        // historico que ya cubrian estos tests.
+        string? ncMonId = null)
     {
         var reserva = new Reserva
         {
@@ -106,6 +110,10 @@ public class AfipServicePartialCreditNoteReversalTests
             CreatedAt = DateTime.UtcNow,
             OriginalInvoiceId = 800,
         };
+        if (ncMonId != null)
+        {
+            nc.MonId = ncMonId;
+        }
         context.Invoices.Add(nc);
 
         // Payments + Receipts vivos (Issued).
@@ -227,6 +235,9 @@ public class AfipServicePartialCreditNoteReversalTests
         Assert.NotNull(reversal);
         Assert.NotNull(reversal!.OriginalPaymentId);
         Assert.Equal(-1000m, reversal.Amount);
+        // Regresion del bug de moneda fantasma (2026-07-08): la NC no seteo MonId (queda "PES" default
+        // del entity Invoice), asi que el reversal tiene que quedar en ARS.
+        Assert.Equal("ARS", reversal.Currency);
     }
 
     // =========================================================================
@@ -277,6 +288,8 @@ public class AfipServicePartialCreditNoteReversalTests
         Assert.NotNull(reversal);
         Assert.Null(reversal!.OriginalPaymentId);
         Assert.Equal(-250m, reversal.Amount);
+        // Regresion del bug de moneda fantasma: sin MonId explicito, el default es "PES" -> ARS.
+        Assert.Equal("ARS", reversal.Currency);
     }
 
     // =========================================================================
@@ -331,6 +344,8 @@ public class AfipServicePartialCreditNoteReversalTests
         Assert.NotNull(reversal);
         Assert.Null(reversal!.OriginalPaymentId);
         Assert.Equal(-250m, reversal.Amount);
+        // Regresion del bug de moneda fantasma: sin MonId explicito, el default es "PES" -> ARS.
+        Assert.Equal("ARS", reversal.Currency);
 
         // Audit del nuevo evento con los 3 receipt IDs serializados.
         Assert.NotNull(capturedAuditDetails);
@@ -343,6 +358,68 @@ public class AfipServicePartialCreditNoteReversalTests
             .ToList();
         Assert.Equal(3, receiptIdsFromAudit.Count);
         Assert.Equal(-250m, auditDoc.RootElement.GetProperty("reversalAmount").GetDecimal());
+    }
+
+    // =========================================================================
+    // Regresion del bug de moneda fantasma (2026-07-08, confirmado con datos de prod: F-2026-1044).
+    // Antes, ninguno de los dos sitios que crean el Payment de reversion economica seteaba Currency,
+    // asi que quedaba SIEMPRE en "ARS" (el default del entity) aunque la NC fuera en dolares. Una NC
+    // parcial o total en USD generaba un asiento de reversion en ARS: el saldo bajaba en el bucket de
+    // pesos (que nunca habia subido) y quedaba una deuda fantasma en ARS mientras la plata real en USD
+    // seguia mostrando saldo a favor. Estos dos tests fijan que Currency siga la moneda REAL de la NC.
+    // =========================================================================
+
+    [Fact]
+    public async Task ApplyCreditNoteEconomicReversal_NcTotal_EnDolares_ReversalQuedaEnUsd()
+    {
+        await using var ctx = new AppDbContext(_dbOptions);
+
+        // NC TOTAL en dolares (MonId ARCA = "DOL"): mismo escenario que el test de regresion FC1.2,
+        // pero con la factura/NC facturada en USD.
+        await SeedNcScenarioAsync(
+            ctx,
+            originalAmount: 1000m,
+            ncAmount: 1000m,
+            bcCreditNoteKind: null,
+            payments: new[] { (1000m, true) },
+            ncMonId: "DOL");
+
+        var service = BuildAfipService(ctx, new Mock<IAuditService>().Object);
+
+        await service.ApplyCreditNoteEconomicReversalAsync(invoiceId: 801);
+
+        var reversal = await ctx.Payments.AsNoTracking()
+            .FirstOrDefaultAsync(p => p.EntryType == PaymentEntryTypes.CreditNoteReversal);
+        Assert.NotNull(reversal);
+        Assert.Equal(-1000m, reversal!.Amount);
+        // ANTES del fix esto daba "ARS" (default del entity) y generaba la deuda fantasma.
+        Assert.Equal("USD", reversal.Currency);
+    }
+
+    [Fact]
+    public async Task ApplyCreditNoteEconomicReversal_NcParcial_EnDolares_ReversalQuedaEnUsd()
+    {
+        await using var ctx = new AppDbContext(_dbOptions);
+
+        // NC PARCIAL en dolares: mismo escenario que el test single-payment, pero MonId = "DOL".
+        await SeedNcScenarioAsync(
+            ctx,
+            originalAmount: 1000m,
+            ncAmount: 250m,
+            bcCreditNoteKind: CreditNoteKind.PartialOnOriginal,
+            payments: new[] { (1000m, true) },
+            ncMonId: "DOL");
+
+        var service = BuildAfipService(ctx, new Mock<IAuditService>().Object);
+
+        await service.ApplyCreditNoteEconomicReversalAsync(invoiceId: 801);
+
+        var reversal = await ctx.Payments.AsNoTracking()
+            .FirstOrDefaultAsync(p => p.EntryType == PaymentEntryTypes.CreditNoteReversal);
+        Assert.NotNull(reversal);
+        Assert.Equal(-250m, reversal!.Amount);
+        // ANTES del fix esto daba "ARS" (default del entity) y generaba la deuda fantasma.
+        Assert.Equal("USD", reversal.Currency);
     }
 
     // =========================================================================

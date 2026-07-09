@@ -16,6 +16,8 @@ import {
   debeMostrarWaiveEnAccionTrabada,
   textoRastroWaived,
   tienePasoDeMultaOperador,
+  debePollearSituacionMulta,
+  seAgotoElBudgetDePollingDeMulta,
 } from "../operatorPenaltyBanner.js";
 
 // ============================================================================
@@ -205,4 +207,50 @@ test("tienePasoDeMultaOperador: sin operatorPenaltySituation, fallback legado (W
 
 test("tienePasoDeMultaOperador: sin operatorPenaltySituation ni capabilities → false", () => {
   assert.equal(tienePasoDeMultaOperador({}), false);
+});
+
+// ============================================================================
+// debePollearSituacionMulta / seAgotoElBudgetDePollingDeMulta
+// (refresco automático del cartel "procesando" — bug del F5 manual, 2026-07-08)
+// ============================================================================
+
+test("debePollearSituacionMulta: familia 'procesando' → true (única familia sin acción del agente)", () => {
+  assert.equal(debePollearSituacionMulta("procesando"), true);
+});
+
+test("debePollearSituacionMulta: 'pregunta' → false (el agente ya tiene botones Sí/No)", () => {
+  assert.equal(debePollearSituacionMulta("pregunta"), false);
+});
+
+test("debePollearSituacionMulta: 'accionTrabada' → false (se refresca sola al resolver la acción)", () => {
+  assert.equal(debePollearSituacionMulta("accionTrabada"), false);
+});
+
+test("debePollearSituacionMulta: 'waived' → false", () => {
+  assert.equal(debePollearSituacionMulta("waived"), false);
+});
+
+test("debePollearSituacionMulta: 'soloLectura' → false", () => {
+  assert.equal(debePollearSituacionMulta("soloLectura"), false);
+});
+
+test("seAgotoElBudgetDePollingDeMulta: recién arrancado (0 ms) → todavía no", () => {
+  assert.equal(seAgotoElBudgetDePollingDeMulta(0, 180_000), false);
+});
+
+test("seAgotoElBudgetDePollingDeMulta: justo antes del tope → todavía no", () => {
+  assert.equal(seAgotoElBudgetDePollingDeMulta(179_999, 180_000), false);
+});
+
+test("seAgotoElBudgetDePollingDeMulta: justo en el tope → se agotó", () => {
+  assert.equal(seAgotoElBudgetDePollingDeMulta(180_000, 180_000), true);
+});
+
+test("seAgotoElBudgetDePollingDeMulta: pasado el tope → se agotó", () => {
+  assert.equal(seAgotoElBudgetDePollingDeMulta(300_000, 180_000), true);
+});
+
+test("seAgotoElBudgetDePollingDeMulta: tope custom respetado", () => {
+  assert.equal(seAgotoElBudgetDePollingDeMulta(59_999, 60_000), false);
+  assert.equal(seAgotoElBudgetDePollingDeMulta(60_000, 60_000), true);
 });

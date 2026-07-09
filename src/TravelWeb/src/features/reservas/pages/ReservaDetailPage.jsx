@@ -1264,7 +1264,12 @@ export default function ReservaDetailPage() {
             situacionCurrency: situacionMulta?.currency,
             porMoneda: reserva.porMoneda,
           })}
-          onResuelto={() => fetchReserva({ showLoading: false, preserveOnError: true })}
+          /* Refresco SILENCIOSO de punta a punta: sin spinner (showLoading:false), sin perder lo
+             que ya está en pantalla si falla (preserveOnError) y sin toast de error (silentErrors)
+             — lo usa tanto el refresco post-acción del panel como el auto-refresco cada ~10 s de
+             la familia "procesando" (useOperatorPenaltyPolling); un tick de fondo que falla no
+             tiene que gritarle nada al usuario, el próximo tick lo reintenta solo. */
+          onResuelto={() => fetchReserva({ showLoading: false, preserveOnError: true, silentErrors: true })}
         />
       ) : (reserva.status === "Cancelled" && !hayPasoDeMultaOperadorActivo) ? (
         // ADR-036: el estado interno sigue siendo "Cancelled" pero el usuario ve "Anulada".

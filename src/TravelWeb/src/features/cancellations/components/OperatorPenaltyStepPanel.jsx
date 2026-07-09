@@ -10,7 +10,8 @@
  *     la nota ahora), gateado por los permisos que ya vienen resueltos del backend
  *     (canRetryDebitNote / canCorrectAmountCurrency).
  *   - "procesando" (DebitNoteQueued): cartel informativo ámbar, sin botón — se está
- *     emitiendo, no hay nada para hacer todavía.
+ *     emitiendo, no hay nada para hacer todavía. Se refresca SOLO cada ~10 s mientras
+ *     dure esta familia (ver useOperatorPenaltyPolling) para no depender de un F5 manual.
  *
  * Las familias "pregunta" (PendingDecision) y "waived" (Waived) NO se dibujan acá: ya
  * tienen su propio bloque en ReservaDetailPage (los botones "Sí cobró/No cobró" y el
@@ -29,6 +30,7 @@
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
 import { familiaDeEstadoMulta, copyAccionTrabada, slugDeEstadoMulta, debeMostrarWaiveEnAccionTrabada } from "../operatorPenaltyBanner";
+import { useOperatorPenaltyPolling } from "../hooks/useOperatorPenaltyPolling";
 import { ConfirmarMultaOperadorInline } from "./ConfirmarMultaOperadorInline";
 import { cancellationsApi } from "../api/cancellationsApi";
 import { showSuccess, showError } from "../../../alerts";
@@ -50,7 +52,9 @@ const MOTIVO_WAIVE_DESDE_TRABADO = "Cerrada sin multa desde el paso trabado de l
  *     Incluye `canWaive` (bool): true solo si la multa está Confirmed, la ND no está en
  *     juego y el usuario tiene permiso — habilita el link "El operador no cobró esta multa".
  *   - monedaSugerida: moneda con la que arranca el selector del modo "corregir", si hace falta.
- *   - onResuelto: callback tras una acción exitosa (el padre refresca la reserva).
+ *   - onResuelto: callback de refresco SILENCIOSO (sin toast propio) que el padre ya usa
+ *     tras una acción exitosa Y que este panel reutiliza para el auto-refresco de la
+ *     familia "procesando" (ver useOperatorPenaltyPolling más abajo).
  */
 export function OperatorPenaltyStepPanel({ reservaPublicId, reservaNumero, situacion, monedaSugerida, onResuelto }) {
   const [buscando, setBuscando] = useState(false);
@@ -65,6 +69,17 @@ export function OperatorPenaltyStepPanel({ reservaPublicId, reservaNumero, situa
   const familia = familiaDeEstadoMulta(situacion.state);
   const testId = `banner-multa-${slugDeEstadoMulta(situacion.state)}`;
 
+  // Bug reportado por Gastón (2026-07-08): este cartel quedaba TRABADO para siempre
+  // aunque la ND ya se hubiera emitido del lado del backend — solo un F5 manual lo
+  // destrababa. Mientras la familia sea "procesando" (y solo ahí: el hook mismo se
+  // encarga de no pollear en las otras cuatro familias), refrescamos la situación
+  // sola cada ~10 s hasta que cambie o se agote el tope de espera. `onResuelto` es acá
+  // el mismo refresco SILENCIOSO que ya usa el resto del panel (fetchReserva con
+  // showLoading:false — no dispara ningún toast de éxito, solo trae la reserva
+  // actualizada): cuando la ND ya se emitió, la familia deja de ser "procesando" y
+  // este cartel se reemplaza solo en el próximo render, sin que el agente haga nada.
+  const seAgotoLaEsperaDelPolling = useOperatorPenaltyPolling(familia, onResuelto);
+
   if (familia === "procesando") {
     return (
       <div
@@ -73,6 +88,16 @@ export function OperatorPenaltyStepPanel({ reservaPublicId, reservaNumero, situa
         role="status"
       >
         <strong className="font-bold">Anulada — se está emitiendo la multa al cliente.</strong> Puede demorar unos minutos, no hace falta que hagas nada.
+        {/* Tope de ~3 min agotado sin que el backend resuelva: puede ser una cola realmente
+            trabada, así que dejamos de insistir solos y le damos la salida manual de siempre. */}
+        {seAgotoLaEsperaDelPolling && (
+          <p
+            className="mt-1.5 text-xs text-amber-700/80 dark:text-amber-300/70"
+            data-testid="multa-polling-timeout-hint"
+          >
+            ¿Tarda mucho? Actualizá la página.
+          </p>
+        )}
       </div>
     );
   }

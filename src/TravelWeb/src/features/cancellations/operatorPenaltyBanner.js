@@ -172,6 +172,44 @@ export function debeMostrarWaiveEnAccionTrabada(situacion) {
 }
 
 /**
+ * True si, en el estado actual del cartel, hay que estar refrescando la situación de
+ * la multa sola (sin que el agente toque nada). Bug reportado por Gastón (2026-07-08):
+ * el cartel "se está emitiendo la multa, puede demorar unos minutos" quedaba TRABADO
+ * para siempre aunque la ND ya se hubiera emitido del lado del backend — la base ya
+ * decía "emitida" pero la pantalla nunca se enteraba, solo un F5 manual lo destrababa.
+ *
+ * Solo la familia "procesando" (DebitNoteQueued, la ND está en camino) necesita este
+ * refresco automático: es la ÚNICA familia sin ninguna acción del agente — todas las
+ * demás (pregunta, accionTrabada, waived, soloLectura) ya se refrescan solas cuando el
+ * agente hace algo (clickea un botón, confirma un modal), así que pollearlas sería
+ * gastar llamadas al backend sin necesidad.
+ *
+ * @param {"pregunta"|"procesando"|"accionTrabada"|"waived"|"soloLectura"} familia
+ * @returns {boolean}
+ */
+export function debePollearSituacionMulta(familia) {
+  return familia === "procesando";
+}
+
+/**
+ * True si ya se agotó el tope prudente de espera del polling (evita pollear infinito
+ * si el backend quedó realmente trabado — cola caída, worker caído, etc.). A partir de
+ * acá el cartel deja de refrescarse solo y le suma al agente una línea chica para que
+ * actualice la página a mano.
+ *
+ * Recibe el tiempo transcurrido como parámetro (no lee el reloj del sistema) para que
+ * el hook que la usa (useOperatorPenaltyPolling) y sus tests puedan simular el paso del
+ * tiempo sin esperas reales — mismo patrón que shouldStopPolling en useInvoicePolling.
+ *
+ * @param {number} elapsedMs - milisegundos transcurridos desde que arrancó el polling.
+ * @param {number} maxDurationMs - tope prudente en milisegundos.
+ * @returns {boolean}
+ */
+export function seAgotoElBudgetDePollingDeMulta(elapsedMs, maxDurationMs) {
+  return elapsedMs >= maxDurationMs;
+}
+
+/**
  * True si, según la situación de la multa, sigue habiendo un paso ACTIVO que atender
  * en la ficha (cualquier estado que no sea None/Done). Reemplaza al viejo cálculo
  * `capabilities.operatorPenaltyOutcome === "Pending" || "Waived"` cuando el DTO ya trae

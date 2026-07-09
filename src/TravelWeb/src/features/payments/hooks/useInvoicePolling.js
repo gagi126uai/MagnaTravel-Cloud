@@ -54,6 +54,11 @@ export function useInvoicePolling(items, reload, options = {}) {
 
     const startedAt = Date.now();
     let timeoutId;
+    // Bandera de cancelación (mismo hallazgo del review 2026-07-09 que en
+    // useOperatorPenaltyPolling): clearTimeout solo alcanza si el timer todavía no disparó.
+    // Si el reload YA está en vuelo cuando el componente se desmonta, el cleanup no limpia
+    // nada y schedule() encadenaría un timer nuevo huérfano. La bandera corta la cadena.
+    let cancelled = false;
 
     const schedule = () => {
       const elapsed = Date.now() - startedAt;
@@ -62,13 +67,16 @@ export function useInvoicePolling(items, reload, options = {}) {
       const interval = elapsed < fastDuration ? fastInterval : slowInterval;
       timeoutId = setTimeout(async () => {
         await reloadRef.current();
-        schedule();
+        if (!cancelled) {
+          schedule();
+        }
       }, interval);
     };
 
     schedule();
 
     return () => {
+      cancelled = true;
       clearTimeout(timeoutId);
     };
   }, [hasPending, fastInterval, slowInterval, fastDuration, maxDuration]);

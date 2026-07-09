@@ -209,7 +209,11 @@ export function useReservaDetail(reservaId, navigate) {
         return camelize(payments || []);
     }, [reservaId]);
 
-    const fetchReserva = useCallback(async ({ showLoading = true, collectionKeys, strictCollections = false, service, serviceType, passenger, preserveOnError = false } = {}) => {
+    // silentErrors: para los refrescos AUTOMÁTICOS de fondo (ej. el polling del paso de multa).
+    // Un tick de fondo que falla no debe gritarle "Error al cargar la reserva" al usuario cada
+    // 10 segundos: la reserva sigue visible en pantalla y el próximo tick lo reintenta solo.
+    // Los refrescos disparados por una ACCIÓN del usuario siguen avisando (default false).
+    const fetchReserva = useCallback(async ({ showLoading = true, collectionKeys, strictCollections = false, service, serviceType, passenger, preserveOnError = false, silentErrors = false } = {}) => {
         if (!reservaId) return null;
         const fetchSequence = fetchSequenceRef.current + 1;
         fetchSequenceRef.current = fetchSequence;
@@ -327,7 +331,9 @@ export function useReservaDetail(reservaId, navigate) {
             };
         } catch (error) {
             console.error(error);
-            showError("Error al cargar la reserva: " + getApiErrorMessage(error, "Error desconocido"));
+            if (!silentErrors) {
+                showError("Error al cargar la reserva: " + getApiErrorMessage(error, "Error desconocido"));
+            }
             if (!preserveOnError) {
                 setReservaSnapshot(null);
             }
