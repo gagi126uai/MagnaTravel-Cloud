@@ -68,13 +68,19 @@ namespace TravelApi.Infrastructure.Persistence.Migrations.App
             // ─────────────────────────────────────────────────────────────────────────────────────────
             // PASO 0 — BACKUP del estado previo (idempotente vía CREATE TABLE IF NOT EXISTS ... AS).
             // Guarda la Currency VIEJA (la rota) de cada Payment que el PASO 1 va a corregir, más los datos
-            // mínimos para poder ubicarlo (ReservaId, RelatedInvoiceId, Amount) si hiciera falta auditar.
+            // mínimos para poder ubicarlo (TravelFileId = la reserva, RelatedInvoiceId, Amount) si hiciera
+            // falta auditar.
             // ─────────────────────────────────────────────────────────────────────────────────────────
+            // OJO con el desalineo historico codigo-vs-base (incidente real de este deploy, 2026-07-09):
+            // la propiedad Payment.ReservaId esta mapeada a la columna "TravelFileId" (HasColumnName en el
+            // snapshot; el rename Reserva->TravelFile nunca se aplico a la base). En SQL crudo va el nombre
+            // REAL de la columna. La primera version de esta migracion usaba p."ReservaId" y reventaba con
+            // 42703 "column p.ReservaId does not exist": el migrador quedaba caido y la API en 503 pendiente.
             migrationBuilder.Sql(@"
                 CREATE TABLE IF NOT EXISTS ""_repair_20260708_phantom_currency_backup"" AS
                 SELECT
                     p.""Id"" AS ""PaymentId"",
-                    p.""ReservaId"",
+                    p.""TravelFileId"",
                     p.""RelatedInvoiceId"",
                     p.""Amount"",
                     p.""Currency"" AS ""CurrencyBeforeRepair"",
