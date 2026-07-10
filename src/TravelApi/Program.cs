@@ -1252,6 +1252,14 @@ app.MapHub<NotificationHub>("/hubs/notifications").RequireAuthorization();
 catch (Exception ex)
 {
     Log.Fatal(ex, "Application start-up failed");
+    // Incidente 2026-07-09 (migracion moneda fantasma): sin esta linea, un arranque fallido
+    // termina el proceso con exit code 0. En el contenedor one-shot de migraciones eso es
+    // veneno: la migracion revienta, el proceso "sale bien", deploy.sh imprime "Migrations
+    // applied successfully" y recien nos enteramos cuando la API queda en /health/ready 503
+    // (migracion pendiente) y el deploy aborta 3 minutos despues sin decir por que. Con el
+    // exit code en 1, docker wait lo ve, deploy.sh corta ahi mismo y muestra los logs del
+    // migrador (el error real), en vez de disfrazar la falla de exito.
+    Environment.ExitCode = 1;
 }
 finally
 {

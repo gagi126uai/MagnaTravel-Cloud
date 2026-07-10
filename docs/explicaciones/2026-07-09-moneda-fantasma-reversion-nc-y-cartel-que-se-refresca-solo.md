@@ -115,3 +115,35 @@ Detalles que importan:
 - Post-deploy pendiente de esta tanda: correr `run-watchdog` para reacomodar los saldos
   reparados sin esperar al vigía nocturno, y chequear en prod que no haya reversiones
   legacy sin `RelatedInvoiceId` (el review sugirió el conteo; si da 0, no queda nada).
+
+---
+
+## Incidente de deploy (2026-07-09, noche) — dos bugs más que destapó esta tanda
+
+El primer deploy de esta tanda (`2124221`) **dejó producción caída ~2 horas**: la API y el
+worker quedaron "no listos" (503 permanente en el chequeo de salud) y la web ni levantó.
+La cadena fue así:
+
+1. **La migración usaba un nombre de columna que no existe.** En SQL crudo escribimos
+   `p."ReservaId"`, pero en la base real esa columna de `Payments` se llama
+   **`TravelFileId`** (el renombre Reserva→TravelFile nunca se aplicó a la base; está
+   anotado como trampa conocida del proyecto). Postgres respondía `42703: column
+   p.ReservaId does not exist` y la migración moría en los 5 reintentos. Los 4 gates de
+   review no lo agarraron. Fix: `9686b18` (validado antes de pushear corriendo la consulta
+   exacta contra prod con el diagnóstico de solo lectura: parsea y encuentra **8 asientos**
+   para reparar — el bug de moneda fantasma era más extendido que el caso F-2026-1044).
+
+2. **El migrador fallaba pero salía "exitoso" (exit 0).** El catch global de `Program.cs`
+   loguea `Application start-up failed` y no setea código de salida. Resultado: el deploy
+   imprimió "Migrations applied successfully" DOS veces mientras la migración reventaba, y
+   la falla recién se vio 3 minutos después, disfrazada de "travel_api unhealthy", sin
+   pista de la causa. Fix: `Environment.ExitCode = 1` en el catch — ahora una migración
+   rota corta el deploy en el momento y muestra los logs del migrador.
+
+3. **Los logs del migrador eran ilegibles desde afuera.** La herramienta de diagnóstico
+   del VPS solo leía logs de API y worker. Se le agregaron `logs-migrate` y `logs-web`
+   (`1af8f88`) — con eso se encontró el `42703` en minutos.
+
+Lección para la memoria: **toda migración con SQL crudo se valida contra prod (solo
+lectura) ANTES de pushear** — la consulta de conteo con el mismo JOIN/WHERE cuesta un
+minuto y hubiera evitado la caída completa.
