@@ -62,11 +62,30 @@ public sealed class BookingCancellationLineBackfillService
             .Where(bc => !_db.BookingCancellationLines.Any(l => l.BookingCancellationId == bc.Id))
             .ToListAsync(ct);
 
+        // ADR-044 T2 Addendum (2026-07-10, por prolijidad, NO bloqueante): el modo de facturacion vigente de
+        // cada operador principal, para estampar SupplierInvoicingModeAtEvent en las lineas sinteticas nuevas.
+        // Batch por los SupplierId distintos para evitar N+1.
+        var distinctSupplierIds = bcsWithoutLines.Select(bc => bc.SupplierId).Distinct().ToList();
+        var invoicingModeBySupplierId = await _db.Suppliers
+            .AsNoTracking()
+            .Where(s => distinctSupplierIds.Contains(s.Id))
+            .Select(s => new { s.Id, s.InvoicingMode })
+            .ToDictionaryAsync(s => s.Id, s => s.InvoicingMode, ct);
+
         int created = 0;
         foreach (var bc in bcsWithoutLines)
         {
             // Moneda del evento desde el snapshot fiscal; ARS si el snapshot no la tiene (legacy).
             string currency = bc.FiscalSnapshot?.CurrencyAtEvent ?? Monedas.ARS;
+
+            // ADR-044 T2 Addendum (2026-07-10, backfill OPCIONAL — no bloqueante, ver B3 del Addendum): para una
+            // linea sintetica cuya multa YA estaba confirmada antes de esta tanda, RetainedDeductionAmount =
+            // PenaltyAmount (toda multa confirmada legacy era Fee+Retenida, el UNICO camino que existia).
+            decimal retainedDeductionAmount = bc.PenaltyStatus == PenaltyStatus.Confirmed
+                ? bc.PenaltyAmountAtEvent ?? 0m
+                : 0m;
+
+            invoicingModeBySupplierId.TryGetValue(bc.SupplierId, out var invoicingMode);
 
             var line = new BookingCancellationLine
             {
@@ -80,6 +99,8 @@ public sealed class BookingCancellationLineBackfillService
                 ConceptKind = bc.ConceptKind,
                 PenaltyStatus = bc.PenaltyStatus,
                 PenaltyAmount = bc.PenaltyAmountAtEvent,
+                RetainedDeductionAmount = retainedDeductionAmount,
+                SupplierInvoicingModeAtEvent = invoicingMode,
                 ReceivedRefundAmount = bc.ReceivedRefundAmount,
                 RefundCap = bc.ReceivedRefundAmount, // approx historica: el cap no se reconstruye; igualar lo recibido evita un cap menor que lo ya imputado
                 RefundStatus = bc.ReceivedRefundAmount > 0m

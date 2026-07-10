@@ -86,6 +86,8 @@ internal static class SupplierCancellationCircuitReader
         var lines = await db.BookingCancellationLines
             .AsNoTracking()
             .Include(l => l.BookingCancellation).ThenInclude(bc => bc.Reserva)
+            // ADR-044 T2 Addendum: necesitamos los cargos de la linea para el bloque "Cargo facturado aparte".
+            .Include(l => l.OperatorCharges)
             .Where(l => l.SupplierId == supplierId
                      && l.BookingCancellation.Status != BookingCancellationStatus.Aborted)
             .ToListAsync(ct);
@@ -111,14 +113,19 @@ internal static class SupplierCancellationCircuitReader
             var reservaNumber = bc.Reserva?.NumeroReserva;
 
             // --- MULTA RETENIDA (pass-through confirmada) ---
-            // Gate C1 (espejo de OperatorRefundService:404-408): la confirmacion real vive en el PADRE
-            // (bc.PenaltyStatus == Confirmed) — line.PenaltyStatus NUNCA se setea a proposito. Solo la penalidad
-            // PASS-THROUGH (bc.ConceptKind) es plata que retuvo el operador; un cargo propio de la agencia
-            // (agency-owned) NO reduce lo que el operador debe devolver, asi que NO entra al circuito del operador.
-            decimal penalty = line.PenaltyAmount ?? 0m;
-            if (penalty > 0m
-                && bc.PenaltyStatus == PenaltyStatus.Confirmed
-                && bc.ConceptKind == CancellationConceptKind.OperatorPenaltyPassThrough)
+            // ADR-044 T2 Addendum (2026-07-10): usamos line.RetainedDeductionAmount (eje CAJA, columna fisica de
+            // la LINEA) en vez de line.PenaltyAmount + bc.PenaltyStatus/bc.ConceptKind (el snapshot del BC PADRE).
+            // Motivo doble:
+            //  (1) FIX de bug real para operadores SECUNDARIOS: bc.PenaltyStatus/bc.ConceptKind describen SIEMPRE
+            //      al operador PRINCIPAL del BC (ADR-044 T1); un secundario con multa confirmada nunca pintaba
+            //      "Multa retenida" en su propio extracto porque este gate miraba el padre. RetainedDeductionAmount
+            //      ya es la fuente de verdad POR LINEA (se escribe en AllocateConfirmedPenaltyToLinesAsync,
+            //      corre para cualquier operador resuelto, no solo el principal).
+            //  (2) B1 del Addendum: PenaltyAmount (eje CLIENTE) puede incluir montos Withholding/FacturadaAparte
+            //      que el operador NUNCA retuvo de la caja — pintarlos como "retenida" seria mostrar plata que el
+            //      operador jamas se quedo. RetainedDeductionAmount ya excluye esos dos casos por construccion.
+            decimal penaltyRetained = line.RetainedDeductionAmount;
+            if (penaltyRetained > 0m)
             {
                 circuitLines.Add(new SupplierCircuitLine(
                     Date: bc.PenaltyConfirmedAt ?? line.CreatedAt,
@@ -126,7 +133,33 @@ internal static class SupplierCancellationCircuitReader
                     Description: "Multa retenida por el operador",
                     DocumentRef: reservaNumber,
                     Currency: currency,
-                    Amount: penalty,
+                    Amount: penaltyRetained,
+                    SourcePublicId: line.PublicId));
+            }
+
+            // --- CARGO FACTURADO APARTE (ADR-044 T2 Addendum) ---
+            // El operador devuelve el reembolso INTEGRO (no retiene nada) pero factura este cargo con su propio
+            // documento: es una DEUDA NUEVA de la agencia hacia el operador (no una retencion). Vive en el
+            // circuito (no en la caja real todavia — ver limitacion documentada en OperatorChargeInvoiced) para
+            // que "Le debo" lo refleje sin mezclarlo con la multa retenida.
+            decimal operatorChargeInvoiced = line.OperatorCharges
+                .Where(c => c.CollectionMode == PenaltyCollectionMode.FacturadaAparte)
+                .Sum(c => c.Amount);
+            if (operatorChargeInvoiced > 0m)
+            {
+                circuitLines.Add(new SupplierCircuitLine(
+                    Date: line.OperatorCharges
+                        .Where(c => c.CollectionMode == PenaltyCollectionMode.FacturadaAparte)
+                        .Select(c => c.ConfirmedAt)
+                        .DefaultIfEmpty(line.CreatedAt)
+                        .Max(),
+                    Kind: SupplierAccountStatementLineKinds.OperatorChargeInvoiced,
+                    Description: "Cargo del operador facturado aparte",
+                    DocumentRef: line.OperatorCharges
+                        .FirstOrDefault(c => c.CollectionMode == PenaltyCollectionMode.FacturadaAparte)?.DocumentRef
+                        ?? reservaNumber,
+                    Currency: currency,
+                    Amount: operatorChargeInvoiced,
                     SourcePublicId: line.PublicId));
             }
 

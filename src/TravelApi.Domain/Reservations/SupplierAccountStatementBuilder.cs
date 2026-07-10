@@ -47,6 +47,24 @@ public static class SupplierAccountStatementLineKinds
     /// que las lineas de circuito: vive solo en el saldo economico intercalado, no en el saldo de caja.
     /// </summary>
     public const string CreditApplied = "CreditApplied";
+
+    /// <summary>
+    /// ADR-044 T2 Addendum (2026-07-10): cargo del operador FACTURADO APARTE (<c>PenaltyCollectionMode.FacturadaAparte</c>):
+    /// el operador devuelve el reembolso INTEGRO (no retiene nada) pero factura este cargo con su propio
+    /// documento. Es una DEUDA NUEVA de la agencia hacia el operador (cargo +), NUNCA una retencion — no se
+    /// confunde con <see cref="PenaltyRetained"/> (que es plata que el operador SI se quedo de la caja).
+    ///
+    /// <para><b>Limitacion documentada (conocida, no bloqueante para T2)</b>: por ahora este cargo vive SOLO en
+    /// el bloque "circuito" (economico, igual que <see cref="PenaltyRetained"/>/<see cref="RefundReceived"/>),
+    /// NO en <c>Supplier.CurrentBalance</c>/<c>SupplierBalanceByCurrency</c> (la cuenta por pagar REAL de
+    /// bookings). Se paga extinguiendose junto con el resto de la deuda cuando se registra un pago normal al
+    /// operador (<c>SupplierPayment</c>), porque el saldo "Le debo" ya combina caja + circuito
+    /// (<c>SupplierAccountReconciliationBuilder</c>). Igual que <see cref="PenaltyRetained"/> hoy, no aparece
+    /// en el semaforo simple del listado de proveedores — es una deuda visible en el EXTRACTO, no en el
+    /// resumen. Seguimiento anotado, no bloqueante: si algun dia se necesita que tambien aparezca ahi, hay que
+    /// sumarlo a <c>SupplierDebtPersister</c>.</para>
+    /// </summary>
+    public const string OperatorChargeInvoiced = "OperatorChargeInvoiced";
 }
 
 /// <summary>

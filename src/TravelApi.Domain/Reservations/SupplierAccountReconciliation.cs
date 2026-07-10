@@ -38,7 +38,14 @@ public sealed class SupplierAccountReconciliationCurrencyBlock
     /// <summary>Reembolso ya recibido del operador, sumado en esta moneda.</summary>
     public decimal RefundReceivedTotal { get; }
 
-    /// <summary>Total del bloque circuito = multa retenida + reembolso recibido (ambos +).</summary>
+    /// <summary>
+    /// ADR-044 T2 Addendum (2026-07-10): cargos del operador FACTURADOS APARTE (deuda nueva hacia el operador,
+    /// NO retencion), sumados en esta moneda. Suma al "Le debo" igual que una compra real: es plata que la
+    /// agencia le debe al operador por este concepto, aunque no venga de un servicio de la reserva.
+    /// </summary>
+    public decimal OperatorChargeInvoicedTotal { get; }
+
+    /// <summary>Total del bloque circuito = multa retenida + reembolso recibido + cargo facturado aparte (todos +).</summary>
     public decimal CircuitTotal { get; }
 
     /// <summary>Saldo economico = caja + circuito. Derivado, SOLO para el header (no toca el running balance de caja).</summary>
@@ -65,13 +72,15 @@ public sealed class SupplierAccountReconciliationCurrencyBlock
         decimal theyOweMe,
         decimal iTheyOwe,
         decimal prepayment,
-        IReadOnlyList<SupplierCircuitLine> circuitLines)
+        IReadOnlyList<SupplierCircuitLine> circuitLines,
+        decimal operatorChargeInvoicedTotal = 0m)
     {
         Currency = currency;
         CashClosingBalance = cashClosingBalance;
         PenaltyRetainedTotal = penaltyRetainedTotal;
         RefundReceivedTotal = refundReceivedTotal;
-        CircuitTotal = penaltyRetainedTotal + refundReceivedTotal;
+        OperatorChargeInvoicedTotal = operatorChargeInvoicedTotal;
+        CircuitTotal = penaltyRetainedTotal + refundReceivedTotal + operatorChargeInvoicedTotal;
         EconomicClosingBalance = economicClosingBalance;
         TheyOweMe = theyOweMe;
         ITheyOwe = iTheyOwe;
@@ -173,13 +182,19 @@ public static class SupplierAccountReconciliationBuilder
             decimal refundReceived = lines
                 .Where(l => l.Kind == SupplierAccountStatementLineKinds.RefundReceived)
                 .Sum(l => l.Amount);
+            // ADR-044 T2 Addendum (2026-07-10): cargo del operador facturado aparte, deuda nueva -> SUMA al
+            // "Le debo" igual que penaltyRetained/refundReceived suman al bloque economico.
+            decimal operatorChargeInvoiced = lines
+                .Where(l => l.Kind == SupplierAccountStatementLineKinds.OperatorChargeInvoiced)
+                .Sum(l => l.Amount);
 
             penaltyRetained = Round(penaltyRetained);
             refundReceived = Round(refundReceived);
+            operatorChargeInvoiced = Round(operatorChargeInvoiced);
             cashClosing = Round(cashClosing);
             receivableY = Round(receivableY);
 
-            decimal economic = Round(cashClosing + penaltyRetained + refundReceived);
+            decimal economic = Round(cashClosing + penaltyRetained + refundReceived + operatorChargeInvoiced);
 
             // X e Y nunca se netean entre si. Prepago es el saldo a favor consumible (caja negativa que NO es
             // un reembolso por cobrar). Por construccion, X y Prepago no pueden ser ambos positivos.
@@ -196,7 +211,8 @@ public static class SupplierAccountReconciliationBuilder
                 theyOweMe: receivableY,
                 iTheyOwe: iTheyOwe,
                 prepayment: prepayment,
-                circuitLines: lines));
+                circuitLines: lines,
+                operatorChargeInvoicedTotal: operatorChargeInvoiced));
         }
 
         return new SupplierAccountReconciliation(blocks);

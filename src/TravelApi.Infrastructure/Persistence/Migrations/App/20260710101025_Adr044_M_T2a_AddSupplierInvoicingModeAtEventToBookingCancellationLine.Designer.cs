@@ -2,18 +2,21 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using TravelApi.Infrastructure.Persistence;
 
 #nullable disable
 
-namespace TravelApi.Infrastructure.Persistence.Migrations
+namespace TravelApi.Infrastructure.Persistence.Migrations.App
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260710101025_Adr044_M_T2a_AddSupplierInvoicingModeAtEventToBookingCancellationLine")]
+    partial class Adr044_M_T2a_AddSupplierInvoicingModeAtEventToBookingCancellationLine
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1301,10 +1304,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Property<int>("RefundStatus")
                         .HasColumnType("integer");
 
-                    b.Property<decimal>("RetainedDeductionAmount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)");
-
                     b.Property<int>("Scope")
                         .HasColumnType("integer");
 
@@ -1340,75 +1339,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("IX_BookingCancellationLines_SupplierId");
 
                     b.ToTable("BookingCancellationLines", (string)null);
-                });
-
-            modelBuilder.Entity("TravelApi.Domain.Entities.BookingCancellationLineOperatorCharge", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<decimal>("Amount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)");
-
-                    b.Property<int>("BookingCancellationLineId")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("CollectionMode")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime>("ConfirmedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("ConfirmedByUserId")
-                        .IsRequired()
-                        .HasMaxLength(450)
-                        .HasColumnType("character varying(450)");
-
-                    b.Property<string>("ConfirmedByUserName")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Currency")
-                        .IsRequired()
-                        .HasMaxLength(3)
-                        .HasColumnType("character varying(3)");
-
-                    b.Property<string>("DocumentRef")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<int>("Kind")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Notes")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<Guid>("PublicId")
-                        .HasColumnType("uuid");
-
-                    b.Property<uint>("xmin")
-                        .IsConcurrencyToken()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("xid")
-                        .HasColumnName("xmin");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("BookingCancellationLineId")
-                        .HasDatabaseName("IX_BookingCancellationLineOperatorCharges_BookingCancellationLineId");
-
-                    b.HasIndex("PublicId")
-                        .IsUnique();
-
-                    b.ToTable("BookingCancellationLineOperatorCharges", (string)null);
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.BusinessSequence", b =>
@@ -6461,17 +6391,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Navigation("Supplier");
                 });
 
-            modelBuilder.Entity("TravelApi.Domain.Entities.BookingCancellationLineOperatorCharge", b =>
-                {
-                    b.HasOne("TravelApi.Domain.Entities.BookingCancellationLine", "BookingCancellationLine")
-                        .WithMany("OperatorCharges")
-                        .HasForeignKey("BookingCancellationLineId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("BookingCancellationLine");
-                });
-
             modelBuilder.Entity("TravelApi.Domain.Entities.CashLedgerEntry", b =>
                 {
                     b.HasOne("TravelApi.Domain.Entities.ClientCreditWithdrawal", "ClientCreditWithdrawal")
@@ -7470,11 +7389,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Navigation("CreditNotes");
 
                     b.Navigation("Lines");
-                });
-
-            modelBuilder.Entity("TravelApi.Domain.Entities.BookingCancellationLine", b =>
-                {
-                    b.Navigation("OperatorCharges");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.CatalogPackage", b =>

@@ -1348,6 +1348,9 @@ public class Adr025PartialAndMultiOperatorCancellationTests
             LineSaleAmount = 40_000m,
             RefundCap = 20_000m,          // cap NETO (despues de penalidad)
             PenaltyAmount = 10_000m,       // la penalidad tambien retuvo pool
+            // ADR-044 T2 Addendum: RetainedDeductionAmount es el eje CAJA (lo que de verdad salio del pool).
+            // Este fixture representa el camino legacy simple (Fee+Retenida), donde ambos ejes coinciden.
+            RetainedDeductionAmount = 10_000m,
             PenaltyStatus = PenaltyStatus.Confirmed,
         });
         ctx.BookingCancellations.Add(firstBc);

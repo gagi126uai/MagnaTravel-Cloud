@@ -2,18 +2,21 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using TravelApi.Infrastructure.Persistence;
 
 #nullable disable
 
-namespace TravelApi.Infrastructure.Persistence.Migrations
+namespace TravelApi.Infrastructure.Persistence.Migrations.App
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260710101202_Adr044_M_T2b_AddBookingCancellationLineOperatorCharges")]
+    partial class Adr044_M_T2b_AddBookingCancellationLineOperatorCharges
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1300,10 +1303,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.Property<int>("RefundStatus")
                         .HasColumnType("integer");
-
-                    b.Property<decimal>("RetainedDeductionAmount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)");
 
                     b.Property<int>("Scope")
                         .HasColumnType("integer");

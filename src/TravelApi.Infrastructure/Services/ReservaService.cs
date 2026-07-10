@@ -2695,8 +2695,14 @@ public class ReservaService : IReservaService
             // menos lista vacia), pero un doble de test (mock parcial) puede devolver null con MockBehavior.Loose.
             // Si eso pasa, nos quedamos con los defaults del DTO (singular "None" + lista vacia): la ficha no
             // revienta, simplemente no muestra el paso de la multa (seguro, igual que "sin cancelacion vigente").
+            // ADR-044 T2 Addendum (security, 2026-07-10): el desglose de cargos del operador es dato de COSTO.
+            // Resolvemos cobranzas.see_cost (Admin bypass incluido en CostMasking) y se lo pasamos al read-model,
+            // que enmascara la lista Charges cuando el caller no puede ver costo. Mismo helper que usa el resto del
+            // masking de costo del detalle de la reserva.
+            var canSeeCost = await CostMasking.CanSeeCostAsync(_httpContextAccessor, _permissionResolver, CancellationToken.None);
             var situations = await _cancellationService.GetOperatorPenaltySituationsAsync(
-                file.PublicId, userCanClassifyOperatorPenalty, isCallerAdmin: isAdmin, CancellationToken.None);
+                file.PublicId, userCanClassifyOperatorPenalty, isCallerAdmin: isAdmin, CancellationToken.None,
+                canSeeCost: canSeeCost);
             if (situations is not null && situations.Count > 0)
             {
                 dto.OperatorPenaltySituations = situations.ToList();

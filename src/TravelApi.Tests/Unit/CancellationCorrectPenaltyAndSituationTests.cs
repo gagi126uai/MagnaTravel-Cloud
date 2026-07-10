@@ -178,6 +178,10 @@ public class CancellationCorrectPenaltyAndSituationTests
             Currency = Monedas.ARS,
             RefundCap = 100_000m - penalty,
             PenaltyAmount = penalty,
+            // ADR-044 T2 Addendum: eje CAJA. Este fixture es el camino legacy simple (Fee+Retenida): coincide con
+            // PenaltyAmount (misma regla del backfill T2c para confirmadas legacy).
+            RetainedDeductionAmount = penalty,
+            PenaltyStatus = PenaltyStatus.Confirmed,
             ReceivedRefundAmount = 0m,
             RefundStatus = BookingCancellationLineRefundStatus.PendingOperatorRefund,
         });

@@ -671,6 +671,74 @@ public class CancellationsController : ControllerBase
     }
 
     /// <summary>
+    /// ADR-044 T2 Addendum (2026-07-10): agrega un cargo SECUNDARIO del operador sobre una multa YA confirmada
+    /// (ej. una retencion fiscal ademas del cargo administrativo automatico). Accion OPCIONAL: NO se muestra ni
+    /// se pregunta en el flujo simple de confirmar la multa.
+    ///
+    /// <para><b>Permiso</b>: MISMO gate fiscal que confirm-penalty/correct-penalty
+    /// (<see cref="Permissions.ReservasCancel"/> para llegar + <see cref="Permissions.CancellationsClassifyAgencyPenalty"/>
+    /// o Admin, resuelto server-side + ownership).</para>
+    ///
+    /// <para><b>Mapeo de errores</b>: 400 (moneda del cargo no coincide con ninguna linea del operador /
+    /// <c>DocumentRef</c> vacio con FacturadaAparte); 404 (BC no existe); 409 INV-ADR044-CHARGE-PERM (sin
+    /// permiso); 409 INV-ADR044-CHARGE-001 (la multa de este operador todavia no esta confirmada); 409
+    /// INV-ADR044-T2-COMMISSIONONLY (operador intermediario); 409 (flag OFF); 409 CONCURRENT_EDIT (xmin); 503
+    /// (DB caida).</para>
+    /// </summary>
+    [HttpPost("{publicId:guid}/operator-charges")]
+    [RequirePermission(Permissions.ReservasCancel)]
+    [RequireOwnership(OwnedEntity.BookingCancellation, "publicId", bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<ActionResult<BookingCancellationDto>> AddOperatorCharge(
+        Guid publicId,
+        AddOperatorChargeRequest request,
+        CancellationToken cancellationToken)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
+        var userName = User.FindFirst("FullName")?.Value ?? User.FindFirst(ClaimTypes.Name)?.Value;
+        var requesterIsAdmin = User.IsInRole("Admin");
+
+        var userCanClassifyAgencyPenalty = requesterIsAdmin
+            || (await _permissionResolver.GetPermissionsAsync(userId, cancellationToken))
+                .Contains(Permissions.CancellationsClassifyAgencyPenalty);
+
+        try
+        {
+            var dto = await _bcService.AddOperatorChargeAsync(
+                publicId, request, userId, userName, cancellationToken,
+                userCanClassifyAgencyPenalty: userCanClassifyAgencyPenalty);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return Conflict(new
+            {
+                code = "CONCURRENT_EDIT",
+                message = "Otra edicion fue procesada primero, reintente.",
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Flag OFF. Business limpio se muestra; ruido tecnico .NET/EF se sanea (FUGA 3).
+            return SanitizedConflict(ex, publicId);
+        }
+        catch (ArgumentException ex)
+        {
+            // Moneda del cargo no coincide con ninguna linea del operador / DocumentRef vacio con FacturadaAparte.
+            return SanitizedBadRequest(ex);
+        }
+        // BusinessInvariantViolationException (INV-ADR044-CHARGE-* / INV-ADR044-T2-COMMISSIONONLY) la atrapa
+        // GlobalExceptionHandler (409 con invariantCode).
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+        }
+    }
+
+    /// <summary>
     /// Aborta un BC en estado <c>Drafted</c> (el operador se arrepintio antes
     /// de tocar AFIP). Idempotente: si ya esta Aborted, retorna 200 con el DTO.
     /// </summary>

@@ -548,6 +548,40 @@ public interface IBookingCancellationService
         CancellationToken ct,
         Guid? supplierPublicId = null);
 
+    /// <summary>
+    /// ADR-044 T2 Addendum (2026-07-10): agrega un cargo SECUNDARIO del operador sobre una multa YA confirmada
+    /// (ej. una retencion fiscal ademas del cargo administrativo que el confirm ya creo por detras). Accion
+    /// OPCIONAL: el flujo simple (confirmar multa) no la necesita ni la muestra por default.
+    ///
+    /// <para><b>Precondiciones</b>: flag ON; BC existe; permiso <c>cancellations.classify_agency_penalty</c> (o
+    /// Admin); el operador resuelto ya tiene su multa <c>Confirmed</c> (no se puede agregar un cargo secundario
+    /// antes del cargo base); el operador NO es <see cref="Domain.Entities.SupplierInvoicingMode.CommissionOnly"/>
+    /// (gate Decision A del Addendum); la moneda del cargo coincide con la de al menos una linea del operador
+    /// (B2); <c>DocumentRef</c> obligatorio si <c>CollectionMode = FacturadaAparte</c>.</para>
+    ///
+    /// <para><b>Efecto en la plata</b>: si <c>CollectionMode = Retenida</c> y <c>Kind != Withholding</c>, reduce
+    /// el <c>RefundCap</c> restante del operador (mismo reparto proporcional que el confirm automatico) y suma a
+    /// <c>RetainedDeductionAmount</c>. Si <c>Kind == Withholding</c>, NUNCA reduce el <c>RefundCap</c> ni el
+    /// credito del cliente (credito fiscal de la agencia). Si <c>CollectionMode = FacturadaAparte</c>, NUNCA
+    /// reduce el <c>RefundCap</c> (el operador devuelve integro; el cargo es una deuda nueva hacia el operador).
+    /// Todo cargo con <c>Kind != Withholding</c> suma a <c>PenaltyAmount</c> (eje CLIENTE) sin importar la forma
+    /// de cobro. Ver <c>BookingCancellationLineOperatorCharge</c>.</para>
+    ///
+    /// <para><b>Exceptions</b>: <c>KeyNotFoundException</c> (404); <c>InvalidOperationException</c> (409, flag
+    /// OFF); <c>BusinessInvariantViolationException</c> (409: INV-ADR044-CHARGE-PERM sin permiso;
+    /// INV-ADR044-CHARGE-001 multa aun no confirmada; INV-ADR044-T2-COMMISSIONONLY operador intermediario);
+    /// <c>ArgumentException</c> (400: moneda no coincide con ninguna linea del operador, o
+    /// <c>DocumentRef</c> vacio con <c>FacturadaAparte</c>); <c>DbUpdateConcurrencyException</c> (409
+    /// CONCURRENT_EDIT).</para>
+    /// </summary>
+    Task<BookingCancellationDto> AddOperatorChargeAsync(
+        Guid publicId,
+        AddOperatorChargeRequest request,
+        string userId,
+        string? userName,
+        CancellationToken ct,
+        bool userCanClassifyAgencyPenalty = false);
+
     // ===== Queries =====
 
     /// <summary>Obtiene un BC por su PublicId. Null si no existe.</summary>
@@ -629,8 +663,17 @@ public interface IBookingCancellationService
     /// individual de cada uno. Lista VACIA = nada que mostrar (equivalente al singular con <c>State="None"</c>).
     /// </para>
     /// </summary>
+    /// <param name="canSeeCost">
+    /// ADR-044 T2 Addendum (security, 2026-07-10): true si el caller tiene visibilidad de COSTO
+    /// (<c>cobranzas.see_cost</c> o Admin). El desglose de cargos del operador (<c>OperatorChargeDto.Amount</c>)
+    /// es dato de costo — mismo criterio que enmascara <c>PenaltyRetained</c>/<c>PaidToOperator</c> en
+    /// <c>OperatorRefundReadModelService</c>. Sin visibilidad de costo, la lista <c>Charges</c> viaja VACIA. El
+    /// caller (<c>ReservaService</c>) resuelve el permiso; default true para no romper tests/otros callers que ya
+    /// operan con contexto de costo.
+    /// </param>
     Task<IReadOnlyList<OperatorPenaltySituationDto>> GetOperatorPenaltySituationsAsync(
-        Guid reservaPublicId, bool userCanClassifyOperatorPenalty, bool isCallerAdmin, CancellationToken ct);
+        Guid reservaPublicId, bool userCanClassifyOperatorPenalty, bool isCallerAdmin, CancellationToken ct,
+        bool canSeeCost = true);
 
     /// <summary>
     /// ADR-013 §3.10 (M4, 2026-06-01): bandeja "cancelaciones con NC emitida pero sin su

@@ -402,6 +402,9 @@ public class CancellationWaivePenaltyTests
             Currency = Monedas.ARS,
             RefundCap = capBeforePenalty - penalty, // ya reducido por la multa (como dejaria el Allocate).
             PenaltyAmount = penalty,
+            // ADR-044 T2 Addendum: eje CAJA (lo que de verdad salio del cap). Camino legacy simple: coincide.
+            RetainedDeductionAmount = penalty,
+            PenaltyStatus = PenaltyStatus.Confirmed,
             ReceivedRefundAmount = 0m,
             RefundStatus = BookingCancellationLineRefundStatus.PendingOperatorRefund,
         };
@@ -552,13 +555,13 @@ public class CancellationWaivePenaltyTests
         var lineWithPenalty = new BookingCancellationLine
         {
             BookingCancellationId = bc.Id, SupplierId = supplier.Id, Currency = Monedas.ARS,
-            RefundCap = 70_000m, PenaltyAmount = 30_000m, ReceivedRefundAmount = 0m,
+            RefundCap = 70_000m, PenaltyAmount = 30_000m, RetainedDeductionAmount = 30_000m, ReceivedRefundAmount = 0m,
             RefundStatus = BookingCancellationLineRefundStatus.PendingOperatorRefund,
         };
         var lineWithZeroResidual = new BookingCancellationLine
         {
             BookingCancellationId = bc.Id, SupplierId = supplier.Id, Currency = Monedas.ARS,
-            RefundCap = 10_000m, PenaltyAmount = 0m, ReceivedRefundAmount = 0m,
+            RefundCap = 10_000m, PenaltyAmount = 0m, RetainedDeductionAmount = 0m, ReceivedRefundAmount = 0m,
             RefundStatus = BookingCancellationLineRefundStatus.PendingOperatorRefund,
         };
         h.Ctx.BookingCancellationLines.AddRange(lineWithPenalty, lineWithZeroResidual);

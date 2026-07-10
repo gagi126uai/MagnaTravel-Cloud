@@ -194,3 +194,222 @@ Cada tanda con los gates de siempre (backend/frontend/seguridad/exposición + fi
 - NC por factura en su moneda (ADR-042), candado de coherencia de moneda de la ND, snapshot
   fiscal al momento del evento, saldo a favor por moneda, circuito "esperando reembolso" +
   registrar reembolso recibido (se enriquece con la multa visible, no se reemplaza).
+
+## Addendum T2 (2026-07-10) — dos decisiones de arquitectura que destraban la construcción
+
+Contexto: la especificación contable firmada de T2
+(`.claude/agent-memory/travel-agency-accountant-argentina/adr044-t2-operator-deduction-kind-spec.md`)
+dejó T2 "apto CON CONDICIONES", con 2 gaps de arquitectura sin resolver (puntos 5 y 6 de esa
+memoria). Este addendum los cierra. Código real inspeccionado para decidir:
+`BookingCancellationLine.cs`, `FiscalSnapshot.cs`, `SupplierInvoicingMode.cs`,
+`SupplierAccountStatementBuilder.cs`, `BookingCancellationService.cs` (sitios donde se construye
+`FiscalSnapshot` y donde se asigna `RefundCap`), `PenaltyOwnership.cs`, `CancellationConceptKind.cs`,
+`BookingCancellationLineBackfillService.cs`.
+
+### Hecho verificado que cambia el diagnóstico de partida
+
+`FiscalSnapshot.InvoicingModeAtEvent` (el campo que hoy vive en el BC padre) **nunca se asigna en
+código de producción**: los 3 sitios reales donde se construye `new FiscalSnapshot { ... }` en
+`BookingCancellationService.cs` (líneas 284, 1009 y 1474) no lo setean. Solo aparece asignado en
+tests. Es decir: en producción ese campo es SIEMPRE `null`, y `FiscalLiquidationCalculator.cs:61`
+ya resuelve esto con el patrón `input.InvoicingModeAtEvent ?? input.Supplier.InvoicingMode` — hoy
+el sistema real SIEMPRE lee el modo vivo del `Supplier`. Este hecho cambia el riesgo de la decisión
+A: no se trata de "romper un snapshot que funciona", sino de recién construir por primera vez el
+snapshot que el diseño original (ADR-009) quiso tener pero nunca cableó.
+
+También verificado: el mismo problema de granularidad ("dato por operador, congelado a nivel BC
+padre único") ya existió antes para OTRO eje — `PenaltyOwnership` (BC padre, "quién se queda la
+multa") — y YA se resolvió en ADR-025 moviendo ese eje a `BookingCancellationLine.ConceptKind`
+(por línea). Las decisiones de abajo repiten ese mismo movimiento ya probado en este repo, no
+inventan un patrón nuevo.
+
+### Decisión A — Snapshot de `InvoicingMode` A NIVEL LÍNEA, con fallback vivo (no lectura en vivo pura)
+
+**Recomendación única**: agregar `BookingCancellationLine.SupplierInvoicingModeAtEvent`
+(`SupplierInvoicingMode?`, nullable), asignado UNA vez al construir la línea (mismo momento en que
+hoy se fija el default de `ConceptKind`), copiando `Supplier.InvoicingMode` vigente en ese instante.
+Toda lectura de gate usa `line.SupplierInvoicingModeAtEvent ?? line.Supplier.InvoicingMode` —
+idéntico idiom al ya usado en `FiscalLiquidationCalculator.cs:61`.
+
+**Por qué esta y no lectura en vivo pura**: una vez que ya hubo movimientos de plata reales sobre
+una línea (`PenaltyRetained`, `RefundReceived`, `OperatorDeductionInvoiced`), si el admin cambia
+`Supplier.InvoicingMode` después, una lectura 100% en vivo reinterpretaría el extracto histórico
+sin que haya cambiado ningún dato real — mismo riesgo de integridad de auditoría que justificó el
+`FiscalSnapshot` original. El snapshot por línea evita eso y es coherente con la filosofía "snapshot
+al momento del evento" que ya rige el resto del módulo.
+
+**Por qué no rompe nada y no exige backfill bloqueante**: como el campo equivalente a nivel padre
+nunca estuvo poblado en producción, toda línea existente (histórica o recién creada antes de este
+cambio) queda con el nuevo campo en `null` → cae al fallback vivo → **comportamiento idéntico al
+de hoy, cero regresión**. Backfill opcional (no bloqueante): extender
+`BookingCancellationLineBackfillService` para estampar `SupplierInvoicingModeAtEvent` en las líneas
+sintéticas que ya crea, por prolijidad, no por necesidad.
+
+**Migración esperada**: `Adr044_M_T2a_AddSupplierInvoicingModeAtEventToBookingCancellationLine` —
+una columna nullable, sin backfill obligatorio, sin migración de datos.
+
+**Uso del gate**: antes de aceptar cualquier deducción sobre una línea (Decisión B) o cualquier
+circuito `FacturadaAparte`, el servicio valida
+`line.SupplierInvoicingModeAtEvent ?? line.Supplier.InvoicingMode == SupplierInvoicingMode.CommissionOnly`
+→ si es `CommissionOnly`, bloquear y enrutar a revisión manual con el mismo
+`ReviewRequiredReason`/patrón que ya usa `IsCommissionOnlyLiquidation` del lado cliente (gap 4 de
+la memoria de T2, hoy confirmado ausente en `SupplierCancellationCircuitReader.cs`).
+
+### Decisión B — Cargos de operador 1:N por línea (tabla hija), no escalar
+> **Corregida (2026-07-10) tras rechazo del software-architect-reviewer.** La versión inicial usaba
+> UN solo agregado derivado (`PenaltyAmount = SUM(Kind!=Withholding)`) que rompía la invariante
+> `RefundCap + PenaltyAmount == capBeforePenalty` en 3 sitios de plata. Esta versión separa el eje
+> cliente del eje retención de caja (B1), acota la moneda (B2), fija la semántica de columna física
+> (B3) y renombra la entidad para evitar colisión con el `DeductionKind` existente (M1). Todo
+> verificado contra código.
+
+**Recomendación única**: tabla hija nueva `BookingCancellationLineOperatorCharge` (N filas por
+`BookingCancellationLine`), NO extender los campos escalares existentes de la línea.
+
+**M1 — por qué NO se llama `...Deduction`**: ya existe `DeductionKind`
+(`src/TravelApi.Domain/Entities/DeductionKind.cs`, ADR-002/FC1) usado en `OperatorRefundService.cs`
+para tipificar lo que el operador retiene AL DEVOLVER FONDOS en un refund (`AdministrativeFee=1`,
+`CancellationPenalty=3`, `IvaWithholding=10`, ...). Reusar el nombre `Deduction`/`DeductionKind`
+para el eje NUEVO (multa por operador en la cancelación) generaría colisión conceptual y de
+autocompletado en un área de plata. Por eso la entidad se llama `BookingCancellationLineOperatorCharge`
+y su enum de tipo `OperatorChargeKind` (no `OperatorDeductionKind`). Dejar comentario cruzado en
+ambos enums (`DeductionKind` ←→ `OperatorChargeKind`) aclarando que son ejes distintos.
+
+**Por qué 1:N y no escalar-con-`Kind`-simple**: el contador CONFIRMÓ (no es hipótesis) que un
+operador RI real aplica cargo administrativo Y retención fiscal SIMULTÁNEOS sobre la misma
+cancelación, y que la retención NUNCA debe confundirse con el cargo administrativo (una es crédito
+fiscal de la agencia, la otra es pérdida real que baja el `RefundCap`). Con un campo escalar, esos
+dos montos de distinta naturaleza fiscal quedarían forzados a un solo `Kind` por línea — o se
+mezclan mal (viola la regla dura del contador), o se fuerza a partir el mismo servicio en dos líneas
+sintéticas (rompe la semántica de `ServiceId`/agregación por operador de `RefundCap`). Diferir esto
+a "backlog" en un área fiscal/plata para un caso que el contador ya dijo que ES real, no edge case,
+es la opción insegura. Construir la tabla hija ahora evita la migración dolorosa de después.
+
+**No es sobreconstrucción**: modela exactamente la multiplicidad que el contador ya verificó, con el
+mismo tipo de tabla hija que el proyecto ya usa (líneas de cancelación, allocations).
+
+**Modelo de datos**:
+```
+BookingCancellationLineOperatorCharge
+  Id (int, PK)
+  PublicId (Guid)
+  BookingCancellationLineId (FK -> BookingCancellationLine, cascade delete, igual que Line->BC)
+  Kind (OperatorChargeKind: AdministrativeFee=0 default | Tax=1 | Withholding=2 | Other=3)
+  CollectionMode (PenaltyCollectionMode: Retenida=0 default | FacturadaAparte=1)
+  Amount (decimal)
+  Currency (string, MaxLength 3 — default = Line.Currency A SECAS [re-review 2026-07-10]: el
+    default anterior (PenaltyCurrency ?? Currency) violaba el CHECK B2 cuando PenaltyCurrency
+    difiere de la moneda de la línea. Un charge Retenida DEBE estar en Line.Currency porque
+    RetainedDeductionAmount se resta de RefundCap, que está en Line.Currency — restar USD de un
+    cap ARS sería mezclar unidades. La retención genuinamente cross-currency (operador retiene
+    USD sobre línea ARS) NO se modela como charge que netea: igual que hoy, donde
+    AllocateConfirmedPenaltyToLinesAsync solo netea líneas cuya Currency == penaltyCurrency
+    (BookingCancellationService.cs:6496-6509) y el cruce de monedas se resuelve en T3/P4.)
+  DocumentRef (string?, MaxLength acorde al resto)
+  Notes (string?)
+  ConfirmedByUserId / ConfirmedByUserName (auditoría, mismo patrón que el resto del módulo)
+  ConfirmedAt (DateTime)
+  CreatedAt (DateTime)
+
+  CHECK chk_..._documentref_required_when_invoiced:
+     CollectionMode <> FacturadaAparte OR DocumentRef IS NOT NULL
+     (FacturadaAparte exige el documento del proveedor; mismo patrón que el CHECK de FiscalSnapshot)
+
+  CHECK chk_..._currency_matches_line   [B2]:
+     Currency = Line.Currency  (o Line.PenaltyCurrency cuando exista)
+     Como un CHECK SQL no puede cruzar tablas en Postgres, se implementa como VALIDACIÓN DE
+     SERVICIO EQUIVALENTE en el punto de escritura (mismo lugar que crea el charge), rechazando
+     una moneda de charge distinta de la de su línea. Documentado acá como invariante dura: un
+     charge SIEMPRE va en la moneda de su línea; nunca se mezclan ARS+USD dentro de la misma línea.
+```
+
+**B1 — DOS agregados derivados con nombre y semántica distintos (crítico, plata)**. La versión
+inicial derivaba un solo `PenaltyAmount = SUM(Kind!=Withholding)`, lo que ROMPÍA la invariante
+`RefundCap + PenaltyAmount == capBeforePenalty` que sostienen 3 sitios verificados:
+`ReverseConfirmedPenaltyFromLinesAsync` (`BookingCancellationService.cs:6607-6616`, restaura el cap
+sumando `PenaltyAmount` completo → con una charge `FacturadaAparte` devolvería al cap plata que nunca
+se restó), `SupplierCancellationCircuitReader.cs:118` (etiquetaría como "Multa retenida por el
+operador" plata que el operador nunca retuvo) y `OperatorRefundReadModelService.cs:290-300`
+(`capBeforePenalty` sobreestimado). Por eso se separan DOS agregados derivados, ambos columnas
+físicas de la línea:
+
+- `Line.PenaltyAmount` = **eje CLIENTE** (ND / ADR-013): `SUM(charges con Kind != Withholding)`.
+  Withholding es crédito fiscal interno de la agencia, nunca llega al cliente. Sin cambio de nombre;
+  P3/P4 lo siguen leyendo tal cual en T3.
+- `Line.RetainedDeductionAmount` (**NUEVO**) = **eje CAJA/RefundCap**:
+  `SUM(charges con Kind != Withholding AND CollectionMode == Retenida)`. Es lo ÚNICO que resta del
+  `RefundCap`. Withholding no resta (crédito fiscal, no pérdida); `FacturadaAparte` no resta (el
+  operador devuelve el bruto, se cobra por AP).
+
+Cambios puntuales en los 3 sitios (parte del alcance de T2):
+- `AllocateConfirmedPenaltyToLinesAsync`: `RefundCap = capBeforePenalty − RetainedDeductionAmount`
+  (hoy resta `PenaltyAmount`).
+- `ReverseConfirmedPenaltyFromLinesAsync` (`:6607-6616`): restaura `RefundCap += RetainedDeductionAmount`
+  (hoy suma `PenaltyAmount`). Con esto la invariante `RefundCap + RetainedDeductionAmount ==
+  capBeforePenalty` se conserva exacta y el reverse nunca devuelve al cap plata `FacturadaAparte`
+  o `Withholding` que jamás se restó.
+- `SupplierCancellationCircuitReader.cs:118`: la línea "Multa retenida por el operador"
+  (`PenaltyRetained`) usa `RetainedDeductionAmount`, no `PenaltyAmount` — solo pinta lo que el
+  operador REALMENTE retuvo. Las charges `FacturadaAparte` se pintan como su propia línea de deuda AP
+  (`OperatorChargeInvoiced`), no como retención.
+- `OperatorRefundReadModelService.cs:290-300`: reconstruye `capBeforePenalty` con
+  `RetainedDeductionAmount`.
+
+**B3 — semántica de columna física (explícito)**. `Line.PenaltyAmount` y `Line.RetainedDeductionAmount`
+siguen siendo COLUMNAS FÍSICAS PERSISTIDAS (NO propiedades calculadas sobre la colección de charges).
+Se reescriben ÚNICAMENTE dentro de la misma transacción/`SaveChanges` que crea o modifica charges de
+esa línea (en el método de servicio que hoy escribe `PenaltyAmount`). JAMÁS se recalculan por lectura
+ni por un job que barra la colección: EF devuelve una colección vacía si el `Include` falta, y un
+recálculo perezoso pondría en 0 las multas confirmadas históricas EN SILENCIO. Como la fuente de
+verdad son las columnas físicas, el backfill legacy es genuinamente OPCIONAL (ver abajo): sin
+charges hijas, los escalares ya persistidos siguen mandando y el comportamiento es el de hoy.
+
+**`RefundCap` cambia de fórmula, no de lugar**: sigue siendo columna física persistida (fuente de
+verdad, igual que hoy), pero se calcula restando `RetainedDeductionAmount` en lugar de `PenaltyAmount`
+(ver B1).
+
+**El caso simple sigue siendo 2 clics**: la pantalla actual (monto + moneda + concepto) no cambia
+para 1 sola deducción — el backend crea UNA charge `Kind=AdministrativeFee` (default legacy, confirmado
+por contador) `CollectionMode=Retenida`, transparente, y en la misma transacción escribe
+`PenaltyAmount` y `RetainedDeductionAmount` (que coinciden en el caso Fee+Retenida). "Agregar otro
+cargo de este operador" es acción secundaria OPCIONAL, no se muestra ni se pregunta por default.
+
+**Migración esperada**: `Adr044_M_T2b_AddBookingCancellationLineOperatorCharges` — tabla nueva + FK +
+índice por `BookingCancellationLineId` + los 2 CHECK; y `Adr044_M_T2c_AddRetainedDeductionAmountToLine`
+(columna física nueva en la línea, default 0, backfill de líneas confirmadas legacy =
+`RetainedDeductionAmount = PenaltyAmount` cuando `PenaltyStatus=Confirmed`, porque hoy TODA multa
+confirmada es Fee retenida → los dos agregados coinciden para el histórico). Sin token de concurrencia
+propio (la línea ya usa `xmin`). Backfill de charges OPCIONAL, no bloqueante: para líneas
+`PenaltyStatus=Confirmed` y `PenaltyAmount>0`, sintetizar una charge legacy
+(`Kind=AdministrativeFee`, `CollectionMode=Retenida`, `Amount=PenaltyAmount`) — mismo patrón
+idempotente que `BookingCancellationLineBackfillService`.
+
+**Qué queda para T3 (no se toca acá)**: la emisión de ND al cliente (P3/P4) sigue leyendo el agregado
+escalar `Line.PenaltyAmount`/`ConceptKind` sin cambios; el desglose Fee/Tax/Withholding es
+información NUEVA para el circuito del operador (T2), no cambia cómo se factura al cliente.
+
+**Testing obligatorio antes de mergear T2** (nombrando los 3 sitios de plata):
+1. Fee + Withholding en la misma línea → `RefundCap` descuenta solo la Fee; `Withholding` no reduce
+   `RefundCap` ni el crédito del cliente.
+2. Fee (Retenida) + otro cargo `FacturadaAparte` → `RefundCap` descuenta solo la Fee retenida; la
+   `FacturadaAparte` genera deuda AP con `DocumentRef` y NO baja el cap.
+3. **Invariante B1**: tras `AllocateConfirmedPenaltyToLinesAsync`,
+   `RefundCap + RetainedDeductionAmount == capBeforePenalty` para mezclas Retenida+FacturadaAparte y
+   Retenida+Withholding.
+4. **Reverse (`ReverseConfirmedPenaltyFromLinesAsync`, `:6607-6616`)** con charges mixtas
+   (Retenida+FacturadaAparte y Retenida+Withholding): restaura EXACTAMENTE `RetainedDeductionAmount`
+   al cap, nunca la parte `FacturadaAparte`/`Withholding`; el cap vuelve a su valor previo al Allocate.
+5. **`SupplierCancellationCircuitReader.cs:118`**: "Multa retenida" refleja `RetainedDeductionAmount`;
+   una charge `FacturadaAparte` aparece como línea de deuda AP (`OperatorChargeInvoiced`), no como
+   retención; una `Withholding` no aparece como retención.
+6. **`OperatorRefundReadModelService.cs:290-300`**: `capBeforePenalty` reconstruido usa
+   `RetainedDeductionAmount` (no sobreestima con `PenaltyAmount`).
+7. **B2 moneda**: rechazar/validar una charge con moneda distinta de la de su línea (2 monedas en la
+   misma línea no se suman en un escalar).
+8. Gate `CommissionOnly` (Decisión A) bloquea/enruta a revisión manual cualquier charge sobre esa línea.
+9. Línea legacy sin charges hijas (solo escalares) se comporta byte-idéntico a hoy;
+   `SupplierInvoicingModeAtEvent` null cae al fallback vivo del `Supplier` sin excepción.
+
+**Rollback**: las 3 migraciones son aditivas (columna nullable/tabla nueva + columna con default 0),
+sin migrar datos destructivamente — `Down()` estándar (drop columna / drop tabla). El backfill de
+`RetainedDeductionAmount = PenaltyAmount` es reconstruible (no destruye el escalar de origen).

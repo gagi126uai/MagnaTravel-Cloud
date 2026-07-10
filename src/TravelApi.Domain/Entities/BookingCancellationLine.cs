@@ -147,4 +147,55 @@ public class BookingCancellationLine : IHasPublicId
     public BookingCancellationLineRefundStatus RefundStatus { get; set; } = BookingCancellationLineRefundStatus.None;
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    // ===== ADR-044 T2 (Addendum, 2026-07-10): cargos tipificados del operador + snapshot de su modo de facturacion =====
+
+    /// <summary>
+    /// Snapshot del <see cref="Domain.Entities.SupplierInvoicingMode"/> del operador de ESTA linea, congelado UNA
+    /// vez al CONSTRUIR la linea (mismo momento en que hoy se fija el default de <see cref="ConceptKind"/>),
+    /// copiando <c>Supplier.InvoicingMode</c> vigente en ese instante. Null para lineas legacy previas a esta
+    /// tanda (nunca se llego a poblar el campo equivalente del padre en produccion).
+    ///
+    /// <para><b>Por que existe (Decision A del Addendum)</b>: el campo equivalente del padre
+    /// (<see cref="FiscalSnapshot.InvoicingModeAtEvent"/>) nunca se llego a poblar en produccion — el sistema real
+    /// SIEMPRE lee el modo VIVO del <see cref="Supplier"/> (mismo patron de fallback que
+    /// <c>FiscalLiquidationCalculator.cs:61</c>). Toda lectura del gate por modo de facturacion usa
+    /// <c>SupplierInvoicingModeAtEvent ?? Supplier.InvoicingMode</c>: el snapshot evita que un cambio de modo del
+    /// proveedor DESPUES de mover plata real sobre esta linea reinterprete el extracto historico en silencio.</para>
+    ///
+    /// <para><b>Cero regresion</b>: como el campo del padre nunca estuvo poblado, toda linea existente arranca en
+    /// null y cae al fallback vivo -> comportamiento identico al de hoy. Sin backfill obligatorio.</para>
+    /// </summary>
+    public SupplierInvoicingMode? SupplierInvoicingModeAtEvent { get; set; }
+
+    /// <summary>
+    /// Cargos tipificados del operador sobre esta linea (ADR-044 T2 Addendum, Decision B). Una linea puede tener
+    /// VARIOS cargos simultaneos de distinta naturaleza fiscal (ej. un cargo administrativo Y una retencion fiscal
+    /// del mismo operador en la misma cancelacion — caso confirmado real por el contador, no hipotetico).
+    /// </summary>
+    public ICollection<BookingCancellationLineOperatorCharge> OperatorCharges { get; set; }
+        = new List<BookingCancellationLineOperatorCharge>();
+
+    /// <summary>
+    /// ADR-044 T2 (Addendum, Decision B1, 2026-07-10): eje CAJA/RefundCap = SUM de los
+    /// <see cref="OperatorCharges"/> de esta linea con <c>Kind != Withholding AND CollectionMode == Retenida</c>.
+    /// Es lo UNICO que resta de <see cref="RefundCap"/>: <c>Withholding</c> es credito fiscal de la agencia (no
+    /// resta, nunca es perdida real) y <c>FacturadaAparte</c> tampoco resta (el operador devuelve el bruto; ese
+    /// cargo se cobra por la cuenta a pagar del circuito ADR-041, no descontando el reembolso).
+    ///
+    /// <para><b>Columna FISICA persistida</b> (NO calculada sobre <see cref="OperatorCharges"/> en lectura): se
+    /// reescribe SOLO dentro de la misma transaccion que crea o modifica cargos de esta linea (el mismo metodo de
+    /// servicio que hoy escribe <see cref="PenaltyAmount"/>). Un recalculo perezoso por lectura pondria en 0
+    /// multas confirmadas historicas en silencio si el <c>Include</c> de <see cref="OperatorCharges"/> faltara.</para>
+    ///
+    /// <para><b>Invariante que preserva</b>: <c>RefundCap + RetainedDeductionAmount == capBeforePenalty</c> (el
+    /// tope de reembolso ANTES de netear la multa), exacta, incluso con cargos mixtos (Retenida + FacturadaAparte,
+    /// o Retenida + Withholding) sobre la misma linea.</para>
+    ///
+    /// <para><b>Backfill legacy (migracion T2c)</b>: para lineas <c>PenaltyStatus=Confirmed</c> con
+    /// <c>PenaltyAmount</c> cargado ANTES de esta tanda, <c>RetainedDeductionAmount = PenaltyAmount</c>: toda
+    /// multa confirmada antes de T2 era, sin excepcion, un cargo administrativo retenido (el UNICO camino que
+    /// existia), asi que los dos agregados coinciden exactamente para el historico.</para>
+    /// </summary>
+    public decimal RetainedDeductionAmount { get; set; }
 }

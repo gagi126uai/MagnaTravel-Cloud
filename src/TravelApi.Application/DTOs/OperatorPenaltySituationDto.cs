@@ -75,4 +75,37 @@ public class OperatorPenaltySituationDto
 
     /// <summary>Nombre del operador (para titular el cartel "Multa del operador X"). Ver <see cref="SupplierPublicId"/>.</summary>
     public string? SupplierName { get; set; }
+
+    /// <summary>
+    /// ADR-044 T2 Addendum (2026-07-10): desglose de los cargos tipificados de ESTE operador (el cargo
+    /// administrativo automatico que crea el confirm, mas cualquier cargo secundario agregado despues —
+    /// retencion fiscal, impuesto, facturado aparte). Lista vacia si el operador todavia no tiene ningun cargo
+    /// registrado (multa pendiente de decidir, o cerrada sin multa). El front usa esto para el detalle "ver
+    /// desglose de la multa", NO reemplaza <see cref="Amount"/>/<see cref="Currency"/> (que siguen siendo el
+    /// total client-facing de la ND, sin cambios en esta tanda — T3 es quien conecta el desglose con la ND).
+    /// </summary>
+    public IReadOnlyList<OperatorChargeDto> Charges { get; set; } = Array.Empty<OperatorChargeDto>();
+}
+
+/// <summary>
+/// ADR-044 T2 Addendum (2026-07-10): UN cargo tipificado del operador, listo para mostrar (moneda ya en ISO,
+/// Kind/CollectionMode como token del contrato que el front traduce a texto en castellano).
+/// </summary>
+public class OperatorChargeDto
+{
+    /// <summary>Token: "AdministrativeFee" | "Tax" | "Withholding" | "Other". Ver <see cref="Domain.Entities.OperatorChargeKind"/>.</summary>
+    public string Kind { get; set; } = string.Empty;
+
+    /// <summary>Token: "Retenida" | "FacturadaAparte". Ver <see cref="Domain.Entities.PenaltyCollectionMode"/>.</summary>
+    public string CollectionMode { get; set; } = string.Empty;
+
+    public decimal Amount { get; set; }
+
+    /// <summary>Moneda ISO 4217 ("ARS"/"USD"), ya normalizada.</summary>
+    public string Currency { get; set; } = string.Empty;
+
+    /// <summary>Referencia al documento del proveedor. Solo tiene valor cuando <see cref="CollectionMode"/> = "FacturadaAparte".</summary>
+    public string? DocumentRef { get; set; }
+
+    public DateTime ConfirmedAt { get; set; }
 }

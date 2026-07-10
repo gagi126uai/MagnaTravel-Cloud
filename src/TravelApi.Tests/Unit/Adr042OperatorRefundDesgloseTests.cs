@@ -38,6 +38,9 @@ public class Adr042OperatorRefundDesgloseTests
             Currency = currency,
             RefundCap = refundCap,
             PenaltyAmount = penaltyAmount,
+            // ADR-044 T2 Addendum: eje CAJA. Este helper representa el camino legacy simple (Fee+Retenida
+            // confirmada): coincide con PenaltyAmount (misma regla del backfill T2c).
+            RetainedDeductionAmount = penaltyAmount ?? 0m,
             ReceivedRefundAmount = received,
         };
 

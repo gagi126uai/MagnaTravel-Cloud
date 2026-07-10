@@ -1529,7 +1529,8 @@ public class BookingCancellationService
             // La sobreestimacion de ese caso raro se corrige recien con la confirmacion diferida, que SI puede traer
             // PenaltyCurrency explicita.
             await AllocateConfirmedPenaltyToLinesAsync(
-                bc, request.ConfirmedPenaltyAmount.Value, requestedPenaltyCurrency: null, ct);
+                bc, request.ConfirmedPenaltyAmount.Value, requestedPenaltyCurrency: null, ct,
+                userId: userId, userName: userName);
         }
 
         // ===================================================================
@@ -4930,7 +4931,8 @@ public class BookingCancellationService
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<OperatorPenaltySituationDto>> GetOperatorPenaltySituationsAsync(
-        Guid reservaPublicId, bool userCanClassifyOperatorPenalty, bool isCallerAdmin, CancellationToken ct)
+        Guid reservaPublicId, bool userCanClassifyOperatorPenalty, bool isCallerAdmin, CancellationToken ct,
+        bool canSeeCost = true)
     {
         // ADR-044 T1 (2026-07-10): version LISTA de GetOperatorPenaltySituationAsync, un elemento POR OPERADOR con
         // multa en juego. Reusa el metodo singular para el operador PRINCIPAL (bc.SupplierId): es la fuente de
@@ -4971,6 +4973,49 @@ public class BookingCancellationService
             .FirstOrDefaultAsync(ct);
         primarySituation.SupplierPublicId = primarySupplier?.PublicId;
         primarySituation.SupplierName = primarySupplier?.Name;
+
+        // ADR-044 T2 Addendum (2026-07-10): cargos tipificados de CADA operador con multa en juego (Fee/Tax/
+        // Withholding, Retenida/FacturadaAparte), para que la ficha pueda listar el detalle sin pedir aparte el
+        // extracto del operador. UNA sola query para toda la cancelacion, agrupada en memoria por operador
+        // (volumen chico, back-office).
+        //
+        // SECURITY (menor security, 2026-07-10): el MONTO de cada cargo es dato de COSTO. Sin cobranzas.see_cost
+        // (canSeeCost false) NO cargamos el desglose — la lista Charges viaja VACIA, mismo criterio que enmascara
+        // PenaltyRetained/PaidToOperator en OperatorRefundReadModelService. No exponemos "estructura con montos en
+        // 0" porque un cargo sin su monto no aporta nada util y el Kind/DocumentRef igual filtrarian info de costo.
+        var chargesRows = canSeeCost
+            ? await _db.BookingCancellationLineOperatorCharges
+                .AsNoTracking()
+                .Where(c => c.BookingCancellationLine.BookingCancellationId == bcRow.Id)
+                .Select(c => new
+                {
+                    SupplierId = c.BookingCancellationLine.SupplierId,
+                    c.Kind,
+                    c.CollectionMode,
+                    c.Amount,
+                    c.Currency,
+                    c.DocumentRef,
+                    c.ConfirmedAt,
+                })
+                .ToListAsync(ct)
+            : null;
+
+        List<OperatorChargeDto> ChargesForSupplier(int supplierId) => chargesRows is null
+            ? new List<OperatorChargeDto>() // sin visibilidad de costo: sin desglose (enmascarado en el borde del server).
+            : chargesRows
+                .Where(c => c.SupplierId == supplierId)
+                .Select(c => new OperatorChargeDto
+                {
+                    Kind = c.Kind.ToString(),
+                    CollectionMode = c.CollectionMode.ToString(),
+                    Amount = c.Amount,
+                    Currency = Monedas.Normalizar(c.Currency),
+                    DocumentRef = c.DocumentRef,
+                    ConfirmedAt = c.ConfirmedAt,
+                })
+                .ToList();
+
+        primarySituation.Charges = ChargesForSupplier(bcRow.SupplierId);
 
         var result = new List<OperatorPenaltySituationDto> { primarySituation };
 
@@ -5067,6 +5112,7 @@ public class BookingCancellationService
                 RevertedByName = null,
                 SupplierPublicId = first.SupplierPublicId,
                 SupplierName = first.SupplierName,
+                Charges = ChargesForSupplier(group.Key),
             });
         }
 
@@ -5359,7 +5405,8 @@ public class BookingCancellationService
         // (corre para ambos). Pasamos effectiveConcept EXPLICITO: para un secundario, bc.ConceptKind describe al
         // principal, asi que el neteo debe decidirse por el concepto de ESTE operador, no por el del padre.
         await AllocateConfirmedPenaltyToLinesAsync(
-            bc, request.ConfirmedPenaltyAmount, request.PenaltyCurrency, ct, targetSupplierId, effectiveConcept);
+            bc, request.ConfirmedPenaltyAmount, request.PenaltyCurrency, ct, targetSupplierId, effectiveConcept,
+            userId: userId, userName: userName);
 
         // === Auditoria del "confirmado" STAGED, no guardada de una (fix atomicidad 2026-07-01). Antes esta
         // llamada era LogBusinessEventAsync, que hace su PROPIO SaveChanges y por lo tanto dejaba
@@ -5734,7 +5781,9 @@ public class BookingCancellationService
 
             // (1) DESHACER la imputacion vieja de la multa a las lineas del operador (restaura los RefundCap). Igual
             //     que hace el cierre sin multa desde Confirmed. Es no-op para agency-owned (no hubo imputacion).
-            await ReverseConfirmedPenaltyFromLinesAsync(bc, ct);
+            //     ADR-044 T2 Addendum (menor 1): capturamos la foto de los cargos que se borran para el audit.
+            var correctionDeletedCharges = new List<DeletedOperatorChargeSnapshot>();
+            await ReverseConfirmedPenaltyFromLinesAsync(bc, ct, deletedChargesSink: correctionDeletedCharges);
 
             // (2) Grabar el monto/moneda NUEVOS. PenaltyAmountAtEvent alimenta la ND al cliente; PenaltyCurrencyAtEvent
             //     es la moneda DECLARADA que el gating compara contra la factura (evita la ND por el numero equivocado).
@@ -5746,7 +5795,8 @@ public class BookingCancellationService
 
             // (3) Registrar la moneda en las lineas + re-imputar la multa nueva a los RefundCap (por moneda, nunca cruzado).
             await PersistPenaltyCurrencyOnLinesAsync(bc, normalizedCurrency, ct);
-            await AllocateConfirmedPenaltyToLinesAsync(bc, amount, normalizedCurrency, ct);
+            await AllocateConfirmedPenaltyToLinesAsync(
+                bc, amount, normalizedCurrency, ct, userId: userId, userName: userName);
 
             // (4) Resetear la huella de la ND trabada para que TryEmit la re-encole desde cero: soltamos el link a
             //     cualquier ND fallida vieja (su monto ya no aplica), volvemos a NotApplicable y limpiamos el error
@@ -5773,6 +5823,8 @@ public class BookingCancellationService
                     previousCurrency,
                     newAmount = amount,
                     newCurrency = normalizedCurrency,
+                    // Menor 1 (ADR-044 T2): foto de los cargos borrados por la correccion (autocontencion del evento).
+                    deletedOperatorCharges = correctionDeletedCharges,
                 }),
                 userId: userId,
                 userName: userName);
@@ -5967,8 +6019,10 @@ public class BookingCancellationService
         // pass-through se REDUJO el RefundCap de esas lineas (invariante RefundCap + PenaltyAmount ==
         // capBeforePenalty). Si no lo restauramos, "Reembolsos a cobrar" queda subestimado para siempre. La lista de
         // caps restaurados va al audit. Para el estado pendiente (Estimated) esto es no-op (no hubo imputacion). ===
+        // ADR-044 T2 Addendum (menor 1): capturamos la foto de los cargos que la reversa borra, para el audit.
+        var waiveDeletedCharges = new List<DeletedOperatorChargeSnapshot>();
         var restoredCaps = waivingFromConfirmed
-            ? await ReverseConfirmedPenaltyFromLinesAsync(bc, ct, targetSupplierId)
+            ? await ReverseConfirmedPenaltyFromLinesAsync(bc, ct, targetSupplierId, deletedChargesSink: waiveDeletedCharges)
             : new List<PenaltyCapRestore>();
 
         // ADR-044 T1: marcar las lineas de ESTE operador como Waived (espejo de como Allocate las marca
@@ -6020,6 +6074,8 @@ public class BookingCancellationService
                 reason = trimmedReason,
                 bcStatus = bc.Status.ToString(),
                 restoredRefundCaps = restoredCaps,
+                // Menor 1 (ADR-044 T2): foto de los cargos borrados por el cierre sin multa (autocontencion).
+                deletedOperatorCharges = waiveDeletedCharges,
                 // Huella de ND ANTES de limpiarla (autocontencion del evento): estado previo + error de ARCA borrado.
                 // Va SOLO al audit interno; nunca se expone al usuario final.
                 previousDebitNoteStatus,
@@ -6233,6 +6289,294 @@ public class BookingCancellationService
             ?? throw new InvalidOperationException("No se pudo completar la operación. Volvé a intentar.");
     }
 
+    /// <inheritdoc />
+    public async Task<BookingCancellationDto> AddOperatorChargeAsync(
+        Guid publicId,
+        AddOperatorChargeRequest request,
+        string userId,
+        string? userName,
+        CancellationToken ct,
+        bool userCanClassifyAgencyPenalty = false)
+    {
+        // ADR-044 T2 Addendum (2026-07-10): "agregar otro cargo de este operador" — accion SECUNDARIA y OPCIONAL
+        // sobre una multa YA confirmada (ej. sumar una retencion fiscal ademas del cargo administrativo que el
+        // confirm automatico ya creo). NO es el flujo simple: ese sigue siendo confirmar la multa a secas.
+        if (request is null) throw new ArgumentNullException(nameof(request));
+
+        var settings = await _settings.GetEntityAsync(ct);
+        if (!settings.EnableCancellationDebitNote)
+            // Voz de los avisos (regla del dueño): quien llama a esta accion ES administracion; no lo derivamos a
+            // "administracion". Mensaje autocontenido, mismo estilo que CorrectPenaltyAsync para el flag OFF.
+            throw new InvalidOperationException(
+                "No se pudo agregar el cargo del operador. Volvé a intentar más tarde.");
+
+        var bc = await _db.BookingCancellations
+            .Include(b => b.Reserva)
+            .Include(b => b.Supplier)
+            .Include(b => b.Lines)
+                .ThenInclude(l => l.Supplier)
+            .FirstOrDefaultAsync(b => b.PublicId == publicId, ct)
+            ?? throw new KeyNotFoundException($"BC {publicId} no encontrada.");
+
+        // === PERMISO PRIMERO (menor 5, security): antes de validar los inputs (documento / moneda), para no
+        // filtrarle detalles de validacion a quien no tiene permiso de resolver la pata del operador. Mismo gate
+        // fiscal que confirmar/corregir la multa. ===
+        if (!userCanClassifyAgencyPenalty)
+            throw new BusinessInvariantViolationException(
+                "No tenés permiso para agregar un cargo del operador. Pedíselo a un administrador.",
+                invariantCode: "INV-ADR044-CHARGE-PERM");
+
+        // Un cargo facturado aparte necesita su documento del proveedor (espejo del CHECK SQL de la tabla).
+        var trimmedDocumentRef = request.DocumentRef?.Trim();
+        if (request.CollectionMode == PenaltyCollectionMode.FacturadaAparte
+            && string.IsNullOrWhiteSpace(trimmedDocumentRef))
+            throw new ArgumentException(
+                "Indicá el documento del proveedor: un cargo facturado aparte necesita su referencia.",
+                nameof(request));
+
+        // A que operador corresponde este cargo. Mismo helper y misma retrocompatibilidad que confirm/waive.
+        var targetSupplierId = ResolveTargetSupplierId(bc, request.SupplierPublicId);
+        var targetLines = bc.Lines.Where(l => l.SupplierId == targetSupplierId).ToList();
+
+        // Solo se puede agregar un cargo SECUNDARIO sobre una multa que YA esta confirmada (el cargo base ya
+        // existe): agregar antes seria "inventar" un cargo sin el flujo normal de confirmar la multa primero.
+        var isPrimaryOperator = targetSupplierId == bc.SupplierId;
+        var alreadyConfirmedForTarget = isPrimaryOperator
+            ? bc.PenaltyStatus == PenaltyStatus.Confirmed
+            : targetLines.Any(l => l.PenaltyStatus == PenaltyStatus.Confirmed);
+        if (!alreadyConfirmedForTarget)
+            throw new BusinessInvariantViolationException(
+                "Primero confirmá la multa de este operador; recién ahí se le puede agregar otro cargo.",
+                invariantCode: "INV-ADR044-CHARGE-001");
+
+        // Gate CommissionOnly (Decision A del Addendum): mismo criterio y mismo mensaje que el confirm automatico.
+        if (AnyLineHasCommissionOnlyInvoicingMode(targetLines))
+            throw new BusinessInvariantViolationException(
+                "Este operador solo cobra comisión: no retiene multas. Si te descontó algo, registralo como cargo " +
+                "facturado aparte con su documento.",
+                invariantCode: "INV-ADR044-T2-COMMISSIONONLY");
+
+        // B2 (moneda coherente con la linea): el cargo solo se reparte entre las lineas de ESTE operador cuya
+        // moneda de servicio coincide con la del cargo. Si ninguna coincide, no hay donde registrarlo.
+        var normalizedCurrency = Monedas.Normalizar(request.Currency);
+        var matchingLineIds = targetLines
+            .Where(l => string.Equals(Monedas.Normalizar(l.Currency), normalizedCurrency, StringComparison.OrdinalIgnoreCase))
+            .Select(l => l.Id)
+            .ToList();
+        if (matchingLineIds.Count == 0)
+            throw new ArgumentException(
+                "La moneda del cargo no coincide con la moneda de los servicios de este operador en esta cancelación.",
+                nameof(request));
+
+        // Efecto en la plata (ver el XML-doc de la interfaz): solo Retenida + Kind!=Withholding resta el
+        // RefundCap. Withholding nunca resta (credito fiscal); FacturadaAparte nunca resta (deuda AP aparte).
+        bool affectsRefundCap = request.CollectionMode == PenaltyCollectionMode.Retenida
+            && request.Kind != OperatorChargeKind.Withholding;
+        // Todo cargo con Kind != Withholding suma al eje CLIENTE (PenaltyAmount), sin importar la forma de cobro:
+        // es plata que eventualmente se traslada al cliente via ND (T3), Withholding nunca se traslada.
+        bool affectsClientAmount = request.Kind != OperatorChargeKind.Withholding;
+        var trimmedNotes = request.Notes?.Trim();
+
+        // === BLOQUEANTE 2 (backend): candado pesimista del padre (mismo patron que CorrectPenaltyAsync) +
+        // dedup por ventana de 60s. Un doble click / retry de red NO debe duplicar plata. En InMemory (tests unit)
+        // corre el cuerpo directo, sin lock ni transaccion. ===
+        await RunUnderParentLockAsync<bool>(bc.Id, async () =>
+        {
+            await _db.Entry(bc).ReloadAsync(ct);
+
+            // Re-leer las lineas del operador TRACKED y FRESCAS dentro del lock (un AddOperatorCharge o un
+            // confirm/waive concurrente del mismo BC, serializado por este mismo lock, pudo cambiar los caps).
+            // ReloadAsync por linea porque una tracking-query NO refresca entidades ya tracked por la Include.
+            var freshMatching = await _db.BookingCancellationLines
+                .Where(l => matchingLineIds.Contains(l.Id))
+                .ToListAsync(ct);
+            foreach (var l in freshMatching) await _db.Entry(l).ReloadAsync(ct);
+
+            // Re-chequear la precondicion de "multa confirmada" DENTRO del lock: un waive-desde-Confirmed
+            // concurrente pudo revertir la confirmacion entre la validacion de afuera y aca (mismo motivo por el
+            // que CorrectPenaltyAsync re-exige Confirmed tras el Reload).
+            var stillConfirmed = isPrimaryOperator
+                ? bc.PenaltyStatus == PenaltyStatus.Confirmed
+                : freshMatching.Any(l => l.PenaltyStatus == PenaltyStatus.Confirmed);
+            if (!stillConfirmed)
+                throw new BusinessInvariantViolationException(
+                    "Primero confirmá la multa de este operador; recién ahí se le puede agregar otro cargo.",
+                    invariantCode: "INV-ADR044-CHARGE-001");
+
+            // Dedup (BLOQUEANTE 2.b): si en los ultimos 60s ya se registro un cargo VIVO con la MISMA firma
+            // (linea del operador + Kind + CollectionMode + Currency + DocumentRef) por un total >= al pedido,
+            // es casi seguro un doble submit. Rebota 409 idempotente. Un cargo IGUAL de verdad se puede volver a
+            // cargar pasada la ventana. Comparamos DocumentRef en memoria (string.Equals) para no depender de la
+            // semantica de NULL del provider (InMemory vs Postgres).
+            var dedupCutoff = DateTime.UtcNow.AddSeconds(-60);
+            var recentSameSignature = await _db.BookingCancellationLineOperatorCharges
+                .Where(c => matchingLineIds.Contains(c.BookingCancellationLineId)
+                         && c.Kind == request.Kind
+                         && c.CollectionMode == request.CollectionMode
+                         && c.Currency == normalizedCurrency
+                         && c.ConfirmedAt >= dedupCutoff)
+                .Select(c => new { c.DocumentRef, c.Amount })
+                .ToListAsync(ct);
+            var recentSameTotal = recentSameSignature
+                .Where(c => string.Equals(c.DocumentRef, trimmedDocumentRef, StringComparison.Ordinal))
+                .Sum(c => c.Amount);
+            if (recentSameTotal >= request.Amount)
+                throw new BusinessInvariantViolationException(
+                    "Ese cargo ya se registró recién. Si es otro cargo igual de verdad, esperá un momento y volvé " +
+                    "a cargarlo.",
+                    invariantCode: "INV-ADR044-CHARGE-DUP");
+
+            // Repartir contra los caps FRESCOS (por RefundCap remanente si afecta caja; por LineSaleAmount si no).
+            var shares = DistributeChargeAcrossLines(freshMatching, request.Amount, affectsRefundCap);
+
+            // === BLOQUEANTE 1 (security): NUNCA aplicar parcial. Si el cargo afecta caja y el RefundCap remanente
+            // no alcanza para retener el monto COMPLETO (incluye el caso "cap agotado" = suma 0), rebota sin
+            // persistir NADA y sin emitir audit. La retencion es todo-o-nada: si no entra, se corrige el monto o
+            // se registra como facturado aparte. ===
+            var applicableTotal = shares.Where(s => s.Share > 0m).Sum(s => s.Share);
+            if (affectsRefundCap && applicableTotal < request.Amount)
+                throw new BusinessInvariantViolationException(
+                    "El operador no tiene reembolso pendiente suficiente para retener este cargo. Corregí el monto " +
+                    "o registralo como facturado aparte con su documento.",
+                    invariantCode: "INV-ADR044-CHARGE-002");
+
+            var appliedAt = DateTime.UtcNow;
+            decimal appliedTotal = 0m;
+            foreach (var (line, share) in shares)
+            {
+                if (share <= 0m) continue;
+
+                _db.BookingCancellationLineOperatorCharges.Add(new BookingCancellationLineOperatorCharge
+                {
+                    BookingCancellationLine = line,
+                    Kind = request.Kind,
+                    CollectionMode = request.CollectionMode,
+                    Amount = share,
+                    Currency = normalizedCurrency,
+                    DocumentRef = trimmedDocumentRef,
+                    Notes = trimmedNotes,
+                    ConfirmedByUserId = userId,
+                    ConfirmedByUserName = userName,
+                    ConfirmedAt = appliedAt,
+                });
+
+                if (affectsRefundCap)
+                {
+                    line.RefundCap -= share;
+                    if (line.RefundCap < 0m) line.RefundCap = 0m; // defensivo: DistributeChargeAcrossLines ya topea
+                    line.RetainedDeductionAmount += share;
+                    if (line.RefundCap <= 0m)
+                        line.RefundStatus = BookingCancellationLineRefundStatus.None;
+                }
+
+                if (affectsClientAmount)
+                    line.PenaltyAmount = (line.PenaltyAmount ?? 0m) + share;
+
+                appliedTotal += share;
+            }
+
+            // Auditoria STAGED (mismo SaveChanges que la mutacion, atomico): SOLO se emite porque algo se
+            // persistio, y con el monto REALMENTE aplicado (appliedTotal), no request.Amount. Para caja completo,
+            // appliedTotal == request.Amount por el guard de arriba; para Withholding/FacturadaAparte tambien
+            // (no hay tope). Se registra por si en el futuro cambia la regla de reparto.
+            _auditService.StageBusinessEvent(
+                action: AuditActions.OperatorChargeAdded,
+                entityName: AuditActions.BookingCancellationEntityName,
+                entityId: bc.Id.ToString(),
+                details: JsonSerializer.Serialize(new
+                {
+                    bc.PublicId,
+                    reservaPublicId = bc.Reserva?.PublicId,
+                    supplierPublicId = targetLines.FirstOrDefault()?.Supplier?.PublicId,
+                    isPrimaryOperator,
+                    kind = request.Kind.ToString(),
+                    collectionMode = request.CollectionMode.ToString(),
+                    requestedAmount = request.Amount,
+                    appliedAmount = appliedTotal,
+                    currency = normalizedCurrency,
+                    documentRef = trimmedDocumentRef,
+                }),
+                userId: userId,
+                userName: userName);
+
+            await _db.SaveChangesAsync(ct);
+
+            _logger.LogInformation(
+                "metric:cancellation_operator_charge_added | BcPublicId={BcPublicId} Supplier={SupplierId} " +
+                "Kind={Kind} CollectionMode={CollectionMode} Applied={Applied} By={UserId}",
+                bc.PublicId, targetSupplierId, request.Kind, request.CollectionMode, appliedTotal, userId);
+
+            return true;
+        }, ct);
+
+        return await MapToDtoAsync(bc.Id, ct)
+            ?? throw new InvalidOperationException("No se pudo completar la operación. Volvé a intentar.");
+    }
+
+    /// <summary>
+    /// ADR-044 T2 Addendum (2026-07-10): reparte un cargo nuevo entre las lineas candidatas del operador (ya
+    /// filtradas por moneda). Con UNA sola linea (el caso comun de hoy), el 100% va a esa linea. Con VARIAS
+    /// (cancelacion parcial multi-servicio del mismo operador, ADR-025), reparte proporcional:
+    /// <list type="bullet">
+    /// <item>Si <paramref name="affectsRefundCap"/> (Retenida + Kind!=Withholding): pondera por el
+    /// <c>RefundCap</c> REMANENTE de cada linea (mismo criterio que <c>AllocateConfirmedPenaltyToLinesAsync</c>)
+    /// y nunca supera ese cap por linea — asi nunca deja un <c>RefundCap</c> negativo.</item>
+    /// <item>Si NO afecta el cap (Withholding o FacturadaAparte: no hay tope de caja que preservar), pondera por
+    /// <c>LineSaleAmount</c> (proxy razonable de "cuanto de este operador corresponde a cada servicio"); si todas
+    /// las lineas tienen <c>LineSaleAmount</c> 0, reparte en partes iguales.</item>
+    /// </list>
+    /// La ULTIMA linea siempre absorbe el residuo de redondeo, para que la suma de las porciones sea EXACTA.
+    /// </summary>
+    private static List<(BookingCancellationLine Line, decimal Share)> DistributeChargeAcrossLines(
+        List<BookingCancellationLine> matchingLines, decimal totalAmount, bool affectsRefundCap)
+    {
+        var result = new List<(BookingCancellationLine, decimal)>();
+        if (matchingLines.Count == 1)
+        {
+            var onlyLine = matchingLines[0];
+            var amount = affectsRefundCap ? Math.Min(totalAmount, onlyLine.RefundCap) : totalAmount;
+            if (amount < 0m) amount = 0m;
+            result.Add((onlyLine, amount));
+            return result;
+        }
+
+        Func<BookingCancellationLine, decimal> weightOf = affectsRefundCap
+            ? l => l.RefundCap
+            : l => l.LineSaleAmount;
+
+        decimal totalWeight = matchingLines.Sum(weightOf);
+        bool useEqualSplit = totalWeight <= 0m;
+
+        decimal allocatedSoFar = 0m;
+        for (int i = 0; i < matchingLines.Count; i++)
+        {
+            var line = matchingLines[i];
+            bool isLastLine = i == matchingLines.Count - 1;
+
+            decimal share;
+            if (isLastLine)
+            {
+                share = totalAmount - allocatedSoFar;
+            }
+            else if (useEqualSplit)
+            {
+                share = Math.Round(totalAmount / matchingLines.Count, 2, MidpointRounding.AwayFromZero);
+            }
+            else
+            {
+                share = Math.Round(totalAmount * (weightOf(line) / totalWeight), 2, MidpointRounding.AwayFromZero);
+            }
+
+            if (affectsRefundCap && share > line.RefundCap) share = line.RefundCap;
+            if (share < 0m) share = 0m;
+
+            result.Add((line, share));
+            allocatedSoFar += share;
+        }
+
+        return result;
+    }
+
     /// <summary>
     /// ADR-014 (§3.6, M2): valida el 4-eyes de la confirmacion diferida reusando el patron
     /// de approval de <c>Confirm</c>. Si el caller no trae un <c>InvariantOverride</c>
@@ -6420,7 +6764,12 @@ public class BookingCancellationService
         string? requestedPenaltyCurrency,
         CancellationToken ct,
         int? targetSupplierId = null,
-        CancellationConceptKind? conceptOverride = null)
+        CancellationConceptKind? conceptOverride = null,
+        // ADR-044 T2 Addendum (2026-07-10): quien confirma, para dejarlo en el cargo automatico que este metodo
+        // crea por detras (BookingCancellationLineOperatorCharge). Opcional con default "System" para no romper
+        // firmas de tests que llamaban este metodo antes de esta tanda sin pasar usuario.
+        string userId = "System",
+        string? userName = null)
     {
         // Sin multa positiva no hay nada que netear (el request ya valida > 0, esto es defensivo).
         if (confirmedPenaltyAmount <= 0m) return;
@@ -6429,7 +6778,10 @@ public class BookingCancellationService
         var effectiveConcept = conceptOverride ?? bc.ConceptKind;
 
         // Lineas TRACKED del operador resuelto (por defecto, el principal del BC — comportamiento historico).
+        // Include Supplier: lo necesita el gate CommissionOnly de abajo (Decision A del Addendum T2) para el
+        // fallback vivo cuando la linea todavia no tiene SupplierInvoicingModeAtEvent (lineas legacy).
         var operatorLines = await _db.BookingCancellationLines
+            .Include(l => l.Supplier)
             .Where(l => l.BookingCancellationId == bc.Id && l.SupplierId == effectiveSupplierId)
             .ToListAsync(ct);
 
@@ -6464,6 +6816,17 @@ public class BookingCancellationService
                 bc.PublicId, effectiveConcept);
             return;
         }
+
+        // ADR-044 T2 Addendum, Decision A (2026-07-10): gate CommissionOnly. Un operador intermediario (factura
+        // DIRECTO al cliente final) estructuralmente NO tiene un RefundCap bruto que retener (SupplierService
+        // nunca le genera "compra confirmada"): que este metodo le netee una multa retenida seria un cargo
+        // automatico sobre un dato que no deberia existir. Se bloquea ANTES de crear ningun cargo/neteo (mismo
+        // criterio que IsCommissionOnlyLiquidation del lado cliente, GR-003, aplicado aca al lado operador).
+        if (AnyLineHasCommissionOnlyInvoicingMode(operatorLines))
+            throw new BusinessInvariantViolationException(
+                "Este operador solo cobra comisión: no retiene multas. Si te descontó algo, registralo como cargo " +
+                "facturado aparte con su documento.",
+                invariantCode: "INV-ADR044-T2-COMMISSIONONLY");
 
         // Guarda de IDEMPOTENCIA interna (hardening review 2026-06-28): si alguna linea de este operador YA
         // tiene PenaltyAmount cargado, la multa ya fue neteada en una corrida previa. Volver a netear recomputaria
@@ -6535,6 +6898,30 @@ public class BookingCancellationService
             line.PenaltyAmount = share;
             line.RefundCap = line.RefundCap - share;
 
+            // ADR-044 T2 Addendum (Decision B, 2026-07-10): el caso simple sigue siendo "2 clics" — el usuario
+            // solo informa monto+moneda+concepto, y ACA ATRAS se crea UN cargo tipificado por detras
+            // (Kind=AdministrativeFee, CollectionMode=Retenida, transparente para el usuario). Como es Fee+
+            // Retenida, el eje CAJA (RetainedDeductionAmount) coincide EXACTO con el eje CLIENTE (PenaltyAmount)
+            // para este camino automatico — la divergencia entre los dos solo aparece cuando se agrega un cargo
+            // SECUNDARIO distinto (Tax/Withholding/FacturadaAparte) via el endpoint "agregar otro cargo".
+            // Se crea SOLO si queda algo para registrar (share > 0): una linea con porcion 0 por redondeo/reparto
+            // no tiene nada que documentar como cargo real.
+            if (share > 0m)
+            {
+                _db.BookingCancellationLineOperatorCharges.Add(new BookingCancellationLineOperatorCharge
+                {
+                    BookingCancellationLine = line,
+                    Kind = OperatorChargeKind.AdministrativeFee,
+                    CollectionMode = PenaltyCollectionMode.Retenida,
+                    Amount = share,
+                    Currency = Monedas.Normalizar(line.Currency),
+                    ConfirmedByUserId = userId,
+                    ConfirmedByUserName = userName,
+                    ConfirmedAt = DateTime.UtcNow,
+                });
+                line.RetainedDeductionAmount = share;
+            }
+
             // FIX D (2026-07-04): si la multa confirmada del operador se comio TODO el cap de la linea, ya no hay
             // reembolso pendiente por esa via -> None (coherente con el doc del enum). Si queda cap, sigue esperando
             // reembolso (PendingOperatorRefund, seteado al nacer el circuito en AssignRefundCapsAsync).
@@ -6546,10 +6933,31 @@ public class BookingCancellationService
     }
 
     /// <summary>
+    /// ADR-044 T2 Addendum, Decision A (2026-07-10): ¿ALGUNA de estas lineas resuelve a un operador
+    /// <see cref="SupplierInvoicingMode.CommissionOnly"/> (intermediario)? Usa el fallback vivo
+    /// <c>line.SupplierInvoicingModeAtEvent ?? line.Supplier.InvoicingMode</c> — idem
+    /// <c>FiscalLiquidationCalculator.cs:61</c>. Se pregunta "alguna" (no "todas") para ser conservador: todas
+    /// las lineas de un mismo <c>SupplierId</c> deberian resolver igual (mismo operador), pero si alguna
+    /// divergiera por dato historico raro, se bloquea igual antes que netear mal.
+    /// </summary>
+    private static bool AnyLineHasCommissionOnlyInvoicingMode(IEnumerable<BookingCancellationLine> lines)
+        => lines.Any(l =>
+            (l.SupplierInvoicingModeAtEvent ?? l.Supplier?.InvoicingMode)
+                == SupplierInvoicingMode.CommissionOnly);
+
+    /// <summary>
     /// Detalle de un tope de reembolso restaurado al cerrar sin multa una penalidad confirmada (para el audit):
     /// que linea, cuanta multa se le devolvio al reembolso, y el cap resultante (viejo -> nuevo).
     /// </summary>
     internal sealed record PenaltyCapRestore(int LineId, decimal RestoredPenalty, decimal OldRefundCap, decimal NewRefundCap);
+
+    /// <summary>
+    /// ADR-044 T2 Addendum (menor 1, 2026-07-10): foto de un cargo de operador BORRADO al deshacer la
+    /// confirmacion (para el detail JSON del audit del waive/correct, patron <c>previousDebitNoteStatus</c>).
+    /// Deja la historia autocontenida: "esta reversa borro estos cargos" sin correlacionar con otros registros.
+    /// </summary>
+    internal sealed record DeletedOperatorChargeSnapshot(
+        int LineId, string Kind, string CollectionMode, decimal Amount, string Currency, string? DocumentRef);
 
     /// <summary>
     /// ESPEJO de <see cref="AllocateConfirmedPenaltyToLinesAsync"/>: deshace la imputacion de la multa a las lineas
@@ -6579,14 +6987,27 @@ public class BookingCancellationService
     /// ADR-044 T1 (2026-07-10): operador cuyas lineas se revierten. Null (default) preserva el comportamiento
     /// historico (operador principal del BC, <c>bc.SupplierId</c>).
     /// </param>
+    /// <param name="deletedChargesSink">
+    /// ADR-044 T2 Addendum (menor 1, 2026-07-10): si el caller lo provee, se llena con la foto de los cargos
+    /// BORRADOS (para el detail JSON de su audit). Null = el caller no la necesita (ej. tests). No cambia la
+    /// logica de restauracion; es solo un canal de salida opcional para no cambiar el tipo de retorno.
+    /// </param>
     // internal (no private) para que los tests unit ejerciten la restauracion directamente, igual que Allocate.
     internal async Task<List<PenaltyCapRestore>> ReverseConfirmedPenaltyFromLinesAsync(
-        BookingCancellation bc, CancellationToken ct, int? targetSupplierId = null)
+        BookingCancellation bc, CancellationToken ct, int? targetSupplierId = null,
+        List<DeletedOperatorChargeSnapshot>? deletedChargesSink = null)
     {
         var restored = new List<PenaltyCapRestore>();
         var effectiveSupplierId = targetSupplierId ?? bc.SupplierId;
 
+        // ADR-044 T2 Addendum (2026-07-10): Include OperatorCharges — este metodo los BORRA (ver abajo). Es el
+        // espejo COMPLETO del Allocate: deshacer una confirmacion deshace TAMBIEN los cargos que esa confirmacion
+        // creo (el automatico Fee+Retenida Y cualquier cargo secundario agregado despues — Tax/Withholding/
+        // FacturadaAparte), no solo el escalar. Decision documentada: un "deshacer" es total, no parcial; si
+        // quedara un cargo secundario huerfano (de un operador ya "Estimated" de nuevo), el usuario lo reconstruye
+        // al reconfirmar, evitando el riesgo mayor de un cargo fantasma que ningun escalar referencia mas.
         var operatorLines = await _db.BookingCancellationLines
+            .Include(l => l.OperatorCharges)
             .Where(l => l.BookingCancellationId == bc.Id && l.SupplierId == effectiveSupplierId)
             .ToListAsync(ct);
 
@@ -6598,40 +7019,61 @@ public class BookingCancellationService
             // operador como confirmado despues de deshacer su confirmacion.
             line.PenaltyStatus = PenaltyStatus.Estimated;
 
-            // Solo restauramos el CAP de lineas que el Allocate haya marcado con una porcion de multa
-            // (PenaltyAmount seteado). Una linea con PenaltyAmount null nunca neteo nada: no hay cap que
-            // devolver (agency-owned SIEMPRE cae aca).
-            if (!line.PenaltyAmount.HasValue)
-                continue;
-
-            var restoredPenalty = line.PenaltyAmount.Value;
-            var oldCap = line.RefundCap;
-
-            // Devolver la multa al tope SOLO si la porcion era positiva. Un 0 residual (linea que el Allocate dejo en
-            // 0 por el reparto/redondeo) no aporta nada al cap; no lo sumamos ni lo auditamos, pero IGUAL hay que
-            // limpiarlo a null (ver el reset de abajo).
-            if (restoredPenalty > 0m)
+            // ADR-044 T2 Addendum (Decision B1, 2026-07-10): borrar los cargos de esta linea (si los hay) ANTES de
+            // decidir si hay que restaurar el cap — son ellos los que originaron RetainedDeductionAmount. Menor 1:
+            // antes de borrarlos, snapshotearlos para el audit del caller (si lo pidio).
+            if (line.OperatorCharges.Count > 0)
             {
-                // El operador ya no retiene la multa: debe reembolsar el monto integro otra vez.
-                line.RefundCap = oldCap + restoredPenalty;
-
-                // El circuito de reembolso del operador vuelve a esperar la plata (si aun no se recibio todo). Si el
-                // Allocate lo habia dejado en None por cap 0, aca revive; si ya se cobro todo, Settled.
-                if (line.RefundCap > 0m)
+                if (deletedChargesSink is not null)
                 {
-                    line.RefundStatus = line.ReceivedRefundAmount >= line.RefundCap
-                        ? BookingCancellationLineRefundStatus.Settled
-                        : BookingCancellationLineRefundStatus.PendingOperatorRefund;
+                    foreach (var charge in line.OperatorCharges)
+                        deletedChargesSink.Add(new DeletedOperatorChargeSnapshot(
+                            LineId: line.Id,
+                            Kind: charge.Kind.ToString(),
+                            CollectionMode: charge.CollectionMode.ToString(),
+                            Amount: charge.Amount,
+                            Currency: Monedas.Normalizar(charge.Currency),
+                            DocumentRef: charge.DocumentRef));
                 }
-
-                restored.Add(new PenaltyCapRestore(line.Id, restoredPenalty, oldCap, line.RefundCap));
+                _db.BookingCancellationLineOperatorCharges.RemoveRange(line.OperatorCharges);
             }
 
-            // SIEMPRE resetear a null, tanto la porcion positiva ya restaurada como un 0 residual. Es clave para el
-            // re-neteo futuro: la guarda de idempotencia del Allocate es operatorLines.Any(l => l.PenaltyAmount.HasValue).
-            // Si dejaramos un 0 (HasValue == true), un re-confirm posterior (revert-waive -> Estimated -> confirmar de
-            // nuevo) creeria que la multa "ya esta neteada" y NO volveria a reducir el cap -> reembolso sobreestimado.
+            // Solo restauramos el CAP de lineas que el Allocate haya marcado con una porcion RETENIDA
+            // (RetainedDeductionAmount > 0 — el eje CAJA). Una linea con RetainedDeductionAmount 0 nunca redujo
+            // el cap (agency-owned SIEMPRE cae aca, y tambien una linea que solo tuviera cargos Withholding/
+            // FacturadaAparte, que por diseño no restan RefundCap).
+            var restoredPenalty = line.RetainedDeductionAmount;
+            if (restoredPenalty <= 0m)
+            {
+                // Igual hay que limpiar el eje CLIENTE si quedo cargado (agency-owned nunca lo carga, pero una
+                // linea con solo Withholding/FacturadaAparte SI tiene PenaltyAmount > 0 sin haber tocado el cap).
+                line.PenaltyAmount = null;
+                line.RetainedDeductionAmount = 0m;
+                continue;
+            }
+
+            var oldCap = line.RefundCap;
+
+            // El operador ya no retiene la multa: debe reembolsar el monto integro otra vez.
+            line.RefundCap = oldCap + restoredPenalty;
+
+            // El circuito de reembolso del operador vuelve a esperar la plata (si aun no se recibio todo). Si el
+            // Allocate lo habia dejado en None por cap 0, aca revive; si ya se cobro todo, Settled.
+            if (line.RefundCap > 0m)
+            {
+                line.RefundStatus = line.ReceivedRefundAmount >= line.RefundCap
+                    ? BookingCancellationLineRefundStatus.Settled
+                    : BookingCancellationLineRefundStatus.PendingOperatorRefund;
+            }
+
+            restored.Add(new PenaltyCapRestore(line.Id, restoredPenalty, oldCap, line.RefundCap));
+
+            // SIEMPRE resetear a null/0, es clave para el re-neteo futuro: la guarda de idempotencia del Allocate
+            // es operatorLines.Any(l => l.PenaltyAmount.HasValue). Si dejaramos un valor residual, un re-confirm
+            // posterior (revert-waive -> Estimated -> confirmar de nuevo) creeria que la multa "ya esta neteada"
+            // y NO volveria a reducir el cap -> reembolso sobreestimado.
             line.PenaltyAmount = null;
+            line.RetainedDeductionAmount = 0m;
         }
 
         return restored;
@@ -8185,7 +8627,43 @@ public class BookingCancellationService
         //         penalidad). Sin esto el cap queda en 0 y RefundStatus=Settled nunca es alcanzable.
         await AssignRefundCapsAsync(reserva.Id, lines, lineNetCosts, ct);
 
+        // ADR-044 T2 Addendum, Decision A (2026-07-10): snapshot del modo de facturacion del operador de CADA
+        // linea, UNA sola vez, al construirla (mismo momento en que arriba se fijo el default de ConceptKind).
+        // Una consulta batch por los SupplierId distintos evita N+1.
+        await StampSupplierInvoicingModeAtEventAsync(lines, ct);
+
         return lines;
+    }
+
+    /// <summary>
+    /// ADR-044 T2 Addendum, Decision A (2026-07-10): congela <see cref="BookingCancellationLine.SupplierInvoicingModeAtEvent"/>
+    /// con el modo de facturacion VIGENTE del operador de cada linea, en el momento en que la linea se construye.
+    ///
+    /// <para><b>Por que congelar y no leer en vivo</b>: una vez que hubo movimientos de plata reales sobre una
+    /// linea (multa retenida, reembolso recibido, cargo facturado aparte), si el admin cambia
+    /// <c>Supplier.InvoicingMode</c> DESPUES, una lectura 100% en vivo reinterpretaria el extracto historico sin
+    /// que haya cambiado ningun dato real. El snapshot evita eso — misma filosofia que <c>FiscalSnapshot</c>.</para>
+    ///
+    /// <para>Toda lectura de gate por modo de facturacion usa el patron
+    /// <c>line.SupplierInvoicingModeAtEvent ?? line.Supplier.InvoicingMode</c> (fallback vivo), asi que una linea
+    /// que por algun motivo no pasara por aca (no deberia) sigue funcionando igual, solo sin el snapshot.</para>
+    /// </summary>
+    private async Task StampSupplierInvoicingModeAtEventAsync(List<BookingCancellationLine> lines, CancellationToken ct)
+    {
+        if (lines.Count == 0) return;
+
+        var distinctSupplierIds = lines.Select(l => l.SupplierId).Distinct().ToList();
+        var invoicingModeBySupplierId = await _db.Suppliers
+            .AsNoTracking()
+            .Where(s => distinctSupplierIds.Contains(s.Id))
+            .Select(s => new { s.Id, s.InvoicingMode })
+            .ToDictionaryAsync(s => s.Id, s => s.InvoicingMode, ct);
+
+        foreach (var line in lines)
+        {
+            if (invoicingModeBySupplierId.TryGetValue(line.SupplierId, out var invoicingMode))
+                line.SupplierInvoicingModeAtEvent = invoicingMode;
+        }
     }
 
     /// <summary>
@@ -8260,20 +8738,28 @@ public class BookingCancellationService
         //
         // Por eso descontamos del pool el "capBeforePenalty" que ya consumieron las lineas EXISTENTES (las
         // persistidas en BCs no abortados de esta reserva). Para una linea ya guardada, ese consumo es su
-        // RefundCap MAS su penalidad (la penalidad se descontó del cap neto pero igual reservó pool; ver el
-        // reparto de abajo, que consume capBeforePenalty y no el cap neto). El path TOTAL no llega aca con
-        // lineas previas (arma todas juntas), asi que para Full esto es no-op.
+        // RefundCap MAS lo RETENIDO de su multa (ver el reparto de abajo, que consume capBeforePenalty y no el
+        // cap neto). El path TOTAL no llega aca con lineas previas (arma todas juntas), asi que para Full esto
+        // es no-op.
+        //
+        // ADR-044 T2 Addendum (2026-07-10, fix de plata encontrado por investigacion, mismo invariante B1 que
+        // ADR-044 T2 corrige en los otros 3 sitios): antes de esta tanda esta reconstruccion usaba PenaltyAmount
+        // (eje CLIENTE). Con T2, PenaltyAmount puede incluir montos Withholding/FacturadaAparte que NUNCA
+        // salieron del pool (no redujeron RefundCap) — usar PenaltyAmount aca SOBRE-restaria el pool disponible
+        // para lineas nuevas del mismo operador/moneda (cancelaciones parciales sucesivas quedarian con menos
+        // cupo del que en realidad queda libre). RetainedDeductionAmount es el eje CAJA correcto: exactamente lo
+        // que salio del pool.
         var existingLineConsumption = await _db.BookingCancellationLines
             .Where(l => l.BookingCancellation.ReservaId == reservaId
                      && l.BookingCancellation.Status != BookingCancellationStatus.Aborted
                      && supplierIds.Contains(l.SupplierId))
-            .Select(l => new { l.SupplierId, l.Currency, l.RefundCap, l.PenaltyAmount })
+            .Select(l => new { l.SupplierId, l.Currency, l.RefundCap, l.RetainedDeductionAmount })
             .ToListAsync(ct);
 
         foreach (var existing in existingLineConsumption)
         {
             // capBeforePenalty reconstruido: lo que la linea persistida le saco al pool del operador/moneda.
-            decimal alreadyConsumed = existing.RefundCap + (existing.PenaltyAmount ?? 0m);
+            decimal alreadyConsumed = existing.RefundCap + existing.RetainedDeductionAmount;
             if (alreadyConsumed <= 0m) continue;
 
             var key = (existing.SupplierId, existing.Currency);

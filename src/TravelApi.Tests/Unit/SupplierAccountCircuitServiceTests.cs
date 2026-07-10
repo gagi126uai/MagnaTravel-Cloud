@@ -134,7 +134,11 @@ public class SupplierAccountCircuitServiceTests
             BookingCancellationId = bcId, SupplierId = supplierId,
             ServiceTable = CancellableServiceTable.Hotel, ServiceId = 1,
             Scope = BookingCancellationLineScope.Full, Currency = currency, LineSaleAmount = refundCap,
-            RefundCap = refundCap, PenaltyAmount = penalty, ReceivedRefundAmount = received,
+            RefundCap = refundCap, PenaltyAmount = penalty,
+            // ADR-044 T2 Addendum: eje CAJA. Este archivo testea el camino legacy simple (pass-through
+            // confirmada, Fee+Retenida): coincide con PenaltyAmount (misma regla del backfill T2c).
+            RetainedDeductionAmount = penalty ?? 0m,
+            ReceivedRefundAmount = received,
         });
     }
 

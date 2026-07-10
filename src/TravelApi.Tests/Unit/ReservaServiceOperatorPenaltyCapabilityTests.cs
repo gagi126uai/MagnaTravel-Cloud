@@ -118,7 +118,7 @@ public class ReservaServiceOperatorPenaltyCapabilityTests
             ? Array.Empty<OperatorPenaltySituationDto>()
             : new[] { new OperatorPenaltySituationDto { State = situationState.ToString() } };
         mock.Setup(s => s.GetOperatorPenaltySituationsAsync(
-                It.IsAny<Guid>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                It.IsAny<Guid>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .ReturnsAsync(situations);
 
         return mock.Object;

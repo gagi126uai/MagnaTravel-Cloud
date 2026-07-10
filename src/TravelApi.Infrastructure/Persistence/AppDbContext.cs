@@ -339,6 +339,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<BookingCancellation> BookingCancellations => Set<BookingCancellation>();
     // ADR-025: lineas hijas de la cancelacion (una por servicio cancelado). Ver BookingCancellationLine.
     public DbSet<BookingCancellationLine> BookingCancellationLines => Set<BookingCancellationLine>();
+
+    // ADR-044 T2 Addendum: cargos tipificados del operador por linea. Ver BookingCancellationLineOperatorCharge.
+    public DbSet<BookingCancellationLineOperatorCharge> BookingCancellationLineOperatorCharges => Set<BookingCancellationLineOperatorCharge>();
     // ADR-042: hijas de la cancelacion (una por factura -> su NC). Caso multi-factura multimoneda.
     public DbSet<BookingCancellationCreditNote> BookingCancellationCreditNotes => Set<BookingCancellationCreditNote>();
     public DbSet<OperatorRefundReceived> OperatorRefundReceived => Set<OperatorRefundReceived>();
@@ -1665,6 +1668,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         // Public IDs (Guid uuid en BD + unique index, patron del repo).
         ConfigurePublicEntity<BookingCancellation>(modelBuilder);
         ConfigurePublicEntity<BookingCancellationLine>(modelBuilder);   // ADR-025
+        ConfigurePublicEntity<BookingCancellationLineOperatorCharge>(modelBuilder);   // ADR-044 T2 Addendum
         ConfigurePublicEntity<BookingCancellationCreditNote>(modelBuilder);   // ADR-042
         ConfigurePublicEntity<OperatorRefundReceived>(modelBuilder);
         ConfigurePublicEntity<OperatorRefundAllocation>(modelBuilder);
@@ -1890,12 +1894,18 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(l => l.PenaltyStatus).HasConversion<int>();
             entity.Property(l => l.DebitNoteStatus).HasConversion<int>();
             entity.Property(l => l.RefundStatus).HasConversion<int>();
+            // ADR-044 T2a (2026-07-10): snapshot nullable del modo de facturacion del operador. Ver el
+            // comentario de la propiedad para el porque de "cero regresion" (nunca estuvo poblado en produccion).
+            entity.Property(l => l.SupplierInvoicingModeAtEvent).HasConversion<int?>();
 
             entity.Property(l => l.Currency).HasMaxLength(3).IsRequired();
             entity.Property(l => l.LineSaleAmount).HasPrecision(18, 2);
             entity.Property(l => l.PenaltyAmount).HasPrecision(18, 2);
             entity.Property(l => l.RefundCap).HasPrecision(18, 2);
             entity.Property(l => l.ReceivedRefundAmount).HasPrecision(18, 2);
+            // ADR-044 T2c (2026-07-10): eje CAJA fisico, ver el comentario de la propiedad. Default 0 (columna
+            // NOT NULL con defaultValue en la migracion) para que las lineas legacy no queden en NULL.
+            entity.Property(l => l.RetainedDeductionAmount).HasPrecision(18, 2);
 
             entity.Property(l => l.ConceptClassifiedByUserId).HasMaxLength(450);
             entity.Property(l => l.ConceptClassifiedByUserName).HasMaxLength(200);
@@ -1928,6 +1938,39 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .HasDatabaseName("IX_BookingCancellationLines_SupplierId");
 
             // Concurrencia igual que el padre: cancelar un servicio y editar la reserva en paralelo -> 409.
+            entity.UseXminAsConcurrencyToken();
+        });
+
+        // ===== BookingCancellationLineOperatorCharge (hija de la linea, ADR-044 T2 Addendum) =====
+        modelBuilder.Entity<BookingCancellationLineOperatorCharge>(entity =>
+        {
+            entity.ToTable("BookingCancellationLineOperatorCharges");
+
+            entity.Property(c => c.Kind).HasConversion<int>();
+            entity.Property(c => c.CollectionMode).HasConversion<int>();
+            entity.Property(c => c.Amount).HasPrecision(18, 2);
+            entity.Property(c => c.Currency).HasMaxLength(3).IsRequired();
+            entity.Property(c => c.DocumentRef).HasMaxLength(200);
+            entity.Property(c => c.Notes).HasMaxLength(1000);
+            entity.Property(c => c.ConfirmedByUserId).HasMaxLength(450).IsRequired();
+            entity.Property(c => c.ConfirmedByUserName).HasMaxLength(200);
+
+            // FK a la linea duena del cargo. Cascade: el cargo no tiene sentido sin su linea (misma politica
+            // que Lines -> BookingCancellation).
+            entity.HasOne(c => c.BookingCancellationLine)
+                  .WithMany(l => l.OperatorCharges)
+                  .HasForeignKey(c => c.BookingCancellationLineId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            // Indice por linea: es el acceso caliente (cargar los cargos de UNA linea al confirmar/leer el
+            // extracto del operador).
+            entity.HasIndex(c => c.BookingCancellationLineId)
+                  .HasDatabaseName("IX_BookingCancellationLineOperatorCharges_BookingCancellationLineId");
+
+            // Los 2 CHECK SQL de la tabla se agregan via migrationBuilder.Sql en la migracion T2b (EF Core no tiene
+            // API fluida para CHECK constraints): (1) DocumentRef obligatorio cuando CollectionMode=FacturadaAparte;
+            // (2) Amount > 0 (amount_positive). La coherencia de MONEDA (B2: Currency del cargo == Currency de su
+            // linea) NO es un CHECK SQL (cruza tablas): se valida en el SERVICIO al escribir (AddOperatorChargeAsync).
             entity.UseXminAsConcurrencyToken();
         });
 

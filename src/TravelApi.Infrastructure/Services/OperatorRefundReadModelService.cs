@@ -253,10 +253,12 @@ public class OperatorRefundReadModelService : IOperatorRefundReadModelService
     /// <c>EstimatedAmount == PaidToOperator - PenaltyRetained - AmountReceived</c>. Se cumple EXACTO por
     /// construccion sobre las lineas elegibles:
     /// <list type="bullet">
-    ///   <item><c>PenaltyRetained = sum(line.PenaltyAmount)</c> — la multa que YA redujo el RefundCap. Solo se
-    ///     setea para penalidad PASS-THROUGH confirmada del operador principal, y el share se topea al cap
-    ///     (<c>AllocateConfirmedPenaltyToLinesAsync</c>), asi que <c>RefundCap + PenaltyAmount == capBeforePenalty</c>
-    ///     siempre (incluso cuando la multa se come todo -> RefundCap 0, PenaltyAmount == capBeforePenalty).</item>
+    ///   <item><c>PenaltyRetained = sum(line.RetainedDeductionAmount)</c> — la multa que YA redujo el RefundCap
+    ///     (ADR-044 T2 Addendum: eje CAJA, columna fisica separada de <c>PenaltyAmount</c>/eje CLIENTE desde esta
+    ///     tanda). Solo se setea para penalidad PASS-THROUGH confirmada, y el share se topea al cap
+    ///     (<c>AllocateConfirmedPenaltyToLinesAsync</c>), asi que <c>RefundCap + RetainedDeductionAmount ==
+    ///     capBeforePenalty</c> siempre (incluso cuando la multa se come todo -> RefundCap 0,
+    ///     RetainedDeductionAmount == capBeforePenalty). Withholding/FacturadaAparte nunca entran aca.</item>
     ///   <item><c>PaidToOperator = sum(RefundCap) + PenaltyRetained == sum(capBeforePenalty)</c> — la base
     ///     reembolsable pagada (topeada al costo del servicio), NO el bruto pagado.</item>
     ///   <item><c>AmountReceived = sum(min(ReceivedRefundAmount, RefundCap))</c> — lo que el operador ya devolvio,
@@ -287,8 +289,12 @@ public class OperatorRefundReadModelService : IOperatorRefundReadModelService
                     l, bc, serviceCountsAsDebt, supplierId, logger: null))
                 .ToList();
 
-        // Multa retenida = lo que ya redujo el RefundCap (line.PenaltyAmount). Es la "multa confirmada imputada".
-        decimal penaltyRetainedReal = eligible.Sum(l => l.PenaltyAmount ?? 0m);
+        // Multa retenida = lo que ya redujo el RefundCap. ADR-044 T2 Addendum (2026-07-10): usamos
+        // line.RetainedDeductionAmount (eje CAJA fisico) en vez de line.PenaltyAmount (eje CLIENTE): desde esta
+        // tanda PenaltyAmount puede incluir montos Withholding/FacturadaAparte que NUNCA redujeron el RefundCap,
+        // asi que sumarlo aca sobreestimaria "lo que ya redujo el reembolso" y rompería la reconstruccion de
+        // capBeforePenalty de abajo (ver invariante B1 del Addendum).
+        decimal penaltyRetainedReal = eligible.Sum(l => l.RetainedDeductionAmount);
         // Reembolso ya recibido del operador (atribuido a estas lineas). El CRUDO decide el motivo del $0
         // (FullyRefunded); el MOSTRADO se topea por linea al cap para que la cuenta del front cierre exacta
         // aun con sobre-reembolso (la ultima linea puede absorber mas que su cap — ver el resumen).

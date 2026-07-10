@@ -430,6 +430,52 @@ public record ConfirmPenaltyRequest(
 );
 
 /// <summary>
+/// ADR-044 T2 Addendum (2026-07-10): payload de "agregar otro cargo de este operador" — accion SECUNDARIA y
+/// OPCIONAL (no se muestra ni se pregunta por default; el confirm de la multa ya crea el cargo automatico simple).
+/// Se usa cuando el mismo operador aplica, ADEMAS del cargo ya confirmado, otro cargo de distinta naturaleza
+/// fiscal (ej. una retencion de IVA/Ganancias ademas del cargo administrativo — caso real confirmado por el
+/// contador, no hipotetico). Requiere que la multa de ESE operador ya este <c>Confirmed</c>.
+/// </summary>
+public record AddOperatorChargeRequest(
+    /// <summary>Naturaleza fiscal del cargo nuevo. Ver <see cref="OperatorChargeKind"/>.</summary>
+    [Required]
+    OperatorChargeKind Kind,
+
+    /// <summary>Como lo efectiviza el operador. Ver <see cref="PenaltyCollectionMode"/>.</summary>
+    [Required]
+    PenaltyCollectionMode CollectionMode,
+
+    /// <summary>Monto del cargo. Obligatorio &gt; 0.</summary>
+    [Range(0.01, double.MaxValue, ErrorMessage = "El monto del cargo debe ser mayor a cero.")]
+    decimal Amount,
+
+    /// <summary>
+    /// Moneda ISO 4217 del cargo (ARS/USD). INVARIANTE DURA (B2): debe coincidir con la moneda del/los
+    /// servicio(s) cancelado(s) de este operador — el service la valida y rechaza si no coincide.
+    /// </summary>
+    [Required]
+    [MaxLength(3, ErrorMessage = "La moneda debe ser un código de 3 letras (por ejemplo: ARS o USD).")]
+    string Currency,
+
+    /// <summary>
+    /// Referencia al documento del proveedor. Obligatoria cuando <see cref="CollectionMode"/> =
+    /// <see cref="PenaltyCollectionMode.FacturadaAparte"/> (esa forma de cobro exige el documento del operador).
+    /// </summary>
+    [MaxLength(200)]
+    string? DocumentRef = null,
+
+    [MaxLength(1000)]
+    string? Notes = null,
+
+    /// <summary>
+    /// Identificador PUBLICO del operador al que corresponde este cargo, para cancelaciones con servicios de MAS
+    /// de un operador (ADR-025). Opcional y retrocompatible: si la cancelacion tiene lineas de UN solo operador,
+    /// se resuelve solo. Mismo criterio que <see cref="ConfirmPenaltyRequest.SupplierPublicId"/>.
+    /// </summary>
+    Guid? SupplierPublicId = null
+);
+
+/// <summary>
 /// ADR-014 (M1, §3.2, 2026-06-02): forma de entrada COMUN de la clasificacion de la
 /// penalidad. Tanto el path SINCRONO (<see cref="ConfirmCancellationRequest"/>, Dia 0)
 /// como el DIFERIDO (<see cref="ConfirmPenaltyRequest"/>, Dia N) construyen este record

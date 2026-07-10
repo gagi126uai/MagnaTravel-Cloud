@@ -118,11 +118,21 @@ public class Adr041SupplierCreditReconcilerCircuitTests
         };
         ctx.BookingCancellations.Add(bc);
         await ctx.SaveChangesAsync();
+        // ADR-044 T2 Addendum: RetainedDeductionAmount es el eje CAJA (lo que de verdad salio del RefundCap /
+        // lo que el circuit reader pinta como "Multa retenida"). Este helper representa el camino legacy simple
+        // (Fee+Retenida): coincide con PenaltyAmount SOLO cuando la penalidad es pass-through confirmada (mismo
+        // gate que antes miraba bc.PenaltyStatus/bc.ConceptKind); para agency-owned o no confirmada, el operador
+        // nunca retuvo nada, asi que queda en 0 (igual que antes de esta tanda, donde no se neteaba el cap).
+        var retainedDeductionAmount = penaltyStatus == PenaltyStatus.Confirmed
+            && conceptKind == CancellationConceptKind.OperatorPenaltyPassThrough
+                ? penalty ?? 0m
+                : 0m;
         ctx.Set<BookingCancellationLine>().Add(new BookingCancellationLine
         {
             BookingCancellationId = bc.Id, SupplierId = supplierId, ServiceTable = CancellableServiceTable.Hotel,
             ServiceId = 1, Scope = BookingCancellationLineScope.Full, Currency = "ARS", LineSaleAmount = refundCap,
-            RefundCap = refundCap, PenaltyAmount = penalty, ReceivedRefundAmount = received,
+            RefundCap = refundCap, PenaltyAmount = penalty, RetainedDeductionAmount = retainedDeductionAmount,
+            ReceivedRefundAmount = received,
         });
         await ctx.SaveChangesAsync();
         return bc;

@@ -299,6 +299,14 @@ public static class AuditActions
     public const string OperatorPenaltyCorrected = "OperatorPenaltyCorrected";
 
     /// <summary>
+    /// ADR-044 T2 Addendum (2026-07-10): un usuario agrego un cargo SECUNDARIO del operador sobre una multa ya
+    /// confirmada (ej. una retencion fiscal ademas del cargo administrativo automatico). Accion OPCIONAL, no
+    /// parte del flujo simple. El detail JSON lleva quien/cuando, el BC/reserva, el operador, y el
+    /// Kind/CollectionMode/Amount/Currency/DocumentRef del cargo agregado.
+    /// </summary>
+    public const string OperatorChargeAdded = "OperatorChargeAdded";
+
+    /// <summary>
     /// (2026-06-26): el operador supero el plazo (<c>OperatorRefundDueBy</c>) sin reembolsar. El job nocturno
     /// transiciono la cancelacion <c>AwaitingOperatorRefund</c> -> <c>AbandonedByOperator</c> y cerro la RESERVA
     /// (<c>PendingOperatorRefund</c> -> <c>Cancelled</c>). Antes este estado nunca se asignaba (codigo muerto) y
