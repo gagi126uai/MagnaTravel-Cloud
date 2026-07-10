@@ -87,7 +87,9 @@ internal static class SupplierCancellationCircuitReader
             .AsNoTracking()
             .Include(l => l.BookingCancellation).ThenInclude(bc => bc.Reserva)
             // ADR-044 T2 Addendum: necesitamos los cargos de la linea para el bloque "Cargo facturado aparte".
-            .Include(l => l.OperatorCharges)
+            // ADR-044 T3b Decision 3 (M3, paso 6): + sus ajustes de diferencia de cambio, para la linea
+            // "Diferencia de cambio" (solo se pintan las filas VIGENTES).
+            .Include(l => l.OperatorCharges).ThenInclude(c => c.TreasuryFxAdjustments)
             .Where(l => l.SupplierId == supplierId
                      && l.BookingCancellation.Status != BookingCancellationStatus.Aborted)
             .ToListAsync(ct);
@@ -161,6 +163,54 @@ internal static class SupplierCancellationCircuitReader
                     Currency: currency,
                     Amount: operatorChargeInvoiced,
                     SourcePublicId: line.PublicId));
+            }
+
+            // --- DIFERENCIA DE CAMBIO (ADR-044 T3b Decision 3, M3 paso 6, K2) ---
+            // Un cargo liquidado con conversion (ND en una moneda, TC definitivo distinto al TC real de la
+            // liquidacion) deja un ajuste de valuacion. Solo se pinta la fila VIGENTE de cada cargo (las
+            // superseded por soft-void/reemplazo, M4, NO aparecen — el indice unico de la BD garantiza a lo
+            // sumo una vigente por cargo).
+            //
+            // K2 (bloqueante backend, 2026-07-10): la linea vive en el bloque de la moneda de la LINEA (junto a
+            // la multa que la origino), NO en el de la moneda de liquidacion — sino caeria en un bloque distinto
+            // al de sus hermanas (todas usan line.Currency). Como el delta se calculo en la moneda de la ND
+            // (SettlementCurrency), lo CONVERTIMOS coherente a la moneda de la linea al TC de la liquidacion, y
+            // dejamos la moneda de liquidacion como dato informativo en la descripcion. (Default conservador,
+            // confirmacion de Gaston batcheada en T4.) A diferencia de sus hermanas, el monto puede ser negativo
+            // (es un ajuste de valuacion, no un cargo).
+            foreach (var charge in line.OperatorCharges)
+            {
+                var vigente = charge.TreasuryFxAdjustments.FirstOrDefault(a => !a.IsSuperseded);
+                if (vigente is null) continue;
+
+                var settlementCurrencyIso = Monedas.Normalizar(vigente.SettlementCurrency);
+                decimal deltaInLineCurrency = vigente.DeltaAmount;
+                string description = "Diferencia de cambio";
+                if (!string.Equals(settlementCurrencyIso, currency, StringComparison.Ordinal))
+                {
+                    var converted = ConvertArsUsdIso(
+                        vigente.DeltaAmount, settlementCurrencyIso, currency, vigente.RateAtSettlement);
+                    if (converted is null)
+                    {
+                        // Par de monedas no soportado o TC raro: no pintamos una linea con un numero dudoso
+                        // (mismo criterio conservador del resto del modulo). Queda en la fila persistida igual.
+                        logger?.LogWarning(
+                            "metric:treasury_fx_adjustment_unconvertible | OperatorChargeId={ChargeId} " +
+                            "Settlement={Settlement} Line={Line}", charge.Id, settlementCurrencyIso, currency);
+                        continue;
+                    }
+                    deltaInLineCurrency = converted.Value;
+                    description = $"Diferencia de cambio (liquidada en {MonedaLabelCorta(settlementCurrencyIso)})";
+                }
+
+                circuitLines.Add(new SupplierCircuitLine(
+                    Date: vigente.CreatedAt,
+                    Kind: SupplierAccountStatementLineKinds.TreasuryFxAdjustment,
+                    Description: description,
+                    DocumentRef: reservaNumber,
+                    Currency: currency,
+                    Amount: deltaInLineCurrency,
+                    SourcePublicId: charge.PublicId));
             }
 
             // --- REEMBOLSO RECIBIDO ---
@@ -369,4 +419,29 @@ internal static class SupplierCancellationCircuitReader
 
         return true; // servicio cuenta como compra y la reserva tambien -> sin receivable, Y no suma (correcto).
     }
+
+    /// <summary>
+    /// K2 (2026-07-10): convierte un monto entre ARS y USD (codigos ISO) con la convencion FIJA del sistema
+    /// (TC = unidades de ARS por 1 USD). Devuelve <c>null</c> si el par no es ARS/USD o el TC no es positivo:
+    /// el caller trata <c>null</c> como "no pintable" y omite la linea (nunca un numero dudoso). Espejo de
+    /// <c>BookingCancellationService.ConvertArsUsdAmount</c> pero en ISO (la moneda de liquidacion/linea del
+    /// ajuste se guarda en ISO, no en el catalogo ARCA).
+    /// </summary>
+    private static decimal? ConvertArsUsdIso(decimal amount, string fromIso, string toIso, decimal rate)
+    {
+        if (rate <= 0m) return null;
+
+        bool fromUsd = string.Equals(fromIso, Monedas.USD, StringComparison.OrdinalIgnoreCase);
+        bool fromArs = string.Equals(fromIso, Monedas.ARS, StringComparison.OrdinalIgnoreCase);
+        bool toUsd = string.Equals(toIso, Monedas.USD, StringComparison.OrdinalIgnoreCase);
+        bool toArs = string.Equals(toIso, Monedas.ARS, StringComparison.OrdinalIgnoreCase);
+
+        if (fromUsd && toArs) return Math.Round(amount * rate, 2, MidpointRounding.AwayFromZero);
+        if (fromArs && toUsd) return Math.Round(amount / rate, 2, MidpointRounding.AwayFromZero);
+        return null;
+    }
+
+    /// <summary>Etiqueta corta de moneda para la descripcion del extracto interno (no viaja al cliente): "dólares"/"pesos".</summary>
+    private static string MonedaLabelCorta(string iso) =>
+        string.Equals(iso, Monedas.USD, StringComparison.OrdinalIgnoreCase) ? "dólares" : "pesos";
 }

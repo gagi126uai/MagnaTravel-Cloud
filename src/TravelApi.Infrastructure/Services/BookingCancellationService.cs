@@ -6329,6 +6329,67 @@ public class BookingCancellationService
             ?? throw new InvalidOperationException("No se pudo completar la operación. Volvé a intentar.");
     }
 
+    // =========================================================================
+    // ADR-044 T3b Decision 1 (2026-07-10): resolucion de la factura destino de un cargo del operador.
+    // =========================================================================
+
+    /// <summary>
+    /// Lista TODAS las facturas de venta VIVAS con CAE de una reserva. Mismo filtro que ya usan
+    /// <c>DraftAsync</c>/<c>ResolveAndPreflightInvoicesToAnnulAsync</c> (excluye NC/ND y filas fantasma sin CAE
+    /// — un intento de emision fallido/reintento nunca cuenta como factura activa). Se reusa aca porque el
+    /// numero de facturas activas es lo que decide si un cargo del operador se autocompleta solo (1 factura) o
+    /// necesita eleccion humana (2+).
+    /// </summary>
+    private async Task<List<Invoice>> LoadActiveSaleInvoicesForReservaAsync(int reservaId, CancellationToken ct)
+    {
+        return await _db.Invoices
+            .Where(i => i.ReservaId == reservaId
+                     && i.AnnulmentStatus != AnnulmentStatus.Succeeded
+                     && !LiveInvoiceCreditNoteTypes.Contains(i.TipoComprobante)
+                     && !LiveInvoiceDebitNoteTypes.Contains(i.TipoComprobante)
+                     && !string.IsNullOrEmpty(i.CAE))
+            .OrderByDescending(i => i.CreatedAt)
+            .ToListAsync(ct);
+    }
+
+    /// <summary>
+    /// ADR-044 T3b Decision 1: caso simple, sin friccion. Con 1 sola factura de venta activa, esa es la factura
+    /// destino del cargo (autocompletada, ningun desplegable visible). Con 0 o 2+ facturas activas, devuelve
+    /// null: 0 no deberia pasar (ya hay un BC, tiene que existir al menos una factura); 2+ exige que un humano
+    /// elija (nunca se adivina con cual moneda/monto "matchea mejor" — riesgo fiscal inaceptable, ver Addendum).
+    /// </summary>
+    private static int? ResolveAutoTargetInvoiceId(List<Invoice> activeInvoices)
+        => activeInvoices.Count == 1 ? activeInvoices[0].Id : (int?)null;
+
+    /// <summary>
+    /// ADR-044 T3b Decision 1 (M2, invariante dura): todos los cargos TRASLADABLES al cliente (<c>Kind !=
+    /// Withholding</c>) de la MISMA linea tienen que compartir la misma factura destino — una linea es un
+    /// servicio, y un servicio vive en UNA sola factura del cliente. Devuelve <c>null</c> si
+    /// <paramref name="candidateTargetInvoiceId"/> es compatible (sin conflicto), o un mensaje claro si otro
+    /// cargo trasladable de esa linea ya quedo resuelto contra una factura DISTINTA. Los <c>Withholding</c> y los
+    /// candidatos <c>null</c> quedan exentos (nunca chocan): un <c>Withholding</c> nunca emite renglon de ND, y
+    /// sin candidato no hay nada que comparar.
+    /// </summary>
+    private async Task<string?> ValidateTargetInvoiceConsistencyForLineAsync(
+        int lineId, OperatorChargeKind kind, int? candidateTargetInvoiceId, int? excludingChargeId, CancellationToken ct)
+    {
+        if (kind == OperatorChargeKind.Withholding || candidateTargetInvoiceId is null)
+            return null;
+
+        var conflicting = await _db.BookingCancellationLineOperatorCharges
+            .Where(c => c.BookingCancellationLineId == lineId
+                     && c.Kind != OperatorChargeKind.Withholding
+                     && c.TargetInvoiceId != null
+                     && c.TargetInvoiceId != candidateTargetInvoiceId
+                     && (excludingChargeId == null || c.Id != excludingChargeId.Value))
+            .AnyAsync(ct);
+
+        return conflicting
+            ? "Ese servicio ya tiene otro cargo del operador con una factura destino distinta: los cargos de un " +
+              "mismo servicio tienen que ir a la misma factura del cliente."
+            : null;
+    }
+
     /// <inheritdoc />
     public async Task<BookingCancellationDto> AddOperatorChargeAsync(
         Guid publicId,
@@ -6431,6 +6492,56 @@ public class BookingCancellationService
             throw new ArgumentException(
                 "La moneda del cargo no coincide con la moneda de los servicios de este operador en esta cancelación.",
                 nameof(request));
+
+        // ADR-044 T3b Decision 1 (2026-07-10): factura destino de este cargo. Con 1 sola factura de venta
+        // activa se autocompleta (transparente). Con 2+, si el caller especifico una, la validamos contra las
+        // facturas ACTIVAS de la reserva (nunca aceptamos a ciegas una factura ajena o ya muerta). Sin eleccion
+        // y con 2+ activas, queda null (el motor de emision de la ND la rutea a revision manual mas adelante).
+        var activeInvoicesForTarget = await LoadActiveSaleInvoicesForReservaAsync(bc.ReservaId, ct);
+        int? resolvedTargetInvoiceId = ResolveAutoTargetInvoiceId(activeInvoicesForTarget);
+        if (resolvedTargetInvoiceId is null && request.TargetInvoicePublicId.HasValue)
+        {
+            var chosenInvoice = activeInvoicesForTarget
+                .FirstOrDefault(i => i.PublicId == request.TargetInvoicePublicId.Value);
+            if (chosenInvoice is null)
+                throw new BusinessInvariantViolationException(
+                    "La factura elegida no es una factura de venta activa de esta reserva.",
+                    invariantCode: "INV-ADR044-TARGETINVOICE-001");
+            resolvedTargetInvoiceId = chosenInvoice.Id;
+        }
+
+        // M2 (invariante dura): ningun cargo trasladable (Kind != Withholding) de las lineas alcanzadas puede
+        // ya tener una factura destino DISTINTA a la resuelta arriba.
+        foreach (var lineIdToCheck in matchingLineIds)
+        {
+            var conflictMessage = await ValidateTargetInvoiceConsistencyForLineAsync(
+                lineIdToCheck, request.Kind, resolvedTargetInvoiceId, excludingChargeId: null, ct);
+            if (conflictMessage is not null)
+                throw new BusinessInvariantViolationException(
+                    conflictMessage, invariantCode: "INV-ADR044-TARGETINVOICE-002");
+        }
+
+        // ADR-044 T3b Decision 2 (2026-07-10): TC ESTIMADO (preview), solo si el caller lo informo (relevante
+        // cuando la moneda del cargo difiere de la de su factura destino). Coherencia minima: el TC, su origen y
+        // su fecha se cargan JUNTOS (menor 1), "Manual" exige justificacion (mismo criterio INV-120 de toda
+        // factura en moneda extranjera del sistema), y el TC pasa la banda de sanidad (S1/F1: no puede quedar en
+        // 1 ni en 0, "default peligroso" de cotizacion sin cargar).
+        if (request.EstimatedExchangeRateToClientInvoiceCurrency.HasValue != request.EstimatedExchangeRateSource.HasValue)
+            throw new ArgumentException(
+                "El tipo de cambio estimado y su origen se cargan juntos.", nameof(request));
+        if (request.EstimatedExchangeRateToClientInvoiceCurrency.HasValue
+            && !request.EstimatedExchangeRateAt.HasValue)
+            throw new ArgumentException(
+                "El tipo de cambio estimado necesita su fecha.", nameof(request));
+        if (request.EstimatedExchangeRateToClientInvoiceCurrency.HasValue
+            && IsUnreliableExchangeRate(request.EstimatedExchangeRateToClientInvoiceCurrency.Value))
+            throw new ArgumentException(
+                "El tipo de cambio no puede quedar en 1 (parece sin completar): cargá la cotización real.",
+                nameof(request));
+        if (request.EstimatedExchangeRateSource == ExchangeRateSource.Manual
+            && string.IsNullOrWhiteSpace(request.EstimatedExchangeRateJustification))
+            throw new ArgumentException(
+                "Un tipo de cambio cargado a mano necesita una justificación.", nameof(request));
 
         // Efecto en la plata (ver el XML-doc de la interfaz): solo Retenida + Kind!=Withholding resta el
         // RefundCap. Withholding nunca resta (credito fiscal); FacturadaAparte nunca resta (deuda AP aparte).
@@ -6548,6 +6659,11 @@ public class BookingCancellationService
                     ConfirmedByUserId = userId,
                     ConfirmedByUserName = userName,
                     ConfirmedAt = appliedAt,
+                    TargetInvoiceId = resolvedTargetInvoiceId,
+                    EstimatedExchangeRateToClientInvoiceCurrency = request.EstimatedExchangeRateToClientInvoiceCurrency,
+                    EstimatedExchangeRateSource = request.EstimatedExchangeRateSource,
+                    EstimatedExchangeRateAt = request.EstimatedExchangeRateAt,
+                    EstimatedExchangeRateJustification = request.EstimatedExchangeRateJustification?.Trim(),
                 });
 
                 if (affectsRefundCap)
@@ -6603,6 +6719,104 @@ public class BookingCancellationService
 
             return true;
         }, ct);
+
+        return await MapToDtoAsync(bc.Id, ct)
+            ?? throw new InvalidOperationException("No se pudo completar la operación. Volvé a intentar.");
+    }
+
+    /// <inheritdoc />
+    public async Task<BookingCancellationDto> SetOperatorChargeTargetInvoiceAsync(
+        Guid publicId,
+        Guid chargePublicId,
+        SetOperatorChargeTargetInvoiceRequest request,
+        string userId,
+        string? userName,
+        CancellationToken ct,
+        bool userCanClassifyAgencyPenalty = false)
+    {
+        // ADR-044 T3b Decision 1 (2026-07-10): "elegir/corregir la factura destino de un cargo del operador" —
+        // se usa con 2+ facturas de venta activas de la reserva (ADR-042), cuando el motor de emision de la ND
+        // no pudo autocompletar sola. La pantalla que llama esto (desplegable, oculto si hay 1 sola factura) es
+        // ADR-044 T4; este metodo es el contrato de backend que esa pantalla consume.
+        if (request is null) throw new ArgumentNullException(nameof(request));
+
+        var settings = await _settings.GetEntityAsync(ct);
+        if (!settings.EnableCancellationDebitNote)
+            throw new InvalidOperationException(
+                "No se pudo actualizar la factura del cargo. Volvé a intentar más tarde.");
+
+        var bc = await _db.BookingCancellations
+            .FirstOrDefaultAsync(b => b.PublicId == publicId, ct)
+            ?? throw new KeyNotFoundException($"BC {publicId} no encontrada.");
+
+        // Mismo gate fiscal que agregar/confirmar un cargo del operador (permiso PRIMERO, antes de validar datos).
+        if (!userCanClassifyAgencyPenalty)
+            throw new BusinessInvariantViolationException(
+                "No tenés permiso para elegir la factura de este cargo. Pedíselo a un administrador.",
+                invariantCode: "INV-ADR044-CHARGE-PERM");
+
+        var charge = await _db.BookingCancellationLineOperatorCharges
+            .Include(c => c.BookingCancellationLine)
+            .FirstOrDefaultAsync(c => c.PublicId == chargePublicId
+                                    && c.BookingCancellationLine.BookingCancellationId == bc.Id, ct)
+            ?? throw new KeyNotFoundException($"Cargo {chargePublicId} no encontrado en esta cancelación.");
+
+        // S3 (bloqueante security, 2026-07-10): una vez que la Nota de Debito al cliente ya se EMITIO (o esta en
+        // vuelo), la factura destino de este cargo YA quedo congelada en el comprobante — cambiarla ahora
+        // dejaria el ajuste FX y el snapshot fiscal apuntando a una factura distinta de la que salio. Se bloquea
+        // si el BC ya tiene ND vinculada / en vuelo / emitida, o si la propia linea del cargo la tiene (caso
+        // multi-operador, ADR-044 T1). ManualReview y NotApplicable SI dejan corregir: son justamente los
+        // estados donde todavia no salio nada y hay que elegir/corregir la factura antes de reintentar.
+        var line = charge.BookingCancellationLine;
+        bool debitNoteInFlightOrIssued =
+            bc.DebitNoteInvoiceId.HasValue
+            || bc.DebitNoteStatus is DebitNoteStatus.Pending or DebitNoteStatus.Issued
+            || line.DebitNoteInvoiceId.HasValue
+            || line.DebitNoteStatus is DebitNoteStatus.Pending or DebitNoteStatus.Issued;
+        if (debitNoteInFlightOrIssued)
+            throw new BusinessInvariantViolationException(
+                "La multa al cliente ya se emitió: la factura destino de este cargo ya no se puede cambiar.",
+                invariantCode: "INV-ADR044-TARGETINVOICE-003");
+
+        // La factura elegida tiene que ser una factura de venta ACTIVA de la reserva (viva, con CAE, no NC/ND):
+        // nunca se acepta a ciegas una factura ajena o ya muerta.
+        var activeInvoices = await LoadActiveSaleInvoicesForReservaAsync(bc.ReservaId, ct);
+        var chosenInvoice = activeInvoices.FirstOrDefault(i => i.PublicId == request.TargetInvoicePublicId);
+        if (chosenInvoice is null)
+            throw new BusinessInvariantViolationException(
+                "La factura elegida no es una factura de venta activa de esta reserva.",
+                invariantCode: "INV-ADR044-TARGETINVOICE-001");
+
+        // M2 (invariante dura): ningun OTRO cargo trasladable (Kind != Withholding) de la MISMA linea puede ya
+        // tener una factura destino distinta a la elegida.
+        var conflictMessage = await ValidateTargetInvoiceConsistencyForLineAsync(
+            charge.BookingCancellationLineId, charge.Kind, chosenInvoice.Id, excludingChargeId: charge.Id, ct);
+        if (conflictMessage is not null)
+            throw new BusinessInvariantViolationException(
+                conflictMessage, invariantCode: "INV-ADR044-TARGETINVOICE-002");
+
+        charge.TargetInvoiceId = chosenInvoice.Id;
+
+        await _auditService.LogBusinessEventAsync(
+            action: AuditActions.OperatorChargeAdded,
+            entityName: AuditActions.BookingCancellationEntityName,
+            entityId: bc.Id.ToString(),
+            details: JsonSerializer.Serialize(new
+            {
+                bc.PublicId,
+                operatorChargePublicId = charge.PublicId,
+                action = "operator-charge-target-invoice-set",
+                targetInvoicePublicId = chosenInvoice.PublicId,
+            }),
+            userId: userId,
+            userName: userName,
+            ct: ct);
+
+        await _db.SaveChangesAsync(ct);
+
+        _logger.LogInformation(
+            "metric:cancellation_operator_charge_target_invoice_set | BcPublicId={BcPublicId} ChargePublicId={ChargePublicId}",
+            bc.PublicId, charge.PublicId);
 
         return await MapToDtoAsync(bc.Id, ct)
             ?? throw new InvalidOperationException("No se pudo completar la operación. Volvé a intentar.");
@@ -6972,6 +7186,14 @@ public class BookingCancellationService
         // La ND al cliente sigue usando el monto COMPLETO (bc.PenaltyAmountAtEvent), que NO se toca aca.
         decimal penaltyToApply = Math.Min(confirmedPenaltyAmount, totalCapBeforePenalty);
 
+        // ADR-044 T3b Decision 1 (2026-07-10): a que factura de venta se traslada el cargo automatico que este
+        // metodo crea mas abajo. Con 1 sola factura activa de la reserva (el 95%+ de los casos) se autocompleta
+        // transparente, cero friccion. Con 2+ facturas activas queda en null: recien se resuelve mas adelante
+        // via SetOperatorChargeTargetInvoiceAsync (la pantalla que elige es ADR-044 T4) — el motor de emision de
+        // la ND rutea a revision manual mientras tanto (nunca adivina a que factura corresponde).
+        var autoTargetInvoiceId = ResolveAutoTargetInvoiceId(
+            await LoadActiveSaleInvoicesForReservaAsync(bc.ReservaId, ct));
+
         decimal allocatedSoFar = 0m;
         for (int i = 0; i < candidateLines.Count; i++)
         {
@@ -7013,6 +7235,7 @@ public class BookingCancellationService
                     ConfirmedByUserId = userId,
                     ConfirmedByUserName = userName,
                     ConfirmedAt = DateTime.UtcNow,
+                    TargetInvoiceId = autoTargetInvoiceId,
                 });
                 line.RetainedDeductionAmount = share;
             }
@@ -7425,45 +7648,48 @@ public class BookingCancellationService
         }
 
         // (4) Construir el request de la ND y emitir por el pipeline existente.
-        //     - IsDebitNote=true + OriginalInvoiceId=factura original -> el pipeline arma
-        //       el <CbtesAsoc> y deriva CbteTipo=12 (ND C) con el fix M1 (§3.9).
+        //     - IsDebitNote=true + OriginalInvoiceId=factura RESUELTA -> el pipeline arma el <CbtesAsoc> y
+        //       deriva CbteTipo=12 (ND C) con el fix M1 (§3.9). ADR-044 T3b Decision 1: la factura resuelta NO
+        //       siempre es bc.OriginatingInvoice — con 2+ facturas activas puede ser la que eligieron los
+        //       cargos via TargetInvoiceId (BuildCancellationDebitNoteItemsAsync ya la valido — B2).
         //     - Los renglones (1 o mas) los arma BuildCancellationDebitNoteItemsAsync. El total (sum de los
         //       renglones) es INDEPENDIENTE del refund (no participa de ninguna suma del refund).
         var penaltyAmount = buildResult.TotalAmount;
+        var ndTargetInvoice = buildResult.ResolvedInvoice ?? originatingInvoice;
         var debitNoteRequest = new CreateInvoiceRequest
         {
             ReservaId = reservaPublicId.Value.ToString(),
             Concepto = 3, // Productos y Servicios (mismo default que la NC total).
-            OriginalInvoiceId = originatingInvoice.PublicId.ToString(),
+            OriginalInvoiceId = ndTargetInvoice.PublicId.ToString(),
             IsCreditNote = false,
             IsDebitNote = true,
             Items = buildResult.Items!,
             Tributes = new List<InvoiceTributeDto>(),
             // ADR-012/013 (multimoneda ND, 2026-07-08): la ND HEREDA la moneda y el TC CONGELADOS de la
-            // factura original, igual que la NC total (ADR-012 §3.3). Para una factura en pesos esto copia
-            // los defaults del original ("PES"/1) -> byte-identico al comportamiento de siempre. Para una
-            // factura extranjera (ej. USD) copia "DOL" + el TC real, que el gating ya valido como coherente
-            // (>0 y !=1) y como moneda soportada. NO recotizamos al dia de hoy: la ND ajusta un comprobante
-            // ya emitido con CAE; recotizar rompe el cuadre fiscal del set factura+NC+ND.
+            // factura RESUELTA (regla firmada, ADR-012 §3.3, INAMOVIBLE: el TC del comprobante SIEMPRE es el
+            // congelado del original que ajusta — nunca se recotiza, ni siquiera en el caso 2+ facturas). Para
+            // una factura en pesos esto copia los defaults ("PES"/1) -> byte-identico al comportamiento de
+            // siempre. Para una factura extranjera (ej. USD) copia "DOL" + el TC real, que el gating ya valido
+            // como coherente (>0 y !=1) y como moneda soportada.
             //
             // CanMisMonExt (RG 5616): NO se setea aca ni se toca AfipService. CreatePendingInvoice congela
             // CanMisMonExt ESPEJANDO el valor de la factura original (es una ND: tiene OriginalInvoiceId), asi
             // la ND replica exactamente el "N"/"S"/null del comprobante asociado — mismo mecanismo que la NC.
-            MonId = originatingInvoice.MonId,
-            MonCotiz = originatingInvoice.MonCotiz,
+            MonId = ndTargetInvoice.MonId,
+            MonCotiz = ndTargetInvoice.MonCotiz,
             // Trazabilidad del TC: la ND pasa por CreateAsync -> ValidateMultiCurrencyInvoicingAsync, que para
             // moneda extranjera EXIGE fuente/fecha/justificacion del tipo de cambio (patron INV-120). Las
-            // HEREDAMOS del comprobante original (que ya las tenia obligatoriamente al emitirse en divisa), asi
+            // HEREDAMOS del comprobante RESUELTO (que ya las tenia obligatoriamente al emitirse en divisa), asi
             // la ND queda valuada con EXACTAMENTE la misma trazabilidad que la factura que ajusta. Para pesos
             // el original las tiene en null y la validacion ni las mira. Si por un dato legacy faltaran, la
             // validacion frena y el blindaje del caller rutea a revision manual (nunca un comprobante mal valuado).
-            ExchangeRateSource = originatingInvoice.ExchangeRateSource,
-            ExchangeRateFetchedAt = originatingInvoice.ExchangeRateFetchedAt,
+            ExchangeRateSource = ndTargetInvoice.ExchangeRateSource,
+            ExchangeRateFetchedAt = ndTargetInvoice.ExchangeRateFetchedAt,
             // N1 (review 2026-07-08): dejamos explicito en la justificacion que este TC es HEREDADO del
             // comprobante original (no recotizado), asi el contador ve de un vistazo por que la ND lleva ese TC.
-            ExchangeRateJustification = string.IsNullOrWhiteSpace(originatingInvoice.ExchangeRateJustification)
-                ? originatingInvoice.ExchangeRateJustification
-                : $"ND por multa de anulación s/ comprobante original — TC heredado: {originatingInvoice.ExchangeRateJustification}",
+            ExchangeRateJustification = string.IsNullOrWhiteSpace(ndTargetInvoice.ExchangeRateJustification)
+                ? ndTargetInvoice.ExchangeRateJustification
+                : $"ND por multa de anulación s/ comprobante original — TC heredado: {ndTargetInvoice.ExchangeRateJustification}",
         };
 
         // Emitir via el pipeline existente (CreateAsync -> CreatePendingInvoice +
@@ -7500,7 +7726,7 @@ public class BookingCancellationService
         // un intento fallido anterior. Sin esto, una ND que ahora vuelve a Pending seguiria arrastrando el texto de
         // error de la vez que fallo (dato viejo enganoso). El crudo ya quedo en el log/auditoria de aquella falla.
         bc.DebitNoteArcaErrorMessage = null;
-        FreezeDebitNoteSnapshot(bc, originatingInvoice, penaltyAmount);
+        FreezeDebitNoteSnapshot(bc, ndTargetInvoice, penaltyAmount);
 
         await _auditService.LogBusinessEventAsync(
             action: AuditActions.BookingCancellationArcaSucceeded,
@@ -7533,13 +7759,19 @@ public class BookingCancellationService
     // =========================================================================
 
     /// <summary>
-    /// ADR-044 T3a: resultado de armar los renglones de la ND. Exactamente UNO de los 3 casos: (a)
-    /// <see cref="Items"/> con contenido -> se puede emitir con ese total; (b) <see cref="ManualReviewReason"/>
-    /// con motivo -> revision manual (NO emitir); (c) <see cref="NothingToBill"/>=true -> la agencia absorbio
-    /// todos los cargos elegibles, no hay nada que facturarle al cliente (no es un error).
+    /// ADR-044 T3a/T3b: resultado de armar los renglones de la ND. Exactamente UNO de los 3 casos: (a)
+    /// <see cref="Items"/> con contenido -> se puede emitir con ese total contra <see cref="ResolvedInvoice"/>;
+    /// (b) <see cref="ManualReviewReason"/> con motivo -> revision manual (NO emitir); (c)
+    /// <see cref="NothingToBill"/>=true -> la agencia absorbio todos los cargos elegibles, no hay nada que
+    /// facturarle al cliente (no es un error).
     /// </summary>
     internal sealed record CancellationDebitNoteItemsResult(
-        List<InvoiceItemDto>? Items, decimal TotalAmount, string? ManualReviewReason, bool NothingToBill)
+        List<InvoiceItemDto>? Items, decimal TotalAmount, string? ManualReviewReason, bool NothingToBill,
+        // ADR-044 T3b Decision 1: la factura CONTRA LA QUE se emite la ND. Con 1 sola factura activa (T3a) es
+        // SIEMPRE bc.OriginatingInvoice; con 2+ facturas activas puede ser OTRA (la que eligieron los cargos via
+        // TargetInvoiceId). El caller (TryEmitCancellationDebitNoteAsync) arma el CreateInvoiceRequest contra
+        // ESTA factura, nunca a ciegas contra bc.OriginatingInvoice.
+        Invoice? ResolvedInvoice = null)
     {
         public static CancellationDebitNoteItemsResult Manual(string reason) =>
             new(Items: null, TotalAmount: 0m, ManualReviewReason: reason, NothingToBill: false);
@@ -7547,8 +7779,8 @@ public class BookingCancellationService
         public static CancellationDebitNoteItemsResult Absorbed() =>
             new(Items: null, TotalAmount: 0m, ManualReviewReason: null, NothingToBill: true);
 
-        public static CancellationDebitNoteItemsResult Ready(List<InvoiceItemDto> items, decimal total) =>
-            new(items, total, ManualReviewReason: null, NothingToBill: false);
+        public static CancellationDebitNoteItemsResult Ready(List<InvoiceItemDto> items, decimal total, Invoice resolvedInvoice) =>
+            new(items, total, ManualReviewReason: null, NothingToBill: false, ResolvedInvoice: resolvedInvoice);
     }
 
     /// <summary>
@@ -7633,28 +7865,99 @@ public class BookingCancellationService
             return LegacySingleItem(bc, originatingInvoice);
         }
 
-        // 2+ facturas activas en esta cancelacion (ADR-042): la ND automatica multi-operador solo cubre 1
-        // factura por ahora (T3b resuelve a que factura corresponde cada cargo cuando hay mas de una).
-        var invoiceCount = await _db.BookingCancellationCreditNotes
-            .CountAsync(c => c.BookingCancellationId == bc.Id, ct);
-        if (invoiceCount > 1)
-            return CancellationDebitNoteItemsResult.Manual(
-                "La cancelación afecta más de una factura: por ahora la Nota de Débito de cada una se resuelve " +
-                "a mano.");
+        // ADR-044 T3b Decision 1 (2026-07-10): con 2+ facturas de venta activas (ADR-042), la ND ya NO se rutea
+        // automaticamente a revision manual: se resuelve a que factura corresponden los cargos ELEGIBLES
+        // (Kind != Withholding, no absorbidos — los unicos que producen un renglon) mirando su
+        // TargetInvoiceId compartido. Con 1 sola factura activa, sigue siendo bc.OriginatingInvoice (T3a,
+        // byte-identico).
+        var activeInvoices = await LoadActiveSaleInvoicesForReservaAsync(bc.ReservaId, ct);
+        var eligibleForInvoiceResolution = allCharges
+            .Where(x => x.Charge.Kind != OperatorChargeKind.Withholding
+                     && x.Charge.ClientTransferMode != ClientTransferMode.Absorbed)
+            .ToList();
+
+        Invoice resolvedInvoice;
+        if (activeInvoices.Count <= 1)
+        {
+            resolvedInvoice = originatingInvoice;
+        }
+        else
+        {
+            var distinctTargetInvoiceIds = eligibleForInvoiceResolution
+                .Select(x => x.Charge.TargetInvoiceId)
+                .Distinct()
+                .ToList();
+
+            if (distinctTargetInvoiceIds.Count == 0 || distinctTargetInvoiceIds.Contains(null))
+                return CancellationDebitNoteItemsResult.Manual(
+                    "Todavía no se eligió a qué factura corresponde el cargo del operador (la cancelación tiene " +
+                    "más de una factura activa): elegila antes de emitir.");
+
+            if (distinctTargetInvoiceIds.Count > 1)
+                return CancellationDebitNoteItemsResult.Manual(
+                    "La cancelación tiene cargos que corresponden a facturas distintas: por ahora se emite una " +
+                    "Nota de Débito por vez, a mano.");
+
+            // B2 (re-validacion al emitir, Addendum T3b): la factura elegida al confirmar el cargo tiene que
+            // SEGUIR viva (con CAE) y ser miembro de las facturas activas ACTUALES de la reserva. Reintentos/
+            // colas async pueden tardar dias; en el medio la factura pudo anularse.
+            var candidateInvoiceId = distinctTargetInvoiceIds[0]!.Value;
+            var candidateInvoice = activeInvoices.FirstOrDefault(i => i.Id == candidateInvoiceId);
+            if (candidateInvoice is null)
+                return CancellationDebitNoteItemsResult.Manual(
+                    "La factura elegida para este cargo ya no está activa: revisalo antes de emitir.");
+
+            // B2 (fiscal): con 2+ facturas activas, la factura resuelta puede NO ser bc.OriginatingInvoice (la
+            // que ya paso el gating de arriba). Re-validamos sobre ELLA los 2 chequeos fiscales duros que el
+            // gating ya le hizo a la principal: letra C y sin tributos provinciales.
+            if (candidateInvoice.TipoComprobante is not (11 or 12))
+                return CancellationDebitNoteItemsResult.Manual(
+                    "La factura elegida para este cargo no es Factura C: por ahora esto se resuelve a mano.");
+            var candidateTributesCount = await _db.Set<InvoiceTribute>()
+                .CountAsync(t => t.InvoiceId == candidateInvoice.Id, ct);
+            if (candidateTributesCount > 0)
+                return CancellationDebitNoteItemsResult.Manual(
+                    "La factura elegida para este cargo tiene tributos provinciales: por ahora esto se resuelve " +
+                    "a mano.");
+
+            // B2 (fiscal, moneda extranjera): mismos 2 guards que EvaluateDebitNoteGating le exige a la
+            // principal — flag maestro de facturacion en divisa, y cotizacion coherente (>0 y !=1).
+            var candidateIsForeign = !string.IsNullOrWhiteSpace(candidateInvoice.MonId)
+                && !string.Equals(candidateInvoice.MonId, "PES", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(candidateInvoice.MonId, "ARS", StringComparison.OrdinalIgnoreCase);
+            if (candidateIsForeign && !settings.EnableMultiCurrencyInvoicing)
+                return CancellationDebitNoteItemsResult.Manual(
+                    "La factura elegida para este cargo está en moneda extranjera y la facturación en moneda " +
+                    "extranjera no está habilitada: por ahora esto se resuelve a mano.");
+            if (IsForeignInvoiceWithoutReliableArcaData(candidateInvoice))
+                return CancellationDebitNoteItemsResult.Manual(
+                    "La factura elegida para este cargo quedó con una cotización no confiable: por ahora esto " +
+                    "se resuelve a mano.");
+
+            resolvedInvoice = candidateInvoice;
+        }
 
         // Condicion fiscal de la agencia CONGELADA al confirmar la cancelacion (nunca la de HOY: reinterpretar
         // un evento fiscal ya ocurrido con un dato que cambio despues seria incoherente con el resto del modulo).
         var emitterCondition = TaxConditionNormalizer.Normalize(bc.FiscalSnapshot?.AgencyTaxConditionAtEvent);
 
-        var invoiceIsArs = string.IsNullOrWhiteSpace(originatingInvoice.MonId) ||
-                           string.Equals(originatingInvoice.MonId, "PES", StringComparison.OrdinalIgnoreCase) ||
-                           string.Equals(originatingInvoice.MonId, "ARS", StringComparison.OrdinalIgnoreCase);
-        var invoiceCurrencyArca = NormalizeCurrencyToArcaOrNull(originatingInvoice.MonId)
+        var invoiceIsArs = string.IsNullOrWhiteSpace(resolvedInvoice.MonId) ||
+                           string.Equals(resolvedInvoice.MonId, "PES", StringComparison.OrdinalIgnoreCase) ||
+                           string.Equals(resolvedInvoice.MonId, "ARS", StringComparison.OrdinalIgnoreCase);
+        var invoiceCurrencyArca = NormalizeCurrencyToArcaOrNull(resolvedInvoice.MonId)
             ?? (invoiceIsArs ? "PES" : null);
 
         var items = new List<InvoiceItemDto>();
         var absorbedCount = 0;
         decimal total = 0m;
+
+        // S4 (bloqueante security, 2026-07-10) — DOS FASES. NO mutamos charge.Definitive* DENTRO del loop: si un
+        // cargo POSTERIOR ruteara a revision manual, RouteDebitNoteToManualReviewAsync hace SaveChanges y
+        // persistiria la mutacion de una ND que NUNCA salio (y el motor FX despues la tomaria como real).
+        // Recolectamos las asignaciones pendientes en memoria y las aplicamos TODAS juntas recien cuando el build
+        // completo dio Ready (justo antes de emitir). Asi ninguna Definitive* se persiste si el build aborta.
+        var pendingDefinitiveRates =
+            new List<(BookingCancellationLineOperatorCharge Charge, decimal Rate, ExchangeRateSource? Source, string? Justification)>();
 
         // Orden deterministico: por operador y despues por orden de creacion del cargo.
         foreach (var (line, charge) in allCharges.OrderBy(x => x.Line.SupplierId).ThenBy(x => x.Charge.Id))
@@ -7668,15 +7971,62 @@ public class BookingCancellationService
                 continue; // la agencia decidio no trasladarlo: sin renglon (el cargo ya quedo persistido como rastro).
             }
 
-            // Coherencia de moneda: el cargo tiene que estar en la MISMA moneda que la factura. El cruce de
-            // moneda (conversion con TC) es T3b, todavia no construido: ante la duda, no se emite.
+            // ADR-044 T3b Decision 2 (2026-07-10): si el cargo esta en la MISMA moneda que su factura destino,
+            // sin cambios (T3a). Si difiere, se intenta convertir con el TC definitivo (promovido del estimado,
+            // lectura M1 del Addendum: no hay fuente automatica de TC todavia, asi que el definitivo se fija
+            // AHORA, al emitir, con el mismo valor/justificacion que ya se cargo como estimado). Sin conversion
+            // posible (par de monedas no soportado, TC no confiable, TC vencido, o sin TC cargado) -> revision
+            // manual, nunca se adivina un numero.
             var chargeCurrencyArca = NormalizeCurrencyToArcaOrNull(charge.Currency);
-            if (chargeCurrencyArca is null || invoiceCurrencyArca is null ||
-                !string.Equals(chargeCurrencyArca, invoiceCurrencyArca, StringComparison.OrdinalIgnoreCase))
+            decimal amountInInvoiceCurrency;
+            if (chargeCurrencyArca is not null && invoiceCurrencyArca is not null &&
+                string.Equals(chargeCurrencyArca, invoiceCurrencyArca, StringComparison.OrdinalIgnoreCase))
+            {
+                amountInInvoiceCurrency = charge.Amount;
+            }
+            else if (chargeCurrencyArca is null || invoiceCurrencyArca is null)
             {
                 return CancellationDebitNoteItemsResult.Manual(
-                    $"La multa de {SafeSupplierName(line)} está en una moneda distinta a la de la factura " +
-                    "original: por ahora esto se resuelve a mano.");
+                    $"La multa de {SafeSupplierName(line)} está en una moneda no reconocida: por ahora esto se " +
+                    "resuelve a mano.");
+            }
+            else if (charge.EstimatedExchangeRateToClientInvoiceCurrency is null)
+            {
+                return CancellationDebitNoteItemsResult.Manual(
+                    $"La multa de {SafeSupplierName(line)} está en una moneda distinta a la de su factura: falta " +
+                    "cargar el tipo de cambio para convertirla. Cargalo antes de emitir.");
+            }
+            else
+            {
+                var estimatedRate = charge.EstimatedExchangeRateToClientInvoiceCurrency.Value;
+
+                // F2 (gate fiscal T3b, severidad media): un TC estimado cargado hace mas de 2 dias ya no es
+                // confiable para fijarlo como definitivo al emitir. Sin fecha tampoco lo aceptamos (dato incompleto).
+                if (charge.EstimatedExchangeRateAt is null ||
+                    DateTime.UtcNow - charge.EstimatedExchangeRateAt.Value > EstimatedExchangeRateMaxAge)
+                    return CancellationDebitNoteItemsResult.Manual(
+                        "El tipo de cambio cargado tiene más de dos días: confirmalo de nuevo antes de emitir.");
+
+                // S1/F1 (bloqueante security): banda de sanidad. Un TC <= 0 o == 1 es el "default peligroso" (se
+                // olvido de cargar la cotizacion): no se puede convertir plata con el. Mismo criterio que
+                // IsForeignCurrencyInvoiceWithoutReliableRate.
+                if (IsUnreliableExchangeRate(estimatedRate))
+                    return CancellationDebitNoteItemsResult.Manual(
+                        "El tipo de cambio cargado no es válido (parece sin completar): corregilo antes de emitir.");
+
+                var converted = ConvertArsUsdAmount(
+                    charge.Amount, chargeCurrencyArca, invoiceCurrencyArca, estimatedRate);
+                if (converted is null)
+                    return CancellationDebitNoteItemsResult.Manual(
+                        $"La multa de {SafeSupplierName(line)} está en una moneda que todavía no se puede " +
+                        "convertir automáticamente: por ahora esto se resuelve a mano.");
+
+                amountInInvoiceCurrency = converted.Value;
+
+                // S4: NO mutamos el cargo aca. Recolectamos la promocion estimado->definitivo para aplicarla
+                // recien si el build COMPLETO dio Ready (ver el bloque al final del metodo).
+                pendingDefinitiveRates.Add(
+                    (charge, estimatedRate, charge.EstimatedExchangeRateSource, charge.EstimatedExchangeRateJustification));
             }
 
             var passThroughAlicuota = ResolvePassThroughAlicuotaIvaIdOrNull(
@@ -7695,13 +8045,13 @@ public class BookingCancellationService
             items.Add(new InvoiceItemDto
             {
                 Description = $"Penalidad de operador por cancelación s/Fc " +
-                              $"{originatingInvoice.PuntoDeVenta:00000}-{originatingInvoice.NumeroComprobante:00000000}.",
+                              $"{resolvedInvoice.PuntoDeVenta:00000}-{resolvedInvoice.NumeroComprobante:00000000}.",
                 Quantity = 1,
-                UnitPrice = charge.Amount,
-                Total = charge.Amount,
+                UnitPrice = amountInInvoiceCurrency,
+                Total = amountInInvoiceCurrency,
                 AlicuotaIvaId = passThroughAlicuota.Value,
             });
-            total += charge.Amount;
+            total += amountInInvoiceCurrency;
 
             if (charge.ClientTransferMode == ClientTransferMode.WithManagementFee)
             {
@@ -7711,11 +8061,13 @@ public class BookingCancellationService
                         "No se pudo determinar la condición fiscal de la agencia para cobrar el cargo de " +
                         "gestión: quedó para revisión manual.");
 
+                // El fee de gestion es SIEMPRE propio de la agencia, cargado en la moneda de la factura (nunca
+                // necesita conversion: no es un monto embebido del operador).
                 var feeAmount = charge.ManagementFeeAmount!.Value; // CHECK SQL lo garantiza > 0 con este modo.
                 items.Add(new InvoiceItemDto
                 {
                     Description = $"Cargo de gestión de la agencia por cancelación s/Fc " +
-                                  $"{originatingInvoice.PuntoDeVenta:00000}-{originatingInvoice.NumeroComprobante:00000000}.",
+                                  $"{resolvedInvoice.PuntoDeVenta:00000}-{resolvedInvoice.NumeroComprobante:00000000}.",
                     Quantity = 1,
                     UnitPrice = feeAmount,
                     Total = feeAmount,
@@ -7743,13 +8095,66 @@ public class BookingCancellationService
                 : LegacySingleItem(bc, originatingInvoice);
         }
 
-        // M2 (espejo del gating de un solo operador): el total nunca supera el total de la factura.
-        if (total > originatingInvoice.ImporteTotal)
+        // M2 (espejo del gating de un solo operador): el total nunca supera el total de la factura RESUELTA
+        // (no siempre bc.OriginatingInvoice: con 2+ facturas activas puede ser otra).
+        if (total > resolvedInvoice.ImporteTotal)
             return CancellationDebitNoteItemsResult.Manual(
                 "El total de los cargos trasladados supera el total de la factura original: queda para " +
                 "revisión manual.");
 
-        return CancellationDebitNoteItemsResult.Ready(items, total);
+        // S4 (FASE 2): el build COMPLETO dio Ready — recien AHORA fijamos el TC DEFINITIVO (dia de emision) de
+        // TODOS los cargos que necesitaron conversion. Antes de este punto no se toco ningun charge.Definitive*,
+        // asi que un build que aborto a Manual jamas persiste una promocion fantasma. El estimado queda intacto
+        // como rastro de que se preveia al cargar el cargo (nunca se pisa). Un unico DateTime.UtcNow para todos
+        // los renglones de esta emision (menor 3: el retry no deja timestamps dispersos de intentos fallidos).
+        var definitiveAtUtc = DateTime.UtcNow;
+        foreach (var (charge, rate, source, justification) in pendingDefinitiveRates)
+        {
+            charge.DefinitiveExchangeRateAtNdEmission = rate;
+            charge.DefinitiveExchangeRateSource = source;
+            charge.DefinitiveExchangeRateAt = definitiveAtUtc;
+            charge.DefinitiveExchangeRateJustification = justification;
+        }
+
+        return CancellationDebitNoteItemsResult.Ready(items, total, resolvedInvoice);
+    }
+
+    /// <summary>
+    /// F2 (gate fiscal T3b, 2026-07-10): antiguedad maxima de un TC ESTIMADO para poder promoverlo a DEFINITIVO
+    /// al emitir la ND. Pasadas 48 horas, el TC dejo de ser confiable y se pide reconfirmarlo. NO es config
+    /// (decision de negocio, batcheada a T4): es una constante documentada.
+    /// </summary>
+    private static readonly TimeSpan EstimatedExchangeRateMaxAge = TimeSpan.FromHours(48);
+
+    /// <summary>
+    /// S1/F1 (gate T3b, 2026-07-10): un tipo de cambio &lt;= 0 o == 1 es el "default peligroso" (la cotizacion
+    /// quedo sin cargar). Mismo criterio que <see cref="IsForeignCurrencyInvoiceWithoutReliableRate"/> — no se
+    /// puede convertir plata con un TC asi.
+    /// </summary>
+    private static bool IsUnreliableExchangeRate(decimal rate) => rate <= 0m || rate == 1m;
+
+    /// <summary>
+    /// ADR-044 T3b Decision 2 (2026-07-10): convierte un monto entre ARS y USD con la convencion FIJA del
+    /// sistema (TC = unidades de ARS por 1 USD, misma orientacion que <c>Payment.ExchangeRate</c>/
+    /// <c>Invoice.MonCotiz</c>). Devuelve <c>null</c> si el par de monedas no es ARS/USD (el sistema no opera
+    /// otras monedas hoy, ver <see cref="Monedas.Soportadas"/>) o si el TC no es confiable (&lt;= 0 o == 1,
+    /// <see cref="IsUnreliableExchangeRate"/>): el caller trata <c>null</c> como "no se puede convertir" ->
+    /// revision manual, nunca un numero inventado. (El caller ademas chequea el TC ANTES para dar un mensaje
+    /// especifico de "corregilo"; esta guarda es defensa en profundidad.)
+    /// </summary>
+    private static decimal? ConvertArsUsdAmount(
+        decimal amount, string fromCurrencyArca, string toCurrencyArca, decimal rate)
+    {
+        if (IsUnreliableExchangeRate(rate)) return null;
+
+        bool fromIsUsd = string.Equals(fromCurrencyArca, "DOL", StringComparison.OrdinalIgnoreCase);
+        bool fromIsArs = string.Equals(fromCurrencyArca, "PES", StringComparison.OrdinalIgnoreCase);
+        bool toIsUsd = string.Equals(toCurrencyArca, "DOL", StringComparison.OrdinalIgnoreCase);
+        bool toIsArs = string.Equals(toCurrencyArca, "PES", StringComparison.OrdinalIgnoreCase);
+
+        if (fromIsUsd && toIsArs) return Math.Round(amount * rate, 2, MidpointRounding.AwayFromZero);
+        if (fromIsArs && toIsUsd) return Math.Round(amount / rate, 2, MidpointRounding.AwayFromZero);
+        return null;
     }
 
     /// <summary>
@@ -7772,7 +8177,7 @@ public class BookingCancellationService
                 AlicuotaIvaId = 3, // 0% / no gravado -> C sin IVA discriminado. Byte-identico al comportamiento previo.
             },
         };
-        return CancellationDebitNoteItemsResult.Ready(items, penaltyAmount);
+        return CancellationDebitNoteItemsResult.Ready(items, penaltyAmount, originatingInvoice);
     }
 
     /// <summary>Nombre del operador para la descripcion de un renglon, sin dejar un hueco vacio si faltara.</summary>

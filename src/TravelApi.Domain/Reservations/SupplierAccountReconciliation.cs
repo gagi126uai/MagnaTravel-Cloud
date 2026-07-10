@@ -10,8 +10,12 @@ namespace TravelApi.Domain.Reservations;
 /// del proveedor. Es derivada-en-lectura (no se persiste): sale del estado de las cancelaciones del operador.
 ///
 /// <para>A diferencia de las lineas de CAJA (<see cref="SupplierAccountStatementInputLine"/>), estas NO entran
-/// al running balance de caja. <see cref="Amount"/> siempre es POSITIVO (un cargo +): tanto la multa retenida
-/// como el reembolso recibido SUMAN al lado economico (neutralizan el pago negativo que dejo la anulacion).</para>
+/// al running balance de caja. <see cref="Amount"/> es POSITIVO (un cargo +) para
+/// <see cref="SupplierAccountStatementLineKinds.PenaltyRetained"/>/<see cref="SupplierAccountStatementLineKinds.RefundReceived"/>/
+/// <see cref="SupplierAccountStatementLineKinds.OperatorChargeInvoiced"/>: todas SUMAN al lado economico
+/// (neutralizan el pago negativo que dejo la anulacion). <b>Excepcion (ADR-044 T3b Decision 3)</b>:
+/// <see cref="SupplierAccountStatementLineKinds.TreasuryFxAdjustment"/> es un ajuste de VALUACION, no un
+/// cargo — su <see cref="Amount"/> puede ser negativo (en contra de la agencia).</para>
 /// </summary>
 public readonly record struct SupplierCircuitLine(
     DateTime Date,
@@ -45,7 +49,14 @@ public sealed class SupplierAccountReconciliationCurrencyBlock
     /// </summary>
     public decimal OperatorChargeInvoicedTotal { get; }
 
-    /// <summary>Total del bloque circuito = multa retenida + reembolso recibido + cargo facturado aparte (todos +).</summary>
+    /// <summary>
+    /// ADR-044 T3b Decision 3 (2026-07-10): suma de los ajustes de diferencia de cambio VIGENTES de esta
+    /// moneda. Puede ser NEGATIVO (a diferencia de los otros 3 totales del bloque circuito, que son siempre
+    /// positivos): es un ajuste de valuacion, no un cargo. Positivo = a favor de la agencia.
+    /// </summary>
+    public decimal TreasuryFxAdjustmentTotal { get; }
+
+    /// <summary>Total del bloque circuito = multa retenida + reembolso recibido + cargo facturado aparte + ajuste FX.</summary>
     public decimal CircuitTotal { get; }
 
     /// <summary>Saldo economico = caja + circuito. Derivado, SOLO para el header (no toca el running balance de caja).</summary>
@@ -73,14 +84,16 @@ public sealed class SupplierAccountReconciliationCurrencyBlock
         decimal iTheyOwe,
         decimal prepayment,
         IReadOnlyList<SupplierCircuitLine> circuitLines,
-        decimal operatorChargeInvoicedTotal = 0m)
+        decimal operatorChargeInvoicedTotal = 0m,
+        decimal treasuryFxAdjustmentTotal = 0m)
     {
         Currency = currency;
         CashClosingBalance = cashClosingBalance;
         PenaltyRetainedTotal = penaltyRetainedTotal;
         RefundReceivedTotal = refundReceivedTotal;
         OperatorChargeInvoicedTotal = operatorChargeInvoicedTotal;
-        CircuitTotal = penaltyRetainedTotal + refundReceivedTotal + operatorChargeInvoicedTotal;
+        TreasuryFxAdjustmentTotal = treasuryFxAdjustmentTotal;
+        CircuitTotal = penaltyRetainedTotal + refundReceivedTotal + operatorChargeInvoicedTotal + treasuryFxAdjustmentTotal;
         EconomicClosingBalance = economicClosingBalance;
         TheyOweMe = theyOweMe;
         ITheyOwe = iTheyOwe;
@@ -187,14 +200,21 @@ public static class SupplierAccountReconciliationBuilder
             decimal operatorChargeInvoiced = lines
                 .Where(l => l.Kind == SupplierAccountStatementLineKinds.OperatorChargeInvoiced)
                 .Sum(l => l.Amount);
+            // ADR-044 T3b Decision 3 (2026-07-10): ajuste de diferencia de cambio, SIGNED (puede ser negativo,
+            // a diferencia de los otros 3 totales del bloque circuito). Positivo = a favor de la agencia.
+            decimal treasuryFxAdjustment = lines
+                .Where(l => l.Kind == SupplierAccountStatementLineKinds.TreasuryFxAdjustment)
+                .Sum(l => l.Amount);
 
             penaltyRetained = Round(penaltyRetained);
             refundReceived = Round(refundReceived);
             operatorChargeInvoiced = Round(operatorChargeInvoiced);
+            treasuryFxAdjustment = Round(treasuryFxAdjustment);
             cashClosing = Round(cashClosing);
             receivableY = Round(receivableY);
 
-            decimal economic = Round(cashClosing + penaltyRetained + refundReceived + operatorChargeInvoiced);
+            decimal economic = Round(
+                cashClosing + penaltyRetained + refundReceived + operatorChargeInvoiced + treasuryFxAdjustment);
 
             // X e Y nunca se netean entre si. Prepago es el saldo a favor consumible (caja negativa que NO es
             // un reembolso por cobrar). Por construccion, X y Prepago no pueden ser ambos positivos.
@@ -212,7 +232,8 @@ public static class SupplierAccountReconciliationBuilder
                 iTheyOwe: iTheyOwe,
                 prepayment: prepayment,
                 circuitLines: lines,
-                operatorChargeInvoicedTotal: operatorChargeInvoiced));
+                operatorChargeInvoicedTotal: operatorChargeInvoiced,
+                treasuryFxAdjustmentTotal: treasuryFxAdjustment));
         }
 
         return new SupplierAccountReconciliation(blocks);

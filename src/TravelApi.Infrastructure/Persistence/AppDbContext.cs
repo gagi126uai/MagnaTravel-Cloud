@@ -342,6 +342,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
 
     // ADR-044 T2 Addendum: cargos tipificados del operador por linea. Ver BookingCancellationLineOperatorCharge.
     public DbSet<BookingCancellationLineOperatorCharge> BookingCancellationLineOperatorCharges => Set<BookingCancellationLineOperatorCharge>();
+    // ADR-044 T3b Decision 3: ajuste de diferencia de cambio de tesoreria al liquidar un cargo del operador.
+    public DbSet<BookingCancellationLineTreasuryFxAdjustment> BookingCancellationLineTreasuryFxAdjustments => Set<BookingCancellationLineTreasuryFxAdjustment>();
     // ADR-042: hijas de la cancelacion (una por factura -> su NC). Caso multi-factura multimoneda.
     public DbSet<BookingCancellationCreditNote> BookingCancellationCreditNotes => Set<BookingCancellationCreditNote>();
     public DbSet<OperatorRefundReceived> OperatorRefundReceived => Set<OperatorRefundReceived>();
@@ -1669,6 +1671,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         ConfigurePublicEntity<BookingCancellation>(modelBuilder);
         ConfigurePublicEntity<BookingCancellationLine>(modelBuilder);   // ADR-025
         ConfigurePublicEntity<BookingCancellationLineOperatorCharge>(modelBuilder);   // ADR-044 T2 Addendum
+        ConfigurePublicEntity<BookingCancellationLineTreasuryFxAdjustment>(modelBuilder);   // ADR-044 T3b Decision 3
         ConfigurePublicEntity<BookingCancellationCreditNote>(modelBuilder);   // ADR-042
         ConfigurePublicEntity<OperatorRefundReceived>(modelBuilder);
         ConfigurePublicEntity<OperatorRefundAllocation>(modelBuilder);
@@ -1958,6 +1961,12 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(c => c.ClientTransferMode).HasConversion<int>();
             entity.Property(c => c.ManagementFeeAmount).HasPrecision(18, 2);
 
+            // ADR-044 T3b Decision 2: TC ESTIMADO (preview) + TC DEFINITIVO (fijado al emitir la ND) del cargo.
+            entity.Property(c => c.EstimatedExchangeRateToClientInvoiceCurrency).HasPrecision(18, 6);
+            entity.Property(c => c.EstimatedExchangeRateJustification).HasMaxLength(500);
+            entity.Property(c => c.DefinitiveExchangeRateAtNdEmission).HasPrecision(18, 6);
+            entity.Property(c => c.DefinitiveExchangeRateJustification).HasMaxLength(500);
+
             // FK a la linea duena del cargo. Cascade: el cargo no tiene sentido sin su linea (misma politica
             // que Lines -> BookingCancellation).
             entity.HasOne(c => c.BookingCancellationLine)
@@ -1965,10 +1974,21 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .HasForeignKey(c => c.BookingCancellationLineId)
                   .OnDelete(DeleteBehavior.Cascade);
 
+            // ADR-044 T3b Decision 1: FK a la factura de venta destino. Restrict (no cascade): el cargo no debe
+            // desaparecer si por algun motivo se intentara borrar la factura (una factura con CAE no se borra en
+            // este sistema, pero mantenemos la misma politica defensiva que el resto de las FK a Invoice).
+            entity.HasOne(c => c.TargetInvoice)
+                  .WithMany()
+                  .HasForeignKey(c => c.TargetInvoiceId)
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.Restrict);
+
             // Indice por linea: es el acceso caliente (cargar los cargos de UNA linea al confirmar/leer el
             // extracto del operador).
             entity.HasIndex(c => c.BookingCancellationLineId)
                   .HasDatabaseName("IX_BookingCancellationLineOperatorCharges_BookingCancellationLineId");
+            entity.HasIndex(c => c.TargetInvoiceId)
+                  .HasDatabaseName("IX_BookingCancellationLineOperatorCharges_TargetInvoiceId");
 
             // Los 2 CHECK SQL de la tabla se agregan via migrationBuilder.Sql en la migracion T2b (EF Core no tiene
             // API fluida para CHECK constraints): (1) DocumentRef obligatorio cuando CollectionMode=FacturadaAparte;
@@ -1976,6 +1996,73 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             // linea) NO es un CHECK SQL (cruza tablas): se valida en el SERVICIO al escribir (AddOperatorChargeAsync).
             // ADR-044 T3a agrega 2 CHECK mas via migrationBuilder.Sql en la migracion T3a: (3) ManagementFeeAmount
             // obligatorio y > 0 solo cuando ClientTransferMode=WithManagementFee (1); (4) vacio en cualquier otro modo.
+            entity.UseXminAsConcurrencyToken();
+        });
+
+        // ===== BookingCancellationLineTreasuryFxAdjustment (ADR-044 T3b Decision 3) =====
+        // Tabla NUEVA (no existia antes de esta tanda): igual que CashLedgerEntry, los CHECK se declaran con
+        // HasCheckConstraint dentro de ToTable (EF los emite en el CREATE TABLE, no hace falta ALTER con SQL
+        // crudo como las tablas viejas que ya tenian datos).
+        modelBuilder.Entity<BookingCancellationLineTreasuryFxAdjustment>(entity =>
+        {
+            entity.ToTable("BookingCancellationLineTreasuryFxAdjustments", t =>
+            {
+                t.HasCheckConstraint(
+                    "chk_bc_treasury_fx_adjustment_exactly_one_origin",
+                    "((\"OperatorRefundAllocationId\" IS NOT NULL)::int + (\"SupplierPaymentId\" IS NOT NULL)::int) = 1");
+            });
+
+            entity.Property(a => a.RateAtNdEmission).HasPrecision(18, 6);
+            entity.Property(a => a.RateAtSettlement).HasPrecision(18, 6);
+            entity.Property(a => a.ChargeAmount).HasPrecision(18, 2);
+            entity.Property(a => a.ChargeCurrency).HasMaxLength(3).IsRequired();
+            entity.Property(a => a.DeltaAmount).HasPrecision(18, 2);
+            entity.Property(a => a.SettlementCurrency).HasMaxLength(3).IsRequired();
+            entity.Property(a => a.AssumedBy).HasConversion<int>();
+            entity.Property(a => a.Notes).HasMaxLength(1000);
+
+            // FK al cargo duenio. Cascade: el ajuste no tiene sentido sin su cargo.
+            // Nombre EXPLICITO (HasConstraintName): sin el, EF le da a esta FK y a la self-FK de abajo el
+            // MISMO nombre autogenerado truncado (arrancan igual: "FK_..._BookingCancell~"), lo que rompe
+            // el diseño de la migracion ("dos FK mapeadas al mismo nombre mirando tablas distintas").
+            entity.HasOne(a => a.OperatorCharge)
+                  .WithMany(c => c.TreasuryFxAdjustments)
+                  .HasForeignKey(a => a.OperatorChargeId)
+                  .HasConstraintName("FK_BookingCancellationLineTreasuryFxAdjustments_OperatorCharge")
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            // Los 2 origenes alternativos: Restrict (el ajuste es historia; no debe desaparecer si alguien
+            // intentara borrar la allocation/pago de origen — que hoy tampoco se borran, solo soft-void).
+            entity.HasOne(a => a.OperatorRefundAllocation)
+                  .WithMany()
+                  .HasForeignKey(a => a.OperatorRefundAllocationId)
+                  .HasConstraintName("FK_BookingCancellationLineTreasuryFxAdjustments_OperatorRefundAllocation")
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            entity.HasOne(a => a.SupplierPayment)
+                  .WithMany()
+                  .HasForeignKey(a => a.SupplierPaymentId)
+                  .HasConstraintName("FK_BookingCancellationLineTreasuryFxAdjustments_SupplierPayment")
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            // Self-FK de supersede (M4): la fila reemplazada apunta a la que la sucede.
+            entity.HasOne(a => a.SupersededByAdjustment)
+                  .WithMany()
+                  .HasForeignKey(a => a.SupersededByAdjustmentId)
+                  .HasConstraintName("FK_BookingCancellationLineTreasuryFxAdjustments_SupersededBy")
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            // Indice UNICO PARCIAL (B1/M4): a lo sumo UNA fila VIGENTE (IsSuperseded=false) por cargo. Las
+            // superseded no cuentan — permite que el reemplazo conviva con la historia. Sirve tambien como
+            // indice de consulta por cargo (el volumen por operador es chico, back-office).
+            entity.HasIndex(a => a.OperatorChargeId)
+                  .HasDatabaseName("IX_BookingCancellationLineTreasuryFxAdjustments_OperatorChargeId_Vigente")
+                  .IsUnique()
+                  .HasFilter("\"IsSuperseded\" = false");
+
             entity.UseXminAsConcurrencyToken();
         });
 

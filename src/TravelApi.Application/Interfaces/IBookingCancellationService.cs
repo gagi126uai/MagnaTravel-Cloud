@@ -582,6 +582,35 @@ public interface IBookingCancellationService
         CancellationToken ct,
         bool userCanClassifyAgencyPenalty = false);
 
+    /// <summary>
+    /// ADR-044 T3b Decision 1 (2026-07-10): fija o corrige la factura de venta destino
+    /// (<see cref="Domain.Entities.BookingCancellationLineOperatorCharge.TargetInvoiceId"/>) de UN cargo puntual
+    /// del operador, para cuando la reserva tiene 2+ facturas de venta activas (ADR-042) y el motor de emision
+    /// de la Nota de Debito no puede autocompletarla sola. La pantalla que llama esto (desplegable de facturas
+    /// activas, oculta si hay 1 sola) es ADR-044 T4.
+    ///
+    /// <para><b>Precondiciones</b>: flag ON; BC y cargo existen; permiso <c>cancellations.classify_agency_penalty</c>
+    /// (o Admin); la factura elegida es miembro de las facturas de venta ACTIVAS de la reserva (viva, con CAE, no
+    /// NC/ND); M2 — si la <see cref="Domain.Entities.BookingCancellationLineOperatorCharge.Kind"/> no es
+    /// <c>Withholding</c>, ningun OTRO cargo trasladable (<c>Kind != Withholding</c>) de la MISMA linea puede
+    /// tener ya una factura destino distinta (rechaza el conflicto; los <c>Withholding</c> quedan exentos porque
+    /// nunca emiten renglon de ND).</para>
+    ///
+    /// <para><b>Exceptions</b>: <c>KeyNotFoundException</c> (404, BC/cargo/factura no existen);
+    /// <c>InvalidOperationException</c> (409, flag OFF); <c>BusinessInvariantViolationException</c> (409:
+    /// INV-ADR044-CHARGE-PERM sin permiso; INV-ADR044-TARGETINVOICE-001 factura no es miembro de las activas de
+    /// la reserva; INV-ADR044-TARGETINVOICE-002 conflicto M2 con otro cargo de la misma linea;
+    /// INV-ADR044-TARGETINVOICE-003 la ND al cliente ya se emitio / esta en vuelo, la factura ya no se cambia).</para>
+    /// </summary>
+    Task<BookingCancellationDto> SetOperatorChargeTargetInvoiceAsync(
+        Guid publicId,
+        Guid chargePublicId,
+        SetOperatorChargeTargetInvoiceRequest request,
+        string userId,
+        string? userName,
+        CancellationToken ct,
+        bool userCanClassifyAgencyPenalty = false);
+
     // ===== Queries =====
 
     /// <summary>Obtiene un BC por su PublicId. Null si no existe.</summary>

@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace TravelApi.Domain.Entities;
 
@@ -92,4 +93,107 @@ public class BookingCancellationLineOperatorCharge : IHasPublicId
     public DateTime ConfirmedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    // ====================================================================================
+    // ADR-044 T3b Decision 1 (2026-07-10): a que FACTURA DE VENTA del cliente se traslada
+    // este cargo. Con 1 sola factura activa de la reserva (el 95%+ de los casos) se
+    // autocompleta transparente; con 2+ facturas activas (ADR-042, ej. USD+ARS) el humano
+    // tiene que elegir CUAL porque no hay ningun dato mecanico que lo infiera (ver el
+    // XML-doc del Addendum: InvoiceItem.SourceServicioReservaId existe pero nunca se puebla
+    // en produccion). Sin eleccion, el cargo NO se factura solo (revision manual).
+    // ====================================================================================
+
+    /// <summary>
+    /// FK a la <see cref="Entities.Invoice"/> de venta a la que se traslada este cargo. Autocompletada
+    /// cuando la reserva tiene 1 sola factura activa; con 2+ requiere que un humano la elija
+    /// (<c>SetOperatorChargeTargetInvoiceAsync</c>). <c>null</c> = todavia sin resolver -&gt; el motor de
+    /// emision de la Nota de Debito rutea a revision manual (nunca adivina).
+    ///
+    /// <para><b>M2 (invariante dura)</b>: todos los cargos trasladables al cliente (<c>Kind != Withholding</c>)
+    /// de la MISMA <see cref="BookingCancellationLine"/> tienen que apuntar a la MISMA factura — una linea es
+    /// un servicio, y un servicio vive en UNA sola factura del cliente. Los <c>Withholding</c> quedan exentos
+    /// (nunca llegan al cliente, no forman renglon de ND). Se valida en el SERVICIO al escribir, no en un
+    /// CHECK SQL (cruzaria filas de la misma tabla agrupadas por linea).</para>
+    /// </summary>
+    public int? TargetInvoiceId { get; set; }
+    public Invoice? TargetInvoice { get; set; }
+
+    // ====================================================================================
+    // ADR-044 T3b Decision 2 (2026-07-10): conversion de moneda cuando este cargo esta en una
+    // moneda DISTINTA a la de su factura destino (ej. cargo en USD, factura del cliente en ARS).
+    // NO es lo mismo que "el TC del comprobante" (ese sigue SIEMPRE congelado de la factura
+    // original, regla firmada e inamovible): esto convierte el MONTO EMBEBIDO del cargo para
+    // que entre como renglon en pesos de esa ND. Mismo patron tipado que Payment.ExchangeRate*
+    // (ADR-021), replicado sin inventar vocabulario nuevo.
+    //
+    // Dos juegos de 4 campos: ESTIMADO (preview informativo al confirmar/cargar el cargo) y
+    // DEFINITIVO (el que realmente viaja al renglon de la ND, fijado AL EMITIRLA — lectura M1
+    // adoptada del Addendum, pendiente de confirmacion final de Gaston en la ronda T4). El
+    // estimado NUNCA se pisa: queda como rastro de "que se preveia al cargar el cargo".
+    // ====================================================================================
+
+    /// <summary>
+    /// TC ESTIMADO (preview, no fiscal) para convertir <see cref="Amount"/> a la moneda de la factura
+    /// destino. Convencion FIJA: unidades de ARS por 1 USD (misma que <c>Payment.ExchangeRate</c>).
+    /// <c>null</c> cuando <see cref="Currency"/> coincide con la moneda de la factura destino (no hay
+    /// conversion que hacer: caso simple T3a, sin cambios).
+    /// </summary>
+    [Column(TypeName = "numeric(18,6)")]
+    public decimal? EstimatedExchangeRateToClientInvoiceCurrency { get; set; }
+
+    /// <summary>Origen del TC estimado. <c>null</c> si no hubo conversion prevista.</summary>
+    public ExchangeRateSource? EstimatedExchangeRateSource { get; set; }
+
+    /// <summary>Fecha en que se tomo el TC estimado. <c>null</c> si no hubo conversion prevista.</summary>
+    public DateTime? EstimatedExchangeRateAt { get; set; }
+
+    /// <summary>
+    /// Justificacion obligatoria cuando <see cref="EstimatedExchangeRateSource"/> = <see cref="ExchangeRateSource.Manual"/>
+    /// (mismo criterio INV-120 que rige toda factura en moneda extranjera del sistema).
+    /// </summary>
+    [MaxLength(500)]
+    public string? EstimatedExchangeRateJustification { get; set; }
+
+    /// <summary>
+    /// TC DEFINITIVO con el que se convirtio este cargo AL EMITIR la Nota de Debito (lectura M1: "dia del
+    /// cargo" = dia de emision de la ND, no dia de confirmacion del operador). Es el valor que viaja a
+    /// auditoria y al calculo del ajuste de diferencia de cambio de tesoreria (Decision 3). Vive en CAMPOS
+    /// PROPIOS del cargo (no en la <see cref="Entities.Invoice"/>: una ND en ARS con un cargo embebido en USD no
+    /// tiene donde guardar ESA conversion en la factura, que describe la valuacion del COMPROBANTE, no de un
+    /// renglon). Convencion FIJA: unidades de ARS por 1 USD.
+    /// </summary>
+    [Column(TypeName = "numeric(18,6)")]
+    public decimal? DefinitiveExchangeRateAtNdEmission { get; set; }
+
+    /// <summary>Origen del TC definitivo. <c>null</c> si el cargo nunca necesito conversion (misma moneda que su ND).</summary>
+    public ExchangeRateSource? DefinitiveExchangeRateSource { get; set; }
+
+    /// <summary>Momento exacto de la emision en que se fijo el TC definitivo. <c>null</c> si no hubo conversion.</summary>
+    public DateTime? DefinitiveExchangeRateAt { get; set; }
+
+    /// <summary>Justificacion obligatoria cuando el TC definitivo es <see cref="ExchangeRateSource.Manual"/> (INV-120).</summary>
+    [MaxLength(500)]
+    public string? DefinitiveExchangeRateJustification { get; set; }
+
+    /// <summary>
+    /// ADR-044 T3b Decision 3 (S2, 2026-07-10): si este cargo es <see cref="PenaltyCollectionMode.FacturadaAparte"/>
+    /// y ya se pago al operador su documento, el <c>Id</c> del <see cref="SupplierPayment"/> que lo liquido.
+    /// <c>null</c> = todavia sin liquidar. Es la RED DURA anti doble-liquidacion: un segundo pago sobre un cargo
+    /// que ya tiene este campo seteado se rechaza (sin esto, se podia pagar dos veces el mismo cargo al operador
+    /// y generar dos ajustes de diferencia de cambio). Se limpia (vuelve a null) al ELIMINAR ese pago, para que
+    /// el cargo pueda volver a liquidarse con el pago correcto.
+    ///
+    /// <para>No es FK de base a proposito (no queremos cascade ni bloquear el borrado del pago por esta
+    /// referencia debil): la integridad la maneja el servicio al crear/borrar el pago, mismo criterio que
+    /// <see cref="SupplierPayment.ServicePublicId"/> (referencia polimorfica sin FK).</para>
+    /// </summary>
+    public int? SettledBySupplierPaymentId { get; set; }
+
+    /// <summary>
+    /// ADR-044 T3b Decision 3: historial de ajustes de diferencia de cambio de tesoreria de este cargo
+    /// (normalmente 0 o 1 VIGENTE + N superseded tras un soft-void/reemplazo, M4). Filtrar por
+    /// <see cref="BookingCancellationLineTreasuryFxAdjustment.IsSuperseded"/> = false para el vigente.
+    /// </summary>
+    public ICollection<BookingCancellationLineTreasuryFxAdjustment> TreasuryFxAdjustments { get; set; }
+        = new List<BookingCancellationLineTreasuryFxAdjustment>();
 }

@@ -65,6 +65,16 @@ public static class SupplierAccountStatementLineKinds
     /// sumarlo a <c>SupplierDebtPersister</c>.</para>
     /// </summary>
     public const string OperatorChargeInvoiced = "OperatorChargeInvoiced";
+
+    /// <summary>
+    /// ADR-044 T3b Decision 3 (2026-07-10): "Diferencia de cambio" de tesoreria de un cargo del operador
+    /// liquidado con conversion (la ND salio con un TC, la liquidacion real fue a otro). A diferencia de
+    /// <see cref="PenaltyRetained"/>/<see cref="RefundReceived"/>/<see cref="OperatorChargeInvoiced"/>, esta
+    /// linea es la UNICA del bloque circuito cuyo <see cref="SupplierCircuitLine.Amount"/> puede ser NEGATIVO
+    /// (a favor de la agencia = positivo; en contra = negativo) — es un ajuste de valuacion, no un cargo. Solo
+    /// se muestran las filas VIGENTES (<c>IsSuperseded = false</c>).
+    /// </summary>
+    public const string TreasuryFxAdjustment = "TreasuryFxAdjustment";
 }
 
 /// <summary>

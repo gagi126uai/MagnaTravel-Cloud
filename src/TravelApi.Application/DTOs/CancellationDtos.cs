@@ -488,7 +488,54 @@ public record AddOperatorChargeRequest(
     /// falta con ese modo, o si viene cargado con cualquier otro modo.
     /// </summary>
     [Range(0.01, double.MaxValue, ErrorMessage = "El monto del cargo de gestión debe ser mayor a cero.")]
-    decimal? ManagementFeeAmount = null
+    decimal? ManagementFeeAmount = null,
+
+    /// <summary>
+    /// ADR-044 T3b Decision 1 (2026-07-10): a que FACTURA DE VENTA del cliente se traslada este cargo, para
+    /// cuando la reserva tiene 2+ facturas de venta activas (ADR-042, ej. USD+ARS). Opcional: con 1 sola factura
+    /// activa el servicio la autocompleta solo (este campo se ignora). Con 2+, si no se manda (o no es miembro
+    /// de las facturas activas de la reserva), el cargo queda sin factura destino resuelta y el motor de emision
+    /// de la Nota de Debito lo rutea a revision manual (nunca adivina). Ver
+    /// <see cref="BookingCancellationLineOperatorCharge.TargetInvoiceId"/>.
+    /// </summary>
+    Guid? TargetInvoicePublicId = null,
+
+    /// <summary>
+    /// ADR-044 T3b Decision 2 (2026-07-10): TC ESTIMADO (preview, no fiscal) para convertir este cargo a la
+    /// moneda de su factura destino, SOLO relevante cuando <see cref="Currency"/> difiere de esa moneda.
+    /// Convencion FIJA: unidades de ARS por 1 USD. Si <see cref="Currency"/> coincide con la moneda de la
+    /// factura destino, se ignora (no hay conversion que hacer). El <c>[Range]</c> pone un piso de sanidad en
+    /// el borde HTTP; el service ademas rechaza el "default peligroso" == 1 (S1/F1).
+    /// </summary>
+    [Range(0.000001, 100_000_000, ErrorMessage = "El tipo de cambio debe ser un valor razonable.")]
+    decimal? EstimatedExchangeRateToClientInvoiceCurrency = null,
+
+    /// <summary>Origen del TC estimado (ver <see cref="ExchangeRateSource"/>). Obligatorio si se informa el TC estimado.</summary>
+    ExchangeRateSource? EstimatedExchangeRateSource = null,
+
+    /// <summary>Fecha del TC estimado. Obligatoria si se informa el TC estimado.</summary>
+    DateTime? EstimatedExchangeRateAt = null,
+
+    /// <summary>
+    /// Justificacion del TC estimado, obligatoria cuando <see cref="EstimatedExchangeRateSource"/> = Manual
+    /// (mismo criterio INV-120 que rige toda factura en moneda extranjera del sistema).
+    /// </summary>
+    [MaxLength(500)]
+    string? EstimatedExchangeRateJustification = null
+);
+
+/// <summary>
+/// ADR-044 T3b Decision 1 (2026-07-10): payload de "elegir/corregir la factura destino de un cargo del
+/// operador" — <c>PATCH /api/cancellations/{publicId}/operator-charges/{chargePublicId}/target-invoice</c>. Se
+/// usa cuando la reserva tiene 2+ facturas de venta activas y el cargo (automatico o agregado a mano) todavia
+/// no tiene <see cref="BookingCancellationLineOperatorCharge.TargetInvoiceId"/> resuelto, o cuando hay que
+/// corregirlo antes de que la Nota de Debito se emita. La pantalla que usa este endpoint (desplegable de
+/// facturas activas, oculto si hay 1 sola) es ADR-044 T4.
+/// </summary>
+public record SetOperatorChargeTargetInvoiceRequest(
+    /// <summary>PublicId de la factura de venta activa a la que se traslada este cargo. Debe ser miembro de las facturas activas de la reserva.</summary>
+    [Required]
+    Guid TargetInvoicePublicId
 );
 
 /// <summary>

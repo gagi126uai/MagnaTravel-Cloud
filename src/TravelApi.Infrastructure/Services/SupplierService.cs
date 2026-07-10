@@ -1073,6 +1073,34 @@ public class SupplierService : ISupplierService
         var imputation = await ResolveSupplierPaymentImputationAsync(
             id, request, currency, cancellationToken);
 
+        // ADR-044 T3b Decision 3 (2026-07-10): si este pago liquida el documento de un cargo del operador
+        // FacturadaAparte puntual, resolvemos y validamos ESE cargo ANTES de persistir (fail-fast, mismo criterio
+        // que el resto del alta): tiene que existir, ser de ESTE proveedor y estar en FacturadaAparte (Retenida
+        // se liquida por el reembolso del operador, no por un pago nuestro).
+        BookingCancellationLineOperatorCharge? settledCharge = null;
+        if (request.SettlesOperatorChargePublicId.HasValue)
+        {
+            settledCharge = await _dbContext.BookingCancellationLineOperatorCharges
+                .Include(c => c.BookingCancellationLine)
+                .FirstOrDefaultAsync(
+                    c => c.PublicId == request.SettlesOperatorChargePublicId.Value
+                      && c.BookingCancellationLine.SupplierId == id,
+                    cancellationToken)
+                ?? throw new KeyNotFoundException("El cargo del operador indicado no existe para este proveedor.");
+
+            if (settledCharge.CollectionMode != PenaltyCollectionMode.FacturadaAparte)
+                throw new ArgumentException(
+                    "Este pago solo puede liquidar un cargo del operador facturado aparte.", nameof(request));
+
+            // S2 (bloqueante security, 2026-07-10): RED DURA anti doble-liquidacion. Si el cargo YA fue liquidado
+            // por otro pago vivo, rechazamos — sin esto se podia pagar dos veces el mismo cargo al operador y
+            // generar dos ajustes de diferencia de cambio.
+            if (settledCharge.SettledBySupplierPaymentId.HasValue)
+                throw new ArgumentException(
+                    "Ese cargo del operador ya se pagó. Si el pago anterior era incorrecto, eliminalo primero.",
+                    nameof(request));
+        }
+
         var payment = new SupplierPayment
         {
             SupplierId = id,
@@ -1108,6 +1136,19 @@ public class SupplierService : ISupplierService
         // recalcular. Para un pago ARS no cruzado el escalar resultante es identico a la cuenta vieja
         // (deuda previa - Amount). Escalar y tabla hija quedan en la misma (segunda) SaveChanges.
         await _dbContext.SaveChangesAsync(cancellationToken);
+
+        // ADR-044 T3b Decision 3: el pago YA tiene Id real (SaveChanges recien commiteo) — recien aca podemos
+        // marcar el cargo como liquidado (S2: red anti doble-liquidacion) y registrar el ajuste de diferencia de
+        // cambio de tesoreria del cargo que liquida (si corresponde). Sin efecto en el ajuste si el cargo no
+        // necesito conversion o el pago no fue cruzado (ver el motor para el detalle).
+        if (settledCharge is not null)
+        {
+            settledCharge.SettledBySupplierPaymentId = payment.Id;
+            await TreasuryFxAdjustmentEngine.RegisterForInvoicedChargeAsync(
+                _dbContext, settledCharge, payment, _logger, cancellationToken);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
+
         await PersistSupplierBalanceAsync(supplier, cancellationToken);
         await _dbContext.SaveChangesAsync(cancellationToken);
 
@@ -1254,6 +1295,21 @@ public class SupplierService : ISupplierService
         payment.IsDeleted = true;
         payment.DeletedAt = DateTime.UtcNow;
         payment.DeletedByUserId = userId;
+
+        // S2 (bloqueante security, 2026-07-10): al eliminar el pago, LIMPIAMOS la marca de liquidacion del/los
+        // cargo(s) que este pago habia liquidado, para que puedan volver a pagarse con el pago correcto. Sin
+        // esto, un pago mal cargado dejaria el cargo bloqueado para siempre.
+        var settledCharges = await _dbContext.BookingCancellationLineOperatorCharges
+            .Where(c => c.SettledBySupplierPaymentId == payment.Id)
+            .ToListAsync(cancellationToken);
+        foreach (var settledCharge in settledCharges)
+            settledCharge.SettledBySupplierPaymentId = null;
+
+        // ADR-044 T3b Decision 3 (M4, 2026-07-10): si este pago liquidaba un cargo FacturadaAparte con ajuste de
+        // diferencia de cambio VIGENTE, queda superseded (historia intacta, NO se borra). Sin reemplazo automatico:
+        // si despues se registra el pago correcto, ESE alta crea la fila nueva sola (RegisterForInvoicedChargeAsync).
+        await TreasuryFxAdjustmentEngine.SupersedeForVoidedOriginAsync(
+            _dbContext, cancellationToken, voidedSupplierPaymentId: payment.Id);
 
         // ADR-022 §4.5: anular el pago NO borra su asiento: se marca IsReversed=true y se inserta su
         // reversa (Income que netea el Expense original). El libro conserva la historia.

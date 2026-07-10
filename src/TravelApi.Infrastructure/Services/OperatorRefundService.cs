@@ -9,6 +9,7 @@ using TravelApi.Domain.Exceptions;
 using TravelApi.Domain.Helpers;
 using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
+using TravelApi.Infrastructure.Reservations;
 
 namespace TravelApi.Infrastructure.Services;
 
@@ -497,6 +498,12 @@ public class OperatorRefundService : IOperatorRefundService
         //         total imputado al operador == lo recibido. NUNCA dejamos saldo negativo.
         //         Las lineas del operador que quedan con su cap cubierto pasan a Settled.
         DistributeReceivedRefundToOperatorLines(operatorLines, allocation.NetAmount);
+
+        // 10-ter) ADR-044 T3b Decision 3 (2026-07-10): esta allocation puede ser la LIQUIDACION real de un cargo
+        // Retenida cuya ND ya salio con conversion de moneda (TC definitivo fijado al emitir). Si es asi, registra
+        // el ajuste de diferencia de cambio de tesoreria (delta entre el TC de la ND y el TC de este recibo). Es
+        // gestion interna (no toca comprobantes ni el saldo del cliente): idempotente, no-op si no aplica.
+        await TreasuryFxAdjustmentEngine.RegisterForRetainedChargesAsync(_db, allocation, _logger, ct);
 
         // 11) Notificar al BookingCancellationService que hubo allocation.
         //     Si era la primera activa, transiciona el BC a ClientCreditApplied.
@@ -1158,6 +1165,13 @@ public class OperatorRefundService : IOperatorRefundService
         allocation.VoidedByUserId = userId;
         allocation.VoidedReason = request.Reason.Trim();
 
+        // 4-bis) ADR-044 T3b Decision 3 (M4, 2026-07-10): si esta allocation ya tenia un ajuste de diferencia de
+        // cambio VIGENTE (Decision 3), queda superseded (historia intacta, NO se borra). Si mas adelante llega
+        // una allocation de reemplazo (correccion), el motor calcula una fila nueva sola al procesarla — no hay
+        // reemplazo automatico aca porque anular no implica que venga una nueva liquidacion.
+        await TreasuryFxAdjustmentEngine.SupersedeForVoidedOriginAsync(
+            _db, ct, voidedOperatorRefundAllocationId: allocation.Id);
+
         // 5) Liberar el cap del refund con el NETO (NO el gross).
         //    Espejo de paso 9 de AllocateAsync: el cap se incrementa con
         //    NetAmount, asi que tambien se libera con NetAmount. Si decrementaramos
@@ -1367,6 +1381,15 @@ public class OperatorRefundService : IOperatorRefundService
         oldAllocation.VoidedAt = DateTime.UtcNow;
         oldAllocation.VoidedByUserId = userId;
         oldAllocation.VoidedReason = $"Reassociate: {request.Reason.Trim()}";
+
+        // ADR-044 T3b Decision 3 (M4, K1, 2026-07-10): la reasociacion SI es un reemplazo (a diferencia del void
+        // PURO de VoidAllocationAsync, que anula sin sustituto): la MISMA plata pasa a liquidar el/los cargo(s)
+        // del BC NUEVO. Aca marcamos superseded el/los ajuste(s) FX vigente(s) de la vieja allocation; mas abajo,
+        // tras crear la allocation nueva, registramos el/los ajuste(s) de la liquidacion NUEVA y los enlazamos
+        // (LinkSupersededTo) para dejar la cadena de trazabilidad old -> new.
+        var supersededFxAdjustments = await TreasuryFxAdjustmentEngine.SupersedeForVoidedOriginAsync(
+            _db, ct, voidedOperatorRefundAllocationId: oldAllocation.Id);
+
         // Liberar cap del refund con NetAmount (espejo de AllocateAsync).
         // Ver explicacion en paso 9 de TryAllocateOnceAsync: el cap acumula netos,
         // por lo tanto se libera con neto.
@@ -1441,6 +1464,20 @@ public class OperatorRefundService : IOperatorRefundService
 
         // 9) Notificar al BC service nuevo.
         await _bcService.OnAllocationRecordedAsync(newBc.Id, newAllocation.NetAmount, ct);
+
+        // 9-bis) ADR-044 T3b Decision 3 (K1, 2026-07-10): registrar el ajuste de diferencia de cambio de la
+        // liquidacion NUEVA (los cargos Retenida del BC nuevo cuya ND ya salio con conversion) y enlazar cada
+        // fila nueva con la vieja superseded correspondiente. El enlace es best-effort posicional: en el caso
+        // comun hay 1 vieja + 1 nueva (un cargo). Si las cantidades no coinciden (multi-cargo con distinta
+        // elegibilidad entre el BC viejo y el nuevo), la supersede vieja igual quedo marcada y la nueva igual se
+        // registra; solo no se dibuja la flecha old->new (trazabilidad parcial, nunca dato incorrecto).
+        var newFxAdjustments = await TreasuryFxAdjustmentEngine.RegisterForRetainedChargesAsync(
+            _db, newAllocation, _logger, ct);
+        if (supersededFxAdjustments.Count > 0 && supersededFxAdjustments.Count == newFxAdjustments.Count)
+        {
+            for (int i = 0; i < newFxAdjustments.Count; i++)
+                TreasuryFxAdjustmentEngine.LinkSupersededTo(supersededFxAdjustments[i], newFxAdjustments[i]);
+        }
 
         // 10) Audit UNICO "Reassociated" (no doble Void+Allocated) para que la
         //     historia se lea como evento atomico.

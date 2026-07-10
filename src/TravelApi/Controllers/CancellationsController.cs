@@ -739,6 +739,59 @@ public class CancellationsController : ControllerBase
     }
 
     /// <summary>
+    /// ADR-044 T3b Decision 1 (2026-07-10): elige o corrige a que factura de venta se traslada UN cargo puntual
+    /// del operador, para cuando la reserva tiene 2+ facturas de venta activas (ADR-042) y el motor de emision
+    /// de la Nota de Debito no pudo autocompletarla sola. Pantalla T4: desplegable de facturas activas, oculto
+    /// si hay 1 sola.
+    ///
+    /// <para><b>Permiso</b>: MISMO gate fiscal que agregar/confirmar un cargo del operador.</para>
+    ///
+    /// <para><b>Mapeo de errores</b>: 404 (BC/cargo no existen); 409 INV-ADR044-CHARGE-PERM (sin permiso); 409
+    /// INV-ADR044-TARGETINVOICE-001 (la factura elegida no es una factura de venta activa de la reserva); 409
+    /// INV-ADR044-TARGETINVOICE-002 (M2: otro cargo de la misma linea ya apunta a una factura distinta); 409
+    /// INV-ADR044-TARGETINVOICE-003 (la ND al cliente ya se emitio / esta en vuelo); 409 (flag OFF); 503 (DB caida).</para>
+    /// </summary>
+    [HttpPatch("{publicId:guid}/operator-charges/{chargePublicId:guid}/target-invoice")]
+    [RequirePermission(Permissions.ReservasCancel)]
+    [RequireOwnership(OwnedEntity.BookingCancellation, "publicId", bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<ActionResult<BookingCancellationDto>> SetOperatorChargeTargetInvoice(
+        Guid publicId,
+        Guid chargePublicId,
+        SetOperatorChargeTargetInvoiceRequest request,
+        CancellationToken cancellationToken)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
+        var userName = User.FindFirst("FullName")?.Value ?? User.FindFirst(ClaimTypes.Name)?.Value;
+        var requesterIsAdmin = User.IsInRole("Admin");
+
+        var userCanClassifyAgencyPenalty = requesterIsAdmin
+            || (await _permissionResolver.GetPermissionsAsync(userId, cancellationToken))
+                .Contains(Permissions.CancellationsClassifyAgencyPenalty);
+
+        try
+        {
+            var dto = await _bcService.SetOperatorChargeTargetInvoiceAsync(
+                publicId, chargePublicId, request, userId, userName, cancellationToken,
+                userCanClassifyAgencyPenalty: userCanClassifyAgencyPenalty);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return SanitizedConflict(ex, publicId);
+        }
+        // BusinessInvariantViolationException (INV-ADR044-CHARGE-PERM / INV-ADR044-TARGETINVOICE-*) la atrapa
+        // GlobalExceptionHandler (409 con invariantCode).
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+        }
+    }
+
+    /// <summary>
     /// Aborta un BC en estado <c>Drafted</c> (el operador se arrepintio antes
     /// de tocar AFIP). Idempotente: si ya esta Aborted, retorna 200 con el DTO.
     /// </summary>

@@ -2,18 +2,21 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using TravelApi.Infrastructure.Persistence;
 
 #nullable disable
 
-namespace TravelApi.Infrastructure.Persistence.Migrations
+namespace TravelApi.Infrastructure.Persistence.Migrations.App
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260710151726_Adr044_M_T3b1_AddTargetInvoiceIdToOperatorCharge")]
+    partial class Adr044_M_T3b1_AddTargetInvoiceIdToOperatorCharge
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1383,37 +1386,9 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasMaxLength(3)
                         .HasColumnType("character varying(3)");
 
-                    b.Property<DateTime?>("DefinitiveExchangeRateAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<decimal?>("DefinitiveExchangeRateAtNdEmission")
-                        .HasPrecision(18, 6)
-                        .HasColumnType("numeric(18,6)");
-
-                    b.Property<string>("DefinitiveExchangeRateJustification")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<int?>("DefinitiveExchangeRateSource")
-                        .HasColumnType("integer");
-
                     b.Property<string>("DocumentRef")
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)");
-
-                    b.Property<DateTime?>("EstimatedExchangeRateAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("EstimatedExchangeRateJustification")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<int?>("EstimatedExchangeRateSource")
-                        .HasColumnType("integer");
-
-                    b.Property<decimal?>("EstimatedExchangeRateToClientInvoiceCurrency")
-                        .HasPrecision(18, 6)
-                        .HasColumnType("numeric(18,6)");
 
                     b.Property<int>("Kind")
                         .HasColumnType("integer");
@@ -1428,9 +1403,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.Property<Guid>("PublicId")
                         .HasColumnType("uuid");
-
-                    b.Property<int?>("SettledBySupplierPaymentId")
-                        .HasColumnType("integer");
 
                     b.Property<int?>("TargetInvoiceId")
                         .HasColumnType("integer");
@@ -1453,96 +1425,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("IX_BookingCancellationLineOperatorCharges_TargetInvoiceId");
 
                     b.ToTable("BookingCancellationLineOperatorCharges", (string)null);
-                });
-
-            modelBuilder.Entity("TravelApi.Domain.Entities.BookingCancellationLineTreasuryFxAdjustment", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
-
-                    b.Property<int>("AssumedBy")
-                        .HasColumnType("integer");
-
-                    b.Property<decimal>("ChargeAmount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)");
-
-                    b.Property<string>("ChargeCurrency")
-                        .IsRequired()
-                        .HasMaxLength(3)
-                        .HasColumnType("character varying(3)");
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<decimal>("DeltaAmount")
-                        .HasPrecision(18, 2)
-                        .HasColumnType("numeric(18,2)");
-
-                    b.Property<bool>("IsSuperseded")
-                        .HasColumnType("boolean");
-
-                    b.Property<string>("Notes")
-                        .HasMaxLength(1000)
-                        .HasColumnType("character varying(1000)");
-
-                    b.Property<int>("OperatorChargeId")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("OperatorRefundAllocationId")
-                        .HasColumnType("integer");
-
-                    b.Property<Guid>("PublicId")
-                        .HasColumnType("uuid");
-
-                    b.Property<decimal>("RateAtNdEmission")
-                        .HasPrecision(18, 6)
-                        .HasColumnType("numeric(18,6)");
-
-                    b.Property<decimal>("RateAtSettlement")
-                        .HasPrecision(18, 6)
-                        .HasColumnType("numeric(18,6)");
-
-                    b.Property<string>("SettlementCurrency")
-                        .IsRequired()
-                        .HasMaxLength(3)
-                        .HasColumnType("character varying(3)");
-
-                    b.Property<int?>("SupersededByAdjustmentId")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("SupplierPaymentId")
-                        .HasColumnType("integer");
-
-                    b.Property<uint>("xmin")
-                        .IsConcurrencyToken()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("xid")
-                        .HasColumnName("xmin");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("OperatorChargeId")
-                        .IsUnique()
-                        .HasDatabaseName("IX_BookingCancellationLineTreasuryFxAdjustments_OperatorChargeId_Vigente")
-                        .HasFilter("\"IsSuperseded\" = false");
-
-                    b.HasIndex("OperatorRefundAllocationId");
-
-                    b.HasIndex("PublicId")
-                        .IsUnique();
-
-                    b.HasIndex("SupersededByAdjustmentId");
-
-                    b.HasIndex("SupplierPaymentId");
-
-                    b.ToTable("BookingCancellationLineTreasuryFxAdjustments", null, t =>
-                        {
-                            t.HasCheckConstraint("chk_bc_treasury_fx_adjustment_exactly_one_origin", "((\"OperatorRefundAllocationId\" IS NOT NULL)::int + (\"SupplierPaymentId\" IS NOT NULL)::int) = 1");
-                        });
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.BusinessSequence", b =>
@@ -6616,42 +6498,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Navigation("TargetInvoice");
                 });
 
-            modelBuilder.Entity("TravelApi.Domain.Entities.BookingCancellationLineTreasuryFxAdjustment", b =>
-                {
-                    b.HasOne("TravelApi.Domain.Entities.BookingCancellationLineOperatorCharge", "OperatorCharge")
-                        .WithMany("TreasuryFxAdjustments")
-                        .HasForeignKey("OperatorChargeId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("FK_BookingCancellationLineTreasuryFxAdjustments_OperatorCharge");
-
-                    b.HasOne("TravelApi.Domain.Entities.OperatorRefundAllocation", "OperatorRefundAllocation")
-                        .WithMany()
-                        .HasForeignKey("OperatorRefundAllocationId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .HasConstraintName("FK_BookingCancellationLineTreasuryFxAdjustments_OperatorRefundAllocation");
-
-                    b.HasOne("TravelApi.Domain.Entities.BookingCancellationLineTreasuryFxAdjustment", "SupersededByAdjustment")
-                        .WithMany()
-                        .HasForeignKey("SupersededByAdjustmentId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .HasConstraintName("FK_BookingCancellationLineTreasuryFxAdjustments_SupersededBy");
-
-                    b.HasOne("TravelApi.Domain.Entities.SupplierPayment", "SupplierPayment")
-                        .WithMany()
-                        .HasForeignKey("SupplierPaymentId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .HasConstraintName("FK_BookingCancellationLineTreasuryFxAdjustments_SupplierPayment");
-
-                    b.Navigation("OperatorCharge");
-
-                    b.Navigation("OperatorRefundAllocation");
-
-                    b.Navigation("SupersededByAdjustment");
-
-                    b.Navigation("SupplierPayment");
-                });
-
             modelBuilder.Entity("TravelApi.Domain.Entities.CashLedgerEntry", b =>
                 {
                     b.HasOne("TravelApi.Domain.Entities.ClientCreditWithdrawal", "ClientCreditWithdrawal")
@@ -7655,11 +7501,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("TravelApi.Domain.Entities.BookingCancellationLine", b =>
                 {
                     b.Navigation("OperatorCharges");
-                });
-
-            modelBuilder.Entity("TravelApi.Domain.Entities.BookingCancellationLineOperatorCharge", b =>
-                {
-                    b.Navigation("TreasuryFxAdjustments");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.CatalogPackage", b =>
