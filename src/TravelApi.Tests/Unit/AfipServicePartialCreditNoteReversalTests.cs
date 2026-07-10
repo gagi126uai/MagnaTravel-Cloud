@@ -64,7 +64,15 @@ public class AfipServicePartialCreditNoteReversalTests
         // 2026-07-08 (fix moneda fantasma): moneda ARCA de la NC ("PES"/"DOL"). null = no se
         // toca el campo -> queda el default del entity Invoice.MonId ("PES"), que es el escenario
         // historico que ya cubrian estos tests.
-        string? ncMonId = null)
+        string? ncMonId = null,
+        // FIX T0 "plata" (2026-07-10): moneda ISO REAL de los Payments seedeados ("ARS"/"USD").
+        // null = no se toca el campo -> default del entity Payment.Currency ("ARS"). Los tests que
+        // simulan una NC en DOLARES (ncMonId="DOL") tienen que seedear el cobro TAMBIEN en USD:
+        // el cap de CalculateCreditNoteReversalCapAsync mide "cuanto cobro la reserva en la moneda
+        // del comprobante" (ver AfipService), asi que una NC en USD con un Payment en ARS (sin
+        // imputacion cruzada) hoy da cobrado real = 0 en USD -> el cap la taparia en 0, que es
+        // justamente la conducta correcta (sin cobro real en esa moneda no hay nada que revertir).
+        string? paymentsCurrency = null)
     {
         var reserva = new Reserva
         {
@@ -123,7 +131,7 @@ public class AfipServicePartialCreditNoteReversalTests
             int rId = 700;
             foreach (var (amount, receiptIssued) in payments)
             {
-                context.Payments.Add(new Payment
+                var payment = new Payment
                 {
                     Id = pId,
                     ReservaId = 1,
@@ -134,7 +142,12 @@ public class AfipServicePartialCreditNoteReversalTests
                     EntryType = PaymentEntryTypes.Payment,
                     AffectsCash = true,
                     RelatedInvoiceId = 800, // FK a la factura original
-                });
+                };
+                if (paymentsCurrency != null)
+                {
+                    payment.Currency = paymentsCurrency;
+                }
+                context.Payments.Add(payment);
                 if (receiptIssued)
                 {
                     context.PaymentReceipts.Add(new PaymentReceipt
@@ -375,14 +388,16 @@ public class AfipServicePartialCreditNoteReversalTests
         await using var ctx = new AppDbContext(_dbOptions);
 
         // NC TOTAL en dolares (MonId ARCA = "DOL"): mismo escenario que el test de regresion FC1.2,
-        // pero con la factura/NC facturada en USD.
+        // pero con la factura/NC facturada en USD. El cobro TAMBIEN se seedea en USD (paymentsCurrency)
+        // porque el fix T0 (2026-07-10) capea la reversion contra lo REALMENTE cobrado en esa moneda.
         await SeedNcScenarioAsync(
             ctx,
             originalAmount: 1000m,
             ncAmount: 1000m,
             bcCreditNoteKind: null,
             payments: new[] { (1000m, true) },
-            ncMonId: "DOL");
+            ncMonId: "DOL",
+            paymentsCurrency: "USD");
 
         var service = BuildAfipService(ctx, new Mock<IAuditService>().Object);
 
@@ -402,13 +417,15 @@ public class AfipServicePartialCreditNoteReversalTests
         await using var ctx = new AppDbContext(_dbOptions);
 
         // NC PARCIAL en dolares: mismo escenario que el test single-payment, pero MonId = "DOL".
+        // El cobro TAMBIEN se seedea en USD (paymentsCurrency), mismo motivo que el test anterior.
         await SeedNcScenarioAsync(
             ctx,
             originalAmount: 1000m,
             ncAmount: 250m,
             bcCreditNoteKind: CreditNoteKind.PartialOnOriginal,
             payments: new[] { (1000m, true) },
-            ncMonId: "DOL");
+            ncMonId: "DOL",
+            paymentsCurrency: "USD");
 
         var service = BuildAfipService(ctx, new Mock<IAuditService>().Object);
 

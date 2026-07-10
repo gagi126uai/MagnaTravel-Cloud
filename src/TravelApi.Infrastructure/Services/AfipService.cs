@@ -1701,32 +1701,50 @@ public class AfipService : IAfipService
     /// </summary>
     private async Task ApplyPartialCreditNoteReversalAsync(Invoice invoice, BookingCancellation? bc)
     {
-        // 1) Crear el Payment reversal por el ImporteTotal de la NC parcial.
+        // BUG DE PLATA (2026-07-08, confirmado con datos de prod, ej. F-2026-1044): la moneda del
+        // reversal tiene que ser la moneda REAL de la NC. Invoice.MonId trae el codigo ARCA
+        // ("PES"/"DOL"); ArcaCurrencyMapper.ToIso lo pasa al ISO ("ARS"/"USD") que habla el resto
+        // del modulo de plata (Payment.Currency). Se calcula UNA sola vez y se reusa tanto para el
+        // cap (T0) como para el campo Currency del Payment, asi los dos quedan sincronizados.
+        var reversalCurrency = ArcaCurrencyMapper.ToIso(invoice.MonId) ?? Monedas.ARS;
+
+        // FIX T0 "plata" (2026-07-10, bug confirmado en prod, reserva F-2026-1038): la reversion
+        // NO puede superar lo que la RESERVA realmente cobro en esta moneda (facturar sin cobrar es
+        // legitimo, ADR-037). Ver detalle completo en el XML-doc de CalculateCreditNoteReversalCapAsync.
+        var reversalAmount = await CalculateCreditNoteReversalCapAsync(invoice.ReservaId, reversalCurrency, invoice.ImporteTotal);
+
+        // 1) Crear el Payment reversal por el monto CAPEADO (no siempre el ImporteTotal de la NC).
         //    OriginalPaymentId = null por diseño (no hay payment unico para apuntar).
-        var reversal = new Payment
+        //    Si el cap dio 0 (la reserva nunca cobro nada en esta moneda, o ya se revirtio todo con
+        //    NCs parciales previas) NO se crea el Payment: no hay plata real que revertir.
+        Payment? reversal = null;
+        if (reversalAmount > 0m)
         {
-            ReservaId = invoice.ReservaId,
-            Amount = -invoice.ImporteTotal,
-            // BUG DE PLATA (2026-07-08, confirmado con datos de prod, ej. F-2026-1044): antes esta linea
-            // no seteaba Currency, y quedaba pegado al default del entity ("ARS") SIEMPRE, aunque la NC
-            // fuera en dolares. Resultado: una NC parcial en USD generaba un asiento de reversion en ARS,
-            // el saldo bajaba en el bucket de pesos (que nunca subio) y quedaba una "deuda fantasma" en
-            // ARS mientras la plata real (USD) seguia mostrando saldo a favor. Invoice.MonId ya trae la
-            // moneda real de la NC, pero en formato ARCA ("PES"/"DOL"); ArcaCurrencyMapper.ToIso la pasa
-            // al ISO ("ARS"/"USD") que habla el resto del modulo de plata (Payment.Currency).
-            Currency = ArcaCurrencyMapper.ToIso(invoice.MonId) ?? Monedas.ARS,
-            PaidAt = DateTime.UtcNow,
-            Method = "CreditNote",
-            Reference = $"NC parcial AFIP {invoice.PuntoDeVenta:D5}-{invoice.NumeroComprobante:D8}",
-            Notes = $"Reversion economica por nota de credito PARCIAL AFIP #{invoice.Id}. " +
-                    $"Receipts NO cascade-voided (politica F2.3). Revision manual via UI Fase 3.",
-            Status = "Paid",
-            EntryType = PaymentEntryTypes.CreditNoteReversal,
-            AffectsCash = false,
-            RelatedInvoiceId = invoice.Id,
-            OriginalPaymentId = null, // NC parcial: por diseño, sin payment exacto.
-        };
-        _context.Payments.Add(reversal);
+            reversal = new Payment
+            {
+                ReservaId = invoice.ReservaId,
+                Amount = -reversalAmount,
+                Currency = reversalCurrency,
+                PaidAt = DateTime.UtcNow,
+                Method = "CreditNote",
+                Reference = $"NC parcial AFIP {invoice.PuntoDeVenta:D5}-{invoice.NumeroComprobante:D8}",
+                Notes = $"Reversion economica por nota de credito PARCIAL AFIP #{invoice.Id}. " +
+                        $"Receipts NO cascade-voided (politica F2.3). Revision manual via UI Fase 3.",
+                Status = "Paid",
+                EntryType = PaymentEntryTypes.CreditNoteReversal,
+                AffectsCash = false,
+                RelatedInvoiceId = invoice.Id,
+                OriginalPaymentId = null, // NC parcial: por diseño, sin payment exacto.
+            };
+            _context.Payments.Add(reversal);
+        }
+        else
+        {
+            _logger.LogInformation(
+                "CreditNoteReversal omitido (T0 bug de plata, sin cobro real disponible para revertir). " +
+                "NcInvoiceId={NcInvoiceId} ReservaId={ReservaId} Currency={Currency} NcImporteTotal={NcImporteTotal}",
+                invoice.Id, invoice.ReservaId, reversalCurrency, invoice.ImporteTotal);
+        }
 
         // 2) Query de receipts vivos (RH2-006): los Issued cuyos Payments tienen
         //    RelatedInvoiceId == invoice.OriginalInvoiceId. Estos son los receipts que
@@ -1816,7 +1834,9 @@ public class AfipService : IAfipService
                 {
                     invoiceId = invoice.Id,
                     bcPublicId = bc?.PublicId.ToString(),
-                    reversalAmount = -invoice.ImporteTotal,
+                    // FIX T0: el monto auditado es el REALMENTE revertido (capeado), no siempre
+                    // el ImporteTotal fiscal de la NC (ver CalculateCreditNoteReversalCapAsync).
+                    reversalAmount = -reversalAmount,
                     liveReceiptIds = liveReceiptIds,
                     liveReceiptCount = liveReceiptIds.Count,
                     note = "NC parcial: receipts NO cascade-voided. Admin debe revisar manualmente.",
@@ -1830,7 +1850,7 @@ public class AfipService : IAfipService
             _logger.LogInformation(
                 "PartialCreditNoteEconomicReversalNoCascade. InvoiceId={InvoiceId} BcPublicId={BcPublicId} " +
                 "ReversalAmount={Amount} LiveReceiptCount={Count} LiveReceiptIds={Ids}",
-                invoice.Id, bc?.PublicId, -invoice.ImporteTotal, liveReceiptIds.Count,
+                invoice.Id, bc?.PublicId, -reversalAmount, liveReceiptIds.Count,
                 string.Join(",", liveReceiptIds));
         }
 
@@ -1859,26 +1879,47 @@ public class AfipService : IAfipService
             .OrderByDescending(p => p.PaidAt)
             .FirstOrDefaultAsync();
 
-        var reversal = new Payment
-        {
-            ReservaId = invoice.ReservaId,
-            Amount = -invoice.ImporteTotal,
-            // Mismo bug/mismo fix que en ApplyPartialCreditNoteReversalAsync (ver comentario ahi arriba):
-            // sin este mapeo, una NC TOTAL en dolares tambien generaba su reversion en ARS por el default
-            // del entity, dejando la misma deuda fantasma cuando la reserva se anula en USD.
-            Currency = ArcaCurrencyMapper.ToIso(invoice.MonId) ?? Monedas.ARS,
-            PaidAt = DateTime.UtcNow,
-            Method = "CreditNote",
-            Reference = $"NC AFIP {invoice.PuntoDeVenta:D5}-{invoice.NumeroComprobante:D8}",
-            Notes = $"Reversion economica por nota de credito AFIP #{invoice.Id}.",
-            Status = "Paid",
-            EntryType = PaymentEntryTypes.CreditNoteReversal,
-            AffectsCash = false,
-            RelatedInvoiceId = invoice.Id,
-            OriginalPaymentId = matchedPayment?.Id
-        };
+        // Mismo bug/mismo fix que en ApplyPartialCreditNoteReversalAsync (ver comentario ahi
+        // arriba): la moneda del reversal tiene que ser la moneda REAL de la NC, no el default
+        // del entity ("ARS"). Se calcula UNA sola vez y se reusa para el cap (T0) y el Payment.
+        var reversalCurrency = ArcaCurrencyMapper.ToIso(invoice.MonId) ?? Monedas.ARS;
 
-        _context.Payments.Add(reversal);
+        // FIX T0 "plata" (2026-07-10, bug confirmado en prod, reserva F-2026-1038): la reversion
+        // NO puede superar lo que la RESERVA realmente cobro en esta moneda (facturar sin cobrar es
+        // legitimo, ADR-037). Ver detalle completo en el XML-doc de CalculateCreditNoteReversalCapAsync.
+        var reversalAmount = await CalculateCreditNoteReversalCapAsync(invoice.ReservaId, reversalCurrency, invoice.ImporteTotal);
+
+        // Si el cap dio 0 (la reserva nunca cobro nada en esta moneda, o ya se revirtio todo con
+        // NCs previas) NO se crea el Payment de reversion: no hay plata real que revertir. El caso
+        // real que confirmo este bug (F-2026-1038): factura con CAE pero CERO Payments de cobro en
+        // toda la reserva -> antes esto igual generaba un Payment de -ImporteTotal, deuda fantasma.
+        if (reversalAmount > 0m)
+        {
+            var reversal = new Payment
+            {
+                ReservaId = invoice.ReservaId,
+                Amount = -reversalAmount,
+                Currency = reversalCurrency,
+                PaidAt = DateTime.UtcNow,
+                Method = "CreditNote",
+                Reference = $"NC AFIP {invoice.PuntoDeVenta:D5}-{invoice.NumeroComprobante:D8}",
+                Notes = $"Reversion economica por nota de credito AFIP #{invoice.Id}.",
+                Status = "Paid",
+                EntryType = PaymentEntryTypes.CreditNoteReversal,
+                AffectsCash = false,
+                RelatedInvoiceId = invoice.Id,
+                OriginalPaymentId = matchedPayment?.Id
+            };
+
+            _context.Payments.Add(reversal);
+        }
+        else
+        {
+            _logger.LogInformation(
+                "CreditNoteReversal omitido (T0 bug de plata, sin cobro real disponible para revertir). " +
+                "NcInvoiceId={NcInvoiceId} ReservaId={ReservaId} Currency={Currency} NcImporteTotal={NcImporteTotal}",
+                invoice.Id, invoice.ReservaId, reversalCurrency, invoice.ImporteTotal);
+        }
 
         // B1.15 (2026-05-11): cascade NC -> Receipt Voided con audit trail completo.
         // Idempotente (Status == Voided no se re-toca). El user se toma de la
@@ -1935,6 +1976,109 @@ public class AfipService : IAfipService
                     voidedReceipt.Id, voidedReceipt.ReceiptNumber, matchedPayment!.Id, invoice.Id, voidUserId, voidReason);
             }
         }
+    }
+
+    /// <summary>
+    /// FIX T0 "plata" (2026-07-10, bug confirmado en prod, reserva F-2026-1038): calcula el TOPE
+    /// de la reversion economica de una NC contra lo que la RESERVA realmente cobro en la moneda
+    /// del comprobante.
+    ///
+    /// <para><b>El bug que arregla</b>: facturar sin cobrar es legitimo (ADR-037 — el "carril" de
+    /// facturacion esta desacoplado del de cobranza). Antes de este fix, la reversion economica de
+    /// una NC (total o parcial) siempre bajaba el saldo por el <c>ImporteTotal</c> COMPLETO de la
+    /// NC, sin mirar si hubo algun cobro real. Resultado: una factura con CAE pero CERO Payments
+    /// de cobro, al anularse, generaba un Payment de reversion negativo igual sin ningun cobro que
+    /// compensar -> "deuda fantasma" permanente (caso real: Invoice 61 / NC 62, $726.000, cero
+    /// Payments de cobro en toda la reserva).</para>
+    ///
+    /// <para><b>Por que se mide a nivel RESERVA y no por-factura via <c>Payment.RelatedInvoiceId</c>
+    /// (hallazgo clave de este fix)</b>: <c>RelatedInvoiceId</c> es el FK "fiscal/economico" que en
+    /// teoria ata un cobro a SU factura (lo dice el XML-doc de <c>Payment.LinkedInvoiceId</c>), pero
+    /// investigando <c>PaymentService.CreatePaymentAsync</c> (el UNICO alta real de un cobro) se
+    /// confirmo que ESE metodo nunca lo setea — solo completa <c>LinkedInvoiceId</c>, que el propio
+    /// código marca como INFORMATIVO ("DELIBERADAMENTE los guards... NO miran este campo"). En toda
+    /// la base, <c>RelatedInvoiceId</c> solo lo escribe <c>AfipService</c> en sus propios Payments de
+    /// reversion. Si el cap hubiera filtrado por <c>RelatedInvoiceId == facturaOriginal</c>, el
+    /// resultado habria sido 0 en CASI TODAS las facturas reales (nunca se puebla en un cobro
+    /// normal) -> hubiera roto la reversion economica en el caso feliz (factura SI cobrada), un
+    /// regresion mucho peor que el bug que se esta arreglando. La cuenta de "cuanto cobro esta
+    /// reserva" que SI existe y se usa en todo el sistema es
+    /// <see cref="TravelApi.Domain.Reservations.ReservaMoneyCalculator.AccumulatePayments"/> (agrupa
+    /// por reserva + moneda IMPUTADA, no por factura). Este metodo replica exactamente ese mismo
+    /// criterio, acotado a la moneda del comprobante que se esta anulando.</para>
+    ///
+    /// <para><b>Formula</b>: <c>cap = max(0, min(ncImporteTotal, cobradoReal + reversalesPreviosVivos))</c>.
+    /// <list type="bullet">
+    /// <item><b>cobradoReal</b>: suma de Payments VIVOS de COBRO (<c>EntryType == Payment</c>,
+    /// <c>!IsDeleted</c>, <c>Status != "Cancelled"</c>) de LA RESERVA, imputados a la MISMA moneda
+    /// del comprobante que se anula. Se usa <c>ImputedAmount ?? Amount</c> — en un pago cruzado
+    /// (ADR-021, ej. el cliente pago en ARS pero se imputa contra un saldo en USD) lo que realmente
+    /// bajo la DEUDA en esa moneda es el monto IMPUTADO, no la caja real que entro.</item>
+    /// <item><b>reversalesPreviosVivos</b>: reversiones YA aplicadas por NCs anteriores (parciales,
+    /// casi siempre) sobre la MISMA reserva y MISMA moneda. Sin restarlas, una 2da NC parcial
+    /// revertiria de nuevo plata que la 1ra ya revirtio (el bug simetrico: saldo a favor fantasma).
+    /// <c>Amount</c> de un reversal ya es negativo, asi que sumarlo tal cual resta del disponible.</item>
+    /// </list></para>
+    ///
+    /// <para><b>Limite conocido (riesgo aceptado, documentado para el owner)</b>: al medir a nivel
+    /// RESERVA (no por factura puntual), si una misma reserva llegara a tener DOS facturas activas
+    /// en la MISMA moneda con distinto nivel de cobro real cada una (hoy no es el patron tipico:
+    /// ADR-042 separa facturas por MONEDA, no duplica facturas dentro de la misma moneda), el orden
+    /// en que se procesan sus NCs podria atribuir el cobro a la que se anula primero. El sistema no
+    /// tiene HOY una atribucion cobro-por-factura mas fina que esta (ni <c>ReservaMoneyCalculator</c>
+    /// la tiene), asi que este metodo no inventa una que el resto del modulo de plata no sostiene.</para>
+    ///
+    /// <para><b>Que NO entra en la cuenta (a proposito)</b>: puentes de saldo a favor / sobrepago
+    /// (FC4, <c>AppliedFromCreditWithdrawalId</c>) SI entran si estan imputados a esta moneda —
+    /// son Payments "puente" positivos con <c>EntryType == Payment</c>, ya bajan la deuda real de la
+    /// reserva en esa moneda tal como lo ve <c>ReservaMoneyCalculator</c>, y excluirlos inflaria el
+    /// bug al reves (capearia de MENOS un cobro que si es real para el saldo).</para>
+    ///
+    /// <para><b>Cuando el resultado es 0</b>: el llamador NO debe crear el Payment de reversion
+    /// (no hay plata real que revertir). Ver el <c>if (reversalAmount > 0m)</c> en
+    /// <see cref="ApplyPartialCreditNoteReversalAsync"/> y <see cref="ApplyTotalCreditNoteReversalAsync"/>.</para>
+    /// </summary>
+    private async Task<decimal> CalculateCreditNoteReversalCapAsync(int? reservaId, string currency, decimal creditNoteImporteTotal)
+    {
+        if (reservaId is null)
+        {
+            // Defensivo: los caminos que llaman a este metodo ya validaron invoice.ReservaId != null
+            // antes (ver ApplyCreditNoteEconomicReversalAsync). Si igual llegara null, no hay reserva
+            // sobre la cual medir cobro real -> mismo criterio conservador que el resto del metodo:
+            // preservar el comportamiento HISTORICO (sin cap) antes que bloquear una reversion legitima.
+            _logger.LogWarning(
+                "CreditNoteReversalCap: NC sin ReservaId, no se puede calcular cobrado real. " +
+                "Se aplica el ImporteTotal completo (comportamiento previo al fix T0).");
+            return creditNoteImporteTotal;
+        }
+
+        // Traemos los Payments VIVOS de cobro de la reserva y filtramos por moneda IMPUTADA en
+        // memoria: Monedas.Normalizar no se puede traducir a SQL, pero son pocos Payments por
+        // reserva (no hay riesgo de performance en barrer una reserva puntual).
+        var pagosDeCobroVivos = await _context.Payments
+            .Where(p => p.ReservaId == reservaId
+                        && p.EntryType == PaymentEntryTypes.Payment
+                        && !p.IsDeleted
+                        && p.Status != "Cancelled")
+            .ToListAsync();
+
+        decimal cobradoReal = pagosDeCobroVivos
+            .Where(p => Monedas.Normalizar(p.ImputedCurrency ?? p.Currency) == currency)
+            .Sum(p => p.ImputedAmount ?? p.Amount);
+
+        var reversalesVivos = await _context.Payments
+            .Where(p => p.ReservaId == reservaId
+                        && p.EntryType == PaymentEntryTypes.CreditNoteReversal
+                        && !p.IsDeleted)
+            .ToListAsync();
+
+        decimal reversalesPreviosVivos = reversalesVivos
+            .Where(p => Monedas.Normalizar(p.Currency) == currency)
+            .Sum(p => p.Amount);
+
+        decimal netoDisponible = cobradoReal + reversalesPreviosVivos;
+
+        return Math.Max(0m, Math.Min(creditNoteImporteTotal, netoDisponible));
     }
 
     // P1.5: el saldo se calcula con la FUENTE UNICA DE VERDAD (ReservaMoneyCalculator),

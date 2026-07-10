@@ -24,7 +24,9 @@ namespace TravelApi.Tests.Unit;
 ///  - Fallback "system"/"Sistema" cuando la invoice original no tiene user.
 ///  - Audit log emitido con accion <c>ReceiptVoidedByCascade</c> (distinto de
 ///    <c>ReceiptVoided</c> del void manual via PaymentService).
-///  - Payment de reversion economica (CreditNoteReversal) siempre se crea.
+///  - Payment de reversion economica (CreditNoteReversal) se crea SIEMPRE QUE la reserva
+///    tenga cobro real que revertir (FIX T0 "plata", 2026-07-10: si la reserva no cobro
+///    nada, NO se crea — ver <c>Cascade_WhenNoMatchingPayment_DoesNotTouchAnyReceipt</c>).
 ///
 /// Decision de diseno: el user del cascade se lee de la invoice original via
 /// Include(OriginalInvoice), NO desde un parametro nuevo en ProcessInvoiceJob.
@@ -271,11 +273,15 @@ public class AfipServiceCascadeReceiptVoidTests
             It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<string?>(),
             It.IsAny<CancellationToken>()), Times.Never);
 
-        // La reversion economica SIGUE creandose (su existencia no depende del Payment match).
+        // FIX T0 "plata" (2026-07-10, bug confirmado en prod, reserva F-2026-1038): este escenario
+        // ("factura con CAE pero CERO Payments de cobro en toda la reserva") es EXACTAMENTE el bug
+        // real que T0 corrige. Antes de este fix, la reversion economica se creaba IGUAL (esta misma
+        // aserción decia "SIGUE creandose... no depende del Payment match"), generando una deuda
+        // fantasma: el saldo bajaba por plata que el cliente nunca puso. Ahora, sin cobro real que
+        // revertir, el Payment de reversion NO se crea (ver AfipService.CalculateCreditNoteReversalCapAsync).
         var reversal = await context.Payments.AsNoTracking()
             .FirstOrDefaultAsync(p => p.EntryType == PaymentEntryTypes.CreditNoteReversal);
-        Assert.NotNull(reversal);
-        Assert.Null(reversal!.OriginalPaymentId); // sin payment match
+        Assert.Null(reversal);
     }
 
     [Fact]
