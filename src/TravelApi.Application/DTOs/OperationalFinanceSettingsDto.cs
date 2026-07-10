@@ -231,4 +231,14 @@ public class OperationalFinanceSettingsDto
     /// valor actual. El service valida que el código sea uno reconocido del catálogo ARCA (400 si no).</para>
     /// </summary>
     public int? CancellationDebitNoteRiPassThroughAlicuotaIvaId { get; set; }
+
+    /// <summary>
+    /// ADR-044 T3b Decision 3 (config, 2026-07-10): default a nivel AGENCIA de "quién asume la diferencia de
+    /// cambio de tesorería" de un cargo de operador (<see cref="TreasuryFxAssumedBy.Client"/> = el cliente,
+    /// default; <see cref="TreasuryFxAssumedBy.Agency"/> = la agencia la absorbe). Cada operador puede pisarlo.
+    ///
+    /// <para>Nullable y patch-like (criterio B-002): enviar null u omitir el campo en el PUT = no se modifica el
+    /// valor actual. El service valida que sea un valor de enum definido (400 si no). Se expone en el GET.</para>
+    /// </summary>
+    public TreasuryFxAssumedBy? TreasuryFxAssumedByDefault { get; set; }
 }

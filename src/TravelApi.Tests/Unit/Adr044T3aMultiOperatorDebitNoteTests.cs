@@ -447,9 +447,10 @@ public class Adr044T3aMultiOperatorDebitNoteTests
                 r.Items.Count == 2 &&
                 r.Items.Sum(i => i.Total) == 30_000m &&
                 r.Items.All(i => i.AlicuotaIvaId == 3) &&
-                // DATA-EXPOSURE: los renglones NO nombran al mayorista/operador (el pasajero recibe el comprobante).
-                r.Items.All(i => !i.Description.Contains("Operador A") && !i.Description.Contains("Operador B")) &&
-                r.Items.All(i => i.Description.Contains("Penalidad de operador por cancelación"))),
+                // DATA-EXPOSURE (decidido por Gaston 2026-07-10): el comprobante del pasajero SÍ nombra al
+                // mayorista — cada renglón nombra a su operador.
+                r.Items.Any(i => i.Description.Contains("Penalidad de Operador A por cancelación")) &&
+                r.Items.Any(i => i.Description.Contains("Penalidad de Operador B por cancelación"))),
             It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
             Times.Once);
     }
@@ -710,17 +711,15 @@ public class Adr044T3aMultiOperatorDebitNoteTests
             bc.PublicId, "u", "U", default, userCanClassifyAgencyPenalty: true);
 
         Assert.Equal("Pending", dto.DebitNoteStatus);
-        // Mismo monto y misma alicuota (0%, Monotributo) que el camino legacy de la Prueba 7. La Description es
-        // generica ("Penalidad de operador...") — NO nombra al mayorista (data-exposure): el desglose por operador
-        // vive en la ficha/auditoria, no en el comprobante del pasajero.
+        // Mismo monto y misma alicuota (0%, Monotributo) que el camino legacy de la Prueba 7. La Description del
+        // renglon pass-through SÍ nombra al mayorista (decidido por Gaston 2026-07-10).
         h.InvoiceMock.Verify(s => s.CreateAsync(
             It.Is<CreateInvoiceRequest>(r =>
                 r.Items.Count == 1 &&
                 r.Items[0].UnitPrice == 45_000m &&
                 r.Items[0].Total == 45_000m &&
                 r.Items[0].AlicuotaIvaId == 3 &&
-                r.Items[0].Description.Contains("Penalidad de operador por cancelación") &&
-                !r.Items[0].Description.Contains("Operador A")),
+                r.Items[0].Description.Contains("Penalidad de Operador A por cancelación")),
             It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
             Times.Once);
     }

@@ -561,6 +561,94 @@ public class Adr044T3bTargetInvoiceAndTreasuryFxTests
     }
 
     // ============================================================
+    // Config "quién asume el ajuste por el dólar": cadena override→setting→default + snapshot congelado.
+    // ============================================================
+
+    /// <summary>Registra el ajuste FX de un cargo Retenida y devuelve la fila creada (para inspeccionar AssumedBy).</summary>
+    private static async Task<BookingCancellationLineTreasuryFxAdjustment> RegisterRetainedAdjustmentAsync(
+        AppDbContext ctx, BookingCancellation bc, BookingCancellationLineOperatorCharge charge, Supplier supplier)
+    {
+        var refund = new OperatorRefundReceived
+        {
+            SupplierId = supplier.Id, ReceivedAmount = 100_000m, Currency = "USD",
+            ExchangeRateAtReceipt = 1100m, ReceivedByUserId = "cashier",
+        };
+        ctx.OperatorRefundReceived.Add(refund);
+        await ctx.SaveChangesAsync();
+        var allocation = new OperatorRefundAllocation
+        {
+            OperatorRefundReceivedId = refund.Id, BookingCancellationId = bc.Id,
+            GrossAmount = 100_000m, NetAmount = 100_000m, CreatedByUserId = "cashier",
+        };
+        ctx.OperatorRefundAllocations.Add(allocation);
+        await ctx.SaveChangesAsync();
+        var tracked = await ctx.OperatorRefundAllocations.Include(a => a.Refund).SingleAsync(a => a.Id == allocation.Id);
+        await TreasuryFxAdjustmentEngine.RegisterForRetainedChargesAsync(ctx, tracked, null, default);
+        await ctx.SaveChangesAsync();
+        return await ctx.BookingCancellationLineTreasuryFxAdjustments.AsNoTracking()
+            .SingleAsync(a => a.OperatorChargeId == charge.Id);
+    }
+
+    [Fact]
+    public async Task AssumedBy_NoOverrideNoSettings_DefaultsToClient()
+    {
+        var ctx = NewDbContext();
+        var (bc, _, charge, supplier) = await SeedChargeWithDefinitiveRateAsync(ctx, chargeAmount: 100m, definitiveRate: 1000m);
+        // Sin fila de settings y sin override -> fallback duro Client.
+        var adjustment = await RegisterRetainedAdjustmentAsync(ctx, bc, charge, supplier);
+        Assert.Equal(TreasuryFxAssumedBy.Client, adjustment.AssumedBy);
+    }
+
+    [Fact]
+    public async Task AssumedBy_AgencyDefaultNoOverride_UsesAgency()
+    {
+        var ctx = NewDbContext();
+        var (bc, _, charge, supplier) = await SeedChargeWithDefinitiveRateAsync(ctx, chargeAmount: 100m, definitiveRate: 1000m);
+        ctx.OperationalFinanceSettings.Add(new OperationalFinanceSettings { TreasuryFxAssumedByDefault = TreasuryFxAssumedBy.Agency });
+        await ctx.SaveChangesAsync();
+
+        var adjustment = await RegisterRetainedAdjustmentAsync(ctx, bc, charge, supplier);
+        Assert.Equal(TreasuryFxAssumedBy.Agency, adjustment.AssumedBy); // default de agencia, sin override.
+    }
+
+    [Fact]
+    public async Task AssumedBy_SupplierOverrideWins_OverAgencyDefault()
+    {
+        var ctx = NewDbContext();
+        var (bc, _, charge, supplier) = await SeedChargeWithDefinitiveRateAsync(ctx, chargeAmount: 100m, definitiveRate: 1000m);
+        ctx.OperationalFinanceSettings.Add(new OperationalFinanceSettings { TreasuryFxAssumedByDefault = TreasuryFxAssumedBy.Agency });
+        // El operador pisa el default de la agencia: este operador SÍ se lo carga al cliente.
+        var trackedSupplier = await ctx.Suppliers.SingleAsync(s => s.Id == supplier.Id);
+        trackedSupplier.TreasuryFxAssumedByOverride = TreasuryFxAssumedBy.Client;
+        await ctx.SaveChangesAsync();
+
+        var adjustment = await RegisterRetainedAdjustmentAsync(ctx, bc, charge, supplier);
+        Assert.Equal(TreasuryFxAssumedBy.Client, adjustment.AssumedBy); // el override del operador gana.
+    }
+
+    [Fact]
+    public async Task AssumedBy_IsFrozenSnapshot_ConfigChangeAfterDoesNotReinterpret()
+    {
+        var ctx = NewDbContext();
+        var (bc, _, charge, supplier) = await SeedChargeWithDefinitiveRateAsync(ctx, chargeAmount: 100m, definitiveRate: 1000m);
+        var settings = new OperationalFinanceSettings { TreasuryFxAssumedByDefault = TreasuryFxAssumedBy.Agency };
+        ctx.OperationalFinanceSettings.Add(settings);
+        await ctx.SaveChangesAsync();
+
+        var adjustment = await RegisterRetainedAdjustmentAsync(ctx, bc, charge, supplier);
+        Assert.Equal(TreasuryFxAssumedBy.Agency, adjustment.AssumedBy);
+
+        // Cambia la config DESPUÉS: el ajuste histórico NO se reinterpreta (snapshot congelado).
+        var trackedSettings = await ctx.OperationalFinanceSettings.SingleAsync();
+        trackedSettings.TreasuryFxAssumedByDefault = TreasuryFxAssumedBy.Client;
+        await ctx.SaveChangesAsync();
+
+        var reloaded = await ctx.BookingCancellationLineTreasuryFxAdjustments.AsNoTracking()
+            .SingleAsync(a => a.Id == adjustment.Id);
+        Assert.Equal(TreasuryFxAssumedBy.Agency, reloaded.AssumedBy); // sigue Agency, no se movió a Client.
+    }
+
+    // ============================================================
     // 8) M4 — supersede/recalculo: voidear la allocation de origen marca superseded; el reemplazo enlaza.
     // ============================================================
 
@@ -654,13 +742,13 @@ public class Adr044T3bTargetInvoiceAndTreasuryFxTests
 
         ctx.BookingCancellationLineTreasuryFxAdjustments.Add(new BookingCancellationLineTreasuryFxAdjustment
         {
-            OperatorChargeId = charge.Id, SupplierPaymentId = 999, RateAtNdEmission = 1000m,
+            OperatorChargeId = charge.Id, SupplierPaymentId = 999, RateAtChargeDay = 1000m,
             RateAtSettlement = 900m, ChargeAmount = 110m, ChargeCurrency = "USD",
             DeltaAmount = -11_000m, SettlementCurrency = "ARS", IsSuperseded = true, // vieja, NO deberia pintarse
         });
         ctx.BookingCancellationLineTreasuryFxAdjustments.Add(new BookingCancellationLineTreasuryFxAdjustment
         {
-            OperatorChargeId = charge.Id, SupplierPaymentId = 1000, RateAtNdEmission = 1000m,
+            OperatorChargeId = charge.Id, SupplierPaymentId = 1000, RateAtChargeDay = 1000m,
             RateAtSettlement = 1100m, ChargeAmount = 110m, ChargeCurrency = "USD",
             DeltaAmount = 11_000m, SettlementCurrency = "ARS", IsSuperseded = false, // vigente (delta 11.000 ARS)
         });
@@ -692,7 +780,7 @@ public class Adr044T3bTargetInvoiceAndTreasuryFxTests
         line.RetainedDeductionAmount = 110m;
         ctx.BookingCancellationLineTreasuryFxAdjustments.Add(new BookingCancellationLineTreasuryFxAdjustment
         {
-            OperatorChargeId = charge.Id, SupplierPaymentId = 1000, RateAtNdEmission = 1000m,
+            OperatorChargeId = charge.Id, SupplierPaymentId = 1000, RateAtChargeDay = 1000m,
             RateAtSettlement = 1100m, ChargeAmount = 110m, ChargeCurrency = "USD",
             DeltaAmount = 11_000m, SettlementCurrency = "ARS", IsSuperseded = false,
         });
@@ -788,11 +876,11 @@ public class Adr044T3bTargetInvoiceAndTreasuryFxTests
     }
 
     // ============================================================
-    // F2 — TC estimado vencido (más de 48 h) al emitir -> Manual.
+    // M1 (i) — el TC definitivo copia el VALOR y la FECHA del día del cargo (no la de emisión).
     // ============================================================
 
     [Fact]
-    public async Task Emit_StaleEstimatedRate_RoutesManual()
+    public async Task Emit_CrossCurrency_DefinitiveRateAndDateCopiedFromChargeDay()
     {
         var h = BuildService();
         var supplierA = await AddSupplierAsync(h.Ctx, "Operador A");
@@ -800,17 +888,21 @@ public class Adr044T3bTargetInvoiceAndTreasuryFxTests
         var usdInvoice = await AddSecondActiveInvoiceAsync(h.Ctx, reserva, monId: "DOL", monCotiz: 1000m, importeTotal: 300m);
         var line = await AddConfirmedLineWithChargeAsync(
             h.Ctx, bc, supplierA, amount: 100m, currency: "ARS", targetInvoiceId: usdInvoice.Id, estimatedRate: 1000m);
-        // Envejecer el TC estimado a 3 dias atras.
-        var charge = await h.Ctx.BookingCancellationLineOperatorCharges.SingleAsync(c => c.BookingCancellationLineId == line.Id);
-        charge.EstimatedExchangeRateAt = DateTime.UtcNow.AddDays(-3);
+        // El TC del día del cargo se cargó hace 40 días (bajo M1 (i) sigue siendo legítimo: NO hay tope de 48h).
+        var chargeDay = DateTime.UtcNow.AddDays(-40);
+        var chargeSeed = await h.Ctx.BookingCancellationLineOperatorCharges.SingleAsync(c => c.BookingCancellationLineId == line.Id);
+        chargeSeed.EstimatedExchangeRateAt = chargeDay;
         await h.Ctx.SaveChangesAsync();
 
         var dto = await h.Service.RetryDebitNoteEmissionAsync(
             bc.PublicId, "u", "U", default, userCanClassifyAgencyPenalty: true);
 
-        Assert.Equal("ManualReview", dto.DebitNoteStatus);
-        var reloaded = await h.Ctx.BookingCancellations.AsNoTracking().SingleAsync(b => b.Id == bc.Id);
-        Assert.Contains("más de dos días", reloaded.DebitNoteArcaErrorMessage);
+        Assert.Equal("Pending", dto.DebitNoteStatus); // NO va a Manual pese a los 40 días (F2 eliminado).
+        var charge = await h.Ctx.BookingCancellationLineOperatorCharges.AsNoTracking()
+            .SingleAsync(c => c.BookingCancellationLineId == line.Id);
+        Assert.Equal(1000m, charge.DefinitiveExchangeRateAtNdEmission); // valor = el del día del cargo.
+        // Fecha definitiva = la del día del cargo (estimado), NO DateTime.UtcNow de la emisión.
+        Assert.Equal(chargeDay, charge.DefinitiveExchangeRateAt);
     }
 
     // ============================================================
@@ -831,12 +923,10 @@ public class Adr044T3bTargetInvoiceAndTreasuryFxTests
         // Cargo A: cross-currency VALIDO (recolecta pending; se fijaria definitivo si el build llegara a Ready).
         var lineA = await AddConfirmedLineWithChargeAsync(
             h.Ctx, bc, supplierA, amount: 100m, currency: "ARS", targetInvoiceId: usdInvoice.Id, estimatedRate: 1000m);
-        // Cargo B (operador posterior): cross-currency con TC VENCIDO (>48h) -> aborta a Manual DENTRO del foreach.
-        var lineB = await AddConfirmedLineWithChargeAsync(
-            h.Ctx, bc, supplierB, amount: 50m, currency: "ARS", targetInvoiceId: usdInvoice.Id, estimatedRate: 1000m);
-        var chargeBStale = await h.Ctx.BookingCancellationLineOperatorCharges.SingleAsync(c => c.BookingCancellationLineId == lineB.Id);
-        chargeBStale.EstimatedExchangeRateAt = DateTime.UtcNow.AddDays(-3);
-        await h.Ctx.SaveChangesAsync();
+        // Cargo B (operador posterior): cross-currency SIN TC cargado -> aborta a Manual ("falta cargar el TC")
+        // DENTRO del foreach, despues de que A ya recolecto su pending.
+        await AddConfirmedLineWithChargeAsync(
+            h.Ctx, bc, supplierB, amount: 50m, currency: "ARS", targetInvoiceId: usdInvoice.Id, estimatedRate: null);
 
         var dto = await h.Service.RetryDebitNoteEmissionAsync(
             bc.PublicId, "u", "U", default, userCanClassifyAgencyPenalty: true);

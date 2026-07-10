@@ -649,6 +649,17 @@ public class OperationalFinanceSettings
     /// </summary>
     public int? CancellationDebitNoteRiPassThroughAlicuotaIvaId { get; set; } = null;
 
+    /// <summary>
+    /// ADR-044 T3b Decision 3 (config, 2026-07-10): default a nivel AGENCIA de "quién asume la diferencia de
+    /// cambio de tesorería" de un cargo de operador (ver <see cref="TreasuryFxAssumedBy"/>). Cada operador puede
+    /// pisar este default con <see cref="Supplier.TreasuryFxAssumedByOverride"/>.
+    ///
+    /// <para><b>Default <see cref="TreasuryFxAssumedBy.Client"/> (invisible)</b>: es la Decisión final #1 del
+    /// ADR ("la asume el cliente por default"). Nadie tiene que tocar nada para operar como hoy. Editable por
+    /// Admin desde el panel (PUT operational-finance), mismo patrón que el parámetro de alícuota RI.</para>
+    /// </summary>
+    public TreasuryFxAssumedBy TreasuryFxAssumedByDefault { get; set; } = TreasuryFxAssumedBy.Client;
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

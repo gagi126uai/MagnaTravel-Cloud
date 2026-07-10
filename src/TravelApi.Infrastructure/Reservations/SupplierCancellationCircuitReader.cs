@@ -175,8 +175,8 @@ internal static class SupplierCancellationCircuitReader
             // la multa que la origino), NO en el de la moneda de liquidacion — sino caeria en un bloque distinto
             // al de sus hermanas (todas usan line.Currency). Como el delta se calculo en la moneda de la ND
             // (SettlementCurrency), lo CONVERTIMOS coherente a la moneda de la linea al TC de la liquidacion, y
-            // dejamos la moneda de liquidacion como dato informativo en la descripcion. (Default conservador,
-            // confirmacion de Gaston batcheada en T4.) A diferencia de sus hermanas, el monto puede ser negativo
+            // dejamos la moneda de liquidacion como dato informativo en la descripcion. CONFIRMADO por Gaston
+            // 2026-07-10 como default definitivo. A diferencia de sus hermanas, el monto puede ser negativo
             // (es un ajuste de valuacion, no un cargo).
             foreach (var charge in line.OperatorCharges)
             {

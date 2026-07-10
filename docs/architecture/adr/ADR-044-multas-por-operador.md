@@ -509,23 +509,22 @@ pagos cruzados ARS<->USD: `ExchangeRate` (decimal 18,6, convención ARS por 1 US
 el mismo idioma que usa `Invoice.ExchangeRateSource`/`ExchangeRateFetchedAt`/`ExchangeRateJustification`. Se
 replica idéntico, sin inventar un vocabulario nuevo.
 
-**M1 — CUÁNDO se fija el TC definitivo (decisión del orquestador, PENDIENTE DE CONFIRMACIÓN de Gastón, ronda T4)**.
-La regla de negocio del ADR dice "la diferencia de cambio la asume el cliente al TC del día del cargo" (Decisión
-final #1). Hay dos lecturas de "día del cargo": (i) el día en que el operador confirma su cargo, o (ii) el día
-en que ese cargo se le carga AL CLIENTE (= emisión de la ND). **Se adopta la lectura literal (ii): el TC
-definitivo del renglón se fija al EMITIR la ND**, no al confirmar el cargo del operador. Consecuencia sobre el
-modelo:
-- Los 4 campos de TC en `OperatorCharge` (abajo) son el **TC ESTIMADO al confirmar** (informativo/preview para
-  que el usuario vea el traslado aproximado cuando carga el cargo) — NO son el valor fiscal definitivo.
-- El **TC DEFINITIVO del renglón se fija al emitir la ND** (mismo mecanismo de carga manual con justificación
-  si no hay fuente automática), viaja al comprobante y es el que va a auditoría y al cálculo del delta de
-  tesorería (Decisión 3). Se persiste sobre la línea de ND / el snapshot de emisión, no se pisa el estimado del
-  cargo (el estimado queda como rastro de "qué se le previó al confirmar").
-- Esta decisión es **default configurable y reversible sin migración destructiva**: si Gastón en T4 prefiere la
-  lectura (i) "TC del día de confirmación del cargo", se cambia qué TC se toma como definitivo SIN tirar
-  columnas (los campos estimado/definitivo ya existen; solo cambia cuál se marca como fiscal). Anotado como
-  **PENDIENTE DE CONFIRMACIÓN de Gastón (ronda T4)** — entra al mismo gate humano del contador (ver "Menor" al
-  final).
+**M1 — CUÁNDO se fija el TC definitivo (CONFIRMADO por Gastón 2026-07-10: lectura (i), TC del DÍA DEL CARGO del
+operador)**. La regla de negocio del ADR dice "la diferencia de cambio la asume el cliente al TC del día del
+cargo" (Decisión final #1). Había dos lecturas de "día del cargo": (i) el día en que el operador confirma/carga
+su cargo, o (ii) el día en que ese cargo se le carga AL CLIENTE (= emisión de la ND). **Gastón confirmó la
+lectura (i): el TC definitivo del renglón es el del DÍA EN QUE EL OPERADOR COBRÓ su cargo** — el TC cargado al
+confirmar el cargo del operador, NO el del día de emisión de la ND. Consecuencia sobre el modelo:
+- Los 4 campos de TC "ESTIMADO" en `OperatorCharge` capturan el **TC del día del cargo del operador** (cargado
+  al confirmar/cargar el cargo).
+- El **TC DEFINITIVO del renglón se promociona AL EMITIR** copiando el VALOR y la FECHA del estimado (día del
+  cargo): NO se recotiza al día de emisión. Viaja al comprobante, a auditoría y al cálculo del delta de
+  tesorería (Decisión 3, `RateAtChargeDay`).
+- **Consecuencia: se ELIMINA el tope de antigüedad de 48h** (guard F2 del gate fiscal): bajo la lectura (i) el
+  TC es legítimamente del día del cargo aunque hayan pasado semanas. La banda de sanidad (TC ≤ 0 o == 1 =
+  "default peligroso") SÍ se mantiene (es otra cosa).
+- El diseño fue reversible a propósito (los campos estimado/definitivo ya existían): el cambio de (ii)→(i) no
+  requirió migración destructiva, solo cambiar qué fecha/valor se promociona.
 
 **Campos (TC ESTIMADO al confirmar)** en `BookingCancellationLineOperatorCharge` (T2):
 ```
@@ -543,17 +542,18 @@ campos de TC de la Invoice", y eso NO funciona: `InvoiceItem` no tiene campos de
 valuación del COMPROBANTE, no la conversión de un renglón embebido). El definitivo vive en CAMPOS PROPIOS de
 `BookingCancellationLineOperatorCharge`, al lado de los estimados, poblados AL EMITIR la ND:
 ```
-DefinitiveExchangeRateAtNdEmission            (decimal(18,6)?, misma convencion)
+DefinitiveExchangeRateAtNdEmission            (decimal(18,6)?, misma convencion; = TC del DÍA DEL CARGO, M1 (i))
 DefinitiveExchangeRateSource                  (ExchangeRateSource?)
-DefinitiveExchangeRateAt                      (DateTime?, momento de la emision)
+DefinitiveExchangeRateAt                      (DateTime?, FECHA DEL CARGO del operador, copiada del estimado — NO la de emision)
 DefinitiveExchangeRateJustification           (string? MaxLength 500, obligatoria cuando Source=Manual)
 ```
-El estimado queda intacto como rastro de preview; la Decisión 3 (delta de tesorería) lee el definitivo de acá.
+El estimado queda intacto como rastro; el definitivo copia su valor y su fecha al emitir. La Decisión 3 (delta
+de tesorería) lee el definitivo de acá (columna `RateAtChargeDay` en la fila de ajuste).
 
-**Fórmula del renglón** (al emitir): `MontoRenglonND(moneda_factura) = Charge.Amount(Charge.Currency) x TC_definitivo_al_emitir`.
+**Fórmula del renglón** (al emitir): `MontoRenglonND(moneda_factura) = Charge.Amount(Charge.Currency) x TC_del_día_del_cargo`.
 NO se recotiza el TC DEL COMPROBANTE (ese sigue siendo el congelado de la factura original, regla firmada): lo
-que se cotiza es la conversión de un cargo extranjero embebido, con el TC del día de emisión de la ND (lectura
-literal M1).
+que se cotiza es la conversión de un cargo extranjero embebido, con el TC del DÍA DEL CARGO del operador
+(lectura (i), CONFIRMADO por Gastón 2026-07-10 — no se recotiza al día de emisión).
 
 **Quién lo carga (default vs manual)**: si existe una fuente automática confiable para la fecha de emisión
 (norte BNA/ADR-011, hoy NO construido), el sistema propone ese TC como default editable. Mientras esa fuente
@@ -581,10 +581,11 @@ este guard, una ND podría salir contra una factura ya anulada = incidente fisca
 
 ### Decisión 3 — Ajuste de diferencia de cambio de tesorería: registro propio DENTRO del aggregate de cancelación, fuera del calculador canónico y fuera del Libro de Caja
 
-**Cuándo ocurre realmente el delta (verificado con el código, no la intuición)**: la ND sale con el TC
-definitivo del día de emisión (Decisión 2 / M1) — ese es el valor en pesos que se le cobró al cliente por el
-cargo del operador. El delta de tesorería aparece DESPUÉS, cuando el cargo del operador se LIQUIDA REALMENTE,
-y **el momento de liquidación depende de la forma de cobro del cargo** (`PenaltyCollectionMode`, T2):
+**Cuándo ocurre realmente el delta (verificado con el código, no la intuición)**: la ND traslada el cargo con
+el TC definitivo del DÍA DEL CARGO del operador (Decisión 2 / M1 (i)) — ese es el valor en pesos que se le
+cobró al cliente por el cargo del operador. El delta de tesorería aparece DESPUÉS, cuando el cargo del operador
+se LIQUIDA REALMENTE, y **el momento de liquidación depende de la forma de cobro del cargo**
+(`PenaltyCollectionMode`, T2):
 
 - **`Retenida` (default)**: se liquida cuando el operador devuelve el neto — momento
   `OperatorRefundReceived`/su `OperatorRefundAllocation` contra el `BookingCancellation`.
@@ -762,15 +763,20 @@ TC estimado de Decisión 2 no existían antes de T3b).
 afecta esos números ya en producción.
 
 **Menor — gate humano compartido**: la contabilización formal del ajuste de tesorería (qué cuenta, cuándo se
-devenga) y la confirmación de M1 (¿"día del cargo" = día de confirmación o día de emisión de la ND?) entran
-al MISMO gate humano del contador matriculado de Gastón que ya tiene pendiente la alícuota IVA de pass-through
-para RI. Es una sola consulta contable con tres ítems, no tres consultas sueltas.
+devenga) entra al MISMO gate humano del contador matriculado de Gastón que ya tiene pendiente la alícuota IVA
+de pass-through para RI. (M1 YA quedó CONFIRMADO por Gastón 2026-07-10: lectura (i), TC del día del cargo.)
+
+**Confirmaciones de Gastón (2026-07-10) que cerraron la ronda T4 de T3b**:
+- **M1: lectura (i)** — el TC definitivo es el del DÍA DEL CARGO del operador (no el de emisión de la ND). Se
+  eliminó el tope de antigüedad de 48h; la banda de sanidad TC ≤ 0 o == 1 se mantiene.
+- **Comprobante del pasajero SÍ nombra al mayorista** en el renglón pass-through ("Penalidad de {Operador} por
+  cancelación s/Fc ...").
+- **Extracto del operador**: la línea "Diferencia de cambio" vive en el bloque de la moneda de la línea (junto
+  a la multa que la originó), con el delta convertido a esa moneda — CONFIRMADO como default definitivo.
 
 **Lo que queda deliberadamente sin resolver (anotado, no ignorado)**:
 - Contabilización formal del ajuste de diferencia de cambio (qué cuenta contable, cuándo se devenga): firma
   contable pendiente, mismo gap que ya señalaba la spec de T3 (gate humano compartido, arriba).
-- Confirmación M1 ("día del cargo" literal = día de emisión de la ND): default adoptado, PENDIENTE de Gastón
-  (ronda T4), reversible sin migración destructiva (gate humano compartido, arriba).
 - Automatizar el disparo de la ND complementaria por diferencia de cambio significativa: requiere criterio
   de materialidad de Gastón, no es arquitectura.
 - Alícuota IVA de pass-through para RI: gate humano, firma del contador matriculado, ajeno a esta obra.

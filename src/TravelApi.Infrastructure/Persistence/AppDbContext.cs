@@ -452,6 +452,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             // pone la migracion a nivel BD para que las filas existentes queden en el
             // valor conservador (= NO ND).
             entity.Property(s => s.PenaltyOwnership).HasConversion<int>();
+
+            // ADR-044 T3b Decision 3 (2026-07-10): override por operador de "quién asume la diferencia de
+            // cambio". Enum nullable como int? (null = hereda el default de la agencia).
+            entity.Property(s => s.TreasuryFxAssumedByOverride).HasConversion<int?>();
         });
 
         // Customer
@@ -1336,6 +1340,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         modelBuilder.Entity<OperationalFinanceSettings>(entity =>
         {
             entity.Property(s => s.AfipInvoiceControlMode).HasMaxLength(50).IsRequired();
+            // ADR-044 T3b Decision 3 (2026-07-10): default de agencia de "quién asume la diferencia de cambio".
+            // Enum como int, default Client lo pone la migracion a nivel BD (fila existente = comportamiento de hoy).
+            entity.Property(s => s.TreasuryFxAssumedByDefault).HasConversion<int>();
         });
 
         // ADR-040 (cuenta corriente del cliente, 2026-06-26): limite de credito del cliente por moneda. Espejo
@@ -2012,7 +2019,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                     "((\"OperatorRefundAllocationId\" IS NOT NULL)::int + (\"SupplierPaymentId\" IS NOT NULL)::int) = 1");
             });
 
-            entity.Property(a => a.RateAtNdEmission).HasPrecision(18, 6);
+            entity.Property(a => a.RateAtChargeDay).HasPrecision(18, 6);
             entity.Property(a => a.RateAtSettlement).HasPrecision(18, 6);
             entity.Property(a => a.ChargeAmount).HasPrecision(18, 2);
             entity.Property(a => a.ChargeCurrency).HasMaxLength(3).IsRequired();

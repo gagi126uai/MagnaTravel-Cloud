@@ -166,6 +166,20 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             entity.CancellationDebitNoteRiPassThroughAlicuotaIvaId = code;
         }
 
+        // ADR-044 T3b Decision 3 (2026-07-10): default de agencia de "quién asume la diferencia de cambio".
+        // Update CONDICIONAL (patch-like, B-002): solo se aplica si el request trae valor. Validamos que sea un
+        // valor de enum DEFINIDO (un int fuera de rango podria colarse por el binder JSON).
+        if (request.TreasuryFxAssumedByDefault.HasValue)
+        {
+            var assumedBy = request.TreasuryFxAssumedByDefault.Value;
+            if (!Enum.IsDefined(typeof(TreasuryFxAssumedBy), assumedBy))
+            {
+                throw new ValidationException(
+                    "El valor de 'quién asume la diferencia de cambio' no es válido.");
+            }
+            entity.TreasuryFxAssumedByDefault = assumedBy;
+        }
+
         entity.UpdatedAt = DateTime.UtcNow;
 
         // FC1.3.2 (ADR-009 §2.10, N-004 round 3, 2026-05-21): pre-condicion GR-002.
@@ -320,6 +334,9 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             // sin firma contable, la ND automatica queda bloqueada para ese caso).
             CancellationDebitNoteRiPassThroughAlicuotaIvaId =
                 entity.CancellationDebitNoteRiPassThroughAlicuotaIvaId,
+            // ADR-044 T3b Decision 3 (2026-07-10): el GET expone el default de agencia de "quién asume la
+            // diferencia de cambio" para que el panel lo muestre/edite.
+            TreasuryFxAssumedByDefault = entity.TreasuryFxAssumedByDefault,
         };
     }
 }

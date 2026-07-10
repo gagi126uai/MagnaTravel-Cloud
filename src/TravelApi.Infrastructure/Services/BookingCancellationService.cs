@@ -7957,7 +7957,8 @@ public class BookingCancellationService
         // Recolectamos las asignaciones pendientes en memoria y las aplicamos TODAS juntas recien cuando el build
         // completo dio Ready (justo antes de emitir). Asi ninguna Definitive* se persiste si el build aborta.
         var pendingDefinitiveRates =
-            new List<(BookingCancellationLineOperatorCharge Charge, decimal Rate, ExchangeRateSource? Source, string? Justification)>();
+            new List<(BookingCancellationLineOperatorCharge Charge, decimal Rate, ExchangeRateSource? Source,
+                      DateTime? ChargeDayDate, string? Justification)>();
 
         // Orden deterministico: por operador y despues por orden de creacion del cargo.
         foreach (var (line, charge) in allCharges.OrderBy(x => x.Line.SupplierId).ThenBy(x => x.Charge.Id))
@@ -7972,11 +7973,12 @@ public class BookingCancellationService
             }
 
             // ADR-044 T3b Decision 2 (2026-07-10): si el cargo esta en la MISMA moneda que su factura destino,
-            // sin cambios (T3a). Si difiere, se intenta convertir con el TC definitivo (promovido del estimado,
-            // lectura M1 del Addendum: no hay fuente automatica de TC todavia, asi que el definitivo se fija
-            // AHORA, al emitir, con el mismo valor/justificacion que ya se cargo como estimado). Sin conversion
-            // posible (par de monedas no soportado, TC no confiable, TC vencido, o sin TC cargado) -> revision
-            // manual, nunca se adivina un numero.
+            // sin cambios (T3a). Si difiere, se convierte con el TC DEFINITIVO = TC del DIA DEL CARGO del operador
+            // (M1 lectura (i), CONFIRMADO por Gaston 2026-07-10): NO se recotiza al dia de emision, se promociona
+            // el estimado (que ya es el TC del dia del cargo) copiando su VALOR y su FECHA. Sin conversion posible
+            // (par de monedas no soportado, TC no confiable, o sin TC cargado) -> revision manual, nunca se
+            // adivina un numero. NO hay tope de antiguedad: bajo la lectura (i) el TC es legitimamente del dia del
+            // cargo aunque hayan pasado semanas.
             var chargeCurrencyArca = NormalizeCurrencyToArcaOrNull(charge.Currency);
             decimal amountInInvoiceCurrency;
             if (chargeCurrencyArca is not null && invoiceCurrencyArca is not null &&
@@ -7998,24 +8000,18 @@ public class BookingCancellationService
             }
             else
             {
-                var estimatedRate = charge.EstimatedExchangeRateToClientInvoiceCurrency.Value;
-
-                // F2 (gate fiscal T3b, severidad media): un TC estimado cargado hace mas de 2 dias ya no es
-                // confiable para fijarlo como definitivo al emitir. Sin fecha tampoco lo aceptamos (dato incompleto).
-                if (charge.EstimatedExchangeRateAt is null ||
-                    DateTime.UtcNow - charge.EstimatedExchangeRateAt.Value > EstimatedExchangeRateMaxAge)
-                    return CancellationDebitNoteItemsResult.Manual(
-                        "El tipo de cambio cargado tiene más de dos días: confirmalo de nuevo antes de emitir.");
+                var chargeDayRate = charge.EstimatedExchangeRateToClientInvoiceCurrency.Value;
 
                 // S1/F1 (bloqueante security): banda de sanidad. Un TC <= 0 o == 1 es el "default peligroso" (se
                 // olvido de cargar la cotizacion): no se puede convertir plata con el. Mismo criterio que
-                // IsForeignCurrencyInvoiceWithoutReliableRate.
-                if (IsUnreliableExchangeRate(estimatedRate))
+                // IsForeignCurrencyInvoiceWithoutReliableRate. (Esta guarda QUEDA; el tope de antiguedad F2 se
+                // eliminó bajo la lectura M1 (i).)
+                if (IsUnreliableExchangeRate(chargeDayRate))
                     return CancellationDebitNoteItemsResult.Manual(
                         "El tipo de cambio cargado no es válido (parece sin completar): corregilo antes de emitir.");
 
                 var converted = ConvertArsUsdAmount(
-                    charge.Amount, chargeCurrencyArca, invoiceCurrencyArca, estimatedRate);
+                    charge.Amount, chargeCurrencyArca, invoiceCurrencyArca, chargeDayRate);
                 if (converted is null)
                     return CancellationDebitNoteItemsResult.Manual(
                         $"La multa de {SafeSupplierName(line)} está en una moneda que todavía no se puede " +
@@ -8024,9 +8020,11 @@ public class BookingCancellationService
                 amountInInvoiceCurrency = converted.Value;
 
                 // S4: NO mutamos el cargo aca. Recolectamos la promocion estimado->definitivo para aplicarla
-                // recien si el build COMPLETO dio Ready (ver el bloque al final del metodo).
-                pendingDefinitiveRates.Add(
-                    (charge, estimatedRate, charge.EstimatedExchangeRateSource, charge.EstimatedExchangeRateJustification));
+                // recien si el build COMPLETO dio Ready (ver el bloque al final del metodo). La FECHA definitiva
+                // es la del ESTIMADO (dia del cargo, M1 (i)), no la de emision.
+                pendingDefinitiveRates.Add((
+                    charge, chargeDayRate, charge.EstimatedExchangeRateSource,
+                    charge.EstimatedExchangeRateAt, charge.EstimatedExchangeRateJustification));
             }
 
             var passThroughAlicuota = ResolvePassThroughAlicuotaIvaIdOrNull(
@@ -8036,15 +8034,12 @@ public class BookingCancellationService
                     "Todavía no está confirmada la alícuota de IVA para trasladarle este tipo de cargo al " +
                     "cliente: quedó para revisión manual.");
 
-            // DATA-EXPOSURE (cambio de negocio, review 2026-07-10): la Description viaja en el comprobante que
-            // RECIBE EL PASAJERO. NO nombramos al mayorista/operador ahi: revelarlo le muestra al cliente quien es
-            // tu proveedor (riesgo de que lo saltee y compre directo). Renglon GENERICO. El nombre del operador
-            // queda SOLO en la auditoria interna y en la ficha (desglose de cargos por operador).
-            // TODO (T4): confirmar con Gaston si prefiere algun texto por operador (ej. "Servicio A/B") que no
-            // filtre el nombre del mayorista, o dejarlo generico como ahora.
+            // DATA-EXPOSURE (decidido por Gaston 2026-07-10): el comprobante del pasajero SÍ nombra al mayorista
+            // en el renglon pass-through (el cliente ya sabe con que operador viajaba). Description con nombre del
+            // operador. El detalle por operador tambien vive en la ficha/auditoria.
             items.Add(new InvoiceItemDto
             {
-                Description = $"Penalidad de operador por cancelación s/Fc " +
+                Description = $"Penalidad de {SafeSupplierName(line)} por cancelación s/Fc " +
                               $"{resolvedInvoice.PuntoDeVenta:00000}-{resolvedInvoice.NumeroComprobante:00000000}.",
                 Quantity = 1,
                 UnitPrice = amountInInvoiceCurrency,
@@ -8102,29 +8097,22 @@ public class BookingCancellationService
                 "El total de los cargos trasladados supera el total de la factura original: queda para " +
                 "revisión manual.");
 
-        // S4 (FASE 2): el build COMPLETO dio Ready — recien AHORA fijamos el TC DEFINITIVO (dia de emision) de
-        // TODOS los cargos que necesitaron conversion. Antes de este punto no se toco ningun charge.Definitive*,
-        // asi que un build que aborto a Manual jamas persiste una promocion fantasma. El estimado queda intacto
-        // como rastro de que se preveia al cargar el cargo (nunca se pisa). Un unico DateTime.UtcNow para todos
-        // los renglones de esta emision (menor 3: el retry no deja timestamps dispersos de intentos fallidos).
-        var definitiveAtUtc = DateTime.UtcNow;
-        foreach (var (charge, rate, source, justification) in pendingDefinitiveRates)
+        // S4 (FASE 2): el build COMPLETO dio Ready — recien AHORA fijamos el TC DEFINITIVO de TODOS los cargos
+        // que necesitaron conversion. Antes de este punto no se toco ningun charge.Definitive*, asi que un build
+        // que aborto a Manual jamas persiste una promocion fantasma. El estimado queda intacto como rastro
+        // (nunca se pisa). M1 lectura (i) (CONFIRMADO por Gaston 2026-07-10): el VALOR y la FECHA definitivos son
+        // los del ESTIMADO (TC del dia del cargo del operador), NO el TC/fecha del dia de emision — la ND traslada
+        // el cargo al TC del dia en que el operador cobro, aunque la emision sea semanas despues.
+        foreach (var (charge, rate, source, chargeDayDate, justification) in pendingDefinitiveRates)
         {
             charge.DefinitiveExchangeRateAtNdEmission = rate;
             charge.DefinitiveExchangeRateSource = source;
-            charge.DefinitiveExchangeRateAt = definitiveAtUtc;
+            charge.DefinitiveExchangeRateAt = chargeDayDate;
             charge.DefinitiveExchangeRateJustification = justification;
         }
 
         return CancellationDebitNoteItemsResult.Ready(items, total, resolvedInvoice);
     }
-
-    /// <summary>
-    /// F2 (gate fiscal T3b, 2026-07-10): antiguedad maxima de un TC ESTIMADO para poder promoverlo a DEFINITIVO
-    /// al emitir la ND. Pasadas 48 horas, el TC dejo de ser confiable y se pide reconfirmarlo. NO es config
-    /// (decision de negocio, batcheada a T4): es una constante documentada.
-    /// </summary>
-    private static readonly TimeSpan EstimatedExchangeRateMaxAge = TimeSpan.FromHours(48);
 
     /// <summary>
     /// S1/F1 (gate T3b, 2026-07-10): un tipo de cambio &lt;= 0 o == 1 es el "default peligroso" (la cotizacion

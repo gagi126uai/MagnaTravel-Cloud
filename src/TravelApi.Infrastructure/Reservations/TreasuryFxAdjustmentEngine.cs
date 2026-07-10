@@ -44,6 +44,11 @@ internal static class TreasuryFxAdjustmentEngine
         if (allocation.Refund.ExchangeRateAtReceipt <= 0m)
             return created; // sin TC de recibo confiable: nada que comparar (evita un ajuste con datos basura).
 
+        // ADR-044 T3b Decision 3 (config): quién asume la diferencia de cambio (override del operador ?? default
+        // de la agencia ?? Client). Se resuelve UNA vez (mismo operador para todas las lineas de este refund) y
+        // se congela en cada fila (snapshot). El operador es el del refund.
+        var assumedBy = await ResolveAssumedByAsync(db, allocation.Refund.SupplierId, ct);
+
         var lines = await db.BookingCancellationLines
             .Include(l => l.OperatorCharges).ThenInclude(c => c.TargetInvoice)
             .Where(l => l.BookingCancellationId == allocation.BookingCancellationId
@@ -69,6 +74,7 @@ internal static class TreasuryFxAdjustmentEngine
                 var adjustment = BuildAdjustment(
                     charge,
                     rateAtSettlement: allocation.Refund.ExchangeRateAtReceipt,
+                    assumedBy: assumedBy,
                     operatorRefundAllocationId: null,
                     supplierPaymentId: null);
                 adjustment.OperatorRefundAllocation = allocation;
@@ -111,9 +117,18 @@ internal static class TreasuryFxAdjustmentEngine
         var targetInvoiceMonId = charge.TargetInvoice?.MonId
             ?? await db.Invoices.Where(i => i.Id == charge.TargetInvoiceId).Select(i => i.MonId).FirstOrDefaultAsync(ct);
 
+        // ADR-044 T3b Decision 3 (config): quién asume la diferencia de cambio (override del operador ?? default
+        // de la agencia ?? Client). El operador es el de la linea del cargo (resuelto de la nav o por query si
+        // el caller no hizo el Include).
+        var supplierId = charge.BookingCancellationLine?.SupplierId
+            ?? await db.BookingCancellationLines.Where(l => l.Id == charge.BookingCancellationLineId)
+                .Select(l => l.SupplierId).FirstAsync(ct);
+        var assumedBy = await ResolveAssumedByAsync(db, supplierId, ct);
+
         var adjustment = BuildAdjustment(
             charge,
             rateAtSettlement: supplierPayment.ExchangeRate.Value,
+            assumedBy: assumedBy,
             operatorRefundAllocationId: null,
             supplierPaymentId: supplierPayment.Id,
             targetInvoiceMonIdOverride: targetInvoiceMonId);
@@ -165,10 +180,31 @@ internal static class TreasuryFxAdjustmentEngine
     }
 
     /// <summary>
+    /// ADR-044 T3b Decision 3 (config, 2026-07-10): resuelve "quién asume la diferencia de cambio" para un
+    /// operador — override del operador (<see cref="Supplier.TreasuryFxAssumedByOverride"/>) ?? default de la
+    /// agencia (<see cref="OperationalFinanceSettings.TreasuryFxAssumedByDefault"/>) ?? <c>Client</c> (fallback
+    /// duro si por algun motivo no hay fila de settings). Se congela en la fila del ajuste (snapshot).
+    /// </summary>
+    private static async Task<TreasuryFxAssumedBy> ResolveAssumedByAsync(AppDbContext db, int supplierId, CancellationToken ct)
+    {
+        var supplierOverride = await db.Suppliers
+            .Where(s => s.Id == supplierId)
+            .Select(s => s.TreasuryFxAssumedByOverride)
+            .FirstOrDefaultAsync(ct);
+        if (supplierOverride.HasValue)
+            return supplierOverride.Value;
+
+        var agencyDefault = await db.OperationalFinanceSettings
+            .Select(s => (TreasuryFxAssumedBy?)s.TreasuryFxAssumedByDefault)
+            .FirstOrDefaultAsync(ct);
+        return agencyDefault ?? TreasuryFxAssumedBy.Client;
+    }
+
+    /// <summary>
     /// Arma (sin persistir) la fila del ajuste con las formulas de la Decision 3: <c>DeltaAmount = (RateAtSettlement
-    /// - RateAtNdEmission) x ChargeAmount</c>. Positivo = a favor de la agencia (liquido a mejor TC que el que
-    /// salio en la ND); negativo = en contra. <c>AssumedBy</c> queda en el default de la entidad (<c>Client</c>):
-    /// no existe todavia un parametro de agencia para este eje (deuda tecnica anotada, ver ADR-044).
+    /// - RateAtChargeDay) x ChargeAmount</c>. Positivo = a favor de la agencia (liquido a mejor TC que el que
+    /// salio en la ND); negativo = en contra. <c>AssumedBy</c> es el resuelto por <see cref="ResolveAssumedByAsync"/>
+    /// (override del operador ?? default de la agencia ?? Client), CONGELADO en la fila (snapshot).
     ///
     /// <para><b>LIMITE CONOCIDO (menor 2, 2026-07-10) — pagos/reembolsos PARCIALES</b>: el delta usa el monto
     /// TOTAL del cargo (<c>charge.Amount</c>), asumiendo que la liquidacion cubre el cargo COMPLETO en un solo
@@ -181,12 +217,14 @@ internal static class TreasuryFxAdjustmentEngine
     private static BookingCancellationLineTreasuryFxAdjustment BuildAdjustment(
         BookingCancellationLineOperatorCharge charge,
         decimal rateAtSettlement,
+        TreasuryFxAssumedBy assumedBy,
         int? operatorRefundAllocationId,
         int? supplierPaymentId,
         string? targetInvoiceMonIdOverride = null)
     {
-        var rateAtNdEmission = charge.DefinitiveExchangeRateAtNdEmission!.Value;
-        var delta = Math.Round((rateAtSettlement - rateAtNdEmission) * charge.Amount, 2, MidpointRounding.AwayFromZero);
+        // M1 (i): el TC definitivo del cargo ES el TC del dia del cargo del operador (no el de emision).
+        var rateAtChargeDay = charge.DefinitiveExchangeRateAtNdEmission!.Value;
+        var delta = Math.Round((rateAtSettlement - rateAtChargeDay) * charge.Amount, 2, MidpointRounding.AwayFromZero);
         var settlementCurrencyIso = ArcaCurrencyMapper.ToIso(
             targetInvoiceMonIdOverride ?? charge.TargetInvoice?.MonId) ?? Monedas.ARS;
 
@@ -195,13 +233,13 @@ internal static class TreasuryFxAdjustmentEngine
             OperatorChargeId = charge.Id,
             OperatorRefundAllocationId = operatorRefundAllocationId,
             SupplierPaymentId = supplierPaymentId,
-            RateAtNdEmission = rateAtNdEmission,
+            RateAtChargeDay = rateAtChargeDay,
             RateAtSettlement = rateAtSettlement,
             ChargeAmount = charge.Amount,
             ChargeCurrency = charge.Currency,
             DeltaAmount = delta,
             SettlementCurrency = settlementCurrencyIso,
-            AssumedBy = TreasuryFxAssumedBy.Client,
+            AssumedBy = assumedBy, // resuelto (override operador ?? default agencia ?? Client), congelado.
         };
     }
 }

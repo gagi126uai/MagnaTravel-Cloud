@@ -2,18 +2,21 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using TravelApi.Infrastructure.Persistence;
 
 #nullable disable
 
-namespace TravelApi.Infrastructure.Persistence.Migrations
+namespace TravelApi.Infrastructure.Persistence.Migrations.App
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260710171833_Adr044_M_T4a_RenameRateAtNdEmissionToRateAtChargeDay")]
+    partial class Adr044_M_T4a_RenameRateAtNdEmissionToRateAtChargeDay
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -3564,9 +3567,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Property<int>("StaleCostReferenceDays")
                         .HasColumnType("integer");
 
-                    b.Property<int>("TreasuryFxAssumedByDefault")
-                        .HasColumnType("integer");
-
                     b.Property<int>("UpcomingUnpaidReservationAlertDays")
                         .HasColumnType("integer");
 
@@ -5396,9 +5396,6 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Property<string>("TaxId")
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)");
-
-                    b.Property<int?>("TreasuryFxAssumedByOverride")
-                        .HasColumnType("integer");
 
                     b.HasKey("Id");
 

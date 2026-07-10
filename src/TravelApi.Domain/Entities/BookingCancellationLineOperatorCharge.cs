@@ -126,10 +126,11 @@ public class BookingCancellationLineOperatorCharge : IHasPublicId
     // que entre como renglon en pesos de esa ND. Mismo patron tipado que Payment.ExchangeRate*
     // (ADR-021), replicado sin inventar vocabulario nuevo.
     //
-    // Dos juegos de 4 campos: ESTIMADO (preview informativo al confirmar/cargar el cargo) y
-    // DEFINITIVO (el que realmente viaja al renglon de la ND, fijado AL EMITIRLA — lectura M1
-    // adoptada del Addendum, pendiente de confirmacion final de Gaston en la ronda T4). El
-    // estimado NUNCA se pisa: queda como rastro de "que se preveia al cargar el cargo".
+    // Dos juegos de 4 campos: ESTIMADO (el TC del DIA DEL CARGO del operador, cargado al confirmar/cargar el
+    // cargo) y DEFINITIVO (el que viaja al renglon de la ND). M1 lectura (i) CONFIRMADA por Gaston 2026-07-10:
+    // el TC definitivo ES el del dia del cargo del operador — NO el del dia de emision de la ND. La "promocion"
+    // estimado->definitivo (al emitir) copia el VALOR y la FECHA originales del estimado; no se recotiza al
+    // momento de emitir. El estimado NUNCA se pisa: queda como rastro del dato con que se cargo el cargo.
     // ====================================================================================
 
     /// <summary>
@@ -155,12 +156,14 @@ public class BookingCancellationLineOperatorCharge : IHasPublicId
     public string? EstimatedExchangeRateJustification { get; set; }
 
     /// <summary>
-    /// TC DEFINITIVO con el que se convirtio este cargo AL EMITIR la Nota de Debito (lectura M1: "dia del
-    /// cargo" = dia de emision de la ND, no dia de confirmacion del operador). Es el valor que viaja a
-    /// auditoria y al calculo del ajuste de diferencia de cambio de tesoreria (Decision 3). Vive en CAMPOS
-    /// PROPIOS del cargo (no en la <see cref="Entities.Invoice"/>: una ND en ARS con un cargo embebido en USD no
-    /// tiene donde guardar ESA conversion en la factura, que describe la valuacion del COMPROBANTE, no de un
-    /// renglon). Convencion FIJA: unidades de ARS por 1 USD.
+    /// TC DEFINITIVO del cargo = TC del DIA DEL CARGO del operador (M1 lectura (i), CONFIRMADO por Gaston
+    /// 2026-07-10). Se fija AL EMITIR la Nota de Debito copiando el VALOR del estimado (que ya es el TC del dia
+    /// del cargo) — NO se recotiza al dia de emision. Es el valor que viaja a auditoria y al calculo del ajuste
+    /// de diferencia de cambio de tesoreria (Decision 3). Vive en CAMPOS PROPIOS del cargo (no en la
+    /// <see cref="Entities.Invoice"/>: una ND en ARS con un cargo embebido en USD no tiene donde guardar ESA
+    /// conversion en la factura, que describe la valuacion del COMPROBANTE, no de un renglon). Convencion FIJA:
+    /// unidades de ARS por 1 USD. (El nombre <c>...AtNdEmission</c> refiere a CUANDO se persiste — al emitir la
+    /// ND —, no a la fecha de referencia del TC, que es la del dia del cargo.)
     /// </summary>
     [Column(TypeName = "numeric(18,6)")]
     public decimal? DefinitiveExchangeRateAtNdEmission { get; set; }
@@ -168,7 +171,7 @@ public class BookingCancellationLineOperatorCharge : IHasPublicId
     /// <summary>Origen del TC definitivo. <c>null</c> si el cargo nunca necesito conversion (misma moneda que su ND).</summary>
     public ExchangeRateSource? DefinitiveExchangeRateSource { get; set; }
 
-    /// <summary>Momento exacto de la emision en que se fijo el TC definitivo. <c>null</c> si no hubo conversion.</summary>
+    /// <summary>Fecha de referencia del TC definitivo = FECHA DEL CARGO del operador (copiada del estimado, M1 (i)), NO la de emision. <c>null</c> si no hubo conversion.</summary>
     public DateTime? DefinitiveExchangeRateAt { get; set; }
 
     /// <summary>Justificacion obligatoria cuando el TC definitivo es <see cref="ExchangeRateSource.Manual"/> (INV-120).</summary>

@@ -5,14 +5,15 @@ namespace TravelApi.Domain.Entities;
 
 /// <summary>
 /// ADR-044 T3b Decision 3 (2026-07-10): registro AUDITABLE (gestion interna, sin asiento de mayor formal
-/// todavia — firma contable pendiente, ver el Addendum T3b) de la diferencia entre el TC con que se emitio la
-/// Nota de Debito de un cargo de operador (<see cref="BookingCancellationLineOperatorCharge.DefinitiveExchangeRateAtNdEmission"/>)
-/// y el TC real con que ese cargo se LIQUIDA de verdad (reembolso recibido si es <c>Retenida</c>, o pago al
-/// proveedor si es <c>FacturadaAparte</c>).
+/// todavia — firma contable pendiente, ver el Addendum T3b) de la diferencia entre el TC del DIA DEL CARGO del
+/// operador (M1 lectura (i), CONFIRMADO por Gaston 2026-07-10 — el TC cargado al confirmar el cargo,
+/// <see cref="BookingCancellationLineOperatorCharge.DefinitiveExchangeRateAtNdEmission"/>) y el TC real con que
+/// ese cargo se LIQUIDA de verdad (reembolso recibido si es <c>Retenida</c>, o pago al proveedor si es
+/// <c>FacturadaAparte</c>).
 ///
-/// <para><b>Por que existe (el problema que resuelve)</b>: la ND sale con un TC "del dia de emision" (Decision
-/// 2). La plata REAL del cargo se mueve DESPUES (dias/semanas), a otro TC. Esa diferencia es un resultado de
-/// tesoreria (ganancia o perdida por el desfasaje cambiario), NO un error de facturacion — el comprobante
+/// <para><b>Por que existe (el problema que resuelve)</b>: la ND traslada el cargo al TC del dia del cargo del
+/// operador. La plata REAL del cargo se mueve DESPUES (dias/semanas), a otro TC. Esa diferencia es un resultado
+/// de tesoreria (ganancia o perdida por el desfasaje cambiario), NO un error de facturacion — el comprobante
 /// nunca se recotiza. Sin este registro esa diferencia queda invisible (mismo antipatron que P2 vino a cerrar
 /// para la multa retenida).</para>
 ///
@@ -50,9 +51,13 @@ public class BookingCancellationLineTreasuryFxAdjustment : IHasPublicId
     public int? SupplierPaymentId { get; set; }
     public SupplierPayment? SupplierPayment { get; set; }
 
-    /// <summary>TC DEFINITIVO con que salio la Nota de Debito (copia congelada de <see cref="BookingCancellationLineOperatorCharge.DefinitiveExchangeRateAtNdEmission"/> al momento del calculo).</summary>
+    /// <summary>
+    /// TC DEFINITIVO del cargo = TC del DIA EN QUE EL OPERADOR COBRO su cargo (M1 lectura (i), CONFIRMADO por
+    /// Gaston 2026-07-10). Copia congelada de <see cref="BookingCancellationLineOperatorCharge.DefinitiveExchangeRateAtNdEmission"/>
+    /// (que a su vez es el TC cargado al confirmar el cargo del operador, no el del dia de emision de la ND).
+    /// </summary>
     [Column(TypeName = "numeric(18,6)")]
-    public decimal RateAtNdEmission { get; set; }
+    public decimal RateAtChargeDay { get; set; }
 
     /// <summary>
     /// TC real de la liquidacion: para <c>Retenida</c>, <c>OperatorRefundReceived.ExchangeRateAtReceipt</c>;
@@ -71,8 +76,8 @@ public class BookingCancellationLineTreasuryFxAdjustment : IHasPublicId
     public string ChargeCurrency { get; set; } = Monedas.ARS;
 
     /// <summary>
-    /// <c>(RateAtSettlement - RateAtNdEmission) x ChargeAmount</c>, redondeado a 2 decimales. Positivo = a favor
-    /// de la agencia (el TC de liquidacion resulto mejor que el de emision); negativo = en contra.
+    /// <c>(RateAtSettlement - RateAtChargeDay) x ChargeAmount</c>, redondeado a 2 decimales. Positivo = a favor
+    /// de la agencia (el TC de liquidacion resulto mejor que el TC del dia del cargo); negativo = en contra.
     /// </summary>
     [Column(TypeName = "numeric(18,2)")]
     public decimal DeltaAmount { get; set; }

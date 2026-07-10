@@ -1123,3 +1123,97 @@ Glosario de palabras que SÍ se usan con el usuario:
 - **Operador**: el proveedor mayorista.
 - **saldo sin cobrar**: lo que el cliente todavía debe.
 - **saldo a favor**: plata a favor del cliente (o del operador, según el caso).
+
+## Multas por operador — Tanda 4 de ADR-044: otro cargo, factura destino, monitor de comprobantes, ajuste por el dólar (2026-07-10, respuestas de Gastón)
+
+> **Origen:** Tanda 4 del rediseño integral de multas (ADR-044). El backend ya soporta multas por
+> servicio/operador, más de un cargo por operador (fee + retención simultáneos, confirmado por el
+> contador), factura destino cuando hay 2+ facturas activas, y el ajuste por tipo de cambio. Sesión
+> de 10 preguntas; Gastón eligió todas las recomendadas (P1..P9 = A) y respondió P10 con matices.
+> Spec: `docs/ux/2026-07-10-t4-multas-pantallas.md`. **NO reabrir.** Sigue valiendo todo lo anterior
+> del paso de multa (2026-07-08 "el paso de multa vive en la ficha") y las 3 reglas duras de
+> multimoneda (2026-06-09).
+
+**El caso simple NO cambia (base).** Anular con UN solo cargo del operador y UNA sola factura se
+sigue resolviendo con el panel de siempre (monto + moneda precargada de la factura + fecha +
+referencia, SIN pregunta de tipo de cargo). Todo lo de abajo es para los casos con más de un cargo o
+más de una factura, y viene escondido con defaults.
+
+- **(2026-07-10, P1=A) "Agregar otro cargo de este operador" = link discreto, escondido.** Cuando el
+  mismo operador cobra dos cosas a la vez (ej. cargo administrativo + retención fiscal), se agrega un
+  segundo cargo desde un **link discreto debajo del cargo ya confirmado** ("+ Agregar otro cargo de
+  este operador"). Es acción secundaria y opcional: quien no la usa ni se entera. Va EN LÍNEA, nunca
+  ventana.
+
+- **(2026-07-10, P2=A) En ese "otro cargo" SÍ se pregunta el tipo, con desplegable en español.** El
+  formulario del segundo cargo tiene un **desplegable "Tipo de cargo"** con las 4 opciones en
+  palabras (cargo administrativo / impuesto / retención fiscal / otro). Los tokens internos NUNCA se
+  muestran crudos. **Esto NO contradice** la regla 2026-07-08 ("el tipo de cargo no se pregunta en el
+  camino normal"): el camino normal sigue sin preguntarlo; el tipo solo aparece en esta acción
+  secundaria.
+
+- **(2026-07-10, P3=A) "Cómo lo cobra el operador" va detrás de "Más detalles", cerrado.** La
+  elección "lo descuenta de lo que te va a devolver / te lo factura aparte" (y el documento del
+  operador cuando es facturado aparte) vive dentro de "Más detalles" del formulario del otro cargo,
+  cerrado por defecto.
+
+- **(2026-07-10, P4=A) "Qué pasa con el cliente" va también en "Más detalles", con default "tal
+  cual".** Las opciones "se le traslada tal cual / + un cargo de gestión (con monto) / lo absorbe la
+  agencia" viven en "Más detalles", y vienen marcadas por defecto en **"se le traslada tal cual"**.
+
+- **(2026-07-10) Recuadro de tipo de cambio SOLO si el cargo cruza de moneda.** Si el cargo está en
+  una moneda distinta de la factura del cliente, aparece el recuadro de TC ya conocido (TC + fuente +
+  fecha, los tres obligatorios). **El TC que manda es el del DÍA EN QUE EL OPERADOR COBRÓ la multa**
+  (decisión de negocio de Gastón), no el del día de emisión del cargo al cliente. Rótulo sin jerga:
+  "Tipo de cambio del día que el operador cobró". Nunca aparece la frase "diferencia de cambio".
+
+- **(2026-07-10, P5=A) Elegir la factura destino con 2+ facturas: desplegable en el mismo panel.**
+  Con UNA sola factura, el sistema la usa sola, sin mostrar nada. Con **2 o más facturas activas**,
+  al confirmar la multa (o cargar otro cargo) aparece un **desplegable "¿A qué factura del cliente
+  corresponde?"** con el formato ya aprobado (`· Factura B 0001-00012345 — US$ 200`). El botón de
+  confirmar queda apagado hasta elegir. Términos fiscales permitidos (es facturación de la ficha).
+
+- **(2026-07-10, P6=A) Si la multa ya salió, no se puede cambiar la factura.** En vez del
+  desplegable va el cartel: **"El cargo de esta multa ya se emitió; no se puede cambiar la factura."**
+  Si el cargo quedó trabado por falta de factura destino (o la factura destino se anuló), en la ficha
+  aparece un cartel naranja de acción trabada con el botón **"Elegir la factura"** (mismo patrón que
+  "Corregir monto y moneda").
+
+- **(2026-07-10) El comprobante del pasajero SÍ nombra al mayorista en el renglón de la multa.**
+  Decisión de negocio de Gastón: la nota de débito que recibe el pasajero **identifica al operador**
+  en el renglón de la multa; no es un cargo anónimo. Es dato del comprobante (pantalla de
+  facturación), donde el nombre del mayorista se permite.
+
+- **(2026-07-10, P7=A + P8=A + P9=A) Fin de "Pendientes con AFIP": monitor "Comprobantes por
+  resolver" dentro de Facturación.** La pantalla "Pendientes con AFIP" se DESARMA. **Se saca su
+  entrada del menú de GESTIÓN**; todo vive dentro de la pantalla de **Facturación**. Adentro:
+  - **"Comprobantes por resolver"**: UNA sola **lista pasiva** (solo para mirar; cada fila es link a
+    la ficha, sin botones propios) que **funde** las multas/cargos y las notas de crédito por
+    revisar. Columnas mínimas: comprobante · reserva (F-2026-xxxx) · qué falta en criollo · hace
+    cuánto. En las notas de crédito, se suma el aviso de vencimiento como "vence en X días". **Nunca**
+    muestra el texto crudo del error de AFIP.
+  - **"Recibos por regularizar"**: queda **aparte** porque tiene **acciones reales** (no es solo un
+    espejo). **Conserva su nombre.**
+  - Cada lista respeta su propio permiso (`cobranzas.invoice_annul` / `cobranzas.view_all` /
+    `approvals.review`), como hoy.
+
+- **(2026-07-10) Extracto del operador: las líneas nuevas llevan el chip "Anulación".** El "cargo del
+  operador facturado aparte" y el "ajuste por el dólar" son movimientos de una anulación: llevan el
+  mismo chip **"Anulación"** que la multa retenida y el reembolso recibido (hoy el chip solo cubre
+  esas dos; se suman los kinds nuevos). El resto del extracto (bloque por moneda, Cargo/Abono/Saldo,
+  enmascarado de costos) no cambia.
+
+- **(2026-07-10, P10) El ajuste por tipo de cambio se llama "Ajuste por el dólar" y es
+  CONFIGURABLE.** La regla dura de multimoneda (la frase "diferencia de cambio" NUNCA aparece) **queda
+  intacta**: la línea del extracto del operador se rotula **"Ajuste por el dólar"**. Quién lo asume es
+  configurable (palabra de Gastón: "contemplá todos los casos posibles — un cliente puede hacer una
+  cosa y otro otra, lo mismo con los operadores"):
+  - **Configuración general de Facturación**: un renglón "Ajuste por el dólar en las multas — ¿quién
+    lo asume por defecto? (•) El cliente / ( ) La agencia". Default: **El cliente**.
+  - **Ficha del operador**: un campo opcional escondido "(•) Como la configuración general / ( ) Lo
+    asume la agencia / ( ) Lo asume el cliente". Default invisible: **"Como la configuración
+    general"** (solo se aparta el operador que lo necesite). Es config, no monto: no expone cifras.
+
+- **(2026-07-10) Los textos del cartel multi-operador NO se cambian.** El cartel de "más de un
+  operador con multa" y los carteles de acción trabada ya cumplen las 8 reglas de voz (dicen "multa",
+  "a mano", "Anulada", sin jerga): se conservan tal cual.

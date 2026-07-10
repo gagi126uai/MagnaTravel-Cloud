@@ -124,6 +124,20 @@ public class Supplier : IHasPublicId
     /// MOMENTO, no el actual.</para>
     /// </summary>
     public PenaltyOwnership PenaltyOwnership { get; set; } = PenaltyOwnership.Operator;
+
+    /// <summary>
+    /// ADR-044 T3b Decision 3 (config, 2026-07-10): OVERRIDE por operador de "quién asume la diferencia de
+    /// cambio de tesorería" de un cargo de este operador (ver <see cref="TreasuryFxAssumedBy"/>). <c>null</c> =
+    /// hereda el default de la agencia (<c>OperationalFinanceSettings.TreasuryFxAssumedByDefault</c>). Cada
+    /// agencia puede tener un default y CADA operador puede pisarlo (algunos operadores absorben la diferencia,
+    /// otros no). Se resuelve al calcular el ajuste (override del operador ?? default de la agencia ?? Client) y
+    /// el resultado se CONGELA en <see cref="BookingCancellationLineTreasuryFxAdjustment.AssumedBy"/> (snapshot:
+    /// cambiar la config después no reinterpreta ajustes históricos).
+    ///
+    /// <para><b>Default null a propósito (invisible)</b>: nadie tiene que tocar nada — sin override, hereda el
+    /// default de la agencia, que a su vez arranca en Client (comportamiento de hoy).</para>
+    /// </summary>
+    public TreasuryFxAssumedBy? TreasuryFxAssumedByOverride { get; set; }
 }
 
 public static class TaxConditions
