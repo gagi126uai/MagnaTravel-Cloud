@@ -115,4 +115,74 @@ public class OperatorPenaltySituationRulesTests
     {
         Assert.Equal(expected, OperatorPenaltySituationRules.ToOutcome(state));
     }
+
+    // ============================================================
+    // ADR-044 T1 (2026-07-10): DeriveForOperator, la version POR OPERADOR de Derive. Misma matriz que arriba,
+    // pero con el eje nuevo "cuantos operadores distintos estan confirmados a la vez".
+    // ============================================================
+
+    private static OperatorPenaltySituationState DeriveForOperator(
+        PenaltyStatus linePenaltyStatus,
+        bool isPendingDecision = false,
+        int confirmedSupplierCount = 1,
+        DebitNoteStatus bcDebitNoteStatus = DebitNoteStatus.NotApplicable)
+        => OperatorPenaltySituationRules.DeriveForOperator(new OperatorPenaltySituationRules.LineFields(
+            LinePenaltyStatus: linePenaltyStatus,
+            IsPendingDecision: isPendingDecision,
+            ConfirmedSupplierCount: confirmedSupplierCount,
+            BcDebitNoteStatus: bcDebitNoteStatus));
+
+    [Fact]
+    public void DeriveForOperator_Estimated_PendingDecision_IsPendingDecision()
+    {
+        Assert.Equal(
+            OperatorPenaltySituationState.PendingDecision,
+            DeriveForOperator(PenaltyStatus.Estimated, isPendingDecision: true, confirmedSupplierCount: 0));
+    }
+
+    [Fact]
+    public void DeriveForOperator_Estimated_NotPendingDecision_IsNone()
+    {
+        Assert.Equal(
+            OperatorPenaltySituationState.None,
+            DeriveForOperator(PenaltyStatus.Estimated, isPendingDecision: false, confirmedSupplierCount: 0));
+    }
+
+    [Fact]
+    public void DeriveForOperator_Waived_IsWaived_RegardlessOfOtherConfirmedOperators()
+    {
+        // Waived es terminal y PROPIO de este operador: no importa cuantos otros esten confirmados.
+        Assert.Equal(
+            OperatorPenaltySituationState.Waived,
+            DeriveForOperator(PenaltyStatus.Waived, confirmedSupplierCount: 3));
+    }
+
+    [Fact]
+    public void DeriveForOperator_ConfirmedAlone_BorrowsBcSnapshot_SameMatrixAsDerive()
+    {
+        // UN solo operador confirmado: el snapshot BC-padre lo describe fielmente (nadie mas lo piso) -> mismo
+        // desglose fino que Derive.
+        Assert.Equal(
+            OperatorPenaltySituationState.Done,
+            DeriveForOperator(PenaltyStatus.Confirmed, confirmedSupplierCount: 1, bcDebitNoteStatus: DebitNoteStatus.Issued));
+        Assert.Equal(
+            OperatorPenaltySituationState.DebitNoteFailed,
+            DeriveForOperator(PenaltyStatus.Confirmed, confirmedSupplierCount: 1, bcDebitNoteStatus: DebitNoteStatus.Failed));
+    }
+
+    [Theory]
+    [InlineData(DebitNoteStatus.Issued)]
+    [InlineData(DebitNoteStatus.Pending)]
+    [InlineData(DebitNoteStatus.Failed)]
+    [InlineData(DebitNoteStatus.ManualReview)]
+    [InlineData(DebitNoteStatus.NotApplicable)]
+    public void DeriveForOperator_ConfirmedWithMoreThanOneOperator_AlwaysNeedsManualReview(DebitNoteStatus bcStatus)
+    {
+        // Con MAS de un operador confirmado a la vez, el snapshot BC-padre (un unico slot de ND) queda AMBIGUO
+        // para cualquiera de los confirmados: sin importar que diga ese snapshot, el paso pasa a "necesita
+        // revision manual" — nunca "Done"/"Fallida"/etc, que podria no corresponder a ESTE operador.
+        Assert.Equal(
+            OperatorPenaltySituationState.MultiOperatorNeedsManualReview,
+            DeriveForOperator(PenaltyStatus.Confirmed, confirmedSupplierCount: 2, bcDebitNoteStatus: bcStatus));
+    }
 }

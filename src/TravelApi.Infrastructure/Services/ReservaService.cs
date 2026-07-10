@@ -2684,21 +2684,28 @@ public class ReservaService : IReservaService
         var operatorPenaltyOutcome = OperatorPenaltyOutcome.None;
         if (_cancellationService is not null)
         {
-            // Defensa (2026-07-08): la interfaz promete "nunca null" (la implementacion real siempre devuelve
-            // al menos { State = "None" }), pero un doble de test (mock parcial que solo configura el metodo
-            // VIEJO GetOperatorPenaltyOutcomeAsync) puede devolver null igual con MockBehavior.Loose. Si eso pasa,
-            // nos quedamos con el DTO por defecto de dto.OperatorPenaltySituation (ya viene en "None" desde el
-            // constructor de ReservaDto) en vez de pisarlo con null: la ficha no debe reventar por un dato
-            // faltante, simplemente no muestra el paso de la multa (comportamiento seguro, igual que "sin
-            // cancelacion vigente").
-            var situation = await _cancellationService.GetOperatorPenaltySituationAsync(
+            // ADR-044 T1 (2026-07-10): pedimos SOLO la version LISTA (un elemento por operador con multa en juego,
+            // ADR-025) y de ella derivamos tanto el campo singular legacy como el outcome grueso — asi el calculo
+            // del operador PRINCIPAL corre UNA sola vez por request (antes se llamaba al singular Y a la lista, que
+            // por dentro vuelve a llamar al singular). El PRIMER elemento de la lista ES exactamente el resultado
+            // del singular para el operador principal (garantia de la implementacion + test de paridad), asi que
+            // el campo legacy dto.OperatorPenaltySituation queda byte-identico al de antes en el caso mono-operador.
+            //
+            // Defensa (2026-07-08): la interfaz promete "nunca null" (la implementacion real siempre devuelve al
+            // menos lista vacia), pero un doble de test (mock parcial) puede devolver null con MockBehavior.Loose.
+            // Si eso pasa, nos quedamos con los defaults del DTO (singular "None" + lista vacia): la ficha no
+            // revienta, simplemente no muestra el paso de la multa (seguro, igual que "sin cancelacion vigente").
+            var situations = await _cancellationService.GetOperatorPenaltySituationsAsync(
                 file.PublicId, userCanClassifyOperatorPenalty, isCallerAdmin: isAdmin, CancellationToken.None);
-            if (situation is not null)
+            if (situations is not null && situations.Count > 0)
             {
-                dto.OperatorPenaltySituation = situation;
-                // El State del DTO es el token que produjo OperatorPenaltySituationState.ToString() (lo controlamos
-                // nosotros): parsearlo de vuelta al enum y colapsarlo al outcome grueso es la fuente unica del mapeo.
-                if (Enum.TryParse<OperatorPenaltySituationState>(situation.State, out var situationState))
+                dto.OperatorPenaltySituations = situations.ToList();
+                // El singular legacy = el primer elemento (el operador principal). El State es el token que produjo
+                // OperatorPenaltySituationState.ToString() (lo controlamos nosotros): parsearlo de vuelta al enum y
+                // colapsarlo al outcome grueso es la fuente unica del mapeo.
+                var primary = situations[0];
+                dto.OperatorPenaltySituation = primary;
+                if (Enum.TryParse<OperatorPenaltySituationState>(primary.State, out var situationState))
                     operatorPenaltyOutcome = OperatorPenaltySituationRules.ToOutcome(situationState);
             }
         }

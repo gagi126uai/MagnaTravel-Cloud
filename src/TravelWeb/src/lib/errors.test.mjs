@@ -181,6 +181,48 @@ test("hardening — 'Forbidden' como statusText pero payload en español → pay
     );
 });
 
+// ─── ProblemDetails (409 invariantes de negocio) — payload.detail ────────────
+// ADR-044 T1 (2026-07-10): las excepciones de invariante de negocio (por ejemplo
+// INV-ADR044-OPERATOR-REQUIRED / INV-ADR044-OPERATOR-NOT-FOUND del multi-operador)
+// llegan como ProblemDetails con el mensaje en `detail` (NO en `message`). Red de
+// seguridad para el fix de ConfirmarMultaOperadorInline/CerrarSinMultaInline: si el
+// backend ya manda un detail en español limpio, tiene que llegar intacto al usuario
+// SIN que ningún branch explícito lo pise con un mensaje genérico.
+
+test("getApiErrorMessage — ProblemDetails 409 con payload.detail (sin .message ni .error) → pasa el detail intacto", () => {
+    const error = {
+        status: 409,
+        payload: {
+            status: 409,
+            title: "Operacion rechazada por una regla de negocio.",
+            detail: "Esta anulación tiene multas de más de un operador. Indicá cuál operador estás resolviendo.",
+            invariantCode: "INV-ADR044-OPERATOR-REQUIRED",
+            code: "business_invariant_violation",
+        },
+    };
+    assert.strictEqual(
+        getApiErrorMessage(error, "No se pudo confirmar la multa del operador. Intentá de nuevo."),
+        "Esta anulación tiene multas de más de un operador. Indicá cuál operador estás resolviendo."
+    );
+});
+
+test("getApiErrorMessage — ProblemDetails 409 INV-ADR044-OPERATOR-NOT-FOUND → pasa el detail intacto", () => {
+    const error = {
+        status: 409,
+        payload: {
+            status: 409,
+            title: "Operacion rechazada por una regla de negocio.",
+            detail: "El operador indicado no tiene servicios cancelados en esta anulación.",
+            invariantCode: "INV-ADR044-OPERATOR-NOT-FOUND",
+            code: "business_invariant_violation",
+        },
+    };
+    assert.strictEqual(
+        getApiErrorMessage(error, "No se pudo cerrar la multa sin cobro. Probá de nuevo."),
+        "El operador indicado no tiene servicios cancelados en esta anulación."
+    );
+});
+
 // ─── normalizeMessage — integración ──────────────────────────────────────────
 
 test("normalizeMessage — string 'Failed to fetch' → genérico español", () => {

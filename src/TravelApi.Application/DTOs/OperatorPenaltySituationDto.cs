@@ -63,4 +63,16 @@ public class OperatorPenaltySituationDto
 
     /// <summary>Quien reabrio el cierre sin multa. Mismo GAP que <see cref="RevertedAt"/>: hoy siempre null.</summary>
     public string? RevertedByName { get; set; }
+
+    /// <summary>
+    /// ADR-044 T1 (2026-07-10): identificador PUBLICO (no el id interno de base) del operador al que corresponde
+    /// esta situacion. Solo tiene valor cuando este DTO es un elemento de la lista
+    /// <c>ReservaDto.OperatorPenaltySituations</c> (una cancelacion puede tener servicios de mas de un operador,
+    /// ADR-025); el uso singular legacy (<c>ReservaDto.OperatorPenaltySituation</c>) tambien lo trae para que la
+    /// ficha pueda titular el cartel, pero nada rompe si un consumidor viejo lo ignora.
+    /// </summary>
+    public Guid? SupplierPublicId { get; set; }
+
+    /// <summary>Nombre del operador (para titular el cartel "Multa del operador X"). Ver <see cref="SupplierPublicId"/>.</summary>
+    public string? SupplierName { get; set; }
 }

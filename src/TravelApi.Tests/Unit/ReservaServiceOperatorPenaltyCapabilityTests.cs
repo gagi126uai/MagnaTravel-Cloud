@@ -110,6 +110,17 @@ public class ReservaServiceOperatorPenaltyCapabilityTests
                 It.IsAny<Guid>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new OperatorPenaltySituationDto { State = situationState.ToString() });
 
+        // ADR-044 T1 (2026-07-10): ReservaService ahora deriva el singular + outcome de la version LISTA (un solo
+        // calculo del principal por request). Stubeamos la lista para que su PRIMER elemento cuente la misma
+        // historia que el singular. Para el outcome None devolvemos lista VACIA (la implementacion real devuelve
+        // Array.Empty cuando no hay nada que mostrar), lo que deja el DTO en sus defaults (singular "None").
+        IReadOnlyList<OperatorPenaltySituationDto> situations = situationState == OperatorPenaltySituationState.None
+            ? Array.Empty<OperatorPenaltySituationDto>()
+            : new[] { new OperatorPenaltySituationDto { State = situationState.ToString() } };
+        mock.Setup(s => s.GetOperatorPenaltySituationsAsync(
+                It.IsAny<Guid>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(situations);
+
         return mock.Object;
     }
 

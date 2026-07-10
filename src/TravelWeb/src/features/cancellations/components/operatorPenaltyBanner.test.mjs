@@ -18,6 +18,12 @@ import {
   tienePasoDeMultaOperador,
   debePollearSituacionMulta,
   seAgotoElBudgetDePollingDeMulta,
+  textoMultiOperador,
+  tituloConNombreOperador,
+  listaDeSituacionesMulta,
+  hayMasDeUnOperadorConMulta,
+  situacionesConPanelDeMulta,
+  situacionesConPreguntaDeMulta,
 } from "../operatorPenaltyBanner.js";
 
 // ============================================================================
@@ -69,6 +75,37 @@ test("familiaDeEstadoMulta: None y Done son 'soloLectura'", () => {
 
 test("familiaDeEstadoMulta: estado futuro desconocido cae a 'soloLectura' (degradación segura)", () => {
   assert.equal(familiaDeEstadoMulta("EstadoDelFuturo"), "soloLectura");
+});
+
+test("familiaDeEstadoMulta: MultiOperatorNeedsManualReview es 'multiOperador' (ADR-044 T1)", () => {
+  assert.equal(familiaDeEstadoMulta("MultiOperatorNeedsManualReview"), "multiOperador");
+});
+
+test("slugDeEstadoMulta: MultiOperatorNeedsManualReview mapea a 'multi-operador' (ADR-044 T1)", () => {
+  assert.equal(slugDeEstadoMulta("MultiOperatorNeedsManualReview"), "multi-operador");
+});
+
+// ============================================================================
+// textoMultiOperador / tituloConNombreOperador (ADR-044 T1, 2026-07-10)
+// ============================================================================
+
+test("textoMultiOperador: nunca nombra 'nota de débito' ni 'revisión manual' (voz de los avisos)", () => {
+  const texto = textoMultiOperador();
+  assert.ok(texto.length > 0);
+  assert.ok(!texto.toLowerCase().includes("nota de débito"));
+  assert.ok(!texto.toLowerCase().includes("revisión manual"));
+});
+
+test("tituloConNombreOperador: sin nombre, devuelve el mensaje intacto (caso mono-operador)", () => {
+  assert.equal(tituloConNombreOperador(undefined, "Anulada — algo pasó."), "Anulada — algo pasó.");
+  assert.equal(tituloConNombreOperador(null, "Anulada — algo pasó."), "Anulada — algo pasó.");
+});
+
+test("tituloConNombreOperador: con nombre, lo antepone separado por guion largo", () => {
+  assert.equal(
+    tituloConNombreOperador("Turismo Cardozo", "Anulada — algo pasó."),
+    "Turismo Cardozo — Anulada — algo pasó."
+  );
 });
 
 // ============================================================================
@@ -207,6 +244,154 @@ test("tienePasoDeMultaOperador: sin operatorPenaltySituation, fallback legado (W
 
 test("tienePasoDeMultaOperador: sin operatorPenaltySituation ni capabilities → false", () => {
   assert.equal(tienePasoDeMultaOperador({}), false);
+});
+
+test("tienePasoDeMultaOperador: con operatorPenaltySituations (lista), algún operador activo → true (ADR-044 T1)", () => {
+  assert.equal(
+    tienePasoDeMultaOperador({
+      operatorPenaltySituations: [{ state: "None" }, { state: "DebitNoteFailed" }],
+    }),
+    true
+  );
+});
+
+test("tienePasoDeMultaOperador: con operatorPenaltySituations (lista), TODOS None/Done → false", () => {
+  assert.equal(
+    tienePasoDeMultaOperador({
+      operatorPenaltySituations: [{ state: "None" }, { state: "Done" }],
+    }),
+    false
+  );
+});
+
+// ============================================================================
+// listaDeSituacionesMulta / hayMasDeUnOperadorConMulta / situacionesConPanelDeMulta
+// (ADR-044 T1, 2026-07-10 — multa por operador)
+// ============================================================================
+
+test("listaDeSituacionesMulta: prefiere la lista nueva cuando viene con elementos", () => {
+  const reserva = {
+    operatorPenaltySituations: [{ state: "DebitNoteFailed", supplierPublicId: "op-1" }],
+    operatorPenaltySituation: { state: "None" },
+  };
+  assert.deepEqual(listaDeSituacionesMulta(reserva), [{ state: "DebitNoteFailed", supplierPublicId: "op-1" }]);
+});
+
+test("listaDeSituacionesMulta: lista vacía o ausente cae al singular legado", () => {
+  assert.deepEqual(
+    listaDeSituacionesMulta({ operatorPenaltySituations: [], operatorPenaltySituation: { state: "Waived" } }),
+    [{ state: "Waived" }]
+  );
+  assert.deepEqual(
+    listaDeSituacionesMulta({ operatorPenaltySituation: { state: "Waived" } }),
+    [{ state: "Waived" }]
+  );
+});
+
+test("listaDeSituacionesMulta: sin ninguno de los dos campos → lista vacía (nunca rompe)", () => {
+  assert.deepEqual(listaDeSituacionesMulta({}), []);
+  assert.deepEqual(listaDeSituacionesMulta(null), []);
+});
+
+test("hayMasDeUnOperadorConMulta: un solo operador (caso de hoy) → false", () => {
+  assert.equal(
+    hayMasDeUnOperadorConMulta({ operatorPenaltySituations: [{ state: "PendingDecision" }] }),
+    false
+  );
+  assert.equal(
+    hayMasDeUnOperadorConMulta({ operatorPenaltySituation: { state: "PendingDecision" } }),
+    false
+  );
+});
+
+test("hayMasDeUnOperadorConMulta: dos o más operadores → true", () => {
+  assert.equal(
+    hayMasDeUnOperadorConMulta({
+      operatorPenaltySituations: [{ state: "PendingDecision" }, { state: "MultiOperatorNeedsManualReview" }],
+    }),
+    true
+  );
+});
+
+test("situacionesConPanelDeMulta: PARIDAD — una lista de 1 elemento produce lo mismo que el singular equivalente", () => {
+  const situacionTrabada = { state: "DebitNoteFailed", canRetryDebitNote: true };
+
+  const viaLista = situacionesConPanelDeMulta({ operatorPenaltySituations: [situacionTrabada] });
+  const viaSingular = situacionesConPanelDeMulta({ operatorPenaltySituation: situacionTrabada });
+
+  assert.deepEqual(viaLista, [situacionTrabada]);
+  assert.deepEqual(viaLista, viaSingular);
+});
+
+test("situacionesConPanelDeMulta: filtra 'pregunta' y 'waived' (tienen su propio bloque, no pasan por el panel)", () => {
+  const resultado = situacionesConPanelDeMulta({
+    operatorPenaltySituations: [
+      { state: "PendingDecision" },
+      { state: "Waived" },
+      { state: "DebitNoteQueued" },
+    ],
+  });
+  assert.deepEqual(resultado, [{ state: "DebitNoteQueued" }]);
+});
+
+test("situacionesConPanelDeMulta: multi-operador — deja pasar los MultiOperatorNeedsManualReview de cada operador", () => {
+  const operador1 = { state: "MultiOperatorNeedsManualReview", supplierPublicId: "op-1", supplierName: "Turismo Cardozo" };
+  const operador2 = { state: "MultiOperatorNeedsManualReview", supplierPublicId: "op-2", supplierName: "Aerolíneas del Sur" };
+
+  const resultado = situacionesConPanelDeMulta({ operatorPenaltySituations: [operador1, operador2] });
+  assert.deepEqual(resultado, [operador1, operador2]);
+});
+
+test("situacionesConPanelDeMulta: sin situación de multa → lista vacía", () => {
+  assert.deepEqual(situacionesConPanelDeMulta({}), []);
+});
+
+// ============================================================================
+// situacionesConPreguntaDeMulta (ADR-044 T1, 2026-07-10 — fix bloqueante:
+// la pregunta "¿cobró multa?" ahora es POR OPERADOR, no una sola compartida)
+// ============================================================================
+
+test("situacionesConPreguntaDeMulta: PARIDAD — lista de 1 elemento produce lo mismo que el singular equivalente", () => {
+  const situacionPregunta = { state: "PendingDecision", canConfirm: true };
+
+  const viaLista = situacionesConPreguntaDeMulta({ operatorPenaltySituations: [situacionPregunta] });
+  const viaSingular = situacionesConPreguntaDeMulta({ operatorPenaltySituation: situacionPregunta });
+
+  assert.deepEqual(viaLista, [situacionPregunta]);
+  assert.deepEqual(viaLista, viaSingular);
+});
+
+test("situacionesConPreguntaDeMulta: filtra por familia 'pregunta' (PendingDecision) exclusivamente", () => {
+  const resultado = situacionesConPreguntaDeMulta({
+    operatorPenaltySituations: [
+      { state: "PendingDecision", canConfirm: true },
+      { state: "DebitNoteQueued", canConfirm: false },
+      { state: "Done", canConfirm: false },
+    ],
+  });
+  assert.deepEqual(resultado, [{ state: "PendingDecision", canConfirm: true }]);
+});
+
+test("situacionesConPreguntaDeMulta: PendingDecision con canConfirm=false NO se muestra (sin permiso u otra precondición)", () => {
+  const resultado = situacionesConPreguntaDeMulta({
+    operatorPenaltySituations: [{ state: "PendingDecision", canConfirm: false }],
+  });
+  assert.deepEqual(resultado, []);
+});
+
+test("situacionesConPreguntaDeMulta: multi-operador — un bloque por cada operador PendingDecision confirmable", () => {
+  const operador1 = { state: "PendingDecision", canConfirm: true, supplierPublicId: "op-1", supplierName: "Turismo Cardozo" };
+  const operador2 = { state: "PendingDecision", canConfirm: true, supplierPublicId: "op-2", supplierName: "Aerolíneas del Sur" };
+  const operador3Confirmado = { state: "ConfirmedNoDebitNote", canConfirm: false, supplierPublicId: "op-3" };
+
+  const resultado = situacionesConPreguntaDeMulta({
+    operatorPenaltySituations: [operador1, operador2, operador3Confirmado],
+  });
+  assert.deepEqual(resultado, [operador1, operador2]);
+});
+
+test("situacionesConPreguntaDeMulta: sin situación de multa → lista vacía", () => {
+  assert.deepEqual(situacionesConPreguntaDeMulta({}), []);
 });
 
 // ============================================================================

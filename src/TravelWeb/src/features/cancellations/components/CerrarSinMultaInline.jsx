@@ -14,8 +14,18 @@
  * Props:
  *   cancellationPublicId - GUID del BookingCancellation (obtenido de GET by-reserva).
  *   reservaNumero        - Número de la reserva (para mostrar en el header).
+ *   supplierPublicId     - (ADR-044 T1, 2026-07-10, opcional) GUID del operador al que
+ *                           corresponde este cierre sin multa. Solo hace falta cuando la
+ *                           cancelación tiene servicios de más de un operador (ADR-025)
+ *                           — en el caso mono-operador de siempre no se pasa y el payload
+ *                           de waive-penalty sale exactamente igual que antes.
  *   onCerrado            - Callback tras cerrar exitosamente; el padre muestra el toast de éxito.
  *   onCerrar             - Callback para abandonar el panel sin guardar.
+ *
+ * Errores 409 con detalle claro del backend (getApiErrorMessage ya los muestra tal cual,
+ * sin mapeo extra acá): INV-ADR044-OPERATOR-REQUIRED (2+ operadores, falta especificar
+ * cuál) e INV-ADR044-OPERATOR-NOT-FOUND (el supplierPublicId mandado no tiene servicios
+ * en esta cancelación) — ambos del 2026-07-10.
  */
 
 import { useState } from "react";
@@ -60,6 +70,7 @@ export function puedeCerrarSinMulta({ motivo, submitting }) {
 export function CerrarSinMultaInline({
     cancellationPublicId,
     reservaNumero,
+    supplierPublicId,
     onCerrado,
     onCerrar,
 }) {
@@ -83,7 +94,7 @@ export function CerrarSinMultaInline({
         setErrorMensaje(null);
 
         try {
-            await cancellationsApi.waivePenalty(cancellationPublicId, motivo.trim());
+            await cancellationsApi.waivePenalty(cancellationPublicId, motivo.trim(), supplierPublicId);
             // El toast de éxito ("Listo. Se cerró sin multa del operador.") lo muestra
             // el padre (ReservaDetailPage) para seguir el patrón de todos los paneles inline.
             onCerrado();

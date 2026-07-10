@@ -452,12 +452,18 @@ public class CancellationTotalAnnulmentRecalcTests
         });
         await h.Ctx.SaveChangesAsync();
 
+        // ADR-044 T1 (2026-07-10): la cancelacion tiene lineas de DOS operadores distintos, asi que el service
+        // exige especificar cual se esta confirmando (ResolveTargetSupplierId ya no adivina). Apuntamos al
+        // operador PRINCIPAL del BC (supplierA) para reproducir el escenario original del test: su llamada de
+        // confirm es la que dispara el intento de emision automatica de la ND, que el gate ARREGLO 2 debe frenar
+        // porque YA hay dos operadores con multa confirmada (ambas lineas se sembraron Confirmed arriba).
         var request = new ConfirmPenaltyRequest(
             ConceptKind: CancellationConceptKind.AgencyManagementFee,
             ConfirmedPenaltyAmount: 10_000m,
             OperatorConfirmationDate: DateTime.UtcNow.AddDays(-1),
             DebitNotePurpose: null,
-            SupportingDocumentReference: "https://docs/operador.pdf");
+            SupportingDocumentReference: "https://docs/operador.pdf",
+            SupplierPublicId: supplierA.PublicId);
 
         await h.Service.ConfirmPenaltyAsync(
             bc.PublicId, request, "admin-1", "Admin Uno",

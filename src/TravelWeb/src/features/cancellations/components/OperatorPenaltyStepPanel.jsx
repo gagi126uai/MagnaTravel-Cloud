@@ -1,10 +1,11 @@
 /**
  * Cartel de la ficha para los pasos "trabados" o "en curso" de la multa del operador
- * (spec "el paso de multa vive en la ficha", 2026-07-08). Traduce
- * `reserva.operatorPenaltySituation` a UN cartel con, como máximo, UNA acción puntual —
- * nunca reenvía a otra pantalla ("bandeja") a resolver algo.
+ * (spec "el paso de multa vive en la ficha", 2026-07-08). Traduce UNA situación de multa
+ * (un elemento de `reserva.operatorPenaltySituations`, o el singular legado en el caso
+ * mono-operador) a UN cartel con, como máximo, UNA acción puntual — nunca reenvía a otra
+ * pantalla ("bandeja") a resolver algo.
  *
- * Cubre dos de las cinco familias de operatorPenaltyBanner.js:
+ * Cubre tres de las seis familias de operatorPenaltyBanner.js:
  *   - "accionTrabada" (DebitNoteFailed / DebitNoteNeedsAmountCurrency / ConfirmedNoDebitNote):
  *     cartel naranja con un botón puntual (Reintentar / Corregir monto y moneda / Emitir
  *     la nota ahora), gateado por los permisos que ya vienen resueltos del backend
@@ -12,6 +13,10 @@
  *   - "procesando" (DebitNoteQueued): cartel informativo ámbar, sin botón — se está
  *     emitiendo, no hay nada para hacer todavía. Se refresca SOLO cada ~10 s mientras
  *     dure esta familia (ver useOperatorPenaltyPolling) para no depender de un F5 manual.
+ *   - "multiOperador" (MultiOperatorNeedsManualReview, ADR-044 T1, 2026-07-10): cartel
+ *     informativo ámbar, SIN botón de emisión — hay más de un operador con la multa
+ *     confirmada a la vez y el cargo automático al cliente se frena hasta resolverse a
+ *     mano (tanda futura T3). Conserva el mismo link de waive que "accionTrabada".
  *
  * Las familias "pregunta" (PendingDecision) y "waived" (Waived) NO se dibujan acá: ya
  * tienen su propio bloque en ReservaDetailPage (los botones "Sí cobró/No cobró" y el
@@ -25,11 +30,30 @@
  * cobró nada" (dato de prueba, confirmación cargada por error). Se agregó un link
  * secundario y discreto DEBAJO del botón principal, gateado por `situacion.canWaive`
  * (el backend ya resuelve ahí la regla de negocio + el permiso del usuario).
+ *
+ * ADR-044 T1 (2026-07-10): una cancelación puede tener servicios de más de un operador
+ * (ADR-025), cada uno con su propia multa — ReservaDetailPage ahora monta UN
+ * OperatorPenaltyStepPanel POR OPERADOR. Este componente sigue recibiendo UNA sola
+ * `situacion` (no cambia su forma de trabajar); lo nuevo son dos props opcionales:
+ *   - `nombreOperador`: si viene, se antepone al mensaje del cartel ("Turismo Cardozo —
+ *     Anulada — ..."). En el caso mono-operador de siempre, el padre no la pasa (queda
+ *     null) y el cartel se ve EXACTO igual que antes de este cambio.
+ *   - `supplierPublicId`: identificador del operador de ESTA situación puntual. Solo se
+ *     usa en el link de waive de este panel — el backend lo acepta opcional en
+ *     waive-penalty para saber a CUÁL de los operadores de la cancelación corresponde el
+ *     cierre sin multa cuando hay más de uno en juego.
  */
 
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
-import { familiaDeEstadoMulta, copyAccionTrabada, slugDeEstadoMulta, debeMostrarWaiveEnAccionTrabada } from "../operatorPenaltyBanner";
+import {
+  familiaDeEstadoMulta,
+  copyAccionTrabada,
+  slugDeEstadoMulta,
+  debeMostrarWaiveEnAccionTrabada,
+  textoMultiOperador,
+  tituloConNombreOperador,
+} from "../operatorPenaltyBanner";
 import { useOperatorPenaltyPolling } from "../hooks/useOperatorPenaltyPolling";
 import { ConfirmarMultaOperadorInline } from "./ConfirmarMultaOperadorInline";
 import { cancellationsApi } from "../api/cancellationsApi";
@@ -47,16 +71,31 @@ const MOTIVO_WAIVE_DESDE_TRABADO = "Cerrada sin multa desde el paso trabado de l
  *   - reservaPublicId: GUID de la reserva (para buscar la cancelación vigente recién al
  *     apretar el botón — el GUID de la cancelación no viaja en el DTO de la reserva).
  *   - reservaNumero: número de negocio, para el header del panel de corrección.
- *   - situacion: reserva.operatorPenaltySituation (obligatorio no-nulo; el padre decide
- *     cuándo montar este componente según familiaDeEstadoMulta(situacion.state)).
+ *   - situacion: UN elemento de reserva.operatorPenaltySituations (o el singular legado
+ *     en el caso mono-operador) — obligatorio no-nulo; el padre decide cuándo montar
+ *     este componente según familiaDeEstadoMulta(situacion.state).
  *     Incluye `canWaive` (bool): true solo si la multa está Confirmed, la ND no está en
  *     juego y el usuario tiene permiso — habilita el link "El operador no cobró esta multa".
  *   - monedaSugerida: moneda con la que arranca el selector del modo "corregir", si hace falta.
+ *   - nombreOperador (ADR-044 T1, opcional): nombre del operador de ESTA situación. Solo
+ *     lo pasa el padre cuando hay MÁS de un operador en juego — en el caso mono-operador
+ *     de siempre queda undefined y el cartel se ve EXACTO igual que antes.
+ *   - supplierPublicId (ADR-044 T1, opcional): identificador del operador de ESTA
+ *     situación puntual. Se manda en el link de waive de este panel para que el backend
+ *     sepa a cuál de los operadores de la cancelación corresponde el cierre sin multa.
  *   - onResuelto: callback de refresco SILENCIOSO (sin toast propio) que el padre ya usa
  *     tras una acción exitosa Y que este panel reutiliza para el auto-refresco de la
  *     familia "procesando" (ver useOperatorPenaltyPolling más abajo).
  */
-export function OperatorPenaltyStepPanel({ reservaPublicId, reservaNumero, situacion, monedaSugerida, onResuelto }) {
+export function OperatorPenaltyStepPanel({
+  reservaPublicId,
+  reservaNumero,
+  situacion,
+  monedaSugerida,
+  nombreOperador,
+  supplierPublicId,
+  onResuelto,
+}) {
   const [buscando, setBuscando] = useState(false);
   const [showCorregir, setShowCorregir] = useState(false);
   const [cancellationPublicId, setCancellationPublicId] = useState(null);
@@ -67,12 +106,19 @@ export function OperatorPenaltyStepPanel({ reservaPublicId, reservaNumero, situa
   const [procesandoWaive, setProcesandoWaive] = useState(false);
 
   const familia = familiaDeEstadoMulta(situacion.state);
-  const testId = `banner-multa-${slugDeEstadoMulta(situacion.state)}`;
+  // ADR-044 T1: cuando hay más de un operador (nombreOperador viene informado), dos
+  // paneles pueden compartir el MISMO estado a la vez (es justamente lo que pasa en
+  // "multiOperador": todos los confirmados quedan en ese mismo estado). Sumamos el guid
+  // del operador al testid para que cada panel siga siendo único en el DOM; en el caso
+  // mono-operador (nombreOperador ausente) el testid queda IGUAL que antes de este cambio.
+  const testId = nombreOperador && supplierPublicId
+    ? `banner-multa-${slugDeEstadoMulta(situacion.state)}-${supplierPublicId}`
+    : `banner-multa-${slugDeEstadoMulta(situacion.state)}`;
 
   // Bug reportado por Gastón (2026-07-08): este cartel quedaba TRABADO para siempre
   // aunque la ND ya se hubiera emitido del lado del backend — solo un F5 manual lo
   // destrababa. Mientras la familia sea "procesando" (y solo ahí: el hook mismo se
-  // encarga de no pollear en las otras cuatro familias), refrescamos la situación
+  // encarga de no pollear en las otras familias), refrescamos la situación
   // sola cada ~10 s hasta que cambie o se agote el tope de espera. `onResuelto` es acá
   // el mismo refresco SILENCIOSO que ya usa el resto del panel (fetchReserva con
   // showLoading:false — no dispara ningún toast de éxito, solo trae la reserva
@@ -87,7 +133,9 @@ export function OperatorPenaltyStepPanel({ reservaPublicId, reservaNumero, situa
         data-testid={testId}
         role="status"
       >
-        <strong className="font-bold">Anulada — se está emitiendo la multa al cliente.</strong> Puede demorar unos minutos, no hace falta que hagas nada.
+        <strong className="font-bold">
+          {tituloConNombreOperador(nombreOperador, "Anulada — se está emitiendo la multa al cliente.")}
+        </strong> Puede demorar unos minutos, no hace falta que hagas nada.
         {/* Tope de ~3 min agotado sin que el backend resuelva: puede ser una cola realmente
             trabada, así que dejamos de insistir solos y le damos la salida manual de siempre. */}
         {seAgotoLaEsperaDelPolling && (
@@ -102,17 +150,26 @@ export function OperatorPenaltyStepPanel({ reservaPublicId, reservaNumero, situa
     );
   }
 
-  if (familia !== "accionTrabada") return null;
+  // ADR-044 T1: "multiOperador" es la única familia nueva que este panel dibuja además
+  // de "accionTrabada" — es un cartel PASIVO (sin botón de emisión), así que
+  // `esAccionTrabada` distingue cuándo hay una acción de cobro real para ofrecer.
+  if (familia !== "accionTrabada" && familia !== "multiOperador") return null;
 
-  const { mensaje, accion, textoBoton } = copyAccionTrabada({
-    state: situacion.state,
-    canRetryDebitNote: situacion.canRetryDebitNote,
-    canCorrectAmountCurrency: situacion.canCorrectAmountCurrency,
-  });
+  const esAccionTrabada = familia === "accionTrabada";
+
+  const { mensaje, accion, textoBoton } = esAccionTrabada
+    ? copyAccionTrabada({
+        state: situacion.state,
+        canRetryDebitNote: situacion.canRetryDebitNote,
+        canCorrectAmountCurrency: situacion.canCorrectAmountCurrency,
+      })
+    // "multiOperador": nunca tiene botón de emisión (ver comentario de textoMultiOperador).
+    : { mensaje: textoMultiOperador(), accion: null, textoBoton: null };
 
   // Modo "corregir" abierto: el panel inline reemplaza al cartel, mismo patrón que el resto
   // de los paneles de multa de la ficha (ConfirmarMultaOperadorInline / CerrarSinMultaInline).
-  if (showCorregir && cancellationPublicId) {
+  // Solo aplica a "accionTrabada" — "multiOperador" no ofrece ninguna acción de emisión.
+  if (esAccionTrabada && showCorregir && cancellationPublicId) {
     return (
       <ConfirmarMultaOperadorInline
         cancellationPublicId={cancellationPublicId}
@@ -175,13 +232,21 @@ export function OperatorPenaltyStepPanel({ reservaPublicId, reservaNumero, situa
   // Segundo click, ya en la confirmación inline ("Confirmar"): recién ahí se llama al
   // backend. Usa el mismo endpoint que el flujo normal "No cobró" (CerrarSinMultaInline),
   // pero con un motivo fijo — ver MOTIVO_WAIVE_DESDE_TRABADO más arriba.
+  //
+  // ADR-044 T1: se manda `supplierPublicId` (si el padre lo pasó) para que el backend
+  // sepa a CUÁL operador corresponde este cierre sin multa cuando hay más de uno en
+  // juego. Ojo: esta prop SÍ viaja también en el caso mono-operador de siempre (el
+  // backend trae `supplierPublicId` incluso en el DTO singular legado) — no hace daño
+  // mandarla, porque el backend resuelve al mismo (único) operador que ya iba a resolver
+  // sin el parámetro. Lo que SÍ queda undefined en mono-operador es `nombreOperador`
+  // (esa prop el padre solo la pasa cuando hay más de un operador en juego).
   const handleConfirmarWaive = async () => {
     setProcesandoWaive(true);
     try {
       const publicId = await buscarCancellationPublicId();
       if (!publicId) return;
 
-      await cancellationsApi.waivePenalty(publicId, MOTIVO_WAIVE_DESDE_TRABADO);
+      await cancellationsApi.waivePenalty(publicId, MOTIVO_WAIVE_DESDE_TRABADO, supplierPublicId);
       showSuccess("Listo. La multa quedó cerrada sin cobro al cliente.", "Multa cerrada");
       setMostrarConfirmacionWaive(false);
       onResuelto();
@@ -192,17 +257,25 @@ export function OperatorPenaltyStepPanel({ reservaPublicId, reservaNumero, situa
     }
   };
 
+  // "multiOperador" es un cartel pasivo/informativo (ámbar, como "procesando" — nada para
+  // hacer salvo, opcionalmente, el link de waive). "accionTrabada" sigue siendo naranja,
+  // con su botón puntual — sin cambios visuales respecto de antes de ADR-044.
+  const clasesContenedor = esAccionTrabada
+    ? "rounded-xl border border-orange-300 bg-orange-50 p-4 text-sm text-orange-900 dark:border-orange-700/50 dark:bg-orange-950/30 dark:text-orange-200"
+    : "rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-200";
+
   return (
     <div
-      className="rounded-xl border border-orange-300 bg-orange-50 p-4 text-sm text-orange-900 dark:border-orange-700/50 dark:bg-orange-950/30 dark:text-orange-200"
+      className={clasesContenedor}
       data-testid={testId}
       role="status"
     >
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <span>
-          <strong className="font-bold">{mensaje}</strong>
+          <strong className="font-bold">{tituloConNombreOperador(nombreOperador, mensaje)}</strong>
         </span>
-        {/* Sin permiso, copyAccionTrabada devuelve accion=null: cartel informativo, sin botón. */}
+        {/* Sin permiso, copyAccionTrabada devuelve accion=null: cartel informativo, sin botón.
+            "multiOperador" siempre tiene accion=null (ver arriba): nunca dibuja este botón. */}
         {accion && (
           <button
             type="button"

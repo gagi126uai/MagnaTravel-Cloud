@@ -21,7 +21,10 @@ namespace TravelApi.Tests.Unit;
 /// read-model "Reembolsos a cobrar" (RefundCap − recibido) seguia SOBREESTIMANDO. Estos tests prueban que tras
 /// confirmar una multa X en la moneda C, el reembolso esperado del operador en C = pagado − X − ya recibido, que las
 /// monedas quedan SEPARADAS (nunca cruzado ARS/USD), que el caso sin multa no cambia nada, y que la cara fiscal del
-/// cliente (bc.PenaltyAmountAtEvent + line.PenaltyStatus) NO se toca.
+/// cliente (<c>bc.PenaltyAmountAtEvent</c>) NO se toca. ADR-044 T1 (2026-07-10):
+/// <c>line.PenaltyStatus</c> SI se marca <c>Confirmed</c> desde esta tanda (ver
+/// <see cref="ConfirmPenalty_marksLinePenaltyStatusConfirmed"/>) — es lo que activa el candado multi-operador de
+/// la ND (<c>CountSuppliersWithConfirmedPenaltyAsync</c>), que antes nunca disparaba de verdad.
 ///
 /// <para>Tests UNIT con EF InMemory (sin Docker). Ejercitan <c>AllocateConfirmedPenaltyToLinesAsync</c> (internal)
 /// directamente y verifican el numero end-to-end con <see cref="OperatorRefundReadModelService"/>. InMemory NO valida
@@ -336,10 +339,14 @@ public class OperatorRefundPenaltyNetsRefundCapTests
     }
 
     [Fact]
-    public async Task ConfirmPenalty_doesNotMarkLinePenaltyStatusConfirmed()
+    public async Task ConfirmPenalty_marksLinePenaltyStatusConfirmed()
     {
-        // Importante para NO desviar la ND del cliente: CountSuppliersWithConfirmedPenaltyAsync cuenta lineas con
-        // PenaltyStatus=Confirmed. La imputacion del reembolso NO debe tocar ese campo (es otra fase).
+        // ADR-044 T1 (2026-07-10): DESDE esta tanda, imputar la multa a las lineas de un operador TAMBIEN marca su
+        // PenaltyStatus=Confirmed (antes de esta tanda, a proposito, NO lo hacia: era el bug M2 del rediseño de
+        // multas — CountSuppliersWithConfirmedPenaltyAsync cuenta lineas con PenaltyStatus=Confirmed, y como nada
+        // lo seteaba, el candado multi-operador de la ND nunca disparaba de verdad). Este test reemplaza al viejo
+        // "ConfirmPenalty_doesNotMarkLinePenaltyStatusConfirmed", que fijaba el comportamiento OPUESTO al que esta
+        // tanda corrige a proposito.
         await using var ctx = NewDbContext();
         var service = BuildService(ctx);
         var (bc, supplierA, _) = await SeedBcAsync(ctx);
@@ -350,7 +357,7 @@ public class OperatorRefundPenaltyNetsRefundCapTests
         await ctx.SaveChangesAsync();
 
         var line = await ctx.Set<BookingCancellationLine>().AsNoTracking().FirstAsync(l => l.BookingCancellationId == bc.Id);
-        Assert.Equal(PenaltyStatus.Estimated, line.PenaltyStatus); // intacto: la imputacion no confirma el estado de la linea
+        Assert.Equal(PenaltyStatus.Confirmed, line.PenaltyStatus);
     }
 
     [Fact]

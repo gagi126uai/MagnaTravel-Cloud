@@ -42,10 +42,19 @@ import { DeshacerCierreSinMultaInline } from "../../cancellations/components/Des
 import { OperatorPenaltyStepPanel } from "../../cancellations/components/OperatorPenaltyStepPanel";
 import { cancellationsApi } from "../../cancellations/api/cancellationsApi";
 import { contarNotasFaltantes, construirTextoFranjaEnRevision } from "../../cancellations/lib/multiCreditNoteFlow";
-// Spec "el paso de multa vive en la ficha" (2026-07-08): helpers puros que traducen
-// reserva.operatorPenaltySituation a la "familia" de cartel a mostrar (ver el propio
-// archivo para el detalle de las 5 familias) y el rastro textual del cierre sin multa.
-import { familiaDeEstadoMulta, textoRastroWaived, tienePasoDeMultaOperador } from "../../cancellations/operatorPenaltyBanner";
+// Spec "el paso de multa vive en la ficha" (2026-07-08) + ADR-044 T1 (2026-07-10,
+// multa por operador): helpers puros que traducen la situación de multa (singular o,
+// desde ADR-044, una lista con un elemento POR OPERADOR) a la "familia" de cartel a
+// mostrar (ver el propio archivo para el detalle de las 6 familias) y el rastro textual
+// del cierre sin multa.
+import {
+  textoRastroWaived,
+  tienePasoDeMultaOperador,
+  situacionesConPanelDeMulta,
+  situacionesConPreguntaDeMulta,
+  hayMasDeUnOperadorConMulta,
+  tituloConNombreOperador,
+} from "../../cancellations/operatorPenaltyBanner";
 import { elegirMonedaSugeridaParaMulta } from "../lib/operatorPenaltyCurrency";
 import { hasPermission, isAdmin } from "../../../auth";
 import { calcularSugerenciaComposicion } from "../lib/pasajeroHint";
@@ -670,6 +679,13 @@ export default function ReservaDetailPage() {
   const [showMultaInline, setShowMultaInline] = useState(false);
   const [multaCancellationPublicId, setMultaCancellationPublicId] = useState(null);
   const [buscandoMulta, setBuscandoMulta] = useState(false);
+  // ADR-044 T1 (2026-07-10): la cancelación puede tener servicios de MÁS de un operador
+  // (ADR-025), cada uno con su propia pregunta "¿cobró multa?". Guarda la situación
+  // COMPLETA del operador cuyo panel Sí/No está abierto ahora mismo (no solo el guid):
+  // de ahí sacamos tanto `supplierPublicId` (para el payload) como `currency` (para la
+  // moneda sugerida del formulario). En el caso mono-operador de siempre, sigue siendo
+  // el único elemento posible — el comportamiento no cambia.
+  const [multaSituacionAbierta, setMultaSituacionAbierta] = useState(null);
   // 2026-06-28: panel "Cerrar sin multa" — segunda opción del flujo post-anulación.
   // Se abre cuando el agente elige "No cobró nada / devolvió todo".
   const [showSinMultaInline, setShowSinMultaInline] = useState(false);
@@ -1009,12 +1025,19 @@ export default function ReservaDetailPage() {
   };
 
   // "Sí, el operador cobró una multa" → abre ConfirmarMultaOperadorInline (naranja, emite ND).
-  const handleAbrirMultaConPenalidad = () =>
+  // ADR-044 T1: recibe la situación COMPLETA del operador que originó el click (no solo
+  // el guid) para poder pasarle supplierPublicId + la moneda sugerida al panel — ver
+  // multaSituacionAbierta más arriba.
+  const handleAbrirMultaConPenalidad = (situacion) => {
+    setMultaSituacionAbierta(situacion ?? null);
     buscarCancelacionYAbrirPanel(() => setShowMultaInline(true));
+  };
 
   // "No cobró nada / devolvió todo" → abre CerrarSinMultaInline (teal, solo registra motivo).
-  const handleAbrirSinMulta = () =>
+  const handleAbrirSinMulta = (situacion) => {
+    setMultaSituacionAbierta(situacion ?? null);
     buscarCancelacionYAbrirPanel(() => setShowSinMultaInline(true));
+  };
 
   // "Deshacer: el operador sí cobró una multa" → abre DeshacerCierreSinMultaInline (Admin only).
   const handleAbrirDeshacer = () =>
@@ -1228,15 +1251,16 @@ export default function ReservaDetailPage() {
         // activos) y cae al campo legado si no lo trae.
         const hayPasoDeMultaOperadorActivo = tienePasoDeMultaOperador(reserva);
 
-        // situacionMulta: la "foto" completa del paso de la multa que manda el backend.
-        // familiaMulta agrupa sus 7 estados posibles en 5 familias visuales (ver
-        // operatorPenaltyBanner.js) — acá solo nos interesan "accionTrabada" (algo quedó
-        // trabado y hay UNA acción puntual para destrabarlo: reintentar / corregir / emitir)
-        // y "procesando" (se está cobrando, sin nada para hacer todavía). Las familias
-        // "pregunta" (PendingDecision) y "waived" ya tienen su propio bloque más abajo en
-        // este mismo IIFE — no se duplican acá.
-        const situacionMulta = reserva.operatorPenaltySituation;
-        const familiaMulta = situacionMulta ? familiaDeEstadoMulta(situacionMulta.state) : null;
+        // ADR-044 T1 (2026-07-10): una cancelación puede tener servicios de MÁS de un
+        // operador (ADR-025), cada uno con su propia multa. situacionesMultaConPanel ya
+        // filtra, de TODOS los operadores en juego, cuáles necesitan el panel accionable
+        // (familias "accionTrabada" / "procesando" / "multiOperador" — ver
+        // operatorPenaltyBanner.js). Las familias "pregunta" (PendingDecision) y "waived"
+        // ya tienen su propio bloque más abajo en este mismo IIFE — no se duplican acá.
+        //
+        // Caso mono-operador (hoy el 100%): esta lista trae, como máximo, el mismo único
+        // elemento que antes leíamos del campo singular — la ficha se ve EXACTO igual.
+        const situacionesMultaConPanel = situacionesConPanelDeMulta(reserva);
 
         // Reemplaza al viejo cartel "Ir a resolver" (mandaba a la bandeja back-office
         // /pendientes-afip): ahora se resuelve DIRECTO en la ficha, con OperatorPenaltyStepPanel.
@@ -1244,8 +1268,7 @@ export default function ReservaDetailPage() {
         // En PendingOperatorRefund el cartel prioritario sigue siendo el de "esperando
         // reembolso" / reintento de anulación (más urgente) — ver la rama de más abajo.
         const mostrarPasoDeMultaTrabadoOProcesando =
-          reserva.status === "Cancelled" &&
-          (familiaMulta === "accionTrabada" || familiaMulta === "procesando");
+          reserva.status === "Cancelled" && situacionesMultaConPanel.length > 0;
 
         return reserva.status === "Lost" ? (
         <div
@@ -1256,21 +1279,33 @@ export default function ReservaDetailPage() {
           <strong className="font-bold">Reserva perdida</strong> — solo lectura.
         </div>
       ) : mostrarPasoDeMultaTrabadoOProcesando ? (
-        <OperatorPenaltyStepPanel
-          reservaPublicId={publicId}
-          reservaNumero={reserva.numeroReserva}
-          situacion={situacionMulta}
-          monedaSugerida={elegirMonedaSugeridaParaMulta({
-            situacionCurrency: situacionMulta?.currency,
-            porMoneda: reserva.porMoneda,
-          })}
-          /* Refresco SILENCIOSO de punta a punta: sin spinner (showLoading:false), sin perder lo
-             que ya está en pantalla si falla (preserveOnError) y sin toast de error (silentErrors)
-             — lo usa tanto el refresco post-acción del panel como el auto-refresco cada ~10 s de
-             la familia "procesando" (useOperatorPenaltyPolling); un tick de fondo que falla no
-             tiene que gritarle nada al usuario, el próximo tick lo reintenta solo. */
-          onResuelto={() => fetchReserva({ showLoading: false, preserveOnError: true, silentErrors: true })}
-        />
+        // ADR-044 T1: un panel POR OPERADOR con multa activa. El nombre del operador solo
+        // se pasa cuando hay MÁS de un operador en juego (hayMasDeUnOperadorConMulta) —
+        // en el caso mono-operador de siempre queda undefined y cada panel se ve EXACTO
+        // igual que antes de este cambio. La key usa el guid del operador (o "legacy" si
+        // el DTO todavía no lo trae) para que React no confunda paneles entre sí.
+        <div className="space-y-3">
+          {situacionesMultaConPanel.map((situacion) => (
+            <OperatorPenaltyStepPanel
+              key={situacion.supplierPublicId ?? "legacy"}
+              reservaPublicId={publicId}
+              reservaNumero={reserva.numeroReserva}
+              situacion={situacion}
+              nombreOperador={hayMasDeUnOperadorConMulta(reserva) ? situacion.supplierName : undefined}
+              supplierPublicId={situacion.supplierPublicId}
+              monedaSugerida={elegirMonedaSugeridaParaMulta({
+                situacionCurrency: situacion?.currency,
+                porMoneda: reserva.porMoneda,
+              })}
+              /* Refresco SILENCIOSO de punta a punta: sin spinner (showLoading:false), sin perder lo
+                 que ya está en pantalla si falla (preserveOnError) y sin toast de error (silentErrors)
+                 — lo usa tanto el refresco post-acción del panel como el auto-refresco cada ~10 s de
+                 la familia "procesando" (useOperatorPenaltyPolling); un tick de fondo que falla no
+                 tiene que gritarle nada al usuario, el próximo tick lo reintenta solo. */
+              onResuelto={() => fetchReserva({ showLoading: false, preserveOnError: true, silentErrors: true })}
+            />
+          ))}
+        </div>
       ) : (reserva.status === "Cancelled" && !hayPasoDeMultaOperadorActivo) ? (
         // ADR-036: el estado interno sigue siendo "Cancelled" pero el usuario ve "Anulada".
         // "Cancelar" en este producto = saldar una deuda; "Anular" = deshacer el viaje.
@@ -1372,7 +1407,6 @@ export default function ReservaDetailPage() {
           // "OperatorPenaltyWaived" en el backend — era un campo muerto. El backend ahora expone
           // `capabilities.operatorPenaltyOutcome` con valores "None"|"Pending"|"Confirmed"|"Waived".
           // Si el campo no llega (DTO viejo o capabilities ausente) → false → banner genérico (degradación segura).
-          const penaltyCapability = reserva.capabilities?.canConfirmOperatorPenalty;
           const yaWaived = reserva.capabilities?.operatorPenaltyOutcome === "Waived";
 
           if (yaWaived) {
@@ -1445,10 +1479,24 @@ export default function ReservaDetailPage() {
           }
 
           // ── Estado: paso de multa pendiente (el agente todavía no eligió) ──────
-          // Mostramos la pregunta y las dos opciones solo cuando la capability lo permite.
-          // Si allowed=false por otro motivo (NC sin CAE, ND ya en juego), no mostramos
-          // ni la pregunta ni los botones — el paso no es accionable por el agente.
-          const hayMultaPendiente = penaltyCapability?.allowed === true;
+          // ADR-044 T1 (2026-07-10, fix de bloqueante): antes había una sola pregunta
+          // compartida por toda la cancelación, gateada por `capabilities.
+          // canConfirmOperatorPenalty.allowed` (BC-level). Eso rompía apenas la
+          // anulación tenía servicios de 2+ operadores (ADR-025 crea una línea POR
+          // proveedor): el agente elegía "Sí cobró", completaba el formulario y el
+          // backend rebotaba 409 pidiendo especificar CUÁL operador — sin salida.
+          //
+          // Ahora situacionesConPreguntaDeMulta ya filtra, de TODOS los operadores en
+          // juego, cuáles están en "pregunta" (PendingDecision) Y son confirmables
+          // (canConfirm, que combina estado + permiso — mismo criterio que el resto de
+          // los booleanos can* que ya usa OperatorPenaltyStepPanel). Se dibuja un bloque
+          // Sí/No POR operador, cada uno con su propio supplierPublicId.
+          //
+          // Caso mono-operador (hoy el 100%): esta lista trae, como máximo, el mismo
+          // único elemento que antes — la ficha se ve EXACTO igual (mismo testid, sin
+          // prefijo de nombre).
+          const situacionesPregunta = situacionesConPreguntaDeMulta(reserva);
+          const hayMasDeUnOperador = hayMasDeUnOperadorConMulta(reserva);
 
           return (
             <div className="space-y-3">
@@ -1472,75 +1520,101 @@ export default function ReservaDetailPage() {
                 </strong> — solo lectura.
 
                 {/* ── Elección del agente: ¿cobró multa o no cobró? ──────────────
-                    Solo visible cuando hay un paso pendiente (allowed=true) y ningún
-                    panel inline está abierto (para no mostrar la pregunta encima del form). */}
-                {hayMultaPendiente && !showMultaInline && !showSinMultaInline && (
-                  <div className="mt-3 pt-3 border-t border-rose-200/60 dark:border-rose-900/30">
-                    <p className="text-sm font-semibold text-rose-900 dark:text-rose-200 mb-3">
-                      ¿El operador te cobró una multa por anular?
-                    </p>
-                    <div className="flex flex-wrap gap-3">
-                      {/* Sí cobró: abre el panel naranja (emite Nota de Débito) */}
-                      <button
-                        type="button"
-                        onClick={handleAbrirMultaConPenalidad}
-                        disabled={buscandoMulta}
-                        data-testid="btn-si-cobro-multa"
-                        className="inline-flex items-center gap-2 rounded-lg border border-orange-400 bg-orange-50 px-3 py-2 text-xs font-bold text-orange-700 hover:bg-orange-100 dark:border-orange-700 dark:bg-orange-950/30 dark:text-orange-300 dark:hover:bg-orange-900/40 transition-colors disabled:opacity-50"
-                      >
-                        {buscandoMulta && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
-                        Sí, el operador cobró una multa
-                      </button>
-                      {/* No cobró: abre el panel teal (cierra sin ND) */}
-                      <button
-                        type="button"
-                        onClick={handleAbrirSinMulta}
-                        disabled={buscandoMulta}
-                        data-testid="btn-no-cobro-multa"
-                        className="inline-flex items-center gap-2 rounded-lg border border-teal-400 bg-teal-50 px-3 py-2 text-xs font-bold text-teal-700 hover:bg-teal-100 dark:border-teal-700 dark:bg-teal-950/30 dark:text-teal-300 dark:hover:bg-teal-900/40 transition-colors disabled:opacity-50"
-                      >
-                        {buscandoMulta && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
-                        No cobró nada / devolvió todo
-                      </button>
-                    </div>
+                    Un bloque POR OPERADOR con situación "pregunta". Solo visible cuando
+                    hay al menos uno confirmable y ningún panel inline está abierto (para
+                    no mostrar la pregunta encima del form) — mismo gate que antes,
+                    ahora aplicado a la LISTA en vez de a un solo flag agregado. */}
+                {situacionesPregunta.length > 0 && !showMultaInline && !showSinMultaInline && (
+                  <div className="mt-3 pt-3 border-t border-rose-200/60 dark:border-rose-900/30 space-y-4">
+                    {situacionesPregunta.map((situacion) => {
+                      // El sufijo del testid solo aparece con 2+ operadores — en mono-operador
+                      // el testid queda IDÉNTICO al de siempre (btn-si-cobro-multa a secas).
+                      const sufijoTestId = hayMasDeUnOperador && situacion.supplierPublicId
+                        ? `-${situacion.supplierPublicId}`
+                        : "";
+                      const nombreParaTitulo = hayMasDeUnOperador ? situacion.supplierName : undefined;
+
+                      return (
+                        <div key={situacion.supplierPublicId ?? "legacy"}>
+                          <p className="text-sm font-semibold text-rose-900 dark:text-rose-200 mb-3">
+                            {tituloConNombreOperador(nombreParaTitulo, "¿El operador te cobró una multa por anular?")}
+                          </p>
+                          <div className="flex flex-wrap gap-3">
+                            {/* Sí cobró: abre el panel naranja (emite Nota de Débito) */}
+                            <button
+                              type="button"
+                              onClick={() => handleAbrirMultaConPenalidad(situacion)}
+                              disabled={buscandoMulta}
+                              data-testid={`btn-si-cobro-multa${sufijoTestId}`}
+                              className="inline-flex items-center gap-2 rounded-lg border border-orange-400 bg-orange-50 px-3 py-2 text-xs font-bold text-orange-700 hover:bg-orange-100 dark:border-orange-700 dark:bg-orange-950/30 dark:text-orange-300 dark:hover:bg-orange-900/40 transition-colors disabled:opacity-50"
+                            >
+                              {buscandoMulta && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
+                              Sí, el operador cobró una multa
+                            </button>
+                            {/* No cobró: abre el panel teal (cierra sin ND) */}
+                            <button
+                              type="button"
+                              onClick={() => handleAbrirSinMulta(situacion)}
+                              disabled={buscandoMulta}
+                              data-testid={`btn-no-cobro-multa${sufijoTestId}`}
+                              className="inline-flex items-center gap-2 rounded-lg border border-teal-400 bg-teal-50 px-3 py-2 text-xs font-bold text-teal-700 hover:bg-teal-100 dark:border-teal-700 dark:bg-teal-950/30 dark:text-teal-300 dark:hover:bg-teal-900/40 transition-colors disabled:opacity-50"
+                            >
+                              {buscandoMulta && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
+                              No cobró nada / devolvió todo
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
 
               {/* Panel inline "Sí cobró" — naranja (ADR-014 diferido: emite Nota de Débito).
                   monedaSugerida (2026-07-08): acá la multa TODAVÍA no tiene monto/moneda
-                  propios (recién se está por cargar), así que situacionMulta.currency viene
-                  null — elegirMonedaSugeridaParaMulta cae a la moneda de la factura ya
-                  emitida de la reserva. Nunca se deja el default USD en silencio si hay
-                  factura de la cual precargar. */}
+                  propios (recién se está por cargar), así que la moneda de la situación
+                  puntual viene null — elegirMonedaSugeridaParaMulta cae a la moneda de la
+                  factura ya emitida de la reserva. Nunca se deja el default USD en
+                  silencio si hay factura de la cual precargar.
+
+                  ADR-044 T1 (2026-07-10, fix de bloqueante): supplierPublicId y
+                  monedaSugerida salen de `multaSituacionAbierta` — la situación PUNTUAL
+                  del operador que el agente clickeó (ver handleAbrirMultaConPenalidad).
+                  En mono-operador es simplemente el único elemento posible. */}
               {showMultaInline && multaCancellationPublicId && (
                 <ConfirmarMultaOperadorInline
                   cancellationPublicId={multaCancellationPublicId}
                   reservaNumero={reserva.numeroReserva}
+                  supplierPublicId={multaSituacionAbierta?.supplierPublicId}
                   monedaSugerida={elegirMonedaSugeridaParaMulta({
-                    situacionCurrency: situacionMulta?.currency,
+                    situacionCurrency: multaSituacionAbierta?.currency,
                     porMoneda: reserva.porMoneda,
                   })}
                   onConfirmado={() => {
                     setShowMultaInline(false);
                     setMultaCancellationPublicId(null);
+                    setMultaSituacionAbierta(null);
                     fetchReserva({ showLoading: false, preserveOnError: true });
                   }}
                   onCerrar={() => {
                     setShowMultaInline(false);
                     setMultaCancellationPublicId(null);
+                    setMultaSituacionAbierta(null);
                   }}
                 />
               )}
 
-              {/* Panel inline "No cobró" — teal (2026-06-28: cierra sin nota de débito). */}
+              {/* Panel inline "No cobró" — teal (2026-06-28: cierra sin nota de débito).
+                  ADR-044 T1: supplierPublicId también sale de multaSituacionAbierta. */}
               {showSinMultaInline && multaCancellationPublicId && (
                 <CerrarSinMultaInline
                   cancellationPublicId={multaCancellationPublicId}
                   reservaNumero={reserva.numeroReserva}
+                  supplierPublicId={multaSituacionAbierta?.supplierPublicId}
                   onCerrado={() => {
                     setShowSinMultaInline(false);
                     setMultaCancellationPublicId(null);
+                    setMultaSituacionAbierta(null);
                     showSuccess("Listo. Se cerró sin multa del operador.");
                     // Refrescamos para que el banner cambie a "cerrada sin multa"
                     // y la capability se actualice con OperatorPenaltyWaived.
@@ -1549,6 +1623,7 @@ export default function ReservaDetailPage() {
                   onCerrar={() => {
                     setShowSinMultaInline(false);
                     setMultaCancellationPublicId(null);
+                    setMultaSituacionAbierta(null);
                   }}
                 />
               )}

@@ -4929,6 +4929,195 @@ public class BookingCancellationService
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<OperatorPenaltySituationDto>> GetOperatorPenaltySituationsAsync(
+        Guid reservaPublicId, bool userCanClassifyOperatorPenalty, bool isCallerAdmin, CancellationToken ct)
+    {
+        // ADR-044 T1 (2026-07-10): version LISTA de GetOperatorPenaltySituationAsync, un elemento POR OPERADOR con
+        // multa en juego. Reusa el metodo singular para el operador PRINCIPAL (bc.SupplierId): es la fuente de
+        // verdad de hoy y garantiza que el caso mono-operador (el 100% de los BCs de hoy) da EXACTAMENTE el mismo
+        // resultado que antes de esta tanda (parity — ver test dedicado). Los operadores SECUNDARIOS (si los hay,
+        // ADR-025) se agregan con su propia derivacion a nivel LINEA (BookingCancellationLine), la unica fuente
+        // que sabe su multa individual.
+        var primarySituation = await GetOperatorPenaltySituationAsync(
+            reservaPublicId, userCanClassifyOperatorPenalty, isCallerAdmin, ct);
+
+        // Sin cancelacion vigente o sin nada que mostrar: lista vacia (la ficha no pinta ningun cartel, igual que
+        // el singular con State="None").
+        if (primarySituation.State == OperatorPenaltySituationState.None.ToString())
+            return Array.Empty<OperatorPenaltySituationDto>();
+
+        var bcRow = await _db.BookingCancellations
+            .AsNoTracking()
+            .Where(b => b.Reserva.PublicId == reservaPublicId && b.Status != BookingCancellationStatus.Aborted)
+            .OrderByDescending(b => b.DraftedAt)
+            .Select(b => new
+            {
+                b.Id,
+                b.SupplierId,
+                b.Status,
+                b.CreditNoteInvoiceId,
+                b.PenaltyStatus,
+                b.DebitNoteStatus,
+                b.DebitNoteInvoiceId,
+            })
+            .FirstOrDefaultAsync(ct);
+        if (bcRow is null)
+            return Array.Empty<OperatorPenaltySituationDto>(); // defensivo: no deberia pasar si primarySituation != None.
+
+        var primarySupplier = await _db.Suppliers
+            .AsNoTracking()
+            .Where(s => s.Id == bcRow.SupplierId)
+            .Select(s => new { s.PublicId, s.Name })
+            .FirstOrDefaultAsync(ct);
+        primarySituation.SupplierPublicId = primarySupplier?.PublicId;
+        primarySituation.SupplierName = primarySupplier?.Name;
+
+        var result = new List<OperatorPenaltySituationDto> { primarySituation };
+
+        // Operadores SECUNDARIOS: lineas cuyo SupplierId es distinto del principal del BC.
+        var secondaryLines = await _db.BookingCancellationLines
+            .AsNoTracking()
+            .Where(l => l.BookingCancellationId == bcRow.Id && l.SupplierId != bcRow.SupplierId)
+            .Select(l => new
+            {
+                l.SupplierId,
+                SupplierPublicId = l.Supplier.PublicId,
+                SupplierName = l.Supplier.Name,
+                l.PenaltyStatus,
+                l.PenaltyAmount,
+                l.PenaltyCurrency,
+                l.PenaltyConfirmedAt,
+            })
+            .ToListAsync(ct);
+        if (secondaryLines.Count == 0)
+            return result; // caso mono-operador (el 99.9% de hoy): lista de UN elemento, igual que el singular.
+
+        var settings = await _settings.GetEntityAsync(ct);
+        // El gate "hay algo para decidir AHORA" es a nivel de TODA la cancelacion (post-NC con CAE + flag), no
+        // por operador — se calcula UNA vez y se comparte. Usamos un PenaltyStatus/DebitNoteInvoiceId/DebitNoteStatus
+        // neutros (Estimated/sin ND) para que EvaluateCanConfirmPenalty no corte antes de tiempo por el estado
+        // Confirmed/Waived de OTRO operador: esos campos alli solo importan para la idempotencia BC-level, que
+        // aca no aplica (estamos evaluando el gate compartido, no la idempotencia de un operador puntual).
+        var sharedFields = new PenaltyConfirmabilityFields(
+            bcRow.Status, bcRow.CreditNoteInvoiceId, PenaltyStatus.Estimated, null, DebitNoteStatus.NotApplicable);
+        var (isPendingDecisionForBc, _) = EvaluateCanConfirmPenalty(sharedFields, settings.EnableCancellationDebitNote);
+        var confirmedSupplierCount = await CountSuppliersWithConfirmedPenaltyAsync(bcRow.Id, ct);
+
+        // ADR-044 T1: si el operador PRINCIPAL esta confirmado Y hay MAS de un operador confirmado a la vez, su
+        // estado (que viene del singular, ciego al multi-operador) queda AMBIGUO tambien — el snapshot BC-level
+        // que el singular lee puede describir a este operador o a otro segun quien confirmo ultimo. Lo pisamos
+        // con el mismo estado "necesita revision" que usan los secundarios, para no mostrar un "Emitida"/"Fallida"
+        // que podria no ser de este operador. Si el principal esta Waived o aun Estimated, esos estados SI son
+        // confiables (son terminales/propios, no dependen de otros operadores) y no se tocan.
+        if (bcRow.PenaltyStatus == PenaltyStatus.Confirmed && confirmedSupplierCount > 1)
+            primarySituation.State = OperatorPenaltySituationState.MultiOperatorNeedsManualReview.ToString();
+
+        foreach (var group in secondaryLines.GroupBy(l => l.SupplierId))
+        {
+            // Prioridad de estado dentro del propio operador: Confirmed > Waived > Estimated. En la practica todas
+            // las lineas de un mismo operador se mueven juntas (Allocate/Reverse las tocan todas parejo), pero esto
+            // es defensivo ante datos parciales.
+            var linePenaltyStatus =
+                group.Any(l => l.PenaltyStatus == PenaltyStatus.Confirmed) ? PenaltyStatus.Confirmed :
+                group.Any(l => l.PenaltyStatus == PenaltyStatus.Waived) ? PenaltyStatus.Waived :
+                PenaltyStatus.Estimated;
+
+            var state = OperatorPenaltySituationRules.DeriveForOperator(new OperatorPenaltySituationRules.LineFields(
+                LinePenaltyStatus: linePenaltyStatus,
+                IsPendingDecision: isPendingDecisionForBc,
+                ConfirmedSupplierCount: confirmedSupplierCount,
+                BcDebitNoteStatus: bcRow.DebitNoteStatus));
+
+            var showAmount = state is not (OperatorPenaltySituationState.None or OperatorPenaltySituationState.Waived);
+            decimal? amount = showAmount
+                ? group.Where(l => l.PenaltyStatus == PenaltyStatus.Confirmed).Sum(l => l.PenaltyAmount ?? 0m)
+                : null;
+            var currencyRaw = group.FirstOrDefault(l => !string.IsNullOrWhiteSpace(l.PenaltyCurrency))?.PenaltyCurrency;
+            var currency = amount.HasValue ? ProjectPenaltyCurrencyToIsoOrNull(currencyRaw) : null;
+            var since = group.Where(l => l.PenaltyConfirmedAt.HasValue).Max(l => (DateTime?)l.PenaltyConfirmedAt);
+
+            // Acciones: CanConfirm/CanWaive SI son operator-aware (via ConfirmPenaltyAsync/WaiveOperatorPenaltyAsync
+            // con SupplierPublicId, ya resueltos en esta tanda). CanRetryDebitNote/CanCorrectAmountCurrency quedan
+            // en false para operadores SECUNDARIOS a proposito (ADR-044 T1, alcance): esos dos endpoints todavia son
+            // solo del operador principal (BC-level); ofrecerlos aca seria el anti-patron "boton que rebota".
+            var canConfirm = state == OperatorPenaltySituationState.PendingDecision && userCanClassifyOperatorPenalty;
+            // CanWaive de un SECUNDARIO NO mira el ND-en-juego del BC padre (ese documento es de OTRO operador,
+            // el principal): espeja EXACTO lo que WaiveOperatorPenaltyAsync valida para un secundario (ver su
+            // Precondicion 6, ADR-044 T1) — si mirara ese campo, el boton rebotaria 409 cuando el principal ya
+            // tiene su ND en curso, aunque ESTE operador nunca la haya tocado.
+            var canWaive = linePenaltyStatus == PenaltyStatus.Confirmed && isCallerAdmin;
+
+            var first = group.First();
+            result.Add(new OperatorPenaltySituationDto
+            {
+                State = state.ToString(),
+                Amount = amount,
+                Currency = currency,
+                Since = state == OperatorPenaltySituationState.None ? null : since,
+                CanConfirm = canConfirm,
+                CanRetryDebitNote = false,
+                CanCorrectAmountCurrency = false,
+                CanWaive = canWaive,
+                // GAP conocido (ADR-044 T1): el schema de linea no tiene "quien cerro sin multa" (solo el BC padre
+                // lo tiene, y ese campo es del operador principal). Se puede agregar en una tanda futura si hace
+                // falta mostrar el nombre; por ahora solo viaja la fecha.
+                WaivedAt = state == OperatorPenaltySituationState.Waived ? since : null,
+                WaivedByName = null,
+                RevertedAt = null,
+                RevertedByName = null,
+                SupplierPublicId = first.SupplierPublicId,
+                SupplierName = first.SupplierName,
+            });
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// ADR-044 T1 (2026-07-10): resuelve a que OPERADOR corresponde una accion sobre la multa (confirmar / cerrar
+    /// sin multa) cuando la cancelacion puede tener servicios de MAS de un proveedor (ADR-025 ya modela
+    /// <see cref="BookingCancellationLine.SupplierId"/> por linea). Es el punto UNICO donde se aplica la regla de
+    /// la spec: "sin parametro = si hay UNA sola linea con multa, esa; si hay varias, error claro pidiendo
+    /// especificar".
+    ///
+    /// <para><b>Retrocompatible</b>: el 100% de los BCs de hoy tienen lineas de UN solo operador (incluidos los
+    /// legacy con la linea sintetica ServiceId=0 del backfill ADR-025), asi que en la practica esto SIEMPRE
+    /// resuelve solo, sin que el caller tenga que mandar nada nuevo — el comportamiento es byte-identico al de
+    /// antes de esta tanda.</para>
+    /// </summary>
+    private static int ResolveTargetSupplierId(BookingCancellation bc, Guid? requestedSupplierPublicId)
+    {
+        if (requestedSupplierPublicId.HasValue)
+        {
+            var requestedLine = bc.Lines.FirstOrDefault(l => l.Supplier?.PublicId == requestedSupplierPublicId.Value);
+            if (requestedLine is not null)
+                return requestedLine.SupplierId;
+
+            // Fallback legacy (2026-07-10, non-bloqueante del review): un BC MUY anterior a ADR-025 puede no
+            // tener lineas todavia (sin backfill). En ese caso el unico operador conocido es el del BC padre; si
+            // el guid pedido coincide con ese operador, resolvemos a bc.SupplierId (simetrico a la rama sin
+            // parametro, que ya devuelve bc.SupplierId cuando no hay lineas). Requiere bc.Supplier cargado.
+            if (bc.Lines.Count == 0 && bc.Supplier?.PublicId == requestedSupplierPublicId.Value)
+                return bc.SupplierId;
+
+            throw new BusinessInvariantViolationException(
+                "El operador indicado no tiene servicios cancelados en esta anulación.",
+                invariantCode: "INV-ADR044-OPERATOR-NOT-FOUND");
+        }
+
+        var distinctSupplierIds = bc.Lines.Select(l => l.SupplierId).Distinct().ToList();
+        // BC legacy sin lineas (muy anterior a ADR-025): el unico operador conocido es el del BC padre.
+        if (distinctSupplierIds.Count == 0)
+            return bc.SupplierId;
+        if (distinctSupplierIds.Count == 1)
+            return distinctSupplierIds[0];
+
+        throw new BusinessInvariantViolationException(
+            "Esta anulación tiene multas de más de un operador. Indicá cuál operador estás resolviendo.",
+            invariantCode: "INV-ADR044-OPERATOR-REQUIRED");
+    }
+
+    /// <inheritdoc />
     public async Task<BookingCancellationDto> ConfirmPenaltyAsync(
         Guid publicId,
         ConfirmPenaltyRequest request,
@@ -4959,12 +5148,17 @@ public class BookingCancellationService
 
         // === Precondicion 2: el BC existe (404 si no). Cargamos los mismos Includes que
         // el gating necesita: factura original + sus Tributos (IIBB) + Supplier + Reserva.
-        // Mismo set que OnArcaSucceededAsync para que TryEmit no se quede corto. ===
+        // Mismo set que OnArcaSucceededAsync para que TryEmit no se quede corto.
+        // ADR-044 T1 (2026-07-10): sumamos Lines + su Supplier: es lo que necesita
+        // ResolveTargetSupplierId para saber a que operador corresponde esta confirmacion
+        // cuando la cancelacion tiene servicios de mas de uno (ADR-025). ===
         var bc = await _db.BookingCancellations
             .Include(b => b.Reserva)
             .Include(b => b.OriginatingInvoice)
                 .ThenInclude(i => i.Tributes)
             .Include(b => b.Supplier)
+            .Include(b => b.Lines)
+                .ThenInclude(l => l.Supplier)
             .FirstOrDefaultAsync(b => b.PublicId == publicId, ct)
             ?? throw new KeyNotFoundException($"BC {publicId} no encontrada.");
 
@@ -4984,6 +5178,18 @@ public class BookingCancellationService
                 "aún no está confirmada por la AFIP.",
                 invariantCode: "INV-ADR014-001");
 
+        // === ADR-044 T1 (2026-07-10): a que OPERADOR corresponde esta confirmacion. Retrocompatible: si la
+        // cancelacion tiene lineas de UN solo operador (el 100% de los BCs de hoy), se resuelve solo — mismo
+        // comportamiento byte-a-byte que antes de esta tanda. Si tiene lineas de VARIOS operadores (ADR-025) y
+        // el request no trae SupplierPublicId, rechaza pidiendo que se especifique (mejor pedir que adivinar).
+        // ===
+        var targetSupplierId = ResolveTargetSupplierId(bc, request.SupplierPublicId);
+        var isPrimaryOperator = targetSupplierId == bc.SupplierId;
+        var targetLines = bc.Lines.Where(l => l.SupplierId == targetSupplierId).ToList();
+        // Supplier real de ESTE operador (para el default de concepto y la auditoria): el de sus propias lineas
+        // si las tiene, o el del BC padre como fallback defensivo (BC legacy sin lineas).
+        var targetSupplier = targetLines.FirstOrDefault()?.Supplier ?? bc.Supplier;
+
         // === Precondicion 5: concepto que emite ND. Resolvemos el concepto efectivo (el
         // explicito del request, o el default por operador). Regla fiscal firmada: emiten ND
         // TANTO el cargo propio de la agencia (gravado) COMO la penalidad pass-through del
@@ -4992,9 +5198,10 @@ public class BookingCancellationService
         //
         // NOTA: cuando el concepto efectivo es pass-through, el default por operador puede dar
         // pass-through aunque el request no traiga ConceptKind -> es el caso CENTRAL del panel
-        // (informar la multa del operador). ===
+        // (informar la multa del operador). ADR-044 T1: el default mira al operador RESUELTO
+        // arriba (targetSupplier), no siempre al principal del BC (bc.Supplier). ===
         var effectiveConcept = request.ConceptKind
-            ?? DefaultConceptFromSupplier(bc.Supplier?.PenaltyOwnership);
+            ?? DefaultConceptFromSupplier(targetSupplier?.PenaltyOwnership);
         if (!ConceptEmitsDebitNote(effectiveConcept))
             throw new BusinessInvariantViolationException(
                 "Este concepto no emite Nota de Debito automatica (es un seguro u otro caso de " +
@@ -5009,12 +5216,24 @@ public class BookingCancellationService
         // Fase A (2026-06-28): Waived es un estado terminal de la pata del operador (se cerro SIN multa).
         // Confirmar una multa sobre una cancelacion ya cerrada sin multa es contradictorio -> rebota 409,
         // mismo candado que comparte con el cierre sin multa (el primero que gana fija el estado).
-        var debitNoteAlreadyInPlay =
-            bc.PenaltyStatus == PenaltyStatus.Confirmed ||
-            bc.PenaltyStatus == PenaltyStatus.Waived ||
-            bc.DebitNoteInvoiceId.HasValue ||
-            bc.DebitNoteStatus == DebitNoteStatus.Pending ||
-            bc.DebitNoteStatus == DebitNoteStatus.Issued;
+        //
+        // ADR-044 T1 (2026-07-10): para el operador PRINCIPAL el candado sigue siendo el snapshot del BC padre
+        // (byte-identico a como era antes de esta tanda: hoy el 100% de los BCs solo tienen ese operador),
+        // INCLUIDO el chequeo de "ND en juego" (el UNICO slot de Nota de Debito que existe hoy a nivel BC
+        // describe justamente al principal). Para un operador SECUNDARIO, ese snapshot describe a OTRO operador
+        // (el principal), no a este: el candado de ESTE operador vive PURAMENTE en SUS PROPIAS lineas ("cada
+        // linea confirma la suya", spec ADR-044) — NO miramos el DebitNoteInvoiceId/DebitNoteStatus del BC padre
+        // para un secundario, porque son el documento (real o en curso) de OTRO operador y no dicen nada sobre
+        // si ESTE ya se resolvio. Sin este split, confirmar al principal primero (que puede terminar emitiendo
+        // su ND real) dejaria al secundario BLOQUEADO para siempre por un documento que no es el suyo — rompiendo
+        // el requisito central de esta tanda: "multa de 2 operadores confirmable por separado".
+        var debitNoteAlreadyInPlay = isPrimaryOperator
+            ? bc.PenaltyStatus == PenaltyStatus.Confirmed
+              || bc.PenaltyStatus == PenaltyStatus.Waived
+              || bc.DebitNoteInvoiceId.HasValue
+              || bc.DebitNoteStatus == DebitNoteStatus.Pending
+              || bc.DebitNoteStatus == DebitNoteStatus.Issued
+            : targetLines.Any(l => l.PenaltyStatus == PenaltyStatus.Confirmed || l.PenaltyStatus == PenaltyStatus.Waived);
         if (debitNoteAlreadyInPlay)
             throw new BusinessInvariantViolationException(
                 "La multa del operador de esta cancelación ya fue resuelta (confirmada o cerrada sin multa). " +
@@ -5063,8 +5282,8 @@ public class BookingCancellationService
                     entityId: bc.Id.ToString(),
                     reason: bypassReason,
                     amount: request.ConfirmedPenaltyAmount,
-                    // La moneda de la multa: la explicita del request, o la del primer line del BC, o ARS.
-                    currency: await ResolvePenaltyCurrencyForAuditAsync(bc, request.PenaltyCurrency, ct),
+                    // La moneda de la multa: la explicita del request, o la del primer line de ESTE operador, o ARS.
+                    currency: await ResolvePenaltyCurrencyForAuditAsync(bc, request.PenaltyCurrency, ct, targetSupplierId),
                     userId: userId,
                     userName: userName,
                     ct: ct);
@@ -5075,61 +5294,72 @@ public class BookingCancellationService
             }
         }
 
-        // === Aplicar la clasificacion (B1, §3.4 pieza 2, paso a). Reusa el MISMO metodo del
-        // path sincrono via el record comun: setea ConceptKind, PenaltyStatus=Confirmed,
-        // DebitNotePurpose, PenaltyAmountAtEvent + la auditoria del clasificador/confirmador,
-        // y enforza las guardas (permiso elevado + anti-reclasificacion). ===
-        var classification = new PenaltyClassificationInput(
-            PenaltyConceptKind: effectiveConcept,
-            PenaltyStatus: PenaltyStatus.Confirmed,
-            DebitNotePurpose: request.DebitNotePurpose
-                ?? Domain.Entities.DebitNotePurpose.PenaltyOrCancellationCharge,
-            ConfirmedPenaltyAmount: request.ConfirmedPenaltyAmount);
-        CaptureDebitNoteClassification(
-            bc, classification, userId, userName,
-            userCanClassifyAgencyPenalty: true, // ya validado en la precondicion 3
-            debitNoteFeatureEnabled: true,
-            // El confirmador diferido sella la auditoria del clasificador SOLO si el BC aun
-            // no tiene clasificador (sin esto el gating B3 rutea a revision manual y la ND
-            // nunca emite). Si ya hay un clasificador previo (ej. clasificado en el Dia 0),
-            // NO se pisa: el confirmador queda registrado en PenaltyConfirmedBy*. Ver
-            // Precondicion 3 + nota anti-clobber en CaptureDebitNoteClassification.
-            sealClassifierAuditWhenMissing: true);
+        // === ADR-044 T1 (2026-07-10, fix B1 security): las escrituras al SNAPSHOT FISCAL del BC padre
+        // (ConceptKind, PenaltyStatus, PenaltyAmountAtEvent, PenaltyCurrencyAtEvent, PenaltyConfirmedBy*,
+        // OperatorPenaltyConfirmedDate, SupportingDocumentReference) describen la CARA UNICA hacia el cliente,
+        // que hoy corresponde al operador PRINCIPAL del BC. Confirmar la multa de un operador SECUNDARIO NO debe
+        // tocar ese snapshot: pisaria los datos del principal (incluso con su Nota de Debito YA emitida con CAE)
+        // = corrupcion fiscal. Para un secundario, su multa vive 100% en SUS lineas (PenaltyStatus/PenaltyAmount/
+        // RefundCap/PenaltyCurrency, que se actualizan mas abajo en Allocate/Persist, scoped a targetSupplierId)
+        // + el audit event (que registra supplierPublicId). El dato "fecha de confirmacion del operador" y
+        // "referencia del documento" de un secundario NO tienen columna a nivel linea todavia: viajan en el audit
+        // y se persistiran en columnas propias en T2 (NO agregamos columnas en esta tanda). ===
+        if (isPrimaryOperator)
+        {
+            // Aplicar la clasificacion (B1, §3.4 pieza 2, paso a). Reusa el MISMO metodo del path sincrono via el
+            // record comun: setea ConceptKind, PenaltyStatus=Confirmed, DebitNotePurpose, PenaltyAmountAtEvent + la
+            // auditoria del clasificador/confirmador, y enforza las guardas (permiso elevado + anti-reclasificacion,
+            // esta ultima = EnsureConceptNotLockedByDebitNote, que solo aplica al principal: la ND en juego del BC
+            // describe al principal, no a un secundario).
+            var classification = new PenaltyClassificationInput(
+                PenaltyConceptKind: effectiveConcept,
+                PenaltyStatus: PenaltyStatus.Confirmed,
+                DebitNotePurpose: request.DebitNotePurpose
+                    ?? Domain.Entities.DebitNotePurpose.PenaltyOrCancellationCharge,
+                ConfirmedPenaltyAmount: request.ConfirmedPenaltyAmount);
+            CaptureDebitNoteClassification(
+                bc, classification, userId, userName,
+                userCanClassifyAgencyPenalty: true, // ya validado en la precondicion 3
+                debitNoteFeatureEnabled: true,
+                // El confirmador diferido sella la auditoria del clasificador SOLO si el BC aun no tiene
+                // clasificador (sin esto el gating B3 rutea a revision manual y la ND nunca emite). Si ya hay un
+                // clasificador previo (ej. clasificado en el Dia 0), NO se pisa: el confirmador queda registrado en
+                // PenaltyConfirmedBy*. Ver Precondicion 3 + nota anti-clobber en CaptureDebitNoteClassification.
+                sealClassifierAuditWhenMissing: true);
 
-        // Paso b: las dos fechas nuevas del diferido (eje fiscal del plazo + soporte).
-        bc.OperatorPenaltyConfirmedDate = operatorDate;
-        bc.SupportingDocumentReference = request.SupportingDocumentReference;
+            // Las dos fechas nuevas del diferido (eje fiscal del plazo + soporte) — snapshot del padre.
+            bc.OperatorPenaltyConfirmedDate = operatorDate;
+            bc.SupportingDocumentReference = request.SupportingDocumentReference;
+
+            // Paso b-quater (B1 security, 2026-07-08): persistir la MONEDA DECLARADA de la multa en el snapshot del
+            // BC (PenaltyCurrencyAtEvent), NO solo en las lineas. Es la moneda en la que el usuario dijo que el
+            // operador retuvo la multa (ISO "USD"/"ARS"; el front la manda con default USD). El gating de la ND la
+            // compara contra la moneda de la factura para NO estampar la ND por el numero equivocado: una multa
+            // tipeada "en pesos" sobre una factura en dolares saldria como una ND en dolares por el mismo numero
+            // (~1500x). Solo la seteamos si el request la trae: si viene vacia (confirmaciones VIEJAS, como el caso
+            // real que quedo pendiente), la dejamos null a proposito y el gating rutea a revision manual cuando la
+            // factura es extranjera (conservador: NO adivinamos la moneda). Nunca convertimos con TC (eso es del
+            // contador). Esto tambien es lo que hace que FreezeDebitNoteSnapshot NO tenga que inventar la moneda.
+            if (!string.IsNullOrWhiteSpace(request.PenaltyCurrency))
+                bc.PenaltyCurrencyAtEvent = Monedas.Normalizar(request.PenaltyCurrency);
+        }
 
         // Paso b-bis (CAMBIO 3, 2026-06-24): registrar la MONEDA en que el operador retuvo la multa, en la(s)
-        // linea(s) del BC. Es SOLO captura/registro: NO cambia la moneda en la que se EMITE la ND al cliente
-        // (eso sigue como hoy; wire de esta moneda a la emision/FX de la ND es follow-up que requiere firma del
-        // contador). Default explicito por linea = moneda del servicio (line.Currency) si el request no la trae.
-        //
-        // LIMITACION declarada (NO inventar): la confirmacion diferida lleva UN solo monto de penalidad a nivel
-        // BC-padre; no desagrega por operador. Por eso, cuando el request trae PenaltyCurrency explicita, se
-        // aplica pareja a todas las lineas del BC; si no la trae, cada linea conserva su propia moneda como
-        // moneda de la multa. El dia que la penalidad se confirme POR operador (multi-op), esto debe pasar a
-        // recibir la moneda por linea.
-        await PersistPenaltyCurrencyOnLinesAsync(bc, request.PenaltyCurrency, ct);
-
-        // Paso b-quater (B1 security, 2026-07-08): persistir la MONEDA DECLARADA de la multa en el snapshot del
-        // BC (PenaltyCurrencyAtEvent), NO solo en las lineas. Es la moneda en la que el usuario dijo que el
-        // operador retuvo la multa (ISO "USD"/"ARS"; el front la manda con default USD). El gating de la ND la
-        // compara contra la moneda de la factura para NO estampar la ND por el numero equivocado: una multa
-        // tipeada "en pesos" sobre una factura en dolares saldria como una ND en dolares por el mismo numero
-        // (~1500x). Solo la seteamos si el request la trae: si viene vacia (confirmaciones VIEJAS, como el caso
-        // real que quedo pendiente), la dejamos null a proposito y el gating rutea a revision manual cuando la
-        // factura es extranjera (conservador: NO adivinamos la moneda). Nunca convertimos con TC (eso es del
-        // contador). Esto tambien es lo que hace que FreezeDebitNoteSnapshot NO tenga que inventar la moneda.
-        if (!string.IsNullOrWhiteSpace(request.PenaltyCurrency))
-            bc.PenaltyCurrencyAtEvent = Monedas.Normalizar(request.PenaltyCurrency);
+        // linea(s) de ESTE operador. Es SOLO captura/registro: NO cambia la moneda en la que se EMITE la ND al
+        // cliente (eso sigue como hoy). Scoped a targetSupplierId (ADR-044 T1): antes de esta tanda se aplicaba a
+        // TODAS las lineas del BC sin importar el operador, lo que habria pisado la moneda de otros operadores.
+        // Este write es a nivel LINEA, asi que corre para principal Y secundario (cada uno registra la suya).
+        await PersistPenaltyCurrencyOnLinesAsync(bc, request.PenaltyCurrency, ct, targetSupplierId);
 
         // Paso b-ter (FASE 0, 2026-06-28): bajar el REEMBOLSO ESPERADO del operador por la multa confirmada.
-        // Imputa la multa a la(s) linea(s) del operador principal y recalcula RefundCap = capBeforePenalty − multa
-        // (por moneda, nunca cruzado, nunca negativo). Asi "Reembolsos a cobrar" deja de sobreestimar. NO toca la
-        // ND al cliente (sigue manejada por bc.PenaltyAmountAtEvent, seteado arriba en CaptureDebitNoteClassification).
+        // Imputa la multa a la(s) linea(s) del operador RESUELTO arriba (targetSupplierId — ADR-044 T1: antes
+        // de esta tanda quedaba hardcodeado al operador principal del BC, bug M2 del rediseño de multas: las
+        // multas de operadores secundarios se perdian) y recalcula RefundCap = capBeforePenalty − multa (por
+        // moneda, nunca cruzado, nunca negativo). Asi "Reembolsos a cobrar" deja de sobreestimar. Es a nivel LINEA
+        // (corre para ambos). Pasamos effectiveConcept EXPLICITO: para un secundario, bc.ConceptKind describe al
+        // principal, asi que el neteo debe decidirse por el concepto de ESTE operador, no por el del padre.
         await AllocateConfirmedPenaltyToLinesAsync(
-            bc, request.ConfirmedPenaltyAmount, request.PenaltyCurrency, ct);
+            bc, request.ConfirmedPenaltyAmount, request.PenaltyCurrency, ct, targetSupplierId, effectiveConcept);
 
         // === Auditoria del "confirmado" STAGED, no guardada de una (fix atomicidad 2026-07-01). Antes esta
         // llamada era LogBusinessEventAsync, que hace su PROPIO SaveChanges y por lo tanto dejaba
@@ -5145,11 +5375,16 @@ public class BookingCancellationService
             {
                 bc.PublicId,
                 action = "deferred-penalty-confirmed",
-                conceptKind = bc.ConceptKind.ToString(),
+                // ADR-044 T1: el concepto EFECTIVO del operador resuelto (para un secundario, bc.ConceptKind
+                // describe al principal, asi que loguear ese seria enganoso). Ver fix B1.
+                conceptKind = effectiveConcept.ToString(),
                 confirmedAmount = request.ConfirmedPenaltyAmount,
                 operatorConfirmationDate = operatorDate,
                 hasSupportingDocument = !string.IsNullOrWhiteSpace(request.SupportingDocumentReference),
                 fourEyesApplied = requiresFourEyes,
+                // ADR-044 T1 (2026-07-10): a que operador corresponde esta confirmacion (rastro multi-operador).
+                supplierPublicId = targetSupplier?.PublicId,
+                isPrimaryOperator,
             }),
             userId: userId,
             userName: userName);
@@ -5165,8 +5400,11 @@ public class BookingCancellationService
         // RefundCap->Y(-) se cancelan — asi que el pool objetivo es el MISMO leyendo el estado pre-marca o
         // post-marca. Y por que da atomicidad sin transaccion explicita: la excepcion del reconciler ocurre ANTES
         // de cualquier SaveChanges (la suya y la de abajo), de modo que la marca no se persiste ni en Postgres ni
-        // en InMemory; y una SaveChanges unica es atomica de por si. ===
-        await ReconcileSupplierCreditPoolAsync(bc.SupplierId, userId, userName, ct);
+        // en InMemory; y una SaveChanges unica es atomica de por si.
+        //
+        // ADR-044 T1 (2026-07-10): reconciliamos el pool del operador RESUELTO (targetSupplierId), no siempre
+        // el principal del BC — el RefundCap que acaba de cambiar es el de ESE operador. ===
+        await ReconcileSupplierCreditPoolAsync(targetSupplierId, userId, userName, ct);
 
         // === Marca de no-retorno + auditoria staged + cambios de lineas, en una unica SaveChanges. Recien ACA la
         // penalidad queda Confirmed de forma durable (si el reconciler ya guardo sus cambios de pool, esta flushea
@@ -5185,19 +5423,37 @@ public class BookingCancellationService
         // sabe recuperar (y que el endpoint retry-debit-note puede reintentar) — y devolvemos EXITO-con-aviso. La
         // combinacion "multa confirmada + ND pendiente de revision" es un estado CONSISTENTE; un 500 con estado a
         // medias NO lo es. ===
-        WarnIfDebitNoteLate(bc, operatorDate, settings);
-        // A3 (2026-07-08): la ND se atribuye a quien CONFIRMA la multa (userId/userName), no al confirmador de la anulacion.
-        try
+        // ADR-044 T1 (2026-07-10, fix B1 security): la emision de la ND lee el snapshot del BC padre
+        // (bc.PenaltyAmountAtEvent / ConceptKind / PenaltyCurrencyAtEvent), que describe al operador PRINCIPAL.
+        // Para un operador SECUNDARIO ese snapshot NO es suyo (lo dejamos intacto arriba), asi que emitir la ND
+        // aca sacaria un comprobante por el numero/moneda del principal, o por datos stale = ND fiscal incorrecta.
+        // La ND POR OPERADOR (una por cada uno) es el objetivo de T3; en T1 la confirmacion de un secundario
+        // registra su multa a nivel linea + audit, y su ND queda pendiente de T3 (ademas, cuando hay >1 operador
+        // confirmado, el gate multi-operador de TryEmit ya frena la ND automatica del principal tambien). Por eso
+        // SOLO el principal dispara la emision aca.
+        if (isPrimaryOperator)
         {
-            await TryEmitCancellationDebitNoteAsync(bc, ct, actorUserId: userId, actorUserName: userName);
+            WarnIfDebitNoteLate(bc, operatorDate, settings);
+            // A3 (2026-07-08): la ND se atribuye a quien CONFIRMA la multa (userId/userName), no al confirmador de la anulacion.
+            try
+            {
+                await TryEmitCancellationDebitNoteAsync(bc, ct, actorUserId: userId, actorUserName: userName);
+            }
+            catch (Exception emissionError) when (emissionError is not OperationCanceledException)
+            {
+                _logger.LogError(emissionError,
+                    "metric:cancellation_debit_note_emission_failed | BcPublicId={BcPublicId} | " +
+                    "La multa quedo confirmada pero la emision de la Nota de Debito fallo; se deja en revision manual.",
+                    bc.PublicId);
+                await MarkDebitNoteEmissionForManualReviewAsync(bc.Id, ct);
+            }
         }
-        catch (Exception emissionError) when (emissionError is not OperationCanceledException)
+        else
         {
-            _logger.LogError(emissionError,
-                "metric:cancellation_debit_note_emission_failed | BcPublicId={BcPublicId} | " +
-                "La multa quedo confirmada pero la emision de la Nota de Debito fallo; se deja en revision manual.",
-                bc.PublicId);
-            await MarkDebitNoteEmissionForManualReviewAsync(bc.Id, ct);
+            _logger.LogInformation(
+                "metric:cancellation_secondary_operator_penalty_confirmed | BcPublicId={BcPublicId} Supplier={SupplierId} | " +
+                "Multa de operador secundario confirmada a nivel linea; su Nota de Debito por operador queda para T3.",
+                bc.PublicId, targetSupplierId);
         }
 
         _logger.LogInformation(
@@ -5603,7 +5859,8 @@ public class BookingCancellationService
         string? userName,
         CancellationToken ct,
         bool userCanClassifyAgencyPenalty = false,
-        bool requesterIsAdmin = false)
+        bool requesterIsAdmin = false,
+        Guid? supplierPublicId = null)
     {
         // Fase A (2026-06-28): cierre SIN multa. Es la rama ALTERNATIVA a ConfirmPenaltyAsync para el caso mas
         // comun del negocio: el operador no cobro ninguna multa y devuelve todo. Reusa las precondiciones de
@@ -5627,9 +5884,15 @@ public class BookingCancellationService
                 "La gestión de penalidades de cancelación no está disponible en este momento. " +
                 "Consultá con administración.");
 
-        // === Precondicion 2: el BC existe (404). Cargamos la Reserva para el detalle del audit. ===
+        // === Precondicion 2: el BC existe (404). Cargamos la Reserva para el detalle del audit.
+        // ADR-044 T1 (2026-07-10): sumamos el Supplier del padre (para el fallback legacy de ResolveTargetSupplierId)
+        // + Lines con su Supplier para poder resolver a que operador corresponde este cierre sin multa cuando la
+        // cancelacion tiene servicios de mas de uno (ADR-025). ===
         var bc = await _db.BookingCancellations
             .Include(b => b.Reserva)
+            .Include(b => b.Supplier)
+            .Include(b => b.Lines)
+                .ThenInclude(l => l.Supplier)
             .FirstOrDefaultAsync(b => b.PublicId == publicId, ct)
             ?? throw new KeyNotFoundException($"BC {publicId} no encontrada.");
 
@@ -5648,9 +5911,20 @@ public class BookingCancellationService
                 "confirmada por la AFIP.",
                 invariantCode: "INV-WAIVE-001");
 
-        // === Precondicion 5: idempotencia. Si la penalidad YA se cerro sin multa (Waived), rebota 409 (no-op
-        // seguro). Waive doble => 409. ===
-        if (bc.PenaltyStatus == PenaltyStatus.Waived)
+        // === ADR-044 T1 (2026-07-10): a que OPERADOR corresponde este cierre sin multa. Mismo helper y misma
+        // retrocompatibilidad que ConfirmPenaltyAsync (ver ResolveTargetSupplierId). ===
+        var targetSupplierId = ResolveTargetSupplierId(bc, supplierPublicId);
+        var isPrimaryOperator = targetSupplierId == bc.SupplierId;
+        var targetLines = bc.Lines.Where(l => l.SupplierId == targetSupplierId).ToList();
+
+        // === Precondicion 5: idempotencia. Si la penalidad de ESTE operador YA se cerro sin multa, rebota 409
+        // (no-op seguro). Waive doble => 409. Para el operador PRINCIPAL el snapshot del BC padre sigue siendo la
+        // fuente de verdad (byte-identico a antes de esta tanda); para uno SECUNDARIO, ese snapshot describe al
+        // principal, asi que miramos SUS PROPIAS lineas ("cada linea confirma/cierra la suya"). ===
+        var alreadyWaivedForTarget = isPrimaryOperator
+            ? bc.PenaltyStatus == PenaltyStatus.Waived
+            : targetLines.Any(l => l.PenaltyStatus == PenaltyStatus.Waived);
+        if (alreadyWaivedForTarget)
             throw new BusinessInvariantViolationException(
                 "La multa del operador de esta cancelación ya fue cerrada sin multa. No se vuelve a procesar.",
                 invariantCode: "INV-WAIVE-003");
@@ -5660,8 +5934,15 @@ public class BookingCancellationService
         // ese comprobante desde administracion primero. Cerrar sin multa dejaria una ND viva sin su multa =
         // incoherencia fiscal. Esta MISMA condicion la reusa el read-model GetOperatorPenaltySituationAsync (via
         // IsOperatorPenaltyDebitNoteInPlay) para decidir si la ficha OFRECE el boton "cerrar sin multa": si
-        // divergieran, la ficha mostraria un boton que despues rebota 409 aca. ===
-        var debitNoteInPlay = IsOperatorPenaltyDebitNoteInPlay(bc.DebitNoteInvoiceId.HasValue, bc.DebitNoteStatus);
+        // divergieran, la ficha mostraria un boton que despues rebota 409 aca.
+        //
+        // ADR-044 T1 (2026-07-10): este chequeo aplica SOLO al operador PRINCIPAL (el UNICO slot de ND que
+        // existe hoy a nivel BC describe justamente a ese operador). Para uno SECUNDARIO ese documento (real o en
+        // curso) es de OTRO operador: bloquear su cierre sin multa por un comprobante ajeno dejaria a un
+        // secundario sin forma de cerrar su pata si el principal ya emitio su ND — rompiendo "cada operador se
+        // resuelve por separado" (mismo criterio que la Precondicion 6 de ConfirmPenaltyAsync). ===
+        var debitNoteInPlay = isPrimaryOperator
+            && IsOperatorPenaltyDebitNoteInPlay(bc.DebitNoteInvoiceId.HasValue, bc.DebitNoteStatus);
         if (debitNoteInPlay)
             throw new BusinessInvariantViolationException(
                 "La multa tiene una nota de débito emitida o en emisión; se resuelve desde administración.",
@@ -5672,21 +5953,28 @@ public class BookingCancellationService
         // / ManualReview, sin factura vinculada — garantizado por la Precondicion 6). Decidir NO cobrarla es una
         // accion sensible (revierte una confirmacion y restaura topes de reembolso), asi que la EXIGIMOS a Admin,
         // igual que reabrir un cierre (RevertWaivedOperatorPenaltyAsync). El cierre desde el estado pendiente normal
-        // (Estimated) NO requiere Admin. ===
-        var waivingFromConfirmed = bc.PenaltyStatus == PenaltyStatus.Confirmed;
+        // (Estimated) NO requiere Admin. Mismo criterio principal-vs-secundario que la Precondicion 5. ===
+        var waivingFromConfirmed = isPrimaryOperator
+            ? bc.PenaltyStatus == PenaltyStatus.Confirmed
+            : targetLines.Any(l => l.PenaltyStatus == PenaltyStatus.Confirmed);
         if (waivingFromConfirmed && !requesterIsAdmin)
             throw new BusinessInvariantViolationException(
                 "Cerrar sin multa una penalidad ya confirmada requiere rol de Administrador.",
                 invariantCode: "INV-WAIVE-005");
 
         // === Si venimos de una multa confirmada, DESHACEMOS la imputacion de la multa a las lineas del operador
-        // ANTES de cambiar el estado. Al confirmar (AllocateConfirmedPenaltyToLinesAsync) en concepto pass-through se
-        // REDUJO el RefundCap de las lineas del operador principal (invariante RefundCap + PenaltyAmount ==
+        // RESUELTO ANTES de cambiar el estado. Al confirmar (AllocateConfirmedPenaltyToLinesAsync) en concepto
+        // pass-through se REDUJO el RefundCap de esas lineas (invariante RefundCap + PenaltyAmount ==
         // capBeforePenalty). Si no lo restauramos, "Reembolsos a cobrar" queda subestimado para siempre. La lista de
         // caps restaurados va al audit. Para el estado pendiente (Estimated) esto es no-op (no hubo imputacion). ===
         var restoredCaps = waivingFromConfirmed
-            ? await ReverseConfirmedPenaltyFromLinesAsync(bc, ct)
+            ? await ReverseConfirmedPenaltyFromLinesAsync(bc, ct, targetSupplierId)
             : new List<PenaltyCapRestore>();
+
+        // ADR-044 T1: marcar las lineas de ESTE operador como Waived (espejo de como Allocate las marca
+        // Confirmed). El Reverse de arriba ya las dejo en Estimated; este es el ultimo paso del estado terminal.
+        foreach (var line in targetLines)
+            line.PenaltyStatus = PenaltyStatus.Waived;
 
         // === Snapshot de la huella de ND ANTES de limpiarla, para el audit. Guardar el estado de ND previo (p.ej.
         // Failed / ManualReview) y el mensaje de error de ARCA que se borra deja la historia AUTOCONTENIDA en el evento:
@@ -5697,15 +5985,23 @@ public class BookingCancellationService
         // === Aplicar el cierre sin multa. Estado terminal propio (Waived) + monto 0, y limpieza de cualquier huella
         // de ND que hubiera quedado (Failed/ManualReview + su mensaje de error): la cara fiscal al cliente por la
         // multa pasa a cero, sin comprobante. NO tocamos el estado de la reserva: cierra cuando llega el reembolso
-        // completo (los post-pasos de abajo reevaluan el auto-cierre). ===
-        bc.PenaltyStatus = PenaltyStatus.Waived;
-        bc.PenaltyAmountAtEvent = 0m; // "no hubo multa" explicito (la cara fiscal al cliente es cero, sin ND).
-        bc.DebitNoteStatus = DebitNoteStatus.NotApplicable; // sin ND (limpia un Failed/ManualReview previo).
-        bc.DebitNoteArcaErrorMessage = null;                // el error de la ND que fallo ya no aplica.
-        bc.DebitNotePurpose = null;                         // no hay finalidad de ND: la multa se cerro sin comprobante.
-        bc.PenaltyConfirmedByUserId = userId;
-        bc.PenaltyConfirmedByUserName = userName;
-        bc.PenaltyConfirmedAt = DateTime.UtcNow;
+        // completo (los post-pasos de abajo reevaluan el auto-cierre).
+        //
+        // ADR-044 T1 (2026-07-10): estos campos son el snapshot BC-padre, que hoy alimenta el UNICO slot de ND
+        // del BC — solo tiene sentido pisarlo cuando el operador que se cierra es el PRINCIPAL. Para uno
+        // SECUNDARIO, este snapshot describe (o describira) a otro operador: tocarlo aca lo corromperia. Su
+        // cierre sin multa queda representado SOLO a nivel linea (targetLines, ya marcadas Waived arriba). ===
+        if (isPrimaryOperator)
+        {
+            bc.PenaltyStatus = PenaltyStatus.Waived;
+            bc.PenaltyAmountAtEvent = 0m; // "no hubo multa" explicito (la cara fiscal al cliente es cero, sin ND).
+            bc.DebitNoteStatus = DebitNoteStatus.NotApplicable; // sin ND (limpia un Failed/ManualReview previo).
+            bc.DebitNoteArcaErrorMessage = null;                // el error de la ND que fallo ya no aplica.
+            bc.DebitNotePurpose = null;                         // no hay finalidad de ND: la multa se cerro sin comprobante.
+            bc.PenaltyConfirmedByUserId = userId;
+            bc.PenaltyConfirmedByUserName = userName;
+            bc.PenaltyConfirmedAt = DateTime.UtcNow;
+        }
 
         // === Auditoria OBLIGATORIA (Condicion 1 del review): rastro que distingue "el operador no cobro multa"
         // (decision de negocio) de "penalidad = 0 por error". El campo `action` distingue el cierre normal del cierre
@@ -5728,6 +6024,9 @@ public class BookingCancellationService
                 // Va SOLO al audit interno; nunca se expone al usuario final.
                 previousDebitNoteStatus,
                 clearedArcaErrorMessage,
+                // ADR-044 T1 (2026-07-10): a que operador corresponde este cierre sin multa (rastro multi-operador).
+                supplierPublicId = targetLines.FirstOrDefault()?.Supplier?.PublicId,
+                isPrimaryOperator,
             }),
             userId: userId,
             userName: userName,
@@ -5739,7 +6038,9 @@ public class BookingCancellationService
         // que el receivable Y sigue contando entero y el reconciler mantiene el pool en 0 (NO mintea la fuga). Lo
         // disparamos para que el pool quede coherente con el estado nuevo. C5: tras el waive sin reembolso, la BC
         // sigue esperando el reembolso (su Y vive) -> Prepago 0.
-        await ReconcileSupplierCreditPoolAsync(bc.SupplierId, userId, userName, ct);
+        //
+        // ADR-044 T1: reconciliamos el pool del operador RESUELTO (targetSupplierId), no siempre el principal.
+        await ReconcileSupplierCreditPoolAsync(targetSupplierId, userId, userName, ct);
 
         // (2026-07-03) Cierre INMEDIATO: al cerrar sin multa se resolvio la pata que bloqueaba el auto-cierre. Si
         // ademas la agencia nunca le pago nada reembolsable al operador (receivable $0), la anulacion ya no espera
@@ -5762,12 +6063,13 @@ public class BookingCancellationService
         string userId,
         string? userName,
         bool requesterIsAdmin,
-        CancellationToken ct)
+        CancellationToken ct,
+        Guid? supplierPublicId = null)
     {
         // Fase A (2026-06-28): REVERSA del cierre sin multa. El cierre sin multa (Waived) es terminal, pero el
         // negocio puede necesitar reabrirlo: o bien fue un error, o bien el operador termino cobrando una multa
-        // TARDIA. Como el waive no emitio ninguna Nota de Debito ni toco las lineas, revertir es un flip de estado
-        // LIMPIO de vuelta a Estimated (el estado pendiente), sin nada fiscal que deshacer.
+        // TARDIA. Como el waive no emitio ninguna Nota de Debito ni dejo cap sin restaurar, revertir es un flip de
+        // estado LIMPIO de vuelta a Estimated (el estado pendiente), sin nada fiscal que deshacer.
 
         // El motivo es obligatorio (lo valida tambien el DataAnnotation del request, esto es defensivo).
         var trimmedReason = reason?.Trim();
@@ -5792,26 +6094,46 @@ public class BookingCancellationService
                 "Reabrir un cierre sin multa del operador requiere rol de Administrador.",
                 invariantCode: "INV-WAIVE-REVERT-PERM");
 
-        // === Precondicion 3: el BC existe (404). Cargamos la Reserva para el detalle del audit. ===
+        // === Precondicion 3: el BC existe (404). Cargamos la Reserva para el detalle del audit; ademas Lines +
+        // su Supplier + el Supplier del padre (ADR-044 T1) para resolver a que operador corresponde la reapertura
+        // cuando la cancelacion tiene servicios de mas de uno (ADR-025). ===
         var bc = await _db.BookingCancellations
             .Include(b => b.Reserva)
+            .Include(b => b.Supplier)
+            .Include(b => b.Lines)
+                .ThenInclude(l => l.Supplier)
             .FirstOrDefaultAsync(b => b.PublicId == publicId, ct)
             ?? throw new KeyNotFoundException($"BC {publicId} no encontrada.");
 
+        // === ADR-044 T1 (2026-07-10, fix B2): a que OPERADOR corresponde esta reapertura. Mismo helper y misma
+        // retrocompatibilidad que Confirm/Waive. Para el PRINCIPAL el estado Waived vive en el snapshot del BC
+        // padre (byte-identico a antes de esta tanda); para un SECUNDARIO vive en SUS lineas. ===
+        var targetSupplierId = ResolveTargetSupplierId(bc, supplierPublicId);
+        var isPrimaryOperator = targetSupplierId == bc.SupplierId;
+        var targetLines = bc.Lines.Where(l => l.SupplierId == targetSupplierId).ToList();
+
         // === Precondicion 4: solo se puede reabrir lo que esta cerrado sin multa (Waived). Si la penalidad esta
         // Estimated (ya pendiente) o Confirmed (se resolvio CON multa, hay una ND real de por medio), reabrir no
-        // procede -> 409. Tambien cubre la idempotencia: revert dos veces => la segunda rebota aca. ===
-        if (bc.PenaltyStatus != PenaltyStatus.Waived)
+        // procede -> 409. Tambien cubre la idempotencia: revert dos veces => la segunda rebota aca. Para el
+        // PRINCIPAL se mira el snapshot del padre; para un SECUNDARIO, SUS lineas (el snapshot del padre describe
+        // al principal, no a este — sin esto un secundario cerrado sin multa quedaria IRREVERSIBLE). ===
+        var isWaivedForTarget = isPrimaryOperator
+            ? bc.PenaltyStatus == PenaltyStatus.Waived
+            : targetLines.Any(l => l.PenaltyStatus == PenaltyStatus.Waived);
+        if (!isWaivedForTarget)
             throw new BusinessInvariantViolationException(
                 "Esta cancelación no está cerrada sin multa.",
                 invariantCode: "INV-WAIVE-REVERT-001");
 
         // === Precondicion 5 (defensiva): un waive NUNCA debe tener una ND vinculada. Si por algun motivo la
         // hubiera, NO revertimos en silencio: habria que tratar primero esa ND. Mantiene la invariante "un cierre
-        // sin multa no tiene comprobante fiscal" antes de tocar el estado. ===
-        if (bc.DebitNoteInvoiceId.HasValue ||
-            bc.DebitNoteStatus == DebitNoteStatus.Pending ||
-            bc.DebitNoteStatus == DebitNoteStatus.Issued)
+        // sin multa no tiene comprobante fiscal" antes de tocar el estado. ADR-044 T1: aplica SOLO al principal —
+        // el UNICO slot de ND del BC describe al principal; para un secundario ese documento (si existe) es de
+        // OTRO operador y no debe bloquear su reapertura (mismo criterio que Confirm/Waive). ===
+        if (isPrimaryOperator &&
+            (bc.DebitNoteInvoiceId.HasValue ||
+             bc.DebitNoteStatus == DebitNoteStatus.Pending ||
+             bc.DebitNoteStatus == DebitNoteStatus.Issued))
             throw new BusinessInvariantViolationException(
                 "No se puede reabrir: la cancelación tiene una Nota de Débito asociada.",
                 invariantCode: "INV-WAIVE-REVERT-002");
@@ -5855,14 +6177,24 @@ public class BookingCancellationService
         //
         // NOTA (fix "multa fantasma", 2026-07-05): si el waive vino DESDE una multa confirmada, ese waive ya habia
         // restaurado los topes de reembolso de las lineas (ReverseConfirmedPenaltyFromLinesAsync dejo PenaltyAmount
-        // en null). Por eso aca NO hay que tocar las lineas: la reversa vuelve a Estimated y, si el operador termino
+        // en null). Por eso aca NO hay que tocar los caps: la reversa vuelve a Estimated y, si el operador termino
         // cobrando la multa, se RE-CONFIRMA por el camino normal (ConfirmPenaltyAsync), que vuelve a imputar la multa
-        // a las lineas. La secuencia waive-desde-Confirmed -> revert -> confirmar es coherente y no descuadra caps. ===
-        bc.PenaltyStatus = PenaltyStatus.Estimated;
-        bc.PenaltyAmountAtEvent = null;          // el waive lo habia puesto en 0; Estimated = aun sin monto
-        bc.PenaltyConfirmedByUserId = null;
-        bc.PenaltyConfirmedByUserName = null;
-        bc.PenaltyConfirmedAt = null;
+        // a las lineas. La secuencia waive-desde-Confirmed -> revert -> confirmar es coherente y no descuadra caps.
+        //
+        // ADR-044 T1 (2026-07-10, fix B2): el snapshot del BC padre describe al PRINCIPAL — solo se restaura si el
+        // que se reabre es el principal. Para un SECUNDARIO, su estado Waived vive en SUS lineas: se vuelven a
+        // Estimated (espejo de como el waive de un secundario las dejo Waived). En ambos casos las lineas del
+        // operador resuelto pasan a Estimated (para el principal es redundante con el snapshot, pero coherente). ===
+        if (isPrimaryOperator)
+        {
+            bc.PenaltyStatus = PenaltyStatus.Estimated;
+            bc.PenaltyAmountAtEvent = null;          // el waive lo habia puesto en 0; Estimated = aun sin monto
+            bc.PenaltyConfirmedByUserId = null;
+            bc.PenaltyConfirmedByUserName = null;
+            bc.PenaltyConfirmedAt = null;
+        }
+        foreach (var line in targetLines)
+            line.PenaltyStatus = PenaltyStatus.Estimated;
 
         // === Auditoria OBLIGATORIA: rastro de quien reabrio, cuando y por que. LogBusinessEventAsync corre antes
         // del commit de abajo; el orden es aceptable (si el SaveChanges fallara por xmin, el reintento rebota por
@@ -5878,6 +6210,9 @@ public class BookingCancellationService
                 action = "operator-penalty-waive-reverted",
                 reason = trimmedReason,
                 bcStatus = bc.Status.ToString(),
+                // ADR-044 T1: a que operador corresponde la reapertura (rastro multi-operador).
+                supplierPublicId = targetLines.FirstOrDefault()?.Supplier?.PublicId ?? bc.Supplier?.PublicId,
+                isPrimaryOperator,
             }),
             userId: userId,
             userName: userName,
@@ -5886,8 +6221,9 @@ public class BookingCancellationService
         await _db.SaveChangesAsync(ct);
 
         // Pasos B/C (2026-06-29): reabrir el cierre sin multa vuelve la penalidad a Estimated sin tocar caps; el
-        // pool no deberia cambiar, pero reconciliamos por coherencia (idempotente).
-        await ReconcileSupplierCreditPoolAsync(bc.SupplierId, userId, userName, ct);
+        // pool no deberia cambiar, pero reconciliamos por coherencia (idempotente). ADR-044 T1: pool del operador
+        // RESUELTO (targetSupplierId), no siempre el principal.
+        await ReconcileSupplierCreditPoolAsync(targetSupplierId, userId, userName, ct);
 
         _logger.LogInformation(
             "metric:cancellation_operator_penalty_waive_reverted | BcPublicId={BcPublicId} By={UserId}",
@@ -5967,18 +6303,24 @@ public class BookingCancellationService
 
     /// <summary>
     /// CAMBIO 3 (2026-06-24): resuelve la moneda de la multa del operador para REGISTRO/auditoria. Prioridad:
-    /// (1) la moneda explicita del request (ISO 4217); (2) la moneda de la primera linea del BC (cada servicio
-    /// cancelado lleva la suya); (3) ARS como fallback conservador. NO cambia la moneda en la que se EMITE la
-    /// ND al cliente (eso sigue como hoy): solo registra la verdad de lo que retuvo el operador.
+    /// (1) la moneda explicita del request (ISO 4217); (2) la moneda de la primera linea del operador resuelto
+    /// (cada servicio cancelado lleva la suya); (3) ARS como fallback conservador. NO cambia la moneda en la que
+    /// se EMITE la ND al cliente (eso sigue como hoy): solo registra la verdad de lo que retuvo el operador.
     /// </summary>
+    /// <param name="targetSupplierId">
+    /// ADR-044 T1 (2026-07-10): si se informa, la primera linea se busca SOLO entre las de ese operador (evita
+    /// devolver la moneda de OTRO operador en una cancelacion multi-operador). Null = comportamiento historico
+    /// (primera linea del BC, sin filtrar por operador).
+    /// </param>
     private async Task<string> ResolvePenaltyCurrencyForAuditAsync(
-        BookingCancellation bc, string? requestedCurrency, CancellationToken ct)
+        BookingCancellation bc, string? requestedCurrency, CancellationToken ct, int? targetSupplierId = null)
     {
         if (!string.IsNullOrWhiteSpace(requestedCurrency))
             return Monedas.Normalizar(requestedCurrency);
 
         var firstLineCurrency = await _db.BookingCancellationLines
-            .Where(l => l.BookingCancellationId == bc.Id)
+            .Where(l => l.BookingCancellationId == bc.Id
+                     && (targetSupplierId == null || l.SupplierId == targetSupplierId.Value))
             .OrderBy(l => l.Id)
             .Select(l => l.Currency)
             .FirstOrDefaultAsync(ct);
@@ -5993,21 +6335,29 @@ public class BookingCancellationService
     ///
     /// <para>Es SOLO registro: no toca el balance, ni el estado, ni la moneda de emision de la ND.</para>
     /// </summary>
+    /// <param name="targetSupplierId">
+    /// ADR-044 T1 (2026-07-10): si se informa, SOLO se tocan las lineas de ESE operador (antes de esta tanda se
+    /// tocaban TODAS las lineas del BC sin importar el operador, lo que en una cancelacion multi-operador habria
+    /// pisado la moneda registrada de un operador distinto al que se esta confirmando/corrigiendo). Null =
+    /// comportamiento historico (todas las lineas del BC), que sigue siendo lo correcto para el 100% de los BCs
+    /// mono-operador de hoy.
+    /// </param>
     private async Task PersistPenaltyCurrencyOnLinesAsync(
-        BookingCancellation bc, string? requestedCurrency, CancellationToken ct)
+        BookingCancellation bc, string? requestedCurrency, CancellationToken ct, int? targetSupplierId = null)
     {
         // Cargamos las lineas TRACKED (sin AsNoTracking) porque vamos a setear PenaltyCurrency y el caller
         // las persiste en su SaveChanges.
         var lines = await _db.BookingCancellationLines
-            .Where(l => l.BookingCancellationId == bc.Id)
+            .Where(l => l.BookingCancellationId == bc.Id
+                     && (targetSupplierId == null || l.SupplierId == targetSupplierId.Value))
             .ToListAsync(ct);
 
-        if (lines.Count == 0) return; // BC sin lineas (legacy): no hay donde registrar; no es error.
+        if (lines.Count == 0) return; // BC sin lineas (legacy), o sin lineas de ese operador: no hay donde registrar.
 
         foreach (var line in lines)
         {
-            // Si el request trae una moneda explicita, se aplica pareja a todas las lineas (ver limitacion en
-            // el call site). Si no, cada linea conserva SU moneda como moneda de la multa.
+            // Si el request trae una moneda explicita, se aplica pareja a todas las lineas ALCANZADAS (ver
+            // limitacion en el call site). Si no, cada linea conserva SU moneda como moneda de la multa.
             line.PenaltyCurrency = string.IsNullOrWhiteSpace(requestedCurrency)
                 ? Monedas.Normalizar(line.Currency)
                 : Monedas.Normalizar(requestedCurrency);
@@ -6026,11 +6376,12 @@ public class BookingCancellationService
     /// = RefundCap − recibido) seguia mostrando el monto SIN descontar la multa. Esto lo corrige.</para>
     ///
     /// <para><b>A que operador se imputa</b>: la confirmacion (sincrona o diferida) lleva UN solo monto de multa
-    /// a nivel BC-padre, sin desagregar por operador ni por servicio. La multa que se confirma corresponde al
-    /// operador PRINCIPAL del evento (<see cref="BookingCancellation.SupplierId"/>), asi que la imputamos SOLO a
-    /// las lineas de ese operador. En una cancelacion multi-operador, los demas operadores conservan su reembolso
-    /// intacto (su multa, si la hay, se confirma por separado — la emision/confirmacion por linea de operador es
-    /// un rediseño aparte, ya documentado en <see cref="TryEmitCancellationDebitNoteAsync"/>).</para>
+    /// por llamada. Se imputa SOLO a las lineas del operador RESUELTO (<paramref name="targetSupplierId"/>, que
+    /// por defecto es el principal del BC, <see cref="BookingCancellation.SupplierId"/>). En una cancelacion
+    /// multi-operador (ADR-025), los demas operadores conservan su reembolso intacto hasta que se confirme SU
+    /// propia multa con una llamada aparte (ADR-044 T1: "cada linea confirma la suya", ver
+    /// <see cref="ConfirmPenaltyAsync"/>); la ND al cliente sigue siendo UNA sola por BC (T3 la desagrega por
+    /// operador, ver <see cref="TryEmitCancellationDebitNoteAsync"/>).</para>
     ///
     /// <para><b>Seguridad de moneda (NUNCA mezclar ARS/USD)</b>: la multa es un solo numero en UNA moneda. Solo
     /// se netea contra las lineas cuya moneda de servicio coincide con la moneda de la multa. Si no se puede
@@ -6039,51 +6390,82 @@ public class BookingCancellationService
     ///
     /// <para><b>Invariante preservada</b>: como cada porcion de multa ≤ el cap de su linea, se cumple
     /// <c>RefundCap + PenaltyAmount == capBeforePenalty</c>, que es justo lo que <see cref="AssignRefundCapsAsync"/>
-    /// usa para descontar el pool del operador en cancelaciones parciales sucesivas. NO tocamos
-    /// <c>line.PenaltyStatus</c> a proposito: cambiarlo activaria el conteo multi-operador del gating de la ND
-    /// (<see cref="CountSuppliersWithConfirmedPenaltyAsync"/>) y podria desviar la ND del cliente — eso es otra
-    /// fase. Aca SOLO corregimos el numero del reembolso esperado del operador.</para>
+    /// usa para descontar el pool del operador en cancelaciones parciales sucesivas.</para>
     ///
     /// <para><b>Idempotencia</b>: corre exactamente una vez por confirmacion. La confirmacion es una transicion
     /// de una sola via (Estimated→Confirmed): la Precondicion 6 de <see cref="ConfirmPenaltyAsync"/> rebota (409)
     /// si la penalidad ya estaba confirmada, asi que el recalculo nunca se reaplica sobre un cap ya neto.</para>
+    ///
+    /// <para><b>ADR-044 T1 (2026-07-10)</b>: <paramref name="targetSupplierId"/> permite imputar la multa a UN
+    /// operador ESPECIFICO en vez de siempre al operador principal del BC (<c>bc.SupplierId</c>) — el bug M2
+    /// del rediseño de multas, donde las multas de operadores SECUNDARIOS se perdian porque este metodo estaba
+    /// hardcodeado a <c>bc.SupplierId</c>. Null (default) preserva el comportamiento historico. Ademas, desde
+    /// esta tanda, marca <see cref="BookingCancellationLine.PenaltyStatus"/> = <c>Confirmed</c> en las lineas de
+    /// ese operador (sin importar el concepto): es lo que activa el candado multi-operador de la ND YA
+    /// EXISTENTE (<see cref="CountSuppliersWithConfirmedPenaltyAsync"/>), que hasta esta tanda nunca disparaba
+    /// porque ninguna linea llegaba a <c>Confirmed</c>.</para>
     /// </summary>
+    /// <param name="conceptOverride">
+    /// ADR-044 T1 (2026-07-10): concepto fiscal a usar para decidir si se netea el RefundCap (pass-through) o no
+    /// (agency-owned). Null (default) = usar el del BC padre (<c>bc.ConceptKind</c>), comportamiento historico.
+    /// Se pasa EXPLICITO para un operador SECUNDARIO: como su confirmacion ya NO pisa <c>bc.ConceptKind</c> (ese
+    /// snapshot describe al PRINCIPAL), sin este override el neteo del secundario leeria el concepto del principal
+    /// y podria netear (o no) por el motivo equivocado. Para el operador principal se pasa su concepto efectivo,
+    /// que en ese punto es identico a <c>bc.ConceptKind</c> — byte-identico al comportamiento previo.
+    /// </param>
     // internal (no private) para que los tests unit ejerciten el reparto directamente, igual que AssignRefundCapsAsync.
     internal async Task AllocateConfirmedPenaltyToLinesAsync(
         BookingCancellation bc,
         decimal confirmedPenaltyAmount,
         string? requestedPenaltyCurrency,
-        CancellationToken ct)
+        CancellationToken ct,
+        int? targetSupplierId = null,
+        CancellationConceptKind? conceptOverride = null)
     {
         // Sin multa positiva no hay nada que netear (el request ya valida > 0, esto es defensivo).
         if (confirmedPenaltyAmount <= 0m) return;
+
+        var effectiveSupplierId = targetSupplierId ?? bc.SupplierId;
+        var effectiveConcept = conceptOverride ?? bc.ConceptKind;
+
+        // Lineas TRACKED del operador resuelto (por defecto, el principal del BC — comportamiento historico).
+        var operatorLines = await _db.BookingCancellationLines
+            .Where(l => l.BookingCancellationId == bc.Id && l.SupplierId == effectiveSupplierId)
+            .ToListAsync(ct);
+
+        if (operatorLines.Count == 0) return; // BC legacy sin lineas, o sin lineas de ese operador: no-op.
+
+        // ADR-044 T1: marcar PenaltyStatus=Confirmed en TODAS las lineas de este operador, sin importar el
+        // concepto (pass-through o agency-owned) — esto es lo que activa el candado multi-operador de la ND.
+        // Se hace ANTES del guard de concepto de abajo (que solo decide si se netea el RefundCap) para que el
+        // conteo de "operadores con multa confirmada" sea correcto tambien para conceptos agency-owned.
+        if (operatorLines.Any(l => l.PenaltyStatus != PenaltyStatus.Confirmed))
+        {
+            foreach (var line in operatorLines)
+                line.PenaltyStatus = PenaltyStatus.Confirmed;
+        }
 
         // C2 (Pasos B/C, 2026-06-29) — fix de plata, concept-aware: la multa SOLO reduce el reembolso esperado
         // del operador cuando es una penalidad PASS-THROUGH (la retiene el operador, que devuelve NETO). Si la
         // penalidad es un cargo PROPIO de la agencia (agency-owned: AgencyManagementFee/AgencyCancellationFee/
         // seguros), el operador debe reembolsar el monto INTEGRO: ese fee es ingreso aparte de la agencia (se le
         // cobra al cliente con su propia ND), NO plata que el operador se queda. Reducir el RefundCap en ese caso
-        // SUBESTIMARIA el "me tiene que devolver" del operador. Por eso, para agency-owned NO tocamos las lineas:
-        // RefundCap queda integro y PenaltyAmount sin setear (asi la linea "Multa retenida" del circuito tampoco
-        // aparece, porque su gate exige PenaltyAmount > 0 + ConceptKind pass-through). Espejo del gate de
-        // OperatorRefundService:404-408 (que mira bc.ConceptKind, el padre).
-        if (bc.ConceptKind != CancellationConceptKind.OperatorPenaltyPassThrough)
+        // SUBESTIMARIA el "me tiene que devolver" del operador. Por eso, para agency-owned NO tocamos el
+        // RefundCap ni PenaltyAmount de las lineas (asi la linea "Multa retenida" del circuito tampoco aparece,
+        // porque su gate exige PenaltyAmount > 0 + ConceptKind pass-through). Espejo del gate de
+        // OperatorRefundService:404-408 (que mira bc.ConceptKind, el padre). ADR-044 T1: usamos effectiveConcept
+        // (override del operador RESUELTO) en vez de bc.ConceptKind directo, para que un operador secundario netee
+        // por SU concepto y no por el del principal.
+        if (effectiveConcept != CancellationConceptKind.OperatorPenaltyPassThrough)
         {
             _logger.LogInformation(
                 "FASE0/C2: BC {BcPublicId} con penalidad agency-owned ({ConceptKind}): NO se reduce el RefundCap " +
                 "del operador (debe reembolsar integro; el fee propio se cobra al cliente aparte).",
-                bc.PublicId, bc.ConceptKind);
+                bc.PublicId, effectiveConcept);
             return;
         }
 
-        // Lineas TRACKED del operador PRINCIPAL del evento (a ese operador se le confirma la multa aca).
-        var operatorLines = await _db.BookingCancellationLines
-            .Where(l => l.BookingCancellationId == bc.Id && l.SupplierId == bc.SupplierId)
-            .ToListAsync(ct);
-
-        if (operatorLines.Count == 0) return; // BC legacy sin lineas, o sin lineas del operador principal: no-op.
-
-        // Guarda de IDEMPOTENCIA interna (hardening review 2026-06-28): si alguna linea del operador principal YA
+        // Guarda de IDEMPOTENCIA interna (hardening review 2026-06-28): si alguna linea de este operador YA
         // tiene PenaltyAmount cargado, la multa ya fue neteada en una corrida previa. Volver a netear recomputaria
         // capBeforePenalty desde un RefundCap YA reducido y restaria de nuevo, rompiendo la invariante
         // RefundCap + PenaltyAmount == capBeforePenalty. Las guardas externas (Precondicion 6 = 409 si
@@ -6092,7 +6474,7 @@ public class BookingCancellationService
         if (operatorLines.Any(l => l.PenaltyAmount.HasValue))
         {
             _logger.LogInformation(
-                "FASE0: BC {BcPublicId} ya tiene la multa neteada en las lineas del operador principal " +
+                "FASE0: BC {BcPublicId} ya tiene la multa neteada en las lineas de este operador " +
                 "(PenaltyAmount cargado). No se vuelve a netear (idempotente).",
                 bc.PublicId);
             return;
@@ -6171,14 +6553,17 @@ public class BookingCancellationService
 
     /// <summary>
     /// ESPEJO de <see cref="AllocateConfirmedPenaltyToLinesAsync"/>: deshace la imputacion de la multa a las lineas
-    /// del operador principal cuando se cierra sin multa una penalidad YA confirmada (fix "multa fantasma"). Por cada
-    /// linea del operador principal con <c>PenaltyAmount</c> seteado: si la porcion era positiva le devuelve ese monto
-    /// al <c>RefundCap</c> (RefundCap += PenaltyAmount), y en TODOS los casos borra la penalidad de la linea. Asi
-    /// "Reembolsos a cobrar" vuelve a mostrar el monto integro que el operador debe devolver (ya no retiene multa).
+    /// del operador resuelto cuando se cierra sin multa una penalidad YA confirmada (fix "multa fantasma") o se va
+    /// a corregir su monto/moneda. Por cada linea de ese operador con <c>PenaltyAmount</c> seteado: si la porcion
+    /// era positiva le devuelve ese monto al <c>RefundCap</c> (RefundCap += PenaltyAmount); y en TODAS sus lineas
+    /// (tenga o no <c>PenaltyAmount</c>) resetea <see cref="BookingCancellationLine.PenaltyStatus"/> a
+    /// <c>Estimated</c> — el espejo exacto de lo que <see cref="AllocateConfirmedPenaltyToLinesAsync"/> confirma
+    /// (ADR-044 T1). Asi "Reembolsos a cobrar" vuelve a mostrar el monto integro que el operador debe devolver
+    /// (ya no retiene multa) Y el candado multi-operador de la ND deja de contar a este operador como confirmado.
     ///
-    /// <para><b>Concepto agency-owned = no-op</b>: para conceptos propios de la agencia, el Allocate NO habia tocado
-    /// las lineas (el operador debia reembolsar integro), asi que aca no hay nada que deshacer. Espeja el mismo gate
-    /// del Allocate.</para>
+    /// <para><b>Concepto agency-owned</b>: el Allocate NO habia reducido el <c>RefundCap</c> (el operador debia
+    /// reembolsar integro), asi que aca no hay cap que restaurar — pero el <c>PenaltyStatus</c> SI se resetea
+    /// igual (el Allocate lo confirma sin importar el concepto desde esta tanda).</para>
     ///
     /// <para><b>Por que <c>PenaltyAmount = null</c> y no 0, para TODA linea con valor (incluido un 0 residual)</b>:
     /// null es el estado canonico "sin penalidad" de la linea (su default). Ademas es lo que la guarda de idempotencia
@@ -6188,26 +6573,34 @@ public class BookingCancellationService
     /// aunque la porcion fuera 0 (y esa linea 0 no suma nada al cap ni entra al audit). La spec pedia
     /// "PenaltyAmount = 0"; se usa null a proposito por esta interaccion con el Allocate.</para>
     ///
-    /// <para>NO hace <c>SaveChanges</c>: corre dentro de la unidad de trabajo del waive (commit unico).</para>
+    /// <para>NO hace <c>SaveChanges</c>: corre dentro de la unidad de trabajo del waive/correct (commit unico).</para>
     /// </summary>
+    /// <param name="targetSupplierId">
+    /// ADR-044 T1 (2026-07-10): operador cuyas lineas se revierten. Null (default) preserva el comportamiento
+    /// historico (operador principal del BC, <c>bc.SupplierId</c>).
+    /// </param>
     // internal (no private) para que los tests unit ejerciten la restauracion directamente, igual que Allocate.
     internal async Task<List<PenaltyCapRestore>> ReverseConfirmedPenaltyFromLinesAsync(
-        BookingCancellation bc, CancellationToken ct)
+        BookingCancellation bc, CancellationToken ct, int? targetSupplierId = null)
     {
         var restored = new List<PenaltyCapRestore>();
-
-        // Espejo del gate de AllocateConfirmedPenaltyToLinesAsync: para agency-owned el reparto fue no-op.
-        if (bc.ConceptKind != CancellationConceptKind.OperatorPenaltyPassThrough)
-            return restored;
+        var effectiveSupplierId = targetSupplierId ?? bc.SupplierId;
 
         var operatorLines = await _db.BookingCancellationLines
-            .Where(l => l.BookingCancellationId == bc.Id && l.SupplierId == bc.SupplierId)
+            .Where(l => l.BookingCancellationId == bc.Id && l.SupplierId == effectiveSupplierId)
             .ToListAsync(ct);
 
         foreach (var line in operatorLines)
         {
-            // Solo tocamos lineas que el Allocate haya marcado con una porcion de multa (PenaltyAmount seteado). Una
-            // linea con PenaltyAmount null nunca recibio multa: no hay nada que deshacer ni que limpiar.
+            // ADR-044 T1: espejo del Allocate — SIEMPRE volvemos la linea a "pendiente de decidir", tenga o no
+            // una porcion de multa neteada (para agency-owned nunca la tuvo, pero el Allocate SI la habia
+            // marcado Confirmed). Sin este reset, el candado multi-operador de la ND seguiria contando a este
+            // operador como confirmado despues de deshacer su confirmacion.
+            line.PenaltyStatus = PenaltyStatus.Estimated;
+
+            // Solo restauramos el CAP de lineas que el Allocate haya marcado con una porcion de multa
+            // (PenaltyAmount seteado). Una linea con PenaltyAmount null nunca neteo nada: no hay cap que
+            // devolver (agency-owned SIEMPRE cae aca).
             if (!line.PenaltyAmount.HasValue)
                 continue;
 

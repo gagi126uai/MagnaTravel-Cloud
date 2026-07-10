@@ -14,6 +14,14 @@
  * Flujo de errores 409:
  *   - INV-ADR014-001: la NC todavía no tiene CAE → "esperá unos minutos".
  *   - INV-ADR014-003: la multa ya fue confirmada o la ND ya está en juego.
+ *   - INV-ADR044-OPERATOR-REQUIRED (2026-07-10): la cancelación tiene servicios de MÁS de
+ *     un operador y no se mandó `supplierPublicId` — el backend no puede adivinar a cuál
+ *     corresponde. El backend ya manda el detalle en español limpio ("Esta anulación
+ *     tiene multas de más de un operador. Indicá cuál operador estás resolviendo.");
+ *     getApiErrorMessage lo muestra tal cual, sin mapeo extra acá.
+ *   - INV-ADR044-OPERATOR-NOT-FOUND (2026-07-10): el `supplierPublicId` mandado no
+ *     corresponde a ningún servicio de esta cancelación. Mismo criterio: el detalle del
+ *     backend ya es claro, no se duplica el mapeo.
  *   - requiresApproval: el sistema requiere 4-eyes (no hay respaldo documental o
  *     el monto supera un umbral). Se avisa y se ofrece reintentar con approvalRequestPublicId.
  *   - 400: fecha inválida (futura o anterior a la cancelación).
@@ -35,6 +43,13 @@
  *     "corregir" (2026-07-08), donde ya existe un monto cargado (operatorPenaltySituation.
  *     amount) que el usuario viene a CORREGIR, no a cargar desde cero. Sigue siendo editable.
  *   - modo: "confirmar" (default) | "corregir". Ver arriba.
+ *   - supplierPublicId (ADR-044 T1, 2026-07-10, opcional): GUID del operador al que
+ *     corresponde ESTA confirmación. Solo hace falta cuando la cancelación tiene
+ *     servicios de más de un operador (ADR-025) — en el caso mono-operador de siempre
+ *     no se pasa y el payload de confirm-penalty sale exactamente igual que antes.
+ *     Se usa SOLO en modo "confirmar": correct-penalty (modo "corregir") no lo necesita
+ *     porque ya opera sobre una Nota de Débito puntual que el backend identifica sin
+ *     ambigüedad por el propio cancellationPublicId.
  *   - onConfirmado: callback luego de confirmar/corregir exitosamente.
  *   - onCerrar: callback para cerrar el panel sin confirmar.
  */
@@ -169,6 +184,7 @@ export function ConfirmarMultaOperadorInline({
     monedaSugerida,
     montoInicial,
     modo = "confirmar",
+    supplierPublicId,
     onConfirmado,
     onCerrar,
 }) {
@@ -250,7 +266,7 @@ export function ConfirmarMultaOperadorInline({
                     supportingDocumentReference: referencia.trim() || null,
                     overrideReason: null,
                     approvalRequestPublicId: null,
-                });
+                }, supplierPublicId);
             }
 
             if (esModoCorregir) {

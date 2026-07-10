@@ -559,7 +559,8 @@ public class CancellationsController : ControllerBase
             var dto = await _bcService.WaiveOperatorPenaltyAsync(
                 publicId, request.Reason, userId, userName, cancellationToken,
                 userCanClassifyAgencyPenalty: userCanClassifyAgencyPenalty,
-                requesterIsAdmin: requesterIsAdmin);
+                requesterIsAdmin: requesterIsAdmin,
+                supplierPublicId: request.SupplierPublicId);
             return Ok(dto);
         }
         catch (KeyNotFoundException)
@@ -625,7 +626,8 @@ public class CancellationsController : ControllerBase
         try
         {
             var dto = await _bcService.RevertWaivedOperatorPenaltyAsync(
-                publicId, request.Reason, userId, userName, requesterIsAdmin: true, cancellationToken);
+                publicId, request.Reason, userId, userName, requesterIsAdmin: true, cancellationToken,
+                supplierPublicId: request.SupplierPublicId);
             return Ok(dto);
         }
         catch (KeyNotFoundException)
@@ -1040,7 +1042,14 @@ public record WaivePenaltyRequest(
     [System.ComponentModel.DataAnnotations.Required]
     [System.ComponentModel.DataAnnotations.MinLength(5)]
     [System.ComponentModel.DataAnnotations.MaxLength(500)]
-    string Reason
+    string Reason,
+
+    /// <summary>
+    /// ADR-044 T1 (2026-07-10): identificador PUBLICO del operador cuya pata de multa se cierra sin multa, para
+    /// cancelaciones con servicios de MAS de un operador (ADR-025). Mismo criterio retrocompatible que
+    /// <see cref="ConfirmPenaltyRequest.SupplierPublicId"/>: opcional cuando hay un solo operador en juego.
+    /// </summary>
+    Guid? SupplierPublicId = null
 );
 
 /// <summary>
@@ -1052,7 +1061,14 @@ public record RevertWaivePenaltyRequest(
     [System.ComponentModel.DataAnnotations.Required]
     [System.ComponentModel.DataAnnotations.MinLength(5)]
     [System.ComponentModel.DataAnnotations.MaxLength(500)]
-    string Reason
+    string Reason,
+
+    /// <summary>
+    /// ADR-044 T1 (2026-07-10): identificador PUBLICO del operador cuya pata de multa se reabre, para cancelaciones
+    /// con servicios de MAS de un operador (ADR-025). Opcional y retrocompatible: si hay un solo operador en juego
+    /// se resuelve solo. Mismo criterio que <see cref="ConfirmPenaltyRequest.SupplierPublicId"/> / <see cref="WaivePenaltyRequest.SupplierPublicId"/>.
+    /// </summary>
+    Guid? SupplierPublicId = null
 );
 
 /// <summary>

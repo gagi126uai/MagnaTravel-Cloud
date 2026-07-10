@@ -84,6 +84,72 @@ public static class OperatorPenaltySituationRules
     }
 
     /// <summary>
+    /// ADR-044 T1 (2026-07-10): campos sueltos que deciden el paso de la multa de UN operador puntual, cuando la
+    /// cancelacion tiene servicios de MAS de un operador (ADR-025). A diferencia de <see cref="Fields"/> (que lee
+    /// el snapshot UNICO del BC padre, valido mientras solo haya UN operador en juego), esta version mira el
+    /// <c>PenaltyStatus</c> de <b>las lineas de ESE operador puntual</b> — la unica fuente que sabe su multa
+    /// individual — y SOLO toma prestado el snapshot del BC padre (moneda/monto/estado de la ND) cuando ese
+    /// operador es el UNICO confirmado (nadie mas lo piso desde que confirmo: el BC-padre sigue describiendolo
+    /// fielmente). Si hay mas de un operador confirmado a la vez, el paso pasa a
+    /// <see cref="OperatorPenaltySituationState.MultiOperatorNeedsManualReview"/> para TODOS los confirmados: la
+    /// Nota de Debito por operador todavia no existe (es una tanda futura), asi que mejor mostrar "hay que
+    /// revisar a mano" que inventar un estado que no es cierto para nadie.
+    /// </summary>
+    /// <param name="LinePenaltyStatus">Estado de la penalidad SEGUN LAS LINEAS de este operador puntual.</param>
+    /// <param name="IsPendingDecision">
+    /// Mismo gate que <see cref="Fields.IsPendingDecision"/>: es a nivel de TODA la cancelacion (post-NC con CAE +
+    /// flag), no por operador — todos los operadores de la misma cancelacion comparten este candado.
+    /// </param>
+    /// <param name="ConfirmedSupplierCount">
+    /// Cuantos operadores DISTINTOS tienen una multa confirmada en esta cancelacion (mismo conteo que usa el
+    /// gating de la ND automatica, <c>CountSuppliersWithConfirmedPenaltyAsync</c>).
+    /// </param>
+    /// <param name="BcDebitNoteStatus">Estado de la (unica) Nota de Debito del BC padre.</param>
+    public readonly record struct LineFields(
+        PenaltyStatus LinePenaltyStatus,
+        bool IsPendingDecision,
+        int ConfirmedSupplierCount,
+        DebitNoteStatus BcDebitNoteStatus);
+
+    /// <summary>
+    /// Deriva el paso de la multa de UN operador puntual (version por-linea de <see cref="Derive"/>). Ver el
+    /// comentario de <see cref="LineFields"/> para el porque de la ramificacion multi-operador.
+    /// </summary>
+    public static OperatorPenaltySituationState DeriveForOperator(LineFields fields)
+    {
+        // Terminal "sin multa" para ESTE operador: no hay ND ni nada mas que hacer, sin importar los demas.
+        if (fields.LinePenaltyStatus == PenaltyStatus.Waived)
+            return OperatorPenaltySituationState.Waived;
+
+        if (fields.LinePenaltyStatus == PenaltyStatus.Confirmed)
+        {
+            // Mas de un operador confirmado a la vez: la ND automatica esta bloqueada (misma señal que
+            // TryEmitCancellationDebitNoteAsync ya usa para frenarse), asi que NINGUN confirmado puede fiarse
+            // del snapshot del BC padre (puede describir a otro operador, o a ninguno todavia).
+            if (fields.ConfirmedSupplierCount > 1)
+                return OperatorPenaltySituationState.MultiOperatorNeedsManualReview;
+
+            // Un unico operador confirmado: el snapshot del BC padre SI lo describe (nadie mas lo piso desde que
+            // confirmo). Mismo desglose que el path mono-operador de Derive.
+            return fields.BcDebitNoteStatus switch
+            {
+                DebitNoteStatus.Issued => OperatorPenaltySituationState.Done,
+                DebitNoteStatus.Pending => OperatorPenaltySituationState.DebitNoteQueued,
+                DebitNoteStatus.Failed => OperatorPenaltySituationState.DebitNoteFailed,
+                DebitNoteStatus.ManualReview => OperatorPenaltySituationState.DebitNoteNeedsAmountCurrency,
+                DebitNoteStatus.NotApplicable => OperatorPenaltySituationState.ConfirmedNoDebitNote,
+                _ => OperatorPenaltySituationState.ConfirmedNoDebitNote,
+            };
+        }
+
+        // Estimated: solo mostramos "pendiente" si HAY algo para decidir ahora (mismo gate compartido por toda
+        // la cancelacion, sin importar el operador).
+        return fields.IsPendingDecision
+            ? OperatorPenaltySituationState.PendingDecision
+            : OperatorPenaltySituationState.None;
+    }
+
+    /// <summary>
     /// Colapsa el paso FINO (<see cref="OperatorPenaltySituationState"/>) al RESULTADO grueso
     /// (<see cref="OperatorPenaltyOutcome"/>: None/Pending/Confirmed/Waived) que consumen las capacidades de la
     /// reserva. Existe para que la ficha derive el outcome de la situacion YA calculada, en vez de re-consultar la

@@ -80,10 +80,24 @@ export const cancellationsApi = {
    *   - supportingDocumentReference: string opc (referencia al mail/PDF del operador)
    *   - overrideReason: string opc (para 4-eyes)
    *   - approvalRequestPublicId: GUID opc (para 4-eyes)
+   *
+   * ADR-044 T1 (2026-07-10): `supplierPublicId` es un parámetro APARTE del payload
+   * (mismo criterio que `waivePenalty` más abajo) — solo hace falta cuando la
+   * cancelación tiene servicios de más de un operador (ADR-025) y hay que decirle al
+   * backend a CUÁL corresponde esta confirmación. En el caso mono-operador de siempre
+   * no se manda (queda undefined) y el payload sale exactamente igual que antes.
+   *
+   * @param {string} [supplierPublicId] - GUID público del operador, si hay más de uno en juego.
    * @returns {Promise<BookingCancellationDto>}
    */
-  confirmPenalty: (publicId, payload) =>
-    api.patch(`/cancellations/${publicId}/confirm-penalty`, payload),
+  confirmPenalty: (publicId, payload, supplierPublicId) =>
+    api.patch(`/cancellations/${publicId}/confirm-penalty`, {
+      ...payload,
+      // Solo se agrega al payload si vino informado — mismo criterio que waivePenalty:
+      // nunca mandamos un campo "null a propósito" que pueda confundirse con una
+      // respuesta real del backend.
+      ...(supplierPublicId ? { supplierPublicId } : {}),
+    }),
 
   /**
    * ADR-025: cancela UN servicio dentro de una reserva activa.
@@ -171,12 +185,24 @@ export const cancellationsApi = {
    *   CanConfirmPenalty = false
    *   ConfirmPenaltyBlockedReason = "OperatorPenaltyWaived"
    *
+   * ADR-044 T1 (2026-07-10): `supplierPublicId` es OPCIONAL — solo hace falta cuando la
+   * cancelación tiene servicios de más de un operador (ADR-025) y hay que decirle al
+   * backend a CUÁL de ellos corresponde este cierre sin multa. En el caso mono-operador
+   * de siempre no se manda (queda undefined) y el payload sale exactamente igual que
+   * antes de este cambio.
+   *
    * @param {string} publicId - GUID del BookingCancellation.
    * @param {string} reason   - Motivo del cierre sin multa (5..500 chars).
+   * @param {string} [supplierPublicId] - GUID público del operador, si hay más de uno en juego.
    * @returns {Promise<BookingCancellationDto>}
    */
-  waivePenalty: (publicId, reason) =>
-    api.patch(`/cancellations/${publicId}/waive-penalty`, { reason }),
+  waivePenalty: (publicId, reason, supplierPublicId) =>
+    api.patch(`/cancellations/${publicId}/waive-penalty`, {
+      reason,
+      // Solo se agrega al payload si vino informado — nunca mandamos un campo "null a
+      // propósito" que pueda confundirse con una respuesta real del backend.
+      ...(supplierPublicId ? { supplierPublicId } : {}),
+    }),
 
   /**
    * 2026-06-28: deshace un cierre "sin multa" previamente registrado.

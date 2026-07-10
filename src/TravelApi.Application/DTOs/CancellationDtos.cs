@@ -417,7 +417,16 @@ public record ConfirmPenaltyRequest(
     // valido, el service tira ApprovalRequiredException -> 409 requiresApproval. El caller
     // crea el approval y reintenta pasando el ApprovalRequestPublicId.
     [MaxLength(500)] string? OverrideReason = null,
-    Guid? ApprovalRequestPublicId = null
+    Guid? ApprovalRequestPublicId = null,
+
+    /// <summary>
+    /// ADR-044 T1 (2026-07-10): identificador PUBLICO del operador cuya multa se esta confirmando, para
+    /// cancelaciones con servicios de MAS de un operador (ADR-025). Opcional y retrocompatible: si la
+    /// cancelacion tiene lineas de UN solo operador (el 100% de los casos hoy), se resuelve solo y este campo
+    /// se puede omitir. Si tiene lineas de VARIOS operadores y no se especifica, el service rechaza pidiendo
+    /// que se indique cual (mejor pedir que adivinar sobre que operador se esta actuando).
+    /// </summary>
+    Guid? SupplierPublicId = null
 );
 
 /// <summary>

@@ -491,6 +491,11 @@ public interface IBookingCancellationService
     /// <param name="requesterIsAdmin">true si el caller es Admin. Solo se EXIGE para cerrar sin multa DESDE una
     /// multa ya confirmada (rama sensible); el cierre desde el estado pendiente normal no lo requiere. Lo resuelve
     /// el controller.</param>
+    /// <param name="supplierPublicId">
+    /// ADR-044 T1 (2026-07-10): identificador PUBLICO del operador cuya pata de multa se cierra sin multa, para
+    /// cancelaciones con servicios de MAS de un operador (ADR-025). Opcional y retrocompatible: si la cancelacion
+    /// tiene lineas de UN solo operador (el 100% de los casos hoy), se resuelve solo.
+    /// </param>
     Task<BookingCancellationDto> WaiveOperatorPenaltyAsync(
         Guid publicId,
         string reason,
@@ -498,7 +503,8 @@ public interface IBookingCancellationService
         string? userName,
         CancellationToken ct,
         bool userCanClassifyAgencyPenalty = false,
-        bool requesterIsAdmin = false);
+        bool requesterIsAdmin = false,
+        Guid? supplierPublicId = null);
 
     /// <summary>
     /// Fase A (2026-06-28): REABRE un cierre sin multa, volviendo la penalidad del operador de
@@ -527,13 +533,20 @@ public interface IBookingCancellationService
     /// </summary>
     /// <param name="reason">Motivo OBLIGATORIO de la reapertura (auditoria del contador).</param>
     /// <param name="requesterIsAdmin">true si el caller es Admin. Lo resuelve el controller. El service lo EXIGE.</param>
+    /// <param name="supplierPublicId">
+    /// ADR-044 T1 (2026-07-10): identificador PUBLICO del operador cuya pata de multa se reabre, para cancelaciones
+    /// con servicios de MAS de un operador (ADR-025). Opcional y retrocompatible: si la cancelacion tiene lineas de
+    /// UN solo operador (el 100% de los casos hoy), se resuelve solo. Sin este parametro un secundario cerrado sin
+    /// multa quedaria irreversible (el snapshot del padre describe al principal).
+    /// </param>
     Task<BookingCancellationDto> RevertWaivedOperatorPenaltyAsync(
         Guid publicId,
         string reason,
         string userId,
         string? userName,
         bool requesterIsAdmin,
-        CancellationToken ct);
+        CancellationToken ct,
+        Guid? supplierPublicId = null);
 
     // ===== Queries =====
 
@@ -601,6 +614,22 @@ public interface IBookingCancellationService
     /// con el permiso veria el boton y al apretarlo rebotaria 409 (el anti-patron "boton que rebota").
     /// </param>
     Task<OperatorPenaltySituationDto> GetOperatorPenaltySituationAsync(
+        Guid reservaPublicId, bool userCanClassifyOperatorPenalty, bool isCallerAdmin, CancellationToken ct);
+
+    /// <summary>
+    /// ADR-044 T1 (2026-07-10): version LISTA de <see cref="GetOperatorPenaltySituationAsync"/>, un elemento POR
+    /// OPERADOR con multa en juego en la cancelacion vigente de la reserva (una cancelacion puede tener servicios
+    /// de mas de un operador, ADR-025 — hoy el 100% de las reservas activas tienen UNO solo, asi que en la
+    /// practica la lista trae UN elemento con el MISMO contenido que el singular).
+    ///
+    /// <para>El PRIMER elemento (si la lista no esta vacia) es SIEMPRE el resultado exacto de
+    /// <see cref="GetOperatorPenaltySituationAsync"/> para el operador principal — garantia de paridad byte a
+    /// byte para el caso mono-operador. Los elementos siguientes (si los hay) son operadores SECUNDARIOS,
+    /// derivados de <see cref="Domain.Entities.BookingCancellationLine"/> — la unica fuente que sabe la multa
+    /// individual de cada uno. Lista VACIA = nada que mostrar (equivalente al singular con <c>State="None"</c>).
+    /// </para>
+    /// </summary>
+    Task<IReadOnlyList<OperatorPenaltySituationDto>> GetOperatorPenaltySituationsAsync(
         Guid reservaPublicId, bool userCanClassifyOperatorPenalty, bool isCallerAdmin, CancellationToken ct);
 
     /// <summary>

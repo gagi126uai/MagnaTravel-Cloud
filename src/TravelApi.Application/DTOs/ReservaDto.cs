@@ -472,6 +472,18 @@ public class ReservaDto
     public OperatorPenaltySituationDto OperatorPenaltySituation { get; set; } = new();
 
     /// <summary>
+    /// ADR-044 T1 (2026-07-10): version LISTA de <see cref="OperatorPenaltySituation"/>, un elemento POR
+    /// OPERADOR con multa en juego (una cancelacion puede tener servicios de mas de un operador, ADR-025, cada
+    /// uno con su propia multa). El caso de HOY (un solo operador) da una lista de UN elemento, con el MISMO
+    /// contenido que <see cref="OperatorPenaltySituation"/> (es su primer elemento) — la ficha se ve igual que
+    /// antes. Cuando hay varios operadores, la ficha renderiza el mismo cartel una vez por elemento, agregando
+    /// el nombre del operador en el titulo. Lista VACIA = nada que mostrar (equivalente a que el singular de
+    /// <c>State="None"</c>). <see cref="OperatorPenaltySituation"/> se mantiene por compatibilidad (deprecado:
+    /// preferir esta lista para pantallas nuevas).
+    /// </summary>
+    public List<OperatorPenaltySituationDto> OperatorPenaltySituations { get; set; } = new();
+
+    /// <summary>
     /// ADR-035 (2026-06-19): true si la reserva tiene una factura AFIP con CAE vivo, por lo que NO se puede
     /// cancelar directamente: primero hay que anular la factura con una Nota de Credito. El front lo usa para
     /// explicar por que el flujo de cancelacion pide pasar por la NC. Derivado de "tiene CAE vivo".

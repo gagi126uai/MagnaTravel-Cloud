@@ -41,4 +41,13 @@ public enum OperatorPenaltySituationState
 
     /// <summary>Multa confirmada y su Nota de Debito ya EMITIDA con CAE. La pata del operador quedo resuelta.</summary>
     Done = 7,
+
+    /// <summary>
+    /// ADR-044 T1 (2026-07-10): multa CONFIRMADA de un operador en una cancelacion con MAS DE UN operador
+    /// confirmado a la vez. La Nota de Debito automatica queda BLOQUEADA a proposito (la ND por linea de
+    /// operador recien se automatiza en una tanda futura — "T3" del rediseño): se resuelve manualmente por
+    /// ahora, misma logica que ya usaba <c>TryEmitCancellationDebitNoteAsync</c> ("ARREGLO 2") para frenar la
+    /// emision automatica cuando detecta multas confirmadas de mas de un operador.
+    /// </summary>
+    MultiOperatorNeedsManualReview = 8,
 }

@@ -254,7 +254,7 @@ public class CancellationWaivePenaltyTests
     // ============================================================
 
     [Fact]
-    public async Task Waive_DoesNotTouchOperatorLines_SoCloseByRefundStillWorks()
+    public async Task Waive_DoesNotTouchRefundCap_SoCloseByRefundStillWorks()
     {
         var h = BuildService();
         var (bcId, bc, supplier, _) = await SeedPostNcAsync(h.Ctx);
@@ -281,7 +281,10 @@ public class CancellationWaivePenaltyTests
         var afterLine = h.Ctx.BookingCancellationLines.Single();
         Assert.Equal(100_000m, afterLine.RefundCap);
         Assert.Null(afterLine.PenaltyAmount);
-        Assert.Equal(PenaltyStatus.Estimated, afterLine.PenaltyStatus); // no se toca la linea
+        // ADR-044 T1 (2026-07-10): antes de esta tanda el waive NO tocaba la linea en absoluto (PenaltyStatus
+        // quedaba en su default Estimated). Desde esta tanda, la linea SI refleja el cierre sin multa (espejo de
+        // como Allocate la confirma): es lo que habilita el estado por-operador de operatorPenaltySituations.
+        Assert.Equal(PenaltyStatus.Waived, afterLine.PenaltyStatus);
     }
 
     [Fact]
