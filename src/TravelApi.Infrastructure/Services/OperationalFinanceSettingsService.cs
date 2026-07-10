@@ -12,6 +12,9 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
 {
     private readonly AppDbContext _dbContext;
 
+    /// <summary>Codigos de alicuota de IVA que reconoce el catalogo ARCA (WSFEv1): 3=0%, 4=10.5%, 5=21%, 6=27%, 8=5%, 9=2.5%.</summary>
+    private static readonly HashSet<int> KnownArcaAlicuotaIvaIds = new() { 3, 4, 5, 6, 8, 9 };
+
     public OperationalFinanceSettingsService(AppDbContext dbContext)
     {
         _dbContext = dbContext;
@@ -144,6 +147,23 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
         if (request.QuotationExpirationDays.HasValue)
         {
             entity.QuotationExpirationDays = Math.Max(0, request.QuotationExpirationDays.Value);
+        }
+
+        // ADR-044 T3a (2026-07-10): alicuota de IVA para la porcion pass-through de un cargo del operador
+        // cuando el emisor es Responsable Inscripto. Update CONDICIONAL (patch-like, criterio B-002): solo se
+        // aplica si el request trae valor. Validamos que sea un codigo RECONOCIDO del catalogo ARCA — no hay
+        // [Range] posible sobre un conjunto discreto, asi que el chequeo vive aca (mismo patron ValidationException
+        // que el resto de las validaciones cruzadas de este metodo).
+        if (request.CancellationDebitNoteRiPassThroughAlicuotaIvaId.HasValue)
+        {
+            var code = request.CancellationDebitNoteRiPassThroughAlicuotaIvaId.Value;
+            if (!KnownArcaAlicuotaIvaIds.Contains(code))
+            {
+                throw new ValidationException(
+                    "El código de alícuota de IVA no es uno reconocido del catálogo ARCA " +
+                    "(valores válidos: 3=0%, 4=10.5%, 5=21%, 6=27%, 8=5%, 9=2.5%).");
+            }
+            entity.CancellationDebitNoteRiPassThroughAlicuotaIvaId = code;
         }
 
         entity.UpdatedAt = DateTime.UtcNow;
@@ -296,6 +316,10 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             // G6 (2026-06-24): el GET expone los dias de caducidad de Budget/Quotation para que el panel los edite.
             BudgetExpirationDays = entity.BudgetExpirationDays,
             QuotationExpirationDays = entity.QuotationExpirationDays,
+            // ADR-044 T3a (2026-07-10): el GET expone el parametro de alicuota RI pass-through (null = todavia
+            // sin firma contable, la ND automatica queda bloqueada para ese caso).
+            CancellationDebitNoteRiPassThroughAlicuotaIvaId =
+                entity.CancellationDebitNoteRiPassThroughAlicuotaIvaId,
         };
     }
 }

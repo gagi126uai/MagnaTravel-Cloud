@@ -1954,6 +1954,9 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(c => c.Notes).HasMaxLength(1000);
             entity.Property(c => c.ConfirmedByUserId).HasMaxLength(450).IsRequired();
             entity.Property(c => c.ConfirmedByUserName).HasMaxLength(200);
+            // ADR-044 T3a: como se traslada este cargo al cliente + el monto adicional del fee de gestion.
+            entity.Property(c => c.ClientTransferMode).HasConversion<int>();
+            entity.Property(c => c.ManagementFeeAmount).HasPrecision(18, 2);
 
             // FK a la linea duena del cargo. Cascade: el cargo no tiene sentido sin su linea (misma politica
             // que Lines -> BookingCancellation).
@@ -1971,6 +1974,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             // API fluida para CHECK constraints): (1) DocumentRef obligatorio cuando CollectionMode=FacturadaAparte;
             // (2) Amount > 0 (amount_positive). La coherencia de MONEDA (B2: Currency del cargo == Currency de su
             // linea) NO es un CHECK SQL (cruza tablas): se valida en el SERVICIO al escribir (AddOperatorChargeAsync).
+            // ADR-044 T3a agrega 2 CHECK mas via migrationBuilder.Sql en la migracion T3a: (3) ManagementFeeAmount
+            // obligatorio y > 0 solo cuando ClientTransferMode=WithManagementFee (1); (4) vacio en cualquier otro modo.
             entity.UseXminAsConcurrencyToken();
         });
 

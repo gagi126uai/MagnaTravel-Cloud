@@ -4996,6 +4996,8 @@ public class BookingCancellationService
                     c.Currency,
                     c.DocumentRef,
                     c.ConfirmedAt,
+                    c.ClientTransferMode,
+                    c.ManagementFeeAmount,
                 })
                 .ToListAsync(ct)
             : null;
@@ -5012,6 +5014,9 @@ public class BookingCancellationService
                     Currency = Monedas.Normalizar(c.Currency),
                     DocumentRef = c.DocumentRef,
                     ConfirmedAt = c.ConfirmedAt,
+                    // ADR-044 T3a: como se traslada este cargo al cliente en la ND + el fee de gestion, si tiene.
+                    ClientTransferMode = c.ClientTransferMode.ToString(),
+                    ManagementFeeAmount = c.ManagementFeeAmount,
                 })
                 .ToList();
 
@@ -5032,6 +5037,11 @@ public class BookingCancellationService
                 l.PenaltyAmount,
                 l.PenaltyCurrency,
                 l.PenaltyConfirmedAt,
+                // ADR-044 T3a (2026-07-10): estado de la ND POR LINEA — el flujo de confirmacion escalonada lo pone
+                // en ManualReview cuando este operador confirmo despues de que la ND del principal ya salio (su cargo
+                // quedo afuera -> nota de debito complementaria a mano). Es el marcador REAL que reemplaza al viejo
+                // "conteo de operadores confirmados" para decidir el estado "necesita revision" por operador.
+                l.DebitNoteStatus,
             })
             .ToListAsync(ct);
         if (secondaryLines.Count == 0)
@@ -5046,16 +5056,13 @@ public class BookingCancellationService
         var sharedFields = new PenaltyConfirmabilityFields(
             bcRow.Status, bcRow.CreditNoteInvoiceId, PenaltyStatus.Estimated, null, DebitNoteStatus.NotApplicable);
         var (isPendingDecisionForBc, _) = EvaluateCanConfirmPenalty(sharedFields, settings.EnableCancellationDebitNote);
-        var confirmedSupplierCount = await CountSuppliersWithConfirmedPenaltyAsync(bcRow.Id, ct);
 
-        // ADR-044 T1: si el operador PRINCIPAL esta confirmado Y hay MAS de un operador confirmado a la vez, su
-        // estado (que viene del singular, ciego al multi-operador) queda AMBIGUO tambien — el snapshot BC-level
-        // que el singular lee puede describir a este operador o a otro segun quien confirmo ultimo. Lo pisamos
-        // con el mismo estado "necesita revision" que usan los secundarios, para no mostrar un "Emitida"/"Fallida"
-        // que podria no ser de este operador. Si el principal esta Waived o aun Estimated, esos estados SI son
-        // confiables (son terminales/propios, no dependen de otros operadores) y no se tocan.
-        if (bcRow.PenaltyStatus == PenaltyStatus.Confirmed && confirmedSupplierCount > 1)
-            primarySituation.State = OperatorPenaltySituationState.MultiOperatorNeedsManualReview.ToString();
+        // ADR-044 T3a (menor 3, review 2026-07-10): el estado del operador PRINCIPAL YA NO se pisa con
+        // "MultiOperatorNeedsManualReview" por el solo hecho de que haya mas de un operador confirmado — ese
+        // override MENTIA cuando el motor emite bien una ND multi-operador (el principal quedaba "necesita revision"
+        // aunque su ND salio perfecta). El estado del principal sale del singular, que refleja el estado REAL de la
+        // ND compartida del BC (Emitida/Encolada/Fallida/etc.). Los operadores SECUNDARIOS derivan su estado del
+        // MARCADOR por linea (line.DebitNoteStatus), no de un conteo (ver DeriveForOperator).
 
         foreach (var group in secondaryLines.GroupBy(l => l.SupplierId))
         {
@@ -5067,11 +5074,15 @@ public class BookingCancellationService
                 group.Any(l => l.PenaltyStatus == PenaltyStatus.Waived) ? PenaltyStatus.Waived :
                 PenaltyStatus.Estimated;
 
+            // ¿Este operador quedo marcado individualmente para resolucion manual (nota de debito complementaria)?
+            // Se deriva del marcador REAL de sus lineas, no de un conteo de operadores.
+            var isOperatorSpecificManual = group.Any(l => l.DebitNoteStatus == DebitNoteStatus.ManualReview);
+
             var state = OperatorPenaltySituationRules.DeriveForOperator(new OperatorPenaltySituationRules.LineFields(
                 LinePenaltyStatus: linePenaltyStatus,
                 IsPendingDecision: isPendingDecisionForBc,
-                ConfirmedSupplierCount: confirmedSupplierCount,
-                BcDebitNoteStatus: bcRow.DebitNoteStatus));
+                BcDebitNoteStatus: bcRow.DebitNoteStatus,
+                IsOperatorSpecificManual: isOperatorSpecificManual));
 
             var showAmount = state is not (OperatorPenaltySituationState.None or OperatorPenaltySituationState.Waived);
             decimal? amount = showAmount
@@ -5470,16 +5481,14 @@ public class BookingCancellationService
         // sabe recuperar (y que el endpoint retry-debit-note puede reintentar) — y devolvemos EXITO-con-aviso. La
         // combinacion "multa confirmada + ND pendiente de revision" es un estado CONSISTENTE; un 500 con estado a
         // medias NO lo es. ===
-        // ADR-044 T1 (2026-07-10, fix B1 security): la emision de la ND lee el snapshot del BC padre
-        // (bc.PenaltyAmountAtEvent / ConceptKind / PenaltyCurrencyAtEvent), que describe al operador PRINCIPAL.
-        // Para un operador SECUNDARIO ese snapshot NO es suyo (lo dejamos intacto arriba), asi que emitir la ND
-        // aca sacaria un comprobante por el numero/moneda del principal, o por datos stale = ND fiscal incorrecta.
-        // La ND POR OPERADOR (una por cada uno) es el objetivo de T3; en T1 la confirmacion de un secundario
-        // registra su multa a nivel linea + audit, y su ND queda pendiente de T3 (ademas, cuando hay >1 operador
-        // confirmado, el gate multi-operador de TryEmit ya frena la ND automatica del principal tambien). Por eso
-        // SOLO el principal dispara la emision aca.
+        // ADR-044 T3a (2026-07-10, fix B1 confirmacion escalonada): la ND al cliente es UNA sola por cancelacion,
+        // que el motor (BuildCancellationDebitNoteItemsAsync) arma con un renglon por cargo de CUALQUIER operador
+        // confirmado. Como cada operador se confirma por separado, el ORDEN de las confirmaciones importa y hay que
+        // manejar los tres casos sin dejar NUNCA un cargo perdido en silencio:
         if (isPrimaryOperator)
         {
+            // Operador PRINCIPAL: dispara la emision. El motor ve TODOS los cargos confirmados hasta este momento
+            // (si un secundario confirmo antes, ya entra en el mismo comprobante).
             WarnIfDebitNoteLate(bc, operatorDate, settings);
             // A3 (2026-07-08): la ND se atribuye a quien CONFIRMA la multa (userId/userName), no al confirmador de la anulacion.
             try
@@ -5495,11 +5504,42 @@ public class BookingCancellationService
                 await MarkDebitNoteEmissionForManualReviewAsync(bc.Id, ct);
             }
         }
+        else if (bc.PenaltyStatus == PenaltyStatus.Confirmed && !bc.DebitNoteInvoiceId.HasValue)
+        {
+            // (a) SECUNDARIO y el PRINCIPAL ya confirmo, PERO su ND todavia no se materializo (no hay comprobante
+            //     vinculado: quedo en revision manual, o a medias). Disparamos la emision AHORA: el motor arma la ND
+            //     con los cargos de AMBOS operadores. El guard de idempotencia de TryEmit protege cualquier carrera
+            //     (si el principal ya la vinculo entre medias, TryEmit es no-op).
+            WarnIfDebitNoteLate(bc, operatorDate, settings);
+            try
+            {
+                await TryEmitCancellationDebitNoteAsync(bc, ct, actorUserId: userId, actorUserName: userName);
+            }
+            catch (Exception emissionError) when (emissionError is not OperationCanceledException)
+            {
+                _logger.LogError(emissionError,
+                    "metric:cancellation_debit_note_emission_failed | BcPublicId={BcPublicId} | " +
+                    "confirmacion de operador secundario: la emision de la Nota de Debito fallo; queda en revision manual.",
+                    bc.PublicId);
+                await MarkDebitNoteEmissionForManualReviewAsync(bc.Id, ct);
+            }
+        }
+        else if (bc.DebitNoteInvoiceId.HasValue)
+        {
+            // (b) SECUNDARIO y la ND del PRINCIPAL YA salio (o esta en vuelo): no se puede meter este cargo en un
+            //     comprobante ya emitido. En vez de perderlo en silencio, lo dejamos VISIBLE en la ficha: marcamos
+            //     las lineas de ESTE operador como "pendiente de resolver a mano" (nota de debito complementaria).
+            //     NO tocamos el estado de la ND del BC padre: esa es del principal, esta bien y es Issued/Pending.
+            await MarkSecondaryChargeAsComplementaryManualAsync(bc, targetSupplierId, userId, userName, ct);
+        }
         else
         {
+            // (c) SECUNDARIO y el PRINCIPAL todavia NO confirmo: este operador confirmo PRIMERO. Su cargo queda
+            //     registrado a nivel linea y entrara en la ND cuando el principal confirme y dispare la emision
+            //     (que ya vera ambos cargos). No hay nada mas que hacer ahora.
             _logger.LogInformation(
                 "metric:cancellation_secondary_operator_penalty_confirmed | BcPublicId={BcPublicId} Supplier={SupplierId} | " +
-                "Multa de operador secundario confirmada a nivel linea; su Nota de Debito por operador queda para T3.",
+                "Multa de operador secundario confirmada; entrara en la Nota de Debito cuando el principal la emita.",
                 bc.PublicId, targetSupplierId);
         }
 
@@ -6334,6 +6374,30 @@ public class BookingCancellationService
                 "Indicá el documento del proveedor: un cargo facturado aparte necesita su referencia.",
                 nameof(request));
 
+        // ADR-044 T3a (2026-07-10): coherencia ClientTransferMode <-> ManagementFeeAmount, espejo de los 2 CHECK
+        // SQL de la migracion T3a. El monto del cargo de gestion es obligatorio CON "+ cargo de gestion" y tiene
+        // que quedar vacio en cualquier otro modo (un monto cargado que nadie factura confundiria el extracto).
+        if (request.ClientTransferMode == ClientTransferMode.WithManagementFee
+            && (!request.ManagementFeeAmount.HasValue || request.ManagementFeeAmount.Value <= 0m))
+            throw new ArgumentException(
+                "Para trasladar este cargo \"+ cargo de gestión\" indicá el monto del cargo de gestión (mayor a cero).",
+                nameof(request));
+        if (request.ClientTransferMode != ClientTransferMode.WithManagementFee
+            && request.ManagementFeeAmount.HasValue)
+            throw new ArgumentException(
+                "El monto del cargo de gestión solo se informa cuando el traslado es \"+ cargo de gestión\".",
+                nameof(request));
+
+        // ADR-044 T3a (menor 1, review 2026-07-10): una retencion fiscal (Withholding) NUNCA llega al cliente
+        // (es credito fiscal de la agencia), asi que su forma de traslado al cliente no tiene sentido: debe ser
+        // AsIs (el default). Rechazamos "+ cargo de gestion" o "absorber" sobre un Withholding — seria un dato
+        // contradictorio (un fee de gestion o una absorcion sobre plata que nunca se le cobra al cliente).
+        if (request.Kind == OperatorChargeKind.Withholding
+            && request.ClientTransferMode != ClientTransferMode.AsIs)
+            throw new ArgumentException(
+                "Una retención fiscal no se le traslada al cliente, así que no admite cargo de gestión ni absorción.",
+                nameof(request));
+
         // A que operador corresponde este cargo. Mismo helper y misma retrocompatibilidad que confirm/waive.
         var targetSupplierId = ResolveTargetSupplierId(bc, request.SupplierPublicId);
         var targetLines = bc.Lines.Where(l => l.SupplierId == targetSupplierId).ToList();
@@ -6372,9 +6436,15 @@ public class BookingCancellationService
         // RefundCap. Withholding nunca resta (credito fiscal); FacturadaAparte nunca resta (deuda AP aparte).
         bool affectsRefundCap = request.CollectionMode == PenaltyCollectionMode.Retenida
             && request.Kind != OperatorChargeKind.Withholding;
-        // Todo cargo con Kind != Withholding suma al eje CLIENTE (PenaltyAmount), sin importar la forma de cobro:
-        // es plata que eventualmente se traslada al cliente via ND (T3), Withholding nunca se traslada.
-        bool affectsClientAmount = request.Kind != OperatorChargeKind.Withholding;
+        // Eje CLIENTE (PenaltyAmount = lo que efectivamente se le traslada al cliente via ND): suma un cargo solo
+        // si NO es Withholding (retencion fiscal, nunca llega al cliente) Y NO es Absorbed (la agencia decidio no
+        // cobrarselo). ADR-044 T3a (menor 4, review 2026-07-10): antes esto solo excluia Withholding, asi que un
+        // cargo Absorbed inflaba PenaltyAmount con plata que la ND NUNCA factura — cualquier lector que use
+        // PenaltyAmount como "lo trasladado al cliente" veria un total mentiroso. El eje CAJA (RetainedDeductionAmount,
+        // que descuenta el RefundCap del operador) es ORTOGONAL: un cargo Retenida+Absorbed SI redujo el reembolso
+        // del operador (el operador retuvo), pero NO se le cobra al cliente — por eso los dos ejes se calculan aparte.
+        bool affectsClientAmount = request.Kind != OperatorChargeKind.Withholding
+            && request.ClientTransferMode != ClientTransferMode.Absorbed;
         var trimmedNotes = request.Notes?.Trim();
 
         // === BLOQUEANTE 2 (backend): candado pesimista del padre (mismo patron que CorrectPenaltyAsync) +
@@ -6442,9 +6512,27 @@ public class BookingCancellationService
 
             var appliedAt = DateTime.UtcNow;
             decimal appliedTotal = 0m;
-            foreach (var (line, share) in shares)
+            // ADR-044 T3a: si el cargo lleva fee de gestion, se reparte PROPORCIONAL a como se repartio el monto
+            // base entre las lineas alcanzadas (misma proporcion share/Amount) — un cargo dividido entre 2 lineas
+            // del mismo operador reparte su fee en la misma proporcion, no en partes iguales. La ULTIMA linea con
+            // porcion > 0 absorbe el centavo de redondeo, mismo criterio que el resto del reparto de este archivo.
+            var lastShareIndexWithAmount = shares.FindLastIndex(s => s.Share > 0m);
+            decimal managementFeeAllocatedSoFar = 0m;
+            for (int shareIndex = 0; shareIndex < shares.Count; shareIndex++)
             {
+                var (line, share) = shares[shareIndex];
                 if (share <= 0m) continue;
+
+                decimal? managementFeeForLine = null;
+                if (request.ClientTransferMode == ClientTransferMode.WithManagementFee)
+                {
+                    managementFeeForLine = shareIndex == lastShareIndexWithAmount
+                        ? request.ManagementFeeAmount!.Value - managementFeeAllocatedSoFar
+                        : Math.Round(
+                            request.ManagementFeeAmount!.Value * (share / request.Amount),
+                            2, MidpointRounding.AwayFromZero);
+                    managementFeeAllocatedSoFar += managementFeeForLine.Value;
+                }
 
                 _db.BookingCancellationLineOperatorCharges.Add(new BookingCancellationLineOperatorCharge
                 {
@@ -6455,6 +6543,8 @@ public class BookingCancellationService
                     Currency = normalizedCurrency,
                     DocumentRef = trimmedDocumentRef,
                     Notes = trimmedNotes,
+                    ClientTransferMode = request.ClientTransferMode,
+                    ManagementFeeAmount = managementFeeForLine,
                     ConfirmedByUserId = userId,
                     ConfirmedByUserName = userName,
                     ConfirmedAt = appliedAt,
@@ -6495,6 +6585,11 @@ public class BookingCancellationService
                     appliedAmount = appliedTotal,
                     currency = normalizedCurrency,
                     documentRef = trimmedDocumentRef,
+                    // ADR-044 T3a (menor 2, review 2026-07-10): como se traslada al cliente + el cargo de gestion,
+                    // para que el contador vea en la auditoria si el cargo se cobro tal cual / con cargo de gestion
+                    // aparte / se absorbio, y por cuanto.
+                    clientTransferMode = request.ClientTransferMode.ToString(),
+                    managementFeeAmount = request.ManagementFeeAmount,
                 }),
                 userId: userId,
                 userName: userName);
@@ -6745,9 +6840,9 @@ public class BookingCancellationService
     /// del rediseño de multas, donde las multas de operadores SECUNDARIOS se perdian porque este metodo estaba
     /// hardcodeado a <c>bc.SupplierId</c>. Null (default) preserva el comportamiento historico. Ademas, desde
     /// esta tanda, marca <see cref="BookingCancellationLine.PenaltyStatus"/> = <c>Confirmed</c> en las lineas de
-    /// ese operador (sin importar el concepto): es lo que activa el candado multi-operador de la ND YA
-    /// EXISTENTE (<see cref="CountSuppliersWithConfirmedPenaltyAsync"/>), que hasta esta tanda nunca disparaba
-    /// porque ninguna linea llegaba a <c>Confirmed</c>.</para>
+    /// ese operador (sin importar el concepto): es lo que permite que el motor de la ND (ADR-044 T3a,
+    /// <c>BuildCancellationDebitNoteItemsAsync</c>) arme un renglon por cada operador confirmado, y que el
+    /// read-model muestre el paso correcto por operador.</para>
     /// </summary>
     /// <param name="conceptOverride">
     /// ADR-044 T1 (2026-07-10): concepto fiscal a usar para decidir si se netea el RefundCap (pass-through) o no
@@ -7019,6 +7114,15 @@ public class BookingCancellationService
             // operador como confirmado despues de deshacer su confirmacion.
             line.PenaltyStatus = PenaltyStatus.Estimated;
 
+            // ADR-044 T3a (2026-07-10): limpiar el marcador de "nota de debito complementaria a mano" si esta
+            // linea lo tenia (caso b de la confirmacion escalonada). Deshacer la confirmacion borra ese estado:
+            // la linea vuelve a Estimated y, si se reconfirma, entrara de nuevo por el flujo normal.
+            if (line.DebitNoteStatus == DebitNoteStatus.ManualReview)
+            {
+                line.DebitNoteStatus = DebitNoteStatus.NotApplicable;
+                line.DebitNoteArcaErrorMessage = null;
+            }
+
             // ADR-044 T2 Addendum (Decision B1, 2026-07-10): borrar los cargos de esta linea (si los hay) ANTES de
             // decidir si hay que restaurar el cap — son ellos los que originaron RetainedDeductionAmount. Menor 1:
             // antes de borrarlos, snapshotearlos para el audit del caller (si lo pidio).
@@ -7171,34 +7275,12 @@ public class BookingCancellationService
             return;
         }
 
-        // (1-ter) ARREGLO 2 (2026-06-24, fiscal bloqueante): multi-operador con multa confirmada.
-        //
-        //   La ND automatica se arma con montos a NIVEL del BC padre (bc.PenaltyAmountAtEvent / ConceptKind /
-        //   moneda de la factura): UNA sola ND por cancelacion. Eso es correcto cuando hay UN operador con
-        //   multa. Pero una reserva multi-operador (ADR-025) puede tener DOS multas confirmadas, cada una con
-        //   su propio monto y hasta su propia moneda (op A en ARS, op B en USD). La emision por LINEA de
-        //   operador NO existe todavia (es un rediseño aparte): si dejaramos correr el motor actual, saldria
-        //   UNA ND que mezcla/ignora la segunda multa -> comprobante fiscal incorrecto.
-        //
-        //   FIX CONSERVADOR (no inventamos emision por linea): si detectamos mas de UN operador distinto con
-        //   penalidad CONFIRMADA en las lineas de esta cancelacion, NO emitimos la ND automatica y derivamos a
-        //   revision/registro MANUAL (mismo mecanismo que ya usa el gating para factura no-ARS, etc.). El
-        //   operador emite/confirma cada ND a mano por ahora. Solo cerramos el agujero de la ND incorrecta.
-        var confirmedPenaltySupplierCount = await CountSuppliersWithConfirmedPenaltyAsync(bc.Id, ct);
-        if (confirmedPenaltySupplierCount > 1)
-        {
-            _logger.LogWarning(
-                "ADR-013/ARREGLO2: BC {BcPublicId} tiene {Count} operadores con multa confirmada. " +
-                "No se emite ND automatica (no hay emision por linea de operador). Rutea a revision manual.",
-                bc.PublicId, confirmedPenaltySupplierCount);
-            await RouteDebitNoteToManualReviewAsync(
-                bc,
-                $"La cancelacion tiene multas confirmadas de {confirmedPenaltySupplierCount} operadores distintos. " +
-                "La Nota de Debito de cada operador se confirma y emite manualmente por ahora " +
-                "(la emision automatica por operador todavia no esta disponible).",
-                ct);
-            return;
-        }
+        // (1-ter) ADR-044 T3a (2026-07-10): el candado "ARREGLO 2" (2026-06-24) que mandaba a revision manual
+        // CUALQUIER multi-operador confirmado se REEMPLAZA por la emision real multi-operador (ver el paso (3-ter)
+        // mas abajo, DESPUES del gating): ahora arma UNA ND con un renglon por cargo del operador, siempre que
+        // sea 1 sola factura activa y todos los cargos esten en la misma moneda que esa factura. El caso que
+        // sigue yendo a revision manual (2+ facturas activas, cruce de moneda, o multi-operador legacy SIN
+        // cargos tipificados) se sigue evaluando ahi, con su propio motivo especifico.
 
         var originatingInvoice = bc.OriginatingInvoice;
         if (originatingInvoice is null)
@@ -7302,13 +7384,52 @@ public class BookingCancellationService
             return;
         }
 
+        // (3-ter) ADR-044 T3a (2026-07-10): arma los renglones de la ND. Reemplaza el candado "ARREGLO 2":
+        // en vez de mandar a revision manual CUALQUIER multi-operador confirmado, arma la ND real con un
+        // renglon por cargo cuando el caso lo permite (1 factura activa, cargos en la misma moneda que ella).
+        // Sigue yendo a revision manual (con un motivo especifico y legible) cuando: hay 2+ facturas activas
+        // (T3b, todavia no construido); algun cargo elegible esta en una moneda distinta a la de la factura
+        // (idem, cruce de moneda es T3b); o el emisor es Responsable Inscripto y todavia no hay un valor
+        // confirmado de alicuota para la porcion pass-through (ver OperationalFinanceSettings).
+        var buildResult = await BuildCancellationDebitNoteItemsAsync(bc, originatingInvoice, settings, ct);
+        if (buildResult.ManualReviewReason is not null)
+        {
+            _logger.LogInformation(
+                "ADR-044 T3a: BC {BcPublicId} NO califica para ND automatica multi-operador ({Reason}). " +
+                "Rutea a revision manual.",
+                bc.PublicId, buildResult.ManualReviewReason);
+            await RouteDebitNoteToManualReviewAsync(bc, buildResult.ManualReviewReason, ct);
+            return;
+        }
+        if (buildResult.NothingToBill)
+        {
+            // La agencia absorbio TODOS los cargos elegibles (nada que trasladarle al cliente): no hay ND que
+            // emitir. Estado final NotApplicable (no es un error ni queda pendiente de nada).
+            bc.DebitNoteStatus = DebitNoteStatus.NotApplicable;
+            await _auditService.LogBusinessEventAsync(
+                action: AuditActions.BookingCancellationArcaSucceeded,
+                entityName: AuditActions.BookingCancellationEntityName,
+                entityId: bc.Id.ToString(),
+                details: JsonSerializer.Serialize(new
+                {
+                    bc.PublicId,
+                    debitNoteAction = "debit-note-absorbed-nothing-to-bill",
+                }),
+                userId: actorUserId ?? bc.ConfirmedByUserId ?? bc.DraftedByUserId,
+                userName: actorUserName ?? bc.ConfirmedByUserName ?? bc.DraftedByUserName,
+                ct: ct);
+            await _db.SaveChangesAsync(ct);
+            _logger.LogInformation(
+                "metric:cancellation_debit_note_absorbed | BcPublicId={BcPublicId}", bc.PublicId);
+            return;
+        }
+
         // (4) Construir el request de la ND y emitir por el pipeline existente.
         //     - IsDebitNote=true + OriginalInvoiceId=factura original -> el pipeline arma
         //       el <CbtesAsoc> y deriva CbteTipo=12 (ND C) con el fix M1 (§3.9).
-        //     - Un solo item: el monto de la penalidad, AlicuotaIvaId=3 (0% / no gravado),
-        //       que es lo que usa el sistema para comprobantes C (ImpIVA=0). El monto de la
-        //       ND es INDEPENDIENTE del refund (no participa de ninguna suma del refund).
-        var penaltyAmount = bc.PenaltyAmountAtEvent!.Value; // gating garantizo > 0
+        //     - Los renglones (1 o mas) los arma BuildCancellationDebitNoteItemsAsync. El total (sum de los
+        //       renglones) es INDEPENDIENTE del refund (no participa de ninguna suma del refund).
+        var penaltyAmount = buildResult.TotalAmount;
         var debitNoteRequest = new CreateInvoiceRequest
         {
             ReservaId = reservaPublicId.Value.ToString(),
@@ -7316,18 +7437,7 @@ public class BookingCancellationService
             OriginalInvoiceId = originatingInvoice.PublicId.ToString(),
             IsCreditNote = false,
             IsDebitNote = true,
-            Items = new List<InvoiceItemDto>
-            {
-                new()
-                {
-                    Description = $"Penalidad por cancelacion s/Fc " +
-                                  $"{originatingInvoice.PuntoDeVenta:00000}-{originatingInvoice.NumeroComprobante:00000000}.",
-                    Quantity = 1,
-                    UnitPrice = penaltyAmount,
-                    Total = penaltyAmount,
-                    AlicuotaIvaId = 3, // 0% / no gravado -> C sin IVA discriminado.
-                },
-            },
+            Items = buildResult.Items!,
             Tributes = new List<InvoiceTributeDto>(),
             // ADR-012/013 (multimoneda ND, 2026-07-08): la ND HEREDA la moneda y el TC CONGELADOS de la
             // factura original, igual que la NC total (ADR-012 §3.3). Para una factura en pesos esto copia
@@ -7417,6 +7527,291 @@ public class BookingCancellationService
             "metric:cancellation_debit_note_enqueued | BcPublicId={BcPublicId} DebitNoteInvoiceId={DebitNoteId} Penalty={Penalty}",
             bc.PublicId, debitNoteId.Value, penaltyAmount);
     }
+
+    // =========================================================================
+    // ADR-044 T3a (2026-07-10): renglones de la ND multi-operador (reemplaza "ARREGLO 2").
+    // =========================================================================
+
+    /// <summary>
+    /// ADR-044 T3a: resultado de armar los renglones de la ND. Exactamente UNO de los 3 casos: (a)
+    /// <see cref="Items"/> con contenido -> se puede emitir con ese total; (b) <see cref="ManualReviewReason"/>
+    /// con motivo -> revision manual (NO emitir); (c) <see cref="NothingToBill"/>=true -> la agencia absorbio
+    /// todos los cargos elegibles, no hay nada que facturarle al cliente (no es un error).
+    /// </summary>
+    internal sealed record CancellationDebitNoteItemsResult(
+        List<InvoiceItemDto>? Items, decimal TotalAmount, string? ManualReviewReason, bool NothingToBill)
+    {
+        public static CancellationDebitNoteItemsResult Manual(string reason) =>
+            new(Items: null, TotalAmount: 0m, ManualReviewReason: reason, NothingToBill: false);
+
+        public static CancellationDebitNoteItemsResult Absorbed() =>
+            new(Items: null, TotalAmount: 0m, ManualReviewReason: null, NothingToBill: true);
+
+        public static CancellationDebitNoteItemsResult Ready(List<InvoiceItemDto> items, decimal total) =>
+            new(items, total, ManualReviewReason: null, NothingToBill: false);
+    }
+
+    /// <summary>
+    /// ADR-044 T3a: arma los renglones (<see cref="InvoiceItemDto"/>) de la Nota de Debito por la multa de
+    /// cancelacion. Reemplaza el candado "ARREGLO 2" (2026-06-24, que mandaba a revision manual CUALQUIER
+    /// multi-operador confirmado) por la emision real: un renglon por CARGO tipificado del operador
+    /// (<see cref="BookingCancellationLineOperatorCharge"/>), sea de uno o de varios operadores, siempre que la
+    /// cancelacion afecte UNA sola factura activa y todos los cargos elegibles esten en la misma moneda que esa
+    /// factura.
+    ///
+    /// <para><b>2 caminos, elegidos por si el BC ya tiene cargos tipificados (ADR-044 T2)</b>:
+    /// <list type="number">
+    /// <item><b>Concepto propio de la agencia</b> (<see cref="ConceptIsAgencyOwnedDebitNote"/>): la agencia
+    /// nunca crea cargos del operador para este concepto (<c>AllocateConfirmedPenaltyToLinesAsync</c> corta
+    /// antes). Se arma el UNICO renglon de siempre (<c>bc.PenaltyAmountAtEvent</c>, AlicuotaIvaId=3),
+    /// BYTE-IDENTICO al comportamiento previo a esta tanda.</item>
+    /// <item><b>Pass-through sin cargos (legacy)</b>: BC confirmado antes de ADR-044 T2, o cuyo cap del
+    /// operador ya estaba en 0 al confirmar (el auto-cargo solo se crea si hay algo que retener). Mismo renglon
+    /// unico de siempre. El unico guard nuevo: si hay 2+ operadores con multa CONFIRMADA y NINGUNO tiene cargos,
+    /// sigue yendo a revision manual (mismo motivo que el "ARREGLO 2" original: sin cargos no hay de donde armar
+    /// el desglose por operador).</item>
+    /// <item><b>Pass-through con cargos</b>: UN renglon por cargo ELEGIBLE (<c>Kind != Withholding AND
+    /// ClientTransferMode != Absorbed</c>) de TODAS las lineas confirmadas del BC (de cualquier operador), mas
+    /// un renglon aparte por cada fee de gestion (<c>ClientTransferMode = WithManagementFee</c>).</item>
+    /// </list></para>
+    ///
+    /// <para><b>Cuando rutea a revision manual (T3b, fuera de esta tanda)</b>: 2+ facturas activas en la
+    /// cancelacion (ADR-042); algun cargo elegible en una moneda distinta a la de la factura (cruce de moneda);
+    /// el emisor es Responsable Inscripto y todavia no hay una alicuota de IVA confirmada para la porcion
+    /// pass-through (<c>OperationalFinanceSettings.CancellationDebitNoteRiPassThroughAlicuotaIvaId</c> en null);
+    /// el total de los renglones supera el total de la factura (M2, espejo del gating de un solo operador); o el
+    /// BC combina un concepto propio de la agencia con cargos de OTRO operador (mezcla que esta tanda no
+    /// resuelve).</para>
+    /// </summary>
+    private async Task<CancellationDebitNoteItemsResult> BuildCancellationDebitNoteItemsAsync(
+        BookingCancellation bc, Invoice originatingInvoice, OperationalFinanceSettings settings, CancellationToken ct)
+    {
+        if (ConceptIsAgencyOwnedDebitNote(bc.ConceptKind))
+        {
+            // El renglon de siempre vive en bc.PenaltyAmountAtEvent (sin cargos: Allocate nunca crea uno para
+            // este concepto). Si ADEMAS otro operador de la MISMA cancelacion tiene SU PROPIA multa confirmada
+            // (con o sin cargos tipificados: un BC legacy puede tener la linea confirmada sin haber pasado nunca
+            // por Allocate), es una mezcla que esta tanda no resuelve: ante la duda, revision manual (no se
+            // inventa un renglon hibrido). Mismo espiritu que el "ARREGLO 2" original, ahora acotado a este caso.
+            var anyOtherSupplierConfirmed = await _db.BookingCancellationLines
+                .AnyAsync(l => l.BookingCancellationId == bc.Id
+                            && l.SupplierId != bc.SupplierId
+                            && l.PenaltyStatus == PenaltyStatus.Confirmed, ct);
+            if (anyOtherSupplierConfirmed)
+                return CancellationDebitNoteItemsResult.Manual(
+                    "La cancelación combina un cargo propio de la agencia con la multa de otro operador: por " +
+                    "ahora esto se resuelve a mano.");
+
+            return LegacySingleItem(bc, originatingInvoice);
+        }
+
+        // A partir de aca, bc.ConceptKind == OperatorPenaltyPassThrough: es el UNICO otro valor que emite ND
+        // (ver ConceptEmitsDebitNote; el gating de arriba ya descarto los conceptos de seguro).
+        var lines = await _db.BookingCancellationLines
+            .Include(l => l.OperatorCharges)
+            .Include(l => l.Supplier)
+            .Where(l => l.BookingCancellationId == bc.Id)
+            .ToListAsync(ct);
+
+        var confirmedLines = lines.Where(l => l.PenaltyStatus == PenaltyStatus.Confirmed).ToList();
+        var allCharges = confirmedLines
+            .SelectMany(line => line.OperatorCharges.Select(charge => (Line: line, Charge: charge)))
+            .ToList();
+
+        if (allCharges.Count == 0)
+        {
+            // Legacy: ningun cargo tipificado (BC confirmado antes de ADR-044 T2, o cap del operador ya en 0 al
+            // confirmar). Si hay 2+ operadores con multa confirmada, no hay de donde armar el desglose -> mismo
+            // motivo que el "ARREGLO 2" original.
+            var confirmedSupplierCount = confirmedLines.Select(l => l.SupplierId).Distinct().Count();
+            if (confirmedSupplierCount > 1)
+                return CancellationDebitNoteItemsResult.Manual(
+                    $"La cancelación tiene multas confirmadas de {confirmedSupplierCount} operadores distintos " +
+                    "y no hay el desglose de cargos necesario para armar la Nota de Débito automática. Se " +
+                    "confirma y emite manualmente por ahora.");
+
+            return LegacySingleItem(bc, originatingInvoice);
+        }
+
+        // 2+ facturas activas en esta cancelacion (ADR-042): la ND automatica multi-operador solo cubre 1
+        // factura por ahora (T3b resuelve a que factura corresponde cada cargo cuando hay mas de una).
+        var invoiceCount = await _db.BookingCancellationCreditNotes
+            .CountAsync(c => c.BookingCancellationId == bc.Id, ct);
+        if (invoiceCount > 1)
+            return CancellationDebitNoteItemsResult.Manual(
+                "La cancelación afecta más de una factura: por ahora la Nota de Débito de cada una se resuelve " +
+                "a mano.");
+
+        // Condicion fiscal de la agencia CONGELADA al confirmar la cancelacion (nunca la de HOY: reinterpretar
+        // un evento fiscal ya ocurrido con un dato que cambio despues seria incoherente con el resto del modulo).
+        var emitterCondition = TaxConditionNormalizer.Normalize(bc.FiscalSnapshot?.AgencyTaxConditionAtEvent);
+
+        var invoiceIsArs = string.IsNullOrWhiteSpace(originatingInvoice.MonId) ||
+                           string.Equals(originatingInvoice.MonId, "PES", StringComparison.OrdinalIgnoreCase) ||
+                           string.Equals(originatingInvoice.MonId, "ARS", StringComparison.OrdinalIgnoreCase);
+        var invoiceCurrencyArca = NormalizeCurrencyToArcaOrNull(originatingInvoice.MonId)
+            ?? (invoiceIsArs ? "PES" : null);
+
+        var items = new List<InvoiceItemDto>();
+        var absorbedCount = 0;
+        decimal total = 0m;
+
+        // Orden deterministico: por operador y despues por orden de creacion del cargo.
+        foreach (var (line, charge) in allCharges.OrderBy(x => x.Line.SupplierId).ThenBy(x => x.Charge.Id))
+        {
+            if (charge.Kind == OperatorChargeKind.Withholding)
+                continue; // credito fiscal de la agencia: nunca se traslada al cliente.
+
+            if (charge.ClientTransferMode == ClientTransferMode.Absorbed)
+            {
+                absorbedCount++;
+                continue; // la agencia decidio no trasladarlo: sin renglon (el cargo ya quedo persistido como rastro).
+            }
+
+            // Coherencia de moneda: el cargo tiene que estar en la MISMA moneda que la factura. El cruce de
+            // moneda (conversion con TC) es T3b, todavia no construido: ante la duda, no se emite.
+            var chargeCurrencyArca = NormalizeCurrencyToArcaOrNull(charge.Currency);
+            if (chargeCurrencyArca is null || invoiceCurrencyArca is null ||
+                !string.Equals(chargeCurrencyArca, invoiceCurrencyArca, StringComparison.OrdinalIgnoreCase))
+            {
+                return CancellationDebitNoteItemsResult.Manual(
+                    $"La multa de {SafeSupplierName(line)} está en una moneda distinta a la de la factura " +
+                    "original: por ahora esto se resuelve a mano.");
+            }
+
+            var passThroughAlicuota = ResolvePassThroughAlicuotaIvaIdOrNull(
+                emitterCondition, settings.CancellationDebitNoteRiPassThroughAlicuotaIvaId);
+            if (passThroughAlicuota is null)
+                return CancellationDebitNoteItemsResult.Manual(
+                    "Todavía no está confirmada la alícuota de IVA para trasladarle este tipo de cargo al " +
+                    "cliente: quedó para revisión manual.");
+
+            // DATA-EXPOSURE (cambio de negocio, review 2026-07-10): la Description viaja en el comprobante que
+            // RECIBE EL PASAJERO. NO nombramos al mayorista/operador ahi: revelarlo le muestra al cliente quien es
+            // tu proveedor (riesgo de que lo saltee y compre directo). Renglon GENERICO. El nombre del operador
+            // queda SOLO en la auditoria interna y en la ficha (desglose de cargos por operador).
+            // TODO (T4): confirmar con Gaston si prefiere algun texto por operador (ej. "Servicio A/B") que no
+            // filtre el nombre del mayorista, o dejarlo generico como ahora.
+            items.Add(new InvoiceItemDto
+            {
+                Description = $"Penalidad de operador por cancelación s/Fc " +
+                              $"{originatingInvoice.PuntoDeVenta:00000}-{originatingInvoice.NumeroComprobante:00000000}.",
+                Quantity = 1,
+                UnitPrice = charge.Amount,
+                Total = charge.Amount,
+                AlicuotaIvaId = passThroughAlicuota.Value,
+            });
+            total += charge.Amount;
+
+            if (charge.ClientTransferMode == ClientTransferMode.WithManagementFee)
+            {
+                var managementFeeAlicuota = ResolveAgencyOwnedAlicuotaIvaIdOrNull(emitterCondition);
+                if (managementFeeAlicuota is null)
+                    return CancellationDebitNoteItemsResult.Manual(
+                        "No se pudo determinar la condición fiscal de la agencia para cobrar el cargo de " +
+                        "gestión: quedó para revisión manual.");
+
+                var feeAmount = charge.ManagementFeeAmount!.Value; // CHECK SQL lo garantiza > 0 con este modo.
+                items.Add(new InvoiceItemDto
+                {
+                    Description = $"Cargo de gestión de la agencia por cancelación s/Fc " +
+                                  $"{originatingInvoice.PuntoDeVenta:00000}-{originatingInvoice.NumeroComprobante:00000000}.",
+                    Quantity = 1,
+                    UnitPrice = feeAmount,
+                    Total = feeAmount,
+                    AlicuotaIvaId = managementFeeAlicuota.Value,
+                });
+                total += feeAmount;
+            }
+        }
+
+        if (absorbedCount > 0)
+        {
+            _logger.LogInformation(
+                "ADR-044 T3a: BC {BcPublicId} absorbe {Count} cargo(s) del operador (no se trasladan al " +
+                "cliente). metric:cancellation_debit_note_charge_absorbed",
+                bc.PublicId, absorbedCount);
+        }
+
+        if (items.Count == 0)
+        {
+            // Si hubo al menos un cargo absorbido, es una decision real de la agencia: nada que facturar.
+            // Si no (todos los cargos eran Withholding, dato atipico sin un solo cargo pass-through creado),
+            // no hay de donde armar el desglose: cae al mismo camino legacy que "sin cargos".
+            return absorbedCount > 0
+                ? CancellationDebitNoteItemsResult.Absorbed()
+                : LegacySingleItem(bc, originatingInvoice);
+        }
+
+        // M2 (espejo del gating de un solo operador): el total nunca supera el total de la factura.
+        if (total > originatingInvoice.ImporteTotal)
+            return CancellationDebitNoteItemsResult.Manual(
+                "El total de los cargos trasladados supera el total de la factura original: queda para " +
+                "revisión manual.");
+
+        return CancellationDebitNoteItemsResult.Ready(items, total);
+    }
+
+    /// <summary>
+    /// ADR-044 T3a: el UNICO renglon de siempre (comportamiento previo a esta tanda, byte-identico). Se usa
+    /// cuando no hay cargos tipificados de donde armar el desglose por operador, o cuando el concepto es propio
+    /// de la agencia (que nunca crea cargos del operador).
+    /// </summary>
+    private static CancellationDebitNoteItemsResult LegacySingleItem(BookingCancellation bc, Invoice originatingInvoice)
+    {
+        var penaltyAmount = bc.PenaltyAmountAtEvent!.Value; // el gating de arriba ya garantizo > 0
+        var items = new List<InvoiceItemDto>
+        {
+            new()
+            {
+                Description = $"Penalidad por cancelacion s/Fc " +
+                              $"{originatingInvoice.PuntoDeVenta:00000}-{originatingInvoice.NumeroComprobante:00000000}.",
+                Quantity = 1,
+                UnitPrice = penaltyAmount,
+                Total = penaltyAmount,
+                AlicuotaIvaId = 3, // 0% / no gravado -> C sin IVA discriminado. Byte-identico al comportamiento previo.
+            },
+        };
+        return CancellationDebitNoteItemsResult.Ready(items, penaltyAmount);
+    }
+
+    /// <summary>Nombre del operador para la descripcion de un renglon, sin dejar un hueco vacio si faltara.</summary>
+    private static string SafeSupplierName(BookingCancellationLine line) =>
+        string.IsNullOrWhiteSpace(line.Supplier?.Name) ? "el operador" : line.Supplier!.Name.Trim();
+
+    /// <summary>
+    /// ADR-044 T3a: alicuota de IVA (codigo ARCA) para un renglon PASS-THROUGH (la multa del operador
+    /// replicada tal cual, sin agregarle nada). Monotributo/Exento: SIEMPRE 3 (0%), verificado para cualquier
+    /// concepto (ver la spec fiscal firmada de T3, punto 5). Responsable Inscripto: SIN firma contable — solo
+    /// se usa si el admin ya cargo el valor confirmado en Configuracion; sin ese valor, null (el caller debe
+    /// bloquear la emision y rutear a revision manual). Cualquier otra condicion (Consumidor Final/Extranjero/
+    /// desconocida): null, conservador — no deberia darse (el emisor es siempre la agencia).
+    /// </summary>
+    internal static int? ResolvePassThroughAlicuotaIvaIdOrNull(
+        TaxConditionCanonical emitterCondition, int? riPassThroughAlicuotaIvaIdSetting) =>
+        emitterCondition switch
+        {
+            TaxConditionCanonical.Monotributista => 3,
+            TaxConditionCanonical.Exento => 3,
+            TaxConditionCanonical.ResponsableInscripto => riPassThroughAlicuotaIvaIdSetting,
+            _ => null,
+        };
+
+    /// <summary>
+    /// ADR-044 T3a: alicuota de IVA (codigo ARCA) para un renglon PROPIO de la agencia (fee de gestion,
+    /// concepto <see cref="CancellationConceptKind.AgencyManagementFee"/>). Monotributo/Exento: 3 (0%).
+    /// Responsable Inscripto: 5 (21%), YA FIRMADO (R2 contador matriculado 2026-06-01, art.61 DR IVA + DAT
+    /// 44/01) — a diferencia del pass-through, este SI tiene un valor operativo confirmado de antemano.
+    /// Cualquier otra condicion: null, conservador.
+    /// </summary>
+    internal static int? ResolveAgencyOwnedAlicuotaIvaIdOrNull(TaxConditionCanonical emitterCondition) =>
+        emitterCondition switch
+        {
+            TaxConditionCanonical.Monotributista => 3,
+            TaxConditionCanonical.Exento => 3,
+            TaxConditionCanonical.ResponsableInscripto => 5,
+            _ => null,
+        };
 
     /// <summary>
     /// ADR-013 §3.4.1 (P3 gating): decide si el caso califica para emitir la ND automatica.
@@ -8053,24 +8448,55 @@ public class BookingCancellationService
     }
 
     /// <summary>
-    /// ARREGLO 2 (2026-06-24): cuenta cuantos OPERADORES distintos tienen una penalidad CONFIRMADA en las
-    /// lineas de esta cancelacion. Es la señal que decide si la ND automatica es segura (1 operador) o si hay
-    /// que derivar a revision manual (mas de 1 -> la emision por linea de operador no existe todavia).
+    /// ADR-044 T3a (2026-07-10, fix B1 confirmacion escalonada, caso (b)): un operador SECUNDARIO confirmo su multa
+    /// DESPUES de que la Nota de Debito del principal ya estaba emitida/en vuelo. Ese cargo NO cabe en un comprobante
+    /// ya emitido, asi que en vez de perderlo en silencio lo dejamos VISIBLE: marcamos las lineas de ESE operador
+    /// con <see cref="DebitNoteStatus.ManualReview"/> + un aviso claro. El read-model
+    /// (<see cref="GetOperatorPenaltySituationsAsync"/>) levanta ese marcador y muestra el paso "resolver a mano
+    /// (nota de debito complementaria)" para ese operador, sin tocar el estado de la ND del BC padre (que es del
+    /// principal y esta bien).
     ///
-    /// <para>Mira <see cref="BookingCancellationLine"/> porque ahi vive la penalidad POR OPERADOR
-    /// (<see cref="BookingCancellationLine.PenaltyStatus"/> + <see cref="BookingCancellationLine.SupplierId"/>).
-    /// El BC padre solo lleva un monto agregado, que es justamente lo que no alcanza para multi-operador. Si la
-    /// cancelacion no tiene lineas (caso legacy NC total sin lineas) devuelve 0 -> no bloquea (sigue el flujo de
-    /// siempre, un solo operador).</para>
+    /// <para><b>Por que a nivel LINEA y no en el BC padre</b>: el BC padre tiene UN solo slot de ND, que describe
+    /// al principal (su ND ya salio). El estado "necesita resolucion manual" es de ESTE operador secundario puntual,
+    /// asi que vive en sus lineas — la unica fuente por operador. Deja rastro de auditoria del cargo huerfano.</para>
     /// </summary>
-    private async Task<int> CountSuppliersWithConfirmedPenaltyAsync(int bookingCancellationId, CancellationToken ct)
+    private async Task MarkSecondaryChargeAsComplementaryManualAsync(
+        BookingCancellation bc, int targetSupplierId, string userId, string? userName, CancellationToken ct)
     {
-        return await _db.BookingCancellationLines
-            .Where(line => line.BookingCancellationId == bookingCancellationId
-                        && line.PenaltyStatus == PenaltyStatus.Confirmed)
-            .Select(line => line.SupplierId)
-            .Distinct()
-            .CountAsync(ct);
+        // Mensaje al USUARIO (aparece en la ficha via el read-model): en criollo, sin jerga, explica el paso.
+        const string message =
+            "La nota de débito al cliente ya se emitió antes de confirmar este cargo. " +
+            "Este cargo adicional se resuelve a mano (nota de débito complementaria).";
+
+        var lines = await _db.BookingCancellationLines
+            .Where(l => l.BookingCancellationId == bc.Id && l.SupplierId == targetSupplierId)
+            .ToListAsync(ct);
+        foreach (var line in lines)
+        {
+            line.DebitNoteStatus = DebitNoteStatus.ManualReview;
+            line.DebitNoteArcaErrorMessage = message;
+        }
+        await _db.SaveChangesAsync(ct);
+
+        // Auditoria del cargo que quedo para nota de debito complementaria (traza para el contador).
+        await _auditService.LogBusinessEventAsync(
+            action: AuditActions.BookingCancellationArcaSucceeded,
+            entityName: AuditActions.BookingCancellationEntityName,
+            entityId: bc.Id.ToString(),
+            details: JsonSerializer.Serialize(new
+            {
+                bc.PublicId,
+                debitNoteAction = "secondary-charge-needs-complementary-debit-note",
+                supplierId = targetSupplierId,
+            }),
+            userId: userId,
+            userName: userName,
+            ct: ct);
+
+        _logger.LogWarning(
+            "metric:cancellation_secondary_charge_orphaned | BcPublicId={BcPublicId} Supplier={SupplierId} | " +
+            "La ND del principal ya estaba emitida/en vuelo al confirmar este operador; su cargo queda para nota de debito complementaria manual.",
+            bc.PublicId, targetSupplierId);
     }
 
     public async Task OnArcaFailedAsync(int originatingInvoiceId, string? afipErrorMessage, CancellationToken ct)

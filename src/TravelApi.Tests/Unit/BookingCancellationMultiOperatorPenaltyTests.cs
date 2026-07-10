@@ -266,14 +266,18 @@ public class BookingCancellationMultiOperatorPenaltyTests
         Assert.Equal("userA", reloadedBc.PenaltyConfirmedByUserId);
         Assert.Equal(20_000m, reloadedBc.PenaltyAmountAtEvent); // el monto de A, NO 10.000 (B)
 
-        // El candado multi-operador de la ND (YA EXISTENTE, "ARREGLO 2") ahora SI puede activarse: hay DOS
-        // operadores con PenaltyStatus.Confirmed en sus lineas. Antes de esta tanda esto era IMPOSIBLE porque
-        // ninguna linea llegaba a Confirmed (CountSuppliersWithConfirmedPenaltyAsync siempre daba 0).
+        // ADR-044 T3a (menor 3, review 2026-07-10): el read-model ahora deriva el paso de cada operador del ESTADO
+        // REAL de la ND, no de un conteo de operadores confirmados. Este seed NO tiene FiscalSnapshot, asi que el
+        // motor de la ND no puede resolver la alicuota (condicion fiscal Unknown) y rutea a REVISION MANUAL — tanto
+        // el principal como el secundario quedan en el paso "hay que revisar monto/moneda a mano" (DebitNoteNeedsAmountCurrency),
+        // que es el mapeo de una ND en ManualReview. (El camino FELIZ multi-operador — 1 ND con 2 renglones — y el
+        // caso escalonado b — cargo huerfano con nota de debito complementaria — se prueban en
+        // Adr044T3aMultiOperatorDebitNoteTests, que tiene FiscalSnapshot + mock de emision real.)
         var situations = await h.Service.GetOperatorPenaltySituationsAsync(
             reserva.PublicId, userCanClassifyOperatorPenalty: true, isCallerAdmin: true, ct: default);
         Assert.Equal(2, situations.Count);
         Assert.All(situations, s => Assert.Equal(
-            OperatorPenaltySituationState.MultiOperatorNeedsManualReview.ToString(), s.State));
+            OperatorPenaltySituationState.DebitNoteNeedsAmountCurrency.ToString(), s.State));
     }
 
     // ============================================================

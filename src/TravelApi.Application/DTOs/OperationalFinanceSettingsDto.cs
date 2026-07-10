@@ -219,4 +219,16 @@ public class OperationalFinanceSettingsDto
     /// </summary>
     [Range(0, 3650, ErrorMessage = "Los días de caducidad de la cotización deben estar entre 0 y 3650 (0 = desactivado).")]
     public int? QuotationExpirationDays { get; set; }
+
+    /// <summary>
+    /// ADR-044 T3a (2026-07-10): código de alícuota de IVA (catálogo ARCA: 3=0%, 4=10.5%, 5=21%, 6=27%, 8=5%,
+    /// 9=2.5%) para la porción del cargo del operador que la agencia solo REPLICA al cliente (pass-through, sin
+    /// agregarle nada), cuando la agencia emisora es Responsable Inscripto. Sin firma contable todavía: mientras
+    /// quede en null, la Nota de Débito automática de un emisor Responsable Inscripto con este tipo de cargo NO
+    /// se emite sola (queda para revisión manual). Setealo recién cuando el contador confirme el valor.
+    ///
+    /// <para>Nullable y patch-like (criterio B-002): enviar null u omitir el campo en el PUT = no se modifica el
+    /// valor actual. El service valida que el código sea uno reconocido del catálogo ARCA (400 si no).</para>
+    /// </summary>
+    public int? CancellationDebitNoteRiPassThroughAlicuotaIvaId { get; set; }
 }

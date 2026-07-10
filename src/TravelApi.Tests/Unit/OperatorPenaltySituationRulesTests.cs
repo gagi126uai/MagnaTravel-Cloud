@@ -117,27 +117,28 @@ public class OperatorPenaltySituationRulesTests
     }
 
     // ============================================================
-    // ADR-044 T1 (2026-07-10): DeriveForOperator, la version POR OPERADOR de Derive. Misma matriz que arriba,
-    // pero con el eje nuevo "cuantos operadores distintos estan confirmados a la vez".
+    // ADR-044 T1/T3a (2026-07-10): DeriveForOperator, la version POR OPERADOR de Derive. Misma matriz que arriba,
+    // pero con el eje nuevo "este operador quedo marcado individualmente para resolucion manual" (nota de debito
+    // complementaria) — un MARCADOR REAL por linea, NO un conteo de operadores confirmados (fix menor 3 T3a).
     // ============================================================
 
     private static OperatorPenaltySituationState DeriveForOperator(
         PenaltyStatus linePenaltyStatus,
         bool isPendingDecision = false,
-        int confirmedSupplierCount = 1,
-        DebitNoteStatus bcDebitNoteStatus = DebitNoteStatus.NotApplicable)
+        DebitNoteStatus bcDebitNoteStatus = DebitNoteStatus.NotApplicable,
+        bool isOperatorSpecificManual = false)
         => OperatorPenaltySituationRules.DeriveForOperator(new OperatorPenaltySituationRules.LineFields(
             LinePenaltyStatus: linePenaltyStatus,
             IsPendingDecision: isPendingDecision,
-            ConfirmedSupplierCount: confirmedSupplierCount,
-            BcDebitNoteStatus: bcDebitNoteStatus));
+            BcDebitNoteStatus: bcDebitNoteStatus,
+            IsOperatorSpecificManual: isOperatorSpecificManual));
 
     [Fact]
     public void DeriveForOperator_Estimated_PendingDecision_IsPendingDecision()
     {
         Assert.Equal(
             OperatorPenaltySituationState.PendingDecision,
-            DeriveForOperator(PenaltyStatus.Estimated, isPendingDecision: true, confirmedSupplierCount: 0));
+            DeriveForOperator(PenaltyStatus.Estimated, isPendingDecision: true));
     }
 
     [Fact]
@@ -145,29 +146,32 @@ public class OperatorPenaltySituationRulesTests
     {
         Assert.Equal(
             OperatorPenaltySituationState.None,
-            DeriveForOperator(PenaltyStatus.Estimated, isPendingDecision: false, confirmedSupplierCount: 0));
+            DeriveForOperator(PenaltyStatus.Estimated, isPendingDecision: false));
     }
 
     [Fact]
-    public void DeriveForOperator_Waived_IsWaived_RegardlessOfOtherConfirmedOperators()
+    public void DeriveForOperator_Waived_IsWaived_RegardlessOfManualMarker()
     {
-        // Waived es terminal y PROPIO de este operador: no importa cuantos otros esten confirmados.
+        // Waived es terminal y PROPIO de este operador: no importa si quedo algun marcador manual.
         Assert.Equal(
             OperatorPenaltySituationState.Waived,
-            DeriveForOperator(PenaltyStatus.Waived, confirmedSupplierCount: 3));
+            DeriveForOperator(PenaltyStatus.Waived, isOperatorSpecificManual: true));
     }
 
     [Fact]
-    public void DeriveForOperator_ConfirmedAlone_BorrowsBcSnapshot_SameMatrixAsDerive()
+    public void DeriveForOperator_ConfirmedWithoutManualMarker_FollowsBcDebitNoteStatus()
     {
-        // UN solo operador confirmado: el snapshot BC-padre lo describe fielmente (nadie mas lo piso) -> mismo
-        // desglose fino que Derive.
+        // Sin marcador propio: este operador comparte la ND del BC padre -> su paso lo define el estado de esa ND
+        // (mismo desglose fino que Derive). Es el caso de una ND multi-operador emitida BIEN: NO "necesita revision".
         Assert.Equal(
             OperatorPenaltySituationState.Done,
-            DeriveForOperator(PenaltyStatus.Confirmed, confirmedSupplierCount: 1, bcDebitNoteStatus: DebitNoteStatus.Issued));
+            DeriveForOperator(PenaltyStatus.Confirmed, bcDebitNoteStatus: DebitNoteStatus.Issued));
+        Assert.Equal(
+            OperatorPenaltySituationState.DebitNoteQueued,
+            DeriveForOperator(PenaltyStatus.Confirmed, bcDebitNoteStatus: DebitNoteStatus.Pending));
         Assert.Equal(
             OperatorPenaltySituationState.DebitNoteFailed,
-            DeriveForOperator(PenaltyStatus.Confirmed, confirmedSupplierCount: 1, bcDebitNoteStatus: DebitNoteStatus.Failed));
+            DeriveForOperator(PenaltyStatus.Confirmed, bcDebitNoteStatus: DebitNoteStatus.Failed));
     }
 
     [Theory]
@@ -176,13 +180,13 @@ public class OperatorPenaltySituationRulesTests
     [InlineData(DebitNoteStatus.Failed)]
     [InlineData(DebitNoteStatus.ManualReview)]
     [InlineData(DebitNoteStatus.NotApplicable)]
-    public void DeriveForOperator_ConfirmedWithMoreThanOneOperator_AlwaysNeedsManualReview(DebitNoteStatus bcStatus)
+    public void DeriveForOperator_ConfirmedWithManualMarker_AlwaysNeedsManualReview(DebitNoteStatus bcStatus)
     {
-        // Con MAS de un operador confirmado a la vez, el snapshot BC-padre (un unico slot de ND) queda AMBIGUO
-        // para cualquiera de los confirmados: sin importar que diga ese snapshot, el paso pasa a "necesita
-        // revision manual" — nunca "Done"/"Fallida"/etc, que podria no corresponder a ESTE operador.
+        // Marcador propio de resolucion manual (su cargo quedo afuera de la ND ya emitida -> nota de debito
+        // complementaria): el paso es "necesita revision manual" sin importar el estado de la ND compartida del BC.
+        // El marcador es REAL (motor ruteo a manual para este operador), no un conteo.
         Assert.Equal(
             OperatorPenaltySituationState.MultiOperatorNeedsManualReview,
-            DeriveForOperator(PenaltyStatus.Confirmed, confirmedSupplierCount: 2, bcDebitNoteStatus: bcStatus));
+            DeriveForOperator(PenaltyStatus.Confirmed, bcDebitNoteStatus: bcStatus, isOperatorSpecificManual: true));
     }
 }

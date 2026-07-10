@@ -472,7 +472,23 @@ public record AddOperatorChargeRequest(
     /// de un operador (ADR-025). Opcional y retrocompatible: si la cancelacion tiene lineas de UN solo operador,
     /// se resuelve solo. Mismo criterio que <see cref="ConfirmPenaltyRequest.SupplierPublicId"/>.
     /// </summary>
-    Guid? SupplierPublicId = null
+    Guid? SupplierPublicId = null,
+
+    /// <summary>
+    /// ADR-044 T3a (2026-07-10): como se traslada ESTE cargo al cliente en la Nota de Debito. Default
+    /// <see cref="ClientTransferMode.AsIs"/> (tal cual, sin friccion — el comportamiento de siempre). Ver
+    /// <see cref="ClientTransferMode"/> para el detalle de cada valor.
+    /// </summary>
+    ClientTransferMode ClientTransferMode = ClientTransferMode.AsIs,
+
+    /// <summary>
+    /// ADR-044 T3a (2026-07-10): monto del cargo de gestion propio de la agencia, SOLO cuando
+    /// <see cref="ClientTransferMode"/> = <see cref="ClientTransferMode.WithManagementFee"/>. Sale como renglon
+    /// APARTE en la misma Nota de Debito (no reemplaza <see cref="Amount"/>). El service rechaza el request si
+    /// falta con ese modo, o si viene cargado con cualquier otro modo.
+    /// </summary>
+    [Range(0.01, double.MaxValue, ErrorMessage = "El monto del cargo de gestión debe ser mayor a cero.")]
+    decimal? ManagementFeeAmount = null
 );
 
 /// <summary>

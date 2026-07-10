@@ -64,6 +64,24 @@ public class BookingCancellationLineOperatorCharge : IHasPublicId
     [MaxLength(1000)]
     public string? Notes { get; set; }
 
+    /// <summary>
+    /// ADR-044 T3a (2026-07-10): como se traslada ESTE cargo al cliente en la Nota de Debito. Default
+    /// <see cref="Entities.ClientTransferMode.AsIs"/> = comportamiento de siempre (el cargo automatico que crea
+    /// el confirm de la multa nace con este valor, transparente para el usuario). Ver
+    /// <see cref="Entities.ClientTransferMode"/> para el detalle de cada valor.
+    /// </summary>
+    public ClientTransferMode ClientTransferMode { get; set; } = ClientTransferMode.AsIs;
+
+    /// <summary>
+    /// ADR-044 T3a (2026-07-10): monto ADICIONAL del cargo de gestion propio de la agencia, SOLO usado cuando
+    /// <see cref="ClientTransferMode"/> = <see cref="Entities.ClientTransferMode.WithManagementFee"/>. Sale como
+    /// renglon APARTE en la misma Nota de Debito (no reemplaza el monto de <see cref="Amount"/>, se SUMA en un
+    /// renglon propio). CHECK SQL: obligatorio (y mayor a cero) cuando el modo es WithManagementFee; debe quedar
+    /// vacio en cualquier otro modo (evita un monto "fantasma" que nadie factura).
+    /// </summary>
+    [System.ComponentModel.DataAnnotations.Schema.Column(TypeName = "numeric(18,2)")]
+    public decimal? ManagementFeeAmount { get; set; }
+
     /// <summary>Auditoria: quien confirmo/cargo este cargo (mismo patron que el resto del modulo).</summary>
     [MaxLength(450)]
     public string ConfirmedByUserId { get; set; } = string.Empty;

@@ -143,6 +143,20 @@ public class CancellationCorrectPenaltyAndSituationTests
             ConfirmedByUserId = confirmedByUserId,
             ConfirmedByUserName = confirmedByUserId,
             ConfirmedWithClientAt = DateTime.UtcNow.AddDays(-10),
+            // ADR-044 T3a (2026-07-10): la agencia emisora (Monotributo, igual que el resto de la suite de ND)
+            // congelada al confirmar la cancelacion. CorrectPenaltyAsync vuelve a pasar por
+            // AllocateConfirmedPenaltyToLinesAsync (crea un cargo tipificado nuevo), y la ND multi-operador
+            // necesita esta condicion fiscal para resolver la alicuota de IVA del renglon.
+            FiscalSnapshot = new FiscalSnapshot
+            {
+                CurrencyAtEvent = "ARS",
+                AgencyTaxConditionAtEvent = "MONOTRIBUTISTA",
+                SupplierTaxConditionAtEvent = "MONOTRIBUTISTA",
+                CustomerTaxConditionAtEvent = "CONSUMIDOR_FINAL",
+                Source = ExchangeRateSource.Manual,
+                ExchangeRateAtOriginalInvoice = 1m,
+                FetchedAt = DateTime.UtcNow.AddDays(-10),
+            },
         };
         ctx.BookingCancellations.Add(bc);
         await ctx.SaveChangesAsync();

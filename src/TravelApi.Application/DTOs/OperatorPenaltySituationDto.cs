@@ -108,4 +108,13 @@ public class OperatorChargeDto
     public string? DocumentRef { get; set; }
 
     public DateTime ConfirmedAt { get; set; }
+
+    /// <summary>
+    /// ADR-044 T3a (2026-07-10): Token "AsIs" | "WithManagementFee" | "Absorbed". Ver
+    /// <see cref="Domain.Entities.ClientTransferMode"/>. Como se traslada ESTE cargo al cliente en la ND.
+    /// </summary>
+    public string ClientTransferMode { get; set; } = string.Empty;
+
+    /// <summary>Monto del fee de gestión agregado, solo presente cuando <see cref="ClientTransferMode"/> = "WithManagementFee".</summary>
+    public decimal? ManagementFeeAmount { get; set; }
 }

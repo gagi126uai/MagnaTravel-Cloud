@@ -619,6 +619,36 @@ public class OperationalFinanceSettings
     /// </summary>
     public bool BlockTravelWhenCreditExceeded { get; set; } = true;
 
+    // ============================================================
+    // ADR-044 T3a (multi-operador en la ND al cliente, 2026-07-10): la ND que reemplaza a la multa del
+    // operador se arma con un renglon por cargo (ver BookingCancellationLineOperatorCharge). La alicuota de
+    // IVA de esos renglones depende de la condicion fiscal de la agencia. Monotributo/Exento ya estan
+    // VERIFICADOS (0%, no hace falta setting). Responsable Inscripto + fee de gestion propio TAMBIEN ya esta
+    // FIRMADO (21%, hardcodeado, no hace falta setting). Lo UNICO sin firma contable es la porcion pass-through
+    // (la multa del operador replicada tal cual) cuando el emisor es RI: por eso, y solo para ese caso, el valor
+    // vive en este setting nullable.
+    // ============================================================
+
+    /// <summary>
+    /// ADR-044 T3a (2026-07-10): codigo de alicuota de IVA (ARCA: 3=0%, 4=10.5%, 5=21%, 6=27%, 8=5%, 9=2.5%)
+    /// que usa la Nota de Debito para la porcion PASS-THROUGH de un cargo del operador (la multa que la agencia
+    /// le replica al cliente tal cual, SIN agregarle nada) cuando la agencia emisora es Responsable Inscripto.
+    ///
+    /// <para><b>Default null a proposito — SIN valor operativo</b>: no existe todavia un criterio confirmado por
+    /// el contador matriculado para este caso especifico (ver ADR-044 T3, punto 5: "SIN FIRMA"). Mientras este
+    /// campo siga en null, la emision automatica de la ND se BLOQUEA para un emisor Responsable Inscripto con
+    /// cargos pass-through y queda en revision manual con un mensaje claro — nunca se inventa un default.</para>
+    ///
+    /// <para>Los emisores Monotributo y Exento NO usan este campo: para ellos la alicuota SIEMPRE es 3 (0%),
+    /// ya verificado. Tampoco lo usa el renglon de "fee de gestion" propio de la agencia (ese es 21% fijo para
+    /// RI, ya firmado): este campo es EXCLUSIVO de la porcion que la agencia solo replica del operador.</para>
+    ///
+    /// <para>Editable por Admin desde el panel (PUT operational-finance) una vez que el contador confirme el
+    /// valor. Hasta entonces se deja en null: la agencia sigue operando con Monotributo/Exento (unico camino
+    /// hoy homologado con ARCA para la ND automatica) sin verse afectada.</para>
+    /// </summary>
+    public int? CancellationDebitNoteRiPassThroughAlicuotaIvaId { get; set; } = null;
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

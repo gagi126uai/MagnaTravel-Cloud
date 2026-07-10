@@ -100,20 +100,22 @@ public static class OperatorPenaltySituationRules
     /// Mismo gate que <see cref="Fields.IsPendingDecision"/>: es a nivel de TODA la cancelacion (post-NC con CAE +
     /// flag), no por operador — todos los operadores de la misma cancelacion comparten este candado.
     /// </param>
-    /// <param name="ConfirmedSupplierCount">
-    /// Cuantos operadores DISTINTOS tienen una multa confirmada en esta cancelacion (mismo conteo que usa el
-    /// gating de la ND automatica, <c>CountSuppliersWithConfirmedPenaltyAsync</c>).
+    /// <param name="BcDebitNoteStatus">Estado de la (unica) Nota de Debito del BC padre — la ND compartida.</param>
+    /// <param name="IsOperatorSpecificManual">
+    /// ADR-044 T3a (2026-07-10): true si ESTE operador quedo marcado INDIVIDUALMENTE para resolucion manual — su
+    /// cargo se confirmo DESPUES de que la ND del principal ya estaba emitida, asi que no entro en ese comprobante
+    /// y necesita una nota de debito complementaria a mano (marcador REAL <c>line.DebitNoteStatus == ManualReview</c>
+    /// puesto por el flujo de confirmacion escalonada, NO derivado de un conteo de operadores confirmados).
     /// </param>
-    /// <param name="BcDebitNoteStatus">Estado de la (unica) Nota de Debito del BC padre.</param>
     public readonly record struct LineFields(
         PenaltyStatus LinePenaltyStatus,
         bool IsPendingDecision,
-        int ConfirmedSupplierCount,
-        DebitNoteStatus BcDebitNoteStatus);
+        DebitNoteStatus BcDebitNoteStatus,
+        bool IsOperatorSpecificManual);
 
     /// <summary>
     /// Deriva el paso de la multa de UN operador puntual (version por-linea de <see cref="Derive"/>). Ver el
-    /// comentario de <see cref="LineFields"/> para el porque de la ramificacion multi-operador.
+    /// comentario de <see cref="LineFields"/> para el porque del marcador de resolucion manual por operador.
     /// </summary>
     public static OperatorPenaltySituationState DeriveForOperator(LineFields fields)
     {
@@ -123,14 +125,16 @@ public static class OperatorPenaltySituationRules
 
         if (fields.LinePenaltyStatus == PenaltyStatus.Confirmed)
         {
-            // Mas de un operador confirmado a la vez: la ND automatica esta bloqueada (misma señal que
-            // TryEmitCancellationDebitNoteAsync ya usa para frenarse), asi que NINGUN confirmado puede fiarse
-            // del snapshot del BC padre (puede describir a otro operador, o a ninguno todavia).
-            if (fields.ConfirmedSupplierCount > 1)
+            // Este operador quedo marcado INDIVIDUALMENTE para resolucion manual (nota de debito complementaria):
+            // su cargo se confirmo cuando la ND del principal ya habia salido, asi que quedo afuera de ese
+            // comprobante. Es el UNICO caso que produce "necesita revision manual" por operador — se deriva de un
+            // MARCADOR REAL (motor realmente ruteo a manual para este operador), NO de contar cuantos estan
+            // confirmados (ese conteo mentia: cuando el motor emite bien una ND multi-operador, nadie queda manual).
+            if (fields.IsOperatorSpecificManual)
                 return OperatorPenaltySituationState.MultiOperatorNeedsManualReview;
 
-            // Un unico operador confirmado: el snapshot del BC padre SI lo describe (nadie mas lo piso desde que
-            // confirmo). Mismo desglose que el path mono-operador de Derive.
+            // Sin marcador propio: este operador comparte la (unica) ND del BC padre, asi que su paso lo define el
+            // estado de ESA ND. Mismo desglose fino que el path mono-operador de Derive.
             return fields.BcDebitNoteStatus switch
             {
                 DebitNoteStatus.Issued => OperatorPenaltySituationState.Done,
