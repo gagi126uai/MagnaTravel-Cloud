@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
+using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
 
@@ -27,6 +28,7 @@ public class CountriesController : ControllerBase
     }
 
     [HttpGet]
+    [RequirePermission(Permissions.PaquetesView)]
     public async Task<ActionResult<IReadOnlyList<CountryListItemDto>>> GetCountries(
         [FromQuery] string? search,
         CancellationToken cancellationToken)
@@ -35,6 +37,7 @@ public class CountriesController : ControllerBase
     }
 
     [HttpGet("{publicIdOrLegacyId}")]
+    [RequirePermission(Permissions.PaquetesView)]
     public async Task<ActionResult<CountryDetailDto>> GetCountry(
         string publicIdOrLegacyId,
         CancellationToken cancellationToken)
@@ -52,6 +55,7 @@ public class CountriesController : ControllerBase
     }
 
     [HttpGet("preview/by-slug/{countrySlug}")]
+    [RequirePermission(Permissions.PaquetesView)]
     public async Task<ActionResult<PreviewCountryEmbedDto>> GetPreviewBySlug(
         string countrySlug,
         CancellationToken cancellationToken)
@@ -61,6 +65,7 @@ public class CountriesController : ControllerBase
     }
 
     [HttpPost]
+    [RequirePermission(Permissions.PaquetesEdit)]
     public async Task<ActionResult<CountryDetailDto>> Create(
         [FromBody] CountryUpsertRequest request,
         CancellationToken cancellationToken)
@@ -77,6 +82,7 @@ public class CountriesController : ControllerBase
     }
 
     [HttpPut("{publicIdOrLegacyId}")]
+    [RequirePermission(Permissions.PaquetesEdit)]
     public async Task<ActionResult<CountryDetailDto>> Update(
         string publicIdOrLegacyId,
         [FromBody] CountryUpsertRequest request,
@@ -99,6 +105,7 @@ public class CountriesController : ControllerBase
     }
 
     [HttpPatch("{publicIdOrLegacyId}/publish")]
+    [RequirePermission(Permissions.PaquetesPublish)]
     public async Task<ActionResult<CountryDetailDto>> Publish(
         string publicIdOrLegacyId,
         CancellationToken cancellationToken)
@@ -115,6 +122,7 @@ public class CountriesController : ControllerBase
     }
 
     [HttpPatch("{publicIdOrLegacyId}/unpublish")]
+    [RequirePermission(Permissions.PaquetesPublish)]
     public async Task<ActionResult<CountryDetailDto>> Unpublish(
         string publicIdOrLegacyId,
         CancellationToken cancellationToken)
@@ -131,6 +139,7 @@ public class CountriesController : ControllerBase
     }
 
     [HttpGet("{publicIdOrLegacyId}/destinations")]
+    [RequirePermission(Permissions.PaquetesView)]
     public async Task<ActionResult<IReadOnlyList<DestinationListItemDto>>> GetDestinations(
         string publicIdOrLegacyId,
         CancellationToken cancellationToken)

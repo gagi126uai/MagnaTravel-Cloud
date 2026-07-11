@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
+using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
 
@@ -10,6 +11,7 @@ namespace TravelApi.Controllers;
 [ApiController]
 [Route("api/rates")]
 [Authorize]
+[RequirePermission(Permissions.TarifarioView)]
 public class RatesController : ControllerBase
 {
     private readonly IRateService _rateService;

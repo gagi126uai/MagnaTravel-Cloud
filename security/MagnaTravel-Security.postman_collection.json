@@ -1,0 +1,74 @@
+{
+  "info": {
+    "name": "MagnaTravel - Security regression",
+    "description": "Pruebas no destructivas de autenticacion, permisos e IDOR/BOLA. Ejecutar primero sin sesion y luego con un usuario de permisos limitados. No contiene login ni credenciales.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000" },
+    { "key": "ownReservaUuid", "value": "REEMPLAZAR_UUID_PROPIO" },
+    { "key": "foreignReservaUuid", "value": "REEMPLAZAR_UUID_AJENO" },
+    { "key": "csrfToken", "value": "REEMPLAZAR_SI_SE_PRUEBAN_ESCRITURAS" }
+  ],
+  "item": [
+    {
+      "name": "Sin sesion",
+      "item": [
+        {
+          "name": "Mensajes no permite lectura anonima",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/messages/recipients" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Responde 401', () => pm.response.to.have.status(401));"] } }]
+        },
+        {
+          "name": "Conversaciones no permite lectura anonima",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/whatsapp/conversations" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Responde 401', () => pm.response.to.have.status(401));"] } }]
+        },
+        {
+          "name": "Reserva por UUID no permite lectura anonima",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/reservas/{{foreignReservaUuid}}" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Responde 401', () => pm.response.to.have.status(401));"] } }]
+        }
+      ]
+    },
+    {
+      "name": "Usuario limitado autenticado",
+      "description": "Iniciar sesion manualmente en Postman con un usuario sin los permisos del modulo. Postman conserva las cookies HttpOnly automaticamente.",
+      "item": [
+        {
+          "name": "Sin messages.view no lista telefonos",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/messages/recipients" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Responde 403', () => pm.response.to.have.status(403));"] } }]
+        },
+        {
+          "name": "Sin paquetes.view no lista paises internos",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/countries" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Responde 403', () => pm.response.to.have.status(403));"] } }]
+        },
+        {
+          "name": "UUID ajeno no revela reserva",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/reservas/{{foreignReservaUuid}}" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Ajena queda oculta', () => pm.expect([403, 404]).to.include(pm.response.code));"] } }]
+        },
+        {
+          "name": "UUID propio sigue accesible",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/reservas/{{ownReservaUuid}}" },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Propia responde 200', () => pm.response.to.have.status(200));"] } }]
+        },
+        {
+          "name": "Permiso solo lectura no crea pais",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-CSRF-TOKEN", "value": "{{csrfToken}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": "{{baseUrl}}/api/countries"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('Responde 403', () => pm.response.to.have.status(403));"] } }]
+        }
+      ]
+    }
+  ]
+}

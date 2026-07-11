@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace TravelApi.Application.DTOs;
 
 public class PackageListQuery : PagedQuery
@@ -197,9 +199,9 @@ public class PreviewCountryEmbedDto
 }
 
 public record PublicPackageLeadRequest(
-    string FullName,
-    string Phone,
-    string? Email,
-    string? Message,
+    [property: Required, MaxLength(150)] string FullName,
+    [property: Required, MaxLength(32)] string Phone,
+    [property: EmailAddress, MaxLength(254)] string? Email,
+    [property: MaxLength(2_000)] string? Message,
     Guid? DeparturePublicId,
-    string? Website);
+    [property: MaxLength(200)] string? Website);

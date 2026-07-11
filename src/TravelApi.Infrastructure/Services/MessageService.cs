@@ -26,8 +26,13 @@ public class MessageService : IMessageService
         _invoiceService = invoiceService;
     }
 
-    public async Task<IReadOnlyList<MessageRecipientDto>> GetRecipientsAsync(string? search, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<MessageRecipientDto>> GetRecipientsAsync(
+        string? search,
+        OperationActor actor,
+        CancellationToken cancellationToken)
     {
+        await EnsureActorCanAsync(actor, Permissions.MessagesView, cancellationToken);
+
         var query = _db.Reservas
             .AsNoTracking()
             .Include(r => r.Payer)
@@ -36,6 +41,11 @@ public class MessageService : IMessageService
                 .ThenInclude(v => v.PassengerAssignments)
                     .ThenInclude(a => a.Passenger)
             .Where(r => r.Status != EstadoReserva.Cancelled && r.Status != "Archived");
+
+        if (!await ActorHasPermissionAsync(actor, Permissions.ReservasViewAll, cancellationToken))
+        {
+            query = query.Where(r => r.ResponsibleUserId == actor.UserId);
+        }
 
         if (!string.IsNullOrWhiteSpace(search))
         {
@@ -111,6 +121,7 @@ public class MessageService : IMessageService
         }
 
         var recipient = await ResolveRecipientAsync(request.PersonType, request.PersonId, request.ReservaId, cancellationToken);
+        await EnsureActorCanAccessReservaAsync(actor, recipient.ReservaId, Permissions.ReservasViewAll, cancellationToken);
         var result = await _whatsAppGateway.SendTextAsync(recipient.Phone, request.Message.Trim(), cancellationToken);
 
         var delivery = new MessageDelivery
@@ -148,6 +159,7 @@ public class MessageService : IMessageService
         }
 
         var recipient = await ResolveRecipientAsync(request.PersonType, request.PersonId, request.ReservaId, cancellationToken);
+        await EnsureActorCanAccessReservaAsync(actor, recipient.ReservaId, Permissions.ReservasViewAll, cancellationToken);
         var deliveries = new List<MessageDeliveryDto>();
 
         foreach (var voucherId in request.VoucherIds.Distinct(StringComparer.OrdinalIgnoreCase))
@@ -250,7 +262,7 @@ public class MessageService : IMessageService
 
         // Ownership de la reserva: un vendedor solo puede mandar facturas de SUS reservas; el permiso
         // view_all (back-office/admin) saltea ese limite. Mismo criterio que los GET de facturas.
-        await EnsureActorCanAccessReservaAsync(actor, invoice.Reserva, cancellationToken);
+        await EnsureActorCanAccessReservaAsync(actor, invoice.Reserva, Permissions.CobranzasViewAll, cancellationToken);
 
         // Estado fiscal: solo se envia una factura EMITIDA por ARCA (aprobada y con CAE). Una factura en
         // proceso o rechazada todavia no es un comprobante valido para entregar al cliente.
@@ -441,7 +453,25 @@ public class MessageService : IMessageService
     /// el permiso view_all (back-office/admin). Evita que un vendedor mande la factura de la reserva de
     /// otro vendedor aunque tenga permiso de enviar mensajes.
     /// </summary>
-    private async Task EnsureActorCanAccessReservaAsync(OperationActor actor, Reserva? reserva, CancellationToken cancellationToken)
+    private async Task EnsureActorCanAccessReservaAsync(
+        OperationActor actor,
+        int reservaId,
+        string viewAllPermission,
+        CancellationToken cancellationToken)
+    {
+        var reserva = await _db.Reservas
+            .AsNoTracking()
+            .FirstOrDefaultAsync(item => item.Id == reservaId, cancellationToken)
+            ?? throw new KeyNotFoundException("Reserva no encontrada.");
+
+        await EnsureActorCanAccessReservaAsync(actor, reserva, viewAllPermission, cancellationToken);
+    }
+
+    private async Task EnsureActorCanAccessReservaAsync(
+        OperationActor actor,
+        Reserva? reserva,
+        string viewAllPermission,
+        CancellationToken cancellationToken)
     {
         if (reserva is null)
         {
@@ -461,18 +491,29 @@ public class MessageService : IMessageService
         }
 
         // Si no es el dueño, necesita el permiso de ver todas las cobranzas.
+        if (!await ActorHasPermissionAsync(actor, viewAllPermission, cancellationToken))
+        {
+            throw new UnauthorizedAccessException("El usuario no tiene acceso a esta reserva.");
+        }
+    }
+
+    private async Task<bool> ActorHasPermissionAsync(
+        OperationActor actor,
+        string permission,
+        CancellationToken cancellationToken)
+    {
+        if (actor.IsAdmin)
+        {
+            return true;
+        }
+
         var roleNames = actor.Roles
             .Where(role => !string.IsNullOrWhiteSpace(role))
             .ToArray();
 
-        var canViewAll = roleNames.Length > 0 && await _db.RolePermissions
+        return roleNames.Length > 0 && await _db.RolePermissions
             .AsNoTracking()
-            .AnyAsync(item => roleNames.Contains(item.RoleName) && item.Permission == Permissions.CobranzasViewAll, cancellationToken);
-
-        if (!canViewAll)
-        {
-            throw new UnauthorizedAccessException("El usuario no tiene acceso a esta reserva.");
-        }
+            .AnyAsync(item => roleNames.Contains(item.RoleName) && item.Permission == permission, cancellationToken);
     }
 
     private async Task<int> ResolveVoucherIdAsync(string publicIdOrLegacyId, CancellationToken cancellationToken)

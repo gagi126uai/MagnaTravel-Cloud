@@ -9,6 +9,7 @@ const axios = require("axios");
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 
 const WEBHOOK_URL = process.env.WEBHOOK_URL || "http://localhost:5000/api/webhooks/whatsapp";
 const API_URL = process.env.API_URL || "http://api:8080";
@@ -54,6 +55,17 @@ function botLog(msg) {
     console.log(entry);
     botLogs.push(entry);
     if (botLogs.length > MAX_LOGS) botLogs.shift();
+}
+
+function maskPhone(phone) {
+    const digits = String(phone || "").replace(/\D/g, "");
+    return digits.length > 4 ? `***${digits.slice(-4)}` : "***";
+}
+
+function hasValidWebhookSecret(provided) {
+    const actual = Buffer.from(String(provided || ""), "utf8");
+    const expected = Buffer.from(WEBHOOK_SECRET, "utf8");
+    return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
 }
 
 async function fetchConfig() {
@@ -206,7 +218,7 @@ async function sendToWebhook(phone, session) {
             headers: { "Content-Type": "application/json", "X-Webhook-Secret": WEBHOOK_SECRET },
             timeout: 10000
         });
-        botLog(`Lead ${res.data?.leadId || "?"} sincronizado para ${phone}`);
+        botLog(`Lead ${res.data?.leadId || "?"} sincronizado para ${maskPhone(phone)}`);
         return "ok";
     } catch (error) {
         if (error.response?.status === 409) return "duplicate";
@@ -374,12 +386,12 @@ client.on("message", async (message) => {
     lastMessageTime.set(chatId, now);
 
     const phone = extractPhone(chatId);
-    botLog(`[${phone}] ${body.substring(0, 50)}`);
+    botLog(`Mensaje entrante recibido de ${maskPhone(phone)}`);
     const existingSession = getSession(chatId);
     const webhookResult = await sendMessageToWebhook(phone, body, "Cliente", { skipLeadAutoCreation: true });
 
     if (webhookResult?.handledBy === "operational") {
-        botLog(`Mensaje operativo vinculado para ${phone}.`);
+        botLog(`Mensaje operativo vinculado para ${maskPhone(phone)}.`);
         return;
     }
 
@@ -549,7 +561,11 @@ process.on("uncaughtException", (error) => {
 });
 
 const app = express();
-app.use(express.json({ limit: "25mb" }));
+app.use((req, res, next) => {
+    if (!hasValidWebhookSecret(req.headers["x-webhook-secret"])) return res.status(401).send();
+    next();
+});
+app.use(express.json({ limit: "16mb" }));
 
 app.post("/send", async (req, res) => {
     const { phone, message } = req.body || {};
@@ -559,7 +575,7 @@ app.post("/send", async (req, res) => {
     try {
         const chatId = phoneToChatId(phone);
         const sent = await client.sendMessage(chatId, message);
-        botLog(`Texto enviado a ${phone}`);
+        botLog(`Texto enviado a ${maskPhone(phone)}`);
         res.json({ success: true, messageId: sent?.id?._serialized || null });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -580,7 +596,7 @@ app.post("/send-document", async (req, res) => {
             caption: caption || "",
             sendMediaAsDocument: true
         });
-        botLog(`Documento enviado a ${phone}: ${fileName}`);
+        botLog(`Documento enviado a ${maskPhone(phone)}: ${fileName}`);
         res.json({ success: true, messageId: sent?.id?._serialized || null });
     } catch (err) {
         res.status(500).json({ error: err.message });

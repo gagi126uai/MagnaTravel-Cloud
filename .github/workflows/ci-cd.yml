@@ -26,10 +26,10 @@ permissions:
 
 jobs:
   # ----------------------------------------------------------------------------
-  # GATE 1: pruebas del backend (.NET 8) — solo unit tests, no requieren Postgres.
+  # GATE 1: pruebas del backend (.NET 8) que no requieren Docker/PostgreSQL.
   # ----------------------------------------------------------------------------
   test-backend:
-    name: Pruebas backend (.NET 8 unit)
+    name: Pruebas backend (.NET 8 sin Docker)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -44,6 +44,43 @@ jobs:
         run: >-
           dotnet test src/TravelApi.Tests/TravelApi.Tests.csproj
           --filter "FullyQualifiedName~Unit"
+          --logger "console;verbosity=normal"
+
+      - name: Correr pruebas de seguridad
+        run: >-
+          dotnet test src/TravelApi.Tests/TravelApi.Tests.csproj
+          --no-build
+          --filter "FullyQualifiedName~TravelApi.Tests.Security"
+          --logger "console;verbosity=normal"
+
+      - name: Correr pruebas HTTP
+        run: >-
+          dotnet test src/TravelApi.Tests/TravelApi.Tests.csproj
+          --no-build
+          --filter "FullyQualifiedName~TravelApi.Tests.Http"
+          --logger "console;verbosity=normal"
+
+  # ----------------------------------------------------------------------------
+  # GATE 1B: integracion real contra PostgreSQL mediante Testcontainers.
+  # Valida constraints, migraciones, locks e idempotencia antes del deploy.
+  # ----------------------------------------------------------------------------
+  test-backend-integration:
+    name: Pruebas backend (PostgreSQL integration)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Instalar .NET SDK (segun global.json)
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Correr integration tests con PostgreSQL real
+        run: >-
+          dotnet test src/TravelApi.Tests/TravelApi.Tests.csproj
+          --filter "Category=Integration"
           --logger "console;verbosity=normal"
 
   # ----------------------------------------------------------------------------
@@ -76,13 +113,13 @@ jobs:
         run: npm run build
 
   # ----------------------------------------------------------------------------
-  # DEPLOY: solo si AMBOS gates pasaron. Se conecta por SSH al VPS y corre el
+  # DEPLOY: solo si TODOS los gates pasaron. Se conecta por SSH al VPS y corre el
   # deploy real (git pull --ff-only + scripts/ops/deploy.sh, que ya valida
   # secretos, construye imagenes, corre migraciones one-shot y verifica salud).
   # ----------------------------------------------------------------------------
   deploy:
     name: Deploy al VPS
-    needs: [test-backend, test-frontend]
+    needs: [test-backend, test-backend-integration, test-frontend]
     runs-on: ubuntu-latest
     # Desplegar tanto en push a main como en disparo manual desde Actions.
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'

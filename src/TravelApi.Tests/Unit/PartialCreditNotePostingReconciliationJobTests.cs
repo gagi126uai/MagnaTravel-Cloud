@@ -451,7 +451,8 @@ public class ReconcileStuckPartialCreditNoteServiceTests
         var bridgeMock = new Mock<IInvoiceAnnulmentBcBridge>();
 
         var mapper = new AutoMapper.MapperConfiguration(
-            c => c.AddProfile<TravelApi.Application.Mappings.MappingProfile>()).CreateMapper();
+            c => c.AddProfile<TravelApi.Application.Mappings.MappingProfile>(),
+            Microsoft.Extensions.Logging.Abstractions.NullLoggerFactory.Instance).CreateMapper();
 
         // El bridge ya NO se inyecta directo en el ctor: InvoiceService lo resuelve LAZY
         // desde IServiceProvider (fix del ciclo DI que colgaba /api/invoices). Para el test

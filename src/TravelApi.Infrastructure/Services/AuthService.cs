@@ -1,4 +1,5 @@
 using System.IdentityModel.Tokens.Jwt;
+using System.Data;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -19,6 +20,8 @@ namespace TravelApi.Infrastructure.Services;
 
 public class AuthService : IAuthService
 {
+    private static readonly SemaphoreSlim NonRelationalRegistrationLock = new(1, 1);
+    private static readonly SemaphoreSlim NonRelationalRefreshLock = new(1, 1);
     private static readonly TimeSpan AccessTokenLifetime = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan RefreshTokenLifetime = TimeSpan.FromDays(7);
     private const string GenericAuthFailureMessage = "No se pudo iniciar sesion con las credenciales provistas.";
@@ -42,7 +45,39 @@ public class AuthService : IAuthService
 
     public async Task<AuthTokensResult> RegisterAsync(RegisterRequest request, string? ipAddress = null, string? userAgent = null)
     {
-        var isFirstUser = !await _userManager.Users.AnyAsync();
+        if (!_dbContext.Database.IsRelational())
+        {
+            await NonRelationalRegistrationLock.WaitAsync();
+            try
+            {
+                return await RegisterFirstUserCoreAsync(request, ipAddress, userAgent);
+            }
+            finally
+            {
+                NonRelationalRegistrationLock.Release();
+            }
+        }
+
+        var strategy = _dbContext.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var transaction = await _dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+            var response = await RegisterFirstUserCoreAsync(request, ipAddress, userAgent);
+            await transaction.CommitAsync();
+            return response;
+        });
+    }
+
+    private async Task<AuthTokensResult> RegisterFirstUserCoreAsync(
+        RegisterRequest request,
+        string? ipAddress,
+        string? userAgent)
+    {
+        if (await _userManager.Users.AnyAsync())
+        {
+            throw new InvalidOperationException("El registro publico esta deshabilitado.");
+        }
+
         var user = new ApplicationUser
         {
             UserName = request.Email,
@@ -57,11 +92,10 @@ public class AuthService : IAuthService
             throw new InvalidOperationException(string.Join(", ", result.Errors.Select(e => e.Description)));
         }
 
-        var defaultRole = isFirstUser ? "Admin" : "Colaborador";
-        var roleResult = await _userManager.AddToRoleAsync(user, defaultRole);
+        var roleResult = await _userManager.AddToRoleAsync(user, "Admin");
         if (!roleResult.Succeeded)
         {
-            _logger.LogWarning("Failed role assignment for {Email}", request.Email);
+            throw new InvalidOperationException("No se pudo completar la configuracion del primer usuario.");
         }
 
         return await IssueSessionAsync(user, ipAddress, userAgent, isPersistent: false);
@@ -102,8 +136,55 @@ public class AuthService : IAuthService
         }
 
         var tokenHash = ComputeTokenHash(refreshToken);
-        var storedToken = await _dbContext.RefreshTokens
-            .FirstOrDefaultAsync(token => token.TokenHash == tokenHash);
+
+        if (!_dbContext.Database.IsRelational())
+        {
+            await NonRelationalRefreshLock.WaitAsync();
+            try
+            {
+                return await RefreshCoreAsync(tokenHash, ipAddress, userAgent, lockPostgresRow: false);
+            }
+            finally
+            {
+                NonRelationalRefreshLock.Release();
+            }
+        }
+
+        var strategy = _dbContext.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var transaction = await _dbContext.Database.BeginTransactionAsync(IsolationLevel.Serializable);
+            try
+            {
+                var response = await RefreshCoreAsync(
+                    tokenHash,
+                    ipAddress,
+                    userAgent,
+                    lockPostgresRow: _dbContext.Database.IsNpgsql());
+                await transaction.CommitAsync();
+                return response;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Reutilizacion o expiracion pueden haber revocado tokens. Esos cambios
+                // defensivos deben persistir aunque la respuesta HTTP termine en 401.
+                await transaction.CommitAsync();
+                throw;
+            }
+        });
+    }
+
+    private async Task<AuthTokensResult> RefreshCoreAsync(
+        string tokenHash,
+        string? ipAddress,
+        string? userAgent,
+        bool lockPostgresRow)
+    {
+        var storedToken = lockPostgresRow
+            ? await _dbContext.RefreshTokens
+                .FromSqlInterpolated($"SELECT * FROM \"RefreshTokens\" WHERE \"TokenHash\" = {tokenHash} FOR UPDATE")
+                .SingleOrDefaultAsync()
+            : await _dbContext.RefreshTokens.SingleOrDefaultAsync(token => token.TokenHash == tokenHash);
 
         if (storedToken is null)
         {
@@ -116,11 +197,7 @@ public class AuthService : IAuthService
             throw new UnauthorizedAccessException(GenericAuthFailureMessage);
         }
 
-        // C16: ApplicationUser ya no es nav prop de RefreshToken — buscamos el usuario por Id
-        // contra UserManager (camino oficial de Identity). Esto preserva el contrato anterior:
-        // si el token expiro, el usuario no existe o esta inactivo, revocamos y devolvemos 401.
         var user = await _userManager.FindByIdAsync(storedToken.UserId);
-
         if (storedToken.IsExpired || user is null || !user.IsActive)
         {
             storedToken.RevokedAt = DateTime.UtcNow;
@@ -128,6 +205,8 @@ public class AuthService : IAuthService
             throw new UnauthorizedAccessException(GenericAuthFailureMessage);
         }
 
+        // La fila original permanece bloqueada hasta el commit. Un segundo refresh con
+        // el mismo token espera y luego observa RevokedAt, en vez de emitir otra sesion.
         var replacementToken = await IssueSessionAsync(user, ipAddress, userAgent, storedToken.IsPersistent);
         storedToken.RevokedAt = DateTime.UtcNow;
         storedToken.ReplacedByTokenHash = ComputeTokenHash(replacementToken.RefreshToken);

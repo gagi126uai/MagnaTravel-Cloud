@@ -4,6 +4,7 @@ import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { Activity } from "lucide-react";
 import { camelize } from "../lib/utils";
+import { parseBasicFormatting } from "../lib/basicFormatting";
 
 export default function ReservaTimeline({ reservaId }) {
     const [events, setEvents] = useState([]);
@@ -70,20 +71,22 @@ export default function ReservaTimeline({ reservaId }) {
 
                                         {event.details && (
                                             <div className="mt-2 rounded-xl border border-slate-100 bg-slate-50/50 p-4 text-sm text-slate-700 dark:border-slate-700/50 dark:bg-slate-900/30 dark:text-slate-300">
-                                                {event.details.split('\n').map((line, i) => {
-                                                    // Simple replacement for **bold** and *italic* for basic formatting
-                                                    const formattedLine = line
-                                                        .replace(/\*\*(.*?)\*\*/g, '<strong class="font-bold text-slate-900 dark:text-white">$1</strong>')
-                                                        .replace(/\*(.*?)\*/g, '<em class="italic text-slate-500">$1</em>');
-                                                    
-                                                    return (
-                                                        <div 
-                                                            key={i} 
-                                                            className="mb-1.5 last:mb-0 leading-relaxed"
-                                                            dangerouslySetInnerHTML={{ __html: formattedLine }}
-                                                        />
-                                                    );
-                                                })}
+                                                {event.details.split('\n').map((line, i) => (
+                                                    <div
+                                                        key={i}
+                                                        className="mb-1.5 last:mb-0 leading-relaxed"
+                                                    >
+                                                        {parseBasicFormatting(line).map((token, tokenIndex) => {
+                                                            if (token.style === "bold") {
+                                                                return <strong key={tokenIndex} className="font-bold text-slate-900 dark:text-white">{token.text}</strong>;
+                                                            }
+                                                            if (token.style === "italic") {
+                                                                return <em key={tokenIndex} className="italic text-slate-500">{token.text}</em>;
+                                                            }
+                                                            return <span key={tokenIndex}>{token.text}</span>;
+                                                        })}
+                                                    </div>
+                                                ))}
                                             </div>
                                         )}
                                     </div>

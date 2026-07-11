@@ -4,6 +4,8 @@ using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.Contracts.Shared;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
+using TravelApi.Authorization;
+using TravelApi.Domain.Entities;
 
 namespace TravelApi.Controllers;
 
@@ -22,15 +24,17 @@ public class MessagesController : ControllerBase
     }
 
     [HttpGet("recipients")]
+    [RequirePermission(Permissions.MessagesView)]
     public async Task<ActionResult<IReadOnlyList<MessageRecipientDto>>> GetRecipients(
         [FromQuery] string? search,
         CancellationToken cancellationToken)
     {
-        var recipients = await _messageService.GetRecipientsAsync(search, cancellationToken);
+        var recipients = await _messageService.GetRecipientsAsync(search, BuildActor(), cancellationToken);
         return Ok(recipients);
     }
 
     [HttpPost("simple")]
+    [RequirePermission(Permissions.MessagesSend)]
     public async Task<ActionResult<MessageDeliveryDto>> SendSimpleMessage(
         [FromBody] SendSimpleMessageRequest request,
         CancellationToken cancellationToken)
@@ -60,6 +64,7 @@ public class MessagesController : ControllerBase
     }
 
     [HttpPost("voucher")]
+    [RequirePermission(Permissions.MessagesSend, Permissions.VouchersSend)]
     public async Task<ActionResult<IReadOnlyList<MessageDeliveryDto>>> SendVoucherMessage(
         [FromBody] SendVoucherMessageRequest request,
         CancellationToken cancellationToken)
@@ -89,6 +94,7 @@ public class MessagesController : ControllerBase
     }
 
     [HttpPost("invoice")]
+    [RequirePermission(Permissions.MessagesSend)]
     public async Task<ActionResult<MessageDeliveryDto>> SendInvoiceMessage(
         [FromBody] SendInvoiceMessageRequest request,
         CancellationToken cancellationToken)

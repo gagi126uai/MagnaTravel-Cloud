@@ -131,7 +131,10 @@ builder.Services.AddResponseCompression(options =>
 {
     options.EnableForHttps = true;
 });
-builder.Services.AddAutoMapper(typeof(Program), typeof(TravelApi.Application.Mappings.MappingProfile));
+builder.Services.AddAutoMapper(
+    _ => { },
+    typeof(Program).Assembly,
+    typeof(TravelApi.Application.Mappings.MappingProfile).Assembly);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
@@ -926,6 +929,7 @@ app.UseRouting();
 app.UseMiddleware<InternalMetricsMiddleware>();
 app.UseCors("web");
 app.UseAuthentication();
+app.UseRateLimiter();
 app.UseMiddleware<TravelApi.Middleware.CookieCsrfMiddleware>();
 app.UseAuthorization();
 
@@ -1043,7 +1047,7 @@ app.MapGet("/health/ready", async (AppDbContext dbContext, InternalMetricsServic
             {
                 status = "unready",
                 code = "database_not_ready",
-                pendingMigrations = pendingMigrations.ToArray()
+                pendingMigrations = pendingMigrations.Count()
             }, statusCode: StatusCodes.Status503ServiceUnavailable);
         }
 
@@ -1057,18 +1061,16 @@ app.MapGet("/health/ready", async (AppDbContext dbContext, InternalMetricsServic
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[CRITICAL] MinIO connectivity check failed for endpoint '{endpoint}': {ex.Message}");
+            app.Logger.LogError(ex, "MinIO connectivity check failed");
             return Results.Json(new
             {
                 status = "unready",
-                storage = "unavailable",
-                endpoint = endpoint,
-                error = ex.Message
+                storage = "unavailable"
             }, statusCode: StatusCodes.Status503ServiceUnavailable);
         }
 
         metrics.SetDatabaseReady(true);
-        return Results.Ok(new { status = "ready", storage = "connected", endpoint = endpoint });
+        return Results.Ok(new { status = "ready", storage = "connected" });
     }
     catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
     {

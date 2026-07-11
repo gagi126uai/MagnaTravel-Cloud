@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
+using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
 
@@ -25,6 +26,7 @@ public class DestinationsController : ControllerBase
     }
 
     [HttpGet("{publicIdOrLegacyId}")]
+    [RequirePermission(Permissions.PaquetesView)]
     public async Task<ActionResult<DestinationDetailDto>> GetDestination(
         string publicIdOrLegacyId,
         CancellationToken cancellationToken)
@@ -42,6 +44,7 @@ public class DestinationsController : ControllerBase
     }
 
     [HttpGet("preview/by-slug/{slug}")]
+    [RequirePermission(Permissions.PaquetesView)]
     public async Task<ActionResult<PreviewPackageDetailDto>> GetPreviewBySlug(
         string slug,
         CancellationToken cancellationToken)
@@ -51,6 +54,7 @@ public class DestinationsController : ControllerBase
     }
 
     [HttpPost]
+    [RequirePermission(Permissions.PaquetesEdit)]
     public async Task<ActionResult<DestinationDetailDto>> Create(
         [FromBody] DestinationUpsertRequest request,
         CancellationToken cancellationToken)
@@ -67,6 +71,7 @@ public class DestinationsController : ControllerBase
     }
 
     [HttpPut("{publicIdOrLegacyId}")]
+    [RequirePermission(Permissions.PaquetesEdit)]
     public async Task<ActionResult<DestinationDetailDto>> Update(
         string publicIdOrLegacyId,
         [FromBody] DestinationUpsertRequest request,
@@ -89,6 +94,7 @@ public class DestinationsController : ControllerBase
     }
 
     [HttpPatch("{publicIdOrLegacyId}/publish")]
+    [RequirePermission(Permissions.PaquetesPublish)]
     public async Task<ActionResult<DestinationDetailDto>> Publish(
         string publicIdOrLegacyId,
         CancellationToken cancellationToken)
@@ -109,6 +115,7 @@ public class DestinationsController : ControllerBase
     }
 
     [HttpPatch("{publicIdOrLegacyId}/unpublish")]
+    [RequirePermission(Permissions.PaquetesPublish)]
     public async Task<ActionResult<DestinationDetailDto>> Unpublish(
         string publicIdOrLegacyId,
         CancellationToken cancellationToken)
@@ -125,6 +132,7 @@ public class DestinationsController : ControllerBase
     }
 
     [HttpPost("{publicIdOrLegacyId}/hero-image")]
+    [RequirePermission(Permissions.PaquetesEdit)]
     [EnableRateLimiting("uploads")]
     public async Task<ActionResult<DestinationDetailDto>> UploadHeroImage(
         string publicIdOrLegacyId,
@@ -160,6 +168,7 @@ public class DestinationsController : ControllerBase
     }
 
     [HttpGet("{publicIdOrLegacyId}/hero-image")]
+    [RequirePermission(Permissions.PaquetesView)]
     public async Task<IActionResult> GetHeroImage(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using TravelApi.Application.Contracts.Shared;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -17,7 +18,9 @@ public class WhatsAppConversationService : IWhatsAppConversationService
         _entityReferenceResolver = entityReferenceResolver;
     }
 
-    public async Task<IReadOnlyList<WhatsAppConversationListItemDto>> GetConversationsAsync(CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<WhatsAppConversationListItemDto>> GetConversationsAsync(
+        OperationActor actor,
+        CancellationToken cancellationToken)
     {
         var leads = await _db.Leads
             .AsNoTracking()
@@ -25,14 +28,21 @@ public class WhatsAppConversationService : IWhatsAppConversationService
             .Where(lead => lead.Activities.Any(activity => activity.Type == "WhatsApp"))
             .ToListAsync(cancellationToken);
 
-        var deliveries = await _db.WhatsAppDeliveries
+        var deliveryQuery = _db.WhatsAppDeliveries
             .AsNoTracking()
             .Include(delivery => delivery.Reserva)
             .ThenInclude(reserva => reserva!.Payer)
             .Include(delivery => delivery.Reserva)
             .ThenInclude(reserva => reserva!.SourceLead)
-            .Where(delivery => delivery.Status != WhatsAppDeliveryStatuses.PendingApproval)
-            .ToListAsync(cancellationToken);
+            .Where(delivery => delivery.Status != WhatsAppDeliveryStatuses.PendingApproval);
+
+        if (!await ActorCanViewAllReservasAsync(actor, cancellationToken))
+        {
+            deliveryQuery = deliveryQuery.Where(delivery =>
+                delivery.Reserva != null && delivery.Reserva.ResponsibleUserId == actor.UserId);
+        }
+
+        var deliveries = await deliveryQuery.ToListAsync(cancellationToken);
 
         var leadItems = leads
             .Select(BuildLeadConversationListItem)
@@ -54,6 +64,7 @@ public class WhatsAppConversationService : IWhatsAppConversationService
     public async Task<WhatsAppConversationDetailDto?> GetConversationDetailAsync(
         string conversationType,
         string publicIdOrLegacyId,
+        OperationActor actor,
         CancellationToken cancellationToken)
     {
         if (string.Equals(conversationType, "lead", StringComparison.OrdinalIgnoreCase))
@@ -94,6 +105,11 @@ public class WhatsAppConversationService : IWhatsAppConversationService
         if (string.Equals(conversationType, "operational", StringComparison.OrdinalIgnoreCase))
         {
             var reservaId = await _entityReferenceResolver.ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, cancellationToken);
+            if (!await ActorCanAccessReservaAsync(actor, reservaId, cancellationToken))
+            {
+                throw new UnauthorizedAccessException("El usuario no tiene acceso a esta reserva.");
+            }
+
             var deliveries = await _db.WhatsAppDeliveries
                 .AsNoTracking()
                 .Include(delivery => delivery.Reserva)
@@ -132,6 +148,34 @@ public class WhatsAppConversationService : IWhatsAppConversationService
         }
 
         throw new ArgumentException("Tipo de conversacion invalido.");
+    }
+
+    private async Task<bool> ActorCanAccessReservaAsync(
+        OperationActor actor,
+        int reservaId,
+        CancellationToken cancellationToken)
+    {
+        if (await ActorCanViewAllReservasAsync(actor, cancellationToken))
+        {
+            return true;
+        }
+
+        return await _db.Reservas.AsNoTracking().AnyAsync(
+            reserva => reserva.Id == reservaId && reserva.ResponsibleUserId == actor.UserId,
+            cancellationToken);
+    }
+
+    private async Task<bool> ActorCanViewAllReservasAsync(OperationActor actor, CancellationToken cancellationToken)
+    {
+        if (actor.IsAdmin)
+        {
+            return true;
+        }
+
+        var roleNames = actor.Roles.Where(role => !string.IsNullOrWhiteSpace(role)).ToArray();
+        return roleNames.Length > 0 && await _db.RolePermissions.AsNoTracking().AnyAsync(
+            item => roleNames.Contains(item.RoleName) && item.Permission == Permissions.ReservasViewAll,
+            cancellationToken);
     }
 
     private static WhatsAppConversationListItemDto? BuildLeadConversationListItem(Lead lead)

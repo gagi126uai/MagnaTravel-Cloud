@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
@@ -79,6 +80,7 @@ public class WhatsAppConversationsControllerTests
 
         var conversationService = new WhatsAppConversationService(db, new EntityReferenceResolver(db));
         var controller = new WhatsAppConversationsController(conversationService);
+        SetAdmin(controller);
         var result = await controller.GetConversations(CancellationToken.None);
 
         var ok = Assert.IsType<OkObjectResult>(result.Result);
@@ -126,6 +128,7 @@ public class WhatsAppConversationsControllerTests
 
         var conversationService = new WhatsAppConversationService(db, new EntityReferenceResolver(db));
         var controller = new WhatsAppConversationsController(conversationService);
+        SetAdmin(controller);
         var result = await controller.GetConversationDetail("lead", lead.PublicId.ToString(), CancellationToken.None);
 
         var ok = Assert.IsType<OkObjectResult>(result.Result);
@@ -138,5 +141,21 @@ public class WhatsAppConversationsControllerTests
         Assert.Equal("client", detail.Messages[2].Sender);
         Assert.Equal("agent", detail.Messages[3].Sender);
         Assert.Equal("Te paso opciones hoy.", detail.Messages[3].Text);
+    }
+
+    private static void SetAdmin(ControllerBase controller)
+    {
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity(new[]
+                {
+                    new Claim(ClaimTypes.NameIdentifier, "test-admin"),
+                    new Claim(ClaimTypes.Name, "Test Admin"),
+                    new Claim(ClaimTypes.Role, "Admin")
+                }, "Test"))
+            }
+        };
     }
 }

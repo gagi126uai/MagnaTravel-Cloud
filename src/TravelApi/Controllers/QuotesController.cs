@@ -3,12 +3,15 @@ using Microsoft.AspNetCore.Mvc;
 using TravelApi.Application.Contracts.Shared;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
+using TravelApi.Authorization;
+using TravelApi.Domain.Entities;
 
 namespace TravelApi.Controllers;
 
 [ApiController]
 [Route("api/quotes")]
 [Authorize]
+[RequirePermission(Permissions.CrmView)]
 public class QuotesController : ControllerBase
 {
     private readonly IQuoteService _quoteService;
@@ -48,12 +51,14 @@ public class QuotesController : ControllerBase
     }
 
     [HttpPut("{publicIdOrLegacyId}")]
+    [RequirePermission(Permissions.CrmEdit)]
     public async Task<ActionResult<QuoteDetailDto>> Update(string publicIdOrLegacyId, [FromBody] UpsertQuoteRequest request, CancellationToken cancellationToken)
     {
         return Ok(await _quoteService.UpdateAsync(publicIdOrLegacyId, request, cancellationToken));
     }
 
     [HttpDelete("{publicIdOrLegacyId}")]
+    [RequirePermission(Permissions.CrmEdit)]
     public async Task<ActionResult> Delete(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         await _quoteService.DeleteAsync(publicIdOrLegacyId, cancellationToken);
@@ -61,12 +66,14 @@ public class QuotesController : ControllerBase
     }
 
     [HttpPost("{publicIdOrLegacyId}/items")]
+    [RequirePermission(Permissions.CrmEdit)]
     public async Task<ActionResult<QuoteDetailDto>> AddItem(string publicIdOrLegacyId, [FromBody] UpsertQuoteItemRequest request, CancellationToken cancellationToken)
     {
         return Ok(await _quoteService.AddItemAsync(publicIdOrLegacyId, request, cancellationToken));
     }
 
     [HttpDelete("{quotePublicIdOrLegacyId}/items/{itemPublicIdOrLegacyId}")]
+    [RequirePermission(Permissions.CrmEdit)]
     public async Task<ActionResult> RemoveItem(string quotePublicIdOrLegacyId, string itemPublicIdOrLegacyId, CancellationToken cancellationToken)
     {
         await _quoteService.RemoveItemAsync(quotePublicIdOrLegacyId, itemPublicIdOrLegacyId, cancellationToken);
@@ -74,12 +81,14 @@ public class QuotesController : ControllerBase
     }
 
     [HttpPatch("{publicIdOrLegacyId}/status")]
+    [RequirePermission(Permissions.CrmEdit)]
     public async Task<ActionResult<QuoteDetailDto>> UpdateStatus(string publicIdOrLegacyId, [FromBody] StatusUpdateRequest request, CancellationToken cancellationToken)
     {
         return Ok(await _quoteService.UpdateStatusAsync(publicIdOrLegacyId, request.Status, cancellationToken));
     }
 
     [HttpPost("{publicIdOrLegacyId}/convert")]
+    [RequirePermission(Permissions.CrmEdit)]
     public async Task<ActionResult<QuoteConversionResultDto>> ConvertToFile(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         return Ok(await _quoteService.ConvertToFileAsync(publicIdOrLegacyId, cancellationToken));

@@ -37,6 +37,7 @@ public class PublicPackagesController : ControllerBase
 
     [HttpPost("{slug}/leads")]
     [EnableRateLimiting("public-leads")]
+    [RequestSizeLimit(16 * 1024)]
     public async Task<IActionResult> CreateLead(
         string slug,
         [FromBody] PublicPackageLeadRequest request,

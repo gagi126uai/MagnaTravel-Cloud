@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Security.Cryptography;
 using System.Text;
+using System.ComponentModel.DataAnnotations;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Application.Contracts.Leads;
@@ -64,6 +65,7 @@ public class WebhooksController : ControllerBase
 
     [HttpPost("whatsapp")]
     [EnableRateLimiting("webhooks")]
+    [RequestSizeLimit(64 * 1024)]
     public async Task<ActionResult> WhatsAppLead(
         [FromBody] WhatsAppWebhookDto dto,
         CancellationToken cancellationToken)
@@ -79,7 +81,7 @@ public class WebhooksController : ControllerBase
             var result = await _whatsAppWebhookService.ProcessLeadCaptureAsync(dto, cancellationToken);
             if (result.Created)
             {
-                _logger.LogInformation("Nuevo lead WhatsApp: {Name} ({Phone})", result.Name, result.Phone);
+                _logger.LogInformation("Nuevo lead WhatsApp recibido para {Phone}", MaskPhone(result.Phone));
                 return StatusCode(201, new
                 {
                     message = "Lead creado exitosamente.",
@@ -89,7 +91,7 @@ public class WebhooksController : ControllerBase
                 });
             }
 
-            _logger.LogInformation("Lead WhatsApp enriquecido: {Phone}", dto.Phone);
+            _logger.LogInformation("Lead WhatsApp enriquecido: {Phone}", MaskPhone(dto.Phone));
             return Ok(new
             {
                 message = "Lead actualizado exitosamente.",
@@ -105,6 +107,7 @@ public class WebhooksController : ControllerBase
 
     [HttpPost("whatsapp/message")]
     [EnableRateLimiting("webhooks")]
+    [RequestSizeLimit(16 * 1024)]
     public async Task<ActionResult> WhatsAppMessage(
         [FromBody] WhatsAppMessageDto dto,
         CancellationToken cancellationToken)
@@ -185,7 +188,7 @@ public class WebhooksController : ControllerBase
                 userName,
                 cancellationToken);
 
-            _logger.LogInformation("WhatsApp enviado a {Phone} por {User}", lead.Phone, userName);
+            _logger.LogInformation("WhatsApp enviado a {Phone} por {User}", MaskPhone(lead.Phone), userName);
             return Ok(new { message = "Mensaje enviado exitosamente." });
         }
         catch (Exception ex)
@@ -305,9 +308,17 @@ public class WebhooksController : ControllerBase
             return Problem(statusCode: StatusCodes.Status502BadGateway, title: "No se pudieron obtener los logs del bot.");
         }
     }
+
+    private static string MaskPhone(string? phone)
+    {
+        if (string.IsNullOrWhiteSpace(phone)) return "***";
+        var digits = new string(phone.Where(char.IsDigit).ToArray());
+        return digits.Length <= 4 ? "***" : $"***{digits[^4..]}";
+    }
 }
 
 public class SendMessageRequest
 {
+    [Required, MaxLength(2_000)]
     public string Message { get; set; } = string.Empty;
 }
