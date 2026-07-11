@@ -782,3 +782,454 @@ de pass-through para RI. (M1 YA quedó CONFIRMADO por Gastón 2026-07-10: lectur
 - Alícuota IVA de pass-through para RI: gate humano, firma del contador matriculado, ajeno a esta obra.
 - TC real por fecha (BNA/ADR-011): mientras no exista, Decisión 2 opera 100% manual con justificación —
   correcto y suficiente para no bloquear T3b, pero es deuda técnica ya conocida del norte multimoneda.
+
+## Addendum T5 (2026-07-11) — las 3 condiciones de arquitectura que la spec fiscal dejó bloqueadas
+
+Contexto: la especificación fiscal de T5
+(`.claude/agent-memory/travel-agency-accountant-argentina/adr044-t5-anulacion-parcial-spec.md`) dejó T5
+"apto CON CONDICIONES": 3 bloqueantes de arquitectura verificados en código. Este addendum los cierra.
+Código real inspeccionado para decidir: `BookingCancellationService.cs` (`CancelServiceAsync` líneas
+380-502, `ResolveServiceCancellationBlockReasonAsync` líneas 756-785, `RecordPartialCancellationLineAsync`
+líneas 957-1033, `DraftAsync` líneas 135-354, `TryResolveExistingBcAsync` líneas 1108-1221),
+`MutationGuards.cs` (íntegro), `BookingCancellation.cs`, `BookingCancellationLine.cs`,
+`BookingCancellationLineScope.cs`, `BookingCancellationCreditNote.cs`, `Voucher.cs`, y los 2 índices únicos
+filtrados de `AppDbContext.cs` (líneas 1729 y 1744).
+
+### Hallazgo adicional que cambia la Decisión C (no estaba en los 3 puntos de la spec)
+
+La spec fiscal ya había verificado que `RecordPartialCancellationLineAsync` (el camino de cancelar UN
+servicio) se reengancha mal a un BC `Closed` (bug real, punto 3 de la spec). Verificando el camino GEMELO
+— `DraftAsync`/`TryResolveExistingBcAsync` (el camino de anular TODA la reserva) — encontré que ese camino
+tiene el **bug inverso**: `TryResolveExistingBcAsync` (líneas 1205-1220) mete `Closed` en su "caso (d):
+cualquier otro estado → rechazo `INV-081`" junto con estados genuinamente activos
+(`AwaitingFiscalConfirmation`, `ManualReviewPending`, etc.). Consecuencia verificada: si una reserva tuvo
+**una** cancelación parcial de un solo servicio que ya llegó a `Closed` (reembolso consumido, caso
+resuelto), intentar después "Anular" el resto de la reserva **rechaza para siempre** con `INV-081`,
+tratando un evento fiscal ya terminado como si todavía estuviera en curso. Sin arreglar esto, T5 destraba
+"cancelar 1 servicio" pero **traba permanentemente** cualquier anulación total o parcial posterior de esa
+misma reserva — el mismo tipo de agujero que el punto 3 de la spec, en el sentido opuesto. Se corrige junto
+con la Decisión C (mismo cambio de regla: `Closed` se trata como `Aborted` a los efectos de "¿puedo abrir
+un evento de cancelación NUEVO sobre esta reserva/factura?", nunca reutilizable, nunca bloqueante eterno).
+
+### Decisión A — SEC-B1 se reemplaza por una compuerta que resuelve, no que bloquea
+
+**Diagnóstico verificado del guard actual**: `ResolveServiceCancellationBlockReasonAsync` reusa
+`MutationGuards.GetBookingMutationBlockReasonAsync`/`GetServiceMutationBlockReasonAsync` — las MISMAS
+funciones que `BookingService.cs` usa para bloquear la EDICIÓN pura de un hotel/vuelo/paquete/traslado ya
+facturado o voucherizado (CODE-04/05, origen: auditoría 2026-05-09). Es decir, hoy "cancelar un servicio
+con factura viva" y "editar el precio de un hotel ya facturado" comparten el mismo candado. **Esto importa
+para el diseño**: no se puede tocar `GetBookingMutationBlockReasonAsync`/`GetServiceMutationBlockReasonAsync`
+en sí mismas — seguirán bloqueando la edición pura (ese es un problema de integridad de datos ya
+facturados/voucherizados, no relacionado con emitir una NC). Hay que sacar a la cancelación de ese guard
+compartido y darle uno propio.
+
+**Por qué existía el guard (verificado, no soy yo interpretando)**: el comentario propio de
+`ResolveServiceCancellationBlockReasonAsync` dice literalmente que sin el bloqueo, cancelar bajaría "la
+venta confirmada por debajo del `ImporteTotal` de la factura SIN emitir NC → divergencia fiscal
+irreversible". El riesgo real que hay que seguir cerrando es exactamente ese: **un servicio que desaparece
+del sistema mientras la factura al cliente sigue mostrando el monto viejo, sin ningún NC en camino, ni
+siquiera uno pendiente en una cola de revisión.** Hoy el guard cierra ese riesgo con un bloqueo binario;
+pero el precio es que **NINGÚN** servicio de una reserva ya facturada puede cancelarse jamás por esta vía
+(el caso normal, según la propia spec: "la mayoría de las reservas ya están facturadas"), y el mecanismo
+`RecordPartialCancellationLineAsync` que sí corre después es dead-code en ese caso (nunca se alcanza).
+
+**Voucher: SIN CAMBIOS.** Verificado en `Voucher.cs`: el `Scope` es `ReservaCompleta` / `TodosLosPasajeros`
+/ `PasajerosSeleccionados` — no existe ninguna asociación voucher↔servicio puntual (solo
+voucher↔pasajero/reserva). No hay forma mecánica de acotar el chequeo de voucher a "solo este servicio" sin
+inventar un modelo de datos nuevo, que está fuera de alcance explícito de T5 (anulación a nivel pasajero
+excluida, y un voucher agrupa por pasajero, no por servicio). **Recomendación: el bloqueo por voucher
+`Issued` de la reserva se mantiene EXACTAMENTE como hoy** (reserva-level, vía
+`MutationGuards.HasIssuedVoucherForReservaAsync` — hoy privado, se expone como método público nuevo
+`GetReservaVoucherOnlyBlockReasonAsync` que reusa el mismo helper, sin duplicar la regla). No reabre el
+agujero: un voucher entregado al cliente sigue sin poder mostrarse mentiroso.
+
+**"Servicio ya viajado": NO se agrega un gate nuevo (verificado, no inventado).** Grep sobre
+`BookingCancellationService.cs` no encontró ningún chequeo de fecha por-servicio (`EndDate`,
+`CheckOutDate`, etc.) para bloquear cancelar un servicio ya consumido. Lo que SÍ existe (verificado,
+líneas 393-404) es un gate a nivel RESERVA: `EstadoReserva.IsCollectableStatus` excluye `Traveling` — si
+la reserva completa está en viaje, no se cancela NINGÚN servicio por esta vía. El caso residual (una
+reserva con rango de fechas amplio, todavía "Confirmada", donde UN servicio puntual ya ocurrió mientras
+otros no) no está cubierto hoy y **no lo cubre este addendum** — es una regla de negocio nueva (¿qué campo
+por tipo de servicio cuenta como "consumido"?), no una decisión de arquitectura, y no es uno de los 3
+bloqueantes que la spec fiscal marcó. Lo dejo anotado como brecha conocida para una tanda posterior, no
+lo escondo.
+
+**El reemplazo del candado fiscal (factura viva)**: deja de ser un bloqueo binario y pasa a ser una
+**compuerta que SIEMPRE deja un rastro accionable**, nunca un servicio cancelado con la factura intacta y
+nada más. Se implementa DENTRO de la misma transacción de `CancelServiceAsync` (no como pre-check
+separado), usando el mismo build de línea que hoy existe (`BuildCancellationLinesAsync` +
+`RecordPartialCancellationLineAsync`, ver Decisión B para el detalle de cómo se resuelve el monto/factura):
+
+1. **Si no hay factura viva** → sin cambios (comportamiento de hoy).
+2. **Si hay factura viva y el monto+factura destino se resuelven sin ambigüedad** (Decisión B: única
+   factura activa, o `TargetInvoiceId` ya elegido y dentro del remanente) → la línea queda lista para
+   emitir su NC (total-de-esa-factura o parcial, según el monto vs. el remanente) **en la MISMA operación**
+   — se reemplaza el "queda como borrador para revisión manual" de hoy (decisión #3 vieja) por la emisión
+   real encolada (mismo patrón asincrónico que ya usa el resto del módulo con AFIP).
+3. **Si hay factura viva pero es ambigua** (2+ facturas activas sin elección, o factura que no discrimina
+   por servicio, Casos c/d de la spec fiscal) → la línea se crea en un BC propio (Decisión C) que pasa a
+   `ManualReviewPending` (reusa el estado y el `ApprovalRequest` tipo `PartialCreditNoteApproval` que ya
+   existen desde FC1.3/ADR-009, aplicados aquí a un BC de una sola línea en vez del histórico BC total) —
+   el servicio SÍ se cancela, pero queda un ítem visible y accionable en la bandeja pasiva (P5), NUNCA
+   silencioso.
+4. **Bloqueo duro (409) SOLO si ni 2 ni 3 son alcanzables** — hoy el único caso verificado es
+   `reserva.PayerId is null` (línea 982, hoy se salteaba en silencio con `return`; pasa a ser un 409
+   explícito: sin pagador no hay a quién facturarle la NC, cancelar el servicio dejando ese hueco sin
+   rastro es peor que bloquear).
+
+**Por qué esto no reabre el agujero**: el agujero original era "servicio desaparece, cero rastro fiscal".
+Con este reemplazo, cancelar SIEMPRE termina en una de tres fotos verificables: NC emitida, NC en revisión
+manual con motivo claro, o bloqueo explícito — nunca "se cancela y ya está". **Dependencia dura de orden de
+construcción**: la Decisión A (aflojar el guard) y la Decisión B (armado de línea + emisión real, ya no
+"borrador muerto") deben desplegarse ATÓMICAMENTE en la misma tanda. Aflojar el guard sin que la emisión
+real ya esté cableada reabre exactamente el agujero que SEC-B1 vino a cerrar.
+
+### Decisión B — Campo manual + cap acumulativo, en la LÍNEA (no en un nuevo objeto)
+
+**Campo nuevo, mismo patrón que `TargetInvoiceId` de T3b (T3b lo aplicó al cargo del operador/ND; acá se
+aplica al lado NC/crédito de la MISMA línea)**:
+
+```
+BookingCancellationLine.TargetInvoiceId          (int?, FK -> Invoice, nullable)
+BookingCancellationLine.ConfirmedGrossCreditAmount (decimal(18,2)?, nullable)
+BookingCancellationLine.CreditAmountConfirmedByUserId   (string?, MaxLength 450)
+BookingCancellationLine.CreditAmountConfirmedByUserName (string?, MaxLength 200)
+BookingCancellationLine.CreditAmountConfirmedAt          (DateTime?)
+```
+
+**Resolución de `TargetInvoiceId`** (idéntica al patrón ya aprobado en T3b Decisión 1, aplicado al mismo
+query `activeInvoices` que `DraftAsync` ya usa):
+- **1 sola factura activa** (el caso dominante hoy, y el ÚNICO caso de la "reserva de 1 servicio" que pide
+  el enunciado — para esa reserva, cancelar su único servicio sigue yendo por "Anular" total,
+  `DraftAsync`/`ConfirmAsync`, sin tocar nada de este addendum): se autocompleta, invisible.
+- **2+ facturas activas**: el vendedor elige al confirmar el cargo — mismo momento/UI que T3b, mismo
+  fallback a revisión manual si no elige.
+
+**`ConfirmedGrossCreditAmount` — de dónde sale el número (verificado, no soy yo inventando el bruto)**:
+`BookingCancellationLine.LineSaleAmount` (campo YA EXISTENTE, línea 68 de `BookingCancellationLine.cs`,
+"SalePrice del servicio cancelado, congelado al armar la línea") es el DEFAULT propuesto — no la fuente
+de verdad fiscal, porque (hecho verificado por la spec, T3b Decisión 1) no existe ninguna tabla
+servicio→renglón de factura: `LineSaleAmount` es lo que el SERVICIO vale en el sistema, no necesariamente
+lo que ESA factura (armada 100% manual) le asignó a ese servicio si comparte comprobante con otros. Por
+eso el monto se PROPONE con `LineSaleAmount` (cero fricción visual) pero se CONFIRMA por el vendedor —
+salvo en el caso trivial de abajo, donde ni se muestra el campo.
+
+**Cómo se deriva el caso (a) "100% de su factura" vs (b) "comparte factura" — SIN pedir un segundo dato**:
+no hace falta preguntarle al vendedor "¿esto es el total de la factura o una parte?" (eso sería el
+cuestionario que el dueño pidió evitar). Se DERIVA comparando el monto contra el remanente calculado (ver
+cap abajo):
+- `ConfirmedGrossCreditAmount == remanente_de_TargetInvoiceId` → se trata IGUAL que una NC total de hoy,
+  pero **acotada a esa factura** (no a toda la reserva) — cero desarrollo nuevo, reusa T0-T4 tal cual sobre
+  1 factura, exactamente como pide el punto 1(a) de la spec fiscal.
+- `ConfirmedGrossCreditAmount < remanente_de_TargetInvoiceId` → NC parcial (`CreditNoteKind.PartialOnOriginal`,
+  ya existe desde ADR-009/FC1.3), por el monto bruto SIN netear la multa (criterio matriculado, sin
+  reabrir).
+- `ConfirmedGrossCreditAmount > remanente_de_TargetInvoiceId` → rechazado, no se guarda (ver cap).
+
+**Cap acumulativo (verificado el mecanismo existente que se reusa, punto 5 de la spec)**: el remanente de
+una factura se calcula, **NO solo dentro del BC actual** (Decisión C hace que cada evento sea su propio
+BC), sino contra **TODAS** las `BookingCancellationCreditNote` de esa factura, sin importar de qué BC
+vinieron:
+
+```
+remanente(invoiceId) = Invoice.ImporteTotal
+                       - SUM(CreditNoteInvoice.ImporteTotal
+                             WHERE BookingCancellationCreditNote.OriginatingInvoiceId = invoiceId
+                               AND Status IN (Succeeded, Pending))
+```
+
+`Pending` cuenta (no solo `Succeeded`): si no se reserva el monto apenas se encola la NC, dos cancelaciones
+casi simultáneas sobre la misma factura podrían ver el mismo remanente "libre" y ambas aprobarse — el mismo
+riesgo que el propio ADR ya anotó como pendiente ("Seguimientos anotados por los reviewers de T0... T5
+multiplica las NCs por reserva → cerrar ANTES de T5"). Este cálculo es la generalización directa del
+patrón ya usado en `TryEmitCancellationDebitNoteAsync` (línea 8196: `if (total > resolvedInvoice.ImporteTotal)`
+→ `Manual()`), aplicado al lado NC en vez del lado ND, y sumando el histórico en vez de un total fijo.
+
+**Prerrequisito DURO, no opcional**: el candado de concurrencia por factura (`pg_advisory_xact_lock` o
+transacción serializable sobre `TargetInvoiceId`, mismo patrón que `Adr042MultiInvoiceConcurrency`) tiene
+que envolver el cálculo-y-escritura del remanente ANTES de que T5 emita su primera NC parcial real — sin
+esto, dos NCs parciales aprobadas casi a la vez sobre la misma factura pueden sumar más de lo que la
+factura vale (exactamente el riesgo que la propia ADR ya había marcado como "cerrar antes de T5").
+
+**Caso trivial, cero fricción, sin campo visible**: reserva con 1 sola factura activa Y el servicio
+cancelado es el primero que se toca de esa factura (remanente == `Invoice.ImporteTotal` todavía) → el
+sistema autocompleta `TargetInvoiceId` y `ConfirmedGrossCreditAmount = LineSaleAmount` sin mostrar ningún
+desplegable ni pedir confirmación extra — coincide con "el servicio es el 100% de su factura" y dispara NC
+total de esa factura, cero desarrollo nuevo. El campo manual solo se muestra cuando hay ambigüedad real
+(2+ facturas, o remanente ya reducido por una NC previa).
+
+**Migración esperada**: `Adr044_M_T5a_AddTargetInvoiceIdAndConfirmedGrossCreditAmountToLine` — 2 columnas
+nullables + 3 de auditoría en `BookingCancellationLine`, FK a `Invoices`, sin backfill (líneas legacy
+quedan en null, no participan de emisión automática — caen al mismo fallback de revisión manual).
+
+### Decisión C — cada evento de cancelación (total o parcial) abre SU PROPIO `BookingCancellation`; `Closed` se excluye del único, igual que `Aborted`
+
+**Recomendación única**: excluir también `Status = 4 (Closed)` de los 2 índices únicos filtrados de
+`AppDbContext.cs` (líneas 1729 y 1744, hoy `HasFilter("\"Status\" <> 6")` — solo excluye `Aborted`). Nuevo
+filtro: `"\"Status\" NOT IN (4, 6)"` en ambos (`ReservaId` y `OriginatingInvoiceId`).
+
+**Por qué esta y no reabrir/reusar el BC `Closed`**: `Closed` (verificado, `BookingCancellation.cs:78`) es
+"cierre administrativo... reembolso consumido" — un hecho fiscal TERMINADO (NC ya con CAE, reembolso ya
+imputado). Reabrirlo para colgarle una línea nueva reinterpretaría en silencio un evento que ya se cerró y
+auditó como completo (mismo argumento que ya usa el propio ADR en T2 Decisión A para no reinterpretar
+snapshots históricos). Cada evento de cancelación (una NC, un ciclo de reembolso del operador, un cierre)
+es su propia foto — igual que un `BookingCancellation` ya representa hoy "una cancelación", no "todas las
+cancelaciones de la reserva".
+
+**Por qué NO rompe lo ya construido (verificado, no supuesto)**: los lectores que muestran "la cancelación
+vigente" de una reserva **ya están escritos para elegir la MÁS RECIENTE entre varias filas no-abortadas**
+(`OrderByDescending(b => b.Id)` o `.DraftedAt`, verificado en 8+ sitios: líneas 988, 1117, 1271, 3456, 4776,
+4805, 4848, 5010 de `BookingCancellationService.cs`). Esto significa que el patrón "puede haber más de una
+fila por reserva a lo largo del tiempo, mostrame la última" **ya es el idioma del código**, no algo que hay
+que inventar. Con `Closed` excluido del único, una NC parcial nueva simplemente crea la fila siguiente, que
+pasa a ser "la más reciente" y la que estos lectores ya eligen — **cero cambios en el código de lectura**.
+El extracto del operador, el circuit reader y los read-models no necesitan tocarse: siguen leyendo por
+`BookingCancellationId`/línea igual que hoy (`OperatorRefundAllocation.BookingCancellationId`,
+`ClientCreditEntry.BookingCancellationId` — verificado, ambos FKs directos al BC, no hay razón para que
+una NUEVA fila BC cause fugas entre eventos).
+
+**Los 2 arreglos de código que la migración de índice exige (ambos, no uno solo — es el hallazgo nuevo de
+arriba)**:
+1. `RecordPartialCancellationLineAsync` (línea 988): el `Where(b => b.ReservaId == reserva.Id && b.Status
+   != BookingCancellationStatus.Aborted)` pasa a excluir también `Closed` — deja de reengancharse a un BC
+   muerto (bug 3 de la spec fiscal) y abre uno nuevo.
+2. `TryResolveExistingBcAsync` (líneas 1205-1220, camino de anulación TOTAL): agregar un caso explícito
+   ANTES del `throw` final — `if (existingBc.Status == BookingCancellationStatus.Closed) return null;`
+   (mismo tratamiento que el caso (b) `Aborted`: "libre para abrir uno nuevo"). Sin esto, el bug nuevo que
+   encontré (arriba) deja cualquier reserva con una cancelación parcial ya cerrada IMPOSIBLE de volver a
+   anular, total o parcialmente, para siempre.
+
+**Qué seguirá bloqueando** (sin cambios, correcto): un BC en cualquier estado que representa un evento
+fiscal REALMENTE en curso (`AwaitingFiscalConfirmation`, `AwaitingOperatorRefund`, `ClientCreditApplied`,
+`ManualReviewPending`, `ManualReviewRejected`, `ArcaRejected` con NC viva) sigue rechazando con `INV-081` un
+segundo intento simultáneo sobre la MISMA reserva/factura — la migración de índice solo relaja `Closed`, no
+toca el resto de la máquina de estados.
+
+**Caso simple, paridad exacta (verificado que no cambia)**: una reserva de 1 solo servicio sigue yendo
+100% por `DraftAsync`/`ConfirmAsync` (Scope=`Full`), sin tocar `CancelServiceAsync` ni ninguna de las 3
+decisiones de este addendum — cero cambios de código en ese camino, cero cambios de comportamiento.
+
+**Migración esperada**: `Adr044_M_T5b_NarrowBookingCancellationUniqueIndexesExcludeClosed` — altera 2
+índices únicos filtrados existentes (drop + recreate con el filtro ampliado). Cambio de dirección SEGURA:
+excluir MÁS estados de un único solo puede RELAJAR la restricción, nunca puede violar filas ya existentes
+(ninguna fila `Closed` puede volverse "duplicada" retroactivamente por ampliar la exclusión). Sin backfill,
+sin riesgo de dato.
+
+### Migraciones esperadas de T5 (en orden)
+
+1. `Adr044_M_T5a_AddTargetInvoiceIdAndConfirmedGrossCreditAmountToLine`
+2. `Adr044_M_T5b_NarrowBookingCancellationUniqueIndexesExcludeClosed`
+
+### Orden de construcción sugerido
+
+1. **Prerrequisito de concurrencia** (ya anotado en el ADR desde T0, ahora se activa): lock por
+   `TargetInvoiceId` (`pg_advisory_xact_lock` o serializable, patrón `Adr042MultiInvoiceConcurrency`) para
+   el cálculo del remanente. Sin esto, ningún paso siguiente es seguro con 2+ NCs parciales concurrentes.
+2. **Decisión C primero** (los 2 fixes de código + la migración de índice): es la base estructural — sin
+   ella, Decisión B no tiene dónde colgar una segunda línea/NC sobre la misma factura sin chocar el único.
+   Incluye el fix del bug nuevo (`TryResolveExistingBcAsync` caso `Closed`).
+3. **Decisión B**: campos nuevos en la línea + cálculo de remanente + derivación NC-total-de-la-factura vs
+   NC-parcial. Se prueba en aislado (sin tocar el guard todavía) usando el mismo mecanismo `Confirm` que ya
+   existe para el flujo total, acotado a la factura.
+4. **Decisión A al final**: reemplazar `ResolveServiceCancellationBlockReasonAsync` para que llame al nuevo
+   guard (voucher-only + la compuerta de 3 salidas). Se despliega en la MISMA tanda que el punto 3 (nunca
+   suelto — ver la dependencia dura de la Decisión A).
+5. Gate de siempre antes de producción: `arca-tax-expert-argentina`/`travel-agency-accountant-argentina`
+   revisan la fórmula del remanente y la derivación total-vs-parcial antes del primer caso real;
+   `security-data-risk-reviewer` + `data-exposure-reviewer` sobre los nuevos mensajes de bloqueo/revisión
+   manual (nunca exponer `BookingCancellationStatus`/IDs internos, mismo estándar que
+   `CancellationErrorMessageLeakUnitTests`).
+
+### Tests obligatorios antes de mergear T5
+
+1. **Regresión caso simple**: reserva de 1 servicio → cancelar ese servicio sigue yendo por
+   `DraftAsync`/`ConfirmAsync` total, byte-idéntico a hoy; `CancelServiceAsync`/`RecordPartialCancellationLineAsync`
+   ni se invocan.
+2. **Bug del BC `Closed` (camino parcial, punto 3 original de la spec)**: reserva con un BC previo `Closed`
+   → cancelar OTRO servicio abre un BC **nuevo** (no le agrega una línea al `Closed`); el `Closed` viejo
+   queda intacto, sin líneas nuevas.
+3. **Bug del BC `Closed` (camino total, hallazgo nuevo de este addendum)**: reserva con un BC previo
+   `Closed` (de una cancelación parcial de 1 servicio) → `DraftAsync` (anular el resto) NO rechaza con
+   `INV-081`; abre un BC nuevo correctamente.
+4. **`INV-081` sigue bloqueando lo que debe**: un BC en `AwaitingFiscalConfirmation`/`ManualReviewPending`/etc.
+   (no `Closed`, no `Aborted`) sigue rechazando un segundo intento de `DraftAsync` o
+   `RecordPartialCancellationLineAsync` sobre la misma reserva.
+5. **Cap acumulativo, 2 NC sucesivas (test explícito del enunciado)**: factura con 2 servicios vivos →
+   cancelar el primero emite NC parcial por su monto, `Succeeded`; cancelar el segundo (evento nuevo, BC
+   nuevo) calcula el remanente correctamente restando la primera NC y emite su propia NC parcial dentro de
+   lo que queda; intentar una 3ra NC que exceda el remanente restante → rechazada (revisión manual), nunca
+   una NC que deje la suma por encima de `Invoice.ImporteTotal`.
+6. **Derivación total-vs-parcial por monto**: `ConfirmedGrossCreditAmount == remanente` → sale como NC
+   total de esa factura (reusa T0-T4); `< remanente` → `PartialOnOriginal`; `> remanente` → rechazada, no
+   se persiste.
+7. **2+ facturas activas sin `TargetInvoiceId` elegido** → revisión manual, nunca NC automática contra la
+   factura equivocada.
+8. **Voucher `Issued` sigue bloqueando** (regresión): con voucher emitido, cancelar el servicio sigue
+   rechazando 409, mensaje idéntico al de hoy — la Decisión A no tocó esta rama.
+9. **`PayerId` null** → 409 explícito (antes se salteaba en silencio); ningún servicio queda cancelado sin
+   pagador a quien facturarle.
+10. **Concurrencia**: 2 cancelaciones parciales casi simultáneas sobre servicios que comparten la misma
+    `TargetInvoiceId` → el lock serializa; nunca ambas ven el mismo remanente "libre" y lo exceden juntas
+    (test estilo `Adr042MultiInvoiceConcurrency`).
+
+**Rollback**: T5a es aditiva (columnas nullables, sin backfill) — `Down()` estándar. T5b solo reduce el
+alcance de un filtro de índice (dirección seguros, ver arriba) — `Down()` restaura el filtro viejo sin
+riesgo de dato. Los 2 fixes de código (`RecordPartialCancellationLineAsync`, `TryResolveExistingBcAsync`)
+son reversión de línea de código estándar, sin estado persistido que dependa de ellos.
+
+### Qué NO resuelve este addendum (anotado, no ignorado)
+
+- Anulación a nivel PASAJERO: fuera de alcance explícito (no existe granularidad de datos para eso, ni en
+  `BookingCancellationLine.ServiceId` ni en `Voucher`).
+- "Servicio ya viajado" como gate independiente del estado de la reserva: brecha conocida, no es uno de
+  los 3 bloqueantes de arquitectura de la spec fiscal, requiere una regla de negocio nueva (qué campo por
+  tipo de servicio cuenta como "consumido").
+- Prorrateo de pagos parciales entre servicios que quedan vivos vs. el que se anula: pendiente
+  Gastón/contador (punto 3 de la spec fiscal), no es arquitectura.
+- Alícuota IVA de pass-through para RI: gate humano ya abierto en T3b, ajeno a T5.
+
+### Revisión 2 (2026-07-11) — 2 agujeros de plata nuevos que abre la Decisión C (reviewer incorporado)
+
+> El `software-architect-reviewer` devolvió "Cambios requeridos": la Decisión C (permitir 2+ BCs
+> no-abortados por reserva a lo largo del tiempo) rompe el supuesto "una sola cancelación activa por
+> reserva" (INV-081) del que dependían DOS lectores de plata FUERA del perímetro que había inspeccionado
+> (`ReservaService.cs` + el camino legacy de `Confirm`/`EditLiquidation`). Ambos VERIFICADOS en código. Sin
+> estos fixes, la Decisión C tapa el bug del BC `Closed` pero abre dos fugas nuevas. Se incorporan tal cual,
+> como parte OBLIGATORIA del alcance de T5.
+
+#### B1 (crítico) — doble NC por el camino legacy de `Confirm`/`EditLiquidation`
+
+**Verificado en código**: `ConfirmAsync` (`BookingCancellationService.cs:1610-1624`) y `EditLiquidationAsync`
+(`:3826-3838`) construyen el `FiscalLiquidationInput` con `CancellationAmount: bc.OriginatingInvoice.ImporteTotal`
+HARDCODEADO (el comentario propio de la línea 1610-1613 lo dice: "Fase 1 solo soporta cancelación total...
+CancellationAmount = ImporteTotal por defecto"). Es decir, el camino de "Anular toda la reserva" siempre
+acredita el TOTAL de la factura, sin mirar si ya salió una NC parcial contra esa misma factura.
+
+**El agujero que abre la Decisión C**: con `Closed` fuera del único (Decisión C), esta secuencia queda
+posible y hoy sumaría de más:
+1. T5 emite una NC parcial por un servicio (BC1, luego `Closed`); la factura sigue viva por el resto.
+2. El usuario dispara "Anular" el resto por el camino viejo (`DraftAsync` → `ConfirmAsync`).
+3. `ConfirmAsync` acredita `ImporteTotal` COMPLETO → suma de NCs (parcial previa + total ahora) supera el
+   importe de la factura. Exactamente el descuadre que el cap acumulativo de la Decisión B vino a evitar,
+   pero por un camino que la Decisión B no tocaba.
+
+**Fix (parte obligatoria de T5, en el MISMO commit que las Decisiones A/B/C)**:
+- **(a) El camino legacy capea `CancellationAmount` contra el remanente real**, no contra `ImporteTotal`.
+  `ConfirmAsync:1619-1620` y `EditLiquidationAsync:3833-3834` pasan a usar
+  `CancellationAmount = remanente(OriginatingInvoiceId)` con la MISMA fórmula de la Decisión B
+  (`Invoice.ImporteTotal − SUM(BookingCancellationCreditNote.CreditNoteInvoice.ImporteTotal WHERE
+  OriginatingInvoiceId = esa factura AND Status IN (Succeeded, Pending))`). `OriginalInvoiceAmount` queda
+  en `ImporteTotal` (es la base fiscal del comprobante original, no cambia); lo que se acota es cuánto se
+  acredita. Cuando no hubo ninguna NC parcial previa (el 100% de los casos de hoy), remanente ==
+  `ImporteTotal` → comportamiento byte-idéntico al actual, cero regresión.
+- **(b) `BuildCancellationLinesAsync` (`:9453-9527`) EXCLUYE los servicios YA CANCELADOS — SOLO en el
+  build de alcance TOTAL** [corrección C1 del re-review 2026-07-11]. Verificado: hoy los 6 queries
+  (hotels/flights/transfers/packages/assistances/generics, líneas 9492-9527) traen TODOS los servicios
+  sin filtrar por estado; tras una cancelación parcial previa, el servicio cancelado re-aportaría línea y
+  RefundCap en la anulación total siguiente → doble cómputo. PERO el mismo builder tiene DOS call-sites
+  con semántica OPUESTA: `DraftAsync:255` (Scope=Full — acá SÍ se excluye) y
+  `RecordPartialCancellationLineAsync:1020-1023` (Scope=Partial, `onlyServiceTable/onlyServiceId` —
+  construye la línea del servicio que SE ACABA DE CANCELAR, ya marcado IsCancelled en el paso previo:
+  filtrar acá dejaría `builtLines` vacío y `builtLines[0]` tira → rompería la cancelación parcial entera).
+  REGLA: el filtro `ServiceResolutionRules.IsCancelled(...)` (mismo helper de
+  `MarkTypedServiceCancelledAsync`/`CancelAllReservaServicesAsync`) se aplica ÚNICAMENTE cuando
+  `scope == Full` (equivalente: `!wantsOne`); el build de una sola línea NUNCA filtra por cancelado.
+  Verificar en implementación que el call-site del guard R1 (`ComputeUnanchoredOperatorRefundCapAsync:933`)
+  quede del lado Full del scoping (un servicio ya cancelado no debe re-aportar cap — el fix lo alinea).
+- **(c) Test obligatorio (ampliado por C1)**: "cancelar 1 servicio → luego Anular el resto" debe verificar
+  TRES cosas: (i) el build de la anulación total EXCLUYE el servicio ya cancelado (no genera su línea/cap),
+  (ii) el `CancellationAmount` de la NC total respeta el remanente (suma de las dos NCs ≤ `ImporteTotal`),
+  y (iii) el camino PARCIAL sigue armando la línea del servicio recién cancelado (el filtro no aplica
+  a Scope=Partial — regresión que C1 detectó en la redacción original).
+
+#### B2 (crítico) — el cartel de multa elige una BC arbitraria
+
+**Verificado en código**: `DeriveCancelledMoneyContextAsync` (`ReservaService.cs:5151-5154`) hace
+`FirstOrDefaultAsync` SIN `OrderBy` sobre `LiveDebitNotePredicate`; `FillCancelledMoneyContextForListAsync`
+(`:5205-5216`) hace `GroupBy(PublicId).First()` — y su propio comentario (línea 5212) dice explícitamente
+"INV-081 garantiza una sola cancelación activa por reserva; si hubiera más de una fila... tomamos la
+primera". **Ese es exactamente el supuesto que la Decisión C rompe.** Además, verifiqué que la 2da rama de
+`LiveDebitNotePredicate` (`CancellationPenaltyRules.cs:61-64`: `PenaltyStatus == Confirmed &&
+PenaltyAmountAtEvent > 0 && DebitNoteStatus IN {NotApplicable, Pending}`) es PERMANENTE — sobrevive a que el
+BC quede `Closed`. Con dos BCs con multa viva simultánea (dos anulaciones parciales de dos servicios de
+operadores distintos, cada una con su multa), el `FirstOrDefault`/`First` devuelve una fila ARBITRARIA:
+monto/moneda del cartel equivocados, o total de multa subestimado (solo el de una BC).
+
+**Fix (parte obligatoria de T5)**: ambos lectores dejan de tomar UNA sola BC y AGREGAN sobre TODAS las BCs
+de la reserva con multa viva:
+- El cartel de la ficha (`DeriveCancelledMoneyContextAsync`) y el del listado
+  (`FillCancelledMoneyContextForListAsync`) suman el `PenaltyAmountAtEvent` de TODAS las BCs que cumplen
+  `LiveDebitNotePredicate`, **agrupado por `PenaltyCurrencyAtEvent`** (nunca se suman monedas distintas —
+  mismo principio "por moneda" que rige todo el módulo de plata). El resultado que se muestra es lo
+  PENDIENTE por moneda (neto de lo ya pagado en esa moneda, reusando `ComputePendingPenaltyForDisplay` como
+  hoy), pero sobre la suma, no sobre una fila.
+- Si hay más de una moneda de multa viva simultánea, el cartel muestra el desglose (una línea por moneda) en
+  vez de un único número — el DTO `CancelledMoneyInfo`/`ReservaListDto` pasa de un par escalar
+  (`CancelledPenaltyAmount`/`CancelledPenaltyCurrency`) a una lista por moneda. El caso de 1 sola multa (el
+  100% de hoy) rinde exactamente igual que ahora (lista de un elemento → mismo número).
+- El comentario engañoso de la línea 5212 ("INV-081 garantiza una sola...") se elimina/corrige: tras la
+  Decisión C ya NO es cierto que haya una sola BC no-abortada por reserva.
+- **Test obligatorio**: el cartel con DOS BCs con ND/multa viva simultánea (mismo operador o distintos)
+  muestra la SUMA por moneda, no el monto de una BC arbitraria; con dos monedas distintas, muestra el
+  desglose.
+
+#### Requisitos de diseño explícitos (no analogías) que el reviewer exige escribir
+
+1. **La transición `Pending → Failed` que libera el remanente REUSA literalmente
+   `ApplyChildResultAndReevaluateAsync`** (`BookingCancellationService.cs:4132-4181`, ADR-042) — no es "el
+   mismo patrón", es el MISMO método. Verificado: cuando ARCA rechaza una NC, ese método pone
+   `child.Status = BookingCancellationCreditNoteStatus.Failed` (`:4172`) y persiste (`:4177`). Como la
+   fórmula del remanente de la Decisión B suma solo `Status IN (Succeeded, Pending)`, una hija que pasa a
+   `Failed` sale automáticamente del cálculo → su monto vuelve a estar disponible para la siguiente NC
+   parcial de esa factura, sin código nuevo de "liberación". Requisito de diseño duro: la Decisión B NO
+   inventa su propia máquina de estados de la NC; se cuelga de la de ADR-042.
+2. **Las Decisiones A y B salen en el MISMO commit/deploy, nunca parcial.** Ya estaba anotado como
+   dependencia dura; se eleva a **invariante de la tanda**: aflojar el guard SEC-B1 (Decisión A) sin la
+   emisión real capeada (Decisión B) reabre el agujero fiscal original; construir la emisión (Decisión B)
+   sin el fix B1(a) del camino legacy deja la puerta de la doble-NC por `ConfirmAsync`. Los tres fixes
+   (A, B, B1) son atómicos: o entran todos, o no entra ninguno.
+3. **Test faltante (además de los ya listados)**: una NC parcial `Pending` que luego FALLA en ARCA libera
+   el remanente — tras el `Failed`, cancelar otro servicio de la misma factura ve el remanente restaurado
+   (el monto de la NC fallida vuelve a estar disponible) y su NC parcial se calcula sobre ese remanente
+   ampliado.
+
+#### Trade-off del bloqueo secuencial (decisión tomada, se documenta; se informa a Gastón, NO es gate)
+
+Con la Decisión C, **las anulaciones parciales de servicios INDEPENDIENTES no se bloquean entre sí**: cada
+BC vive su propio ciclo (puede quedar semanas esperando el reembolso de SU operador) sin frenar que mañana
+se anule otro servicio de otro operador de la misma reserva. Esto es la esencia de T5 y es coherente con la
+Decisión C (cada evento = su BC). Es un cambio deliberado respecto del mundo INV-081 ("una cancelación
+activa por reserva a la vez").
+
+Qué pasa si el MISMO operador tiene dos anulaciones en curso (dos servicios del mismo operador, cancelados
+en momentos distintos): quedan DOS BCs, cada uno con su línea de ese operador. El reviewer verificó que el
+`SupplierCancellationCircuitReader`/extracto del operador YA suma por línea (no por BC), así que el extracto
+del operador refleja correctamente la suma de ambos receivables/multas — no hay doble cómputo ni pérdida. No
+requiere trabajo adicional; se anota como **dato a informar a Gastón en el reporte final** (comportamiento
+nuevo esperado: puede ver dos anulaciones abiertas del mismo operador sobre la misma reserva conviviendo),
+NO como gate ni como bloqueante.
+
+#### Tests obligatorios añadidos en Revisión 2 (se suman a los 10 originales)
+
+11. **B1(a) — remanente en el camino legacy**: cancelar 1 servicio (NC parcial `Succeeded`) → luego Anular
+    el resto por `ConfirmAsync`; el `CancellationAmount` de la NC total usa el remanente, no `ImporteTotal`;
+    la suma de las dos NCs no supera `Invoice.ImporteTotal`.
+12. **B1(b) — exclusión de cancelados en el build**: tras una cancelación parcial, `BuildCancellationLinesAsync`
+    de la anulación total siguiente NO genera línea ni RefundCap para el servicio ya cancelado.
+13. **B2 — cartel con 2 BCs con multa viva**: dos anulaciones parciales con multa viva simultánea → el
+    cartel de la ficha y el del listado muestran la SUMA por moneda (y desglose si hay 2 monedas), no una
+    BC arbitraria.
+14. **Pending → Failed libera remanente**: una NC parcial `Pending` que falla en ARCA (vía
+    `ApplyChildResultAndReevaluateAsync`) restaura el remanente para la siguiente NC parcial de esa factura.
+
+#### Orden de construcción — ajuste de Revisión 2
+
+Los fixes B1(a), B1(b) y B2 entran en el paso 2 (Decisión C) del orden original, PORQUE son consecuencia
+directa de excluir `Closed` del único: no tiene sentido mergear la Decisión C sin cerrar simultáneamente las
+dos fugas que abre. El invariante de la tanda (A+B+B1 atómicos) gobierna el commit final.
+
+**C2 [re-review 2026-07-11]** — el candado de concurrencia por factura (paso 1) envuelve TAMBIÉN el
+cálculo remanente-y-emisión del camino LEGACY (B1(a), dentro de `ConfirmAsync`/`EditLiquidationAsync`),
+no solo el de `CancelServiceAsync`: una NC parcial T5 y una anulación total legacy casi simultáneas sobre
+la misma factura no pueden leer ambas el mismo remanente. Mismo `pg_advisory_xact_lock`/serializable sobre
+`OriginatingInvoiceId` en los tres puntos de escritura de NC.
