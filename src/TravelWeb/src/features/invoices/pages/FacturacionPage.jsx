@@ -22,11 +22,13 @@
  * Acción "Ver": abre el PDF en nueva pestaña (mismo patrón que CustomerAccountPage).
  */
 import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Eye, Loader2, Receipt, RefreshCw, FileText } from "lucide-react";
 import { api } from "../../../api";
 import { showError } from "../../../alerts";
 import { getPublicId } from "../../../lib/publicIds";
 import { formatCurrency, formatDate } from "../../../lib/utils";
+import { hasPermission } from "../../../auth";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import {
   DataGrid,
@@ -46,6 +48,31 @@ import { FacturacionFilters } from "../../customers/components/FacturacionFilter
 import { formatTipoComprobante, calcularPeriodoPorDefecto } from "../../customers/lib/facturacionFilters";
 import { OPCIONES_ESTADO_FILTRO_GLOBAL } from "../lib/facturacionGlobalFilters";
 import { useFacturacionGlobal } from "../hooks/useFacturacionGlobal";
+import { ComprobantesPorResolverTab } from "../components/ComprobantesPorResolverTab";
+import CreditNoteReconciliationInboxPage from "../../creditNoteReconciliation/pages/CreditNoteReconciliationInboxPage";
+import {
+  FACTURACION_TAB_TODOS as TAB_TODOS,
+  FACTURACION_TAB_COMPROBANTES as TAB_COMPROBANTES,
+  FACTURACION_TAB_RECIBOS as TAB_RECIBOS,
+  getAllowedFacturacionTabs,
+  resolveInitialFacturacionTab,
+  puedeVerFuenteMultas,
+  puedeVerFuenteNotasCredito,
+} from "../lib/facturacionTabs";
+
+// ─── ADR-044 T4 (2026-07-10): solapas dentro de Facturación ───────────────────
+// "Pendientes con AFIP" se desarmó (spec sección 3): el monitor pasivo "Comprobantes
+// por resolver" y la bandeja con acciones reales "Recibos por regularizar" pasan a
+// vivir ACÁ, como solapas opcionales. La solapa por defecto (sin ?tab= en la URL) es
+// la tabla de siempre para quien tiene cobranzas.view_all — CERO cambio para quien no
+// toca nada nuevo.
+//
+// FIX F1 (gate de frontend, 2026-07-10): la resolución de qué solapas se ven y cuál es
+// la de arranque vive en `facturacionTabs.js` (lib pura, testeada) — antes esta página
+// asumía que TODO usuario que llegaba acá tenía `cobranzas.view_all` (porque el guard
+// de la ruta lo exigía), lo que dejaba afuera al Vendedor con SOLO
+// `cobranzas.invoice_annul` y al revisor con SOLO `approvals.review` que antes veían
+// esta bandeja en /pendientes-afip.
 
 // ─── Helpers de presentación del PDF ──────────────────────────────────────────
 // Mismos helpers que CustomerAccountPage: generan el HTML de la ventana preview.
@@ -179,6 +206,22 @@ function getInitialFilters() {
 // ─── Componente principal ──────────────────────────────────────────────────────
 
 export default function FacturacionPage() {
+  // ── Solapas (ADR-044 T4, 2026-07-10 + fix F1) ────────────────────────────────
+  // Cada solapa respeta SU propio permiso (mismo criterio que /pendientes-afip antes
+  // de la fusión) — la resolución vive en facturacionTabs.js (lib pura, testeada), no
+  // acá, para no repetir la matriz de permisos en cada componente. Si la URL trae un
+  // ?tab= que el usuario no puede ver (o que no existe), cae con gracia a la primera
+  // solapa permitida — nunca rompe.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get("tab");
+  const allowedTabs = getAllowedFacturacionTabs(hasPermission);
+  const activeTab = resolveInitialFacturacionTab(tabParam, hasPermission);
+  // Dentro de "Comprobantes por resolver", cada FUENTE respeta su propio permiso — un
+  // Vendedor con solo cobranzas.invoice_annul ve la parte de multas pero NO se le
+  // fetchean las NC (evita el 403 documentado en usePendingCreditNoteReviewList).
+  const puedeVerMultas = puedeVerFuenteMultas(hasPermission);
+  const puedeVerNotasCredito = puedeVerFuenteNotasCredito(hasPermission);
+
   // ── Filtros activos ──────────────────────────────────────────────────────────
   // Período por defecto: últimos 90 días (decisión UX P13=A, 2026-06-28).
   // `filters` refleja lo que el usuario VE en los inputs (actualización inmediata).
@@ -337,21 +380,68 @@ export default function FacturacionPage() {
           </div>
         </div>
 
-        {/* Botón de actualización manual */}
-        <button
-          type="button"
-          onClick={reload}
-          disabled={cargando}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50 transition-colors"
-          aria-label="Actualizar lista de comprobantes"
-          data-testid="facturacion-global-refresh"
-        >
-          <RefreshCw className={`h-3.5 w-3.5 ${cargando ? "animate-spin" : ""}`} aria-hidden="true" />
-          Actualizar
-        </button>
+        {/* Botón de actualización manual — solo tiene sentido en la solapa "Todos". */}
+        {activeTab === TAB_TODOS && (
+          <button
+            type="button"
+            onClick={reload}
+            disabled={cargando}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50 transition-colors"
+            aria-label="Actualizar lista de comprobantes"
+            data-testid="facturacion-global-refresh"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${cargando ? "animate-spin" : ""}`} aria-hidden="true" />
+            Actualizar
+          </button>
+        )}
       </div>
 
-      {/* ─ Panel principal ──────────────────────────────────────────────────── */}
+      {/* ─ Solapas (ADR-044 T4, 2026-07-10 + fix F1) ─────────────────────────────
+          Solo se listan las solapas que `allowedTabs` (facturacionTabs.js) permite
+          para ESTE usuario — nunca se ofrece una solapa que después 403ee. */}
+      {allowedTabs.length > 0 && (
+        <div className="flex flex-wrap gap-6 border-b border-slate-200 dark:border-slate-800">
+          {allowedTabs.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => setSearchParams(tab.key === TAB_TODOS ? {} : { tab: tab.key }, { replace: true })}
+              className={`relative pb-3 text-sm font-semibold transition-colors ${
+                activeTab === tab.key
+                  ? "text-indigo-600 dark:text-indigo-400"
+                  : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+              }`}
+              data-testid={`tab-facturacion-${tab.key}`}
+            >
+              {tab.label}
+              {activeTab === tab.key && (
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 rounded-full bg-indigo-600 dark:bg-indigo-400" />
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Resguardo defensivo: sin ninguna solapa permitida (no debería pasar — el
+          guard de la ruta en App.jsx ya exige al menos uno de los 3 permisos). */}
+      {allowedTabs.length === 0 && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
+          No tenés permiso para ver ninguna sección de Facturación.
+        </div>
+      )}
+
+      {/* Solapa "Comprobantes por resolver": lista pasiva, sin filtros ni paginación. */}
+      {activeTab === TAB_COMPROBANTES && (
+        <ComprobantesPorResolverTab puedeVerMultas={puedeVerMultas} puedeVerNotasCredito={puedeVerNotasCredito} />
+      )}
+
+      {/* Solapa "Recibos por regularizar": la bandeja existente, TAL CUAL (conserva su
+          nombre y su funcionalidad — spec sección 3.2, "Gastón no lo cambió"). */}
+      {activeTab === TAB_RECIBOS && <CreditNoteReconciliationInboxPage />}
+
+      {/* ─ Panel principal (solapa "Todos los comprobantes") ────────────────── */}
+      {activeTab === TAB_TODOS && (
+      <>
       <div className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
 
         {/* Barra de filtros */}
@@ -545,6 +635,8 @@ export default function FacturacionPage() {
           onPageChange={handlePageChange}
           onPageSizeChange={handlePageSizeChange}
         />
+      )}
+      </>
       )}
     </div>
   );

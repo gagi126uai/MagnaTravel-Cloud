@@ -678,6 +678,11 @@ export default function ReservaDetailPage() {
   // multaCancellationPublicId: el GUID de la cancelación vigente (obtenido de GET by-reserva al abrir el panel).
   const [showMultaInline, setShowMultaInline] = useState(false);
   const [multaCancellationPublicId, setMultaCancellationPublicId] = useState(null);
+  // ADR-044 T4 (2026-07-10): facturas de venta activas de la cancelación vigente
+  // (BookingCancellationDto.SaleInvoices), para el desplegable "¿a qué factura
+  // corresponde?" de ConfirmarMultaOperadorInline. Con 0/1 factura queda ignorado
+  // (el panel no muestra nada — autocompletado, sin cambios respecto de antes).
+  const [multaSaleInvoices, setMultaSaleInvoices] = useState([]);
   const [buscandoMulta, setBuscandoMulta] = useState(false);
   // ADR-044 T1 (2026-07-10): la cancelación puede tener servicios de MÁS de un operador
   // (ADR-025), cada uno con su propia pregunta "¿cobró multa?". Guarda la situación
@@ -1009,6 +1014,9 @@ export default function ReservaDetailPage() {
         return;
       }
       setMultaCancellationPublicId(cancelacion.publicId);
+      // ADR-044 T4: guardamos las facturas de venta activas junto con el GUID — las
+      // necesita el desplegable "¿a qué factura corresponde?" del panel de confirmar.
+      setMultaSaleInvoices(Array.isArray(cancelacion.saleInvoices) ? cancelacion.saleInvoices : []);
       abrirPanel();
     } catch (error) {
       if (error?.status === 404) {
@@ -1586,6 +1594,7 @@ export default function ReservaDetailPage() {
                   cancellationPublicId={multaCancellationPublicId}
                   reservaNumero={reserva.numeroReserva}
                   supplierPublicId={multaSituacionAbierta?.supplierPublicId}
+                  saleInvoices={multaSaleInvoices}
                   monedaSugerida={elegirMonedaSugeridaParaMulta({
                     situacionCurrency: multaSituacionAbierta?.currency,
                     porMoneda: reserva.porMoneda,
@@ -1594,12 +1603,14 @@ export default function ReservaDetailPage() {
                     setShowMultaInline(false);
                     setMultaCancellationPublicId(null);
                     setMultaSituacionAbierta(null);
+                    setMultaSaleInvoices([]);
                     fetchReserva({ showLoading: false, preserveOnError: true });
                   }}
                   onCerrar={() => {
                     setShowMultaInline(false);
                     setMultaCancellationPublicId(null);
                     setMultaSituacionAbierta(null);
+                    setMultaSaleInvoices([]);
                   }}
                 />
               )}

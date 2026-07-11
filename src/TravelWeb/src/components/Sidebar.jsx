@@ -31,7 +31,6 @@ import {
   Shield,
   ShieldCheck,
   Inbox,
-  FileWarning,
   FileText,
   TrendingUp,
   ChevronRight,
@@ -142,15 +141,12 @@ export const MODULE_DEFS = [
     links: [
       { to: "/approvals/inbox",       label: "Aprobaciones",   icon: ShieldCheck, requiredPermission: "approvals.review" },
       { to: "/approvals/my-requests", label: "Mis solicitudes", icon: Inbox,      requiredPermission: "approvals.request" },
-      // Bandeja unificada de las 3 bandejas back-office que antes vivían sueltas en VENTAS
-      // (spec "fin de las bandejas", 2026-07-08). Visible si el usuario tiene AL MENOS UNO
-      // de los 3 permisos (ve solo las solapas que le correspondan dentro de la página).
-      {
-        to: "/pendientes-afip",
-        label: "Pendientes con AFIP",
-        icon: FileWarning,
-        anyPermission: ["cobranzas.invoice_annul", "cobranzas.view_all", "approvals.review"],
-      },
+      // "Pendientes con AFIP" se DESARMA (ADR-044 T4, spec 2026-07-10, decisión final #2 de
+      // Gastón): la resolución vive en la ficha (ya hecho 2026-07-08) y el monitor pasivo
+      // "Comprobantes por resolver" + "Recibos por regularizar" pasan a vivir DENTRO de la
+      // pantalla de Facturación (/facturacion), no como entrada propia del menú. Las rutas
+      // viejas (/pendientes-afip y las 3 bandejas sueltas) siguen respondiendo con un
+      // redirect en App.jsx para no romper bookmarks/links existentes.
       // Comisiones: solo el dueño/admin la ve (decisión del dueño, guia-ux 2026-06-13).
       { to: "/commissions",           label: "Comisiones",     icon: TrendingUp,  adminOnly: true },
       // TODO: cuando se construya la pantalla global de Reportes (spec 2026-06-28),

@@ -57,7 +57,7 @@ export function slugDeEstadoMulta(state) {
 }
 
 /**
- * Agrupa los 8 estados en las 6 "familias" visuales de la spec — cada familia arma
+ * Agrupa los estados en las 7 "familias" visuales de la spec — cada familia arma
  * un tipo de cartel distinto (color, si tiene botón, si tiene panel inline debajo):
  *
  *   - "pregunta": PendingDecision (S1). El agente todavía no eligió. Naranja/rosa,
@@ -75,11 +75,17 @@ export function slugDeEstadoMulta(state) {
  *     se resuelva a mano (la ND por operador es una tanda futura). Ámbar, cartel
  *     pasivo SIN botón de emisión — solo conserva el link de "no cobró esta multa" si
  *     el backend lo habilita.
- *   - "soloLectura": None / Done (S7) o cualquier estado futuro no contemplado acá.
- *     Cartel liso, sin ninguna acción.
+ *   - "confirmada": Done (S7, ADR-044 T4, 2026-07-10). La multa quedó resuelta de punta
+ *     a punta (ND emitida con CAE). Antes este estado cofundía en "soloLectura" y la
+ *     ficha no mostraba NADA del cargo confirmado — con T4 pasa a tener su propio
+ *     cartel prolijo ("Multa del operador: US$ 200 ✔ confirmada") que además habilita
+ *     el link "+ Agregar otro cargo de este operador" (spec sección 1: el mismo
+ *     operador a veces aplica un cargo administrativo Y una retención fiscal juntos).
+ *   - "soloLectura": None, o cualquier estado futuro no contemplado acá. Sin cartel de
+ *     multa (la ficha no tiene nada que mostrar de este paso).
  *
  * @param {string} state
- * @returns {"pregunta"|"procesando"|"accionTrabada"|"waived"|"multiOperador"|"soloLectura"}
+ * @returns {"pregunta"|"procesando"|"accionTrabada"|"waived"|"multiOperador"|"confirmada"|"soloLectura"}
  */
 export function familiaDeEstadoMulta(state) {
   if (state === "PendingDecision") return "pregunta";
@@ -93,7 +99,8 @@ export function familiaDeEstadoMulta(state) {
   }
   if (state === "Waived") return "waived";
   if (state === "MultiOperatorNeedsManualReview") return "multiOperador";
-  return "soloLectura"; // None, Done, o un estado futuro que este frontend todavia no conoce
+  if (state === "Done") return "confirmada";
+  return "soloLectura"; // None, o un estado futuro que este frontend todavia no conoce
 }
 
 /**
@@ -167,10 +174,12 @@ export function hayMasDeUnOperadorConMulta(reserva) {
  * Filtra, de la lista completa de situaciones de multa (una por operador), las que
  * necesitan el panel accionable de la ficha (OperatorPenaltyStepPanel): familias
  * "accionTrabada" (algo quedó trabado, hay una acción puntual para destrabarlo),
- * "procesando" (se está emitiendo, solo esperar) y "multiOperador" (ADR-044 T1: más de
- * un operador confirmado a la vez, se resuelve a mano). Las familias "pregunta"
- * (PendingDecision) y "waived" tienen su propio bloque en ReservaDetailPage y no pasan
- * por acá — este componente no las duplica.
+ * "procesando" (se está emitiendo, solo esperar), "multiOperador" (ADR-044 T1: más de
+ * un operador confirmado a la vez, se resuelve a mano) y "confirmada" (ADR-044 T4,
+ * 2026-07-10: la multa ya quedó resuelta del todo — antes la ficha no mostraba NADA acá;
+ * ahora aparece el cartel prolijo con el monto confirmado + el link "Agregar otro
+ * cargo"). Las familias "pregunta" (PendingDecision) y "waived" tienen su propio bloque
+ * en ReservaDetailPage y no pasan por acá — este componente no las duplica.
  *
  * Caso mono-operador (hoy el 100%): la lista de entrada tiene un único elemento, así
  * que esta función devuelve como máximo ESE elemento — mismo comportamiento que antes
@@ -182,7 +191,12 @@ export function hayMasDeUnOperadorConMulta(reserva) {
 export function situacionesConPanelDeMulta(reserva) {
   return listaDeSituacionesMulta(reserva).filter((situacion) => {
     const familia = familiaDeEstadoMulta(situacion.state);
-    return familia === "accionTrabada" || familia === "procesando" || familia === "multiOperador";
+    return (
+      familia === "accionTrabada" ||
+      familia === "procesando" ||
+      familia === "multiOperador" ||
+      familia === "confirmada"
+    );
   });
 }
 
@@ -215,6 +229,40 @@ export function situacionesConPreguntaDeMulta(reserva) {
 }
 
 /**
+ * ADR-044 T4 (2026-07-10): true si, de la lista de cargos de un operador, hay al menos
+ * uno TRASLADABLE (Kind != "Withholding" — las retenciones nunca emiten renglón de ND,
+ * así que nunca necesitan factura destino) que todavía no tiene factura destino
+ * resuelta. Es la señal que distingue, dentro del estado compartido
+ * "DebitNoteNeedsAmountCurrency", el caso NUEVO "falta elegir la factura" (ADR-044 T3b)
+ * del caso VIEJO "falta confirmar monto y moneda" (ADR-013/014) — el backend no agregó
+ * un token de estado nuevo a propósito (ver XML-doc de `OperatorPenaltySituationDto.
+ * ManualReviewReason`): esta función deriva cuál es cuál a partir del desglose de cargos
+ * que YA viaja en el DTO.
+ *
+ * @param {Array<{kind: string, targetInvoicePublicId: string|null}>} charges
+ * @returns {boolean}
+ */
+export function hayCargoTrasladableSinFacturaDestino(charges) {
+  return (Array.isArray(charges) ? charges : []).some(
+    (cargo) => cargo.kind !== "Withholding" && cargo.targetInvoicePublicId == null
+  );
+}
+
+/**
+ * El primer cargo trasladable sin factura destino resuelta (ver
+ * `hayCargoTrasladableSinFacturaDestino`) — es el que hay que corregir con el
+ * desplegable de "Elegir la factura" (PATCH .../operator-charges/{chargePublicId}/target-invoice).
+ *
+ * @param {Array<{kind: string, targetInvoicePublicId: string|null, publicId: string}>} charges
+ * @returns {object|undefined}
+ */
+export function primerCargoTrasladableSinFacturaDestino(charges) {
+  return (Array.isArray(charges) ? charges : []).find(
+    (cargo) => cargo.kind !== "Withholding" && cargo.targetInvoicePublicId == null
+  );
+}
+
+/**
  * Texto y acción del cartel de la familia "accionTrabada" (S3/S4/S5) — el ÚNICO lugar
  * donde se decide la copy y qué botón corresponde a cada uno de los tres estados, para
  * que el componente no tenga que repetir el switch.
@@ -224,10 +272,26 @@ export function situacionesConPreguntaDeMulta(reserva) {
  * esta función devuelve `accion: null` y el componente muestra el cartel sin botón
  * (versión informativa, regla de visibilidad de la spec).
  *
- * @param {{ state: string, canRetryDebitNote: boolean, canCorrectAmountCurrency: boolean }} situacion
- * @returns {{ mensaje: string, accion: "reintentar"|"corregir"|"emitir"|null, textoBoton: string|null }}
+ * ADR-044 T4 (2026-07-10): "DebitNoteNeedsAmountCurrency" cubre DOS casos reales
+ * distintos que comparten el mismo token de estado: "falta elegir la factura" (nuevo,
+ * T3b) y "falta confirmar monto y moneda" (viejo, ADR-013/014, comportamiento PRE-T4
+ * SIN CAMBIOS). La única señal para distinguirlos es ESTRUCTURAL —
+ * `hayCargoTrasladableSinFacturaDestino(charges)` — nunca un match de texto sobre
+ * `manualReviewReason`: ese campo es texto libre saneado por el backend y NUNCA se
+ * usa para decidir ramas ni se interpola en el cartel.
+ *
+ * FIX F3 (gate de exposición, 2026-07-10): la rama "elegirFactura" usa SIEMPRE el copy
+ * FIJO de la spec, nunca `manualReviewReason` — aunque el backend documenta que ese
+ * campo solo trae este mensaje puntual en este caso, el frontend no debe DEPENDER de
+ * esa promesa (defensa en profundidad: un texto técnico que se colara ahí quedaría
+ * expuesto al usuario). El parámetro se sigue recibiendo (por si en el futuro hace
+ * falta para otro propósito, ej. un detalle técnico solo-admin) pero NO se renderiza.
+ *
+ * @param {{ state: string, canRetryDebitNote: boolean, canCorrectAmountCurrency: boolean, manualReviewReason?: string|null, charges?: Array<object> }} situacion
+ * @returns {{ mensaje: string, accion: "reintentar"|"corregir"|"emitir"|"elegirFactura"|null, textoBoton: string|null }}
  */
-export function copyAccionTrabada({ state, canRetryDebitNote, canCorrectAmountCurrency }) {
+// eslint-disable-next-line no-unused-vars -- manualReviewReason se acepta a propósito pero NUNCA se interpola (ver comentario de arriba, FIX F3).
+export function copyAccionTrabada({ state, canRetryDebitNote, canCorrectAmountCurrency, manualReviewReason, charges }) {
   if (state === "DebitNoteFailed") {
     return {
       mensaje: "Anulada — el cargo de la multa al cliente no salió. Probá de nuevo.",
@@ -237,6 +301,18 @@ export function copyAccionTrabada({ state, canRetryDebitNote, canCorrectAmountCu
   }
 
   if (state === "DebitNoteNeedsAmountCurrency") {
+    if (hayCargoTrasladableSinFacturaDestino(charges)) {
+      return {
+        // FIX F3: copy FIJO, nunca manualReviewReason (defensa en profundidad).
+        mensaje: "Anulada — el cargo de la multa al cliente quedó trabado: falta elegir a qué factura corresponde.",
+        accion: canCorrectAmountCurrency ? "elegirFactura" : null,
+        textoBoton: canCorrectAmountCurrency ? "Elegir la factura" : null,
+      };
+    }
+    // Comportamiento PRE-T4 EXACTO para cualquier otro motivo bajo este mismo estado
+    // (incluido "no podemos distinguir" — charges vacío/ausente, registros legacy sin
+    // el desglose de ADR-044): "Corregir monto y moneda" sigue siendo la ÚNICA causa
+    // conocida de este estado antes de T3b, así que seguimos ofreciéndola sin cambios.
     return {
       mensaje: "Anulada — el cargo de la multa al cliente quedó trabado: falta confirmar el monto y la moneda.",
       accion: canCorrectAmountCurrency ? "corregir" : null,

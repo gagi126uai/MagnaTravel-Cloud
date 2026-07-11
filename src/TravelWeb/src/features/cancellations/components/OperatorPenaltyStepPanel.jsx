@@ -5,7 +5,7 @@
  * mono-operador) a UN cartel con, como máximo, UNA acción puntual — nunca reenvía a otra
  * pantalla ("bandeja") a resolver algo.
  *
- * Cubre tres de las seis familias de operatorPenaltyBanner.js:
+ * Cubre cuatro de las siete familias de operatorPenaltyBanner.js:
  *   - "accionTrabada" (DebitNoteFailed / DebitNoteNeedsAmountCurrency / ConfirmedNoDebitNote):
  *     cartel naranja con un botón puntual (Reintentar / Corregir monto y moneda / Emitir
  *     la nota ahora), gateado por los permisos que ya vienen resueltos del backend
@@ -17,10 +17,24 @@
  *     informativo ámbar, SIN botón de emisión — hay más de un operador con la multa
  *     confirmada a la vez y el cargo automático al cliente se frena hasta resolverse a
  *     mano (tanda futura T3). Conserva el mismo link de waive que "accionTrabada".
+ *   - "confirmada" (Done, ADR-044 T4, 2026-07-10): la multa quedó resuelta de punta a
+ *     punta (ND emitida con CAE). Antes este estado no dibujaba NADA acá — la ficha
+ *     mostraba solo el cartel genérico "Reserva anulada". Ahora muestra el monto
+ *     confirmado (enmascarado sin permiso `cobranzas.see_cost`) y habilita el link
+ *     "+ Agregar otro cargo de este operador" para el caso real confirmado por el
+ *     contador (cargo administrativo + retención fiscal juntos).
  *
  * Las familias "pregunta" (PendingDecision) y "waived" (Waived) NO se dibujan acá: ya
  * tienen su propio bloque en ReservaDetailPage (los botones "Sí cobró/No cobró" y el
  * rastro + "Deshacer" respectivamente) — este componente no las duplica.
+ *
+ * "+ Agregar otro cargo de este operador" (ADR-044 T4): además de la familia
+ * "confirmada", el link también aparece en "accionTrabada"/"procesando"/"multiOperador"
+ * — la multa PRINCIPAL ya está confirmada en todas esas familias (lo que está trabado es
+ * la Nota de Débito, no la confirmación), así que agregar un segundo cargo independiente
+ * (ej. una retención fiscal) es válido igual. Gateado por el permiso
+ * `cancellations.classify_agency_penalty` (mismo permiso que confirmar la multa) —
+ * chequeo de UI, el backend revalida server-side.
  *
  * Reemplaza al viejo cartel "Ir a resolver" que mandaba a la bandeja back-office
  * (/pendientes-afip?tab=multas): ahora se resuelve DIRECTO acá, sin navegar a otra pantalla.
@@ -53,11 +67,17 @@ import {
   debeMostrarWaiveEnAccionTrabada,
   textoMultiOperador,
   tituloConNombreOperador,
+  primerCargoTrasladableSinFacturaDestino,
 } from "../operatorPenaltyBanner";
 import { useOperatorPenaltyPolling } from "../hooks/useOperatorPenaltyPolling";
 import { ConfirmarMultaOperadorInline } from "./ConfirmarMultaOperadorInline";
+import { AgregarOtroCargoOperadorInline } from "./AgregarOtroCargoOperadorInline";
+import { ElegirFacturaDestinoInline } from "./ElegirFacturaDestinoInline";
+import { debeMostrarDesgloseCargos, construirFilasDesgloseCargos } from "../lib/otroCargoOperador";
 import { cancellationsApi } from "../api/cancellationsApi";
 import { showSuccess, showError } from "../../../alerts";
+import { hasPermission } from "../../../auth";
+import { formatCurrency } from "../../../lib/utils";
 import { getApiErrorMessage } from "../../../lib/errors";
 
 // Motivo fijo para el waive disparado desde el link "no cobró esta multa" del paso
@@ -98,6 +118,10 @@ export function OperatorPenaltyStepPanel({
 }) {
   const [buscando, setBuscando] = useState(false);
   const [showCorregir, setShowCorregir] = useState(false);
+  // ADR-044 T4 (2026-07-10): "Elegir la factura" — corrección aparte de "corregir monto
+  // y moneda", para cuando lo trabado es la falta de factura destino (ver
+  // hayCargoTrasladableSinFacturaDestino en operatorPenaltyBanner.js).
+  const [showElegirFactura, setShowElegirFactura] = useState(false);
   const [cancellationPublicId, setCancellationPublicId] = useState(null);
   // Link secundario "no cobró esta multa": pide confirmación explícita en línea antes de
   // llamar al backend (mismo patrón que DeshacerCierreSinMultaInline) porque cierra el
@@ -126,6 +150,15 @@ export function OperatorPenaltyStepPanel({
   // este cartel se reemplaza solo en el próximo render, sin que el agente haga nada.
   const seAgotoLaEsperaDelPolling = useOperatorPenaltyPolling(familia, onResuelto);
 
+  // ADR-044 T4 (2026-07-10): gatea el link "+ Agregar otro cargo de este operador" —
+  // mismo permiso que confirmar la multa (chequeo de UI; el backend revalida). Se
+  // calcula una sola vez acá porque lo usan varias familias distintas más abajo.
+  const puedeAgregarOtroCargo = hasPermission("cancellations.classify_agency_penalty");
+  // FIX F4 (gate de frontend, 2026-07-10): mismo permiso que enmascara montos en toda
+  // la ficha y el extracto del operador — se calcula una sola vez para el desglose de
+  // cargos (familias "confirmada" y "accionTrabada"/"multiOperador").
+  const puedeVerMontos = hasPermission("cobranzas.see_cost");
+
   if (familia === "procesando") {
     return (
       <div
@@ -146,13 +179,65 @@ export function OperatorPenaltyStepPanel({
             ¿Tarda mucho? Actualizá la página.
           </p>
         )}
+        {/* La multa PRINCIPAL ya está confirmada (lo que está "procesando" es la ND):
+            agregar un segundo cargo independiente (ej. retención fiscal) es válido igual. */}
+        {puedeAgregarOtroCargo && (
+          <div className="mt-2 pt-2 border-t border-amber-200/60 dark:border-amber-800/40">
+            <AgregarOtroCargoOperadorInline
+              reservaPublicId={reservaPublicId}
+              reservaNumero={reservaNumero}
+              supplierPublicId={supplierPublicId}
+              monedaSugerida={situacion.currency ?? monedaSugerida}
+              onAgregado={onResuelto}
+            />
+          </div>
+        )}
       </div>
     );
   }
 
-  // ADR-044 T1: "multiOperador" es la única familia nueva que este panel dibuja además
-  // de "accionTrabada" — es un cartel PASIVO (sin botón de emisión), así que
-  // `esAccionTrabada` distingue cuándo hay una acción de cobro real para ofrecer.
+  // ADR-044 T4 (2026-07-10): "confirmada" (Done) — la multa quedó resuelta de punta a
+  // punta. Cartel neutro/prolijo (sin naranja ni ámbar: no hay nada trabado ni pendiente)
+  // con el monto confirmado y el link de "otro cargo". Antes de esta tanda la ficha no
+  // mostraba NADA para este estado (ver comentario del archivo).
+  if (familia === "confirmada") {
+    return (
+      <div
+        className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 text-sm text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/10 dark:text-emerald-200"
+        data-testid={testId}
+        role="status"
+      >
+        <strong className="font-bold">
+          {tituloConNombreOperador(nombreOperador, "Anulada — multa del operador confirmada.")}
+        </strong>{" "}
+        {puedeVerMontos && situacion.amount != null && situacion.currency ? (
+          <span data-testid="multa-confirmada-monto">
+            {formatCurrency(situacion.amount, situacion.currency)}
+          </span>
+        ) : !puedeVerMontos ? (
+          <span title="Sin permiso para ver montos">—</span>
+        ) : null}
+        {/* FIX F4 (2026-07-10, spec sección 1.2): con más de un cargo, se ve el
+            desglose completo — antes, agregar un segundo cargo no cambiaba nada visible. */}
+        <DesgloseCargosOperador charges={situacion.charges} puedeVerMontos={puedeVerMontos} />
+        {puedeAgregarOtroCargo && (
+          <div className="mt-2 pt-2 border-t border-emerald-200/60 dark:border-emerald-800/40">
+            <AgregarOtroCargoOperadorInline
+              reservaPublicId={reservaPublicId}
+              reservaNumero={reservaNumero}
+              supplierPublicId={supplierPublicId}
+              monedaSugerida={situacion.currency ?? monedaSugerida}
+              onAgregado={onResuelto}
+            />
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ADR-044 T1: "multiOperador" es la única familia nueva (además de "confirmada") que
+  // este panel dibuja fuera de "accionTrabada" — es un cartel PASIVO (sin botón de
+  // emisión), así que `esAccionTrabada` distingue cuándo hay una acción de cobro real.
   if (familia !== "accionTrabada" && familia !== "multiOperador") return null;
 
   const esAccionTrabada = familia === "accionTrabada";
@@ -162,6 +247,8 @@ export function OperatorPenaltyStepPanel({
         state: situacion.state,
         canRetryDebitNote: situacion.canRetryDebitNote,
         canCorrectAmountCurrency: situacion.canCorrectAmountCurrency,
+        manualReviewReason: situacion.manualReviewReason,
+        charges: situacion.charges,
       })
     // "multiOperador": nunca tiene botón de emisión (ver comentario de textoMultiOperador).
     : { mensaje: textoMultiOperador(), accion: null, textoBoton: null };
@@ -188,6 +275,25 @@ export function OperatorPenaltyStepPanel({
     );
   }
 
+  // "Elegir la factura" abierto (ADR-044 T4): reemplaza al cartel, mismo patrón que
+  // "corregir". El cargo puntual a corregir es el primer trasladable sin factura
+  // destino (mismo criterio que usó copyAccionTrabada para ofrecer este botón).
+  if (esAccionTrabada && showElegirFactura) {
+    const cargoACorregir = primerCargoTrasladableSinFacturaDestino(situacion.charges);
+    return (
+      <ElegirFacturaDestinoInline
+        reservaPublicId={reservaPublicId}
+        reservaNumero={reservaNumero}
+        chargePublicId={cargoACorregir?.publicId}
+        onResuelto={() => {
+          setShowElegirFactura(false);
+          onResuelto();
+        }}
+        onCerrar={() => setShowElegirFactura(false)}
+      />
+    );
+  }
+
   // El GUID de la cancelación no viaja en el DTO de la reserva: se busca recién al primer
   // click (mismo patrón que buscarCancelacionYAbrirPanel en ReservaDetailPage). Extraído
   // como función propia porque tanto el botón principal (Reintentar/Corregir/Emitir) como
@@ -207,6 +313,14 @@ export function OperatorPenaltyStepPanel({
   };
 
   const handleClickAccion = async () => {
+    // "elegirFactura" no necesita buscar el cancellationPublicId acá — el propio
+    // ElegirFacturaDestinoInline lo resuelve solo al abrirse (mismo motivo por el que
+    // AgregarOtroCargoOperadorInline también hace su propio fetch).
+    if (accion === "elegirFactura") {
+      setShowElegirFactura(true);
+      return;
+    }
+
     setBuscando(true);
     try {
       const publicId = await buscarCancellationPublicId();
@@ -293,6 +407,10 @@ export function OperatorPenaltyStepPanel({
         )}
       </div>
 
+      {/* FIX F4 (2026-07-10, spec sección 1.2): con más de un cargo, se ve el desglose
+          completo — antes, agregar un segundo cargo no cambiaba nada visible acá. */}
+      <DesgloseCargosOperador charges={situacion.charges} puedeVerMontos={puedeVerMontos} />
+
       {/* Link secundario y discreto — solo si el backend habilita canWaive (multa
           Confirmed + ND no en juego + permiso del usuario). Vive DEBAJO del botón
           principal, mismo patrón visual que el enlace "Deshacer" del cartel Waived en
@@ -345,6 +463,61 @@ export function OperatorPenaltyStepPanel({
           </div>
         </div>
       )}
+
+      {/* ADR-044 T4 (2026-07-10): la multa PRINCIPAL de este operador ya está confirmada
+          en "accionTrabada"/"multiOperador" (lo trabado es la Nota de Débito, no la
+          confirmación) — agregar un segundo cargo independiente sigue siendo válido. Se
+          oculta mientras el link de waive está en su confirmación explícita para no
+          amontonar dos acciones a la vez en el mismo cartel. */}
+      {puedeAgregarOtroCargo && !mostrarConfirmacionWaive && (
+        <div className="mt-2 pt-2 border-t border-orange-200/60 dark:border-orange-800/40">
+          <AgregarOtroCargoOperadorInline
+            reservaPublicId={reservaPublicId}
+            reservaNumero={reservaNumero}
+            supplierPublicId={supplierPublicId}
+            monedaSugerida={situacion.currency ?? monedaSugerida}
+            onAgregado={onResuelto}
+          />
+        </div>
+      )}
     </div>
+  );
+}
+
+/**
+ * Desglose de los cargos de este operador, uno por fila (ADR-044 T4, fix F4, spec
+ * sección 1.2). Con 1 solo cargo (el caso simple, 100% de las anulaciones de hoy) NO
+ * renderiza nada — la línea resumen de siempre (monto + moneda totales) ya alcanza;
+ * recién con 2+ cargos (el caso real confirmado por el contador: cargo administrativo
+ * + retención fiscal juntos) hace falta ver cada uno por separado.
+ *
+ * Enmascarado de costos: sin permiso `cobranzas.see_cost`, cada monto se muestra como
+ * "—" (nunca el monto real) — mismo criterio que el resto de la ficha.
+ */
+function DesgloseCargosOperador({ charges, puedeVerMontos }) {
+  if (!debeMostrarDesgloseCargos(charges)) return null;
+
+  const filas = construirFilasDesgloseCargos(charges, puedeVerMontos);
+
+  return (
+    <ul
+      className="mt-2 pt-2 border-t border-current/10 space-y-1 text-xs"
+      data-testid="desglose-cargos-operador"
+    >
+      {filas.map((fila) => (
+        <li key={fila.key} className="flex items-center justify-between gap-3">
+          <span>
+            {fila.tipo} <span className="opacity-70">· {fila.comoLoCobra}</span>
+          </span>
+          <span className="font-semibold flex-shrink-0">
+            {fila.montoOculto ? (
+              <span title="Sin permiso para ver montos">—</span>
+            ) : (
+              formatCurrency(fila.amount, fila.currency)
+            )}
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }

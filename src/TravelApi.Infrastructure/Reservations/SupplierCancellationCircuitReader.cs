@@ -87,8 +87,8 @@ internal static class SupplierCancellationCircuitReader
             .AsNoTracking()
             .Include(l => l.BookingCancellation).ThenInclude(bc => bc.Reserva)
             // ADR-044 T2 Addendum: necesitamos los cargos de la linea para el bloque "Cargo facturado aparte".
-            // ADR-044 T3b Decision 3 (M3, paso 6): + sus ajustes de diferencia de cambio, para la linea
-            // "Diferencia de cambio" (solo se pintan las filas VIGENTES).
+            // ADR-044 T3b Decision 3 (M3, paso 6): + sus ajustes de tipo de cambio, para la linea
+            // "Ajuste por el dólar" (solo se pintan las filas VIGENTES).
             .Include(l => l.OperatorCharges).ThenInclude(c => c.TreasuryFxAdjustments)
             .Where(l => l.SupplierId == supplierId
                      && l.BookingCancellation.Status != BookingCancellationStatus.Aborted)
@@ -185,7 +185,9 @@ internal static class SupplierCancellationCircuitReader
 
                 var settlementCurrencyIso = Monedas.Normalizar(vigente.SettlementCurrency);
                 decimal deltaInLineCurrency = vigente.DeltaAmount;
-                string description = "Diferencia de cambio";
+                // Regla dura de multimoneda (2026-06-09, P10 resuelto 2026-07-10): la frase "diferencia de
+                // cambio" NUNCA aparece en ninguna pantalla. El rotulo visible es "Ajuste por el dólar".
+                string description = "Ajuste por el dólar";
                 if (!string.Equals(settlementCurrencyIso, currency, StringComparison.Ordinal))
                 {
                     var converted = ConvertArsUsdIso(
@@ -200,7 +202,7 @@ internal static class SupplierCancellationCircuitReader
                         continue;
                     }
                     deltaInLineCurrency = converted.Value;
-                    description = $"Diferencia de cambio (liquidada en {MonedaLabelCorta(settlementCurrencyIso)})";
+                    description = $"Ajuste por el dólar (liquidada en {MonedaLabelCorta(settlementCurrencyIso)})";
                 }
 
                 circuitLines.Add(new SupplierCircuitLine(

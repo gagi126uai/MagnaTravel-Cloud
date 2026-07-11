@@ -83,8 +83,9 @@ public record SupplierPaymentRequest(
     decimal? ImputedAmount = null,
     // ADR-044 T3b Decision 3 (2026-07-10): si este pago liquida el documento de un cargo del operador
     // FacturadaAparte puntual, el PublicId de ESE cargo. Opcional: null = pago normal, sin efecto en el
-    // ajuste de diferencia de cambio de tesoreria. Cuando se informa y el pago fue cruzado (trae
+    // ajuste de tipo de cambio de tesoreria. Cuando se informa y el pago fue cruzado (trae
     // ExchangeRate), el service calcula y registra el ajuste (Decision 3) — visible en el extracto del
-    // operador como "Diferencia de cambio". La pantalla que carga este campo es ADR-044 T4.
+    // operador como "Ajuste por el dólar" (regla dura de multimoneda: nunca "diferencia de cambio").
+    // La pantalla que carga este campo es ADR-044 T4.
     Guid? SettlesOperatorChargePublicId = null
 );

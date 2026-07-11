@@ -14,14 +14,24 @@
 import { useState, useEffect, useCallback } from "react";
 import { cancellationsApi } from "../api/cancellationsApi";
 
-export function usePendingCreditNoteReviewList() {
+/**
+ * @param {boolean} enabled - ADR-044 T4 fix F1 (2026-07-10): "Comprobantes por
+ *   resolver" funde esta bandeja con la de multas, pero ESTE endpoint exige el
+ *   permiso `cobranzas.view_all` — un usuario que solo tenga `cobranzas.invoice_annul`
+ *   (el mínimo para ver la parte de multas) recibiría un 403 si igual la llamáramos.
+ *   `enabled=false` salta el fetch por completo (items queda vacío, sin loading ni
+ *   error). Default `true`: el comportamiento de siempre (bandeja standalone) no
+ *   cambia para quien ya la usaba.
+ */
+export function usePendingCreditNoteReviewList(enabled = true) {
   const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState(null);
 
   // Encapsulamos el fetch en useCallback para que la referencia sea estable
   // y no cause loops si se pasa como dependencia de un useEffect externo.
   const fetchData = useCallback(async () => {
+    if (!enabled) return;
     setLoading(true);
     setError(null);
     try {
@@ -32,7 +42,7 @@ export function usePendingCreditNoteReviewList() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [enabled]);
 
   // useEffect con dependencia vacía: carga los datos una sola vez al montar.
   // El usuario puede refrescar con el botón "Actualizar" que llama a reload.

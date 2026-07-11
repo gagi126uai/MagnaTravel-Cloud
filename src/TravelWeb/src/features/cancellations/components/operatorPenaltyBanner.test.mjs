@@ -24,6 +24,8 @@ import {
   hayMasDeUnOperadorConMulta,
   situacionesConPanelDeMulta,
   situacionesConPreguntaDeMulta,
+  hayCargoTrasladableSinFacturaDestino,
+  primerCargoTrasladableSinFacturaDestino,
 } from "../operatorPenaltyBanner.js";
 
 // ============================================================================
@@ -68,9 +70,12 @@ test("familiaDeEstadoMulta: Waived es 'waived'", () => {
   assert.equal(familiaDeEstadoMulta("Waived"), "waived");
 });
 
-test("familiaDeEstadoMulta: None y Done son 'soloLectura'", () => {
+test("familiaDeEstadoMulta: None es 'soloLectura'", () => {
   assert.equal(familiaDeEstadoMulta("None"), "soloLectura");
-  assert.equal(familiaDeEstadoMulta("Done"), "soloLectura");
+});
+
+test("familiaDeEstadoMulta: Done es 'confirmada' (ADR-044 T4, 2026-07-10)", () => {
+  assert.equal(familiaDeEstadoMulta("Done"), "confirmada");
 });
 
 test("familiaDeEstadoMulta: estado futuro desconocido cae a 'soloLectura' (degradación segura)", () => {
@@ -147,6 +152,115 @@ test("copyAccionTrabada: ConfirmedNoDebitNote con permiso → botón Cobrarle la
 test("copyAccionTrabada: ConfirmedNoDebitNote sin permiso → sin botón", () => {
   const r = copyAccionTrabada({ state: "ConfirmedNoDebitNote", canRetryDebitNote: false, canCorrectAmountCurrency: false });
   assert.equal(r.accion, null);
+});
+
+// ============================================================================
+// hayCargoTrasladableSinFacturaDestino / primerCargoTrasladableSinFacturaDestino
+// (ADR-044 T4, 2026-07-10 — distinguir "falta elegir factura" de "falta monto/moneda")
+// ============================================================================
+
+test("hayCargoTrasladableSinFacturaDestino: true si hay un cargo NO Withholding sin targetInvoicePublicId", () => {
+  const charges = [{ kind: "AdministrativeFee", targetInvoicePublicId: null }];
+  assert.equal(hayCargoTrasladableSinFacturaDestino(charges), true);
+});
+
+test("hayCargoTrasladableSinFacturaDestino: false si todos los cargos ya tienen factura destino", () => {
+  const charges = [{ kind: "AdministrativeFee", targetInvoicePublicId: "inv-1" }];
+  assert.equal(hayCargoTrasladableSinFacturaDestino(charges), false);
+});
+
+test("hayCargoTrasladableSinFacturaDestino: Withholding sin factura destino NO cuenta (nunca emite renglón de ND)", () => {
+  const charges = [{ kind: "Withholding", targetInvoicePublicId: null }];
+  assert.equal(hayCargoTrasladableSinFacturaDestino(charges), false);
+});
+
+test("hayCargoTrasladableSinFacturaDestino: lista vacía o ausente → false (defensivo)", () => {
+  assert.equal(hayCargoTrasladableSinFacturaDestino([]), false);
+  assert.equal(hayCargoTrasladableSinFacturaDestino(undefined), false);
+});
+
+test("primerCargoTrasladableSinFacturaDestino: devuelve el primer cargo trasladable sin factura", () => {
+  const cargoBueno = { kind: "AdministrativeFee", targetInvoicePublicId: null, publicId: "charge-1" };
+  const charges = [
+    { kind: "Withholding", targetInvoicePublicId: null, publicId: "charge-0" },
+    cargoBueno,
+  ];
+  assert.deepEqual(primerCargoTrasladableSinFacturaDestino(charges), cargoBueno);
+});
+
+test("primerCargoTrasladableSinFacturaDestino: undefined si no hay ninguno (defensivo)", () => {
+  assert.equal(primerCargoTrasladableSinFacturaDestino([]), undefined);
+});
+
+// ============================================================================
+// copyAccionTrabada: rama nueva "elegirFactura" (ADR-044 T4)
+// ============================================================================
+
+test("copyAccionTrabada: DebitNoteNeedsAmountCurrency con cargo sin factura destino → accion 'elegirFactura'", () => {
+  const r = copyAccionTrabada({
+    state: "DebitNoteNeedsAmountCurrency",
+    canRetryDebitNote: false,
+    canCorrectAmountCurrency: true,
+    manualReviewReason: "Todavía no se eligió a qué factura corresponde el cargo del operador.",
+    charges: [{ kind: "AdministrativeFee", targetInvoicePublicId: null }],
+  });
+  assert.equal(r.accion, "elegirFactura");
+  assert.equal(r.textoBoton, "Elegir la factura");
+  // FIX F3 (gate de exposición, 2026-07-10): el mensaje es SIEMPRE el copy fijo de la
+  // spec, nunca manualReviewReason — aunque acá venga un texto en criollo razonable.
+  assert.equal(r.mensaje, "Anulada — el cargo de la multa al cliente quedó trabado: falta elegir a qué factura corresponde.");
+});
+
+test("copyAccionTrabada: FIX F3 — un manualReviewReason con pinta de texto técnico NUNCA se muestra (defensa en profundidad)", () => {
+  // Simula justo el bug que el gate encontró: si algo técnico se colara en
+  // manualReviewReason (bug del backend, DTO viejo, lo que sea), el front no debe
+  // reventarlo al usuario. La rama "elegirFactura" IGNORA por completo este campo.
+  const textoTecnico = "InvariantViolation: BookingCancellationLineOperatorCharge#4821 TargetInvoiceId=NULL (state=ManualReview)";
+  const r = copyAccionTrabada({
+    state: "DebitNoteNeedsAmountCurrency",
+    canRetryDebitNote: false,
+    canCorrectAmountCurrency: true,
+    manualReviewReason: textoTecnico,
+    charges: [{ kind: "AdministrativeFee", targetInvoicePublicId: null }],
+  });
+  assert.notEqual(r.mensaje, textoTecnico);
+  assert.equal(r.mensaje, "Anulada — el cargo de la multa al cliente quedó trabado: falta elegir a qué factura corresponde.");
+});
+
+test("copyAccionTrabada: 'elegirFactura' sin manualReviewReason (null/undefined) usa el mismo texto fijo", () => {
+  const r = copyAccionTrabada({
+    state: "DebitNoteNeedsAmountCurrency",
+    canRetryDebitNote: false,
+    canCorrectAmountCurrency: true,
+    manualReviewReason: null,
+    charges: [{ kind: "AdministrativeFee", targetInvoicePublicId: null }],
+  });
+  assert.equal(r.mensaje, "Anulada — el cargo de la multa al cliente quedó trabado: falta elegir a qué factura corresponde.");
+});
+
+test("copyAccionTrabada: DebitNoteNeedsAmountCurrency SIN cargo sin factura → sigue siendo 'corregir' (caso viejo, sin regresión)", () => {
+  const r = copyAccionTrabada({
+    state: "DebitNoteNeedsAmountCurrency",
+    canRetryDebitNote: false,
+    canCorrectAmountCurrency: true,
+    manualReviewReason: null,
+    charges: [{ kind: "AdministrativeFee", targetInvoicePublicId: "inv-1" }],
+  });
+  assert.equal(r.accion, "corregir");
+  assert.equal(r.mensaje, "Anulada — el cargo de la multa al cliente quedó trabado: falta confirmar el monto y la moneda.");
+});
+
+test("copyAccionTrabada: 'elegirFactura' sin permiso → sin botón (versión informativa), mismo copy fijo", () => {
+  const r = copyAccionTrabada({
+    state: "DebitNoteNeedsAmountCurrency",
+    canRetryDebitNote: false,
+    canCorrectAmountCurrency: false,
+    manualReviewReason: "Falta elegir la factura.",
+    charges: [{ kind: "AdministrativeFee", targetInvoicePublicId: null }],
+  });
+  assert.equal(r.accion, null);
+  assert.equal(r.textoBoton, null);
+  assert.equal(r.mensaje, "Anulada — el cargo de la multa al cliente quedó trabado: falta elegir a qué factura corresponde.");
 });
 
 // ============================================================================
@@ -344,6 +458,13 @@ test("situacionesConPanelDeMulta: multi-operador — deja pasar los MultiOperato
 
 test("situacionesConPanelDeMulta: sin situación de multa → lista vacía", () => {
   assert.deepEqual(situacionesConPanelDeMulta({}), []);
+});
+
+test("situacionesConPanelDeMulta: Done (multa confirmada) SÍ pasa por el panel (ADR-044 T4, 2026-07-10)", () => {
+  const resultado = situacionesConPanelDeMulta({
+    operatorPenaltySituations: [{ state: "Done", amount: 200, currency: "USD" }],
+  });
+  assert.deepEqual(resultado, [{ state: "Done", amount: 200, currency: "USD" }]);
 });
 
 // ============================================================================

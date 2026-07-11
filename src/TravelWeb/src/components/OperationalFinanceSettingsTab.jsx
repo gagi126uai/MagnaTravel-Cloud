@@ -3,6 +3,7 @@ import { AlertTriangle, BookOpen, CalendarClock, DollarSign, FileWarning, GitBra
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
 import { Button } from "./ui/button";
+import { TREASURY_FX_ASSUMED_BY, OPCIONES_ASUME_AJUSTE_DOLAR_AGENCIA } from "../lib/treasuryFxAssumedBy";
 
 const defaultSettings = {
   requireFullPaymentForOperativeStatus: true,
@@ -41,6 +42,11 @@ const defaultSettings = {
   // G6 (2026-06-24): días de caducidad de cotizaciones. 0 = no caduca nunca.
   // Eje SEPARADO del de presupuesto — se configura de forma independiente.
   quotationExpirationDays: 0,
+  // ADR-044 T4 (2026-07-10): quién asume por defecto el "Ajuste por el dólar" de las
+  // multas del operador (regla dura: la frase "diferencia de cambio" nunca se muestra;
+  // el rótulo visible es siempre "Ajuste por el dólar"). Default: el cliente — cada
+  // operador puede apartarse con su propio campo opcional (ficha del operador).
+  treasuryFxAssumedByDefault: TREASURY_FX_ASSUMED_BY.Client,
 };
 
 export default function OperationalFinanceSettingsTab() {
@@ -139,6 +145,9 @@ export default function OperationalFinanceSettingsTab() {
         // Se guardan como número entero; el backend valida Range(0,3650).
         budgetExpirationDays: Number(form.budgetExpirationDays || 0),
         quotationExpirationDays: Number(form.quotationExpirationDays || 0),
+        // ADR-044 T4: enum como INT (Client=0, Agency=1) — el backend no tiene
+        // JsonStringEnumConverter, mismo criterio que el resto de los enums del sistema.
+        treasuryFxAssumedByDefault: Number(form.treasuryFxAssumedByDefault),
       });
       showSuccess("Configuración operativa guardada.");
     } catch (error) {
@@ -456,6 +465,43 @@ export default function OperationalFinanceSettingsTab() {
               />
               <span className="text-sm text-slate-700 dark:text-slate-300">días</span>
               <span className="text-xs text-slate-400 dark:text-slate-500">0 = no caduca nunca</span>
+            </div>
+          </div>
+
+          {/* ================================================================
+              ADR-044 T4 (2026-07-10): "Ajuste por el dólar" en las multas.
+              Un solo control (radio), sin toggle de encender/apagar — coherente con
+              el estilo del bloque de caducidad de arriba. La etiqueta visible NUNCA
+              dice "diferencia de cambio" (regla dura de multimoneda, 2026-06-09).
+              Cada operador puede apartarse de este default desde su propia ficha
+              (campo opcional, ver la solapa "Datos" de cada operador).
+              ================================================================ */}
+          <div
+            className="rounded-2xl border border-slate-200 dark:border-slate-800 p-4 space-y-3"
+            aria-label="Ajuste por el dólar en las multas"
+          >
+            <div>
+              <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                Ajuste por el dólar en las multas
+              </p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                ¿Quién lo asume por defecto? Cada operador puede tener su propia excepción.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-4">
+              {OPCIONES_ASUME_AJUSTE_DOLAR_AGENCIA.map((opcion) => (
+                <label key={opcion.value} className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+                  <input
+                    type="radio"
+                    name="treasuryFxAssumedByDefault"
+                    checked={Number(form.treasuryFxAssumedByDefault) === opcion.value}
+                    onChange={() => updateField("treasuryFxAssumedByDefault", opcion.value)}
+                    disabled={loading}
+                    data-testid={`treasury-fx-assumed-by-${opcion.value}`}
+                  />
+                  {opcion.label}
+                </label>
+              ))}
             </div>
           </div>
 

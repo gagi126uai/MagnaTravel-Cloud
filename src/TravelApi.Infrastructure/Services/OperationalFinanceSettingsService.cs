@@ -174,8 +174,11 @@ public class OperationalFinanceSettingsService : IOperationalFinanceSettingsServ
             var assumedBy = request.TreasuryFxAssumedByDefault.Value;
             if (!Enum.IsDefined(typeof(TreasuryFxAssumedBy), assumedBy))
             {
+                // Regla dura de multimoneda (2026-06-09): la frase "diferencia de cambio" NUNCA llega al
+                // usuario. Este mensaje SI llega (ver GlobalExceptionHandler, ValidationException -> 400 con
+                // el mensaje real), asi que tiene que decir "ajuste por el dólar" (P10, 2026-07-10).
                 throw new ValidationException(
-                    "El valor de 'quién asume la diferencia de cambio' no es válido.");
+                    "El valor de 'quién asume el ajuste por el dólar' no es válido.");
             }
             entity.TreasuryFxAssumedByDefault = assumedBy;
         }

@@ -15,6 +15,7 @@
  *   - POST   /api/cancellations/:id/retry-credit-notes (ADR-042: reintenta NC faltantes de anulacion multi-factura)
  *   - POST   /api/cancellations/:id/retry-debit-note (reintenta la ND de la multa trabada/fallida)
  *   - PATCH  /api/cancellations/:id/correct-penalty (corrige monto/moneda de la multa trabada)
+ *   - POST   /api/cancellations/:id/operator-charges (ADR-044 T4: agrega un segundo cargo del operador)
  */
 
 import { api } from "../../../api";
@@ -279,6 +280,53 @@ export const cancellationsApi = {
    */
   correctPenalty: (publicId, payload) =>
     api.patch(`/cancellations/${publicId}/correct-penalty`, payload),
+
+  /**
+   * ADR-044 T2 Addendum / T4 (2026-07-10): agrega un cargo SECUNDARIO del operador sobre
+   * una multa YA confirmada (ej. una retención fiscal además del cargo administrativo
+   * automático). Acción OPCIONAL y escondida — ver "Agregar otro cargo de este operador"
+   * en la ficha (AgregarOtroCargoOperadorInline). Construir el payload con
+   * `construirPayloadOtroCargo` de `lib/otroCargoOperador.js`, no armarlo a mano acá.
+   *
+   * Errores posibles: 400 (moneda del cargo no coincide con la de la línea del operador,
+   * o falta el documento con "Facturada aparte"); 409 con {invariantCode} (la multa de
+   * este operador todavía no está confirmada, el flag está apagado, o hubo edición
+   * concurrente).
+   *
+   * @param {string} publicId - GUID del BookingCancellation.
+   * @param {object} payload - Shape de AddOperatorChargeRequest (ver otroCargoOperador.js).
+   * @param {string} [supplierPublicId] - GUID público del operador, si hay más de uno en juego.
+   * @returns {Promise<BookingCancellationDto>}
+   */
+  addOperatorCharge: (publicId, payload, supplierPublicId) =>
+    api.post(`/cancellations/${publicId}/operator-charges`, {
+      ...payload,
+      ...(supplierPublicId ? { supplierPublicId } : {}),
+    }),
+
+  /**
+   * ADR-044 T3b Decision 1 / T4 (2026-07-10): elige o corrige a qué factura de venta se
+   * traslada UN cargo puntual del operador, para cuando la reserva tiene 2+ facturas
+   * activas y el cargo (automático o agregado a mano) quedó sin factura destino resuelta
+   * (estado "DebitNoteNeedsAmountCurrency" con `manualReviewReason` de "falta elegir
+   * factura" — ver `hayCargoTrasladableSinFacturaDestino` en operatorPenaltyBanner.js).
+   *
+   * Errores posibles: 404 (BC/cargo no existen); 409 INV-ADR044-TARGETINVOICE-001 (la
+   * factura elegida no es una factura de venta activa de la reserva); 409
+   * INV-ADR044-TARGETINVOICE-002 (otro cargo de la misma línea ya apunta a una factura
+   * distinta); 409 INV-ADR044-TARGETINVOICE-003 (la Nota de Débito al cliente ya se
+   * emitió — la ficha muestra el cartel "El cargo de esta multa ya se emitió; no se
+   * puede cambiar la factura.", ver ElegirFacturaDestinoInline.jsx).
+   *
+   * @param {string} publicId - GUID del BookingCancellation.
+   * @param {string} chargePublicId - GUID del cargo puntual (OperatorChargeDto.PublicId).
+   * @param {string} targetInvoicePublicId - GUID de la factura de venta activa elegida.
+   * @returns {Promise<BookingCancellationDto>}
+   */
+  setOperatorChargeTargetInvoice: (publicId, chargePublicId, targetInvoicePublicId) =>
+    api.patch(`/cancellations/${publicId}/operator-charges/${chargePublicId}/target-invoice`, {
+      targetInvoicePublicId,
+    }),
 };
 
 // ============================================================================

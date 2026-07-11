@@ -773,6 +773,139 @@ public class CancellationCorrectPenaltyAndSituationTests
         Assert.Null(sit.RevertedByName);
     }
 
+    // ============================================================
+    // ADR-044 T3b/T4 (2026-07-10, fix data-exposure): ManualReviewReason NUNCA porta el DebitNoteArcaErrorMessage
+    // crudo. Solo viaja el mensaje LIMPIO fijo cuando el motivo es el caso derivable "falta elegir la factura".
+    // ============================================================
+
+    [Fact]
+    public async Task Situation_ManualReview_ByCurrencyMismatch_ManualReviewReasonNull()
+    {
+        // Motivo "moneda distinta a la factura": 1 sola factura activa, sin cargo trasladable sin resolver. El
+        // DebitNoteArcaErrorMessage guardado es un texto de negocio, pero NO es el caso "falta elegir factura",
+        // asi que ManualReviewReason viaja NULL (el front muestra su copy fija de "corregir monto y moneda").
+        var h = BuildService();
+        var (_, bc, supplier, reserva) = await SeedPostNcAsync(h.Ctx);
+        await SeedConfirmedManualReviewAsync(h, bc, supplier, penalty: 30_000m, declaredCurrency: "USD");
+
+        var sit = await h.Service.GetOperatorPenaltySituationAsync(
+            reserva.PublicId, userCanClassifyOperatorPenalty: true, isCallerAdmin: true, default);
+
+        Assert.Equal(OperatorPenaltySituationState.DebitNoteNeedsAmountCurrency.ToString(), sit.State);
+        Assert.Null(sit.ManualReviewReason);
+    }
+
+    [Fact]
+    public async Task Situation_ManualReview_WithTechnicalArcaMessage_AndResolvedTargetInvoice_ManualReviewReasonNull()
+    {
+        // Blindaje data-exposure: aunque el DebitNoteArcaErrorMessage guardado sea texto TECNICO en español que
+        // la blocklist de saneo NO ataja ("OriginatingInvoice no cargada."), como NO es el caso "falta elegir
+        // factura" (el cargo YA tiene su factura destino resuelta, con 2 facturas activas), ManualReviewReason
+        // viaja NULL: ese string interno nunca llega al usuario.
+        var h = BuildService();
+        var (_, _, _, reserva) = await SeedManualReviewWithChargeAsync(
+            h, addSecondActiveInvoice: true, chargeTargetResolved: true,
+            storedArcaMessage: "OriginatingInvoice no cargada.");
+
+        var sit = await h.Service.GetOperatorPenaltySituationAsync(
+            reserva.PublicId, userCanClassifyOperatorPenalty: true, isCallerAdmin: true, default);
+
+        Assert.Equal(OperatorPenaltySituationState.DebitNoteNeedsAmountCurrency.ToString(), sit.State);
+        Assert.Null(sit.ManualReviewReason);
+    }
+
+    [Fact]
+    public async Task Situation_ManualReview_TargetInvoiceUnchosen_ManualReviewReasonIsCleanFixedMessage()
+    {
+        // Caso derivable "falta elegir la factura": 2 facturas activas + un cargo trasladable SIN factura destino.
+        // El DebitNoteArcaErrorMessage guardado se pone a un texto TECNICO a proposito: el read-model NO lo copia,
+        // reconstruye la condicion en vivo y expone el mensaje LIMPIO conocido (prueba de que no depende del
+        // string interno).
+        var h = BuildService();
+        var (_, _, _, reserva) = await SeedManualReviewWithChargeAsync(
+            h, addSecondActiveInvoice: true, chargeTargetResolved: false,
+            storedArcaMessage: "fail-safe: coleccion no cargada (M2).");
+
+        var sit = await h.Service.GetOperatorPenaltySituationAsync(
+            reserva.PublicId, userCanClassifyOperatorPenalty: true, isCallerAdmin: true, default);
+
+        Assert.Equal(OperatorPenaltySituationState.DebitNoteNeedsAmountCurrency.ToString(), sit.State);
+        Assert.Equal(BookingCancellationService.TargetInvoiceUnchosenManualReviewMessage, sit.ManualReviewReason);
+        // No filtra el string interno guardado.
+        Assert.DoesNotContain("fail-safe", sit.ManualReviewReason!);
+        Assert.DoesNotContain("M2", sit.ManualReviewReason!);
+    }
+
+    /// <summary>
+    /// Semilla del estado "multa confirmada + ND en revision manual" con UN cargo del operador. Controla si hay
+    /// una segunda factura de venta activa y si el cargo tiene su factura destino resuelta, para cubrir los dos
+    /// caminos de ManualReviewReason (null vs. mensaje "falta elegir factura").
+    /// </summary>
+    private static async Task<(Guid BcPublicId, BookingCancellation Bc, Supplier Supplier, Reserva Reserva)>
+        SeedManualReviewWithChargeAsync(
+            Harness h, bool addSecondActiveInvoice, bool chargeTargetResolved, string storedArcaMessage)
+    {
+        var (bcPublicId, seededBc, seededSupplier, seededReserva) = await SeedPostNcAsync(h.Ctx);
+
+        // Segunda factura de venta activa (con CAE), para llegar a "2+ facturas activas".
+        if (addSecondActiveInvoice)
+        {
+            h.Ctx.Invoices.Add(new Invoice
+            {
+                TipoComprobante = 11, PuntoDeVenta = 1, NumeroComprobante = 305, CAE = "second-cae",
+                Resultado = "A", MonId = "DOL", MonCotiz = 1000m, ImporteTotal = 300m,
+                ReservaId = seededReserva.Id, AnnulmentStatus = AnnulmentStatus.None,
+            });
+            await h.Ctx.SaveChangesAsync();
+        }
+
+        seededBc.ConceptKind = CancellationConceptKind.OperatorPenaltyPassThrough;
+        seededBc.PenaltyStatus = PenaltyStatus.Confirmed;
+        seededBc.PenaltyAmountAtEvent = 20_000m;
+        seededBc.PenaltyCurrencyAtEvent = "ARS";
+        seededBc.DebitNotePurpose = DebitNotePurpose.PenaltyOrCancellationCharge;
+        seededBc.DebitNoteStatus = DebitNoteStatus.ManualReview;
+        seededBc.DebitNoteInvoiceId = null;
+        seededBc.DebitNoteArcaErrorMessage = storedArcaMessage;
+        seededBc.PenaltyConfirmedByUserId = "u";
+        seededBc.PenaltyConfirmedByUserName = "U";
+        seededBc.PenaltyConfirmedAt = DateTime.UtcNow.AddDays(-1);
+        seededBc.ConceptClassifiedByUserId = "u";
+        seededBc.ConceptClassifiedByUserName = "U";
+        seededBc.ConceptClassifiedAt = DateTime.UtcNow.AddDays(-1);
+        await h.Ctx.SaveChangesAsync();
+
+        var line = new BookingCancellationLine
+        {
+            BookingCancellationId = seededBc.Id,
+            SupplierId = seededSupplier.Id,
+            Currency = Monedas.ARS,
+            RefundCap = 80_000m,
+            PenaltyAmount = 20_000m,
+            RetainedDeductionAmount = 20_000m,
+            PenaltyStatus = PenaltyStatus.Confirmed,
+            RefundStatus = BookingCancellationLineRefundStatus.PendingOperatorRefund,
+        };
+        h.Ctx.BookingCancellationLines.Add(line);
+        await h.Ctx.SaveChangesAsync();
+
+        h.Ctx.BookingCancellationLineOperatorCharges.Add(new BookingCancellationLineOperatorCharge
+        {
+            BookingCancellationLineId = line.Id,
+            Kind = OperatorChargeKind.AdministrativeFee,
+            CollectionMode = PenaltyCollectionMode.Retenida,
+            Amount = 20_000m,
+            Currency = Monedas.ARS,
+            ClientTransferMode = ClientTransferMode.AsIs,
+            // Resuelta -> a la 1ra factura activa (la original del BC). Sin resolver -> null (caso "falta elegir").
+            TargetInvoiceId = chargeTargetResolved ? seededBc.OriginatingInvoiceId : (int?)null,
+            ConfirmedByUserId = "u",
+        });
+        await h.Ctx.SaveChangesAsync();
+
+        return (bcPublicId, seededBc, seededSupplier, seededReserva);
+    }
+
     [Fact]
     public async Task Situation_WhenNoCancellation_IsNone()
     {

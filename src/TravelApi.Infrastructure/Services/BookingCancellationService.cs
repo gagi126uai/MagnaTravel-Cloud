@@ -4695,6 +4695,20 @@ public class BookingCancellationService
     };
 
     /// <summary>
+    /// ADR-044 T3b/T4 (2026-07-10): copy LIMPIO y fijo del unico motivo de revision manual que la ficha muestra
+    /// al usuario — "falta elegir a que factura corresponde el cargo" (cancelacion con 2+ facturas activas). Es
+    /// FUENTE UNICA: la usa tanto el motor de emision (<c>BuildCancellationDebitNoteItemsAsync</c>, para
+    /// persistir el motivo) como el read-model del paso de multa (<c>GetOperatorPenaltySituationAsync</c>, para
+    /// exponer <c>ManualReviewReason</c>). No se expone NUNCA el <c>DebitNoteArcaErrorMessage</c> crudo: puede
+    /// portar texto tecnico en español que la blocklist de <see cref="SanitizeArcaErrorForUser"/> no ataja (ej.
+    /// "OriginatingInvoice no cargada.", "...(M2).", "fail-safe: coleccion no cargada"). El front, para los demas
+    /// motivos de revision manual, muestra su propia copy fija.
+    /// </summary>
+    internal const string TargetInvoiceUnchosenManualReviewMessage =
+        "Todavía no se eligió a qué factura corresponde el cargo del operador (la cancelación tiene " +
+        "más de una factura activa): elegila antes de emitir.";
+
+    /// <summary>
     /// H3 (2026-06-24): FUENTE UNICA de "¿esta cancelacion tiene una multa del operador pendiente de confirmar
     /// AHORA?" (la confirmacion diferida que emite la ND). Refleja SOLO las precondiciones de ESTADO que valida
     /// <see cref="ConfirmPenaltyAsync"/> (flag maestro, NC total con CAE, idempotencia: penalidad aun Estimated y
@@ -4835,6 +4849,8 @@ public class BookingCancellationService
             .OrderByDescending(b => b.DraftedAt)
             .Select(b => new
             {
+                b.Id,
+                b.ReservaId,
                 b.Status,
                 b.CreditNoteInvoiceId,
                 b.PenaltyStatus,
@@ -4910,6 +4926,21 @@ public class BookingCancellationService
             && !IsOperatorPenaltyDebitNoteInPlay(row.DebitNoteInvoiceId.HasValue, row.DebitNoteStatus)
             && isCallerAdmin;
 
+        // ADR-044 T3b/T4 (2026-07-10, fix data-exposure): motivo en criollo del atasco, SOLO cuando es el caso
+        // DERIVABLE "falta elegir a que factura corresponde el cargo" (2+ facturas activas + algun cargo
+        // trasladable sin factura destino resuelta). En ese caso viaja un mensaje LIMPIO y FIJO
+        // (TargetInvoiceUnchosenManualReviewMessage), NUNCA el DebitNoteArcaErrorMessage crudo — ese campo puede
+        // portar texto tecnico en español (ej. "OriginatingInvoice no cargada.", "...(M2).") que la blocklist de
+        // saneo no ataja. Para cualquier OTRO motivo de revision manual, ManualReviewReason queda null y el front
+        // muestra su propia copy fija ("falta confirmar el monto y la moneda"). El mismo criterio de derivacion
+        // que usa el motor de emision para rutear ESTE caso.
+        string? manualReviewReason = null;
+        if (state == OperatorPenaltySituationState.DebitNoteNeedsAmountCurrency
+            && await IsManualReviewBecauseTargetInvoiceUnchosenAsync(row.Id, row.ReservaId, ct))
+        {
+            manualReviewReason = TargetInvoiceUnchosenManualReviewMessage;
+        }
+
         return new OperatorPenaltySituationDto
         {
             State = state.ToString(),
@@ -4926,7 +4957,33 @@ public class BookingCancellationService
             // migracion (fuera de alcance de esta noche), estos van null. El campo existe para no romper el contrato.
             RevertedAt = null,
             RevertedByName = null,
+            ManualReviewReason = manualReviewReason,
         };
+    }
+
+    /// <summary>
+    /// ADR-044 T3b/T4 (2026-07-10, fix data-exposure): true si la Nota de Debito de este BC quedo en revision
+    /// manual PORQUE falta elegir a que factura corresponde el cargo del operador (el UNICO motivo de revision
+    /// manual que la ficha traduce a un mensaje limpio; para el resto, el front usa su copy fija). Deriva el mismo
+    /// criterio que el motor de emision (<c>BuildCancellationDebitNoteItemsAsync</c>): hay 2+ facturas de venta
+    /// ACTIVAS en la reserva, Y existe al menos un cargo TRASLADABLE al cliente (<c>Kind != Withholding</c> y no
+    /// absorbido) SIN factura destino resuelta (<c>TargetInvoiceId == null</c>). No mira el
+    /// <c>DebitNoteArcaErrorMessage</c> persistido (que puede portar texto tecnico): reconstruye la condicion en
+    /// vivo, asi el mensaje al usuario nunca depende de un string interno.
+    /// </summary>
+    private async Task<bool> IsManualReviewBecauseTargetInvoiceUnchosenAsync(
+        int bookingCancellationId, int reservaId, CancellationToken ct)
+    {
+        var activeInvoiceCount = (await LoadActiveSaleInvoicesForReservaAsync(reservaId, ct)).Count;
+        if (activeInvoiceCount <= 1)
+            return false; // con 1 sola factura activa el destino se autocompleta; nunca es "falta elegir".
+
+        // ¿Hay algun cargo trasladable al cliente (no retencion fiscal, no absorbido) sin factura destino resuelta?
+        return await _db.BookingCancellationLineOperatorCharges
+            .AnyAsync(c => c.BookingCancellationLine.BookingCancellationId == bookingCancellationId
+                        && c.Kind != OperatorChargeKind.Withholding
+                        && c.ClientTransferMode != ClientTransferMode.Absorbed
+                        && c.TargetInvoiceId == null, ct);
     }
 
     /// <inheritdoc />
@@ -4990,6 +5047,7 @@ public class BookingCancellationService
                 .Select(c => new
                 {
                     SupplierId = c.BookingCancellationLine.SupplierId,
+                    c.PublicId,
                     c.Kind,
                     c.CollectionMode,
                     c.Amount,
@@ -4998,6 +5056,13 @@ public class BookingCancellationService
                     c.ConfirmedAt,
                     c.ClientTransferMode,
                     c.ManagementFeeAmount,
+                    // ADR-044 T4 (2026-07-10): a que factura de venta se traslada este cargo (null = sin resolver
+                    // todavia, ver el XML-doc de OperatorChargeDto.TargetInvoicePublicId) + el TC estimado.
+                    TargetInvoicePublicId = c.TargetInvoiceId == null ? (Guid?)null : c.TargetInvoice!.PublicId,
+                    c.EstimatedExchangeRateToClientInvoiceCurrency,
+                    c.EstimatedExchangeRateSource,
+                    c.EstimatedExchangeRateAt,
+                    c.EstimatedExchangeRateJustification,
                 })
                 .ToListAsync(ct)
             : null;
@@ -5008,6 +5073,7 @@ public class BookingCancellationService
                 .Where(c => c.SupplierId == supplierId)
                 .Select(c => new OperatorChargeDto
                 {
+                    PublicId = c.PublicId,
                     Kind = c.Kind.ToString(),
                     CollectionMode = c.CollectionMode.ToString(),
                     Amount = c.Amount,
@@ -5017,6 +5083,13 @@ public class BookingCancellationService
                     // ADR-044 T3a: como se traslada este cargo al cliente en la ND + el fee de gestion, si tiene.
                     ClientTransferMode = c.ClientTransferMode.ToString(),
                     ManagementFeeAmount = c.ManagementFeeAmount,
+                    // ADR-044 T3b/T4: factura destino + TC estimado (los necesita el desplegable de "elegir/
+                    // corregir factura" y el recuadro de TC cruzado del front).
+                    TargetInvoicePublicId = c.TargetInvoicePublicId,
+                    EstimatedExchangeRateToClientInvoiceCurrency = c.EstimatedExchangeRateToClientInvoiceCurrency,
+                    EstimatedExchangeRateSource = c.EstimatedExchangeRateSource?.ToString(),
+                    EstimatedExchangeRateAt = c.EstimatedExchangeRateAt,
+                    EstimatedExchangeRateJustification = c.EstimatedExchangeRateJustification,
                 })
                 .ToList();
 
@@ -5121,6 +5194,11 @@ public class BookingCancellationService
                 WaivedByName = null,
                 RevertedAt = null,
                 RevertedByName = null,
+                // GAP conocido (ADR-044 T3b/T4): el motivo de revision manual vive HOY en bc.DebitNoteArcaErrorMessage
+                // (nivel BC padre, describe al operador PRINCIPAL). Un SECUNDARIO no tiene su propio campo de motivo
+                // todavia, asi que se deja null a proposito (mismo criterio que WaivedByName arriba) en vez de
+                // atribuirle a este operador un texto que puede ser de otro.
+                ManualReviewReason = null,
                 SupplierPublicId = first.SupplierPublicId,
                 SupplierName = first.SupplierName,
                 Charges = ChargesForSupplier(group.Key),
@@ -5417,7 +5495,10 @@ public class BookingCancellationService
         // principal, asi que el neteo debe decidirse por el concepto de ESTE operador, no por el del padre.
         await AllocateConfirmedPenaltyToLinesAsync(
             bc, request.ConfirmedPenaltyAmount, request.PenaltyCurrency, ct, targetSupplierId, effectiveConcept,
-            userId: userId, userName: userName);
+            userId: userId, userName: userName,
+            // ADR-044 T3b Decision 1 (2026-07-10): factura elegida en el MISMO paso de confirmar la multa, para
+            // cuando la reserva tiene 2+ facturas activas.
+            requestedTargetInvoicePublicId: request.TargetInvoicePublicId);
 
         // === Auditoria del "confirmado" STAGED, no guardada de una (fix atomicidad 2026-07-01). Antes esta
         // llamada era LogBusinessEventAsync, que hace su PROPIO SaveChanges y por lo tanto dejaba
@@ -7078,7 +7159,13 @@ public class BookingCancellationService
         // crea por detras (BookingCancellationLineOperatorCharge). Opcional con default "System" para no romper
         // firmas de tests que llamaban este metodo antes de esta tanda sin pasar usuario.
         string userId = "System",
-        string? userName = null)
+        string? userName = null,
+        // ADR-044 T3b Decision 1 (2026-07-10): factura elegida por el usuario al CONFIRMAR la multa (viene de
+        // ConfirmPenaltyRequest.TargetInvoicePublicId), para cuando la reserva tiene 2+ facturas activas y no hay
+        // autocompletado posible. Opcional: default null preserva el comportamiento previo (auto-resuelve con 1
+        // sola factura activa, o queda sin resolver con 2+ -> revision manual). Los call sites del path Dia-0
+        // (ConfirmCancellationRequest) y de CorrectPenaltyAsync no traen este dato todavia y siguen pasando null.
+        Guid? requestedTargetInvoicePublicId = null)
     {
         // Sin multa positiva no hay nada que netear (el request ya valida > 0, esto es defensivo).
         if (confirmedPenaltyAmount <= 0m) return;
@@ -7191,8 +7278,24 @@ public class BookingCancellationService
         // transparente, cero friccion. Con 2+ facturas activas queda en null: recien se resuelve mas adelante
         // via SetOperatorChargeTargetInvoiceAsync (la pantalla que elige es ADR-044 T4) — el motor de emision de
         // la ND rutea a revision manual mientras tanto (nunca adivina a que factura corresponde).
-        var autoTargetInvoiceId = ResolveAutoTargetInvoiceId(
-            await LoadActiveSaleInvoicesForReservaAsync(bc.ReservaId, ct));
+        var activeInvoicesForAutoTarget = await LoadActiveSaleInvoicesForReservaAsync(bc.ReservaId, ct);
+        var autoTargetInvoiceId = ResolveAutoTargetInvoiceId(activeInvoicesForAutoTarget);
+
+        // ADR-044 T3b Decision 1 (2026-07-10): con 2+ facturas activas el autocompletado de arriba da null. Si el
+        // usuario ELIGIO una factura al confirmar la multa (ConfirmPenaltyRequest.TargetInvoicePublicId), la
+        // validamos contra las facturas ACTIVAS de la reserva — misma validacion de membresia (mismo mensaje e
+        // invariantCode) que ya usan AddOperatorChargeAsync y SetOperatorChargeTargetInvoiceAsync: nunca se acepta
+        // a ciegas una factura ajena o ya muerta.
+        if (autoTargetInvoiceId is null && requestedTargetInvoicePublicId.HasValue)
+        {
+            var chosenInvoice = activeInvoicesForAutoTarget
+                .FirstOrDefault(i => i.PublicId == requestedTargetInvoicePublicId.Value);
+            if (chosenInvoice is null)
+                throw new BusinessInvariantViolationException(
+                    "La factura elegida no es una factura de venta activa de esta reserva.",
+                    invariantCode: "INV-ADR044-TARGETINVOICE-001");
+            autoTargetInvoiceId = chosenInvoice.Id;
+        }
 
         decimal allocatedSoFar = 0m;
         for (int i = 0; i < candidateLines.Count; i++)
@@ -7889,9 +7992,7 @@ public class BookingCancellationService
                 .ToList();
 
             if (distinctTargetInvoiceIds.Count == 0 || distinctTargetInvoiceIds.Contains(null))
-                return CancellationDebitNoteItemsResult.Manual(
-                    "Todavía no se eligió a qué factura corresponde el cargo del operador (la cancelación tiene " +
-                    "más de una factura activa): elegila antes de emitir.");
+                return CancellationDebitNoteItemsResult.Manual(TargetInvoiceUnchosenManualReviewMessage);
 
             if (distinctTargetInvoiceIds.Count > 1)
                 return CancellationDebitNoteItemsResult.Manual(
@@ -10620,11 +10721,14 @@ public class BookingCancellationService
                      && !LiveInvoiceDebitNoteTypes.Contains(i.TipoComprobante)
                      && !string.IsNullOrEmpty(i.CAE))
             .OrderByDescending(i => i.CreatedAt)
-            .Select(i => new { i.TipoComprobante, i.PuntoDeVenta, i.NumeroComprobante, i.MonId, i.ImporteTotal })
+            .Select(i => new { i.PublicId, i.TipoComprobante, i.PuntoDeVenta, i.NumeroComprobante, i.MonId, i.ImporteTotal })
             .ToListAsync(ct);
 
         return invoices.Select(i => new CancellationSaleInvoiceDto
         {
+            // ADR-044 T4 (2026-07-10): el front necesita este id para poder ELEGIR la factura destino de un
+            // cargo del operador (antes esta lista era solo informativa, ver el XML-doc del campo).
+            PublicId = i.PublicId,
             ComprobanteLabel = FormatComprobanteLabel(i.TipoComprobante, i.PuntoDeVenta, i.NumeroComprobante),
             // Moneda en ISO legible para el front (ARS/USD). Fallback ARS para datos sin MonId (legacy).
             Currency = ArcaCurrencyMapper.ToIso(i.MonId) ?? "ARS",

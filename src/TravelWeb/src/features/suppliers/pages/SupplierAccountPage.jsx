@@ -20,6 +20,7 @@ import {
     RotateCcw,
     Landmark,
     Settings,
+    ChevronRight,
 } from "lucide-react";
 import { api } from "../../../api";
 import { AccountPageSkeleton } from "../../../components/ui/skeleton";
@@ -55,6 +56,13 @@ import { useOperatorRefundsPending } from "../hooks/useOperatorRefundsPending";
 // No duplicamos el array: si el equipo agrega una moneda, se actualiza en un solo lugar.
 import { CURRENCY_OPTIONS } from "../lib/nuevoOperadorLogic.js";
 import { ordenarBloquesPesosPrimero, debeMostrarseEnGrisNeutro } from "../lib/supplierPageLogic.js";
+import {
+    OPCIONES_ASUME_AJUSTE_DOLAR_OPERADOR,
+    HEREDA_CONFIGURACION_GENERAL,
+    valorSelectDesdeOverride,
+    overrideDesdeValorSelect,
+} from "../../../lib/treasuryFxAssumedBy.js";
+import { siguienteEstadoTreasuryFxOverride, puedeGuardarConTreasuryFxOverride } from "../lib/treasuryFxOverrideState.js";
 
 // Estado inicial vacío para la paginación de servicios.
 const emptyPage = {
@@ -243,6 +251,20 @@ function SupplierInlineEditForm({ supplier, onGuardado }) {
     });
     const [saving, setSaving] = useState(false);
 
+    // ADR-044 T4 (2026-07-10): excepción opcional de "quién asume el ajuste por el
+    // dólar" para ESTE operador. OJO: el overview (`/suppliers/{id}/account`) NO
+    // expone este campo — solo lo devuelve `GET /suppliers/{id}` — así que se busca
+    // aparte. Arranca en `cargandoOverride=true` y el botón Guardar queda BLOQUEADO
+    // hasta que termine: el PUT del operador asigna SIEMPRE este campo (a diferencia
+    // de defaultCurrency/defaultPaymentTermDays, que si vienen vacíos no tocan nada),
+    // así que guardar antes de conocer el valor real pisaría con null una excepción
+    // ya cargada — justo el bug que hay que evitar.
+    const [treasuryFxOverrideSelect, setTreasuryFxOverrideSelect] = useState(HEREDA_CONFIGURACION_GENERAL);
+    const [cargandoOverride, setCargandoOverride] = useState(true);
+    // "Más detalles" cerrado por defecto (spec 4.3.2): el campo del ajuste por el dólar
+    // es una excepción rara — no ocupa espacio en la vista principal de la ficha.
+    const [masDetallesAbierto, setMasDetallesAbierto] = useState(false);
+
     // Inicializa el formulario con los datos del proveedor cuando llegan del servidor.
     // Cada vez que el proveedor se recarga (handlePagoGuardado llama loadOverview, etc.)
     // el formulario vuelve a los valores guardados. Esto está comentado para que quede claro.
@@ -266,15 +288,75 @@ function SupplierInlineEditForm({ supplier, onGuardado }) {
         });
     }, [supplier]);
 
+    // FIX F2 (gate de frontend, 2026-07-10): si esta carga falla, `cargandoOverride`
+    // tiene que quedarse en `true` — NO reactivarlo en un `finally` incondicional. El
+    // bug real: un `finally` que siempre hace `setCargandoOverride(false)` reactivaba
+    // el botón "Guardar" aunque el fetch hubiera fallado, y `treasuryFxOverrideSelect`
+    // seguía en su valor inicial ("hereda la config general") — si el operador tenía
+    // una excepción real cargada, guardar en ese estado la pisaba con `null` sin que
+    // el usuario se enterara. Por eso `cargandoOverride` solo se apaga en el camino de
+    // ÉXITO; en el de error queda prendido y se muestra `errorCargaOverride` con un
+    // botón "Reintentar" que vuelve a llamar a esta misma función.
+    const [errorCargaOverride, setErrorCargaOverride] = useState(null);
+
+    const cargarTreasuryFxOverride = useCallback(async () => {
+        if (!supplier) return;
+        setCargandoOverride(true);
+        setErrorCargaOverride(null);
+        try {
+            const detalle = await api.get(`/suppliers/${getPublicId(supplier)}`);
+            // siguienteEstadoTreasuryFxOverride es la ÚNICA fuente de verdad de qué hacer
+            // con el resultado (ver treasuryFxOverrideState.js) — el componente no repite
+            // la regla, así nunca puede volver a divergir como pasó con el bug de F2.
+            const siguiente = siguienteEstadoTreasuryFxOverride({
+                exito: true,
+                selectValueNuevo: valorSelectDesdeOverride(detalle?.treasuryFxAssumedByOverride),
+            });
+            setCargandoOverride(siguiente.cargandoOverride);
+            setErrorCargaOverride(siguiente.errorCargaOverride);
+            setTreasuryFxOverrideSelect(siguiente.treasuryFxOverrideSelect);
+        } catch (error) {
+            const siguiente = siguienteEstadoTreasuryFxOverride({
+                exito: false,
+                errorMessage: getApiErrorMessage(error, null),
+            });
+            setCargandoOverride(siguiente.cargandoOverride);
+            setErrorCargaOverride(siguiente.errorCargaOverride);
+            // A propósito NO se llama a setTreasuryFxOverrideSelect acá: la función pura
+            // no devuelve ese campo en la rama de error (ver treasuryFxOverrideState.js)
+            // — el valor que el usuario ya veía queda intacto, nunca se resetea.
+        }
+    }, [supplier]);
+
+    // Busca el valor REAL de treasuryFxAssumedByOverride (GET /suppliers/{id}, no el
+    // overview) cada vez que cambia el operador. Efecto separado del de arriba porque
+    // lee de un endpoint distinto — no queremos que un fallo acá tumbe el resto del form.
+    useEffect(() => {
+        cargarTreasuryFxOverride();
+    }, [cargarTreasuryFxOverride]);
+
+    // FIX F2: si la carga falló, el cartel de error tiene que ser VISIBLE de una —
+    // el botón "Guardar cambios" queda bloqueado y el usuario necesita entender por
+    // qué sin tener que adivinar que hay que abrir "Más detalles" primero.
+    const masDetallesEfectivamenteAbierto = masDetallesAbierto || Boolean(errorCargaOverride);
+
     const handleChange = (campo) => (event) => {
         setFormData((anterior) => ({ ...anterior, [campo]: event.target.value }));
     };
 
     const handleSubmit = async (event) => {
         event.preventDefault();
+        // ver comentario del estado: nunca guardar sin confirmar el valor real del ajuste por el dólar
+        if (!puedeGuardarConTreasuryFxOverride(cargandoOverride)) return;
         setSaving(true);
         try {
-            await api.put(`/suppliers/${getPublicId(supplier)}`, formData);
+            await api.put(`/suppliers/${getPublicId(supplier)}`, {
+                ...formData,
+                // Siempre se manda el valor ACTUAL (tocado o no) — el PUT asigna este
+                // campo siempre, así que omitirlo o mandar null "por defecto" borraría
+                // una excepción real ya cargada para este operador.
+                treasuryFxAssumedByOverride: overrideDesdeValorSelect(treasuryFxOverrideSelect),
+            });
             showSuccess("Datos del operador guardados correctamente.");
             if (onGuardado) onGuardado();
         } catch (error) {
@@ -424,10 +506,81 @@ function SupplierInlineEditForm({ supplier, onGuardado }) {
                 </div>
             </div>
 
+            {/* "Más detalles" — cerrado por defecto (ADR-044 T4, spec sección 4.3.2): el
+                ajuste por el dólar es una excepción rara, no un dato de todos los días. */}
+            <div className="border-t border-slate-100 dark:border-slate-800 pt-3">
+                <button
+                    type="button"
+                    onClick={() => setMasDetallesAbierto((v) => !v)}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400"
+                    data-testid="supplier-datos-mas-detalles-toggle"
+                >
+                    <ChevronRight
+                        className={`h-3.5 w-3.5 transition-transform ${masDetallesEfectivamenteAbierto ? "rotate-90" : ""}`}
+                        aria-hidden="true"
+                    />
+                    Más detalles
+                    {errorCargaOverride && (
+                        <span className="ml-1 h-1.5 w-1.5 rounded-full bg-rose-500" aria-hidden="true" title="Hay un dato pendiente de cargar" />
+                    )}
+                </button>
+
+                {masDetallesEfectivamenteAbierto && (
+                    <div className="mt-3 space-y-2" data-testid="supplier-datos-mas-detalles-panel">
+                        <label className={labelClass} htmlFor="supplier-treasury-fx-override">
+                            Ajuste por el dólar en sus multas
+                        </label>
+
+                        {errorCargaOverride ? (
+                            // FIX F2: mientras la carga real falló, NO se muestra el select con un
+                            // valor que podría no ser el correcto — solo el cartel + reintentar.
+                            // El submit del form entero queda bloqueado (cargandoOverride sigue true).
+                            <div
+                                role="alert"
+                                className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200 flex items-start justify-between gap-3"
+                                data-testid="supplier-datos-treasury-fx-override-error"
+                            >
+                                <span>{errorCargaOverride}</span>
+                                <button
+                                    type="button"
+                                    onClick={cargarTreasuryFxOverride}
+                                    className="flex-shrink-0 rounded-lg border border-rose-300 bg-white px-2.5 py-1 text-xs font-bold text-rose-700 hover:bg-rose-50 dark:bg-slate-800 dark:text-rose-300 dark:border-rose-700"
+                                    data-testid="supplier-datos-treasury-fx-override-reintentar"
+                                >
+                                    Reintentar
+                                </button>
+                            </div>
+                        ) : (
+                            <>
+                                <select
+                                    id="supplier-treasury-fx-override"
+                                    value={treasuryFxOverrideSelect}
+                                    onChange={(event) => setTreasuryFxOverrideSelect(event.target.value)}
+                                    disabled={cargandoOverride}
+                                    className={inputClass + " sm:max-w-sm"}
+                                    data-testid="supplier-datos-treasury-fx-override-select"
+                                >
+                                    {OPCIONES_ASUME_AJUSTE_DOLAR_OPERADOR.map((opcion) => (
+                                        <option key={opcion.value} value={opcion.value}>
+                                            {opcion.label}
+                                        </option>
+                                    ))}
+                                </select>
+                                <p className="text-xs text-muted-foreground">
+                                    {cargandoOverride
+                                        ? "Cargando el valor actual…"
+                                        : "Por defecto usa la configuración general de Facturación. Solo cambialo si este operador necesita un criterio distinto."}
+                                </p>
+                            </>
+                        )}
+                    </div>
+                )}
+            </div>
+
             <div className="flex items-center gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
                 <button
                     type="submit"
-                    disabled={saving}
+                    disabled={saving || !puedeGuardarConTreasuryFxOverride(cargandoOverride)}
                     className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 shadow-lg shadow-indigo-500/25 transition-all disabled:opacity-50"
                     data-testid="supplier-datos-submit"
                 >

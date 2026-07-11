@@ -44,10 +44,10 @@ import AdminHubPage from "./pages/AdminHubPage";
 import ApprovalsInboxPage from "./features/approvals/pages/ApprovalsInboxPage";
 import MyApprovalRequestsPage from "./features/approvals/pages/MyApprovalRequestsPage";
 import MovementsPreviewPage from "./features/movements/pages/MovementsPreviewPage";
-// Spec "fin de las bandejas" (2026-07-08): las 3 bandejas back-office (reconciliacion NC,
-// ND de cancelacion pendientes, NC por revisar) ahora viven como solapas DENTRO de esta
-// pagina unica — ya no se importan sueltas en App.jsx (PendientesAfipPage.jsx las importa).
-import PendientesAfipPage from "./features/afip-pending/pages/PendientesAfipPage";
+// ADR-044 T4 (2026-07-10, spec sección 3): "Pendientes con AFIP" se DESARMÓ. El monitor
+// pasivo "Comprobantes por resolver" y "Recibos por regularizar" pasaron a vivir DENTRO
+// de /facturacion (FacturacionPage.jsx) — PendientesAfipPage.jsx quedó sin ruta que la
+// use (se conserva el archivo por si hace falta revertir, pero no se importa más acá).
 // Comisiones de vendedor: solo visible para el dueño/admin.
 import CommissionsPage from "./features/commissions/pages/CommissionsPage";
 // Pantalla global de Facturación (spec 2026-06-28 §4/P14): todos los comprobantes de la agencia.
@@ -292,25 +292,18 @@ export default function App() {
                       path="/approvals/inbox"
                       element={hasPermission("approvals.review") ? <ApprovalsInboxPage /> : <Navigate to="/dashboard" replace />}
                     />
-                    {/* Spec "fin de las bandejas" (2026-07-08): las 3 bandejas back-office (reconciliacion NC,
-                        ND de cancelacion pendientes, NC por revisar) se unificaron en /pendientes-afip con
-                        solapas. El guard de la ruta pide AL MENOS UNO de los 3 permisos; cada solapa adentro
-                        se ocupa de mostrarse solo si el usuario tiene el permiso especifico de ESA bandeja. */}
-                    <Route
-                      path="/pendientes-afip"
-                      element={
-                        hasPermission("cobranzas.invoice_annul") ||
-                        hasPermission("cobranzas.view_all") ||
-                        hasPermission("approvals.review")
-                          ? <PendientesAfipPage />
-                          : <Navigate to="/dashboard" replace />
-                      }
-                    />
-                    {/* Rutas viejas de las 3 bandejas: quedan como redirects para que ningun link/bookmark
-                        existente se rompa. El guard de permisos vive ahora en /pendientes-afip y en cada solapa. */}
-                    <Route path="/credit-note-reconciliation/inbox" element={<Navigate to="/pendientes-afip?tab=recibos" replace />} />
-                    <Route path="/cancellations/debit-notes/inbox" element={<Navigate to="/pendientes-afip?tab=multas" replace />} />
-                    <Route path="/cancellations/credit-notes/inbox" element={<Navigate to="/pendientes-afip?tab=notasCredito" replace />} />
+                    {/* ADR-044 T4 (2026-07-10, spec sección 3): "Pendientes con AFIP" se desarmó — el
+                        monitor pasivo ("Comprobantes por resolver") y "Recibos por regularizar" viven
+                        ahora dentro de /facturacion (como solapas). Esta ruta vieja queda como redirect
+                        para que ningún link/bookmark existente se rompa; el guard de permisos vive en
+                        /facturacion (requiere cobranzas.view_all) y en cada solapa adentro. */}
+                    <Route path="/pendientes-afip" element={<Navigate to="/facturacion?tab=comprobantes" replace />} />
+                    {/* Rutas viejas de las 3 bandejas originales: mismo criterio, apuntan a la nueva
+                        ubicación dentro de Facturación. "Recibos por regularizar" conserva su solapa
+                        propia; multas y NC por revisar se fusionaron en "Comprobantes por resolver". */}
+                    <Route path="/credit-note-reconciliation/inbox" element={<Navigate to="/facturacion?tab=recibos" replace />} />
+                    <Route path="/cancellations/debit-notes/inbox" element={<Navigate to="/facturacion?tab=comprobantes" replace />} />
+                    <Route path="/cancellations/credit-notes/inbox" element={<Navigate to="/facturacion?tab=comprobantes" replace />} />
                     <Route
                       path="/approvals/my-requests"
                       element={hasPermission("approvals.request") ? <MyApprovalRequestsPage /> : <Navigate to="/dashboard" replace />}
@@ -327,13 +320,25 @@ export default function App() {
                     />
                     {/* La bandeja global /operator-refunds se eliminó (decisión 5, spec 2026-07-03 P1=C):
                         los reembolsos del operador se ven en la solapa "Reembolsos" de cada ficha. */}
-                    {/* Pantalla global de Facturación: todos los comprobantes de la agencia.
-                        Permiso cobranzas.view_all (un vendedor sin él solo ve los suyos desde
-                        la solapa de facturación de cada cliente). El backend también hace cumplir
-                        el scope en GET /invoices vía GetOwnerScopeOrNullAsync. */}
+                    {/* Pantalla global de Facturación: todos los comprobantes de la agencia
+                        ("Todos los comprobantes", solo con cobranzas.view_all) MÁS, desde
+                        ADR-044 T4 (2026-07-10), el monitor "Comprobantes por resolver" y
+                        "Recibos por regularizar" que antes vivían en /pendientes-afip.
+                        FIX F1 (gate 2026-07-10): la ruta unificada hereda el guard "AL MENOS
+                        UNO de los 3 permisos" que ya tenía /pendientes-afip — un Vendedor con
+                        SOLO cobranzas.invoice_annul, o un revisor con SOLO approvals.review,
+                        seguían entrando a esa bandeja antes de la fusión; exigir acá únicamente
+                        cobranzas.view_all les habría cortado el acceso. Dentro de la página,
+                        cada solapa se muestra/oculta por SU propio permiso (igual que antes). */}
                     <Route
                       path="/facturacion"
-                      element={hasPermission("cobranzas.view_all") ? <FacturacionPage /> : <Navigate to="/dashboard" replace />}
+                      element={
+                        hasPermission("cobranzas.view_all") ||
+                        hasPermission("cobranzas.invoice_annul") ||
+                        hasPermission("approvals.review")
+                          ? <FacturacionPage />
+                          : <Navigate to="/dashboard" replace />
+                      }
                     />
                     <Route
                       path="/admin"

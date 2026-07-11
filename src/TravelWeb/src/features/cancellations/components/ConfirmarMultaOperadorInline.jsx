@@ -50,6 +50,12 @@
  *     Se usa SOLO en modo "confirmar": correct-penalty (modo "corregir") no lo necesita
  *     porque ya opera sobre una Nota de Débito puntual que el backend identifica sin
  *     ambigüedad por el propio cancellationPublicId.
+ *   - saleInvoices (ADR-044 T4, 2026-07-10, opcional): BookingCancellationDto.SaleInvoices
+ *     de la cancelación vigente. Con 2+ facturas activas, el panel agrega el desplegable
+ *     "¿A qué factura del cliente corresponde?" (spec sección 2.2) y manda la elegida
+ *     como `targetInvoicePublicId` en el confirm. Con 0 o 1 factura no se muestra nada
+ *     (autocompletado) — SOLO aplica al modo "confirmar"; "corregir" no lo usa porque
+ *     ya opera sobre una ND puntual que no cambia de factura destino acá.
  *   - onConfirmado: callback luego de confirmar/corregir exitosamente.
  *   - onCerrar: callback para cerrar el panel sin confirmar.
  */
@@ -60,6 +66,8 @@ import { cancellationsApi } from "../api/cancellationsApi";
 import { showSuccess, showError } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
 import RequestApprovalModal from "../../approvals/components/RequestApprovalModal";
+import { FacturaDestinoSelect } from "./FacturaDestinoSelect";
+import { hayFacturaDestinoAmbigua, facturaDestinoResuelta } from "../lib/facturaDestinoLogic";
 
 // Fecha de hoy en formato YYYY-MM-DD para el atributo max del input[type=date].
 function getTodayString() {
@@ -116,15 +124,21 @@ export function validarCamposMulta({ montoStr, fecha }) {
  * Determina si el formulario puede enviarse (sin errores y sin llamada en curso).
  * Modo "confirmar" únicamente — ver puedeEnviarCorregir para el modo "corregir".
  *
+ * ADR-044 T4 (2026-07-10, P5): con 2+ facturas de venta activas, además hace falta
+ * que el usuario haya elegido a cuál corresponde el cargo (el botón queda apagado
+ * hasta entonces). Con 0 o 1 factura, `facturaDestinoResuelta` da true solo (nada
+ * que elegir) — comportamiento sin cambios para el caso simple.
+ *
  * Se exporta para testearse sin DOM.
  *
- * @param {{ montoStr: string, fecha: string, submitting: boolean }} estado
+ * @param {{ montoStr: string, fecha: string, saleInvoices?: Array<object>, targetInvoicePublicId?: string, submitting: boolean }} estado
  * @returns {boolean}
  */
-export function puedeEnviar({ montoStr, fecha, submitting }) {
+export function puedeEnviar({ montoStr, fecha, saleInvoices, targetInvoicePublicId, submitting }) {
     if (submitting) return false;
     const { montoError, fechaError } = validarCamposMulta({ montoStr, fecha });
-    return montoError === null && fechaError === null;
+    if (montoError !== null || fechaError !== null) return false;
+    return facturaDestinoResuelta(saleInvoices, targetInvoicePublicId);
 }
 
 // Límites del campo motivo en modo "corregir" — mismo criterio que el resto de los
@@ -185,6 +199,7 @@ export function ConfirmarMultaOperadorInline({
     montoInicial,
     modo = "confirmar",
     supplierPublicId,
+    saleInvoices = [],
     onConfirmado,
     onCerrar,
 }) {
@@ -200,6 +215,9 @@ export function ConfirmarMultaOperadorInline({
     const [moneda, setMoneda] = useState(monedaSugerida ?? "USD");
     const [fecha, setFecha] = useState(getTodayString());
     const [referencia, setReferencia] = useState("");
+    // P5 (2+ facturas activas, ADR-044 T4): a qué factura del cliente corresponde el
+    // cargo. Solo aplica al modo "confirmar" — "corregir" no toca la factura destino.
+    const [targetInvoicePublicId, setTargetInvoicePublicId] = useState("");
     const [submitting, setSubmitting] = useState(false);
     const [conflictMessage, setConflictMessage] = useState(null);
 
@@ -213,6 +231,7 @@ export function ConfirmarMultaOperadorInline({
         setMoneda(monedaSugerida ?? "USD");
         setFecha(getTodayString());
         setReferencia("");
+        setTargetInvoicePublicId("");
         setConflictMessage(null);
         setApprovalContext(null);
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -227,7 +246,7 @@ export function ConfirmarMultaOperadorInline({
     const montoTocado = montoStr.length > 0;
     const canSubmit = esModoCorregir
         ? puedeEnviarCorregir({ montoStr, motivo: referencia, submitting })
-        : puedeEnviar({ montoStr, fecha, submitting });
+        : puedeEnviar({ montoStr, fecha, saleInvoices, targetInvoicePublicId, submitting });
 
     const handleConfirmar = async () => {
         if (!canSubmit) return;
@@ -253,7 +272,7 @@ export function ConfirmarMultaOperadorInline({
                 // conceptKind: null = OperatorPenaltyPassThrough (regla fiscal cerrada ADR-014).
                 // La agencia es intermediaria: NO emite un cargo propio, solo traslada la multa
                 // del operador al cliente vía ND. El backend lo identifica por conceptKind=null.
-                resultado = await cancellationsApi.confirmPenalty(cancellationPublicId, {
+                const payloadConfirmar = {
                     conceptKind: null,
                     confirmedPenaltyAmount: monto,
                     // penaltyCurrency: campo nuevo — contrato PATCH /cancellations/{id}/confirm-penalty.
@@ -266,7 +285,15 @@ export function ConfirmarMultaOperadorInline({
                     supportingDocumentReference: referencia.trim() || null,
                     overrideReason: null,
                     approvalRequestPublicId: null,
-                }, supplierPublicId);
+                };
+
+                // ADR-044 T4 (2026-07-10, P5): con 2+ facturas activas, se manda la elegida.
+                // Con 0/1 factura no se agrega nada — el backend la autocompleta solo.
+                if (hayFacturaDestinoAmbigua(saleInvoices)) {
+                    payloadConfirmar.targetInvoicePublicId = targetInvoicePublicId;
+                }
+
+                resultado = await cancellationsApi.confirmPenalty(cancellationPublicId, payloadConfirmar, supplierPublicId);
             }
 
             if (esModoCorregir) {
@@ -552,6 +579,20 @@ export function ConfirmarMultaOperadorInline({
                         </div>
                     )}
                 </div>
+
+                {/* ── ¿A qué factura del cliente corresponde? (ADR-044 T4, spec 2.2) ──
+                    SOLO modo "confirmar" y SOLO con 2+ facturas activas — con 0/1 factura
+                    no se muestra nada (autocompletado, regla "la complejidad se esconde
+                    con defaults"). Términos fiscales permitidos acá (facturación de la ficha). */}
+                {!esModoCorregir && (
+                    <FacturaDestinoSelect
+                        saleInvoices={saleInvoices}
+                        value={targetInvoicePublicId}
+                        onChange={setTargetInvoicePublicId}
+                        disabled={submitting}
+                        testId="multa-factura-destino-select"
+                    />
+                )}
 
                 {/* ── Acciones ── */}
                 <div className="flex justify-end gap-3 pt-1">

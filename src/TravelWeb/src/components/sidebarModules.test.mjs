@@ -75,11 +75,9 @@ const MODULE_DEFS = [
     links: [
       { to: "/approvals/inbox",       label: "Aprobaciones",   requiredPermission: "approvals.review" },
       { to: "/approvals/my-requests", label: "Mis solicitudes", requiredPermission: "approvals.request" },
-      {
-        to: "/pendientes-afip",
-        label: "Pendientes con AFIP",
-        anyPermission: ["cobranzas.invoice_annul", "cobranzas.view_all", "approvals.review"],
-      },
+      // "Pendientes con AFIP" se DESARMA (ADR-044 T4, 2026-07-10): pasa a vivir dentro de
+      // /facturacion (solapas "Comprobantes por resolver" y "Recibos por regularizar"),
+      // ya no es una entrada propia del menú.
       { to: "/commissions",           label: "Comisiones",     adminOnly: true },
       { to: "/admin",    label: "Administración", requiredPermission: "auditoria.view" },
       { to: "/settings", label: "Configuración",  requiredPermission: "configuracion.view" },
@@ -207,15 +205,11 @@ test("agrupamiento (spec 'fin de las bandejas', 2026-07-08): NC por revisar y Re
   assert.ok(!routes.includes("/credit-note-reconciliation/inbox"), "Reconciliación NC no debe estar en VENTAS");
 });
 
-test("agrupamiento (spec 'fin de las bandejas'): /pendientes-afip está en GESTIÓN con los 3 permisos como anyPermission", () => {
-  const gestion = MODULE_DEFS.find((m) => m.id === "gestion");
-  const link = gestion.links.find((l) => l.to === "/pendientes-afip");
-  assert.ok(link, "/pendientes-afip debe estar en GESTIÓN");
-  assert.deepEqual(
-    link.anyPermission,
-    ["cobranzas.invoice_annul", "cobranzas.view_all", "approvals.review"],
-    "/pendientes-afip debe listar los 3 permisos de las bandejas que unifica"
-  );
+test("agrupamiento (ADR-044 T4, 2026-07-10): /pendientes-afip YA NO está en ningún módulo del menú", () => {
+  // "Pendientes con AFIP" se desarma: el monitor pasivo pasa a vivir dentro de
+  // /facturacion (solapas "Comprobantes por resolver" y "Recibos por regularizar").
+  const allRoutes = MODULE_DEFS.flatMap((m) => m.links.map((l) => l.to));
+  assert.ok(!allRoutes.includes("/pendientes-afip"), "/pendientes-afip no debe estar en ningún módulo");
 });
 
 test("agrupamiento (decisión 5, spec 2026-07-03): /operator-refunds NO está en ningún módulo del menú", () => {
@@ -259,7 +253,6 @@ test("agrupamiento: /approvals, /commissions, /admin y /settings están en GESTI
   const routes = gestion.links.map((l) => l.to);
   assert.ok(routes.includes("/approvals/inbox"),       "/approvals/inbox debe estar en GESTIÓN");
   assert.ok(routes.includes("/approvals/my-requests"), "/approvals/my-requests debe estar en GESTIÓN");
-  assert.ok(routes.includes("/pendientes-afip"),        "/pendientes-afip debe estar en GESTIÓN");
   assert.ok(routes.includes("/commissions"),            "/commissions debe estar en GESTIÓN");
   assert.ok(routes.includes("/admin"),                  "/admin debe estar en GESTIÓN");
   assert.ok(routes.includes("/settings"),               "/settings debe estar en GESTIÓN");
@@ -302,13 +295,13 @@ test("isLinkVisible: sin permiso ni adminOnly → visible para cualquier usuario
 });
 
 test("isLinkVisible: anyPermission con UNO de los permisos en true → visible", () => {
-  const link = { to: "/pendientes-afip", label: "Pendientes con AFIP", anyPermission: ["a.x", "b.y", "c.z"] };
+  const link = { to: "/algun-link", label: "Algún ítem paraguas", anyPermission: ["a.x", "b.y", "c.z"] };
   // El usuario solo tiene "b.y" — alcanza para verlo (es un OR).
   assert.equal(isLinkVisible(link, false, (p) => p === "b.y"), true);
 });
 
 test("isLinkVisible: anyPermission sin NINGUNO de los permisos → oculto", () => {
-  const link = { to: "/pendientes-afip", label: "Pendientes con AFIP", anyPermission: ["a.x", "b.y", "c.z"] };
+  const link = { to: "/algun-link", label: "Algún ítem paraguas", anyPermission: ["a.x", "b.y", "c.z"] };
   assert.equal(isLinkVisible(link, false, () => false), false);
 });
 
@@ -375,10 +368,6 @@ test("findActiveModuleId: /settings → módulo 'gestion'", () => {
 
 test("findActiveModuleId: /payments → módulo 'ventas'", () => {
   assert.equal(findActiveModuleId("/payments"), "ventas");
-});
-
-test("findActiveModuleId: /pendientes-afip → módulo 'gestion'", () => {
-  assert.equal(findActiveModuleId("/pendientes-afip"), "gestion");
 });
 
 test("findActiveModuleId: ruta desconocida → null", () => {

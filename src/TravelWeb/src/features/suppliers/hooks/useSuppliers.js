@@ -59,6 +59,11 @@ export function useSuppliers() {
         setPage(1);
     }, [debouncedSearch, showInactive, pageSize]);
 
+    // ADR-044 T4 (2026-07-10, gate de frontend — round-trip): `formData` viene de
+    // SupplierFormModal, que ya incluye `treasuryFxAssumedByOverride` y
+    // `defaultPaymentTermDays` explícitos en su estado (aunque no los muestre como
+    // campos editables) — así este PUT nunca los pisa con `null` por accidente. Ver el
+    // comentario del estado inicial en SupplierFormModal.jsx.
     const handleSaveSupplier = async (formData, supplierId = null) => {
         try {
             if (supplierId) {
@@ -80,6 +85,12 @@ export function useSuppliers() {
     const handleToggleStatus = async (supplier) => {
         try {
             const newStatus = !supplier.isActive;
+            // El spread {...supplier} preserva TODOS los campos de la fila de la lista
+            // (SupplierListItemDto) tal cual — incluidos `treasuryFxAssumedByOverride` y
+            // `defaultPaymentTermDays` una vez que el backend los agregue a ese DTO
+            // (ADR-044 T4, gate de frontend 2026-07-10). Si esos campos no vinieran en
+            // `supplier` (DTO legacy), el PUT los pisaría con su default — por eso es
+            // importante que la lista los exponga, no algo que este hook deba corregir.
             await api.put(`/suppliers/${getPublicId(supplier)}`, {
                 ...supplier,
                 isActive: newStatus

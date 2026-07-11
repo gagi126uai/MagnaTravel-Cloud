@@ -768,6 +768,55 @@ public class Adr044T3bTargetInvoiceAndTreasuryFxTests
     }
 
     // ============================================================
+    // Regla dura de multimoneda (2026-06-09, P10 resuelto 2026-07-10): el rotulo visible del ajuste de
+    // tipo de cambio en el extracto del operador es "Ajuste por el dólar" — la frase "diferencia de
+    // cambio" NUNCA llega a una pantalla, ni siquiera dentro de este rotulo.
+    // ============================================================
+
+    [Fact]
+    public async Task CircuitReader_TreasuryFxAdjustmentLabel_IsAjustePorElDolar_NeverDiferenciaDeCambio()
+    {
+        var ctx = NewDbContext();
+        // charge/line y ND en la MISMA moneda (USD): caso simple, sin sufijo de "liquidada en...".
+        var (_, _, charge, supplier) = await SeedChargeWithDefinitiveRateAsync(ctx, chargeAmount: 110m, definitiveRate: 1000m);
+        ctx.BookingCancellationLineTreasuryFxAdjustments.Add(new BookingCancellationLineTreasuryFxAdjustment
+        {
+            OperatorChargeId = charge.Id, SupplierPaymentId = 1000, RateAtChargeDay = 1000m,
+            RateAtSettlement = 1100m, ChargeAmount = 110m, ChargeCurrency = "USD",
+            DeltaAmount = 11_000m, SettlementCurrency = "USD", IsSuperseded = false,
+        });
+        await ctx.SaveChangesAsync();
+
+        var result = await SupplierCancellationCircuitReader.LoadAsync(ctx, supplier.Id, default);
+        var line = Assert.Single(result.CircuitLines
+            .Where(l => l.Kind == SupplierAccountStatementLineKinds.TreasuryFxAdjustment));
+
+        Assert.Equal("Ajuste por el dólar", line.Description);
+        Assert.DoesNotContain("Diferencia de cambio", line.Description, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CircuitReader_TreasuryFxAdjustmentLabel_CrossCurrency_StartsWithAjustePorElDolar()
+    {
+        var ctx = NewDbContext();
+        var (_, _, charge, supplier) = await SeedChargeWithDefinitiveRateAsync(ctx, chargeAmount: 110m, definitiveRate: 1000m);
+        ctx.BookingCancellationLineTreasuryFxAdjustments.Add(new BookingCancellationLineTreasuryFxAdjustment
+        {
+            OperatorChargeId = charge.Id, SupplierPaymentId = 1000, RateAtChargeDay = 1000m,
+            RateAtSettlement = 1100m, ChargeAmount = 110m, ChargeCurrency = "USD",
+            DeltaAmount = 11_000m, SettlementCurrency = "ARS", IsSuperseded = false,
+        });
+        await ctx.SaveChangesAsync();
+
+        var result = await SupplierCancellationCircuitReader.LoadAsync(ctx, supplier.Id, default);
+        var line = Assert.Single(result.CircuitLines
+            .Where(l => l.Kind == SupplierAccountStatementLineKinds.TreasuryFxAdjustment));
+
+        Assert.StartsWith("Ajuste por el dólar", line.Description);
+        Assert.DoesNotContain("Diferencia de cambio", line.Description, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ============================================================
     // K2 (reconciliacion) — multa retenida + su ajuste FX conviven en el MISMO bloque de moneda.
     // ============================================================
 

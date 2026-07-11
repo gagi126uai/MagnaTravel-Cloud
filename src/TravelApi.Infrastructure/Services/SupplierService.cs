@@ -129,6 +129,10 @@ public class SupplierService : ISupplierService
                 TaxCondition = supplier.TaxCondition,
                 Address = supplier.Address,
                 DefaultCurrency = supplier.DefaultCurrency,
+                // ADR-044 T4 (2026-07-10): estos dos viajan en la fila para que un PUT de edicion que spreadea
+                // la fila (toggle de estado) NO los borre a null (ver el XML-doc del DTO).
+                DefaultPaymentTermDays = supplier.DefaultPaymentTermDays,
+                TreasuryFxAssumedByOverride = supplier.TreasuryFxAssumedByOverride,
                 IsActive = supplier.IsActive,
                 CurrentBalance = supplier.CurrentBalance,
                 CreatedAt = supplier.CreatedAt
@@ -187,6 +191,11 @@ public class SupplierService : ISupplierService
         // Si viene vacia se resuelve a ARS; se guarda la forma canonica en mayuscula.
         supplier.DefaultCurrency = ValidateAndNormalizeDefaultCurrency(supplier.DefaultCurrency);
 
+        // ADR-044 T3b Decision 3 (2026-07-10): excepcion opcional de "quien asume el ajuste por el dolar" para
+        // ESTE operador. null es un valor VALIDO ("hereda el default de la agencia", el caso normal); solo se
+        // valida que, si viene con valor, sea uno de los dos definidos por el enum.
+        ValidateTreasuryFxAssumedByOverride(supplier.TreasuryFxAssumedByOverride);
+
         supplier.CreatedAt = DateTime.UtcNow;
         supplier.CurrentBalance = 0;
 
@@ -205,6 +214,9 @@ public class SupplierService : ISupplierService
 
         // ADR-041 TANDA 5: validar el plazo de pago antes de tocar la entidad (si viene, >= 0).
         ValidateDefaultPaymentTermDays(supplier.DefaultPaymentTermDays);
+
+        // ADR-044 T3b Decision 3 (2026-07-10): mismo chequeo que en el alta.
+        ValidateTreasuryFxAssumedByOverride(supplier.TreasuryFxAssumedByOverride);
 
         // Rediseño alta de operador (2026-06-28): la moneda por defecto SOLO se toca si el request realmente
         // trae una. Los forms de edicion existentes (SupplierFormModal y la solapa "Datos") NO mandan
@@ -261,6 +273,11 @@ public class SupplierService : ISupplierService
         existing.IsActive = supplier.IsActive;
         // ADR-041 TANDA 5: plazo de pago por defecto (null = se borra el plazo = sin vencimiento sugerido).
         existing.DefaultPaymentTermDays = supplier.DefaultPaymentTermDays;
+        // ADR-044 T3b Decision 3 (2026-07-10): mismo criterio que DefaultPaymentTermDays de arriba (NO como
+        // DefaultCurrency abajo): se asigna SIEMPRE, incluido null. Aca null es un valor de negocio valido y
+        // frecuente ("Como la configuración general", el default invisible), no "el front no mando este campo" —
+        // la ficha del operador que setea esta excepcion tiene que poder VOLVER a null para deshacerla.
+        existing.TreasuryFxAssumedByOverride = supplier.TreasuryFxAssumedByOverride;
         // Rediseño alta de operador (2026-06-28): solo se pisa la moneda si el request trajo una (ver arriba);
         // si no vino, se preserva la existente para no resetearla a ARS al editar otros campos.
         if (defaultCurrencyProvided)
@@ -289,6 +306,25 @@ public class SupplierService : ISupplierService
     /// se manda no puede ser negativo. Un plazo negativo daria un vencimiento sugerido ANTERIOR a la compra,
     /// que no tiene sentido de negocio. Lanza <see cref="ArgumentException"/> (el controller la mapea a 400).
     /// </summary>
+    /// <summary>
+    /// ADR-044 T3b Decision 3 (2026-07-10): valida la excepcion opcional por operador de "quien asume el
+    /// ajuste por el dólar" en sus multas. <c>null</c> es SIEMPRE valido (hereda el default de la agencia,
+    /// <see cref="Domain.Entities.OperationalFinanceSettings.TreasuryFxAssumedByDefault"/>). Si viene con
+    /// valor, tiene que ser uno de los DOS definidos por el enum (<c>System.Text.Json</c> no tiene un
+    /// <c>JsonStringEnumConverter</c> configurado en este proyecto, asi que un INT fuera de rango podria
+    /// colarse por el binder JSON sin este chequeo explicito — mismo criterio que
+    /// <c>OperationalFinanceSettingsService.UpdateAsync</c> para <c>TreasuryFxAssumedByDefault</c>).
+    /// </summary>
+    private static void ValidateTreasuryFxAssumedByOverride(TreasuryFxAssumedBy? treasuryFxAssumedByOverride)
+    {
+        if (treasuryFxAssumedByOverride.HasValue
+            && !Enum.IsDefined(typeof(TreasuryFxAssumedBy), treasuryFxAssumedByOverride.Value))
+        {
+            throw new ArgumentException(
+                "El valor de 'quién asume el ajuste por el dólar' para este operador no es válido.");
+        }
+    }
+
     private static void ValidateDefaultPaymentTermDays(int? defaultPaymentTermDays)
     {
         if (defaultPaymentTermDays.HasValue && defaultPaymentTermDays.Value < 0)

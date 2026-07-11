@@ -21,6 +21,13 @@ export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
         defaultCurrency: "ARS",
         // Round-trip: se preserva en el PUT para no perder el plazo acordado (ADR-041).
         defaultPaymentTermDays: null,
+        // ADR-044 T4 (2026-07-10, gate de frontend — round-trip): excepción opcional de
+        // "quién asume el ajuste por el dólar" para este operador. Este modal NO expone
+        // un control para editarlo (esa UI vive en la ficha del operador, solapa
+        // "Datos" — ver SupplierAccountPage.jsx); se preserva acá SOLO para que el PUT
+        // de este modal no la pise con `null` por accidente (el PUT asigna este campo
+        // SIEMPRE, a diferencia de defaultCurrency/defaultPaymentTermDays).
+        treasuryFxAssumedByOverride: null,
     });
 
     useEffect(() => {
@@ -39,6 +46,9 @@ export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
                 defaultCurrency: supplier.defaultCurrency || "ARS",
                 // Round-trip: preservamos el plazo pactado aunque no se muestre en este form.
                 defaultPaymentTermDays: supplier.defaultPaymentTermDays ?? null,
+                // Round-trip (ver comentario del estado inicial): preservamos la excepción
+                // real del operador aunque este modal no la muestre ni la edite.
+                treasuryFxAssumedByOverride: supplier.treasuryFxAssumedByOverride ?? null,
             });
         } else {
             setFormData({
@@ -53,6 +63,7 @@ export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
                 currentBalance: 0,
                 defaultCurrency: "ARS",
                 defaultPaymentTermDays: null,
+                treasuryFxAssumedByOverride: null,
             });
         }
     }, [supplier, isOpen]);

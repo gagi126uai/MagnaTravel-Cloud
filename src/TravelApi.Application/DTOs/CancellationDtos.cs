@@ -170,6 +170,15 @@ public class BookingCancellationDto
 /// </summary>
 public class CancellationSaleInvoiceDto
 {
+    /// <summary>
+    /// ADR-044 T4 (2026-07-10): identificador PUBLICO de esta factura. Lo necesita el desplegable "¿a qué
+    /// factura corresponde este cargo?" (2+ facturas activas, ADR-044 T3b Decision 1): el front lo manda de
+    /// vuelta como <c>TargetInvoicePublicId</c> en <c>ConfirmPenaltyRequest</c> / <c>AddOperatorChargeRequest</c> /
+    /// <c>SetOperatorChargeTargetInvoiceRequest</c>. Antes de este campo, esta lista solo servia para MOSTRAR
+    /// (aviso previo de anular); no se podia usar para ELEGIR nada.
+    /// </summary>
+    public Guid PublicId { get; set; }
+
     /// <summary>Etiqueta legible del comprobante, ej. "Factura B 0001-00012345". Sin IDs internos.</summary>
     public string ComprobanteLabel { get; set; } = string.Empty;
 
@@ -426,7 +435,18 @@ public record ConfirmPenaltyRequest(
     /// se puede omitir. Si tiene lineas de VARIOS operadores y no se especifica, el service rechaza pidiendo
     /// que se indique cual (mejor pedir que adivinar sobre que operador se esta actuando).
     /// </summary>
-    Guid? SupplierPublicId = null
+    Guid? SupplierPublicId = null,
+
+    /// <summary>
+    /// ADR-044 T3b Decision 1 (2026-07-10): a que FACTURA DE VENTA del cliente corresponde el cargo que esta
+    /// confirmacion crea, para cuando la reserva tiene 2+ facturas de venta activas (ADR-042, ej. USD+ARS).
+    /// Opcional: con 1 sola factura activa se autocompleta sola (este campo se ignora). Con 2+, si no se manda
+    /// (o no es miembro de las facturas activas de la reserva), el cargo automatico queda sin factura destino
+    /// resuelta y el motor de emision de la Nota de Debito lo rutea a revision manual (nunca adivina) — mismo
+    /// criterio que <see cref="AddOperatorChargeRequest.TargetInvoicePublicId"/>. Se puede corregir despues con
+    /// <c>SetOperatorChargeTargetInvoiceRequest</c> (pantalla ADR-044 T4).
+    /// </summary>
+    Guid? TargetInvoicePublicId = null
 );
 
 /// <summary>

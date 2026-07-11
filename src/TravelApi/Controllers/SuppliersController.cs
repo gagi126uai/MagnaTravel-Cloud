@@ -444,7 +444,12 @@ public class SuppliersController : ControllerBase
         // muestre el valor actual.
         supplier.DefaultCurrency,
         supplier.CurrentBalance,
-        supplier.CreatedAt
+        supplier.CreatedAt,
+        // ADR-044 T3b Decision 3 (2026-07-10): excepcion opcional de "quién asume el ajuste por el dólar" en las
+        // multas de ESTE operador. null = hereda el default de la agencia (Configuración operativa). Viaja como
+        // el INT del enum (Client=0, Agency=1) — este proyecto no tiene JsonStringEnumConverter configurado,
+        // mismo criterio que TreasuryFxAssumedByDefault en OperationalFinanceSettingsDto.
+        supplier.TreasuryFxAssumedByOverride
     };
 
     private static Supplier MapSupplier(SupplierUpsertRequest request) => new()
@@ -461,7 +466,10 @@ public class SuppliersController : ControllerBase
         DefaultPaymentTermDays = request.DefaultPaymentTermDays,
         // Rediseño alta de operador (2026-06-28): moneda por defecto. La validacion (moneda soportada) y la
         // normalizacion a ARS si viene vacia las hace el servicio.
-        DefaultCurrency = request.DefaultCurrency
+        DefaultCurrency = request.DefaultCurrency,
+        // ADR-044 T3b Decision 3 (2026-07-10): excepcion opcional del operador. La validacion (que sea un valor
+        // definido del enum) la hace el servicio; null siempre es valido (hereda el default de la agencia).
+        TreasuryFxAssumedByOverride = request.TreasuryFxAssumedByOverride
     };
 }
 
@@ -479,4 +487,9 @@ public record SupplierUpsertRequest(
     // Rediseño alta de operador (2026-06-28): moneda por defecto del operador (ISO "ARS"/"USD"). null/vacio
     // = el front no la mando -> el servicio la resuelve a ARS. Si viene un valor no soportado, el servicio
     // rechaza con un mensaje en espanol (validacion server-side, no se confia en el front).
-    string? DefaultCurrency = null);
+    string? DefaultCurrency = null,
+    // ADR-044 T3b Decision 3 (2026-07-10): excepcion opcional de "quién asume el ajuste por el dólar" en las
+    // multas de ESTE operador (Client=0 / Agency=1). null = hereda el default de la agencia (Configuración
+    // operativa) — es el valor NORMAL, no "campo sin completar": el servicio lo asigna SIEMPRE (a diferencia
+    // de DefaultCurrency arriba), asi que mandar null explicito SI limpia una excepcion previa.
+    TreasuryFxAssumedBy? TreasuryFxAssumedByOverride = null);

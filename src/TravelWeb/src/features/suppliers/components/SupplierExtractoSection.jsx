@@ -494,15 +494,42 @@ function ReconciliacionSaldoOperador({ bloque, montosVisibles }) {
 
 // ─── Fila individual del extracto ────────────────────────────────────────────
 
+/**
+ * True si el `kind` de una línea del extracto pertenece al circuito de cancelación
+ * (movimiento de una anulación, no una compra normal) — decide si la fila lleva el
+ * chip "Anulación". Exportada como función PURA (sin JSX) para poder testearla sin
+ * montar el componente.
+ *
+ * ADR-044 T4 (2026-07-10): se suman los dos kinds nuevos del extracto del operador
+ * (ADR-044 T3b) a la lista original de dos — sin esto quedaban pintados como una
+ * compra normal, confundiendo al usuario:
+ *   - "OperatorChargeInvoiced" ("Cargo del operador facturado aparte"): deuda nueva
+ *     hacia el operador cuando la multa se factura aparte en vez de retenerse.
+ *   - "TreasuryFxAdjustment" ("Ajuste por el dólar" en la UI): el backend ya manda
+ *     ese rótulo tal cual en `linea.description` (verificado en
+ *     SupplierCancellationCircuitReader.cs — la frase prohibida "Diferencia de
+ *     cambio" que existía al momento de construir este chip ya fue corregida del
+ *     lado del servidor). Este componente NO arma el texto, solo agrega el chip
+ *     encima del que venga del servidor.
+ *
+ * @param {string} kind
+ * @returns {boolean}
+ */
+export function esLineaDeCircuitoCancelacion(kind) {
+  return (
+    kind === "PenaltyRetained" ||
+    kind === "RefundReceived" ||
+    kind === "OperatorChargeInvoiced" ||
+    kind === "TreasuryFxAdjustment"
+  );
+}
+
 function FilaExtractoProveedor({ linea, currency, montosVisibles, allPayments, canEditarEliminar, onEditarPago, onEliminarPago }) {
     // Purchase → columna Cargo (cargamos deuda); Payment → columna Abono (abonamos deuda)
     const esCargo = linea.charge > 0;
     const esAbono = linea.credit > 0;
     const esPago = linea.kind === "Payment";
-    // Renglones del circuito de cancelación (multa retenida / reembolso recibido): son movimientos de una
-    // anulación que REDUCEN lo que el operador te tiene que devolver. Se muestran como "Cargo" por convención
-    // contable (suben el saldo negativo hacia cero), pero NO son una compra nueva — de ahí el aviso.
-    const esCircuito = linea.kind === "PenaltyRetained" || linea.kind === "RefundReceived";
+    const esCircuito = esLineaDeCircuitoCancelacion(linea.kind);
 
     // Cruzamos sourcePublicId de la línea con la lista de pagos completos del padre.
     // Así tenemos el objeto completo (con method, reference, exchangeRate, etc.)

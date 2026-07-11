@@ -44,14 +44,26 @@ function validarCamposMulta({ montoStr, fecha }) {
     return { montoError, fechaError };
 }
 
+// Réplica de hayFacturaDestinoAmbigua / facturaDestinoResuelta (facturaDestinoLogic.js).
+function hayFacturaDestinoAmbigua(saleInvoices) {
+    return Array.isArray(saleInvoices) && saleInvoices.length >= 2;
+}
+
+function facturaDestinoResuelta(saleInvoices, targetInvoicePublicId) {
+    if (!hayFacturaDestinoAmbigua(saleInvoices)) return true;
+    return Boolean(targetInvoicePublicId);
+}
+
 /**
  * Determina si el formulario puede enviarse.
- * Réplica de puedeEnviar en ConfirmarMultaOperadorInline.jsx.
+ * Réplica de puedeEnviar en ConfirmarMultaOperadorInline.jsx (ADR-044 T4, 2026-07-10:
+ * suma facturaDestinoResuelta — con 2+ facturas activas, hace falta elegir una).
  */
-function puedeEnviar({ montoStr, fecha, submitting }) {
+function puedeEnviar({ montoStr, fecha, saleInvoices, targetInvoicePublicId, submitting }) {
     if (submitting) return false;
     const { montoError, fechaError } = validarCamposMulta({ montoStr, fecha });
-    return montoError === null && fechaError === null;
+    if (montoError !== null || fechaError !== null) return false;
+    return facturaDestinoResuelta(saleInvoices, targetInvoicePublicId);
 }
 
 // ─── Réplica de la lógica de cuándo mostrar el botón "Confirmar multa" ────────
@@ -210,6 +222,29 @@ test("todo vacío → puedeEnviar=false", () => {
     );
 });
 
+test("ADR-044 T4: con 2+ facturas activas, puedeEnviar=false hasta elegir la factura destino (P5)", () => {
+    const saleInvoices = [{ publicId: "inv-1" }, { publicId: "inv-2" }];
+    assert.equal(
+        puedeEnviar({ montoStr: "500", fecha: "2026-06-01", saleInvoices, targetInvoicePublicId: null, submitting: false }),
+        false
+    );
+    assert.equal(
+        puedeEnviar({ montoStr: "500", fecha: "2026-06-01", saleInvoices, targetInvoicePublicId: "inv-1", submitting: false }),
+        true
+    );
+});
+
+test("ADR-044 T4: con 0 o 1 factura, puedeEnviar no depende de targetInvoicePublicId (autocompletado)", () => {
+    assert.equal(
+        puedeEnviar({ montoStr: "500", fecha: "2026-06-01", saleInvoices: undefined, targetInvoicePublicId: null, submitting: false }),
+        true
+    );
+    assert.equal(
+        puedeEnviar({ montoStr: "500", fecha: "2026-06-01", saleInvoices: [{ publicId: "inv-1" }], targetInvoicePublicId: null, submitting: false }),
+        true
+    );
+});
+
 // ============================================================================
 // Sección 4: cuándo ofrecer la acción "Confirmar multa del operador"
 // ============================================================================
@@ -297,11 +332,14 @@ test("motivo desconocido → no abre, mensaje genérico (defensivo)", () => {
  * Construye el payload de confirm-penalty para el pass-through del operador.
  * Réplica de la lógica del handleConfirmar de ConfirmarMultaOperadorInline.jsx.
  *
- * @param {{ montoStr: string, fecha: string, referencia: string, moneda: string }} params
+ * ADR-044 T4 (2026-07-10): suma targetInvoicePublicId SOLO cuando hay 2+ facturas
+ * activas (con 0/1 factura el backend la autocompleta solo, no se manda nada nuevo).
+ *
+ * @param {{ montoStr: string, fecha: string, referencia: string, moneda: string, saleInvoices?: Array<object>, targetInvoicePublicId?: string }} params
  */
-function construirPayloadMultaOperador({ montoStr, fecha, referencia, moneda }) {
+function construirPayloadMultaOperador({ montoStr, fecha, referencia, moneda, saleInvoices, targetInvoicePublicId }) {
     const monto = parseFloat(montoStr);
-    return {
+    const payload = {
         // conceptKind: null = OperatorPenaltyPassThrough (regla fiscal cerrada ADR-014).
         // La agencia actúa como intermediaria, NO emite cargo propio.
         conceptKind: null,
@@ -314,6 +352,12 @@ function construirPayloadMultaOperador({ montoStr, fecha, referencia, moneda }) 
         overrideReason: null,
         approvalRequestPublicId: null,
     };
+
+    if (hayFacturaDestinoAmbigua(saleInvoices)) {
+        payload.targetInvoicePublicId = targetInvoicePublicId;
+    }
+
+    return payload;
 }
 
 test("payload pass-through: conceptKind es null (NO es 0 ni AgencyManagementFee)", () => {
@@ -367,6 +411,30 @@ test("payload pass-through: referencia con contenido → supportingDocumentRefer
         moneda: "USD",
     });
     assert.equal(payload.supportingDocumentReference, "Nota 2025/123");
+});
+
+test("ADR-044 T4: con 2+ facturas activas, el payload incluye targetInvoicePublicId", () => {
+    const payload = construirPayloadMultaOperador({
+        montoStr: "500",
+        fecha: "2026-06-01",
+        referencia: "",
+        moneda: "USD",
+        saleInvoices: [{ publicId: "inv-1" }, { publicId: "inv-2" }],
+        targetInvoicePublicId: "inv-2",
+    });
+    assert.equal(payload.targetInvoicePublicId, "inv-2");
+});
+
+test("ADR-044 T4: con 1 sola factura, el payload NO incluye targetInvoicePublicId", () => {
+    const payload = construirPayloadMultaOperador({
+        montoStr: "500",
+        fecha: "2026-06-01",
+        referencia: "",
+        moneda: "USD",
+        saleInvoices: [{ publicId: "inv-1" }],
+        targetInvoicePublicId: null,
+    });
+    assert.equal("targetInvoicePublicId" in payload, false);
 });
 
 test("payload pass-through: debitNotePurpose es null (el backend usa el default)", () => {

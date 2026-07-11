@@ -85,6 +85,27 @@ public class OperatorPenaltySituationDto
     /// total client-facing de la ND, sin cambios en esta tanda — T3 es quien conecta el desglose con la ND).
     /// </summary>
     public IReadOnlyList<OperatorChargeDto> Charges { get; set; } = Array.Empty<OperatorChargeDto>();
+
+    /// <summary>
+    /// ADR-044 T3b/T4 (2026-07-10): mensaje LIMPIO y FIJO al usuario cuando la Nota de Debito quedo en revision
+    /// manual por el caso DERIVABLE "falta elegir a qué factura corresponde el cargo" (cancelacion con 2+ facturas
+    /// de venta activas + algun cargo trasladable sin factura destino resuelta). Null en cualquier OTRO motivo de
+    /// revision manual: ahi el front muestra su propia copy fija ("falta confirmar el monto y la moneda").
+    ///
+    /// <para><b>SEGURIDAD (data-exposure, 2026-07-10)</b>: este campo NUNCA porta el <c>DebitNoteArcaErrorMessage</c>
+    /// crudo del backend, que puede contener texto tecnico en español (ej. "OriginatingInvoice no cargada.",
+    /// "...(M2)."). El service reconstruye la condicion "falta elegir factura" EN VIVO (2+ facturas activas + cargo
+    /// con <see cref="OperatorChargeDto.TargetInvoicePublicId"/> null) y, solo si se cumple, expone un mensaje
+    /// fijo controlado; para el resto viaja null. Asi el texto al usuario nunca depende de un string interno.</para>
+    ///
+    /// <para><b>NO se agrego un enum de estado nuevo para "falta elegir la factura" vs. "moneda no coincide"</b>
+    /// (ambos comparten el token "DebitNoteNeedsAmountCurrency"): el FRONT los distingue por este campo (si viene
+    /// no-null, el paso trabado es "falta elegir factura" y muestra el desplegable de la Pantalla 2 con
+    /// <c>BookingCancellationDto.SaleInvoices</c> — <see cref="CancellationSaleInvoiceDto.PublicId"/>; si viene
+    /// null, es "falta confirmar monto/moneda" y muestra el formulario de <c>correct-penalty</c>). GAP CONOCIDO:
+    /// para operadores SECUNDARIOS este campo queda null (su desglose por operador es una tanda futura).</para>
+    /// </summary>
+    public string? ManualReviewReason { get; set; }
 }
 
 /// <summary>
@@ -93,6 +114,14 @@ public class OperatorPenaltySituationDto
 /// </summary>
 public class OperatorChargeDto
 {
+    /// <summary>
+    /// ADR-044 T4 (2026-07-10): identificador PUBLICO de este cargo. Lo necesita el front para pegarle al PATCH
+    /// <c>/api/cancellations/{publicId}/operator-charges/{chargePublicId}/target-invoice</c> (elegir/corregir la
+    /// factura destino de ESTE cargo puntual). Antes de este campo, la lista de cargos era solo informativa: no
+    /// se podia direccionar un cargo individual desde el front.
+    /// </summary>
+    public Guid PublicId { get; set; }
+
     /// <summary>Token: "AdministrativeFee" | "Tax" | "Withholding" | "Other". Ver <see cref="Domain.Entities.OperatorChargeKind"/>.</summary>
     public string Kind { get; set; } = string.Empty;
 
@@ -117,4 +146,32 @@ public class OperatorChargeDto
 
     /// <summary>Monto del fee de gestión agregado, solo presente cuando <see cref="ClientTransferMode"/> = "WithManagementFee".</summary>
     public decimal? ManagementFeeAmount { get; set; }
+
+    // ====================================================================================
+    // ADR-044 T3b Decision 1 y 2 (2026-07-10): a que factura se traslada este cargo, y el TC
+    // ESTIMADO usado para convertirlo cuando su moneda difiere de la de esa factura. Ver el
+    // XML-doc de los campos espejo en BookingCancellationLineOperatorCharge (Domain).
+    // ====================================================================================
+
+    /// <summary>
+    /// PublicId de la factura de venta a la que se traslada este cargo. Null cuando la reserva tiene 2+ facturas
+    /// activas y todavia NADIE eligio (o la eleccion previa quedo invalida porque esa factura se anulo): el front
+    /// usa este null, combinado con <see cref="OperatorPenaltySituationDto.State"/> == "DebitNoteNeedsAmountCurrency"
+    /// (o el equivalente por operador), para saber que el desplegable de "elegir factura" es lo que hay que
+    /// mostrar (en vez del formulario de "corregir monto y moneda"). Ver la nota de derivacion en
+    /// <see cref="OperatorPenaltySituationDto"/>.
+    /// </summary>
+    public Guid? TargetInvoicePublicId { get; set; }
+
+    /// <summary>TC ESTIMADO (preview, no fiscal) para convertir <see cref="Amount"/> a la moneda de la factura destino. Null si no hubo conversion (cargo en la misma moneda que su factura).</summary>
+    public decimal? EstimatedExchangeRateToClientInvoiceCurrency { get; set; }
+
+    /// <summary>Token: "Manual" | "Bcra" | "Blue" | etc. Ver <see cref="Domain.Entities.ExchangeRateSource"/>. Null si no hubo TC estimado.</summary>
+    public string? EstimatedExchangeRateSource { get; set; }
+
+    /// <summary>Fecha del TC estimado (el dia en que el operador cobro la multa). Null si no hubo TC estimado.</summary>
+    public DateTime? EstimatedExchangeRateAt { get; set; }
+
+    /// <summary>Justificacion del TC estimado, solo presente cuando su origen es "Manual".</summary>
+    public string? EstimatedExchangeRateJustification { get; set; }
 }

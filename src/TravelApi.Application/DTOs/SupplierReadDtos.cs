@@ -1,3 +1,5 @@
+using TravelApi.Domain.Entities;
+
 namespace TravelApi.Application.DTOs;
 
 public class SupplierListItemDto
@@ -16,6 +18,28 @@ public class SupplierListItemDto
     /// edicion la usa para preseleccionar la moneda. null solo en filas legacy aun no migradas (se lee ARS).
     /// </summary>
     public string? DefaultCurrency { get; set; }
+
+    // ====================================================================================
+    // ADR-044 T4 (2026-07-10, fix backend-reviewer): estos DOS campos viajan en la FILA de la
+    // lista porque el front hace PUT de edicion con el SPREAD de la fila (ej. el toggle de
+    // activo/inactivo, handleToggleStatus). Si la fila no los trae, ese PUT los mandaria como
+    // undefined -> el binder los toma como null -> el UpdateSupplierAsync los PISA a null
+    // (ambos se asignan SIEMPRE, no son anti-clobber). Traerlos en la lista evita ese borrado
+    // silencioso de un dato que el usuario nunca toco.
+    // ====================================================================================
+
+    /// <summary>
+    /// ADR-041 TANDA 5: plazo de pago por defecto del operador (dias). null = sin plazo. Se incluye en la fila
+    /// para que un PUT que spreadea la fila (toggle de estado) no lo borre.
+    /// </summary>
+    public int? DefaultPaymentTermDays { get; set; }
+
+    /// <summary>
+    /// ADR-044 T3b Decision 3 (2026-07-10): excepcion opcional de "quién asume el ajuste por el dólar" del
+    /// operador (Client=0 / Agency=1). null = hereda el default de la agencia. Se incluye en la fila por el
+    /// mismo motivo que <see cref="DefaultPaymentTermDays"/>: que un PUT con spread de la fila no lo borre.
+    /// </summary>
+    public TreasuryFxAssumedBy? TreasuryFxAssumedByOverride { get; set; }
 
     public bool IsActive { get; set; }
     public decimal CurrentBalance { get; set; }
