@@ -377,6 +377,32 @@ public static class MutationGuards
     }
 
     /// <summary>
+    /// ADR-044 T5 Addendum, Decision A (2026-07-11): SOLO el candado de VOUCHER emitido, SIN el de factura
+    /// viva. Existe porque <c>BookingCancellationService.CancelServiceAsync</c> reemplazo su bloqueo
+    /// binario de "factura viva" (que impedia cancelar CUALQUIER servicio de una reserva ya facturada — el
+    /// caso normal del negocio) por una compuerta de 3 salidas que SI permite cancelar con factura viva
+    /// (resolviendo la nota de credito o dejandola visible para resolucion manual, nunca en silencio). El
+    /// candado de voucher, en cambio, sigue EXACTAMENTE igual que hoy: un voucher entregado al cliente no se
+    /// reescribe. Reusa el MISMO helper privado <see cref="HasIssuedVoucherForReservaAsync"/> que ya usaba
+    /// el guard combinado — una sola fuente de verdad, ahora expuesta sola.
+    /// </summary>
+    public static async Task<string?> GetReservaVoucherOnlyBlockReasonAsync(
+        AppDbContext db,
+        int reservaId,
+        CancellationToken ct = default)
+    {
+        if (reservaId == 0) return null;
+
+        if (await HasIssuedVoucherForReservaAsync(db, reservaId, ct))
+        {
+            return "No se puede cancelar este servicio: la reserva tiene vouchers emitidos. " +
+                   "Anulá los vouchers primero si necesitás corregir datos.";
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Helper interno usado por los guards a nivel reserva (servicio/booking/
     /// fechas). Devuelve un mensaje uniforme parametrizado por la entidad que
     /// se intenta modificar.

@@ -308,13 +308,18 @@ public sealed class BookingCancellationDraftRetryPolicyTests
 
     // =========================================================================
     // Caso (d): estados no liberables -> INV-081
+    //
+    // ADR-044 T5 Addendum, Decision C (2026-07-11): Closed SALE de esta lista — un BC Closed es un evento
+    // fiscal TERMINADO (NC con CAE, reembolso consumido), no una cancelacion "en curso". Antes esta linea
+    // rechazaba INV-081 (bug: dejaba una reserva con una cancelacion PARCIAL previa ya cerrada IMPOSIBLE de
+    // volver a anular para siempre); ahora Closed se trata igual que Aborted (libera, abre BC nuevo). Ver el
+    // test dedicado mas abajo (DraftAsync_SobreBcClosed_YaNoRechaza_AbreNuevo).
     // =========================================================================
 
     [Theory]
     [InlineData(BookingCancellationStatus.AwaitingFiscalConfirmation)]
     [InlineData(BookingCancellationStatus.AwaitingOperatorRefund)]
     [InlineData(BookingCancellationStatus.ClientCreditApplied)]
-    [InlineData(BookingCancellationStatus.Closed)]
     [InlineData(BookingCancellationStatus.AbandonedByOperator)]
     [InlineData(BookingCancellationStatus.ManualReviewPending)]
     [InlineData(BookingCancellationStatus.ManualReviewRejected)]
@@ -331,6 +336,31 @@ public sealed class BookingCancellationDraftRetryPolicyTests
         // No se creo un BC nuevo: sigue habiendo una sola fila.
         var count = await ctx.BookingCancellations.CountAsync(b => b.ReservaId == seed.ReservaId);
         Assert.Equal(1, count);
+    }
+
+    /// <summary>
+    /// ADR-044 T5 Addendum, Decision C (2026-07-11, hallazgo nuevo del re-review): un BC Closed previo YA NO
+    /// rechaza INV-081 — se abre un BC nuevo, igual que con Aborted. Contra Postgres real: valida que el
+    /// indice UNICO parcial ensanchado (<c>"Status" NOT IN (4, 6)</c>) efectivamente deja pasar el INSERT.
+    /// </summary>
+    [Fact]
+    public async Task DraftAsync_SobreBcClosed_YaNoRechaza_AbreNuevo()
+    {
+        var (service, ctx, _) = BuildService();
+        var seed = await SeedReservaAsync(ctx);
+        var closed = await SeedBcAsync(ctx, seed, BookingCancellationStatus.Closed);
+
+        var nuevo = await DraftAsync(service, seed.ReservaPublicId);
+
+        Assert.NotEqual(closed.PublicId, nuevo.PublicId);
+        Assert.Equal("Drafted", nuevo.Status);
+
+        var closedReloaded = await ctx.BookingCancellations.AsNoTracking()
+            .FirstAsync(b => b.PublicId == closed.PublicId);
+        Assert.Equal(BookingCancellationStatus.Closed, closedReloaded.Status); // intacto.
+
+        var total = await ctx.BookingCancellations.CountAsync(b => b.ReservaId == seed.ReservaId);
+        Assert.Equal(2, total);
     }
 
     // =========================================================================

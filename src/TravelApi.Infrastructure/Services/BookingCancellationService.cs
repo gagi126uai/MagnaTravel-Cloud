@@ -403,17 +403,16 @@ public class BookingCancellationService
             throw new InvalidOperationException(
                 ReservaCapabilityPolicy.ServiceNotCancellableStatusReason);
 
-        // 0) SEC-B1 (candado fiscal): ANTES de tocar nada, consultar el mismo guard que usa el path normal
-        //    de cambio de Status (BookingService). Si la reserva tiene una FACTURA viva (CAE no anulado) o
-        //    un VOUCHER emitido, cancelar un servicio bajaria silenciosamente la venta confirmada por debajo
-        //    del ImporteTotal de la factura SIN emitir NC -> divergencia fiscal irreversible. El guard es a
-        //    nivel reserva (mismo criterio que CODE-04/05): se bloquea y se exige anular la factura/voucher
-        //    primero. Se lanza InvalidOperationException -> el controller la mapea a 409 (igual que el path
-        //    normal expone el bloqueo). NO se baja el saldo a escondidas.
-        var blockReason = await ResolveServiceCancellationBlockReasonAsync(
-            serviceTable, request.ServicePublicId, reserva.Id, ct);
-        if (blockReason is not null)
-            throw new InvalidOperationException(blockReason);
+        // 0) ADR-044 T5 Addendum, Decision A (2026-07-11): SEC-B1 (bloqueo binario por factura viva) se
+        //    REEMPLAZA por una compuerta de 3 salidas resuelta mas abajo (paso 5): con factura viva, cancelar
+        //    un servicio YA NO se bloquea de punta a punta — se resuelve la nota de credito de ese servicio
+        //    (a que factura, por cuanto) o queda visible/accionable para resolucion manual, pero NUNCA baja
+        //    el saldo en silencio (el agujero que SEC-B1 vino a cerrar sigue cerrado, con otro mecanismo).
+        //    El candado de VOUCHER emitido sigue EXACTAMENTE igual que hoy (reserva-level, sin cambios): un
+        //    voucher entregado no se reescribe. InvalidOperationException -> 409 (igual que siempre).
+        var voucherBlockReason = await MutationGuards.GetReservaVoucherOnlyBlockReasonAsync(_db, reserva.Id, ct);
+        if (voucherBlockReason is not null)
+            throw new InvalidOperationException(voucherBlockReason);
 
         // 0-bis) R1 (Pasos B/C, plata viva, 2026-06-30): NO cancelar un servicio PAGADO al operador si no se puede
         //    ANCLAR el receivable "me tiene que devolver". El registro del lado-operador (la linea de cancelacion
@@ -427,38 +426,86 @@ public class BookingCancellationService
         //    (servicio con plata pagada al operador + sin factura); un servicio impago, o con factura, sigue igual.
         await EnsurePaidServiceCancellationHasReceivableAnchorAsync(reserva, serviceTable, request.ServicePublicId, ct);
 
-        // 1) Cargar el servicio puntual y VALIDAR pertenencia a la reserva (server-side, espejo INV-151:
-        //    no se confia en el frontend para que el servicio sea de esta reserva). CancelOneServiceAsync
-        //    marca el Status cancelado y devuelve (supplierId, alreadyCancelled).
-        var (affectedSupplierId, alreadyCancelled) = await MarkTypedServiceCancelledAsync(
-            serviceTable, request.ServicePublicId, reserva.Id, userId, userName, ct);
+        // 0-ter) ADR-044 T5 Addendum, Decision A punto 4 (2026-07-11): bloqueo duro SOLO si hay factura de
+        //    venta viva PERO la reserva no tiene Payer asignado. Antes esto se resolvia en silencio dentro de
+        //    RecordPartialCancellationLineAsync (un "return" sin rastro): el servicio se cancelaba igual y la
+        //    factura quedaba viva sin ningun evento de credito registrado — el mismo agujero fiscal que SEC-B1
+        //    vino a cerrar. Sin Payer no hay a quien facturarle la Nota de Credito, asi que ahora se bloquea
+        //    ANTES de tocar nada (409 explicito), en vez de cancelar dejando ese hueco sin rastro.
+        if (reserva.PayerId is null && await ReservaHasLiveSaleInvoiceAsync(reserva.Id, ct))
+            throw new InvalidOperationException(
+                "No se puede cancelar este servicio: la reserva tiene una factura emitida pero no tiene un " +
+                "cliente asignado para facturarle la nota de crédito. Asigná un cliente a la reserva antes de cancelar.");
 
-        if (!alreadyCancelled)
+        // 1) PLAN de credito (solo LECTURA): resolvemos el Id del servicio, las facturas de venta vivas y a
+        //    que factura le corresponde el credito ANTES de abrir la transaccion. Asi la transaccion de mas
+        //    abajo abre a lo sumo UN "FOR UPDATE" (sobre esa factura) y nunca anida BeginTransactionAsync
+        //    (Npgsql rechaza transacciones anidadas). Server-side (espejo INV-151): la pertenencia del
+        //    servicio a la reserva se valida aca, no se confia en el frontend.
+        var creditPlan = await PlanServiceCancellationCreditAsync(reserva, serviceTable, request, ct);
+
+        // Resultado del acto (se completa dentro de la unidad transaccional de abajo).
+        bool serviceWasCancelledNow = false;
+        int? affectedSupplierId = null;
+
+        // 2-5) UNIDAD DE TRABAJO ATOMICA (ADR-044 T5, fix seguridad B1): marcar el servicio cancelado +
+        //       recalcular plata/deuda + resolver la linea/ancla de la nota de credito commitean TODO JUNTO o
+        //       NADA. Antes cada paso commiteaba por separado: si el ultimo fallaba, quedaba el servicio
+        //       cancelado (venta bajada) con la factura viva por el total y SIN linea que respalde el credito
+        //       — el mismo agujero fiscal que SEC-B1 cerraba, reaparecido por una falla a mitad de camino.
+        async Task RunCancellationUnitAsync()
         {
-            // 2) Persistir el Status cancelado del servicio.
+            // Partir SIEMPRE de un ChangeTracker limpio: si la estrategia de ejecucion reintenta el cuerpo
+            // ante un error transitorio, o si reintentamos por colision del primer BC (mas abajo), las
+            // entidades del intento anterior NO deben quedar rastreadas (doble-add / estado stale en EF).
+            _db.ChangeTracker.Clear();
+
+            // 2) Marcar el Status cancelado del servicio + CancelledAt/By (no hace SaveChanges: lo hacemos aca).
+            var (supplierId, alreadyCancelled) = await MarkTypedServiceCancelledAsync(
+                serviceTable, request.ServicePublicId, reserva.Id, userId, userName, ct);
+            affectedSupplierId = supplierId;
+            if (alreadyCancelled)
+            {
+                // Idempotencia: el servicio ya estaba cancelado (doble click / reintento). Nada que hacer.
+                serviceWasCancelledNow = false;
+                return;
+            }
+            serviceWasCancelledNow = true;
+
+            // 2-bis) Persistir el Status cancelado (participa de la transaccion externa: si algo de abajo
+            //         falla, este cambio tambien se revierte).
             await _db.SaveChangesAsync(ct);
 
             // 3) Recalcular la plata de la reserva: el servicio cancelado sale del saldo del cliente solo
-            //    (ServiceResolutionRules lo excluye). ReservaMoneyPersister hace su propio SaveChanges.
+            //    (ServiceResolutionRules lo excluye). ReservaMoneyPersister hace su propio SaveChanges (que
+            //    tambien participa de la transaccion externa).
             await TravelApi.Infrastructure.Reservations.ReservaMoneyPersister.PersistAsync(_db, reserva.Id, ct);
 
             // 4) B1 (OBLIGATORIO): recalcular la deuda del operador del servicio cancelado en la misma
             //    operacion. El cambio de Status NO recalcula la deuda solo (bug P1 del ADR-022): hay que
             //    invocar el persister explicitamente, igual que el path generico de ReservaService.
-            if (affectedSupplierId.HasValue)
+            if (supplierId.HasValue)
             {
-                await TravelApi.Infrastructure.Reservations.SupplierDebtPersister.PersistAsync(_db, affectedSupplierId.Value, ct);
+                await TravelApi.Infrastructure.Reservations.SupplierDebtPersister.PersistAsync(_db, supplierId.Value, ct);
                 await _db.SaveChangesAsync(ct);
             }
 
-            // 5) SEC-B1b: dejar RASTRO y ANCLA del evento parcial. Sin esto Scope.Partial es dead-code y un
-            //    servicio parcial PAGADO al operador no tiene linea contra la cual imputar el refund (§3.2).
-            //    Reusamos (o creamos) el BookingCancellation padre de la reserva y le agregamos UNA linea
-            //    Scope=Partial para el servicio cancelado. NO se emite NC automatica (decision #3): el armado
-            //    queda como borrador para revision manual.
-            await RecordPartialCancellationLineAsync(reserva, serviceTable, request.ServicePublicId, userId, userName, ct);
+            // 5) SEC-B1b + ADR-044 T5 Addendum, Decisiones A/B (2026-07-11): dejar RASTRO y ANCLA del evento
+            //    parcial. Con FACTURA VIVA (el caso normal, antes bloqueado de punta a punta por SEC-B1) la
+            //    linea resuelve a que factura y por cuanto le corresponde el credito de este servicio —
+            //    automatico si hay una sola factura activa de la misma moneda, capeado contra el remanente
+            //    vivo de esa factura (ya estamos bajo el FOR UPDATE de esa factura, tomado por la transaccion
+            //    externa). La EMISION fiscal real (la Nota de Credito) sigue un paso de confirmacion aparte
+            //    (mismo patron Draft/Confirm del modulo): esta llamada deja la linea lista y VISIBLE en la
+            //    bandeja "Comprobantes por resolver", nunca silenciosa, pero no dispara AFIP por si sola.
+            //    Sin factura viva: comportamiento IDENTICO a hoy (RecordPartialCancellationLineAsync).
+            var creditOutcome = await ApplyServiceCancellationCreditLineAsync(
+                reserva, serviceTable, creditPlan, request, userId, userName, ct);
 
-            await _auditService.LogBusinessEventAsync(
+            // Auditoria de negocio (M3 del re-review): el monto y la factura destino de la decision de credito
+            // quedan en el evento INMUTABLE, no solo en columnas mutables de la linea. STAGED para entrar en el
+            // MISMO commit que la mutacion (si el commit revierte, no queda auditoria de un acto que no paso).
+            _auditService.StageBusinessEvent(
                 action: AuditActions.BookingCancellationDrafted, // reusamos la accion del modulo; el detail aclara que es parcial
                 entityName: AuditActions.BookingCancellationEntityName,
                 entityId: reserva.PublicId.ToString(),
@@ -468,26 +515,84 @@ public class BookingCancellationService
                     ReservaPublicId = reserva.PublicId,
                     request.ServiceTable,
                     request.ServicePublicId,
-                    AffectedSupplierId = affectedSupplierId,
+                    AffectedSupplierId = supplierId,
                     request.Reason,
+                    TargetInvoiceId = creditOutcome.TargetInvoiceId,
+                    ConfirmedGrossCreditAmount = creditOutcome.ConfirmedGrossCreditAmount,
                 }),
                 userId: userId,
-                userName: userName,
-                ct: ct);
+                userName: userName);
 
-            _logger.LogInformation(
-                "metric:partial_service_cancelled | ReservaPublicId={ReservaPublicId} ServiceTable={ServiceTable} ServicePublicId={ServicePublicId} SupplierId={SupplierId}",
-                reserva.PublicId, request.ServiceTable, request.ServicePublicId, affectedSupplierId);
+            // SaveChanges final: la linea de credito + la auditoria stageada, en la misma transaccion.
+            await _db.SaveChangesAsync(ct);
 
             // Pasos B/C (2026-06-29): NO disparamos el reconcile del pool aca a proposito. La cancelacion parcial
             // deja la caja del operador en negativo, pero el receivable que lo compensa lo ancla la LINEA parcial
             // (con su RefundCap). El fix de RAIZ (SupplierCancellationCircuitReader, Y atado al servicio cancelado)
             // hace que el PROXIMO reconcile de ese operador (un pago al operador, u otra cancelacion) cuente ese
-            // receivable y NO mintee — sin importar que la BC siga en Drafted. Disparar el reconcile aca seria
-            // PELIGROSO en el caso de la "limitacion declarada" (RecordPartialCancellationLineAsync OMITE la linea
-            // cuando la reserva no tiene factura viva que ancle el BC): ahi quedaria caja negativa SIN linea, y un
-            // reconcile mintearia el pagado. Mientras NO haya linea, no inventamos un receivable; ese caso
-            // (servicio pagado sin factura de venta) es la limitacion ya declarada del modelo, fuera de este alcance.
+            // receivable y NO mintee — sin importar que la BC siga en Drafted.
+        }
+
+        // Ejecutar la unidad de trabajo de forma ATOMICA sobre Postgres (una sola transaccion con a lo sumo un
+        // FOR UPDATE) + reintento UNICO ante la colision del primer BookingCancellation de la reserva.
+        if (_db.Database.IsRelational())
+        {
+            var strategy = _db.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async () =>
+            {
+                for (int attempt = 0; ; attempt++)
+                {
+                    try
+                    {
+                        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+
+                        await _db.Database.ExecuteSqlRawAsync("SET LOCAL lock_timeout = '5s'", ct);
+
+                        // Un solo FOR UPDATE de la factura destino (si la resolvimos): serializa
+                        // leer-remanente + decidir-monto + escribir contra ESA factura, sin anidar locks. Si el
+                        // caso es ambiguo (2+ facturas sin eleccion) o no hay factura viva, no hay una unica
+                        // factura que lockear -> transaccion sin FOR UPDATE, igual atomica.
+                        if (creditPlan.TargetInvoiceId is int lockInvoiceId)
+                        {
+                            await _db.Database.ExecuteSqlRawAsync(
+                                "SELECT 1 FROM \"Invoices\" WHERE \"Id\" = {0} FOR UPDATE",
+                                new object[] { lockInvoiceId }, ct);
+                        }
+
+                        await RunCancellationUnitAsync();
+
+                        await tx.CommitAsync(ct);
+                        break;
+                    }
+                    catch (DbUpdateException ex) when (attempt == 0 && IsUniqueConstraintViolation(ex))
+                    {
+                        // Colision del PRIMER BookingCancellation de la reserva: dos cancelaciones concurrentes
+                        // que son ambas "el primer servicio cancelado" chocan en el INSERT del BC (unico
+                        // parcial por ReservaId). La transaccion ya revirtio TODO (Status del servicio
+                        // incluido): NUNCA queda servicio-sin-linea. Reintentamos UNA vez -> el segundo
+                        // GetOrCreate encuentra al BC ganador y reusa su fila (mismo patron que DraftAsync).
+                        _logger.LogWarning(ex,
+                            "CancelServiceAsync race: el INSERT del primer BC de la reserva {ReservaPublicId} " +
+                            "colisiono con el unico parcial. Reintentamos una vez reusando el BC ganador.",
+                            reserva.PublicId);
+                        // El loop reintenta; ChangeTracker.Clear al inicio de RunCancellationUnitAsync limpia
+                        // el grafo perdedor (el BC en estado Added que perdio la carrera).
+                    }
+                }
+            });
+        }
+        else
+        {
+            // InMemory: no soporta FOR UPDATE ni transacciones (los tests de atomicidad/concurrencia real
+            // viven en integracion Postgres). Corremos la unidad directa.
+            await RunCancellationUnitAsync();
+        }
+
+        if (serviceWasCancelledNow)
+        {
+            _logger.LogInformation(
+                "metric:partial_service_cancelled | ReservaPublicId={ReservaPublicId} ServiceTable={ServiceTable} ServicePublicId={ServicePublicId} SupplierId={SupplierId}",
+                reserva.PublicId, request.ServiceTable, request.ServicePublicId, affectedSupplierId);
         }
 
         // Contadores para el header "N de M servicios cancelado" (decision #1: dato calculado, no estado nuevo).
@@ -743,48 +848,6 @@ public class BookingCancellationService
             _db, supplierId, sourceSupplierPaymentId: null, actorUserId, actorUserName, _auditService, ct);
 
     /// <summary>
-    /// SEC-B1 (ADR-025 / candado fiscal): devuelve el motivo de bloqueo si NO se puede cancelar el servicio
-    /// porque la reserva tiene una factura viva (CAE) o un voucher emitido; <c>null</c> si se permite.
-    ///
-    /// <para>Reusa <see cref="MutationGuards"/> — la MISMA fuente de verdad que el path normal de cambio de
-    /// Status en <c>BookingService</c> (CODE-04/05). Para los tipos tipados consulta el guard de booking a
-    /// nivel reserva; para el generico, el guard de servicio. El bloqueo es a nivel reserva porque una NC se
-    /// emite sobre la factura del evento, no por servicio: bajar la venta confirmada por debajo del total
-    /// facturado sin NC es divergencia fiscal. La emision fiscal sigue en revision manual (decision #3); el
-    /// guard solo evita el agujero de bajar el saldo a escondidas.</para>
-    /// </summary>
-    private async Task<string?> ResolveServiceCancellationBlockReasonAsync(
-        CancellableServiceTable serviceTable,
-        Guid servicePublicId,
-        int reservaId,
-        CancellationToken ct)
-    {
-        // El generico tiene su propio guard por Id de servicio (CODE-05). Resolvemos el Id desde el PublicId
-        // validando pertenencia a la reserva (espejo INV-151) para no consultar el guard de un servicio ajeno.
-        if (serviceTable == CancellableServiceTable.Generic)
-        {
-            var servicioReservaId = await _db.Servicios.AsNoTracking()
-                .Where(s => s.PublicId == servicePublicId && s.ReservaId == reservaId)
-                .Select(s => (int?)s.Id)
-                .FirstOrDefaultAsync(ct);
-            if (servicioReservaId is null) return null; // el servicio se valida (y 404ea) al marcarlo; aca no bloqueamos.
-
-            return await MutationGuards.GetServiceMutationBlockReasonAsync(_db, servicioReservaId.Value, ct);
-        }
-
-        // Tipos tipados: el guard de booking es a nivel reserva (CODE-04). El label personaliza el mensaje.
-        var bookingType = serviceTable switch
-        {
-            CancellableServiceTable.Hotel => "hotel",
-            CancellableServiceTable.Flight => "flight",
-            CancellableServiceTable.Package => "package",
-            CancellableServiceTable.Transfer => "transfer",
-            _ => "service"
-        };
-        return await MutationGuards.GetBookingMutationBlockReasonAsync(_db, reservaId, bookingType, ct);
-    }
-
-    /// <summary>
     /// R1 (Pasos B/C, plata viva, 2026-06-30): impide cancelar un servicio PAGADO al operador cuando NO hay forma de
     /// ANCLAR el receivable "me tiene que devolver" (no existe factura de venta viva que sostenga el
     /// <see cref="BookingCancellation"/> padre de la linea). Sin ese ancla, cancelar deja la caja del operador en
@@ -981,11 +1044,47 @@ public class BookingCancellationService
 
         if (reserva.PayerId is null) return; // sin Payer no hay BC posible (mismo precondicion que DraftAsync).
 
-        // Reusar el BC NO-abortado existente de la reserva, o crear uno nuevo (Drafted). El UNIQUE parcial
-        // (Status <> 6) permite a lo sumo un BC vivo por reserva: lo reusamos como padre del evento parcial.
+        var (bc, _, isNewLine) = await GetOrCreateServiceCancellationBcAndLineAsync(
+            reserva, serviceTable, serviceId.Value, originatingInvoiceId.Value, userId, userName, ct);
+        if (!isNewLine) return; // idempotencia: ya existia la linea para (tabla, servicio).
+
+        await _db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// ADR-044 T5 Addendum, Decision C (2026-07-11): nucleo compartido de "conseguime el BC EN CURSO de esta
+    /// reserva (o creame uno nuevo) y agregale la linea Partial de este servicio, si todavia no la tiene".
+    /// Antes esta logica vivia duplicada; ahora <see cref="RecordPartialCancellationLineAsync"/> (sin factura
+    /// viva, comportamiento historico) y <see cref="ResolveServiceCancellationCreditLineAsync"/> (con factura
+    /// viva, T5) comparten el MISMO armado — no pueden divergir en como se resuelve/crea el BC padre.
+    ///
+    /// <para>Decision C (excluir Closed del UNIQUE, no solo Aborted) aplica aca: un BC Closed es un evento
+    /// fiscal TERMINADO (NC con CAE, reembolso consumido); reenganchar una linea nueva a esa fila muerta la
+    /// dejaria invisible para la maquina de estados que dispara NC/ND. Se abre un BC NUEVO en su lugar (mismo
+    /// tratamiento que un BC Aborted).</para>
+    ///
+    /// <para><b>NO hace SaveChanges</b>: el caller decide cuando persistir (puede necesitar setear mas campos
+    /// de la linea antes, ej. TargetInvoiceId/ConfirmedGrossCreditAmount en el camino T5).</para>
+    /// </summary>
+    private async Task<(BookingCancellation Bc, BookingCancellationLine Line, bool IsNewLine)> GetOrCreateServiceCancellationBcAndLineAsync(
+        Reserva reserva,
+        CancellableServiceTable serviceTable,
+        int serviceId,
+        int anchorInvoiceId,
+        string userId,
+        string? userName,
+        CancellationToken ct)
+    {
+        // Include tanto Lines como CreditNotes: el camino T5 (ResolveServiceCancellationCreditLineAsync)
+        // necesita agregar una fila hija a bc.CreditNotes (reserva del cap acumulativo) via la navegacion;
+        // sin el Include, un BC EXISTENTE traeria esa coleccion "vacia" para el change tracker (no se
+        // cargo), y un Add() por navegacion no se detectaria/persistiria en el SaveChanges del caller.
         var bc = await _db.BookingCancellations
             .Include(b => b.Lines)
-            .Where(b => b.ReservaId == reserva.Id && b.Status != BookingCancellationStatus.Aborted)
+            .Include(b => b.CreditNotes)
+            .Where(b => b.ReservaId == reserva.Id
+                     && b.Status != BookingCancellationStatus.Aborted
+                     && b.Status != BookingCancellationStatus.Closed)
             .OrderByDescending(b => b.Id)
             .FirstOrDefaultAsync(ct);
 
@@ -994,9 +1093,9 @@ public class BookingCancellationService
             bc = new BookingCancellation
             {
                 ReservaId = reserva.Id,
-                CustomerId = reserva.PayerId.Value,
+                CustomerId = reserva.PayerId!.Value,
                 SupplierId = 0, // se setea abajo con el operador de la primera linea (denormalizado).
-                OriginatingInvoiceId = originatingInvoiceId.Value,
+                OriginatingInvoiceId = anchorInvoiceId,
                 Status = BookingCancellationStatus.Drafted,
                 Reason = "Cancelacion parcial de servicio",
                 DraftedAt = DateTime.UtcNow,
@@ -1005,7 +1104,8 @@ public class BookingCancellationService
                 AmountPaidAtCancellation = 0m,
                 EstimatedRefundAmount = 0m,
                 ReceivedRefundAmount = 0m,
-                // Snapshot vacio: en Drafted el CHECK SQL lo permite. La emision (que lo completa) es manual.
+                // Snapshot vacio: en Drafted el CHECK SQL lo permite. La emision fiscal completa el snapshot
+                // en un paso de confirmacion aparte (mismo patron Draft/Confirm de siempre).
                 FiscalSnapshot = new FiscalSnapshot { Source = ExchangeRateSource.Unset, FetchedAt = default },
                 IsLegacyPreCancellationModel = false,
             };
@@ -1013,13 +1113,14 @@ public class BookingCancellationService
         }
 
         // Idempotencia: no duplicar la linea si ya existe para (tabla, servicio).
-        bool lineAlreadyExists = bc.Lines.Any(l => l.ServiceTable == serviceTable && l.ServiceId == serviceId.Value);
-        if (lineAlreadyExists) return;
+        var existingLine = bc.Lines.FirstOrDefault(l => l.ServiceTable == serviceTable && l.ServiceId == serviceId);
+        if (existingLine is not null)
+            return (bc, existingLine, IsNewLine: false);
 
         // Construir la linea Partial reusando el mismo armado que el path total (incluye el RefundCap, B2).
         var builtLines = await BuildCancellationLinesAsync(
             reserva, BookingCancellationLineScope.Partial, ct,
-            onlyServiceTable: serviceTable, onlyServiceId: serviceId.Value);
+            onlyServiceTable: serviceTable, onlyServiceId: serviceId);
         var partialLine = builtLines[0]; // BuildCancellationLinesAsync tira si no arma ninguna.
 
         bc.Lines.Add(partialLine);
@@ -1029,8 +1130,217 @@ public class BookingCancellationService
         if (bc.SupplierId == 0)
             bc.SupplierId = partialLine.SupplierId;
 
-        await _db.SaveChangesAsync(ct);
+        return (bc, partialLine, IsNewLine: true);
     }
+
+    /// <summary>
+    /// ADR-044 T5 Addendum, Decision A+B (2026-07-11): plan (solo LECTURA) de a que factura de venta le
+    /// corresponde el credito de UN servicio cancelado. Se resuelve ANTES de abrir la transaccion de
+    /// <see cref="CancelServiceAsync"/> para que esa transaccion tome a lo sumo UN <c>FOR UPDATE</c> (sobre la
+    /// factura destino) y nunca anide <c>BeginTransactionAsync</c>.
+    ///
+    /// <para><see cref="ServiceCancellationCreditPlan.LiveInvoiceCount"/> == 0 -> sin factura viva (camino
+    /// historico). <see cref="ServiceCancellationCreditPlan.TargetInvoiceId"/> resuelto (1 factura, o eleccion
+    /// que matchea) -> credito auto-resoluble. Null con 2+ facturas -> ambiguo (revision manual).</para>
+    /// </summary>
+    private sealed record ServiceCancellationCreditPlan(
+        int? ServiceId,
+        int LiveInvoiceCount,
+        int? TargetInvoiceId,
+        int? AnchorInvoiceId,
+        string TargetInvoiceMonId,
+        decimal TargetInvoiceMonCotiz);
+
+    private async Task<ServiceCancellationCreditPlan> PlanServiceCancellationCreditAsync(
+        Reserva reserva,
+        CancellableServiceTable serviceTable,
+        CancelServiceRequest request,
+        CancellationToken ct)
+    {
+        var serviceId = await ResolveServiceIdAsync(serviceTable, request.ServicePublicId, reserva.Id, ct);
+
+        // Facturas de venta VIVAS de la reserva (mismo criterio que DraftAsync: sin NC, sin ND, con CAE, no
+        // anulada). Traemos MonId/MonCotiz para el guard de moneda del apply (fix fiscal-b). Mas de una es el
+        // caso "2+ facturas activas" de la Decision B (T3b Decision 1 espejo).
+        var liveInvoices = await _db.Invoices.AsNoTracking()
+            .Where(i => i.ReservaId == reserva.Id
+                     && !LiveInvoiceCreditNoteTypes.Contains(i.TipoComprobante)
+                     && !LiveInvoiceDebitNoteTypes.Contains(i.TipoComprobante)
+                     && !string.IsNullOrEmpty(i.CAE)
+                     && i.AnnulmentStatus != AnnulmentStatus.Succeeded)
+            .OrderByDescending(i => i.CreatedAt)
+            .Select(i => new { i.Id, i.PublicId, i.MonId, i.MonCotiz })
+            .ToListAsync(ct);
+
+        if (liveInvoices.Count == 0)
+            return new ServiceCancellationCreditPlan(serviceId, 0, null, null, "PES", 1m);
+
+        // A que factura le corresponde el credito (mismo patron que T3b Decision 1): 1 factura -> auto; 2+ ->
+        // la que el vendedor eligio (TargetInvoicePublicId), o null (ambiguo) si no eligio o no matchea.
+        int? targetInvoiceId = liveInvoices.Count == 1
+            ? liveInvoices[0].Id
+            : liveInvoices.FirstOrDefault(i => request.TargetInvoicePublicId == i.PublicId)?.Id;
+
+        var target = targetInvoiceId is null
+            ? null
+            : liveInvoices.First(i => i.Id == targetInvoiceId.Value);
+
+        return new ServiceCancellationCreditPlan(
+            ServiceId: serviceId,
+            LiveInvoiceCount: liveInvoices.Count,
+            TargetInvoiceId: targetInvoiceId,
+            // El ancla del BC padre (cuando la factura es ambigua) cuelga de la mas reciente, como DraftAsync.
+            AnchorInvoiceId: liveInvoices[0].Id,
+            TargetInvoiceMonId: target?.MonId ?? "PES",
+            TargetInvoiceMonCotiz: target?.MonCotiz ?? 1m);
+    }
+
+    /// <summary>
+    /// ADR-044 T5 Addendum, Decision A+B (2026-07-11): resuelve la linea de credito de UN servicio cancelado.
+    /// Reemplaza el "queda como borrador mudo" de antes por una linea que SIEMPRE resuelve lo que se puede
+    /// resolver automaticamente (factura + monto cuando no hay ambiguedad ni mismatch) y deja
+    /// visible/accionable en la bandeja lo que no (factura ambigua, moneda que no coincide, TC incoherente, o
+    /// monto que excede el remanente).
+    ///
+    /// <para><b>NO abre lock ni transaccion propia</b>: el caller (<see cref="CancelServiceAsync"/>) ya corre
+    /// dentro de una transaccion que tomo el <c>FOR UPDATE</c> de la factura destino. Asi el tramo
+    /// leer-remanente + decidir-monto + escribir queda serializado sin anidar transacciones (Npgsql las
+    /// rechaza).</para>
+    ///
+    /// <para><b>Por que NO dispara la emision fiscal (Nota de Credito) en esta misma llamada</b>: emitir una
+    /// NC exige un <see cref="FiscalSnapshot"/> completo (moneda, TC, condiciones fiscales — CHECK SQL
+    /// <c>chk_BookingCancellations_fiscalsnapshot_consistent</c>, solo <c>Drafted</c>/<c>Aborted</c> admiten
+    /// snapshot vacio) que <see cref="CancelServiceRequest"/> no trae y que este backend NO puede inventar sin
+    /// que el usuario lo confirme (mismo criterio INV-118/INV-120). Por eso la linea queda lista (factura
+    /// destino + monto) pero el BC permanece <c>Drafted</c>: la emision real es un paso de confirmacion APARTE
+    /// (tanda de UI). El cap se reserva por la LINEA (TargetInvoiceId + ConfirmedGrossCreditAmount), NO por una
+    /// hija Pending fantasma (esa hija se crea recien al emitir, en la tanda de la pantalla — fix B2-backend).</para>
+    ///
+    /// <para>Devuelve la decision de credito (factura destino + monto confirmado, o null/null) para que el
+    /// caller la deje en la auditoria inmutable (M3), no solo en columnas mutables de la linea.</para>
+    /// </summary>
+    private async Task<(int? TargetInvoiceId, decimal? ConfirmedGrossCreditAmount)> ApplyServiceCancellationCreditLineAsync(
+        Reserva reserva,
+        CancellableServiceTable serviceTable,
+        ServiceCancellationCreditPlan plan,
+        CancelServiceRequest request,
+        string userId,
+        string? userName,
+        CancellationToken ct)
+    {
+        if (plan.ServiceId is null) return (null, null); // no deberia pasar (ya se marco), defensivo.
+
+        if (plan.LiveInvoiceCount == 0)
+        {
+            // 1) Sin factura viva: comportamiento historico (el borrador queda sin ancla fiscal).
+            await RecordPartialCancellationLineAsync(reserva, serviceTable, request.ServicePublicId, userId, userName, ct);
+            return (null, null);
+        }
+
+        // A esta altura reserva.PayerId NUNCA es null: CancelServiceAsync ya bloqueo con 409 (paso 0-ter) si
+        // hubiera factura viva sin Payer, ANTES de marcar el servicio cancelado.
+
+        if (plan.TargetInvoiceId is null)
+        {
+            // 3a) Ambiguo (2+ facturas activas, sin eleccion valida): la linea queda SIN factura destino
+            // resuelta -> visible/accionable en la bandeja, nunca silenciosa. El ancla del BC padre cuelga de
+            // la factura mas reciente (mismo criterio que DraftAsync).
+            var (_, _, _) = await GetOrCreateServiceCancellationBcAndLineAsync(
+                reserva, serviceTable, plan.ServiceId.Value, plan.AnchorInvoiceId!.Value, userId, userName, ct);
+            await _db.SaveChangesAsync(ct);
+            return (null, null);
+        }
+
+        // 2) Factura destino resuelta. Ya estamos bajo el FOR UPDATE de esa factura (transaccion externa de
+        // CancelServiceAsync): leer-remanente + decidir-monto + escribir corre serializado.
+        var (bc, line, _) = await GetOrCreateServiceCancellationBcAndLineAsync(
+            reserva, serviceTable, plan.ServiceId.Value, plan.TargetInvoiceId.Value, userId, userName, ct);
+
+        line.TargetInvoiceId = plan.TargetInvoiceId.Value;
+
+        // Guard de moneda (fix fiscal-b): la NC de una linea solo se puede acreditar contra una factura de la
+        // MISMA moneda. Normalizamos ambos lados al catalogo ARCA (la factura guarda MonId en ARCA "PES"/"DOL";
+        // la linea guarda Currency en ISO "ARS"/"USD"). Comparar los strings crudos daria mismatch SIEMPRE
+        // (ARS != PES) y bloquearia el 100% de los casos legitimos en pesos.
+        var lineCurrencyArca = ArcaCurrencyMapper.TryMap(line.Currency); // ISO -> ARCA (null si no soportada)
+        var invoiceCurrencyArca = string.IsNullOrWhiteSpace(plan.TargetInvoiceMonId)
+            ? "PES"
+            : plan.TargetInvoiceMonId.Trim().ToUpperInvariant();
+        bool currencyMatches = lineCurrencyArca is not null
+            && string.Equals(lineCurrencyArca, invoiceCurrencyArca, StringComparison.OrdinalIgnoreCase);
+
+        // Coherencia del TC de la factura destino: una factura extranjera con cotizacion 1 (o <=0) es dato
+        // corrupto (misma regla que el guard de NC total, INV-156). No inventamos un TC: derivamos a manual.
+        bool invoiceIsForeign = !string.Equals(invoiceCurrencyArca, "PES", StringComparison.OrdinalIgnoreCase);
+        bool exchangeRateCoherent = plan.TargetInvoiceMonCotiz > 0m
+            && (!invoiceIsForeign || plan.TargetInvoiceMonCotiz != 1m);
+
+        if (!currencyMatches || !exchangeRateCoherent)
+        {
+            // 3b) Mismatch de moneda o TC incoherente: NO auto-acreditamos (inventar el credito exigiria un TC
+            // que no tenemos confirmado). La linea queda con su factura destino resuelta pero SIN monto ->
+            // visible como pendiente de resolucion manual. El servicio igual quedo cancelado.
+            ClearLineCreditAmount(line);
+            await _db.SaveChangesAsync(ct);
+            return (plan.TargetInvoiceId, null);
+        }
+
+        var remainingCreditableAmount = await ComputeInvoiceRemainingCreditableAmountAsync(plan.TargetInvoiceId.Value, ct);
+
+        // Monto propuesto: LineSaleAmount del servicio (cero friccion visual) salvo que el vendedor ya haya
+        // confirmado un monto explicito (request.ConfirmedGrossCreditAmount, pantalla aparte).
+        var proposedAmount = request.ConfirmedGrossCreditAmount ?? line.LineSaleAmount;
+
+        if (proposedAmount > 0m && proposedAmount <= remainingCreditableAmount)
+        {
+            // 2) Auto-resuelto. == remanente -> NC TOTAL de esa factura; < remanente -> NC PARCIAL
+            //    (CreditNoteKind.PartialOnOriginal). La linea guarda el monto confirmado; quien complete la
+            //    confirmacion fiscal (paso aparte) decide con ese numero si emite total o parcial.
+            //    El cap se reserva por la LINEA (TargetInvoiceId + ConfirmedGrossCreditAmount). NO se crea una
+            //    hija Pending fantasma (fix B2-backend): ese registro reservaba remanente para siempre (nunca
+            //    pasaba a Failed) y la levantaba el reconciler como "NC esperando CAE". La hija recien se crea
+            //    al EMITIR (tanda de la pantalla).
+            line.ConfirmedGrossCreditAmount = proposedAmount;
+            line.CreditAmountConfirmedByUserId = userId;
+            line.CreditAmountConfirmedByUserName = userName;
+            line.CreditAmountConfirmedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync(ct);
+            return (plan.TargetInvoiceId, proposedAmount);
+        }
+
+        // > remanente (o remanente ya en 0): rechazado, NO se persiste monto (excederia lo que la factura
+        // vale). La linea queda con su factura destino resuelta pero SIN monto -> visible como pendiente.
+        ClearLineCreditAmount(line);
+        await _db.SaveChangesAsync(ct);
+        return (plan.TargetInvoiceId, null);
+    }
+
+    /// <summary>
+    /// Limpia el monto de credito confirmado de una linea (y quien/cuando lo confirmo). Se usa cuando el
+    /// credito NO se puede auto-resolver (moneda que no coincide, TC incoherente, o monto que excede el
+    /// remanente): la linea queda visible como pendiente de resolucion manual, sin monto inventado.
+    /// </summary>
+    private static void ClearLineCreditAmount(BookingCancellationLine line)
+    {
+        line.ConfirmedGrossCreditAmount = null;
+        line.CreditAmountConfirmedByUserId = null;
+        line.CreditAmountConfirmedByUserName = null;
+        line.CreditAmountConfirmedAt = null;
+    }
+
+    /// <summary>
+    /// ADR-044 T5 Addendum, Decision A punto 4 (2026-07-11): true si la reserva tiene AL MENOS UNA factura de
+    /// venta viva (mismo criterio que <see cref="ResolveServiceCancellationCreditLineAsync"/>/DraftAsync: sin
+    /// NC, sin ND, con CAE, no anulada). Usado por el bloqueo duro de "factura viva sin Payer".
+    /// </summary>
+    private Task<bool> ReservaHasLiveSaleInvoiceAsync(int reservaId, CancellationToken ct)
+        => _db.Invoices.AsNoTracking().AnyAsync(
+            i => i.ReservaId == reservaId
+                 && !LiveInvoiceCreditNoteTypes.Contains(i.TipoComprobante)
+                 && !LiveInvoiceDebitNoteTypes.Contains(i.TipoComprobante)
+                 && !string.IsNullOrEmpty(i.CAE)
+                 && i.AnnulmentStatus != AnnulmentStatus.Succeeded,
+            ct);
 
     /// <summary>
     /// Resuelve el Id (int) de un servicio por (tabla, PublicId) validando que pertenece a la reserva.
@@ -1167,6 +1477,14 @@ public class BookingCancellationService
                 userName: userName,
                 ct: ct);
 
+            // FRENTE E (ADR-044 T5, D3): si este draft reusable es un BC de cancelacion PARCIAL (tiene lineas
+            // Scope=Partial de servicios cancelados uno a uno via CancelServiceAsync) y AHORA se esta anulando
+            // TODO el file, completamos el MISMO BC con las lineas Full de los servicios vivos restantes,
+            // preservando la(s) Partial. Sin esto, el anular-total heredaria solo las Partial y sub-acreditaria
+            // al cliente (los servicios vivos no recibirian linea/RefundCap). Un solo BC con Partial + Full;
+            // el unico por ReservaId impide abrir otro.
+            await CompleteReusedDraftWithFullLinesIfPartialAsync(existingBc, reserva, ct);
+
             return await MapToDtoAsync(existingBc.Id, ct)
                 ?? throw new InvalidOperationException(
                     "BC existente no encontrada al reutilizar el draft. Estado inconsistente.");
@@ -1202,9 +1520,20 @@ public class BookingCancellationService
             // hasLiveCreditNote -> cae al rechazo INV-081 de abajo (no liberar con NC viva).
         }
 
+        // Caso (c-bis) ADR-044 T5 Addendum, Decision C (2026-07-11, hallazgo nuevo del re-review): Closed es
+        // un evento fiscal TERMINADO (NC con CAE, reembolso ya consumido), no una cancelacion "en curso".
+        // ANTES de este fix, un BC Closed caia en el caso (d) de abajo y rechazaba INV-081 para SIEMPRE:
+        // una reserva con una cancelacion PARCIAL de un solo servicio ya cerrada quedaba IMPOSIBLE de volver
+        // a anular (total o parcialmente) nunca mas, tratando un hecho ya terminado como si siguiera vivo.
+        // Mismo tratamiento que el caso (b) Aborted: liberamos (return null) para que el caller abra un BC
+        // NUEVO. No hay riesgo fiscal: Closed, por definicion, ya tiene su NC con CAE resuelta, asi que
+        // liberar la fila NO reabre ni reinterpreta ningun comprobante — simplemente permite un evento NUEVO.
+        if (existingBc.Status == BookingCancellationStatus.Closed)
+            return null;
+
         // Caso (d): cualquier otro estado = cancelacion REALMENTE activa o con efecto
         // fiscal en juego (AwaitingFiscalConfirmation, AwaitingOperatorRefund,
-        // ClientCreditApplied, Closed, AbandonedByOperator, ManualReview*, o un
+        // ClientCreditApplied, AbandonedByOperator, ManualReview*, o un
         // ArcaRejected con NC viva) -> rechazo INV-081.
         //
         // ManualReviewRejected=11 (decision B1 2026-06-03): lo dejamos RECHAZANDO,
@@ -1218,6 +1547,64 @@ public class BookingCancellationService
         throw new BusinessInvariantViolationException(
             $"La reserva {reserva.NumeroReserva} ya tiene una cancelación en curso.",
             invariantCode: "INV-081");
+    }
+
+    /// <summary>
+    /// FRENTE E (ADR-044 T5, D3, 2026-07-11): cuando el anular-total reusa un draft que en realidad es un BC de
+    /// cancelacion PARCIAL (tiene lineas <c>Scope=Partial</c> de servicios cancelados uno a uno), lo COMPLETA
+    /// agregando las lineas <c>Scope=Full</c> de los servicios vivos restantes, preservando la(s) Partial. Asi
+    /// el cliente se acredita por el TOTAL del file, no solo por lo que se habia cancelado parcialmente.
+    ///
+    /// <para>No hace nada si el draft no tiene lineas Partial (draft de anulacion total normal, ya armado con
+    /// sus lineas Full por <c>DraftAsync</c>): es idempotente y seguro de llamar siempre en el reuse.</para>
+    ///
+    /// <para><b>Por que no duplica</b>: <c>BuildCancellationLinesAsync(Full)</c> excluye los servicios ya
+    /// cancelados (B1(b)), asi que el servicio ya cancelado por T5 NO recibe una segunda linea — conserva su
+    /// Partial; las nuevas Full cubren solo los vivos. El guard por (tabla, servicio) es defensivo extra.
+    /// <c>throwIfNoOperatorService: false</c>: si ya no quedan servicios vivos con operador (todos cancelados),
+    /// no rompe — el BC ya tiene su(s) Partial.</para>
+    /// </summary>
+    private async Task CompleteReusedDraftWithFullLinesIfPartialAsync(
+        BookingCancellation existingBc, Reserva reserva, CancellationToken ct)
+    {
+        // La query de resolucion no trae las lineas: cargarlas para saber si hay Partial y para no duplicar.
+        await _db.Entry(existingBc).Collection(b => b.Lines).LoadAsync(ct);
+
+        bool hasPartialLine = existingBc.Lines.Any(l => l.Scope == BookingCancellationLineScope.Partial);
+        if (!hasPartialLine)
+            return; // draft de anulacion total normal (lineas Full o vacio): nada que completar.
+
+        var fullLines = await BuildCancellationLinesAsync(
+            reserva, BookingCancellationLineScope.Full, ct, throwIfNoOperatorService: false);
+
+        foreach (var fullLine in fullLines)
+        {
+            bool alreadyHasLineForService = existingBc.Lines.Any(
+                l => l.ServiceTable == fullLine.ServiceTable && l.ServiceId == fullLine.ServiceId);
+            if (alreadyHasLineForService)
+                continue;
+
+            existingBc.Lines.Add(fullLine);
+        }
+
+        // El BC parcial nacio con AmountPaidAtCancellation/EstimatedRefundAmount en 0 (una cancelacion parcial
+        // no estima refund del file). Al pasar a anulacion TOTAL lo emparejamos con un draft total fresco:
+        // AmountPaidAtCancellation = suma de pagos activos de la reserva (mismo calculo que DraftAsync). Asi el
+        // estimado de reembolso del file no queda en 0 por haber nacido de una parcial.
+        //
+        // FIX N2 (backend reviewer): este refresh corre SIEMPRE que el draft reusado sea parcial, INCLUSO si no
+        // se agrego ninguna linea Full nueva (caso: todos los servicios vivos restantes ya estaban cancelados).
+        // Aun sin lineas nuevas, la reserva puede tener pagos activos que el estimado de reembolso del file
+        // debe reflejar — antes esto quedaba en 0 por salir temprano cuando no se agregaba ninguna linea.
+        var amountPaid = await _db.Payments
+            .Where(p => p.ReservaId == reserva.Id
+                     && !p.IsDeleted
+                     && p.Status != "Cancelled")
+            .SumAsync(p => (decimal?)p.Amount, ct) ?? 0m;
+        existingBc.AmountPaidAtCancellation = amountPaid;
+        existingBc.EstimatedRefundAmount = amountPaid;
+
+        await _db.SaveChangesAsync(ct);
     }
 
     /// <summary>
@@ -1607,17 +1994,40 @@ public class BookingCancellationService
                     "No se encontró el operador de esta anulación. Consultá con administración.");
             }
 
-            // (c) Armar input. CancellationAmount = ImporteTotal por defecto:
-            // Fase 1 solo soporta cancelacion total (cancelacion parcial sub-monto
-            // queda para Fase 2). OperatorPenaltyAmount = 0 por ahora — el endpoint
-            // todavia no recibe el monto. En Fase 1.3.5 se agrega al request.
+            // (c) Armar input. OriginalInvoiceAmount queda en ImporteTotal (es la base fiscal del
+            // comprobante original, no cambia). CancellationAmount, en cambio, ADR-044 T5 Addendum fix
+            // B1(a) (2026-07-11): se acota al REMANENTE acreditable de la factura, no al ImporteTotal a
+            // secas. Antes, si esta reserva ya tenia una NC PARCIAL previa contra la misma factura (T5,
+            // cancelar 1 servicio), este camino legacy ("Anular el resto") seguia clasificando/acreditando
+            // el TOTAL completo -> la suma de NCs (la parcial previa + esta) superaba lo que la factura vale
+            // (descuadre fiscal). Cuando NO hubo ninguna NC parcial previa (el 100% de los casos de hoy),
+            // remanente == ImporteTotal -> comportamiento byte-identico al actual, cero regresion.
+            //
+            // excludeBookingCancellationId: bc.Id (FRENTE E, anti-doble-cap): este es el camino de anulacion
+            // TOTAL. Si este mismo BC absorbio una linea PARCIAL previa (el anular-total completa el draft
+            // parcial), esa reserva por-linea NO debe restarse contra la anulacion de SU PROPIO BC — la
+            // parcial nunca emitio su NC, y el total acredita la factura ENTERA. Excluir el propio BC hace que
+            // el remanente que ve este camino sea el ImporteTotal pleno.
+            //
+            // Sobre la concurrencia del cap en ESTE camino legacy (M1/C2 del re-review): el lock envuelve solo
+            // la LECTURA del remanente, no la escritura de la NC. Es seguro por los DOS indices unicos parciales
+            // (IX_BookingCancellations_ReservaId e IX_..._OriginatingInvoiceId, filtro Status NOT IN (4,6)):
+            // garantizan como maximo UN BC vivo por reserva Y por factura, asi que no puede haber DOS eventos
+            // concurrentes leyendo el mismo remanente "libre" de la misma factura — el segundo INSERT de BC lo
+            // rechaza el unico. Ver el test de integracion que fija esta imposibilidad. Fallback (si el
+            // argumento del unico no bastara): envolver leer-decidir-emitir en el lock (mas caro).
+            var remainingCreditableAmount = await RunUnderInvoiceLockAsync(
+                bc.OriginatingInvoiceId,
+                () => ComputeInvoiceRemainingCreditableAmountAsync(bc.OriginatingInvoiceId, ct, excludeBookingCancellationId: bc.Id),
+                ct);
+
             var calculatorInput = new FiscalLiquidationInput(
                 OriginatingInvoice: bc.OriginatingInvoice,
                 Items: invoiceItems,
                 Supplier: supplier,
                 InvoicingModeAtEvent: bc.FiscalSnapshot.InvoicingModeAtEvent,
                 OriginalInvoiceAmount: bc.OriginatingInvoice.ImporteTotal,
-                CancellationAmount: bc.OriginatingInvoice.ImporteTotal,
+                CancellationAmount: remainingCreditableAmount,
                 OperatorPenaltyAmount: 0m,
                 RetentionNatureChangedByUser: false,
                 OriginalInvoiceUnclearByUser: false,
@@ -3706,39 +4116,91 @@ public class BookingCancellationService
         CancellationToken ct)
     {
         // Solo lectura: NO reconciliamos ni mutamos nada (a diferencia de la bandeja de notas de debito).
-        // Esta bandeja solo lista lo que espera revision manual; el approve/reject lo hace el flujo de
-        // approvals + EditLiquidation.
+        // Esta bandeja solo lista lo que espera revision/emision manual; NO dispara ninguna maquinaria fiscal.
         //
-        // Materializamos las entidades (con Reserva + Payer) y proyectamos en memoria, mismo patron que
-        // GetCancellationsWithMissingDebitNoteAsync. Lo hacemos asi (en vez de proyectar en la query)
-        // porque el monto sale del owned VO OPCIONAL FiscalLiquidation y el Status es un enum: resolverlo
-        // en memoria evita depender de como cada provider traduce el null-check del owned object y el
-        // ToString() del enum. El volumen de esta bandeja es chico (cancelaciones esperando revision).
+        // Materializamos las entidades (con Reserva + Payer + Lines) y proyectamos en memoria, mismo patron que
+        // GetCancellationsWithMissingDebitNoteAsync. Lo hacemos asi porque el monto sale de dos fuentes segun el
+        // caso (el owned VO OPCIONAL FiscalLiquidation en el flujo legacy, o la suma de las lineas Partial en un
+        // pendiente T5) y el Status se traduce a una etiqueta de negocio: resolverlo en memoria evita depender
+        // de como cada provider traduce esos casos. El volumen de esta bandeja es chico.
+        //
+        // FRENTE D (ADR-044 T5): ademas de los estados de revision manual (RequiresManualReview /
+        // ManualReviewPending), la bandeja incluye los BC en Drafted que sean PURAMENTE parciales — al menos una
+        // linea Scope=Partial y NINGUNA Scope=Full. Son las cancelaciones parciales de UN servicio cuya Nota de
+        // Credito quedo pendiente de emision (el BC permanece Drafted porque no se inventa el snapshot fiscal;
+        // ver CancelServiceAsync).
+        //
+        // FIX N1 (security reviewer): se EXCLUYE explicitamente un Drafted que ya tiene alguna linea Scope=Full.
+        // Ese es el caso del anular-total que ABSORBIO un draft parcial (FRENTE E): pasa a ser una anulacion
+        // TOTAL en curso con su propio circuito, y mostrarlo como "Pendiente de emisión" con el monto de las
+        // Partial seria engañoso. Un Drafted de anulacion total normal (solo Full) tampoco entra por lo mismo.
         var candidates = await _db.BookingCancellations
             .AsNoTracking()
             .Include(b => b.Reserva)
                 .ThenInclude(r => r.Payer)
-            .Where(b => PendingCreditNoteReviewStates.Contains(b.Status))
-            .OrderBy(b => b.ConfirmedWithClientAt) // mas antiguo primero (prioridad de revision)
+            .Include(b => b.Lines)
+            .Where(b => PendingCreditNoteReviewStates.Contains(b.Status)
+                     || (b.Status == BookingCancellationStatus.Drafted
+                         && b.Lines.Any(l => l.Scope == BookingCancellationLineScope.Partial)
+                         && !b.Lines.Any(l => l.Scope == BookingCancellationLineScope.Full)))
+            // Mas antiguo primero (prioridad de revision). Los T5 no tienen ConfirmedWithClientAt (quedan en
+            // Drafted), asi que caemos a DraftedAt.
+            .OrderBy(b => b.ConfirmedWithClientAt ?? b.DraftedAt)
             .ToListAsync(ct);
 
         var rows = candidates
-            .Select(b => new PendingCreditNoteReviewDto
+            .Select(b =>
             {
-                BookingCancellationPublicId = b.PublicId,
-                ReservaPublicId = b.Reserva?.PublicId ?? Guid.Empty,
-                ReservaNumero = b.Reserva?.NumeroReserva ?? string.Empty,
-                // Preferimos el nombre del cliente pagador; si no hay, el nombre de la reserva.
-                ClienteNombre = b.Reserva?.Payer?.FullName ?? b.Reserva?.Name ?? string.Empty,
-                Status = b.Status.ToString(),
-                EnteredReviewAt = b.ConfirmedWithClientAt,
-                CreditNoteAmount = b.FiscalLiquidation?.FiscalAmountToCredit,
-                CreditNoteCurrency = b.FiscalLiquidation?.Currency,
+                // Monto/moneda del pendiente T5 (Drafted con lineas Partial): el FiscalLiquidation VO es null,
+                // asi que el monto sale de la suma de las lineas Partial RESUELTAS (con monto confirmado). Si
+                // ninguna esta resuelta (caso ambiguo/mismatch), queda sin monto -> "pendiente de resolucion".
+                var partialLines = b.Lines
+                    .Where(l => l.Scope == BookingCancellationLineScope.Partial)
+                    .ToList();
+                var resolvedPartialLines = partialLines
+                    .Where(l => l.ConfirmedGrossCreditAmount.HasValue)
+                    .ToList();
+                decimal? partialAmount = resolvedPartialLines.Count > 0
+                    ? resolvedPartialLines.Sum(l => l.ConfirmedGrossCreditAmount!.Value)
+                    : (decimal?)null;
+                // Currency de las lineas ya viene en ISO ("ARS"/"USD"). Tomamos la de la primera linea Partial.
+                string? partialCurrency = partialLines.Count > 0 ? partialLines[0].Currency : null;
+
+                return new PendingCreditNoteReviewDto
+                {
+                    BookingCancellationPublicId = b.PublicId,
+                    ReservaPublicId = b.Reserva?.PublicId ?? Guid.Empty,
+                    ReservaNumero = b.Reserva?.NumeroReserva ?? string.Empty,
+                    // Preferimos el nombre del cliente pagador; si no hay, el nombre de la reserva.
+                    ClienteNombre = b.Reserva?.Payer?.FullName ?? b.Reserva?.Name ?? string.Empty,
+                    // Data-exposure: NUNCA el nombre crudo del enum ("Drafted"/"ManualReviewPending"). Etiqueta
+                    // de negocio en español para el operador de la bandeja.
+                    Status = ProjectPendingReviewStatusLabel(b.Status),
+                    // Los T5 no tienen ConfirmedWithClientAt (quedan Drafted): caemos a DraftedAt.
+                    EnteredReviewAt = b.ConfirmedWithClientAt ?? b.DraftedAt,
+                    CreditNoteAmount = b.FiscalLiquidation?.FiscalAmountToCredit ?? partialAmount,
+                    CreditNoteCurrency = b.FiscalLiquidation?.Currency ?? partialCurrency,
+                };
             })
             .ToList();
 
         return rows;
     }
+
+    /// <summary>
+    /// Data-exposure (FRENTE D, ADR-044 T5): traduce el estado interno del BC a una etiqueta de negocio en
+    /// español para la bandeja "Comprobantes por resolver". NUNCA se expone el nombre crudo del enum al usuario.
+    /// Un <c>Drafted</c> con lineas Partial es una cancelacion parcial cuya NC quedo pendiente de emision; los
+    /// estados de revision manual son liquidaciones que el back-office tiene que aprobar/emitir.
+    /// </summary>
+    private static string ProjectPendingReviewStatusLabel(BookingCancellationStatus status)
+        => status switch
+        {
+            BookingCancellationStatus.Drafted => "Pendiente de emisión",
+            BookingCancellationStatus.ManualReviewPending => "En revisión",
+            BookingCancellationStatus.RequiresManualReview => "En revisión",
+            _ => "En revisión",
+        };
 
     // =========================================================================
     // FC1.3.3 (ADR-009 §2.7 G3, 2026-05-21): edicion admin de la liquidacion
@@ -3824,14 +4286,23 @@ public class BookingCancellationService
         }
 
         // 5) Aplicar overrides del admin sobre el input.
+        // ADR-044 T5 Addendum fix B1(a) (2026-07-11): mismo capeo que ConfirmAsync — CancellationAmount se
+        // acota al remanente acreditable real de la factura, no al ImporteTotal a secas (ver el comentario
+        // detallado en ConfirmAsync). excludeBookingCancellationId: bc.Id (FRENTE E anti-doble-cap) +
+        // seguridad de concurrencia por los indices unicos parciales (M1/C2): ver el comentario detallado en
+        // ConfirmAsync — vale identico aca.
         var penaltyOverride = req.OperatorPenaltyAmountOverride ?? 0m;
+        var remainingCreditableAmount = await RunUnderInvoiceLockAsync(
+            bc.OriginatingInvoiceId,
+            () => ComputeInvoiceRemainingCreditableAmountAsync(bc.OriginatingInvoiceId, ct, excludeBookingCancellationId: bc.Id),
+            ct);
         var calculatorInput = new FiscalLiquidationInput(
             OriginatingInvoice: bc.OriginatingInvoice,
             Items: invoiceItems,
             Supplier: supplier,
             InvoicingModeAtEvent: bc.FiscalSnapshot.InvoicingModeAtEvent,
             OriginalInvoiceAmount: bc.OriginatingInvoice.ImporteTotal,
-            CancellationAmount: bc.OriginatingInvoice.ImporteTotal,
+            CancellationAmount: remainingCreditableAmount,
             OperatorPenaltyAmount: penaltyOverride,
             RetentionNatureChangedByUser: false,
             OriginalInvoiceUnclearByUser: false,
@@ -4122,6 +4593,165 @@ public class BookingCancellationService
             await tx.CommitAsync(ct); // libera el lock al commitear
             return result;
         });
+    }
+
+    /// <summary>
+    /// ADR-044 T5 Addendum (2026-07-11): mismo patron que <see cref="RunUnderParentLockAsync{T}"/>
+    /// (<c>SELECT ... FOR UPDATE</c>, <c>lock_timeout</c> acotado), pero lockeando la FACTURA en vez del BC
+    /// padre. Existe porque, con la Decision C (varios <see cref="BookingCancellation"/> no-abortados
+    /// conviviendo por reserva), DOS eventos de cancelacion distintos — uno parcial (T5) y uno legacy total,
+    /// o dos parciales sucesivas — pueden calcular el remanente ACREDITABLE de la MISMA factura casi al mismo
+    /// tiempo. Sin este lock, ambos verian el mismo remanente "libre" y emitirian NCs cuya suma supera el
+    /// importe de la factura (el riesgo que el propio ADR ya habia anotado como "cerrar antes de T5").
+    ///
+    /// <para>Se lockea la fila de <c>"Invoices"</c> (siempre existe, no hace falta una tabla nueva ni
+    /// <c>pg_advisory_xact_lock</c>). Usado por los TRES puntos de escritura de NC de este modulo: el gate de
+    /// <see cref="CancelServiceAsync"/> (T5), y el camino LEGACY de anulacion total dentro de
+    /// <c>ConfirmAsync</c>/<c>EditLiquidationAsync</c> (fix B1(a)/C2) — ninguno de los tres puede leer el
+    /// remanente de una factura sin este candado.</para>
+    /// </summary>
+    private async Task<T> RunUnderInvoiceLockAsync<T>(
+        int invoiceId, Func<Task<T>> body, CancellationToken ct)
+    {
+        if (!_db.Database.IsRelational())
+        {
+            // InMemory: no soporta FOR UPDATE ni transacciones. Corremos el cuerpo directo (la
+            // serializacion real se valida en integracion Postgres, mismo criterio que el lock del BC).
+            return await body();
+        }
+
+        var strategy = _db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await _db.Database.BeginTransactionAsync(ct);
+
+            await _db.Database.ExecuteSqlRawAsync("SET LOCAL lock_timeout = '5s'", ct);
+
+            // FOR UPDATE de la factura por Id: serializa la lectura-decision del remanente ACREDITABLE de
+            // cualquier evento de cancelacion (parcial o total) que la involucre.
+            await _db.Database.ExecuteSqlRawAsync(
+                "SELECT 1 FROM \"Invoices\" WHERE \"Id\" = {0} FOR UPDATE",
+                new object[] { invoiceId }, ct);
+
+            var result = await body();
+
+            await tx.CommitAsync(ct);
+            return result;
+        });
+    }
+
+    /// <summary>
+    /// ADR-044 T5 Addendum, Decision B (2026-07-11): remanente ACREDITABLE de una factura de venta — cuanto de
+    /// su <c>ImporteTotal</c> todavia NO tiene una Nota de Credito viva (<c>Succeeded</c>) o en camino
+    /// (<c>Pending</c>) en su contra. Formula UNICA reusada por el gate de <see cref="CancelServiceAsync"/>
+    /// (decidir NC-total-de-la-factura vs NC-parcial), el camino LEGACY de anulacion total (fix B1(a),
+    /// capear <c>CancellationAmount</c>) y el limite acumulativo de NC parciales sucesivas sobre el MISMO
+    /// comprobante (punto 5 de la spec fiscal). SIEMPRE debe leerse con la fila de la factura lockeada
+    /// (<c>FOR UPDATE</c>): el camino legacy usa <see cref="RunUnderInvoiceLockAsync{T}"/>; el gate de T5
+    /// (<see cref="CancelServiceAsync"/>) ya corre dentro de su transaccion externa que tomo ese lock.
+    ///
+    /// <para><b>Por que Pending cuenta</b> (no solo Succeeded): si no se reservara el monto apenas se encola
+    /// la NC, dos cancelaciones casi simultaneas sobre la misma factura verian el mismo remanente "libre" y
+    /// ambas se aprobarian, sumando mas que la factura vale.</para>
+    ///
+    /// <para><b>Como se descuenta el credito T5 (parcial) que todavia NO emitio su NC</b> (fix B2-backend): en
+    /// T5 el cap se reserva por la <see cref="BookingCancellationLine"/> (<see cref="BookingCancellationLine.TargetInvoiceId"/>
+    /// + <see cref="BookingCancellationLine.ConfirmedGrossCreditAmount"/>), NO por una hija Pending fantasma.
+    /// Por eso el remanente descuenta DOS cosas: (a) las hijas <c>BookingCancellationCreditNote</c> emitidas /
+    /// en camino del circuito de anulacion TOTAL, y (b) las reservas por-linea de eventos T5 cuya NC aun no se
+    /// emitio. Cuando la NC de una linea se emite (tanda de la pantalla), nace su hija y el monto pasa a
+    /// contarse por la hija: por eso (b) excluye las lineas cuyo BC ya tiene una hija EMITIDA para esta factura
+    /// (evita el doble conteo linea-vs-hija).</para>
+    ///
+    /// <para><b><paramref name="excludeBookingCancellationId"/></b>: cuando el camino de anulacion TOTAL
+    /// (<see cref="ConfirmAsync"/>/<see cref="EditLiquidationAsync"/>) computa el remanente para acreditar la
+    /// factura ENTERA de SU propio BC, la reserva por-linea de una parcial previa absorbida por ese mismo BC
+    /// NO debe restarse (la parcial nunca emitio su NC; el total acredita la factura completa). Ese caller pasa
+    /// <c>bc.Id</c> para excluir las lineas de su propio BC. El gate de T5 pasa <c>null</c> (dos lineas T5 de la
+    /// MISMA reserva sobre la misma factura SI se topean entre si: 60 + 60 sobre 100 -> la segunda se capa a 40).</para>
+    ///
+    /// <para><b>Por que se libera solo, sin codigo de "liberacion"</b>: cuando ARCA rechaza una NC,
+    /// <see cref="ApplyChildResultAndReevaluateAsync"/> (ADR-042) pasa la hija a <c>Failed</c> — que esta
+    /// formula NO cuenta (solo <c>Succeeded</c>/<c>Pending</c>) — asi que su monto vuelve a estar disponible
+    /// automaticamente para la siguiente NC parcial de esa factura.</para>
+    /// </summary>
+    // internal (no private, InternalsVisibleTo("TravelApi.Tests") ya configurado): permite a los tests unit
+    // ejercitar la formula del remanente directamente, sin pasar por el lock relacional (que es no-op en
+    // InMemory de todos modos).
+    internal async Task<decimal> ComputeInvoiceRemainingCreditableAmountAsync(
+        int invoiceId, CancellationToken ct, int? excludeBookingCancellationId = null)
+    {
+        var importeTotal = await _db.Invoices.AsNoTracking()
+            .Where(i => i.Id == invoiceId)
+            .Select(i => (decimal?)i.ImporteTotal)
+            .FirstOrDefaultAsync(ct) ?? 0m;
+
+        if (importeTotal <= 0m)
+            return 0m;
+
+        // (A) Hijas del circuito de anulacion TOTAL (ADR-042): una con NC vinculada cuenta por el monto real
+        //     de esa NC; una Pending legacy sin NC vinculada representa una NC TOTAL en camino -> ImporteTotal.
+        var liveChildren = await _db.BookingCancellationCreditNotes.AsNoTracking()
+            .Where(c => c.OriginatingInvoiceId == invoiceId
+                     && (c.Status == BookingCancellationCreditNoteStatus.Succeeded
+                         || c.Status == BookingCancellationCreditNoteStatus.Pending))
+            .Select(c => new { c.CreditNoteInvoiceId, c.BookingCancellationId })
+            .ToListAsync(ct);
+
+        var creditNoteInvoiceIds = liveChildren
+            .Where(c => c.CreditNoteInvoiceId.HasValue)
+            .Select(c => c.CreditNoteInvoiceId!.Value)
+            .Distinct()
+            .ToList();
+        var creditNoteAmountsById = creditNoteInvoiceIds.Count == 0
+            ? new Dictionary<int, decimal>()
+            : await _db.Invoices.AsNoTracking()
+                .Where(i => creditNoteInvoiceIds.Contains(i.Id))
+                .Select(i => new { i.Id, i.ImporteTotal })
+                .ToDictionaryAsync(i => i.Id, i => i.ImporteTotal, ct);
+
+        decimal alreadyCommitted = 0m;
+        // BCs que YA tienen una hija EMITIDA (NC vinculada) para esta factura: sus reservas por-linea NO se
+        // vuelven a contar en (B) — su monto ya se conto aca por la hija. Evita el doble conteo linea-vs-hija.
+        var bcIdsWithEmittedChild = new HashSet<int>();
+        foreach (var child in liveChildren)
+        {
+            if (child.CreditNoteInvoiceId.HasValue
+                && creditNoteAmountsById.TryGetValue(child.CreditNoteInvoiceId.Value, out var emittedAmount))
+            {
+                alreadyCommitted += emittedAmount;
+                bcIdsWithEmittedChild.Add(child.BookingCancellationId);
+            }
+            else
+            {
+                // Hija Pending legacy sin NC vinculada: NC TOTAL en camino (circuito de anulacion total).
+                alreadyCommitted += importeTotal;
+            }
+        }
+
+        // (B) Reservas por LINEA de eventos de cancelacion PARCIAL (T5) cuya NC todavia no se emitio: cada
+        //     linea Scope=Partial con monto confirmado apuntando a esta factura reserva ese monto. Se excluyen
+        //     las de un BC ya Aborted/Closed (evento muerto/terminado), las de un BC que ya emitio su hija (ya
+        //     contadas en (A)), y las del BC que se esta confirmando ahora (excludeBookingCancellationId).
+        var partialLineReservations = await _db.BookingCancellationLines.AsNoTracking()
+            .Where(l => l.TargetInvoiceId == invoiceId
+                     && l.Scope == BookingCancellationLineScope.Partial
+                     && l.ConfirmedGrossCreditAmount != null
+                     && l.BookingCancellation.Status != BookingCancellationStatus.Aborted
+                     && l.BookingCancellation.Status != BookingCancellationStatus.Closed
+                     && (excludeBookingCancellationId == null || l.BookingCancellationId != excludeBookingCancellationId))
+            .Select(l => new { l.BookingCancellationId, Amount = l.ConfirmedGrossCreditAmount!.Value })
+            .ToListAsync(ct);
+
+        foreach (var reservation in partialLineReservations)
+        {
+            if (bcIdsWithEmittedChild.Contains(reservation.BookingCancellationId))
+                continue; // ya contada por su hija emitida en (A) -> no doble contar
+            alreadyCommitted += reservation.Amount;
+        }
+
+        var remaining = importeTotal - alreadyCommitted;
+        return remaining < 0m ? 0m : remaining;
     }
 
     /// <summary>
@@ -9391,7 +10021,7 @@ public class BookingCancellationService
 
         if (distinctSupplierIds.Count == 0)
             throw new InvalidOperationException(
-                $"La reserva {reserva.NumeroReserva} no tiene servicios con Supplier asignado. " +
+                $"La reserva {reserva.NumeroReserva} no tiene servicios con operador asignado. " +
                 "Se requiere al menos un servicio con operador para registrar la cancelacion.");
 
         if (distinctSupplierIds.Count > 1)
@@ -9469,11 +10099,26 @@ public class BookingCancellationService
         var lineNetCosts = new List<decimal>();
         bool wantsOne = onlyServiceTable.HasValue && onlyServiceId.HasValue;
 
-        // Helper local: agrega una linea si el servicio tiene operador y pasa el filtro de "solo este".
-        void AddLine(CancellableServiceTable table, int serviceId, int? supplierId, string? currency, decimal salePrice, decimal netCost)
+        // ADR-044 T5 Addendum, Revision 2, fix B1(b) (2026-07-11, corregido C1): tras una cancelacion PARCIAL
+        // previa, el servicio ya cancelado NO debe volver a aportar linea/RefundCap cuando se arma una
+        // anulacion TOTAL siguiente (doble computo de cap + deuda fantasma del operador). El filtro se aplica
+        // UNICAMENTE en alcance Full (equivalente a !wantsOne): el build de UNA sola linea (Scope=Partial,
+        // wantsOne=true) construye la linea del servicio que se ACABA DE MARCAR cancelado un paso antes
+        // (RecordPartialCancellationLineAsync) — si filtraramos ahi tambien, `builtLines` quedaria vacia y la
+        // cancelacion parcial entera rompe (`builtLines[0]` tira). El mapeo de estado reusa EXACTAMENTE el
+        // mismo helper que ServiceResolutionRules.IsCancelled (WorkflowStatusHelper): no es una regla nueva,
+        // es la MISMA regla aplicada sobre la proyeccion liviana (Status) en vez de la entidad completa.
+        bool excludeAlreadyCancelled = !wantsOne;
+
+        // Helper local: agrega una linea si el servicio tiene operador, pasa el filtro de "solo este" y (en
+        // alcance Full) todavia no esta cancelado.
+        void AddLine(
+            CancellableServiceTable table, int serviceId, int? supplierId, string? currency,
+            decimal salePrice, decimal netCost, bool isCancelled)
         {
             if (supplierId is null) return;                       // servicio sin operador no genera linea (ni deuda)
             if (wantsOne && (table != onlyServiceTable!.Value || serviceId != onlyServiceId!.Value)) return;
+            if (excludeAlreadyCancelled && isCancelled) return;    // B1(b): ya tiene su propia linea Partial
 
             lines.Add(new BookingCancellationLine
             {
@@ -9491,40 +10136,53 @@ public class BookingCancellationService
 
         var hotels = await _db.HotelBookings.AsNoTracking()
             .Where(h => h.ReservaId == reserva.Id)
-            .Select(h => new { h.Id, h.SupplierId, h.Currency, h.SalePrice, h.NetCost })
+            .Select(h => new { h.Id, h.SupplierId, h.Currency, h.SalePrice, h.NetCost, h.Status })
             .ToListAsync(ct);
-        foreach (var h in hotels) AddLine(CancellableServiceTable.Hotel, h.Id, h.SupplierId, h.Currency, h.SalePrice, h.NetCost);
+        foreach (var h in hotels)
+            AddLine(CancellableServiceTable.Hotel, h.Id, h.SupplierId, h.Currency, h.SalePrice, h.NetCost,
+                isCancelled: WorkflowStatusHelper.MapGenericStatus(h.Status ?? string.Empty) == WorkflowStatuses.Cancelado);
 
         var flights = await _db.FlightSegments.AsNoTracking()
             .Where(f => f.ReservaId == reserva.Id)
-            .Select(f => new { f.Id, f.SupplierId, f.Currency, f.SalePrice, f.NetCost })
+            .Select(f => new { f.Id, f.SupplierId, f.Currency, f.SalePrice, f.NetCost, f.Status })
             .ToListAsync(ct);
-        foreach (var f in flights) AddLine(CancellableServiceTable.Flight, f.Id, f.SupplierId, f.Currency, f.SalePrice, f.NetCost);
+        foreach (var f in flights)
+            // El aereo mapea por codigo IATA (MapFlightStatus), no por el mapeo generico de texto libre.
+            AddLine(CancellableServiceTable.Flight, f.Id, f.SupplierId, f.Currency, f.SalePrice, f.NetCost,
+                isCancelled: WorkflowStatusHelper.MapFlightStatus(f.Status ?? string.Empty) == WorkflowStatuses.Cancelado);
 
         var transfers = await _db.TransferBookings.AsNoTracking()
             .Where(t => t.ReservaId == reserva.Id)
-            .Select(t => new { t.Id, t.SupplierId, t.Currency, t.SalePrice, t.NetCost })
+            .Select(t => new { t.Id, t.SupplierId, t.Currency, t.SalePrice, t.NetCost, t.Status })
             .ToListAsync(ct);
-        foreach (var t in transfers) AddLine(CancellableServiceTable.Transfer, t.Id, t.SupplierId, t.Currency, t.SalePrice, t.NetCost);
+        foreach (var t in transfers)
+            AddLine(CancellableServiceTable.Transfer, t.Id, t.SupplierId, t.Currency, t.SalePrice, t.NetCost,
+                isCancelled: WorkflowStatusHelper.MapGenericStatus(t.Status ?? string.Empty) == WorkflowStatuses.Cancelado);
 
         var packages = await _db.PackageBookings.AsNoTracking()
             .Where(p => p.ReservaId == reserva.Id)
-            .Select(p => new { p.Id, p.SupplierId, p.Currency, p.SalePrice, p.NetCost })
+            .Select(p => new { p.Id, p.SupplierId, p.Currency, p.SalePrice, p.NetCost, p.Status })
             .ToListAsync(ct);
-        foreach (var p in packages) AddLine(CancellableServiceTable.Package, p.Id, p.SupplierId, p.Currency, p.SalePrice, p.NetCost);
+        foreach (var p in packages)
+            AddLine(CancellableServiceTable.Package, p.Id, p.SupplierId, p.Currency, p.SalePrice, p.NetCost,
+                isCancelled: WorkflowStatusHelper.MapGenericStatus(p.Status ?? string.Empty) == WorkflowStatuses.Cancelado);
 
         var assistances = await _db.AssistanceBookings.AsNoTracking()
             .Where(a => a.ReservaId == reserva.Id)
-            .Select(a => new { a.Id, a.SupplierId, a.Currency, a.SalePrice, a.NetCost })
+            .Select(a => new { a.Id, a.SupplierId, a.Currency, a.SalePrice, a.NetCost, a.Status })
             .ToListAsync(ct);
-        foreach (var a in assistances) AddLine(CancellableServiceTable.Assistance, a.Id, a.SupplierId, a.Currency, a.SalePrice, a.NetCost);
+        foreach (var a in assistances)
+            AddLine(CancellableServiceTable.Assistance, a.Id, a.SupplierId, a.Currency, a.SalePrice, a.NetCost,
+                isCancelled: WorkflowStatusHelper.MapGenericStatus(a.Status ?? string.Empty) == WorkflowStatuses.Cancelado);
 
         // Generico: SupplierId nullable; los que no tienen operador no generan linea.
         var generics = await _db.Servicios.AsNoTracking()
             .Where(s => s.ReservaId == reserva.Id && s.SupplierId != null)
-            .Select(s => new { s.Id, s.SupplierId, s.Currency, s.SalePrice, s.NetCost })
+            .Select(s => new { s.Id, s.SupplierId, s.Currency, s.SalePrice, s.NetCost, s.Status })
             .ToListAsync(ct);
-        foreach (var s in generics) AddLine(CancellableServiceTable.Generic, s.Id, s.SupplierId, s.Currency, s.SalePrice, s.NetCost);
+        foreach (var s in generics)
+            AddLine(CancellableServiceTable.Generic, s.Id, s.SupplierId, s.Currency, s.SalePrice, s.NetCost,
+                isCancelled: WorkflowStatusHelper.MapGenericStatus(s.Status ?? string.Empty) == WorkflowStatuses.Cancelado);
 
         if (lines.Count == 0)
         {
@@ -9539,7 +10197,7 @@ public class BookingCancellationService
                     $"El servicio indicado de la reserva {reserva.NumeroReserva} no existe o no tiene operador asignado.");
 
             throw new InvalidOperationException(
-                $"La reserva {reserva.NumeroReserva} no tiene servicios con Supplier asignado. " +
+                $"La reserva {reserva.NumeroReserva} no tiene servicios con operador asignado. " +
                 "Se requiere al menos un servicio con operador para registrar la cancelacion.");
         }
 

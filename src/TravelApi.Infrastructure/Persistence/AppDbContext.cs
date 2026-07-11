@@ -1724,11 +1724,21 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             // activos compitiendo por el mismo ReservaId. Mantener Drafted DENTRO
             // del unique es un backstop extra contra doble-INSERT por doble-click.
             //
+            // ADR-044 T5 Addendum, Decision C (2026-07-11): se AMPLIA el filtro para excluir TAMBIEN
+            // Status=4 (Closed). Un BC Closed es un evento fiscal TERMINADO (NC ya con CAE, reembolso ya
+            // consumido) — igual que un Aborted, es una foto vieja, no una cancelacion ACTIVA. Antes, un
+            // BC Closed de una anulacion parcial de UN servicio dejaba IMPOSIBLE volver a anular (total o
+            // parcialmente) esa misma reserva para siempre (bug verificado, spec T5). Cada evento de
+            // cancelacion (parcial o total) es su propia fila: T5 abre una fila NUEVA por cada servicio que
+            // se cancela, y el UNIQUE solo debe impedir DOS eventos EN CURSO simultaneos, no bloquear un
+            // evento nuevo porque uno viejo ya se cerro. Direccion SEGURA: excluir MAS estados de un unico
+            // solo puede RELAJAR la restriccion, nunca puede violar filas ya existentes.
+            //
             // EF Core traduce HasFilter a "CREATE UNIQUE INDEX ... WHERE <sql>".
-            // El literal usa la columna fisica "Status" (int) y el valor 6 = Aborted.
+            // El literal usa la columna fisica "Status" (int); 4 = Closed, 6 = Aborted.
             entity.HasIndex(b => b.ReservaId)
                   .IsUnique()
-                  .HasFilter("\"Status\" <> 6");
+                  .HasFilter("\"Status\" NOT IN (4, 6)");
 
             // INV-100 (review BR4, 2026-05-14): la factura original que se anula no
             // puede pertenecer a dos cancelaciones distintas. Sin este UNIQUE seria
@@ -1741,9 +1751,14 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             // que este indice tambien debe ignorar los Aborted o el INSERT del retry
             // chocaria aca. Sigue garantizando: como maximo una cancelacion NO-abortada
             // por factura (la proteccion anti-doble-NC se mantiene intacta).
+            //
+            // ADR-044 T5 Addendum, Decision C: mismo ensanche que el indice de ReservaId (excluye TAMBIEN
+            // Closed=4). Una factura puede tener varias filas BC a lo largo del tiempo (una anulacion
+            // parcial cerrada + otra nueva abierta despues); lo que sigue prohibido es que DOS queden
+            // simultaneamente EN CURSO sobre la misma factura.
             entity.HasIndex(b => b.OriginatingInvoiceId)
                   .IsUnique()
-                  .HasFilter("\"Status\" <> 6")
+                  .HasFilter("\"Status\" NOT IN (4, 6)")
                   .HasDatabaseName("IX_BookingCancellations_OriginatingInvoiceId");
 
             entity.HasOne(b => b.Reserva)
@@ -1940,12 +1955,27 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .HasForeignKey(l => l.DebitNoteInvoiceId)
                   .OnDelete(DeleteBehavior.SetNull);
 
-            // Indices: el padre (cargar las lineas de un BC) y el operador (imputar refund por SupplierId,
-            // INV-126 reformulado a nivel linea). Ambos son los accesos calientes.
+            // ADR-044 T5 Addendum, Decision B (2026-07-11): factura destino del CREDITO (NC) de esta linea.
+            // Restrict (no cascade): mismo criterio defensivo que el resto de las FK a Invoice de este modulo
+            // (una factura con CAE no se borra fisicamente en este sistema).
+            entity.HasOne(l => l.TargetInvoice)
+                  .WithMany()
+                  .HasForeignKey(l => l.TargetInvoiceId)
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.Restrict);
+            entity.Property(l => l.ConfirmedGrossCreditAmount).HasPrecision(18, 2);
+            entity.Property(l => l.CreditAmountConfirmedByUserId).HasMaxLength(450);
+            entity.Property(l => l.CreditAmountConfirmedByUserName).HasMaxLength(200);
+
+            // Indices: el padre (cargar las lineas de un BC), el operador (imputar refund por SupplierId,
+            // INV-126 reformulado a nivel linea) y la factura destino del credito (T5, calcular el remanente
+            // de una factura implica traer sus lineas por TargetInvoiceId). Todos son accesos calientes.
             entity.HasIndex(l => l.BookingCancellationId)
                   .HasDatabaseName("IX_BookingCancellationLines_BookingCancellationId");
             entity.HasIndex(l => l.SupplierId)
                   .HasDatabaseName("IX_BookingCancellationLines_SupplierId");
+            entity.HasIndex(l => l.TargetInvoiceId)
+                  .HasDatabaseName("IX_BookingCancellationLines_TargetInvoiceId");
 
             // Concurrencia igual que el padre: cancelar un servicio y editar la reserva en paralelo -> 409.
             entity.UseXminAsConcurrencyToken();

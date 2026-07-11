@@ -33,15 +33,16 @@ public class PendingCreditNoteReviewDto
     public string ClienteNombre { get; set; } = string.Empty;
 
     /// <summary>
-    /// Estado del BC en texto (tipicamente "ManualReviewPending"; "RequiresManualReview" si algun dia
-    /// se persistiera). El frontend lo usa para distinguir si quisiera mostrar el sub-estado.
+    /// Etiqueta de negocio en español del estado del pendiente, YA saneada para el usuario (nunca el nombre
+    /// crudo del enum interno). Valores: "Pendiente de emisión" (cancelación parcial de un servicio cuya nota
+    /// de crédito todavía no se emitió) o "En revisión" (liquidación que el back-office tiene que aprobar/emitir).
     /// </summary>
     public string Status { get; set; } = string.Empty;
 
     /// <summary>
-    /// Cuando el BC entro a revision manual. Es <c>ConfirmedWithClientAt</c>: el flujo de NC parcial
-    /// sella ese timestamp al transicionar a <c>ManualReviewPending</c> (SubmitForReviewAsync). Sirve
-    /// para ordenar la bandeja por antiguedad. Null solo en datos inconsistentes.
+    /// Cuando el pendiente entro a la bandeja, para ordenar por antiguedad. Para las liquidaciones en revision
+    /// manual es <c>ConfirmedWithClientAt</c> (sellado al transicionar a <c>ManualReviewPending</c>); para una
+    /// cancelacion parcial pendiente de emision (BC en Drafted, sin ese timestamp) es <c>DraftedAt</c>.
     /// </summary>
     public DateTime? EnteredReviewAt { get; set; }
 

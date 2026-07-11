@@ -270,8 +270,11 @@ public record DraftCancellationRequest(
 /// el servicio puntual. El service VALIDA server-side que el servicio pertenece a la reserva (no se confia
 /// en el frontend, espejo de INV-151).</para>
 ///
-/// <para><b>Fiscal</b>: NO se emite NC automatica (decision #3). El borrador/calculo queda para revision
-/// manual. La penalidad se clasifica por linea (pass-through vs cargo propio).</para>
+/// <para><b>Fiscal</b>: la penalidad se clasifica por linea (pass-through vs cargo propio). Cuando la
+/// reserva tiene factura de venta viva, ADR-044 T5 Addendum reemplaza el viejo bloqueo binario por una
+/// compuerta que resuelve a que factura y por cuanto le corresponde el credito de este servicio (ver
+/// <see cref="TargetInvoicePublicId"/>/<see cref="ConfirmedGrossCreditAmount"/>); la emision fiscal real
+/// (Nota de Credito) sigue un paso de confirmacion aparte, no automatico en esta llamada.</para>
 /// </summary>
 public record CancelServiceRequest(
     [Required] Guid ReservaPublicId,
@@ -282,7 +285,23 @@ public record CancelServiceRequest(
     [Required] Guid ServicePublicId,
 
     [Required, MinLength(10), MaxLength(1000)]
-    string Reason
+    string Reason,
+
+    /// <summary>
+    /// ADR-044 T5 Addendum, Decision B (2026-07-11): a que factura de venta VIVA de la reserva le corresponde
+    /// el credito de este servicio. Opcional: con 1 sola factura activa (el caso dominante) se resuelve solo,
+    /// sin fricción; solo hace falta cuando la reserva tiene 2+ facturas activas y el vendedor elige. Si no se
+    /// indica y hay ambigüedad, la linea queda sin factura destino resuelta (visible para resolucion manual).
+    /// </summary>
+    Guid? TargetInvoicePublicId = null,
+
+    /// <summary>
+    /// ADR-044 T5 Addendum, Decision B (2026-07-11): monto BRUTO (sin netear la multa) que el vendedor
+    /// confirma para el credito de este servicio contra <see cref="TargetInvoicePublicId"/>. Opcional: si no
+    /// se indica, el sistema propone el precio de venta del servicio. Se valida contra el remanente vivo de
+    /// esa factura (nunca se persiste un monto que la exceda).
+    /// </summary>
+    decimal? ConfirmedGrossCreditAmount = null
 );
 
 /// <summary>

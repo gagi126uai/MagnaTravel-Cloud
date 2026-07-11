@@ -481,6 +481,8 @@ public sealed class BookingCancellationSupplierInferenceTests
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => DraftAsync(service, reservaPublicId));
-        Assert.Contains("no tiene servicios con Supplier asignado", ex.Message);
+        // El mensaje es de cara al vendedor: dice "operador" (termino del negocio),
+        // nunca "Supplier" (nombre interno de la entidad). Gate de data-exposure 2026-07-11.
+        Assert.Contains("no tiene servicios con operador asignado", ex.Message);
     }
 }

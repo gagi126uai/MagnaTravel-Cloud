@@ -704,22 +704,24 @@ public class Adr025PartialAndMultiOperatorCancellationTests
     }
 
     // ============================================================
-    // SEC-B1 (CRITICO): el candado fiscal bloquea cancelar bajo factura CAE viva / voucher Issued
+    // ADR-044 T5 Addendum, Decision A (2026-07-11): SEC-B1 (bloqueo binario por factura viva) se REEMPLAZA
+    // por una compuerta de 3 salidas. El candado de VOUCHER Issued sigue igual (ver mas abajo); el de
+    // factura viva ya NO bloquea de punta a punta.
     // ============================================================
 
     [Fact]
-    public async Task CancelService_BlockedByLiveCaeInvoice_DoesNotCancelNorDropBalance_SECB1()
+    public async Task CancelService_WithLiveCaeInvoice_NoLongerBlocked_ResolvesCreditLineAndCancelsService()
     {
-        // SEC-B1: si la reserva tiene una FACTURA viva (CAE no anulado, no NC), cancelar un servicio
-        // bajaria la venta confirmada por debajo del total facturado SIN emitir NC -> divergencia
-        // fiscal irreversible. El guard debe BLOQUEAR (InvalidOperationException) ANTES de tocar nada:
-        // el servicio NO queda cancelado y el saldo del operador NO baja a escondidas.
+        // ADR-044 T5 Addendum, Decision A: con UNA sola factura de venta viva (caso trivial), cancelar el
+        // servicio YA NO se bloquea: el servicio se cancela, la deuda del operador se recalcula, y la linea
+        // de cancelacion resuelve SOLA la factura destino del credito (unica factura activa) y el monto
+        // (LineSaleAmount, coincide con el remanente completo -> "el servicio es el 100% de su factura").
         using var ctx = NewDbContext();
         var (reserva, _, supplierA, _, hotel, _) = await SeedAsync(ctx, hotelNetCost: 50_000m, paidToSupplierA: 50_000m);
         var service = BuildService(ctx);
 
         // Factura viva: TipoComprobante 11 = Factura C (NO es NC), CAE no vacio, anulacion != Succeeded.
-        ctx.Invoices.Add(new Invoice
+        var invoice = new Invoice
         {
             TipoComprobante = 11,
             PuntoDeVenta = 1,
@@ -729,29 +731,28 @@ public class Adr025PartialAndMultiOperatorCancellationTests
             ImporteTotal = 80_000m,
             ReservaId = reserva.Id,
             AnnulmentStatus = AnnulmentStatus.None,
-        });
+        };
+        ctx.Invoices.Add(invoice);
         await ctx.SaveChangesAsync();
 
-        var purchasesBefore = await ctx.SupplierBalanceByCurrency
-            .Where(r => r.SupplierId == supplierA.Id && r.Currency == "ARS")
-            .Select(r => (decimal?)r.ConfirmedPurchases)
-            .FirstOrDefaultAsync();
+        await service.CancelServiceAsync(
+            new CancelServiceRequest(reserva.PublicId, "Hotel", hotel.PublicId, "Bajo el hotel con factura viva"),
+            "vendedor-1", "Vendedor", CancellationToken.None);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            service.CancelServiceAsync(
-                new CancelServiceRequest(reserva.PublicId, "Hotel", hotel.PublicId, "Intento bajar el hotel con factura viva"),
-                "vendedor-1", "Vendedor", CancellationToken.None));
-
-        // El hotel sigue "Confirmado" (no se toco el Status) y la deuda/compra del operador NO bajo.
+        // El servicio SI queda cancelado (ya no se bloquea de punta a punta).
         var hotelReloaded = await ctx.HotelBookings.AsNoTracking().FirstAsync(h => h.Id == hotel.Id);
-        Assert.False(TravelApi.Domain.Reservations.ServiceResolutionRules.IsCancelled(hotelReloaded));
-        Assert.Null(hotelReloaded.CancelledAt);
+        Assert.True(TravelApi.Domain.Reservations.ServiceResolutionRules.IsCancelled(hotelReloaded));
+        Assert.NotNull(hotelReloaded.CancelledAt);
 
-        var purchasesAfter = await ctx.SupplierBalanceByCurrency
-            .Where(r => r.SupplierId == supplierA.Id && r.Currency == "ARS")
-            .Select(r => (decimal?)r.ConfirmedPurchases)
-            .FirstOrDefaultAsync();
-        Assert.Equal(purchasesBefore ?? 0m, purchasesAfter ?? 0m); // la venta NO bajo a escondidas
+        // La linea de cancelacion resolvio la factura destino y el monto SOLA (1 factura activa, sin ambiguedad).
+        var line = await ctx.BookingCancellationLines.AsNoTracking().SingleAsync();
+        Assert.Equal(invoice.Id, line.TargetInvoiceId);
+        Assert.Equal(80_000m, line.ConfirmedGrossCreditAmount);
+        Assert.NotNull(line.CreditAmountConfirmedAt);
+
+        // El BC padre queda Drafted (la emision fiscal real es un paso de confirmacion aparte, ADR-044 T5).
+        var bc = await ctx.BookingCancellations.AsNoTracking().SingleAsync();
+        Assert.Equal(BookingCancellationStatus.Drafted, bc.Status);
     }
 
     [Fact]
@@ -854,30 +855,31 @@ public class Adr025PartialAndMultiOperatorCancellationTests
     }
 
     [Fact]
-    public async Task CancelService_TypedService_WithLiveInvoice_BlockedByGuard_NeverReachesRecordPartial_SECB1b()
+    public async Task CancelService_TypedService_WithLiveInvoice_NoLongerBlocked_CreatesPartialLineWithTargetInvoice()
     {
-        // Con factura viva: el candado SEC-B1 bloquea antes -> jamas se ejecuta RecordPartial.
-        // Demuestra la exclusion mutua entre guard y ancla para servicios tipados (el gap de B1b).
+        // ADR-044 T5 Addendum, Decision A: con factura viva, un servicio TIPADO (hotel) ya no se bloquea.
+        // La linea Partial SI se crea (antes el guard cortaba antes de RecordPartial; ahora la resolucion
+        // de la nota de credito reemplaza ese corte).
         using var ctx = NewDbContext();
         var (reserva, _, _, _, hotel, _) = await SeedAsync(ctx);
         var service = BuildService(ctx);
 
-        ctx.Invoices.Add(new Invoice
+        var invoice = new Invoice
         {
             TipoComprobante = 11, PuntoDeVenta = 1, NumeroComprobante = 72, CAE = "12121212121212",
             Resultado = "A", ImporteTotal = 80_000m, ReservaId = reserva.Id, AnnulmentStatus = AnnulmentStatus.None,
-        });
+        };
+        ctx.Invoices.Add(invoice);
         await ctx.SaveChangesAsync();
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            service.CancelServiceAsync(
-                new CancelServiceRequest(reserva.PublicId, "Hotel", hotel.PublicId, "Baja parcial con factura viva"),
-                "vendedor-1", "Vendedor", CancellationToken.None));
+        await service.CancelServiceAsync(
+            new CancelServiceRequest(reserva.PublicId, "Hotel", hotel.PublicId, "Baja parcial con factura viva"),
+            "vendedor-1", "Vendedor", CancellationToken.None);
 
-        // El guard corto antes: no hay linea Partial (ni se cancelo el servicio).
-        Assert.Empty(await ctx.BookingCancellationLines.ToListAsync());
+        var line = await ctx.BookingCancellationLines.AsNoTracking().SingleAsync();
+        Assert.Equal(invoice.Id, line.TargetInvoiceId);
         var hotelReloaded = await ctx.HotelBookings.AsNoTracking().FirstAsync(h => h.Id == hotel.Id);
-        Assert.False(TravelApi.Domain.Reservations.ServiceResolutionRules.IsCancelled(hotelReloaded));
+        Assert.True(TravelApi.Domain.Reservations.ServiceResolutionRules.IsCancelled(hotelReloaded));
     }
 
     [Fact]

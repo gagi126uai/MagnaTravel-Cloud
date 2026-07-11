@@ -122,8 +122,9 @@ public class CancellationPendingCreditNoteReviewTests
         var rows = await service.GetCancellationsPendingCreditNoteReviewAsync(CancellationToken.None);
 
         Assert.Equal(2, rows.Count);
-        Assert.All(rows, r => Assert.Contains(r.Status,
-            new[] { "ManualReviewPending", "RequiresManualReview" }));
+        // Data-exposure (FRENTE D, ADR-044 T5): el Status es una etiqueta de negocio, NUNCA el nombre crudo del
+        // enum. Los estados de revision manual proyectan "En revisión".
+        Assert.All(rows, r => Assert.Equal("En revisión", r.Status));
         // Las reservas 3..7 (otros estados) no salieron.
         Assert.DoesNotContain(rows, r => r.ReservaNumero == "F-2026-0003");
         Assert.DoesNotContain(rows, r => r.ReservaNumero == "F-2026-0005");
@@ -145,7 +146,7 @@ public class CancellationPendingCreditNoteReviewTests
         Assert.Equal(bc.PublicId, row.BookingCancellationPublicId);
         Assert.Equal("F-2026-0001", row.ReservaNumero);
         Assert.Equal("Juan Perez", row.ClienteNombre); // tomo el nombre del pagador
-        Assert.Equal("ManualReviewPending", row.Status);
+        Assert.Equal("En revisión", row.Status); // etiqueta de negocio, no el nombre del enum (data-exposure)
         Assert.Equal(enteredAt, row.EnteredReviewAt);
         Assert.Equal(1500m, row.CreditNoteAmount);
         Assert.Equal("USD", row.CreditNoteCurrency);

@@ -198,4 +198,42 @@ public class BookingCancellationLine : IHasPublicId
     /// existia), asi que los dos agregados coinciden exactamente para el historico.</para>
     /// </summary>
     public decimal RetainedDeductionAmount { get; set; }
+
+    // ===== ADR-044 T5 (Addendum, Decision B, 2026-07-11): anulacion PARCIAL — a que factura y por cuanto =====
+
+    /// <summary>
+    /// A que FACTURA DE VENTA de la reserva le corresponde el credito (NC) de ESTE servicio cancelado. Mismo
+    /// patron que <see cref="BookingCancellationLineOperatorCharge.TargetInvoiceId"/> (T3b Decision 1), pero
+    /// aplicado al lado NC/credito de la linea (no al cargo del operador): con 1 sola factura activa se
+    /// autocompleta sin fricción; con 2+ facturas activas, el vendedor la elige al confirmar (sin eleccion,
+    /// la linea no participa de emision automatica — cae a revision manual).
+    ///
+    /// <para><b>Null</b> = todavia no resuelto (lineas legacy previas a esta tanda, o casos ambiguos sin
+    /// eleccion). Sin backfill: cero regresion, cae al mismo fallback de revision manual que existia antes.</para>
+    /// </summary>
+    public int? TargetInvoiceId { get; set; }
+    public Invoice? TargetInvoice { get; set; }
+
+    /// <summary>
+    /// Monto BRUTO (sin netear la multa, criterio matriculado 2026-06-01) que el vendedor confirmo para el
+    /// credito de este servicio contra <see cref="TargetInvoiceId"/>. Se PROPONE con
+    /// <see cref="LineSaleAmount"/> (default, cero friccion visual) pero se CONFIRMA por el vendedor: no existe
+    /// ninguna tabla servicio-a-renglon-de-factura (verificado T3b Decision 1), asi que <c>LineSaleAmount</c>
+    /// es lo que el SERVICIO vale en el sistema, no necesariamente lo que la factura (armada 100% manual) le
+    /// asigno si comparte comprobante con otros servicios.
+    ///
+    /// <para>Comparado contra el remanente vivo de <see cref="TargetInvoiceId"/> decide, SIN pedir un segundo
+    /// dato al vendedor: monto == remanente -> NC total de esa factura (reusa el circuito de siempre); monto
+    /// &lt; remanente -> NC parcial (<c>CreditNoteKind.PartialOnOriginal</c>); monto &gt; remanente -> se
+    /// rechaza, no se persiste (excederia lo que la factura vale).</para>
+    /// </summary>
+    public decimal? ConfirmedGrossCreditAmount { get; set; }
+
+    [MaxLength(450)]
+    public string? CreditAmountConfirmedByUserId { get; set; }
+
+    [MaxLength(200)]
+    public string? CreditAmountConfirmedByUserName { get; set; }
+
+    public DateTime? CreditAmountConfirmedAt { get; set; }
 }

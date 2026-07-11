@@ -2,18 +2,21 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using TravelApi.Infrastructure.Persistence;
 
 #nullable disable
 
-namespace TravelApi.Infrastructure.Persistence.Migrations
+namespace TravelApi.Infrastructure.Persistence.Migrations.App
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260711091127_Adr044_M_T5a_AddTargetInvoiceIdAndConfirmedGrossCreditAmountToLine")]
+    partial class Adr044_M_T5a_AddTargetInvoiceIdAndConfirmedGrossCreditAmountToLine
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1148,7 +1151,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.HasIndex("OriginatingInvoiceId")
                         .IsUnique()
                         .HasDatabaseName("IX_BookingCancellations_OriginatingInvoiceId")
-                        .HasFilter("\"Status\" NOT IN (4, 6)");
+                        .HasFilter("\"Status\" <> 6");
 
                     b.HasIndex("PartialCreditNoteApprovalRequestId")
                         .HasDatabaseName("IX_BookingCancellations_PartialCreditNoteApprovalRequestId");
@@ -1158,7 +1161,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("ReservaId")
                         .IsUnique()
-                        .HasFilter("\"Status\" NOT IN (4, 6)");
+                        .HasFilter("\"Status\" <> 6");
 
                     b.HasIndex("SupplierId");
 

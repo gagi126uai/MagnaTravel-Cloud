@@ -51,6 +51,13 @@ public class ReservaListDto
     public string? CancelledPenaltyCurrency { get; set; }
 
     /// <summary>
+    /// ADR-044 T5 Addendum, Revision 2, fix B2 (2026-07-11): mismo desglose por moneda que
+    /// <c>ReservaDto.CancelledPenaltiesByCurrency</c>, para la fila del listado. Con 1 sola multa viva (el
+    /// 100% de los casos hasta hoy) tiene un unico elemento, igual a los escalares de arriba.
+    /// </summary>
+    public List<CancelledPenaltyByCurrencyDto> CancelledPenaltiesByCurrency { get; set; } = new();
+
+    /// <summary>
     /// ADR-021 Capa 5: detalle de plata por moneda para la fila del listado. Se llena leyendo la tabla
     /// hija materializada (no recalcula on-read fila por fila). Una sola linea = reserva mono-moneda.
     /// El <c>TotalCost</c> de cada linea se enmascara igual que el escalar para usuarios sin ver-costos.

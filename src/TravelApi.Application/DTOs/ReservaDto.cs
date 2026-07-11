@@ -1,6 +1,19 @@
 namespace TravelApi.Application.DTOs;
 
 /// <summary>
+/// ADR-044 T5 Addendum, Revision 2, fix B2 (2026-07-11): una entrada del desglose de multa por cobrar, para
+/// una MONEDA. Nunca se suman monedas distintas (mismo principio "por moneda" de todo el modulo de plata).
+/// </summary>
+public class CancelledPenaltyByCurrencyDto
+{
+    /// <summary>Moneda ISO 4217 ("ARS"/"USD") de este monto.</summary>
+    public string Currency { get; set; } = string.Empty;
+
+    /// <summary>Monto PENDIENTE de cobro en esta moneda (neto de lo ya pagado, no el bruto congelado).</summary>
+    public decimal Amount { get; set; }
+}
+
+/// <summary>
 /// (2026-06-25) Valores del discriminador <see cref="ReservaDto.CancellationCase"/>: en cual de los cuatro
 /// caminos de "Anular reserva" cae la reserva. El backend lo calcula; el front solo lo lee para mostrar el
 /// cartel de confirmacion correcto. No son estados de la reserva (los estados viven en <c>EstadoReserva</c>).
@@ -288,6 +301,19 @@ public class ReservaDto
     /// al codigo ISO del negocio.
     /// </summary>
     public string? CancelledPenaltyCurrency { get; set; }
+
+    /// <summary>
+    /// ADR-044 T5 Addendum, Revision 2, fix B2 (2026-07-11): desglose COMPLETO de la multa por cobrar, una
+    /// entrada por moneda. Con la Decision C (varias cancelaciones no-abortadas pueden convivir en la misma
+    /// reserva a lo largo del tiempo — anulaciones parciales de servicios distintos), puede haber MAS DE UNA
+    /// multa viva simultanea; <see cref="CancelledPenaltyAmount"/>/<see cref="CancelledPenaltyCurrency"/>
+    /// (escalares, PRE-existentes) quedan por compatibilidad y muestran la PRIMERA moneda de esta lista — el
+    /// front nuevo (tanda de UI aparte) debe leer esta lista para mostrar el desglose completo cuando hay 2+
+    /// monedas. Con 1 sola multa viva (el 100% de los casos hasta hoy), esta lista tiene un unico elemento y
+    /// coincide exactamente con los escalares — cero cambio visual para el caso de siempre. Vacia cuando
+    /// <see cref="CancelledMoneyContext"/> no es "MultaPorCobrar".
+    /// </summary>
+    public List<CancelledPenaltyByCurrencyDto> CancelledPenaltiesByCurrency { get; set; } = new();
 
     public string? CustomerName { get; set; } // Flattened
     public CustomerDto? Payer { get; set; } // Nested for frontend convenience
