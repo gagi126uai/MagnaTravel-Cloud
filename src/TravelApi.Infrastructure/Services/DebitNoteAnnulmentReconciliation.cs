@@ -269,8 +269,14 @@ public static class DebitNoteAnnulmentReconciliation
     /// una linea en <see cref="DebitNoteStatus.ManualReview"/> (es la ND complementaria de OTRO operador, ajena
     /// a esta ND — resetearla borraria una multa pendiente que nunca se cobraria, ver el XML-doc de la entidad
     /// <c>BookingCancellationLineOperatorCharge.TargetInvoiceId</c>).
+    ///
+    /// <para><b>Visibilidad <c>internal</c> (no <c>private</c>)</b>: la reparacion automatica del choque con el
+    /// re-vinculador de ND huerfana (<c>BookingCancellationService.GetCancellationsWithMissingDebitNoteAsync</c>,
+    /// fix 2026-07-14) reusa este MISMO criterio de reseteo de lineas cuando encuentra un BC que quedo
+    /// re-enganchado por error a una ND que ya habia sido anulada. Ambas clases viven en el mismo ensamblado
+    /// (<c>TravelApi.Infrastructure.Services</c>), asi que <c>internal</c> alcanza sin exponerlo fuera del proyecto.</para>
     /// </summary>
-    private static async Task ResetLinesFedByDebitNoteAsync(
+    internal static async Task ResetLinesFedByDebitNoteAsync(
         AppDbContext db, int bookingCancellationId, int undoneDebitNoteInvoiceId, CancellationToken ct)
     {
         // T3b: lineas cuyos cargos trasladables (Kind != Withholding) apuntan a la ND anulada via TargetInvoiceId.

@@ -3915,6 +3915,69 @@ public class BookingCancellationService
             // Resultado == "PENDING" o null: sigue en vuelo, TryApplyResolvedDebitNote devuelve false y lo dejamos.
         }
 
+        // (2-bis-0) ADR-044 (fix choque con ADR-014, 2026-07-14): AUTO-REPARACION de un estado corrupto real de
+        //     produccion (reserva F-2026-1043 / BC 13). Corre ANTES del re-vinculador de mas abajo, a proposito:
+        //     si un BC quedo re-enganchado por error a una ND que YA fue anulada por su propia Nota de Credito
+        //     (ver el porque en el bloque (2-bis)), hay que desenganchar ESE enganche fantasma primero. Si no,
+        //     el BC seguiria mostrando "multa cobrada" con una ND muerta y el boton "Deshacer" rebotaria de
+        //     nuevo con "ya se deshizo" (el limbo exacto que disparo este fix).
+        //
+        //     SaveChanges INMEDIATO (no esperamos al SaveChanges de mas abajo, a proposito): el bloque (2-bis)
+        //     que sigue vuelve a CONSULTAR la base para armar orphanCandidates, y una consulta nueva NO ve
+        //     mutaciones todavia sin persistir del mismo DbContext (ni en Postgres ni en el proveedor InMemory
+        //     de los tests). Sin este commit intermedio, un BC recien reparado quedaria invisible en ESTA misma
+        //     pasada de la bandeja (habria que abrirla una segunda vez para verlo abierto).
+        var orphanRepair = await AutoRepairOrphanRelinksToAnnulledDebitNotesAsync(ct);
+        if (orphanRepair is not null)
+        {
+            changed = true;
+            try
+            {
+                await _db.SaveChangesAsync(ct);
+            }
+            catch (DbUpdateConcurrencyException conflict)
+            {
+                // Mismo criterio de carrera que el resto de este metodo (ver el catch de mas abajo): otro
+                // proceso (otro pedido concurrente a esta bandeja, o el job del CAE) ya toco esta fila. No es
+                // un error: otro proceso ya reparo el re-enganche fantasma. Aca la reparacion de ESTA lectura
+                // NO se aplico, asi que hay que descartar TODO su rastro pendiente en el ChangeTracker.
+                //
+                // Por que un cleanup DIRIGIDO y no un ChangeTracker.Clear() global: mas arriba (bloque (1)) este
+                // metodo pudo dejar mutaciones legitimas Modified de BCs que SI se tienen que persistir en el
+                // SaveChanges de mas abajo; un Clear las tiraria. Solo descartamos lo que produjo la reparacion.
+                //
+                // REGLA (seguridad, N3): la auditoria "reparado" JAMAS puede sobrevivir desacoplada de la
+                // mutacion que la origina. Si el BC no se desvinculo (se recarga al valor persistido), su
+                // AuditLog "reparado" y sus resets de linea tampoco deben quedar para flushearse despues, o
+                // quedaria un rastro de una reparacion que esta lectura no hizo (auditoria fantasma / duplicada).
+
+                // (a) Los BC que tocamos: recargar al valor persistido (revierte la desvinculacion pendiente y
+                //     deja la fila Unchanged con el estado real de la base).
+                foreach (var bc in orphanRepair.BookingCancellations)
+                {
+                    await _db.Entry(bc).ReloadAsync(ct);
+                }
+
+                // (b) Los resets de linea: recargar tambien (revierte el DebitNoteStatus/error que pusimos).
+                foreach (var line in orphanRepair.ResetLines)
+                {
+                    await _db.Entry(line).ReloadAsync(ct);
+                }
+
+                // (c) La auditoria staged de esta reparacion: DETACH (todavia esta Added, sin fila en la base;
+                //     un Reload no aplica). Asi no se inserta en el SaveChanges de mas abajo.
+                foreach (var audit in orphanRepair.StagedAudits)
+                {
+                    _db.Entry(audit).State = EntityState.Detached;
+                }
+
+                _logger.LogInformation(
+                    "Bandeja de NDs: otro proceso ya reparo el re-enganche fantasma (ADR-044) antes que esta " +
+                    "lectura. Se descarto el rastro pendiente de esta reparacion (BC recargados, lineas " +
+                    "recargadas, auditoria staged desvinculada) y se continua sin romper.");
+            }
+        }
+
         // (2-bis) ADR-014 (§3.8 pieza 3, M-R2-1): segunda rama de la bandeja para la ND
         //     HUERFANA o NUNCA CREADA. El query (1) proyecta sobre BCs que YA tienen
         //     DebitNoteInvoiceId (la ND ya vinculada) -> nunca ve un BC con
@@ -3929,6 +3992,14 @@ public class BookingCancellationService
         //           dejamos visible en la bandeja para re-disparo manual (el endpoint
         //           confirm-penalty ya rebota por PenaltyStatus=Confirmed).
         //     La marca PenaltyStatus=Confirmed garantiza que re-vincular NUNCA re-emite.
+        //
+        //     OJO (fix 2026-07-14): este mismo perfil "Confirmed + DebitNoteInvoiceId=null" es AMBIGUO desde que
+        //     existe ADR-044 "Deshacer una multa ya emitida" (2026-07-14, posterior a esta pieza): un BC recien
+        //     DESHECHO A PROPOSITO por DebitNoteAnnulmentReconciliation.ApplyAsync cae EXACTO en el mismo perfil
+        //     (queda Confirmed, sin ND, y sigue existiendo una ND para la factura original — la que se acaba de
+        //     anular). La consulta de mas abajo desambigua consultando la tabla hija
+        //     BookingCancellationDebitNoteAnnulments: si la ND candidata tiene una fila Pending o Succeeded, NO
+        //     es huerfana valida (es la ND que se esta/ya se deshizo) y se descarta.
         var orphanCandidates = await _db.BookingCancellations
             .Include(b => b.Reserva)
             .Where(b => b.CreditNoteInvoiceId != null &&
@@ -3945,7 +4016,13 @@ public class BookingCancellationService
             var orphanDebitNote = await _db.Invoices
                 .Where(i => debitNoteTipos.Contains(i.TipoComprobante) &&
                             i.OriginalInvoiceId == bc.OriginatingInvoiceId &&
-                            i.ReservaId == bc.ReservaId)
+                            i.ReservaId == bc.ReservaId &&
+                            // ADR-044: descartar cualquier ND que este siendo (o ya haya sido) anulada por una
+                            // NC-anula-ND. Re-vincularla seria re-enganchar una ND MUERTA (ver el comentario
+                            // de arriba).
+                            !_db.BookingCancellationDebitNoteAnnulments.Any(a =>
+                                a.AnnulledDebitNoteInvoiceId == i.Id &&
+                                a.Status != DebitNoteAnnulmentStatus.Failed))
                 .OrderByDescending(i => i.CreatedAt)
                 .FirstOrDefaultAsync(ct);
 
@@ -4058,6 +4135,116 @@ public class BookingCancellationService
         rows.AddRange(orphanRows);
         rows.AddRange(estimatedAgencyOwnedRows);
         return rows;
+    }
+
+    /// <summary>
+    /// ADR-044 (fix choque con ADR-014, 2026-07-14): AUTO-REPARACION del estado corrupto real de produccion
+    /// (reserva F-2026-1043 / BC 13). Busca BCs cuya ND VINCULADA (<c>DebitNoteInvoiceId</c>) en realidad ya fue
+    /// anulada por una NC con CAE aprobado (fila <c>Succeeded</c> en <c>BookingCancellationDebitNoteAnnulments</c>)
+    /// — es decir, el re-vinculador de ND huerfana de ADR-014 la re-engancho por error DESPUES de que
+    /// <see cref="TravelApi.Infrastructure.Services.DebitNoteAnnulmentReconciliation"/> ya la habia desvinculado a
+    /// proposito. Deshace ese re-enganche fantasma con el MISMO trio de campos que usa la reconciliacion original
+    /// (<c>DebitNoteInvoiceId=null</c>, <c>DebitNoteStatus=NotApplicable</c>, sin mensaje de error) y resetea las
+    /// lineas que alimentaron esa ND, reusando el helper del reconciliador.
+    ///
+    /// <para><b>NO vuelve a acuñar saldo a favor</b>: el credito por la porcion cobrada de la multa ya se acuño
+    /// UNA vez, en la reconciliacion original que proceso la NC-anula-ND. Acuñar de nuevo aca duplicaria ese
+    /// credito (y ademas el indice unico parcial de <c>ClientCreditEntry</c> lo rechazaria si se intentara).</para>
+    ///
+    /// <para>Solo mira <c>Status == Succeeded</c> (no <c>Pending</c>): mientras la NC-anula-ND sigue en vuelo, la
+    /// ND original TODAVIA esta viva (Issued) — no hay nada que reparar hasta que consiga su propio CAE.</para>
+    /// </summary>
+    /// <summary>
+    /// Entidades que la auto-reparacion dejo pendientes en el <c>ChangeTracker</c> (sin persistir todavia). El
+    /// caller las necesita para poder DESHACER LIMPIO su propio trabajo si el <c>SaveChanges</c> inmediato choca
+    /// con otra transaccion: hay que descartar la auditoria staged Y los resets de linea junto con el BC, para
+    /// que ningun huerfano de una reparacion FALLIDA sobreviva y se flushee mas tarde desacoplado.
+    /// </summary>
+    private sealed record OrphanRelinkRepairTouched(
+        List<BookingCancellation> BookingCancellations,
+        List<BookingCancellationLine> ResetLines,
+        List<AuditLog> StagedAudits);
+
+    /// <returns>
+    /// Las entidades tocadas si reparo al menos un BC (para que el caller marque <c>changed</c>, persista y —si
+    /// el commit choca— sepa EXACTAMENTE que descartar); <c>null</c> si no habia nada que reparar.
+    /// </returns>
+    private async Task<OrphanRelinkRepairTouched?> AutoRepairOrphanRelinksToAnnulledDebitNotesAsync(CancellationToken ct)
+    {
+        var brokenLinks = await _db.BookingCancellations
+            .Where(b => b.DebitNoteInvoiceId != null &&
+                        _db.BookingCancellationDebitNoteAnnulments.Any(a =>
+                            a.AnnulledDebitNoteInvoiceId == b.DebitNoteInvoiceId!.Value &&
+                            a.Status == DebitNoteAnnulmentStatus.Succeeded))
+            .ToListAsync(ct);
+
+        if (brokenLinks.Count == 0)
+        {
+            return null;
+        }
+
+        foreach (var bc in brokenLinks)
+        {
+            var wronglyRelinkedDebitNoteInvoiceId = bc.DebitNoteInvoiceId!.Value;
+
+            bc.DebitNoteInvoiceId = null;
+            bc.DebitNoteStatus = DebitNoteStatus.NotApplicable;
+            bc.DebitNoteArcaErrorMessage = null;
+
+            // Mismo reseteo de lineas que la reconciliacion original (B2): solo las que alimentaron ESTA ND,
+            // jamas las que estan en ManualReview (multa pendiente de OTRO operador).
+            await DebitNoteAnnulmentReconciliation.ResetLinesFedByDebitNoteAsync(
+                _db, bc.Id, wronglyRelinkedDebitNoteInvoiceId, ct);
+
+            _logger.LogWarning(
+                "metric:debit_note_orphan_relink_repaired | BcPublicId={BcPublicId} " +
+                "WronglyRelinkedDebitNoteInvoiceId={NdId} | El re-vinculador de ND huerfana (ADR-014) habia " +
+                "re-enganchado una ND que YA estaba anulada por su propia NC. Se desvinculo de nuevo; el paso " +
+                "vuelve a quedar abierto. NO se acuño saldo a favor otra vez (ya se acuño en la reconciliacion " +
+                "original).",
+                bc.PublicId, wronglyRelinkedDebitNoteInvoiceId);
+
+            StageOrphanRelinkRepairAudit(bc, wronglyRelinkedDebitNoteInvoiceId);
+        }
+
+        // Recolectamos lo que quedo pendiente en el ChangeTracker POR esta reparacion, para que el caller pueda
+        // descartarlo en bloque si el commit choca. Es seguro leer el estado del tracker aca: esta reparacion
+        // corre ANTES del re-vinculador (2-bis) y el bloque (1) previo solo toca escalares del BC —nunca lineas
+        // ni auditoria—, asi que en este punto las UNICAS lineas Modified y los UNICOS AuditLog Added con esta
+        // accion salieron de este metodo.
+        var resetLines = _db.ChangeTracker.Entries<BookingCancellationLine>()
+            .Where(e => e.State == EntityState.Modified)
+            .Select(e => e.Entity)
+            .ToList();
+
+        var stagedAudits = _db.ChangeTracker.Entries<AuditLog>()
+            .Where(e => e.State == EntityState.Added &&
+                        e.Entity.Action == AuditActions.OperatorPenaltyDebitNoteOrphanLinkRepaired)
+            .Select(e => e.Entity)
+            .ToList();
+
+        return new OrphanRelinkRepairTouched(brokenLinks, resetLines, stagedAudits);
+    }
+
+    /// <summary>Auditoria dedicada de la auto-reparacion de arriba (accion propia para que el contador pueda filtrarla).</summary>
+    private void StageOrphanRelinkRepairAudit(BookingCancellation bc, int wronglyRelinkedDebitNoteInvoiceId)
+    {
+        var details = JsonSerializer.Serialize(new
+        {
+            bc.PublicId,
+            action = "operator-penalty-debit-note-orphan-relink-repaired",
+            wronglyRelinkedDebitNoteInvoiceId,
+            note = "El re-vinculador de ND huerfana (ADR-014) re-engancho por error una ND ya anulada por su " +
+                   "propia NC. Se desvinculo de nuevo automaticamente al abrir la bandeja de NDs.",
+        });
+
+        _auditService.StageBusinessEvent(
+            action: AuditActions.OperatorPenaltyDebitNoteOrphanLinkRepaired,
+            entityName: AuditActions.BookingCancellationEntityName,
+            entityId: bc.Id.ToString(),
+            details: details,
+            userId: "system:orphan-relink-guard",
+            userName: "Sistema (bandeja de Notas de Débito)");
     }
 
     /// <summary>ADR-013/014: tipos de comprobante de Nota de Debito (A=2, B=7, C=12, M=52).</summary>
@@ -6498,11 +6685,18 @@ public class BookingCancellationService
             //     solo volveria a dejar el BC en Failed (bucle infinito del boton Reintentar). Ante una rechazada hay
             //     que emitir una NUEVA, no re-atarla. (El OR con null es defensivo: en Postgres "Resultado <> 'R'"
             //     excluiria las filas con Resultado NULL, que si son huerfanas validas a re-vincular.)
+            //     ADR-044 (fix 2026-07-14): TAMBIEN excluimos cualquier ND que este siendo (o ya haya sido)
+            //     anulada por una NC-anula-ND (fila en BookingCancellationDebitNoteAnnulments con Status
+            //     Pending o Succeeded). Mismo choque que en la bandeja: sin este filtro, "Reintentar" podia
+            //     re-atar una ND MUERTA y el paso volvia a mostrar "multa cobrada" sin salida.
             var orphanDebitNote = await _db.Invoices
                 .Where(i => debitNoteTipos.Contains(i.TipoComprobante) &&
                             i.OriginalInvoiceId == bc.OriginatingInvoiceId &&
                             i.ReservaId == bc.ReservaId &&
-                            (i.Resultado == null || i.Resultado != "R"))
+                            (i.Resultado == null || i.Resultado != "R") &&
+                            !_db.BookingCancellationDebitNoteAnnulments.Any(a =>
+                                a.AnnulledDebitNoteInvoiceId == i.Id &&
+                                a.Status != DebitNoteAnnulmentStatus.Failed))
                 .OrderByDescending(i => i.CreatedAt)
                 .FirstOrDefaultAsync(ct);
             if (orphanDebitNote is not null)

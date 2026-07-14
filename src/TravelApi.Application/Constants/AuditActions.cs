@@ -322,6 +322,18 @@ public static class AuditActions
     public const string OperatorPenaltyDebitNoteUndoNeedsReview = "OperatorPenaltyDebitNoteUndoNeedsReview";
 
     /// <summary>
+    /// ADR-044 (fix choque con ADR-014, 2026-07-14): el re-vinculador de ND huerfana (2026-07-08) es MAS VIEJO
+    /// que el flujo de "deshacer una multa" (2026-07-14). El perfil que usa ese re-vinculador para detectar una
+    /// ND huerfana por crash ("BC Confirmed sin ND vinculada") es EXACTAMENTE el mismo perfil que deja un BC
+    /// recien deshecho a proposito — asi que, sin distinguirlos, el re-vinculador podia re-enganchar una ND que
+    /// ya habia sido anulada por su propia Nota de Credito, dejando el paso otra vez como "multa cobrada" sin
+    /// salida (limbo real de produccion, reserva F-2026-1043 / BC 13). Esta accion audita la AUTO-REPARACION
+    /// que la bandeja de NDs corre al detectar ese estado corrupto: desvincula de nuevo, sin acuñar saldo a
+    /// favor otra vez (ya se acuñó en la reconciliación original).
+    /// </summary>
+    public const string OperatorPenaltyDebitNoteOrphanLinkRepaired = "OperatorPenaltyDebitNoteOrphanLinkRepaired";
+
+    /// <summary>
     /// ADR-044 T2 Addendum (2026-07-10): un usuario agrego un cargo SECUNDARIO del operador sobre una multa ya
     /// confirmada (ej. una retencion fiscal ademas del cargo administrativo automatico). Accion OPCIONAL, no
     /// parte del flujo simple. El detail JSON lleva quien/cuando, el BC/reserva, el operador, y el

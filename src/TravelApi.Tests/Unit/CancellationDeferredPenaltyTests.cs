@@ -668,6 +668,186 @@ public class CancellationDeferredPenaltyTests
             It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // ============================================================
+    // ADR-044 (fix choque con ADR-014, 2026-07-14) — el re-vinculador de ND huerfana es MAS VIEJO
+    // (2026-07-08) que el flujo de "deshacer una multa ya emitida" (2026-07-14). Ambos comparten el
+    // MISMO perfil de deteccion ("BC Confirmed sin ND vinculada"): antes, ese perfil solo podia ser un
+    // crash entre crear la ND y vincularla; ahora TAMBIEN puede ser un BC recien deshecho A PROPOSITO.
+    // Los tests de abajo prueban que la tabla hija BookingCancellationDebitNoteAnnulment desambigua
+    // los dos casos, y que un estado ya corrompido (el limbo real de produccion, BC 13 de la reserva
+    // F-2026-1043) se auto-repara solo con abrir la bandeja.
+    // ============================================================
+
+    [Fact]
+    public async Task OrphanDebitNote_WithSucceededAnnulment_IsNotRelinked()
+    {
+        // Esta ND YA fue anulada por su propia Nota de Credito (Status=Succeeded): es una ND MUERTA, no una
+        // ND huerfana valida. Si el re-vinculador la re-atara, el paso volveria a mostrar "multa cobrada"
+        // sobre un comprobante que ya no vale nada fiscalmente — exactamente el limbo real de produccion.
+        var h = BuildService();
+        var (_, _, original) = await SeedPostNcAsync(h.Ctx);
+        var bcEntity = h.Ctx.BookingCancellations.Single();
+        bcEntity.PenaltyStatus = PenaltyStatus.Confirmed;
+        bcEntity.PenaltyAmountAtEvent = 30_000m;
+        await h.Ctx.SaveChangesAsync();
+
+        var undoneNd = new Invoice
+        {
+            TipoComprobante = 12, // ND C
+            PuntoDeVenta = 1,
+            NumeroComprobante = 200,
+            Resultado = "A",
+            CAE = "55555555",
+            ReservaId = original.ReservaId,
+            OriginalInvoiceId = original.Id,
+        };
+        h.Ctx.Invoices.Add(undoneNd);
+        await h.Ctx.SaveChangesAsync();
+
+        h.Ctx.Set<BookingCancellationDebitNoteAnnulment>().Add(new BookingCancellationDebitNoteAnnulment
+        {
+            BookingCancellationId = bcEntity.Id,
+            AnnulledDebitNoteInvoiceId = undoneNd.Id,
+            Status = DebitNoteAnnulmentStatus.Succeeded,
+            Reason = "La multa estaba mal calculada.",
+            Amount = 30_000m,
+            Currency = "ARS",
+            RequestedByUserId = "u",
+            RequestedByUserName = "U",
+        });
+        await h.Ctx.SaveChangesAsync();
+
+        var rows = await h.Service.GetCancellationsWithMissingDebitNoteAsync(default);
+
+        var afterQuery = h.Ctx.BookingCancellations.Single();
+        Assert.Null(afterQuery.DebitNoteInvoiceId); // NO se re-engancho la ND muerta.
+        // El paso queda visible para re-disparo manual (Reintentar/Corregir/Emitir), NO re-vinculado en
+        // silencio a un comprobante que ya no existe fiscalmente.
+        Assert.Contains(rows, r =>
+            r.BookingCancellationPublicId == afterQuery.PublicId &&
+            r.DebitNoteStatus == CancellationDebitNotePendingDto.ConfirmedWithoutDebitNotePseudoStatus);
+        h.InvoiceMock.Verify(s => s.CreateAsync(
+            It.IsAny<CreateInvoiceRequest>(), It.IsAny<string?>(), It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task OrphanDebitNote_WithPendingAnnulment_IsNotRelinked()
+    {
+        // Control simetrico al de arriba: mientras la NC-anula-ND sigue en vuelo (Pending, todavia sin
+        // CAE), la ND tampoco se re-engancha. Si se re-atara ahora y despues ARCA aprobara la NC, el
+        // reconciliador (DebitNoteAnnulmentReconciliation) desvincularia una ND que el re-vinculador
+        // acababa de re-atar — dos escritores pisandose el mismo campo.
+        var h = BuildService();
+        var (_, _, original) = await SeedPostNcAsync(h.Ctx);
+        var bcEntity = h.Ctx.BookingCancellations.Single();
+        bcEntity.PenaltyStatus = PenaltyStatus.Confirmed;
+        bcEntity.PenaltyAmountAtEvent = 30_000m;
+        await h.Ctx.SaveChangesAsync();
+
+        var ndBeingUndone = new Invoice
+        {
+            TipoComprobante = 12, // ND C
+            PuntoDeVenta = 1,
+            NumeroComprobante = 200,
+            Resultado = "A",
+            CAE = "55555555",
+            ReservaId = original.ReservaId,
+            OriginalInvoiceId = original.Id,
+        };
+        h.Ctx.Invoices.Add(ndBeingUndone);
+        await h.Ctx.SaveChangesAsync();
+
+        h.Ctx.Set<BookingCancellationDebitNoteAnnulment>().Add(new BookingCancellationDebitNoteAnnulment
+        {
+            BookingCancellationId = bcEntity.Id,
+            AnnulledDebitNoteInvoiceId = ndBeingUndone.Id,
+            Status = DebitNoteAnnulmentStatus.Pending,
+            Reason = "La multa estaba mal calculada.",
+            Amount = 30_000m,
+            Currency = "ARS",
+            RequestedByUserId = "u",
+            RequestedByUserName = "U",
+        });
+        await h.Ctx.SaveChangesAsync();
+
+        var rows = await h.Service.GetCancellationsWithMissingDebitNoteAsync(default);
+
+        var afterQuery = h.Ctx.BookingCancellations.Single();
+        Assert.Null(afterQuery.DebitNoteInvoiceId);
+        Assert.Contains(rows, r =>
+            r.BookingCancellationPublicId == afterQuery.PublicId &&
+            r.DebitNoteStatus == CancellationDebitNotePendingDto.ConfirmedWithoutDebitNotePseudoStatus);
+    }
+
+    [Fact]
+    public async Task WronglyRelinkedDebitNote_IsAutoRepaired_ReopeningTheStep()
+    {
+        // Reproduce el limbo REAL de produccion (reserva F-2026-1043 / BC 13, 2026-07-14): antes de este
+        // fix, el re-vinculador (ADR-014) corrio DESPUES de que la ND ya habia sido desvinculada por la
+        // reconciliacion del "deshacer" y la volvio a atar por error. El BC queda con DebitNoteInvoiceId
+        // apuntando a una ND MUERTA (ya anulada, Status=Succeeded en la tabla hija). La bandeja tiene que
+        // detectar y reparar esto solo con abrirse, sin intervencion manual.
+        var h = BuildService();
+        var (_, _, original) = await SeedPostNcAsync(h.Ctx);
+
+        var undoneNd = new Invoice
+        {
+            TipoComprobante = 12, // ND C
+            PuntoDeVenta = 1,
+            NumeroComprobante = 200,
+            Resultado = "A",
+            CAE = "55555555",
+            ReservaId = original.ReservaId,
+            OriginalInvoiceId = original.Id,
+        };
+        h.Ctx.Invoices.Add(undoneNd);
+        await h.Ctx.SaveChangesAsync();
+
+        var bcEntity = h.Ctx.BookingCancellations.Single();
+        // Estado CORRUPTO (el bug real): el BC quedo re-enganchado a la ND que ya fue anulada.
+        bcEntity.PenaltyStatus = PenaltyStatus.Confirmed;
+        bcEntity.PenaltyAmountAtEvent = 30_000m;
+        bcEntity.DebitNoteInvoiceId = undoneNd.Id;
+        bcEntity.DebitNoteStatus = DebitNoteStatus.Issued;
+        await h.Ctx.SaveChangesAsync();
+
+        h.Ctx.Set<BookingCancellationDebitNoteAnnulment>().Add(new BookingCancellationDebitNoteAnnulment
+        {
+            BookingCancellationId = bcEntity.Id,
+            AnnulledDebitNoteInvoiceId = undoneNd.Id,
+            Status = DebitNoteAnnulmentStatus.Succeeded,
+            Reason = "La multa estaba mal calculada.",
+            Amount = 30_000m,
+            Currency = "ARS",
+            RequestedByUserId = "u",
+            RequestedByUserName = "U",
+        });
+        await h.Ctx.SaveChangesAsync();
+
+        var rows = await h.Service.GetCancellationsWithMissingDebitNoteAsync(default);
+
+        var repaired = await h.Ctx.BookingCancellations.AsNoTracking().SingleAsync(b => b.Id == bcEntity.Id);
+        Assert.Null(repaired.DebitNoteInvoiceId);
+        Assert.Equal(DebitNoteStatus.NotApplicable, repaired.DebitNoteStatus);
+        Assert.Null(repaired.DebitNoteArcaErrorMessage);
+
+        // El paso vuelve a abierto: aparece en la bandeja para re-disparo manual, tal como espera el
+        // usuario despues de deshacer una multa.
+        Assert.Contains(rows, r =>
+            r.BookingCancellationPublicId == repaired.PublicId &&
+            r.DebitNoteStatus == CancellationDebitNotePendingDto.ConfirmedWithoutDebitNotePseudoStatus);
+
+        // Rastro de auditoria dedicado (accion propia, para que el contador pueda filtrar esta reparacion).
+        h.AuditMock.Verify(a => a.StageBusinessEvent(
+            AuditActions.OperatorPenaltyDebitNoteOrphanLinkRepaired,
+            AuditActions.BookingCancellationEntityName,
+            It.IsAny<string>(),
+            It.IsAny<string?>(),
+            It.IsAny<string>(),
+            It.IsAny<string?>()), Times.Once);
+    }
+
     [Fact]
     public async Task ConfirmedWithoutDebitNote_AppearsInBandejaForManualRetrigger()
     {
