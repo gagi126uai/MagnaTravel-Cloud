@@ -1608,13 +1608,21 @@ export default function ReservaDetailPage() {
                   ADR-044 T1 (2026-07-10, fix de bloqueante): supplierPublicId y
                   monedaSugerida salen de `multaSituacionAbierta` — la situación PUNTUAL
                   del operador que el agente clickeó (ver handleAbrirMultaConPenalidad).
-                  En mono-operador es simplemente el único elemento posible. */}
+                  En mono-operador es simplemente el único elemento posible.
+
+                  invoiceCurrency (spec 2026-07-14 "explicación por qué la multa va en la
+                  moneda de la factura"): también sale de `multaSituacionAbierta` — el DTO
+                  ya trae este campo para CUALQUIER estado con cancelación en juego (no
+                  solo el de "corregir"), así que acá alcanza con pasarlo tal cual. Dispara
+                  la línea 2 bajo el selector de Moneda cuando el usuario elige una moneda
+                  distinta de la de la factura. */}
               {showMultaInline && multaCancellationPublicId && (
                 <ConfirmarMultaOperadorInline
                   cancellationPublicId={multaCancellationPublicId}
                   reservaNumero={reserva.numeroReserva}
                   supplierPublicId={multaSituacionAbierta?.supplierPublicId}
                   saleInvoices={multaSaleInvoices}
+                  invoiceCurrency={multaSituacionAbierta?.invoiceCurrency}
                   monedaSugerida={elegirMonedaSugeridaParaMulta({
                     situacionCurrency: multaSituacionAbierta?.currency,
                     porMoneda: reserva.porMoneda,

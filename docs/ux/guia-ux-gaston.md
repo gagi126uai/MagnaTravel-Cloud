@@ -9,7 +9,7 @@
 
 ## Reglas generales (valen para toda la app)
 
-- **(2026-06-05) Basta de formularios "aclarativos".** Nada de cartelitos explicativos, leyendas largas ni "(opcional)" repartidos por el formulario: confunden al usuario. El formulario muestra solo lo imprescindible; lo secundario va escondido detrás de un "Más detalles". Si un campo necesita explicación, el diseño está mal.
+- **(2026-06-05) Basta de formularios "aclarativos".** Nada de cartelitos explicativos, leyendas largas ni "(opcional)" repartidos por el formulario: confunden al usuario. El formulario muestra solo lo imprescindible; lo secundario va escondido detrás de un "Más detalles". Si un campo necesita explicación, el diseño está mal. **(Excepción puntual aprobada 2026-07-14, P0:** la línea que explica por qué la multa va en la moneda de la factura — ver sección "Explicar POR QUÉ la multa va en la moneda de la factura". Es una regla fiscal no obvia; es la ÚNICA excepción, no habilita más cartelitos.)
 - **(2026-06-05) Lo "opcional" no se decide solo.** Qué campo es obligatorio y cuál no lo define el experto de dominio + Gastón, nunca el programador. Referencia validada: para cargar un servicio lo imprescindible es operador, fechas, pasajeros, costo, venta y moneda; el resto (confirmación del operador, régimen, etc.) puede ir después.
 
 ## Formularios
@@ -1256,6 +1256,51 @@ más de una factura, y viene escondido con defaults.
   de "muy lejos" es una regla de negocio nueva (hoy la pantalla de cobro no tiene este aviso): lo fija
   dominio/negocio, no lo inventa el front; hasta que esté fijado, el aviso queda apagado y no bloquea
   el resto de la pantalla.
+
+## Explicar POR QUÉ la multa va en la moneda de la factura (2026-07-14, respuestas de Gastón)
+
+> **Origen (caso real F-2026-1025):** reserva con servicios en dólares, pero la factura del cliente
+> se emitió en pesos. El paso de la multa le dijo a Gastón que la multa se pasaba a pesos, pero
+> ninguna pantalla explicaba el porqué — lo leyó como una incoherencia ("los servicios están en
+> dólares, ¿por qué la multa no?"). La regla es correcta y está firmada (ADR-012 §3.3: la factura, sus
+> notas de crédito y el comprobante de la multa hablan TODOS la moneda de la factura). Faltaba UNA
+> línea en criollo que lo tradujera. Spec: `docs/ux/2026-07-14-explicacion-moneda-multa.md`.
+
+- **(2026-07-14, P0 — EXCEPCIÓN CONSCIENTE a la regla anti-cartelitos del 2026-06-05).** Gastón
+  aprobó, a sabiendas, meter un cartelito explicativo acá ("Sí, va la línea. Es una excepción
+  justificada y puntual."), pese a su regla general "basta de cartelitos aclarativos; si un campo
+  necesita explicación, el diseño está mal". Motivo: es una regla **fiscal no obvia** que confundió
+  al propio dueño. **Es una excepción puntual, NO abre la puerta a más cartelitos.** El
+  `frontend-reviewer` NO debe rechazar estas dos líneas por chocar con la regla del 2026-06-05: están
+  autorizadas explícitamente.
+
+- **(2026-07-14, P1=C) La explicación va en LOS DOS lugares donde aparece la moneda de la multa**,
+  con la misma idea, adaptada a cada lugar:
+  1. En el cartel **"Corregir monto y moneda"**, dentro del bloque de conversión (arriba de todo el
+     bloque, antes del encabezado "La factura del cliente está en pesos ($)" que ya existe).
+  2. Bajo el selector de **Moneda** del cartel **"Confirmar multa del operador"** (el que se abre al
+     elegir que el operador sí cobró la multa).
+
+- **(2026-07-14, P2) Texto según el lugar (mezcla que eligió Gastón):**
+  - **En el bloque de conversión — versión COMPLETA:** "La factura de esta reserva salió en **pesos**.
+    Todo lo que se le cobra o se le devuelve al cliente va en esa moneda, incluida la multa — aunque
+    el operador la haya cobrado en dólares." Se da vuelta sola si la factura está en dólares (todas
+    las monedas invertidas).
+  - **Bajo el selector de Moneda — versión MÍNIMA:** "La factura de esta reserva salió en **pesos**:
+    el cargo al cliente va en pesos." Se da vuelta sola si la factura está en dólares.
+
+- **(2026-07-14, P3=B) Bajo el selector de Moneda, la línea aparece SOLO cuando la moneda elegida es
+  distinta de la de la factura.** Si coincide (el caso normal, porque arranca precargada en la
+  moneda de la factura), queda el texto de hoy sin cambio: "El cargo al cliente sale en esta misma
+  moneda." La línea del porqué aparece recién cuando el usuario cambia la moneda a una que NO es la
+  de la factura (el momento en que podría equivocarse). En el bloque de conversión, en cambio, la
+  línea completa aparece siempre que el bloque se muestre (ese bloque ya solo aparece cuando hay
+  cruce de moneda; para no repetir, bajo el selector se deja el texto de hoy en modo "Corregir").
+
+- **(2026-07-14) La línea nunca aparece si la reserva todavía no tiene factura** (no hay moneda que
+  mande). Y **no reemplaza** los textos ya aprobados del bloque de conversión (encabezado + "↕ … la
+  pasamos a …"): se SUMA arriba. Sigue prohibida la frase "diferencia de cambio" (regla dura
+  2026-06-09).
 
 ## Deshacer una multa YA emitida y aprobada por ARCA (2026-07-14, respuestas de Gastón)
 

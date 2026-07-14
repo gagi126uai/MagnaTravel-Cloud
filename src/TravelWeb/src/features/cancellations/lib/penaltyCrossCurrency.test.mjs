@@ -15,6 +15,8 @@ import {
   hayCruceDeMoneda,
   tituloBloqueConversion,
   encabezadoBloqueConversion,
+  explicacionMonedaFacturaCompleta,
+  explicacionMonedaFacturaMinima,
   calcularMontoConvertido,
   debeMostrarAvisoTCLejano,
   resolverFuenteTC,
@@ -82,6 +84,49 @@ test("encabezado: factura en pesos", () => {
 
 test("encabezado: factura en dólares", () => {
   assert.equal(encabezadoBloqueConversion("USD"), "La factura del cliente está en dólares (US$)");
+});
+
+// ============================================================================
+// Sección 2b: explicacionMonedaFacturaCompleta / explicacionMonedaFacturaMinima
+// (spec 2026-07-14 "explicación por qué la multa va en la moneda de la factura")
+// ============================================================================
+
+test("línea 1 (completa): factura en pesos, espejo dólares → texto exacto de la spec", () => {
+  assert.equal(
+    explicacionMonedaFacturaCompleta("ARS"),
+    "La factura de esta reserva salió en pesos. Todo lo que se le cobra o se le devuelve al cliente va en esa moneda, incluida la multa — aunque el operador la haya cobrado en dólares."
+  );
+});
+
+test("línea 1 (completa): factura en dólares → espejo pesos↔dólares", () => {
+  assert.equal(
+    explicacionMonedaFacturaCompleta("USD"),
+    "La factura de esta reserva salió en dólares. Todo lo que se le cobra o se le devuelve al cliente va en esa moneda, incluida la multa — aunque el operador la haya cobrado en pesos."
+  );
+});
+
+test("línea 1 (completa): NUNCA contiene la frase prohibida 'diferencia de cambio'", () => {
+  assert.doesNotMatch(explicacionMonedaFacturaCompleta("ARS"), /diferencia de cambio/i);
+  assert.doesNotMatch(explicacionMonedaFacturaCompleta("USD"), /diferencia de cambio/i);
+});
+
+test("línea 2 (mínima): factura en pesos → texto exacto de la spec", () => {
+  assert.equal(
+    explicacionMonedaFacturaMinima("ARS"),
+    "La factura de esta reserva salió en pesos: el cargo al cliente va en pesos."
+  );
+});
+
+test("línea 2 (mínima): factura en dólares → espejo pesos↔dólares", () => {
+  assert.equal(
+    explicacionMonedaFacturaMinima("USD"),
+    "La factura de esta reserva salió en dólares: el cargo al cliente va en dólares."
+  );
+});
+
+test("línea 2 (mínima): NUNCA contiene la frase prohibida 'diferencia de cambio'", () => {
+  assert.doesNotMatch(explicacionMonedaFacturaMinima("ARS"), /diferencia de cambio/i);
+  assert.doesNotMatch(explicacionMonedaFacturaMinima("USD"), /diferencia de cambio/i);
 });
 
 // ============================================================================

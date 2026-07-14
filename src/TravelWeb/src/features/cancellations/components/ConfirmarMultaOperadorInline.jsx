@@ -65,10 +65,15 @@
  *     como `targetInvoicePublicId` en el confirm. Con 0 o 1 factura no se muestra nada
  *     (autocompletado) — SOLO aplica al modo "confirmar"; "corregir" no lo usa porque
  *     ya opera sobre una ND puntual que no cambia de factura destino acá.
- *   - invoiceCurrency (2026-07-13, opcional, SOLO modo "corregir"): moneda REAL de la
- *     factura del cliente (operatorPenaltySituation.invoiceCurrency del DTO). Es el dato
- *     contra el que se compara para decidir si aparece el bloque de conversión — NUNCA
- *     se compara contra `monedaSugerida` (esa es editable y no sirve para esto).
+ *   - invoiceCurrency (2026-07-13, opcional): moneda REAL de la factura del cliente
+ *     (operatorPenaltySituation.invoiceCurrency del DTO). Es el dato contra el que se
+ *     compara para decidir si aparece el bloque de conversión — NUNCA se compara contra
+ *     `monedaSugerida` (esa es editable y no sirve para esto). El bloque de conversión
+ *     en sí sigue siendo SOLO modo "corregir" (ver más arriba), pero desde 2026-07-14
+ *     este dato también hace falta en modo "confirmar": es lo que dispara la línea
+ *     "La factura de esta reserva salió en pesos: el cargo al cliente va en pesos."
+ *     bajo el selector de Moneda cuando el usuario elige una moneda distinta de la
+ *     factura (ver `mostrarExplicacionMonedaConfirmar` en el cuerpo del componente).
  *   - suggestedExchangeRateDate (2026-07-13, opcional, SOLO modo "corregir"): fecha
  *     sugerida por el backend para el tipo de cambio (operatorPenaltySituation.
  *     suggestedExchangeRateDate). Si viene, precarga la fecha "en que el operador
@@ -90,6 +95,8 @@ import {
     hayCruceDeMoneda,
     tituloBloqueConversion,
     encabezadoBloqueConversion,
+    explicacionMonedaFacturaCompleta,
+    explicacionMonedaFacturaMinima,
     calcularMontoConvertido,
     debeMostrarAvisoTCLejano,
     resolverFuenteTC,
@@ -311,6 +318,15 @@ export function ConfirmarMultaOperadorInline({
     // el bloque compara la moneda elegida contra la moneda REAL de la factura
     // (invoiceCurrency), nunca contra monedaSugerida (regla dura, ver hayCruceDeMoneda).
     const hayCruce = esModoCorregir && hayCruceDeMoneda(moneda, invoiceCurrency);
+
+    // Línea 2 (spec 2026-07-14 "explicación por qué la multa va en la moneda de la
+    // factura", P3=B): SOLO en modo "confirmar", cuando la reserva ya tiene factura Y
+    // la moneda elegida en el selector difiere de la moneda real de esa factura — el
+    // momento en que el usuario se podría estar por equivocar (el selector arranca
+    // precargado en la moneda de la factura; esto se prende recién si lo cambió). En
+    // modo "corregir" queda siempre en false: la explicación completa ya vive en el
+    // bloque de conversión de más abajo, no hace falta repetirla acá.
+    const mostrarExplicacionMonedaConfirmar = !esModoCorregir && hayCruceDeMoneda(moneda, invoiceCurrency);
 
     // Cotización de referencia del BNA para la fecha elegida (2026-07-14: endpoint
     // GET /cancellations/bna-usd-rate?date=... ya conectado). `enabled: hayCruce`
@@ -619,9 +635,20 @@ export function ConfirmarMultaOperadorInline({
                         </select>
                         {/* B2 (2026-07-08): la aclaración anterior decía que la moneda de la ND la
                             definía "la configuración fiscal" — contradecía lo que en realidad hace
-                            el backend (usa esta misma moneda). Corregido para no confundir. */}
-                        <div className="mt-1.5 text-xs text-slate-400 dark:text-slate-500">
-                            El cargo al cliente sale en esta misma moneda.
+                            el backend (usa esta misma moneda). Corregido para no confundir.
+                            Línea 2 (spec 2026-07-14, P3=B): si el usuario cambió la moneda a una
+                            distinta de la de la factura, este texto se reemplaza por el "porqué"
+                            (mostrarExplicacionMonedaConfirmar) — es el momento en que se podría
+                            estar por equivocar. Si coincide (caso normal) o estamos en modo
+                            "corregir" (la explicación completa ya está en el bloque de abajo),
+                            queda el texto de siempre, sin cambio. */}
+                        <div
+                            className="mt-1.5 text-xs text-slate-400 dark:text-slate-500"
+                            data-testid="multa-explicacion-moneda-confirmar"
+                        >
+                            {mostrarExplicacionMonedaConfirmar
+                                ? explicacionMonedaFacturaMinima(invoiceCurrency)
+                                : "El cargo al cliente sale en esta misma moneda."}
                         </div>
                     </div>
                 </div>
@@ -635,6 +662,18 @@ export function ConfirmarMultaOperadorInline({
                         className="rounded-lg border-2 border-dashed border-indigo-300 bg-indigo-50/50 dark:border-indigo-900/50 dark:bg-indigo-950/20 p-4 space-y-3"
                         data-testid="multa-bloque-conversion"
                     >
+                        {/* Línea 1 (spec 2026-07-14 "explicación por qué la multa va en la moneda
+                            de la factura", versión COMPLETA): primer elemento del bloque, arriba
+                            del encabezado que ya existía. El bloque de conversión ya decía QUÉ se
+                            hace ("la pasamos a pesos") pero nunca el PORQUÉ (regla fiscal ADR-012
+                            §3.3: factura, NC y multa hablan todas la misma moneda) — sin esto el
+                            usuario lo lee como una incoherencia del sistema. Excepción autorizada
+                            a sabiendas a la regla anti-cartelitos (ver comentario del JSDoc de
+                            explicacionMonedaFacturaCompleta). NO reemplaza el encabezado ni el
+                            título de abajo: se suma arriba, tal como pide la spec. */}
+                        <p className="text-xs text-indigo-600 dark:text-indigo-400" data-testid="multa-explicacion-moneda-factura">
+                            {explicacionMonedaFacturaCompleta(invoiceCurrency)}
+                        </p>
                         <p className="text-xs font-bold text-indigo-800 dark:text-indigo-200">
                             {encabezadoBloqueConversion(invoiceCurrency)}
                         </p>

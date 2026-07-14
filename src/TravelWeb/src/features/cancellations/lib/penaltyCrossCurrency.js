@@ -93,6 +93,47 @@ export function encabezadoBloqueConversion(invoiceCurrency) {
 }
 
 /**
+ * Línea 1 (spec 2026-07-14 "explicación por qué la multa va en la moneda de la
+ * factura", versión COMPLETA/V1): va como primer elemento del bloque de conversión,
+ * arriba de `encabezadoBloqueConversion`. Explica el PORQUÉ (no solo el qué): la
+ * factura del cliente, sus notas de crédito y la multa hablan TODOS la misma moneda
+ * (ADR-012 §3.3) — aunque el operador haya cobrado la multa en otra moneda.
+ *
+ * Es una EXCEPCIÓN autorizada a sabiendas a la regla anti-cartelitos del 2026-06-05
+ * (ver guía-ux-gaston.md, sección "Explicar POR QUÉ..."): no se replica en otras
+ * pantallas.
+ *
+ * Se da vuelta sola según la moneda de la factura (pesos↔dólares) — nunca hace falta
+ * pasar la moneda contraria, se deduce de `invoiceCurrency`.
+ *
+ * @param {string} invoiceCurrency - moneda real de la factura ("ARS"|"USD")
+ * @returns {string}
+ */
+export function explicacionMonedaFacturaCompleta(invoiceCurrency) {
+  const monedaDeLaFactura = invoiceCurrency === "USD" ? "dólares" : "pesos";
+  const monedaContraria = invoiceCurrency === "USD" ? "pesos" : "dólares";
+  return `La factura de esta reserva salió en ${monedaDeLaFactura}. Todo lo que se le cobra o se le devuelve al cliente va en esa moneda, incluida la multa — aunque el operador la haya cobrado en ${monedaContraria}.`;
+}
+
+/**
+ * Línea 2 (spec 2026-07-14, versión MÍNIMA/V3): va bajo el selector de Moneda del
+ * panel "Confirmar multa del operador", reemplazando al texto de siempre SOLO cuando
+ * corresponde mostrar la advertencia (ver P3=B en ConfirmarMultaOperadorInline.jsx:
+ * modo "confirmar" + hay factura + la moneda elegida difiere de la de la factura).
+ * Más corta que la línea 1 a propósito: acá no hace falta el "porqué" completo, alcanza
+ * con recordar cuál es la moneda que manda.
+ *
+ * Mismo espejo automático pesos↔dólares que `explicacionMonedaFacturaCompleta`.
+ *
+ * @param {string} invoiceCurrency - moneda real de la factura ("ARS"|"USD")
+ * @returns {string}
+ */
+export function explicacionMonedaFacturaMinima(invoiceCurrency) {
+  const monedaDeLaFactura = invoiceCurrency === "USD" ? "dólares" : "pesos";
+  return `La factura de esta reserva salió en ${monedaDeLaFactura}: el cargo al cliente va en ${monedaDeLaFactura}.`;
+}
+
+/**
  * Calcula el monto ya convertido a la moneda de la factura ("→ Se le cobra al
  * cliente $ X"). El tipo de cambio SIEMPRE se carga como "1 US$ = $ TC" (pesos por
  * dólar), sea cual sea la dirección del cruce — mismo criterio que RegistrarCobroInline.

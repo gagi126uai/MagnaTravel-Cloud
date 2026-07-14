@@ -19,7 +19,7 @@ import assert from "node:assert/strict";
 // de conversión cambia en penaltyCrossCurrency.js, este test lo detecta solo, sin
 // que nadie tenga que acordarse de actualizar una copia (fix de prolijidad del
 // review 2026-07-14, sección J).
-import { construirCamposConversionParaPayload, EXCHANGE_RATE_SOURCE_MANUAL } from "../lib/penaltyCrossCurrency.js";
+import { construirCamposConversionParaPayload, EXCHANGE_RATE_SOURCE_MANUAL, hayCruceDeMoneda } from "../lib/penaltyCrossCurrency.js";
 
 // ─── Réplica de las funciones de ConfirmarMultaOperadorInline.jsx ─────────────
 // Se copian aquí para testearlas sin DOM ni React.
@@ -779,4 +779,63 @@ test("payload corregir, cruce de moneda: suma los campos de conversión al paylo
     assert.equal(payload.exchangeRateSource, EXCHANGE_RATE_SOURCE_MANUAL);
     assert.equal(payload.exchangeRateDate, "2026-07-05");
     assert.equal(payload.exchangeRateJustification, "Recibo del operador en dólares.");
+});
+
+// ============================================================================
+// Sección K: spec 2026-07-14 "explicación por qué la multa va en la moneda de la
+// factura" — CUÁNDO aparece cada línea nueva dentro de ConfirmarMultaOperadorInline.jsx.
+// Los textos en sí (explicacionMonedaFacturaCompleta/Minima) ya se testean con
+// imports REALES en penaltyCrossCurrency.test.mjs; acá solo se verifica la
+// CONDICIÓN de visibilidad de cada línea dentro del componente, usando la función
+// REAL hayCruceDeMoneda (import de arriba) — igual que hace el componente.
+// ============================================================================
+
+// Réplica EXACTA de `hayCruce` en ConfirmarMultaOperadorInline.jsx: la línea 1
+// (bloque de conversión completo) solo existe adentro de este mismo booleano — no
+// hay forma de que la línea 1 aparezca sin que también aparezca el resto del bloque.
+function hayCruce({ esModoCorregir, moneda, invoiceCurrency }) {
+    return esModoCorregir && hayCruceDeMoneda(moneda, invoiceCurrency);
+}
+
+// Réplica EXACTA de `mostrarExplicacionMonedaConfirmar` en el componente (P3=B):
+// solo en modo "confirmar", con factura, y con la moneda elegida distinta de la
+// factura.
+function mostrarExplicacionMonedaConfirmar({ esModoCorregir, moneda, invoiceCurrency }) {
+    return !esModoCorregir && hayCruceDeMoneda(moneda, invoiceCurrency);
+}
+
+test("línea 1 (bloque de conversión): modo corregir + moneda distinta de la factura → aparece (mismo booleano que el resto del bloque)", () => {
+    assert.equal(hayCruce({ esModoCorregir: true, moneda: "USD", invoiceCurrency: "ARS" }), true);
+});
+
+test("línea 1: modo corregir + misma moneda que la factura → NO aparece (el bloque entero no se dibuja)", () => {
+    assert.equal(hayCruce({ esModoCorregir: true, moneda: "ARS", invoiceCurrency: "ARS" }), false);
+});
+
+test("línea 1: modo confirmar → NUNCA aparece, aunque la moneda difiera (el bloque de conversión es SOLO modo corregir)", () => {
+    assert.equal(hayCruce({ esModoCorregir: false, moneda: "USD", invoiceCurrency: "ARS" }), false);
+});
+
+test("línea 1: sin factura todavía (invoiceCurrency null) → NO aparece, ni en modo corregir", () => {
+    assert.equal(hayCruce({ esModoCorregir: true, moneda: "USD", invoiceCurrency: null }), false);
+});
+
+test("línea 2 (bajo el selector de Moneda): modo confirmar + factura en pesos + eligió dólares → aparece", () => {
+    assert.equal(mostrarExplicacionMonedaConfirmar({ esModoCorregir: false, moneda: "USD", invoiceCurrency: "ARS" }), true);
+});
+
+test("línea 2: modo confirmar + factura en dólares + eligió pesos → aparece (espejo)", () => {
+    assert.equal(mostrarExplicacionMonedaConfirmar({ esModoCorregir: false, moneda: "ARS", invoiceCurrency: "USD" }), true);
+});
+
+test("línea 2: modo confirmar + moneda elegida COINCIDE con la factura (caso normal, precargada) → NO aparece, queda el texto de hoy", () => {
+    assert.equal(mostrarExplicacionMonedaConfirmar({ esModoCorregir: false, moneda: "ARS", invoiceCurrency: "ARS" }), false);
+});
+
+test("línea 2: sin factura todavía (invoiceCurrency null) → NO aparece, aunque esté en modo confirmar", () => {
+    assert.equal(mostrarExplicacionMonedaConfirmar({ esModoCorregir: false, moneda: "USD", invoiceCurrency: null }), false);
+});
+
+test("línea 2: modo corregir → NUNCA aparece (no se duplica; la explicación completa ya está en el bloque de conversión)", () => {
+    assert.equal(mostrarExplicacionMonedaConfirmar({ esModoCorregir: true, moneda: "USD", invoiceCurrency: "ARS" }), false);
 });
