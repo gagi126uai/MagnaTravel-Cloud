@@ -423,6 +423,13 @@ public interface IBookingCancellationService
     /// <param name="currency">Moneda ISO 4217 corregida (ARS/USD).</param>
     /// <param name="reason">Motivo OBLIGATORIO de la correccion (auditoria del contador).</param>
     /// <param name="userCanClassifyAgencyPenalty">true si el caller puede resolver la pata fiscal (permiso o Admin).</param>
+    /// <param name="exchangeRate">
+    /// ADR-044 Fix B (2026-07-13): tipo de cambio (ARS por 1 USD) para convertir una multa declarada en una
+    /// moneda distinta a la de la factura (Caso A). Requerido cuando hay que convertir; el service revalida.
+    /// </param>
+    /// <param name="exchangeRateSource">Origen del TC (ver <c>ExchangeRateSource</c>). Manual/sin especificar exige justificacion.</param>
+    /// <param name="exchangeRateDate">Fecha del TC (dia en que el operador cobro). Requerida cuando hay que convertir.</param>
+    /// <param name="exchangeRateJustification">Justificacion del TC. Obligatoria cuando el origen es Manual (INV-120).</param>
     Task<BookingCancellationDto> CorrectPenaltyAsync(
         Guid publicId,
         decimal amount,
@@ -431,7 +438,11 @@ public interface IBookingCancellationService
         string userId,
         string? userName,
         CancellationToken ct,
-        bool userCanClassifyAgencyPenalty = false);
+        bool userCanClassifyAgencyPenalty = false,
+        decimal? exchangeRate = null,
+        int? exchangeRateSource = null,
+        DateTime? exchangeRateDate = null,
+        string? exchangeRateJustification = null);
 
     /// <summary>
     /// ADR-042 §3.6 (2026-07-01): reintenta SOLO las notas de credito faltantes de una anulacion multi-factura

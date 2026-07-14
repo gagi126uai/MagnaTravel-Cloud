@@ -34,6 +34,15 @@
  * a confirm-penalty. No emite una ND nueva "desde cero": corrige la que ya está en
  * curso para que pueda terminar de salir.
  *
+ * BLOQUE DE CONVERSIÓN DE MONEDA (spec cerrada 2026-07-13, bug F-2026-1033, SOLO modo
+ * "corregir"): cuando la moneda elegida para la multa NO coincide con la moneda REAL
+ * de la factura del cliente (`invoiceCurrency`), aparece un recuadro extra que guía la
+ * conversión: fecha en que el operador cobró + tipo de cambio de ese día + el resultado
+ * ya convertido ("→ Se le cobra al cliente $ X"). Si las monedas coinciden, el panel se
+ * ve y funciona EXACTAMENTE como antes de esta spec — cero cambio visible, payload
+ * byte-idéntico. Toda la lógica de este bloque vive en lib/penaltyCrossCurrency.js
+ * (función pura, testeada sin DOM) — este componente solo la usa y dibuja el recuadro.
+ *
  * Props:
  *   - cancellationPublicId: GUID del BookingCancellation (obtenido de GET by-reserva).
  *   - reservaNumero: número de reserva (para mostrar en el header).
@@ -56,6 +65,14 @@
  *     como `targetInvoicePublicId` en el confirm. Con 0 o 1 factura no se muestra nada
  *     (autocompletado) — SOLO aplica al modo "confirmar"; "corregir" no lo usa porque
  *     ya opera sobre una ND puntual que no cambia de factura destino acá.
+ *   - invoiceCurrency (2026-07-13, opcional, SOLO modo "corregir"): moneda REAL de la
+ *     factura del cliente (operatorPenaltySituation.invoiceCurrency del DTO). Es el dato
+ *     contra el que se compara para decidir si aparece el bloque de conversión — NUNCA
+ *     se compara contra `monedaSugerida` (esa es editable y no sirve para esto).
+ *   - suggestedExchangeRateDate (2026-07-13, opcional, SOLO modo "corregir"): fecha
+ *     sugerida por el backend para el tipo de cambio (operatorPenaltySituation.
+ *     suggestedExchangeRateDate). Si viene, precarga la fecha "en que el operador
+ *     cobró" del bloque de conversión; si no viene, el campo arranca vacío.
  *   - onConfirmado: callback luego de confirmar/corregir exitosamente.
  *   - onCerrar: callback para cerrar el panel sin confirmar.
  */
@@ -65,9 +82,24 @@ import { AlertTriangle, Loader2, FileCheck2, X } from "lucide-react";
 import { cancellationsApi } from "../api/cancellationsApi";
 import { showSuccess, showError } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
+import { formatCurrency } from "../../../lib/utils";
 import RequestApprovalModal from "../../approvals/components/RequestApprovalModal";
 import { FacturaDestinoSelect } from "./FacturaDestinoSelect";
 import { hayFacturaDestinoAmbigua, facturaDestinoResuelta } from "../lib/facturaDestinoLogic";
+import {
+    hayCruceDeMoneda,
+    tituloBloqueConversion,
+    encabezadoBloqueConversion,
+    calcularMontoConvertido,
+    debeMostrarAvisoTCLejano,
+    resolverFuenteTC,
+    validarBloqueConversion,
+    bloqueConversionCompleto,
+    construirCamposConversionParaPayload,
+    textoEstadoDolarBna,
+    EXCHANGE_RATE_SOURCE_MANUAL,
+} from "../lib/penaltyCrossCurrency";
+import { useBnaUsdRateForDate } from "../hooks/useBnaUsdRateForDate";
 
 // Fecha de hoy en formato YYYY-MM-DD para el atributo max del input[type=date].
 function getTodayString() {
@@ -183,13 +215,22 @@ export function validarCamposCorregir({ montoStr, motivo }) {
  * Determina si el formulario del modo "corregir" puede enviarse.
  * Se exporta para testearse sin DOM.
  *
- * @param {{ montoStr: string, motivo: string, submitting: boolean }} estado
+ * 2026-07-13: suma la validación del bloque de conversión de moneda — cuando la multa
+ * cruza de moneda respecto de la factura (`requiereBloqueConversion`), además de monto
+ * y motivo, hace falta que la fecha/TC/justificación del recuadro estén completos
+ * (`bloqueConversionValido`, calculado con bloqueConversionCompleto de
+ * lib/penaltyCrossCurrency.js). Por default ambos parámetros dejan el comportamiento
+ * IGUAL que antes de esta spec (caso misma moneda, sin bloque).
+ *
+ * @param {{ montoStr: string, motivo: string, submitting: boolean, requiereBloqueConversion?: boolean, bloqueConversionValido?: boolean }} estado
  * @returns {boolean}
  */
-export function puedeEnviarCorregir({ montoStr, motivo, submitting }) {
+export function puedeEnviarCorregir({ montoStr, motivo, submitting, requiereBloqueConversion = false, bloqueConversionValido = true }) {
     if (submitting) return false;
     const { montoError, motivoError } = validarCamposCorregir({ montoStr, motivo });
-    return montoError === null && motivoError === null;
+    if (montoError !== null || motivoError !== null) return false;
+    if (requiereBloqueConversion && !bloqueConversionValido) return false;
+    return true;
 }
 
 export function ConfirmarMultaOperadorInline({
@@ -200,6 +241,8 @@ export function ConfirmarMultaOperadorInline({
     modo = "confirmar",
     supplierPublicId,
     saleInvoices = [],
+    invoiceCurrency,
+    suggestedExchangeRateDate,
     onConfirmado,
     onCerrar,
 }) {
@@ -221,6 +264,21 @@ export function ConfirmarMultaOperadorInline({
     const [submitting, setSubmitting] = useState(false);
     const [conflictMessage, setConflictMessage] = useState(null);
 
+    // ── Bloque de conversión de moneda (2026-07-13, spec F-2026-1033, SOLO modo
+    // "corregir") ── Fecha en que el operador cobró la multa: si el backend sugiere
+    // una (suggestedExchangeRateDate), arranca precargada con esa; si no, vacía.
+    // El helper corta la parte de hora/timezone del ISO (el input type=date solo
+    // entiende "YYYY-MM-DD").
+    const [fechaOperadorCobro, setFechaOperadorCobro] = useState(
+        suggestedExchangeRateDate ? String(suggestedExchangeRateDate).split("T")[0] : ""
+    );
+    const [tipoCambioStr, setTipoCambioStr] = useState("");
+    // "Se tocó" el casillero de TC: false hasta el primer cambio del usuario. Mientras
+    // sea false Y haya habido una sugerencia del BNA, la fuente queda "BNA"; apenas se
+    // toca, pasa a "Manual" (P2=A, no hay desplegable de fuente que preguntar).
+    const [tipoCambioTocado, setTipoCambioTocado] = useState(false);
+    const [justificacionTC, setJustificacionTC] = useState("");
+
     // 409 requiresApproval: flujo 4-eyes — abre RequestApprovalModal.
     const [approvalContext, setApprovalContext] = useState(null);
 
@@ -232,6 +290,10 @@ export function ConfirmarMultaOperadorInline({
         setFecha(getTodayString());
         setReferencia("");
         setTargetInvoicePublicId("");
+        setFechaOperadorCobro(suggestedExchangeRateDate ? String(suggestedExchangeRateDate).split("T")[0] : "");
+        setTipoCambioStr("");
+        setTipoCambioTocado(false);
+        setJustificacionTC("");
         setConflictMessage(null);
         setApprovalContext(null);
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -244,8 +306,56 @@ export function ConfirmarMultaOperadorInline({
         : validarCamposMulta({ montoStr, fecha });
     const motivoError = esModoCorregir ? validarMotivoCorregir(referencia) : null;
     const montoTocado = montoStr.length > 0;
+
+    // ── Bloque de conversión de moneda (2026-07-13) ── Solo aplica en modo "corregir":
+    // el bloque compara la moneda elegida contra la moneda REAL de la factura
+    // (invoiceCurrency), nunca contra monedaSugerida (regla dura, ver hayCruceDeMoneda).
+    const hayCruce = esModoCorregir && hayCruceDeMoneda(moneda, invoiceCurrency);
+
+    // Cotización de referencia del BNA para la fecha elegida (2026-07-14: endpoint
+    // GET /cancellations/bna-usd-rate?date=... ya conectado). `enabled: hayCruce`
+    // evita gastar pedidos mientras el bloque de conversión no está visible.
+    const { tipoCambioSugerido: tipoCambioSugeridoBNA, fechaSugeridaReal, cargando: buscandoTCBna } =
+        useBnaUsdRateForDate(fechaOperadorCobro, { enabled: hayCruce });
+    const huboSugerenciaBNA = tipoCambioSugeridoBNA != null;
+
+    // Pre-carga el casillero de TC con la sugerencia del BNA apenas llega (P2=A,
+    // spec 2026-07-13: "viene ya escrito y se pisa escribiendo encima"). Si el
+    // usuario YA tocó el campo, no lo pisamos — es su valor, no el sugerido. Si la
+    // sugerencia se va (204, o el usuario borró/cambió la fecha), y el campo sigue
+    // sin tocar, lo vaciamos: no puede quedar en pantalla un número que ya no
+    // corresponde a la fecha elegida.
+    useEffect(() => {
+        if (!tipoCambioTocado) {
+            setTipoCambioStr(tipoCambioSugeridoBNA != null ? String(tipoCambioSugeridoBNA) : "");
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [tipoCambioSugeridoBNA]);
+
+    const fuenteTC = resolverFuenteTC({ fueTocadoPorElUsuario: tipoCambioTocado, huboSugerenciaBNA });
+    const montoConvertido = hayCruce
+        ? calcularMontoConvertido({ monto: montoStr, monedaMulta: moneda, invoiceCurrency, tipoCambio: tipoCambioStr })
+        : null;
+    const mostrarAvisoTCLejano = hayCruce && debeMostrarAvisoTCLejano({
+        tipoCambioEscrito: tipoCambioStr,
+        tipoCambioReferenciaBNA: tipoCambioSugeridoBNA,
+    });
+    const erroresBloqueConversion = validarBloqueConversion({
+        fecha: fechaOperadorCobro,
+        tipoCambio: tipoCambioStr,
+        fuente: fuenteTC,
+        justificacion: justificacionTC,
+    });
+    const bloqueConversionValido = bloqueConversionCompleto(erroresBloqueConversion);
+
     const canSubmit = esModoCorregir
-        ? puedeEnviarCorregir({ montoStr, motivo: referencia, submitting })
+        ? puedeEnviarCorregir({
+            montoStr,
+            motivo: referencia,
+            submitting,
+            requiereBloqueConversion: hayCruce,
+            bloqueConversionValido,
+        })
         : puedeEnviar({ montoStr, fecha, saleInvoices, targetInvoicePublicId, submitting });
 
     const handleConfirmar = async () => {
@@ -263,10 +373,22 @@ export function ConfirmarMultaOperadorInline({
                 // Corrige el monto/moneda de una multa que quedó trabada en revisión manual
                 // (DebitNoteNeedsAmountCurrency). No confirma una multa nueva: ajusta la que
                 // ya está en curso para que el backend pueda reintentar su emisión.
+                //
+                // 2026-07-13 (spec F-2026-1033): si la moneda de la multa cruza contra la
+                // de la factura, se suman los campos del tipo de cambio. Caso misma
+                // moneda → construirCamposConversionParaPayload devuelve {} y el payload
+                // queda BYTE-IDÉNTICO al de antes de esta spec (regla dura §0 de la spec).
                 resultado = await cancellationsApi.correctPenalty(cancellationPublicId, {
                     amount: monto,
                     currency: moneda,
                     reason: referencia.trim(),
+                    ...construirCamposConversionParaPayload({
+                        hayCruce,
+                        tipoCambio: tipoCambioStr,
+                        fuente: fuenteTC,
+                        fecha: fechaOperadorCobro,
+                        justificacion: justificacionTC,
+                    }),
                 });
             } else {
                 // conceptKind: null = OperatorPenaltyPassThrough (regla fiscal cerrada ADR-014).
@@ -503,6 +625,133 @@ export function ConfirmarMultaOperadorInline({
                         </div>
                     </div>
                 </div>
+
+                {/* ── Bloque de conversión de moneda (2026-07-13, spec F-2026-1033) ──
+                    Aparece SOLO cuando la moneda elegida arriba no coincide con la moneda
+                    REAL de la factura del cliente. Caso misma moneda: este bloque entero
+                    no se dibuja, el panel queda igual que antes de esta spec. */}
+                {hayCruce && (
+                    <div
+                        className="rounded-lg border-2 border-dashed border-indigo-300 bg-indigo-50/50 dark:border-indigo-900/50 dark:bg-indigo-950/20 p-4 space-y-3"
+                        data-testid="multa-bloque-conversion"
+                    >
+                        <p className="text-xs font-bold text-indigo-800 dark:text-indigo-200">
+                            {encabezadoBloqueConversion(invoiceCurrency)}
+                        </p>
+                        <p className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">
+                            {tituloBloqueConversion(moneda, invoiceCurrency)}
+                        </p>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            {/* Fecha en que el operador cobró la multa — define qué dólar se usa. */}
+                            <div>
+                                <label
+                                    className="block text-xs font-semibold text-indigo-700 dark:text-indigo-300 mb-1.5"
+                                    htmlFor="multa-fecha-operador-cobro"
+                                >
+                                    Fecha en que el operador cobró la multa <span className="text-rose-500" aria-hidden="true">*</span>
+                                </label>
+                                <input
+                                    id="multa-fecha-operador-cobro"
+                                    type="date"
+                                    value={fechaOperadorCobro}
+                                    onChange={(e) => setFechaOperadorCobro(e.target.value)}
+                                    max={getTodayString()}
+                                    disabled={submitting}
+                                    data-testid="multa-fecha-operador-cobro-input"
+                                    className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 dark:border-indigo-800 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                                />
+                                {/* erroresBloqueConversion.fecha (no un chequeo suelto en el JSX) es
+                                    lo que también bloquea "Guardar corrección" — ver bloqueConversionValido. */}
+                                {fechaOperadorCobro && erroresBloqueConversion.fecha && (
+                                    <div className="mt-1 text-xs text-rose-600" role="alert" data-testid="multa-fecha-operador-cobro-error">
+                                        {erroresBloqueConversion.fecha}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Tipo de cambio del día que cobró — se pre-carga solo con el
+                                dólar del BNA de esa fecha (useBnaUsdRateForDate, más arriba)
+                                mientras el usuario no lo toque. Al escribir encima, se marca
+                                "tocado" → la fuente pasa a Manual (P2=A, spec 2026-07-13). */}
+                            <div>
+                                <label
+                                    className="block text-xs font-semibold text-indigo-700 dark:text-indigo-300 mb-1.5"
+                                    htmlFor="multa-tipo-cambio"
+                                >
+                                    Tipo de cambio del día que el operador cobró <span className="text-rose-500" aria-hidden="true">*</span>
+                                </label>
+                                <input
+                                    id="multa-tipo-cambio"
+                                    type="number"
+                                    step="0.01"
+                                    min="0.01"
+                                    value={tipoCambioStr}
+                                    onChange={(e) => {
+                                        setTipoCambioStr(e.target.value);
+                                        setTipoCambioTocado(true);
+                                    }}
+                                    placeholder="1.200,00"
+                                    disabled={submitting}
+                                    data-testid="multa-tipo-cambio-input"
+                                    className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 dark:border-indigo-800 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                                />
+                                {/* Estado del dato del BNA para esa fecha — mientras se
+                                    consulta, un texto neutro ("Buscando…"); una vez que
+                                    resuelve, textoEstadoDolarBna arma el mensaje según haya
+                                    o no cotización (usa la fecha REAL del dato, rateDate,
+                                    que puede ser distinta a la pedida por fin de semana/feriado). */}
+                                <div className="mt-1 text-xs text-slate-500 dark:text-slate-400" role="status">
+                                    {buscandoTCBna
+                                        ? "Buscando el dólar oficial del BNA…"
+                                        : textoEstadoDolarBna({ fechaPedida: fechaOperadorCobro, fechaSugeridaReal })}
+                                </div>
+                                {mostrarAvisoTCLejano && (
+                                    <div
+                                        className="mt-1.5 text-xs text-amber-700 dark:text-amber-300 flex items-start gap-1"
+                                        role="alert"
+                                        data-testid="multa-tc-lejano-aviso"
+                                    >
+                                        <AlertTriangle className="h-3 w-3 flex-shrink-0 mt-0.5" />
+                                        <span>El dólar que pusiste está muy lejos del oficial. Revisalo.</span>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Justificación: solo se pide cuando la fuente terminó siendo Manual
+                            (spec: con fuente BNA no hace falta explicar nada). */}
+                        {fuenteTC === EXCHANGE_RATE_SOURCE_MANUAL && tipoCambioTocado && (
+                            <div>
+                                <label
+                                    className="block text-xs font-semibold text-indigo-700 dark:text-indigo-300 mb-1.5"
+                                    htmlFor="multa-tc-justificacion"
+                                >
+                                    ¿De dónde sacaste este tipo de cambio? <span className="text-rose-500" aria-hidden="true">*</span>
+                                </label>
+                                <input
+                                    id="multa-tc-justificacion"
+                                    type="text"
+                                    value={justificacionTC}
+                                    onChange={(e) => setJustificacionTC(e.target.value)}
+                                    maxLength={500}
+                                    disabled={submitting}
+                                    placeholder="Recibo del operador, cotización del día que me pasó..."
+                                    data-testid="multa-tc-justificacion-input"
+                                    className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 dark:border-indigo-800 dark:bg-slate-800 dark:text-white disabled:opacity-50"
+                                />
+                            </div>
+                        )}
+
+                        {/* Línea de resultado — recalcula en vivo a medida que cambian
+                            monto / tipo de cambio (montoStr viene del campo de arriba). */}
+                        {montoConvertido != null && (
+                            <p className="text-xs font-medium text-indigo-700 dark:text-indigo-300 mt-1" data-testid="multa-monto-convertido">
+                                → Se le cobra al cliente <strong>{formatCurrency(montoConvertido, invoiceCurrency)}</strong>
+                            </p>
+                        )}
+                    </div>
+                )}
 
                 {/* ── Fecha en que el operador confirmó el monto ──
                     Solo en modo "confirmar": correct-penalty no usa esta fecha. */}

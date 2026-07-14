@@ -5510,6 +5510,9 @@ public class BookingCancellationService
                 b.PenaltyConfirmedByUserName,
                 b.OperatorPenaltyConfirmedDate,
                 b.ConfirmedWithClientAt,
+                // ADR-044 Fix B (2026-07-13): moneda de la factura destino (ARCA "PES"/"DOL"), para que el modal
+                // sepa cuando pedir el TC. Null si el BC no tiene factura origen (no deberia con ND en juego).
+                InvoiceMonId = b.OriginatingInvoice != null ? b.OriginatingInvoice.MonId : null,
             })
             .FirstOrDefaultAsync(ct);
 
@@ -5606,6 +5609,10 @@ public class BookingCancellationService
             RevertedAt = null,
             RevertedByName = null,
             ManualReviewReason = manualReviewReason,
+            // ADR-044 Fix B (2026-07-13): moneda de la factura (ISO) + fecha sugerida del TC, para que el modal de
+            // correccion sepa cuando mostrar el campo de tipo de cambio y que fecha proponer.
+            InvoiceCurrency = ResolveInvoiceCurrencyIso(row.InvoiceMonId),
+            SuggestedExchangeRateDate = row.OperatorPenaltyConfirmedDate,
         };
     }
 
@@ -6456,7 +6463,14 @@ public class BookingCancellationService
         string userId,
         string? userName,
         CancellationToken ct,
-        bool userCanClassifyAgencyPenalty = false)
+        bool userCanClassifyAgencyPenalty = false,
+        // ADR-044 Fix B (2026-07-13): datos del tipo de cambio para convertir una multa declarada en una moneda
+        // distinta a la de la factura (Caso A). Opcionales y con default null: una correccion en la misma moneda
+        // de la factura (el caso de hoy) no los manda y sigue byte-identica. El service revalida server-side.
+        decimal? exchangeRate = null,
+        int? exchangeRateSource = null,
+        DateTime? exchangeRateDate = null,
+        string? exchangeRateJustification = null)
     {
         // Spec "el paso de multa vive en la ficha" (A4, 2026-07-08): corrige el MONTO + MONEDA de una multa YA
         // CONFIRMADA cuya Nota de Debito quedo TRABADA (revision manual por moneda distinta, o fallida) y todavia NO
@@ -6548,24 +6562,91 @@ public class BookingCancellationService
 
             await EnsureDebitNoteNotBlockingCorrectionAsync(bc, ct);
 
+            // === ADR-044 Fix B (2026-07-13): resolver una multa declarada en una moneda DISTINTA a la de la
+            //     factura ANTES de tocar nada (antes del Reverse). La conversion ocurre aca —al capturar—, NO en
+            //     la emision: asi el guard de coherencia de la ND (que exige moneda declarada == moneda factura)
+            //     queda intacto y es IMPOSIBLE emitir un comprobante en la escala de otra moneda. Un TC mal
+            //     cargado, a lo sumo, da un monto en pesos equivocado (visible y re-corregible), nunca un
+            //     comprobante en la escala equivocada. Ver docs/architecture/2026-07-13-fixb-multa-moneda-cruzada.
+            var invoiceCurrencyIso = ResolveInvoiceCurrencyIso(bc.OriginatingInvoice?.MonId);
+            var operatorLines = await _db.BookingCancellationLines
+                .Where(l => l.BookingCancellationId == bc.Id && l.SupplierId == bc.SupplierId)
+                .ToListAsync(ct);
+
+            // La fuente del TC llega como int (contrato con el front); la validamos contra el enum antes de usarla,
+            // para no persistir un entero fuera de rango como si fuera un ExchangeRateSource.
+            ExchangeRateSource? parsedExchangeRateSource = null;
+            if (exchangeRateSource.HasValue)
+            {
+                if (!Enum.IsDefined(typeof(ExchangeRateSource), exchangeRateSource.Value))
+                    throw new ArgumentException(
+                        "El origen del tipo de cambio no es válido.", nameof(exchangeRateSource));
+                parsedExchangeRateSource = (ExchangeRateSource)exchangeRateSource.Value;
+            }
+
+            var conversion = ResolveDeclaredPenaltyConversion(
+                operatorLines,
+                declaredCurrencyIso: normalizedCurrency,
+                invoiceCurrencyIso: invoiceCurrencyIso,
+                declaredAmount: amount,
+                exchangeRate: exchangeRate,
+                exchangeRateSource: parsedExchangeRateSource,
+                exchangeRateDate: exchangeRateDate,
+                exchangeRateJustification: exchangeRateJustification);
+
+            switch (conversion.Outcome)
+            {
+                case PenaltyConversionOutcome.NeedsExchangeRate:
+                    // Caso A incompleto (falta fecha/TC valido o justificacion del TC manual). 400 con mensaje
+                    // claro; NO se toca nada (el throw revierte la transaccion sin haber deshecho la imputacion vieja).
+                    throw new ArgumentException(conversion.Reason, nameof(exchangeRate));
+                case PenaltyConversionOutcome.NotConvertible:
+                    // Caso B: la multa esta en otra moneda que las lineas del operador; un solo TC no resuelve a la
+                    // vez el lado cliente y el lado operador. Se deja en revision manual: NO se re-graba monto/moneda,
+                    // NO se estampa nada en las lineas, NO se crea cargo, NO se toca el RefundCap. Idempotente (el
+                    // BC queda como estaba, el usuario puede reintentar). Deuda futura: retencion cross-currency real.
+                    _logger.LogWarning(
+                        "metric:cancellation_penalty_correction_not_convertible | BcPublicId={BcPublicId} | " +
+                        "multa en moneda distinta a las lineas del operador: queda para revision manual.",
+                        bc.PublicId);
+                    throw new BusinessInvariantViolationException(
+                        conversion.Reason!, invariantCode: "INV-CORRECT-CROSSCURRENCY");
+            }
+
+            // A partir de aca la multa esta EN LA MONEDA DE LA FACTURA: convertida (Caso A) o ya coincidia (mismo-moneda).
+            var effectivePenaltyAmount = conversion.EffectiveAmount;
+            var effectivePenaltyCurrency = conversion.EffectiveCurrencyIso;
+
             // (1) DESHACER la imputacion vieja de la multa a las lineas del operador (restaura los RefundCap). Igual
             //     que hace el cierre sin multa desde Confirmed. Es no-op para agency-owned (no hubo imputacion).
             //     ADR-044 T2 Addendum (menor 1): capturamos la foto de los cargos que se borran para el audit.
             var correctionDeletedCharges = new List<DeletedOperatorChargeSnapshot>();
             await ReverseConfirmedPenaltyFromLinesAsync(bc, ct, deletedChargesSink: correctionDeletedCharges);
 
-            // (2) Grabar el monto/moneda NUEVOS. PenaltyAmountAtEvent alimenta la ND al cliente; PenaltyCurrencyAtEvent
-            //     es la moneda DECLARADA que el gating compara contra la factura (evita la ND por el numero equivocado).
-            bc.PenaltyAmountAtEvent = amount;
-            bc.PenaltyCurrencyAtEvent = normalizedCurrency;
+            // (2) Grabar el monto/moneda EFECTIVOS (ya en la moneda de la factura). PenaltyAmountAtEvent alimenta la
+            //     ND al cliente; PenaltyCurrencyAtEvent es la moneda que el gating compara contra la factura (con la
+            //     conversion hecha aca, coinciden -> el gating deja emitir por el numero correcto).
+            bc.PenaltyAmountAtEvent = effectivePenaltyAmount;
+            bc.PenaltyCurrencyAtEvent = effectivePenaltyCurrency;
             bc.PenaltyConfirmedByUserId = userId;
             bc.PenaltyConfirmedByUserName = userName;
             bc.PenaltyConfirmedAt = DateTime.UtcNow;
 
-            // (3) Registrar la moneda en las lineas + re-imputar la multa nueva a los RefundCap (por moneda, nunca cruzado).
-            await PersistPenaltyCurrencyOnLinesAsync(bc, normalizedCurrency, ct);
+            // (2-bis) ADR-044 Fix B: en Caso A guardamos el ORIGINAL declarado + el TC usado en columnas
+            //     ESTRUCTURADAS (no solo en el audit), para poder reconstruir el origen (ej. USD 200) sin leer
+            //     blobs. En mismo-moneda estos vienen null y limpian cualquier conversion previa del BC.
+            bc.DeclaredPenaltyOriginalAmount = conversion.DeclaredOriginalAmount;
+            bc.DeclaredPenaltyOriginalCurrency = conversion.DeclaredOriginalCurrencyIso;
+            bc.PenaltyConversionExchangeRate = conversion.ExchangeRate;
+            bc.PenaltyConversionExchangeRateSource = conversion.ExchangeRateSource;
+            bc.PenaltyConversionExchangeRateAt = conversion.ExchangeRateAt;
+            bc.PenaltyConversionExchangeRateJustification = conversion.ExchangeRateJustification;
+
+            // (3) Registrar la moneda en las lineas + re-imputar la multa nueva a los RefundCap (por moneda, nunca
+            //     cruzado). Se usa la moneda EFECTIVA: en Caso A las lineas ya estan en esa moneda -> coherente.
+            await PersistPenaltyCurrencyOnLinesAsync(bc, effectivePenaltyCurrency, ct);
             await AllocateConfirmedPenaltyToLinesAsync(
-                bc, amount, normalizedCurrency, ct, userId: userId, userName: userName);
+                bc, effectivePenaltyAmount, effectivePenaltyCurrency, ct, userId: userId, userName: userName);
 
             // (4) Resetear la huella de la ND trabada para que TryEmit la re-encole desde cero: soltamos el link a
             //     cualquier ND fallida vieja (su monto ya no aplica), volvemos a NotApplicable y limpiamos el error
@@ -6590,8 +6671,17 @@ public class BookingCancellationService
                     reason = trimmedReason,
                     previousAmount,
                     previousCurrency,
-                    newAmount = amount,
-                    newCurrency = normalizedCurrency,
+                    // Lo que finalmente quedo grabado (ya en la moneda de la factura). En Caso A esto es el CONVERTIDO.
+                    newAmount = effectivePenaltyAmount,
+                    newCurrency = effectivePenaltyCurrency,
+                    // ADR-044 Fix B: lo que el usuario DECLARO + el TC usado, cuando hubo conversion cross-currency
+                    // (Caso A). Todo null cuando la multa ya estaba en la moneda de la factura (mismo-moneda).
+                    declaredOriginalAmount = conversion.DeclaredOriginalAmount,
+                    declaredOriginalCurrency = conversion.DeclaredOriginalCurrencyIso,
+                    conversionExchangeRate = conversion.ExchangeRate,
+                    conversionExchangeRateSource = conversion.ExchangeRateSource?.ToString(),
+                    conversionExchangeRateDate = conversion.ExchangeRateAt,
+                    conversionExchangeRateJustification = conversion.ExchangeRateJustification,
                     // Menor 1 (ADR-044 T2): foto de los cargos borrados por la correccion (autocontencion del evento).
                     deletedOperatorCharges = correctionDeletedCharges,
                 }),
@@ -8892,6 +8982,204 @@ public class BookingCancellationService
         if (fromIsUsd && toIsArs) return Math.Round(amount * rate, 2, MidpointRounding.AwayFromZero);
         if (fromIsArs && toIsUsd) return Math.Round(amount / rate, 2, MidpointRounding.AwayFromZero);
         return null;
+    }
+
+    // ============================================================
+    // ADR-044 Fix B (2026-07-13): resolver la conversion de una multa declarada en una moneda
+    // distinta a la de la factura, en el momento de CORREGIRLA. La idea (opcion (c) del diseno):
+    // convertir ANTES de guardar, dejando intacto el guard de coherencia de la emision, para que
+    // sea IMPOSIBLE emitir una ND en la escala equivocada.
+    // ============================================================
+
+    /// <summary>Que decidio la resolucion de conversion de la multa (ADR-044 Fix B).</summary>
+    internal enum PenaltyConversionOutcome
+    {
+        /// <summary>La multa ya esta en la moneda de la factura: se usa tal cual, sin TC (comportamiento de hoy).</summary>
+        SameCurrency,
+
+        /// <summary>Caso A: se convirtio a la moneda de la factura con el TC provisto.</summary>
+        Converted,
+
+        /// <summary>Caso A pero falta la fecha o el TC (o el TC es no confiable): 400, corregir el dato.</summary>
+        NeedsExchangeRate,
+
+        /// <summary>Caso B: alguna linea del operador esta en otra moneda: no se puede convertir con un solo TC -> revision manual.</summary>
+        NotConvertible,
+    }
+
+    /// <summary>
+    /// Resultado de <see cref="ResolveDeclaredPenaltyConversion"/>. En <see cref="PenaltyConversionOutcome.SameCurrency"/>
+    /// y <see cref="PenaltyConversionOutcome.Converted"/> trae el monto/moneda EFECTIVOS a guardar; en los otros dos
+    /// trae solo el <see cref="Reason"/> (mensaje limpio para el usuario, sin jerga).
+    /// </summary>
+    internal readonly record struct DeclaredPenaltyConversion(
+        PenaltyConversionOutcome Outcome,
+        decimal EffectiveAmount,
+        string EffectiveCurrencyIso,
+        decimal? DeclaredOriginalAmount,
+        string? DeclaredOriginalCurrencyIso,
+        decimal? ExchangeRate,
+        ExchangeRateSource? ExchangeRateSource,
+        DateTime? ExchangeRateAt,
+        string? ExchangeRateJustification,
+        string? Reason);
+
+    /// <summary>
+    /// ADR-044 Fix B (seguridad, 2026-07-14): PISO de cordura del tipo de cambio ARS-por-1-USD. No es una
+    /// cotizacion exacta (a proposito NO se acopla al snapshot BNA, que puede no existir): es un limite AMPLIO
+    /// para atajar un dedazo grosero. Un TC fraccionario (ej. 0,5) pasa el filtro de
+    /// <see cref="IsUnreliableExchangeRate"/> (que solo rechaza &lt;=0 o ==1) pero no es un valor real.
+    /// </summary>
+    private const decimal MinSaneExchangeRate = 1m;
+
+    /// <summary>
+    /// ADR-044 Fix B (seguridad, 2026-07-14): TECHO de cordura del tipo de cambio. Un TC absurdo (ej. 10^9)
+    /// pasaria <see cref="IsUnreliableExchangeRate"/> y produciria un monto convertido sin sentido que las
+    /// columnas M2 (que solo guardan el original) no revierten. 1.000.000 ARS por USD es un techo holgadisimo
+    /// frente a cualquier cotizacion real previsible; por encima es casi seguro un error de tipeo.
+    /// </summary>
+    private const decimal MaxSaneExchangeRate = 1_000_000m;
+
+    /// <summary>
+    /// ADR-044 Fix B (2026-07-13): decide si la multa de una correccion se guarda tal cual, se convierte a la
+    /// moneda de la factura, o no se puede resolver. Es PURA (no toca la base) y por eso se testea sola.
+    ///
+    /// <para><b>Regla del disparador</b> (lo que el reviewer de arquitectura corrigio): la conversion NO se
+    /// dispara por "moneda de la multa != moneda de la factura", sino por el eje que gobierna el neteo del
+    /// reembolso del operador: la moneda de las LINEAS del operador. Dos casos:</para>
+    /// <list type="bullet">
+    ///   <item><b>Caso A (convertible)</b>: TODAS las lineas del operador ya estan en la moneda de la factura.
+    ///     Se convierte la multa declarada a esa moneda con el TC provisto. Al netear, las lineas ya hablan la
+    ///     moneda convertida -> coherente.</item>
+    ///   <item><b>Caso B (no convertible)</b>: alguna linea del operador esta en otra moneda (ej. el operador
+    ///     internacional retuvo USD sobre un servicio USD, con el cliente facturado en pesos). Un solo TC no
+    ///     puede resolver a la vez el renglon en pesos de la ND (lado cliente) y el cap en dolares del operador
+    ///     (lado proveedor): se rutea a revision manual, sin convertir ni tocar nada.</item>
+    /// </list>
+    /// </summary>
+    /// <param name="operatorLines">Lineas del operador principal del BC (las que gobiernan el neteo del reembolso).</param>
+    /// <param name="declaredCurrencyIso">Moneda declarada de la multa, ya normalizada a ISO ("ARS"/"USD").</param>
+    /// <param name="invoiceCurrencyIso">Moneda de la factura destino, en ISO ("ARS"/"USD").</param>
+    /// <param name="declaredAmount">Monto declarado de la multa, en su moneda original.</param>
+    /// <param name="exchangeRate">TC provisto por el usuario (ARS por 1 USD). Requerido en Caso A cruzado.</param>
+    /// <param name="exchangeRateSource">Origen del TC. Null se trata como Manual (exige justificacion).</param>
+    /// <param name="exchangeRateDate">Fecha del TC (dia en que el operador cobro). Requerida en Caso A cruzado.</param>
+    /// <param name="exchangeRateJustification">Justificacion del TC. Obligatoria cuando el origen es Manual (INV-120).</param>
+    internal static DeclaredPenaltyConversion ResolveDeclaredPenaltyConversion(
+        IReadOnlyCollection<BookingCancellationLine> operatorLines,
+        string declaredCurrencyIso,
+        string invoiceCurrencyIso,
+        decimal declaredAmount,
+        decimal? exchangeRate,
+        ExchangeRateSource? exchangeRateSource,
+        DateTime? exchangeRateDate,
+        string? exchangeRateJustification)
+    {
+        var declared = Monedas.Normalizar(declaredCurrencyIso);
+        var invoice = Monedas.Normalizar(invoiceCurrencyIso);
+
+        // Mismo-moneda: comportamiento de hoy. No se pide TC ni se llenan columnas de conversion.
+        if (string.Equals(declared, invoice, StringComparison.OrdinalIgnoreCase))
+            return SameCurrencyConversion(declaredAmount, declared);
+
+        // Cruce de moneda. ¿Todas las lineas del operador ya estan en la moneda de la factura? (Caso A)
+        bool todasLasLineasEnLaMonedaDeLaFactura = operatorLines.Count > 0 &&
+            operatorLines.All(l => string.Equals(
+                Monedas.Normalizar(l.Currency), invoice, StringComparison.OrdinalIgnoreCase));
+        if (!todasLasLineasEnLaMonedaDeLaFactura)
+            return NotConvertibleConversion(
+                "Esta multa está en una moneda distinta a la de la factura y a la de lo que el operador tiene " +
+                "que devolver, así que no se puede convertir automáticamente. La tiene que revisar una persona.");
+
+        // Caso A: convertible. Exigimos fecha + TC validos (defensa server-side, no confiar en el front).
+        if (exchangeRateDate is null)
+            return NeedsExchangeRateConversion(
+                "Falta la fecha en que el operador cobró la multa para poder convertirla a la moneda de la factura.");
+
+        // Defensa en profundidad (seguridad 2026-07-14): la fecha del TC no puede ser FUTURA (el front ya lo
+        // bloquea; lo revalidamos aca). Un TC "del futuro" no existe todavia. Comparamos por DIA de calendario en
+        // UTC, mismo criterio que ConfirmPenaltyAsync con la fecha del operador (:6038).
+        if (exchangeRateDate.Value.Date > DateTime.UtcNow.Date)
+            return NeedsExchangeRateConversion(
+                "La fecha del tipo de cambio no puede ser futura. Revisala.");
+
+        if (exchangeRate is null || IsUnreliableExchangeRate(exchangeRate.Value))
+            return NeedsExchangeRateConversion(
+                "Falta un tipo de cambio válido para convertir la multa a la moneda de la factura.");
+
+        // Techo/piso de cordura del TC (seguridad 2026-07-14): IsUnreliableExchangeRate solo ataja <=0 o ==1; un
+        // TC absurdo (10^9) o fraccionario (0,5) pasa igual y daria un monto convertido sin sentido que M2 no
+        // revierte. Lo acotamos a un rango AMPLIO y razonable (NO acoplado al snapshot BNA, que puede faltar):
+        // fuera de [MinSaneExchangeRate, MaxSaneExchangeRate] es casi seguro un dedazo, no una cotizacion real.
+        if (exchangeRate.Value < MinSaneExchangeRate || exchangeRate.Value > MaxSaneExchangeRate)
+            return NeedsExchangeRateConversion(
+                "El tipo de cambio que pusiste no parece un valor real. Revisalo.");
+
+        // El TC cargado a mano exige una razon escrita (misma regla que el resto de los TC manuales, INV-120).
+        // Si no vino una fuente, la tratamos como Manual (el caso mas exigente): asi nunca se guarda un TC a mano
+        // sin justificacion por el solo hecho de que el front no mando el origen.
+        var effectiveSource = exchangeRateSource ?? Domain.Entities.ExchangeRateSource.Manual;
+        if (effectiveSource == Domain.Entities.ExchangeRateSource.Manual
+            && string.IsNullOrWhiteSpace(exchangeRateJustification))
+            return NeedsExchangeRateConversion(
+                "Indicá por qué usás ese tipo de cambio para convertir la multa.");
+
+        // Conversion con la maquinaria existente (misma que usa la emision de cargos T3b). Trabaja en el eje ARCA.
+        var declaredArca = ArcaCurrencyMapper.TryMap(declared);
+        var invoiceArca = ArcaCurrencyMapper.TryMap(invoice);
+        if (declaredArca is null || invoiceArca is null)
+            return NotConvertibleConversion(
+                "Esta multa está en una moneda que no se puede convertir automáticamente. La tiene que revisar una persona.");
+
+        var converted = ConvertArsUsdAmount(declaredAmount, declaredArca, invoiceArca, exchangeRate.Value);
+        if (converted is null || converted.Value <= 0m)
+            return NeedsExchangeRateConversion(
+                "No se pudo convertir la multa a la moneda de la factura con ese tipo de cambio. Revisá el dato.");
+
+        // La fecha del TC va a una columna timestamptz: Postgres/Npgsql EXIGE Kind=Utc. Un date-picker del front
+        // suele mandar la fecha sin zona (Kind=Unspecified) o local; como esto representa un DIA de calendario (el
+        // dia en que el operador cobro), la fijamos como UTC sin correr el reloj, para no mover el dia ni romper el
+        // INSERT en produccion. (InMemory no valida Kind, pero prod si.)
+        var exchangeRateAtUtc = exchangeRateDate.Value.Kind == DateTimeKind.Utc
+            ? exchangeRateDate.Value
+            : DateTime.SpecifyKind(exchangeRateDate.Value, DateTimeKind.Utc);
+
+        return new DeclaredPenaltyConversion(
+            Outcome: PenaltyConversionOutcome.Converted,
+            EffectiveAmount: converted.Value,
+            EffectiveCurrencyIso: invoice,
+            DeclaredOriginalAmount: declaredAmount,
+            DeclaredOriginalCurrencyIso: declared,
+            ExchangeRate: exchangeRate.Value,
+            ExchangeRateSource: effectiveSource,
+            ExchangeRateAt: exchangeRateAtUtc,
+            ExchangeRateJustification: exchangeRateJustification?.Trim(),
+            Reason: null);
+    }
+
+    private static DeclaredPenaltyConversion SameCurrencyConversion(decimal amount, string currencyIso) =>
+        new(PenaltyConversionOutcome.SameCurrency, amount, currencyIso,
+            null, null, null, null, null, null, null);
+
+    private static DeclaredPenaltyConversion NeedsExchangeRateConversion(string reason) =>
+        new(PenaltyConversionOutcome.NeedsExchangeRate, 0m, string.Empty,
+            null, null, null, null, null, null, reason);
+
+    private static DeclaredPenaltyConversion NotConvertibleConversion(string reason) =>
+        new(PenaltyConversionOutcome.NotConvertible, 0m, string.Empty,
+            null, null, null, null, null, null, reason);
+
+    /// <summary>
+    /// ADR-044 Fix B (2026-07-13): moneda de la factura destino en ISO ("ARS"/"USD"), a partir de su
+    /// <c>MonId</c> (que se guarda en formato ARCA "PES"/"DOL", o vacio = pesos por convencion legacy).
+    /// </summary>
+    private static string ResolveInvoiceCurrencyIso(string? invoiceMonId)
+    {
+        // "DOL" -> USD; "PES"/vacio/no reconocido -> ARS (regla legacy: sin moneda == pesos).
+        var invoiceArca = NormalizeCurrencyToArcaOrNull(invoiceMonId);
+        return string.Equals(invoiceArca, "DOL", StringComparison.OrdinalIgnoreCase)
+            ? Monedas.USD
+            : Monedas.ARS;
     }
 
     /// <summary>

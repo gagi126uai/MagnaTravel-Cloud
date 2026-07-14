@@ -266,6 +266,12 @@ export function OperatorPenaltyStepPanel({
         // El monto que ya estaba cargado (y quedó trabado) se precarga para corregir,
         // no para tipear de cero.
         montoInicial={situacion.amount ?? undefined}
+        // 2026-07-13 (spec F-2026-1033): moneda REAL de la factura del cliente — el
+        // panel la usa para decidir si aparece el bloque de conversión (nunca compara
+        // contra monedaSugerida, que es editable). Y la fecha que el backend sugiere
+        // para el tipo de cambio, si la tiene.
+        invoiceCurrency={situacion.invoiceCurrency}
+        suggestedExchangeRateDate={situacion.suggestedExchangeRateDate}
         onConfirmado={() => {
           setShowCorregir(false);
           onResuelto();

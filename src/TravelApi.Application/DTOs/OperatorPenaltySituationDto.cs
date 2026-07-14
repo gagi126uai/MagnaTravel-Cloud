@@ -106,6 +106,22 @@ public class OperatorPenaltySituationDto
     /// para operadores SECUNDARIOS este campo queda null (su desglose por operador es una tanda futura).</para>
     /// </summary>
     public string? ManualReviewReason { get; set; }
+
+    /// <summary>
+    /// ADR-044 Fix B (2026-07-13): moneda de la factura original a la que se emite la Nota de Débito, en ISO
+    /// ("ARS"/"USD"). El modal de "corregir monto y moneda" la usa para saber CUÁNDO pedir el tipo de cambio: si
+    /// el usuario elige una moneda distinta a ésta, hay que convertir (y aparece el campo de TC). Aditivo y
+    /// nullable: un front viejo que lo ignore no se rompe. Null cuando no hay cancelación en juego.
+    /// </summary>
+    public string? InvoiceCurrency { get; set; }
+
+    /// <summary>
+    /// ADR-044 Fix B (2026-07-13): fecha SUGERIDA para el tipo de cambio (el día en que el operador confirmó/
+    /// cobró la multa, <c>OperatorPenaltyConfirmedDate</c>). El modal la propone como default editable del campo
+    /// de fecha; si viene null (BC legacy sin esa fecha), el campo arranca vacío y es obligatorio (el sistema
+    /// nunca inventa una fecha). Aditivo y nullable.
+    /// </summary>
+    public DateTime? SuggestedExchangeRateDate { get; set; }
 }
 
 /// <summary>

@@ -118,15 +118,22 @@ Recuadro con borde propio (mismo estilo que el recuadro del cobro cruzado). Cont
 
 3. **Tipo de cambio del día que el operador cobró \*** (campo numérico, formato "1 US$ = $ ___",
    obligatorio). `[GUÍA 2026-07-10: rótulo "Tipo de cambio del día que el operador cobró"]`
-   - Al elegir la fecha, el sistema **sugiere el dólar oficial del BNA de ese día** ya guardado, y
-     rellena el campo con ese número (editable). Debajo, en gris: **"Dólar oficial del BNA del
-     05/07. Si ponés otro número, lo tomamos 'a mano'."** `[arquitectura: el sistema sugiere el BNA;
-     el usuario puede aceptar o poner otro]`
+   - Al elegir la fecha, el sistema **sugiere el dólar oficial del BNA de ese día** ya guardado y
+     **rellena el campo con ese número** (editable). Para poner otro, se **escribe encima**. Debajo,
+     en gris: **"Dólar oficial del BNA del 05/07. Si ponés otro número, lo tomamos 'a mano'."**
+     `[GASTÓN 2026-07-13, P2=A: viene ya escrito y se pisa escribiendo encima]`
    - **La fuente del tipo de cambio se resuelve sola, no se pregunta:** vale "Dólar oficial del BNA"
-     mientras el usuario no toque el número; pasa a "a mano" apenas lo cambia. (Simplificación
-     respecto del cobro cruzado, que muestra un desplegable de fuente: acá, como el sistema ya sabe
-     de dónde salió el número, no hace falta preguntarlo. `[decidido desde la guía: no preguntar lo
-     que se puede derivar]`)
+     mientras el usuario no toque el número; pasa a **"a mano"** apenas lo cambia. `[GASTÓN
+     2026-07-13, P2=A: si lo cambia, la fuente queda "a mano"]`
+   - **Aviso suave si el número escrito está muy lejos del oficial (no frena):** si el usuario pisa
+     el sugerido con un número que se aparta bastante del dólar del BNA de ese día, aparece un
+     **cartelito amarillo** debajo del campo: **"⚠ El dólar que pusiste está muy lejos del oficial.
+     Revisalo."** Es solo un aviso: **se puede guardar igual.** `[GASTÓN 2026-07-13, P1=A: aviso
+     suave que no frena]`
+     - **Cuánto es "muy lejos" es una regla nueva** que hoy no existe (la pantalla de cobro no tiene
+       este aviso). Es la ÚNICA pieza de esta spec que necesita que dominio/negocio fijen el umbral
+       (ej. ±X %). Frontend-senior no lo inventa: si al construir no está fijado, se deja el aviso
+       apagado detrás del umbral y se pregunta el número. No bloquea el resto de la pantalla.
 
 4. **Línea de resultado:** **"→ Se le cobra al cliente $ 240.000"** (el monto ya convertido a la
    moneda de la factura). Se recalcula solo a medida que cambian monto / fecha / tipo de cambio.
@@ -168,9 +175,19 @@ o el tipo de cambio del recuadro (además de las reglas de siempre: monto > 0 y 
 
 ---
 
-## 6. Preguntas para Gastón (lo que la guía NO cubre)
+## 6. Preguntas para Gastón — RESPONDIDAS (2026-07-13)
 
-Ver el bloque `## PREGUNTAS PARA GASTON` que acompaña esta spec. Son 2. Hasta que responda, se
-construye TODO lo de arriba salvo esas 2 piezas (marcadas `[PREGUNTA]`).
+Las 2 preguntas quedaron cerradas por Gastón el 2026-07-13, las dos con la opción recomendada (A):
+
+- **P1 = A (aviso suave que no frena).** Si el dólar escrito se aparta bastante del oficial del BNA
+  de ese día, aparece un cartelito amarillo ("⚠ El dólar que pusiste está muy lejos del oficial.
+  Revisalo."); **se puede guardar igual.** Ya integrado en §3 (punto 3) y §4. Único pendiente de
+  negocio: el umbral de "muy lejos" (no lo inventa el front).
+- **P2 = A (el sugerido viene ya escrito y se pisa escribiendo encima).** El casillero de tipo de
+  cambio arranca con el dólar del BNA de ese día; para poner otro, se escribe encima; al hacerlo, la
+  fuente pasa a "a mano". Ya integrado en §3 (punto 3).
+
+**La spec queda CERRADA.** Todo lo de arriba se puede construir tal cual; la única dependencia
+abierta es el umbral del aviso de P1, que no bloquea el resto de la pantalla.
 </content>
 </invoke>

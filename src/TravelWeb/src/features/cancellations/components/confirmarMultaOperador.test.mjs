@@ -14,9 +14,27 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+// Import REAL (no réplica): construirCamposConversionParaPayload vive en un módulo
+// .js puro (sin JSX), así que SÍ se puede importar acá — si el contrato del payload
+// de conversión cambia en penaltyCrossCurrency.js, este test lo detecta solo, sin
+// que nadie tenga que acordarse de actualizar una copia (fix de prolijidad del
+// review 2026-07-14, sección J).
+import { construirCamposConversionParaPayload, EXCHANGE_RATE_SOURCE_MANUAL } from "../lib/penaltyCrossCurrency.js";
+
 // ─── Réplica de las funciones de ConfirmarMultaOperadorInline.jsx ─────────────
 // Se copian aquí para testearlas sin DOM ni React.
 // Si cambia la lógica del componente, actualizar también estas réplicas.
+//
+// POR QUÉ SON RÉPLICAS Y NO IMPORTS REALES (verificado 2026-07-14, review de
+// prolijidad): ConfirmarMultaOperadorInline.jsx es un archivo .jsx, y este proyecto
+// corre sus tests con `node --test` PELADO (sin loader de JSX/Babel/esbuild — se
+// probó directamente: node --test tira `ERR_UNKNOWN_FILE_EXTENSION` al intentar
+// importar un .jsx). Por eso ningún test de este repo importa un componente .jsx
+// (mismo criterio documentado en otroCargoOperador.js: "se separó para no importar
+// un componente de otro"). La única forma de que estas funciones fueran importables
+// de verdad sería extraerlas a un módulo .js puro — cambio más grande que esta
+// tanda de prolijidad; queda anotado como mejora futura si se quiere blindar del
+// todo la detección de divergencia.
 
 function getTodayString() {
     return new Date().toISOString().split("T")[0];
@@ -644,4 +662,121 @@ test("puedeEnviarCorregir: false si el motivo es muy corto aunque el monto sea v
         puedeEnviarCorregir({ montoStr: "100", motivo: "no", submitting: false }),
         false
     );
+});
+
+// ============================================================================
+// Sección J: bloque de conversión de moneda cruzada (spec cerrada 2026-07-13,
+// bug F-2026-1033) — réplica de la extensión de puedeEnviarCorregir (ver nota de
+// "por qué son réplicas" más arriba) + uso REAL de construirCamposConversionParaPayload
+// para armar el payload final. La lógica de negocio en sí (hayCruceDeMoneda,
+// calcularMontoConvertido, validarBloqueConversion, etc.) se testea con imports
+// REALES en lib/penaltyCrossCurrency.test.mjs — acá solo se verifica que el
+// componente la conecta bien a "puede enviar" y al payload final de correct-penalty.
+// ============================================================================
+
+// Réplica de puedeEnviarCorregir extendido (2026-07-13, mismo comportamiento que el
+// export REAL del componente): con requiereBloqueConversion además hace falta que
+// el bloque de conversión esté completo.
+function puedeEnviarCorregirConConversion({ montoStr, motivo, submitting, requiereBloqueConversion = false, bloqueConversionValido = true }) {
+    if (submitting) return false;
+    const { montoError, motivoError } = validarCamposCorregir({ montoStr, motivo });
+    if (montoError !== null || motivoError !== null) return false;
+    if (requiereBloqueConversion && !bloqueConversionValido) return false;
+    return true;
+}
+
+test("misma moneda (requiereBloqueConversion=false): se comporta EXACTO igual que antes de la spec", () => {
+    assert.equal(
+        puedeEnviarCorregirConConversion({ montoStr: "100", motivo: "Motivo válido de sobra", submitting: false }),
+        true
+    );
+});
+
+test("cruce de moneda, bloque incompleto (falta TC/fecha) → no puede enviar aunque monto y motivo estén OK", () => {
+    assert.equal(
+        puedeEnviarCorregirConConversion({
+            montoStr: "100",
+            motivo: "Motivo válido de sobra",
+            submitting: false,
+            requiereBloqueConversion: true,
+            bloqueConversionValido: false,
+        }),
+        false
+    );
+});
+
+test("cruce de moneda, bloque completo → puede enviar", () => {
+    assert.equal(
+        puedeEnviarCorregirConConversion({
+            montoStr: "100",
+            motivo: "Motivo válido de sobra",
+            submitting: false,
+            requiereBloqueConversion: true,
+            bloqueConversionValido: true,
+        }),
+        true
+    );
+});
+
+// Réplica del ENSAMBLADO del payload de correct-penalty (handleConfirmar, rama
+// esModoCorregir: { amount, currency, reason, ...camposConversion }) — el spread en
+// sí es trivial y vive inline en el componente. Lo que SÍ importa detectar si
+// diverge es QUÉ hay adentro de `camposConversion`, y para eso estos tests llaman
+// a la función REAL construirCamposConversionParaPayload (import de arriba), no a
+// una copia — si su contrato cambia, estos tests se rompen solos.
+function construirPayloadCorregir({ montoStr, moneda, referencia, camposConversion }) {
+    return {
+        amount: parseFloat(montoStr),
+        currency: moneda,
+        reason: referencia.trim(),
+        ...camposConversion,
+    };
+}
+
+test("payload corregir, misma moneda: byte-idéntico a hoy (sin ningún campo de conversión)", () => {
+    const payload = construirPayloadCorregir({
+        montoStr: "500",
+        moneda: "ARS",
+        referencia: "Monto mal cargado, era 500 no 5000",
+        // hayCruce=false → la función REAL debe devolver {} (regla de oro §0 de la spec).
+        camposConversion: construirCamposConversionParaPayload({
+            hayCruce: false,
+            tipoCambio: "",
+            fuente: EXCHANGE_RATE_SOURCE_MANUAL,
+            fecha: "",
+            justificacion: "",
+        }),
+    });
+    assert.deepEqual(payload, {
+        amount: 500,
+        currency: "ARS",
+        reason: "Monto mal cargado, era 500 no 5000",
+    });
+    assert.equal("exchangeRate" in payload, false);
+    assert.equal("exchangeRateSource" in payload, false);
+    assert.equal("exchangeRateDate" in payload, false);
+    assert.equal("exchangeRateJustification" in payload, false);
+});
+
+test("payload corregir, cruce de moneda: suma los campos de conversión al payload de siempre", () => {
+    const payload = construirPayloadCorregir({
+        montoStr: "200",
+        moneda: "USD",
+        referencia: "El operador informó la multa en dólares, no en pesos.",
+        // hayCruce=true, fuente Manual (el usuario pisó el TC sugerido) → la función
+        // REAL arma los 4 campos, incluida la justificación.
+        camposConversion: construirCamposConversionParaPayload({
+            hayCruce: true,
+            tipoCambio: "1200",
+            fuente: EXCHANGE_RATE_SOURCE_MANUAL,
+            fecha: "2026-07-05",
+            justificacion: "Recibo del operador en dólares.",
+        }),
+    });
+    assert.equal(payload.amount, 200);
+    assert.equal(payload.currency, "USD");
+    assert.equal(payload.exchangeRate, 1200);
+    assert.equal(payload.exchangeRateSource, EXCHANGE_RATE_SOURCE_MANUAL);
+    assert.equal(payload.exchangeRateDate, "2026-07-05");
+    assert.equal(payload.exchangeRateJustification, "Recibo del operador en dólares.");
 });

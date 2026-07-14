@@ -54,17 +54,21 @@ public class CancellationsController : ControllerBase
     // ADR-013: para resolver server-side si el usuario puede clasificar la penalidad
     // como ingreso propio de la agencia (permiso elevado que dispara la ND fiscal).
     private readonly IUserPermissionResolver _permissionResolver;
+    // ADR-044 Fix B (2026-07-13): sugerencia de TC del dolar oficial BNA para pre-escribir el modal de correccion.
+    private readonly IBnaExchangeRateService _bnaExchangeRateService;
     private readonly ILogger<CancellationsController> _logger;
 
     public CancellationsController(
         IBookingCancellationService bcService,
         IOwnershipResolver ownershipResolver,
         IUserPermissionResolver permissionResolver,
+        IBnaExchangeRateService bnaExchangeRateService,
         ILogger<CancellationsController> logger)
     {
         _bcService = bcService;
         _ownershipResolver = ownershipResolver;
         _permissionResolver = permissionResolver;
+        _bnaExchangeRateService = bnaExchangeRateService;
         _logger = logger;
     }
 
@@ -429,7 +433,12 @@ public class CancellationsController : ControllerBase
         {
             var dto = await _bcService.CorrectPenaltyAsync(
                 publicId, request.Amount, request.Currency, request.Reason, userId, userName, cancellationToken,
-                userCanClassifyAgencyPenalty: userCanClassifyAgencyPenalty);
+                userCanClassifyAgencyPenalty: userCanClassifyAgencyPenalty,
+                // ADR-044 Fix B (2026-07-13): datos del TC para convertir una multa cross-currency (Caso A).
+                exchangeRate: request.ExchangeRate,
+                exchangeRateSource: request.ExchangeRateSource,
+                exchangeRateDate: request.ExchangeRateDate,
+                exchangeRateJustification: request.ExchangeRateJustification);
             return Ok(dto);
         }
         catch (KeyNotFoundException)
@@ -924,6 +933,39 @@ public class CancellationsController : ControllerBase
     }
 
     /// <summary>
+    /// ADR-044 Fix B (2026-07-13): sugerencia del dolar oficial BNA para una FECHA pasada, para pre-escribir el
+    /// tipo de cambio del modal "corregir monto y moneda" (la conversion de una multa en dolares sobre una
+    /// factura en pesos). SOLO LECTURA de lo ya guardado: NO llama a Banco Nacion en vivo.
+    ///
+    /// <para><b>Permiso</b>: <see cref="Permissions.ReservasView"/> — mismo nivel que las otras lecturas de la
+    /// ficha de reserva (cualquier usuario que opera reservas). Es una cotizacion publica, sin ownership por fila
+    /// (no expone datos de una reserva concreta).</para>
+    ///
+    /// <para><b>Respuesta</b>: 200 con <c>{ rate, rateDate }</c> cuando hay un dato razonable para la fecha; 204
+    /// (sin contenido) cuando no hay dato util para esa fecha (el modal cae a "escribilo a mano"); 400 si falta
+    /// la fecha. <b>Limitacion</b> (dato real del modelo): la tabla de cotizaciones es un SINGLETON (guarda solo
+    /// la ULTIMA), asi que solo se ofrece ese unico snapshot y unicamente si su fecha cae en una ventana corta
+    /// (&lt;= la pedida, hasta 5 dias antes). Ver <c>IBnaExchangeRateService.GetPersistedUsdSellerRateForDateAsync</c>.</para>
+    /// </summary>
+    /// <param name="date">Fecha (YYYY-MM-DD) del dia en que el operador cobro la multa.</param>
+    [HttpGet("bna-usd-rate")]
+    [RequirePermission(Permissions.ReservasView)]
+    public async Task<ActionResult<BnaRateForDateDto>> GetBnaUsdRateForDate(
+        [FromQuery] DateOnly? date,
+        CancellationToken cancellationToken)
+    {
+        if (date is null)
+            return BadRequest(new { message = "Indicá la fecha para buscar el dólar oficial." });
+
+        var suggestion = await _bnaExchangeRateService
+            .GetPersistedUsdSellerRateForDateAsync(date.Value, cancellationToken);
+        if (suggestion is null)
+            return NoContent(); // sin dato util para esa fecha: el front permite cargar el TC a mano.
+
+        return Ok(suggestion);
+    }
+
+    /// <summary>
     /// ADR-013 §3.10 (M4, 2026-06-01): bandeja "cancelaciones con NC emitida pero sin su
     /// ND". Devuelve las cancelaciones cuya NC total ya salio con CAE pero cuya Nota de
     /// Debito quedo pendiente o fallida -> fiscalmente incompletas. El service reconcilia de
@@ -1210,5 +1252,21 @@ public record CorrectPenaltyRequest(
     [System.ComponentModel.DataAnnotations.Required]
     [System.ComponentModel.DataAnnotations.MinLength(5)]
     [System.ComponentModel.DataAnnotations.MaxLength(500)]
-    string Reason
+    string Reason,
+
+    // ADR-044 Fix B (2026-07-13): tipo de cambio para convertir una multa declarada en una moneda distinta a la
+    // de la factura (Caso A: multa en dólares, factura en pesos). Van AL FINAL, nullable con default, para no
+    // romper la firma posicional del record. Se REQUIEREN cuando la moneda elegida no coincide con la de la
+    // factura y todo se puede convertir; el service revalida server-side (no se confía en el front) y devuelve
+    // 400 con mensaje claro si faltan.
+    decimal? ExchangeRate = null,
+
+    // Origen del tipo de cambio (ver ExchangeRateSource). Manual (o sin especificar) exige justificación.
+    int? ExchangeRateSource = null,
+
+    // Fecha del tipo de cambio (el día en que el operador cobró la multa). Requerida cuando hay que convertir.
+    DateTime? ExchangeRateDate = null,
+
+    [System.ComponentModel.DataAnnotations.MaxLength(500)]
+    string? ExchangeRateJustification = null
 );

@@ -180,6 +180,7 @@ public class Adr042DataExposureFugasTests
     {
         var controller = new CancellationsController(
             bcService, Mock.Of<IOwnershipResolver>(), Mock.Of<IUserPermissionResolver>(),
+            Mock.Of<IBnaExchangeRateService>(),
             NullLogger<CancellationsController>.Instance);
         controller.ControllerContext = new ControllerContext
         {

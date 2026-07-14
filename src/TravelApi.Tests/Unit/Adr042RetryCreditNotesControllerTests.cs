@@ -27,6 +27,7 @@ public class Adr042RetryCreditNotesControllerTests
             bcService,
             Mock.Of<IOwnershipResolver>(),
             Mock.Of<IUserPermissionResolver>(),
+            Mock.Of<IBnaExchangeRateService>(),
             NullLogger<CancellationsController>.Instance);
         controller.ControllerContext = new ControllerContext
         {

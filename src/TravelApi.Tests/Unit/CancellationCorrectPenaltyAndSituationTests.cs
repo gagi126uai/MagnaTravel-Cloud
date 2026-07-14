@@ -929,4 +929,439 @@ public class CancellationCorrectPenaltyAndSituationTests
         Assert.Null(sit.Amount);
         Assert.Null(sit.Since);
     }
+
+    // ============================================================
+    // ADR-044 Fix B (2026-07-13): CorrectPenaltyAsync convierte una multa declarada en una moneda distinta a la de
+    // la factura (Caso A: multa en USD, factura + lineas del operador en pesos), con TC provisto por el usuario y
+    // auditado. Caso B (linea del operador en otra moneda) -> revision manual, sin convertir. El guard de coherencia
+    // de la emision queda intacto: es imposible emitir un comprobante en la escala equivocada.
+    // ============================================================
+
+    /// <summary>Captura la CreateInvoiceRequest con la que se emite la ND, para poder afirmar moneda y renglones.</summary>
+    private static void SetupCreateCapturesRequest(Harness h, Action<CreateInvoiceRequest> captureRequest)
+    {
+        h.InvoiceMock
+            .Setup(s => s.CreateAsync(
+                It.IsAny<CreateInvoiceRequest>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((CreateInvoiceRequest req, string? uid, string? uname, CancellationToken ct) =>
+            {
+                captureRequest(req);
+                var reservaId = h.Ctx.Reservas.First().Id;
+                var originalId = h.Ctx.Invoices.First(i => i.TipoComprobante == 11).Id;
+                var nd = new Invoice
+                {
+                    TipoComprobante = 12, PuntoDeVenta = 1, NumeroComprobante = 210,
+                    Resultado = "PENDING", ReservaId = reservaId, OriginalInvoiceId = originalId,
+                };
+                h.Ctx.Invoices.Add(nd);
+                h.Ctx.SaveChanges();
+                return new InvoiceDto { PublicId = nd.PublicId };
+            });
+    }
+
+    private static readonly DateTime OperatorChargedDate = new(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc);
+
+    [Fact]
+    public async Task Correct_CaseA_UsdOnArsInvoice_ConvertsToArs_PersistsOriginal_AndEmitsSingleArsLine()
+    {
+        // Caso A (F-2026-1033): multa declarada USD 60, linea del operador en ARS, factura en pesos. Con TC 1000
+        // el servidor convierte a ARS 60.000 ANTES de guardar; el gating pasa (ARS==ARS) y la ND se re-encola.
+        var h = BuildService();
+        var (bcId, bc, supplier, _) = await SeedPostNcAsync(h.Ctx);
+        await SeedConfirmedManualReviewAsync(h, bc, supplier, penalty: 60m, declaredCurrency: "USD");
+        CreateInvoiceRequest? capturedRequest = null;
+        SetupCreateCapturesRequest(h, r => capturedRequest = r);
+
+        await h.Service.CorrectPenaltyAsync(
+            bcId, amount: 60m, currency: "USD", reason: "El operador retuvo US$ 60.",
+            "corrector", "Corrector", default, userCanClassifyAgencyPenalty: true,
+            exchangeRate: 1000m, exchangeRateSource: (int)ExchangeRateSource.BNA_VendedorDivisa,
+            exchangeRateDate: OperatorChargedDate);
+
+        var after = h.Ctx.BookingCancellations.Single();
+        // La multa quedo en la moneda de la factura, por el monto convertido.
+        Assert.Equal("ARS", after.PenaltyCurrencyAtEvent);
+        Assert.Equal(60_000m, after.PenaltyAmountAtEvent);
+        Assert.Equal(DebitNoteStatus.Pending, after.DebitNoteStatus); // re-encolada: el gating paso
+        Assert.NotNull(after.DebitNoteInvoiceId);
+        // El original declarado + el TC quedan en columnas ESTRUCTURADAS (M2), no solo en el JSON de auditoria.
+        Assert.Equal(60m, after.DeclaredPenaltyOriginalAmount);
+        Assert.Equal("USD", after.DeclaredPenaltyOriginalCurrency);
+        Assert.Equal(1000m, after.PenaltyConversionExchangeRate);
+        Assert.Equal(ExchangeRateSource.BNA_VendedorDivisa, after.PenaltyConversionExchangeRateSource);
+        Assert.Equal(OperatorChargedDate, after.PenaltyConversionExchangeRateAt);
+
+        // Emision por la RAMA de cargos tipificados T3b (allCharges>0), no LegacySingleItem: un unico renglon en
+        // pesos y el comprobante hereda MonId=PES de la factura original.
+        Assert.NotNull(capturedRequest);
+        Assert.Equal("PES", capturedRequest!.MonId);
+        Assert.Single(capturedRequest.Items);
+        Assert.Equal(60_000m, capturedRequest.Items[0].Total);
+
+        // El cargo del operador nace en la moneda de la LINEA (ARS), coherente con su cuenta.
+        var charge = h.Ctx.BookingCancellationLineOperatorCharges.Single();
+        Assert.Equal("ARS", Monedas.Normalizar(charge.Currency));
+        Assert.Equal(60_000m, charge.Amount);
+    }
+
+    [Fact]
+    public async Task Correct_CaseA_MoneyInvariant_HoldsInArs()
+    {
+        // Invariante de plata (Caso A): tras convertir y re-imputar, RefundCap + PenaltyAmount == capBeforePenalty
+        // (100.000), con la retencion en ARS (moneda de la linea).
+        var h = BuildService();
+        var (bcId, bc, supplier, _) = await SeedPostNcAsync(h.Ctx);
+        await SeedConfirmedManualReviewAsync(h, bc, supplier, penalty: 60m, declaredCurrency: "USD");
+        SetupCreateCapturesUser(h, _ => { });
+
+        await h.Service.CorrectPenaltyAsync(
+            bcId, 60m, "USD", "Convertir a pesos", "corrector", "Corrector", default,
+            userCanClassifyAgencyPenalty: true,
+            exchangeRate: 1000m, exchangeRateSource: (int)ExchangeRateSource.BNA_VendedorDivisa,
+            exchangeRateDate: OperatorChargedDate);
+
+        var line = h.Ctx.BookingCancellationLines.Single();
+        Assert.Equal(60_000m, line.PenaltyAmount);      // 60 USD * 1000 = 60.000 ARS
+        Assert.Equal(40_000m, line.RefundCap);          // 100.000 - 60.000
+        Assert.Equal(100_000m, line.RefundCap + line.PenaltyAmount!.Value);
+        Assert.Equal(60_000m, line.RetainedDeductionAmount); // eje CAJA en ARS
+        Assert.Equal("ARS", Monedas.Normalizar(line.PenaltyCurrency));
+    }
+
+    [Fact]
+    public async Task Correct_CaseB_OperatorLineInOtherCurrency_RoutesToManualReview_WithoutMutating()
+    {
+        // Caso B: el operador retuvo USD sobre un servicio en USD, pero el cliente esta facturado en pesos. Un solo
+        // TC no puede resolver a la vez el renglon ARS de la ND y el cap USD del operador -> revision manual, sin
+        // convertir ni tocar nada. Idempotente (el BC queda como estaba).
+        var h = BuildService();
+        var (bcId, bc, supplier, _) = await SeedPostNcAsync(h.Ctx);
+        await SeedConfirmedCrossCurrencyOperatorLineAsync(h, bc, supplier, declaredUsd: 200m);
+
+        var lineBefore = h.Ctx.BookingCancellationLines.Single();
+        var refundCapBefore = lineBefore.RefundCap;
+        var penaltyAmountBefore = lineBefore.PenaltyAmount;
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.CorrectPenaltyAsync(
+                bcId, 200m, "USD", "El operador retuvo US$ 200", "corrector", "Corrector", default,
+                userCanClassifyAgencyPenalty: true,
+                exchangeRate: 1000m, exchangeRateSource: (int)ExchangeRateSource.BNA_VendedorDivisa,
+                exchangeRateDate: OperatorChargedDate));
+        Assert.Equal("INV-CORRECT-CROSSCURRENCY", ex.InvariantCode);
+        // Mensaje al usuario sin jerga (data-exposure): habla de "una persona", no de IDs/enums.
+        Assert.Contains("revisar una persona", ex.Message, StringComparison.OrdinalIgnoreCase);
+
+        var after = h.Ctx.BookingCancellations.Single();
+        Assert.Equal(200m, after.PenaltyAmountAtEvent);       // no se re-grabo
+        Assert.Equal("USD", after.PenaltyCurrencyAtEvent);     // no se convirtio
+        Assert.Null(after.DeclaredPenaltyOriginalAmount);      // no se estampo la conversion
+        Assert.Null(after.PenaltyConversionExchangeRate);
+        Assert.Empty(h.Ctx.BookingCancellationLineOperatorCharges); // no se creo cargo
+        var lineAfter = h.Ctx.BookingCancellationLines.Single();
+        Assert.Equal(refundCapBefore, lineAfter.RefundCap);    // no se toco el RefundCap
+        Assert.Equal(penaltyAmountBefore, lineAfter.PenaltyAmount);
+    }
+
+    [Fact]
+    public async Task Correct_CaseA_WithUnreliableExchangeRate_Rejects400_WithoutMutating()
+    {
+        // Banda de sanidad: un TC <= 0 o == 1 es el "default peligroso" (cotizacion sin cargar). Se rechaza con 400
+        // y NO se persiste nada.
+        var h = BuildService();
+        var (bcId, bc, supplier, _) = await SeedPostNcAsync(h.Ctx);
+        await SeedConfirmedManualReviewAsync(h, bc, supplier, penalty: 60m, declaredCurrency: "USD");
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            h.Service.CorrectPenaltyAsync(
+                bcId, 60m, "USD", "TC invalido", "corrector", "Corrector", default,
+                userCanClassifyAgencyPenalty: true,
+                exchangeRate: 1m, exchangeRateSource: (int)ExchangeRateSource.BNA_VendedorDivisa,
+                exchangeRateDate: OperatorChargedDate));
+
+        var after = h.Ctx.BookingCancellations.Single();
+        Assert.Equal("USD", after.PenaltyCurrencyAtEvent); // intacto
+        Assert.Equal(60m, after.PenaltyAmountAtEvent);
+        Assert.Null(after.DeclaredPenaltyOriginalAmount);
+    }
+
+    [Fact]
+    public async Task Correct_CaseA_WithoutExchangeRate_Rejects400_WithoutMutating()
+    {
+        var h = BuildService();
+        var (bcId, bc, supplier, _) = await SeedPostNcAsync(h.Ctx);
+        await SeedConfirmedManualReviewAsync(h, bc, supplier, penalty: 60m, declaredCurrency: "USD");
+
+        // Cruce de moneda pero SIN tipo de cambio: 400 con mensaje claro, no persiste.
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            h.Service.CorrectPenaltyAsync(
+                bcId, 60m, "USD", "Sin TC", "corrector", "Corrector", default,
+                userCanClassifyAgencyPenalty: true,
+                exchangeRate: null, exchangeRateSource: null, exchangeRateDate: OperatorChargedDate));
+
+        Assert.Equal("USD", h.Ctx.BookingCancellations.Single().PenaltyCurrencyAtEvent);
+    }
+
+    [Fact]
+    public async Task Correct_CaseA_WithoutExchangeRateDate_Rejects400_WithoutMutating()
+    {
+        var h = BuildService();
+        var (bcId, bc, supplier, _) = await SeedPostNcAsync(h.Ctx);
+        await SeedConfirmedManualReviewAsync(h, bc, supplier, penalty: 60m, declaredCurrency: "USD");
+
+        // Cruce de moneda con TC pero SIN fecha: 400 (el sistema no inventa la fecha del TC).
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            h.Service.CorrectPenaltyAsync(
+                bcId, 60m, "USD", "Sin fecha del TC", "corrector", "Corrector", default,
+                userCanClassifyAgencyPenalty: true,
+                exchangeRate: 1000m, exchangeRateSource: (int)ExchangeRateSource.BNA_VendedorDivisa,
+                exchangeRateDate: null));
+
+        Assert.Equal("USD", h.Ctx.BookingCancellations.Single().PenaltyCurrencyAtEvent);
+    }
+
+    [Fact]
+    public async Task Correct_CaseA_ManualExchangeRateWithoutJustification_Rejects400()
+    {
+        // TC cargado a mano (Manual) exige justificacion (INV-120). Sin ella, 400.
+        var h = BuildService();
+        var (bcId, bc, supplier, _) = await SeedPostNcAsync(h.Ctx);
+        await SeedConfirmedManualReviewAsync(h, bc, supplier, penalty: 60m, declaredCurrency: "USD");
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            h.Service.CorrectPenaltyAsync(
+                bcId, 60m, "USD", "TC manual sin justificar", "corrector", "Corrector", default,
+                userCanClassifyAgencyPenalty: true,
+                exchangeRate: 1000m, exchangeRateSource: (int)ExchangeRateSource.Manual,
+                exchangeRateDate: OperatorChargedDate, exchangeRateJustification: null));
+
+        Assert.Equal("USD", h.Ctx.BookingCancellations.Single().PenaltyCurrencyAtEvent);
+    }
+
+    [Fact]
+    public async Task Correct_SameCurrency_ArsOnArsInvoice_IsByteIdentical_NoConversionColumns()
+    {
+        // Mismo-moneda (ARS sobre factura ARS): comportamiento de hoy. No se pide TC y las columnas de conversion
+        // quedan en null.
+        var h = BuildService();
+        var (bcId, bc, supplier, _) = await SeedPostNcAsync(h.Ctx);
+        await SeedConfirmedManualReviewAsync(h, bc, supplier, penalty: 30_000m, declaredCurrency: "ARS");
+        SetupCreateCapturesUser(h, _ => { });
+
+        await h.Service.CorrectPenaltyAsync(
+            bcId, 45_000m, "ARS", "Corregir el monto en pesos", "corrector", "Corrector", default,
+            userCanClassifyAgencyPenalty: true);
+
+        var after = h.Ctx.BookingCancellations.Single();
+        Assert.Equal(45_000m, after.PenaltyAmountAtEvent);
+        Assert.Equal("ARS", after.PenaltyCurrencyAtEvent);
+        Assert.Equal(DebitNoteStatus.Pending, after.DebitNoteStatus);
+        // Sin conversion: las 6 columnas M2 quedan en null.
+        Assert.Null(after.DeclaredPenaltyOriginalAmount);
+        Assert.Null(after.DeclaredPenaltyOriginalCurrency);
+        Assert.Null(after.PenaltyConversionExchangeRate);
+        Assert.Null(after.PenaltyConversionExchangeRateSource);
+        Assert.Null(after.PenaltyConversionExchangeRateAt);
+        Assert.Null(after.PenaltyConversionExchangeRateJustification);
+    }
+
+    [Fact]
+    public async Task Correct_CaseA_DoesNotCreateCancellationPenaltyDeduction()
+    {
+        // Anti-doble-cobro INV-ADR013-001: la conversion no crea una deduccion CancellationPenalty (la multa se
+        // cobra por la ND, no por una deduccion del refund del cliente).
+        var h = BuildService();
+        var (bcId, bc, supplier, _) = await SeedPostNcAsync(h.Ctx);
+        await SeedConfirmedManualReviewAsync(h, bc, supplier, penalty: 60m, declaredCurrency: "USD");
+        SetupCreateCapturesUser(h, _ => { });
+
+        await h.Service.CorrectPenaltyAsync(
+            bcId, 60m, "USD", "Convertir a pesos", "corrector", "Corrector", default,
+            userCanClassifyAgencyPenalty: true,
+            exchangeRate: 1000m, exchangeRateSource: (int)ExchangeRateSource.BNA_VendedorDivisa,
+            exchangeRateDate: OperatorChargedDate);
+
+        Assert.Empty(h.Ctx.DeductionLines.Where(d => d.Kind == DeductionKind.CancellationPenalty));
+    }
+
+    [Fact]
+    public async Task Situation_ExposesInvoiceCurrency_AndSuggestedExchangeRateDate()
+    {
+        // El read-model del paso expone la moneda de la factura (para saber cuando pedir TC) y la fecha sugerida.
+        var h = BuildService();
+        var (_, bc, supplier, reserva) = await SeedPostNcAsync(h.Ctx);
+        await SeedConfirmedManualReviewAsync(h, bc, supplier, penalty: 60m, declaredCurrency: "USD");
+        bc.OperatorPenaltyConfirmedDate = OperatorChargedDate;
+        await h.Ctx.SaveChangesAsync();
+
+        var sit = await h.Service.GetOperatorPenaltySituationAsync(
+            reserva.PublicId, userCanClassifyOperatorPenalty: true, isCallerAdmin: true, default);
+
+        Assert.Equal("ARS", sit.InvoiceCurrency); // factura en pesos (MonId=PES)
+        Assert.Equal(OperatorChargedDate, sit.SuggestedExchangeRateDate);
+    }
+
+    [Fact]
+    public async Task Correct_CaseA_WithAbsurdlyHighExchangeRate_Rejects400_WithoutMutating()
+    {
+        // Endurecimiento seguridad (2026-07-14): un TC absurdo (10^9) pasa IsUnreliableExchangeRate pero el techo
+        // de cordura lo rechaza. 400, sin mutar.
+        var h = BuildService();
+        var (bcId, bc, supplier, _) = await SeedPostNcAsync(h.Ctx);
+        await SeedConfirmedManualReviewAsync(h, bc, supplier, penalty: 60m, declaredCurrency: "USD");
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            h.Service.CorrectPenaltyAsync(
+                bcId, 60m, "USD", "TC absurdo", "corrector", "Corrector", default,
+                userCanClassifyAgencyPenalty: true,
+                exchangeRate: 1_000_000_000m, exchangeRateSource: (int)ExchangeRateSource.Manual,
+                exchangeRateDate: OperatorChargedDate, exchangeRateJustification: "test"));
+        Assert.Contains("no parece un valor real", ex.Message, StringComparison.OrdinalIgnoreCase);
+
+        var after = h.Ctx.BookingCancellations.Single();
+        Assert.Equal("USD", after.PenaltyCurrencyAtEvent); // intacto
+        Assert.Equal(60m, after.PenaltyAmountAtEvent);
+        Assert.Null(after.DeclaredPenaltyOriginalAmount);
+    }
+
+    [Fact]
+    public async Task Correct_CaseA_WithFractionalExchangeRate_Rejects400_WhereIsUnreliableWouldMiss()
+    {
+        // Endurecimiento seguridad (2026-07-14): un TC fraccionario (0,5) NO lo ataja IsUnreliableExchangeRate
+        // (solo rechaza <=0 o ==1), pero el PISO de cordura si. Prueba que el piso cubre ese hueco.
+        var h = BuildService();
+        var (bcId, bc, supplier, _) = await SeedPostNcAsync(h.Ctx);
+        await SeedConfirmedManualReviewAsync(h, bc, supplier, penalty: 60m, declaredCurrency: "USD");
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            h.Service.CorrectPenaltyAsync(
+                bcId, 60m, "USD", "TC fraccionario", "corrector", "Corrector", default,
+                userCanClassifyAgencyPenalty: true,
+                exchangeRate: 0.5m, exchangeRateSource: (int)ExchangeRateSource.Manual,
+                exchangeRateDate: OperatorChargedDate, exchangeRateJustification: "test"));
+
+        Assert.Equal("USD", h.Ctx.BookingCancellations.Single().PenaltyCurrencyAtEvent);
+    }
+
+    [Fact]
+    public async Task Correct_CaseA_WithFutureExchangeRateDate_Rejects400_WithoutMutating()
+    {
+        // Endurecimiento seguridad (2026-07-14): la fecha del TC no puede ser futura (defensa en profundidad, el
+        // front ya la bloquea). 400, sin mutar.
+        var h = BuildService();
+        var (bcId, bc, supplier, _) = await SeedPostNcAsync(h.Ctx);
+        await SeedConfirmedManualReviewAsync(h, bc, supplier, penalty: 60m, declaredCurrency: "USD");
+
+        var futureDate = DateTime.UtcNow.Date.AddDays(30);
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            h.Service.CorrectPenaltyAsync(
+                bcId, 60m, "USD", "Fecha futura", "corrector", "Corrector", default,
+                userCanClassifyAgencyPenalty: true,
+                exchangeRate: 1000m, exchangeRateSource: (int)ExchangeRateSource.BNA_VendedorDivisa,
+                exchangeRateDate: futureDate));
+        Assert.Contains("no puede ser futura", ex.Message, StringComparison.OrdinalIgnoreCase);
+
+        Assert.Equal("USD", h.Ctx.BookingCancellations.Single().PenaltyCurrencyAtEvent);
+    }
+
+    [Fact]
+    public async Task Correct_CaseA_ConvertedAmountExceedsInvoiceTotal_RoutesEmissionToManualReview_NoCae()
+    {
+        // Endurecimiento seguridad (2026-07-14): si el monto CONVERTIDO supera el total de la factura, la emision
+        // de la ND rutea a revision manual (guard M2 del motor de emision) -> nunca saca CAE. El convertido igual
+        // se persiste (M2); lo que queda pendiente es SOLO la emision.
+        var h = BuildService();
+        var (bcId, bc, supplier, _) = await SeedPostNcAsync(h.Ctx);
+        await SeedConfirmedManualReviewAsync(h, bc, supplier, penalty: 200m, declaredCurrency: "USD");
+        // Factura chica + cap grande: el convertido (200 * 1000 = 200.000) supera el total de la factura (50.000).
+        var original = h.Ctx.Invoices.Single(i => i.TipoComprobante == 11);
+        original.ImporteTotal = 50_000m;
+        var line = h.Ctx.BookingCancellationLines.Single();
+        line.RefundCap = 500_000m;
+        await h.Ctx.SaveChangesAsync();
+        var createCalls = 0;
+        SetupCreateCapturesUser(h, _ => createCalls++);
+
+        await h.Service.CorrectPenaltyAsync(
+            bcId, 200m, "USD", "Convertido supera la factura", "corrector", "Corrector", default,
+            userCanClassifyAgencyPenalty: true,
+            exchangeRate: 1000m, exchangeRateSource: (int)ExchangeRateSource.BNA_VendedorDivisa,
+            exchangeRateDate: OperatorChargedDate);
+
+        var after = h.Ctx.BookingCancellations.Single();
+        Assert.Equal(0, createCalls);                                  // no se emitio: sin CAE
+        Assert.Null(after.DebitNoteInvoiceId);
+        Assert.Equal(DebitNoteStatus.ManualReview, after.DebitNoteStatus);
+        // El convertido se persistio igual (queda para revision manual, no se pierde el dato).
+        Assert.Equal(200_000m, after.PenaltyAmountAtEvent);
+        Assert.Equal("ARS", after.PenaltyCurrencyAtEvent);
+        Assert.Equal(200m, after.DeclaredPenaltyOriginalAmount);
+    }
+
+    [Fact]
+    public async Task Correct_CaseA_NonRoundConversion_RoundsAwayFromZeroToTwoDecimals()
+    {
+        // Endurecimiento backend N1 (2026-07-14): conversion no-redonda. 150,5 USD * 1234,57 = 185.802,785, que a
+        // 2 decimales con MidpointRounding.AwayFromZero da 185.802,79 (el redondeo bancario daria .78). Fija la
+        // convencion de redondeo del sistema.
+        var h = BuildService();
+        var (bcId, bc, supplier, _) = await SeedPostNcAsync(h.Ctx);
+        await SeedConfirmedManualReviewAsync(h, bc, supplier, penalty: 150.5m, declaredCurrency: "USD");
+        // Factura y cap holgados para que emita limpio y el cap no recorte el monto convertido.
+        var original = h.Ctx.Invoices.Single(i => i.TipoComprobante == 11);
+        original.ImporteTotal = 1_000_000m;
+        var line = h.Ctx.BookingCancellationLines.Single();
+        line.RefundCap = 1_000_000m;
+        await h.Ctx.SaveChangesAsync();
+        SetupCreateCapturesUser(h, _ => { });
+
+        await h.Service.CorrectPenaltyAsync(
+            bcId, 150.5m, "USD", "Conversion no redonda", "corrector", "Corrector", default,
+            userCanClassifyAgencyPenalty: true,
+            exchangeRate: 1234.57m, exchangeRateSource: (int)ExchangeRateSource.BNA_VendedorDivisa,
+            exchangeRateDate: OperatorChargedDate);
+
+        var after = h.Ctx.BookingCancellations.Single();
+        Assert.Equal(185_802.79m, after.PenaltyAmountAtEvent);      // AwayFromZero (no 185.802,78)
+        Assert.Equal(1234.57m, after.PenaltyConversionExchangeRate);
+        Assert.Equal(150.5m, after.DeclaredPenaltyOriginalAmount);
+    }
+
+    /// <summary>
+    /// Semilla Caso B: multa confirmada declarada en USD con la linea del operador TAMBIEN en USD (el operador
+    /// internacional retuvo dolares), pero la factura del cliente esta en pesos. La correccion cross-currency no
+    /// se puede resolver con un solo TC.
+    /// </summary>
+    private static async Task SeedConfirmedCrossCurrencyOperatorLineAsync(
+        Harness h, BookingCancellation bc, Supplier supplier, decimal declaredUsd)
+    {
+        bc.ConceptKind = CancellationConceptKind.OperatorPenaltyPassThrough;
+        bc.PenaltyStatus = PenaltyStatus.Confirmed;
+        bc.PenaltyAmountAtEvent = declaredUsd;
+        bc.PenaltyCurrencyAtEvent = "USD";
+        bc.DebitNotePurpose = DebitNotePurpose.PenaltyOrCancellationCharge;
+        bc.DebitNoteStatus = DebitNoteStatus.ManualReview;
+        bc.DebitNoteInvoiceId = null;
+        bc.PenaltyConfirmedByUserId = "u";
+        bc.PenaltyConfirmedByUserName = "U";
+        bc.PenaltyConfirmedAt = DateTime.UtcNow.AddDays(-1);
+        bc.ConceptClassifiedByUserId = "u";
+        bc.ConceptClassifiedByUserName = "U";
+        bc.ConceptClassifiedAt = DateTime.UtcNow.AddDays(-1);
+
+        h.Ctx.BookingCancellationLines.Add(new BookingCancellationLine
+        {
+            BookingCancellationId = bc.Id,
+            SupplierId = supplier.Id,
+            Currency = Monedas.USD, // <- la linea del operador esta en dolares (el eje que hace Caso B)
+            RefundCap = 500m,
+            PenaltyAmount = declaredUsd,
+            RetainedDeductionAmount = declaredUsd,
+            PenaltyStatus = PenaltyStatus.Confirmed,
+            ReceivedRefundAmount = 0m,
+            RefundStatus = BookingCancellationLineRefundStatus.PendingOperatorRefund,
+        });
+        await h.Ctx.SaveChangesAsync();
+    }
 }

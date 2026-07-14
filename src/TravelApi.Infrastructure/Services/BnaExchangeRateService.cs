@@ -122,6 +122,52 @@ public class BnaExchangeRateService : IBnaExchangeRateService
         return LoadPersistedSnapshotAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// ADR-044 Fix B (2026-07-13): ventana de dias hacia atras que aceptamos entre la fecha pedida y la fecha del
+    /// unico snapshot guardado. 5 dias cubre findes largos/feriados (el BNA no cotiza esos dias): si el operador
+    /// cobro un domingo, el ultimo BNA util es el del viernes anterior. Mas alla de la ventana, el snapshot no
+    /// representa la fecha pedida y devolvemos "sin dato" (el modal cae a carga manual).
+    /// </summary>
+    private const int RateForDateWindowDays = 5;
+
+    /// <summary>Formatos posibles del <c>PublishedDate</c> que scrapea el parser (d/M/yyyy con o sin cero a la izquierda).</summary>
+    private static readonly string[] PublishedDateFormats =
+        { "d/M/yyyy", "dd/MM/yyyy", "d/MM/yyyy", "dd/M/yyyy" };
+
+    /// <inheritdoc />
+    public async Task<BnaRateForDateDto?> GetPersistedUsdSellerRateForDateAsync(
+        DateOnly requestedDate, CancellationToken cancellationToken)
+    {
+        // SOLO lectura del snapshot ya guardado: NO se llama a Banco Nacion en vivo (es una consulta historica).
+        var snapshot = await _dbContext.BnaExchangeRateSnapshots
+            .AsNoTracking()
+            .SingleOrDefaultAsync(item => item.Id == BnaExchangeRateSnapshot.SingletonId, cancellationToken);
+
+        if (snapshot is null)
+            return null; // nunca se persistio una cotizacion.
+
+        // La fecha guardada viene como texto scrapeado ("dd/MM/yyyy"). Si no se puede parsear, no arriesgamos un
+        // dato incierto: sin sugerencia (el modal permite cargar el TC a mano).
+        if (!DateOnly.TryParseExact(
+                snapshot.PublishedDate, PublishedDateFormats,
+                CultureInfo.InvariantCulture, DateTimeStyles.None, out var publishedDate))
+            return null;
+
+        // El snapshot solo sirve como TC de la fecha pedida si es de ESA fecha o anterior (nunca un dato posterior
+        // que el operador no pudo haber visto) y no mas viejo que la ventana. Como la tabla es un SINGLETON, esto
+        // es lo unico que podemos ofrecer con honestidad.
+        if (publishedDate > requestedDate)
+            return null;
+        if (requestedDate.DayNumber - publishedDate.DayNumber > RateForDateWindowDays)
+            return null;
+
+        // Cotizacion no confiable (0/negativa): sin sugerencia.
+        if (snapshot.UsdSeller <= 0m)
+            return null;
+
+        return new BnaRateForDateDto(Rate: snapshot.UsdSeller, RateDate: publishedDate);
+    }
+
     private async Task<BnaUsdSellerRateDto?> LoadPersistedSnapshotAsync(CancellationToken cancellationToken)
     {
         var snapshot = await _dbContext.BnaExchangeRateSnapshots

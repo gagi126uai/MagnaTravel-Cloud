@@ -448,6 +448,73 @@ public class BookingCancellation : IHasPublicId
     public string? SupportingDocumentReference { get; set; }
 
     // ============================================================
+    // ADR-044 Fix B (2026-07-13): conversion de una multa declarada en una moneda
+    // distinta a la de la factura destino (Caso A: la multa se declaro en USD pero
+    // TODAS las lineas del operador y la factura estan en pesos).
+    //
+    // POR QUE EXISTEN estas columnas: cuando el usuario corrige la multa y elige una
+    // moneda que NO coincide con la de la factura, el servidor CONVIERTE el monto a la
+    // moneda de la factura (con un tipo de cambio que confirma el usuario) ANTES de
+    // guardarlo, para que la Nota de Debito salga en la escala correcta. Al convertir,
+    // el monto original que declaro el operador (ej. USD 200) se "pierde" de
+    // PenaltyAmountAtEvent (que pasa a guardar el equivalente en pesos). Estas 6
+    // columnas conservan ese original + el tipo de cambio usado en forma ESTRUCTURADA
+    // (no solo en el log de auditoria), para que un dia se pueda reconstruir el origen
+    // en dolares sin leer blobs de JSON (deuda futura: retencion cross-currency real).
+    //
+    // TODAS quedan en null cuando NO hubo conversion (la multa se declaro en la misma
+    // moneda de la factura, el 99% de los casos): el comportamiento y la forma del dato
+    // son identicos a antes de este fix para esos BCs. Solo el path Caso A las llena.
+    // ============================================================
+
+    /// <summary>
+    /// ADR-044 Fix B: monto de la multa TAL COMO lo declaro el operador, en su moneda
+    /// original (ej. <c>200</c> cuando el operador retuvo US$ 200). Null si no hubo
+    /// conversion. El monto ya CONVERTIDO a la moneda de la factura vive en
+    /// <see cref="PenaltyAmountAtEvent"/>.
+    /// </summary>
+    public decimal? DeclaredPenaltyOriginalAmount { get; set; }
+
+    /// <summary>
+    /// ADR-044 Fix B: moneda original declarada por el operador, en ISO 4217
+    /// ("USD"/"ARS"). Null si no hubo conversion. La moneda en la que finalmente se
+    /// emite la ND (la de la factura) vive en <see cref="PenaltyCurrencyAtEvent"/>.
+    /// </summary>
+    [MaxLength(3)]
+    public string? DeclaredPenaltyOriginalCurrency { get; set; }
+
+    /// <summary>
+    /// ADR-044 Fix B: tipo de cambio usado para convertir la multa a la moneda de la
+    /// factura. Convencion FIJA del sistema: unidades de ARS por 1 USD (igual que
+    /// <c>Payment.ExchangeRate</c>/<c>Invoice.MonCotiz</c>). Null si no hubo conversion.
+    /// </summary>
+    public decimal? PenaltyConversionExchangeRate { get; set; }
+
+    /// <summary>
+    /// ADR-044 Fix B: origen del tipo de cambio usado (reusa <see cref="ExchangeRateSource"/>:
+    /// Manual, BNA vendedor divisa, etc.). Null si no hubo conversion. Cuando es
+    /// <see cref="ExchangeRateSource.Manual"/> se exige
+    /// <see cref="PenaltyConversionExchangeRateJustification"/> (misma regla INV-120 que el
+    /// resto de los TC manuales del sistema).
+    /// </summary>
+    public ExchangeRateSource? PenaltyConversionExchangeRateSource { get; set; }
+
+    /// <summary>
+    /// ADR-044 Fix B: fecha del tipo de cambio usado (el dia en que el operador cobro la
+    /// multa). El usuario la conoce y la informa; el sistema no la inventa. Null si no
+    /// hubo conversion.
+    /// </summary>
+    public DateTime? PenaltyConversionExchangeRateAt { get; set; }
+
+    /// <summary>
+    /// ADR-044 Fix B: justificacion escrita del tipo de cambio, OBLIGATORIA cuando el
+    /// origen es <see cref="ExchangeRateSource.Manual"/> (INV-120). Null si no hubo
+    /// conversion o si el TC vino de una fuente automatica.
+    /// </summary>
+    [MaxLength(500)]
+    public string? PenaltyConversionExchangeRateJustification { get; set; }
+
+    // ============================================================
     // ADR-025 (DT.1.1, 2026-06-13): lineas hijas (una por servicio cancelado).
     //
     // La multiplicidad (varios operadores, varios servicios cancelados) vive aca,

@@ -1217,3 +1217,42 @@ más de una factura, y viene escondido con defaults.
 - **(2026-07-10) Los textos del cartel multi-operador NO se cambian.** El cartel de "más de un
   operador con multa" y los carteles de acción trabada ya cumplen las 8 reglas de voz (dicen "multa",
   "a mano", "Anulada", sin jerga): se conservan tal cual.
+
+## Corregir una multa cuando la moneda no coincide con la factura (2026-07-13, respuestas de Gastón)
+
+> **Origen:** una multa cargada en una moneda (ej. US$ 200) distinta de la de la factura del cliente
+> (ej. pesos) quedaba trabada para siempre: "Corregir monto y moneda" la volvía a trabar con el mismo
+> motivo, en círculo (bug F-2026-1033). Solución: cuando las monedas no coinciden, el MISMO panel en
+> línea "Corregir monto y moneda" **guía la conversión** (monto en la moneda del operador + fecha en
+> que el operador cobró → el sistema sugiere el dólar del BNA de ese día → muestra el resultado ya
+> convertido a la moneda de la factura). Sigue valiendo todo lo anterior del paso de multa (2026-07-08
+> "el paso de multa vive en la ficha", 2026-07-10 T4) y las 3 reglas duras de multimoneda (2026-06-09).
+> Spec: `docs/ux/2026-07-13-modal-conversion-multa-moneda-cruzada.md`.
+
+- **(2026-07-13) El caso de misma moneda NO cambia.** Si la multa está en la misma moneda que la
+  factura, el panel "Corregir monto y moneda" se ve y funciona EXACTAMENTE como hoy. El bloque de
+  conversión SOLO aparece cuando la moneda de la multa es distinta de la de la factura (misma regla
+  dura del recuadro de TC "solo si cruza", 2026-06-09 P4 / 2026-07-10).
+
+- **(2026-07-13) El bloque de conversión tiene: fecha en que el operador cobró + tipo de cambio de
+  ese día + línea de resultado**, los tres obligatorios. El vendedor carga el monto en la moneda del
+  operador (no convierte a mano); el sistema muestra "→ Se le cobra al cliente $ 240.000" ya en la
+  moneda de la factura. Rótulo del TC: "Tipo de cambio del día que el operador cobró" (2026-07-10).
+  Nunca aparece la frase "diferencia de cambio".
+
+- **(2026-07-13, P2=A) El dólar sugerido viene YA ESCRITO en el casillero y se pisa escribiendo
+  encima.** Al elegir la fecha, el casillero de tipo de cambio arranca con el dólar oficial del BNA
+  de ese día (editable); para poner otro, se escribe encima. Debajo, en gris: "Dólar oficial del BNA
+  del 05/07. Si ponés otro número, lo tomamos 'a mano'." La **fuente se resuelve sola**: vale "Dólar
+  oficial del BNA" mientras no se toque, y pasa a **"a mano"** apenas se cambia el número (no hay
+  desplegable de fuente que preguntar). Si NO hay dólar del BNA guardado para esa fecha, el casillero
+  arranca vacío con el texto "No tenemos el dólar del BNA para el 05/07. Escribí el tipo de cambio a
+  mano." y no se puede guardar hasta escribir uno.
+
+- **(2026-07-13, P1=A) Aviso suave, NO frena, si el dólar escrito está muy lejos del oficial.** Si el
+  usuario pisa el sugerido con un número que se aparta bastante del dólar del BNA de ese día, aparece
+  un cartelito amarillo debajo del campo ("⚠ El dólar que pusiste está muy lejos del oficial.
+  Revisalo."). Es solo un aviso para atajar un error de tipeo: **se puede guardar igual.** El umbral
+  de "muy lejos" es una regla de negocio nueva (hoy la pantalla de cobro no tiene este aviso): lo fija
+  dominio/negocio, no lo inventa el front; hasta que esté fijado, el aviso queda apagado y no bloquea
+  el resto de la pantalla.

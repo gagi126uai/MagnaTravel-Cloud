@@ -16,6 +16,7 @@
  *   - POST   /api/cancellations/:id/retry-debit-note (reintenta la ND de la multa trabada/fallida)
  *   - PATCH  /api/cancellations/:id/correct-penalty (corrige monto/moneda de la multa trabada)
  *   - POST   /api/cancellations/:id/operator-charges (ADR-044 T4: agrega un segundo cargo del operador)
+ *   - GET    /api/cancellations/bna-usd-rate?date=YYYY-MM-DD (2026-07-14: dólar oficial BNA de una fecha)
  */
 
 import { api } from "../../../api";
@@ -274,8 +275,28 @@ export const cancellationsApi = {
    * {invariantCode} (regla de negocio) o {code:"CONCURRENT_EDIT"} (otro usuario lo tocó
    * al mismo tiempo).
    *
+   * 2026-07-14 (spec F-2026-1033, bloque de conversión de moneda cruzada): cuando la
+   * moneda de la multa (`currency`) NO coincide con la moneda real de la factura del
+   * cliente, se suman 4 campos opcionales — SOLO se mandan en ese caso (caso misma
+   * moneda: payload byte-idéntico a hoy, sin ninguno de estos 4 campos). Se arman con
+   * construirCamposConversionParaPayload de lib/penaltyCrossCurrency.js, no a mano.
+   *   - exchangeRate: number — pesos por 1 dólar, el tipo de cambio del día que cobró el operador.
+   *   - exchangeRateSource: number — INT del enum ExchangeRateSource del backend:
+   *     6 = BNA_VendedorDivisa (el usuario no tocó el valor sugerido por
+   *     GET /cancellations/bna-usd-rate), 5 = Manual (el usuario escribió otro número).
+   *   - exchangeRateDate: string "YYYY-MM-DD" — la fecha en que el operador cobró la
+   *     multa (la que cargó el usuario en el bloque de conversión). OJO: es una fecha
+   *     PELADA sin hora, a diferencia de `operatorConfirmationDate` de confirmPenalty
+   *     más arriba (que sí lleva "T00:00:00Z") — ver el comentario junto a donde se
+   *     arma este campo en ConfirmarMultaOperadorInline.jsx para el detalle de por qué
+   *     esta asimetría es intencional y no rompe nada del lado del backend.
+   *   - exchangeRateJustification: string — SOLO viaja cuando exchangeRateSource es
+   *     Manual (5); el backend la exige en ese caso (400 si falta).
+   *
    * @param {string} publicId - GUID del BookingCancellation.
-   * @param {object} payload - { amount: number, currency: "ARS"|"USD", reason: string }
+   * @param {object} payload - { amount: number, currency: "ARS"|"USD", reason: string,
+   *   exchangeRate?: number, exchangeRateSource?: number, exchangeRateDate?: string,
+   *   exchangeRateJustification?: string }
    * @returns {Promise<BookingCancellationDto>}
    */
   correctPenalty: (publicId, payload) =>
@@ -327,6 +348,25 @@ export const cancellationsApi = {
     api.patch(`/cancellations/${publicId}/operator-charges/${chargePublicId}/target-invoice`, {
       targetInvoicePublicId,
     }),
+
+  /**
+   * 2026-07-14 (spec F-2026-1033, bloque de conversión de moneda de la multa): dólar
+   * oficial del BNA (vendedor) para UNA fecha puntual — se usa para pre-cargar el tipo
+   * de cambio del bloque de conversión de ConfirmarMultaOperadorInline.
+   *
+   * Respuestas del backend:
+   *   - 200 { rate: number, rateDate: "YYYY-MM-DD" }: rate = pesos por 1 dólar. OJO:
+   *     rateDate puede ser ANTERIOR a la fecha pedida (fines de semana/feriados sin
+   *     cotización propia) — el rótulo en pantalla tiene que usar rateDate, no la fecha
+   *     que se pidió.
+   *   - 204 sin body: no hay dato para esa fecha. api.get ya devuelve `null` en este
+   *     caso (ver parseResponse en api.js) — no es un error, es un estado esperado.
+   *
+   * @param {string} dateIso - Fecha en que el operador cobró la multa ("YYYY-MM-DD").
+   * @returns {Promise<{rate: number, rateDate: string}|null>}
+   */
+  getBnaUsdRate: (dateIso) =>
+    api.get(`/cancellations/bna-usd-rate?date=${encodeURIComponent(dateIso)}`),
 };
 
 // ============================================================================

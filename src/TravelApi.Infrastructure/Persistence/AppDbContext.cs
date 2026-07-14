@@ -1889,6 +1889,16 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             // no necesita config explicita (DateTime? mapea a timestamp nullable por default).
             entity.Property(b => b.SupportingDocumentReference).HasMaxLength(500);
 
+            // ADR-044 Fix B (2026-07-13): conversion de multa declarada en moneda distinta a la
+            // de la factura (Caso A). Los montos con precision de plata (18,2), el TC con la misma
+            // precision que Invoice.MonCotiz (18,6), la fuente como int (igual que el resto de los
+            // enum del BC), y los textos con su largo. Todas nullable (solo se llenan en Caso A).
+            entity.Property(b => b.DeclaredPenaltyOriginalAmount).HasPrecision(18, 2);
+            entity.Property(b => b.DeclaredPenaltyOriginalCurrency).HasMaxLength(3);
+            entity.Property(b => b.PenaltyConversionExchangeRate).HasPrecision(18, 6);
+            entity.Property(b => b.PenaltyConversionExchangeRateSource).HasConversion<int?>();
+            entity.Property(b => b.PenaltyConversionExchangeRateJustification).HasMaxLength(500);
+
             // ND opcional: existe solo despues de que la NC total salio con CAE y el
             // gating habilito la emision. SetNull para que el rollback de una ND (caso
             // raro) no rompa el aggregate (mismo patron que CreditNoteInvoice).
