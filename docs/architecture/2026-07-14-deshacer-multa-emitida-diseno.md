@@ -152,7 +152,7 @@ Nuevo método en `IBookingCancellationService` / `BookingCancellationService`, m
    `Supplier`, `Reserva`). 404 si no existe.
 3. **Permiso elevado** (defensa en profundidad): `userCanClassifyAgencyPenalty` (o Admin), igual gate que
    confirm/correct/retry/waive. 409 `INV-UNDO-PERM` si no.
-4. **Guards duros (reglas #9/#10/#11), fuera de transacción para el 409 rápido, RE-evaluados dentro del
+4. **Guards duros (reglas #9/#10), fuera de transacción para el 409 rápido, RE-evaluados dentro del
    lock:**
    - La multa debe estar `Confirmed` con ND vinculada y `DebitNoteStatus == Issued` y la ND con CAE
      (`DebitNoteInvoice.Resultado == "A" && CAE != null`). Si la ND está `Pending` (sin CAE) → 409
@@ -160,8 +160,13 @@ Nuevo método en `IBookingCancellationService` / `BookingCancellationService`, m
      no hay nada fiscal que anular).
    - Si ya hay una anulación viva de esa ND (`Pending` o `Succeeded` en la tabla hija) → 409
      `INV-UNDO-002` (regla #10, no anular dos veces).
-   - Si la **factura original** (`bc.OriginatingInvoice`) tiene `AnnulmentStatus == Succeeded` → **revisión
-     manual**, no auto-deshacer (regla #11): se rutea con motivo claro, NO se emite NC automática.
+   - **Regla #11 ELIMINADA (2026-07-14, bug confirmado en prod con F-2026-1043).** La regla original
+     bloqueaba deshacer cuando la **factura original** (`bc.OriginatingInvoice`) tenía
+     `AnnulmentStatus == Succeeded`, pero ESE es el caso normal: anular una reserva siempre emite antes la
+     NC total de la factura de venta (la deja `Succeeded`), y las multas de operador solo existen en
+     reservas anuladas — por eso la regla bloqueaba el 100% de los casos reales y el botón de deshacer
+     nunca funcionaba. La NC que deshace la multa apunta a la ND (nunca a la factura de venta), así que el
+     estado de la factura de venta es irrelevante para esta operación.
    - **RG 4540 (regla #12): avisar, no bloquear.** Si pasaron > 15 días corridos desde `ND.IssuedAt`, se
      agrega un aviso informativo (no frena la emisión). El reloj arranca en la detección; para el MVP se
      usa `ND.IssuedAt` como referencia y el aviso es informativo (ver §10, abierto).
@@ -248,9 +253,10 @@ Body: { "reason": string }        // requerido, no vacío
 - **200:** `BookingCancellationDto` (con el paso ya en `DebitNoteAnnulling`).
 - **404:** BC no existe.
 - **409:** `INV-UNDO-PERM` (sin permiso) / `INV-UNDO-001` (no hay ND con CAE para deshacer) /
-  `INV-UNDO-002` (ya hay una anulación en curso o consumada) / `INV-UNDO-MANUAL` (factura original ya
-  anulada → revisión manual) / flag OFF. Mapeo por `GlobalExceptionHandler` (mismo criterio que
-  correct-penalty).
+  `INV-UNDO-002` (ya hay una anulación en curso o consumada) / `INV-UNDO-MANUAL` (ND con tributos
+  asociados — ver regla #11 eliminada más abajo) / `INV-UNDO-MULTIOP` (multi-operador ambiguo,
+  guard B2) / flag OFF. Mapeo por
+  `GlobalExceptionHandler` (mismo criterio que correct-penalty).
 - **Aviso RG 4540:** campo informativo en el DTO (no bloquea).
 
 Request DTO: `UndoDebitNoteRequest { string Reason }`. El DTO de situación
@@ -305,7 +311,10 @@ Correcto.
    (índice único filtrado + parent lock); el segundo → 409 `INV-UNDO-002`.
 9. Deshacer con ND aún `Pending` (sin CAE) → 409 `INV-UNDO-001`, no emite NC.
 10. Deshacer con anulación ya `Succeeded` → 409 `INV-UNDO-002`.
-11. Factura original ya anulada del todo → `INV-UNDO-MANUAL` (revisión manual), no auto-deshacer.
+11. **ELIMINADO (2026-07-14).** El test original afirmaba que factura original ya anulada del todo →
+    `INV-UNDO-MANUAL` (revisión manual). Se invirtió: ESE es el caso canónico real (F-2026-1043) y ahora
+    tiene que quedar PERMITIDO — factura original `AnnulmentStatus = Succeeded` + multa `Confirmed` + ND
+    `Issued` con CAE (`Resultado == "A"`) → el guard NO tira, se crea la fila de anulación pendiente.
 12. Ciclo emitir→deshacer→re-emitir→deshacer: dos vueltas dejan dos filas hija + la cadena de comprobantes;
     el cartel cuenta sólo la ND viva (anti-doble-conteo).
 13. Extracto: tras deshacer con CAE, la ND y la NC-anula-ND aparecen como cargo+abono que netean 0.
@@ -588,7 +597,8 @@ interna (número de ND en formato usuario, nunca IDs/enum).
   - `UndoIssuedDebitNoteAsync(publicId, reason, userId, userName, ct, userCanClassifyAgencyPenalty)` (§6.1),
     molde de `CorrectPenaltyAsync` (`:6458`); bajo `RunUnderParentLockAsync(bc.Id)`; arma la NC vía
     `_invoiceService.CreateAsync` (IsCreditNote, OriginalInvoiceId=ND); crea la fila hija; auditoría staged.
-  - Guards `EnsureUndoAllowed…` (reglas #9/#10/#11 + guard conservador multi-operador B2).
+  - Guards `EnsureUndoAllowed…` (reglas #9/#10 + guard de tributos + guard conservador multi-operador B2;
+    regla #11 ELIMINADA 2026-07-14, ver §6.1).
   - Cálculo de `HasPending/FailedDebitNoteAnnulment` al mapear la situación del paso (query chica a la hija).
   - Reset de líneas B2 en el reconciliador (criterio `TargetInvoiceId == nd.Id`).
 - `Services/DebitNoteAnnulmentReconciliation.cs` (NUEVO, molde de `CancellationDebitNoteReconciliation.cs`):

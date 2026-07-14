@@ -7007,7 +7007,9 @@ public class BookingCancellationService
     }
 
     /// <summary>
-    /// GUARD DURO compartido de <see cref="UndoIssuedDebitNoteAsync"/> (reglas duras #9/#10/#11/#B2 de la spec).
+    /// GUARD DURO compartido de <see cref="UndoIssuedDebitNoteAsync"/> (reglas duras #9/#10/tributos/#B2 de la
+    /// spec; la regla #11 -factura original anulada del todo bloquea el deshacer- se ELIMINO el 2026-07-14 por
+    /// ser un bug: bloqueaba el caso normal, ver comentario mas abajo).
     /// Se llama DOS veces: fuera de transaccion (409 rapido) y DENTRO del lock tras <c>ReloadAsync</c> (anti
     /// carrera con un retry/callback/correct concurrente), mismo patron que <c>EnsureDebitNoteNotBlockingCorrectionAsync</c>.
     /// </summary>
@@ -7053,18 +7055,18 @@ public class BookingCancellationService
                 invariantCode: "INV-UNDO-002");
         }
 
-        // Regla dura #11: si la factura original ya fue anulada por completo, no auto-deshacer -> revision manual.
-        var originatingAnnulmentStatus = bc.OriginatingInvoice?.AnnulmentStatus
-            ?? await _db.Invoices
-                .Where(i => i.Id == bc.OriginatingInvoiceId)
-                .Select(i => (AnnulmentStatus?)i.AnnulmentStatus)
-                .FirstOrDefaultAsync(ct);
-        if (originatingAnnulmentStatus == AnnulmentStatus.Succeeded)
-        {
-            throw new BusinessInvariantViolationException(
-                "La factura original de esta operación ya está anulada por completo. Este caso lo tiene que revisar una persona.",
-                invariantCode: "INV-UNDO-MANUAL");
-        }
+        // Regla dura #11 ELIMINADA (2026-07-14, bug confirmado en prod con F-2026-1043): la regla original
+        // bloqueaba deshacer la ND cuando la factura de venta original ya estaba anulada del todo
+        // (AnnulmentStatus.Succeeded). El problema es que ESE es el caso normal, no la excepcion: cuando se
+        // anula una reserva completa, primero se emite la NC total de la factura de venta (que la deja
+        // Succeeded) y RECIEN DESPUES puede existir una multa de operador para esa cancelacion. O sea que
+        // cualquier multa que exista siempre cuelga de una factura ya anulada del todo -> la regla #11 tiraba
+        // "revision manual" en el 100% de los casos reales y el boton de deshacer nunca funcionaba.
+        // Por que es seguro sacarla: la NC que deshace la multa apunta a la ND (OriginatingInvoiceId = la ND),
+        // nunca a la factura de venta original, y hereda la moneda y el tipo de cambio congelados de la ND. El
+        // estado de la factura de venta no afecta en nada esta operacion. Ademas, emitir una ND sobre una
+        // factura ya anulada es el flujo normal de las multas post-anulacion (ADR-013), asi que deshacer esa
+        // misma ND tiene que poder hacerse aunque la factura de venta este Succeeded.
 
         // TRIBUTOS (guard defensivo barato, corrección post-gate 2026-07-14): la NC-anula-ND espeja los renglones
         // de la ND pero NO sus tributos (IIBB provinciales). El gating de EMISIÓN automática de la ND ya manda a

@@ -313,17 +313,27 @@ public class Adr044UndoIssuedDebitNoteServiceTests
     }
 
     [Fact]
-    public async Task Undo_WhenOriginatingInvoiceFullyAnnulled_Rebounds409_INV_UNDO_MANUAL()
+    public async Task Undo_WhenOriginatingInvoiceFullyAnnulled_IsAllowed_CreatesPendingAnnulment()
     {
+        // Caso real de producción (F-2026-1043, bug encontrado 2026-07-14): CUALQUIER multa de operador cuelga
+        // de una reserva anulada del todo, y anular una reserva SIEMPRE emite antes la NC total de la factura de
+        // venta original (la deja AnnulmentStatus.Succeeded). O sea que este es el escenario NORMAL, no una
+        // excepción — antes de este fix la regla dura #11 lo bloqueaba en el 100% de los casos y el botón de
+        // deshacer nunca funcionaba. La NC que deshace la multa apunta a la ND (nunca a la factura de venta), así
+        // que el estado de la factura de venta no debería importarle nada a esta operación.
         var h = BuildService();
-        var (bcId, _, _, original, _, _) = await SeedIssuedDebitNoteAsync(h.Ctx);
+        var (bcId, _, nd, original, _, _) = await SeedIssuedDebitNoteAsync(h.Ctx, ndAmount: 30_000m, ndCurrency: "PES");
         original.AnnulmentStatus = AnnulmentStatus.Succeeded;
         await h.Ctx.SaveChangesAsync();
+        SetupCreateAsyncEmitsCreditNote(h);
 
-        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
-            h.Service.UndoIssuedDebitNoteAsync(
-                bcId, "La factura ya está anulada.", "u", "U", default, requesterIsAdmin: true));
-        Assert.Equal("INV-UNDO-MANUAL", ex.InvariantCode);
+        var dto = await h.Service.UndoIssuedDebitNoteAsync(
+            bcId, "La multa estaba mal calculada.", "u", "U", default, requesterIsAdmin: true);
+
+        Assert.NotNull(dto);
+        var annulment = h.Ctx.Set<BookingCancellationDebitNoteAnnulment>().Single();
+        Assert.Equal(DebitNoteAnnulmentStatus.Pending, annulment.Status);
+        Assert.Equal(nd.Id, annulment.AnnulledDebitNoteInvoiceId);
     }
 
     [Fact]
