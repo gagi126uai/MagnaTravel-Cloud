@@ -115,6 +115,63 @@ public class Adr042DataExposureFugasTests
         Assert.Equal("CUIT del emisor sin habilitación", row.ArcaErrorMessage);
     }
 
+    [Fact]
+    public async Task Fuga1_BandejaNds_MotivoPersistidoPorElJob_seSanea()
+    {
+        // Espejo del bug 2026-07-13: ahora el job del CAE (via CancellationDebitNoteReconciliation) es el que
+        // persiste el motivo de rechazo de ARCA en DebitNoteArcaErrorMessage, no solo la lectura de la bandeja.
+        // Este test recorre esa VIA NUEVA de punta a punta: reconciliamos una ND rechazada con Observaciones
+        // tecnicas crudas (SOAP fault) y verificamos que, al proyectar la bandeja, ese motivo sale SANEADO
+        // (no filtra XML ni jerga tecnica al usuario).
+        await using var ctx = NewDbContext();
+
+        var reserva = new Reserva { NumeroReserva = "F-2026-1046", Name = "Reserva", Status = EstadoReserva.Cancelled };
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        // ND rechazada por ARCA con ruido tecnico en Observaciones (lo que el job recibiria de WSFE).
+        var debitNote = new Invoice
+        {
+            TipoComprobante = 2,
+            Resultado = "R",
+            Observaciones = "<soap:Fault><faultstring>Object reference not set</faultstring></soap:Fault>",
+            ReservaId = reserva.Id,
+        };
+        ctx.Invoices.Add(debitNote);
+        await ctx.SaveChangesAsync();
+
+        // BC con la ND vinculada todavia en Pending (esperando el CAE async).
+        ctx.BookingCancellations.Add(new BookingCancellation
+        {
+            ReservaId = reserva.Id,
+            CustomerId = 1,
+            SupplierId = 1,
+            OriginatingInvoiceId = 1,
+            CreditNoteInvoiceId = 999,
+            DebitNoteInvoiceId = debitNote.Id,
+            DebitNoteStatus = DebitNoteStatus.Pending,
+            Status = BookingCancellationStatus.AwaitingOperatorRefund,
+            Reason = "cancelacion",
+            DraftedByUserId = "u",
+            FiscalSnapshot = new FiscalSnapshot { CurrencyAtEvent = "ARS", Source = ExchangeRateSource.Manual, ExchangeRateAtOriginalInvoice = 1m, FetchedAt = DateTime.UtcNow },
+        });
+        await ctx.SaveChangesAsync();
+
+        // VIA NUEVA: el job reconcilia la ND rechazada -> persiste el motivo crudo en DebitNoteArcaErrorMessage.
+        int changed = await CancellationDebitNoteReconciliation.ReconcileLinkedCancellationFromDebitNoteAsync(
+            ctx, debitNote, NullLogger.Instance, CancellationToken.None);
+        Assert.Equal(1, changed);
+
+        // La proyeccion de la bandeja debe sanear ese motivo tecnico (MapPendingDebitNoteRow).
+        var service = BuildBcService(ctx);
+        var rows = await service.GetCancellationsWithMissingDebitNoteAsync(CancellationToken.None);
+
+        var row = Assert.Single(rows);
+        Assert.Equal(GenericArca, row.ArcaErrorMessage);
+        Assert.DoesNotContain("<soap", row.ArcaErrorMessage);
+        Assert.DoesNotContain("Object reference", row.ArcaErrorMessage);
+    }
+
     // =========================================================================
     // FUGA 3 — bodies de error del controller: business pasa, tecnico -> generico
     // =========================================================================

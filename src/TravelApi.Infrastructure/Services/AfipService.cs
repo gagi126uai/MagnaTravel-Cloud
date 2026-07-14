@@ -1490,6 +1490,9 @@ public class AfipService : IAfipService
                  // RetryAsync, que limpia el estado.
                  await ResolveInvoiceIdempotencyKeyAsync(invoiceIdemKey, CancellationToken.None);
                  await _context.SaveChangesAsync();
+                 // Reconciliar la anulacion vinculada: si esta ND rechazada era la multa de una
+                 // anulacion, su DebitNoteStatus pasa de Pending a Failed con el motivo de ARCA.
+                 await TryReconcileLinkedCancellationDebitNoteAsync(invoice);
                  return;
             }
 
@@ -1564,6 +1567,10 @@ public class AfipService : IAfipService
             {
                 await ApplyCreditNoteEconomicReversalAsync(invoice.Id);
             }
+
+            // Reconciliar la anulacion vinculada: si esta ND aprobada era la multa de una anulacion,
+            // su DebitNoteStatus pasa de Pending a Issued (la ficha deja de mostrar "emitiendo multa").
+            await TryReconcileLinkedCancellationDebitNoteAsync(invoice);
         }
         catch (Exception ex)
         {
@@ -1578,6 +1585,32 @@ public class AfipService : IAfipService
             invoice.Observaciones = $"Error técnico: {ex.Message}";
             await _context.SaveChangesAsync();
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Reconcilia el estado de la anulacion (BookingCancellation) vinculada a esta ND ahora que su
+    /// Resultado quedo resuelto en ARCA (bug 2026-07-13: el DebitNoteStatus quedaba en Pending para
+    /// siempre porque nadie lo transicionaba al llegar el CAE async).
+    ///
+    /// <para>BLINDADO A PROPOSITO: si la reconciliacion falla NO se propaga. El CAE ya esta conseguido
+    /// y persistido; que la ficha tarde en actualizarse es un problema menor comparado con romper el
+    /// job del CAE. La bandeja "Comprobantes por resolver" sigue siendo la red de seguridad. Usa su
+    /// propio SaveChanges (posterior al del CAE), asi que un fallo aca nunca revierte el CAE.</para>
+    /// </summary>
+    private async Task TryReconcileLinkedCancellationDebitNoteAsync(Invoice invoice)
+    {
+        try
+        {
+            await CancellationDebitNoteReconciliation.ReconcileLinkedCancellationFromDebitNoteAsync(
+                _context, invoice, _logger, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "No se pudo reconciliar la anulacion vinculada a la ND (Invoice {InvoiceId}) tras resolver ARCA. " +
+                "El CAE ya quedo persistido; la bandeja de comprobantes por resolver lo reconciliara.",
+                invoice.Id);
         }
     }
 
@@ -2615,6 +2648,11 @@ public class AfipService : IAfipService
             {
                 await ApplyCreditNoteEconomicReversalAsync(invoice.Id);
             }
+
+            // Reconciliar la anulacion vinculada tambien cuando el CAE se DERIVA por recovery de
+            // idempotencia (no solo en el POST normal): si la ND ya estaba emitida en ARCA y aca
+            // adoptamos su CAE, la anulacion pasa de Pending a Issued igual.
+            await TryReconcileLinkedCancellationDebitNoteAsync(invoice);
 
             return true;
         }

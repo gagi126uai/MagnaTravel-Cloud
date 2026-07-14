@@ -3897,30 +3897,22 @@ public class BookingCancellationService
             var nd = bc.DebitNoteInvoice;
             if (nd is null) continue;
 
-            if (string.Equals(nd.Resultado, "A", StringComparison.OrdinalIgnoreCase) &&
-                !string.IsNullOrWhiteSpace(nd.CAE))
+            // Regla UNICA de reconciliacion (Pending -> Issued si "A"+CAE / Pending -> Failed si "R").
+            // Compartida con AfipService.ProcessInvoiceJob (bug 2026-07-13): el mismo criterio corre ni
+            // bien llega el CAE async, no solo al abrir esta bandeja. Ver CancellationDebitNoteReconciliation.
+            if (CancellationDebitNoteReconciliation.TryApplyResolvedDebitNote(bc, nd))
             {
-                bc.DebitNoteStatus = DebitNoteStatus.Issued;
-                bc.DebitNoteArcaErrorMessage = null;
                 changed = true;
-                // DECISION (2026-07-03, cierre inmediato al resolver la multa): aca la ND acaba de pasar a Issued, o
-                // sea la pata de la multa quedo resuelta -> tecnicamente ya se podria auto-cerrar la anulacion sin
-                // reembolso pendiente. NO lo hacemos en este punto A PROPOSITO: esto es un GET (bandeja de NDs) y
-                // cerrar una reserva es una transicion de negocio que no debe dispararse como efecto lateral de una
-                // LECTURA (dos usuarios abriendo la bandeja competirian por el cierre, y sorprende a quien solo mira).
-                // La reconciliacion Pending->Issued ya existia; la mantenemos. El cierre lo hacen (a) las acciones
-                // EXPLICITAS de resolucion (cerrar sin multa / reintentar la ND -> TryAutoCloseAfterOperatorPenalty
-                // ResolvedAsync) y (b) el barrido nocturno como red de seguridad. Peor caso: la reserva queda un ciclo
-                // de barrido en "esperando reembolso" tras llegar el CAE async de la ND. Aceptable.
+                // DECISION (2026-07-03, cierre inmediato al resolver la multa): aca la ND puede acabar de pasar a
+                // Issued, o sea la pata de la multa quedo resuelta -> tecnicamente ya se podria auto-cerrar la
+                // anulacion sin reembolso pendiente. NO lo hacemos en este punto A PROPOSITO: esto es un GET (bandeja
+                // de NDs) y cerrar una reserva es una transicion de negocio que no debe dispararse como efecto lateral
+                // de una LECTURA (dos usuarios abriendo la bandeja competirian por el cierre, y sorprende a quien solo
+                // mira). El cierre lo hacen (a) las acciones EXPLICITAS de resolucion (cerrar sin multa / reintentar la
+                // ND -> TryAutoCloseAfterOperatorPenaltyResolvedAsync) y (b) el barrido nocturno como red de seguridad.
+                // Peor caso: la reserva queda un ciclo de barrido en "esperando reembolso" tras llegar el CAE async.
             }
-            else if (string.Equals(nd.Resultado, "R", StringComparison.OrdinalIgnoreCase))
-            {
-                bc.DebitNoteStatus = DebitNoteStatus.Failed;
-                var obs = nd.Observaciones ?? "ARCA rechazo la ND sin mensaje.";
-                bc.DebitNoteArcaErrorMessage = obs.Length > 1000 ? obs[..1000] : obs;
-                changed = true;
-            }
-            // Resultado == "PENDING" o null: sigue en vuelo, lo dejamos en Pending.
+            // Resultado == "PENDING" o null: sigue en vuelo, TryApplyResolvedDebitNote devuelve false y lo dejamos.
         }
 
         // (2-bis) ADR-014 (§3.8 pieza 3, M-R2-1): segunda rama de la bandeja para la ND
@@ -3991,7 +3983,33 @@ public class BookingCancellationService
         }
 
         if (changed)
-            await _db.SaveChangesAsync(ct);
+        {
+            try
+            {
+                await _db.SaveChangesAsync(ct);
+            }
+            catch (DbUpdateConcurrencyException conflict)
+            {
+                // CARRERA job-vs-bandeja (bug 2026-07-13): desde el fix de reconciliacion, el job del CAE
+                // (AfipService.ProcessInvoiceJob) es un SEGUNDO escritor del mismo BookingCancellation ni bien
+                // ARCA resuelve la ND. Como el BC usa xmin de Postgres como token de concurrencia
+                // (AppDbContext.cs), si el job le gana la carrera a esta LECTURA, el xmin que trajimos ya
+                // quedo viejo y este SaveChanges tira DbUpdateConcurrencyException. NO es un error: el job
+                // aplico EXACTAMENTE la misma transicion (Pending -> Issued/Failed, misma regla compartida
+                // CancellationDebitNoteReconciliation). Antes esta excepcion sin capturar rompia la bandeja
+                // con un 500. La tratamos como "otro ya reconcilio": descartamos nuestro write recargando las
+                // filas en conflicto con lo persistido, para que la proyeccion de mas abajo muestre la verdad
+                // de la BD. NO reintentamos el SaveChanges (el job ya escribio).
+                foreach (var conflictedEntry in conflict.Entries)
+                {
+                    await conflictedEntry.ReloadAsync(ct);
+                }
+                _logger.LogInformation(
+                    "Bandeja de NDs: el job del CAE reconcilio {Count} anulacion(es) antes que esta lectura. " +
+                    "Se recargaron los valores persistidos y se continua sin romper.",
+                    conflict.Entries.Count);
+            }
+        }
 
         // (2-ter) ADR-014 (M-B2, caso DOMINANTE del negocio): penalidad de cargo PROPIO de
         //     la agencia que quedo ESTIMADA (PenaltyStatus=Estimated), con la NC total ya
