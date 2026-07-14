@@ -97,8 +97,14 @@ public sealed class PostgresIntegrationFixture : IAsyncLifetime
     /// <summary>
     /// Connection string apuntando al container. Cambia entre runs (puerto
     /// random asignado por Docker) — nunca hardcodearla.
+    ///
+    /// <para><b>Include Error Detail=true</b> (2026-07-14): en ENTORNO DE TEST (container efímero, datos
+    /// sintéticos, sin PII real) hacemos que Npgsql incluya el <c>DETAIL</c> de los errores de Postgres en la
+    /// excepción. Sin esto, un <c>DbUpdateException</c> en CI llega con "Detail redacted as it may contain
+    /// sensitive data" y hay que diagnosticar a ciegas (p.ej. una FK/NOT NULL violada por datos del test). NUNCA
+    /// se usa en producción — es solo la connection string de los Testcontainers.</para>
     /// </summary>
-    public string ConnectionString => _container.GetConnectionString();
+    public string ConnectionString => _container.GetConnectionString() + ";Include Error Detail=true";
 
     public async Task InitializeAsync()
     {

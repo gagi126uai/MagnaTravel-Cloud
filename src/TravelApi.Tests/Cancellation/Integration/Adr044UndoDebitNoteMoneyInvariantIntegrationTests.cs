@@ -87,9 +87,35 @@ public sealed class Adr044UndoDebitNoteMoneyInvariantIntegrationTests
     /// original con CAE, ND C=12 con CAE vinculada al BC (multa Confirmed). Devuelve (bcPublicId, ndId, reservaId,
     /// customerId). Opcionalmente siembra una fila de saldo por moneda (para el caso parcial).
     /// </summary>
+    /// <summary>
+    /// Siembra el usuario Admin real. NECESARIO en Postgres: el Payment puente "MultaDeshecha" que acuña el
+    /// deshacer setea <c>CreatedByUserId</c>, que tiene FK a AspNetUsers (<c>Payment</c> config en AppDbContext).
+    /// En producción el actor es un Admin real; acá lo sembramos para no violar esa FK (InMemory la ignora).
+    /// </summary>
+    private async Task SeedAdminUserAsync(string userId = "admin")
+    {
+        await using var ctx = _fixture.CreateDbContext();
+        if (await ctx.Users.AnyAsync(u => u.Id == userId)) return;
+        ctx.Users.Add(new TravelApi.Infrastructure.Identity.ApplicationUser
+        {
+            Id = userId,
+            UserName = userId,
+            NormalizedUserName = userId.ToUpperInvariant(),
+            Email = $"{userId}@test.local",
+            NormalizedEmail = $"{userId.ToUpperInvariant()}@TEST.LOCAL",
+            FullName = "Admin Test",
+            IsActive = true,
+            SecurityStamp = Guid.NewGuid().ToString(),
+        });
+        await ctx.SaveChangesAsync();
+    }
+
     private async Task<(Guid BcPublicId, int NdId, int ReservaId, int CustomerId)> SeedIssuedPenaltyAsync(
         decimal grossPenalty = 30_000m, decimal? penaltyCurrencyBalance = null)
     {
+        // El actor "admin" del deshacer debe existir en AspNetUsers (FK de Payment.CreatedByUserId).
+        await SeedAdminUserAsync("admin");
+
         await using var ctx = _fixture.CreateDbContext();
         var (custId, supId, resId, invId) = await CancellationTestData.SeedBaseAsync(ctx);
 
