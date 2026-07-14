@@ -80,6 +80,23 @@ public class ClientCreditEntry : IHasPublicId
     [MaxLength(200)]
     public string? CreatedByUserName { get; set; }
 
+    // --- Origen "multa deshecha" (ADR-044 "Deshacer una multa ya emitida", 2026-07-14) ---
+    // Tercer origen posible del credito (los otros dos son arriba: cancelacion via Allocation, sobrepago via
+    // SourcePayment/SourceReserva). Se acuña cuando se deshace una Nota de Debito de multa que el cliente ya
+    // habia pagado (total o parcialmente): la porcion COBRADA de la multa se convierte en saldo a favor
+    // consumible, espejo del mecanismo de sobrepago (mismo <c>OperatorRefundAllocationId</c>=null).
+
+    /// <summary>
+    /// MULTA DESHECHA: el evento de "deshacer" que origino este credito. Null en creditos de cancelacion/sobrepago.
+    /// <para><b>OJO — <see cref="BookingCancellationId"/> queda NULL a proposito en este origen</b> (igual que en
+    /// sobrepago): si se atara al BC, gastar este credito disparia el guard B5 (<c>OnAllCreditConsumedAsync</c>,
+    /// FC1.2) que CIERRA el BC cuando todos sus creditos llegan a 0 — pero "deshacer la multa" deja el paso
+    /// ABIERTO (<c>ConfirmedNoDebitNote</c>), no lo cierra. El BC se sigue pudiendo trazar via
+    /// <c>SourceDebitNoteAnnulment.BookingCancellationId</c>.</para>
+    /// </summary>
+    public int? SourceDebitNoteAnnulmentId { get; set; }
+    public BookingCancellationDebitNoteAnnulment? SourceDebitNoteAnnulment { get; set; }
+
     /// <summary>Saldo inicial acreditado. Igual a <c>Allocation.NetAmount</c> al crear. Inmutable.</summary>
     public decimal CreditedAmount { get; set; }
 

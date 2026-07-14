@@ -2,18 +2,21 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using TravelApi.Infrastructure.Persistence;
 
 #nullable disable
 
-namespace TravelApi.Infrastructure.Persistence.Migrations
+namespace TravelApi.Infrastructure.Persistence.Migrations.App
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260714051653_Adr044_M_Undo1_AddBookingCancellationDebitNoteAnnulment")]
+    partial class Adr044_M_Undo1_AddBookingCancellationDebitNoteAnnulment
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -67,7 +70,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("Delivered");
 
-                    b.ToTable("InboxState", (string)null);
+                    b.ToTable("InboxState");
                 });
 
             modelBuilder.Entity("MassTransit.EntityFrameworkCoreIntegration.OutboxMessage", b =>
@@ -158,7 +161,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.HasIndex("InboxMessageId", "InboxConsumerId", "SequenceNumber")
                         .IsUnique();
 
-                    b.ToTable("OutboxMessage", (string)null);
+                    b.ToTable("OutboxMessage");
                 });
 
             modelBuilder.Entity("MassTransit.EntityFrameworkCoreIntegration.OutboxState", b =>
@@ -188,7 +191,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("Created");
 
-                    b.ToTable("OutboxState", (string)null);
+                    b.ToTable("OutboxState");
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRole", b =>
@@ -401,7 +404,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("AfipSettings", (string)null);
+                    b.ToTable("AfipSettings");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.AgencySettings", b =>
@@ -457,7 +460,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("AgencySettings", (string)null);
+                    b.ToTable("AgencySettings");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.ApprovalPolicy", b =>
@@ -639,7 +642,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasDatabaseName("IX_ArcaIdempotencyKeys_Key");
 
-                    b.ToTable("ArcaIdempotencyKeys", (string)null);
+                    b.ToTable("ArcaIdempotencyKeys");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.AssistanceBooking", b =>
@@ -761,7 +764,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("SupplierId");
 
-                    b.ToTable("AssistanceBookings", (string)null);
+                    b.ToTable("AssistanceBookings");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.AuditLog", b =>
@@ -807,7 +810,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("AuditLogs", (string)null);
+                    b.ToTable("AuditLogs");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.BankAccount", b =>
@@ -2225,7 +2228,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("SupplierId");
 
-                    b.ToTable("CommissionRules", (string)null);
+                    b.ToTable("CommissionRules");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.Country", b =>
@@ -2355,7 +2358,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("IsActive", "FullName");
 
-                    b.ToTable("Customers", (string)null);
+                    b.ToTable("Customers");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.CustomerCreditLimitByCurrency", b =>
@@ -2784,7 +2787,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("SupplierId");
 
-                    b.ToTable("FlightSegments", (string)null);
+                    b.ToTable("FlightSegments");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.HotelBooking", b =>
@@ -2930,7 +2933,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("SupplierId");
 
-                    b.ToTable("HotelBookings", (string)null);
+                    b.ToTable("HotelBookings");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.Invoice", b =>
@@ -3102,7 +3105,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("ReservaId");
 
-                    b.ToTable("Invoices", (string)null);
+                    b.ToTable("Invoices");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.InvoiceItem", b =>
@@ -3268,7 +3271,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.HasIndex("PublicId")
                         .IsUnique();
 
-                    b.ToTable("Leads", (string)null);
+                    b.ToTable("Leads");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.LeadActivity", b =>
@@ -3309,7 +3312,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.HasIndex("PublicId")
                         .IsUnique();
 
-                    b.ToTable("LeadActivities", (string)null);
+                    b.ToTable("LeadActivities");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.ManualCashMovement", b =>
@@ -3399,7 +3402,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("RelatedSupplierId");
 
-                    b.ToTable("ManualCashMovements", (string)null);
+                    b.ToTable("ManualCashMovements");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.MessageDelivery", b =>
@@ -3540,7 +3543,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("ResolutionKey");
 
-                    b.ToTable("Notifications", (string)null);
+                    b.ToTable("Notifications");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.OperationalFinanceSettings", b =>
@@ -3709,7 +3712,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("OperationalFinanceSettings", (string)null);
+                    b.ToTable("OperationalFinanceSettings");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.OperatorRefundAllocation", b =>
@@ -3992,7 +3995,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("SupplierId");
 
-                    b.ToTable("PackageBookings", (string)null);
+                    b.ToTable("PackageBookings");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.PartialCreditNoteReconciliation", b =>
@@ -4186,7 +4189,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("ReservaId");
 
-                    b.ToTable("Passengers", (string)null);
+                    b.ToTable("Passengers");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.PassengerServiceAssignment", b =>
@@ -4363,7 +4366,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("ServicioReservaId");
 
-                    b.ToTable("Payments", (string)null);
+                    b.ToTable("Payments");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.PaymentReceipt", b =>
@@ -4428,7 +4431,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("ReservaId");
 
-                    b.ToTable("PaymentReceipts", (string)null);
+                    b.ToTable("PaymentReceipts");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.Quote", b =>
@@ -4520,7 +4523,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.HasIndex("PublicId")
                         .IsUnique();
 
-                    b.ToTable("Quotes", (string)null);
+                    b.ToTable("Quotes");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.QuoteItem", b =>
@@ -4583,7 +4586,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("SupplierId");
 
-                    b.ToTable("QuoteItems", (string)null);
+                    b.ToTable("QuoteItems");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.Rate", b =>
@@ -4775,7 +4778,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("SupplierId");
 
-                    b.ToTable("Rates", (string)null);
+                    b.ToTable("Rates");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.RateSupplierSale", b =>
@@ -4828,7 +4831,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasDatabaseName("IX_RateSupplierSales_RateId_SupplierId");
 
-                    b.ToTable("RateSupplierSales", (string)null);
+                    b.ToTable("RateSupplierSales");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.RefreshToken", b =>
@@ -5539,7 +5542,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.HasIndex("PublicId")
                         .IsUnique();
 
-                    b.ToTable("Suppliers", (string)null);
+                    b.ToTable("Suppliers");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.SupplierBalanceByCurrency", b =>
@@ -5810,7 +5813,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("IX_SupplierPayment_Supplier_ServicePublicId")
                         .HasFilter("\"ServicePublicId\" IS NOT NULL");
 
-                    b.ToTable("SupplierPayments", (string)null);
+                    b.ToTable("SupplierPayments");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.TransferBooking", b =>
@@ -5955,7 +5958,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("SupplierId");
 
-                    b.ToTable("TransferBookings", (string)null);
+                    b.ToTable("TransferBookings");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.UpcomingStartAlertDismissal", b =>
@@ -5986,7 +5989,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .IsUnique()
                         .HasDatabaseName("IX_UpcomingStartAlertDismissals_ReservaId");
 
-                    b.ToTable("UpcomingStartAlertDismissals", (string)null);
+                    b.ToTable("UpcomingStartAlertDismissals");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.Voucher", b =>
@@ -6259,7 +6262,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("WhatsAppBotConfigs", (string)null);
+                    b.ToTable("WhatsAppBotConfigs");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.WhatsAppDelivery", b =>
@@ -6539,7 +6542,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.OwnsOne("TravelApi.Domain.Entities.BookingCancellation.FiscalLiquidation#TravelApi.Domain.Entities.FiscalLiquidation", "FiscalLiquidation", b1 =>
+                    b.OwnsOne("TravelApi.Domain.Entities.FiscalLiquidation", "FiscalLiquidation", b1 =>
                         {
                             b1.Property<int>("BookingCancellationId")
                                 .HasColumnType("integer");
@@ -6592,13 +6595,13 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                             b1.HasKey("BookingCancellationId");
 
-                            b1.ToTable("BookingCancellations", (string)null);
+                            b1.ToTable("BookingCancellations");
 
                             b1.WithOwner()
                                 .HasForeignKey("BookingCancellationId");
                         });
 
-                    b.OwnsOne("TravelApi.Domain.Entities.BookingCancellation.FiscalSnapshot#TravelApi.Domain.Entities.FiscalSnapshot", "FiscalSnapshot", b1 =>
+                    b.OwnsOne("TravelApi.Domain.Entities.FiscalSnapshot", "FiscalSnapshot", b1 =>
                         {
                             b1.Property<int>("BookingCancellationId")
                                 .HasColumnType("integer");
@@ -6660,7 +6663,7 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
 
                             b1.HasKey("BookingCancellationId");
 
-                            b1.ToTable("BookingCancellations", (string)null);
+                            b1.ToTable("BookingCancellations");
 
                             b1.WithOwner()
                                 .HasForeignKey("BookingCancellationId");

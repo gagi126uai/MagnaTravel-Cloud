@@ -5124,7 +5124,13 @@ public class ReservaService : IReservaService
     /// una ND emitida por la rama 1 del predicado sin snapshot de monto, o con datos legacy. En ese caso el front cae
     /// a su propio fallback (el balance), igual que antes de este fix.</para>
     /// </summary>
-    private static decimal? ComputePendingPenaltyForDisplay(
+    /// <remarks>
+    /// ADR-044 "Deshacer una multa ya emitida" (2026-07-14): visibilidad ampliada a <c>internal</c> (era
+    /// <c>private</c>) para que <see cref="TravelApi.Infrastructure.Services.DebitNoteAnnulmentReconciliation"/>
+    /// (misma formula: "cuanto de la multa ya esta cobrado") la reuse en vez de duplicarla. Sin cambio de
+    /// comportamiento: la firma y el cuerpo quedan identicos.
+    /// </remarks>
+    internal static decimal? ComputePendingPenaltyForDisplay(
         decimal? grossPenalty, string penaltyCurrencyIso, IReadOnlyDictionary<string, decimal> balanceByCurrency)
     {
         // Sin monto bruto congelado no podemos netear; devolvemos null y el front usa su fallback (el balance).

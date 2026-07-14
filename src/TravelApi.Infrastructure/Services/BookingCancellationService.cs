@@ -5513,6 +5513,9 @@ public class BookingCancellationService
                 // ADR-044 Fix B (2026-07-13): moneda de la factura destino (ARCA "PES"/"DOL"), para que el modal
                 // sepa cuando pedir el TC. Null si el BC no tiene factura origen (no deberia con ND en juego).
                 InvoiceMonId = b.OriginatingInvoice != null ? b.OriginatingInvoice.MonId : null,
+                // ADR-044 "Deshacer una multa ya emitida" (2026-07-14): fecha de emision (CAE) de la ND vigente,
+                // para el aviso informativo RG 4540 en el front (avisar, no bloquear).
+                DebitNoteIssuedAt = b.DebitNoteInvoice != null ? b.DebitNoteInvoice.IssuedAt : null,
             })
             .FirstOrDefaultAsync(ct);
 
@@ -5527,13 +5530,20 @@ public class BookingCancellationService
         var settings = await _settings.GetEntityAsync(ct);
         var (isPendingDecision, _) = EvaluateCanConfirmPenalty(fields, settings.EnableCancellationDebitNote);
 
+        // ADR-044 "Deshacer una multa ya emitida" (2026-07-14): ¿hay un evento de deshacer EN VUELO o el ultimo
+        // quedo Failed para la ND vinculada? Solo importa cuando la ND esta Issued (ver Derive).
+        var (hasPendingAnnulment, hasFailedAnnulment) =
+            await GetDebitNoteAnnulmentFlagsAsync(row.DebitNoteInvoiceId, ct);
+
         // Derivacion del paso: regla de dominio PURA (testeable caso por caso).
         var state = OperatorPenaltySituationRules.Derive(new OperatorPenaltySituationRules.Fields(
             HasLiveCancellation: true,
             PenaltyStatus: row.PenaltyStatus,
             DebitNoteStatus: row.DebitNoteStatus,
             HasDebitNoteInvoice: row.DebitNoteInvoiceId.HasValue,
-            IsPendingDecision: isPendingDecision));
+            IsPendingDecision: isPendingDecision,
+            HasPendingDebitNoteAnnulment: hasPendingAnnulment,
+            HasFailedDebitNoteAnnulment: hasFailedAnnulment));
 
         // Monto/moneda: solo tienen sentido cuando hay una multa con monto real. En None no hay cancelacion en juego;
         // en Waived el monto quedo en 0 ("no hubo multa") -> null para que el front no muestre "$0".
@@ -5576,6 +5586,14 @@ public class BookingCancellationService
         var canWaive = row.PenaltyStatus == PenaltyStatus.Confirmed
             && !IsOperatorPenaltyDebitNoteInPlay(row.DebitNoteInvoiceId.HasValue, row.DebitNoteStatus)
             && isCallerAdmin;
+        //   - Deshacer la ND ya emitida (ADR-044 "Deshacer una multa ya emitida"): SOLO ADMIN (spec UX firmada,
+        //     gate B1 2026-07-14 — NO el permiso classify, para no ofrecerle el link ni el Reintentar a quien el
+        //     endpoint va a rebotar con INV-UNDO-PERM). En "Done" (emitida con CAE) o en "DebitNoteAnnulmentFailed"
+        //     (el último intento fue rechazado por ARCA y la ND sigue viva -> REINTENTAR, mismo endpoint POST
+        //     undo-debit-note). El guard INV-UNDO-002 permite el reintento porque el índice único parcial excluye
+        //     las filas Failed. "DebitNoteAnnulling" (deshacer en curso) NO lo ofrece: hay que esperar el CAE.
+        var canUndoDebitNote = isCallerAdmin && state is
+            OperatorPenaltySituationState.Done or OperatorPenaltySituationState.DebitNoteAnnulmentFailed;
 
         // ADR-044 T3b/T4 (2026-07-10, fix data-exposure): motivo en criollo del atasco, SOLO cuando es el caso
         // DERIVABLE "falta elegir a que factura corresponde el cargo" (2+ facturas activas + algun cargo
@@ -5592,6 +5610,19 @@ public class BookingCancellationService
             manualReviewReason = TargetInvoiceUnchosenManualReviewMessage;
         }
 
+        // ADR-044 "Deshacer una multa ya emitida" (M4, gap 3): monto que quedaria a favor del cliente si se
+        // deshace AHORA (variante "ya pagó" del modal). Se calcula SOLO cuando se puede deshacer, con la MISMA
+        // formula que acuña el credito al consumarse (ver ClientCreditService.CreateEntryFromDebitNoteUndoAsync).
+        var collectedPenaltyAmount = canUndoDebitNote
+            ? await ComputeCollectedPenaltyForUndoAsync(
+                row.ReservaId, row.PenaltyAmountAtEvent, row.PenaltyCurrencyAtEvent, ct)
+            : (decimal?)null;
+
+        // ADR-044 (M4, gap 2): rastro del ULTIMO deshacer CONSUMADO (fila hija Succeeded mas reciente de ESTE BC).
+        // Se busca por BookingCancellationId, NO por la ND actual: al consumarse un deshacer la ND se desvincula
+        // (DebitNoteInvoiceId=null), asi que la fila Succeeded apunta a una ND que ya no es la vigente.
+        var lastDebitNoteUndo = await GetLastConsummatedDebitNoteUndoAsync(row.Id, ct);
+
         return new OperatorPenaltySituationDto
         {
             State = state.ToString(),
@@ -5602,6 +5633,7 @@ public class BookingCancellationService
             CanRetryDebitNote = canRetryDebitNote,
             CanCorrectAmountCurrency = canCorrectAmountCurrency,
             CanWaive = canWaive,
+            CanUndoDebitNote = canUndoDebitNote,
             WaivedAt = waivedAt,
             WaivedByName = waivedByName,
             // GAP conocido (2026-07-08): el revert-waive no persiste rastro en la entidad (solo audit log). Sin
@@ -5613,7 +5645,69 @@ public class BookingCancellationService
             // correccion sepa cuando mostrar el campo de tipo de cambio y que fecha proponer.
             InvoiceCurrency = ResolveInvoiceCurrencyIso(row.InvoiceMonId),
             SuggestedExchangeRateDate = row.OperatorPenaltyConfirmedDate,
+            // Solo tiene sentido cuando se puede deshacer (o ya se esta deshaciendo/fallo el intento): en
+            // cualquier otro estado no hay ND vigente que avisar por RG 4540.
+            DebitNoteIssuedAt = state is OperatorPenaltySituationState.Done
+                or OperatorPenaltySituationState.DebitNoteAnnulling
+                or OperatorPenaltySituationState.DebitNoteAnnulmentFailed
+                ? row.DebitNoteIssuedAt
+                : null,
+            CollectedPenaltyAmount = collectedPenaltyAmount,
+            LastDebitNoteUndo = lastDebitNoteUndo,
         };
+    }
+
+    /// <summary>
+    /// ADR-044 "Deshacer una multa ya emitida" (M4, gap 3): calcula la porcion EFECTIVAMENTE COBRADA de la multa
+    /// (lo que se acuñaria como saldo a favor si se deshace ahora), en la moneda de la ND. Espejo EXACTO de la
+    /// formula del reconciliador (<c>DebitNoteAnnulmentReconciliation</c> / <c>CreateEntryFromDebitNoteUndoAsync</c>):
+    /// <c>max(0, gross − pendiente)</c>, con el pendiente neteado contra el saldo por moneda de la reserva via
+    /// <see cref="ReservaService.ComputePendingPenaltyForDisplay"/> (fuente unica, no se duplica la cuenta).
+    /// Devuelve <c>null</c> si no hay monto congelado o la moneda no se puede resolver a ISO (el front omite la linea).
+    /// </summary>
+    private async Task<decimal?> ComputeCollectedPenaltyForUndoAsync(
+        int reservaId, decimal? grossPenalty, string? penaltyCurrencyAtEvent, CancellationToken ct)
+    {
+        if (!grossPenalty.HasValue)
+            return null;
+
+        var penaltyCurrencyIso = ProjectPenaltyCurrencyToIsoOrNull(penaltyCurrencyAtEvent);
+        if (penaltyCurrencyIso is null)
+            return null;
+
+        // Saldo de la reserva en la moneda de la multa (0 si no hay fila). MISMA regla PURA que usa el
+        // reconciliador al acuñar (OperatorPenaltyUndoRules.ComputeCollectedPenalty), así el número que muestra
+        // el modal ("le va a quedar $ X a favor") coincide EXACTAMENTE con lo que se acuñaría — y nunca es un
+        // crédito fantasma (ver el XML-doc de OperatorPenaltyUndoRules).
+        var penaltyCurrencyBalance = await _db.ReservaMoneyByCurrency
+            .AsNoTracking()
+            .Where(m => m.ReservaId == reservaId && m.Currency == penaltyCurrencyIso)
+            .Select(m => (decimal?)m.Balance)
+            .FirstOrDefaultAsync(ct) ?? 0m;
+
+        return OperatorPenaltyUndoRules.ComputeCollectedPenalty(grossPenalty.Value, penaltyCurrencyBalance);
+    }
+
+    /// <summary>
+    /// ADR-044 "Deshacer una multa ya emitida" (M4, gap 2): trae el rastro del ULTIMO deshacer CONSUMADO
+    /// (fila hija Succeeded mas reciente por <c>RequestedAt</c>) de este BC, o <c>null</c> si nunca se deshizo.
+    /// Query chica (top-1). Datos listos para el cartel, sin IDs ni jerga interna.
+    /// </summary>
+    private async Task<LastDebitNoteUndoDto?> GetLastConsummatedDebitNoteUndoAsync(
+        int bookingCancellationId, CancellationToken ct)
+    {
+        return await _db.Set<BookingCancellationDebitNoteAnnulment>()
+            .AsNoTracking()
+            .Where(a => a.BookingCancellationId == bookingCancellationId
+                     && a.Status == DebitNoteAnnulmentStatus.Succeeded)
+            .OrderByDescending(a => a.RequestedAt)
+            .Select(a => new LastDebitNoteUndoDto
+            {
+                UndoneAt = a.RequestedAt,
+                UndoneByName = a.RequestedByUserName,
+                Reason = a.Reason,
+            })
+            .FirstOrDefaultAsync(ct);
     }
 
     /// <summary>
@@ -5785,6 +5879,11 @@ public class BookingCancellationService
             bcRow.Status, bcRow.CreditNoteInvoiceId, PenaltyStatus.Estimated, null, DebitNoteStatus.NotApplicable);
         var (isPendingDecisionForBc, _) = EvaluateCanConfirmPenalty(sharedFields, settings.EnableCancellationDebitNote);
 
+        // ADR-044 "Deshacer una multa ya emitida": mismo dato compartido que el singular (la ND compartida del
+        // BC padre es UNA sola, sin importar cuantos operadores tenga en juego).
+        var (hasPendingAnnulmentForBc, hasFailedAnnulmentForBc) =
+            await GetDebitNoteAnnulmentFlagsAsync(bcRow.DebitNoteInvoiceId, ct);
+
         // ADR-044 T3a (menor 3, review 2026-07-10): el estado del operador PRINCIPAL YA NO se pisa con
         // "MultiOperatorNeedsManualReview" por el solo hecho de que haya mas de un operador confirmado — ese
         // override MENTIA cuando el motor emite bien una ND multi-operador (el principal quedaba "necesita revision"
@@ -5810,7 +5909,9 @@ public class BookingCancellationService
                 LinePenaltyStatus: linePenaltyStatus,
                 IsPendingDecision: isPendingDecisionForBc,
                 BcDebitNoteStatus: bcRow.DebitNoteStatus,
-                IsOperatorSpecificManual: isOperatorSpecificManual));
+                IsOperatorSpecificManual: isOperatorSpecificManual,
+                HasPendingDebitNoteAnnulment: hasPendingAnnulmentForBc,
+                HasFailedDebitNoteAnnulment: hasFailedAnnulmentForBc));
 
             var showAmount = state is not (OperatorPenaltySituationState.None or OperatorPenaltySituationState.Waived);
             decimal? amount = showAmount
@@ -5841,6 +5942,8 @@ public class BookingCancellationService
                 CanConfirm = canConfirm,
                 CanRetryDebitNote = false,
                 CanCorrectAmountCurrency = false,
+                // Deshacer tambien es BC-level (la ND es COMPARTIDA): mismo criterio que las dos de arriba,
+                // queda false para secundarios a proposito (CanUndoDebitNote default = false).
                 CanWaive = canWaive,
                 // GAP conocido (ADR-044 T1): el schema de linea no tiene "quien cerro sin multa" (solo el BC padre
                 // lo tiene, y ese campo es del operador principal). Se puede agregar en una tanda futura si hace
@@ -6745,6 +6848,306 @@ public class BookingCancellationService
                     "La multa ya tiene una Nota de Débito emitida. Para cambiarla hay que anular ese comprobante primero.",
                     invariantCode: "INV-CORRECT-002");
         }
+    }
+
+    // =========================================================================================================
+    // ADR-044 "Deshacer una multa ya emitida" (2026-07-14): la ND de la multa salio con CAE y estaba MAL
+    // (monto/moneda equivocada, o no correspondia). UndoIssuedDebitNoteAsync emite una NC ESPEJO de esa ND
+    // (OriginalInvoiceId=la ND, nunca la factura) que la anula fiscalmente. Molde de CorrectPenaltyAsync.
+    // =========================================================================================================
+
+    /// <inheritdoc />
+    public async Task<BookingCancellationDto> UndoIssuedDebitNoteAsync(
+        Guid publicId,
+        string reason,
+        string userId,
+        string? userName,
+        CancellationToken ct,
+        bool requesterIsAdmin = false)
+    {
+        var trimmedReason = reason?.Trim();
+        if (string.IsNullOrWhiteSpace(trimmedReason))
+            throw new ArgumentException("Indicá un motivo para deshacer la multa.", nameof(reason));
+
+        var settings = await _settings.GetEntityAsync(ct);
+        if (!settings.EnableCancellationDebitNote)
+            // Quien llama YA es Admin, asi que el mensaje queda autocontenido (no derivamos a "administracion").
+            throw new InvalidOperationException(
+                "No se pudo completar el deshacer de la multa. Volvé a intentar más tarde.");
+
+        var bc = await _db.BookingCancellations
+            .Include(b => b.Reserva)
+            .Include(b => b.OriginatingInvoice)
+            .Include(b => b.Supplier)
+            .FirstOrDefaultAsync(b => b.PublicId == publicId, ct)
+            ?? throw new KeyNotFoundException($"BC {publicId} no encontrada.");
+
+        // SOLO ADMINISTRADORES (spec UX firmada, gate B1 2026-07-14): deshacer un comprobante fiscal ya emitido
+        // con CAE es la acción más sensible del paso de multa. A diferencia de confirm/correct/retry (permiso
+        // classify), esto exige rol Admin. Defensa en profundidad: el controller ya lo resolvió, acá se re-exige.
+        if (!requesterIsAdmin)
+            throw new BusinessInvariantViolationException(
+                "No tenés permiso para deshacer la multa del operador. Pedíselo a un administrador.",
+                invariantCode: "INV-UNDO-PERM");
+
+        // Guard duro fuera de transaccion (409 rapido); SE RE-EVALUA IDENTICO dentro del lock (abajo).
+        await EnsureUndoDebitNoteAllowedAsync(bc, ct);
+
+        // Unidad de trabajo ATOMICA bajo el MISMO lock FOR UPDATE del padre que confirm/correct/retry: arma la
+        // NC-anula-ND (via el pipeline normal de InvoiceService) y crea la fila hija, todo o nada.
+        await RunUnderParentLockAsync<bool>(bc.Id, async () =>
+        {
+            await _db.Entry(bc).ReloadAsync(ct);
+            await EnsureUndoDebitNoteAllowedAsync(bc, ct);
+
+            var nd = await _db.Invoices
+                .Include(i => i.Items)
+                .FirstOrDefaultAsync(i => i.Id == bc.DebitNoteInvoiceId!.Value, ct)
+                ?? throw new InvalidOperationException(
+                    "No se pudo completar el deshacer de la multa. Volvé a intentar más tarde.");
+
+            // Espejo 1:1 de los renglones de la ND (regla dura #3: la NC reversa CADA linea con su tipificacion).
+            var items = nd.Items
+                .Select(item => new InvoiceItemDto
+                {
+                    Description = item.Description,
+                    Quantity = item.Quantity,
+                    UnitPrice = item.UnitPrice,
+                    Total = item.Total,
+                    AlicuotaIvaId = item.AlicuotaIvaId,
+                })
+                .ToList();
+
+            var ncRequest = new CreateInvoiceRequest
+            {
+                ReservaId = bc.Reserva.PublicId.ToString(),
+                Concepto = 3, // Productos y Servicios (mismo default que la NC total / la ND).
+                OriginalInvoiceId = nd.PublicId.ToString(), // LA ND, nunca la factura (regla dura #1).
+                IsCreditNote = true,
+                IsDebitNote = false,
+                Items = items,
+                Tributes = new List<InvoiceTributeDto>(),
+                // Regla dura #3/#4: la NC hereda el TC CONGELADO de la ND (nunca recotiza). AfipService deriva la
+                // letra sola del tipo de la ND asociada (12->13, 2->3, 7->8) — no se hardcodea aca (regla #2).
+                MonId = nd.MonId,
+                MonCotiz = nd.MonCotiz,
+                ExchangeRateSource = nd.ExchangeRateSource,
+                ExchangeRateFetchedAt = nd.ExchangeRateFetchedAt,
+                ExchangeRateJustification = string.IsNullOrWhiteSpace(nd.ExchangeRateJustification)
+                    ? nd.ExchangeRateJustification
+                    : $"Anulación de Nota de Débito por multa mal emitida — TC heredado: {nd.ExchangeRateJustification}",
+            };
+
+            var ncDto = await _invoiceService.CreateAsync(ncRequest, userId, userName, ct);
+
+            var ncId = await _db.Invoices
+                .Where(i => i.PublicId == ncDto.PublicId)
+                .Select(i => (int?)i.Id)
+                .FirstOrDefaultAsync(ct);
+            if (ncId is null)
+            {
+                // Misma defensa que TryEmitCancellationDebitNoteAsync: la NC existe pero no se pudo resolver su
+                // Id interno. No dejamos la fila hija sin comprobante: mejor error claro que un dato a medias.
+                throw new InvalidOperationException(
+                    "No se pudo completar el deshacer de la multa. Volvé a intentar más tarde.");
+            }
+
+            var annulmentCurrency = ProjectPenaltyCurrencyToIsoOrNull(bc.PenaltyCurrencyAtEvent)
+                ?? ResolveInvoiceCurrencyIso(nd.MonId);
+
+            var annulment = new BookingCancellationDebitNoteAnnulment
+            {
+                BookingCancellationId = bc.Id,
+                AnnulledDebitNoteInvoiceId = nd.Id,
+                AnnulmentCreditNoteInvoiceId = ncId.Value,
+                Status = DebitNoteAnnulmentStatus.Pending,
+                Reason = trimmedReason,
+                Amount = nd.ImporteTotal,
+                Currency = annulmentCurrency,
+                ExchangeRate = nd.MonCotiz,
+                RequestedByUserId = userId,
+                RequestedByUserName = userName,
+                RequestedAt = DateTime.UtcNow,
+            };
+            _db.Set<BookingCancellationDebitNoteAnnulment>().Add(annulment);
+
+            // Auditoria STAGED (misma SaveChanges que la mutacion): motivo, comprobantes vinculados, importe+
+            // moneda+TC, estado previo del paso (regla dura #14).
+            _auditService.StageBusinessEvent(
+                action: AuditActions.OperatorPenaltyDebitNoteUndoRequested,
+                entityName: AuditActions.BookingCancellationEntityName,
+                entityId: bc.Id.ToString(),
+                details: JsonSerializer.Serialize(new
+                {
+                    bc.PublicId,
+                    reservaPublicId = bc.Reserva?.PublicId,
+                    action = "operator-penalty-debit-note-undo-requested",
+                    reason = trimmedReason,
+                    undoneDebitNoteInvoiceId = nd.Id,
+                    undoneDebitNoteCbteTipo = nd.TipoComprobante,
+                    annulmentCreditNoteInvoicePublicId = ncDto.PublicId,
+                    amount = nd.ImporteTotal,
+                    currency = annulmentCurrency,
+                    exchangeRate = nd.MonCotiz,
+                    previousDebitNoteStatus = bc.DebitNoteStatus.ToString(),
+                }),
+                userId: userId,
+                userName: userName);
+
+            await _db.SaveChangesAsync(ct);
+            return true;
+        }, ct);
+
+        _logger.LogInformation(
+            "metric:cancellation_debit_note_undo_requested | BcPublicId={BcPublicId} By={UserId}",
+            bc.PublicId, userId);
+
+        return await MapToDtoAsync(bc.Id, ct)
+            ?? throw new InvalidOperationException("No se pudo completar la operación. Volvé a intentar.");
+    }
+
+    /// <summary>
+    /// GUARD DURO compartido de <see cref="UndoIssuedDebitNoteAsync"/> (reglas duras #9/#10/#11/#B2 de la spec).
+    /// Se llama DOS veces: fuera de transaccion (409 rapido) y DENTRO del lock tras <c>ReloadAsync</c> (anti
+    /// carrera con un retry/callback/correct concurrente), mismo patron que <c>EnsureDebitNoteNotBlockingCorrectionAsync</c>.
+    /// </summary>
+    private async Task EnsureUndoDebitNoteAllowedAsync(BookingCancellation bc, CancellationToken ct)
+    {
+        // Regla dura #9: la multa debe estar Confirmed, con ND vinculada, Issued Y con CAE real. Una ND en
+        // PENDING (sin CAE) no tiene nada fiscal que anular por este camino.
+        if (bc.PenaltyStatus != PenaltyStatus.Confirmed
+            || bc.DebitNoteStatus != DebitNoteStatus.Issued
+            || !bc.DebitNoteInvoiceId.HasValue)
+        {
+            // Voz de la obra (data-exposure 2026-07-14): "comprobante", no "Nota de Débito".
+            throw new BusinessInvariantViolationException(
+                "Esta multa no tiene un comprobante emitido para deshacer.",
+                invariantCode: "INV-UNDO-001");
+        }
+
+        var ndSnapshot = await _db.Invoices
+            .AsNoTracking()
+            .Where(i => i.Id == bc.DebitNoteInvoiceId.Value)
+            .Select(i => new { i.Resultado, i.CAE })
+            .FirstOrDefaultAsync(ct);
+        bool ndHasCae = ndSnapshot is not null
+            && string.Equals(ndSnapshot.Resultado, "A", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(ndSnapshot.CAE);
+        if (!ndHasCae)
+        {
+            // Voz de la obra: quien lee YA es Admin, así que no se deriva a "administración".
+            throw new BusinessInvariantViolationException(
+                "El comprobante de esta multa todavía se está emitiendo. Esperá a que termine.",
+                invariantCode: "INV-UNDO-001");
+        }
+
+        // Regla dura #10: no anular dos veces el mismo comprobante (ya hay una anulacion viva o consumada para
+        // ESTA ND). El indice unico filtrado de la tabla ya lo impide a nivel base; esto da el 409 legible.
+        var hasLiveAnnulment = await _db.Set<BookingCancellationDebitNoteAnnulment>()
+            .AnyAsync(a => a.AnnulledDebitNoteInvoiceId == bc.DebitNoteInvoiceId.Value
+                        && a.Status != DebitNoteAnnulmentStatus.Failed, ct);
+        if (hasLiveAnnulment)
+        {
+            throw new BusinessInvariantViolationException(
+                "Esta multa ya se está deshaciendo (o ya se deshizo). No se puede repetir.",
+                invariantCode: "INV-UNDO-002");
+        }
+
+        // Regla dura #11: si la factura original ya fue anulada por completo, no auto-deshacer -> revision manual.
+        var originatingAnnulmentStatus = bc.OriginatingInvoice?.AnnulmentStatus
+            ?? await _db.Invoices
+                .Where(i => i.Id == bc.OriginatingInvoiceId)
+                .Select(i => (AnnulmentStatus?)i.AnnulmentStatus)
+                .FirstOrDefaultAsync(ct);
+        if (originatingAnnulmentStatus == AnnulmentStatus.Succeeded)
+        {
+            throw new BusinessInvariantViolationException(
+                "La factura original de esta operación ya está anulada por completo. Este caso lo tiene que revisar una persona.",
+                invariantCode: "INV-UNDO-MANUAL");
+        }
+
+        // TRIBUTOS (guard defensivo barato, corrección post-gate 2026-07-14): la NC-anula-ND espeja los renglones
+        // de la ND pero NO sus tributos (IIBB provinciales). El gating de EMISIÓN automática de la ND ya manda a
+        // revisión manual toda factura CON tributos (EvaluateDebitNoteGating), así que una ND emitida
+        // automáticamente NUNCA lleva tributos -> por ese camino esto es INALCANZABLE. Pero si una ND con
+        // tributos existiera por un camino manual/legacy, deshacerla acá dejaría los tributos sin reversar (fuga
+        // fiscal silenciosa). Guard cheap: ND con tributos -> revisión manual, nunca auto-deshacer.
+        var ndHasTributes = await _db.Set<InvoiceTribute>()
+            .AnyAsync(t => t.InvoiceId == bc.DebitNoteInvoiceId.Value, ct);
+        if (ndHasTributes)
+        {
+            throw new BusinessInvariantViolationException(
+                "El comprobante de esta multa tiene impuestos asociados. Este caso lo tiene que revisar una persona.",
+                invariantCode: "INV-UNDO-MANUAL");
+        }
+
+        // B2 (guard conservador, ambiguedad irresoluble): la ND mezcla cargos de 2+ operadores Y hay al menos
+        // una linea ManualReview (ND complementaria de OTRO operador) cuyo vinculo con esta ND no se puede
+        // determinar (cargos legacy sin TargetInvoiceId). Nunca resetear a ciegas: se rutea a revision manual.
+        if (await HasUnresolvableMultiOperatorAmbiguityAsync(bc, ct))
+        {
+            throw new BusinessInvariantViolationException(
+                "Esta multa la tiene que revisar una persona antes de poder deshacerla (hay más de un operador en juego).",
+                invariantCode: "INV-UNDO-MULTIOP");
+        }
+    }
+
+    /// <summary>
+    /// B2 (ADR-044 "Deshacer una multa ya emitida"): true si NO se puede determinar con seguridad que resetear
+    /// las lineas de esta ND NO va a pisar la marca <see cref="DebitNoteStatus.ManualReview"/> de una linea de
+    /// OTRO operador. Mono-operador (el 99%+ de los casos hoy) siempre da false.
+    /// </summary>
+    private async Task<bool> HasUnresolvableMultiOperatorAmbiguityAsync(BookingCancellation bc, CancellationToken ct)
+    {
+        if (!bc.DebitNoteInvoiceId.HasValue) return false;
+        var ndId = bc.DebitNoteInvoiceId.Value;
+
+        var supplierIdsInNd = await _db.BookingCancellationLineOperatorCharges
+            .Where(c => c.BookingCancellationLine.BookingCancellationId == bc.Id
+                     && c.Kind != OperatorChargeKind.Withholding
+                     && c.TargetInvoiceId == ndId)
+            .Select(c => c.BookingCancellationLine.SupplierId)
+            .Distinct()
+            .ToListAsync(ct);
+
+        if (supplierIdsInNd.Count < 2)
+            return false; // mono-operador (o T3a legado sin TargetInvoiceId poblado): sin ambiguedad, B2 reusa el fallback del BC unico.
+
+        // ¿Hay una linea ManualReview (multa complementaria pendiente de OTRO operador) cuyos cargos NO tienen
+        // TargetInvoiceId? Sin ese dato no se puede afirmar mecanicamente que quedo AFUERA de esta ND.
+        return await _db.BookingCancellationLines
+            .Where(l => l.BookingCancellationId == bc.Id && l.DebitNoteStatus == DebitNoteStatus.ManualReview)
+            .AnyAsync(l => l.OperatorCharges.Any(
+                c => c.Kind != OperatorChargeKind.Withholding && c.TargetInvoiceId == null), ct);
+    }
+
+    /// <summary>
+    /// ADR-044 "Deshacer una multa ya emitida" (2026-07-14): ¿hay un evento de deshacer EN VUELO (Pending) o el
+    /// ULTIMO intento quedo Failed, para la ND vinculada de este BC? Query chica a la tabla hija, compartida por
+    /// <see cref="GetOperatorPenaltySituationAsync"/> y <see cref="GetOperatorPenaltySituationsAsync"/> para que
+    /// ambos lectores deriven el mismo paso.
+    /// </summary>
+    private async Task<(bool HasPending, bool HasFailed)> GetDebitNoteAnnulmentFlagsAsync(
+        int? debitNoteInvoiceId, CancellationToken ct)
+    {
+        if (!debitNoteInvoiceId.HasValue)
+            return (false, false);
+
+        var hasPending = await _db.Set<BookingCancellationDebitNoteAnnulment>()
+            .AnyAsync(a => a.AnnulledDebitNoteInvoiceId == debitNoteInvoiceId.Value
+                        && a.Status == DebitNoteAnnulmentStatus.Pending, ct);
+        if (hasPending)
+            return (true, false);
+
+        // Sin Pending: miramos si el ULTIMO intento (por fecha) quedo Failed. Un Failed viejo con un Pending mas
+        // nuevo ya cayo en la rama de arriba; esto cubre el caso "el ultimo intento fallo y nadie reintento aun".
+        var lastStatus = await _db.Set<BookingCancellationDebitNoteAnnulment>()
+            .Where(a => a.AnnulledDebitNoteInvoiceId == debitNoteInvoiceId.Value)
+            .OrderByDescending(a => a.RequestedAt)
+            .Select(a => (DebitNoteAnnulmentStatus?)a.Status)
+            .FirstOrDefaultAsync(ct);
+
+        return (false, lastStatus == DebitNoteAnnulmentStatus.Failed);
     }
 
     /// <summary>

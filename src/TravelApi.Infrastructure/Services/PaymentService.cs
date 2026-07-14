@@ -1539,6 +1539,16 @@ public class PaymentService : IPaymentService
             throw new InvalidOperationException(AppliedCreditBridge.DirectBridgeMutationBlockReason);
         }
 
+        // ADR-044 "Deshacer una multa ya emitida" (2026-07-14): mismo candado para el puente de multa deshecha.
+        // Editarlo a mano desincroniza el saldo a favor acuñado al deshacer respecto del bolsillo del cliente.
+        if (ClientCreditService.IsDebitNoteUndoBridge(payment))
+        {
+            _logger.LogWarning(
+                "UpdatePaymentAsync rejected (direct debit-note-undo-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
+                paymentId, payment.ReservaId);
+            throw new InvalidOperationException(ClientCreditService.DirectBridgeMutationBlockReason);
+        }
+
         // ADR-033 (2026-06-16, E3/A2): habia quitado TODO gate de estado para editar (editar libremente lo
         // restringian solo los guards fiscal/puente). ADR-035 (2026-06-19) reintroduce un gate ACOTADO a los
         // estados TERMINALES: en {Closed, Cancelled, Lost, PendingOperatorRefund} editar/borrar NO se permite;
@@ -1786,6 +1796,15 @@ public class PaymentService : IPaymentService
                 "{Operation} rejected (direct applied-credit-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
                 operationName, payment.Id, payment.ReservaId);
             throw new InvalidOperationException(AppliedCreditBridge.DirectBridgeMutationBlockReason);
+        }
+
+        // ADR-044 "Deshacer una multa ya emitida" (2026-07-14): mismo candado para el puente de multa deshecha.
+        if (ClientCreditService.IsDebitNoteUndoBridge(payment))
+        {
+            _logger.LogWarning(
+                "{Operation} rejected (direct debit-note-undo-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
+                operationName, payment.Id, payment.ReservaId);
+            throw new InvalidOperationException(ClientCreditService.DirectBridgeMutationBlockReason);
         }
     }
 

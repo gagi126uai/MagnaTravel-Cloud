@@ -299,6 +299,29 @@ public static class AuditActions
     public const string OperatorPenaltyCorrected = "OperatorPenaltyCorrected";
 
     /// <summary>
+    /// ADR-044 "Deshacer una multa ya emitida" (2026-07-14): un usuario SOLICITO deshacer una Nota de Debito de
+    /// multa ya emitida con CAE (arma la Nota de Credito que la anula). Accion fiscalmente sensible: propia
+    /// accion de auditoria (no se mezcla con la emision normal de ND) para que el contador la pueda filtrar. El
+    /// detail JSON lleva quien/cuando, motivo, comprobantes vinculados (ND anulada, NC creada), importe/moneda/TC.
+    /// </summary>
+    public const string OperatorPenaltyDebitNoteUndoRequested = "OperatorPenaltyDebitNoteUndoRequested";
+
+    /// <summary>
+    /// ADR-044 "Deshacer una multa ya emitida": la Nota de Credito que anula la ND CONSIGUIO su CAE — la ND queda
+    /// desvinculada del BC (el paso vuelve a abierto) y, si la multa estaba cobrada (total o parcial), se acuño
+    /// saldo a favor del cliente por la porcion cobrada. El detail JSON lleva el efecto en la plata.
+    /// </summary>
+    public const string OperatorPenaltyDebitNoteUndone = "OperatorPenaltyDebitNoteUndone";
+
+    /// <summary>
+    /// ADR-044 "Deshacer una multa ya emitida" (corner "Succeeded sin mint", 2026-07-14): la Nota de Crédito que
+    /// anula la ND consiguió CAE, pero el BC ya NO apuntaba a esa ND (otro flujo la re-apuntó en carrera). Se
+    /// marcó el evento como consumado (el hecho fiscal es real) pero NO se desvinculó ni se acuñó saldo a favor:
+    /// requiere revisión manual. Auditoría dedicada para que el salto no quede silencioso.
+    /// </summary>
+    public const string OperatorPenaltyDebitNoteUndoNeedsReview = "OperatorPenaltyDebitNoteUndoNeedsReview";
+
+    /// <summary>
     /// ADR-044 T2 Addendum (2026-07-10): un usuario agrego un cargo SECUNDARIO del operador sobre una multa ya
     /// confirmada (ej. una retencion fiscal ademas del cargo administrativo automatico). Accion OPCIONAL, no
     /// parte del flujo simple. El detail JSON lleva quien/cuando, el BC/reserva, el operador, y el

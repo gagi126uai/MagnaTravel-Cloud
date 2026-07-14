@@ -502,7 +502,10 @@ public class CustomerService : ICustomerService
                     && !((payment.Method == OverpaymentCreditCleanup.BridgeMethod
                             && !payment.AffectsCash && payment.OriginalPaymentId != null)
                         || (payment.Method == AppliedCreditBridge.BridgeMethod
-                            && !payment.AffectsCash && payment.AppliedFromCreditWithdrawalId != null)), cancellationToken),
+                            && !payment.AffectsCash && payment.AppliedFromCreditWithdrawalId != null)
+                        // ADR-044 "Deshacer una multa ya emitida": puente de multa deshecha (Method + !AffectsCash).
+                        || (payment.Method == ClientCreditService.DebitNoteUndoBridgeMethod
+                            && !payment.AffectsCash)), cancellationToken),
             InvoiceCount = await _dbContext.Invoices
                 .AsNoTracking()
                 .CountAsync(invoice => invoice.Reserva != null && invoice.Reserva.PayerId == id, cancellationToken),
@@ -1088,7 +1091,11 @@ public class CustomerService : ICustomerService
                 (payment.Method == OverpaymentCreditCleanup.BridgeMethod
                     && !payment.AffectsCash && payment.OriginalPaymentId != null)
                 || (payment.Method == AppliedCreditBridge.BridgeMethod
-                    && !payment.AffectsCash && payment.AppliedFromCreditWithdrawalId != null)));
+                    && !payment.AffectsCash && payment.AppliedFromCreditWithdrawalId != null)
+                // ADR-044 "Deshacer una multa ya emitida": el puente de multa deshecha tampoco es un cobro real;
+                // su Notes no debe filtrarse a la pestaña Pagos del cliente. Method + !AffectsCash lo identifica.
+                || (payment.Method == ClientCreditService.DebitNoteUndoBridgeMethod
+                    && !payment.AffectsCash)));
 
         if (!string.IsNullOrWhiteSpace(query.Search))
         {

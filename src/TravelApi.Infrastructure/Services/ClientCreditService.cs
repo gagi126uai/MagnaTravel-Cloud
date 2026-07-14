@@ -186,6 +186,150 @@ public class ClientCreditService : IClientCreditService
     }
 
     // =========================================================================
+    // ADR-044 "Deshacer una multa ya emitida" (2026-07-14): tercer origen del credito (B1 del re-review).
+    // =========================================================================
+
+    /// <summary>
+    /// Origen del puente de "multa deshecha" (mismo criterio que <c>OverpaymentCreditCleanup.BridgeMethod</c> /
+    /// <c>CancellationToClientCreditConverter.BridgeMethod</c>: un metodo propio para distinguir estos Payments
+    /// tecnicos de los cobros reales del cliente).
+    /// </summary>
+    public const string DebitNoteUndoBridgeMethod = "MultaDeshecha";
+
+    /// <summary>
+    /// Mensaje de negocio cuando un usuario intenta borrar o editar DIRECTAMENTE el Payment puente de una multa
+    /// deshecha. Espejo de <c>OverpaymentCreditCleanup.DirectBridgeMutationBlockReason</c>: el puente es respaldo
+    /// interno del saldo a favor; tocarlo a mano lo desincroniza del bolsillo del cliente.
+    /// </summary>
+    public const string DirectBridgeMutationBlockReason =
+        "Este movimiento es el respaldo interno de un saldo a favor por una multa deshecha; " +
+        "gestionalo desde el saldo a favor del cliente.";
+
+    /// <summary>
+    /// ADR-044 "Deshacer una multa ya emitida" (endurecimiento post-gate 2026-07-14): true si <paramref name="payment"/>
+    /// ES el Payment puente que traslada al bolsillo del cliente la porción cobrada de una multa deshecha. Espejo
+    /// de <c>OverpaymentCreditCleanup.IsOverpaymentBridge</c> / <c>AppliedCreditBridge.IsAppliedCreditBridge</c>.
+    ///
+    /// <para>La firma es <c>Method == DebitNoteUndoBridgeMethod</c> + <c>AffectsCash == false</c> (lo distingue de
+    /// un cobro real). No lleva FK propio (mismo criterio que el puente de anulación
+    /// <c>CancellationToClientCreditConverter</c>): el Method es único y suficiente para identificarlo. Recibe la
+    /// entidad materializada; EF NO lo traduce a SQL — para queries usar la forma inline expandida (Method +
+    /// !AffectsCash).</para>
+    /// </summary>
+    public static bool IsDebitNoteUndoBridge(Payment payment)
+    {
+        return payment.Method == DebitNoteUndoBridgeMethod
+            && !payment.AffectsCash;
+    }
+
+    /// <summary>
+    /// ADR-044 "Deshacer una multa ya emitida" (B1 del re-review, 2026-07-14): cuando se deshace una Nota de
+    /// Debito de multa que el cliente YA HABIA PAGADO (total o parcialmente), acuña un
+    /// <see cref="ClientCreditEntry"/> por la porcion EFECTIVAMENTE COBRADA de la multa, en su moneda.
+    ///
+    /// <para><b>Es un ESPEJO de <c>PaymentService.ConvertOverpaymentToClientCreditAsync</c>
+    /// (<c>OverpaymentCreditConverter</c>)</b>, NO de <see cref="CreateEntryAsync"/>: no hay ninguna
+    /// <c>OperatorRefundAllocation</c> detras (la multa no es un reembolso del operador), asi que el credito
+    /// nace con <c>OperatorRefundAllocationId = null</c> — igual que el credito de sobrepago. Y al igual que
+    /// ese origen, <c>BookingCancellationId</c> tambien queda <c>null</c> A PROPOSITO: si se atara al BC,
+    /// gastar este credito disparia el guard B5 (<c>OnAllCreditConsumedAsync</c>) que CIERRA el BC cuando todos
+    /// sus creditos llegan a 0 — pero "deshacer la multa" deja el paso ABIERTO
+    /// (<c>ConfirmedNoDebitNote</c>), nunca lo cierra. El BC se sigue trazando via
+    /// <c>SourceDebitNoteAnnulmentId -&gt; BookingCancellationDebitNoteAnnulment.BookingCancellationId</c>.</para>
+    ///
+    /// <para><b>Idempotencia dura (retry de Hangfire)</b>: si YA existe un <see cref="ClientCreditEntry"/> con
+    /// <see cref="ClientCreditEntry.SourceDebitNoteAnnulmentId"/> == <paramref name="annulmentId"/>, NO se crea
+    /// otro (devuelve <c>null</c>). El reconciliador puede re-correr ante un retry de Hangfire; esta guarda es
+    /// lo que garantiza a lo sumo UN credito por evento de deshacer.</para>
+    ///
+    /// <para><b>Ademas del bolsillo, mueve la plata FUERA del saldo de la reserva</b> con un <see cref="Payment"/>
+    /// puente NEGATIVO (<c>AffectsCash=false</c>, no mueve caja: la plata real ya habia entrado con el cobro
+    /// original de la multa). Sin este puente, la misma plata podria "reaparecer" como saldo a favor aparente
+    /// si mas adelante se re-confirma una NUEVA multa sobre la misma reserva y moneda (doble-conteo silencioso).</para>
+    ///
+    /// <para><b>NO hace <c>SaveChangesAsync</c></b> (a diferencia de <c>OverpaymentCreditConverter.ConvertAsync</c>):
+    /// solo <c>Add()</c> en memoria. Lo commitea el <c>DebitNoteAnnulmentReconciliation</c> que la invoca, en la
+    /// MISMA unidad de trabajo que desvincula la ND (atomico: o queda todo, o no queda nada).</para>
+    /// </summary>
+    /// <param name="collectedPenaltyPortion">
+    /// Porcion de la multa efectivamente cobrada (regla B1: <c>max(0, PenaltyAmountAtEvent - pendingPenalty)</c>,
+    /// calculada por el caller ANTES de desvincular la ND). Si es &lt;= 0 (multa impaga), el caller NO debe
+    /// invocar este metodo (no hay nada que acuñar); se valida igual acá por las dudas.
+    /// </param>
+    /// <returns>El <see cref="ClientCreditEntry"/> agregado (sin persistir), o <c>null</c> si no correspondia
+    /// acuñar nada (monto &lt;= 0, o ya existia un credito para este evento).</returns>
+    public static async Task<ClientCreditEntry?> CreateEntryFromDebitNoteUndoAsync(
+        AppDbContext db,
+        int annulmentId,
+        int reservaId,
+        int customerId,
+        decimal collectedPenaltyPortion,
+        string currency,
+        string? actorUserId,
+        string? actorUserName,
+        ILogger logger,
+        CancellationToken cancellationToken = default)
+    {
+        var amount = ReservationEconomicPolicy.RoundCurrency(collectedPenaltyPortion);
+        if (amount <= 0m)
+        {
+            return null; // multa impaga (o ya neteada a 0): nada que acuñar, deja de ser deuda y listo.
+        }
+
+        var alreadyMinted = await db.ClientCreditEntries
+            .AnyAsync(e => e.SourceDebitNoteAnnulmentId == annulmentId, cancellationToken);
+        if (alreadyMinted)
+        {
+            logger.LogInformation(
+                "Deshacer multa: ya existe un ClientCreditEntry para el evento {AnnulmentId}; no se acuña de nuevo (idempotencia).",
+                annulmentId);
+            return null;
+        }
+
+        var normalizedCurrency = Monedas.Normalizar(currency);
+
+        var credit = new ClientCreditEntry
+        {
+            CustomerId = customerId,
+            OperatorRefundAllocationId = null,
+            BookingCancellationId = null, // deliberado: ver el XML-doc de arriba (guard B5).
+            Currency = normalizedCurrency,
+            CreditedAmount = amount,
+            RemainingBalance = amount,
+            IsFullyConsumed = false,
+            CreatedAt = DateTime.UtcNow,
+            SourcePaymentId = null,
+            SourceReservaId = reservaId,
+            SourceDebitNoteAnnulmentId = annulmentId,
+            CreatedByUserId = actorUserId,
+            CreatedByUserName = actorUserName,
+        };
+        db.ClientCreditEntries.Add(credit);
+
+        var bridge = new Payment
+        {
+            ReservaId = reservaId,
+            Amount = -amount,
+            Currency = normalizedCurrency,
+            Method = DebitNoteUndoBridgeMethod,
+            Notes = "Multa del operador deshecha: la porción ya cobrada pasa a saldo a favor del cliente.",
+            PaidAt = DateTime.UtcNow,
+            Status = "Paid",
+            EntryType = PaymentEntryTypes.Payment,
+            AffectsCash = false,
+            CreatedByUserId = actorUserId,
+            CreatedByUserName = actorUserName,
+        };
+        db.Payments.Add(bridge);
+
+        logger.LogInformation(
+            "metric:debit_note_undo_credit_minted | AnnulmentId={AnnulmentId} ReservaId={ReservaId} CustomerId={CustomerId} {Currency} {Amount}",
+            annulmentId, reservaId, customerId, normalizedCurrency, amount);
+
+        return credit;
+    }
+
+    // =========================================================================
     // WithdrawAsync (T3 del flujo — entrada publica del controller)
     // =========================================================================
 

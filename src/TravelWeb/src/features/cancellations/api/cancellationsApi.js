@@ -17,6 +17,7 @@
  *   - PATCH  /api/cancellations/:id/correct-penalty (corrige monto/moneda de la multa trabada)
  *   - POST   /api/cancellations/:id/operator-charges (ADR-044 T4: agrega un segundo cargo del operador)
  *   - GET    /api/cancellations/bna-usd-rate?date=YYYY-MM-DD (2026-07-14: dólar oficial BNA de una fecha)
+ *   - POST   /api/cancellations/:id/undo-debit-note (2026-07-14: deshace una ND de multa YA emitida con CAE)
  */
 
 import { api } from "../../../api";
@@ -367,6 +368,30 @@ export const cancellationsApi = {
    */
   getBnaUsdRate: (dateIso) =>
     api.get(`/cancellations/bna-usd-rate?date=${encodeURIComponent(dateIso)}`),
+
+  /**
+   * ADR-044 "Deshacer una multa ya emitida" (2026-07-14): deja sin efecto una Nota de
+   * Débito de multa YA emitida con CAE (estado "Done" / familia "confirmada"). Emite
+   * una Nota de Crédito ESPEJO de esa ND que la anula fiscalmente; al conseguir CAE, la
+   * ND queda desvinculada y el paso de la multa vuelve a estar abierto (corregir y
+   * re-emitir, o cerrar sin multa). Mismo botón "Reintentar" de la familia
+   * "accionTrabada" (estado "DebitNoteAnnulmentFailed") vuelve a llamar este MISMO
+   * endpoint — el backend acepta un nuevo intento mientras el anterior haya fallado.
+   *
+   * Permiso: MISMO gate que confirm-penalty/correct-penalty/retry/waive (Admin, o el
+   * permiso `cancellations.classify_agency_penalty`, resuelto server-side).
+   *
+   * Errores posibles: 400 (motivo vacío/corto); 404 (BC no existe); 409 con
+   * {invariantCode} INV-UNDO-001 (no hay ND con CAE para deshacer), INV-UNDO-002 (ya
+   * hay una anulación en curso o consumada), INV-UNDO-MANUAL / INV-UNDO-MULTIOP (casos
+   * que el backend deriva a revisión manual), o {code:"CONCURRENT_EDIT"}.
+   *
+   * @param {string} publicId - GUID del BookingCancellation.
+   * @param {string} reason   - Motivo del deshacer (5..500 chars).
+   * @returns {Promise<BookingCancellationDto>}
+   */
+  undoDebitNote: (publicId, reason) =>
+    api.post(`/cancellations/${publicId}/undo-debit-note`, { reason }),
 };
 
 // ============================================================================

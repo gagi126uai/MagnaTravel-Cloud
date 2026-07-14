@@ -22,11 +22,24 @@
  *     mostraba solo el cartel genérico "Reserva anulada". Ahora muestra el monto
  *     confirmado (enmascarado sin permiso `cobranzas.see_cost`) y habilita el link
  *     "+ Agregar otro cargo de este operador" para el caso real confirmado por el
- *     contador (cargo administrativo + retención fiscal juntos).
+ *     contador (cargo administrativo + retención fiscal juntos), Y desde ADR-044
+ *     "Deshacer una multa ya emitida" (2026-07-14) el link "· Deshacer: el operador
+ *     cobró mal esta multa" (Admin ÚNICAMENTE — gateado por `debeMostrarReintentarDeshacer`,
+ *     la MISMA función que gatea el botón "Reintentar" de la familia "accionTrabada",
+ *     FIX BLOQUEANTE B1: nunca alcanza con `situacion.canUndoDebitNote` solo) que abre
+ *     DeshacerMultaEmitidaInline — deja sin efecto el comprobante ENTERO (nunca un cargo
+ *     suelto: regla fiscal dura, ver el archivo de ese componente).
  *
  * Las familias "pregunta" (PendingDecision) y "waived" (Waived) NO se dibujan acá: ya
  * tienen su propio bloque en ReservaDetailPage (los botones "Sí cobró/No cobró" y el
  * rastro + "Deshacer" respectivamente) — este componente no las duplica.
+ *
+ * ADR-044 "Deshacer una multa ya emitida" (2026-07-14): dos estados nuevos, mapeados en
+ * operatorPenaltyBanner.js a familias YA existentes (nunca se creó una familia visual
+ * nueva) — "DebitNoteAnnulling" entra en "procesando" (mismo cartel ámbar con
+ * auto-refresco, solo cambia el título) y "DebitNoteAnnulmentFailed" entra en
+ * "accionTrabada" (mismo cartel naranja, botón "Reintentar" que reabre
+ * DeshacerMultaEmitidaInline desde cero).
  *
  * "+ Agregar otro cargo de este operador" (ADR-044 T4): además de la familia
  * "confirmada", el link también aparece en "accionTrabada"/"procesando"/"multiOperador"
@@ -68,15 +81,19 @@ import {
   textoMultiOperador,
   tituloConNombreOperador,
   primerCargoTrasladableSinFacturaDestino,
+  tituloProcesandoMulta,
+  textoRastroDeshacerMulta,
 } from "../operatorPenaltyBanner";
 import { useOperatorPenaltyPolling } from "../hooks/useOperatorPenaltyPolling";
 import { ConfirmarMultaOperadorInline } from "./ConfirmarMultaOperadorInline";
 import { AgregarOtroCargoOperadorInline } from "./AgregarOtroCargoOperadorInline";
 import { ElegirFacturaDestinoInline } from "./ElegirFacturaDestinoInline";
+import { DeshacerMultaEmitidaInline } from "./DeshacerMultaEmitidaInline";
 import { debeMostrarDesgloseCargos, construirFilasDesgloseCargos } from "../lib/otroCargoOperador";
+import { debeMostrarReintentarDeshacer } from "../lib/undoDebitNoteLogic";
 import { cancellationsApi } from "../api/cancellationsApi";
 import { showSuccess, showError } from "../../../alerts";
-import { hasPermission } from "../../../auth";
+import { hasPermission, isAdmin } from "../../../auth";
 import { formatCurrency } from "../../../lib/utils";
 import { getApiErrorMessage } from "../../../lib/errors";
 
@@ -128,6 +145,11 @@ export function OperatorPenaltyStepPanel({
   // paso sin cobrarle nada al cliente — no es una acción trivial de deshacer.
   const [mostrarConfirmacionWaive, setMostrarConfirmacionWaive] = useState(false);
   const [procesandoWaive, setProcesandoWaive] = useState(false);
+  // ADR-044 "Deshacer una multa ya emitida" (2026-07-14): panel de "Deshacer" abierto —
+  // se usa TANTO desde el link de la familia "confirmada" (Done) COMO desde el botón
+  // "Reintentar" de la familia "accionTrabada" cuando el estado es
+  // "DebitNoteAnnulmentFailed" (el intento anterior de deshacer no se pudo emitir).
+  const [mostrarDeshacerMulta, setMostrarDeshacerMulta] = useState(false);
 
   const familia = familiaDeEstadoMulta(situacion.state);
   // ADR-044 T1: cuando hay más de un operador (nombreOperador viene informado), dos
@@ -167,7 +189,7 @@ export function OperatorPenaltyStepPanel({
         role="status"
       >
         <strong className="font-bold">
-          {tituloConNombreOperador(nombreOperador, "Anulada — se está emitiendo la multa al cliente.")}
+          {tituloConNombreOperador(nombreOperador, tituloProcesandoMulta(situacion.state))}
         </strong> Puede demorar unos minutos, no hace falta que hagas nada.
         {/* Tope de ~3 min agotado sin que el backend resuelva: puede ser una cola realmente
             trabada, así que dejamos de insistir solos y le damos la salida manual de siempre. */}
@@ -201,35 +223,102 @@ export function OperatorPenaltyStepPanel({
   // con el monto confirmado y el link de "otro cargo". Antes de esta tanda la ficha no
   // mostraba NADA para este estado (ver comentario del archivo).
   if (familia === "confirmada") {
+    // ADR-044 "Deshacer una multa ya emitida" (2026-07-14): mismo gate ÚNICO que usa el
+    // botón "Reintentar" del cartel "accionTrabada" (ver copyAccionTrabada) — Admin
+    // ÚNICAMENTE, Y el backend ya combinó la condición de negocio (ND con CAE vigente,
+    // sin otra anulación en curso) en `situacion.canUndoDebitNote`. FIX B1: las dos
+    // puertas de entrada NUNCA deben poder divergir, por eso comparten esta función.
+    const puedeDeshacerMulta = debeMostrarReintentarDeshacer({
+      canUndoDebitNote: situacion.canUndoDebitNote,
+      esAdmin: isAdmin(),
+    });
+    // Rastro del último "Deshacer" de este operador (2026-07-14: backend ya manda
+    // `situacion.lastDebitNoteUndo` — objeto con undoneAt/undoneByName/reason, o null si
+    // esta ND nunca se deshizo). textoRastroDeshacerMulta degrada solo a null cuando
+    // viene null (nunca se deshizo) — no hace falta chequear acá.
+    const rastroDeshacer = textoRastroDeshacerMulta(situacion.lastDebitNoteUndo);
+
     return (
-      <div
-        className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 text-sm text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/10 dark:text-emerald-200"
-        data-testid={testId}
-        role="status"
-      >
-        <strong className="font-bold">
-          {tituloConNombreOperador(nombreOperador, "Anulada — multa del operador confirmada.")}
-        </strong>{" "}
-        {puedeVerMontos && situacion.amount != null && situacion.currency ? (
-          <span data-testid="multa-confirmada-monto">
-            {formatCurrency(situacion.amount, situacion.currency)}
-          </span>
-        ) : !puedeVerMontos ? (
-          <span title="Sin permiso para ver montos">—</span>
-        ) : null}
-        {/* FIX F4 (2026-07-10, spec sección 1.2): con más de un cargo, se ve el
-            desglose completo — antes, agregar un segundo cargo no cambiaba nada visible. */}
-        <DesgloseCargosOperador charges={situacion.charges} puedeVerMontos={puedeVerMontos} />
-        {puedeAgregarOtroCargo && (
-          <div className="mt-2 pt-2 border-t border-emerald-200/60 dark:border-emerald-800/40">
-            <AgregarOtroCargoOperadorInline
-              reservaPublicId={reservaPublicId}
-              reservaNumero={reservaNumero}
-              supplierPublicId={supplierPublicId}
-              monedaSugerida={situacion.currency ?? monedaSugerida}
-              onAgregado={onResuelto}
-            />
-          </div>
+      // Envoltorio "space-y-3": mismo patrón que el cartel Waived + DeshacerCierreSinMultaInline
+      // en ReservaDetailPage — el panel de confirmación va DEBAJO del cartel, como
+      // hermano, nunca anidado adentro (spec sección 2: "se abre debajo del cartel").
+      <div className="space-y-3">
+        <div
+          className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 text-sm text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/10 dark:text-emerald-200"
+          data-testid={testId}
+          role="status"
+        >
+          <strong className="font-bold">
+            {tituloConNombreOperador(nombreOperador, "Anulada — multa del operador confirmada.")}
+          </strong>{" "}
+          {puedeVerMontos && situacion.amount != null && situacion.currency ? (
+            <span data-testid="multa-confirmada-monto">
+              {formatCurrency(situacion.amount, situacion.currency)}
+            </span>
+          ) : !puedeVerMontos ? (
+            <span title="Sin permiso para ver montos">—</span>
+          ) : null}
+
+          {/* FIX de exposición (revisión 2026-07-14): el motivo del "Deshacer" puede
+              llegar a 500 caracteres — sin recorte, esta línea chica estiraba el cartel
+              entero. `line-clamp-2` lo corta visualmente a 2 renglones con "…"; el
+              `title` deja el texto COMPLETO disponible al pasar el mouse (nunca se
+              pierde información, solo se recorta la vista). */}
+          {rastroDeshacer && (
+            <div
+              className="mt-1 text-xs text-emerald-700/80 dark:text-emerald-300/70 line-clamp-2"
+              data-testid="multa-deshacer-rastro"
+              title={rastroDeshacer}
+            >
+              {rastroDeshacer}
+            </div>
+          )}
+
+          {/* FIX F4 (2026-07-10, spec sección 1.2): con más de un cargo, se ve el
+              desglose completo — antes, agregar un segundo cargo no cambiaba nada visible. */}
+          <DesgloseCargosOperador charges={situacion.charges} puedeVerMontos={puedeVerMontos} />
+          {puedeAgregarOtroCargo && !mostrarDeshacerMulta && (
+            <div className="mt-2 pt-2 border-t border-emerald-200/60 dark:border-emerald-800/40">
+              <AgregarOtroCargoOperadorInline
+                reservaPublicId={reservaPublicId}
+                reservaNumero={reservaNumero}
+                supplierPublicId={supplierPublicId}
+                monedaSugerida={situacion.currency ?? monedaSugerida}
+                onAgregado={onResuelto}
+              />
+            </div>
+          )}
+
+          {/* "· Deshacer: el operador cobró mal esta multa" (spec sección 1): link
+              discreto, UNO SOLO por comprobante (nunca uno por renglón del desglose —
+              regla fiscal dura, la NC anula el 100% del comprobante). Segunda fila
+              aparte, separada por su propia línea fina, debajo de "Agregar otro cargo". */}
+          {puedeDeshacerMulta && !mostrarDeshacerMulta && (
+            <div className="mt-2 pt-2 border-t border-emerald-200/60 dark:border-emerald-800/40">
+              <button
+                type="button"
+                onClick={() => setMostrarDeshacerMulta(true)}
+                data-testid="btn-multa-deshacer-link"
+                className="text-xs text-emerald-700/70 hover:text-emerald-800 dark:text-emerald-300/60 dark:hover:text-emerald-200 transition-colors"
+              >
+                · Deshacer: el operador cobró mal esta multa
+              </button>
+            </div>
+          )}
+        </div>
+
+        {mostrarDeshacerMulta && (
+          <DeshacerMultaEmitidaInline
+            reservaPublicId={reservaPublicId}
+            reservaNumero={reservaNumero}
+            situacion={situacion}
+            puedeVerMontos={puedeVerMontos}
+            onDeshecho={() => {
+              setMostrarDeshacerMulta(false);
+              onResuelto();
+            }}
+            onCerrar={() => setMostrarDeshacerMulta(false)}
+          />
         )}
       </div>
     );
@@ -247,6 +336,11 @@ export function OperatorPenaltyStepPanel({
         state: situacion.state,
         canRetryDebitNote: situacion.canRetryDebitNote,
         canCorrectAmountCurrency: situacion.canCorrectAmountCurrency,
+        canUndoDebitNote: situacion.canUndoDebitNote,
+        // FIX B1: el botón "Reintentar" de DebitNoteAnnulmentFailed exige Admin además
+        // de canUndoDebitNote (ver debeMostrarReintentarDeshacer) — nunca alcanza con
+        // el permiso de clasificar multas solo.
+        esAdmin: isAdmin(),
         manualReviewReason: situacion.manualReviewReason,
         charges: situacion.charges,
       })
@@ -300,6 +394,26 @@ export function OperatorPenaltyStepPanel({
     );
   }
 
+  // "Reintentar" el deshacer (ADR-044, estado "DebitNoteAnnulmentFailed"): reemplaza
+  // al cartel, mismo patrón que "corregir"/"elegirFactura" — reabre el panel de
+  // "Deshacer" desde cero (nunca reenvía en silencio el motivo del intento anterior,
+  // ver comentario de DeshacerMultaEmitidaInline).
+  if (esAccionTrabada && accion === "reintentarDeshacer" && mostrarDeshacerMulta) {
+    return (
+      <DeshacerMultaEmitidaInline
+        reservaPublicId={reservaPublicId}
+        reservaNumero={reservaNumero}
+        situacion={situacion}
+        puedeVerMontos={puedeVerMontos}
+        onDeshecho={() => {
+          setMostrarDeshacerMulta(false);
+          onResuelto();
+        }}
+        onCerrar={() => setMostrarDeshacerMulta(false)}
+      />
+    );
+  }
+
   // El GUID de la cancelación no viaja en el DTO de la reserva: se busca recién al primer
   // click (mismo patrón que buscarCancelacionYAbrirPanel en ReservaDetailPage). Extraído
   // como función propia porque tanto el botón principal (Reintentar/Corregir/Emitir) como
@@ -324,6 +438,13 @@ export function OperatorPenaltyStepPanel({
     // AgregarOtroCargoOperadorInline también hace su propio fetch).
     if (accion === "elegirFactura") {
       setShowElegirFactura(true);
+      return;
+    }
+
+    // "reintentarDeshacer" (DebitNoteAnnulmentFailed): mismo criterio, el propio
+    // DeshacerMultaEmitidaInline resuelve el cancellationPublicId solo al abrirse.
+    if (accion === "reintentarDeshacer") {
+      setMostrarDeshacerMulta(true);
       return;
     }
 

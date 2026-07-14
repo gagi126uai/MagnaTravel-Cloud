@@ -1256,3 +1256,58 @@ más de una factura, y viene escondido con defaults.
   de "muy lejos" es una regla de negocio nueva (hoy la pantalla de cobro no tiene este aviso): lo fija
   dominio/negocio, no lo inventa el front; hasta que esté fijado, el aviso queda apagado y no bloquea
   el resto de la pantalla.
+
+## Deshacer una multa YA emitida y aprobada por ARCA (2026-07-14, respuestas de Gastón)
+
+> **Origen:** una reserva anulada tenía la multa del operador cobrada al cliente con un comprobante ya
+> aprobado por ARCA... y estaba mal (monto o moneda equivocados, o no correspondía). Un comprobante
+> aprobado no se edita: se emite el comprobante inverso (lo deja sin efecto), la plata del cliente se
+> acomoda sola, y el paso de la multa vuelve a quedar abierto en la ficha para corregir y volver a
+> cobrar, o cerrar sin multa. **Es un caso DISTINTO del "Deshacer" que ya existe** (ese es para el
+> cierre "sin multa" / `Waived`, que nunca tuvo comprobante). Reusa el cartel de multa confirmada
+> (`OperatorPenaltyStepPanel`, familia `confirmada`), el patrón del panel `DeshacerCierreSinMultaInline`
+> (motivo obligatorio + confirmación en dos pasos) y las familias `procesando`/`accionTrabada` de la
+> Nota de Débito. Spec: `docs/ux/2026-07-14-deshacer-multa-emitida.md`.
+
+- **(2026-07-14) La entrada es un link discreto, Admin-only, dentro del cartel de multa confirmada.**
+  "· Deshacer: el operador cobró mal esta multa", al pie del cartel verde de multa resuelta, mismo
+  patrón visual (texto chico, línea fina arriba) y mismo límite de permiso (**solo administradores**)
+  que el "Deshacer" del cierre sin multa que ya existía. No es un botón: es una acción rara y de último
+  recurso.
+
+- **(2026-07-14) La confirmación va EN LÍNEA, en dos pasos**, clonando `DeshacerCierreSinMultaInline`:
+  paso 1 explica + pide **motivo obligatorio** (5 a 500 caracteres), paso 2 confirma explícitamente
+  antes de tocar el backend. Si falla, el panel queda abierto con el motivo intacto y un cartel rojo
+  de error. Variante cuando el cliente ya había pagado la multa: "le va a quedar US$ X a favor para
+  usar en otra reserva". Montos tapados con "—" sin permiso `cobranzas.see_cost` (regla general
+  2026-06-05).
+
+- **(2026-07-14 — resuelto por regla fiscal firmada, NO lo decide Gastón) "Deshacer" deja sin efecto
+  el COMPROBANTE ENTERO, nunca un cargo suelto.** Lo fija la regla dura del contador (la nota de
+  crédito anula el 100% del comprobante, nunca en forma parcial). Por eso el link es **UNO solo por
+  comprobante emitido** (no uno por cargo del desglose), y el modal lo aclara en criollo: "Se deja sin
+  efecto el comprobante completo, con todos los cargos que salieron en él. Después podés corregir cada
+  cargo y volver a cobrarla." Deshecho el comprobante, cada cargo se corrige/edita por separado y se
+  vuelve a emitir.
+
+- **(2026-07-14) Dos estados nuevos del cartel, reusando familias existentes:** mientras se espera la
+  aprobación de ARCA, cartel ámbar "se está dejando sin efecto la multa" (familia `procesando`, se
+  refresca solo, mismo hook que "se está emitiendo la multa"); si falla, cartel naranja "no se pudo
+  dejar sin efecto la multa. Probá de nuevo." con botón **"Reintentar"** (familia `accionTrabada`).
+
+- **(2026-07-14) El rastro** (línea chica bajo el cartel, patrón `textoRastroWaived`): "El comprobante
+  anterior se dejó sin efecto el {fecha} por {quién} — motivo: {texto}". Se muestra tanto en el paso
+  reabierto (¿el operador cobró...? Sí/No) como en el cartel vuelto a confirmar. Sin quién/motivo, el
+  texto se corta sin inventar nada. Si pasa más de una vez, se muestra solo el último.
+
+- **(2026-07-14) Aviso del plazo de ARCA: suave, NUNCA bloquea** (mismo espíritu que el aviso del
+  dólar lejos del oficial, 2026-07-13). Vive en el panel de confirmación, entre la explicación y el
+  motivo:
+  - **Dentro de plazo:** "⚠ Quedan {N} días para hacer esta corrección sin trámites extra ante ARCA
+    (vence el {fecha})."
+  - **Pasado el plazo (texto exacto de Gastón):** "⚠ Pasaron más de 15 días desde que se emitió este
+    comprobante. Se puede deshacer igual, pero convendría consultarlo con un contador antes de seguir."
+    El botón "Deshacer" sigue disponible igual.
+  - **No corresponde / el backend no manda el dato:** el aviso no aparece y nada ocupa ese lugar. El
+    frontend NO calcula la fecha ni los días a mano: los recibe ya calculados del backend (regla "el
+    front no deduce, lo dice el backend", 2026-07-03).

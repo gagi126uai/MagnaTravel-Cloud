@@ -68,8 +68,11 @@ public class MovementsService : IMovementsService
                 // deben listarse en Movimientos. Se filtran AMBOS por Method, a proposito: el puente de
                 // reversion de NC (EntryType=CreditNoteReversal, tambien AffectsCash=false) SI se sigue
                 // mostrando como su propio tipo (comportamiento historico). Por eso filtramos por Method.
+                // ADR-044 "Deshacer una multa ya emitida": el puente de multa deshecha (Method=MultaDeshecha,
+                // AffectsCash=false) tampoco es movimiento de caja -> no se lista en Movimientos.
                 .Where(p => p.Method != OverpaymentCreditCleanup.BridgeMethod
-                    && p.Method != AppliedCreditBridge.BridgeMethod);
+                    && p.Method != AppliedCreditBridge.BridgeMethod
+                    && p.Method != ClientCreditService.DebitNoteUndoBridgeMethod);
 
             if (ownerScope is not null)
             {

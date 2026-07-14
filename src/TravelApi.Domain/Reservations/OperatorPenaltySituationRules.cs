@@ -29,12 +29,23 @@ public static class OperatorPenaltySituationRules
     /// Cerrar sin multa": flag ON + NC total con CAE + penalidad aun Estimated + sin ND en juego). Se calcula afuera
     /// (reusa <c>EvaluateCanConfirmPenalty</c>) para no duplicar esa logica aca.
     /// </param>
+    /// <param name="HasPendingDebitNoteAnnulment">
+    /// ADR-044 "Deshacer una multa ya emitida" (2026-07-14): true si hay un evento de "deshacer" EN VUELO
+    /// (<c>BookingCancellationDebitNoteAnnulment.Status == Pending</c>) para la ND vinculada de este BC. Solo
+    /// tiene efecto cuando <see cref="DebitNoteStatus"/> es <c>Issued</c> (la ND sigue viva mientras se deshace).
+    /// </param>
+    /// <param name="HasFailedDebitNoteAnnulment">
+    /// ADR-044 "Deshacer una multa ya emitida": true si el ULTIMO intento de deshacer la ND vinculada quedo
+    /// <c>Failed</c> (y no hay ninguno <c>Pending</c> mas nuevo). Mismo alcance que <see cref="HasPendingDebitNoteAnnulment"/>.
+    /// </param>
     public readonly record struct Fields(
         bool HasLiveCancellation,
         PenaltyStatus PenaltyStatus,
         DebitNoteStatus DebitNoteStatus,
         bool HasDebitNoteInvoice,
-        bool IsPendingDecision);
+        bool IsPendingDecision,
+        bool HasPendingDebitNoteAnnulment = false,
+        bool HasFailedDebitNoteAnnulment = false);
 
     /// <summary>
     /// Deriva el paso en que esta la multa del operador. Orden de decision de arriba hacia abajo (flujo lineal):
@@ -56,6 +67,12 @@ public static class OperatorPenaltySituationRules
         {
             return fields.DebitNoteStatus switch
             {
+                // ADR-044 "Deshacer una multa ya emitida" (2026-07-14): dentro de Issued, un "deshacer" en curso
+                // o fallido PISA el Done de siempre (sub-regla nueva, el resto del switch no cambia).
+                DebitNoteStatus.Issued when fields.HasPendingDebitNoteAnnulment
+                    => OperatorPenaltySituationState.DebitNoteAnnulling,
+                DebitNoteStatus.Issued when fields.HasFailedDebitNoteAnnulment
+                    => OperatorPenaltySituationState.DebitNoteAnnulmentFailed,
                 // Emitida con CAE -> la pata quedo resuelta.
                 DebitNoteStatus.Issued => OperatorPenaltySituationState.Done,
                 // Encolada, esperando CAE -> no hay accion, solo esperar.
@@ -107,11 +124,15 @@ public static class OperatorPenaltySituationRules
     /// y necesita una nota de debito complementaria a mano (marcador REAL <c>line.DebitNoteStatus == ManualReview</c>
     /// puesto por el flujo de confirmacion escalonada, NO derivado de un conteo de operadores confirmados).
     /// </param>
+    /// <param name="HasPendingDebitNoteAnnulment">Ver <see cref="Fields.HasPendingDebitNoteAnnulment"/>: mismo dato, a nivel de la ND COMPARTIDA del BC padre.</param>
+    /// <param name="HasFailedDebitNoteAnnulment">Ver <see cref="Fields.HasFailedDebitNoteAnnulment"/>.</param>
     public readonly record struct LineFields(
         PenaltyStatus LinePenaltyStatus,
         bool IsPendingDecision,
         DebitNoteStatus BcDebitNoteStatus,
-        bool IsOperatorSpecificManual);
+        bool IsOperatorSpecificManual,
+        bool HasPendingDebitNoteAnnulment = false,
+        bool HasFailedDebitNoteAnnulment = false);
 
     /// <summary>
     /// Deriva el paso de la multa de UN operador puntual (version por-linea de <see cref="Derive"/>). Ver el
@@ -137,6 +158,11 @@ public static class OperatorPenaltySituationRules
             // estado de ESA ND. Mismo desglose fino que el path mono-operador de Derive.
             return fields.BcDebitNoteStatus switch
             {
+                // ADR-044 "Deshacer una multa ya emitida": misma sub-regla que el path mono-operador (Derive).
+                DebitNoteStatus.Issued when fields.HasPendingDebitNoteAnnulment
+                    => OperatorPenaltySituationState.DebitNoteAnnulling,
+                DebitNoteStatus.Issued when fields.HasFailedDebitNoteAnnulment
+                    => OperatorPenaltySituationState.DebitNoteAnnulmentFailed,
                 DebitNoteStatus.Issued => OperatorPenaltySituationState.Done,
                 DebitNoteStatus.Pending => OperatorPenaltySituationState.DebitNoteQueued,
                 DebitNoteStatus.Failed => OperatorPenaltySituationState.DebitNoteFailed,

@@ -853,6 +853,73 @@ public class Adr032CollectableStateRuleTests
     }
 
     // =====================================================================================================
+    // ADR-044 "Deshacer una multa ya emitida" (2026-07-14) — el puente "MultaDeshecha" no se borra ni edita.
+    // =====================================================================================================
+
+    /// <summary>Firma exacta del puente de multa deshecha: Method=MultaDeshecha + AffectsCash=false + monto negativo.</summary>
+    private static Payment NewDebitNoteUndoBridge(int reservaId) => new()
+    {
+        ReservaId = reservaId,
+        Amount = -20_000m,
+        Method = TravelApi.Infrastructure.Services.ClientCreditService.DebitNoteUndoBridgeMethod,
+        AffectsCash = false,
+        Status = "Paid",
+        EntryType = PaymentEntryTypes.Payment,
+        PaidAt = DateTime.UtcNow,
+    };
+
+    [Fact]
+    public void IsDebitNoteUndoBridge_RecognizesTheBridge_AndRejectsRealPayments()
+    {
+        // Positivo: la firma exacta.
+        Assert.True(TravelApi.Infrastructure.Services.ClientCreditService.IsDebitNoteUndoBridge(
+            new Payment { Method = "MultaDeshecha", AffectsCash = false }));
+        // Negativos: un cobro real (AffectsCash=true) o cualquier otro Method NO es el puente.
+        Assert.False(TravelApi.Infrastructure.Services.ClientCreditService.IsDebitNoteUndoBridge(
+            new Payment { Method = "MultaDeshecha", AffectsCash = true }));
+        Assert.False(TravelApi.Infrastructure.Services.ClientCreditService.IsDebitNoteUndoBridge(
+            new Payment { Method = "Transfer", AffectsCash = false }));
+    }
+
+    [Fact]
+    public async Task AnnulPayment_OnDebitNoteUndoBridge_RejectsByEnsureNotBridge()
+    {
+        await using var context = CreateContext();
+        var reserva = await SeedReservaAsync(context, EstadoReserva.Cancelled);
+        var bridge = NewDebitNoteUndoBridge(reserva.Id);
+        context.Payments.Add(bridge);
+        await context.SaveChangesAsync();
+
+        var paymentService = BuildPaymentService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            paymentService.AnnulPaymentAsync(bridge.PublicId.ToString(), reason: null, CancellationToken.None));
+        Assert.Equal(TravelApi.Infrastructure.Services.ClientCreditService.DirectBridgeMutationBlockReason, ex.Message);
+
+        var after = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(x => x.PublicId == bridge.PublicId);
+        Assert.False(after.IsDeleted);
+    }
+
+    [Fact]
+    public async Task UpdatePayment_OnDebitNoteUndoBridge_RejectsByBridgeGuard()
+    {
+        await using var context = CreateContext();
+        var reserva = await SeedReservaAsync(context, EstadoReserva.Cancelled);
+        var bridge = NewDebitNoteUndoBridge(reserva.Id);
+        context.Payments.Add(bridge);
+        await context.SaveChangesAsync();
+
+        var paymentService = BuildPaymentService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            paymentService.UpdatePaymentAsync(
+                bridge.PublicId.ToString(),
+                new UpdatePaymentRequest { Amount = -5_000m, Method = "MultaDeshecha" },
+                CancellationToken.None));
+        Assert.Equal(TravelApi.Infrastructure.Services.ClientCreditService.DirectBridgeMutationBlockReason, ex.Message);
+    }
+
+    // =====================================================================================================
     // ADR-032 (review) — anti doble-anulacion. El guard EnsureNotAlreadyAnnulled corta sobre un cobro YA
     // soft-deleted (FindAsync ignora el filtro global !IsDeleted, por eso el guard existe).
     //

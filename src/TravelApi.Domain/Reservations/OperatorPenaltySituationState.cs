@@ -50,4 +50,18 @@ public enum OperatorPenaltySituationState
     /// emision automatica cuando detecta multas confirmadas de mas de un operador.
     /// </summary>
     MultiOperatorNeedsManualReview = 8,
+
+    /// <summary>
+    /// ADR-044 "Deshacer una multa ya emitida" (2026-07-14): la multa esta <c>Done</c> (ND emitida con CAE) Y hay
+    /// un "deshacer" en curso (la Nota de Credito que anula esa ND todavia espera su propio CAE). Familia
+    /// PROCESANDO: el front hace polling, sin accion ofrecida (esperar).
+    /// </summary>
+    DebitNoteAnnulling = 9,
+
+    /// <summary>
+    /// ADR-044 "Deshacer una multa ya emitida" (2026-07-14): la multa sigue <c>Done</c> (la ND original SIGUE
+    /// viva, Issued) porque el ultimo intento de deshacerla fallo (ARCA rechazo la Nota de Credito). Se ofrece
+    /// reintentar el deshacer.
+    /// </summary>
+    DebitNoteAnnulmentFailed = 10,
 }

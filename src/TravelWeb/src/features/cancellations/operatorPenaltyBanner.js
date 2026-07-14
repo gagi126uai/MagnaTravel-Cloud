@@ -27,6 +27,8 @@
  * tiene que seguir con el comportamiento legado intacto (ver OperatorPenaltyStepPanel).
  */
 
+import { debeMostrarReintentarDeshacer } from "./lib/undoDebitNoteLogic.js";
+
 // Traduce cada estado del backend a un slug corto y estable, usado tanto para armar
 // el data-testid (banner-multa-<slug>) como — en algunos casos — el texto mostrado.
 // Es una tabla explícita (no un cálculo con regex) para que cualquiera pueda leer de
@@ -42,6 +44,10 @@ const SLUG_POR_ESTADO = {
   Done: "done",
   // ADR-044 T1 (2026-07-10): más de un operador con multa confirmada a la vez.
   MultiOperatorNeedsManualReview: "multi-operador",
+  // ADR-044 "Deshacer una multa ya emitida" (2026-07-14): la ND con CAE se está anulando
+  // (se emite la NC espejo que la deja sin efecto) y, si eso falla, queda trabado.
+  DebitNoteAnnulling: "debit-note-annulling",
+  DebitNoteAnnulmentFailed: "debit-note-annulment-failed",
 };
 
 /**
@@ -80,20 +86,33 @@ export function slugDeEstadoMulta(state) {
  *     ficha no mostraba NADA del cargo confirmado — con T4 pasa a tener su propio
  *     cartel prolijo ("Multa del operador: US$ 200 ✔ confirmada") que además habilita
  *     el link "+ Agregar otro cargo de este operador" (spec sección 1: el mismo
- *     operador a veces aplica un cargo administrativo Y una retención fiscal juntos).
+ *     operador a veces aplica un cargo administrativo Y una retención fiscal juntos) y,
+ *     desde ADR-044 "Deshacer una multa ya emitida" (2026-07-14), el link "Deshacer:
+ *     el operador cobró mal esta multa" (Admin ÚNICAMENTE — ver `debeMostrarReintentarDeshacer`
+ *     en lib/undoDebitNoteLogic.js, nunca alcanza con canUndoDebitNote solo).
  *   - "soloLectura": None, o cualquier estado futuro no contemplado acá. Sin cartel de
  *     multa (la ficha no tiene nada que mostrar de este paso).
+ *
+ * ADR-044 "Deshacer una multa ya emitida" (2026-07-14): dos estados nuevos REUSAN
+ * familias que ya existían (nunca se creó una familia visual nueva para esto):
+ *   - DebitNoteAnnulling (se está emitiendo la NC que deja sin efecto la ND) entra en
+ *     "procesando" — mismo cartel ámbar con auto-refresco que "se está emitiendo la
+ *     multa al cliente" (DebitNoteQueued), solo cambia el texto (ver tituloProcesando).
+ *   - DebitNoteAnnulmentFailed (esa NC no se pudo emitir) entra en "accionTrabada" —
+ *     mismo cartel naranja con un botón puntual ("Reintentar") que los otros tres
+ *     estados trabados.
  *
  * @param {string} state
  * @returns {"pregunta"|"procesando"|"accionTrabada"|"waived"|"multiOperador"|"confirmada"|"soloLectura"}
  */
 export function familiaDeEstadoMulta(state) {
   if (state === "PendingDecision") return "pregunta";
-  if (state === "DebitNoteQueued") return "procesando";
+  if (state === "DebitNoteQueued" || state === "DebitNoteAnnulling") return "procesando";
   if (
     state === "DebitNoteFailed" ||
     state === "DebitNoteNeedsAmountCurrency" ||
-    state === "ConfirmedNoDebitNote"
+    state === "ConfirmedNoDebitNote" ||
+    state === "DebitNoteAnnulmentFailed"
   ) {
     return "accionTrabada";
   }
@@ -101,6 +120,25 @@ export function familiaDeEstadoMulta(state) {
   if (state === "MultiOperatorNeedsManualReview") return "multiOperador";
   if (state === "Done") return "confirmada";
   return "soloLectura"; // None, o un estado futuro que este frontend todavia no conoce
+}
+
+/**
+ * Título en negrita del cartel de la familia "procesando" (spec "Deshacer una multa ya
+ * emitida", sección 3a, 2026-07-14). Esta familia ahora cubre DOS situaciones de fondo
+ * distintas que comparten el mismo cartel ámbar con auto-refresco (ver
+ * useOperatorPenaltyPolling): la emisión NORMAL de la multa (DebitNoteQueued, texto de
+ * siempre) y la anulación de una multa YA emitida (DebitNoteAnnulling, texto nuevo). El
+ * resto del cartel (auto-refresco, línea de "¿tarda mucho?", link de otro cargo) no
+ * cambia entre los dos casos — solo este título.
+ *
+ * @param {string} state
+ * @returns {string}
+ */
+export function tituloProcesandoMulta(state) {
+  if (state === "DebitNoteAnnulling") {
+    return "Anulada — se está dejando sin efecto la multa.";
+  }
+  return "Anulada — se está emitiendo la multa al cliente.";
 }
 
 /**
@@ -287,16 +325,41 @@ export function primerCargoTrasladableSinFacturaDestino(charges) {
  * expuesto al usuario). El parámetro se sigue recibiendo (por si en el futuro hace
  * falta para otro propósito, ej. un detalle técnico solo-admin) pero NO se renderiza.
  *
- * @param {{ state: string, canRetryDebitNote: boolean, canCorrectAmountCurrency: boolean, manualReviewReason?: string|null, charges?: Array<object> }} situacion
- * @returns {{ mensaje: string, accion: "reintentar"|"corregir"|"emitir"|"elegirFactura"|null, textoBoton: string|null }}
+ * ADR-044 "Deshacer una multa ya emitida" (2026-07-14): se suma el cuarto estado
+ * trabado, "DebitNoteAnnulmentFailed" — la NC que iba a dejar sin efecto la ND no se
+ * pudo emitir. El botón "Reintentar" es la MISMA acción que el link "Deshacer" de la
+ * familia "confirmada" (solo que reintentada), así que se gatea con la MISMA función
+ * `debeMostrarReintentarDeshacer` — nunca con `canRetryDebitNote`, que es un permiso
+ * DISTINTO (el de reintentar la EMISIÓN de la multa, no el de deshacerla).
+ *
+ * FIX BLOQUEANTE B1 (gate de seguridad, revisión 2026-07-14): antes de este fix, acá se
+ * gateaba SOLO con `canUndoDebitNote` — un usuario sin rol Admin (pero con el permiso
+ * `cancellations.classify_agency_penalty`) podía ver el botón y completar el deshacer.
+ * Deshacer un comprobante con CAE es **Admin únicamente** (misma regla que "Deshacer"
+ * del cierre sin multa): por eso ahora también se exige `esAdmin` — ver
+ * `debeMostrarReintentarDeshacer` (undoDebitNoteLogic.js) para el detalle completo.
+ *
+ * @param {{ state: string, canRetryDebitNote: boolean, canCorrectAmountCurrency: boolean, canUndoDebitNote?: boolean, esAdmin?: boolean, manualReviewReason?: string|null, charges?: Array<object> }} situacion
+ * @returns {{ mensaje: string, accion: "reintentar"|"corregir"|"emitir"|"elegirFactura"|"reintentarDeshacer"|null, textoBoton: string|null }}
  */
 // eslint-disable-next-line no-unused-vars -- manualReviewReason se acepta a propósito pero NUNCA se interpola (ver comentario de arriba, FIX F3).
-export function copyAccionTrabada({ state, canRetryDebitNote, canCorrectAmountCurrency, manualReviewReason, charges }) {
+export function copyAccionTrabada({ state, canRetryDebitNote, canCorrectAmountCurrency, canUndoDebitNote, esAdmin, manualReviewReason, charges }) {
   if (state === "DebitNoteFailed") {
     return {
       mensaje: "Anulada — el cargo de la multa al cliente no salió. Probá de nuevo.",
       accion: canRetryDebitNote ? "reintentar" : null,
       textoBoton: canRetryDebitNote ? "Reintentar" : null,
+    };
+  }
+
+  if (state === "DebitNoteAnnulmentFailed") {
+    // FIX B1: unifica la puerta con la del link "Deshacer" de la familia "confirmada" —
+    // NUNCA alcanza con canUndoDebitNote solo, hace falta también esAdmin.
+    const puedeReintentarDeshacer = debeMostrarReintentarDeshacer({ canUndoDebitNote, esAdmin });
+    return {
+      mensaje: "Anulada — no se pudo dejar sin efecto la multa. Probá de nuevo.",
+      accion: puedeReintentarDeshacer ? "reintentarDeshacer" : null,
+      textoBoton: puedeReintentarDeshacer ? "Reintentar" : null,
     };
   }
 
@@ -444,4 +507,120 @@ export function tienePasoDeMultaOperador(reserva) {
   // Fallback legado — DTO viejo sin operatorPenaltySituation ni operatorPenaltySituations.
   const outcome = reserva?.capabilities?.operatorPenaltyOutcome;
   return outcome === "Pending" || outcome === "Waived";
+}
+
+// ============================================================================
+// ADR-044 "Deshacer una multa ya emitida" (2026-07-14): aviso de plazo RG 4540 + rastro.
+// ============================================================================
+
+const MS_POR_DIA = 24 * 60 * 60 * 1000;
+// RG 4540 (AFIP/ARCA): 15 días corridos desde que se aprobó el CAE de la ND para poder
+// deshacerla "sin trámites extra". Pasado ese plazo, el sistema SIGUE dejando deshacer
+// (nunca bloquea, ver sección 5 de la spec) pero avisa con un tono más fuerte.
+const PLAZO_RG4540_DIAS = 15;
+
+/**
+ * Formatea una fecha en "DD/MM" (sin año) — el mismo formato corto que usan los
+ * mockups de la spec ("vence el 20/07", "el 14/07"). Es DISTINTO del formato largo
+ * "DD/MM/AAAA" que usa `textoRastroWaived`: acá no hace falta el año porque el plazo
+ * de 15 días nunca cruza a un año distinto del de la emisión.
+ *
+ * OJO (verificado a mano): `toLocaleDateString("es-AR", {day:"2-digit", month:"2-digit"})`
+ * SIN pedir también el año NO rellena el mes con cero en este entorno (da "14/7" en vez
+ * de "14/07") — es una rareza puntual de la selección de patrón de Intl/CLDR para ese
+ * combo de opciones, no un bug de tipeo. Para no depender de esa rareza, se arma el
+ * string a mano con padStart (mismo criterio que `fechaLocalInput` en otroCargoOperador.js).
+ *
+ * @param {string|number} fechaOISO
+ * @returns {string}
+ */
+function formatearFechaCorta(fechaOISO) {
+  const fecha = new Date(fechaOISO);
+  const dia = String(fecha.getDate()).padStart(2, "0");
+  const mes = String(fecha.getMonth() + 1).padStart(2, "0");
+  return `${dia}/${mes}`;
+}
+
+/**
+ * Aviso SUAVE (nunca bloquea, spec sección 5) del plazo de 15 días corridos de la RG
+ * 4540 para deshacer una Nota de Débito ya emitida sin trámites extra ante ARCA. Vive
+ * en el panel de confirmación de "Deshacer", entre la explicación y el campo de motivo.
+ *
+ * Regla "el front no deduce, lo dice el backend" (2026-07-03): el backend manda la
+ * fecha CRUDA en que se aprobó el CAE (`debitNoteIssuedAt`); esta función es la ÚNICA
+ * que calcula los días a partir de esa fecha — nadie más en el frontend debería repetir
+ * esta cuenta. Recibe "ahora" como parámetro (no lee el reloj del sistema) para que el
+ * componente y sus tests puedan fijar una fecha exacta sin esperas reales — mismo
+ * patrón que `seAgotoElBudgetDePollingDeMulta`.
+ *
+ * Interpretación del borde EXACTO (al cumplirse el día 15 completo): se considera
+ * plazo VENCIDO (tono fuerte). Es la lectura más conservadora — en un tema fiscal es
+ * mejor avisar de más (un día antes de lo estrictamente necesario) que de menos.
+ *
+ * @param {string|null|undefined} debitNoteIssuedAtIso - Fecha ISO en que ARCA aprobó
+ *   el CAE de la ND (`OperatorPenaltySituationDto.DebitNoteIssuedAt`). Null/undefined
+ *   si el backend no la manda (BC legacy, u otro estado que no sea "Done") — en ese
+ *   caso no hay nada que avisar.
+ * @param {number} ahoraMs - `Date.now()` del momento en que se calcula el aviso.
+ * @returns {{ tono: "suave"|"fuerte", texto: string }|null} - null cuando no corresponde
+ *   mostrar nada (sin fecha, o fecha inválida) — el llamador no debe inventar el aviso.
+ */
+export function calcularAvisoPlazoDeshacerMulta(debitNoteIssuedAtIso, ahoraMs) {
+  if (!debitNoteIssuedAtIso) return null;
+
+  const emitidoMs = new Date(debitNoteIssuedAtIso).getTime();
+  if (Number.isNaN(emitidoMs)) return null; // fecha invalida (defensivo) -> no se inventa nada.
+
+  const diasTranscurridos = Math.floor((ahoraMs - emitidoMs) / MS_POR_DIA);
+  const diasRestantes = PLAZO_RG4540_DIAS - diasTranscurridos;
+
+  if (diasRestantes > 0) {
+    const vencimientoMs = emitidoMs + PLAZO_RG4540_DIAS * MS_POR_DIA;
+    return {
+      tono: "suave",
+      texto: `Quedan ${diasRestantes} día${diasRestantes === 1 ? "" : "s"} para hacer esta ` +
+        `corrección sin trámites extra ante ARCA (vence el ${formatearFechaCorta(vencimientoMs)}).`,
+    };
+  }
+
+  // Texto EXACTO elegido por Gastón (2026-07-14, P2) — no se parafrasea ni se interpola nada acá.
+  return {
+    tono: "fuerte",
+    texto: "Pasaron más de 15 días desde que se emitió este comprobante. Se puede deshacer " +
+      "igual, pero convendría consultarlo con un contador antes de seguir.",
+  };
+}
+
+/**
+ * Rastro textual del ÚLTIMO "Deshacer" de una Nota de Débito de multa (spec sección 4,
+ * mismo patrón que `textoRastroWaived`). Se muestra debajo del cartel cuando el paso de
+ * la multa vuelve a quedar resuelto (confirmado de nuevo, o reabierto en "pregunta")
+ * después de haberse deshecho una vez.
+ *
+ * Backend (2026-07-14): `OperatorPenaltySituationDto.lastDebitNoteUndo` — objeto
+ * `{ undoneAt, undoneByName, reason }` cuando la ND de este operador se deshizo alguna
+ * vez, o `null` si nunca se deshizo. Se recibe el objeto TAL CUAL viene del DTO (no se
+ * desarma antes de llamar a esta función) para no repetir el nombre de los campos en
+ * cada lugar que la usa.
+ *
+ * @param {{ undoneAt: string, undoneByName: string|null, reason: string }|null|undefined} lastDebitNoteUndo
+ * @returns {string|null}
+ */
+export function textoRastroDeshacerMulta(lastDebitNoteUndo) {
+  if (!lastDebitNoteUndo?.undoneAt) return null;
+  const { undoneAt, undoneByName, reason } = lastDebitNoteUndo;
+
+  // Base: siempre la fecha. Después se le suma "por Fulano" y/o el motivo entre
+  // comillas, solo si vinieron — nunca se inventa ninguno de los dos (spec sección 4).
+  let texto = `El comprobante anterior se dejó sin efecto el ${formatearFechaCorta(undoneAt)}`;
+  if (undoneByName) {
+    texto += ` por ${undoneByName}`;
+  }
+  if (reason) {
+    texto += ` — motivo: "${reason}"`;
+  } else {
+    // Sin motivo, se corta acá (después de la fecha, o de "por Fulano") con un punto final.
+    texto += ".";
+  }
+  return texto;
 }

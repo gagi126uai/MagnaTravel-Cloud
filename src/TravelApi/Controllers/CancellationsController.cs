@@ -471,6 +471,72 @@ public class CancellationsController : ControllerBase
     }
 
     /// <summary>
+    /// ADR-044 "Deshacer una multa ya emitida" (2026-07-14): la Nota de Debito de la multa salio con CAE y
+    /// estaba MAL (monto/moneda equivocada, o no correspondia). Emite una Nota de Credito ESPEJO de esa ND que
+    /// la anula fiscalmente; al conseguir CAE, la ND queda desvinculada y el paso vuelve a estar abierto
+    /// (corregir y re-emitir, o cerrar sin multa). Molde de <see cref="CorrectPenalty"/>.
+    ///
+    /// <para><b>Permiso</b>: MISMO gate que confirm-penalty/correct-penalty/retry/waive
+    /// (<see cref="Permissions.ReservasCancel"/> para llegar + <see cref="Permissions.CancellationsClassifyAgencyPenalty"/>
+    /// o Admin, resuelto server-side + ownership). Deshacer un comprobante fiscal ya emitido es, como minimo, tan
+    /// sensible como corregirlo.</para>
+    ///
+    /// <para><b>Mapeo de errores</b>: 400 (motivo vacio); 404 (BC no existe); 409 INV-UNDO-PERM (sin permiso);
+    /// 409 INV-UNDO-001 (no hay ND con CAE para deshacer); 409 INV-UNDO-002 (ya hay una anulacion en curso o
+    /// consumada); 409 INV-UNDO-MANUAL (factura original ya anulada del todo -> revision manual); 409
+    /// INV-UNDO-MULTIOP (ambiguedad entre operadores -> revision manual); 409 CONCURRENT_EDIT (xmin); 409 (flag
+    /// OFF); 503 (DB caida).</para>
+    /// </summary>
+    [HttpPost("{publicId:guid}/undo-debit-note")]
+    [RequirePermission(Permissions.ReservasCancel)]
+    [RequireOwnership(OwnedEntity.BookingCancellation, "publicId", bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<ActionResult<BookingCancellationDto>> UndoDebitNote(
+        Guid publicId,
+        UndoDebitNoteRequest request,
+        CancellationToken cancellationToken)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
+        var userName = User.FindFirst("FullName")?.Value ?? User.FindFirst(ClaimTypes.Name)?.Value;
+        // SOLO ADMINISTRADORES (spec UX firmada, gate B1 2026-07-14): deshacer un comprobante fiscal ya emitido
+        // con CAE es la acción más sensible del paso de multa; a diferencia de confirmar/corregir/reintentar
+        // (permiso classify), esto se restringe al rol Admin. El service lo EXIGE de nuevo (defensa en profundidad).
+        var requesterIsAdmin = User.IsInRole("Admin");
+
+        try
+        {
+            var dto = await _bcService.UndoIssuedDebitNoteAsync(
+                publicId, request.Reason, userId, userName, cancellationToken,
+                requesterIsAdmin: requesterIsAdmin);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return Conflict(new
+            {
+                code = "CONCURRENT_EDIT",
+                message = "Otra edicion fue procesada primero, reintente.",
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return SanitizedConflict(ex, publicId);
+        }
+        catch (ArgumentException ex)
+        {
+            return SanitizedBadRequest(ex);
+        }
+        // BusinessInvariantViolationException (INV-UNDO-*) la atrapa GlobalExceptionHandler (409 con invariantCode).
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+        }
+    }
+
+    /// <summary>
     /// ADR-042 §3.6 (2026-07-01): reintenta SOLO las notas de credito faltantes de una anulacion multi-factura
     /// que quedo a medias (una NC salio y otra no). Idempotente: no re-emite la NC que ya salio; serializado
     /// bajo el mismo lock del padre que los callbacks de ARCA. Destraba la reserva desde la UI ("Reintentar la
@@ -1269,4 +1335,15 @@ public record CorrectPenaltyRequest(
 
     [System.ComponentModel.DataAnnotations.MaxLength(500)]
     string? ExchangeRateJustification = null
+);
+
+/// <summary>
+/// ADR-044 "Deshacer una multa ya emitida" (2026-07-14): payload de deshacer una Nota de Debito de multa YA
+/// EMITIDA con CAE. El <c>Reason</c> es OBLIGATORIO (auditoria del contador: por que la ND estaba mal).
+/// </summary>
+public record UndoDebitNoteRequest(
+    [System.ComponentModel.DataAnnotations.Required]
+    [System.ComponentModel.DataAnnotations.MinLength(5)]
+    [System.ComponentModel.DataAnnotations.MaxLength(500)]
+    string Reason
 );

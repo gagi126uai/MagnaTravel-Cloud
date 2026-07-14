@@ -26,6 +26,9 @@ import {
   situacionesConPreguntaDeMulta,
   hayCargoTrasladableSinFacturaDestino,
   primerCargoTrasladableSinFacturaDestino,
+  tituloProcesandoMulta,
+  calcularAvisoPlazoDeshacerMulta,
+  textoRastroDeshacerMulta,
 } from "../operatorPenaltyBanner.js";
 
 // ============================================================================
@@ -559,4 +562,177 @@ test("seAgotoElBudgetDePollingDeMulta: pasado el tope → se agotó", () => {
 test("seAgotoElBudgetDePollingDeMulta: tope custom respetado", () => {
   assert.equal(seAgotoElBudgetDePollingDeMulta(59_999, 60_000), false);
   assert.equal(seAgotoElBudgetDePollingDeMulta(60_000, 60_000), true);
+});
+
+// ============================================================================
+// ADR-044 "Deshacer una multa ya emitida" (2026-07-14): estados nuevos
+// DebitNoteAnnulling / DebitNoteAnnulmentFailed + polling + degradación segura.
+// ============================================================================
+
+test("slugDeEstadoMulta: DebitNoteAnnulling y DebitNoteAnnulmentFailed tienen slug propio", () => {
+  assert.equal(slugDeEstadoMulta("DebitNoteAnnulling"), "debit-note-annulling");
+  assert.equal(slugDeEstadoMulta("DebitNoteAnnulmentFailed"), "debit-note-annulment-failed");
+});
+
+test("familiaDeEstadoMulta: DebitNoteAnnulling es 'procesando' (mismo cartel ámbar que DebitNoteQueued)", () => {
+  assert.equal(familiaDeEstadoMulta("DebitNoteAnnulling"), "procesando");
+});
+
+test("familiaDeEstadoMulta: DebitNoteAnnulmentFailed es 'accionTrabada' (mismo cartel naranja que los otros 3 trabados)", () => {
+  assert.equal(familiaDeEstadoMulta("DebitNoteAnnulmentFailed"), "accionTrabada");
+});
+
+test("debePollearSituacionMulta: DebitNoteAnnulling entra en 'procesando' → sigue pollenado solo (reusa el mismo hook)", () => {
+  const familia = familiaDeEstadoMulta("DebitNoteAnnulling");
+  assert.equal(debePollearSituacionMulta(familia), true);
+});
+
+test("familiaDeEstadoMulta: un token todavía más nuevo (que ni siquiera este frontend actualizado conoce) sigue degradando a 'soloLectura'", () => {
+  assert.equal(familiaDeEstadoMulta("EstadoDelFuturoQueTodaviaNoExiste"), "soloLectura");
+});
+
+test("tituloProcesandoMulta: DebitNoteQueued (emisión normal) usa el texto de siempre", () => {
+  assert.equal(tituloProcesandoMulta("DebitNoteQueued"), "Anulada — se está emitiendo la multa al cliente.");
+});
+
+test("tituloProcesandoMulta: DebitNoteAnnulling (deshaciendo) usa el texto nuevo de la spec", () => {
+  assert.equal(tituloProcesandoMulta("DebitNoteAnnulling"), "Anulada — se está dejando sin efecto la multa.");
+});
+
+test("tituloProcesandoMulta: cualquier otro estado (defensivo) cae al texto de siempre", () => {
+  assert.equal(tituloProcesandoMulta("AlgoQueNoDeberiaLlegarAca"), "Anulada — se está emitiendo la multa al cliente.");
+});
+
+test("copyAccionTrabada: DebitNoteAnnulmentFailed con canUndoDebitNote Y esAdmin → botón Reintentar", () => {
+  const r = copyAccionTrabada({ state: "DebitNoteAnnulmentFailed", canUndoDebitNote: true, esAdmin: true });
+  assert.equal(r.mensaje, "Anulada — no se pudo dejar sin efecto la multa. Probá de nuevo.");
+  assert.equal(r.accion, "reintentarDeshacer");
+  assert.equal(r.textoBoton, "Reintentar");
+});
+
+test("copyAccionTrabada: DebitNoteAnnulmentFailed sin canUndoDebitNote → sin botón (versión informativa)", () => {
+  const r = copyAccionTrabada({ state: "DebitNoteAnnulmentFailed", canUndoDebitNote: false, esAdmin: true });
+  assert.equal(r.accion, null);
+  assert.equal(r.textoBoton, null);
+  assert.ok(r.mensaje.length > 0);
+});
+
+test("FIX BLOQUEANTE B1 (revisión 2026-07-14): copyAccionTrabada — DebitNoteAnnulmentFailed con canUndoDebitNote=true PERO esAdmin=false → sin botón", () => {
+  // Este es exactamente el bug que reportó el gate de seguridad: un usuario sin rol
+  // Admin (pero con permiso de clasificar multas) NO debe ver "Reintentar" aunque el
+  // backend diga canUndoDebitNote=true.
+  const r = copyAccionTrabada({ state: "DebitNoteAnnulmentFailed", canUndoDebitNote: true, esAdmin: false });
+  assert.equal(r.accion, null);
+  assert.equal(r.textoBoton, null);
+});
+
+test("copyAccionTrabada: DebitNoteAnnulmentFailed se gatea con canUndoDebitNote+esAdmin, NUNCA con canRetryDebitNote (son permisos distintos)", () => {
+  // canRetryDebitNote=true pero canUndoDebitNote=false (o ausente): igual sin botón.
+  const r = copyAccionTrabada({ state: "DebitNoteAnnulmentFailed", canRetryDebitNote: true, canUndoDebitNote: false, esAdmin: true });
+  assert.equal(r.accion, null);
+});
+
+// ============================================================================
+// calcularAvisoPlazoDeshacerMulta (spec sección 5 — plazo RG 4540 de 15 días,
+// aviso SUAVE, NUNCA bloquea)
+// ============================================================================
+
+const MS_POR_DIA = 24 * 60 * 60 * 1000;
+const EMITIDO = new Date("2026-07-01T10:00:00Z").getTime();
+
+test("calcularAvisoPlazoDeshacerMulta: sin debitNoteIssuedAt (null/undefined) → no corresponde, null", () => {
+  assert.equal(calcularAvisoPlazoDeshacerMulta(null, Date.now()), null);
+  assert.equal(calcularAvisoPlazoDeshacerMulta(undefined, Date.now()), null);
+});
+
+test("calcularAvisoPlazoDeshacerMulta: fecha inválida (defensivo) → null, no rompe", () => {
+  assert.equal(calcularAvisoPlazoDeshacerMulta("no-es-una-fecha", Date.now()), null);
+});
+
+test("calcularAvisoPlazoDeshacerMulta: recién emitida (mismo día) → tono suave, quedan 15 días", () => {
+  const aviso = calcularAvisoPlazoDeshacerMulta(new Date(EMITIDO).toISOString(), EMITIDO);
+  assert.equal(aviso.tono, "suave");
+  assert.ok(aviso.texto.startsWith("Quedan 15 días"));
+  assert.ok(aviso.texto.includes("vence el"));
+});
+
+test("calcularAvisoPlazoDeshacerMulta: dentro del plazo (6 días quedando) — mismo ejemplo del mockup de la spec", () => {
+  const ahora = EMITIDO + 9 * MS_POR_DIA; // 9 días transcurridos → quedan 6.
+  const aviso = calcularAvisoPlazoDeshacerMulta(new Date(EMITIDO).toISOString(), ahora);
+  assert.equal(aviso.tono, "suave");
+  assert.ok(aviso.texto.startsWith("Quedan 6 días"));
+});
+
+test("calcularAvisoPlazoDeshacerMulta: borde exacto — a los 15 días completos transcurridos, el plazo ya se considera vencido (tono fuerte)", () => {
+  const ahora = EMITIDO + 15 * MS_POR_DIA; // exactamente 15 días completos.
+  const aviso = calcularAvisoPlazoDeshacerMulta(new Date(EMITIDO).toISOString(), ahora);
+  assert.equal(aviso.tono, "fuerte");
+});
+
+test("calcularAvisoPlazoDeshacerMulta: un instante antes del borde (14 días y pico) — todavía suave, queda 1 día", () => {
+  const ahora = EMITIDO + 15 * MS_POR_DIA - 1; // 1 ms antes del borde de arriba.
+  const aviso = calcularAvisoPlazoDeshacerMulta(new Date(EMITIDO).toISOString(), ahora);
+  assert.equal(aviso.tono, "suave");
+  assert.ok(aviso.texto.startsWith("Quedan 1 día "));
+});
+
+test("calcularAvisoPlazoDeshacerMulta: pasado el plazo (20 días) → tono fuerte con el texto EXACTO elegido por Gastón", () => {
+  const ahora = EMITIDO + 20 * MS_POR_DIA;
+  const aviso = calcularAvisoPlazoDeshacerMulta(new Date(EMITIDO).toISOString(), ahora);
+  assert.equal(aviso.tono, "fuerte");
+  assert.equal(
+    aviso.texto,
+    "Pasaron más de 15 días desde que se emitió este comprobante. Se puede deshacer igual, " +
+      "pero convendría consultarlo con un contador antes de seguir."
+  );
+});
+
+// ============================================================================
+// textoRastroDeshacerMulta (spec sección 4 — rastro del último "Deshacer").
+// Backend (2026-07-14): recibe TAL CUAL el objeto `situacion.lastDebitNoteUndo`
+// ({ undoneAt, undoneByName, reason } | null).
+// ============================================================================
+
+test("textoRastroDeshacerMulta: lastDebitNoteUndo null (la ND nunca se deshizo) → null, no se muestra nada", () => {
+  assert.equal(textoRastroDeshacerMulta(null), null);
+  assert.equal(textoRastroDeshacerMulta(undefined), null);
+});
+
+test("textoRastroDeshacerMulta: objeto sin undoneAt (defensivo) → null", () => {
+  assert.equal(textoRastroDeshacerMulta({}), null);
+  assert.equal(textoRastroDeshacerMulta({ undoneAt: null, undoneByName: "Ana", reason: "algo" }), null);
+});
+
+test("textoRastroDeshacerMulta: solo undoneAt, undoneByName null y sin motivo → se corta después de la fecha", () => {
+  const texto = textoRastroDeshacerMulta({ undoneAt: "2026-07-14T10:00:00Z", undoneByName: null, reason: "" });
+  assert.equal(texto, "El comprobante anterior se dejó sin efecto el 14/07.");
+});
+
+test("textoRastroDeshacerMulta: undoneAt + undoneByName, sin motivo → se corta después de 'por Fulano'", () => {
+  const texto = textoRastroDeshacerMulta({ undoneAt: "2026-07-14T10:00:00Z", undoneByName: "Ana" });
+  assert.equal(texto, "El comprobante anterior se dejó sin efecto el 14/07 por Ana.");
+});
+
+test("textoRastroDeshacerMulta: undoneAt + undoneByName + reason → texto completo (mockup exacto de la spec)", () => {
+  const texto = textoRastroDeshacerMulta({
+    undoneAt: "2026-07-14T10:00:00Z",
+    undoneByName: "Ana",
+    reason: "el operador cobró la multa en pesos, no en dólares.",
+  });
+  assert.equal(
+    texto,
+    'El comprobante anterior se dejó sin efecto el 14/07 por Ana — motivo: "el operador cobró la multa en pesos, no en dólares."'
+  );
+});
+
+test("textoRastroDeshacerMulta: undoneAt + reason pero SIN undoneByName (null) → omite 'por {nombre}', va directo al motivo", () => {
+  const texto = textoRastroDeshacerMulta({
+    undoneAt: "2026-07-14T10:00:00Z",
+    undoneByName: null,
+    reason: "el operador cobró la multa en pesos, no en dólares.",
+  });
+  assert.equal(
+    texto,
+    'El comprobante anterior se dejó sin efecto el 14/07 — motivo: "el operador cobró la multa en pesos, no en dólares."'
+  );
 });

@@ -445,6 +445,37 @@ public interface IBookingCancellationService
         string? exchangeRateJustification = null);
 
     /// <summary>
+    /// ADR-044 "Deshacer una multa ya emitida" (2026-07-14): la Nota de Debito de la multa salio con CAE y
+    /// estaba MAL (monto/moneda equivocada, o no correspondia). Emite una Nota de Credito ESPEJO de esa ND
+    /// (<c>OriginalInvoiceId = la ND</c>, nunca la factura original) que la anula fiscalmente. Al conseguir CAE
+    /// (async, reconciliado por <c>DebitNoteAnnulmentReconciliation</c>), la ND queda desvinculada del BC y el
+    /// paso de la multa vuelve a estar ABIERTO (<c>ConfirmedNoDebitNote</c>: corregir y re-emitir, o cerrar sin
+    /// multa). Si la multa estaba cobrada (total o parcialmente), la porcion cobrada se convierte en saldo a
+    /// favor del cliente. El ciclo emitir→deshacer→re-emitir se puede repetir (molde de <see cref="CorrectPenaltyAsync"/>).
+    ///
+    /// <para><b>Permiso</b>: SOLO ADMINISTRADORES (spec UX firmada, gate 2026-07-14). A diferencia de
+    /// confirm-penalty/correct-penalty/retry (permiso <c>cancellations.classify_agency_penalty</c>), deshacer un
+    /// comprobante fiscal ya emitido con CAE se restringe al rol Admin. Resuelto server-side por el controller y
+    /// EXIGIDO por el service (INV-UNDO-PERM).</para>
+    ///
+    /// <para><b>Exceptions</b>: <c>ArgumentException</c> (400: motivo vacio); <c>KeyNotFoundException</c> (404);
+    /// <c>InvalidOperationException</c> (409, flag OFF); <c>BusinessInvariantViolationException</c> (409:
+    /// INV-UNDO-PERM sin ser Admin; INV-UNDO-001 sin ND con CAE para deshacer; INV-UNDO-002 ya hay una anulacion
+    /// en curso o consumada; INV-UNDO-MANUAL factura original ya anulada del todo o ND con tributos -> revision
+    /// manual; INV-UNDO-MULTIOP ambiguedad irresoluble entre operadores); <c>DbUpdateConcurrencyException</c>
+    /// (409 CONCURRENT_EDIT).</para>
+    /// </summary>
+    /// <param name="reason">Motivo OBLIGATORIO de por que la ND estaba mal (auditoria del contador).</param>
+    /// <param name="requesterIsAdmin">true si el caller es Admin. Lo resuelve el controller; el service lo EXIGE.</param>
+    Task<BookingCancellationDto> UndoIssuedDebitNoteAsync(
+        Guid publicId,
+        string reason,
+        string userId,
+        string? userName,
+        CancellationToken ct,
+        bool requesterIsAdmin = false);
+
+    /// <summary>
     /// ADR-042 §3.6 (2026-07-01): reintenta SOLO las notas de credito faltantes de una anulacion multi-factura
     /// que quedo a medias (una NC salio y otra fallo, o quedo atascada). Idempotente: NO re-emite las NC que
     /// ya salieron (anti doble-emision: re-vincula una NC huerfana ya creada). Serializado por el mismo lock

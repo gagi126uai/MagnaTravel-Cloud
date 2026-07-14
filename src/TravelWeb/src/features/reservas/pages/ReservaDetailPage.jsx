@@ -49,6 +49,7 @@ import { contarNotasFaltantes, construirTextoFranjaEnRevision } from "../../canc
 // del cierre sin multa.
 import {
   textoRastroWaived,
+  textoRastroDeshacerMulta,
   tienePasoDeMultaOperador,
   situacionesConPanelDeMulta,
   situacionesConPreguntaDeMulta,
@@ -1541,12 +1542,31 @@ export default function ReservaDetailPage() {
                         ? `-${situacion.supplierPublicId}`
                         : "";
                       const nombreParaTitulo = hayMasDeUnOperador ? situacion.supplierName : undefined;
+                      // ADR-044 "Deshacer una multa ya emitida" (spec sección 4): si este paso
+                      // se reabrió porque alguien deshizo un comprobante ya emitido, la misma
+                      // frase de rastro se repite acá — para que quien vuelve a decidir sepa
+                      // POR QUÉ el paso está de nuevo abierto. `lastDebitNoteUndo` degrada solo
+                      // a null cuando la multa nunca se deshizo (no se muestra nada).
+                      const rastroDeshacer = textoRastroDeshacerMulta(situacion.lastDebitNoteUndo);
 
                       return (
                         <div key={situacion.supplierPublicId ?? "legacy"}>
                           <p className="text-sm font-semibold text-rose-900 dark:text-rose-200 mb-3">
                             {tituloConNombreOperador(nombreParaTitulo, "¿El operador te cobró una multa por anular?")}
                           </p>
+                          {rastroDeshacer && (
+                            // FIX de exposición (revisión 2026-07-14): el motivo puede
+                            // llegar a 500 caracteres — se recorta a 2 renglones visibles
+                            // (line-clamp-2) para no estirar el cartel; el texto COMPLETO
+                            // sigue disponible en el title (tooltip al pasar el mouse).
+                            <p
+                              className="text-xs text-rose-700/80 dark:text-rose-300/70 mb-3 line-clamp-2"
+                              data-testid="multa-deshacer-rastro-pregunta"
+                              title={rastroDeshacer}
+                            >
+                              {rastroDeshacer}
+                            </p>
+                          )}
                           <div className="flex flex-wrap gap-3">
                             {/* Sí cobró: abre el panel naranja (emite Nota de Débito) */}
                             <button

@@ -1571,6 +1571,10 @@ public class AfipService : IAfipService
             // Reconciliar la anulacion vinculada: si esta ND aprobada era la multa de una anulacion,
             // su DebitNoteStatus pasa de Pending a Issued (la ficha deja de mostrar "emitiendo multa").
             await TryReconcileLinkedCancellationDebitNoteAsync(invoice);
+
+            // ADR-044 "Deshacer una multa ya emitida" (2026-07-14): si esta NC resuelta era la que anula una ND
+            // de multa, desvincula la ND del BC (+ B1/B2). No-op barato para cualquier otra factura/NC/ND.
+            await TryReconcileDebitNoteAnnulmentAsync(invoice);
         }
         catch (Exception ex)
         {
@@ -1610,6 +1614,28 @@ public class AfipService : IAfipService
             _logger.LogError(ex,
                 "No se pudo reconciliar la anulacion vinculada a la ND (Invoice {InvoiceId}) tras resolver ARCA. " +
                 "El CAE ya quedo persistido; la bandeja de comprobantes por resolver lo reconciliara.",
+                invoice.Id);
+        }
+    }
+
+    /// <summary>
+    /// ADR-044 "Deshacer una multa ya emitida" (2026-07-14): reconcilia el evento de "deshacer" cuando la NC que
+    /// anula una ND de multa resuelve en ARCA. BLINDADO A PROPOSITO (mismo criterio que
+    /// <see cref="TryReconcileLinkedCancellationDebitNoteAsync"/>): si falla, el CAE de la NC YA esta persistido;
+    /// que la ficha tarde en reflejar el desvinculo es un problema menor comparado con romper el job del CAE.
+    /// </summary>
+    private async Task TryReconcileDebitNoteAnnulmentAsync(Invoice invoice)
+    {
+        try
+        {
+            await DebitNoteAnnulmentReconciliation.ReconcileFromCreditNoteAsync(
+                _context, invoice, _auditService, _logger, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "No se pudo reconciliar el deshacer de la ND vinculada a esta NC (Invoice {InvoiceId}) tras " +
+                "resolver ARCA. El CAE ya quedo persistido.",
                 invoice.Id);
         }
     }
@@ -1682,6 +1708,18 @@ public class AfipService : IAfipService
 
         if (invoice?.ReservaId == null || invoice.Reserva == null)
             return;
+
+        // ADR-044 "Deshacer una multa ya emitida" (2026-07-14, M2): esta NC anula una Nota de Debito, no una
+        // factura de venta -> NO reversar cobros de factura (anularia un recibo y crearia un -Payment, borrando
+        // el saldo a favor / duplicando la devolucion). La reversion economica correcta (bajar la deuda de la
+        // multa, o acuñar saldo a favor por la porcion cobrada) la hace DebitNoteAnnulmentReconciliation, mas
+        // abajo en ProcessInvoiceJob; aca salimos SIN tocar cobros. Guard especifico: una NC contra una FACTURA
+        // (OriginalInvoice.TipoComprobante = 1/6/11/51) sigue creando su reversal normal, sin cambios.
+        if (invoice.OriginalInvoice != null &&
+            InvoiceComprobanteHelpers.Categorize(invoice.OriginalInvoice.TipoComprobante) == InvoiceComprobanteCategory.DebitNote)
+        {
+            return;
+        }
 
         // FC1.3 F2.3: detectar NC parcial vs total ANTES de tocar Payments.
         // Decision primaria (RH2-003): leer BookingCancellation asociado al CreditNoteInvoiceId.
@@ -2653,6 +2691,9 @@ public class AfipService : IAfipService
             // idempotencia (no solo en el POST normal): si la ND ya estaba emitida en ARCA y aca
             // adoptamos su CAE, la anulacion pasa de Pending a Issued igual.
             await TryReconcileLinkedCancellationDebitNoteAsync(invoice);
+
+            // ADR-044 "Deshacer una multa ya emitida": mismo criterio, tambien en el path de recovery.
+            await TryReconcileDebitNoteAnnulmentAsync(invoice);
 
             return true;
         }

@@ -346,6 +346,8 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<BookingCancellationLineTreasuryFxAdjustment> BookingCancellationLineTreasuryFxAdjustments => Set<BookingCancellationLineTreasuryFxAdjustment>();
     // ADR-042: hijas de la cancelacion (una por factura -> su NC). Caso multi-factura multimoneda.
     public DbSet<BookingCancellationCreditNote> BookingCancellationCreditNotes => Set<BookingCancellationCreditNote>();
+    // ADR-044 "Deshacer una multa ya emitida" (2026-07-14): una fila por evento de "deshacer" una ND de multa.
+    public DbSet<BookingCancellationDebitNoteAnnulment> BookingCancellationDebitNoteAnnulments => Set<BookingCancellationDebitNoteAnnulment>();
     public DbSet<OperatorRefundReceived> OperatorRefundReceived => Set<OperatorRefundReceived>();
     public DbSet<OperatorRefundAllocation> OperatorRefundAllocations => Set<OperatorRefundAllocation>();
     public DbSet<DeductionLine> DeductionLines => Set<DeductionLine>();
@@ -1680,6 +1682,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
         ConfigurePublicEntity<BookingCancellationLineOperatorCharge>(modelBuilder);   // ADR-044 T2 Addendum
         ConfigurePublicEntity<BookingCancellationLineTreasuryFxAdjustment>(modelBuilder);   // ADR-044 T3b Decision 3
         ConfigurePublicEntity<BookingCancellationCreditNote>(modelBuilder);   // ADR-042
+        ConfigurePublicEntity<BookingCancellationDebitNoteAnnulment>(modelBuilder);   // ADR-044 deshacer multa
         ConfigurePublicEntity<OperatorRefundReceived>(modelBuilder);
         ConfigurePublicEntity<OperatorRefundAllocation>(modelBuilder);
         ConfigurePublicEntity<DeductionLine>(modelBuilder);
@@ -2154,6 +2157,52 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.UseXminAsConcurrencyToken();
         });
 
+        // ADR-044 "Deshacer una multa ya emitida" (2026-07-14): molde exacto de BookingCancellationCreditNote
+        // (arriba), pero para el evento "se anulo fiscalmente la ND de la multa".
+        modelBuilder.Entity<BookingCancellationDebitNoteAnnulment>(entity =>
+        {
+            entity.ToTable("BookingCancellationDebitNoteAnnulments");
+
+            entity.Property(a => a.Status).HasConversion<int>();
+            entity.Property(a => a.Reason).HasMaxLength(1000).IsRequired();
+            entity.Property(a => a.Amount).HasPrecision(18, 2);
+            entity.Property(a => a.Currency).HasMaxLength(3).IsRequired();
+            entity.Property(a => a.ExchangeRate).HasPrecision(18, 6);
+            entity.Property(a => a.RequestedByUserId).HasMaxLength(450).IsRequired();
+            entity.Property(a => a.RequestedByUserName).HasMaxLength(200);
+            entity.Property(a => a.ArcaErrorMessage).HasMaxLength(1000);
+
+            // FK al BC. Cascade: la fila no tiene sentido sin su cancelacion (mismo criterio que Lines/CreditNotes).
+            entity.HasOne(a => a.BookingCancellation)
+                  .WithMany()
+                  .HasForeignKey(a => a.BookingCancellationId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            // FK a la ND anulada. Restrict: preserva el rastro fiscal aunque alguien intente borrar la Invoice.
+            entity.HasOne(a => a.AnnulledDebitNoteInvoice)
+                  .WithMany()
+                  .HasForeignKey(a => a.AnnulledDebitNoteInvoiceId)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            // FK a la NC-anula-ND. Null hasta que se crea (CreateAsync); SetNull si alguna vez se borrara la Invoice.
+            entity.HasOne(a => a.AnnulmentCreditNoteInvoice)
+                  .WithMany()
+                  .HasForeignKey(a => a.AnnulmentCreditNoteInvoiceId)
+                  .OnDelete(DeleteBehavior.SetNull);
+
+            entity.HasIndex(a => a.BookingCancellationId);
+
+            // INDICE UNICO PARCIAL (regla dura #10 de la spec fiscal a nivel base, idempotencia): a lo sumo UNA
+            // anulacion VIVA (Pending) o CONSUMADA (Succeeded) por ND. Las Failed no cuentan (Status<>2): se
+            // puede reintentar deshacer sin chocar contra el intento fallido anterior.
+            entity.HasIndex(a => a.AnnulledDebitNoteInvoiceId)
+                  .IsUnique()
+                  .HasFilter("\"Status\" <> 2")
+                  .HasDatabaseName("IX_BookingCancellationDebitNoteAnnulments_OneLivePerDebitNote");
+
+            entity.UseXminAsConcurrencyToken();
+        });
+
         // ============================================================
         // FC1.3 Fase 3 (ADR-010, 2026-05-29): bandeja de reconciliacion de
         // NC parciales con recibos vivos.
@@ -2376,6 +2425,24 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .HasForeignKey(c => c.SourceReservaId)
                   .IsRequired(false)
                   .OnDelete(DeleteBehavior.Restrict);
+
+            // ADR-044 "Deshacer una multa ya emitida": origen "multa deshecha" (tercer origen, ver el XML-doc
+            // de la entidad). Restrict: el evento de deshacer no se borra mientras exista el credito que originó.
+            entity.HasOne(c => c.SourceDebitNoteAnnulment)
+                  .WithMany()
+                  .HasForeignKey(c => c.SourceDebitNoteAnnulmentId)
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            // Endurecimiento (post-gate 2026-07-14): a lo sumo UN credito por evento de deshacer. Índice ÚNICO
+            // PARCIAL (WHERE not null) — RED DURA de la idempotencia del minteo B1 ante retry de Hangfire: si dos
+            // corridas del reconciliador intentaran acuñar para el mismo annulment, Postgres rechaza la segunda
+            // (23505). Parcial para no chocar entre los creditos de OTROS orígenes (allocation/sobrepago), que
+            // dejan esta FK en null.
+            entity.HasIndex(c => c.SourceDebitNoteAnnulmentId)
+                  .IsUnique()
+                  .HasFilter("\"SourceDebitNoteAnnulmentId\" IS NOT NULL")
+                  .HasDatabaseName("IX_ClientCreditEntries_SourceDebitNoteAnnulment_OnePerEvent");
 
             entity.HasMany(c => c.Withdrawals)
                   .WithOne(w => w.Entry)

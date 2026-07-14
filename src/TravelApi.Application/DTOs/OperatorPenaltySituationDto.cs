@@ -14,7 +14,9 @@ public class OperatorPenaltySituationDto
     /// <summary>
     /// Token del paso (contrato con el front, NO texto para el usuario). Valores:
     /// "None" | "PendingDecision" | "DebitNoteQueued" | "DebitNoteFailed" | "DebitNoteNeedsAmountCurrency" |
-    /// "ConfirmedNoDebitNote" | "Waived" | "Done". El front lo traduce a su cartel/boton en castellano.
+    /// "ConfirmedNoDebitNote" | "Waived" | "Done" | "DebitNoteAnnulling" | "DebitNoteAnnulmentFailed". El front
+    /// lo traduce a su cartel/boton en castellano. Los dos ultimos son ADR-044 "Deshacer una multa ya emitida"
+    /// (2026-07-14): un front que no los conozca DEBE degradar a un estado informativo neutro (nunca romper).
     /// </summary>
     public string State { get; set; } = "None";
 
@@ -36,6 +38,13 @@ public class OperatorPenaltySituationDto
 
     /// <summary>true si se puede REINTENTAR la emision de la Nota de Debito (fallida / confirmada-sin-encolar + permiso).</summary>
     public bool CanRetryDebitNote { get; set; }
+
+    /// <summary>
+    /// ADR-044 "Deshacer una multa ya emitida" (2026-07-14): true si se puede DESHACER la Nota de Debito ya
+    /// emitida con CAE (estado "Done" + permiso). El endpoint <c>POST .../undo-debit-note</c> revalida todo
+    /// server-side; este booleano solo decide si la ficha OFRECE el boton.
+    /// </summary>
+    public bool CanUndoDebitNote { get; set; }
 
     /// <summary>true si se puede CORREGIR monto + moneda de una multa con la ND trabada (revision manual / fallida + permiso).</summary>
     public bool CanCorrectAmountCurrency { get; set; }
@@ -122,6 +131,55 @@ public class OperatorPenaltySituationDto
     /// nunca inventa una fecha). Aditivo y nullable.
     /// </summary>
     public DateTime? SuggestedExchangeRateDate { get; set; }
+
+    /// <summary>
+    /// ADR-044 "Deshacer una multa ya emitida" (2026-07-14): fecha en que ARCA aprobó el CAE de la Nota de
+    /// Débito ya emitida (<c>Invoice.IssuedAt</c>). Solo tiene valor en "Done" (la ND vigente que se podría
+    /// deshacer). El front la usa para el aviso informativo de RG 4540 (15 días corridos desde la emisión):
+    /// AVISAR si pasó el plazo, NUNCA bloquear el botón de deshacer — el backend tampoco bloquea por esto.
+    /// </summary>
+    public DateTime? DebitNoteIssuedAt { get; set; }
+
+    /// <summary>
+    /// ADR-044 "Deshacer una multa ya emitida" (2026-07-14, M4): monto que le quedaría de saldo a favor al
+    /// cliente si se deshiciera la multa AHORA — la porción EFECTIVAMENTE COBRADA de la multa, en la moneda de la
+    /// Nota de Débito. El modal muestra la línea "le va a quedar $ X a favor" con este número. Es la MISMA fuente
+    /// de verdad que acuña <c>ClientCreditService.CreateEntryFromDebitNoteUndoAsync</c> al consumarse el deshacer
+    /// (<c>max(0, PenaltyAmountAtEvent − pendiente)</c>, neteado contra el saldo por moneda de la reserva).
+    ///
+    /// <para>Solo trae valor cuando <see cref="CanUndoDebitNote"/> es true (Done o deshacer-fallido). <c>0</c> si
+    /// la multa está impaga (no se acuñaría nada); <c>null</c> si no se puede calcular (sin monto congelado /
+    /// moneda no resoluble): el front OMITE la línea si viene null.</para>
+    /// </summary>
+    public decimal? CollectedPenaltyAmount { get; set; }
+
+    /// <summary>
+    /// ADR-044 "Deshacer una multa ya emitida" (2026-07-14, M4): rastro del ÚLTIMO deshacer CONSUMADO de este
+    /// paso, para el cartel re-abierto ("Se deshizo el comprobante anterior el {fecha} — motivo: {motivo}").
+    /// <c>null</c> si nunca se deshizo una Nota de Débito de esta cancelación. Sale de la tabla hija
+    /// (<c>BookingCancellationDebitNoteAnnulment</c>), última fila en estado Succeeded.
+    /// </summary>
+    public LastDebitNoteUndoDto? LastDebitNoteUndo { get; set; }
+}
+
+/// <summary>
+/// ADR-044 "Deshacer una multa ya emitida" (2026-07-14, M4): datos del último deshacer consumado, listos para
+/// el cartel (sin IDs ni jerga interna). Ver <see cref="OperatorPenaltySituationDto.LastDebitNoteUndo"/>.
+/// </summary>
+public class LastDebitNoteUndoDto
+{
+    /// <summary>
+    /// Cuándo se solicitó el deshacer (<c>RequestedAt</c> de la fila hija). Es la fecha del acto en el sistema;
+    /// el CAE de la Nota de Crédito que lo consumó llega unos minutos después (no se persiste un timestamp
+    /// aparte de esa aprobación, así que esta es la fecha razonable disponible para el cartel).
+    /// </summary>
+    public DateTime UndoneAt { get; set; }
+
+    /// <summary>Nombre de quien deshizo (para el cartel). Puede venir null si la fila hija no tiene nombre legible.</summary>
+    public string? UndoneByName { get; set; }
+
+    /// <summary>Motivo con que se deshizo (texto libre que cargó el usuario, obligatorio al deshacer).</summary>
+    public string Reason { get; set; } = string.Empty;
 }
 
 /// <summary>
