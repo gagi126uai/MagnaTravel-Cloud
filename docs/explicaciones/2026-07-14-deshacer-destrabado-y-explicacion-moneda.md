@@ -89,3 +89,53 @@ para confirmar con datos reales antes de tocar nada. Implementación con modelo 
 los modelos potentes solo para revisar y diseñar.
 
 Commits: `b68a477` (fix Deshacer) + `0de1561` (líneas explicativas + guía UX).
+
+---
+
+# Segunda tanda de la misma sesión — el limbo del cosedor y el misterio de los 2 centavos
+
+## Hallazgo 3 — el cosedor de huérfanos pisaba al "Deshacer" (arreglado y deployado)
+
+Gaston probó el "Deshacer" recién destrabado en la 1043 y FUNCIONÓ (la nota de crédito
+salió y ARCA la aprobó en 15 segundos). Pero enseguida la ficha volvió a mostrar la multa
+como cobrada y el "Deshacer" rebotaba con "ya se deshizo" — un limbo sin salida.
+
+**La causa** (confirmada con datos y auditoría de producción): el **re-vinculador de
+comprobantes huérfanos** (del 08/07, hecho para reparar cortes a mitad de camino entre
+crear un comprobante y engancharlo) no conoce la tabla nueva de anulaciones del "Deshacer"
+(del 14/07). Para él, una multa confirmada sin comprobante enganchado = huérfana por
+accidente → busca el comprobante existente de esa factura y lo cose de vuelta. Cosió el
+comprobante ANULADO como si estuviera vivo. Es el mismo patrón del "cartel pegado": dos
+piezas de fechas distintas que no se conocían entre sí.
+
+**El arreglo** (`2275ef9`): (a) el cosedor ahora descarta comprobantes con anulación viva
+o consumada; (b) auto-reparación en la bandeja de comprobantes: si un paso quedó enganchado
+a un comprobante ya anulado, se desengancha solo, resetea sus renglones y deja rastro de
+auditoría propio (sin volver a acuñar saldo: eso ya corrió y es idempotente); (c)
+endurecimiento de concurrencia pedido por el revisor de seguridad: si dos aperturas de la
+bandeja chocan, NADA de la reparación fallida sobrevive (ni auditoría desacoplada). Ronda
+completa de 3 revisores aprobada, 42/42 unit + integración Postgres verde en CI, deployado.
+La 1043 de producción se repara sola al abrir la bandeja.
+
+## Hallazgo 4 — el "650 que se volvió 649,98" NO fue el sistema (según el rastro completo)
+
+Gaston reportó que cargó una multa de USD 650 y quedó 649,98. La investigación con la
+auditoría completa mostró: la PRIMERA aparición de 649,98 en todo el sistema es el confirm
+de la multa del 08/07, **tecleado a mano** (con documento de respaldo marcado), y no existe
+NINGÚN registro con "650" para esa anulación. El sistema no transformó nada en ese camino.
+Hipótesis restantes: el comprobante del operador decía 649,98, o Gaston copió un número ya
+calculado en pantalla en el circuito del reembolso (esas cuentas no quedan auditadas).
+
+**Prueba en vivo pactada**: con la 1043 destrabada, teclear 650 en "Corregir monto y
+moneda" — si se recorta de nuevo, el rastro dice exactamente dónde.
+
+**Lo que la investigación SÍ encontró** (anotado como obra futura "barrido de redondeos"):
+3 lugares reales donde se pueden perder centavos — el reparto de la multa entre varios
+renglones cuando el tope de la última recorta el residuo, la conversión de moneda (pérdida
+inherente, auditada), y los renglones convertidos de a uno sin absorbedor del resto.
+
+## También quedó claro en esta tanda
+
+- "Rehacer la multa" después de deshacerla ya estaba diseñado y construido (patrón estándar
+  de los ERP: documento anulado → documento nuevo asociado); era el cosedor el que lo pisaba.
+- La 1042 sigue pendiente de la mano de Gaston: "Corregir monto y moneda" en su ficha.
