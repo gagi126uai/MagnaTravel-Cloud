@@ -25,6 +25,14 @@ namespace TravelApi.Infrastructure.Reservations;
 /// asi que el numero que produce este persister es EXACTAMENTE el mismo que daria el servicio del proveedor
 /// (no hay dos formulas que puedan discrepar). El calculo en si sigue siendo puro en
 /// <see cref="SupplierDebtCalculator"/>; este helper solo materializa la query y escribe la proyeccion.</para>
+///
+/// <para><b>(2026-07-15) Ya no es SOLO caja</b>: ademas de compras confirmadas - pagos, el saldo oficial suma
+/// los cargos del operador facturados APARTE (<see cref="OperatorChargeInvoicedReader"/>, ADR-044 T2 Addendum)
+/// — deuda real hacia el operador que antes solo se veia en el extracto (bloque "Circuito de cancelacion") pero
+/// nunca en <c>Supplier.CurrentBalance</c>/<c>SupplierBalanceByCurrency</c> (gap admitido y cerrado en esta
+/// fecha). La multa RETENIDA de un reembolso (<c>PenaltyRetained</c>) y el reembolso recibido
+/// (<c>RefundReceived</c>) siguen SIN sumar aca a proposito: ya estan neteados en el reembolso esperado del
+/// operador (<c>BookingCancellationLine.RefundCap</c>), sumarlos tambien aca los contaria dos veces.</para>
 /// </summary>
 internal static class SupplierDebtPersister
 {
@@ -64,6 +72,7 @@ internal static class SupplierDebtPersister
             if (existingByCurrency.TryGetValue(currency, out var row))
             {
                 row.ConfirmedPurchases = line.ConfirmedPurchases;
+                row.OperatorChargesInvoiced = line.OperatorChargesInvoiced;
                 row.TotalPaid = line.TotalPaid;
                 row.Balance = line.Balance;
             }
@@ -74,6 +83,7 @@ internal static class SupplierDebtPersister
                     SupplierId = supplierId,
                     Currency = currency,
                     ConfirmedPurchases = line.ConfirmedPurchases,
+                    OperatorChargesInvoiced = line.OperatorChargesInvoiced,
                     TotalPaid = line.TotalPaid,
                     Balance = line.Balance
                 });
@@ -215,7 +225,17 @@ internal static class SupplierDebtPersister
         var payments = paymentRows.Select(p => new SupplierDebtCalculator.SupplierPaymentInput(
             p.Amount, p.Currency, p.ImputedCurrency, p.ImputedAmount));
 
-        return SupplierDebtCalculator.Calculate(confirmedPurchases, payments);
+        // (2026-07-15) Cargos del operador facturados APARTE con su propio documento: deuda nueva hacia el
+        // operador, independiente del modo de facturacion (un CommissionOnly no deberia tener uno de estos
+        // cargos por construccion — el servicio los bloquea al cargarlos, ver
+        // BookingCancellationService.AnyLineHasCommissionOnlyInvoicingMode — pero si existiera, es deuda real
+        // y debe sumar igual). Mismo lector que usa el desglose por reserva, asi el saldo OFICIAL coincide con
+        // lo que el extracto del operador ya muestra en el bloque "Circuito de cancelacion".
+        var invoicedChargeRows = await OperatorChargeInvoicedReader.LoadAsync(db, supplierId, ct);
+        var operatorChargesInvoiced = invoicedChargeRows
+            .Select(r => new SupplierDebtCalculator.ConfirmedPurchase(r.Currency, r.Amount));
+
+        return SupplierDebtCalculator.Calculate(confirmedPurchases, payments, operatorChargesInvoiced);
     }
 
     /// <summary>

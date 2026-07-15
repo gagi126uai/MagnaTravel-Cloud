@@ -109,17 +109,31 @@ public static class SupplierDebtCalculator
         => payment.ImputedAmount ?? payment.Amount;
 
     /// <summary>
-    /// Calcula la deuda por moneda. Devuelve una linea por cada moneda presente en compras o pagos.
+    /// Calcula la deuda por moneda. Devuelve una linea por cada moneda presente en compras, cargos
+    /// facturados aparte o pagos.
     /// </summary>
+    /// <param name="operatorChargesInvoiced">
+    /// (2026-07-15) Cargos del operador "facturados aparte" (ADR-044 T2 Addendum,
+    /// <c>PenaltyCollectionMode.FacturadaAparte</c>): el operador devuelve el reembolso INTEGRO de una
+    /// cancelacion pero factura este monto con su PROPIO documento. Es deuda NUEVA de la agencia hacia el
+    /// operador, con la MISMA naturaleza que una compra confirmada (suma al saldo que le debemos), pero se
+    /// cuenta APARTE de <see cref="ConfirmedPurchase"/> (costos de servicios reales) para que
+    /// <see cref="SupplierDebtLine.ConfirmedPurchases"/> siga significando exactamente lo que dice su nombre.
+    /// Opcional (<c>null</c> = ninguno) para no romper a los callers que todavia no cargan este dato: el pool
+    /// de saldo a favor (<c>SupplierCreditReconciler</c>) ya suma esta plata por su cuenta via el circuito del
+    /// extracto — pasarla tambien aca la contaria DOS veces.
+    /// </param>
     public static IReadOnlyDictionary<string, SupplierDebtLine> Calculate(
         IEnumerable<ConfirmedPurchase> confirmedPurchases,
-        IEnumerable<SupplierPaymentInput> payments)
+        IEnumerable<SupplierPaymentInput> payments,
+        IEnumerable<ConfirmedPurchase>? operatorChargesInvoiced = null)
     {
         ArgumentNullException.ThrowIfNull(confirmedPurchases);
         ArgumentNullException.ThrowIfNull(payments);
 
         var purchasesByCurrency = new Dictionary<string, decimal>(StringComparer.Ordinal);
         var paidByCurrency = new Dictionary<string, decimal>(StringComparer.Ordinal);
+        var invoicedChargesByCurrency = new Dictionary<string, decimal>(StringComparer.Ordinal);
 
         foreach (var purchase in confirmedPurchases)
         {
@@ -139,17 +153,26 @@ public static class SupplierDebtCalculator
             paidByCurrency[imputedCurrency] = current + imputedAmount;
         }
 
-        // Union de monedas presentes en compras o pagos.
+        foreach (var charge in operatorChargesInvoiced ?? Enumerable.Empty<ConfirmedPurchase>())
+        {
+            string currency = Monedas.Normalizar(charge.Currency);
+            invoicedChargesByCurrency.TryGetValue(currency, out var current);
+            invoicedChargesByCurrency[currency] = current + charge.NetCost;
+        }
+
+        // Union de monedas presentes en compras, cargos facturados aparte o pagos.
         var currencies = new HashSet<string>(StringComparer.Ordinal);
         foreach (var key in purchasesByCurrency.Keys) currencies.Add(key);
         foreach (var key in paidByCurrency.Keys) currencies.Add(key);
+        foreach (var key in invoicedChargesByCurrency.Keys) currencies.Add(key);
 
         var lines = new Dictionary<string, SupplierDebtLine>(StringComparer.Ordinal);
         foreach (var currency in currencies)
         {
             purchasesByCurrency.TryGetValue(currency, out var confirmed);
             paidByCurrency.TryGetValue(currency, out var paid);
-            lines[currency] = new SupplierDebtLine(currency, confirmed, paid);
+            invoicedChargesByCurrency.TryGetValue(currency, out var invoicedCharges);
+            lines[currency] = new SupplierDebtLine(currency, confirmed, paid, invoicedCharges);
         }
         return lines;
     }
@@ -195,17 +218,31 @@ public sealed class SupplierDebtLine
     /// <summary>Compras confirmadas (NetCost que cuenta como deuda) en esta moneda.</summary>
     public decimal ConfirmedPurchases { get; }
 
+    /// <summary>
+    /// (2026-07-15) Cargos del operador facturados APARTE con su propio documento (ADR-044 T2 Addendum,
+    /// <c>PenaltyCollectionMode.FacturadaAparte</c>) en esta moneda: deuda nueva de la agencia hacia el
+    /// operador, misma naturaleza que una compra pero contada por separado para no ensuciar el significado de
+    /// <see cref="ConfirmedPurchases"/> (costos de servicios reales). Ver el XML-doc de
+    /// <see cref="SupplierDebtCalculator.Calculate"/>.
+    /// </summary>
+    public decimal OperatorChargesInvoiced { get; }
+
     /// <summary>Pagado al proveedor imputado a esta moneda.</summary>
     public decimal TotalPaid { get; }
 
-    /// <summary>Deuda de esta moneda = <see cref="ConfirmedPurchases"/> - <see cref="TotalPaid"/> (puede ser negativa).</summary>
+    /// <summary>
+    /// Deuda de esta moneda = <see cref="ConfirmedPurchases"/> + <see cref="OperatorChargesInvoiced"/> -
+    /// <see cref="TotalPaid"/> (puede ser negativa = sobrepago).
+    /// </summary>
     public decimal Balance { get; }
 
-    public SupplierDebtLine(string currency, decimal confirmedPurchases, decimal totalPaid)
+    public SupplierDebtLine(
+        string currency, decimal confirmedPurchases, decimal totalPaid, decimal operatorChargesInvoiced = 0m)
     {
         Currency = currency;
         ConfirmedPurchases = confirmedPurchases;
+        OperatorChargesInvoiced = operatorChargesInvoiced;
         TotalPaid = totalPaid;
-        Balance = confirmedPurchases - totalPaid;
+        Balance = confirmedPurchases + operatorChargesInvoiced - totalPaid;
     }
 }

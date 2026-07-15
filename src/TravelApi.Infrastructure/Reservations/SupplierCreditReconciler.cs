@@ -20,10 +20,12 @@ namespace TravelApi.Infrastructure.Reservations;
 /// sobrepago (lo mismo que siembra el backfill de la migracion).</para>
 ///
 /// <para><b>Por que vive separado del calculo de la deuda</b>: la deuda (escalar + tabla hija) la sigue
-/// produciendo <see cref="SupplierDebtPersister"/> SOLO con caja (compras - pagos). Este reconciler NO la toca:
-/// el <c>Balance</c> agregado es la fuente del sobrepago, y este helper solo MATERIALIZA ese sobrepago como
-/// credito consumible. Asi NO se duplica plata: el pago sigue contando completo en <c>TotalPaid</c> (verdad de
-/// caja intacta) y el credito es la cara consumible del balance negativo, no plata nueva.</para>
+/// produciendo <see cref="SupplierDebtPersister"/>. Este reconciler NO la toca: arma su propio "cierre de caja"
+/// (<c>ConfirmedPurchases - TotalPaid</c>, ver el XML-doc de <see cref="ComputeConsumableOverpaymentByCurrencyAsync"/>
+/// para el porque NO usa la columna <c>Balance</c> agregada desde 2026-07-15) y le suma el circuito de
+/// cancelacion para materializar el sobrepago como credito consumible. Asi NO se duplica plata: el pago sigue
+/// contando completo en <c>TotalPaid</c> (verdad de caja intacta) y el credito es la cara consumible del balance
+/// negativo, no plata nueva.</para>
 ///
 /// <para><b>Atomicidad</b>: este helper hace su PROPIO <c>SaveChanges</c> (con la auditoria staged en la misma
 /// llamada). Se invoca DESPUES de que la deuda del proveedor ya quedo persistida (commit), porque LEE el
@@ -190,11 +192,20 @@ internal static class SupplierCreditReconciler
 
     /// <summary>
     /// Pasos B/C (2026-06-29): sobrepago CONSUMIBLE (saldo a favor) objetivo por moneda del operador =
-    /// <c>max(0, -(Balance + MultaRetenida + ReembolsoRecibido + Y))</c>, que es el "Prepago" del calculador
-    /// economico. Es la FUENTE UNICA del numero: la usa el reconciler para materializar el pool y
-    /// <c>SupplierCreditService.ApplyCreditAsync</c> para topear cuanto se puede aplicar (asi nunca se gasta como
-    /// saldo a favor un negativo de caja que en realidad es un reembolso por cobrar). Sin anulaciones colapsa a
-    /// <c>max(0, -Balance)</c>. SOLO LECTURA: no escribe nada.
+    /// <c>max(0, -(CashClosing + MultaRetenida + ReembolsoRecibido + CargoFacturadoAparte + Y))</c>, que es el
+    /// "Prepago" del calculador economico. Es la FUENTE UNICA del numero: la usa el reconciler para materializar
+    /// el pool y <c>SupplierCreditService.ApplyCreditAsync</c> para topear cuanto se puede aplicar (asi nunca se
+    /// gasta como saldo a favor un negativo de caja que en realidad es un reembolso por cobrar). Sin anulaciones
+    /// colapsa a <c>max(0, -CashClosing)</c>. SOLO LECTURA: no escribe nada.
+    ///
+    /// <para><b>ANTI DOBLE-CONTEO (2026-07-15)</b>: <c>CashClosing</c> se arma con <c>ConfirmedPurchases -
+    /// TotalPaid</c> de <c>SupplierBalanceByCurrency</c> — NUNCA con la columna <c>Balance</c> de esa tabla.
+    /// Desde que <see cref="SupplierDebtPersister"/> empezo a sumar los cargos facturados aparte al saldo OFICIAL,
+    /// <c>Balance</c> YA los incluye; el circuito de abajo (<see cref="SupplierCancellationCircuitReader"/>) los
+    /// suma DE NUEVO como linea propia del bloque "Circuito de cancelacion" (misma logica que la multa retenida
+    /// y el reembolso recibido, que tampoco viven en <c>ConfirmedPurchases</c>/<c>TotalPaid</c>). Leer
+    /// <c>Balance</c> aca contaria esos cargos DOS VECES y le robaria pool de saldo a favor real al operador.
+    /// </para>
     /// </summary>
     public static async Task<IReadOnlyDictionary<string, decimal>> ComputeConsumableOverpaymentByCurrencyAsync(
         AppDbContext db, int supplierId, CancellationToken ct)
@@ -202,7 +213,7 @@ internal static class SupplierCreditReconciler
         var balanceRows = await db.SupplierBalanceByCurrency
             .AsNoTracking()
             .Where(row => row.SupplierId == supplierId)
-            .Select(row => new { row.Currency, row.Balance })
+            .Select(row => new { row.Currency, row.ConfirmedPurchases, row.TotalPaid })
             .ToListAsync(ct);
 
         var cashClosingByCurrency = new Dictionary<string, decimal>(StringComparer.Ordinal);
@@ -210,7 +221,7 @@ internal static class SupplierCreditReconciler
         {
             var ccy = Monedas.Normalizar(row.Currency);
             cashClosingByCurrency.TryGetValue(ccy, out var acc);
-            cashClosingByCurrency[ccy] = acc + row.Balance;
+            cashClosingByCurrency[ccy] = acc + (row.ConfirmedPurchases - row.TotalPaid);
         }
 
         var circuit = await SupplierCancellationCircuitReader.LoadAsync(db, supplierId, ct);

@@ -7001,6 +7001,14 @@ public class BookingCancellationService
             // Mutacion + auditoria staged en una UNICA SaveChanges (atomica).
             await _db.SaveChangesAsync(ct);
 
+            // (5-bis, 2026-07-15) La correccion borro TODOS los cargos del operador (paso 1) y re-creo solo el
+            // automatico Retenida (paso 3): si habia un cargo FACTURADO APARTE, desaparecio. Ese cargo sumaba al
+            // saldo OFICIAL del operador (SupplierBalanceByCurrency), asi que recalculamos el saldo para que no
+            // quede inflado. Corre DESPUES del SaveChanges de arriba (PersistAsync LEE los cargos flusheados) y
+            // hace su propio SaveChanges. Recalcula el operador principal del BC (el que corrige esta accion).
+            await TravelApi.Infrastructure.Reservations.SupplierDebtPersister.PersistAsync(_db, bc.SupplierId, ct);
+            await _db.SaveChangesAsync(ct);
+
             // (6) Re-encolar la ND con la moneda NUEVA. Si ahora es coherente con la factura -> Pending; si sigue
             //     trabada (u otro fallo) -> revision manual + exito-con-aviso (nunca un 500 que la vuelva a trabar).
             //     Atribuida al actor real de la correccion (A3).
@@ -7560,6 +7568,18 @@ public class BookingCancellationService
             ct: ct);
 
         await _db.SaveChangesAsync(ct);
+
+        // (2026-07-15) Si el cierre sin multa vino DESDE una multa confirmada, el Reverse de arriba borro TODOS
+        // los cargos del operador — incluido un eventual FACTURADO APARTE, que sumaba al saldo OFICIAL. Recalculamos
+        // el saldo del operador RESUELTO ANTES de reconciliar el pool (el reconciler lee ConfirmedPurchases -
+        // TotalPaid de esa proyeccion, asi que tiene que estar fresca). Corre DESPUES del SaveChanges de arriba
+        // (PersistAsync LEE los cargos ya flusheados) y hace su propio SaveChanges. Si el waive fue desde el estado
+        // pendiente (Estimated), no hubo cargos que borrar y esto es un no-op barato.
+        if (waivingFromConfirmed)
+        {
+            await TravelApi.Infrastructure.Reservations.SupplierDebtPersister.PersistAsync(_db, targetSupplierId, ct);
+            await _db.SaveChangesAsync(ct);
+        }
 
         // Pasos B/C (2026-06-29): el cierre sin multa deja los RefundCap COMPLETOS (el operador devuelve todo), asi
         // que el receivable Y sigue contando entero y el reconciler mantiene el pool en 0 (NO mintea la fuga). Lo
@@ -8142,6 +8162,19 @@ public class BookingCancellationService
                 userName: userName);
 
             await _db.SaveChangesAsync(ct);
+
+            // (2026-07-15) Un cargo FACTURADO APARTE es deuda nueva hacia el operador que ahora suma al saldo
+            // OFICIAL (Supplier.CurrentBalance / SupplierBalanceByCurrency). Recalculamos ese saldo DESPUES del
+            // SaveChanges de arriba: PersistAsync LEE el cargo de la base (via OperatorChargeInvoicedReader), asi
+            // que el cargo tiene que estar flusheado primero (mismo gotcha EF que el path de cancelacion parcial).
+            // Solo para FacturadaAparte: un cargo Retenida ya esta neteado en el RefundCap y NO toca el saldo
+            // oficial, recalcular ahi seria trabajo al pedo. PersistAsync no guarda solo -> SaveChanges propio.
+            if (request.CollectionMode == PenaltyCollectionMode.FacturadaAparte)
+            {
+                await TravelApi.Infrastructure.Reservations.SupplierDebtPersister.PersistAsync(
+                    _db, targetSupplierId, ct);
+                await _db.SaveChangesAsync(ct);
+            }
 
             _logger.LogInformation(
                 "metric:cancellation_operator_charge_added | BcPublicId={BcPublicId} Supplier={SupplierId} " +

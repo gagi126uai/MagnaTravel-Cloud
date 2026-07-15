@@ -33,14 +33,27 @@ public class SupplierBalanceByCurrency
     [Column(TypeName = "decimal(18,2)")]
     public decimal ConfirmedPurchases { get; set; }
 
+    /// <summary>
+    /// (2026-07-15) Cargos del operador facturados APARTE con su propio documento en esta moneda (ADR-044 T2
+    /// Addendum, <c>PenaltyCollectionMode.FacturadaAparte</c>): deuda nueva hacia el operador, con la misma
+    /// naturaleza que una compra pero contada aparte para no ensuciar el significado de
+    /// <see cref="ConfirmedPurchases"/> (costos de servicios reales). Antes de esta fecha esta plata NO sumaba
+    /// aca (gap admitido en <c>BookingCancellationLineOperatorCharge</c>): el "Saldo (deuda)" del listado de
+    /// proveedores quedaba mas bajo que la deuda real. Ver
+    /// <c>TravelApi.Infrastructure.Reservations.SupplierDebtPersister</c>.
+    /// </summary>
+    [Column(TypeName = "decimal(18,2)")]
+    public decimal OperatorChargesInvoiced { get; set; }
+
     /// <summary>Pagado al proveedor imputado a ESTA moneda (suma de <c>ImputedAmount</c>, o <c>Amount</c> si no cruzo).</summary>
     [Column(TypeName = "decimal(18,2)")]
     public decimal TotalPaid { get; set; }
 
     /// <summary>
-    /// Deuda de esta moneda = <see cref="ConfirmedPurchases"/> - <see cref="TotalPaid"/>. Puede ser
-    /// negativa (sobrepago al operador en esta moneda). El sobrepago de una moneda NO compensa la
-    /// deuda de otra. Indexado por (Currency, Balance) para el top-N de proveedores deudores.
+    /// Deuda de esta moneda = <see cref="ConfirmedPurchases"/> + <see cref="OperatorChargesInvoiced"/> -
+    /// <see cref="TotalPaid"/>. Puede ser negativa (sobrepago al operador en esta moneda). El sobrepago de una
+    /// moneda NO compensa la deuda de otra. Indexado por (Currency, Balance) para el top-N de proveedores
+    /// deudores.
     /// </summary>
     [Column(TypeName = "decimal(18,2)")]
     public decimal Balance { get; set; }

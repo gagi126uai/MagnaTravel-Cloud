@@ -87,9 +87,19 @@ public class SupplierAccountBalanceByCurrencyDto
 {
     public string Currency { get; set; } = "ARS";
     public decimal ConfirmedPurchases { get; set; }
+
+    /// <summary>
+    /// (2026-07-15) Cargos del operador facturados aparte con su propio documento (deuda nueva hacia el
+    /// operador, no una retencion). Se muestra desglosado de <see cref="ConfirmedPurchases"/> para que se vea
+    /// de donde sale la diferencia si el proveedor tuvo alguno de estos cargos.
+    /// </summary>
+    public decimal OperatorChargesInvoiced { get; set; }
     public decimal TotalPaid { get; set; }
 
-    /// <summary>Saldo = compras confirmadas - pagado en ESTA moneda. Positivo = deuda; negativo = saldo a favor.</summary>
+    /// <summary>
+    /// Saldo = compras confirmadas + cargos facturados aparte - pagado en ESTA moneda. Positivo = deuda;
+    /// negativo = saldo a favor.
+    /// </summary>
     public decimal Balance { get; set; }
 }
 
@@ -217,6 +227,12 @@ public class SupplierDebtCurrencyLineDto
 {
     public string Currency { get; set; } = "ARS";
     public decimal ConfirmedPurchases { get; set; }
+
+    /// <summary>
+    /// (2026-07-15) Cargos del operador facturados aparte con su propio documento, atribuidos a ESTA reserva
+    /// (deuda nueva hacia el operador, no una retencion). Espejo del mismo campo del total global.
+    /// </summary>
+    public decimal OperatorChargesInvoiced { get; set; }
     public decimal TotalPaid { get; set; }
 
     /// <summary>
@@ -226,8 +242,8 @@ public class SupplierDebtCurrencyLineDto
     public decimal CreditApplied { get; set; }
 
     /// <summary>
-    /// Saldo = compras confirmadas - pagado - saldo a favor aplicado. Puede ser negativo (sobrepago a esta
-    /// reserva/proveedor o saldo a favor aplicado por encima de la deuda).
+    /// Saldo = compras confirmadas + cargos facturados aparte - pagado - saldo a favor aplicado. Puede ser
+    /// negativo (sobrepago a esta reserva/proveedor o saldo a favor aplicado por encima de la deuda).
     /// </summary>
     public decimal Balance { get; set; }
 }

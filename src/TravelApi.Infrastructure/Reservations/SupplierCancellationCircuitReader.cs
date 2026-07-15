@@ -142,8 +142,12 @@ internal static class SupplierCancellationCircuitReader
             // --- CARGO FACTURADO APARTE (ADR-044 T2 Addendum) ---
             // El operador devuelve el reembolso INTEGRO (no retiene nada) pero factura este cargo con su propio
             // documento: es una DEUDA NUEVA de la agencia hacia el operador (no una retencion). Vive en el
-            // circuito (no en la caja real todavia — ver limitacion documentada en OperatorChargeInvoiced) para
-            // que "Le debo" lo refleje sin mezclarlo con la multa retenida.
+            // circuito para que "Le debo" lo refleje sin mezclarlo con la multa retenida. (2026-07-15) Desde esta
+            // fecha ESTE MISMO cargo tambien suma al saldo OFICIAL persistido (SupplierDebtPersister via
+            // OperatorChargeInvoicedReader, columna SupplierBalanceByCurrency.OperatorChargesInvoiced): el
+            // extracto y el "Saldo (deuda)" del listado ya cuadran. El reconciler del pool
+            // (SupplierCreditReconciler) evita el doble-conteo leyendo ConfirmedPurchases - TotalPaid, no la
+            // columna Balance ya sumada.
             decimal operatorChargeInvoiced = line.OperatorCharges
                 .Where(c => c.CollectionMode == PenaltyCollectionMode.FacturadaAparte)
                 .Sum(c => c.Amount);

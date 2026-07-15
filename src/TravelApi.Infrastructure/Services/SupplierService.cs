@@ -582,6 +582,7 @@ public class SupplierService : ISupplierService
             {
                 Currency = row.Currency,
                 ConfirmedPurchases = row.ConfirmedPurchases,
+                OperatorChargesInvoiced = row.OperatorChargesInvoiced,
                 TotalPaid = row.TotalPaid,
                 Balance = row.Balance
             })
@@ -616,6 +617,7 @@ public class SupplierService : ISupplierService
             foreach (var line in overview.BalancesByCurrency)
             {
                 line.ConfirmedPurchases = 0m;
+                line.OperatorChargesInvoiced = 0m;
                 line.TotalPaid = 0m;
                 line.Balance = 0m;
             }
@@ -2131,8 +2133,15 @@ public class SupplierService : ISupplierService
                 application.TargetReserva!.Name))
             .ToListAsync(cancellationToken);
 
+        // (2026-07-15) Cargos del operador facturados aparte con su propio documento (ADR-044 T2 Addendum),
+        // atribuidos a la reserva de donde salio la cancelacion que los origino. Mismo lector que usa el saldo
+        // OFICIAL (SupplierDebtPersister), asi el desglose por reserva y el total global cuadran igual.
+        var operatorChargeRows = await TravelApi.Infrastructure.Reservations.OperatorChargeInvoicedReader
+            .LoadAsync(_dbContext, id, cancellationToken);
+
         var result = BuildSupplierDebtByReserva(
-            supplier.PublicId, supplier.Name, confirmedServiceRows, paymentRows, creditApplicationRows);
+            supplier.PublicId, supplier.Name, confirmedServiceRows, paymentRows, creditApplicationRows,
+            operatorChargeRows);
 
         // Masking see_cost: sin permiso, la estructura queda visible pero todos los montos en 0.
         if (!await CanSeeSupplierCostFiguresAsync(cancellationToken))
@@ -2180,7 +2189,8 @@ public class SupplierService : ISupplierService
         string supplierName,
         IReadOnlyList<SupplierAccountServiceListItemDto> confirmedServiceRows,
         IReadOnlyList<SupplierPaymentImputationRow> paymentRows,
-        IReadOnlyList<SupplierCreditApplicationRow> creditApplicationRows)
+        IReadOnlyList<SupplierCreditApplicationRow> creditApplicationRows,
+        IReadOnlyList<TravelApi.Infrastructure.Reservations.OperatorChargeInvoicedReader.Row> operatorChargeRows)
     {
         // --- Compras confirmadas agrupadas por reserva (y dentro, por moneda) ---
         // Por cada reserva guardamos su identidad (numero/nombre) y las compras por moneda.
@@ -2232,6 +2242,22 @@ public class SupplierService : ISupplierService
             }
 
             accumulator.AddPayment(imputedCurrency, imputedAmount);
+        }
+
+        // --- Cargos del operador FACTURADOS APARTE (ADR-044 T2 Addendum, 2026-07-15) ---
+        // Deuda nueva hacia el operador, atribuida a la reserva de la cancelacion que la origino. Se suma junto
+        // a las compras confirmadas (misma naturaleza: aumenta lo que le debemos), en su propio bucket para no
+        // ensuciar el significado de "compras confirmadas".
+        foreach (var charge in operatorChargeRows)
+        {
+            if (!reservaPurchases.TryGetValue(charge.ReservaPublicId, out var accumulator))
+            {
+                accumulator = new ReservaDebtAccumulator(
+                    charge.ReservaPublicId, charge.NumeroReserva, charge.FileName);
+                reservaPurchases[charge.ReservaPublicId] = accumulator;
+            }
+
+            accumulator.AddOperatorChargeInvoiced(charge.Currency, charge.Amount);
         }
 
         // --- Saldo a favor del operador APLICADO a reservas (ADR-041 TANDA 3) ---
@@ -2288,6 +2314,7 @@ public class SupplierService : ISupplierService
                 {
                     Currency = line.Currency,
                     ConfirmedPurchases = EconomicRulesHelper.RoundCurrency(line.ConfirmedPurchases),
+                    OperatorChargesInvoiced = EconomicRulesHelper.RoundCurrency(line.OperatorChargesInvoiced),
                     TotalPaid = EconomicRulesHelper.RoundCurrency(line.TotalPaid),
                     CreditApplied = EconomicRulesHelper.RoundCurrency(line.CreditApplied),
                     Balance = EconomicRulesHelper.RoundCurrency(line.Balance)
@@ -2387,24 +2414,39 @@ public class SupplierService : ISupplierService
             _creditAppliedByCurrency[currency] = current + amount;
         }
 
+        // (2026-07-15) Cargos del operador facturados aparte con su propio documento (deuda nueva hacia el
+        // operador). Bucket PROPIO, separado de _purchasesByCurrency, para que "compras confirmadas" siga
+        // significando solo costos de servicios reales; el saldo total SI los suma (misma naturaleza: aumenta
+        // la deuda).
+        private readonly Dictionary<string, decimal> _operatorChargesInvoicedByCurrency = new(StringComparer.Ordinal);
+
+        public void AddOperatorChargeInvoiced(string currency, decimal amount)
+        {
+            _operatorChargesInvoicedByCurrency.TryGetValue(currency, out var current);
+            _operatorChargesInvoicedByCurrency[currency] = current + amount;
+        }
+
         /// <summary>
-        /// Devuelve una linea por cada moneda presente en compras, pagos o saldo a favor aplicado. El saldo
-        /// (<c>Balance</c>) ya descuenta el saldo a favor aplicado: <c>compras - pagado - creditoAplicado</c>.
+        /// Devuelve una linea por cada moneda presente en compras, cargos facturados aparte, pagos o saldo a
+        /// favor aplicado. El saldo (<c>Balance</c>) ya descuenta el saldo a favor aplicado:
+        /// <c>compras + cargosFacturadosAparte - pagado - creditoAplicado</c>.
         /// </summary>
-        public IEnumerable<(string Currency, decimal ConfirmedPurchases, decimal TotalPaid, decimal CreditApplied, decimal Balance)> ToLines()
+        public IEnumerable<(string Currency, decimal ConfirmedPurchases, decimal OperatorChargesInvoiced, decimal TotalPaid, decimal CreditApplied, decimal Balance)> ToLines()
         {
             var currencies = new HashSet<string>(StringComparer.Ordinal);
             foreach (var key in _purchasesByCurrency.Keys) currencies.Add(key);
             foreach (var key in _paidByCurrency.Keys) currencies.Add(key);
             foreach (var key in _creditAppliedByCurrency.Keys) currencies.Add(key);
+            foreach (var key in _operatorChargesInvoicedByCurrency.Keys) currencies.Add(key);
 
             foreach (var currency in currencies)
             {
                 _purchasesByCurrency.TryGetValue(currency, out var purchases);
                 _paidByCurrency.TryGetValue(currency, out var paid);
                 _creditAppliedByCurrency.TryGetValue(currency, out var creditApplied);
-                decimal balance = purchases - paid - creditApplied;
-                yield return (currency, purchases, paid, creditApplied, balance);
+                _operatorChargesInvoicedByCurrency.TryGetValue(currency, out var operatorChargesInvoiced);
+                decimal balance = purchases + operatorChargesInvoiced - paid - creditApplied;
+                yield return (currency, purchases, operatorChargesInvoiced, paid, creditApplied, balance);
             }
         }
     }
@@ -2420,6 +2462,7 @@ public class SupplierService : ISupplierService
             foreach (var currencyLine in reserva.Currencies)
             {
                 currencyLine.ConfirmedPurchases = 0m;
+                currencyLine.OperatorChargesInvoiced = 0m;
                 currencyLine.TotalPaid = 0m;
                 currencyLine.CreditApplied = 0m;
                 currencyLine.Balance = 0m;

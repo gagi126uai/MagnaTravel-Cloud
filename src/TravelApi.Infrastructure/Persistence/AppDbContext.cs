@@ -1331,6 +1331,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.ToTable("SupplierBalanceByCurrency");
             entity.Property(x => x.Currency).HasMaxLength(3).IsRequired().HasDefaultValue("ARS");
             entity.Property(x => x.ConfirmedPurchases).HasPrecision(18, 2);
+            // (2026-07-15) Cargos del operador facturados aparte (ADR-044 T2 Addendum): fila existente = 0
+            // (ningun proveedor tenia esta plata sumada hasta ahora); la recalcula el persister en el primer
+            // recalculo que corra despues del deploy.
+            entity.Property(x => x.OperatorChargesInvoiced).HasPrecision(18, 2).HasDefaultValue(0m);
             entity.Property(x => x.TotalPaid).HasPrecision(18, 2);
             entity.Property(x => x.Balance).HasPrecision(18, 2);
 
