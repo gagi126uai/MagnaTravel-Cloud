@@ -194,4 +194,34 @@ public static class OperatorPenaltySituationRules
         // Confirmada, sin importar donde quedo la ND (encolada / fallida / trabada por moneda / confirmada-sin-ND / emitida).
         _ => OperatorPenaltyOutcome.Confirmed,
     };
+
+    /// <summary>
+    /// Configuracion de multas de cancelacion (2026-07-14): deriva el camino SUGERIDO ("probablemente no cobre" /
+    /// "probablemente cobre") para el paso de la multa de un operador puntual. Regla PURA (testeable sin base): el
+    /// SERVIDOR es quien decide esto, el front nunca deduce nada — solo pinta el texto que corresponde al token.
+    ///
+    /// <para>Solo sugiere algo cuando el paso todavia esta en la etapa de la PREGUNTA
+    /// (<see cref="OperatorPenaltySituationState.PendingDecision"/>, la multa sigue Estimated esperando que el
+    /// vendedor confirme o cierre sin multa). En cualquier otro paso — ya resuelto, cerrado, emitido, o incluso
+    /// sin cancelacion en juego — no tiene sentido sugerir nada sobre algo que ya se decidio, asi que da null.</para>
+    ///
+    /// <para>Tampoco sugiere nada si el operador esta en <see cref="SupplierPenaltyBehavior.Unknown"/> (no hay
+    /// pista configurada): es preferible NO mostrar nada a mostrar una sugerencia inventada.</para>
+    /// </summary>
+    ///
+    /// <para>Los tokens del resultado ("probablyNoPenalty"/"probablyPenalty") son el mismo contrato que expone
+    /// <c>SuggestedPenaltyPaths</c> del lado Application (DTO); se repiten como literales aca a proposito para
+    /// que el Dominio no dependa de la capa Application (Domain no referencia Application en este repo).</para>
+    public static string? SuggestPenaltyPath(OperatorPenaltySituationState state, SupplierPenaltyBehavior supplierPenaltyBehavior)
+    {
+        if (state != OperatorPenaltySituationState.PendingDecision)
+            return null;
+
+        return supplierPenaltyBehavior switch
+        {
+            SupplierPenaltyBehavior.RarelyCharges => "probablyNoPenalty",
+            SupplierPenaltyBehavior.UsuallyCharges => "probablyPenalty",
+            _ => null, // Unknown (o cualquier valor futuro no contemplado): sin pista, mejor no sugerir nada.
+        };
+    }
 }

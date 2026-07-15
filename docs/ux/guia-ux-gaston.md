@@ -1356,3 +1356,70 @@ más de una factura, y viene escondido con defaults.
   - **No corresponde / el backend no manda el dato:** el aviso no aparece y nada ocupa ese lugar. El
     frontend NO calcula la fecha ni los días a mano: los recibe ya calculados del backend (regla "el
     front no deduce, lo dice el backend", 2026-07-03).
+
+## El operador tiene un "comportamiento con multas" que SUGIERE el camino al anular (2026-07-14, respuestas de Gastón)
+
+> **Origen:** Gastón pidió que el sistema **no asuma que todo operador cobra multa**. Investigación de
+> ERPs reales: la política de cancelación se configura por TARIFA, ningún sistema emite el cargo solo,
+> la política solo ESTIMA y el evento real siempre se confirma. Decisión aprobada: **sugerencia por
+> operador ahora** (política por tarifa = obra futura). El dato **solo resalta un camino**: NUNCA
+> pre-completa montos, NUNCA decide solo, NUNCA saca el paso de la multa. Por dentro reusa el campo
+> dormido `Supplier.PenaltyPolicyJson`. Sesión de 9 preguntas; Gastón aprobó todas las recomendadas.
+> Spec: `docs/ux/2026-07-14-config-multas-proveedor.md`.
+
+**A) El dato en la ficha del operador (solapa "Datos"):**
+
+- **(2026-07-14, P1=A) Vive escondido dentro de "Más detalles" de la solapa "Datos"**, con el mismo
+  molde que el campo "Ajuste por el dólar en sus multas" (2026-07-10): un solo desplegable, valor real
+  cargado aparte, "Más detalles" cerrado por defecto. NO es un dato de todos los días. NO va en el
+  modal viejo `SupplierFormModal`; va en `SupplierAccountPage` (solapa Datos).
+- **(2026-07-14, P2=A) NO aparece en el alta del operador.** El alta se mantiene liviana; el campo se
+  carga después, editando. Todos los operadores existentes y nuevos arrancan en el default.
+- **(2026-07-14, P3=A) Etiqueta y opciones (texto exacto de Gastón):**
+  - Etiqueta: **"¿Suele cobrar multa cuando se anula?"**
+  - Opciones del desplegable: **"Casi nunca cobra multa"** / **"Casi siempre cobra multa"** / **"No se
+    sabe / depende de la tarifa"** (esta última es el **DEFAULT**).
+  - Línea de ayuda gris: **"Esto solo resalta un camino cuando anulás. Nunca completa montos ni decide
+    por vos."**
+- **(2026-07-14) Con el default "No se sabe / depende de la tarifa", el paso de la multa queda
+  EXACTAMENTE como hoy** (sin ninguna sugerencia). Es la condición de "cero cambio" que Gastón exigió.
+- **(2026-07-14) Enmascarado:** el campo no expone montos ni costos; se ve/edita con el mismo permiso
+  que editar los datos del operador (igual que el campo del ajuste por el dólar). Estados de carga y
+  error idénticos al hermano (cargando → desplegable deshabilitado; error → cartel + "Reintentar" +
+  "Guardar" bloqueado).
+
+**B) La sugerencia en el paso de la multa (reserva Anulada):**
+
+- **(2026-07-14, P4=A) El camino sugerido va PRIMERO y RESALTADO, con una notita arriba.** El otro
+  camino sigue a un clic, en su color normal (nunca se esconde ni se deshabilita: la sugerencia
+  resalta, no ejecuta).
+  - Operador **"Casi nunca cobra multa"** → el botón **"No cobró nada / devolvió todo"** pasa a primero
+    y resaltado.
+  - Operador **"Casi siempre cobra multa"** → el botón **"Sí, el operador cobró una multa"** queda
+    primero y resaltado (ya iba primero; se le agrega el énfasis y la notita).
+- **(2026-07-14, P5=A) La notita dice de dónde salió** (con "💡"):
+  - Casi nunca: **"💡 Este operador casi nunca cobra multa (según su ficha)."**
+  - Casi siempre (espejo): **"💡 Este operador casi siempre cobra multa (según su ficha)."**
+- **(2026-07-14, P6=A) Con "No se sabe" NO aparece notita ni se cambia el orden:** la pantalla queda
+  EXACTAMENTE como hoy.
+- **(2026-07-14) La sugerencia se calcula POR OPERADOR** (multi-operador, ADR-044 T1): cada bloque de
+  pregunta mira la ficha de SU operador; uno puede sugerir "no cobró" y otro "sí cobró". El "camino
+  sugerido" lo resuelve el backend por situación (el front no re-deriva; regla "el front no deduce, lo
+  dice el backend", 2026-07-03).
+
+**C) El "Deshacer" del cierre sin multa: texto más claro (la visibilidad admin-only YA existía):**
+
+- **(2026-07-14) Verificado en código: el "Deshacer" del cierre sin multa YA es admin-only** (gate
+  `isAdmin()` en `ReservaDetailPage`, y la guía 2026-07-04 ya lo decía "solo para administradores").
+  Gastón lo vio porque él ES admin. **No hay cambio de visibilidad**: se confirma admin-only.
+- **(2026-07-14, P7=A) El enlace cambia de texto** de "· Deshacer: el operador sí cobró una multa" a
+  **"· Reabrir el paso de la multa"** (dice qué hace, no adivina el motivo). La cabecera del panel pasa
+  a **"Reabrir el paso de la multa"**.
+- **(2026-07-14, P8=A) Al abrir el panel, la explicación pasa a:** **"Volvés a la pregunta '¿el
+  operador cobró una multa?'. No se toca ningún comprobante: este cierre nunca emitió ninguno."** Todo
+  lo demás del panel se conserva (motivo obligatorio 5–500, confirmación en dos pasos, error inline con
+  datos intactos, bloqueo si el saldo a favor ya se usó — 409 `SALDO_YA_USADO`).
+- **(2026-07-14, P9=A) Los dos "Deshacer" quedan con textos DISTINTOS** para no confundirse cuando
+  conviven (multi-operador): el del cierre sin multa (cartel rosa) dice **"· Reabrir el paso de la
+  multa"**; el de la multa YA emitida con comprobante (cartel verde, ADR-044) **queda como está**: "·
+  Deshacer: el operador cobró mal esta multa". Son acciones fiscalmente distintas y no se unifican.

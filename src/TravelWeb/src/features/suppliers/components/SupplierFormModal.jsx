@@ -5,6 +5,9 @@ import { formatCurrency } from "../../../lib/utils";
 import { getPublicId } from "../../../lib/publicIds";
 // Reutilizamos CURRENCY_OPTIONS del alta para que las etiquetas sean idénticas en ambas superficies.
 import { CURRENCY_OPTIONS } from "../lib/nuevoOperadorLogic.js";
+// Este modal no muestra el desplegable de "¿Suele cobrar multa?" — solo necesita
+// normalizar el valor para el round-trip (ver comentario del estado inicial).
+import { SUPPLIER_PENALTY_BEHAVIOR, valorSelectDesdePenaltyBehavior } from "../../../lib/supplierPenaltyBehavior.js";
 
 export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
     const [formData, setFormData] = useState({
@@ -28,6 +31,15 @@ export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
         // de este modal no la pise con `null` por accidente (el PUT asigna este campo
         // SIEMPRE, a diferencia de defaultCurrency/defaultPaymentTermDays).
         treasuryFxAssumedByOverride: null,
+        // Configuracion de multas de cancelacion (2026-07-14, gate de frontend — mismo
+        // round-trip que el campo de arriba): "¿Suele cobrar multa cuando se anula?" se
+        // edita SOLO en SupplierAccountPage.jsx (Pieza 1 de
+        // docs/ux/2026-07-14-config-multas-proveedor.md, que explícitamente no toca este
+        // modal viejo). Se preserva igual acá porque el PUT del operador asigna SIEMPRE
+        // este campo — si este modal lo omitiera, guardar una edición cualquiera desde
+        // acá (nombre, teléfono, etc.) borraría en silencio la configuración ya cargada,
+        // volviéndola a "no se sabe" sin que nadie lo pidiera.
+        penaltyBehavior: SUPPLIER_PENALTY_BEHAVIOR.Unknown,
     });
 
     useEffect(() => {
@@ -49,6 +61,12 @@ export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
                 // Round-trip (ver comentario del estado inicial): preservamos la excepción
                 // real del operador aunque este modal no la muestre ni la edite.
                 treasuryFxAssumedByOverride: supplier.treasuryFxAssumedByOverride ?? null,
+                // Round-trip (ver comentario del estado inicial): preservamos el
+                // comportamiento con multas ya configurado, aunque este modal no lo
+                // muestre. valorSelectDesdePenaltyBehavior normaliza cualquier fila vieja
+                // que todavía no traiga el campo al default "no se sabe" (nunca inventa
+                // una configuración que el operador no tiene).
+                penaltyBehavior: valorSelectDesdePenaltyBehavior(supplier.penaltyBehavior),
             });
         } else {
             setFormData({
@@ -64,6 +82,7 @@ export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
                 defaultCurrency: "ARS",
                 defaultPaymentTermDays: null,
                 treasuryFxAssumedByOverride: null,
+                penaltyBehavior: SUPPLIER_PENALTY_BEHAVIOR.Unknown,
             });
         }
     }, [supplier, isOpen]);

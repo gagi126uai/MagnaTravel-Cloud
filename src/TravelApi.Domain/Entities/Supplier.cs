@@ -103,9 +103,22 @@ public class Supplier : IHasPublicId
     /// <para>Validacion de schema interno (tiers ordenados, porcentajes 0..100) se hace
     /// en <c>SupplierService</c> con FluentValidation antes de persistir. El CHECK
     /// SQL solo valida que sea objeto, no la forma interna.</para>
+    ///
+    /// <para><b>Este cajon sigue DORMIDO</b> (nadie lo escribe todavia): la politica por tramos de
+    /// antelacion es una obra futura. Para la pista SIMPLE de "que tan seguido cobra este operador"
+    /// (2026-07-14) se agrego un campo aparte, mas chico: <see cref="PenaltyBehavior"/>.</para>
     /// </summary>
     [Column(TypeName = "jsonb")]
     public string? PenaltyPolicyJson { get; set; }
+
+    /// <summary>
+    /// Configuracion de multas de cancelacion (2026-07-14): que tan seguido ESTE operador cobra multa al
+    /// cancelar (<see cref="SupplierPenaltyBehavior"/>). Es solo una PISTA para el paso de la multa de la
+    /// cancelacion — nunca decide ni emite nada sola, el vendedor sigue confirmando o cerrando sin multa a
+    /// mano. Default <see cref="SupplierPenaltyBehavior.Unknown"/> (conservador): mientras nadie configure
+    /// nada para este operador, el paso de la multa no sugiere ningun camino, igual que hoy.
+    /// </summary>
+    public SupplierPenaltyBehavior PenaltyBehavior { get; set; } = SupplierPenaltyBehavior.Unknown;
 
     /// <summary>
     /// ADR-013 §3.7 (2026-06-01): "quien se queda la penalidad" de cancelacion para

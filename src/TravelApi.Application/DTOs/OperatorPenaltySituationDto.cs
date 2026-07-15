@@ -160,6 +160,28 @@ public class OperatorPenaltySituationDto
     /// (<c>BookingCancellationDebitNoteAnnulment</c>), última fila en estado Succeeded.
     /// </summary>
     public LastDebitNoteUndoDto? LastDebitNoteUndo { get; set; }
+
+    /// <summary>
+    /// Configuracion de multas de cancelacion (2026-07-14): camino SUGERIDO para este paso, calculado por el
+    /// servidor a partir de <c>Supplier.PenaltyBehavior</c> (el front NUNCA deduce esto solo). Valores:
+    /// <c>null</c> (sin sugerencia: el operador esta en "no se sabe" o el paso ya no esta en la etapa de
+    /// pregunta), <c>"probablyNoPenalty"</c> (el operador casi nunca cobra) o <c>"probablyPenalty"</c> (el
+    /// operador casi siempre cobra).
+    ///
+    /// <para>Es SOLO una pista visual: nunca decide, nunca emite, nunca saca el paso de confirmar/cerrar sin
+    /// multa. Por eso solo viaja con valor cuando <see cref="State"/> == "PendingDecision" (la multa sigue
+    /// Estimated, esperando que el vendedor confirme o cierre sin multa); en cualquier estado ya resuelto
+    /// (confirmado, cerrado, emitido) queda <c>null</c> — mostrar una sugerencia sobre algo ya decidido no
+    /// tendria sentido.</para>
+    /// </summary>
+    public string? SuggestedPenaltyPath { get; set; }
+}
+
+/// <summary>Valores posibles de <see cref="OperatorPenaltySituationDto.SuggestedPenaltyPath"/>.</summary>
+public static class SuggestedPenaltyPaths
+{
+    public const string ProbablyNoPenalty = "probablyNoPenalty";
+    public const string ProbablyPenalty = "probablyPenalty";
 }
 
 /// <summary>

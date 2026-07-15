@@ -29,6 +29,8 @@ import {
   tituloProcesandoMulta,
   calcularAvisoPlazoDeshacerMulta,
   textoRastroDeshacerMulta,
+  SUGGESTED_PENALTY_PATHS,
+  sugerenciaCaminoMulta,
 } from "../operatorPenaltyBanner.js";
 
 // ============================================================================
@@ -735,4 +737,61 @@ test("textoRastroDeshacerMulta: undoneAt + reason pero SIN undoneByName (null) �
     texto,
     'El comprobante anterior se dejó sin efecto el 14/07 — motivo: "el operador cobró la multa en pesos, no en dólares."'
   );
+});
+
+// ============================================================================
+// sugerenciaCaminoMulta — Configuracion de multas de cancelacion (2026-07-14, Pieza 2)
+// ============================================================================
+
+test("sugerenciaCaminoMulta: null (operador 'no se sabe', o paso que ya no es pregunta) → CERO cambio visual", () => {
+  const sugerencia = sugerenciaCaminoMulta(null);
+  assert.deepEqual(sugerencia, {
+    ordenBotones: "siPrimero",
+    siResaltado: true,
+    noResaltado: true,
+    notita: null,
+  });
+});
+
+test("sugerenciaCaminoMulta: undefined (DTO viejo sin el campo) se comporta igual que null", () => {
+  const sugerencia = sugerenciaCaminoMulta(undefined);
+  assert.deepEqual(sugerencia, {
+    ordenBotones: "siPrimero",
+    siResaltado: true,
+    noResaltado: true,
+    notita: null,
+  });
+});
+
+test("sugerenciaCaminoMulta: probablyNoPenalty → 'No cobró' primero y resaltado, con su notita exacta", () => {
+  const sugerencia = sugerenciaCaminoMulta(SUGGESTED_PENALTY_PATHS.ProbablyNoPenalty);
+  assert.equal(sugerencia.ordenBotones, "noPrimero");
+  assert.equal(sugerencia.siResaltado, false);
+  assert.equal(sugerencia.noResaltado, true);
+  assert.equal(sugerencia.notita, "💡 Este operador casi nunca cobra multa (según su ficha).");
+});
+
+test("sugerenciaCaminoMulta: probablyPenalty → 'Sí cobró' primero y resaltado, con su notita exacta", () => {
+  const sugerencia = sugerenciaCaminoMulta(SUGGESTED_PENALTY_PATHS.ProbablyPenalty);
+  assert.equal(sugerencia.ordenBotones, "siPrimero");
+  assert.equal(sugerencia.siResaltado, true);
+  assert.equal(sugerencia.noResaltado, false);
+  assert.equal(sugerencia.notita, "💡 Este operador casi siempre cobra multa (según su ficha).");
+});
+
+test("sugerenciaCaminoMulta: valor futuro desconocido degrada a 'sin sugerencia' (nunca rompe la pantalla)", () => {
+  const sugerencia = sugerenciaCaminoMulta("algoQueTodaviaNoExiste");
+  assert.deepEqual(sugerencia, {
+    ordenBotones: "siPrimero",
+    siResaltado: true,
+    noResaltado: true,
+    notita: null,
+  });
+});
+
+test("sugerenciaCaminoMulta: nunca esconde ni deshabilita ningún camino (los dos booleanos de resaltado nunca son false a la vez)", () => {
+  for (const valor of [null, undefined, SUGGESTED_PENALTY_PATHS.ProbablyNoPenalty, SUGGESTED_PENALTY_PATHS.ProbablyPenalty, "otro"]) {
+    const sugerencia = sugerenciaCaminoMulta(valor);
+    assert.ok(sugerencia.siResaltado || sugerencia.noResaltado, `Con valor=${valor} algún camino debe seguir visible/resaltado`);
+  }
 });

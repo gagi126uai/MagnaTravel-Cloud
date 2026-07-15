@@ -86,10 +86,11 @@ export function useSuppliers() {
         try {
             const newStatus = !supplier.isActive;
             // El spread {...supplier} preserva TODOS los campos de la fila de la lista
-            // (SupplierListItemDto) tal cual — incluidos `treasuryFxAssumedByOverride` y
-            // `defaultPaymentTermDays` una vez que el backend los agregue a ese DTO
-            // (ADR-044 T4, gate de frontend 2026-07-10). Si esos campos no vinieran en
-            // `supplier` (DTO legacy), el PUT los pisaría con su default — por eso es
+            // (SupplierListItemDto) tal cual — incluidos `treasuryFxAssumedByOverride`,
+            // `defaultPaymentTermDays` (ADR-044 T4, gate de frontend 2026-07-10) y
+            // `penaltyBehavior` (configuración de multas, 2026-07-14) una vez que el
+            // backend los agregue a ese DTO. Si alguno de esos campos no viniera en
+            // `supplier` (DTO legacy), el PUT lo pisaría con su default — por eso es
             // importante que la lista los exponga, no algo que este hook deba corregir.
             await api.put(`/suppliers/${getPublicId(supplier)}`, {
                 ...supplier,

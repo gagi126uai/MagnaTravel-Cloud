@@ -266,6 +266,77 @@ export function situacionesConPreguntaDeMulta(reserva) {
   );
 }
 
+// ============================================================================
+// Configuracion de multas de cancelacion (2026-07-14): sugerencia de camino en la
+// pregunta "¿el operador te cobró una multa?" — spec
+// docs/ux/2026-07-14-config-multas-proveedor.md, Pieza 2.
+// ============================================================================
+
+/**
+ * Valores posibles de `OperatorPenaltySituationDto.suggestedPenaltyPath` (mismo nombre
+ * y mismos strings que la clase `SuggestedPenaltyPaths` del backend, en
+ * OperatorPenaltySituationDto.cs). Regla dura de la spec: el FRONT NUNCA calcula esta
+ * sugerencia solo — el backend ya la resuelve mirando `Supplier.PenaltyBehavior` (la
+ * config de la ficha del operador, Pieza 1) y acá solo se TRADUCE ese valor a un orden
+ * de botones + una notita.
+ */
+export const SUGGESTED_PENALTY_PATHS = {
+  ProbablyNoPenalty: "probablyNoPenalty",
+  ProbablyPenalty: "probablyPenalty",
+};
+
+/**
+ * Traduce `suggestedPenaltyPath` (que ya viene resuelto del backend, por operador) a
+ * cómo se ven los dos botones "Sí, el operador cobró una multa" / "No cobró nada /
+ * devolvió todo" en el paso de la pregunta.
+ *
+ * Regla dura de la spec (Pieza 2): la sugerencia SOLO cambia el orden y el resaltado de
+ * los botones, más una notita arriba — los DOS botones siguen estando siempre, nunca se
+ * esconde ni se deshabilita el camino no sugerido, y nunca se auto-elige nada.
+ *
+ * Con `suggestedPenaltyPath` null (operador en "no se sabe", o el paso ya no está en la
+ * etapa de pregunta) el resultado deja los dos botones con el mismo aspecto fuerte de
+ * siempre y sin notita — CERO cambio visual respecto de antes de esta tanda. Un valor
+ * desconocido (versión de backend más nueva que este frontend) degrada al mismo
+ * comportamiento de "sin sugerencia", nunca rompe la pantalla.
+ *
+ * @param {string|null|undefined} suggestedPenaltyPath
+ * @returns {{
+ *   ordenBotones: "siPrimero"|"noPrimero",
+ *   siResaltado: boolean,
+ *   noResaltado: boolean,
+ *   notita: string|null,
+ * }}
+ */
+export function sugerenciaCaminoMulta(suggestedPenaltyPath) {
+  if (suggestedPenaltyPath === SUGGESTED_PENALTY_PATHS.ProbablyNoPenalty) {
+    return {
+      ordenBotones: "noPrimero",
+      siResaltado: false,
+      noResaltado: true,
+      notita: "💡 Este operador casi nunca cobra multa (según su ficha).",
+    };
+  }
+
+  if (suggestedPenaltyPath === SUGGESTED_PENALTY_PATHS.ProbablyPenalty) {
+    return {
+      ordenBotones: "siPrimero",
+      siResaltado: true,
+      noResaltado: false,
+      notita: "💡 Este operador casi siempre cobra multa (según su ficha).",
+    };
+  }
+
+  // null, o cualquier valor que este frontend todavía no conoce: sin sugerencia, orden
+  // y resaltado de siempre (los dos botones "fuertes", sin notita).
+  return {
+    ordenBotones: "siPrimero",
+    siResaltado: true,
+    noResaltado: true,
+    notita: null,
+  };
+}
+
 /**
  * ADR-044 T4 (2026-07-10): true si, de la lista de cargos de un operador, hay al menos
  * uno TRASLADABLE (Kind != "Withholding" — las retenciones nunca emiten renglón de ND,

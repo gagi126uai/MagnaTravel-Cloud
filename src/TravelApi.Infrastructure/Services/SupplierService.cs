@@ -133,6 +133,9 @@ public class SupplierService : ISupplierService
                 // la fila (toggle de estado) NO los borre a null (ver el XML-doc del DTO).
                 DefaultPaymentTermDays = supplier.DefaultPaymentTermDays,
                 TreasuryFxAssumedByOverride = supplier.TreasuryFxAssumedByOverride,
+                // Configuracion de multas de cancelacion (2026-07-14): mismo motivo que los dos campos de
+                // arriba (que un PUT con spread de la fila no la borre).
+                PenaltyBehavior = supplier.PenaltyBehavior,
                 IsActive = supplier.IsActive,
                 CurrentBalance = supplier.CurrentBalance,
                 CreatedAt = supplier.CreatedAt
@@ -196,6 +199,12 @@ public class SupplierService : ISupplierService
         // valida que, si viene con valor, sea uno de los dos definidos por el enum.
         ValidateTreasuryFxAssumedByOverride(supplier.TreasuryFxAssumedByOverride);
 
+        // Configuracion de multas de cancelacion (2026-07-14): el campo no es nullable (default Unknown), pero
+        // igual se valida que el valor sea uno de los tres definidos por el enum — el binder JSON no tiene
+        // JsonStringEnumConverter configurado en este proyecto, asi que un INT fuera de rango podria colarse sin
+        // este chequeo (mismo motivo que ValidateTreasuryFxAssumedByOverride de arriba).
+        ValidatePenaltyBehavior(supplier.PenaltyBehavior);
+
         supplier.CreatedAt = DateTime.UtcNow;
         supplier.CurrentBalance = 0;
 
@@ -217,6 +226,9 @@ public class SupplierService : ISupplierService
 
         // ADR-044 T3b Decision 3 (2026-07-10): mismo chequeo que en el alta.
         ValidateTreasuryFxAssumedByOverride(supplier.TreasuryFxAssumedByOverride);
+
+        // Configuracion de multas de cancelacion (2026-07-14): mismo chequeo que en el alta.
+        ValidatePenaltyBehavior(supplier.PenaltyBehavior);
 
         // Rediseño alta de operador (2026-06-28): la moneda por defecto SOLO se toca si el request realmente
         // trae una. Los forms de edicion existentes (SupplierFormModal y la solapa "Datos") NO mandan
@@ -278,6 +290,10 @@ public class SupplierService : ISupplierService
         // frecuente ("Como la configuración general", el default invisible), no "el front no mando este campo" —
         // la ficha del operador que setea esta excepcion tiene que poder VOLVER a null para deshacerla.
         existing.TreasuryFxAssumedByOverride = supplier.TreasuryFxAssumedByOverride;
+        // Configuracion de multas de cancelacion (2026-07-14): se asigna SIEMPRE, igual que
+        // TreasuryFxAssumedByOverride de arriba (no es "el front no mando este campo", Unknown es un valor de
+        // negocio valido y es el default — la ficha del operador tiene que poder VOLVER a Unknown).
+        existing.PenaltyBehavior = supplier.PenaltyBehavior;
         // Rediseño alta de operador (2026-06-28): solo se pisa la moneda si el request trajo una (ver arriba);
         // si no vino, se preserva la existente para no resetearla a ARS al editar otros campos.
         if (defaultCurrencyProvided)
@@ -322,6 +338,20 @@ public class SupplierService : ISupplierService
         {
             throw new ArgumentException(
                 "El valor de 'quién asume el ajuste por el dólar' para este operador no es válido.");
+        }
+    }
+
+    /// <summary>
+    /// Configuracion de multas de cancelacion (2026-07-14): valida que el valor de "que tan seguido cobra
+    /// multa este operador" sea uno de los tres definidos por <see cref="SupplierPenaltyBehavior"/>. Lanza
+    /// <see cref="ArgumentException"/> (el controller la mapea a 400) con mensaje en espanol de negocio.
+    /// </summary>
+    private static void ValidatePenaltyBehavior(SupplierPenaltyBehavior penaltyBehavior)
+    {
+        if (!Enum.IsDefined(typeof(SupplierPenaltyBehavior), penaltyBehavior))
+        {
+            throw new ArgumentException(
+                "El valor de 'que tan seguido cobra multa este operador' no es válido.");
         }
     }
 

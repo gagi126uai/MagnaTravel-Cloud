@@ -63,6 +63,18 @@ import {
     overrideDesdeValorSelect,
 } from "../../../lib/treasuryFxAssumedBy.js";
 import { siguienteEstadoTreasuryFxOverride, puedeGuardarConTreasuryFxOverride } from "../lib/treasuryFxOverrideState.js";
+// Configuracion de multas de cancelacion (2026-07-14, spec
+// docs/ux/2026-07-14-config-multas-proveedor.md, Pieza 1): campo hermano del de arriba,
+// mismo molde (valor real cargado aparte de GET /suppliers/{id}, bloqueo de Guardar
+// hasta confirmarlo). Ver el comentario de `cargarConfiguracionAvanzadaOperador` más
+// abajo: los dos campos comparten el MISMO fetch porque viven en la misma respuesta.
+import {
+    SUPPLIER_PENALTY_BEHAVIOR,
+    OPCIONES_COMPORTAMIENTO_MULTA_OPERADOR,
+    valorSelectDesdePenaltyBehavior,
+    penaltyBehaviorDesdeValorSelect,
+} from "../../../lib/supplierPenaltyBehavior.js";
+import { siguienteEstadoPenaltyBehavior, puedeGuardarConPenaltyBehavior } from "../lib/penaltyBehaviorState.js";
 
 // Estado inicial vacío para la paginación de servicios.
 const emptyPage = {
@@ -261,6 +273,15 @@ function SupplierInlineEditForm({ supplier, onGuardado }) {
     // ya cargada — justo el bug que hay que evitar.
     const [treasuryFxOverrideSelect, setTreasuryFxOverrideSelect] = useState(HEREDA_CONFIGURACION_GENERAL);
     const [cargandoOverride, setCargandoOverride] = useState(true);
+
+    // Configuracion de multas de cancelacion (2026-07-14, spec
+    // docs/ux/2026-07-14-config-multas-proveedor.md, Pieza 1): "¿Suele cobrar multa
+    // cuando se anula?" — mismo criterio de bloqueo que el campo de arriba (nunca
+    // guardar sin conocer el valor real, para no pisar una configuración ya cargada
+    // con el default "no se sabe"). Arranca en Unknown mientras carga.
+    const [penaltyBehaviorSelect, setPenaltyBehaviorSelect] = useState(SUPPLIER_PENALTY_BEHAVIOR.Unknown);
+    const [cargandoPenaltyBehavior, setCargandoPenaltyBehavior] = useState(true);
+
     // "Más detalles" cerrado por defecto (spec 4.3.2): el campo del ajuste por el dólar
     // es una excepción rara — no ocupa espacio en la vista principal de la ficha.
     const [masDetallesAbierto, setMasDetallesAbierto] = useState(false);
@@ -298,47 +319,72 @@ function SupplierInlineEditForm({ supplier, onGuardado }) {
     // ÉXITO; en el de error queda prendido y se muestra `errorCargaOverride` con un
     // botón "Reintentar" que vuelve a llamar a esta misma función.
     const [errorCargaOverride, setErrorCargaOverride] = useState(null);
+    // Mismo criterio para "¿Suele cobrar multa cuando se anula?" (Pieza 1, 2026-07-14).
+    const [errorCargaPenaltyBehavior, setErrorCargaPenaltyBehavior] = useState(null);
 
-    const cargarTreasuryFxOverride = useCallback(async () => {
+    // Busca el valor REAL de `treasuryFxAssumedByOverride` Y `penaltyBehavior` en UN
+    // SOLO fetch — los dos campos viven en la MISMA respuesta (GET /suppliers/{id}, que
+    // el overview de la cuenta NO expone). Antes esta función solo traía el primero; se
+    // extendió acá para no duplicar una segunda llamada de red a la misma URL. Cada campo
+    // sigue teniendo su propio estado de carga/error (ver los comentarios de arriba) por
+    // si en el futuro alguno pasa a resolverse por otro endpoint — hoy están acoplados
+    // solo porque comparten la respuesta, no por una razón de negocio.
+    const cargarConfiguracionAvanzadaOperador = useCallback(async () => {
         if (!supplier) return;
         setCargandoOverride(true);
         setErrorCargaOverride(null);
+        setCargandoPenaltyBehavior(true);
+        setErrorCargaPenaltyBehavior(null);
         try {
             const detalle = await api.get(`/suppliers/${getPublicId(supplier)}`);
+
             // siguienteEstadoTreasuryFxOverride es la ÚNICA fuente de verdad de qué hacer
             // con el resultado (ver treasuryFxOverrideState.js) — el componente no repite
             // la regla, así nunca puede volver a divergir como pasó con el bug de F2.
-            const siguiente = siguienteEstadoTreasuryFxOverride({
+            const siguienteOverride = siguienteEstadoTreasuryFxOverride({
                 exito: true,
                 selectValueNuevo: valorSelectDesdeOverride(detalle?.treasuryFxAssumedByOverride),
             });
-            setCargandoOverride(siguiente.cargandoOverride);
-            setErrorCargaOverride(siguiente.errorCargaOverride);
-            setTreasuryFxOverrideSelect(siguiente.treasuryFxOverrideSelect);
-        } catch (error) {
-            const siguiente = siguienteEstadoTreasuryFxOverride({
-                exito: false,
-                errorMessage: getApiErrorMessage(error, null),
+            setCargandoOverride(siguienteOverride.cargandoOverride);
+            setErrorCargaOverride(siguienteOverride.errorCargaOverride);
+            setTreasuryFxOverrideSelect(siguienteOverride.treasuryFxOverrideSelect);
+
+            // Mismo criterio para el campo nuevo (ver penaltyBehaviorState.js).
+            const siguientePenaltyBehavior = siguienteEstadoPenaltyBehavior({
+                exito: true,
+                selectValueNuevo: valorSelectDesdePenaltyBehavior(detalle?.penaltyBehavior),
             });
-            setCargandoOverride(siguiente.cargandoOverride);
-            setErrorCargaOverride(siguiente.errorCargaOverride);
+            setCargandoPenaltyBehavior(siguientePenaltyBehavior.cargandoPenaltyBehavior);
+            setErrorCargaPenaltyBehavior(siguientePenaltyBehavior.errorCargaPenaltyBehavior);
+            setPenaltyBehaviorSelect(siguientePenaltyBehavior.penaltyBehaviorSelect);
+        } catch (error) {
+            const mensaje = getApiErrorMessage(error, null);
+
+            const siguienteOverride = siguienteEstadoTreasuryFxOverride({ exito: false, errorMessage: mensaje });
+            setCargandoOverride(siguienteOverride.cargandoOverride);
+            setErrorCargaOverride(siguienteOverride.errorCargaOverride);
             // A propósito NO se llama a setTreasuryFxOverrideSelect acá: la función pura
             // no devuelve ese campo en la rama de error (ver treasuryFxOverrideState.js)
             // — el valor que el usuario ya veía queda intacto, nunca se resetea.
+
+            const siguientePenaltyBehavior = siguienteEstadoPenaltyBehavior({ exito: false, errorMessage: mensaje });
+            setCargandoPenaltyBehavior(siguientePenaltyBehavior.cargandoPenaltyBehavior);
+            setErrorCargaPenaltyBehavior(siguientePenaltyBehavior.errorCargaPenaltyBehavior);
         }
     }, [supplier]);
 
-    // Busca el valor REAL de treasuryFxAssumedByOverride (GET /suppliers/{id}, no el
-    // overview) cada vez que cambia el operador. Efecto separado del de arriba porque
-    // lee de un endpoint distinto — no queremos que un fallo acá tumbe el resto del form.
+    // Dispara la carga cada vez que cambia el operador. Efecto separado del que
+    // inicializa `formData` (arriba) porque lee de un endpoint distinto — un fallo acá
+    // no debe tumbar el resto del formulario.
     useEffect(() => {
-        cargarTreasuryFxOverride();
-    }, [cargarTreasuryFxOverride]);
+        cargarConfiguracionAvanzadaOperador();
+    }, [cargarConfiguracionAvanzadaOperador]);
 
-    // FIX F2: si la carga falló, el cartel de error tiene que ser VISIBLE de una —
-    // el botón "Guardar cambios" queda bloqueado y el usuario necesita entender por
-    // qué sin tener que adivinar que hay que abrir "Más detalles" primero.
-    const masDetallesEfectivamenteAbierto = masDetallesAbierto || Boolean(errorCargaOverride);
+    // FIX F2: si CUALQUIERA de las dos cargas falló, el cartel de error tiene que ser
+    // VISIBLE de una — el botón "Guardar cambios" queda bloqueado y el usuario necesita
+    // entender por qué sin tener que adivinar que hay que abrir "Más detalles" primero.
+    const masDetallesEfectivamenteAbierto =
+        masDetallesAbierto || Boolean(errorCargaOverride) || Boolean(errorCargaPenaltyBehavior);
 
     const handleChange = (campo) => (event) => {
         setFormData((anterior) => ({ ...anterior, [campo]: event.target.value }));
@@ -346,8 +392,10 @@ function SupplierInlineEditForm({ supplier, onGuardado }) {
 
     const handleSubmit = async (event) => {
         event.preventDefault();
-        // ver comentario del estado: nunca guardar sin confirmar el valor real del ajuste por el dólar
+        // ver comentario del estado: nunca guardar sin confirmar el valor real de los dos
+        // campos "avanzados" (ajuste por el dólar + comportamiento con multas).
         if (!puedeGuardarConTreasuryFxOverride(cargandoOverride)) return;
+        if (!puedeGuardarConPenaltyBehavior(cargandoPenaltyBehavior)) return;
         setSaving(true);
         try {
             await api.put(`/suppliers/${getPublicId(supplier)}`, {
@@ -356,6 +404,11 @@ function SupplierInlineEditForm({ supplier, onGuardado }) {
                 // campo siempre, así que omitirlo o mandar null "por defecto" borraría
                 // una excepción real ya cargada para este operador.
                 treasuryFxAssumedByOverride: overrideDesdeValorSelect(treasuryFxOverrideSelect),
+                // Configuracion de multas de cancelacion (2026-07-14, Pieza 1): mismo
+                // criterio — el PUT asigna SIEMPRE este campo (el backend lo defaultea a
+                // Unknown si no viaja), así que hay que mandar el valor actual aunque el
+                // usuario no lo haya tocado, para no pisar una config ya cargada.
+                penaltyBehavior: penaltyBehaviorDesdeValorSelect(penaltyBehaviorSelect),
             });
             showSuccess("Datos del operador guardados correctamente.");
             if (onGuardado) onGuardado();
@@ -520,59 +573,111 @@ function SupplierInlineEditForm({ supplier, onGuardado }) {
                         aria-hidden="true"
                     />
                     Más detalles
-                    {errorCargaOverride && (
+                    {(errorCargaOverride || errorCargaPenaltyBehavior) && (
                         <span className="ml-1 h-1.5 w-1.5 rounded-full bg-rose-500" aria-hidden="true" title="Hay un dato pendiente de cargar" />
                     )}
                 </button>
 
                 {masDetallesEfectivamenteAbierto && (
-                    <div className="mt-3 space-y-2" data-testid="supplier-datos-mas-detalles-panel">
-                        <label className={labelClass} htmlFor="supplier-treasury-fx-override">
-                            Ajuste por el dólar en sus multas
-                        </label>
+                    <div className="mt-3 space-y-4" data-testid="supplier-datos-mas-detalles-panel">
+                        <div className="space-y-2">
+                            <label className={labelClass} htmlFor="supplier-treasury-fx-override">
+                                Ajuste por el dólar en sus multas
+                            </label>
 
-                        {errorCargaOverride ? (
-                            // FIX F2: mientras la carga real falló, NO se muestra el select con un
-                            // valor que podría no ser el correcto — solo el cartel + reintentar.
-                            // El submit del form entero queda bloqueado (cargandoOverride sigue true).
-                            <div
-                                role="alert"
-                                className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200 flex items-start justify-between gap-3"
-                                data-testid="supplier-datos-treasury-fx-override-error"
-                            >
-                                <span>{errorCargaOverride}</span>
-                                <button
-                                    type="button"
-                                    onClick={cargarTreasuryFxOverride}
-                                    className="flex-shrink-0 rounded-lg border border-rose-300 bg-white px-2.5 py-1 text-xs font-bold text-rose-700 hover:bg-rose-50 dark:bg-slate-800 dark:text-rose-300 dark:border-rose-700"
-                                    data-testid="supplier-datos-treasury-fx-override-reintentar"
+                            {errorCargaOverride ? (
+                                // FIX F2: mientras la carga real falló, NO se muestra el select con un
+                                // valor que podría no ser el correcto — solo el cartel + reintentar.
+                                // El submit del form entero queda bloqueado (cargandoOverride sigue true).
+                                <div
+                                    role="alert"
+                                    className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200 flex items-start justify-between gap-3"
+                                    data-testid="supplier-datos-treasury-fx-override-error"
                                 >
-                                    Reintentar
-                                </button>
-                            </div>
-                        ) : (
-                            <>
-                                <select
-                                    id="supplier-treasury-fx-override"
-                                    value={treasuryFxOverrideSelect}
-                                    onChange={(event) => setTreasuryFxOverrideSelect(event.target.value)}
-                                    disabled={cargandoOverride}
-                                    className={inputClass + " sm:max-w-sm"}
-                                    data-testid="supplier-datos-treasury-fx-override-select"
+                                    <span>{errorCargaOverride}</span>
+                                    <button
+                                        type="button"
+                                        onClick={cargarConfiguracionAvanzadaOperador}
+                                        className="flex-shrink-0 rounded-lg border border-rose-300 bg-white px-2.5 py-1 text-xs font-bold text-rose-700 hover:bg-rose-50 dark:bg-slate-800 dark:text-rose-300 dark:border-rose-700"
+                                        data-testid="supplier-datos-treasury-fx-override-reintentar"
+                                    >
+                                        Reintentar
+                                    </button>
+                                </div>
+                            ) : (
+                                <>
+                                    <select
+                                        id="supplier-treasury-fx-override"
+                                        value={treasuryFxOverrideSelect}
+                                        onChange={(event) => setTreasuryFxOverrideSelect(event.target.value)}
+                                        disabled={cargandoOverride}
+                                        className={inputClass + " sm:max-w-sm"}
+                                        data-testid="supplier-datos-treasury-fx-override-select"
+                                    >
+                                        {OPCIONES_ASUME_AJUSTE_DOLAR_OPERADOR.map((opcion) => (
+                                            <option key={opcion.value} value={opcion.value}>
+                                                {opcion.label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <p className="text-xs text-muted-foreground">
+                                        {cargandoOverride
+                                            ? "Cargando el valor actual…"
+                                            : "Por defecto usa la configuración general de Facturación. Solo cambialo si este operador necesita un criterio distinto."}
+                                    </p>
+                                </>
+                            )}
+                        </div>
+
+                        {/* Configuracion de multas de cancelacion (2026-07-14, Pieza 1): campo nuevo
+                            DEBAJO del ajuste por el dólar, mismo molde de carga/error/reintentar. Solo
+                            SUGIERE un camino en el paso de la multa de una anulación (Pieza 2) — nunca
+                            completa montos ni decide sola (regla dura de la spec). */}
+                        <div className="space-y-2">
+                            <label className={labelClass} htmlFor="supplier-penalty-behavior">
+                                ¿Suele cobrar multa cuando se anula?
+                            </label>
+
+                            {errorCargaPenaltyBehavior ? (
+                                <div
+                                    role="alert"
+                                    className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200 flex items-start justify-between gap-3"
+                                    data-testid="supplier-datos-penalty-behavior-error"
                                 >
-                                    {OPCIONES_ASUME_AJUSTE_DOLAR_OPERADOR.map((opcion) => (
-                                        <option key={opcion.value} value={opcion.value}>
-                                            {opcion.label}
-                                        </option>
-                                    ))}
-                                </select>
-                                <p className="text-xs text-muted-foreground">
-                                    {cargandoOverride
-                                        ? "Cargando el valor actual…"
-                                        : "Por defecto usa la configuración general de Facturación. Solo cambialo si este operador necesita un criterio distinto."}
-                                </p>
-                            </>
-                        )}
+                                    <span>{errorCargaPenaltyBehavior}</span>
+                                    <button
+                                        type="button"
+                                        onClick={cargarConfiguracionAvanzadaOperador}
+                                        className="flex-shrink-0 rounded-lg border border-rose-300 bg-white px-2.5 py-1 text-xs font-bold text-rose-700 hover:bg-rose-50 dark:bg-slate-800 dark:text-rose-300 dark:border-rose-700"
+                                        data-testid="supplier-datos-penalty-behavior-reintentar"
+                                    >
+                                        Reintentar
+                                    </button>
+                                </div>
+                            ) : (
+                                <>
+                                    <select
+                                        id="supplier-penalty-behavior"
+                                        value={penaltyBehaviorSelect}
+                                        onChange={(event) => setPenaltyBehaviorSelect(event.target.value)}
+                                        disabled={cargandoPenaltyBehavior}
+                                        className={inputClass + " sm:max-w-sm"}
+                                        data-testid="supplier-datos-penalty-behavior-select"
+                                    >
+                                        {OPCIONES_COMPORTAMIENTO_MULTA_OPERADOR.map((opcion) => (
+                                            <option key={opcion.value} value={opcion.value}>
+                                                {opcion.label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <p className="text-xs text-muted-foreground">
+                                        {cargandoPenaltyBehavior
+                                            ? "Cargando el valor actual…"
+                                            : "Esto solo resalta un camino cuando anulás. Nunca completa montos ni decide por vos."}
+                                    </p>
+                                </>
+                            )}
+                        </div>
                     </div>
                 )}
             </div>
@@ -580,7 +685,11 @@ function SupplierInlineEditForm({ supplier, onGuardado }) {
             <div className="flex items-center gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
                 <button
                     type="submit"
-                    disabled={saving || !puedeGuardarConTreasuryFxOverride(cargandoOverride)}
+                    disabled={
+                        saving ||
+                        !puedeGuardarConTreasuryFxOverride(cargandoOverride) ||
+                        !puedeGuardarConPenaltyBehavior(cargandoPenaltyBehavior)
+                    }
                     className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 shadow-lg shadow-indigo-500/25 transition-all disabled:opacity-50"
                     data-testid="supplier-datos-submit"
                 >

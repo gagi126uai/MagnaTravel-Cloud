@@ -20,4 +20,11 @@ public class SupplierDto
     /// si un futuro endpoint empieza a usarlo).
     /// </summary>
     public TreasuryFxAssumedBy? TreasuryFxAssumedByOverride { get; set; }
+
+    /// <summary>
+    /// Configuracion de multas de cancelacion (2026-07-14): que tan seguido cobra multa este operador. Mismo
+    /// motivo de existir en este DTO dormido que <see cref="TreasuryFxAssumedByOverride"/>: se mantiene en
+    /// sync por si un futuro endpoint empieza a usar este DTO.
+    /// </summary>
+    public SupplierPenaltyBehavior PenaltyBehavior { get; set; }
 }

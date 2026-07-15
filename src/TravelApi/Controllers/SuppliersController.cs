@@ -449,7 +449,11 @@ public class SuppliersController : ControllerBase
         // multas de ESTE operador. null = hereda el default de la agencia (Configuración operativa). Viaja como
         // el INT del enum (Client=0, Agency=1) — este proyecto no tiene JsonStringEnumConverter configurado,
         // mismo criterio que TreasuryFxAssumedByDefault en OperationalFinanceSettingsDto.
-        supplier.TreasuryFxAssumedByOverride
+        supplier.TreasuryFxAssumedByOverride,
+        // Configuracion de multas de cancelacion (2026-07-14): que tan seguido cobra multa este operador
+        // (Unknown=0/RarelyCharges=1/UsuallyCharges=2). Default Unknown = sin pista en el paso de la multa.
+        // Viaja como el INT del enum, mismo criterio que TreasuryFxAssumedByOverride de arriba.
+        supplier.PenaltyBehavior
     };
 
     private static Supplier MapSupplier(SupplierUpsertRequest request) => new()
@@ -469,7 +473,11 @@ public class SuppliersController : ControllerBase
         DefaultCurrency = request.DefaultCurrency,
         // ADR-044 T3b Decision 3 (2026-07-10): excepcion opcional del operador. La validacion (que sea un valor
         // definido del enum) la hace el servicio; null siempre es valido (hereda el default de la agencia).
-        TreasuryFxAssumedByOverride = request.TreasuryFxAssumedByOverride
+        TreasuryFxAssumedByOverride = request.TreasuryFxAssumedByOverride,
+        // Configuracion de multas de cancelacion (2026-07-14): que tan seguido cobra multa este operador. La
+        // validacion (que sea un valor definido del enum) la hace el servicio; si el request no lo manda, el
+        // binder JSON lo deja en Unknown (default del enum), que es el valor correcto para "sin pista".
+        PenaltyBehavior = request.PenaltyBehavior
     };
 }
 
@@ -492,4 +500,8 @@ public record SupplierUpsertRequest(
     // multas de ESTE operador (Client=0 / Agency=1). null = hereda el default de la agencia (Configuración
     // operativa) — es el valor NORMAL, no "campo sin completar": el servicio lo asigna SIEMPRE (a diferencia
     // de DefaultCurrency arriba), asi que mandar null explicito SI limpia una excepcion previa.
-    TreasuryFxAssumedBy? TreasuryFxAssumedByOverride = null);
+    TreasuryFxAssumedBy? TreasuryFxAssumedByOverride = null,
+    // Configuracion de multas de cancelacion (2026-07-14): que tan seguido cobra multa este operador
+    // (Unknown=0/RarelyCharges=1/UsuallyCharges=2). Default Unknown ("no se sabe") — es el valor NORMAL,
+    // el servicio lo asigna SIEMPRE (mismo criterio que TreasuryFxAssumedByOverride de arriba).
+    SupplierPenaltyBehavior PenaltyBehavior = SupplierPenaltyBehavior.Unknown);

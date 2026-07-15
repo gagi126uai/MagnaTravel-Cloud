@@ -55,7 +55,14 @@ import {
   situacionesConPreguntaDeMulta,
   hayMasDeUnOperadorConMulta,
   tituloConNombreOperador,
+  sugerenciaCaminoMulta,
 } from "../../cancellations/operatorPenaltyBanner";
+// Configuracion de multas de cancelacion (2026-07-14, spec
+// docs/ux/2026-07-14-config-multas-proveedor.md, Pieza 3): textos del "Deshacer" del
+// cierre sin multa. Viven en un módulo aparte (no JSX) para que el enlace del cartel
+// rosa (acá abajo) y el panel que se abre (DeshacerCierreSinMultaInline.jsx) usen
+// SIEMPRE la misma frase — y para poder testearlos sin renderizar nada.
+import { ENLACE_REABRIR_PASO_MULTA } from "../../cancellations/lib/reabrirPasoMultaTextos.js";
 import { elegirMonedaSugeridaParaMulta } from "../lib/operatorPenaltyCurrency";
 import { hasPermission, isAdmin } from "../../../auth";
 import { calcularSugerenciaComposicion } from "../lib/pasajeroHint";
@@ -1048,7 +1055,10 @@ export default function ReservaDetailPage() {
     buscarCancelacionYAbrirPanel(() => setShowSinMultaInline(true));
   };
 
-  // "Deshacer: el operador sí cobró una multa" → abre DeshacerCierreSinMultaInline (Admin only).
+  // "Reabrir el paso de la multa" (spec Pieza 3, 2026-07-14) → abre
+  // DeshacerCierreSinMultaInline (Admin only). El nombre de la función queda igual
+  // (sigue "deshaciendo" el cierre sin multa puertas adentro) aunque el texto visible
+  // haya cambiado — ver reabrirPasoMultaTextos.js para la copy exacta.
   const handleAbrirDeshacer = () =>
     buscarCancelacionYAbrirPanel(() => setShowDeshacerWaiveInline(true));
 
@@ -1455,10 +1465,10 @@ export default function ReservaDetailPage() {
                         disabled={buscandoMulta}
                         data-testid="btn-deshacer-cierre-sin-multa"
                         className="inline-flex items-center gap-1.5 text-xs text-rose-600/70 hover:text-rose-700 dark:text-rose-400/60 dark:hover:text-rose-300 transition-colors disabled:opacity-50"
-                        aria-label="Deshacer el cierre sin multa del operador"
+                        aria-label={ENLACE_REABRIR_PASO_MULTA}
                       >
                         {buscandoMulta && <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />}
-                        · Deshacer: el operador sí cobró una multa
+                        · {ENLACE_REABRIR_PASO_MULTA}
                       </button>
                     </div>
                   )}
@@ -1549,6 +1559,56 @@ export default function ReservaDetailPage() {
                       // a null cuando la multa nunca se deshizo (no se muestra nada).
                       const rastroDeshacer = textoRastroDeshacerMulta(situacion.lastDebitNoteUndo);
 
+                      // Configuracion de multas de cancelacion (2026-07-14, spec Pieza 2):
+                      // el backend YA calculó, para ESTE operador puntual, qué camino es más
+                      // probable (mirando `Supplier.PenaltyBehavior` de su ficha). El front
+                      // NUNCA re-deriva esto — solo traduce el string a un orden de botones +
+                      // una notita. Con `suggestedPenaltyPath` null (operador en "no se sabe",
+                      // el default de todo operador nuevo) el resultado deja la pantalla
+                      // EXACTAMENTE como se veía antes de esta tanda.
+                      const sugerencia = sugerenciaCaminoMulta(situacion.suggestedPenaltyPath);
+
+                      // Clases de cada botón: el camino sugerido conserva su color fuerte de
+                      // siempre; el otro pasa a un tono gris apagado (sigue siendo un botón
+                      // normal, clickeable — regla dura de la spec: nunca se esconde ni se
+                      // deshabilita el camino no sugerido, solo se le baja el volumen visual).
+                      const claseBotonSiCobro = sugerencia.siResaltado
+                        ? "inline-flex items-center gap-2 rounded-lg border border-orange-400 bg-orange-50 px-3 py-2 text-xs font-bold text-orange-700 hover:bg-orange-100 dark:border-orange-700 dark:bg-orange-950/30 dark:text-orange-300 dark:hover:bg-orange-900/40 transition-colors disabled:opacity-50"
+                        : "inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 transition-colors disabled:opacity-50";
+                      const claseBotonNoCobro = sugerencia.noResaltado
+                        ? "inline-flex items-center gap-2 rounded-lg border border-teal-400 bg-teal-50 px-3 py-2 text-xs font-bold text-teal-700 hover:bg-teal-100 dark:border-teal-700 dark:bg-teal-950/30 dark:text-teal-300 dark:hover:bg-teal-900/40 transition-colors disabled:opacity-50"
+                        : "inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 transition-colors disabled:opacity-50";
+
+                      const botonSiCobro = (
+                        // Sí cobró: abre el panel naranja (emite Nota de Débito)
+                        <button
+                          key="si-cobro"
+                          type="button"
+                          onClick={() => handleAbrirMultaConPenalidad(situacion)}
+                          disabled={buscandoMulta}
+                          data-testid={`btn-si-cobro-multa${sufijoTestId}`}
+                          className={claseBotonSiCobro}
+                        >
+                          {buscandoMulta && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
+                          Sí, el operador cobró una multa
+                        </button>
+                      );
+
+                      const botonNoCobro = (
+                        // No cobró: abre el panel teal (cierra sin ND)
+                        <button
+                          key="no-cobro"
+                          type="button"
+                          onClick={() => handleAbrirSinMulta(situacion)}
+                          disabled={buscandoMulta}
+                          data-testid={`btn-no-cobro-multa${sufijoTestId}`}
+                          className={claseBotonNoCobro}
+                        >
+                          {buscandoMulta && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
+                          No cobró nada / devolvió todo
+                        </button>
+                      );
+
                       return (
                         <div key={situacion.supplierPublicId ?? "legacy"}>
                           <p className="text-sm font-semibold text-rose-900 dark:text-rose-200 mb-3">
@@ -1567,29 +1627,18 @@ export default function ReservaDetailPage() {
                               {rastroDeshacer}
                             </p>
                           )}
+                          {sugerencia.notita && (
+                            <p
+                              className="text-xs font-medium text-rose-700 dark:text-rose-300 mb-2"
+                              data-testid={`multa-sugerencia-notita${sufijoTestId}`}
+                            >
+                              {sugerencia.notita}
+                            </p>
+                          )}
                           <div className="flex flex-wrap gap-3">
-                            {/* Sí cobró: abre el panel naranja (emite Nota de Débito) */}
-                            <button
-                              type="button"
-                              onClick={() => handleAbrirMultaConPenalidad(situacion)}
-                              disabled={buscandoMulta}
-                              data-testid={`btn-si-cobro-multa${sufijoTestId}`}
-                              className="inline-flex items-center gap-2 rounded-lg border border-orange-400 bg-orange-50 px-3 py-2 text-xs font-bold text-orange-700 hover:bg-orange-100 dark:border-orange-700 dark:bg-orange-950/30 dark:text-orange-300 dark:hover:bg-orange-900/40 transition-colors disabled:opacity-50"
-                            >
-                              {buscandoMulta && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
-                              Sí, el operador cobró una multa
-                            </button>
-                            {/* No cobró: abre el panel teal (cierra sin ND) */}
-                            <button
-                              type="button"
-                              onClick={() => handleAbrirSinMulta(situacion)}
-                              disabled={buscandoMulta}
-                              data-testid={`btn-no-cobro-multa${sufijoTestId}`}
-                              className="inline-flex items-center gap-2 rounded-lg border border-teal-400 bg-teal-50 px-3 py-2 text-xs font-bold text-teal-700 hover:bg-teal-100 dark:border-teal-700 dark:bg-teal-950/30 dark:text-teal-300 dark:hover:bg-teal-900/40 transition-colors disabled:opacity-50"
-                            >
-                              {buscandoMulta && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
-                              No cobró nada / devolvió todo
-                            </button>
+                            {sugerencia.ordenBotones === "noPrimero"
+                              ? [botonNoCobro, botonSiCobro]
+                              : [botonSiCobro, botonNoCobro]}
                           </div>
                         </div>
                       );

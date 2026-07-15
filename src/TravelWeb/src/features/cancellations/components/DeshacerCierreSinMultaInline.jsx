@@ -10,6 +10,15 @@
  *
  * Especificación UX aprobada: docs/ux/2026-06-28c-cierre-sin-multa-operador.md (mockup 3).
  *
+ * Copy actualizada (2026-07-14, spec docs/ux/2026-07-14-config-multas-proveedor.md,
+ * Pieza 3): el título y las explicaciones pasaron de "Deshacer el cierre sin multa" a
+ * "Reabrir el paso de la multa" — dice QUÉ hace en vez de adivinar el motivo, y aclara
+ * que este cierre en particular nunca tuvo un comprobante (no hay nada que anular ante
+ * ARCA). Los textos viven en `lib/reabrirPasoMultaTextos.js` para compartirlos con el
+ * enlace del cartel rosa de ReservaDetailPage.jsx. La visibilidad admin-only y el resto
+ * del flujo (motivo obligatorio, confirmación en dos pasos, bloqueo por SALDO_YA_USADO)
+ * NO cambiaron en esta tanda.
+ *
  * E2 (spec "el paso de multa vive en la ficha", 2026-07-08): antes de mandar el motivo al
  * backend, el panel pide una confirmación explícita ("Volver" / "Sí, reabrir") — reabrir
  * el paso de la multa no es gratis: puede terminar en otra Nota de Débito o en un cambio
@@ -31,6 +40,14 @@ import { useState } from "react";
 import { RotateCcw, Loader2, AlertTriangle, X } from "lucide-react";
 import { cancellationsApi } from "../api/cancellationsApi";
 import { getApiErrorMessage } from "../../../lib/errors";
+// Configuracion de multas de cancelacion (2026-07-14, spec Pieza 3): textos compartidos
+// con el enlace del cartel rosa en ReservaDetailPage.jsx — ver reabrirPasoMultaTextos.js
+// para el porqué de tenerlos en un módulo aparte.
+import {
+  TITULO_PANEL_REABRIR_PASO_MULTA,
+  EXPLICACION_REABRIR_PASO_MULTA,
+  textoConfirmacionReabrirPasoMulta,
+} from "../lib/reabrirPasoMultaTextos.js";
 
 // Límites del campo motivo — espejamos el contrato del backend (5..500 caracteres).
 const MOTIVO_MIN = 5;
@@ -159,7 +176,7 @@ export function DeshacerCierreSinMultaInline({
                 <div className="flex items-center gap-2">
                     <RotateCcw className="w-4 h-4 text-slate-600 dark:text-slate-400" aria-hidden="true" />
                     <h4 className="text-sm font-bold text-slate-900 dark:text-white">
-                        Deshacer el cierre sin multa
+                        {TITULO_PANEL_REABRIR_PASO_MULTA}
                     </h4>
                     <span className="text-xs text-slate-500 dark:text-slate-400">
                         Reserva #{reservaNumero}
@@ -187,8 +204,7 @@ export function DeshacerCierreSinMultaInline({
                         data-testid="deshacer-confirmacion-explicita"
                         role="alert"
                     >
-                        Esto reabre el paso de la multa de la reserva {reservaNumero}. Vas a poder
-                        cargar la multa o cerrar sin multa otra vez.
+                        {textoConfirmacionReabrirPasoMulta(reservaNumero)}
                     </div>
 
                     <div className="flex justify-end gap-3 pt-1">
@@ -220,8 +236,7 @@ export function DeshacerCierreSinMultaInline({
                         className="rounded-lg border border-slate-200 bg-white p-3.5 text-xs text-slate-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
                         data-testid="deshacer-explicacion"
                     >
-                        Esto reabre el paso de la multa del operador. Vas a poder volver a elegir
-                        entre cargar la multa o cerrar sin multa otra vez.
+                        {EXPLICACION_REABRIR_PASO_MULTA}
                     </div>
 
                     {/* ── Banner de error de API — datos intactos, el usuario puede reintentar ──

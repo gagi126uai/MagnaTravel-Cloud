@@ -458,6 +458,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             // ADR-044 T3b Decision 3 (2026-07-10): override por operador de "quién asume la diferencia de
             // cambio". Enum nullable como int? (null = hereda el default de la agencia).
             entity.Property(s => s.TreasuryFxAssumedByOverride).HasConversion<int?>();
+
+            // Configuracion de multas de cancelacion (2026-07-14): que tan seguido cobra multa este operador.
+            // Enum como int, default Unknown (0) puesto a nivel BD en la migracion.
+            entity.Property(s => s.PenaltyBehavior).HasConversion<int>();
         });
 
         // Customer

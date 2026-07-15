@@ -5703,6 +5703,10 @@ public class BookingCancellationService
                 // ADR-044 "Deshacer una multa ya emitida" (2026-07-14): fecha de emision (CAE) de la ND vigente,
                 // para el aviso informativo RG 4540 en el front (avisar, no bloquear).
                 DebitNoteIssuedAt = b.DebitNoteInvoice != null ? b.DebitNoteInvoice.IssuedAt : null,
+                // Configuracion de multas de cancelacion (2026-07-14): que tan seguido cobra multa ESTE operador,
+                // para sugerir el camino en el paso de la pregunta (ver SuggestedPenaltyPath mas abajo). Se trae
+                // en la MISMA query (join a Supplier, sin consulta aparte: no agrega N+1).
+                SupplierPenaltyBehavior = b.Supplier.PenaltyBehavior,
             })
             .FirstOrDefaultAsync(ct);
 
@@ -5841,6 +5845,10 @@ public class BookingCancellationService
                 : null,
             CollectedPenaltyAmount = collectedPenaltyAmount,
             LastDebitNoteUndo = lastDebitNoteUndo,
+            // Configuracion de multas de cancelacion (2026-07-14): sugerencia PURA (Dominio) a partir de que tan
+            // seguido cobra multa este operador. Solo da algo distinto de null en la etapa de la pregunta
+            // (PendingDecision) — ver el XML-doc de OperatorPenaltySituationRules.SuggestPenaltyPath.
+            SuggestedPenaltyPath = OperatorPenaltySituationRules.SuggestPenaltyPath(state, row.SupplierPenaltyBehavior),
         };
     }
 
@@ -6042,6 +6050,9 @@ public class BookingCancellationService
                 l.SupplierId,
                 SupplierPublicId = l.Supplier.PublicId,
                 SupplierName = l.Supplier.Name,
+                // Configuracion de multas de cancelacion (2026-07-14): mismo dato que trae el principal, para
+                // sugerir el camino tambien en operadores SECUNDARIOS.
+                SupplierPenaltyBehavior = l.Supplier.PenaltyBehavior,
                 l.PenaltyStatus,
                 l.PenaltyAmount,
                 l.PenaltyCurrency,
@@ -6146,6 +6157,8 @@ public class BookingCancellationService
                 ManualReviewReason = null,
                 SupplierPublicId = first.SupplierPublicId,
                 SupplierName = first.SupplierName,
+                // Configuracion de multas de cancelacion (2026-07-14): misma regla PURA que el principal.
+                SuggestedPenaltyPath = OperatorPenaltySituationRules.SuggestPenaltyPath(state, first.SupplierPenaltyBehavior),
                 Charges = ChargesForSupplier(group.Key),
             });
         }

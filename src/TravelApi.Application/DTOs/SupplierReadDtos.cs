@@ -41,6 +41,14 @@ public class SupplierListItemDto
     /// </summary>
     public TreasuryFxAssumedBy? TreasuryFxAssumedByOverride { get; set; }
 
+    /// <summary>
+    /// Configuracion de multas de cancelacion (2026-07-14): que tan seguido cobra multa este operador
+    /// (<see cref="SupplierPenaltyBehavior"/>). Default Unknown = sin pista. Se incluye en la fila por el
+    /// mismo motivo que <see cref="DefaultPaymentTermDays"/> y <see cref="TreasuryFxAssumedByOverride"/>: que
+    /// un PUT con spread de la fila no lo borre.
+    /// </summary>
+    public SupplierPenaltyBehavior PenaltyBehavior { get; set; }
+
     public bool IsActive { get; set; }
     public decimal CurrentBalance { get; set; }
     public DateTime CreatedAt { get; set; }
