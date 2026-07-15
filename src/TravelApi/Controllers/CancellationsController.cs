@@ -596,6 +596,68 @@ public class CancellationsController : ControllerBase
     }
 
     /// <summary>
+    /// ADR-044 T5-emision (2026-07-15, diseño §6.1/§7): confirma y EMITE la Nota de Credito real de una
+    /// cancelacion PARCIAL (se canceló UN servicio de una reserva facturada; la factura sigue viva por el
+    /// resto). Sella el snapshot fiscal (heredado de la factura destino, nunca recotizado) y dispara la NC via
+    /// el pipeline de bajo nivel — la ficha hace polling del resultado (mismo patron "procesando" del modulo).
+    ///
+    /// <para><b>Permiso</b>: <see cref="Permissions.CobranzasInvoiceAnnul"/> — el MISMO que la anulacion TOTAL
+    /// y la bandeja "Comprobantes por resolver" (diseño §11: emision fiscal real contra ARCA es una accion
+    /// sensible, no <c>ReservasCancel</c>). + ownership de la reserva.</para>
+    ///
+    /// <para><b>Sin body</b>: a diferencia de <c>Confirm</c> (anulacion total), esta pantalla es de SOLO
+    /// LECTURA sobre el monto/moneda/TC (criterio matriculado + regla dura multimoneda): no hay nada que el
+    /// usuario tipee. La moneda/TC se heredan server-side de la factura destino; las condiciones fiscales se
+    /// leen del dato VIVO al momento de emitir (spec UX P3=A: "sin motivo nuevo, registro automático").</para>
+    ///
+    /// <para><b>Mapeo de errores</b>: 404 (BC no existe); 409 <c>INV-T5-EMIT-STATE</c> (ya no está Drafted/
+    /// puramente parcial); 409 <c>INV-T5-EMIT-UNRESOLVED</c> (falta resolver factura o monto); 409
+    /// <c>INV-T5-EMIT-CAP</c> (el saldo de la factura cambió); 409 <c>INV-T5-EMIT-RI-SIGNOFF</c> (agencia RI,
+    /// pendiente firma del contador); 409 <c>INV-T5-EMIT-MULTI-INVOICE</c> (2+ facturas destino, fuera de
+    /// alcance MVP); 409 <c>CONCURRENT_EDIT</c> (xmin); 503 (DB caída). Todas sin jerga/IDs/enums en el body
+    /// (gate data-exposure).</para>
+    /// </summary>
+    [HttpPost("{publicId:guid}/emit-partial-credit-note")]
+    [RequirePermission(Permissions.CobranzasInvoiceAnnul)]
+    [RequireOwnership(OwnedEntity.BookingCancellation, "publicId", bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<ActionResult<BookingCancellationDto>> EmitPartialCreditNote(
+        Guid publicId,
+        CancellationToken cancellationToken)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
+        var userName = User.FindFirst("FullName")?.Value ?? User.FindFirst(ClaimTypes.Name)?.Value;
+
+        try
+        {
+            var dto = await _bcService.ConfirmPartialCancellationEmissionAsync(publicId, userId, userName, cancellationToken);
+            return Ok(dto);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return Conflict(new
+            {
+                code = "CONCURRENT_EDIT",
+                message = "Otra edicion fue procesada primero, reintente.",
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Business limpio se muestra; ruido tecnico .NET/EF por carreras se sanea (FUGA 3).
+            return SanitizedConflict(ex, publicId);
+        }
+        // BusinessInvariantViolationException (INV-T5-EMIT-*) la atrapa el GlobalExceptionHandler (409 con
+        // invariantCode), mismo criterio que Draft/Confirm/EditLiquidation — no la catcheamos aca.
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+        }
+    }
+
+    /// <summary>
     /// Fase A (2026-06-28): cierre SIN multa de la pata del operador ("el operador no cobro multa / devuelve
     /// todo"). Es la rama ALTERNATIVA a <see cref="ConfirmPenalty"/>: el front ofrece las dos acciones cuando hay
     /// una multa pendiente. Limpia el boton pendiente dejando la penalidad en estado terminal "sin multa" y

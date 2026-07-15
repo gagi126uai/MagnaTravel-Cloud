@@ -334,6 +334,28 @@ public static class AuditActions
     public const string OperatorPenaltyDebitNoteOrphanLinkRepaired = "OperatorPenaltyDebitNoteOrphanLinkRepaired";
 
     /// <summary>
+    /// ADR-044 T5-emision (2026-07-15): un usuario CONFIRMO y disparo la emision real de la Nota de Credito
+    /// parcial de un servicio cancelado (queda encolada, esperando CAE). El detail JSON lleva la factura destino,
+    /// el monto congelado a acreditar y la moneda. Distinta de <see cref="BookingCancellationConfirmed"/> (esa es
+    /// la anulacion TOTAL, T0 del flujo legacy): esta accion NUNCA marca la reserva ni la factura como anuladas.
+    /// </summary>
+    public const string PartialCreditNoteEmissionRequested = "PartialCreditNoteEmissionRequested";
+
+    /// <summary>
+    /// ADR-044 T5-emision (2026-07-15): la Nota de Credito parcial de un servicio cancelado CONSIGUIO su CAE. El
+    /// detail JSON lleva el efecto en la plata (reversion economica) y si la factura destino quedo totalmente
+    /// acreditada (ultima porcion) o sigue viva por el resto.
+    /// </summary>
+    public const string PartialCreditNoteEmitted = "PartialCreditNoteEmitted";
+
+    /// <summary>
+    /// ADR-044 T5-emision (2026-07-15): AFIP RECHAZO la Nota de Credito parcial de un servicio cancelado. La
+    /// hija queda Failed, la factura destino NUNCA se tocó (sigue viva) y el BC vuelve a Drafted para que el
+    /// back-office pueda reintentar desde el mismo paso.
+    /// </summary>
+    public const string PartialCreditNoteEmissionRejected = "PartialCreditNoteEmissionRejected";
+
+    /// <summary>
     /// ADR-044 T2 Addendum (2026-07-10): un usuario agrego un cargo SECUNDARIO del operador sobre una multa ya
     /// confirmada (ej. una retencion fiscal ademas del cargo administrativo automatico). Accion OPCIONAL, no
     /// parte del flujo simple. El detail JSON lleva quien/cuando, el BC/reserva, el operador, y el

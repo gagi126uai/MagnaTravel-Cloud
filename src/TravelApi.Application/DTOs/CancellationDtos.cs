@@ -162,6 +162,74 @@ public class BookingCancellationDto
     /// Vacio si todavia no hubo cobros que se vuelvan saldo a favor.
     /// </summary>
     public Dictionary<string, decimal> ClientCreditByCurrency { get; set; } = new();
+
+    /// <summary>
+    /// ADR-044 T5-emision (2026-07-15, diseño §7): contrato de la pantalla "confirmar y emitir la devolución"
+    /// de una cancelacion PARCIAL (se canceló UN servicio de una reserva facturada). Null cuando este BC NO es
+    /// puramente parcial (no tiene ninguna linea Scope=Partial, o tiene alguna Scope=Full — ese es el circuito
+    /// de anulacion TOTAL, un contrato distinto). Todos los montos/TC son de SOLO LECTURA: el front nunca los
+    /// recalcula ni ofrece cambiar de moneda (criterio matriculado + regla dura multimoneda del proyecto).
+    /// </summary>
+    public PartialCreditNoteEmissionSummaryDto? PartialCreditNoteEmission { get; set; }
+}
+
+/// <summary>
+/// ADR-044 T5-emision (2026-07-15, diseño §7): datos de solo lectura para el panel de confirmar/emitir la
+/// devolucion de UN servicio cancelado. El monto y el tipo de cambio vienen CONGELADOS (nunca se recalculan
+/// aca); el aviso del plazo de ARCA (15 dias) viaja como fecha+bandera para que el front NO calcule fechas.
+/// </summary>
+public class PartialCreditNoteEmissionSummaryDto
+{
+    /// <summary>
+    /// true cuando la/las linea(s) Partial de este evento ya tienen factura destino y monto resueltos (listo
+    /// para emitir). false = falta resolver (moneda que no coincide, TC incoherente, o factura ambigua sin
+    /// elegir) — el front debe mostrar el cartel de "falta resolver" en vez del boton de emitir.
+    /// </summary>
+    public bool IsResolved { get; set; }
+
+    /// <summary>
+    /// true cuando este evento de cancelacion junta lineas que resolvieron a MAS DE UNA factura destino
+    /// distinta. La emision automatica de este MVP soporta una sola factura destino por evento (ver diseño
+    /// §6.1, deviation documentada): con esta bandera en true, el back-office resuelve a mano.
+    /// </summary>
+    public bool HasMultipleTargetInvoices { get; set; }
+
+    /// <summary>Identificador publico de la factura a la que se le acredita esta devolucion. Null si no resuelto.</summary>
+    public Guid? TargetInvoicePublicId { get; set; }
+
+    /// <summary>Numero legible de la factura destino, ej. "Factura B 0001-00012345". Nunca un Id interno.</summary>
+    public string? TargetInvoiceLabel { get; set; }
+
+    /// <summary>Moneda de la factura destino en ISO (ARS/USD). Es la moneda EN QUE SALE la devolucion.</summary>
+    public string? TargetInvoiceCurrency { get; set; }
+
+    /// <summary>
+    /// Tipo de cambio CONGELADO de la factura destino. Null cuando la factura es en pesos (no aplica TC). El
+    /// front lo muestra de solo lectura ("el de la factura, no se cambia"), nunca ofrece pasar a pesos.
+    /// </summary>
+    public decimal? TargetInvoiceExchangeRate { get; set; }
+
+    /// <summary>Monto BRUTO congelado de la devolucion (suma de las lineas Partial resueltas contra esa factura).</summary>
+    public decimal? AmountToCredit { get; set; }
+
+    /// <summary>Saldo vivo de la factura destino ANTES de esta devolucion (la factura sigue viva por el resto).</summary>
+    public decimal? RemainingBeforeThisEmission { get; set; }
+
+    /// <summary>Fecha del hecho (la cancelacion del servicio) que dispara el conteo del plazo de ARCA.</summary>
+    public DateTime CancellationEventAt { get; set; }
+
+    /// <summary>Fecha limite informativa (CancellationEventAt + 15 dias corridos, RG 4540). No bloquea.</summary>
+    public DateTime Rg4540DeadlineAt { get; set; }
+
+    /// <summary>true si ya pasaron los 15 dias del plazo informativo. NO bloquea la emision.</summary>
+    public bool Rg4540DeadlinePassed { get; set; }
+
+    /// <summary>
+    /// true cuando la agencia es Responsable Inscripto: la emision automatica queda bloqueada hasta la firma
+    /// de un contador matriculado sobre la alicuota de la porcion trasladada (fiscal, riesgo residual 1). Para
+    /// Monotributo (la condicion de la agencia hoy) esto siempre es false.
+    /// </summary>
+    public bool RequiresAccountantSignoffForRi { get; set; }
 }
 
 /// <summary>

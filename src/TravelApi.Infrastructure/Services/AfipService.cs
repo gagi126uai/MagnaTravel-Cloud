@@ -1493,6 +1493,10 @@ public class AfipService : IAfipService
                  // Reconciliar la anulacion vinculada: si esta ND rechazada era la multa de una
                  // anulacion, su DebitNoteStatus pasa de Pending a Failed con el motivo de ARCA.
                  await TryReconcileLinkedCancellationDebitNoteAsync(invoice);
+                 // ADR-044 T5-emision (2026-07-15): si esta NC rechazada era la devolucion parcial de un
+                 // servicio cancelado, la hija T5 pasa a Failed y el BC vuelve a Drafted (reintentable). No-op
+                 // barato para cualquier otro comprobante.
+                 await TryReconcilePartialCreditNoteT5Async(invoice);
                  return;
             }
 
@@ -1575,6 +1579,13 @@ public class AfipService : IAfipService
             // ADR-044 "Deshacer una multa ya emitida" (2026-07-14): si esta NC resuelta era la que anula una ND
             // de multa, desvincula la ND del BC (+ B1/B2). No-op barato para cualquier otra factura/NC/ND.
             await TryReconcileDebitNoteAnnulmentAsync(invoice);
+
+            // ADR-044 T5-emision (2026-07-15): si esta NC resuelta era la devolucion parcial de UN servicio
+            // cancelado, marca la hija Succeeded + deriva AnnulmentStatus de la factura destino (Succeeded SOLO
+            // si el remanente llega a 0) + avanza el BC por SU circuito. NUNCA OnArcaSucceededAsync (dispararia
+            // una anulacion TOTAL fantasma sobre una cancelacion PARCIAL — el mayor riesgo de esta tanda, ver el
+            // XML-doc de PartialCreditNoteT5Reconciliation). No-op barato para cualquier otro comprobante.
+            await TryReconcilePartialCreditNoteT5Async(invoice);
         }
         catch (Exception ex)
         {
@@ -1636,6 +1647,29 @@ public class AfipService : IAfipService
             _logger.LogError(ex,
                 "No se pudo reconciliar el deshacer de la ND vinculada a esta NC (Invoice {InvoiceId}) tras " +
                 "resolver ARCA. El CAE ya quedo persistido.",
+                invoice.Id);
+        }
+    }
+
+    /// <summary>
+    /// ADR-044 T5-emision (2026-07-15): reconcilia el evento de "devolucion parcial de un servicio cancelado"
+    /// cuando la NC resuelve en ARCA (aprobada o rechazada). BLINDADO A PROPOSITO (mismo criterio que
+    /// <see cref="TryReconcileDebitNoteAnnulmentAsync"/>): si falla, el resultado de ARCA YA esta persistido en
+    /// la Invoice; que la ficha tarde en reflejar el efecto es un problema menor comparado con romper el job
+    /// del CAE. Usa su propio SaveChanges (posterior al del CAE), asi que un fallo aca nunca revierte el CAE.
+    /// </summary>
+    private async Task TryReconcilePartialCreditNoteT5Async(Invoice invoice)
+    {
+        try
+        {
+            await PartialCreditNoteT5Reconciliation.TryReconcileAsync(
+                _context, invoice, _auditService, _logger, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "No se pudo reconciliar la devolucion parcial T5 vinculada a esta NC (Invoice {InvoiceId}) tras " +
+                "resolver ARCA. El resultado de ARCA ya quedo persistido.",
                 invoice.Id);
         }
     }
@@ -1737,13 +1771,45 @@ public class AfipService : IAfipService
         }
         else
         {
-            // Fallback historico: NCs pre-FC1.3 sin BC asociado. La comparacion por monto
-            // sigue siendo correcta porque las NCs emitidas via FC1.2 son siempre totales
-            // y matchean el ImporteTotal original. Si la NC parcial existe en BD pero el
-            // BC no esta seteado (deberia ser imposible en Fase 2), tambien caemos aca y
-            // detectamos parcial por monto.
-            isPartialNc = invoice.OriginalInvoice != null
-                          && invoice.ImporteTotal < invoice.OriginalInvoice.ImporteTotal;
+            // ADR-044 T5-emision (2026-07-15, diseño §6.2a — endurecimiento del discriminador, condicion B3):
+            // el BC PADRE de una cancelacion parcial T5 NUNCA setea su escalar CreditNoteInvoiceId (defensa por
+            // construccion contra el re-vinculador de ND huerfana, ver BookingCancellationService §B3). Por eso
+            // el lookup de arriba (por el escalar) siempre da null para T5, y ANTES de caer al fallback fragil
+            // por monto (que en el borde "ultima porcion" cruzaria a reversal TOTAL con cascade-void — incorrecto
+            // para T5, donde el recibo cubre TODA la reserva, no solo el servicio cancelado), miramos si existe
+            // una HIJA BookingCancellationCreditNote con CreditNoteInvoiceId==invoice.Id cuyo BC sea PURAMENTE
+            // parcial (mismo predicado que usa el reconciliador T5 y la bandeja, V4). Si existe, es
+            // DETERMINISTICAMENTE una NC T5 parcial — sin importar el monto, incluso en la ultima porcion.
+            var t5Child = await _context.BookingCancellationCreditNotes
+                .Include(c => c.BookingCancellation)
+                .FirstOrDefaultAsync(c => c.CreditNoteInvoiceId == invoice.Id);
+            bool t5ChildIsPurelyPartial = false;
+            if (t5Child != null)
+            {
+                var lineScopes = await _context.BookingCancellationLines
+                    .AsNoTracking()
+                    .Where(l => l.BookingCancellationId == t5Child.BookingCancellationId)
+                    .Select(l => l.Scope)
+                    .ToListAsync();
+                t5ChildIsPurelyPartial = lineScopes.Contains(BookingCancellationLineScope.Partial)
+                                      && !lineScopes.Contains(BookingCancellationLineScope.Full);
+            }
+
+            if (t5Child != null && t5ChildIsPurelyPartial)
+            {
+                isPartialNc = true;
+                bc = t5Child.BookingCancellation; // para que el reversal de abajo pueda leer bc.PublicId/etc.
+            }
+            else
+            {
+                // Fallback historico: NCs pre-FC1.3 sin BC asociado. La comparacion por monto
+                // sigue siendo correcta porque las NCs emitidas via FC1.2 son siempre totales
+                // y matchean el ImporteTotal original. Si la NC parcial existe en BD pero el
+                // BC no esta seteado (deberia ser imposible en Fase 2), tambien caemos aca y
+                // detectamos parcial por monto.
+                isPartialNc = invoice.OriginalInvoice != null
+                              && invoice.ImporteTotal < invoice.OriginalInvoice.ImporteTotal;
+            }
         }
 
         if (isPartialNc)
@@ -1856,11 +1922,14 @@ public class AfipService : IAfipService
             var openedByUserId = invoice.OriginalInvoice?.AnnulledByUserId ?? "system";
             var openedByUserName = invoice.OriginalInvoice?.AnnulledByUserName ?? "Sistema";
 
-            // Moneda del caso: la del FiscalLiquidation del BC si existe (fuente fiscal
-            // del monto acreditado), si no ARS por defecto (hoy todo se factura en pesos;
-            // multimoneda llega en F2.5). NO usamos invoice.MonId porque ese es el codigo
-            // ARCA ('PES'), no el ISO ('ARS') que maneja el resto del modulo.
-            var currency = bc?.FiscalLiquidation?.Currency ?? "ARS";
+            // Moneda del caso: la del FiscalLiquidation del BC si existe (fuente fiscal del monto acreditado,
+            // camino legacy FC1.3). ADR-044 T5-emision (2026-07-15, fix): un BC T5 NUNCA persiste
+            // FiscalLiquidation (esa VO es del camino "anular la reserva entera"), asi que para T5 este
+            // fallback ANTES caia siempre en "ARS" — un bug real para una devolucion en USD. Ahora cae en
+            // reversalCurrency (ya calculada arriba a partir de invoice.MonId, la moneda REAL de esta NC),
+            // correcto para T5 y sin cambiar el comportamiento legacy (bc.FiscalLiquidation sigue ganando
+            // cuando existe).
+            var currency = bc?.FiscalLiquidation?.Currency ?? reversalCurrency;
 
             var reconciliation = new PartialCreditNoteReconciliation
             {

@@ -1686,6 +1686,28 @@ public class BookingCancellationService
                             || c.CreditNoteInvoiceId != null), ct);
     }
 
+    /// <summary>
+    /// ADR-044 T5-emision, condicion C2 (2026-07-15): true si el BC tiene AL MENOS UNA hija con
+    /// <c>Status == Succeeded</c> (CAE YA aprobado por AFIP). A DIFERENCIA de
+    /// <see cref="BcHasLiveCreditNoteChildAsync"/> (que tambien cuenta <c>Pending</c> — "hay una NC en vuelo que
+    /// no debo pisar", la pregunta de la liberacion INV-081), esta pregunta es mas estricta a proposito: "¿la NC
+    /// al cliente YA esta confirmada por AFIP?" — la misma que exigian los guards de multa/ND ANTES de esta
+    /// tanda via <c>bc.CreditNoteInvoiceId != null</c> (ese escalar solo se setea al CAE en el camino legacy).
+    ///
+    /// <para>Usado por los 3 guards de ACCION de UN BC (<see cref="ConfirmPenaltyAsync"/>,
+    /// <see cref="WaiveOperatorPenaltyAsync"/>, <see cref="RetryDebitNoteEmissionAsync"/>): con la Decision B3 (el
+    /// escalar del padre queda null para una parcial T5), esos guards se vuelven child-aware con ESTE helper, NO
+    /// con <see cref="BcHasLiveCreditNoteChildAsync"/> (unificar los dos criterios reintroduciria el "boton que
+    /// rebota": una NC T5 recien creada, todavia Pending, no tiene CAE — confirmar la multa en ese momento
+    /// mentiria "ya se puede" cuando AFIP todavia no la aprobo).</para>
+    /// </summary>
+    private async Task<bool> BcHasSucceededCreditNoteChildAsync(int bookingCancellationId, CancellationToken ct)
+    {
+        return await _db.BookingCancellationCreditNotes
+            .AnyAsync(c => c.BookingCancellationId == bookingCancellationId
+                        && c.Status == BookingCancellationCreditNoteStatus.Succeeded, ct);
+    }
+
     public async Task<BookingCancellationDto> ConfirmAsync(
         Guid publicId,
         ConfirmCancellationRequest request,
@@ -2398,6 +2420,403 @@ public class BookingCancellationService
             // SaveChanges final del estado BC/Reserva + el audit stageado, todo en la misma transaccion.
             await _db.SaveChangesAsync(ct);
         }
+    }
+
+    /// <inheritdoc />
+    ///
+    /// <remarks>
+    /// ADR-044 T5-emision (2026-07-15, diseño §6.1). Modelado sobre <see cref="ConfirmAsync"/> pero MUCHO mas
+    /// chico: T5 no corre el clasificador fiscal FC1.3 (eso es del camino "anular la reserva ENTERA"), no pide
+    /// override admin, y no valida "solo Hotel". Lo que SI comparte con el total: sellar el
+    /// <see cref="FiscalSnapshot"/> justo antes de transicionar, y el candado por-factura para leer el
+    /// remanente fresco antes de emitir (mismo <see cref="RunUnderInvoiceLockAsync{T}"/> que usa el cap de
+    /// <see cref="CancelServiceAsync"/> y el camino legacy — TODOS comparten el MISMO remanente, sin flags).
+    ///
+    /// <para><b>DEVIATION del diseño, documentada</b>: el diseño describe la emision "por cada factura destino
+    /// distinta involucrada — normalmente una". Esta implementacion soporta EXACTAMENTE una: si las lineas
+    /// Partial pendientes de este BC resolvieron a 2+ facturas distintas (un BC que acumulo cancelaciones de
+    /// servicios de la MISMA reserva contra facturas DIFERENTES antes de la primera emision — caso raro),
+    /// rebota <c>INV-T5-EMIT-MULTI-INVOICE</c> pidiendo resolucion manual. Motivo: <c>BuildPartialCreditNoteLines</c>
+    /// legacy lee <c>bc.FiscalLiquidation</c> (un VO por BC, no por factura); soportar N facturas de verdad
+    /// exigiria una liquidacion por factura y un manejo de <see cref="BookingCancellationStatus"/> compartido
+    /// entre N emisiones en vuelo — fuera del alcance de esta tanda. Ver §9 del diseño: ningun test obligatorio
+    /// ejercita el caso multi-factura-en-un-solo-BC (T-B2 es "2 BCs sobre la MISMA factura", lo opuesto).</para>
+    /// </remarks>
+    public async Task<BookingCancellationDto> ConfirmPartialCancellationEmissionAsync(
+        Guid publicId,
+        string userId,
+        string? userName,
+        CancellationToken ct)
+    {
+        // 1) Cargar el BC con lo que hace falta para decidir y para armar la NC.
+        var bc = await _db.BookingCancellations
+            .Include(b => b.Reserva)
+            .Include(b => b.Customer)
+            .Include(b => b.Supplier)
+            .Include(b => b.Lines)
+            .Include(b => b.CreditNotes)
+            .FirstOrDefaultAsync(b => b.PublicId == publicId, ct)
+            ?? throw new KeyNotFoundException($"Cancelación {publicId} no encontrada.");
+
+        // 2) Debe estar Drafted y ser PURAMENTE parcial: al menos una linea Scope=Partial, NINGUNA Scope=Full
+        //    (una Full es el circuito de anulacion TOTAL — otro contrato, "Anular la reserva"). Mismo predicado
+        //    que usa la bandeja "Comprobantes por resolver" (V4, FIX N1).
+        var partialLines = bc.Lines.Where(l => l.Scope == BookingCancellationLineScope.Partial).ToList();
+        bool hasFullLine = bc.Lines.Any(l => l.Scope == BookingCancellationLineScope.Full);
+        if (bc.Status != BookingCancellationStatus.Drafted || partialLines.Count == 0 || hasFullLine)
+            throw new BusinessInvariantViolationException(
+                "Esta cancelación ya no está lista para confirmar la devolución. Actualizá la página.",
+                invariantCode: "INV-T5-EMIT-STATE");
+
+        // 3) Todas las lineas Partial deben tener factura destino + monto resueltos (V3: la captura NUNCA
+        //    inventa un credito cuando la moneda no coincide o el TC es incoherente — queda pendiente de
+        //    resolucion manual EN LA FICHA). Si alguna quedo sin resolver, no se emite a ciegas.
+        if (partialLines.Any(l => l.TargetInvoiceId is null || l.ConfirmedGrossCreditAmount is null))
+            throw new BusinessInvariantViolationException(
+                "Esta cancelación necesita que resuelvas la factura o el monto antes de emitir la devolución.",
+                invariantCode: "INV-T5-EMIT-UNRESOLVED");
+
+        // 4) Facturas destino cuya hija TODAVIA no tiene CAE (idempotencia defensiva: si por alguna razon ya
+        //    hay una hija Succeeded para una de las lineas, no la re-procesamos).
+        var succeededInvoiceIds = bc.CreditNotes
+            .Where(c => c.Status == BookingCancellationCreditNoteStatus.Succeeded)
+            .Select(c => c.OriginatingInvoiceId)
+            .ToHashSet();
+        var targetInvoiceIds = partialLines
+            .Select(l => l.TargetInvoiceId!.Value)
+            .Where(id => !succeededInvoiceIds.Contains(id))
+            .Distinct()
+            .ToList();
+
+        if (targetInvoiceIds.Count == 0)
+            throw new BusinessInvariantViolationException(
+                "Esta devolución ya fue emitida.",
+                invariantCode: "INV-T5-EMIT-ALREADY-DONE");
+
+        // 5) MVP: una sola factura destino por evento de emision (ver DEVIATION documentada arriba).
+        if (targetInvoiceIds.Count > 1)
+            throw new BusinessInvariantViolationException(
+                "Esta cancelación tiene servicios que corresponden a más de una factura: por ahora hay que " +
+                "resolverlos y emitirlos por separado. Consultá con administración.",
+                invariantCode: "INV-T5-EMIT-MULTI-INVOICE");
+
+        var targetInvoiceId = targetInvoiceIds[0];
+
+        // 6) Bajo el lock de la factura destino (el MISMO candado que toma el cap de CancelServiceAsync y el
+        //    camino legacy de anulacion total — fuente unica del remanente, sin flags): re-validar todo con
+        //    datos FRESCOS + armar + emitir la NC, todo o nada en una sola transaccion (M2 del review: si el
+        //    proceso muere antes del SaveChanges final, nada de esto persiste — el BC sigue Drafted).
+        await RunUnderInvoiceLockAsync(
+            targetInvoiceId,
+            () => EmitOnePartialCreditNoteAsync(bc, targetInvoiceId, userId, userName, ct),
+            ct);
+
+        return await MapToDtoAsync(bc.Id, ct)
+            ?? throw new InvalidOperationException("No se pudo completar la operación. Volvé a intentar.");
+    }
+
+    /// <summary>
+    /// ADR-044 T5-emision (2026-07-15): cuerpo de la emision, YA bajo el lock por-factura. Re-lee todo FRESCO
+    /// (anti-carrera: otra emision pudo haber cambiado el remanente entre la validacion de arriba y este
+    /// punto), sella el <see cref="FiscalSnapshot"/>, arma la NC y la emite via el pipeline de BAJO NIVEL
+    /// (<c>InvoiceService.CreateAsync</c> + <c>ProcessInvoiceJob</c> — NUNCA <c>EnqueuePartialCreditNoteAsync</c>
+    /// legacy, que marcaria la factura de venta <c>AnnulmentStatus=Succeeded</c> y mataria el resto de la
+    /// reserva, V5 del diseño). Crea la fila hija con <c>CreditNoteInvoiceId</c> YA seteado (invariante dura
+    /// B2). Devuelve <c>true</c> siempre que no haya explotado (el valor no se usa; la firma exige un tipo
+    /// porque <see cref="RunUnderInvoiceLockAsync{T}"/> es generico).
+    /// </summary>
+    private async Task<bool> EmitOnePartialCreditNoteAsync(
+        BookingCancellation bc,
+        int targetInvoiceId,
+        string userId,
+        string? userName,
+        CancellationToken ct)
+    {
+        // Releer el BC + sus colecciones FRESCAS bajo el lock (anti-carrera: la validacion de arriba corrio
+        // FUERA del lock; otra emision concurrente sobre esta MISMA factura pudo haber avanzado el BC).
+        await _db.Entry(bc).ReloadAsync(ct);
+        await _db.Entry(bc).Collection(b => b.Lines).LoadAsync(ct);
+        await _db.Entry(bc).Collection(b => b.CreditNotes).LoadAsync(ct);
+
+        if (bc.Status != BookingCancellationStatus.Drafted)
+            throw new BusinessInvariantViolationException(
+                "Esta cancelación ya no está lista para confirmar la devolución. Actualizá la página.",
+                invariantCode: "INV-T5-EMIT-STATE");
+
+        var linesForInvoice = bc.Lines
+            .Where(l => l.Scope == BookingCancellationLineScope.Partial
+                     && l.TargetInvoiceId == targetInvoiceId
+                     && l.ConfirmedGrossCreditAmount != null)
+            .ToList();
+        if (linesForInvoice.Count == 0)
+            throw new BusinessInvariantViolationException(
+                "Esta cancelación necesita que resuelvas la factura o el monto antes de emitir la devolución.",
+                invariantCode: "INV-T5-EMIT-UNRESOLVED");
+
+        // Monto congelado: la suma de las lineas Partial resueltas contra ESTA factura (si el BC anulo varios
+        // servicios de la misma factura en el mismo evento). NUNCA se recalcula (criterio matriculado 2026-06-01).
+        decimal amountToCredit = linesForInvoice.Sum(l => l.ConfirmedGrossCreditAmount!.Value);
+
+        var targetInvoice = await _db.Invoices.FirstOrDefaultAsync(i => i.Id == targetInvoiceId, ct);
+        if (targetInvoice is null
+            || string.IsNullOrEmpty(targetInvoice.CAE)
+            || targetInvoice.AnnulmentStatus == AnnulmentStatus.Succeeded)
+            throw new BusinessInvariantViolationException(
+                "La factura de esta devolución ya no está disponible. Consultá con administración.",
+                invariantCode: "INV-T5-EMIT-INVOICE-GONE");
+
+        // Remanente FRESCO, releido bajo el lock (Bloqueante #1/#2 del review): anti-carrera con CUALQUIER otra
+        // emision (parcial T5 o total legacy) que este acreditando la MISMA factura en simultaneo.
+        var remaining = await ComputeInvoiceRemainingCreditableAmountAsync(
+            targetInvoiceId, ct, excludeBookingCancellationId: bc.Id);
+        if (amountToCredit > remaining)
+            throw new BusinessInvariantViolationException(
+                "El saldo de la factura cambió; revisá el monto antes de emitir.",
+                invariantCode: "INV-T5-EMIT-CAP");
+
+        // Guard de moneda linea == moneda ARCA de la factura destino (defensa en profundidad: ya se valido en
+        // la captura — ADR-044 T5 Addendum Decision A/B — pero nada impide que algo haya cambiado entretanto).
+        var lineCurrencyArca = ArcaCurrencyMapper.TryMap(linesForInvoice[0].Currency);
+        var invoiceCurrencyArca = string.IsNullOrWhiteSpace(targetInvoice.MonId)
+            ? "PES"
+            : targetInvoice.MonId.Trim().ToUpperInvariant();
+        bool currencyMatches = lineCurrencyArca is not null
+            && string.Equals(lineCurrencyArca, invoiceCurrencyArca, StringComparison.OrdinalIgnoreCase);
+        if (!currencyMatches)
+            throw new BusinessInvariantViolationException(
+                "Esta cancelación necesita que resuelvas la factura o el monto antes de emitir la devolución.",
+                invariantCode: "INV-T5-EMIT-UNRESOLVED");
+
+        // Moneda + TC: SIEMPRE heredados de la factura destino (regla firmada, diseño §5) — la NC NUNCA recotiza.
+        bool invoiceIsForeign = !string.Equals(invoiceCurrencyArca, "PES", StringComparison.OrdinalIgnoreCase);
+        decimal exchangeRate = invoiceIsForeign ? targetInvoice.MonCotiz : 1m;
+        if (invoiceIsForeign && (exchangeRate <= 0m || exchangeRate == 1m))
+            throw new BusinessInvariantViolationException(
+                "Esta cancelación necesita que resuelvas la factura o el monto antes de emitir la devolución.",
+                invariantCode: "INV-T5-EMIT-UNRESOLVED");
+
+        string currencyIso = invoiceIsForeign
+            ? (ArcaCurrencyMapper.ToIso(invoiceCurrencyArca) ?? linesForInvoice[0].Currency)
+            : Monedas.ARS;
+
+        // Origen del TC: heredado del snapshot de la factura destino (el usuario NUNCA inventa un TC, INV-120).
+        // Para pesos no hay TC real que justificar: no se exige Source manual con justificacion.
+        ExchangeRateSource source;
+        string? manualJustification = null;
+        if (invoiceIsForeign)
+        {
+            if (targetInvoice.ExchangeRateSource is null)
+                throw new BusinessInvariantViolationException(
+                    "Esta cancelación necesita que resuelvas la factura o el monto antes de emitir la devolución.",
+                    invariantCode: "INV-T5-EMIT-UNRESOLVED");
+            source = targetInvoice.ExchangeRateSource.Value;
+            manualJustification = targetInvoice.ExchangeRateJustification;
+        }
+        else
+        {
+            // Pesos: no hay conversion que registrar (TC=1 siempre). Un valor no-Manual/no-Unset alcanza para
+            // cumplir el CHECK del snapshot sin exigir una justificacion que no aplica.
+            source = ExchangeRateSource.BNA_Minorista;
+        }
+
+        // Condiciones fiscales: foto AL MOMENTO de emitir (agencia/operador/cliente), leidas del dato VIVO —
+        // igual criterio que "el usuario no inventa nada": esta pantalla no pide texto libre (P3=A de la spec
+        // UX, sin motivo nuevo), asi que las tres condiciones se resuelven server-side, nunca del front.
+        var afipSettings = await _db.AfipSettings.AsNoTracking().FirstOrDefaultAsync(ct);
+        var agencyCanonical = TaxConditionNormalizer.Normalize(afipSettings?.TaxCondition);
+        var supplierCanonical = TaxConditionNormalizer.Normalize(bc.Supplier?.TaxCondition);
+        var customerCanonical = TaxConditionNormalizer.Normalize(bc.Customer?.TaxCondition);
+        if (agencyCanonical == TaxConditionCanonical.Unknown
+            || supplierCanonical == TaxConditionCanonical.Unknown
+            || customerCanonical == TaxConditionCanonical.Unknown)
+            throw new BusinessInvariantViolationException(
+                "No pudimos determinar la condición fiscal de la agencia, del operador o del cliente. " +
+                "Consultá con administración antes de emitir la devolución.",
+                invariantCode: "INV-118");
+
+        // Gate RI <-> firma de alicuota (fiscal, riesgo residual 1; diseño §6.1 punto 3 / §10 / §14 pregunta 1):
+        // la emision automatica de NC parcial para agencia Responsable Inscripto queda BLOQUEADA hasta que un
+        // contador matriculado firme el tratamiento de IVA de la porcion trasladada. Para Monotributo (la
+        // condicion de la agencia hoy) esto NUNCA dispara — Factura C no discrimina IVA.
+        if (agencyCanonical == TaxConditionCanonical.ResponsableInscripto)
+            throw new BusinessInvariantViolationException(
+                "Esta devolución necesita la firma del contador antes de emitirse.",
+                invariantCode: "INV-T5-EMIT-RI-SIGNOFF");
+
+        // Sellar el FiscalSnapshot + transicionar. A partir de aca el BC deja de estar Drafted: el CHECK SQL
+        // chk_BookingCancellations_fiscalsnapshot_consistent exige el snapshot completo para cualquier estado
+        // distinto de Drafted/Aborted (INV-118).
+        bc.FiscalSnapshot = new FiscalSnapshot
+        {
+            CurrencyAtEvent = currencyIso.ToUpperInvariant(),
+            ExchangeRateAtOriginalInvoice = exchangeRate,
+            Source = source,
+            ManualJustification = manualJustification,
+            FetchedAt = DateTime.UtcNow,
+            AgencyTaxConditionAtEvent = TaxConditionNormalizer.ToStorageString(agencyCanonical),
+            SupplierTaxConditionAtEvent = TaxConditionNormalizer.ToStorageString(supplierCanonical),
+            CustomerTaxConditionAtEvent = TaxConditionNormalizer.ToStorageString(customerCanonical),
+        };
+        bc.Status = BookingCancellationStatus.AwaitingFiscalConfirmation;
+        bc.ConfirmedWithClientAt ??= DateTime.UtcNow;
+        bc.ConfirmedByUserId ??= userId;
+        bc.ConfirmedByUserName ??= userName;
+        // Discriminador de plata (§6.2a): marca que ESTE BC es una NC parcial. Decision B3 (§6.1/§6.4): el
+        // escalar bc.CreditNoteInvoiceId del PADRE queda SIEMPRE null para T5 — es la defensa POR CONSTRUCCION
+        // contra el re-vinculador de ND huerfana (:4003-4008, su predicado exige ese escalar != null). NO tocar.
+        bc.CreditNoteKind = CreditNoteKind.PartialOnOriginal;
+
+        // Armar las lineas de la NC contra los items de la factura DESTINO (V11): prorrateo por alicuota
+        // (multi-alicuota) o linea unica (mono-alicuota), parametrizado por el monto YA congelado — nunca se
+        // recalcula. NO usa BuildPartialCreditNoteLines legacy (esa lee bc.FiscalLiquidation, un VO que un BC
+        // T5 nunca persiste) ni contempla items no reintegrables (decision fiscal exclusiva del camino total).
+        var invoiceItems = await _db.Set<InvoiceItem>()
+            .Where(i => i.InvoiceId == targetInvoiceId)
+            .ToListAsync(ct);
+        if (invoiceItems.Count == 0)
+            throw new InvalidOperationException("No se pudo completar la operación. Volvé a intentar.");
+
+        var fallbackDescription = $"Devolución por cancelación parcial - reserva {bc.Reserva.NumeroReserva}";
+        if (fallbackDescription.Length > 200)
+            fallbackDescription = fallbackDescription[..200];
+
+        var ncLines = BuildPartialCreditNoteLinesForTargetInvoice(amountToCredit, invoiceItems, fallbackDescription);
+
+        var emissionInput = new PartialCreditNoteEmissionInput(
+            OriginalNetAmount: targetInvoice.ImporteNeto,
+            OriginalVatAmount: targetInvoice.ImporteIva,
+            OriginalTotalAmount: targetInvoice.ImporteTotal,
+            FiscalAmountToCredit: amountToCredit,
+            Currency: currencyIso,
+            ExchangeRateAtOriginalInvoice: exchangeRate,
+            Lines: ncLines);
+
+        // Prorrateo de IVA + cuadre exacto para ARCA (mismo calculador PURO que usa el camino legacy F2.2 —
+        // TravelApi.Infrastructure.Services.PartialCreditNoteIvaCalculator — reusado tal cual: es matematica
+        // pura sin efectos de lado, no es "el pipeline legacy" que el diseño prohibe reusar).
+        var settings = await _settings.GetEntityAsync(ct);
+        PartialCreditNoteIvaResult iva;
+        try
+        {
+            iva = PartialCreditNoteIvaCalculator.Calculate(
+                input: emissionInput,
+                mode: settings.IvaProrrateoMode,
+                roundingTolerance: settings.PartialCreditNoteRoundingTolerance);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
+        {
+            _logger.LogCritical(ex,
+                "T5-emision ABORT: el prorrateo de IVA no cierra para BC {BcPublicId} contra factura {InvoiceId}.",
+                bc.PublicId, targetInvoiceId);
+            throw new BusinessInvariantViolationException(
+                "No se pudo armar la devolución: el detalle no cuadra. Consultá con administración.",
+                invariantCode: "INV-T5-EMIT-ROUNDING");
+        }
+
+        decimal impNeto = iva.CreditedNetAmount;
+        decimal impIva = iva.VatGroups.Sum(g => g.ImporteIva);
+        const decimal impTrib = 0m; // T5 no prorratea tributos provinciales (mismo alcance que F2.2/G-F2-C).
+        decimal impTotal = Math.Round(impNeto + impIva + impTrib, 2);
+
+        var totalsOverride = new InvoiceTotalsOverride(
+            AlicIvas: iva.VatGroups
+                .Select(g => new AlicIvaOverride(Id: g.AlicuotaIvaId, BaseImp: g.BaseImponible, Importe: g.ImporteIva))
+                .ToList(),
+            ImpNeto: impNeto,
+            ImpIVA: impIva,
+            ImpTrib: impTrib,
+            ImpTotal: impTotal);
+
+        // Emitir via el pipeline de BAJO NIVEL (V10 del diseño: el mismo que usan la ND-multa y el "Deshacer",
+        // NUNCA EnqueuePartialCreditNoteAsync legacy). CreateAsync crea la Invoice PENDING + encola
+        // ProcessInvoiceJob (Hangfire); la letra del comprobante la deriva ARCA sola del tipo de la factura
+        // asociada (CreatePendingInvoice), no la fijamos aca.
+        var request = new CreateInvoiceRequest
+        {
+            ReservaId = bc.Reserva.PublicId.ToString(),
+            Concepto = 3, // Productos y Servicios (mismo default que el resto del modulo).
+            OriginalInvoiceId = targetInvoice.PublicId.ToString(),
+            IsCreditNote = true,
+            IsDebitNote = false,
+            Items = ncLines
+                .Select(l => new InvoiceItemDto
+                {
+                    Description = l.Description,
+                    Quantity = l.Quantity,
+                    UnitPrice = l.UnitPrice,
+                    Total = l.Total,
+                    AlicuotaIvaId = l.AlicuotaIvaId,
+                })
+                .ToList(),
+            Tributes = new List<InvoiceTributeDto>(),
+            TotalsOverride = totalsOverride,
+            MonId = invoiceCurrencyArca,
+            MonCotiz = exchangeRate,
+            ExchangeRateSource = invoiceIsForeign ? source : (ExchangeRateSource?)null,
+            ExchangeRateFetchedAt = invoiceIsForeign ? targetInvoice.ExchangeRateFetchedAt : null,
+            ExchangeRateJustification = invoiceIsForeign ? manualJustification : null,
+        };
+
+        var ncDto = await _invoiceService.CreateAsync(request, userId, userName, ct);
+
+        var ncId = await _db.Invoices
+            .Where(i => i.PublicId == ncDto.PublicId)
+            .Select(i => (int?)i.Id)
+            .FirstOrDefaultAsync(ct);
+        if (ncId is null)
+            throw new InvalidOperationException("No se pudo completar la operación. Volvé a intentar.");
+
+        // INVARIANTE DURA B2 (§6.1): la hija nace con CreditNoteInvoiceId=nc.Id YA seteado, en la MISMA
+        // transaccion. Si se dejara null hasta la reconciliacion, el cap (ComputeInvoiceRemainingCreditableAmountAsync)
+        // trataria esta hija Pending SIN link como "NC TOTAL en camino" y reservaria el ImporteTotal completo de
+        // la factura — bloqueando cualquier OTRA emision parcial contra ella mientras esta espera el CAE.
+        var hija = bc.CreditNotes.FirstOrDefault(c => c.OriginatingInvoiceId == targetInvoiceId);
+        if (hija is null)
+        {
+            hija = new BookingCancellationCreditNote
+            {
+                BookingCancellationId = bc.Id,
+                OriginatingInvoiceId = targetInvoiceId,
+                CreditNoteInvoiceId = ncId.Value,
+                ArcaCurrency = invoiceCurrencyArca,
+                Status = BookingCancellationCreditNoteStatus.Pending,
+            };
+            bc.CreditNotes.Add(hija);
+        }
+        else
+        {
+            // Reintento: la emision anterior de ESTA factura fallo en ARCA (hija Failed) y el BC volvio a
+            // Drafted. Reusamos la MISMA fila hija (el UNIQUE OriginatingInvoiceId+BookingCancellationId no
+            // permite una segunda) apuntando a la NC nueva.
+            hija.CreditNoteInvoiceId = ncId.Value;
+            hija.Status = BookingCancellationCreditNoteStatus.Pending;
+            hija.ArcaErrorMessage = null;
+        }
+
+        _auditService.StageBusinessEvent(
+            action: AuditActions.PartialCreditNoteEmissionRequested,
+            entityName: AuditActions.BookingCancellationEntityName,
+            entityId: bc.Id.ToString(),
+            details: JsonSerializer.Serialize(new
+            {
+                bc.PublicId,
+                reservaPublicId = bc.Reserva.PublicId,
+                targetInvoicePublicId = targetInvoice.PublicId,
+                creditNoteInvoicePublicId = ncDto.PublicId,
+                amountToCredit,
+                currency = currencyIso,
+            }),
+            userId: userId,
+            userName: userName);
+
+        await _db.SaveChangesAsync(ct);
+
+        _logger.LogInformation(
+            "metric:t5_partial_credit_note_emission_requested | BcPublicId={BcPublicId} TargetInvoiceId={TargetInvoiceId} " +
+            "CreditNoteInvoicePublicId={CreditNoteInvoicePublicId} Amount={Amount} Currency={Currency}",
+            bc.PublicId, targetInvoiceId, ncDto.PublicId, amountToCredit, currencyIso);
+
+        return true;
     }
 
     public async Task<BookingCancellationDto> AbortAsync(
@@ -4106,11 +4525,24 @@ public class BookingCancellationService
         //
         //     Es una rama de SOLO LECTURA: no reconcilia ni muta estado (no hay ND que mirar
         //     todavia). Por eso AsNoTracking y va DESPUES del SaveChanges de las otras ramas.
+        //     ADR-044 T5-emision, condicion C2 (2026-07-15): esta bandeja NO tiene gate de estado (a diferencia
+        //     de ConfirmPenaltyAsync/WaiveOperatorPenaltyAsync/RetryDebitNoteEmissionAsync, que exigen
+        //     PostCreditNoteStatuses). Por eso la condicion child-aware tiene que ser ESTRICTA (hija con
+        //     Status==Succeeded, CAE ya aprobado) y NUNCA la rama "CreditNoteInvoiceId != null" del helper de
+        //     liberacion INV-081 (BcHasLiveCreditNoteChildAsync): esa rama cuenta una hija Pending (recien
+        //     creada, sin CAE) — y por B2 la hija de una parcial T5 nace en Pending desde el vamos. Si se
+        //     usara esa rama, un BC T5 con fee de agencia aparaceria en esta bandeja ANTES de tener CAE; al
+        //     clickear la fila el front abriria el modal de confirmar multa, que SI tiene el gate de estado y
+        //     rebotaria — el anti-patron "boton que rebota" que este modulo combate (ver el doc de diseño T5,
+        //     Rev 3, C2). La subconsulta es traducible a SQL (un EXISTS por fila), sin N+1.
         var estimatedAgencyOwnedRows = new List<CancellationDebitNotePendingDto>();
         var estimatedCandidates = await _db.BookingCancellations
             .AsNoTracking()
             .Include(b => b.Reserva)
-            .Where(b => b.CreditNoteInvoiceId != null &&
+            .Where(b => (b.CreditNoteInvoiceId != null ||
+                         _db.BookingCancellationCreditNotes.Any(c =>
+                             c.BookingCancellationId == b.Id &&
+                             c.Status == BookingCancellationCreditNoteStatus.Succeeded)) &&
                         b.DebitNoteInvoiceId == null &&
                         b.PenaltyStatus == PenaltyStatus.Estimated &&
                         (b.ConceptKind == CancellationConceptKind.AgencyManagementFee ||
@@ -4883,10 +5315,31 @@ public class BookingCancellationService
     // internal (no private, InternalsVisibleTo("TravelApi.Tests") ya configurado): permite a los tests unit
     // ejercitar la formula del remanente directamente, sin pasar por el lock relacional (que es no-op en
     // InMemory de todos modos).
-    internal async Task<decimal> ComputeInvoiceRemainingCreditableAmountAsync(
+    //
+    // ADR-044 T5-emision (2026-07-15): wrapper de instancia que delega al overload ESTATICO de abajo con
+    // _db. Se mantiene por compatibilidad — todos los callers existentes (dentro de este service y los
+    // tests) siguen llamando "service.ComputeInvoiceRemainingCreditableAmountAsync(invoiceId, ct)" tal
+    // cual. El overload estatico existe para que el reconciliador T5 (que vive FUERA de este service, en
+    // AfipService/PartialCreditNoteT5Reconciliation, para evitar una dependencia circular
+    // AfipService -> IBookingCancellationService) pueda leer el MISMO remanente sin duplicar la formula
+    // (duplicarla arriesgaria que las dos copias diverjan con el tiempo — la plata SIEMPRE se calcula UNA
+    // sola vez, en UN solo lugar).
+    internal Task<decimal> ComputeInvoiceRemainingCreditableAmountAsync(
         int invoiceId, CancellationToken ct, int? excludeBookingCancellationId = null)
+        => ComputeInvoiceRemainingCreditableAmountAsync(_db, invoiceId, ct, excludeBookingCancellationId);
+
+    /// <summary>
+    /// ADR-044 T5-emision (2026-07-15): mismo calculo que el overload de instancia, pero ESTATICO y
+    /// recibiendo el <see cref="AppDbContext"/> explicito. Permite que codigo fuera de
+    /// <see cref="BookingCancellationService"/> (el reconciliador dedicado T5 en AfipService) lea el
+    /// remanente ACREDITABLE de una factura con la MISMA fuente de verdad, sin inyectar
+    /// <c>IBookingCancellationService</c> (evita el ciclo de dependencias
+    /// AfipService -> IBookingCancellationService -> IInvoiceService -> IAfipService -> AfipService).
+    /// </summary>
+    internal static async Task<decimal> ComputeInvoiceRemainingCreditableAmountAsync(
+        AppDbContext db, int invoiceId, CancellationToken ct, int? excludeBookingCancellationId = null)
     {
-        var importeTotal = await _db.Invoices.AsNoTracking()
+        var importeTotal = await db.Invoices.AsNoTracking()
             .Where(i => i.Id == invoiceId)
             .Select(i => (decimal?)i.ImporteTotal)
             .FirstOrDefaultAsync(ct) ?? 0m;
@@ -4896,7 +5349,7 @@ public class BookingCancellationService
 
         // (A) Hijas del circuito de anulacion TOTAL (ADR-042): una con NC vinculada cuenta por el monto real
         //     de esa NC; una Pending legacy sin NC vinculada representa una NC TOTAL en camino -> ImporteTotal.
-        var liveChildren = await _db.BookingCancellationCreditNotes.AsNoTracking()
+        var liveChildren = await db.BookingCancellationCreditNotes.AsNoTracking()
             .Where(c => c.OriginatingInvoiceId == invoiceId
                      && (c.Status == BookingCancellationCreditNoteStatus.Succeeded
                          || c.Status == BookingCancellationCreditNoteStatus.Pending))
@@ -4910,7 +5363,7 @@ public class BookingCancellationService
             .ToList();
         var creditNoteAmountsById = creditNoteInvoiceIds.Count == 0
             ? new Dictionary<int, decimal>()
-            : await _db.Invoices.AsNoTracking()
+            : await db.Invoices.AsNoTracking()
                 .Where(i => creditNoteInvoiceIds.Contains(i.Id))
                 .Select(i => new { i.Id, i.ImporteTotal })
                 .ToDictionaryAsync(i => i.Id, i => i.ImporteTotal, ct);
@@ -4938,7 +5391,7 @@ public class BookingCancellationService
         //     linea Scope=Partial con monto confirmado apuntando a esta factura reserva ese monto. Se excluyen
         //     las de un BC ya Aborted/Closed (evento muerto/terminado), las de un BC que ya emitio su hija (ya
         //     contadas en (A)), y las del BC que se esta confirmando ahora (excludeBookingCancellationId).
-        var partialLineReservations = await _db.BookingCancellationLines.AsNoTracking()
+        var partialLineReservations = await db.BookingCancellationLines.AsNoTracking()
             .Where(l => l.TargetInvoiceId == invoiceId
                      && l.Scope == BookingCancellationLineScope.Partial
                      && l.ConfirmedGrossCreditAmount != null
@@ -5563,12 +6016,26 @@ public class BookingCancellationService
     /// fuente (entidad ya cargada en MapToDtoAsync, proyeccion anonima en HasPendingOperatorPenaltyAsync) y
     /// comparten la MISMA regla.
     /// </summary>
+    /// <param name="HasSucceededCreditNoteChild">
+    /// ADR-044 T5-emision, condicion C2 (2026-07-15): true si existe una hija <see cref="BookingCancellationCreditNote"/>
+    /// de este BC con <c>Status == Succeeded</c> (CAE YA aprobado por AFIP). Cierra el radio de la Decision B3
+    /// (el escalar <see cref="BookingCancellation.CreditNoteInvoiceId"/> del BC padre queda SIEMPRE null para una
+    /// cancelacion parcial T5): sin esta condicion, la multa/fee de una parcial quedaria en deadlock silencioso
+    /// (el gate de abajo nunca veria "la NC al cliente ya tiene CAE").
+    ///
+    /// <para><b>OJO — semantica EXACTA (C2, no confundir con <see cref="BcHasLiveCreditNoteChildAsync"/>)</b>: acá
+    /// SOLO cuenta <c>Succeeded</c> (CAE obtenido), nunca <c>Pending</c> (NC recien creada, todavia sin CAE). El
+    /// helper <c>BcHasLiveCreditNoteChildAsync</c> (usado en <c>:1513</c> para la liberacion INV-081) responde una
+    /// pregunta DISTINTA ("¿hay una NC en vuelo que no debo pisar?", donde Pending SI cuenta a proposito) — no se
+    /// unifican los dos criterios.</para>
+    /// </param>
     private readonly record struct PenaltyConfirmabilityFields(
         BookingCancellationStatus Status,
         int? CreditNoteInvoiceId,
         PenaltyStatus PenaltyStatus,
         int? DebitNoteInvoiceId,
-        DebitNoteStatus DebitNoteStatus);
+        DebitNoteStatus DebitNoteStatus,
+        bool HasSucceededCreditNoteChild = false);
 
     /// <returns>(canConfirm, blockedReasonCode). blockedReasonCode es null cuando canConfirm es true.</returns>
     private static (bool CanConfirm, string? BlockedReason) EvaluateCanConfirmPenalty(
@@ -5577,8 +6044,11 @@ public class BookingCancellationService
         if (!debitNoteFeatureEnabled)
             return (false, "DebitNoteFeatureDisabled");
 
-        // La ND nunca sale antes que la NC total: requiere estado post-NC + CreditNoteInvoiceId seteado (CAE).
-        if (!PostCreditNoteStatuses.Contains(fields.Status) || fields.CreditNoteInvoiceId is null)
+        // La ND nunca sale antes que la NC total: requiere estado post-NC + "la NC al cliente ya tiene CAE".
+        // ADR-044 T5-emision (C2): esto ultimo se cumple por el escalar del padre (camino legacy, CAE) O por una
+        // hija Succeeded (camino T5, escalar del padre siempre null por B3 — ver el XML-doc del campo arriba).
+        bool creditNoteHasCae = fields.CreditNoteInvoiceId is not null || fields.HasSucceededCreditNoteChild;
+        if (!PostCreditNoteStatuses.Contains(fields.Status) || !creditNoteHasCae)
             return (false, "CreditNoteNotYetIssued");
 
         // Fase A (2026-06-28): cierre sin multa. Si la pata del operador ya se resolvio "sin multa"
@@ -5617,12 +6087,16 @@ public class BookingCancellationService
                 b.PenaltyStatus,
                 b.DebitNoteInvoiceId,
                 b.DebitNoteStatus,
+                // ADR-044 T5-emision (C2): subconsulta traducible, sin N+1 (una fila -> un EXISTS). Ver el
+                // XML-doc de PenaltyConfirmabilityFields.HasSucceededCreditNoteChild.
+                HasSucceededCreditNoteChild = b.CreditNotes.Any(c => c.Status == BookingCancellationCreditNoteStatus.Succeeded),
             })
             .FirstOrDefaultAsync(ct);
         if (row is null) return false;
 
         var fields = new PenaltyConfirmabilityFields(
-            row.Status, row.CreditNoteInvoiceId, row.PenaltyStatus, row.DebitNoteInvoiceId, row.DebitNoteStatus);
+            row.Status, row.CreditNoteInvoiceId, row.PenaltyStatus, row.DebitNoteInvoiceId, row.DebitNoteStatus,
+            row.HasSucceededCreditNoteChild);
 
         var settings = await _settings.GetEntityAsync(ct);
         var (canConfirm, _) = EvaluateCanConfirmPenalty(fields, settings.EnableCancellationDebitNote);
@@ -5646,6 +6120,8 @@ public class BookingCancellationService
                 b.PenaltyStatus,
                 b.DebitNoteInvoiceId,
                 b.DebitNoteStatus,
+                // ADR-044 T5-emision (C2): ver HasPendingOperatorPenaltyAsync arriba.
+                HasSucceededCreditNoteChild = b.CreditNotes.Any(c => c.Status == BookingCancellationCreditNoteStatus.Succeeded),
             })
             .FirstOrDefaultAsync(ct);
         if (row is null) return OperatorPenaltyOutcome.None;
@@ -5659,7 +6135,8 @@ public class BookingCancellationService
         // No-terminal: ¿esta PENDIENTE de resolver ahora mismo? Reusa la MISMA regla canonica que
         // HasPendingOperatorPenaltyAsync (flag ON + NC total con CAE + penalidad aun Estimated + sin ND en juego).
         var fields = new PenaltyConfirmabilityFields(
-            row.Status, row.CreditNoteInvoiceId, row.PenaltyStatus, row.DebitNoteInvoiceId, row.DebitNoteStatus);
+            row.Status, row.CreditNoteInvoiceId, row.PenaltyStatus, row.DebitNoteInvoiceId, row.DebitNoteStatus,
+            row.HasSucceededCreditNoteChild);
         var settings = await _settings.GetEntityAsync(ct);
         var (canConfirm, _) = EvaluateCanConfirmPenalty(fields, settings.EnableCancellationDebitNote);
 
@@ -5707,6 +6184,8 @@ public class BookingCancellationService
                 // para sugerir el camino en el paso de la pregunta (ver SuggestedPenaltyPath mas abajo). Se trae
                 // en la MISMA query (join a Supplier, sin consulta aparte: no agrega N+1).
                 SupplierPenaltyBehavior = b.Supplier.PenaltyBehavior,
+                // ADR-044 T5-emision (C2): ver HasPendingOperatorPenaltyAsync.
+                HasSucceededCreditNoteChild = b.CreditNotes.Any(c => c.Status == BookingCancellationCreditNoteStatus.Succeeded),
             })
             .FirstOrDefaultAsync(ct);
 
@@ -5717,7 +6196,8 @@ public class BookingCancellationService
         // "Pendiente de decidir ahora" reusa la MISMA regla canonica que el boton confirmar/cerrar (flag ON + NC
         // total con CAE + penalidad aun Estimated + sin ND en juego), para no divergir de esa verdad.
         var fields = new PenaltyConfirmabilityFields(
-            row.Status, row.CreditNoteInvoiceId, row.PenaltyStatus, row.DebitNoteInvoiceId, row.DebitNoteStatus);
+            row.Status, row.CreditNoteInvoiceId, row.PenaltyStatus, row.DebitNoteInvoiceId, row.DebitNoteStatus,
+            row.HasSucceededCreditNoteChild);
         var settings = await _settings.GetEntityAsync(ct);
         var (isPendingDecision, _) = EvaluateCanConfirmPenalty(fields, settings.EnableCancellationDebitNote);
 
@@ -5962,6 +6442,8 @@ public class BookingCancellationService
                 b.PenaltyStatus,
                 b.DebitNoteStatus,
                 b.DebitNoteInvoiceId,
+                // ADR-044 T5-emision (C2): ver HasPendingOperatorPenaltyAsync.
+                HasSucceededCreditNoteChild = b.CreditNotes.Any(c => c.Status == BookingCancellationCreditNoteStatus.Succeeded),
             })
             .FirstOrDefaultAsync(ct);
         if (bcRow is null)
@@ -6074,7 +6556,8 @@ public class BookingCancellationService
         // Confirmed/Waived de OTRO operador: esos campos alli solo importan para la idempotencia BC-level, que
         // aca no aplica (estamos evaluando el gate compartido, no la idempotencia de un operador puntual).
         var sharedFields = new PenaltyConfirmabilityFields(
-            bcRow.Status, bcRow.CreditNoteInvoiceId, PenaltyStatus.Estimated, null, DebitNoteStatus.NotApplicable);
+            bcRow.Status, bcRow.CreditNoteInvoiceId, PenaltyStatus.Estimated, null, DebitNoteStatus.NotApplicable,
+            bcRow.HasSucceededCreditNoteChild);
         var (isPendingDecisionForBc, _) = EvaluateCanConfirmPenalty(sharedFields, settings.EnableCancellationDebitNote);
 
         // ADR-044 "Deshacer una multa ya emitida": mismo dato compartido que el singular (la ND compartida del
@@ -6264,8 +6747,13 @@ public class BookingCancellationService
                 "No tenés permiso para confirmar la multa del operador. Pedíselo a un administrador.",
                 invariantCode: "INV-ADR014-PERM");
 
-        // === Precondicion 4: estado post-NC con CAE. Nunca emitir la ND antes que la NC. ===
-        if (!PostCreditNoteStatuses.Contains(bc.Status) || bc.CreditNoteInvoiceId is null)
+        // === Precondicion 4: estado post-NC con CAE. Nunca emitir la ND antes que la NC.
+        // ADR-044 T5-emision (C2): "la NC al cliente ya tiene CAE" se cumple por el escalar del padre (camino
+        // legacy) O por una hija Succeeded (camino T5 parcial, donde el escalar del padre queda SIEMPRE null por
+        // la Decision B3). Sin esto, una parcial con multa de operador confirmada quedaria en deadlock: nunca
+        // podria confirmar su multa aunque la NC al cliente YA tenga CAE. ===
+        if (!PostCreditNoteStatuses.Contains(bc.Status)
+            || (bc.CreditNoteInvoiceId is null && !await BcHasSucceededCreditNoteChildAsync(bc.Id, ct)))
             throw new BusinessInvariantViolationException(
                 "Todavía no se puede confirmar la multa del operador: la nota de crédito al cliente " +
                 "aún no está confirmada por la AFIP.",
@@ -6640,7 +7128,10 @@ public class BookingCancellationService
             throw new BusinessInvariantViolationException(
                 "La Nota de Débito de esta cancelación ya fue emitida o encolada. No hace falta reintentar.",
                 invariantCode: "INV-ADR014-RETRY-002");
-        if (!PostCreditNoteStatuses.Contains(bc.Status) || bc.CreditNoteInvoiceId is null)
+        // ADR-044 T5-emision (C2): mismo criterio child-aware que ConfirmPenaltyAsync (ver su comentario) — una
+        // parcial con NC ya con CAE puede reintentar su ND aunque el escalar del padre sea null.
+        if (!PostCreditNoteStatuses.Contains(bc.Status)
+            || (bc.CreditNoteInvoiceId is null && !await BcHasSucceededCreditNoteChildAsync(bc.Id, ct)))
             throw new BusinessInvariantViolationException(
                 "Todavía no se puede emitir la Nota de Débito: la nota de crédito al cliente aún no está " +
                 "confirmada por la AFIP.",
@@ -7435,8 +7926,9 @@ public class BookingCancellationService
                 invariantCode: "INV-WAIVE-PERM");
 
         // === Precondicion 4: estado post-NC con CAE. La pata de la penalidad solo se resuelve despues de que la
-        // NC total al cliente ya tiene CAE (mismo gate que ConfirmPenaltyAsync). ===
-        if (!PostCreditNoteStatuses.Contains(bc.Status) || bc.CreditNoteInvoiceId is null)
+        // NC al cliente ya tiene CAE (mismo gate que ConfirmPenaltyAsync, incluido el child-aware de C2/T5-emision). ===
+        if (!PostCreditNoteStatuses.Contains(bc.Status)
+            || (bc.CreditNoteInvoiceId is null && !await BcHasSucceededCreditNoteChildAsync(bc.Id, ct)))
             throw new BusinessInvariantViolationException(
                 "Todavía no se puede cerrar sin multa: la nota de crédito al cliente aún no está " +
                 "confirmada por la AFIP.",
@@ -12100,6 +12592,95 @@ public class BookingCancellationService
     }
 
     /// <summary>
+    /// ADR-044 T5-emision (2026-07-15, diseño §6.1 V11): arma las lineas de la NC parcial de UN evento de
+    /// cancelacion PARCIAL (se canceló uno o mas servicios de la MISMA reserva contra la MISMA factura) a
+    /// partir de los items de la factura DESTINO. Version SIMPLIFICADA de <see cref="BuildPartialCreditNoteLines"/>
+    /// (el camino LEGACY FC1.3, "anular la reserva entera"): a proposito NO lee <c>bc.FiscalLiquidation</c> (un
+    /// BC T5 nunca la persiste — esa VO tiene sus propios CHECK constraints de coherencia con
+    /// <c>LiquidationComputedAt</c>/<c>CreditNoteKind</c> del camino total) ni contempla items no reintegrables
+    /// (esa es una decision fiscal exclusiva de "anular todo", no de cancelar un servicio puntual).
+    ///
+    /// <para><b>Los 2 casos</b> (mismo criterio fiscal que el legacy, RH-001/OQ-2 — preservar fidelidad, no
+    /// colapsar a una alicuota dominante):
+    /// <list type="number">
+    ///   <item><b>Factura mono-alicuota</b>: una unica linea, <c>Total = fiscalAmountToCredit</c>, con
+    ///   <paramref name="fallbackDescription"/> (el caller arma un texto simple con la reserva).</item>
+    ///   <item><b>Factura multi-alicuota</b>: una linea POR alicuota, prorrateando <paramref name="fiscalAmountToCredit"/>
+    ///   proporcional al peso de cada alicuota en la factura destino; la ultima linea absorbe el residuo de
+    ///   redondeo para que <c>Σ Lines.Total == fiscalAmountToCredit</c> EXACTO. Cada linea usa la descripcion
+    ///   del item representativo de su grupo (trazabilidad hacia los items originales).</item>
+    /// </list>
+    /// </para>
+    ///
+    /// <para><b>CRITICO (mismo criterio matriculado 2026-05-28 que el legacy)</b>: <paramref name="fiscalAmountToCredit"/>
+    /// es BRUTO (con IVA incluido) — el mismo monto congelado que <c>BookingCancellationLine.ConfirmedGrossCreditAmount</c>.
+    /// El calculador de IVA del caller extrae el IVA por dentro; NO se resta aca.</para>
+    /// </summary>
+    // Visibilidad internal (no private): permite a TravelApi.Tests candar el prorrateo/residuo sin armar un
+    // BookingCancellation entero (InternalsVisibleTo ya configurado, mismo patron que BuildPartialCreditNoteLines).
+    internal static IReadOnlyList<PartialCreditNoteLineDto> BuildPartialCreditNoteLinesForTargetInvoice(
+        decimal fiscalAmountToCredit,
+        IReadOnlyList<InvoiceItem> invoiceItems,
+        string fallbackDescription)
+    {
+        var alicuotaGroups = invoiceItems
+            .GroupBy(i => i.AlicuotaIvaId)
+            .Select(g => new
+            {
+                AlicuotaId = g.Key,
+                GroupTotal = g.Sum(i => i.Total),
+                RepresentativeDescription = g.First().Description ?? string.Empty,
+            })
+            .ToList();
+
+        // Caso 1 (mono-alicuota): una sola linea con la descripcion generica del evento.
+        if (alicuotaGroups.Count == 1)
+        {
+            return new[]
+            {
+                new PartialCreditNoteLineDto(
+                    Description: fallbackDescription,
+                    Quantity: 1m,
+                    UnitPrice: fiscalAmountToCredit,
+                    Total: fiscalAmountToCredit,
+                    AlicuotaIvaId: alicuotaGroups[0].AlicuotaId),
+            };
+        }
+
+        // Caso 2 (multi-alicuota): prorrateo proporcional al peso de cada alicuota en la factura destino,
+        // residuo de redondeo absorbido por la ultima linea (mismo algoritmo que el legacy, ver su XML-doc).
+        var totalGross = alicuotaGroups.Sum(g => g.GroupTotal);
+        var lines = new List<PartialCreditNoteLineDto>(alicuotaGroups.Count);
+        for (int i = 0; i < alicuotaGroups.Count; i++)
+        {
+            var g = alicuotaGroups[i];
+            decimal lineTotal;
+            if (i < alicuotaGroups.Count - 1)
+            {
+                var factor = totalGross > 0m ? g.GroupTotal / totalGross : 0m;
+                lineTotal = Math.Round(fiscalAmountToCredit * factor, 2, MidpointRounding.AwayFromZero);
+            }
+            else
+            {
+                var sumSoFar = lines.Sum(l => l.Total);
+                lineTotal = Math.Round(fiscalAmountToCredit - sumSoFar, 2, MidpointRounding.AwayFromZero);
+            }
+
+            var description = g.RepresentativeDescription;
+            if (description.Length > 200)
+                description = description[..200];
+
+            lines.Add(new PartialCreditNoteLineDto(
+                Description: description,
+                Quantity: 1m,
+                UnitPrice: lineTotal,
+                Total: lineTotal,
+                AlicuotaIvaId: g.AlicuotaId));
+        }
+        return lines;
+    }
+
+    /// <summary>
     /// F2.3 — devuelve el id de alicuota IVA dominante (el que tiene mayor Total
     /// acumulado en los items de la factura origen).
     ///
@@ -12197,6 +12778,9 @@ public class BookingCancellationService
             // ADR-042: hijas (una por factura -> su NC) + la Invoice NC de cada una (para el numero de comprobante).
             .Include(b => b.CreditNotes)
                 .ThenInclude(c => c.CreditNoteInvoice)
+            // ADR-044 T5-emision (2026-07-15): las lineas Partial son las que necesita el contrato de la
+            // pantalla "confirmar y emitir la devolucion" (PartialCreditNoteEmission, mas abajo).
+            .Include(b => b.Lines)
             .FirstOrDefaultAsync(b => b.Id == bcId, ct);
         if (bc is null) return null;
 
@@ -12227,9 +12811,12 @@ public class BookingCancellationService
         // boton o, si esta bloqueado, mostrar el aviso correcto sin disparar una llamada que va
         // a rebotar. confirm-penalty revalida TODO server-side, asi que esto es solo una pista.
         var settings = await _settings.GetEntityAsync(ct);
-        // La entidad ya esta cargada (con sus Includes): armamos los campos sueltos para la regla compartida.
+        // La entidad ya esta cargada (con sus Includes, CreditNotes incluido): armamos los campos sueltos para la
+        // regla compartida. ADR-044 T5-emision (C2): el chequeo de la hija Succeeded es en MEMORIA (LINQ-to-
+        // Objects), sin query extra — bc.CreditNotes ya vino con el Include de mas arriba.
         var penaltyFields = new PenaltyConfirmabilityFields(
-            bc.Status, bc.CreditNoteInvoiceId, bc.PenaltyStatus, bc.DebitNoteInvoiceId, bc.DebitNoteStatus);
+            bc.Status, bc.CreditNoteInvoiceId, bc.PenaltyStatus, bc.DebitNoteInvoiceId, bc.DebitNoteStatus,
+            bc.CreditNotes.Any(c => c.Status == BookingCancellationCreditNoteStatus.Succeeded));
         var (canConfirmPenalty, confirmPenaltyBlockedReason) =
             EvaluateCanConfirmPenalty(penaltyFields, settings.EnableCancellationDebitNote);
 
@@ -12270,6 +12857,10 @@ public class BookingCancellationService
                 ComputedByUserName = bc.FiscalLiquidation.ComputedByUserName,
             };
         }
+
+        // ADR-044 T5-emision (2026-07-15): contrato de la pantalla "confirmar y emitir la devolucion" de una
+        // cancelacion PARCIAL. Null cuando este BC no es puramente parcial (anulacion TOTAL, u otro contrato).
+        var partialCreditNoteEmissionDto = await BuildPartialCreditNoteEmissionSummaryAsync(bc, ct);
 
         return new BookingCancellationDto
         {
@@ -12312,7 +12903,100 @@ public class BookingCancellationService
             CreditNotes = creditNotesDto,
             CanRetryCreditNotes = canRetryCreditNotes,
             ClientCreditByCurrency = clientCreditByCurrency,
+            PartialCreditNoteEmission = partialCreditNoteEmissionDto,
         };
+    }
+
+    /// <summary>
+    /// ADR-044 T5-emision (2026-07-15, diseño §7): arma el contrato de solo lectura del panel de confirmar/
+    /// emitir la devolucion de UN servicio cancelado. Devuelve <c>null</c> cuando <paramref name="bc"/> no es
+    /// puramente parcial (sin lineas Scope=Partial, o con alguna Scope=Full — el circuito de anulacion TOTAL
+    /// tiene su propio contrato). Barato: solo pega 2 queries chicas cuando SI hay una factura destino unica
+    /// resuelta (el caso comun); si hay 2+ facturas destino o nada resuelto, no consulta de mas.
+    /// </summary>
+    private async Task<PartialCreditNoteEmissionSummaryDto?> BuildPartialCreditNoteEmissionSummaryAsync(
+        BookingCancellation bc, CancellationToken ct)
+    {
+        var partialLines = bc.Lines.Where(l => l.Scope == BookingCancellationLineScope.Partial).ToList();
+        bool hasFullLine = bc.Lines.Any(l => l.Scope == BookingCancellationLineScope.Full);
+        if (partialLines.Count == 0 || hasFullLine)
+            return null;
+
+        var resolvedLines = partialLines
+            .Where(l => l.TargetInvoiceId.HasValue && l.ConfirmedGrossCreditAmount.HasValue)
+            .ToList();
+        bool isResolved = resolvedLines.Count == partialLines.Count && resolvedLines.Count > 0;
+
+        // Facturas destino cuya devolucion TODAVIA no tiene CAE (una hija Succeeded ya esta resuelta: no
+        // vuelve a contar como "pendiente de emitir" en este panel).
+        var succeededInvoiceIds = bc.CreditNotes
+            .Where(c => c.Status == BookingCancellationCreditNoteStatus.Succeeded)
+            .Select(c => c.OriginatingInvoiceId)
+            .ToHashSet();
+        var pendingTargetInvoiceIds = resolvedLines
+            .Select(l => l.TargetInvoiceId!.Value)
+            .Where(id => !succeededInvoiceIds.Contains(id))
+            .Distinct()
+            .ToList();
+
+        var dto = new PartialCreditNoteEmissionSummaryDto
+        {
+            IsResolved = isResolved,
+            HasMultipleTargetInvoices = pendingTargetInvoiceIds.Count > 1,
+            // M3 del review (deuda anotada, diseño §10): DraftedAt es el proxy MVP de "la fecha del hecho" (la
+            // cancelacion del servicio) para el aviso RG 4540. Afinar a la fecha real de anulacion del servicio
+            // queda para una tanda futura si difieren (ej. un draft editado dias despues de cancelar).
+            CancellationEventAt = bc.DraftedAt,
+            Rg4540DeadlineAt = bc.DraftedAt.AddDays(15),
+            Rg4540DeadlinePassed = DateTime.UtcNow > bc.DraftedAt.AddDays(15),
+        };
+
+        var afipSettings = await _db.AfipSettings.AsNoTracking().FirstOrDefaultAsync(ct);
+        dto.RequiresAccountantSignoffForRi =
+            TaxConditionNormalizer.Normalize(afipSettings?.TaxCondition) == TaxConditionCanonical.ResponsableInscripto;
+
+        // Datos de la factura destino: solo cuando hay EXACTAMENTE una factura pendiente de emitir (el caso
+        // comun, "normalmente una" del diseño). Con 2+ facturas (fuera de alcance MVP, INV-T5-EMIT-MULTI-INVOICE
+        // al confirmar) o ninguna resuelta, el panel queda sin estos datos — el front muestra el cartel que
+        // corresponda (trabada / ya emitida) sin ellos.
+        if (isResolved && pendingTargetInvoiceIds.Count == 1)
+        {
+            var targetInvoiceId = pendingTargetInvoiceIds[0];
+            var invoiceRow = await _db.Invoices.AsNoTracking()
+                .Where(i => i.Id == targetInvoiceId)
+                .Select(i => new
+                {
+                    i.PublicId,
+                    i.TipoComprobante,
+                    i.PuntoDeVenta,
+                    i.NumeroComprobante,
+                    i.MonId,
+                    i.MonCotiz,
+                })
+                .FirstOrDefaultAsync(ct);
+            if (invoiceRow is not null)
+            {
+                bool invoiceIsForeign = !string.IsNullOrWhiteSpace(invoiceRow.MonId)
+                    && !string.Equals(invoiceRow.MonId, "PES", StringComparison.OrdinalIgnoreCase);
+
+                dto.TargetInvoicePublicId = invoiceRow.PublicId;
+                dto.TargetInvoiceLabel = FormatComprobanteLabel(
+                    invoiceRow.TipoComprobante, invoiceRow.PuntoDeVenta, invoiceRow.NumeroComprobante);
+                dto.TargetInvoiceCurrency = invoiceIsForeign
+                    ? (ArcaCurrencyMapper.ToIso(invoiceRow.MonId) ?? Monedas.USD)
+                    : Monedas.ARS;
+                dto.TargetInvoiceExchangeRate = invoiceIsForeign ? invoiceRow.MonCotiz : null;
+                dto.AmountToCredit = resolvedLines
+                    .Where(l => l.TargetInvoiceId == targetInvoiceId)
+                    .Sum(l => l.ConfirmedGrossCreditAmount!.Value);
+                // Mismo remanente (fuente unica, V2) que usa el gate de emision: cuanto queda ANTES de esta
+                // devolucion, excluyendo la reserva de ESTE BC (para no restarse a si mismo).
+                dto.RemainingBeforeThisEmission = await ComputeInvoiceRemainingCreditableAmountAsync(
+                    targetInvoiceId, ct, excludeBookingCancellationId: bc.Id);
+            }
+        }
+
+        return dto;
     }
 
     /// <summary>

@@ -84,6 +84,33 @@ public interface IBookingCancellationService
         bool userCanClassifyAgencyPenalty = false);
 
     /// <summary>
+    /// ADR-044 T5-emision (2026-07-15, diseño §6.1): confirma y EMITE la Nota de Credito real de una
+    /// cancelacion PARCIAL (se canceló UN servicio de una reserva facturada, la factura sigue viva por el
+    /// resto). Sella el <c>FiscalSnapshot</c> (heredado de la factura destino: moneda/TC congelados, NUNCA se
+    /// recotiza), transiciona el BC <c>Drafted → AwaitingFiscalConfirmation</c> y emite la NC via el pipeline
+    /// de bajo nivel (<c>InvoiceService.CreateAsync</c> + <c>ProcessInvoiceJob</c>) — NUNCA el pipeline legacy
+    /// que marca la factura de venta <c>AnnulmentStatus=Succeeded</c> (eso mataria la factura para el resto de
+    /// servicios). La reconciliacion al CAE la hace un reconciliador T5 DEDICADO (nunca
+    /// <c>OnArcaSucceededAsync</c>, que dispararia una anulacion TOTAL fantasma).
+    ///
+    /// <para><b>Guards duros (400/409)</b>: BC debe existir y estar <c>Drafted</c>, puramente parcial (≥1 linea
+    /// <c>Scope=Partial</c>, ninguna <c>Scope=Full</c>); todas sus lineas Partial deben tener factura destino y
+    /// monto resueltos (<c>INV-T5-EMIT-UNRESOLVED</c> si no); el monto no puede exceder el remanente FRESCO de
+    /// la factura destino, releido bajo el lock por factura (<c>INV-T5-EMIT-CAP</c> si otra emision lo consumio
+    /// mientras tanto); si la agencia es Responsable Inscripto, la emision automatica queda bloqueada
+    /// (<c>INV-T5-EMIT-RI-SIGNOFF</c>) hasta la firma de un contador matriculado sobre la alicuota (fiscal,
+    /// riesgo residual 1) — para Monotributo (la condicion de hoy) esto NO bloquea.</para>
+    ///
+    /// <para>El permiso de emision fiscal (mismo que anular-total, <c>cobranzas.invoice_annul</c>) y la
+    /// ownership de la reserva los resuelve el controller server-side ANTES de llamar a este metodo.</para>
+    /// </summary>
+    Task<BookingCancellationDto> ConfirmPartialCancellationEmissionAsync(
+        Guid publicId,
+        string userId,
+        string? userName,
+        CancellationToken ct);
+
+    /// <summary>
     /// Aborta un BC en <c>Drafted</c>. Idempotente: si ya esta <c>Aborted</c>,
     /// retorna el DTO actual sin tocar nada. Si el BC esta en cualquier otro
     /// estado, throws (transicion invalida — usar el flujo normal o
