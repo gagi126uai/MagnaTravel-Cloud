@@ -1423,3 +1423,128 @@ más de una factura, y viene escondido con defaults.
   conviven (multi-operador): el del cierre sin multa (cartel rosa) dice **"· Reabrir el paso de la
   multa"**; el de la multa YA emitida con comprobante (cartel verde, ADR-044) **queda como está**: "·
   Deshacer: el operador cobró mal esta multa". Son acciones fiscalmente distintas y no se unifican.
+
+## Las multas por anulación se ven en la cuenta del cliente (2026-07-15, decisiones traídas por Gastón)
+
+> **Origen:** Gastón reportó "las multas a cobrar al cliente no aparecen". La cuenta corriente del
+> cliente (`CustomerAccountPage`) escondía las reservas anuladas, y la multa solo vive en una
+> anulada → nunca se veía. Estas tres decisiones vinieron ya cerradas por él. Spec completa:
+> `docs/ux/2026-07-15-multas-en-cuenta-del-cliente.md`. **NO reabrir.** Sigue valiendo todo lo del
+> paso de multa (2026-07-08 "el paso de multa vive en la ficha", 2026-07-10 T4, 2026-07-14) y las
+> 3 reglas duras de multimoneda (2026-06-09). Quedan 2 puntos abiertos, esperando respuesta de
+> Gastón (ver la spec, P1 extracto global / P2 quién ve las multas sin comprobante todavía).
+
+- **(2026-07-15) Una multa CONFIRMADA cuyo comprobante todavía no salió** (se está emitiendo, o
+  quedó trabado/a revisión) **YA cuenta como deuda del cliente en su cuenta corriente, y se muestra
+  DISTINGUIDA** de la que ya tiene comprobante emitido. Tres voces en criollo: **"Pendiente de
+  cobro"** (comprobante emitido, deuda firme, rojo) · **"Comprobante en camino"** (emitiéndose,
+  ámbar) · **"En revisión"** (trabado o a revisión, ámbar). Nunca se muestra el término fiscal ni
+  el error crudo. **OJO — límite:** esto es SOLO en la cuenta del cliente; `moneyStatus.js` NO se
+  cambia globalmente: en la ficha y el listado del vendedor, la multa sin comprobante (`En revisión`)
+  sigue oculta (no se le promete un cobro sin papel al vendedor).
+- **(2026-07-15) Sin alertas nuevas.** La multa se ve en la cuenta del cliente y en la ficha; las
+  bandejas siguen siendo listas pasivas. Nada de campanita ni cartel global nuevo.
+- **(2026-07-15) Bloque "Multa pendiente de cobro" en la cuenta del cliente, espejo del circuito de
+  la cuenta del operador** (recuadros por moneda + lista de líneas con chip, molde de
+  `SupplierExtractoSection.jsx`). Junta las multas de TODAS las reservas anuladas del cliente. Va en
+  el carril de arriba (debajo del encabezado, arriba de las solapas), donde ya viven los carteles
+  "A FAVOR" y "Saldo a favor aplicado". **Un total por moneda, nunca sumando pesos + dólares**
+  (multimoneda). Cada fila linkea a la ficha (sin botones propios). **Aparece SOLO si el cliente
+  tiene al menos una multa pendiente; si no, no existe** (esconder complejidad, igual que el
+  circuito del operador cuando no hay anulaciones).
+- **(2026-07-15, P1 — respondida) La multa vive SOLO en el bloque nuevo "Multa pendiente de cobro".
+  El extracto "Estado de cuenta" NO cambia.** No se mete la multa como renglón del extracto: eso
+  movería el saldo de cierre y rompería la coincidencia saldo↔"Debe" del encabezado (decidido
+  2026-06-22, "Estado de cuenta = resumen con saldo corriente"). El extracto sigue mostrando solo
+  los viajes vivos.
+- **(2026-07-15, P2 — respondida) Las multas confirmadas SIN comprobante todavía las ven TODOS los
+  que abran la cuenta del cliente**, cada una con su cartelito distintivo ("Comprobante en camino" /
+  "En revisión"). No se esconden a nadie: es plata real que el cliente debe; ocultarlas haría que la
+  cuenta parezca más al día de lo que está. (Distinto del cartel de multa trabada en la FICHA, que
+  sí es admin-only 2026-07-08: eso es una acción a resolver; esto es información de la cuenta.)
+
+## T5 — devolución por un servicio cancelado (nota de crédito parcial) (2026-07-15, respuestas de Gastón)
+
+> **Origen:** cuando se cancela UN servicio de una reserva YA facturada (ej. el hotel de una reserva que
+> también tiene aéreo), la reserva **sigue viva** por el resto, pero hay que emitirle al cliente una
+> devolución (nota de crédito) por ese servicio. El sistema ya guarda todo (qué servicio, cuánto se
+> devuelve —monto congelado—, a qué factura y en qué moneda) y el caso aparece en "Comprobantes por
+> resolver" como "Pendiente de emisión". Faltaba LA PANTALLA para confirmar y emitir esa devolución.
+> Contrato técnico: `docs/architecture/2026-07-15-t5-emision-nc-parcial-diseno.md` (§7/§8/§11). Sesión de
+> 5 preguntas; Gastón respondió P1=A, **P2=B (con doble confirmación)**, P3=A, P4=A, P5a=A, P5b=A.
+> Spec: `docs/ux/2026-07-15-t5-pantalla-confirmar-nc-parcial.md`. **NO reabrir.** Sigue valiendo todo lo
+> del paso de multa (2026-07-08 "el paso de multa vive en la ficha"), la bandeja pasiva (2026-07-10 T4),
+> las 8 reglas de voz (2026-07-08) y las 3 reglas duras de multimoneda (2026-06-09).
+
+- **La reserva NO se anula: sigue viva.** Se canceló un servicio (queda tachado "Cancelado", regla del
+  tacho dinámico 2026-06-08); la factura queda viva por los demás servicios. La voz habla de **"el
+  servicio cancelado"**, nunca "servicio anulado" ("Anular" está reservado a la reserva entera). El
+  término **"nota de crédito"/"devolución"/"factura" SÍ se usa acá** por ser pantalla de facturación
+  (glosario 2026-07-08).
+
+- **(2026-07-15) La fila en la bandeja "Comprobantes por resolver" es pasiva (link a la ficha, sin
+  botón propio)** — un tercer tipo de fila junto a multas y NC por revisar (2026-07-10 P7/P8/P9).
+  **(P5a=A) Rótulo:** `DEVOLUCIÓN · SERVICIO CANCELADO` + "qué falta" = **"Falta confirmar y emitir la
+  devolución"** + hace-cuánto. El click lleva a la ficha, que es donde se resuelve.
+
+- **(2026-07-15, P1=A) El aviso vive ARRIBA de la ficha, como aviso que pide acción, siempre visible
+  hasta que se emite** (junto a los otros accionables tipo "Dar OK", regla de la tira de avisos
+  2026-07-05). NO va escondido en la sección de facturación. Es una tarea pendiente que hay que hacer;
+  por eso arriba y a la vista. Todo EN LÍNEA dentro de la ficha, nunca ventana flotante.
+
+- **(2026-07-15) El panel muestra (todo de solo lectura, el backend lo da; el front no deduce ni
+  recalcula):** servicio(s) cancelado(s) + operador; **monto de la devolución** (bruto congelado);
+  **factura destino** por su número legible (nunca un Id); **saldo vivo de esa factura** antes de la
+  devolución, con la aclaración "queda viva por el resto". El monto NO se edita: se muestra.
+
+- **(2026-07-15) Multimoneda dura (2026-06-09):** el monto va en la **moneda de la factura**; nunca se
+  ofrece pasar a pesos; nunca aparece "diferencia de cambio". **(P5b=A) Si la factura es en dólares**, se
+  muestra el dólar congelado con el rótulo exacto: **"Dólar de la factura: $ X (el de la factura, no se
+  cambia)"** (solo lectura).
+
+- **(2026-07-15, P4=A) Aviso del plazo de la AFIP (15 días desde que se canceló el servicio): informa,
+  NO frena; el tono sube si venció** (mismo molde que el aviso de "Deshacer una multa", 2026-07-14; el
+  front NO calcula la fecha, la recibe del backend). Textos exactos:
+  - **Dentro de plazo:** "⚠ Quedan {N} días para emitir esta devolución sin trámites extra ante ARCA
+    (vence el {fecha})."
+  - **Pasado el plazo:** "⚠ Pasaron más de 15 días desde que se canceló el servicio. Se puede emitir
+    igual, pero convendría consultarlo con un contador antes de seguir."
+  - **No corresponde / el backend no manda el dato:** el aviso no aparece y nada ocupa ese lugar.
+
+- **(2026-07-15, P3=A) NO pide motivo nuevo para emitir: solo queda registrado quién y cuándo.** El "por
+  qué" ya se escribió al cancelar el servicio; este paso solo completa el papel de esa cancelación, no es
+  una decisión nueva.
+
+- **(2026-07-15, P2=B) SÍ hay un segundo cartel "¿Seguro?" antes de mandarla a ARCA.** Gastón eligió a
+  sabiendas la doble confirmación (la opción NO recomendada). **⚠️ Esto DIFIERE del patrón de anular una
+  reserva con UNA sola factura** (2026-06-25 Caso 4), que NO tiene el "¿seguro?" extra. Acá SÍ lo tiene,
+  igual que el anular con VARIAS facturas (2026-07-01 P2). Es una decisión explícita del dueño para este
+  caso: primero el panel con todos los datos, y al apretar "Confirmar y emitir la devolución" aparece el
+  cartel **"¿Seguro? Una vez emitida no se puede deshacer."** con botones **[Volver]** / **[Sí, emitir]**
+  (misma voz que el "¿seguro?" de emitir factura H2 2026-06-24 y del multi-factura 2026-07-01). El cartel
+  "¿Seguro?" es la ÚNICA excepción a "nada de ventana flotante" (mismo criterio que el "¿confirmás costo
+  $0?" y el de la Nota de Débito: el "¿seguro?" antes de algo irreversible).
+
+- **(2026-07-15) Estados después de confirmar (EN LÍNEA, se refrescan solos, NO atrapan al usuario —
+  puede irse de la ficha; molde H2 2026-06-24 + familias de `OperatorPenaltyStepPanel`):**
+  - **Emitiendo (ámbar, sin botón):** "⏳ Estamos emitiendo la nota de crédito en AFIP. En unos instantes
+    vas a ver el resultado."
+  - **Emitida (verde, con número — es facturación):** "✔ Devolución emitida. Nota de crédito B
+    0001-00000987." + acciones **"Ver/Descargar PDF"** y **"Enviar al cliente"** (reusan lo existente).
+  - **Rechazada (rojo):** "✕ No se pudo emitir la devolución." + "Motivo de AFIP: «…tal cual…»" + botón
+    **"Reintentar"** (idempotente; la factura no se tocó, sigue viva).
+
+- **(2026-07-15) Si falta resolver la factura o el monto antes de emitir** (2+ facturas sin elegir
+  destino, o moneda cruzada): el panel NO ofrece emitir; muestra el cartel naranja de acción trabada
+  (familia `accionTrabada`) reusando **`ElegirFacturaDestinoInline`** (formato `· Factura B
+  0001-00012345 — US$ 200`, 2026-07-10 P5) y/o el **bloque de conversión guiada** (2026-07-13). Resuelto,
+  vuelve al panel "listo para emitir".
+
+- **(2026-07-15) Permiso:** ve y usa "Confirmar y emitir" solo quien puede emitir/anular fiscalmente
+  (`cobranzas.invoice_annul`, el mismo de la anulación total y de la bandeja). Si la agencia es **RI**, el
+  botón queda bloqueado con el aviso "Esta devolución necesita la firma del contador antes de emitirse"
+  (default multi-condición fiscal; hoy la agencia es Monotributo → no aparece).
+
+- **(2026-07-15) Qué NO hacer:** ventana flotante (salvo el "¿Seguro?" de P2); editar monto/TC; pasar a
+  pesos una factura en dólares; mostrar "diferencia de cambio"/"CAE"/"RG 4540"/Id/enum/texto de código;
+  marcar la reserva Anulada; spinner que atrape; botones en la fila de la bandeja.

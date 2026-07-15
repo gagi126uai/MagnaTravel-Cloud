@@ -5072,7 +5072,14 @@ public class ReservaService : IReservaService
     /// (<see cref="ReservationDebtRules.CancelledMoneyContext"/>). Fuera de estos estados el contexto es null:
     /// una reserva viva usa el chip de deuda normal, no el de plata de anulacion.
     /// </summary>
-    private static bool IsCancelledLikeStatus(string? status)
+    /// <remarks>
+    /// "Multas en la cuenta del cliente" (2026-07-15): visibilidad ampliada a <c>internal</c> (era
+    /// <c>private</c>) para que <see cref="TravelApi.Infrastructure.Services.CustomerService"/> reuse el MISMO
+    /// criterio de "reserva anulada" al armar el bloque de multas pendientes, en vez de copiar la comparacion
+    /// de estados. Mismo patron ya usado con <see cref="ComputePendingPenaltyForDisplay"/>. Sin cambio de
+    /// comportamiento: la firma y el cuerpo quedan identicos.
+    /// </remarks>
+    internal static bool IsCancelledLikeStatus(string? status)
         => status == EstadoReserva.Cancelled || status == EstadoReserva.PendingOperatorRefund;
 
     // El "respaldo fiscal de la multa" (viva / en revision / ninguno) se decide con los predicados compartidos de
@@ -5098,7 +5105,12 @@ public class ReservaService : IReservaService
     /// al codigo ISO del negocio ("ARS"/"USD") para mostrarla. Si no se reconoce el codigo ARCA, cae al normalizador
     /// legacy (null/vacio -> ARS). Ver el comentario de BookingCancellation.PenaltyCurrencyAtEvent.
     /// </summary>
-    private static string NormalizePenaltyCurrencyForDisplay(string? penaltyCurrencyAtEvent)
+    /// <remarks>
+    /// "Multas en la cuenta del cliente" (2026-07-15): visibilidad ampliada a <c>internal</c> (era
+    /// <c>private</c>) para que <c>CustomerService</c> muestre la MISMA moneda que el resto del modulo en el
+    /// bloque de multas pendientes, sin reimplementar el mapeo ARCA-&gt;ISO. Sin cambio de comportamiento.
+    /// </remarks>
+    internal static string NormalizePenaltyCurrencyForDisplay(string? penaltyCurrencyAtEvent)
         => TravelApi.Domain.Helpers.ArcaCurrencyMapper.ToIso(penaltyCurrencyAtEvent)
            ?? Monedas.Normalizar(penaltyCurrencyAtEvent);
 
@@ -5221,7 +5233,12 @@ public class ReservaService : IReservaService
     /// monto bruto null se ignoran (mismo fallback que el caso singular: sin monto congelado no hay nada que
     /// sumar). Devuelve la lista ordenada por moneda para que el orden sea deterministico.
     /// </summary>
-    private static List<CancelledPenaltyByCurrencyDto> AggregatePendingPenaltiesByCurrency(
+    /// <remarks>
+    /// "Multas en la cuenta del cliente" (2026-07-15): visibilidad ampliada a <c>internal</c> (era
+    /// <c>private</c>) para que <c>CustomerService</c> la reuse al completar el contexto de plata de la solapa
+    /// "Reservas" de la cuenta del cliente, en vez de duplicar la formula de neteo. Sin cambio de comportamiento.
+    /// </remarks>
+    internal static List<CancelledPenaltyByCurrencyDto> AggregatePendingPenaltiesByCurrency(
         IEnumerable<(decimal? PenaltyAmountAtEvent, string? PenaltyCurrencyAtEvent)> liveSnapshots,
         IReadOnlyDictionary<string, decimal> balanceByCurrency)
     {

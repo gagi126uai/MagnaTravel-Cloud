@@ -60,8 +60,10 @@ import { formatCurrency } from "../../../lib/utils";
 import { ReservaStatusBadge } from "../../reservas/components/ReservaStatusBadge";
 import { getMoneyStatus, isReservaAnulada } from "../../reservas/moneyStatus";
 import { formatTipoComprobante } from "../lib/facturacionFilters";
+import { resolverFilaReservaAnuladaCuenta } from "../lib/pendingPenaltiesLogic";
 import { EstadoCuentaClienteTab } from "../components/EstadoCuentaClienteTab";
 import { FacturacionClienteTab } from "../components/FacturacionClienteTab";
+import { MultaPendienteDeCobroBlock } from "../components/MultaPendienteDeCobroBlock";
 
 // ─── Constantes de paginación (solo usadas por la solapa Reservas) ───────────
 
@@ -120,32 +122,53 @@ function SaldoLineaCuenta({ balance, currency }) {
   return <div className="text-slate-400 dark:text-slate-500">{formatCurrency(valor, currency)}</div>;
 }
 
+// Clase de color según el "tono" que devuelve resolverFilaReservaAnuladaCuenta.
+const TONO_CONTEXTO_ANULADA = {
+  amber: "text-amber-600 dark:text-amber-400",
+  emerald: "text-emerald-600 dark:text-emerald-400",
+  neutral: "text-slate-400 dark:text-slate-500",
+};
+
 /**
  * Reemplaza la columna Saldo cuando la reserva de la fila está ANULADA (Tanda 6, C2+C4).
- * Nunca muestra "deuda" genérica: el contexto sale de getMoneyStatus (misma fuente que
- * ReservaTable/ReservaSummaryStrip/ReservaStatusChips). Si el dato es "Inconsistente"
- * (o no hay contexto explícito y el balance no permite afirmar nada), no se muestra plata.
+ * Nunca muestra "deuda" genérica: el contexto sale de `cancelledMoneyContext` (mismo
+ * campo canónico que llena el backend en ReservationDebtRules.DeriveForCancelled).
  *
- * Tanda "multa fantasma" (2026-07-06): con multa, el monto sale de moneyStatus (el monto
- * exacto de la multa), no del balance total de la reserva. Nota: esta solapa usa
- * CustomerAccountReservaListItemDto, un DTO legacy que hoy NO manda cancelledMoneyContext
- * (ver moneyStatus.js) — en la práctica esta fila solo puede llegar acá con "saldoAFavorAnulada"
- * o "none"; la rama de multa queda lista para el día que el backend extienda este DTO.
+ * Multa "en revisión" (spec 2026-07-15, §5) — POR QUÉ ESTO NO USA getMoneyStatus PARA
+ * DECIDIR SI ES MULTA: esta solapa es de la cuenta del CLIENTE (no el listado del
+ * vendedor). Acá SÍ se muestra la multa confirmada sin comprobante todavía (decisión
+ * del dueño); en cambio `moneyStatus.js` la esconde a propósito para el vendedor (una
+ * promesa de cobro sin papel no se le muestra) y esa regla compartida NO se toca.
+ *
+ * Toda la decisión de QUÉ texto/monto/color pintar vive en `resolverFilaReservaAnuladaCuenta`
+ * (pendingPenaltiesLogic.js, capa pura y testeada) — este componente solo la llama y pinta
+ * el resultado, sin volver a decidir nada acá (fix de revisión N1/N2/N3: el monto de una
+ * multa "en revisión" o sin `cancelledPenaltyAmount` explícito NUNCA se inventa desde acá).
  */
-function ContextoAnuladaCuenta({ moneyStatus, reserva }) {
-  if (moneyStatus.kind === "none") {
-    return <div className="text-slate-400 dark:text-slate-500">—</div>;
+function ContextoAnuladaCuenta({ reserva }) {
+  const monedaFallback = reserva.porMoneda?.[0]?.currency ?? "ARS";
+  // moneyStatusKind solo hace falta para el caso "saldo a favor" (getMoneyStatus ya valida
+  // el balance con tolerancia de redondeo); la parte de multa se resuelve con el token
+  // cancelledMoneyContext directo, sin pasar por esta función compartida con el vendedor.
+  const moneyStatusKind = getMoneyStatus(reserva).kind;
+
+  const fila = resolverFilaReservaAnuladaCuenta({
+    cancelledMoneyContext: reserva.cancelledMoneyContext,
+    cancelledPenaltyAmount: reserva.cancelledPenaltyAmount,
+    cancelledPenaltyCurrency: reserva.cancelledPenaltyCurrency,
+    balance: reserva.balance,
+    moneyStatusKind,
+    monedaFallback,
+  });
+
+  if (fila.tono === "neutral") {
+    return <div className={TONO_CONTEXTO_ANULADA.neutral}>—</div>;
   }
-  const esMulta = moneyStatus.kind === "multaPorCobrar";
-  const monto = esMulta
-    ? formatCurrency(moneyStatus.amount, moneyStatus.amountCurrency ?? reserva.porMoneda?.[0]?.currency ?? "ARS")
-    : formatCurrency(Math.abs(reserva.balance ?? 0), reserva.porMoneda?.[0]?.currency ?? "ARS");
+
   return (
-    <div className={esMulta ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}>
-      {monto}
-      <span className="ml-1 text-[9px] font-semibold uppercase tracking-wider">
-        {esMulta ? "multa por anulación" : "a favor"}
-      </span>
+    <div className={TONO_CONTEXTO_ANULADA[fila.tono]}>
+      {fila.montoTexto && <span className="mr-1">{fila.montoTexto}</span>}
+      <span className="text-[9px] font-semibold uppercase tracking-wider">{fila.texto}</span>
     </div>
   );
 }
@@ -656,6 +679,14 @@ export default function CustomerAccountPage() {
       </div>
 
       {/*
+        ── Bloque "Multa pendiente de cobro" (spec 2026-07-15) ─────────────────
+        PRIMERO en el carril de arriba: es deuda del cliente, lo más "urgente" acá.
+        Se dibuja solo cuando hay al menos una multa pendiente (el componente decide
+        eso solo, leyendo overview.pendingPenalties — nunca se recalcula acá).
+      */}
+      <MultaPendienteDeCobroBlock pendingPenalties={overview?.pendingPenalties} />
+
+      {/*
         ── Carteles "A FAVOR" por moneda ───────────────────────────────────────
         Un cartel por moneda con saldo a favor > 0. Regla multimoneda: uno por moneda,
         nunca sumados. El botón "Usar saldo a favor" abre la ficha inline.
@@ -915,10 +946,9 @@ export default function CustomerAccountPage() {
                     ) : (
                       reservas.map((reserva) => {
                         // C4: plata real por moneda (fallback a escalares+ARS si el DTO no la trae).
-                        // C2: getMoneyStatus decide si esta fila "debe" de verdad o es una reserva
-                        // anulada con su propio contexto — nunca recalculamos balance>0 acá.
+                        // C2: ContextoAnuladaCuenta decide si esta fila "debe" de verdad o es una
+                        // reserva anulada con su propio contexto — nunca recalculamos balance>0 acá.
                         const lineasMoneda = getLineasMonedaCuenta(reserva);
-                        const moneyStatus = getMoneyStatus(reserva);
                         const esAnuladaFila = isReservaAnulada(reserva.status);
                         return (
                           <DataGridRow key={getPublicId(reserva)}>
@@ -940,7 +970,7 @@ export default function CustomerAccountPage() {
                             </DataGridCell>
                             <DataGridCell align="right" className="font-semibold">
                               {esAnuladaFila ? (
-                                <ContextoAnuladaCuenta moneyStatus={moneyStatus} reserva={reserva} />
+                                <ContextoAnuladaCuenta reserva={reserva} />
                               ) : (
                                 lineasMoneda.map((linea) => (
                                   <SaldoLineaCuenta key={linea.currency} balance={linea.balance} currency={linea.currency} />
@@ -971,7 +1001,6 @@ export default function CustomerAccountPage() {
                   <MobileRecordList>
                     {reservas.map((reserva) => {
                       const lineasMoneda = getLineasMonedaCuenta(reserva);
-                      const moneyStatus = getMoneyStatus(reserva);
                       const esAnuladaFila = isReservaAnulada(reserva.status);
                       return (
                         <MobileRecordCard
@@ -994,7 +1023,7 @@ export default function CustomerAccountPage() {
                           footer={
                             <div className="text-sm font-semibold">
                               {esAnuladaFila ? (
-                                <ContextoAnuladaCuenta moneyStatus={moneyStatus} reserva={reserva} />
+                                <ContextoAnuladaCuenta reserva={reserva} />
                               ) : (
                                 lineasMoneda.map((linea) => (
                                   <SaldoLineaCuenta key={linea.currency} balance={linea.balance} currency={linea.currency} />

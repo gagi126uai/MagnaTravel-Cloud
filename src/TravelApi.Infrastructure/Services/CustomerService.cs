@@ -520,8 +520,148 @@ public class CustomerService : ICustomerService
         return new CustomerAccountOverviewDto
         {
             Customer = customer,
-            Summary = summary
+            Summary = summary,
+            // "Multas en la cuenta del cliente" (2026-07-15): bloque APARTE del summary (no toca
+            // ReceivableByCurrency ni el resto de los totales existentes).
+            PendingPenalties = await BuildPendingPenaltiesAsync(id, cancellationToken)
         };
+    }
+
+    /// <summary>
+    /// Bloque "Multa pendiente de cobro" de la cuenta del cliente (UX 2026-07-15): junta las multas de
+    /// anulación de TODAS las reservas ANULADAS del cliente, una fila por cada <c>BookingCancellation</c> con
+    /// respaldo fiscal VIVO o EN REVISIÓN. Reusa los MISMOS predicados compartidos que el resto del módulo
+    /// (<c>CancellationPenaltyRules.LiveDebitNotePredicate</c> / <c>PenaltyUnderReviewPredicate</c>) — el
+    /// criterio de "multa por cobrar" no se vuelve a escribir acá.
+    ///
+    /// <para><b>Por qué esta plata estaba invisible</b>: el resto de la cuenta del cliente (resumen, extracto,
+    /// solapa Reservas) filtra a reservas VIVAS o las trae sin cruzar; la multa SOLO existe en una reserva
+    /// ANULADA, así que nunca aparecía agrupada a nivel cliente. Este es el primer lugar que la junta.</para>
+    ///
+    /// <para><b>El monto es el BRUTO congelado</b> (<c>PenaltyAmountAtEvent</c>), no el neto de lo ya cobrado:
+    /// es la cifra con la que se emitió (o se va a emitir) el comprobante de la multa — a propósito distinta
+    /// del cartel de la ficha, que muestra lo neto pendiente contra el saldo (otro cartel, otro propósito).</para>
+    ///
+    /// <para>Dos queries batcheadas (vivas / en revisión), nunca una por reserva: no importa cuántas reservas
+    /// anuladas tenga el cliente.</para>
+    /// </summary>
+    private async Task<CustomerPendingPenaltiesDto> BuildPendingPenaltiesAsync(int customerId, CancellationToken cancellationToken)
+    {
+        var empty = new CustomerPendingPenaltiesDto();
+
+        // Universo: reservas ANULADAS del cliente. OJO: acá se INLINEA la MISMA comparación que
+        // ReservaService.IsCancelledLikeStatus porque EF no puede traducir el helper dentro de la query.
+        // Si algún día se agrega un tercer estado "anulado", hay que actualizar LOS DOS lugares
+        // (este Where y el helper) — mantenerlos en sync a mano (nota del review 2026-07-15, N1).
+        var cancelledReservas = await _dbContext.Reservas
+            .AsNoTracking()
+            .Where(reserva => reserva.PayerId == customerId
+                && (reserva.Status == EstadoReserva.Cancelled || reserva.Status == EstadoReserva.PendingOperatorRefund))
+            .Select(reserva => new { reserva.Id, reserva.PublicId, reserva.NumeroReserva, reserva.Name })
+            .ToListAsync(cancellationToken);
+
+        if (cancelledReservas.Count == 0) return empty;
+
+        var reservaIds = cancelledReservas.Select(r => r.Id).ToList();
+        var reservaById = cancelledReservas.ToDictionary(r => r.Id);
+
+        // Multas VIVAS: respaldo fiscal firme. El propio predicado mezcla dos ramas (ver
+        // CancellationPenaltyRules.LiveDebitNotePredicate); acá traemos el DebitNoteStatus para distinguirlas:
+        // Issued = ya tiene comprobante (chip "pendingCollection"); NotApplicable/Pending = se está emitiendo
+        // todavía (chip "issuing").
+        var liveRows = await _dbContext.BookingCancellations
+            .AsNoTracking()
+            .Where(CancellationPenaltyRules.LiveDebitNotePredicate)
+            .Where(bc => reservaIds.Contains(bc.ReservaId))
+            .Select(bc => new { bc.ReservaId, bc.PenaltyAmountAtEvent, bc.PenaltyCurrencyAtEvent, bc.DebitNoteStatus })
+            .ToListAsync(cancellationToken);
+
+        // Multas EN REVISION: el comprobante falló su emisión o quedó para revisión manual (back-office). Ya
+        // cuenta como deuda del cliente (decisión del dueño, 2026-07-15) pero distinguida con su propio chip.
+        var underReviewRows = await _dbContext.BookingCancellations
+            .AsNoTracking()
+            .Where(CancellationPenaltyRules.PenaltyUnderReviewPredicate)
+            .Where(bc => reservaIds.Contains(bc.ReservaId))
+            .Select(bc => new { bc.ReservaId, bc.PenaltyAmountAtEvent, bc.PenaltyCurrencyAtEvent })
+            .ToListAsync(cancellationToken);
+
+        var items = new List<CustomerPendingPenaltyItemDto>();
+
+        foreach (var row in liveRows)
+        {
+            // Sin monto bruto congelado no hay nada que mostrar (mismo guard defensivo que el resto del modulo:
+            // pasa con datos legacy o con una ND emitida sin snapshot de monto).
+            if (row.PenaltyAmountAtEvent is null) continue;
+
+            var reserva = reservaById[row.ReservaId];
+            var status = row.DebitNoteStatus == DebitNoteStatus.Issued
+                ? CustomerPendingPenaltyStatus.PendingCollection
+                : CustomerPendingPenaltyStatus.Issuing;
+
+            items.Add(BuildPendingPenaltyItem(reserva.PublicId, reserva.NumeroReserva, reserva.Name,
+                row.PenaltyAmountAtEvent.Value, row.PenaltyCurrencyAtEvent, status));
+        }
+
+        foreach (var row in underReviewRows)
+        {
+            if (row.PenaltyAmountAtEvent is null) continue;
+
+            var reserva = reservaById[row.ReservaId];
+            items.Add(BuildPendingPenaltyItem(reserva.PublicId, reserva.NumeroReserva, reserva.Name,
+                row.PenaltyAmountAtEvent.Value, row.PenaltyCurrencyAtEvent, CustomerPendingPenaltyStatus.UnderReview));
+        }
+
+        // Orden estable por numero de reserva, igual criterio que el resto de los desgloses del modulo.
+        items = items.OrderBy(item => item.NumeroReserva, StringComparer.Ordinal).ToList();
+
+        return new CustomerPendingPenaltiesDto
+        {
+            Items = items,
+            TotalsByCurrency = BuildPendingPenaltyTotalsByCurrency(items)
+        };
+    }
+
+    /// <summary>Arma UNA fila del bloque de multas pendientes, normalizando moneda y redondeando el monto.</summary>
+    private static CustomerPendingPenaltyItemDto BuildPendingPenaltyItem(
+        Guid reservaPublicId, string numeroReserva, string name,
+        decimal grossPenaltyAmount, string? penaltyCurrencyAtEvent, string status)
+        => new()
+        {
+            ReservaPublicId = reservaPublicId,
+            NumeroReserva = numeroReserva,
+            Name = name,
+            Amount = EconomicRulesHelper.RoundCurrency(grossPenaltyAmount),
+            Currency = ReservaService.NormalizePenaltyCurrencyForDisplay(penaltyCurrencyAtEvent),
+            Status = status
+        };
+
+    /// <summary>
+    /// Agrupa las multas por moneda en "deuda firme" (comprobante ya emitido) vs "todavía sin comprobante"
+    /// (emitiéndose o en revisión), para que el front pinte el número grande + la segunda línea en ámbar sin
+    /// tener que re-sumar los Items (ver <see cref="CustomerPendingPenaltyTotalDto"/>).
+    /// </summary>
+    private static List<CustomerPendingPenaltyTotalDto> BuildPendingPenaltyTotalsByCurrency(
+        IReadOnlyList<CustomerPendingPenaltyItemDto> items)
+    {
+        var totalsByCurrency = new Dictionary<string, CustomerPendingPenaltyTotalDto>(StringComparer.Ordinal);
+
+        foreach (var item in items)
+        {
+            if (!totalsByCurrency.TryGetValue(item.Currency, out var total))
+            {
+                total = new CustomerPendingPenaltyTotalDto { Currency = item.Currency };
+                totalsByCurrency[item.Currency] = total;
+            }
+
+            if (item.Status == CustomerPendingPenaltyStatus.PendingCollection)
+                total.FirmAmount += item.Amount;
+            else
+                total.NotYetIssuedAmount += item.Amount;
+        }
+
+        return totalsByCurrency.Values
+            .OrderBy(total => total.Currency, StringComparer.Ordinal)
+            .ToList();
     }
 
     /// <summary>
@@ -1017,7 +1157,81 @@ public class CustomerService : ICustomerService
         // de mostrar "ARS" hardcodeado. Una sola query batcheada por los PublicId de la pagina (sin N+1).
         await FillReservaMoneyByCurrencyAsync(paged.Items, cancellationToken);
 
+        // "Multas en la cuenta del cliente" (2026-07-15): completamos el contexto de plata de las filas
+        // ANULADAS (CancelledMoneyContext/CancelledPenaltyAmount/CancelledPenaltyCurrency). Depende de
+        // PorMoneda ya lleno (arriba) para netear el monto pendiente contra el saldo de su moneda.
+        await FillCancelledMoneyContextForCustomerReservasAsync(paged.Items, cancellationToken);
+
         return paged;
+    }
+
+    /// <summary>
+    /// Llena <c>CancelledMoneyContext</c>/<c>CancelledPenaltyAmount</c>/<c>CancelledPenaltyCurrency</c> de las
+    /// filas ANULADAS de la solapa "Reservas" de la cuenta del cliente. Es el MISMO derivador que usa el
+    /// listado general de reservas (<c>ReservaService.FillCancelledMoneyContextForListAsync</c>): reusa
+    /// idénticas las piezas compartidas de la regla (<c>CancellationPenaltyRules</c>, <c>ReservationDebtRules</c>,
+    /// <c>ReservaService.AggregatePendingPenaltiesByCurrency</c>). Lo único que cambia acá es el tipo de fila
+    /// de salida (esta cuenta usa <c>CustomerAccountReservaListItemDto</c>, no <c>ReservaListDto</c>), así que
+    /// el armado de la query se repite pero la REGLA no: viene de las mismas funciones compartidas.
+    ///
+    /// <para>Dos queries batcheadas (vivas / en revisión) para toda la página, nunca una por fila (sin N+1).</para>
+    /// </summary>
+    private async Task FillCancelledMoneyContextForCustomerReservasAsync(
+        IReadOnlyList<CustomerAccountReservaListItemDto> items, CancellationToken cancellationToken)
+    {
+        // Solo las filas anuladas necesitan contexto de plata; el resto queda con los 3 campos en null.
+        var cancelledItems = items.Where(item => ReservaService.IsCancelledLikeStatus(item.Status)).ToList();
+        if (cancelledItems.Count == 0) return;
+
+        var publicIds = cancelledItems.Select(item => item.PublicId).ToList();
+
+        // Query 1: filas de la pagina con multa VIVA, con el monto/moneda congelados de CADA BC (puede haber
+        // mas de una linea por reserva si hubo mas de una cancelacion parcial con multa propia).
+        var liveRows = await (
+            from bc in _dbContext.BookingCancellations.AsNoTracking().Where(CancellationPenaltyRules.LiveDebitNotePredicate)
+            join reservaPadre in _dbContext.Reservas.AsNoTracking() on bc.ReservaId equals reservaPadre.Id
+            where publicIds.Contains(reservaPadre.PublicId)
+            select new { reservaPadre.PublicId, bc.PenaltyAmountAtEvent, bc.PenaltyCurrencyAtEvent })
+            .ToListAsync(cancellationToken);
+
+        var liveRowsByPublicId = liveRows
+            .GroupBy(row => row.PublicId)
+            .ToDictionary(group => group.Key, group => group.Select(row => (row.PenaltyAmountAtEvent, row.PenaltyCurrencyAtEvent)).ToList());
+
+        // Query 2: filas de la pagina con multa EN REVISION. Solo necesitamos el set de PublicId.
+        var underReviewIds = (await (
+            from bc in _dbContext.BookingCancellations.AsNoTracking().Where(CancellationPenaltyRules.PenaltyUnderReviewPredicate)
+            join reservaPadre in _dbContext.Reservas.AsNoTracking() on bc.ReservaId equals reservaPadre.Id
+            where publicIds.Contains(reservaPadre.PublicId)
+            select reservaPadre.PublicId).Distinct().ToListAsync(cancellationToken))
+            .ToHashSet();
+
+        foreach (var item in cancelledItems)
+        {
+            ReservationDebtRules.DebitNoteBacking backing;
+            if (liveRowsByPublicId.ContainsKey(item.PublicId))
+                backing = ReservationDebtRules.DebitNoteBacking.Live;
+            else if (underReviewIds.Contains(item.PublicId))
+                backing = ReservationDebtRules.DebitNoteBacking.UnderReview;
+            else
+                backing = ReservationDebtRules.DebitNoteBacking.None;
+
+            var context = ReservationDebtRules.DeriveForCancelled(item.Balance, backing);
+            item.CancelledMoneyContext = ReservationDebtRules.ToDtoString(context);
+
+            // El monto solo acompaña al caso "multa por cobrar" (PenaltyReceivable); es lo PENDIENTE de cobro
+            // (neto de lo ya pagado en esa moneda, no el bruto congelado) — mismo criterio que la ficha/listado.
+            if (context == ReservationDebtRules.CancelledMoneyContext.PenaltyReceivable
+                && liveRowsByPublicId.TryGetValue(item.PublicId, out var snapshots))
+            {
+                var balanceByCurrency = item.PorMoneda
+                    .ToDictionary(line => line.Currency, line => line.Balance, StringComparer.OrdinalIgnoreCase);
+                var penalties = ReservaService.AggregatePendingPenaltiesByCurrency(snapshots, balanceByCurrency);
+                var primary = penalties.Count > 0 ? penalties[0] : null;
+                item.CancelledPenaltyAmount = primary?.Amount;
+                item.CancelledPenaltyCurrency = primary?.Currency;
+            }
+        }
     }
 
     /// <summary>

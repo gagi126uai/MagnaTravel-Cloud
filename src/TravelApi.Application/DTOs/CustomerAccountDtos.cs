@@ -23,6 +23,90 @@ public class CustomerAccountOverviewDto
 {
     public CustomerAccountCustomerDto Customer { get; set; } = new();
     public CustomerAccountSummaryDto Summary { get; set; } = new();
+
+    /// <summary>
+    /// "Multa pendiente de cobro" (UX 2026-07-15): las multas por anulación de TODAS las reservas anuladas
+    /// del cliente, juntas en un solo bloque. Antes esta plata quedaba invisible: la cuenta del cliente
+    /// filtraba afuera las reservas anuladas, y la multa solo existe ahí. Vacío (Items sin filas) si el
+    /// cliente no tiene ninguna multa pendiente — el front esconde el bloque entero en ese caso.
+    /// </summary>
+    public CustomerPendingPenaltiesDto PendingPenalties { get; set; } = new();
+}
+
+/// <summary>
+/// Tokens de estado del comprobante de una multa pendiente, para <see cref="CustomerPendingPenaltyItemDto.Status"/>.
+/// El backend SOLO manda el token (camelCase, en inglés); el texto final que ve el usuario ("Pendiente de
+/// cobro" / "Comprobante en camino" / "En revisión") lo arma el front (UX 2026-07-15). A propósito estos
+/// tokens NO usan el castellano de <c>ReservationDebtRules.ToDtoString</c> (ese es el contrato viejo de
+/// <c>CancelledMoneyContext</c>): este bloque es nuevo y sigue el contrato ya acordado con el front.
+/// </summary>
+public static class CustomerPendingPenaltyStatus
+{
+    /// <summary>El comprobante de la multa ya tiene CAE: es deuda firme, solo falta que el cliente la pague.</summary>
+    public const string PendingCollection = "pendingCollection";
+
+    /// <summary>La multa está confirmada pero su comprobante todavía se está emitiendo.</summary>
+    public const string Issuing = "issuing";
+
+    /// <summary>El comprobante de la multa falló su emisión o quedó para revisión manual (lo destraba back-office).</summary>
+    public const string UnderReview = "underReview";
+}
+
+/// <summary>
+/// Bloque "Multa pendiente de cobro" de la cuenta del cliente (UX 2026-07-15): una fila por cada multa de
+/// anulación viva o en revisión, de cualquier reserva anulada del cliente, más el total por moneda. Es un
+/// bloque APARTE del extracto "Estado de Cuenta" (decisión cerrada del dueño: no se mezclan) — el "Estado de
+/// Cuenta" sigue mostrando solo reservas vivas, sin tocar.
+/// </summary>
+public class CustomerPendingPenaltiesDto
+{
+    /// <summary>Una fila por multa. Vacía si el cliente no tiene ninguna (el front esconde el bloque).</summary>
+    public List<CustomerPendingPenaltyItemDto> Items { get; set; } = new();
+
+    /// <summary>Un total por cada moneda que tenga al menos una multa. Nunca se suman monedas distintas.</summary>
+    public List<CustomerPendingPenaltyTotalDto> TotalsByCurrency { get; set; } = new();
+}
+
+/// <summary>
+/// UNA multa por anulación pendiente de cobro, de una reserva anulada del cliente. El monto es el BRUTO
+/// congelado al momento del evento (<c>BookingCancellation.PenaltyAmountAtEvent</c>): el mismo número con el
+/// que se emitió (o se va a emitir) el comprobante de la multa — a propósito NO se netea contra cobros
+/// parciales (ese neteo es el criterio de la ficha/listado de reservas, un cartel distinto).
+/// </summary>
+public class CustomerPendingPenaltyItemDto
+{
+    /// <summary>PublicId de la reserva anulada; el front linkea la fila a su ficha (ahí se resuelve la multa).</summary>
+    public Guid ReservaPublicId { get; set; }
+
+    public string NumeroReserva { get; set; } = string.Empty;
+
+    /// <summary>Nombre del expediente (titular), para armar "R-1042 · Cancún" en la fila del bloque.</summary>
+    public string Name { get; set; } = string.Empty;
+
+    public decimal Amount { get; set; }
+
+    /// <summary>Moneda ISO 4217 ("ARS"/"USD") del monto: la MISMA moneda de la factura (ADR-012 §3.3), sin convertir.</summary>
+    public string Currency { get; set; } = Monedas.ARS;
+
+    /// <summary>Ver <see cref="CustomerPendingPenaltyStatus"/> para los tres valores posibles.</summary>
+    public string Status { get; set; } = string.Empty;
+}
+
+/// <summary>
+/// Total de multas pendientes de UNA moneda, ya separado en "deuda firme" (comprobante emitido,
+/// <see cref="CustomerPendingPenaltyStatus.PendingCollection"/>) vs "todavía sin comprobante" (emitiéndose o
+/// en revisión). El front pinta el número grande en rojo con <see cref="FirmAmount"/> y, debajo, la segunda
+/// línea en ámbar con <see cref="NotYetIssuedAmount"/> (UX 2026-07-15) sin tener que re-sumar los Items.
+/// </summary>
+public class CustomerPendingPenaltyTotalDto
+{
+    public string Currency { get; set; } = Monedas.ARS;
+
+    /// <summary>Suma de las multas con comprobante ya emitido, en esta moneda.</summary>
+    public decimal FirmAmount { get; set; }
+
+    /// <summary>Suma de las multas sin comprobante todavía (emitiéndose o en revisión), en esta moneda.</summary>
+    public decimal NotYetIssuedAmount { get; set; }
 }
 
 public class CustomerAccountCustomerDto
@@ -122,6 +206,28 @@ public class CustomerAccountReservaListItemDto
 
     /// <summary>True si la reserva mueve mas de una moneda (el front muestra las lineas separadas).</summary>
     public bool EsMultimoneda { get; set; }
+
+    // "Multas en la cuenta del cliente" (2026-07-15): estos 3 campos completan el contexto de plata de una
+    // reserva ANULADA en la solapa "Reservas" de la cuenta del cliente. El front (CustomerAccountPage.jsx) ya
+    // tenia la logica de pintado lista (ContextoAnuladaCuenta) pero muda: el servidor no mandaba el dato. Se
+    // llenan con el MISMO derivador que usa el listado general de reservas (ReservaService, via los helpers
+    // compartidos CancellationPenaltyRules/ReservationDebtRules) — no hay una segunda definicion de la regla.
+    // Quedan null en cualquier reserva que NO este anulada (una reserva viva no tiene "contexto de anulacion").
+
+    /// <summary>
+    /// Token del contexto de plata de una anulada (ver <c>ReservationDebtRules.ToDtoString</c>): por ejemplo
+    /// "MultaPorCobrar" o "MultaEnRevision". Null si la reserva no esta anulada.
+    /// </summary>
+    public string? CancelledMoneyContext { get; set; }
+
+    /// <summary>
+    /// Monto de la multa PENDIENTE de cobro (neto de lo ya pagado), solo cuando <see cref="CancelledMoneyContext"/>
+    /// es "MultaPorCobrar". Null en cualquier otro caso.
+    /// </summary>
+    public decimal? CancelledPenaltyAmount { get; set; }
+
+    /// <summary>Moneda ISO 4217 ("ARS"/"USD") de <see cref="CancelledPenaltyAmount"/>. Null si ese monto es null.</summary>
+    public string? CancelledPenaltyCurrency { get; set; }
 }
 
 /// <summary>
