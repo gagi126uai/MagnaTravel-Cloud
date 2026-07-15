@@ -205,6 +205,14 @@ describe("construirPayloadPagoProveedor", () => {
         assert.equal(payload.servicePublicId, null);
     });
 
+    it("cargo facturado aparte: envia el PublicId puntual que queda liquidado", () => {
+        const payload = construirPayloadPagoProveedor({
+            ...camposBase,
+            settlesOperatorChargePublicId: "uuid-cargo-789",
+        });
+        assert.equal(payload.settlesOperatorChargePublicId, "uuid-cargo-789");
+    });
+
     it("pago cruzado ARS→USD: SÍ incluye los 5 campos de tipo de cambio", () => {
         const payload = construirPayloadPagoProveedor({
             ...camposBase,

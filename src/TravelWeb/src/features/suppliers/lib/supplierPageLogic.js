@@ -96,6 +96,7 @@ export function calcularEquivalenteProveedor(monto, tipoCambio, monedaCobro, sal
  * @param {number|string} params.fuenteTC          — fuente TC como int (viene de <select> como string)
  * @param {string}        params.fechaTC           — fecha del TC en "YYYY-MM-DD" (cruzado)
  * @param {number|null}   params.montoEquivalente  — monto ya convertido a saldoImputado (cruzado)
+ * @param {string|null}   params.settlesOperatorChargePublicId — cargo facturado aparte que queda liquidado
  * @returns {object} payload listo para enviar como JSON al backend
  */
 export function construirPayloadPagoProveedor({
@@ -114,6 +115,7 @@ export function construirPayloadPagoProveedor({
     fuenteTC,
     fechaTC,
     montoEquivalente,
+    settlesOperatorChargePublicId,
 }) {
     // Payload base: siempre va, sea pago simple o cruzado
     const base = {
@@ -127,6 +129,10 @@ export function construirPayloadPagoProveedor({
         serviceRecordKind: serviceRecordKind || null,
         servicePublicId: servicePublicId || null,
     };
+
+    if (settlesOperatorChargePublicId) {
+        base.settlesOperatorChargePublicId = settlesOperatorChargePublicId;
+    }
 
     if (!esCruzado) {
         return base;
