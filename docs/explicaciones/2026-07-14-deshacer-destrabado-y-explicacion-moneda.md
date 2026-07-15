@@ -134,6 +134,49 @@ moneda" — si se recorta de nuevo, el rastro dice exactamente dónde.
 renglones cuando el tope de la última recorta el residuo, la conversión de moneda (pérdida
 inherente, auditada), y los renglones convertidos de a uno sin absorbedor del resto.
 
+---
+
+# Tercera tanda de la misma sesión — el operador ahora puede decir si suele cobrar multa (ADR-045)
+
+## El pedido de Gaston
+
+"El sistema asume que todo se cobra multa y eso no lo sabemos. Un buen ERP tendría una
+configuración por proveedor y/o tipo de servicio. Quizás estoy equivocado: pongan
+contra-argumentos, investiguen."
+
+## La investigación (con fuentes)
+
+- Los ERP genéricos (SAP, Dynamics, NetSuite) NO tienen esa configuración: la penalidad
+  se carga caso por caso, como hoy.
+- Los sistemas de turismo SÍ la tienen, pero atada a **la tarifa/contrato** (tramos por
+  días de anticipación y porcentaje), no al proveedor en bloque: el mismo operador vende
+  a la vez una tarifa reembolsable y una promo que no lo es.
+- **Ninguno emite el cargo solo**: la política estima; el hecho real siempre se confirma.
+  Nuestro paso actual ya sigue ese patrón.
+- Hallazgo: esto se había empezado en mayo (un cajón de política de penalidades en la
+  ficha del proveedor, `PenaltyPolicyJson`) y quedó dormido sin pantalla. Queda reservado
+  para la política por tramos futura.
+
+## Lo decidido por Gaston (4 respuestas) y construido
+
+- Campo **"¿Suele cobrar multa cuando se anula?"** en la ficha del operador (Datos →
+  "Más detalles", al lado del ajuste por el dólar): *casi nunca / casi siempre / no se
+  sabe-depende de la tarifa* (valor de arranque de todos = no se sabe → nada cambia).
+- Con dato cargado, al anular el paso de la multa muestra el camino sugerido **primero y
+  resaltado** con la notita "💡 Este operador casi nunca (o casi siempre) cobra multa
+  (según su ficha)". **Solo sugiere: jamás decide, jamás emite, jamás saca el paso** —
+  el revisor de seguridad verificó con evidencia que es 100% visual.
+- De paso, el "deshacer" del cierre sin multa (que ya era solo para administradores —
+  Gaston lo veía por ser admin) ahora dice qué hace: **"Reabrir el paso de la multa"** +
+  la aclaración "No se toca ningún comprobante: este cierre nunca emitió ninguno".
+
+Ronda completa de 4 revisores: 0 bloqueantes. Migración aditiva verificada post-deploy
+(3 operadores, los 3 en "no se sabe"). Suite frontend completa 2129/2129. Commit `21b95c0`.
+
+Anotados de la obra: hacer que el guardado del proveedor no pise la config si un cliente
+viejo omite el campo (mini-tanda junto con el campo hermano del dólar); la política fina
+por tarifa (tramos días/%) como obra futura cuando el tarifario madure.
+
 ## También quedó claro en esta tanda
 
 - "Rehacer la multa" después de deshacerla ya estaba diseñado y construido (patrón estándar
