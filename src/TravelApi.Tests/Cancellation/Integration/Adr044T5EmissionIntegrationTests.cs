@@ -309,65 +309,18 @@ public sealed class Adr044T5EmissionIntegrationTests
     }
 
     // =========================================================================
-    // Test obligatorio §9.10 — concurrencia real: dos T5 (BCs distintos) sobre la MISMA factura no pueden
-    // sobre-acreditar. Requiere el FOR UPDATE real de Postgres (InMemory no lo serializa).
+    // Test obligatorio §9.10 — concurrencia real: dos pedidos T5 simultaneos sobre la MISMA cancelacion y
+    // factura se serializan y emiten una sola NC. Requiere el FOR UPDATE real de Postgres.
     // =========================================================================
 
     [Fact]
     public async Task Concurrency_TwoT5EmissionsSameInvoice_Serialized_NeverOverCredit()
     {
-        // Factura de 100 con dos eventos de cancelacion parcial de 60 cada uno (cada uno en su PROPIO BC,
-        // Decision C): sin el lock, ambos verian el remanente completo (100) y confirmarian 60+60=120>100.
-        Guid reservaPublicId; int reservaId; int invoiceId;
-        await using (var seed = _fixture.CreateDbContext())
-        {
-            seed.AfipSettings.Add(new AfipSettings { TaxCondition = "Monotributo", Cuit = 20111111111 });
-            var (customerId, supplierId, resId, invId) = await CancellationTestData.SeedBaseAsync(seed);
-            var invoice = await seed.Invoices.FirstAsync(i => i.Id == invId);
-            invoice.ImporteTotal = 100m;
-            invoice.ImporteNeto = 100m;
-            invoice.ImporteIva = 0m;
-            invoice.TipoComprobante = 11;
-            seed.Set<InvoiceItem>().Add(new InvoiceItem
-            {
-                InvoiceId = invId, Description = "Hotel", Quantity = 1, UnitPrice = 100m, Total = 100m, AlicuotaIvaId = 3,
-            });
-            await seed.SaveChangesAsync();
-
-            BookingCancellation NewBc(int lineServiceId, decimal amount) => new()
-            {
-                ReservaId = resId, CustomerId = customerId, SupplierId = supplierId, OriginatingInvoiceId = invId,
-                Status = BookingCancellationStatus.Drafted, Reason = "Cancelacion parcial concurrente",
-                DraftedAt = DateTime.UtcNow, DraftedByUserId = "vendedor-1",
-                FiscalSnapshot = new FiscalSnapshot { Source = ExchangeRateSource.Unset, FetchedAt = default },
-                Lines =
-                {
-                    new BookingCancellationLine
-                    {
-                        SupplierId = supplierId, ServiceTable = CancellableServiceTable.Hotel, ServiceId = lineServiceId,
-                        Scope = BookingCancellationLineScope.Partial, Currency = "ARS", LineSaleAmount = amount,
-                        TargetInvoiceId = invId, ConfirmedGrossCreditAmount = amount,
-                    },
-                },
-            };
-            var bc1 = NewBc(1, 60m);
-            var bc2 = NewBc(2, 60m);
-            seed.BookingCancellations.AddRange(bc1, bc2);
-            await seed.SaveChangesAsync();
-
-            var reserva = await seed.Reservas.FirstAsync(r => r.Id == resId);
-            reservaPublicId = reserva.PublicId;
-            reservaId = resId;
-            invoiceId = invId;
-        }
-
-        var bcPublicIds = new System.Collections.Generic.List<Guid>();
-        await using (var ctxList = _fixture.CreateDbContext())
-        {
-            bcPublicIds = await ctxList.BookingCancellations.AsNoTracking()
-                .Where(b => b.ReservaId == reservaId).Select(b => b.PublicId).ToListAsync();
-        }
-        Assert.Equal(2, bcPublicIds.Count);
+        // El modelo garantiza un solo BC abierto por reserva/factura. La carrera real posible es un doble
+        // click/reintento concurrente contra ese mismo BC; el segundo pedido debe observar el estado fresco
+        // luego del lock y no crear una segunda NC.
+        var (_, _, invoiceId, bcPublicId, _) = await SeedResolvedPartialAsync(
+            _fixture, invoiceTotal: 100m, confirmedAmount: 60m);
 
         await using (var ctxA = _fixture.CreateDbContext())
         await using (var ctxB = _fixture.CreateDbContext())
@@ -375,25 +328,26 @@ public sealed class Adr044T5EmissionIntegrationTests
             var serviceA = BuildService(ctxA, BuildInvoiceServiceMock(ctxA));
             var serviceB = BuildService(ctxB, BuildInvoiceServiceMock(ctxB));
 
-            async Task<bool> RunSwallowingCapAsync(BookingCancellationService svc, Guid publicId)
+            async Task<bool> RunSwallowingDuplicateAsync(BookingCancellationService svc)
             {
                 try
                 {
-                    await svc.ConfirmPartialCancellationEmissionAsync(publicId, "cajero", "Cajero", CancellationToken.None);
+                    await svc.ConfirmPartialCancellationEmissionAsync(
+                        bcPublicId, "cajero", "Cajero", CancellationToken.None);
                     return true;
                 }
                 catch (TravelApi.Domain.Exceptions.BusinessInvariantViolationException ex)
-                    when (ex.InvariantCode == "INV-T5-EMIT-CAP")
+                    when (ex.InvariantCode == "INV-T5-EMIT-STATE")
                 {
-                    return false; // la otra emision gano la carrera y consumio el remanente.
+                    return false; // la otra solicitud gano y ya avanzo el BC.
                 }
             }
 
             var results = await Task.WhenAll(
-                RunSwallowingCapAsync(serviceA, bcPublicIds[0]),
-                RunSwallowingCapAsync(serviceB, bcPublicIds[1]));
+                RunSwallowingDuplicateAsync(serviceA),
+                RunSwallowingDuplicateAsync(serviceB));
 
-            // Outcome exacto: exactamente UNA de las dos confirma (60 <= 100 pero 60+60 > 100).
+            // Outcome exacto: una confirma y la otra detecta que el estado ya cambio.
             Assert.Equal(1, results.Count(r => r));
         }
 
@@ -401,7 +355,7 @@ public sealed class Adr044T5EmissionIntegrationTests
         var childrenAmounts = await verify.BookingCancellationCreditNotes.AsNoTracking()
             .Where(c => c.OriginatingInvoiceId == invoiceId)
             .ToListAsync();
-        Assert.Single(childrenAmounts); // solo la ganadora creo su hija.
+        Assert.Single(childrenAmounts); // solo la ganadora creo su hija/NC.
     }
 
     // =========================================================================
