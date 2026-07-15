@@ -53,6 +53,7 @@ public class QuoteServiceConvertCatalogTests
         {
             QuoteNumber = "COT-CONV",
             Title = "Conversion catalogo",
+            Status = QuoteStatus.Accepted,
             TravelStartDate = DateTime.UtcNow.Date.AddDays(10),
             TravelEndDate = DateTime.UtcNow.Date.AddDays(12),
             Adults = 2,
@@ -115,12 +116,27 @@ public class QuoteServiceConvertCatalogTests
         Assert.True(reservaId > 0);
         var quote = await context.Quotes.SingleAsync(q => q.Id == quoteId);
         Assert.Equal(reservaId, quote.ConvertedReservaId); // la conversion quedo commiteada
+        Assert.Equal(EstadoReserva.InManagement, (await context.Reservas.FindAsync(reservaId))!.Status);
 
         var sale = await context.RateSupplierSales.SingleAsync();
         Assert.Equal(rate.Id, sale.RateId);
         Assert.Equal(5, sale.SupplierId);
         Assert.Equal(100m, sale.LastNetCost); // 200 total / (2 noches x 1 habitacion)
         Assert.Equal(1, sale.SalesCount);
+    }
+
+    [Fact]
+    public async Task ConvertToFile_RejectsQuoteThatWasNotAccepted()
+    {
+        await using var context = CreateContext();
+        var quoteId = await SeedQuoteWithItemAsync(context, "Hotel", rateId: null, itemSupplierId: null);
+        var quote = await context.Quotes.FindAsync(quoteId);
+        quote!.Status = QuoteStatus.Draft;
+        await context.SaveChangesAsync();
+        var service = CreateService(context, flagOn: false);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.ConvertToFileAsync(quoteId, CancellationToken.None));
     }
 
     [Fact]

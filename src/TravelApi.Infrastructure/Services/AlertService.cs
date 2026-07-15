@@ -252,18 +252,24 @@ public class AlertService : IAlertService
         IReadOnlyList<object> supplierDebts = Array.Empty<object>();
         if (caller.CanSeeCost)
         {
-            supplierDebts = await _context.Suppliers
-                .Where(s => s.CurrentBalance > 100 && s.IsActive)
-                .Select(s => new
+            // Una alerta por operador+moneda. Supplier.CurrentBalance es un surrogate sin moneda que puede
+            // mezclar ARS y USD; mostrarlo como pesos era informacion falsa.
+            var supplierDebtRows = await (
+                from row in _context.SupplierBalanceByCurrency
+                join supplier in _context.Suppliers on row.SupplierId equals supplier.Id
+                where supplier.IsActive && row.Balance > 100
+                orderby row.Balance descending
+                select new
                 {
-                    s.PublicId,
-                    s.Name,
-                    s.CurrentBalance,
-                    s.Phone
+                    supplier.PublicId,
+                    supplier.Name,
+                    Currency = row.Currency,
+                    CurrentBalance = row.Balance,
+                    supplier.Phone
                 })
-                .OrderByDescending(s => s.CurrentBalance)
                 .Take(10)
                 .ToListAsync(cancellationToken);
+            supplierDebts = supplierDebtRows.Select(row => (object)row).ToList();
         }
 
         return (urgentTrips, supplierDebts);

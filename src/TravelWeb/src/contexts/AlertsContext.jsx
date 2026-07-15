@@ -24,6 +24,8 @@ export function AlertsProvider({ children }) {
         upcomingStarts: [],
         upcomingStartsWindowDays: null,
         costsToConfirm: [],
+        stuckOperatorRefunds: [],
+        abandonedOperatorRefunds: [],
         totalCount: 0,
         // Q9: lista de pre-ventas (presupuestos/cotizaciones) por caducar. Null = bucket no activo.
         expiringPreSales: null,
@@ -43,6 +45,8 @@ export function AlertsProvider({ children }) {
                 upcomingStarts: [],
                 upcomingStartsWindowDays: null,
                 costsToConfirm: [],
+                stuckOperatorRefunds: [],
+                abandonedOperatorRefunds: [],
                 totalCount: 0,
                 expiringPreSales: null,
             });

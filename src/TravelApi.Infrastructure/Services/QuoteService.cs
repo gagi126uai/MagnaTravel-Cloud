@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using System.Data;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -319,8 +320,15 @@ public class QuoteService : IQuoteService
         return quote;
     }
 
-    public async Task<int> ConvertToFileAsync(int quoteId, CancellationToken cancellationToken)
+    public Task<int> ConvertToFileAsync(int quoteId, CancellationToken cancellationToken)
     {
+        var strategy = _db.Database.CreateExecutionStrategy();
+        return strategy.ExecuteAsync(() => ConvertToFileCoreAsync(quoteId, cancellationToken));
+    }
+
+    private async Task<int> ConvertToFileCoreAsync(int quoteId, CancellationToken cancellationToken)
+    {
+        await using var transaction = await _db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         var quote = await _db.Quotes
             .Include(q => q.Items)
             .FirstOrDefaultAsync(q => q.Id == quoteId, cancellationToken)
@@ -329,10 +337,13 @@ public class QuoteService : IQuoteService
         if (quote.ConvertedReservaId.HasValue)
             throw new InvalidOperationException("Esta cotización ya fue convertida a reserva.");
 
+        if (quote.Status != QuoteStatus.Accepted)
+            throw new InvalidOperationException("La cotización histórica debe estar aceptada antes de convertirla.");
+
         // Create Reserva from quote
         quote.CustomerId = await ResolveCustomerFromLeadAsync(quote.CustomerId, quote.LeadId, cancellationToken);
 
-        // ADR-020 (2026-06-07): toda reserva nace en Cotizacion (INV-020-01). La cotizacion del
+        // Las cotizaciones históricas se convierten al circuito vigente como Presupuesto. La cotizacion del
         // modulo de leads se convierte en una reserva que arranca su ciclo de vida desde cero; los
         // items entran como servicios en borrador/solicitados (NO resueltos), asi que el saldo nace
         // en 0 (Balance = ConfirmedSale - TotalPaid = 0 - 0). TotalSale conserva el valor comercial
@@ -343,7 +354,9 @@ public class QuoteService : IQuoteService
             NumeroReserva = $"RES-{(fileCount + 1).ToString().PadLeft(5, '0')}",
             Name = quote.Title,
             Description = quote.Description,
-            Status = EstadoReserva.Quotation,
+            // Una cotizacion legacy sólo se convierte después de estar Aceptada: ingresa directamente
+            // a En gestión para no exigir una segunda aceptación ni quedar sujeta al vencimiento de presupuesto.
+            Status = EstadoReserva.InManagement,
             PayerId = quote.CustomerId,
             SourceLeadId = quote.LeadId,
             SourceQuoteId = quote.Id,
@@ -362,9 +375,8 @@ public class QuoteService : IQuoteService
         _db.Reservas.Add(file);
         await _db.SaveChangesAsync(cancellationToken);
 
-        // ADR-017 F1.3 (§2.3.b.7): "ultimas ventas" a upsertear DESPUES de que la conversion termine bien.
-        // Asimetria DELIBERADA con el create transaccional: la conversion NO es atomica (deuda preexistente),
-        // asi que el upsert es POST-EXITO best-effort (si falla, se loguea y NO se revierte la conversion).
+        // Las estadísticas de últimas ventas se actualizan después del commit principal. Reserva, servicios,
+        // vínculo y lead sí viajan atómicamente; este upsert secundario sigue siendo best-effort.
         var pendingCatalogUpserts = new List<(int RateId, int SupplierId, CatalogUnitization.Unitized Unit, string? Currency)>();
 
         // Migrate Quote Items to File Services (Smart Conversion)
@@ -547,34 +559,50 @@ public class QuoteService : IQuoteService
         quote.ConvertedReservaId = file.Id;
         quote.Status = QuoteStatus.Accepted;
         quote.AcceptedAt = DateTime.UtcNow;
-        // Decision del dueño (auditoria ERP 2026-06-13): convertir una cotizacion en reserva ya NO marca el
-        // lead como Ganado. La reserva nace en Cotizacion (NO es estado en firme), asi que marcarlo aca seria
-        // prematuro. El lead pasa a Ganado recien cuando la reserva linkeada transiciona a un estado EN FIRME
-        // (ver ReservaService.MarkSourceLeadAsWonIfReservaIsFirmAsync). El linkeo lead->reserva ya quedo
-        // hecho via SourceLeadId al construir el file.
+        if (quote.LeadId.HasValue)
+        {
+            // Una cotización legacy sólo se convierte aceptada y ahora ingresa a En gestión: el lead debe
+            // cerrar como Ganado en la misma persistencia para no dejar dos verdades comerciales.
+            var lead = await _db.Leads.FindAsync(new object[] { quote.LeadId.Value }, cancellationToken);
+            if (lead != null && lead.Status != LeadStatus.Lost)
+            {
+                lead.Status = LeadStatus.Won;
+                lead.ClosedAt = DateTime.UtcNow;
+            }
+        }
         await _db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         // ADR-017 F1.3 (§2.3.b.7): upsert POST-EXITO best-effort de la "ultima venta" por (producto, operador).
         // Solo con flag ON (catalog find-or-create). Skip de supplier 0 lo hace el propio helper. Asistencia
         // NO entra (cae al servicio generico, que no snapshotea Rate). Si un upsert falla, se loguea y se
         // sigue: la conversion ya quedo commiteada y la tabla es estadistica de sugerencia.
-        var settings = await _settingsService.GetEntityAsync(cancellationToken);
-        if (settings.EnableCatalogFindOrCreate)
+        try
         {
-            foreach (var sale in pendingCatalogUpserts)
+            var settings = await _settingsService.GetEntityAsync(cancellationToken);
+            if (settings.EnableCatalogFindOrCreate)
             {
-                try
+                foreach (var sale in pendingCatalogUpserts)
                 {
-                    await CatalogSaleUpsert.UpsertAsync(
-                        _db, sale.RateId, sale.SupplierId, sale.Unit, sale.Currency, DateTime.UtcNow, cancellationToken);
-                }
-                catch (Exception ex)
-                {
-                    _logger?.LogWarning(ex,
-                        "ConvertToFile: fallo el upsert best-effort de RateSupplierSale. RateId={RateId} SupplierId={SupplierId}",
-                        sale.RateId, sale.SupplierId);
+                    try
+                    {
+                        await CatalogSaleUpsert.UpsertAsync(
+                            _db, sale.RateId, sale.SupplierId, sale.Unit, sale.Currency, DateTime.UtcNow, cancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger?.LogWarning(ex,
+                            "ConvertToFile: fallo el upsert best-effort de RateSupplierSale. RateId={RateId} SupplierId={SupplierId}",
+                            sale.RateId, sale.SupplierId);
+                    }
                 }
             }
+        }
+        catch (Exception ex)
+        {
+            // La reserva ya fue confirmada dentro de la transacción. Esta estadística secundaria nunca debe
+            // provocar un reintento de toda la conversión después del commit.
+            _logger?.LogWarning(ex, "ConvertToFile: no se pudieron actualizar estadísticas de catálogo.");
         }
 
         return file.Id;
@@ -765,6 +793,3 @@ public class QuoteService : IQuoteService
         return convertedCustomerId ?? customerId;
     }
 }
-
-
-

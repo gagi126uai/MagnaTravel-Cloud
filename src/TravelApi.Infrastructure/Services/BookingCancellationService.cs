@@ -2442,6 +2442,126 @@ public class BookingCancellationService
     /// entre N emisiones en vuelo — fuera del alcance de esta tanda. Ver §9 del diseño: ningun test obligatorio
     /// ejercita el caso multi-factura-en-un-solo-BC (T-B2 es "2 BCs sobre la MISMA factura", lo opuesto).</para>
     /// </remarks>
+    public async Task<BookingCancellationDto> ResolvePartialCreditNoteAsync(
+        Guid publicId,
+        ResolvePartialCreditNoteRequest request,
+        string userId,
+        string? userName,
+        CancellationToken ct)
+    {
+        var bc = await _db.BookingCancellations
+            .Include(b => b.Lines)
+            .Include(b => b.CreditNotes)
+            .FirstOrDefaultAsync(b => b.PublicId == publicId, ct)
+            ?? throw new KeyNotFoundException($"Cancelación {publicId} no encontrada.");
+
+        var partialLines = bc.Lines.Where(l => l.Scope == BookingCancellationLineScope.Partial).ToList();
+        if (bc.Status != BookingCancellationStatus.Drafted
+            || partialLines.Count != 1
+            || bc.Lines.Any(l => l.Scope == BookingCancellationLineScope.Full))
+            throw new BusinessInvariantViolationException(
+                "Solo se puede resolver una devolución parcial pendiente de un único servicio.",
+                invariantCode: "INV-T5-RESOLVE-STATE");
+
+        if (bc.CreditNotes.Any(c => c.Status is BookingCancellationCreditNoteStatus.Pending or BookingCancellationCreditNoteStatus.Succeeded))
+            throw new BusinessInvariantViolationException(
+                "La devolución ya está emitida o en proceso y no se puede cambiar.",
+                invariantCode: "INV-T5-RESOLVE-FISCAL");
+
+        if (request.ConfirmedGrossCreditAmount <= 0m)
+            throw new BusinessInvariantViolationException(
+                "El monto de la devolución debe ser mayor que cero.",
+                invariantCode: "INV-T5-RESOLVE-AMOUNT");
+
+        var reason = request.Reason?.Trim();
+        if (string.IsNullOrWhiteSpace(reason) || reason.Length < 10 || reason.Length > 500)
+            throw new BusinessInvariantViolationException(
+                "Indicá un motivo de entre 10 y 500 caracteres para resolver la devolución.",
+                invariantCode: "INV-T5-RESOLVE-REASON");
+
+        var invoiceId = await _db.Invoices.AsNoTracking()
+            .Where(i => i.PublicId == request.TargetInvoicePublicId)
+            .Select(i => (int?)i.Id)
+            .FirstOrDefaultAsync(ct)
+            ?? throw new BusinessInvariantViolationException(
+                "La factura elegida no está disponible para esta devolución.",
+                invariantCode: "INV-T5-RESOLVE-INVOICE");
+
+        await RunUnderInvoiceLockAsync(invoiceId, async () =>
+        {
+            await _db.Entry(bc).ReloadAsync(ct);
+            await _db.Entry(bc).Collection(b => b.Lines).LoadAsync(ct);
+            await _db.Entry(bc).Collection(b => b.CreditNotes).LoadAsync(ct);
+
+            var line = bc.Lines.SingleOrDefault(l => l.Scope == BookingCancellationLineScope.Partial);
+            if (bc.Status != BookingCancellationStatus.Drafted
+                || line is null
+                || bc.Lines.Count(l => l.Scope == BookingCancellationLineScope.Partial) != 1
+                || bc.CreditNotes.Any(c => c.Status is BookingCancellationCreditNoteStatus.Pending or BookingCancellationCreditNoteStatus.Succeeded))
+                throw new BusinessInvariantViolationException(
+                    "La devolución cambió mientras la estabas resolviendo. Actualizá la página.",
+                    invariantCode: "INV-T5-RESOLVE-STATE");
+
+            var invoice = await _db.Invoices.FirstOrDefaultAsync(i => i.Id == invoiceId, ct);
+            if (invoice is null
+                || invoice.ReservaId != bc.ReservaId
+                || string.IsNullOrWhiteSpace(invoice.CAE)
+                || invoice.Resultado != "A"
+                || invoice.AnnulmentStatus == AnnulmentStatus.Succeeded
+                || LiveInvoiceCreditNoteTypes.Contains(invoice.TipoComprobante)
+                || LiveInvoiceDebitNoteTypes.Contains(invoice.TipoComprobante))
+                throw new BusinessInvariantViolationException(
+                    "La factura elegida no es una factura de venta activa de esta reserva.",
+                    invariantCode: "INV-T5-RESOLVE-INVOICE");
+
+            var invoiceCurrency = ArcaCurrencyMapper.ToIso(invoice.MonId) ?? Monedas.ARS;
+            if (!string.Equals(invoiceCurrency, line.Currency, StringComparison.OrdinalIgnoreCase))
+                throw new BusinessInvariantViolationException(
+                    "La moneda del servicio no coincide con la factura elegida.",
+                    invariantCode: "INV-T5-RESOLVE-CURRENCY");
+
+            if (line.TargetInvoiceId == invoiceId
+                && line.ConfirmedGrossCreditAmount == request.ConfirmedGrossCreditAmount)
+                return true; // idempotencia exacta
+
+            // No existe hoy un permiso explícito de override para acreditar más que el precio de venta
+            // congelado del servicio. Por lo tanto fail-closed: invoice_annul habilita operar, no inventar
+            // crédito adicional. Si el negocio crea un permiso dedicado futuro, deberá entrar por otro contrato.
+            if (request.ConfirmedGrossCreditAmount > line.LineSaleAmount)
+                throw new BusinessInvariantViolationException(
+                    "El monto supera el valor justificable del servicio cancelado.",
+                    invariantCode: "INV-T5-RESOLVE-LINE-CAP");
+
+            var remaining = await ComputeInvoiceRemainingCreditableAmountAsync(
+                invoiceId, ct, excludeBookingCancellationId: bc.Id);
+            if (request.ConfirmedGrossCreditAmount > remaining)
+                throw new BusinessInvariantViolationException(
+                    "El monto supera el saldo disponible de la factura.",
+                    invariantCode: "INV-T5-RESOLVE-CAP");
+
+            line.TargetInvoiceId = invoiceId;
+            line.ConfirmedGrossCreditAmount = request.ConfirmedGrossCreditAmount;
+            _auditService.StageBusinessEvent(
+                AuditActions.PartialCreditNoteLegacyResolved,
+                AuditActions.BookingCancellationEntityName,
+                bc.PublicId.ToString(),
+                JsonSerializer.Serialize(new
+                {
+                    reason,
+                    targetInvoicePublicId = invoice.PublicId,
+                    confirmedGrossCreditAmount = request.ConfirmedGrossCreditAmount,
+                    lineSaleAmount = line.LineSaleAmount,
+                }),
+                userId,
+                userName);
+            await _db.SaveChangesAsync(ct);
+            return true;
+        }, ct);
+
+        return await MapToDtoAsync(bc.Id, ct)
+            ?? throw new InvalidOperationException("No se pudo completar la operación. Volvé a intentar.");
+    }
+
     public async Task<BookingCancellationDto> ConfirmPartialCancellationEmissionAsync(
         Guid publicId,
         string userId,
@@ -12949,6 +13069,7 @@ public class BookingCancellationService
             CancellationEventAt = bc.DraftedAt,
             Rg4540DeadlineAt = bc.DraftedAt.AddDays(15),
             Rg4540DeadlinePassed = DateTime.UtcNow > bc.DraftedAt.AddDays(15),
+            Rg4540DaysRemaining = Math.Max(0, (bc.DraftedAt.AddDays(15).Date - DateTime.UtcNow.Date).Days),
         };
 
         var afipSettings = await _db.AfipSettings.AsNoTracking().FirstOrDefaultAsync(ct);
@@ -13039,6 +13160,7 @@ public class BookingCancellationService
             .OrderBy(c => c.Id)
             .Select(c => new BookingCancellationCreditNoteDto
             {
+                PublicId = c.CreditNoteInvoice?.PublicId,
                 Currency = ArcaCurrencyMapper.ToIso(c.ArcaCurrency) ?? "ARS",
                 Status = c.Status.ToString(),
                 NumeroComprobante = c.CreditNoteInvoice != null

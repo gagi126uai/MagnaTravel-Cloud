@@ -39,7 +39,7 @@ function QuoteFormModal({ customers, initial, defaults, contextLead, onSave, onC
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
             <div className="max-h-[90vh] w-full max-w-2xl space-y-5 overflow-y-auto rounded-[2rem] border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900" onClick={(event) => event.stopPropagation()}>
-                <div><h2 className="text-2xl font-black text-slate-900 dark:text-white">{initial ? "Editar cotizacion" : "Nueva cotizacion"}</h2><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Propuesta lista para seguir despues como reserva.</p></div>
+                <div><h2 className="text-2xl font-black text-slate-900 dark:text-white">Editar cotizacion historica</h2><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Registro anterior al circuito de Reserva-Presupuesto.</p></div>
                 {form.leadPublicId && !initial && <div className="rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-700 dark:border-violet-900/50 dark:bg-violet-900/10 dark:text-violet-300"><div className="text-[11px] font-black uppercase tracking-[0.22em]">Posible cliente asociado</div><div className="mt-1 font-semibold">{contextLead?.fullName || "Gestion comercial vinculada"}</div></div>}
                 <div className="grid gap-4 md:grid-cols-2">
                     <Field label="Titulo"><input value={form.title} onChange={(event) => set("title", event.target.value)} placeholder="Ej: Escapada a Bariloche en familia" className="w-full rounded-2xl border border-slate-200 bg-transparent px-4 py-3 text-sm font-medium dark:border-slate-700" /></Field>
@@ -110,8 +110,6 @@ export default function QuotesPage() {
 
     const loadQuotes = useCallback(async () => { setLoading(true); try { const [quoteData, customerData] = await Promise.all([api.get("/quotes"), api.get("/customers?page=1&pageSize=100&sortBy=fullName&sortDir=asc")]); setQuotes(quoteData || []); setCustomers(customerData?.items || []); } catch { showError("Error al cargar cotizaciones"); } finally { setLoading(false); } }, []);
     const loadDetail = useCallback(async (id) => { try { setDetailQuote(await api.get(`/quotes/${id}`)); } catch { showError("Error al cargar detalle"); } }, []);
-    const loadLeadContext = useCallback(async (leadPublicId) => { if (!leadPublicId) { setContextLead(null); return; } try { setContextLead(await api.get(`/leads/${leadPublicId}`)); } catch { setContextLead(null); } }, []);
-    const openCreateModal = useCallback((defaults = {}) => { setEditingQuote(null); setCreateDefaults(buildForm(null, defaults)); setShowModal(true); }, []);
     const closeModal = () => { setShowModal(false); setEditingQuote(null); setCreateDefaults(null); setContextLead(null); };
     useEffect(() => { loadQuotes(); }, [loadQuotes]);
     useEffect(() => {
@@ -120,12 +118,18 @@ export default function QuotesPage() {
         const params = new URLSearchParams(location.search);
         const defaults = { customerPublicId: params.get("customerPublicId") || stateDefaults.customerPublicId || "", leadPublicId: params.get("leadPublicId") || stateDefaults.leadPublicId || "" };
         if (openQuoteId) { loadDetail(openQuoteId); navigate(location.pathname, { replace: true, state: {} }); return; }
-        if (params.get("create") === "1" || location.state?.createQuoteDefaults) { openCreateModal(defaults); loadLeadContext(defaults.leadPublicId); navigate(location.pathname, { replace: true, state: {} }); }
-    }, [loadDetail, loadLeadContext, location.pathname, location.search, location.state, navigate, openCreateModal]);
+        if (params.get("create") === "1" || location.state?.createQuoteDefaults) {
+            if (defaults.leadPublicId) {
+                navigate("/crm", { replace: true, state: { openLeadId: defaults.leadPublicId } });
+                return;
+            }
+            const customerQuery = defaults.customerPublicId ? `&customerPublicId=${encodeURIComponent(defaults.customerPublicId)}` : "";
+            navigate(`/reservas?create=1${customerQuery}`, { replace: true });
+        }
+    }, [loadDetail, location.pathname, location.search, location.state, navigate]);
 
     const filtered = quotes.filter((quote) => [quote.title, quote.quoteNumber, quote.destination, quote.customer?.fullName, quote.customerName, quote.leadName, quote.convertedReservaNumeroReserva].filter(Boolean).join(" ").toLowerCase().includes(search.toLowerCase()));
     const sanitizeQuote = (data) => ({ ...data, customerPublicId: data.customerPublicId || null, leadPublicId: data.leadPublicId || null, travelStartDate: data.travelStartDate || null, travelEndDate: data.travelEndDate || null, validUntil: data.validUntil || null, adults: parseInt(data.adults, 10) || 2, children: parseInt(data.children, 10) || 0 });
-    const handleCreate = async (data) => { try { await api.post("/quotes", sanitizeQuote(data)); showSuccess("Cotizacion creada"); closeModal(); loadQuotes(); } catch { showError("Error al crear cotizacion"); } };
     const handleUpdate = async (data) => { try { await api.put(`/quotes/${getPublicId(editingQuote)}`, sanitizeQuote(data)); showSuccess("Cotizacion actualizada"); closeModal(); loadQuotes(); if (getPublicId(detailQuote) === getPublicId(editingQuote)) loadDetail(getPublicId(editingQuote)); } catch { showError("Error al actualizar"); } };
     const handleDelete = async (id) => { const confirmed = await showConfirm("Eliminar cotizacion", "La propuesta se eliminara por completo junto con sus servicios.", "Si, eliminar", "red"); if (!confirmed) return; try { await api.delete(`/quotes/${id}`); showSuccess("Cotizacion eliminada"); if (getPublicId(detailQuote) === id) setDetailQuote(null); loadQuotes(); } catch { showError("Error al eliminar"); } };
     const handleStatusChange = async (id, status) => { try { await api.patch(`/quotes/${id}/status`, { status }); showSuccess(`Estado actualizado: ${status}`); loadQuotes(); if (getPublicId(detailQuote) === id) loadDetail(id); } catch { showError("Error al cambiar estado"); } };
@@ -155,7 +159,7 @@ export default function QuotesPage() {
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
                 <strong className="font-bold">Cotizaciones discontinuadas.</strong> Las cotizaciones existentes se pueden seguir editando y convirtiendo a Reserva, pero no se crean nuevas. Para nuevas propuestas, crea una <strong>Reserva en estado Presupuesto</strong> directamente desde el modulo de Reservas.
             </div>
-            <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center"><div><h1 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white">Cotizaciones</h1><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Propuestas comerciales conectadas con clientes, posibles clientes y reservas.</p></div><button disabled title="Cotizaciones discontinuadas. Crea una Reserva en estado Presupuesto." className="flex items-center gap-2 rounded-xl bg-slate-300 px-4 py-2.5 text-sm font-bold text-slate-500 shadow-lg cursor-not-allowed"><Plus className="h-4 w-4" /> Nueva cotizacion</button></div>
+            <div><h1 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white">Cotizaciones historicas</h1><p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Consulta y conversion de propuestas creadas antes del circuito Reserva-Presupuesto.</p></div>
             <div className="relative"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por numero, cliente, destino, reserva o posible cliente..." className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-4 text-sm dark:border-slate-700 dark:bg-slate-900" /></div>
             {filtered.length === 0 ? (
                 <div className="rounded-2xl border border-slate-200 bg-white px-4 py-12 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -209,7 +213,7 @@ export default function QuotesPage() {
                     </div>
                 </>
             )}
-            {showModal && <QuoteFormModal customers={customers} initial={editingQuote} defaults={createDefaults} contextLead={contextLead} onSave={editingQuote ? handleUpdate : handleCreate} onClose={closeModal} />}
+            {showModal && <QuoteFormModal customers={customers} initial={editingQuote} defaults={createDefaults} contextLead={contextLead} onSave={handleUpdate} onClose={closeModal} />}
         </div>
     );
 }

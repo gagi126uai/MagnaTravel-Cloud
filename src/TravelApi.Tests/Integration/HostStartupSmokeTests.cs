@@ -141,9 +141,8 @@ public class HostStartupSmokeTests : IClassFixture<CustomWebApplicationFactory>
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var reserva = await db.Reservas.FirstOrDefaultAsync(r => r.Name == reservaName);
             Assert.NotNull(reserva);
-            // ADR-020 (INV-020-01): toda reserva nace en Cotizacion (Quotation), nunca Budget ni
-            // Confirmed; CreateReservaAsync ignora cualquier Status del request.
-            Assert.Equal(EstadoReserva.Quotation, reserva!.Status);
+            // Las altas nuevas nacen en Presupuesto; CreateReservaAsync ignora cualquier Status del request.
+            Assert.Equal(EstadoReserva.Budget, reserva!.Status);
             Assert.StartsWith($"F-{DateTime.Now.Year}-", reserva.NumeroReserva);
         }
     }

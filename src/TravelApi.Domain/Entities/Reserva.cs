@@ -11,9 +11,8 @@ namespace TravelApi.Domain.Entities;
 ///
 /// <para>CICLO UNICO (ya NO hay flag ni ciclo dual; el rediseño Fase A+B con
 /// <c>EnableSoldToSettleStates</c> y el estado "Sold"/Vendida murieron en ADR-020):</para>
-///  - Quotation (Cotizacion): estado INICIAL unico. Toda reserva nace aca. Borrador interno.
-///  - Budget (Presupuesto): el documento que recibe el cliente. Antes era el estado inicial;
-///    ahora es la etapa "presupuesto entregado".
+///  - Quotation (Cotizacion): estado legacy para borradores históricos; no se crean nuevos.
+///  - Budget (Presupuesto): estado inicial de toda propuesta nueva y documento que recibe el cliente.
 ///  - InManagement (En gestion): el cliente acepto; se gestionan los servicios con los operadores.
 ///    Reemplaza al viejo "Sold". El saldo del cliente nace POR SERVICIO CONFIRMADO en esta etapa.
 ///  - Confirmed (Confirmada): TODOS los servicios estan resueltos (aereo emitido, hotel confirmado,
@@ -33,8 +32,7 @@ namespace TravelApi.Domain.Entities;
 public static class EstadoReserva
 {
     /// <summary>
-    /// ADR-020 (2026-06-07): estado INICIAL unico. Toda reserva nace en Cotizacion (borrador
-    /// interno). <c>CreateReservaAsync</c> ignora cualquier Status del request y fuerza este valor.
+    /// Estado legacy conservado para datos históricos. Las altas nuevas nacen en Budget.
     /// </summary>
     public const string Quotation = "Quotation";
 
@@ -219,7 +217,7 @@ public class Reserva : IHasPublicId
     
     [Required]
     [MaxLength(50)]
-    public string Status { get; set; } = EstadoReserva.Quotation;
+    public string Status { get; set; } = EstadoReserva.Budget;
     
     // Dates
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

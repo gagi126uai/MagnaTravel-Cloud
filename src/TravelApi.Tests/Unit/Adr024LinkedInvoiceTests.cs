@@ -195,6 +195,42 @@ public class Adr024LinkedInvoiceTests
     }
 
     [Fact]
+    public async Task CreatePayment_CancelledReserva_AllowsApprovedDebitNoteUpToOutstanding()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        var reserva = await SeedReservaAsync(context, id: 1);
+        reserva.Status = EstadoReserva.Cancelled;
+        var debitNote = await SeedInvoiceAsync(context, id: 10, reservaId: reserva.Id);
+        debitNote.TipoComprobante = 12;
+        debitNote.ImporteTotal = 500m;
+        await context.SaveChangesAsync();
+
+        var service = BuildPaymentService(context);
+        var dto = await service.CreatePaymentAsync(new CreatePaymentRequest
+        {
+            ReservaId = reserva.PublicId.ToString(),
+            Amount = 200m,
+            Currency = "ARS",
+            Method = "Transfer",
+            LinkedInvoicePublicId = debitNote.PublicId.ToString()
+        }, CancellationToken.None);
+
+        var persisted = await context.Payments.AsNoTracking().SingleAsync(payment => payment.PublicId == dto.PublicId);
+        Assert.True(persisted.AffectsCash);
+        Assert.Equal(debitNote.Id, persisted.LinkedInvoiceId);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => service.CreatePaymentAsync(new CreatePaymentRequest
+        {
+            ReservaId = reserva.PublicId.ToString(),
+            Amount = 301m,
+            Currency = "ARS",
+            Method = "Transfer",
+            LinkedInvoicePublicId = debitNote.PublicId.ToString()
+        }, CancellationToken.None));
+        Assert.Contains("supera el saldo", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task CreatePayment_LinkToNonexistentInvoice_Throws400()
     {
         await using var context = new AppDbContext(_dbOptions);

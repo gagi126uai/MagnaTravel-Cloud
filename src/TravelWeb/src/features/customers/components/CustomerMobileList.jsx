@@ -65,14 +65,14 @@ export function CustomerMobileList({ customers, onEdit, onAccountClick }) {
             </>
           }
           footer={
-            <div
-              className={`font-mono font-medium ${
-                (customer.currentBalance || 0) > 0
-                  ? "text-rose-600 dark:text-rose-400"
-                  : "text-emerald-600 dark:text-emerald-400"
-              }`}
-            >
-              {formatCurrency(customer.currentBalance || 0)}
+            <div className="font-mono font-medium">
+              {(customer.balancesByCurrency ?? []).length > 0
+                ? (customer.balancesByCurrency ?? []).map((balance) => (
+                    <div key={balance.currency} className="text-rose-600 dark:text-rose-400">
+                      {formatCurrency(balance.amount, balance.currency)}
+                    </div>
+                  ))
+                : <span className="text-emerald-600 dark:text-emerald-400">Al día</span>}
             </div>
           }
           footerActions={

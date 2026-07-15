@@ -137,6 +137,7 @@ public class SupplierService : ISupplierService
                 // Configuracion de multas de cancelacion (2026-07-14): mismo motivo que los dos campos de
                 // arriba (que un PUT con spread de la fila no la borre).
                 PenaltyBehavior = supplier.PenaltyBehavior,
+                InvoicingMode = supplier.InvoicingMode,
                 IsActive = supplier.IsActive,
                 CurrentBalance = supplier.CurrentBalance,
                 CreatedAt = supplier.CreatedAt
@@ -144,10 +145,49 @@ public class SupplierService : ISupplierService
 
         var page = await itemsQuery.ToPagedResponseAsync(query, cancellationToken);
 
+        // La lista debe mostrar plata por moneda. CurrentBalance es un surrogate historico que suma buckets
+        // heterogeneos y no tiene una moneda representable; conservarlo en el contrato no autoriza a pintarlo.
+        // Cargamos en una sola query las proyecciones de los operadores de ESTA pagina.
+        var pagePublicIds = page.Items.Select(item => item.PublicId).ToList();
+        var balanceRows = await (
+            from row in _dbContext.SupplierBalanceByCurrency.AsNoTracking()
+            join supplier in _dbContext.Suppliers.AsNoTracking() on row.SupplierId equals supplier.Id
+            where pagePublicIds.Contains(supplier.PublicId)
+            select new
+            {
+                supplier.PublicId,
+                row.Currency,
+                row.ConfirmedPurchases,
+                row.OperatorChargesInvoiced,
+                row.TotalPaid,
+                row.Balance
+            })
+            .ToListAsync(cancellationToken);
+
+        var rowsBySupplier = balanceRows
+            .GroupBy(row => row.PublicId)
+            .ToDictionary(group => group.Key, group => group.OrderBy(row => row.Currency).ToList());
+
+        bool canSeeCost = await CanSeeSupplierCostFiguresAsync(cancellationToken);
+        foreach (var item in page.Items)
+        {
+            item.AmountsVisible = canSeeCost;
+            if (!rowsBySupplier.TryGetValue(item.PublicId, out var rows)) continue;
+
+            item.BalancesByCurrency = rows.Select(row => new SupplierAccountBalanceByCurrencyDto
+            {
+                Currency = Monedas.Normalizar(row.Currency),
+                ConfirmedPurchases = canSeeCost ? row.ConfirmedPurchases : 0m,
+                OperatorChargesInvoiced = canSeeCost ? row.OperatorChargesInvoiced : 0m,
+                TotalPaid = canSeeCost ? row.TotalPaid : 0m,
+                Balance = canSeeCost ? row.Balance : 0m
+            }).ToList();
+        }
+
         // ADR-017 F1b: CurrentBalance es la deuda de la agencia con el proveedor.
         // Sin cobranzas.see_cost se anula; el resto del item (nombre, contacto,
         // estado) sigue visible — decision del dueño.
-        if (!await CanSeeSupplierCostFiguresAsync(cancellationToken))
+        if (!canSeeCost)
         {
             foreach (var item in page.Items)
             {
@@ -295,6 +335,9 @@ public class SupplierService : ISupplierService
         // TreasuryFxAssumedByOverride de arriba (no es "el front no mando este campo", Unknown es un valor de
         // negocio valido y es el default — la ficha del operador tiene que poder VOLVER a Unknown).
         existing.PenaltyBehavior = supplier.PenaltyBehavior;
+        // Modelo operativo de CxP: en intermediacion el operador factura directo al cliente y no nace deuda
+        // de compra. El controller preserva el valor vigente cuando un cliente legacy no manda el campo.
+        existing.InvoicingMode = supplier.InvoicingMode;
         // Rediseño alta de operador (2026-06-28): solo se pisa la moneda si el request trajo una (ver arriba);
         // si no vino, se preserva la existente para no resetearla a ARS al editar otros campos.
         if (defaultCurrencyProvided)
@@ -550,6 +593,8 @@ public class SupplierService : ISupplierService
                 TaxCondition = item.TaxCondition,
                 Address = item.Address,
                 DefaultCurrency = item.DefaultCurrency,
+                DefaultPaymentTermDays = item.DefaultPaymentTermDays,
+                InvoicingMode = item.InvoicingMode,
                 IsActive = item.IsActive,
                 CurrentBalance = item.CurrentBalance
             })
@@ -1069,6 +1114,13 @@ public class SupplierService : ISupplierService
             servicesQuery = servicesQuery.Where(item => item.Type.ToLower() == normalizedType);
         }
 
+        if (!string.IsNullOrWhiteSpace(query.Currency))
+        {
+            var currency = Monedas.Normalizar(query.Currency);
+            if (!Monedas.EsSoportada(currency)) throw new ArgumentException("La moneda del filtro no es válida.");
+            servicesQuery = servicesQuery.Where(item => (item.Currency ?? Monedas.ARS) == currency);
+        }
+
         if (!string.IsNullOrWhiteSpace(query.Search))
         {
             var normalized = query.Search.Trim().ToLowerInvariant();
@@ -1117,6 +1169,13 @@ public class SupplierService : ISupplierService
         CancellationToken cancellationToken)
     {
         var paymentsQuery = BuildSupplierPaymentsQuery(id);
+
+        if (!string.IsNullOrWhiteSpace(query.Currency))
+        {
+            var currency = Monedas.Normalizar(query.Currency);
+            if (!Monedas.EsSoportada(currency)) throw new ArgumentException("La moneda del filtro no es válida.");
+            paymentsQuery = paymentsQuery.Where(payment => (payment.ImputedCurrency ?? payment.Currency) == currency);
+        }
 
         if (!string.IsNullOrWhiteSpace(query.Search))
         {
@@ -1334,6 +1393,13 @@ public class SupplierService : ISupplierService
             throw new ArgumentException("El monto debe ser mayor a 0");
         }
 
+        if (await _dbContext.SupplierInvoicePaymentApplications
+                .AnyAsync(x => x.SupplierPaymentId == payment.Id && !x.IsReversed, cancellationToken))
+        {
+            throw new InvalidOperationException(
+                "El pago está aplicado a una factura del operador. Revertí esa aplicación antes de editarlo.");
+        }
+
         // ADR-021: resolver/validar el bloque de moneda igual que en el alta.
         var currency = ResolvePaymentCurrencyBlock(request);
 
@@ -1428,6 +1494,13 @@ public class SupplierService : ISupplierService
         if (payment == null)
         {
             throw new KeyNotFoundException("Pago no encontrado");
+        }
+
+        if (await _dbContext.SupplierInvoicePaymentApplications
+                .AnyAsync(x => x.SupplierPaymentId == payment.Id && !x.IsReversed, cancellationToken))
+        {
+            throw new InvalidOperationException(
+                "El pago está aplicado a una factura del operador. Anulá o corregí esa conciliación antes de eliminarlo.");
         }
 
         // TODO B1.7: bloquear si el pago cae dentro de un periodo contable cerrado.
@@ -1564,6 +1637,318 @@ public class SupplierService : ISupplierService
         // GetSupplierAccountPaymentsAsync).
         await MaskSupplierPaymentAmountsAsync(payments, cancellationToken);
         return payments;
+    }
+
+    public async Task<IReadOnlyList<SupplierInvoiceDto>> GetSupplierInvoicesAsync(
+        int id, CancellationToken cancellationToken)
+    {
+        if (!await _dbContext.Suppliers.AsNoTracking().AnyAsync(s => s.Id == id, cancellationToken))
+            throw new KeyNotFoundException("Proveedor no encontrado.");
+
+        var invoices = await SupplierInvoicesWithDetails()
+            .Where(x => x.SupplierId == id)
+            .OrderByDescending(x => x.IssuedAt)
+            .ThenByDescending(x => x.Id)
+            .ToListAsync(cancellationToken);
+        var canSeeAmounts = await CanSeeSupplierCostFiguresAsync(cancellationToken);
+        return invoices.Select(x => MapSupplierInvoice(x, canSeeAmounts)).ToList();
+    }
+
+    public Task<SupplierInvoiceDto> CreateSupplierInvoiceAsync(
+        int id, SupplierInvoiceCreateRequest request, CancellationToken cancellationToken)
+        => RunSerializableTransactionAsync(() => CreateSupplierInvoiceCoreAsync(id, request, cancellationToken), cancellationToken);
+
+    private async Task<SupplierInvoiceDto> CreateSupplierInvoiceCoreAsync(
+        int id, SupplierInvoiceCreateRequest request, CancellationToken cancellationToken)
+    {
+        var supplier = await _dbContext.Suppliers.AsNoTracking()
+            .SingleOrDefaultAsync(s => s.Id == id, cancellationToken)
+            ?? throw new KeyNotFoundException("Proveedor no encontrado.");
+        if (!SupplierDebtCalculator.SupplierGeneratesPurchaseDebt(supplier.InvoicingMode))
+            throw new InvalidOperationException(
+                "Este operador factura directo al cliente y sus servicios no generan una cuenta por pagar de la agencia.");
+        var number = request.Number?.Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(number)) throw new ArgumentException("Ingresá el número de factura.");
+        var currency = Monedas.Normalizar(request.Currency);
+        if (!Monedas.EsSoportada(currency)) throw new ArgumentException("La moneda de la factura no es válida.");
+        if (request.DueDate.Date < request.IssuedAt.Date)
+            throw new ArgumentException("El vencimiento no puede ser anterior a la fecha de emisión.");
+        if (request.Lines is null || request.Lines.Count == 0)
+            throw new ArgumentException("Seleccioná al menos un servicio para la factura.");
+        if (await _dbContext.SupplierInvoices.AnyAsync(x => x.SupplierId == id && x.Number.ToLower() == number.ToLower(), cancellationToken))
+            throw new InvalidOperationException("Ya existe una factura con ese número para este operador.");
+
+        var (userId, userName) = ResolveCurrentActor();
+        var invoice = new SupplierInvoice
+        {
+            SupplierId = id,
+            Number = number,
+            Currency = currency,
+            IssuedAt = DateTime.SpecifyKind(request.IssuedAt.Date, DateTimeKind.Utc),
+            DueDate = DateTime.SpecifyKind(request.DueDate.Date, DateTimeKind.Utc),
+            CreatedByUserId = userId,
+            CreatedByUserName = userName
+        };
+
+        var requestedServices = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var requestedLine in request.Lines)
+        {
+            if (requestedLine.Amount <= 0) throw new ArgumentException("El importe de cada servicio debe ser mayor a cero.");
+            var kind = ServicePaymentRecordKinds.Normalize(requestedLine.ServiceRecordKind)
+                ?? throw new ArgumentException("El tipo de servicio de la factura no es válido.");
+            var key = $"{kind}:{requestedLine.ServicePublicId:D}";
+            if (!requestedServices.Add(key)) throw new ArgumentException("Un servicio no puede repetirse en la misma factura.");
+
+            var service = await ResolveInvoiceServiceAsync(id, kind, requestedLine.ServicePublicId, cancellationToken);
+            if (!SupplierDebtCalculator.ValidReservationStatuses.Contains(service.ReservaStatus)
+                || !WorkflowStatusHelper.CountsForSupplierDebtByType(service.ServiceType, service.Status))
+                throw new InvalidOperationException(
+                    "Solo se pueden documentar servicios confirmados que integran la deuda vigente con el operador.");
+            if (!string.Equals(service.Currency, currency, StringComparison.Ordinal))
+                throw new InvalidOperationException("Todos los servicios de la factura deben usar la misma moneda que el documento.");
+
+            var alreadyInvoiced = await _dbContext.SupplierInvoiceLines
+                .Where(x => x.ServiceRecordKind == kind && x.ServicePublicId == requestedLine.ServicePublicId
+                            && x.SupplierInvoice.Status != SupplierInvoiceStatus.Void)
+                .SumAsync(x => (decimal?)x.Amount, cancellationToken) ?? 0m;
+            if (alreadyInvoiced + requestedLine.Amount > service.NetCost)
+                throw new InvalidOperationException("El importe facturado del servicio supera su costo registrado.");
+
+            invoice.Lines.Add(new SupplierInvoiceLine
+            {
+                ReservaId = service.ReservaId,
+                ServiceRecordKind = kind,
+                ServicePublicId = requestedLine.ServicePublicId,
+                Description = ServiceKindLabel(kind),
+                Amount = decimal.Round(requestedLine.Amount, 2, MidpointRounding.AwayFromZero)
+            });
+        }
+
+        _dbContext.SupplierInvoices.Add(invoice);
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        var stored = await SupplierInvoicesWithDetails().SingleAsync(x => x.Id == invoice.Id, cancellationToken);
+        return MapSupplierInvoice(stored, await CanSeeSupplierCostFiguresAsync(cancellationToken));
+    }
+
+    public Task<SupplierInvoiceDto> ApplySupplierPaymentToInvoiceAsync(
+        int id, Guid invoicePublicId, SupplierInvoicePaymentApplicationRequest request, CancellationToken cancellationToken)
+        => RunSerializableTransactionAsync(() => ApplySupplierPaymentToInvoiceCoreAsync(id, invoicePublicId, request, cancellationToken), cancellationToken);
+
+    private async Task<SupplierInvoiceDto> ApplySupplierPaymentToInvoiceCoreAsync(
+        int id, Guid invoicePublicId, SupplierInvoicePaymentApplicationRequest request, CancellationToken cancellationToken)
+    {
+        if (request.Amount <= 0) throw new ArgumentException("El importe aplicado debe ser mayor a cero.");
+        var invoice = await SupplierInvoicesWithDetails()
+            .SingleOrDefaultAsync(x => x.SupplierId == id && x.PublicId == invoicePublicId, cancellationToken)
+            ?? throw new KeyNotFoundException("Factura de operador no encontrada.");
+        if (invoice.Status == SupplierInvoiceStatus.Void) throw new InvalidOperationException("No se puede aplicar un pago a una factura anulada.");
+
+        var payment = await _dbContext.SupplierPayments
+            .SingleOrDefaultAsync(x => x.SupplierId == id && x.PublicId == request.SupplierPaymentPublicId, cancellationToken)
+            ?? throw new KeyNotFoundException("Pago de operador no encontrado.");
+        if (await _dbContext.BookingCancellationLineOperatorCharges
+                .AnyAsync(charge => charge.SettledBySupplierPaymentId == payment.Id, cancellationToken))
+            throw new InvalidOperationException(
+                "Ese pago ya liquida un cargo de cancelación del operador y no puede aplicarse también a una factura de servicios.");
+        var paymentCurrency = Monedas.Normalizar(payment.ImputedCurrency ?? payment.Currency);
+        if (!string.Equals(paymentCurrency, invoice.Currency, StringComparison.Ordinal))
+            throw new InvalidOperationException("La moneda imputada del pago no coincide con la factura.");
+        if (payment.ServicePublicId.HasValue
+            && invoice.Lines.Any(x => x.ServicePublicId != payment.ServicePublicId.Value
+                || !string.Equals(x.ServiceRecordKind, payment.ServiceRecordKind, StringComparison.Ordinal)))
+            throw new InvalidOperationException(
+                "Un pago imputado a un servicio solo puede aplicarse a una factura exclusiva de ese servicio.");
+        if (payment.ReservaId.HasValue && invoice.Lines.Any(x => x.ReservaId != payment.ReservaId.Value))
+            throw new InvalidOperationException(
+                "Un pago imputado a una reserva solo puede aplicarse a una factura formada únicamente por esa reserva.");
+
+        var paymentValue = payment.ImputedAmount ?? payment.Amount;
+        if (paymentValue <= 0) throw new InvalidOperationException("El pago no tiene importe disponible para aplicar.");
+        var existingApplication = invoice.PaymentApplications.SingleOrDefault(x => x.SupplierPaymentId == payment.Id && !x.IsReversed);
+        var amount = decimal.Round(request.Amount, 2, MidpointRounding.AwayFromZero);
+        if (existingApplication is not null)
+        {
+            if (existingApplication.Amount == amount)
+                return MapSupplierInvoice(invoice, await CanSeeSupplierCostFiguresAsync(cancellationToken));
+            throw new InvalidOperationException("Ese pago ya fue aplicado a la factura con otro importe.");
+        }
+        var paymentAlreadyApplied = await _dbContext.SupplierInvoicePaymentApplications
+            .Where(x => x.SupplierPaymentId == payment.Id && !x.IsReversed)
+            .SumAsync(x => (decimal?)x.Amount, cancellationToken) ?? 0m;
+        var invoiceTotal = invoice.Lines.Sum(x => x.Amount);
+        var invoiceApplied = invoice.PaymentApplications.Where(x => !x.IsReversed).Sum(x => x.Amount);
+        if (paymentAlreadyApplied + amount > paymentValue)
+            throw new InvalidOperationException("La aplicación supera el importe disponible del pago.");
+        if (invoiceApplied + amount > invoiceTotal)
+            throw new InvalidOperationException("La aplicación supera el saldo pendiente de la factura.");
+
+        var (userId, userName) = ResolveCurrentActor();
+        invoice.PaymentApplications.Add(new SupplierInvoicePaymentApplication
+        {
+            SupplierPaymentId = payment.Id,
+            SupplierPayment = payment,
+            Amount = amount,
+            CreatedByUserId = userId,
+            CreatedByUserName = userName
+        });
+        var finalApplied = invoiceApplied + amount;
+        invoice.Status = finalApplied >= invoiceTotal ? SupplierInvoiceStatus.Paid : SupplierInvoiceStatus.PartiallyPaid;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return MapSupplierInvoice(invoice, await CanSeeSupplierCostFiguresAsync(cancellationToken));
+    }
+
+    public Task<SupplierInvoiceDto> ReverseSupplierInvoicePaymentApplicationAsync(
+        int id, Guid invoicePublicId, Guid applicationPublicId, string reason, CancellationToken cancellationToken)
+        => RunSerializableTransactionAsync(
+            () => ReverseSupplierInvoicePaymentApplicationCoreAsync(id, invoicePublicId, applicationPublicId, reason, cancellationToken),
+            cancellationToken);
+
+    private async Task<SupplierInvoiceDto> ReverseSupplierInvoicePaymentApplicationCoreAsync(
+        int id, Guid invoicePublicId, Guid applicationPublicId, string reason, CancellationToken cancellationToken)
+    {
+        var invoice = await SupplierInvoicesWithDetails()
+            .SingleOrDefaultAsync(x => x.SupplierId == id && x.PublicId == invoicePublicId, cancellationToken)
+            ?? throw new KeyNotFoundException("Factura de operador no encontrada.");
+        var application = invoice.PaymentApplications.SingleOrDefault(x => x.PublicId == applicationPublicId)
+            ?? throw new KeyNotFoundException("Aplicación de pago no encontrada.");
+        if (application.IsReversed)
+            return MapSupplierInvoice(invoice, await CanSeeSupplierCostFiguresAsync(cancellationToken));
+        if (invoice.Status == SupplierInvoiceStatus.Void)
+            throw new InvalidOperationException("No se puede modificar una factura anulada.");
+        if (string.IsNullOrWhiteSpace(reason) || reason.Trim().Length < 10)
+            throw new ArgumentException("Indicá un motivo de reversa de al menos 10 caracteres.");
+
+        var (userId, userName) = ResolveCurrentActor();
+        application.IsReversed = true;
+        application.Reversal = new SupplierInvoicePaymentApplicationReversal
+        {
+            CreatedByUserId = userId,
+            CreatedByUserName = userName,
+            Reason = reason.Trim()
+        };
+        var total = invoice.Lines.Sum(x => x.Amount);
+        var activeApplied = invoice.PaymentApplications.Where(x => !x.IsReversed).Sum(x => x.Amount);
+        invoice.Status = activeApplied <= 0m
+            ? SupplierInvoiceStatus.Open
+            : activeApplied >= total ? SupplierInvoiceStatus.Paid : SupplierInvoiceStatus.PartiallyPaid;
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return MapSupplierInvoice(invoice, await CanSeeSupplierCostFiguresAsync(cancellationToken));
+    }
+
+    public Task<SupplierInvoiceDto> VoidSupplierInvoiceAsync(
+        int id, Guid invoicePublicId, string reason, CancellationToken cancellationToken)
+        => RunSerializableTransactionAsync(() => VoidSupplierInvoiceCoreAsync(id, invoicePublicId, reason, cancellationToken), cancellationToken);
+
+    private async Task<SupplierInvoiceDto> VoidSupplierInvoiceCoreAsync(
+        int id, Guid invoicePublicId, string reason, CancellationToken cancellationToken)
+    {
+        var invoice = await SupplierInvoicesWithDetails()
+            .SingleOrDefaultAsync(x => x.SupplierId == id && x.PublicId == invoicePublicId, cancellationToken)
+            ?? throw new KeyNotFoundException("Factura de operador no encontrada.");
+        if (invoice.Status == SupplierInvoiceStatus.Void) return MapSupplierInvoice(invoice, await CanSeeSupplierCostFiguresAsync(cancellationToken));
+        if (invoice.PaymentApplications.Any(x => !x.IsReversed))
+            throw new InvalidOperationException("No se puede anular una factura con pagos aplicados.");
+        if (string.IsNullOrWhiteSpace(reason) || reason.Trim().Length < 10)
+            throw new ArgumentException("Indicá un motivo de anulación de al menos 10 caracteres.");
+        invoice.Status = SupplierInvoiceStatus.Void;
+        invoice.VoidedAt = DateTime.UtcNow;
+        invoice.VoidReason = reason.Trim();
+        await _dbContext.SaveChangesAsync(cancellationToken);
+        return MapSupplierInvoice(invoice, await CanSeeSupplierCostFiguresAsync(cancellationToken));
+    }
+
+    private IQueryable<SupplierInvoice> SupplierInvoicesWithDetails() => _dbContext.SupplierInvoices
+        .IgnoreQueryFilters()
+        .Include(x => x.Lines).ThenInclude(x => x.Reserva)
+        .Include(x => x.PaymentApplications).ThenInclude(x => x.SupplierPayment)
+        .Include(x => x.PaymentApplications).ThenInclude(x => x.Reversal);
+
+    private static SupplierInvoiceDto MapSupplierInvoice(SupplierInvoice invoice, bool amountsVisible)
+    {
+        var total = invoice.Lines.Sum(x => x.Amount);
+        var applied = invoice.PaymentApplications.Where(x => !x.IsReversed).Sum(x => x.Amount);
+        return new SupplierInvoiceDto
+        {
+            PublicId = invoice.PublicId,
+            Number = invoice.Number,
+            Currency = invoice.Currency,
+            IssuedAt = invoice.IssuedAt,
+            DueDate = invoice.DueDate,
+            Status = invoice.Status switch
+            {
+                SupplierInvoiceStatus.Open => "pendiente",
+                SupplierInvoiceStatus.PartiallyPaid => "pago_parcial",
+                SupplierInvoiceStatus.Paid => "pagada",
+                _ => "anulada"
+            },
+            Total = amountsVisible ? total : 0m,
+            Applied = amountsVisible ? applied : 0m,
+            Pending = amountsVisible ? Math.Max(0m, total - applied) : 0m,
+            AmountsVisible = amountsVisible,
+            Lines = invoice.Lines.Select(x => new SupplierInvoiceLineDto(
+                x.PublicId, x.Reserva.PublicId, x.Reserva.NumeroReserva, ServiceKindLabel(x.ServiceRecordKind),
+                x.ServicePublicId, x.Description, amountsVisible ? x.Amount : 0m)).ToList(),
+            Applications = invoice.PaymentApplications.Select(x => new SupplierInvoicePaymentApplicationDto(
+                x.PublicId, x.SupplierPayment.PublicId, amountsVisible ? x.Amount : 0m,
+                x.CreatedAt, x.CreatedByUserName, x.IsReversed, x.Reversal?.CreatedAt,
+                x.Reversal?.CreatedByUserName, x.Reversal?.Reason)).ToList()
+        };
+    }
+
+    private async Task<InvoiceServiceMatch> ResolveInvoiceServiceAsync(
+        int supplierId, string kind, Guid publicId, CancellationToken cancellationToken)
+    {
+        var match = kind switch
+        {
+            ServicePaymentRecordKinds.Flight => await _dbContext.FlightSegments.AsNoTracking()
+                .Where(x => x.SupplierId == supplierId && x.PublicId == publicId)
+                .Select(x => new InvoiceServiceMatch(x.ReservaId, x.NetCost, x.Currency, "Vuelo", x.Status, x.Reserva.Status)).SingleOrDefaultAsync(cancellationToken),
+            ServicePaymentRecordKinds.Hotel => await _dbContext.HotelBookings.AsNoTracking()
+                .Where(x => x.SupplierId == supplierId && x.PublicId == publicId)
+                .Select(x => new InvoiceServiceMatch(x.ReservaId, x.NetCost, x.Currency, "Hotel", x.Status, x.Reserva.Status)).SingleOrDefaultAsync(cancellationToken),
+            ServicePaymentRecordKinds.Transfer => await _dbContext.TransferBookings.AsNoTracking()
+                .Where(x => x.SupplierId == supplierId && x.PublicId == publicId)
+                .Select(x => new InvoiceServiceMatch(x.ReservaId, x.NetCost, x.Currency, "Traslado", x.Status, x.Reserva.Status)).SingleOrDefaultAsync(cancellationToken),
+            ServicePaymentRecordKinds.Package => await _dbContext.PackageBookings.AsNoTracking()
+                .Where(x => x.SupplierId == supplierId && x.PublicId == publicId)
+                .Select(x => new InvoiceServiceMatch(x.ReservaId, x.NetCost, x.Currency, "Paquete", x.Status, x.Reserva.Status)).SingleOrDefaultAsync(cancellationToken),
+            ServicePaymentRecordKinds.Assistance => await _dbContext.AssistanceBookings.AsNoTracking()
+                .Where(x => x.SupplierId == supplierId && x.PublicId == publicId)
+                .Select(x => new InvoiceServiceMatch(x.ReservaId, x.NetCost, x.Currency, "Asistencia", x.Status, x.Reserva.Status)).SingleOrDefaultAsync(cancellationToken),
+            ServicePaymentRecordKinds.Generic => await _dbContext.Servicios.AsNoTracking()
+                .Where(x => x.SupplierId == supplierId && x.PublicId == publicId && x.ReservaId.HasValue)
+                .Select(x => new InvoiceServiceMatch(x.ReservaId!.Value, x.NetCost, x.Currency, x.ServiceType, x.Status, x.Reserva!.Status)).SingleOrDefaultAsync(cancellationToken),
+            _ => null
+        };
+        if (match is null) throw new InvalidOperationException("El servicio no existe o no pertenece a este operador.");
+        return match with { Currency = Monedas.Normalizar(match.Currency) };
+    }
+
+    private static string ServiceKindLabel(string kind) => kind switch
+    {
+        ServicePaymentRecordKinds.Flight => "Vuelo",
+        ServicePaymentRecordKinds.Hotel => "Hotel",
+        ServicePaymentRecordKinds.Transfer => "Traslado",
+        ServicePaymentRecordKinds.Package => "Paquete",
+        ServicePaymentRecordKinds.Assistance => "Asistencia",
+        _ => "Servicio"
+    };
+
+    private sealed record InvoiceServiceMatch(
+        int ReservaId, decimal NetCost, string? Currency, string ServiceType, string Status, string ReservaStatus);
+
+    private async Task<T> RunSerializableTransactionAsync<T>(Func<Task<T>> body, CancellationToken cancellationToken)
+    {
+        if (!_dbContext.Database.IsRelational()) return await body();
+        var strategy = _dbContext.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var transaction = await _dbContext.Database.BeginTransactionAsync(
+                System.Data.IsolationLevel.Serializable, cancellationToken);
+            var result = await body();
+            await transaction.CommitAsync(cancellationToken);
+            return result;
+        });
     }
 
     /// <summary>
@@ -1752,9 +2137,12 @@ public class SupplierService : ISupplierService
             "createdat" => desc
                 ? query.OrderByDescending(supplier => supplier.CreatedAt).ThenByDescending(supplier => supplier.Name)
                 : query.OrderBy(supplier => supplier.CreatedAt).ThenBy(supplier => supplier.Name),
+            // El surrogate CurrentBalance puede representar ARS o USD, pero nunca ambas. Sin una moneda
+            // explícita en el contrato, ordenarlo sería comparar importes incomparables. Conservamos un orden
+            // estable por nombre hasta que el listado ofrezca un filtro de moneda.
             "currentbalance" => desc
-                ? query.OrderByDescending(supplier => supplier.CurrentBalance).ThenBy(supplier => supplier.Name)
-                : query.OrderBy(supplier => supplier.CurrentBalance).ThenBy(supplier => supplier.Name),
+                ? query.OrderByDescending(supplier => supplier.Name).ThenByDescending(supplier => supplier.Id)
+                : query.OrderBy(supplier => supplier.Name).ThenBy(supplier => supplier.Id),
             _ => desc
                 ? query.OrderByDescending(supplier => supplier.Name).ThenByDescending(supplier => supplier.CreatedAt)
                 : query.OrderBy(supplier => supplier.Name).ThenByDescending(supplier => supplier.CreatedAt)

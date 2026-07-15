@@ -358,6 +358,13 @@ public class ReservaCapabilitiesTests
     }
 
     [Fact]
+    public void AllowedRevert_Budget_DoesNotReturnToLegacyQuotation()
+    {
+        var caps = ReservaCapabilityPolicy.For(Ctx(EstadoReserva.Budget, balance: 0m));
+        Assert.Empty(caps.AllowedRevert);
+    }
+
+    [Fact]
     public void AllowedForward_Closed_IsEmpty()
     {
         // Decision 4: Closed no tiene salida forward (no se cancela una Finalizada).

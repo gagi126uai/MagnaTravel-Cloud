@@ -222,7 +222,54 @@ export default function PaymentsHomePage() {
                 </div>
               </div>
               <div className="text-right text-sm font-semibold text-rose-600 dark:text-rose-400">
-                {formatCurrency(supplier.currentBalance)}
+                {formatCurrency(supplier.currentBalance, supplier.currency || "ARS")}
+              </div>
+            </Link>
+          )}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <AlertList
+          title="Reembolsos de operador vencidos"
+          items={alerts?.abandonedOperatorRefunds || []}
+          emptyText="No hay reembolsos vencidos ni dados por perdidos."
+          icon={ShieldAlert}
+          renderItem={(item) => (
+            <Link
+              key={`refund-overdue-${getPublicId(item)}`}
+              to={`/reservas/${getPublicId(item)}`}
+              className="flex items-start justify-between gap-4 rounded-2xl border border-rose-100 dark:border-rose-900/40 px-4 py-3 hover:bg-rose-50/50 dark:hover:bg-rose-950/20 transition-colors"
+            >
+              <div>
+                <div className="font-semibold text-slate-900 dark:text-white">{item.numeroReserva || "Reserva"}</div>
+                <div className="text-sm text-slate-500 dark:text-slate-400">{item.holderName || item.name || "Sin titular"}</div>
+              </div>
+              <div className="text-right text-xs font-semibold text-rose-600 dark:text-rose-400">
+                {item.status === "AbandonedByOperator" ? "Dado por perdido" : "Vencido"}
+                {Number(item.daysOverdue || 0) > 0 ? ` · ${item.daysOverdue} días` : ""}
+              </div>
+            </Link>
+          )}
+        />
+
+        <AlertList
+          title="Créditos de anulaciones sin resolver"
+          items={alerts?.stuckOperatorRefunds || []}
+          emptyText="No hay saldos de anulaciones atascados."
+          icon={AlertCircle}
+          renderItem={(item) => (
+            <Link
+              key={`refund-stuck-${getPublicId(item)}-${item.currency || "ARS"}`}
+              to={`/reservas/${getPublicId(item)}`}
+              className="flex items-start justify-between gap-4 rounded-2xl border border-amber-100 dark:border-amber-900/40 px-4 py-3 hover:bg-amber-50/50 dark:hover:bg-amber-950/20 transition-colors"
+            >
+              <div>
+                <div className="font-semibold text-slate-900 dark:text-white">{item.numeroReserva || "Reserva"}</div>
+                <div className="text-sm text-slate-500 dark:text-slate-400">Saldo de la anulación sin aplicar ni devolver</div>
+              </div>
+              <div className="text-right text-sm font-semibold text-amber-700 dark:text-amber-300">
+                {formatCurrency(item.remainingCredit || 0, item.currency || "ARS")}
               </div>
             </Link>
           )}

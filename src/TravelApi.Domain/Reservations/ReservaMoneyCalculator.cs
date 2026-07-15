@@ -155,6 +155,10 @@ public static class ReservaMoneyCalculator
             bool isLive = payment.Status != "Cancelled" && !payment.IsDeleted;
             if (!isLive) continue;
 
+            // Los cobros de open items fiscales independientes (por ejemplo, una multa documentada luego
+            // de anular la venta) mueven caja, pero no reducen nuevamente el saldo operativo de la reserva.
+            if (!payment.AffectsReservaBalance) continue;
+
             // Moneda a la que se imputa y monto imputado. Para el caso legacy (sin moneda ni
             // imputacion) esto es ARS + Amount = identico a hoy.
             string imputedCurrency = Monedas.Normalizar(payment.ImputedCurrency ?? payment.Currency);

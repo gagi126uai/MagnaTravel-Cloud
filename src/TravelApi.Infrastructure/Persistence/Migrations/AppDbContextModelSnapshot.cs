@@ -4249,6 +4249,11 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Property<bool>("AffectsCash")
                         .HasColumnType("boolean");
 
+                    b.Property<bool>("AffectsReservaBalance")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(true);
+
                     b.Property<decimal>("Amount")
                         .HasPrecision(12, 2)
                         .HasColumnType("decimal(18,2)");
@@ -5717,6 +5722,202 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.HasIndex("SupplierId", "IsFullyConsumed");
 
                     b.ToTable("SupplierCreditEntries", (string)null);
+                });
+
+            modelBuilder.Entity("TravelApi.Domain.Entities.SupplierInvoice", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedByUserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("character varying(450)");
+
+                    b.Property<string>("CreatedByUserName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("Currency")
+                        .IsRequired()
+                        .HasMaxLength(3)
+                        .HasColumnType("character varying(3)");
+
+                    b.Property<DateTime>("DueDate")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("IssuedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Number")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("character varying(80)");
+
+                    b.Property<Guid>("PublicId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("SupplierId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("VoidReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<DateTime?>("VoidedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SupplierId", "Number")
+                        .IsUnique();
+
+                    b.HasIndex("SupplierId", "Currency", "Status", "DueDate");
+
+                    b.ToTable("SupplierInvoices", (string)null);
+                });
+
+            modelBuilder.Entity("TravelApi.Domain.Entities.SupplierInvoiceLine", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid>("PublicId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("ReservaId")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("ServicePublicId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ServiceRecordKind")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<int>("SupplierInvoiceId")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ReservaId");
+
+                    b.HasIndex("ServiceRecordKind", "ServicePublicId");
+
+                    b.HasIndex("SupplierInvoiceId", "ServiceRecordKind", "ServicePublicId")
+                        .IsUnique();
+
+                    b.ToTable("SupplierInvoiceLines", (string)null);
+                });
+
+            modelBuilder.Entity("TravelApi.Domain.Entities.SupplierInvoicePaymentApplication", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<decimal>("Amount")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("numeric(18,2)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedByUserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("character varying(450)");
+
+                    b.Property<string>("CreatedByUserName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<bool>("IsReversed")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<Guid>("PublicId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("SupplierInvoiceId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("SupplierPaymentId")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SupplierPaymentId");
+
+                    b.HasIndex("SupplierInvoiceId", "SupplierPaymentId")
+                        .IsUnique()
+                        .HasFilter("\"IsReversed\" = FALSE");
+
+                    b.ToTable("SupplierInvoicePaymentApplications", (string)null);
+                });
+
+            modelBuilder.Entity("TravelApi.Domain.Entities.SupplierInvoicePaymentApplicationReversal", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedByUserId")
+                        .IsRequired()
+                        .HasMaxLength(450)
+                        .HasColumnType("character varying(450)");
+
+                    b.Property<string>("CreatedByUserName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<Guid>("PublicId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<int>("SupplierInvoicePaymentApplicationId")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SupplierInvoicePaymentApplicationId")
+                        .IsUnique();
+
+                    b.ToTable("SupplierInvoicePaymentApplicationReversals", (string)null);
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.SupplierPayment", b =>
@@ -7709,6 +7910,66 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
                     b.Navigation("Supplier");
                 });
 
+            modelBuilder.Entity("TravelApi.Domain.Entities.SupplierInvoice", b =>
+                {
+                    b.HasOne("TravelApi.Domain.Entities.Supplier", "Supplier")
+                        .WithMany()
+                        .HasForeignKey("SupplierId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Supplier");
+                });
+
+            modelBuilder.Entity("TravelApi.Domain.Entities.SupplierInvoiceLine", b =>
+                {
+                    b.HasOne("TravelApi.Domain.Entities.Reserva", "Reserva")
+                        .WithMany()
+                        .HasForeignKey("ReservaId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("TravelApi.Domain.Entities.SupplierInvoice", "SupplierInvoice")
+                        .WithMany("Lines")
+                        .HasForeignKey("SupplierInvoiceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Reserva");
+
+                    b.Navigation("SupplierInvoice");
+                });
+
+            modelBuilder.Entity("TravelApi.Domain.Entities.SupplierInvoicePaymentApplication", b =>
+                {
+                    b.HasOne("TravelApi.Domain.Entities.SupplierInvoice", "SupplierInvoice")
+                        .WithMany("PaymentApplications")
+                        .HasForeignKey("SupplierInvoiceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("TravelApi.Domain.Entities.SupplierPayment", "SupplierPayment")
+                        .WithMany()
+                        .HasForeignKey("SupplierPaymentId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("SupplierInvoice");
+
+                    b.Navigation("SupplierPayment");
+                });
+
+            modelBuilder.Entity("TravelApi.Domain.Entities.SupplierInvoicePaymentApplicationReversal", b =>
+                {
+                    b.HasOne("TravelApi.Domain.Entities.SupplierInvoicePaymentApplication", "Application")
+                        .WithOne("Reversal")
+                        .HasForeignKey("TravelApi.Domain.Entities.SupplierInvoicePaymentApplicationReversal", "SupplierInvoicePaymentApplicationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Application");
+                });
+
             modelBuilder.Entity("TravelApi.Domain.Entities.SupplierPayment", b =>
                 {
                     b.HasOne("TravelApi.Domain.Entities.Reserva", "Reserva")
@@ -7971,6 +8232,18 @@ namespace TravelApi.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("TravelApi.Domain.Entities.SupplierCreditEntry", b =>
                 {
                     b.Navigation("Applications");
+                });
+
+            modelBuilder.Entity("TravelApi.Domain.Entities.SupplierInvoice", b =>
+                {
+                    b.Navigation("Lines");
+
+                    b.Navigation("PaymentApplications");
+                });
+
+            modelBuilder.Entity("TravelApi.Domain.Entities.SupplierInvoicePaymentApplication", b =>
+                {
+                    b.Navigation("Reversal");
                 });
 
             modelBuilder.Entity("TravelApi.Domain.Entities.Voucher", b =>

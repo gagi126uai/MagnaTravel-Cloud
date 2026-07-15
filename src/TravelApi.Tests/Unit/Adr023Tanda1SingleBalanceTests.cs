@@ -35,6 +35,19 @@ public class Adr023Tanda1SingleBalanceTests
     private static CustomerService BuildCustomers(AppDbContext context)
         => new(context, new FinancePositionService(context));
 
+    private static void AddApprovedInvoice(AppDbContext context, int reservaId, decimal amount, string currency = "ARS")
+        => context.Invoices.Add(new Invoice
+        {
+            ReservaId = reservaId,
+            TipoComprobante = 11,
+            PuntoDeVenta = 1,
+            NumeroComprobante = reservaId,
+            Resultado = "A",
+            ImporteTotal = amount,
+            MonId = currency == "USD" ? "DOL" : "PES",
+            IssuedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+        });
+
     private static ReportService BuildReports(AppDbContext context)
     {
         var bna = new Mock<IBnaExchangeRateService>();
@@ -127,6 +140,7 @@ public class Adr023Tanda1SingleBalanceTests
         context.ReservaMoneyByCurrency.AddRange(
             new ReservaMoneyByCurrency { ReservaId = 1, Currency = "ARS", Balance = 300m },
             new ReservaMoneyByCurrency { ReservaId = 2, Currency = "ARS", Balance = 1000m });
+        AddApprovedInvoice(context, 1, 300m);
         await context.SaveChangesAsync();
 
         var page = await BuildCustomers(context).GetCustomersAsync(new CustomerListQuery(), CancellationToken.None);
@@ -149,6 +163,8 @@ public class Adr023Tanda1SingleBalanceTests
         context.ReservaMoneyByCurrency.AddRange(
             new ReservaMoneyByCurrency { ReservaId = 1, Currency = "ARS", Balance = 100m },
             new ReservaMoneyByCurrency { ReservaId = 2, Currency = "ARS", Balance = 900m });
+        AddApprovedInvoice(context, 1, 100m);
+        AddApprovedInvoice(context, 2, 900m);
         await context.SaveChangesAsync();
 
         var query = new CustomerListQuery { SortBy = "currentbalance", SortDir = "desc" };
@@ -172,6 +188,7 @@ public class Adr023Tanda1SingleBalanceTests
         context.ReservaMoneyByCurrency.AddRange(
             new ReservaMoneyByCurrency { ReservaId = 1, Currency = "ARS", Balance = 250m },
             new ReservaMoneyByCurrency { ReservaId = 2, Currency = "ARS", Balance = 700m });
+        AddApprovedInvoice(context, 1, 250m);
         await context.SaveChangesAsync();
 
         var detail = await BuildCustomers(context).GetCustomerAsync(1, CancellationToken.None);
@@ -193,6 +210,16 @@ public class Adr023Tanda1SingleBalanceTests
                 TotalSale = 5000m, TotalPaid = 0m, Balance = 5000m });
         context.ReservaMoneyByCurrency.Add(
             new ReservaMoneyByCurrency { ReservaId = 1, Currency = "ARS", Balance = 600m });
+        AddApprovedInvoice(context, 1, 1000m);
+        context.Payments.Add(new Payment
+        {
+            ReservaId = 1,
+            Amount = 400m,
+            Currency = "ARS",
+            Status = "Paid",
+            AffectsCash = true,
+            PaidAt = new DateTime(2026, 1, 2, 0, 0, 0, DateTimeKind.Utc)
+        });
         await context.SaveChangesAsync();
 
         var overview = await BuildCustomers(context).GetCustomerAccountOverviewAsync(1, CancellationToken.None);

@@ -1,3 +1,4 @@
+using System.Data;
 using System.Security.Claims;
 using AutoMapper;
 using AutoMapper.QueryableExtensions;
@@ -720,20 +721,19 @@ public class PaymentService : IPaymentService
             throw new UnauthorizedAccessException("La reserva no esta asignada al usuario actual.");
         }
 
-        // ADR-035 (2026-06-19): PRIMERA COMPUERTA de capacidades. La politica de dominio decide si el estado
-        // admite registrar cobro (estado cobrable + deuda). Es la MISMA regla que el front lee para apagar el
-        // boton "registrar cobro" con motivo, asi front y back no divergen. NO reemplaza al guard fino de abajo:
-        // EnsureCollectable() sigue siendo la defensa final (Balance>0 con el saldo fresco). InvalidOperationException
-        // -> 409 en PaymentsController.CreatePayment.
-        var paymentCapability = ReservaCapabilityPolicy.For(BuildCapabilityContext(reserva)).CanRegisterPayment;
-        if (!paymentCapability.Allowed)
-            throw new InvalidOperationException(paymentCapability.Reason);
+        var isCancelledLike = reserva.Status == EstadoReserva.Cancelled
+            || reserva.Status == EstadoReserva.PendingOperatorRefund;
 
-        // ADR-032 (2026-06-15): regla UNICA de estado cobrable. Antes esto solo bloqueaba Budget y dejaba
-        // cobrar en Quotation/Lost/Cancelled/Closed/PendingOperatorRefund/Archived (todos fuera de
-        // ActiveCollectionStatuses). Ahora converge en el guard de dominio: solo se cobra en estados
-        // cobrables. Lanza InvalidOperationException (mapeada a 409 en PaymentsController.CreatePayment).
-        reserva.EnsureCollectable();
+        // El producto vendido conserva el gate normal. Una reserva anulada solo admite el camino excepcional
+        // de una multa documentada: mas abajo se exige una ND aprobada, de esta reserva y con saldo abierto.
+        if (!isCancelledLike)
+        {
+            var paymentCapability = ReservaCapabilityPolicy.For(BuildCapabilityContext(reserva)).CanRegisterPayment;
+            if (!paymentCapability.Allowed)
+                throw new InvalidOperationException(paymentCapability.Reason);
+
+            reserva.EnsureCollectable();
+        }
 
         if (request.Amount <= 0)
             throw new ArgumentException("El monto debe ser mayor a 0.");
@@ -782,7 +782,10 @@ public class PaymentService : IPaymentService
             PaidAt = paidAt,
             Status = "Paid",
             EntryType = PaymentEntryTypes.Payment,
-            AffectsCash = true
+            AffectsCash = true,
+            // En una anulada el pago cancela exclusivamente la ND seleccionada. No debe transformar
+            // ese cobro fiscal en saldo operativo negativo ni acuñar un crédito ficticio al cliente.
+            AffectsReservaBalance = !isCancelledLike
         };
 
         _dbContext.Payments.Add(payment);
@@ -817,7 +820,8 @@ public class PaymentService : IPaymentService
             var strategy = _dbContext.Database.CreateExecutionStrategy();
             await strategy.ExecuteAsync(async () =>
             {
-                await using var transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+                await using var transaction = await _dbContext.Database.BeginTransactionAsync(
+                    IsolationLevel.Serializable, cancellationToken);
                 await PersistNewPaymentAsync();
                 await transaction.CommitAsync(cancellationToken);
             });
@@ -838,6 +842,17 @@ public class PaymentService : IPaymentService
         // devenga la comision) y convierte el sobrepago en saldo a favor del cliente.
         async Task PersistNewPaymentAsync()
         {
+            // Debe ocurrir dentro de la transacción serializable: dos cobros concurrentes de la misma ND
+            // no pueden validar ambos contra el mismo remanente y sobrecobrarla.
+            if (isCancelledLike)
+            {
+                await EnsureCancelledDebitNoteCollectableAsync(
+                    reservaId,
+                    linkedInvoiceId,
+                    moneyBlock.ImputedCurrency ?? moneyBlock.Currency,
+                    moneyBlock.ImputedAmount ?? amount,
+                    cancellationToken);
+            }
             await _dbContext.SaveChangesAsync(cancellationToken);
             await RecalculateReservaBalanceAsync(reservaId, cancellationToken);
 
@@ -845,7 +860,14 @@ public class PaymentService : IPaymentService
             // pago, el excedente se convierte en saldo a favor del cliente (ClientCreditEntry) y la reserva
             // queda en 0. Es una IMPUTACION (mueve plata de "saldo de reserva" a "bolsillo del cliente"), NO
             // un movimiento de caja nuevo: el asiento del cobro ya reflejo la plata real que entro.
-            await ConvertOverpaymentToClientCreditAsync(payment, ledgerActorUserId, ledgerActorUserName, cancellationToken);
+            // El cobro excepcional de una ND/multa en una reserva anulada cancela un open item FISCAL. No es
+            // un sobrepago de la venta operativa (que ya fue anulada), por lo que nunca debe crear un saldo a
+            // favor equivalente para el cliente.
+            if (!isCancelledLike)
+            {
+                await ConvertOverpaymentToClientCreditAsync(
+                    payment, ledgerActorUserId, ledgerActorUserName, cancellationToken);
+            }
         }
     }
 
@@ -1298,8 +1320,11 @@ public class PaymentService : IPaymentService
                 // estado terminal (Cancelada/Perdida), que es justo cuando mas se necesita poder revertir. El alta
                 // de cobro nuevo (CreatePaymentAsync / AddPaymentAsync) si exige EnsureCollectable; restaurar no.
                 var (creditActorUserId, creditActorUserName) = ResolveLedgerActor();
-                await ConvertOverpaymentToClientCreditAsync(
-                    payment, creditActorUserId, creditActorUserName, cancellationToken);
+                if (payment.AffectsReservaBalance)
+                {
+                    await ConvertOverpaymentToClientCreditAsync(
+                        payment, creditActorUserId, creditActorUserName, cancellationToken);
+                }
             }
         }
     }
@@ -1422,6 +1447,83 @@ public class PaymentService : IPaymentService
         }
 
         return invoice.Id;
+    }
+
+    /// <summary>
+    /// Excepcion acotada al gate de reservas anuladas: permite cobrar solamente un open item fiscal concreto
+    /// (ND aprobada), en su moneda y hasta su saldo pendiente. Sin vinculo no hay concepto contable cobrable.
+    /// </summary>
+    private async Task EnsureCancelledDebitNoteCollectableAsync(
+        int reservaId,
+        int? linkedInvoiceId,
+        string rawImputedCurrency,
+        decimal imputedAmount,
+        CancellationToken cancellationToken)
+    {
+        if (!linkedInvoiceId.HasValue)
+        {
+            throw new InvalidOperationException(
+                "Para cobrar una multa de una reserva anulada debe seleccionar su Nota de Debito aprobada.");
+        }
+
+        var debitNote = await _dbContext.Invoices
+            .AsNoTracking()
+            .Where(invoice => invoice.Id == linkedInvoiceId.Value && invoice.ReservaId == reservaId)
+            .Select(invoice => new
+            {
+                invoice.Id,
+                invoice.TipoComprobante,
+                invoice.ImporteTotal,
+                invoice.MonId,
+                invoice.Resultado
+            })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (debitNote is null
+            || debitNote.Resultado != "A"
+            || !InvoiceComprobanteHelpers.IsDebitNote(debitNote.TipoComprobante))
+        {
+            throw new InvalidOperationException(
+                "La multa debe estar documentada por una Nota de Debito aprobada de esta reserva.");
+        }
+
+        var debitNoteCurrency = Monedas.Normalizar(
+            TravelApi.Domain.Helpers.ArcaCurrencyMapper.ToIso(debitNote.MonId));
+        var imputedCurrency = Monedas.Normalizar(rawImputedCurrency);
+        if (!string.Equals(debitNoteCurrency, imputedCurrency, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"La Nota de Debito esta expresada en {debitNoteCurrency}; el cobro debe imputarse a esa moneda.");
+        }
+
+        var creditedAmount = await _dbContext.Invoices
+            .AsNoTracking()
+            .Where(invoice => invoice.OriginalInvoiceId == debitNote.Id
+                && invoice.Resultado == "A"
+                && invoice.AnnulmentStatus != AnnulmentStatus.Succeeded
+                && (invoice.TipoComprobante == 3 || invoice.TipoComprobante == 8
+                    || invoice.TipoComprobante == 13 || invoice.TipoComprobante == 53))
+            .SumAsync(invoice => (decimal?)invoice.ImporteTotal, cancellationToken) ?? 0m;
+
+        var collectedAmount = await _dbContext.Payments
+            .AsNoTracking()
+            .Where(payment => payment.LinkedInvoiceId == debitNote.Id
+                && payment.Status != "Cancelled"
+                && !payment.IsDeleted)
+            .SumAsync(payment => (decimal?)(payment.ImputedAmount ?? payment.Amount), cancellationToken) ?? 0m;
+
+        var outstanding = EconomicRulesHelper.RoundCurrency(
+            debitNote.ImporteTotal - creditedAmount - collectedAmount);
+        if (outstanding <= 0m)
+        {
+            throw new InvalidOperationException("La Nota de Debito seleccionada ya no tiene saldo pendiente.");
+        }
+
+        if (EconomicRulesHelper.RoundCurrency(imputedAmount) > outstanding)
+        {
+            throw new InvalidOperationException(
+                $"El cobro imputado supera el saldo pendiente de la Nota de Debito ({outstanding:0.00} {debitNoteCurrency}).");
+        }
     }
 
     private (string? UserId, string? UserName) ResolveLedgerActor()

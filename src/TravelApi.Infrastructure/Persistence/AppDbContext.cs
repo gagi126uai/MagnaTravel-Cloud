@@ -282,6 +282,10 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
     
     // Sprint 4: Egresos y Configuración
     public DbSet<SupplierPayment> SupplierPayments => Set<SupplierPayment>();
+    public DbSet<SupplierInvoice> SupplierInvoices => Set<SupplierInvoice>();
+    public DbSet<SupplierInvoiceLine> SupplierInvoiceLines => Set<SupplierInvoiceLine>();
+    public DbSet<SupplierInvoicePaymentApplication> SupplierInvoicePaymentApplications => Set<SupplierInvoicePaymentApplication>();
+    public DbSet<SupplierInvoicePaymentApplicationReversal> SupplierInvoicePaymentApplicationReversals => Set<SupplierInvoicePaymentApplicationReversal>();
     public DbSet<AgencySettings> AgencySettings => Set<AgencySettings>();
     public DbSet<OperationalFinanceSettings> OperationalFinanceSettings => Set<OperationalFinanceSettings>();
     public DbSet<CommissionRule> CommissionRules => Set<CommissionRule>();
@@ -607,6 +611,7 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(p => p.Method).HasMaxLength(50).IsRequired();
             entity.Property(p => p.Status).HasMaxLength(50).IsRequired();
             entity.Property(p => p.EntryType).HasMaxLength(50).IsRequired();
+            entity.Property(p => p.AffectsReservaBalance).HasDefaultValue(true);
             entity.HasIndex(p => p.PaidAt);
 
             // ADR-021 (multimoneda + cobro cruzado, 2026-06-08): moneda real del pago + bloque de TC.
@@ -1293,6 +1298,50 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(p => p.ExchangeRate).HasPrecision(18, 6);   // convencion ARS por 1 USD (ADR-021 §2.2bis)
             entity.Property(p => p.ImputedAmount).HasPrecision(18, 2);
             entity.Property(p => p.ExchangeRateSource).HasConversion<int?>();
+        });
+
+        // Facturas recibidas del operador: documento conciliatorio, no comprobante fiscal AFIP. Las líneas
+        // reclasifican servicios ya comprometidos; la factura no se suma otra vez a SupplierBalanceByCurrency.
+        modelBuilder.Entity<SupplierInvoice>(entity =>
+        {
+            entity.ToTable("SupplierInvoices");
+            entity.Property(x => x.Currency).HasMaxLength(3).IsRequired();
+            entity.Property(x => x.Status).HasConversion<int>();
+            entity.HasOne(x => x.Supplier).WithMany().HasForeignKey(x => x.SupplierId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(x => new { x.SupplierId, x.Number }).IsUnique();
+            entity.HasIndex(x => new { x.SupplierId, x.Currency, x.Status, x.DueDate });
+        });
+
+        modelBuilder.Entity<SupplierInvoiceLine>(entity =>
+        {
+            entity.ToTable("SupplierInvoiceLines");
+            entity.Property(x => x.Amount).HasPrecision(18, 2);
+            entity.HasOne(x => x.SupplierInvoice).WithMany(x => x.Lines).HasForeignKey(x => x.SupplierInvoiceId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.Reserva).WithMany().HasForeignKey(x => x.ReservaId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(x => new { x.SupplierInvoiceId, x.ServiceRecordKind, x.ServicePublicId }).IsUnique();
+            entity.HasIndex(x => new { x.ServiceRecordKind, x.ServicePublicId });
+        });
+
+        modelBuilder.Entity<SupplierInvoicePaymentApplication>(entity =>
+        {
+            entity.ToTable("SupplierInvoicePaymentApplications");
+            entity.Property(x => x.Amount).HasPrecision(18, 2);
+            entity.Property(x => x.IsReversed).HasDefaultValue(false);
+            entity.HasOne(x => x.SupplierInvoice).WithMany(x => x.PaymentApplications).HasForeignKey(x => x.SupplierInvoiceId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.SupplierPayment).WithMany().HasForeignKey(x => x.SupplierPaymentId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(x => new { x.SupplierInvoiceId, x.SupplierPaymentId })
+                .IsUnique().HasFilter("\"IsReversed\" = FALSE");
+            entity.HasIndex(x => x.SupplierPaymentId);
+            // El pago tiene soft-delete. Una aplicación viva exige pago vivo; SupplierService bloquea su baja.
+        });
+
+        modelBuilder.Entity<SupplierInvoicePaymentApplicationReversal>(entity =>
+        {
+            entity.ToTable("SupplierInvoicePaymentApplicationReversals");
+            entity.HasOne(x => x.Application).WithOne(x => x.Reversal)
+                .HasForeignKey<SupplierInvoicePaymentApplicationReversal>(x => x.SupplierInvoicePaymentApplicationId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasIndex(x => x.SupplierInvoicePaymentApplicationId).IsUnique();
         });
 
         // ====================================================================================

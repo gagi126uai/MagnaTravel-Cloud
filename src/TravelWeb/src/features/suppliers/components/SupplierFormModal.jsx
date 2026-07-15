@@ -40,6 +40,7 @@ export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
         // acá (nombre, teléfono, etc.) borraría en silencio la configuración ya cargada,
         // volviéndola a "no se sabe" sin que nadie lo pidiera.
         penaltyBehavior: SUPPLIER_PENALTY_BEHAVIOR.Unknown,
+        invoicingMode: 0,
     });
 
     useEffect(() => {
@@ -67,6 +68,7 @@ export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
                 // que todavía no traiga el campo al default "no se sabe" (nunca inventa
                 // una configuración que el operador no tiene).
                 penaltyBehavior: valorSelectDesdePenaltyBehavior(supplier.penaltyBehavior),
+                invoicingMode: supplier.invoicingMode ?? 0,
             });
         } else {
             setFormData({
@@ -83,6 +85,7 @@ export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
                 defaultPaymentTermDays: null,
                 treasuryFxAssumedByOverride: null,
                 penaltyBehavior: SUPPLIER_PENALTY_BEHAVIOR.Unknown,
+                invoicingMode: 0,
             });
         }
     }, [supplier, isOpen]);

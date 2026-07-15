@@ -3070,6 +3070,23 @@ public class ReservaService : IReservaService
                     }
 
                     sourceLead = await _context.Leads.FindAsync(new object[] { sourceLeadId.Value }, CancellationToken.None);
+
+                    // El botón de CRM puede repetirse por doble clic o por volver a abrir un lead que aún
+                    // no llegó a un estado en firme. Reusar el presupuesto abierto evita duplicar expedientes.
+                    var existingLeadBudget = await _context.Reservas
+                        .Where(r => r.SourceLeadId == sourceLeadId.Value
+                            && r.Status == EstadoReserva.Budget)
+                        .OrderByDescending(r => r.CreatedAt)
+                        .FirstOrDefaultAsync();
+                    if (existingLeadBudget != null)
+                    {
+                        await transaction.CommitAsync();
+                        return existingLeadBudget;
+                    }
+
+                    // Si el posible cliente ya fue convertido, el presupuesto debe nacer conectado a su
+                    // cuenta corriente. Un payer explícito del request conserva prioridad.
+                    payerId ??= sourceLead?.ConvertedCustomerId;
                 }
 
                 var numeroReserva = await GenerateNumeroReservaAsync(CancellationToken.None);
@@ -3087,9 +3104,10 @@ public class ReservaService : IReservaService
                     ResponsibleUserName = responsibleUserName,
                     StartDate = request.StartDate,
                     Description = request.Description,
-                    // ADR-020 (D9 / INV-020-01): toda reserva nace en Cotizacion. El estado inicial
-                    // ya NO se puede elegir desde el request (el campo Status se elimino del DTO).
-                    Status = EstadoReserva.Quotation,
+                    // Decision de producto 2026-07-15: el circuito legacy de cotizaciones quedo
+                    // discontinuado. Toda propuesta nueva nace como Reserva-Presupuesto y el estado
+                    // inicial sigue sin poder elegirse desde el request.
+                    Status = EstadoReserva.Budget,
                     // CRM leads: linkeo de trazabilidad lead -> reserva (se setea aunque el lead ya
                     // estuviera Ganado/Perdido; el linkeo no depende del estado).
                     SourceLeadId = sourceLead?.Id
@@ -3101,7 +3119,7 @@ public class ReservaService : IReservaService
                 // lead ya NO lo marca Ganado. Solo dejamos el linkeo de trazabilidad (SourceLeadId, seteado
                 // arriba). El lead pasa a Ganado recien cuando la reserva linkeada llega a un estado EN FIRME
                 // (ver MarkSourceLeadAsWonIfReservaIsFirmAsync, disparado desde UpdateStatusAsync). Una reserva
-                // nace en Cotizacion, que NO es un estado en firme: marcar Ganado aca seria prematuro (el
+                // nace en Presupuesto, que NO es un estado en firme: marcar Ganado aca seria prematuro (el
                 // cliente todavia no acepto el presupuesto).
 
                 await _context.SaveChangesAsync();

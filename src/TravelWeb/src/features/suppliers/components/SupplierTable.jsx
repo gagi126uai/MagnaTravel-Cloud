@@ -14,6 +14,7 @@ import {
 } from "../../../components/ui/DataGrid";
 import { getPublicId } from "../../../lib/publicIds";
 import { formatCurrency } from "../../../lib/utils";
+import { supplierBalanceLines } from "../lib/supplierBalanceView";
 
 export function SupplierTable({ suppliers, onEdit, onToggleStatus, onAccountClick }) {
   const getInitials = (name) => {
@@ -56,7 +57,9 @@ export function SupplierTable({ suppliers, onEdit, onToggleStatus, onAccountClic
             description="Ajustá los filtros o creá un operador nuevo para empezar."
           />
         ) : (
-          suppliers.map((supplier) => (
+          suppliers.map((supplier) => {
+            const balanceLines = supplierBalanceLines(supplier);
+            return (
             <DataGridRow key={getPublicId(supplier)} inactive={!supplier.isActive}>
               <DataGridCell className="font-medium text-slate-900 dark:text-white">
                 <div className="flex items-center gap-3">
@@ -80,13 +83,22 @@ export function SupplierTable({ suppliers, onEdit, onToggleStatus, onAccountClic
                 </div>
               </DataGridCell>
               <DataGridCell align="right">
-                <div
-                  className={`font-mono font-medium ${
-                    supplier.currentBalance > 0 ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"
-                  }`}
-                >
-                  {formatCurrency(supplier.currentBalance)}
-                </div>
+                {supplier.amountsVisible === false ? (
+                  <span className="text-slate-400">—</span>
+                ) : balanceLines.length === 0 ? (
+                  <span className="text-slate-500">Sin saldo</span>
+                ) : (
+                  <div className="space-y-0.5 font-mono font-medium">
+                    {balanceLines.map((line) => (
+                      <div key={line.currency} className={line.balance > 0
+                        ? "text-rose-600 dark:text-rose-400"
+                        : "text-emerald-600 dark:text-emerald-400"}
+                      >
+                        {formatCurrency(line.balance, line.currency)}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </DataGridCell>
               <DataGridCell align="center">
                 <Badge variant={supplier.isActive ? "success" : "secondary"} className="text-[10px] px-1.5 py-0.5">
@@ -118,7 +130,8 @@ export function SupplierTable({ suppliers, onEdit, onToggleStatus, onAccountClic
                 </button>
               </DataGridActionCell>
             </DataGridRow>
-          ))
+            );
+          })
         )}
       </DataGridBody>
     </DataGrid>

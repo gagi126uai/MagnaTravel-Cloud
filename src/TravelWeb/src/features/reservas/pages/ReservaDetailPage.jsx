@@ -40,7 +40,9 @@ import { ConfirmarMultaOperadorInline } from "../../cancellations/components/Con
 import { CerrarSinMultaInline } from "../../cancellations/components/CerrarSinMultaInline";
 import { DeshacerCierreSinMultaInline } from "../../cancellations/components/DeshacerCierreSinMultaInline";
 import { OperatorPenaltyStepPanel } from "../../cancellations/components/OperatorPenaltyStepPanel";
+import { PartialCreditNoteEmissionPanel } from "../../cancellations/components/PartialCreditNoteEmissionPanel";
 import { cancellationsApi } from "../../cancellations/api/cancellationsApi";
+import { getActiveSaleInvoices } from "../../cancellations/lib/partialCreditNoteEmissionLogic";
 import { contarNotasFaltantes, construirTextoFranjaEnRevision } from "../../cancellations/lib/multiCreditNoteFlow";
 // Spec "el paso de multa vive en la ficha" (2026-07-08) + ADR-044 T1 (2026-07-10,
 // multa por operador): helpers puros que traducen la situación de multa (singular o,
@@ -829,6 +831,11 @@ export default function ReservaDetailPage() {
     capacity,
   } = useReservaDetail(publicId, navigate);
 
+  const activeSaleInvoices = useMemo(
+    () => getActiveSaleInvoices(reserva?.invoices),
+    [reserva?.invoices]
+  );
+
   // ADR-042 (2026-07-01): detecta si la anulación de esta reserva quedó "en revisión"
   // (multi-factura, una nota de crédito salió y otra no). Confirmar la anulación SIEMPRE
   // pone la reserva en estado "PendingOperatorRefund" (haya salido todo bien o a medias);
@@ -1225,6 +1232,12 @@ export default function ReservaDetailPage() {
       />
 
       <ReservaSummaryStrip reserva={reserva} />
+
+      <PartialCreditNoteEmissionPanel
+        reserva={reserva}
+        canEmit={hasPermission("cobranzas.invoice_annul")}
+        onChanged={() => fetchReserva({ showLoading: false, preserveOnError: true })}
+      />
 
       {/* ═══ TIRA DE AVISOS (spec UX 2026-07-05, respuestas 1C/2B/3A/4B/5A) ═══════════
           "Arriba la foto, abajo solo lo que hay que hacer": primero la FOTO del estado
@@ -2111,7 +2124,8 @@ export default function ReservaDetailPage() {
                   }
                 }}
                 onDeleteService={(service) => handleDeleteService(service)}
-                onCancelService={(service, motivo) => handleCancelService(service, motivo)}
+                onCancelService={(service, motivo, creditSelection) => handleCancelService(service, motivo, creditSelection)}
+                saleInvoices={activeSaleInvoices}
                 onIrAFacturas={() => setActiveTab("account")}
                 // ADR-025: "Cancelar varios" en línea.
                 // canCancelServices: gate UI-only; el server siempre re-valida.

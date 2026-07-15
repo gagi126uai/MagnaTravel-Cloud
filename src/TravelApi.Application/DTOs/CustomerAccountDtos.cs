@@ -17,6 +17,10 @@ public class CustomerListItemDto
     public bool IsActive { get; set; }
     public int? TaxConditionId { get; set; }
     public decimal CurrentBalance { get; set; }
+    public List<CurrencyAmountDto> BalancesByCurrency { get; set; } = new();
+    /// <summary>Creditos no aplicados a otra reserva, separados por moneda.</summary>
+    public List<CurrencyAmountDto> UnappliedCreditsByCurrency { get; set; } = new();
+    public bool AmountsVisible { get; set; } = true;
 }
 
 public class CustomerAccountOverviewDto
@@ -90,6 +94,15 @@ public class CustomerPendingPenaltyItemDto
 
     /// <summary>Ver <see cref="CustomerPendingPenaltyStatus"/> para los tres valores posibles.</summary>
     public string Status { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Nota de debito aprobada que documenta el open item. Solo viene para PendingCollection; el alta de cobro
+    /// de una reserva anulada debe vincularse a este documento concreto.
+    /// </summary>
+    public Guid? DebitNotePublicId { get; set; }
+
+    /// <summary>Numero legible del comprobante (punto de venta-numero), si la ND ya fue emitida.</summary>
+    public string? DocumentRef { get; set; }
 }
 
 /// <summary>
@@ -122,12 +135,21 @@ public class CustomerAccountCustomerDto
 
 public class CustomerAccountSummaryDto
 {
+    /// <summary>Compatibilidad legacy: solo se completa cuando existe una unica moneda.</summary>
     public decimal TotalSales { get; set; }
+    /// <summary>Compatibilidad legacy: solo se completa cuando existe una unica moneda.</summary>
     public decimal TotalPaid { get; set; }
+    /// <summary>Compatibilidad legacy: solo se completa cuando existe una unica moneda.</summary>
     public decimal TotalBalance { get; set; }
     public int ReservaCount { get; set; }
     public int PaymentCount { get; set; }
     public int InvoiceCount { get; set; }
+
+    /// <summary>Cargos de comprobantes aprobados, separados estrictamente por moneda.</summary>
+    public List<CurrencyAmountDto> DocumentedByCurrency { get; set; } = new();
+
+    /// <summary>Cobros reales (AffectsCash), separados estrictamente por moneda de imputacion.</summary>
+    public List<CurrencyAmountDto> CollectedByCurrency { get; set; } = new();
 
     // ADR-022 Capa 8 (C2): la cuenta corriente del cliente deja de ser un escalar surrogate y pasa a
     // exponerse POR MONEDA, alineada con ADR-021 (el saldo en USD no compensa el saldo en ARS). Los
@@ -145,6 +167,12 @@ public class CustomerAccountSummaryDto
     /// se exponen separados y NO se netea uno contra otro (ni dentro de una moneda ni entre monedas).
     /// </summary>
     public List<CurrencyAmountDto> CreditBalanceByCurrency { get; set; } = new();
+
+    /// <summary>
+    /// Cobros/compensaciones que exceden el open item de su reserva y aun no fueron trasladados o aplicados.
+    /// Se muestran separados y nunca reducen <see cref="ReceivableByCurrency"/> implicitamente.
+    /// </summary>
+    public List<CurrencyAmountDto> UnappliedCreditByCurrency { get; set; } = new();
 }
 
 /// <summary>
@@ -349,6 +377,9 @@ public class CustomerAccountStatementCurrencyBlockDto
     /// 0 = saldado. Reconcilia con el "Debe" de esta moneda del header (ReceivableByCurrency) por construccion.
     /// </summary>
     public decimal ClosingBalance { get; set; }
+
+    /// <summary>Credito no aplicado de esta moneda; no compensa el saldo de cierre de otras reservas.</summary>
+    public decimal UnappliedCredit { get; set; }
 }
 
 /// <summary>
@@ -362,7 +393,10 @@ public class CustomerAccountStatementLineDto
     /// <summary>Fecha del movimiento (alta de la reserva en la venta; fecha del cobro en el abono).</summary>
     public DateTime Date { get; set; }
 
-    /// <summary>Tipo de movimiento: "Sale" (venta confirmada) / "Payment" (cobro).</summary>
+    /// <summary>
+    /// Tipo de movimiento documentado: Invoice, DebitNote, CreditNote, Payment o CreditApplication.
+    /// Payment siempre mueve caja; CreditApplication es una compensacion explicita sin caja.
+    /// </summary>
     public string Kind { get; set; } = string.Empty;
 
     /// <summary>Texto legible del movimiento (nombre del expediente; nº de recibo o metodo del cobro).</summary>

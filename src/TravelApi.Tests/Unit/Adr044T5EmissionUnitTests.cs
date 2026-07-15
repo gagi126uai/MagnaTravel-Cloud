@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using TravelApi.Application.Constants;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.DTOs.Cancellation;
 using TravelApi.Application.Interfaces;
@@ -192,6 +193,98 @@ public class Adr044T5EmissionUnitTests
                 h.Ctx.SaveChanges();
                 return new InvoiceDto { PublicId = nc.PublicId };
             });
+    }
+
+    [Fact]
+    public async Task ResolveLegacySingleLine_SavesTargetAndAmount_AndIsIdempotent()
+    {
+        await using var ctx = NewDbContext();
+        var (_, invoice, bc, line, _) = await SeedResolvedPartialAsync(ctx);
+        line.TargetInvoiceId = null;
+        line.ConfirmedGrossCreditAmount = null;
+        await ctx.SaveChangesAsync();
+        var h = BuildService(ctx);
+        var request = new ResolvePartialCreditNoteRequest(invoice.PublicId, 25_000m, "Factura validada contra el servicio cancelado");
+
+        await h.Service.ResolvePartialCreditNoteAsync(bc.PublicId, request, "u1", "Usuario Uno", CancellationToken.None);
+        await h.Service.ResolvePartialCreditNoteAsync(bc.PublicId, request, "u1", "Usuario Uno", CancellationToken.None);
+
+        await ctx.Entry(line).ReloadAsync();
+        Assert.Equal(invoice.Id, line.TargetInvoiceId);
+        Assert.Equal(25_000m, line.ConfirmedGrossCreditAmount);
+        h.AuditMock.Verify(a => a.StageBusinessEvent(
+            AuditActions.PartialCreditNoteLegacyResolved,
+            AuditActions.BookingCancellationEntityName,
+            bc.PublicId.ToString(),
+            It.Is<string>(details => details.Contains("Factura validada") && details.Contains("25000")),
+            "u1",
+            "Usuario Uno"), Times.Once);
+    }
+
+    [Fact]
+    public async Task ResolveLegacySingleLine_RejectsAmountAboveFreshRemaining()
+    {
+        await using var ctx = NewDbContext();
+        var (_, invoice, bc, line, _) = await SeedResolvedPartialAsync(ctx, invoiceTotal: 100_000m, confirmedAmount: 200_000m);
+        line.TargetInvoiceId = null;
+        line.ConfirmedGrossCreditAmount = null;
+        await ctx.SaveChangesAsync();
+        var h = BuildService(ctx);
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.ResolvePartialCreditNoteAsync(
+                bc.PublicId,
+                new ResolvePartialCreditNoteRequest(invoice.PublicId, 100_000.01m, "Monto validado para comprobar el remanente"),
+                "u1", "Usuario Uno",
+                CancellationToken.None));
+
+        Assert.Equal("INV-T5-RESOLVE-CAP", ex.InvariantCode);
+    }
+
+    [Fact]
+    public async Task ResolveLegacySingleLine_RejectsWhenCreditNoteIsPending()
+    {
+        await using var ctx = NewDbContext();
+        var (_, invoice, bc, _, _) = await SeedResolvedPartialAsync(ctx);
+        bc.CreditNotes.Add(new BookingCancellationCreditNote
+        {
+            OriginatingInvoiceId = invoice.Id,
+            ArcaCurrency = "PES",
+            Status = BookingCancellationCreditNoteStatus.Pending,
+        });
+        await ctx.SaveChangesAsync();
+        var h = BuildService(ctx);
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.ResolvePartialCreditNoteAsync(
+                bc.PublicId,
+                new ResolvePartialCreditNoteRequest(invoice.PublicId, 20_000m, "Factura validada para la devolución parcial"),
+                "u1", "Usuario Uno",
+                CancellationToken.None));
+
+        Assert.Equal("INV-T5-RESOLVE-FISCAL", ex.InvariantCode);
+    }
+
+    [Fact]
+    public async Task ResolveLegacySingleLine_RejectsAmountAboveCancelledServiceValue()
+    {
+        await using var ctx = NewDbContext();
+        var (_, invoice, bc, line, _) = await SeedResolvedPartialAsync(ctx, invoiceTotal: 100_000m, confirmedAmount: 30_000m);
+        line.TargetInvoiceId = null;
+        line.ConfirmedGrossCreditAmount = null;
+        await ctx.SaveChangesAsync();
+        var h = BuildService(ctx);
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.ResolvePartialCreditNoteAsync(
+                bc.PublicId,
+                new ResolvePartialCreditNoteRequest(invoice.PublicId, 30_000.01m, "Monto solicitado por revisión del caso legacy"),
+                "u1", "Usuario Uno", CancellationToken.None));
+
+        Assert.Equal("INV-T5-RESOLVE-LINE-CAP", ex.InvariantCode);
+        h.AuditMock.Verify(a => a.StageBusinessEvent(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<string>(), It.IsAny<string?>()), Times.Never);
     }
 
     // =====================================================================================

@@ -73,18 +73,14 @@ export function CustomerTable({ customers, onEdit, onToggleStatus, onAccountClic
                 </div>
               </DataGridCell>
               <DataGridCell align="right">
-                <div
-                  className={`font-mono font-medium ${
-                    (customer.currentBalance || 0) > 0
-                      ? "text-rose-600 dark:text-rose-400"
-                      : "text-emerald-600 dark:text-emerald-400"
-                  }`}
-                >
-                  {formatCurrency(customer.currentBalance || 0)}
-                </div>
-                {(customer.currentBalance || 0) > 0 ? (
-                  <span className="text-[10px] font-semibold uppercase text-rose-500">Deuda</span>
-                ) : null}
+                {(customer.balancesByCurrency ?? []).length > 0 ? (
+                  (customer.balancesByCurrency ?? []).map((balance) => (
+                    <div key={balance.currency} className="font-mono font-medium text-rose-600 dark:text-rose-400">
+                      {formatCurrency(balance.amount, balance.currency)}
+                    </div>
+                  ))
+                ) : <div className="font-mono font-medium text-emerald-600 dark:text-emerald-400">Al día</div>}
+                {(customer.balancesByCurrency ?? []).length > 0 && <span className="text-[10px] font-semibold uppercase text-rose-500">Deuda</span>}
               </DataGridCell>
               <DataGridCell align="center">
                 <Badge

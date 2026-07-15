@@ -49,7 +49,22 @@ public class SupplierListItemDto
     /// </summary>
     public SupplierPenaltyBehavior PenaltyBehavior { get; set; }
 
+    /// <summary>
+    /// Modelo de facturacion del operador. TotalToCustomer = compra/reventa; CommissionOnly = intermediacion.
+    /// Debe viajar en la fila para que editar o activar/desactivar no lo resetee silenciosamente.
+    /// </summary>
+    public SupplierInvoicingMode InvoicingMode { get; set; }
+
     public bool IsActive { get; set; }
+
+    /// <summary>
+    /// Saldo oficial separado por moneda. Esta es la unica cifra apta para UI; CurrentBalance queda solo por
+    /// compatibilidad y no debe mostrarse porque es un surrogate que puede mezclar ARS y USD.
+    /// </summary>
+    public List<SupplierAccountBalanceByCurrencyDto> BalancesByCurrency { get; set; } = new();
+    public bool AmountsVisible { get; set; }
+
+    /// <summary>Surrogate legacy. No usar para presentar dinero.</summary>
     public decimal CurrentBalance { get; set; }
     public DateTime CreatedAt { get; set; }
 }
@@ -134,6 +149,12 @@ public class SupplierAccountSupplierDto
 
     /// <summary>Rediseño alta de operador (2026-06-28): moneda por defecto del operador (ISO ARS/USD).</summary>
     public string? DefaultCurrency { get; set; }
+
+    /// <summary>Plazo pactado usado para derivar el aging operativo de los servicios.</summary>
+    public int? DefaultPaymentTermDays { get; set; }
+
+    /// <summary>Compra/reventa o intermediacion. Impacta si el servicio genera CxP.</summary>
+    public SupplierInvoicingMode InvoicingMode { get; set; }
 
     public bool IsActive { get; set; }
     public decimal CurrentBalance { get; set; }

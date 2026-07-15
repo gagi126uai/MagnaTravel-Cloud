@@ -290,10 +290,13 @@ function formatFechaSegura(valor) {
  * - onCancelar: (motivo: string) => void — callback cuando confirma cancelar (motivo ya valido)
  * - onClose: () => void
  */
-function ModalBorrarVsCancelar({ service, onBorrar, onCancelar, onClose }) {
+function ModalBorrarVsCancelar({ service, saleInvoices = [], onBorrar, onCancelar, onClose }) {
     const estaConfirmado = esServicioConfirmadoPorOperador(service);
     const [motivo, setMotivo] = useState('');
     const [loading, setLoading] = useState(false);
+    const [targetInvoicePublicId, setTargetInvoicePublicId] = useState(
+        saleInvoices.length === 1 ? saleInvoices[0].publicId : ''
+    );
     const motivoInputRef = useRef(null);
 
     // Regla del backend: el motivo de cancelación debe tener entre 10 y 1000 caracteres.
@@ -321,7 +324,10 @@ function ModalBorrarVsCancelar({ service, onBorrar, onCancelar, onClose }) {
         setLoading(true);
         try {
             if (estaConfirmado) {
-                await onCancelar(motivo.trim());
+                await onCancelar(motivo.trim(), {
+                    targetInvoicePublicId: targetInvoicePublicId || undefined,
+                    confirmedGrossCreditAmount: Number(service?.salePrice || 0),
+                });
             } else {
                 await onBorrar();
             }
@@ -390,6 +396,28 @@ function ModalBorrarVsCancelar({ service, onBorrar, onCancelar, onClose }) {
                                     </p>
                                 )}
                             </div>
+                            {saleInvoices.length > 1 && (
+                                <div>
+                                    <label htmlFor="factura-destino-devolucion" className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                                        Factura de la devolución
+                                    </label>
+                                    <select
+                                        id="factura-destino-devolucion"
+                                        value={targetInvoicePublicId}
+                                        onChange={(e) => setTargetInvoicePublicId(e.target.value)}
+                                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+                                        data-testid="select-factura-devolucion"
+                                    >
+                                        <option value="">Elegí una factura</option>
+                                        {saleInvoices.map((invoice) => <option key={invoice.publicId} value={invoice.publicId}>{invoice.label}</option>)}
+                                    </select>
+                                </div>
+                            )}
+                            {saleInvoices.length > 0 && (
+                                <p className="text-sm text-slate-600 dark:text-slate-300">
+                                    Monto de la devolución: <strong>{Number(service?.salePrice || 0).toLocaleString('es-AR', { minimumFractionDigits: 2 })} {service?.currency || 'ARS'}</strong>
+                                </p>
+                            )}
                         </>
                     ) : (
                         // Servicio no confirmado: se puede borrar directo (era un borrador).
@@ -414,7 +442,7 @@ function ModalBorrarVsCancelar({ service, onBorrar, onCancelar, onClose }) {
                         onClick={handleConfirmar}
                         // En el camino de cancelación (servicio confirmado) exigimos motivo válido.
                         // En el camino de borrado no hay textarea, así que no aplica la restricción.
-                        disabled={loading || (estaConfirmado && !motivoValido)}
+                        disabled={loading || (estaConfirmado && (!motivoValido || (saleInvoices.length > 1 && !targetInvoicePublicId)))}
                         data-testid={estaConfirmado ? 'btn-confirm-cancel-service' : 'btn-confirm-delete-service'}
                         className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-bold text-white transition-colors disabled:opacity-50 ${
                             estaConfirmado
@@ -856,6 +884,7 @@ export function ServiceList({
     onEditService,
     onDeleteService,
     onCancelService,
+    saleInvoices = [],
     reservaId,
     reservaStatus,
     // reserva: objeto completo de la reserva. Necesario para el hint de pasajeros
@@ -974,10 +1003,10 @@ export function ServiceList({
         setModalBorrarCancelar(null);
     }, [modalBorrarCancelar, onDeleteService]);
 
-    const handleModalCancelar = useCallback(async (motivo) => {
+    const handleModalCancelar = useCallback(async (motivo, creditSelection) => {
         if (!modalBorrarCancelar) return;
         if (onCancelService) {
-            const respuesta = await onCancelService(modalBorrarCancelar, motivo);
+            const respuesta = await onCancelService(modalBorrarCancelar, motivo, creditSelection);
 
             // Si la cancelación fue bloqueada por el backend (409), mostramos el modal
             // explicativo en vez del toast genérico de error.
@@ -1020,6 +1049,7 @@ export function ServiceList({
             {modalBorrarCancelar && (
                 <ModalBorrarVsCancelar
                     service={modalBorrarCancelar}
+                    saleInvoices={saleInvoices}
                     onBorrar={handleModalBorrar}
                     onCancelar={handleModalCancelar}
                     onClose={() => setModalBorrarCancelar(null)}
@@ -1802,6 +1832,7 @@ export function ServiceList({
                     <CancelarVariosServiciosInline
                         serviciosCancelables={serviciosCancelables}
                         reservaPublicId={reservaId}
+                        saleInvoices={saleInvoices}
                         blockReason={serviceCancellationBlockReason}
                         onCerrar={() => setShowCancelarVarios(false)}
                         onCancelacionTerminada={() => {

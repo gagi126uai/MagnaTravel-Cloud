@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using TravelApi.Application.DTOs;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
@@ -67,7 +68,8 @@ public class CustomerAccountStatementTests
     }
 
     /// <summary>Agrega un servicio generico RESUELTO (Status "Confirmado"): aporta SalePrice a ConfirmedSale.</summary>
-    private static void AddResolvedService(AppDbContext context, int reservaId, decimal salePrice, string currency)
+    private static void AddResolvedService(
+        AppDbContext context, int reservaId, decimal salePrice, string currency, bool documented = true)
     {
         context.Set<ServicioReserva>().Add(new ServicioReserva
         {
@@ -77,11 +79,26 @@ public class CustomerAccountStatementTests
             NetCost = 0m,
             Currency = currency
         });
+        if (documented)
+        {
+            context.Invoices.Add(new Invoice
+            {
+                ReservaId = reservaId,
+                TipoComprobante = 11,
+                PuntoDeVenta = 1,
+                NumeroComprobante = reservaId,
+                Resultado = "A",
+                ImporteTotal = salePrice,
+                MonId = currency == "USD" ? "DOL" : "PES",
+                IssuedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+            });
+        }
     }
 
     private static Payment AddPayment(
         AppDbContext context, int reservaId, decimal amount, string currency, DateTime paidAt,
-        string method = "Efectivo", string? imputedCurrency = null, decimal? imputedAmount = null)
+        string method = "Efectivo", string? imputedCurrency = null, decimal? imputedAmount = null,
+        bool affectsCash = true)
     {
         var payment = new Payment
         {
@@ -93,7 +110,7 @@ public class CustomerAccountStatementTests
             PaidAt = paidAt,
             Method = method,
             Status = "Paid",
-            AffectsCash = true
+            AffectsCash = affectsCash
         };
         context.Payments.Add(payment);
         return payment;
@@ -129,22 +146,22 @@ public class CustomerAccountStatementTests
 
         // Reserva C (ARS, InManagement): venta 200 sin cobrar y SIN facturar ("facturar tarde") -> debe 200.
         var c = await AddReservaAsync(context, customer.Id, "R-003", EstadoReserva.InManagement, new DateTime(2026, 3, 1));
-        AddResolvedService(context, c.Id, 200m, "ARS");
+        AddResolvedService(context, c.Id, 200m, "ARS", documented: false);
         await context.SaveChangesAsync();
         await PersistMoneyAsync(context, c.Id);
 
         var service = CreateService(context);
         var statement = await service.GetCustomerAccountStatementAsync(customer.Id, CancellationToken.None);
-        var receivable = await new FinancePositionService(context)
-            .GetCustomerReceivableByCurrencyAsync(customer.Id, CancellationToken.None);
+        var receivable = (await service.GetCustomerAccountOverviewAsync(customer.Id, CancellationToken.None))
+            .Summary.ReceivableByCurrency;
 
-        // Header: ARS = 400 + 200 = 600; USD ausente (Balance 0).
-        Assert.Equal(600m, receivable.Single(x => x.Currency == "ARS").Amount);
+        // La venta C no documentada no es un open item: ARS = 1000 - 600 = 400.
+        Assert.Equal(400m, receivable.Single(x => x.Currency == "ARS").Amount);
         Assert.DoesNotContain(receivable, x => x.Currency == "USD");
 
         // Extracto: bloque ARS cierra en 600 (== receivable); bloque USD existe pero cierra en 0.
         var ars = statement.Currencies.Single(x => x.Currency == "ARS");
-        Assert.Equal(600m, ars.ClosingBalance);
+        Assert.Equal(400m, ars.ClosingBalance);
 
         var usd = statement.Currencies.Single(x => x.Currency == "USD");
         Assert.Equal(0m, usd.ClosingBalance);
@@ -172,7 +189,7 @@ public class CustomerAccountStatementTests
 
         var ars = Assert.Single(statement.Currencies);
         var line = Assert.Single(ars.Lines);
-        Assert.Equal(CustomerAccountStatementLineKinds.Sale, line.Kind);
+        Assert.Equal(CustomerAccountStatementLineKinds.Invoice, line.Kind);
         Assert.Equal(1500m, line.Charge);
         Assert.Equal(0m, line.Credit);
         Assert.Equal(1500m, line.RunningBalance);
@@ -199,12 +216,40 @@ public class CustomerAccountStatementTests
         Assert.Equal(2, ars.Lines.Count);
 
         // Venta primero (cargo), cobro despues (abono): orden cronologico y saldo corriente.
-        Assert.Equal(CustomerAccountStatementLineKinds.Sale, ars.Lines[0].Kind);
+        Assert.Equal(CustomerAccountStatementLineKinds.Invoice, ars.Lines[0].Kind);
         Assert.Equal(1000m, ars.Lines[0].RunningBalance);
         Assert.Equal(CustomerAccountStatementLineKinds.Payment, ars.Lines[1].Kind);
         Assert.Equal(400m, ars.Lines[1].Credit);
         Assert.Equal(600m, ars.Lines[1].RunningBalance);
         Assert.Equal(600m, ars.ClosingBalance);
+    }
+
+    [Fact]
+    public async Task Payment_on_another_reserva_does_not_implicitly_compensate_debt()
+    {
+        using var context = CreateContext();
+        var customer = await AddCustomerAsync(context, "Cliente open items");
+        var debt = await AddReservaAsync(context, customer.Id, "R-DEBT", EstadoReserva.Confirmed, new DateTime(2026, 1, 1));
+        AddResolvedService(context, debt.Id, 1000m, "ARS");
+
+        var credit = await AddReservaAsync(context, customer.Id, "R-CREDIT", EstadoReserva.Confirmed, new DateTime(2026, 1, 2));
+        AddPayment(context, credit.Id, 400m, "ARS", new DateTime(2026, 1, 3));
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context);
+        var statement = await service.GetCustomerAccountStatementAsync(customer.Id, CancellationToken.None);
+        var overview = await service.GetCustomerAccountOverviewAsync(customer.Id, CancellationToken.None);
+        var debtByReserva = await service.GetCustomerDebtByReservaAsync(customer.Id, CancellationToken.None);
+        var listItem = Assert.Single((await service.GetCustomersAsync(new CustomerListQuery(), CancellationToken.None)).Items);
+
+        var ars = Assert.Single(statement.Currencies);
+        Assert.Equal(1000m, ars.ClosingBalance);
+        Assert.Equal(400m, ars.UnappliedCredit);
+        Assert.Equal(1000m, Assert.Single(overview.Summary.ReceivableByCurrency).Amount);
+        Assert.Equal(400m, Assert.Single(overview.Summary.UnappliedCreditByCurrency).Amount);
+        Assert.Equal(debt.PublicId, Assert.Single(debtByReserva.Reservas).ReservaPublicId);
+        Assert.Equal(1000m, Assert.Single(listItem.BalancesByCurrency).Amount);
+        Assert.Equal(400m, Assert.Single(listItem.UnappliedCreditsByCurrency).Amount);
     }
 
     [Fact]
@@ -246,6 +291,29 @@ public class CustomerAccountStatementTests
         Assert.Equal(750m, statement.Currencies[0].ClosingBalance); // 1000 - 250
         Assert.Equal("USD", statement.Currencies[1].Currency);
         Assert.Equal(300m, statement.Currencies[1].ClosingBalance); // sin cobro USD
+    }
+
+    [Fact]
+    public async Task Collected_summary_counts_cash_but_statement_keeps_explicit_compensation()
+    {
+        using var context = CreateContext();
+        var customer = await AddCustomerAsync(context, "Cliente con compensacion");
+        var reserva = await AddReservaAsync(context, customer.Id, "R-045", EstadoReserva.Confirmed, new DateTime(2026, 1, 1));
+        AddResolvedService(context, reserva.Id, 1000m, "ARS");
+        AddPayment(context, reserva.Id, 300m, "ARS", new DateTime(2026, 1, 10), affectsCash: true);
+        AddPayment(context, reserva.Id, 200m, "ARS", new DateTime(2026, 1, 11), affectsCash: false);
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context);
+        var statement = await service.GetCustomerAccountStatementAsync(customer.Id, CancellationToken.None);
+        var overview = await service.GetCustomerAccountOverviewAsync(customer.Id, CancellationToken.None);
+
+        var ars = Assert.Single(statement.Currencies);
+        Assert.Equal(500m, ars.ClosingBalance);
+        Assert.Contains(ars.Lines, line => line.Kind == CustomerAccountStatementLineKinds.CreditApplication && line.Credit == 200m);
+        var collected = Assert.Single(overview.Summary.CollectedByCurrency);
+        Assert.Equal("ARS", collected.Currency);
+        Assert.Equal(300m, collected.Amount);
     }
 
     [Fact]
@@ -312,9 +380,9 @@ public class CustomerAccountStatementTests
         var firme = await AddReservaAsync(context, customer.Id, "R-070", EstadoReserva.Confirmed, new DateTime(2026, 1, 1));
         AddResolvedService(context, firme.Id, 500m, "ARS");
         var cotizacion = await AddReservaAsync(context, customer.Id, "R-071", EstadoReserva.Quotation, new DateTime(2026, 1, 2));
-        AddResolvedService(context, cotizacion.Id, 999m, "ARS");
+        AddResolvedService(context, cotizacion.Id, 999m, "ARS", documented: false);
         var cancelada = await AddReservaAsync(context, customer.Id, "R-072", EstadoReserva.Cancelled, new DateTime(2026, 1, 3));
-        AddResolvedService(context, cancelada.Id, 888m, "ARS");
+        AddResolvedService(context, cancelada.Id, 888m, "ARS", documented: false);
         var ajena = await AddReservaAsync(context, other.Id, "R-073", EstadoReserva.Confirmed, new DateTime(2026, 1, 4));
         AddResolvedService(context, ajena.Id, 777m, "ARS");
         await context.SaveChangesAsync();

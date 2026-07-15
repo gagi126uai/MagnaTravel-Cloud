@@ -1,3 +1,5 @@
+using System.Security.Claims;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using TravelApi.Application.Constants;
 using TravelApi.Application.DTOs;
@@ -24,16 +26,43 @@ public class CustomerService : ICustomerService
     // construyen CustomerService sin auditoria; con StageBusinessEvent la fila de audit entra en el MISMO
     // SaveChanges que el cambio (atomico). Si es null (test sin auditoria), el cambio se aplica igual sin audit.
     private readonly IAuditService? _auditService;
+    private readonly IUserPermissionResolver? _permissionResolver;
+    private readonly IHttpContextAccessor? _httpContextAccessor;
 
-    public CustomerService(AppDbContext dbContext, IFinancePositionService financePosition, IAuditService? auditService = null)
+    public CustomerService(
+        AppDbContext dbContext,
+        IFinancePositionService financePosition,
+        IAuditService? auditService = null,
+        IUserPermissionResolver? permissionResolver = null,
+        IHttpContextAccessor? httpContextAccessor = null)
     {
         _dbContext = dbContext;
         _financePosition = financePosition;
         _auditService = auditService;
+        _permissionResolver = permissionResolver;
+        _httpContextAccessor = httpContextAccessor;
+    }
+
+    /// <summary>
+    /// Null = puede ver todas las cobranzas. En caso contrario, las cifras se limitan a reservas a cargo del
+    /// usuario actual. Sin HttpContext se conserva el comportamiento de los tests unitarios directos.
+    /// </summary>
+    private async Task<string?> GetOwnerScopeOrNullAsync(CancellationToken cancellationToken)
+    {
+        var user = _httpContextAccessor?.HttpContext?.User;
+        if (user is null || user.IsInRole("Admin")) return null;
+
+        var userId = user.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (_permissionResolver is null || string.IsNullOrWhiteSpace(userId))
+            return string.IsNullOrWhiteSpace(userId) ? "__no_user__" : userId;
+
+        var permissions = await _permissionResolver.GetPermissionsAsync(userId, cancellationToken);
+        return permissions.Contains(Permissions.CobranzasViewAll) ? null : userId;
     }
 
     public async Task<PagedResponse<CustomerListItemDto>> GetCustomersAsync(CustomerListQuery query, CancellationToken cancellationToken)
     {
+        var ownerScope = await GetOwnerScopeOrNullAsync(cancellationToken);
         var customersQuery = ApplyCustomerSearch(_dbContext.Customers.AsNoTracking(), query.Search);
 
         if (!query.IncludeInactive)
@@ -69,11 +98,81 @@ public class CustomerService : ICustomerService
 
         var page = await projectedQuery.ToPagedResponseAsync(query, cancellationToken);
 
-        // Una sola pasada trae el saldo en firme de todos los clientes con deuda (PublicId -> escalar).
-        var scalarsByPublicId = await _financePosition.GetReceivableScalarByCustomerPublicIdAsync(cancellationToken);
+        var pagePublicIds = page.Items.Select(item => item.PublicId).ToList();
+        var pageCustomerIds = await _dbContext.Customers
+            .AsNoTracking()
+            .Where(customer => pagePublicIds.Contains(customer.PublicId))
+            .Select(customer => new { customer.Id, customer.PublicId })
+            .ToListAsync(cancellationToken);
+        var ids = pageCustomerIds.Select(customer => customer.Id).ToList();
+        var publicIdById = pageCustomerIds.ToDictionary(customer => customer.Id, customer => customer.PublicId);
+        var netByOpenItem = new Dictionary<(Guid CustomerPublicId, string Currency, int ReservaId), decimal>();
+
+        var invoiceRows = await _dbContext.Invoices.AsNoTracking()
+            .Where(invoice => invoice.Reserva != null && invoice.Reserva.PayerId.HasValue
+                && ids.Contains(invoice.Reserva.PayerId.Value) && invoice.Resultado == "A"
+                && (ownerScope == null || invoice.Reserva.ResponsibleUserId == ownerScope))
+            .Select(invoice => new
+            {
+                CustomerId = invoice.Reserva!.PayerId!.Value,
+                ReservaId = invoice.ReservaId!.Value,
+                invoice.TipoComprobante,
+                invoice.ImporteTotal,
+                invoice.MonId
+            })
+            .ToListAsync(cancellationToken);
+        foreach (var row in invoiceRows)
+        {
+            var category = InvoiceComprobanteHelpers.Categorize(row.TipoComprobante);
+            if (category == InvoiceComprobanteCategory.Unknown) continue;
+            var key = (publicIdById[row.CustomerId], Domain.Helpers.ArcaCurrencyMapper.ToIso(row.MonId) ?? Monedas.ARS, row.ReservaId);
+            var signed = category == InvoiceComprobanteCategory.CreditNote ? -row.ImporteTotal : row.ImporteTotal;
+            netByOpenItem[key] = netByOpenItem.GetValueOrDefault(key) + signed;
+        }
+
+        var paymentRows = await _dbContext.Payments.AsNoTracking()
+            .Where(payment => payment.Reserva != null && payment.Reserva.PayerId.HasValue
+                && ids.Contains(payment.Reserva.PayerId.Value) && payment.Status != "Cancelled" && !payment.IsDeleted
+                && (ownerScope == null || payment.Reserva.ResponsibleUserId == ownerScope))
+            .Select(payment => new
+            {
+                CustomerId = payment.Reserva!.PayerId!.Value,
+                ReservaId = payment.ReservaId!.Value,
+                payment.Currency,
+                payment.ImputedCurrency,
+                payment.Amount,
+                payment.ImputedAmount
+            })
+            .ToListAsync(cancellationToken);
+        foreach (var row in paymentRows)
+        {
+            var key = (publicIdById[row.CustomerId], Monedas.Normalizar(row.ImputedCurrency ?? row.Currency), row.ReservaId);
+            netByOpenItem[key] = netByOpenItem.GetValueOrDefault(key) - (row.ImputedAmount ?? row.Amount);
+        }
+
         foreach (var item in page.Items)
         {
-            item.CurrentBalance = scalarsByPublicId.GetValueOrDefault(item.PublicId, 0m);
+            item.BalancesByCurrency = netByOpenItem
+                .Where(entry => entry.Key.CustomerPublicId == item.PublicId && entry.Value > 0.01m)
+                .GroupBy(entry => entry.Key.Currency)
+                .Select(group => new CurrencyAmountDto
+                {
+                    Currency = group.Key,
+                    Amount = EconomicRulesHelper.RoundCurrency(group.Sum(entry => entry.Value))
+                })
+                .OrderBy(entry => entry.Currency, StringComparer.Ordinal)
+                .ToList();
+            item.UnappliedCreditsByCurrency = netByOpenItem
+                .Where(entry => entry.Key.CustomerPublicId == item.PublicId && entry.Value < -0.01m)
+                .GroupBy(entry => entry.Key.Currency)
+                .Select(group => new CurrencyAmountDto
+                {
+                    Currency = group.Key,
+                    Amount = EconomicRulesHelper.RoundCurrency(-group.Sum(entry => entry.Value))
+                })
+                .OrderBy(entry => entry.Currency, StringComparer.Ordinal)
+                .ToList();
+            item.CurrentBalance = item.BalancesByCurrency.Count == 1 ? item.BalancesByCurrency[0].Amount : 0m;
         }
 
         if (!sortByBalance)
@@ -118,7 +217,29 @@ public class CustomerService : ICustomerService
 
         // ADR-023 T1: el saldo sale del componente canonico (reservas en firme), no de un subquery local
         // que incluia cotizaciones/canceladas.
-        customer.CurrentBalance = await _financePosition.GetCustomerReceivableScalarAsync(id, cancellationToken);
+        // Fuente unica de la UI: open items documentados (Factura/ND - NC - cobros - compensaciones).
+        // Una venta confirmada sin comprobante aun no integra "Debe"; una ND emitida en una anulada si.
+        var documentedStatement = await GetCustomerAccountStatementAsync(id, cancellationToken);
+        var receivableByCurrency = documentedStatement.Currencies
+            .Where(block => block.ClosingBalance > 0m)
+            .Select(block => new CurrencyAmountDto
+            {
+                Currency = block.Currency,
+                Amount = EconomicRulesHelper.RoundCurrency(block.ClosingBalance)
+            })
+            .OrderBy(item => item.Currency, StringComparer.Ordinal)
+            .ToList();
+        customer.BalancesByCurrency = receivableByCurrency;
+        customer.UnappliedCreditsByCurrency = documentedStatement.Currencies
+            .Where(block => block.UnappliedCredit > 0m)
+            .Select(block => new CurrencyAmountDto
+            {
+                Currency = block.Currency,
+                Amount = EconomicRulesHelper.RoundCurrency(block.UnappliedCredit)
+            })
+            .OrderBy(item => item.Currency, StringComparer.Ordinal)
+            .ToList();
+        customer.CurrentBalance = receivableByCurrency.Count == 1 ? receivableByCurrency[0].Amount : 0m;
         return customer;
     }
 
@@ -445,6 +566,7 @@ public class CustomerService : ICustomerService
 
     public async Task<CustomerAccountOverviewDto> GetCustomerAccountOverviewAsync(int id, CancellationToken cancellationToken)
     {
+        var ownerScope = await GetOwnerScopeOrNullAsync(cancellationToken);
         var customer = await _dbContext.Customers
             .AsNoTracking()
             .Where(entity => entity.Id == id)
@@ -464,8 +586,29 @@ public class CustomerService : ICustomerService
             throw new KeyNotFoundException("Cliente no encontrado");
         }
 
-        // ADR-023 T1: el "Saldo Actual" del cliente sale del componente canonico (reservas en firme).
-        customer.CurrentBalance = await _financePosition.GetCustomerReceivableScalarAsync(id, cancellationToken);
+        // La cuenta del cliente se apoya en open items documentados: comprobantes aprobados menos cobros e
+        // imputaciones explicitas. Cada moneda conserva su propio saldo; nunca se compensan ARS y USD.
+        var documentedStatement = await GetCustomerAccountStatementAsync(id, cancellationToken);
+        var receivableByCurrency = documentedStatement.Currencies
+            .Where(block => block.ClosingBalance > 0m)
+            .Select(block => new CurrencyAmountDto
+            {
+                Currency = block.Currency,
+                Amount = EconomicRulesHelper.RoundCurrency(block.ClosingBalance)
+            })
+            .OrderBy(item => item.Currency, StringComparer.Ordinal)
+            .ToList();
+        var unappliedCreditByCurrency = documentedStatement.Currencies
+            .Where(block => block.UnappliedCredit > 0m)
+            .Select(block => new CurrencyAmountDto
+            {
+                Currency = block.Currency,
+                Amount = EconomicRulesHelper.RoundCurrency(block.UnappliedCredit)
+            })
+            .OrderBy(item => item.Currency, StringComparer.Ordinal)
+            .ToList();
+        // Escalar legacy: solo tiene significado si existe una unica moneda. Nunca sumar ARS + USD.
+        customer.CurrentBalance = receivableByCurrency.Count == 1 ? receivableByCurrency[0].Amount : 0m;
 
         // ADR-023 T1 (fix bug A3): el resumen TotalSales/TotalPaid/TotalBalance se calcula SOLO sobre las
         // reservas en firme. Antes sumaba TODAS las reservas del cliente (incluidas canceladas y cotizaciones)
@@ -474,22 +617,41 @@ public class CustomerService : ICustomerService
         // ADR-033 (2026-06-16, A3/B1): el "Saldo Actual" y el resumen del cliente usan ahora la lista de
         // DEUDA cobrable (ReceivableDebtStatuses, incluye Closed). Una reserva Finalizada con deuda es deuda
         // real del cliente y debe sumar a su saldo. El conteo de reservas (abajo) NO cambia.
-        var firmReservasQuery = _dbContext.Reservas
-            .AsNoTracking()
-            .Where(reserva => reserva.PayerId == id
-                && FinancePositionService.ReceivableDebtStatuses.Contains(reserva.Status));
-
         // El contador de reservas sigue contando TODAS las del cliente (es el badge "Reservas: N" de la
         // pestaña, no un numero de plata): solo los tres importes pasan a la lista en firme.
         var reservasQuery = _dbContext.Reservas
             .AsNoTracking()
             .Where(reserva => reserva.PayerId == id);
+        if (ownerScope is not null)
+            reservasQuery = reservasQuery.Where(reserva => reserva.ResponsibleUserId == ownerScope);
+
+        var statementLines = documentedStatement.Currencies.SelectMany(block => block.Lines).ToList();
+        var documentedByCurrency = documentedStatement.Currencies
+            .Select(block => new CurrencyAmountDto
+            {
+                Currency = block.Currency,
+                Amount = EconomicRulesHelper.RoundCurrency(block.Lines.Sum(line => line.Charge))
+            })
+            .Where(item => item.Amount != 0m)
+            .ToList();
+        var collectedByCurrency = documentedStatement.Currencies
+            .Select(block => new CurrencyAmountDto
+            {
+                Currency = block.Currency,
+                Amount = EconomicRulesHelper.RoundCurrency(block.Lines
+                    .Where(line => line.Kind == CustomerAccountStatementLineKinds.Payment)
+                    .Sum(line => line.Credit))
+            })
+            .Where(item => item.Amount != 0m)
+            .ToList();
 
         var summary = new CustomerAccountSummaryDto
         {
-            TotalSales = await firmReservasQuery.SumAsync(reserva => (decimal?)reserva.TotalSale, cancellationToken) ?? 0m,
-            TotalPaid = await firmReservasQuery.SumAsync(reserva => (decimal?)reserva.TotalPaid, cancellationToken) ?? 0m,
-            TotalBalance = await firmReservasQuery.SumAsync(reserva => (decimal?)reserva.Balance, cancellationToken) ?? 0m,
+            TotalSales = documentedByCurrency.Count == 1 ? documentedByCurrency[0].Amount : 0m,
+            TotalPaid = collectedByCurrency.Count == 1 ? collectedByCurrency[0].Amount : 0m,
+            TotalBalance = receivableByCurrency.Count == 1 ? receivableByCurrency[0].Amount : 0m,
+            DocumentedByCurrency = documentedByCurrency,
+            CollectedByCurrency = collectedByCurrency,
             ReservaCount = await reservasQuery.CountAsync(cancellationToken),
             // ADR-022 §4.9 (fix S1-bis): el contador NO debe incluir el Payment puente del saldo a favor,
             // o el badge "Pagos: N" no coincidiria con las filas visibles en GetCustomerAccountPaymentsAsync
@@ -499,22 +661,21 @@ public class CustomerService : ICustomerService
                 // FC4 (2026-06-14): el contador excluye AMBOS puentes (sobrepago + saldo a favor aplicado),
                 // para que el badge "Pagos: N" coincida con las filas visibles en GetCustomerAccountPaymentsAsync.
                 .CountAsync(payment => payment.Reserva != null && payment.Reserva.PayerId == id
-                    && !((payment.Method == OverpaymentCreditCleanup.BridgeMethod
-                            && !payment.AffectsCash && payment.OriginalPaymentId != null)
-                        || (payment.Method == AppliedCreditBridge.BridgeMethod
-                            && !payment.AffectsCash && payment.AppliedFromCreditWithdrawalId != null)
-                        // ADR-044 "Deshacer una multa ya emitida": puente de multa deshecha (Method + !AffectsCash).
-                        || (payment.Method == ClientCreditService.DebitNoteUndoBridgeMethod
-                            && !payment.AffectsCash)), cancellationToken),
+                    && (ownerScope == null || payment.Reserva.ResponsibleUserId == ownerScope)
+                    && payment.AffectsCash
+                    && payment.Status != "Cancelled"
+                    && !payment.IsDeleted, cancellationToken),
             InvoiceCount = await _dbContext.Invoices
                 .AsNoTracking()
-                .CountAsync(invoice => invoice.Reserva != null && invoice.Reserva.PayerId == id, cancellationToken),
+                .CountAsync(invoice => invoice.Reserva != null && invoice.Reserva.PayerId == id
+                    && (ownerScope == null || invoice.Reserva.ResponsibleUserId == ownerScope)
+                    && invoice.Resultado == "A", cancellationToken),
             // ADR-022 Capa 8 (C2) / ADR-023 T1: la cuenta corriente por moneda sale del componente canonico
             // (mismo predicado en firme que el AR de tesoreria). El bolsillo de saldo a favor sigue local
             // (es de ClientCreditEntry, no de cuentas por cobrar).
-            ReceivableByCurrency = MapToCurrencyAmounts(
-                await _financePosition.GetCustomerReceivableByCurrencyAsync(id, cancellationToken)),
-            CreditBalanceByCurrency = await BuildCustomerCreditByCurrencyAsync(id, cancellationToken)
+            ReceivableByCurrency = receivableByCurrency,
+            CreditBalanceByCurrency = await BuildCustomerCreditByCurrencyAsync(id, ownerScope, cancellationToken),
+            UnappliedCreditByCurrency = unappliedCreditByCurrency
         };
 
         return new CustomerAccountOverviewDto
@@ -523,7 +684,7 @@ public class CustomerService : ICustomerService
             Summary = summary,
             // "Multas en la cuenta del cliente" (2026-07-15): bloque APARTE del summary (no toca
             // ReceivableByCurrency ni el resto de los totales existentes).
-            PendingPenalties = await BuildPendingPenaltiesAsync(id, cancellationToken)
+            PendingPenalties = await BuildPendingPenaltiesAsync(id, ownerScope, cancellationToken)
         };
     }
 
@@ -545,7 +706,8 @@ public class CustomerService : ICustomerService
     /// <para>Dos queries batcheadas (vivas / en revisión), nunca una por reserva: no importa cuántas reservas
     /// anuladas tenga el cliente.</para>
     /// </summary>
-    private async Task<CustomerPendingPenaltiesDto> BuildPendingPenaltiesAsync(int customerId, CancellationToken cancellationToken)
+    private async Task<CustomerPendingPenaltiesDto> BuildPendingPenaltiesAsync(
+        int customerId, string? ownerScope, CancellationToken cancellationToken)
     {
         var empty = new CustomerPendingPenaltiesDto();
 
@@ -556,7 +718,8 @@ public class CustomerService : ICustomerService
         var cancelledReservas = await _dbContext.Reservas
             .AsNoTracking()
             .Where(reserva => reserva.PayerId == customerId
-                && (reserva.Status == EstadoReserva.Cancelled || reserva.Status == EstadoReserva.PendingOperatorRefund))
+                && (reserva.Status == EstadoReserva.Cancelled || reserva.Status == EstadoReserva.PendingOperatorRefund)
+                && (ownerScope == null || reserva.ResponsibleUserId == ownerScope))
             .Select(reserva => new { reserva.Id, reserva.PublicId, reserva.NumeroReserva, reserva.Name })
             .ToListAsync(cancellationToken);
 
@@ -573,8 +736,63 @@ public class CustomerService : ICustomerService
             .AsNoTracking()
             .Where(CancellationPenaltyRules.LiveDebitNotePredicate)
             .Where(bc => reservaIds.Contains(bc.ReservaId))
-            .Select(bc => new { bc.ReservaId, bc.PenaltyAmountAtEvent, bc.PenaltyCurrencyAtEvent, bc.DebitNoteStatus })
+            .Select(bc => new
+            {
+                bc.ReservaId,
+                bc.PenaltyAmountAtEvent,
+                bc.PenaltyCurrencyAtEvent,
+                bc.DebitNoteStatus,
+                bc.DebitNoteInvoiceId
+            })
             .ToListAsync(cancellationToken);
+
+        var debitNoteIds = liveRows
+            .Where(row => row.DebitNoteStatus == DebitNoteStatus.Issued && row.DebitNoteInvoiceId.HasValue)
+            .Select(row => row.DebitNoteInvoiceId!.Value)
+            .Distinct()
+            .ToList();
+
+        var debitNotes = await _dbContext.Invoices
+            .AsNoTracking()
+            .Where(invoice => debitNoteIds.Contains(invoice.Id))
+            .Select(invoice => new
+            {
+                invoice.Id,
+                invoice.PublicId,
+                invoice.TipoComprobante,
+                invoice.ImporteTotal,
+                invoice.MonId,
+                invoice.PuntoDeVenta,
+                invoice.NumeroComprobante,
+                invoice.Resultado
+            })
+            .ToDictionaryAsync(invoice => invoice.Id, cancellationToken);
+
+        var creditedByDebitNote = await _dbContext.Invoices
+            .AsNoTracking()
+            .Where(invoice => invoice.OriginalInvoiceId.HasValue
+                && debitNoteIds.Contains(invoice.OriginalInvoiceId.Value)
+                && invoice.Resultado == "A"
+                && invoice.AnnulmentStatus != AnnulmentStatus.Succeeded
+                && (invoice.TipoComprobante == 3 || invoice.TipoComprobante == 8
+                    || invoice.TipoComprobante == 13 || invoice.TipoComprobante == 53))
+            .GroupBy(invoice => invoice.OriginalInvoiceId!.Value)
+            .Select(group => new { DebitNoteId = group.Key, Amount = group.Sum(invoice => invoice.ImporteTotal) })
+            .ToDictionaryAsync(row => row.DebitNoteId, row => row.Amount, cancellationToken);
+
+        var collectedByDebitNote = await _dbContext.Payments
+            .AsNoTracking()
+            .Where(payment => payment.LinkedInvoiceId.HasValue
+                && debitNoteIds.Contains(payment.LinkedInvoiceId.Value)
+                && payment.Status != "Cancelled"
+                && !payment.IsDeleted)
+            .GroupBy(payment => payment.LinkedInvoiceId!.Value)
+            .Select(group => new
+            {
+                DebitNoteId = group.Key,
+                Amount = group.Sum(payment => payment.ImputedAmount ?? payment.Amount)
+            })
+            .ToDictionaryAsync(row => row.DebitNoteId, row => row.Amount, cancellationToken);
 
         // Multas EN REVISION: el comprobante falló su emisión o quedó para revisión manual (back-office). Ya
         // cuenta como deuda del cliente (decisión del dueño, 2026-07-15) pero distinguida con su propio chip.
@@ -589,15 +807,36 @@ public class CustomerService : ICustomerService
 
         foreach (var row in liveRows)
         {
-            // Sin monto bruto congelado no hay nada que mostrar (mismo guard defensivo que el resto del modulo:
-            // pasa con datos legacy o con una ND emitida sin snapshot de monto).
-            if (row.PenaltyAmountAtEvent is null) continue;
-
             var reserva = reservaById[row.ReservaId];
-            var status = row.DebitNoteStatus == DebitNoteStatus.Issued
-                ? CustomerPendingPenaltyStatus.PendingCollection
-                : CustomerPendingPenaltyStatus.Issuing;
+            if (row.DebitNoteStatus == DebitNoteStatus.Issued
+                && row.DebitNoteInvoiceId.HasValue
+                && debitNotes.TryGetValue(row.DebitNoteInvoiceId.Value, out var debitNote)
+                && debitNote.Resultado == "A"
+                && InvoiceComprobanteHelpers.IsDebitNote(debitNote.TipoComprobante))
+            {
+                var credited = creditedByDebitNote.GetValueOrDefault(debitNote.Id);
+                var collected = collectedByDebitNote.GetValueOrDefault(debitNote.Id);
+                var outstanding = EconomicRulesHelper.RoundCurrency(debitNote.ImporteTotal - credited - collected);
+                if (outstanding <= 0m) continue;
 
+                items.Add(BuildPendingPenaltyItem(
+                    reserva.PublicId,
+                    reserva.NumeroReserva,
+                    reserva.Name,
+                    outstanding,
+                    Domain.Helpers.ArcaCurrencyMapper.ToIso(debitNote.MonId),
+                    CustomerPendingPenaltyStatus.PendingCollection,
+                    debitNote.PublicId,
+                    $"{debitNote.PuntoDeVenta:D5}-{debitNote.NumeroComprobante:D8}"));
+                continue;
+            }
+
+            // Una multa sin ND aprobada todavia no es un open item cobrable. Se muestra como pendiente
+            // operativo, pero no se suma a la deuda firme ni ofrece registrar un cobro.
+            if (row.PenaltyAmountAtEvent is null) continue;
+            var status = row.DebitNoteStatus == DebitNoteStatus.Issued
+                ? CustomerPendingPenaltyStatus.UnderReview
+                : CustomerPendingPenaltyStatus.Issuing;
             items.Add(BuildPendingPenaltyItem(reserva.PublicId, reserva.NumeroReserva, reserva.Name,
                 row.PenaltyAmountAtEvent.Value, row.PenaltyCurrencyAtEvent, status));
         }
@@ -624,7 +863,8 @@ public class CustomerService : ICustomerService
     /// <summary>Arma UNA fila del bloque de multas pendientes, normalizando moneda y redondeando el monto.</summary>
     private static CustomerPendingPenaltyItemDto BuildPendingPenaltyItem(
         Guid reservaPublicId, string numeroReserva, string name,
-        decimal grossPenaltyAmount, string? penaltyCurrencyAtEvent, string status)
+        decimal grossPenaltyAmount, string? penaltyCurrencyAtEvent, string status,
+        Guid? debitNotePublicId = null, string? documentRef = null)
         => new()
         {
             ReservaPublicId = reservaPublicId,
@@ -632,7 +872,9 @@ public class CustomerService : ICustomerService
             Name = name,
             Amount = EconomicRulesHelper.RoundCurrency(grossPenaltyAmount),
             Currency = ReservaService.NormalizePenaltyCurrencyForDisplay(penaltyCurrencyAtEvent),
-            Status = status
+            Status = status,
+            DebitNotePublicId = debitNotePublicId,
+            DocumentRef = documentRef
         };
 
     /// <summary>
@@ -679,11 +921,16 @@ public class CustomerService : ICustomerService
     /// ClientCreditEntry activos (RemainingBalance &gt; 0) del cliente, CUALQUIER origen (cancelacion o sobrepago).
     /// Es el eje OPUESTO al de cobrar; el backend los expone separados y NUNCA netea uno contra el otro.
     /// </summary>
-    private async Task<List<CurrencyAmountDto>> BuildCustomerCreditByCurrencyAsync(int customerId, CancellationToken cancellationToken)
+    private async Task<List<CurrencyAmountDto>> BuildCustomerCreditByCurrencyAsync(
+        int customerId, string? ownerScope, CancellationToken cancellationToken)
     {
         var grouped = await _dbContext.ClientCreditEntries
             .AsNoTracking()
-            .Where(entry => entry.CustomerId == customerId && entry.RemainingBalance > 0m)
+            .Where(entry => entry.CustomerId == customerId && entry.RemainingBalance > 0m
+                && (ownerScope == null
+                    || (entry.SourceReserva != null && entry.SourceReserva.ResponsibleUserId == ownerScope)
+                    || (entry.BookingCancellation != null && entry.BookingCancellation.Reserva != null
+                        && entry.BookingCancellation.Reserva.ResponsibleUserId == ownerScope)))
             .GroupBy(entry => entry.Currency)
             .Select(g => new { Currency = g.Key, Amount = g.Sum(x => x.RemainingBalance) })
             .ToListAsync(cancellationToken);
@@ -699,6 +946,7 @@ public class CustomerService : ICustomerService
     /// </summary>
     public async Task<IReadOnlyList<CustomerAvailableCreditEntryDto>> GetCustomerAvailableCreditAsync(int id, CancellationToken cancellationToken)
     {
+        var ownerScope = await GetOwnerScopeOrNullAsync(cancellationToken);
         // Una sola query con los dos posibles orígenes incluidos:
         //  - Cancelación: la reserva vive en BookingCancellation.Reserva.
         //  - Sobrepago: la reserva vive en SourceReserva (FK directa del entry).
@@ -706,7 +954,11 @@ public class CustomerService : ICustomerService
         // ni disparar N+1: el Select arma la fila con el número/PublicId de la reserva de origen en el mismo SQL.
         var entries = await _dbContext.ClientCreditEntries
             .AsNoTracking()
-            .Where(entry => entry.CustomerId == id && entry.RemainingBalance > 0m)
+            .Where(entry => entry.CustomerId == id && entry.RemainingBalance > 0m
+                && (ownerScope == null
+                    || (entry.SourceReserva != null && entry.SourceReserva.ResponsibleUserId == ownerScope)
+                    || (entry.BookingCancellation != null && entry.BookingCancellation.Reserva != null
+                        && entry.BookingCancellation.Reserva.ResponsibleUserId == ownerScope)))
             .OrderBy(entry => entry.CreatedAt)
             .Select(entry => new CustomerAvailableCreditEntryDto
             {
@@ -762,27 +1014,40 @@ public class CustomerService : ICustomerService
             throw new KeyNotFoundException("Cliente no encontrado");
         }
 
-        // Mismo predicado que GetCustomerReceivableByCurrencyAsync, pero trayendo la identidad de la reserva
-        // para poder abrir el desglose. Join explicito contra Reservas (no nav implicita) para correr igual en
-        // Postgres e InMemory. Solo saldos positivos (deuda viva del cliente).
-        var rows = await (
-            from row in _dbContext.ReservaMoneyByCurrency
-            join reserva in _dbContext.Reservas on row.ReservaId equals reserva.Id
-            where reserva.PayerId == id
-                && FinancePositionService.ReceivableDebtStatuses.Contains(reserva.Status)
-                && row.Balance > 0
-            select new
-            {
-                reserva.PublicId,
-                reserva.NumeroReserva,
-                reserva.Name,
-                row.Currency,
-                row.Balance
-            })
-            .ToListAsync(cancellationToken);
+        // El selector de cobro usa exactamente los mismos open items documentados del extracto, sin paginado
+        // ni limite artificial de 100 reservas. Un saldo positivo queda separado por reserva y moneda.
+        var statement = await GetCustomerAccountStatementAsync(id, cancellationToken);
+        var reservaNames = await _dbContext.Reservas
+            .AsNoTracking()
+            .Where(reserva => reserva.PayerId == id)
+            .Select(reserva => new { reserva.PublicId, reserva.Name })
+            .ToDictionaryAsync(reserva => reserva.PublicId, reserva => reserva.Name, cancellationToken);
 
-        return BuildCustomerDebtByReserva(customer.PublicId, customer.FullName, rows
-            .Select(r => (r.PublicId, r.NumeroReserva, r.Name, r.Currency, r.Balance)));
+        var rows = statement.Currencies
+            .SelectMany(block => block.Lines.Select(line => new
+            {
+                line.ReservaPublicId,
+                line.NumeroReserva,
+                Currency = block.Currency,
+                Net = line.Charge - line.Credit
+            }))
+            .GroupBy(row => new { row.ReservaPublicId, row.NumeroReserva, row.Currency })
+            .Select(group => new
+            {
+                group.Key.ReservaPublicId,
+                group.Key.NumeroReserva,
+                group.Key.Currency,
+                Balance = EconomicRulesHelper.RoundCurrency(group.Sum(row => row.Net))
+            })
+            .Where(row => row.Balance > 0m)
+            .ToList();
+
+        return BuildCustomerDebtByReserva(customer.PublicId, customer.FullName, rows.Select(row => (
+            row.ReservaPublicId,
+            row.NumeroReserva,
+            reservaNames.GetValueOrDefault(row.ReservaPublicId),
+            row.Currency,
+            row.Balance)));
     }
 
     /// <summary>
@@ -805,6 +1070,7 @@ public class CustomerService : ICustomerService
     /// </summary>
     public async Task<CustomerAccountStatementDto> GetCustomerAccountStatementAsync(int id, CancellationToken cancellationToken)
     {
+        var ownerScope = await GetOwnerScopeOrNullAsync(cancellationToken);
         var customer = await _dbContext.Customers
             .AsNoTracking()
             .Where(c => c.Id == id)
@@ -821,8 +1087,7 @@ public class CustomerService : ICustomerService
         // proyeccion (cargos) y de los pagos (abonos).
         var reservas = await _dbContext.Reservas
             .AsNoTracking()
-            .Where(r => r.PayerId == id
-                && FinancePositionService.ReceivableDebtStatuses.Contains(r.Status))
+            .Where(r => r.PayerId == id && (ownerScope == null || r.ResponsibleUserId == ownerScope))
             .Select(r => new ReservaIdentityRow(r.Id, r.PublicId, r.NumeroReserva, r.Name, r.CreatedAt))
             .ToListAsync(cancellationToken);
 
@@ -843,10 +1108,23 @@ public class CustomerService : ICustomerService
         // CARGOS = venta confirmada por (reserva, moneda), leida de la MISMA proyeccion que usa el header. Solo
         // filas con ConfirmedSale != 0 (una reserva sin venta resuelta —p.ej. solo con una sena— no aporta
         // cargo; su cobro igual aparece como abono).
-        var saleRows = await _dbContext.ReservaMoneyByCurrency
+        var invoiceRows = await _dbContext.Invoices
             .AsNoTracking()
-            .Where(m => reservaIds.Contains(m.ReservaId) && m.ConfirmedSale != 0m)
-            .Select(m => new { m.ReservaId, m.Currency, m.ConfirmedSale })
+            .Where(invoice => invoice.ReservaId != null
+                && reservaIds.Contains(invoice.ReservaId.Value)
+                && invoice.Resultado == "A")
+            .Select(invoice => new
+            {
+                ReservaId = invoice.ReservaId!.Value,
+                invoice.PublicId,
+                invoice.TipoComprobante,
+                invoice.ImporteTotal,
+                invoice.MonId,
+                invoice.PuntoDeVenta,
+                invoice.NumeroComprobante,
+                invoice.IssuedAt,
+                invoice.CreatedAt
+            })
             .ToListAsync(cancellationToken);
 
         // ABONOS = cobros VIVOS de esas reservas. El filtro global !IsDeleted ya excluye los borrados; sumamos
@@ -876,22 +1154,40 @@ public class CustomerService : ICustomerService
 
         // Armamos las lineas planas: primero TODAS las ventas, despues TODOS los cobros. El builder ordena por
         // fecha de forma estable, asi ante misma fecha la venta (cargo) queda antes que el cobro (abono).
-        var inputLines = new List<CustomerAccountStatementInputLine>(saleRows.Count + paymentRows.Count);
+        var inputLines = new List<CustomerAccountStatementInputLine>(invoiceRows.Count + paymentRows.Count);
 
-        foreach (var sale in saleRows)
+        foreach (var invoice in invoiceRows)
         {
-            var reserva = reservaById[sale.ReservaId];
+            var category = InvoiceComprobanteHelpers.Categorize(invoice.TipoComprobante);
+            if (category == InvoiceComprobanteCategory.Unknown) continue;
+
+            var reserva = reservaById[invoice.ReservaId];
+            var isCredit = category == InvoiceComprobanteCategory.CreditNote;
+            var kind = category switch
+            {
+                InvoiceComprobanteCategory.Invoice => CustomerAccountStatementLineKinds.Invoice,
+                InvoiceComprobanteCategory.DebitNote => CustomerAccountStatementLineKinds.DebitNote,
+                InvoiceComprobanteCategory.CreditNote => CustomerAccountStatementLineKinds.CreditNote,
+                _ => CustomerAccountStatementLineKinds.Invoice
+            };
+            var description = category switch
+            {
+                InvoiceComprobanteCategory.Invoice => "Factura",
+                InvoiceComprobanteCategory.DebitNote => "Nota de debito",
+                InvoiceComprobanteCategory.CreditNote => "Nota de credito",
+                _ => "Comprobante"
+            };
             inputLines.Add(new CustomerAccountStatementInputLine(
-                Date: reserva.CreatedAt,
-                Kind: CustomerAccountStatementLineKinds.Sale,
-                Description: BuildStatementSaleDescription(reserva.Name),
-                DocumentRef: null,
+                Date: invoice.IssuedAt ?? invoice.CreatedAt,
+                Kind: kind,
+                Description: description,
+                DocumentRef: $"{invoice.PuntoDeVenta:D4}-{invoice.NumeroComprobante:D8}",
                 ReservaPublicId: reserva.PublicId,
                 NumeroReserva: reserva.NumeroReserva,
-                Currency: Monedas.Normalizar(sale.Currency),
-                Charge: sale.ConfirmedSale,
-                Credit: 0m,
-                SourcePublicId: reserva.PublicId));
+                Currency: Domain.Helpers.ArcaCurrencyMapper.ToIso(invoice.MonId) ?? Monedas.ARS,
+                Charge: isCredit ? 0m : invoice.ImporteTotal,
+                Credit: isCredit ? invoice.ImporteTotal : 0m,
+                SourcePublicId: invoice.PublicId));
         }
 
         foreach (var payment in paymentRows)
@@ -904,7 +1200,9 @@ public class CustomerService : ICustomerService
 
             inputLines.Add(new CustomerAccountStatementInputLine(
                 Date: payment.PaidAt,
-                Kind: CustomerAccountStatementLineKinds.Payment,
+                Kind: payment.AffectsCash
+                    ? CustomerAccountStatementLineKinds.Payment
+                    : CustomerAccountStatementLineKinds.CreditApplication,
                 Description: BuildStatementPaymentDescription(payment.AffectsCash, imputedAmount, payment.ReceiptNumber, payment.Method),
                 DocumentRef: payment.ReceiptNumber,
                 ReservaPublicId: reserva.PublicId,
@@ -987,6 +1285,7 @@ public class CustomerService : ICustomerService
             {
                 Currency = block.Currency,
                 ClosingBalance = EconomicRulesHelper.RoundCurrency(block.ClosingBalance),
+                UnappliedCredit = EconomicRulesHelper.RoundCurrency(block.UnappliedCredit),
             };
 
             foreach (var line in block.Lines)
@@ -1121,9 +1420,11 @@ public class CustomerService : ICustomerService
 
     public async Task<PagedResponse<CustomerAccountReservaListItemDto>> GetCustomerAccountReservasAsync(int id, PagedQuery query, CancellationToken cancellationToken)
     {
+        var ownerScope = await GetOwnerScopeOrNullAsync(cancellationToken);
         var reservasQuery = _dbContext.Reservas
             .AsNoTracking()
-            .Where(reserva => reserva.PayerId == id);
+            .Where(reserva => reserva.PayerId == id
+                && (ownerScope == null || reserva.ResponsibleUserId == ownerScope));
 
         if (!string.IsNullOrWhiteSpace(query.Search))
         {
@@ -1288,9 +1589,11 @@ public class CustomerService : ICustomerService
 
     public async Task<PagedResponse<CustomerAccountPaymentListItemDto>> GetCustomerAccountPaymentsAsync(int id, PagedQuery query, CancellationToken cancellationToken)
     {
+        var ownerScope = await GetOwnerScopeOrNullAsync(cancellationToken);
         var paymentsQuery = _dbContext.Payments
             .AsNoTracking()
-            .Where(payment => payment.Reserva != null && payment.Reserva.PayerId == id)
+            .Where(payment => payment.Reserva != null && payment.Reserva.PayerId == id
+                && (ownerScope == null || payment.Reserva.ResponsibleUserId == ownerScope))
             // ADR-022 §4.9 (fix S1-bis): excluir el Payment puente del saldo a favor (Method="SaldoAFavor",
             // AffectsCash=false, OriginalPaymentId!=null, monto negativo). Es respaldo INTERNO del sobrepago, no
             // un cobro real, y su Notes contiene un GUID que no debe filtrarse a la pestaña Pagos del cliente.
@@ -1363,9 +1666,11 @@ public class CustomerService : ICustomerService
 
     public async Task<PagedResponse<InvoiceListDto>> GetCustomerAccountInvoicesAsync(int id, PagedQuery query, CancellationToken cancellationToken)
     {
+        var ownerScope = await GetOwnerScopeOrNullAsync(cancellationToken);
         var invoicesQuery = _dbContext.Invoices
             .AsNoTracking()
-            .Where(invoice => invoice.Reserva != null && invoice.Reserva.PayerId == id);
+            .Where(invoice => invoice.Reserva != null && invoice.Reserva.PayerId == id
+                && (ownerScope == null || invoice.Reserva.ResponsibleUserId == ownerScope));
 
         if (!string.IsNullOrWhiteSpace(query.Search))
         {

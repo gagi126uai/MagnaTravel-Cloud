@@ -27,6 +27,19 @@ namespace TravelApi.Tests.Unit;
 /// </summary>
 public class Adr022Tanda3Tests
 {
+    private static void AddApprovedInvoice(AppDbContext context, int reservaId, decimal amount, string currency = "ARS")
+        => context.Invoices.Add(new Invoice
+        {
+            ReservaId = reservaId,
+            TipoComprobante = 11,
+            PuntoDeVenta = 1,
+            NumeroComprobante = reservaId,
+            Resultado = "A",
+            ImporteTotal = amount,
+            MonId = currency == "USD" ? "DOL" : "PES",
+            IssuedAt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+        });
+
     private static AppDbContext CreateContext()
     {
         var options = new DbContextOptionsBuilder<AppDbContext>()
@@ -424,6 +437,8 @@ public class Adr022Tanda3Tests
         context.ReservaMoneyByCurrency.AddRange(
             new ReservaMoneyByCurrency { ReservaId = 1, Currency = "ARS", Balance = 500m, ConfirmedSale = 500m },
             new ReservaMoneyByCurrency { ReservaId = 2, Currency = "USD", Balance = 100m, ConfirmedSale = 100m });
+        AddApprovedInvoice(context, 1, 500m);
+        AddApprovedInvoice(context, 2, 100m, "USD");
         await context.SaveChangesAsync();
 
         var overview = await new CustomerService(context, new FinancePositionService(context)).GetCustomerAccountOverviewAsync(1, CancellationToken.None);
@@ -464,6 +479,7 @@ public class Adr022Tanda3Tests
         context.Customers.Add(customer);
         context.Reservas.Add(new Reserva { Id = 1, NumeroReserva = "F-1", Name = "R1", PayerId = 1, Status = EstadoReserva.Confirmed, Balance = 300m });
         context.ReservaMoneyByCurrency.Add(new ReservaMoneyByCurrency { ReservaId = 1, Currency = "ARS", Balance = 300m, ConfirmedSale = 300m });
+        AddApprovedInvoice(context, 1, 300m);
         await context.SaveChangesAsync();
 
         var overview = await new CustomerService(context, new FinancePositionService(context)).GetCustomerAccountOverviewAsync(1, CancellationToken.None);

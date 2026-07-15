@@ -43,6 +43,11 @@ public interface ISupplierService
     /// CommissionOnly / soft-deleted). Los montos respetan el masking see_cost.
     /// </summary>
     Task<SupplierAccountStatementDto> GetSupplierAccountStatementAsync(int id, CancellationToken cancellationToken);
+    Task<IReadOnlyList<SupplierInvoiceDto>> GetSupplierInvoicesAsync(int id, CancellationToken cancellationToken);
+    Task<SupplierInvoiceDto> CreateSupplierInvoiceAsync(int id, SupplierInvoiceCreateRequest request, CancellationToken cancellationToken);
+    Task<SupplierInvoiceDto> ApplySupplierPaymentToInvoiceAsync(int id, Guid invoicePublicId, SupplierInvoicePaymentApplicationRequest request, CancellationToken cancellationToken);
+    Task<SupplierInvoiceDto> ReverseSupplierInvoicePaymentApplicationAsync(int id, Guid invoicePublicId, Guid applicationPublicId, string reason, CancellationToken cancellationToken);
+    Task<SupplierInvoiceDto> VoidSupplierInvoiceAsync(int id, Guid invoicePublicId, string reason, CancellationToken cancellationToken);
 }
 
 /// <summary>

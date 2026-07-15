@@ -193,6 +193,10 @@ public class ReservasController : ControllerBase
     {
         try
         {
+            if (!string.IsNullOrWhiteSpace(request.SourceLeadPublicId))
+            {
+                return BadRequest(new { message = "Creá el presupuesto desde Posibles clientes." });
+            }
             var createdByUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
             var reserva = await _reservaService.CreateReservaAsync(request, createdByUserId, cancellationToken);
             return CreatedAtAction(nameof(GetReserva), new { publicIdOrLegacyId = reserva.PublicId }, reserva);

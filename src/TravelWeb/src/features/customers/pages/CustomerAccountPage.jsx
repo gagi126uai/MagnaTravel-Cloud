@@ -229,11 +229,11 @@ export default function CustomerAccountPage() {
   const debouncedSearch = useDebounce(searchTerm, 300);
 
   // ── Opciones de reservas para el modal de cobro ──────────────────────────
-  const [reservaOptions, setReservaOptions] = useState([]);
 
   // ── Modal de cobro (CustomerPaymentModal) ────────────────────────────────
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [paymentToEdit, setPaymentToEdit] = useState(null);
+  const [paymentContext, setPaymentContext] = useState(null);
 
   // ── Estado de cuenta (extracto libro mayor, GET .../account/statement) ────
   // Se levanta acá (no dentro de EstadoCuentaClienteTab) porque las tarjetas
@@ -270,18 +270,6 @@ export default function CustomerAccountPage() {
       showError("No se pudo cargar la cuenta corriente.");
     } finally {
       setLoadingOverview(false);
-    }
-  }, [publicId]);
-
-  const loadReservaOptions = useCallback(async () => {
-    try {
-      const response = await api.get(
-        `/customers/${publicId}/account/reservas?page=1&pageSize=100&sortBy=createdAt&sortDir=desc`
-      );
-      setReservaOptions(response?.items || []);
-    } catch (error) {
-      setReservaOptions([]);
-      setDatabaseUnavailable(isDatabaseUnavailableError(error));
     }
   }, [publicId]);
 
@@ -364,11 +352,10 @@ export default function CustomerAccountPage() {
     setExtractoRefreshKey((prev) => prev + 1);
     await Promise.all([
       loadOverview(),
-      loadReservaOptions(),
       loadCreditApplications(),
       loadDeudaClientePorReserva(),
     ]);
-  }, [loadOverview, loadReservaOptions, loadCreditApplications, loadDeudaClientePorReserva]);
+  }, [loadOverview, loadCreditApplications, loadDeudaClientePorReserva]);
 
   // ── Effects de carga ──────────────────────────────────────────────────────
 
@@ -383,10 +370,9 @@ export default function CustomerAccountPage() {
   // Carga inicial del encabezado y datos auxiliares
   useEffect(() => {
     loadOverview();
-    loadReservaOptions();
     loadCreditApplications();
     loadDeudaClientePorReserva();
-  }, [loadOverview, loadReservaOptions, loadCreditApplications, loadDeudaClientePorReserva]);
+  }, [loadOverview, loadCreditApplications, loadDeudaClientePorReserva]);
 
   // Carga el extracto (Estado de cuenta) al montar, cuando cambia el cliente,
   // y cada vez que extractoRefreshKey sube (refreshAll lo incrementa tras un cobro).
@@ -410,8 +396,9 @@ export default function CustomerAccountPage() {
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
-  const handleOpenModal = (payment = null) => {
+  const handleOpenModal = (payment = null, context = null) => {
     setPaymentToEdit(payment);
+    setPaymentContext(context);
     setIsModalOpen(true);
   };
 
@@ -486,10 +473,7 @@ export default function CustomerAccountPage() {
   const reservas = reservasPage.items || [];
 
   // Reservas sin cancelar: para el picker del modal de cobro
-  const availableReservas = useMemo(
-    () => reservaOptions.filter((r) => r.status !== "Cancelled"),
-    [reservaOptions]
-  );
+  const availableReservas = deudaClientePorReserva || [];
 
   // "Ventas" y "Cobrado" por moneda para las tarjetas del encabezado.
   //
@@ -513,7 +497,9 @@ export default function CustomerAccountPage() {
     const bloques = estadoCuenta?.currencies ?? [];
     return bloques.map((bloque) => ({
       currency: bloque.currency,
-      amount: (bloque.lines ?? []).reduce((acc, linea) => acc + (linea.credit ?? 0), 0),
+      amount: (bloque.lines ?? [])
+        .filter((linea) => linea.kind === "Payment")
+        .reduce((acc, linea) => acc + (linea.credit ?? 0), 0),
     }));
   }, [estadoCuenta]);
 
@@ -560,16 +546,16 @@ export default function CustomerAccountPage() {
           </div>
         </div>
 
-        {/* Nueva cotización: acción rápida independiente del cobro */}
+        {/* La propuesta nueva nace en el circuito único Reserva-Presupuesto. */}
         <Button
           type="button"
           variant="outline"
-          onClick={() => navigate(`/quotes?create=1&customerPublicId=${publicId}`)}
+          onClick={() => navigate(`/reservas?create=1&customerPublicId=${publicId}`)}
           className="gap-2 border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800 dark:border-indigo-800 dark:text-indigo-300 dark:hover:bg-indigo-900/20"
           disabled={databaseUnavailable}
         >
           <Receipt className="h-4 w-4" />
-          Nueva cotización
+          Nuevo presupuesto
         </Button>
       </div>
 
@@ -608,7 +594,7 @@ export default function CustomerAccountPage() {
           */}
           <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-950/60">
-              <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">Ventas</div>
+              <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">Documentado</div>
               {loadingEstadoCuenta ? (
                 <div className="mt-1 text-lg font-bold text-slate-400">…</div>
               ) : ventasPorMoneda.length === 0 ? (
@@ -640,7 +626,7 @@ export default function CustomerAccountPage() {
               <div className="mt-1 text-lg font-bold text-slate-900 dark:text-white">{summary.reservaCount || 0}</div>
             </div>
             <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-950/60">
-              <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">Facturas</div>
+              <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">Comprobantes</div>
               <div className="mt-1 text-lg font-bold text-slate-900 dark:text-white">{summary.invoiceCount || 0}</div>
             </div>
           </div>
@@ -684,7 +670,15 @@ export default function CustomerAccountPage() {
         Se dibuja solo cuando hay al menos una multa pendiente (el componente decide
         eso solo, leyendo overview.pendingPenalties — nunca se recalcula acá).
       */}
-      <MultaPendienteDeCobroBlock pendingPenalties={overview?.pendingPenalties} />
+      <MultaPendienteDeCobroBlock
+        pendingPenalties={overview?.pendingPenalties}
+        canCobrar={hasPermission("cobranzas.edit")}
+        onCobrar={(item) => handleOpenModal(null, {
+          reservaPublicId: item.reservaPublicId,
+          linkedInvoicePublicId: item.debitNotePublicId,
+          imputedCurrency: item.currency,
+        })}
+      />
 
       {/*
         ── Carteles "A FAVOR" por moneda ───────────────────────────────────────
@@ -741,6 +735,28 @@ export default function CustomerAccountPage() {
                   />
                 </div>
               )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {Array.isArray(summary.unappliedCreditByCurrency) && summary.unappliedCreditByCurrency.length > 0 && (
+        <div className="flex flex-col gap-3">
+          {summary.unappliedCreditByCurrency.map((entry) => (
+            <div
+              key={entry.currency}
+              className="rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 dark:border-amber-900/40 dark:bg-amber-950/20"
+              data-testid={`credito-no-aplicado-${entry.currency}`}
+            >
+              <div className="text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+                CRÉDITO NO APLICADO EN {entry.currency === "USD" ? "US$" : "$"}
+              </div>
+              <div className="mt-0.5 text-2xl font-bold text-amber-700 dark:text-amber-400">
+                {formatCurrency(entry.amount, entry.currency)}
+              </div>
+              <div className="mt-1 text-xs text-amber-700/80 dark:text-amber-500">
+                No reduce otras reservas hasta que se aplique expresamente.
+              </div>
             </div>
           ))}
         </div>
@@ -1109,10 +1125,13 @@ export default function CustomerAccountPage() {
       */}
       <CustomerPaymentModal
         isOpen={isModalOpen}
-        onClose={() => { setIsModalOpen(false); setPaymentToEdit(null); }}
+        onClose={() => { setIsModalOpen(false); setPaymentToEdit(null); setPaymentContext(null); }}
         paymentToEdit={paymentToEdit}
         customerId={publicId}
         availableReservas={availableReservas}
+        initialReservaPublicId={paymentContext?.reservaPublicId}
+        initialLinkedInvoicePublicId={paymentContext?.linkedInvoicePublicId}
+        initialImputedCurrency={paymentContext?.imputedCurrency}
         onSave={refreshAll}
       />
     </div>

@@ -62,6 +62,12 @@ public class AlertServiceCallerGatingTests
             CurrentBalance = 500m,
             IsActive = true
         });
+        context.SupplierBalanceByCurrency.Add(new SupplierBalanceByCurrency
+        {
+            SupplierId = 1,
+            Currency = "ARS",
+            Balance = 500m
+        });
         await context.SaveChangesAsync();
         return context;
     }

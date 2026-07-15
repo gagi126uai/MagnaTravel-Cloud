@@ -30,7 +30,7 @@ import { textoQueFalta, textoTiempoRelativo } from "../debitNoteInboxLogic.js";
  */
 export function textoQueFaltaNotaCredito(status) {
   if (status === "RequiresManualReview") return "Falta que alguien la revise";
-  return "Falta revisar y emitir la devolución";
+  return "Falta confirmar y emitir la devolución";
 }
 
 /**
@@ -54,7 +54,7 @@ export function fusionarComprobantesPorResolver(itemsMultas, itemsNotasCredito) 
 
   const filasNotasCredito = (Array.isArray(itemsNotasCredito) ? itemsNotasCredito : []).map((row) => ({
     key: `nc-${row.bookingCancellationPublicId}`,
-    comprobante: "Devolución (NC)",
+    comprobante: "DEVOLUCIÓN · SERVICIO CANCELADO",
     reservaPublicId: row.reservaPublicId ?? null,
     reservaNumero: row.reservaNumero,
     queFalta: textoQueFaltaNotaCredito(row.status),

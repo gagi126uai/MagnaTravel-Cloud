@@ -88,7 +88,13 @@ public class SupplierServiceCostMaskingTests
     // TotalPurchases=100, TotalPaid=40, Balance=60, ServiceCount=1, PaymentCount=1.
     private static async Task<Supplier> SeedSupplierAccountAsync(AppDbContext context)
     {
-        var supplier = new Supplier { Name = "Mayorista cuenta", CurrentBalance = 500m };
+        var supplier = new Supplier
+        {
+            Name = "Mayorista cuenta",
+            CurrentBalance = 500m,
+            TaxId = "30-12345678-9",
+            TaxCondition = "IVA_RESP_INSCRIPTO"
+        };
         var reserva = new Reserva
         {
             NumeroReserva = "F-2026-MASK",

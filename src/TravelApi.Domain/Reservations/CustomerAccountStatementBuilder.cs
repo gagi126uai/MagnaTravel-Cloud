@@ -17,8 +17,23 @@ public static class CustomerAccountStatementLineKinds
     /// </summary>
     public const string Sale = "Sale";
 
+    /// <summary>Factura fiscal aprobada: open item documentado que aumenta la cuenta por cobrar.</summary>
+    public const string Invoice = "Invoice";
+
+    /// <summary>Nota de debito fiscal aprobada: open item documentado que aumenta la cuenta por cobrar.</summary>
+    public const string DebitNote = "DebitNote";
+
+    /// <summary>Nota de credito fiscal aprobada: documento que reduce la cuenta por cobrar.</summary>
+    public const string CreditNote = "CreditNote";
+
     /// <summary>Cobro imputado a la deuda del cliente: RESTA de lo que debe (abono).</summary>
     public const string Payment = "Payment";
+
+    /// <summary>
+    /// Compensacion explicita que reduce deuda sin ingreso de caja (por ejemplo, saldo a favor aplicado).
+    /// Se separa de Payment para que "Cobrado" mida exclusivamente dinero real.
+    /// </summary>
+    public const string CreditApplication = "CreditApplication";
 }
 
 /// <summary>
@@ -88,14 +103,22 @@ public sealed class CustomerAccountStatementCurrencyBlock
     /// </summary>
     public decimal ClosingBalance { get; }
 
+    /// <summary>
+    /// Creditos que quedaron sin aplicar en esta moneda. Se calcula por reserva y se expone separado del
+    /// <see cref="ClosingBalance"/>: nunca compensa automaticamente la deuda de otro expediente.
+    /// </summary>
+    public decimal UnappliedCredit { get; }
+
     public CustomerAccountStatementCurrencyBlock(
         string currency,
         IReadOnlyList<CustomerAccountStatementResultLine> lines,
-        decimal closingBalance)
+        decimal closingBalance,
+        decimal unappliedCredit)
     {
         Currency = currency;
         Lines = lines;
         ClosingBalance = closingBalance;
+        UnappliedCredit = unappliedCredit;
     }
 }
 
@@ -182,14 +205,17 @@ public static class CustomerAccountStatementBuilder
         var ordered = inputLines.OrderBy(line => line.Date).ToList();
 
         var resultLines = new List<CustomerAccountStatementResultLine>(ordered.Count);
-        decimal runningBalance = 0m; // saldo de apertura = 0
+        // El saldo corriente es por reserva. Un abono de R-B no puede disminuir el saldo mostrado de R-A.
+        var runningByReserva = new Dictionary<Guid, decimal>();
 
         foreach (var line in ordered)
         {
             // Cargo suma a la deuda del cliente; abono la resta. Una linea trae uno u otro (el otro en 0); el
             // cobro puente de sobrepago trae Credit negativo, lo que devuelve saldo (correcto: saco el excedente).
+            var runningBalance = runningByReserva.GetValueOrDefault(line.ReservaPublicId);
             runningBalance += line.Charge;
             runningBalance -= line.Credit;
+            runningByReserva[line.ReservaPublicId] = runningBalance;
 
             resultLines.Add(new CustomerAccountStatementResultLine(
                 Date: line.Date,
@@ -205,7 +231,10 @@ public static class CustomerAccountStatementBuilder
                 SourcePublicId: line.SourcePublicId));
         }
 
-        decimal closingBalance = resultLines.Count > 0 ? resultLines[^1].RunningBalance : 0m;
-        return new CustomerAccountStatementCurrencyBlock(currency, resultLines, closingBalance);
+        // Open-item principle: el Debe suma solo saldos positivos por reserva. Los negativos quedan visibles
+        // como credito no aplicado y requieren una aplicacion explicita para cancelar otra deuda.
+        decimal closingBalance = runningByReserva.Values.Where(balance => balance > 0m).Sum();
+        decimal unappliedCredit = -runningByReserva.Values.Where(balance => balance < 0m).Sum();
+        return new CustomerAccountStatementCurrencyBlock(currency, resultLines, closingBalance, unappliedCredit);
     }
 }

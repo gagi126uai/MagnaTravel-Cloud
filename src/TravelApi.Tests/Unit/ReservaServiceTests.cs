@@ -78,8 +78,7 @@ public class ReservaServiceTests
 
         Assert.NotNull(result);
         Assert.Equal("Test Trip", result.Name);
-        // ADR-020: toda reserva nace en Cotizacion (antes nacia en Presupuesto).
-        Assert.Equal(EstadoReserva.Quotation, result.Status);
+        Assert.Equal(EstadoReserva.Budget, result.Status);
         Assert.StartsWith($"F-{DateTime.Now.Year}-", result.NumeroReserva);
         Assert.Equal(1, await context.Reservas.CountAsync());
     }

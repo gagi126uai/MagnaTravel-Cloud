@@ -83,7 +83,8 @@ public static class ReservaStatusTransitions
     public static readonly IReadOnlyDictionary<string, string[]> Revert =
         new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
         {
-            [EstadoReserva.Budget] = new[] { EstadoReserva.Quotation },
+            // Quotation quedó como estado histórico: una reserva vigente no puede volver al circuito legacy.
+            [EstadoReserva.Budget] = Array.Empty<string>(),
             [EstadoReserva.InManagement] = new[] { EstadoReserva.Budget },
             [EstadoReserva.Lost] = new[] { EstadoReserva.Quotation, EstadoReserva.Budget },
             // ADR-036: Traveling NO tiene revert (en viaje es inmutable). La fila [Traveling] = { Confirmed } se
