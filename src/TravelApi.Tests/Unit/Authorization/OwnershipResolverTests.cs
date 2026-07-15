@@ -106,6 +106,49 @@ public class OwnershipResolverTests
     }
 
     [Fact]
+    public async Task Lead_owner_match_uses_assigned_user()
+    {
+        await using var ctx = BuildContext();
+        var lead = new Lead { FullName = "Consulta", AssignedToUserId = "user-1" };
+        ctx.Leads.Add(lead);
+        await ctx.SaveChangesAsync();
+        var resolver = new OwnershipResolver(ctx);
+
+        Assert.True(await resolver.IsOwnerAsync("user-1", OwnedEntity.Lead, lead.PublicId.ToString()));
+        Assert.False(await resolver.IsOwnerAsync("user-2", OwnedEntity.Lead, lead.PublicId.ToString()));
+    }
+
+    [Fact]
+    public async Task Lead_without_assignment_fails_closed()
+    {
+        await using var ctx = BuildContext();
+        var lead = new Lead { FullName = "Consulta", AssignedToUserId = null };
+        ctx.Leads.Add(lead);
+        await ctx.SaveChangesAsync();
+        var resolver = new OwnershipResolver(ctx);
+
+        Assert.False(await resolver.IsOwnerAsync("user-1", OwnedEntity.Lead, lead.PublicId.ToString()));
+    }
+
+    [Fact]
+    public async Task Quote_owner_is_inherited_from_assigned_lead()
+    {
+        await using var ctx = BuildContext();
+        var quote = new Quote
+        {
+            QuoteNumber = "HIST-1",
+            Title = "Histórica",
+            Lead = new Lead { FullName = "Consulta", AssignedToUserId = "user-1" }
+        };
+        ctx.Quotes.Add(quote);
+        await ctx.SaveChangesAsync();
+        var resolver = new OwnershipResolver(ctx);
+
+        Assert.True(await resolver.IsOwnerAsync("user-1", OwnedEntity.Quote, quote.PublicId.ToString()));
+        Assert.False(await resolver.IsOwnerAsync("user-2", OwnedEntity.Quote, quote.PublicId.ToString()));
+    }
+
+    [Fact]
     public async Task Servicio_resolves_via_parent_reserva()
     {
         await using var ctx = BuildContext();

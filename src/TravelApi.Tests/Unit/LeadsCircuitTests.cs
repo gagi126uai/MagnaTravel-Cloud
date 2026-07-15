@@ -77,7 +77,7 @@ public class LeadsCircuitTests
     {
         // Decision del dueño (auditoria ERP 2026-06-13): crear la reserva desde un lead solo LINKEA. El lead
         // se gana recien cuando la reserva linkeada llega a un estado EN FIRME (el cliente acepta el
-        // presupuesto). Al nacer en Cotizacion, el lead debe conservar su estado actual.
+        // presupuesto). Al nacer en Presupuesto, el lead debe conservar su estado actual.
         await using var ctx = NewContext();
         var lead = new Lead { FullName = "Ana", Phone = "1122334455", Status = LeadStatus.Contacted };
         ctx.Leads.Add(lead);
@@ -90,11 +90,54 @@ public class LeadsCircuitTests
 
         var reserva = await ctx.Reservas.FirstAsync(r => r.PublicId == dto.PublicId);
         Assert.Equal(lead.Id, reserva.SourceLeadId);     // se linkea
-        Assert.Equal(EstadoReserva.Quotation, reserva.Status); // nace en Cotizacion (no en firme)
+        Assert.Equal(EstadoReserva.Budget, reserva.Status); // nace en Presupuesto (no en firme)
 
         var refreshedLead = await ctx.Leads.FindAsync(lead.Id);
         Assert.Equal(LeadStatus.Contacted, refreshedLead!.Status); // NO se marca Ganado al crear
         Assert.Null(refreshedLead.ClosedAt);
+    }
+
+    [Fact]
+    public async Task CreateReserva_WithConvertedLead_UsesCustomerAsPayer()
+    {
+        await using var ctx = NewContext();
+        var customer = new Customer { FullName = "Ana Cliente" };
+        var lead = new Lead
+        {
+            FullName = "Ana",
+            Status = LeadStatus.Contacted,
+            ConvertedCustomer = customer
+        };
+        ctx.Leads.Add(lead);
+        await ctx.SaveChangesAsync();
+
+        var service = NewReservaService(ctx);
+        var result = await service.CreateReservaAsync(new CreateReservaRequest
+        {
+            SourceLeadPublicId = lead.PublicId.ToString()
+        }, createdByUserId: null, CancellationToken.None);
+
+        var reserva = await ctx.Reservas.SingleAsync(r => r.PublicId == result.PublicId);
+        Assert.Equal(customer.Id, reserva.PayerId);
+        Assert.Equal(lead.Id, reserva.SourceLeadId);
+    }
+
+    [Fact]
+    public async Task CreateReserva_WithSameLeadTwice_ReturnsExistingBudget()
+    {
+        await using var ctx = NewContext();
+        var lead = new Lead { FullName = "Ana", Status = LeadStatus.Contacted };
+        ctx.Leads.Add(lead);
+        await ctx.SaveChangesAsync();
+
+        var service = NewReservaService(ctx);
+        var request = new CreateReservaRequest { SourceLeadPublicId = lead.PublicId.ToString() };
+
+        var first = await service.CreateReservaAsync(request, createdByUserId: null, CancellationToken.None);
+        var second = await service.CreateReservaAsync(request, createdByUserId: null, CancellationToken.None);
+
+        Assert.Equal(first.PublicId, second.PublicId);
+        Assert.Equal(1, await ctx.Reservas.CountAsync(r => r.SourceLeadId == lead.Id));
     }
 
     [Fact]

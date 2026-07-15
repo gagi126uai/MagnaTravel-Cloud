@@ -68,6 +68,19 @@ public class CustomerDebtByReservaTests
             Balance = balance,
             ConfirmedSale = balance
         });
+        if (balance > 0m)
+        {
+            context.Invoices.Add(new Invoice
+            {
+                ReservaId = reservaId,
+                TipoComprobante = 11,
+                PuntoDeVenta = 1,
+                NumeroComprobante = reservaId,
+                Resultado = "A",
+                ImporteTotal = balance,
+                MonId = currency == "USD" ? "DOL" : "PES"
+            });
+        }
     }
 
     [Fact]
@@ -168,8 +181,7 @@ public class CustomerDebtByReservaTests
         var cotizacion = await AddReservaAsync(context, customer.Id, "R-301", EstadoReserva.Quotation);
         var cancelada = await AddReservaAsync(context, customer.Id, "R-302", EstadoReserva.Cancelled);
         AddBalance(context, firme.Id, "ARS", 400m);
-        AddBalance(context, cotizacion.Id, "ARS", 400m);
-        AddBalance(context, cancelada.Id, "ARS", 400m);
+        // Sin comprobante aprobado no son open items, independientemente del estado operativo.
         await context.SaveChangesAsync();
 
         var result = await CreateService(context).GetCustomerDebtByReservaAsync(customer.Id, CancellationToken.None);

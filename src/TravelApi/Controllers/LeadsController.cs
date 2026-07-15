@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
+using TravelApi.Application.Contracts.Files;
 using TravelApi.Application.Contracts.Leads;
 using TravelApi.Application.Contracts.Shared;
 using TravelApi.Application.DTOs;
@@ -15,10 +17,12 @@ namespace TravelApi.Controllers;
 public class LeadsController : ControllerBase
 {
     private readonly ILeadService _leadService;
+    private readonly IReservaService _reservaService;
 
-    public LeadsController(ILeadService leadService)
+    public LeadsController(ILeadService leadService, IReservaService reservaService)
     {
         _leadService = leadService;
+        _reservaService = reservaService;
     }
 
     // ADR-023 T3.3: los permisos crm.view/crm.edit ya existian y se sembraban, pero ningun
@@ -110,6 +114,22 @@ public class LeadsController : ControllerBase
         {
             message = "Las cotizaciones quedaron discontinuadas. Crear una Reserva en estado Presupuesto desde el modulo de Reservas."
         });
+    }
+
+    [HttpPost("{publicIdOrLegacyId}/budget")]
+    [RequirePermission(Permissions.CrmEdit)]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Lead, bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<ActionResult<ReservaDto>> CreateBudget(
+        string publicIdOrLegacyId,
+        CancellationToken cancellationToken)
+    {
+        var createdByUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        var reserva = await _reservaService.CreateReservaAsync(new CreateReservaRequest
+        {
+            SourceLeadPublicId = publicIdOrLegacyId
+        }, createdByUserId, cancellationToken);
+        return Ok(reserva);
     }
 
     [HttpGet("{publicIdOrLegacyId}/journey")]

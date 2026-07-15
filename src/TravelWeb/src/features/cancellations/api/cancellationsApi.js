@@ -178,6 +178,25 @@ export const cancellationsApi = {
     api.get(`/cancellations/by-reserva/${reservaPublicId}`),
 
   /**
+   * ADR-044 T5: confirma la emision fiscal de la devolucion parcial ya congelada.
+   * Es idempotente del lado del backend y devuelve el BookingCancellation actualizado.
+   */
+  emitPartialCreditNote: (publicId) =>
+    api.post(`/cancellations/${publicId}/emit-partial-credit-note`),
+
+  /** T5 legacy: fija factura y monto de una única devolución parcial ambigua, sin emitirla. */
+  resolvePartialCreditNote: (publicId, targetInvoicePublicId, confirmedGrossCreditAmount, reason) =>
+    api.patch(`/cancellations/${publicId}/resolve-partial-credit-note`, {
+      targetInvoicePublicId,
+      confirmedGrossCreditAmount,
+      reason,
+    }),
+
+  /** Envía la NC T5 ya aprobada; documento y destinatario se derivan en el backend. */
+  sendPartialCreditNote: (publicId) =>
+    api.post(`/fiscal-documents/cancellations/${publicId}/partial-credit-note/send`),
+
+  /**
    * 2026-06-28: cierra el paso de multa del operador SIN emitir nota de débito.
    * Se usa cuando el operador NO cobró ninguna penalidad por la anulación.
    *

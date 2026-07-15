@@ -1312,6 +1312,7 @@ public class ClientCreditService : IClientCreditService
 
     public async Task<ClientCreditOverviewDto> GetCustomerCreditAsync(int customerId, CancellationToken ct)
     {
+        var ownerScope = await GetTargetReservaOwnerScopeOrNullAsync(ct);
         var customer = await _db.Customers
             .AsNoTracking()
             .Where(c => c.Id == customerId)
@@ -1320,9 +1321,18 @@ public class ClientCreditService : IClientCreditService
             ?? throw new KeyNotFoundException("Cliente no encontrado");
 
         // Solo bolsillos con saldo disponible (RemainingBalance > 0): es lo que se puede aplicar.
-        var entries = await _db.ClientCreditEntries
+        var entriesQuery = _db.ClientCreditEntries
             .AsNoTracking()
-            .Where(e => e.CustomerId == customerId && e.RemainingBalance > 0m)
+            .Where(e => e.CustomerId == customerId && e.RemainingBalance > 0m);
+        if (ownerScope is not null)
+        {
+            entriesQuery = entriesQuery.Where(e =>
+                (e.SourceReserva != null && e.SourceReserva.ResponsibleUserId == ownerScope)
+                || (e.BookingCancellation != null && e.BookingCancellation.Reserva.ResponsibleUserId == ownerScope)
+                || (e.SourceDebitNoteAnnulment != null
+                    && e.SourceDebitNoteAnnulment.BookingCancellation.Reserva.ResponsibleUserId == ownerScope));
+        }
+        var entries = await entriesQuery
             .Select(e => new { e.PublicId, e.Currency, e.CreditedAmount, e.RemainingBalance, e.CreatedAt })
             .ToListAsync(ct);
 
@@ -1362,13 +1372,25 @@ public class ClientCreditService : IClientCreditService
         // Por INV-093 la reserva destino siempre es del MISMO cliente, asi que el titular es el propio cliente.
         // El front muestra estas filas en el extracto con un boton "Revertir" por cada una (revierte por su
         // ApplicationPublicId). Asi un apply que drenó N bolsillos queda como N filas independientes.
-        var applicationRows = await _db.Payments
+        var applicationQuery = _db.Payments
             .AsNoTracking()
             .Where(p => p.Method == AppliedCreditBridge.BridgeMethod
                      && !p.AffectsCash
                      && !p.IsDeleted
                      && p.AppliedFromCreditWithdrawalId != null
-                     && p.AppliedFromCreditWithdrawal!.Entry.CustomerId == customerId)
+                     && p.AppliedFromCreditWithdrawal!.Entry.CustomerId == customerId);
+        if (ownerScope is not null)
+        {
+            applicationQuery = applicationQuery.Where(p =>
+                p.Reserva != null && p.Reserva.ResponsibleUserId == ownerScope
+                && ((p.AppliedFromCreditWithdrawal!.Entry.SourceReserva != null
+                        && p.AppliedFromCreditWithdrawal.Entry.SourceReserva.ResponsibleUserId == ownerScope)
+                    || (p.AppliedFromCreditWithdrawal.Entry.BookingCancellation != null
+                        && p.AppliedFromCreditWithdrawal.Entry.BookingCancellation.Reserva.ResponsibleUserId == ownerScope)
+                    || (p.AppliedFromCreditWithdrawal.Entry.SourceDebitNoteAnnulment != null
+                        && p.AppliedFromCreditWithdrawal.Entry.SourceDebitNoteAnnulment.BookingCancellation.Reserva.ResponsibleUserId == ownerScope)));
+        }
+        var applicationRows = await applicationQuery
             .Select(p => new
             {
                 ApplicationPublicId = p.AppliedFromCreditWithdrawal!.PublicId,

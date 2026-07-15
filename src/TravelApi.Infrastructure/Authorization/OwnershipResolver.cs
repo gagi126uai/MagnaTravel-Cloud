@@ -54,6 +54,8 @@ public sealed class OwnershipResolver : IOwnershipResolver
             OwnedEntity.Voucher => await ResolveVoucherResponsibleAsync(publicId, legacyId, cancellationToken),
             OwnedEntity.Passenger => await ResolvePassengerResponsibleAsync(publicId, legacyId, cancellationToken),
             OwnedEntity.Assignment => await ResolveAssignmentResponsibleAsync(publicId, legacyId, cancellationToken),
+            OwnedEntity.Lead => await ResolveLeadResponsibleAsync(publicId, legacyId, cancellationToken),
+            OwnedEntity.Quote => await ResolveQuoteResponsibleAsync(publicId, legacyId, cancellationToken),
             // FC1.2.0 v3 (2026-05-17): nuevas entidades del modulo de cancelacion/refund.
             OwnedEntity.BookingCancellation => await ResolveBookingCancellationResponsibleAsync(publicId, legacyId, cancellationToken),
             OwnedEntity.ClientCreditEntry => await ResolveClientCreditEntryResponsibleAsync(publicId, legacyId, cancellationToken),
@@ -101,6 +103,27 @@ public sealed class OwnershipResolver : IOwnershipResolver
             query = query.Where(r => r.Id == legacyId!.Value);
         }
         return query.Select(r => r.ResponsibleUserId).FirstOrDefaultAsync(ct);
+    }
+
+    private Task<string?> ResolveLeadResponsibleAsync(Guid? publicId, int? legacyId, CancellationToken ct)
+    {
+        var query = _dbContext.Leads.AsNoTracking().AsQueryable();
+        query = publicId.HasValue
+            ? query.Where(lead => lead.PublicId == publicId.Value)
+            : query.Where(lead => lead.Id == legacyId!.Value);
+        return query.Select(lead => lead.AssignedToUserId).FirstOrDefaultAsync(ct);
+    }
+
+    private Task<string?> ResolveQuoteResponsibleAsync(Guid? publicId, int? legacyId, CancellationToken ct)
+    {
+        var query = _dbContext.Quotes.AsNoTracking().AsQueryable();
+        query = publicId.HasValue
+            ? query.Where(quote => quote.PublicId == publicId.Value)
+            : query.Where(quote => quote.Id == legacyId!.Value);
+        return query.Select(quote => quote.Lead != null
+            ? quote.Lead.AssignedToUserId
+            : quote.ConvertedReserva != null ? quote.ConvertedReserva.ResponsibleUserId : null)
+            .FirstOrDefaultAsync(ct);
     }
 
     private Task<string?> ResolveServicioResponsibleAsync(Guid? publicId, int? legacyId, CancellationToken ct)

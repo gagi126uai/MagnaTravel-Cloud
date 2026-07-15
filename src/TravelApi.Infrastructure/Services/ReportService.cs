@@ -763,22 +763,27 @@ public class ReportService : IReportService
         {
             var payableSheet = workbook.Worksheets.Add("Cuentas por Pagar");
             payableSheet.Cell(1, 1).Value = "Proveedor";
-            payableSheet.Cell(1, 2).Value = "Saldo a Favor";
+            payableSheet.Cell(1, 2).Value = "Moneda";
+            payableSheet.Cell(1, 3).Value = "Saldo pendiente";
 
-            var creditors = await _dbContext.Suppliers
-                .Where(s => s.CurrentBalance > 0)
-                .OrderByDescending(s => s.CurrentBalance)
+            var creditors = await (
+                from balance in _dbContext.SupplierBalanceByCurrency
+                join supplier in _dbContext.Suppliers on balance.SupplierId equals supplier.Id
+                where balance.Balance > 0
+                orderby balance.Balance descending
+                select new { supplier.Name, balance.Currency, balance.Balance })
                 .ToListAsync(cancellationToken);
 
             int row = 2;
             foreach (var creditor in creditors)
             {
                 payableSheet.Cell(row, 1).Value = creditor.Name;
-                payableSheet.Cell(row, 2).Value = creditor.CurrentBalance;
+                payableSheet.Cell(row, 2).Value = Monedas.Normalizar(creditor.Currency);
+                payableSheet.Cell(row, 3).Value = creditor.Balance;
                 row++;
             }
 
-            payableSheet.Range(2, 2, row - 1, 2).Style.NumberFormat.Format = "$ #,##0.00";
+            payableSheet.Range(2, 3, row - 1, 3).Style.NumberFormat.Format = "#,##0.00";
             payableSheet.Columns().AdjustToContents();
         }
 

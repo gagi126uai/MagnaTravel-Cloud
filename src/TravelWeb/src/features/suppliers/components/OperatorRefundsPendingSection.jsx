@@ -468,7 +468,7 @@ export function OperatorRefundsPendingSection({ supplierPublicId = null, showSup
   // caja.edit es el permiso para reabrir cancelaciones (endpoint reopen-for-late-refund).
   const puedeReabrir = hasPermission("caja.edit");
 
-  const { items, loading, error, reload } = useOperatorRefundsPending(supplierPublicId);
+  const { items, loading, error, reload } = useOperatorRefundsPending(supplierPublicId, puedeVer);
 
   if (!puedeVer) {
     return null;

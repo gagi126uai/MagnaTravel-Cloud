@@ -59,11 +59,11 @@ export default function CustomersPage() {
             <Button
               type="button"
               variant="outline"
-              onClick={() => navigate("/quotes?create=1")}
+              onClick={() => navigate("/reservas?create=1")}
               className="gap-2 border-indigo-200 text-indigo-700 hover:bg-indigo-50 hover:text-indigo-800 dark:border-indigo-900/60 dark:bg-slate-900 dark:text-indigo-300 dark:hover:bg-indigo-900/20"
             >
               <Plus className="h-4 w-4" />
-              Nueva cotizacion
+              Nuevo presupuesto
             </Button>
             <Button
               onClick={() => handleOpenModal()}

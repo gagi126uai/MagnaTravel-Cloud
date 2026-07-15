@@ -27,6 +27,7 @@ import {
     X
 } from "lucide-react";
 import { api } from "../api";
+import { hasPermission } from "../auth";
 import { showConfirm, showError, showSuccess } from "../alerts";
 import { PaginationFooter } from "../components/ui/PaginationFooter";
 import { MobileRecordCard, MobileRecordList } from "../components/ui/MobileRecordCard";
@@ -247,14 +248,14 @@ export default function CRMPage() {
     const handleCreateQuoteDraft = async (id) => {
         try {
             setCreatingQuote(true);
-            const res = await api.post(`/leads/${id}/quote-draft`);
-            showSuccess(`Cotizacion lista: ${res.quoteNumber || "nueva"}`);
+            const res = await api.post(`/leads/${id}/budget`);
+            showSuccess("Presupuesto creado");
             setDetailLead(null);
             setDetailJourney(null);
             loadLeads();
-            navigate("/quotes", { state: { openQuoteId: res.quotePublicId } });
+            navigate(`/reservas/${getPublicId(res)}`);
         } catch (error) {
-            showError(error.message || "Error al crear cotizacion");
+            showError(error.message || "No se pudo crear el presupuesto");
         } finally {
             setCreatingQuote(false);
         }
@@ -379,7 +380,9 @@ export default function CRMPage() {
                                         // La misma condición que usa la ficha: no es estado cerrado.
                                         onCrearPresupuesto={
                                             !isClosedStatus(lead.status)
-                                                ? () => navigate("/reservas", { state: { newBudgetForLead: getPublicId(lead) } })
+                                                && hasPermission("crm.edit")
+                                                && hasPermission("reservas.edit")
+                                                ? () => handleCreateQuoteDraft(getPublicId(lead))
                                                 : null
                                         }
                                     />
@@ -604,7 +607,7 @@ function DetailModal({ detailLead, detailJourney, detailLoading, chatMessage, cr
                                 <JourneyGrid detailLead={detailLead} detailJourney={detailJourney} creatingQuote={creatingQuote} onCreateQuoteDraft={onCreateQuoteDraft} navigate={navigate} />
                                 <div className="flex flex-wrap items-center gap-3">
                                     {!getRelatedPublicId(detailLead, "convertedCustomerPublicId", "convertedCustomerId") && detailLead.status !== "Perdido" && <ActionBtnLg onClick={() => onConvert(getPublicId(detailLead))} bg="bg-indigo-600" text="Crear cliente" icon={User} />}
-                                    {!detailJourney?.latestQuotePublicId && !detailJourney?.latestReservaPublicId && detailLead.status !== "Perdido" && <ActionBtnLg onClick={() => navigate("/reservas", { state: { newBudgetForLead: getPublicId(detailLead) } })} bg="bg-violet-600" text="Crear presupuesto" icon={FileText} />}
+                                    {!detailJourney?.latestQuotePublicId && !detailJourney?.latestReservaPublicId && detailLead.status !== "Perdido" && hasPermission("crm.edit") && hasPermission("reservas.edit") && <ActionBtnLg onClick={() => onCreateQuoteDraft(getPublicId(detailLead))} bg="bg-violet-600" text="Crear presupuesto" icon={FileText} disabled={creatingQuote} />}
                                     {detailJourney?.latestQuotePublicId && <ActionBtnLg onClick={() => navigate("/quotes", { state: { openQuoteId: detailJourney.latestQuotePublicId } })} bg="bg-slate-900" text="Abrir cotizacion" icon={ArrowRight} />}
                                     {detailJourney?.latestReservaPublicId && <ActionBtnLg onClick={() => navigate(`/reservas/${detailJourney.latestReservaPublicId}`)} bg="bg-emerald-600" text="Abrir reserva" icon={ArrowRight} />}
                                 </div>

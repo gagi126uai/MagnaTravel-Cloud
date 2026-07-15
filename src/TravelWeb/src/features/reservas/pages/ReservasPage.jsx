@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Plus, Search, ChevronLeft, ChevronRight, Calendar } from "lucide-react";
 
 import { useReservas } from "../hooks/useReservas";
@@ -33,7 +33,7 @@ import { ReservaMobileList } from "../components/ReservaMobileList";
  * "archived"      → Archivadas
  */
 const TABS = [
-  { value: "quotation", label: "Cotizaciones" },
+  { value: "quotation", label: "Borradores anteriores" },
   { value: "budget", label: "Presupuestos" },
   { value: "in-management", label: "En gestion" },
   { value: "reserved", label: "Confirmadas" },
@@ -45,7 +45,17 @@ const TABS = [
 
 export default function ReservasPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [initialPayerId, setInitialPayerId] = useState("");
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get("create") !== "1") return;
+    setInitialPayerId(params.get("customerPublicId") || "");
+    setIsModalOpen(true);
+    navigate(location.pathname, { replace: true });
+  }, [location.pathname, location.search, navigate]);
 
   /**
    * Mapeo del valor de la tab al key correspondiente en tabCounts del hook.
@@ -113,8 +123,8 @@ export default function ReservasPage() {
         title="Reservas"
         subtitle="Administra tus reservas, presupuestos y ventas."
         actions={
-          <Button onClick={() => setIsModalOpen(true)} className="w-full shadow-sm sm:w-auto">
-            <Plus className="mr-2 h-4 w-4" /> Nueva Reserva
+          <Button onClick={() => { setInitialPayerId(""); setIsModalOpen(true); }} className="w-full shadow-sm sm:w-auto">
+            <Plus className="mr-2 h-4 w-4" /> Nuevo Presupuesto
           </Button>
         }
       />
@@ -269,10 +279,10 @@ export default function ReservasPage() {
 
       <CreateReservaModal
         isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
+        onClose={() => { setIsModalOpen(false); setInitialPayerId(""); }}
         onSuccess={handleCreateSuccess}
+        initialPayerId={initialPayerId}
       />
     </div>
   );
 }
-

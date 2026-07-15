@@ -464,7 +464,7 @@ export function useReservaDetail(reservaId, navigate) {
      *   Retornamos el objeto para que el llamador pueda actualizar el contador "N de M"
      *   sin hacer un fetch completo (los contadores vienen en el resultado).
      */
-    const handleCancelService = async (service, motivo = null) => {
+    const handleCancelService = async (service, motivo = null, creditSelection = null) => {
         // Mapeo de recordKind (front) → serviceTable (backend).
         // Verificado contra CancelServiceRequest del backend (CancellationDtos.cs).
         const RECORD_KIND_TO_SERVICE_TABLE = {
@@ -499,6 +499,12 @@ export function useReservaDetail(reservaId, navigate) {
                 serviceTable,
                 servicePublicId,
                 reason: motivoFinal,
+                ...(creditSelection?.targetInvoicePublicId
+                    ? { targetInvoicePublicId: creditSelection.targetInvoicePublicId }
+                    : {}),
+                ...(Number(creditSelection?.confirmedGrossCreditAmount) > 0
+                    ? { confirmedGrossCreditAmount: Number(creditSelection.confirmedGrossCreditAmount) }
+                    : {}),
             });
 
             // Recargamos la colección del tipo de servicio para que el workflowStatus

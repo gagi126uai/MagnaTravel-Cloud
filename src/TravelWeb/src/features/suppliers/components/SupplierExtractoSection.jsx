@@ -362,7 +362,7 @@ export function SupplierExtractoSection({
 
 /**
  * Tabla del extracto para una moneda.
- * Muestra cabecera con saldo de cierre + tabla de líneas.
+ * Muestra las tres partidas independientes de la cuenta + tabla de líneas.
  * La columna "Acciones" solo aparece cuando canEditarEliminar=true.
  */
 function BloqueExtractoProveedor({ bloque, montosVisiblesGlobal, allPayments, canEditarEliminar, onEditarPago, onEliminarPago }) {
@@ -373,32 +373,31 @@ function BloqueExtractoProveedor({ bloque, montosVisiblesGlobal, allPayments, ca
 
     return (
         <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-            {/* Cabecera: moneda + saldo de cierre */}
-            <div className="flex items-center justify-between gap-3 border-b border-slate-100 bg-slate-50/30 px-6 py-3 dark:border-slate-800 dark:bg-slate-800/10">
+            {/* Cabecera: cada partida se informa por separado. No existe compensación implícita. */}
+            <div className="flex flex-col gap-3 border-b border-slate-100 bg-slate-50/30 px-6 py-3 dark:border-slate-800 dark:bg-slate-800/10 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex items-center gap-2">
                     <CurrencyBadge currency={bloque.currency} />
                     <span className="text-sm font-bold text-slate-700 dark:text-slate-300">
                         {bloque.currency === "USD" ? "Dólares" : "Pesos"}
                     </span>
                 </div>
-                <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Saldo</span>
-                    {montosVisibles ? (
-                        <span
-                            className={`text-sm font-extrabold ${
-                                (bloque.closingBalance ?? 0) > 0
-                                    ? "text-rose-600 dark:text-rose-500"
-                                    : (bloque.closingBalance ?? 0) < 0
-                                    ? "text-emerald-600 dark:text-emerald-500"
-                                    : "text-slate-400 dark:text-slate-600"
-                            }`}
-                            data-testid={`extracto-saldo-${bloque.currency}`}
-                        >
-                            {formatCurrency(bloque.closingBalance ?? 0, bloque.currency)}
-                        </span>
-                    ) : (
-                        <span className="text-sm font-extrabold text-muted-foreground" title="Sin permiso para ver montos">—</span>
-                    )}
+                <div className="grid grid-cols-3 gap-4 text-right">
+                    {[
+                        ["Le debemos", bloque.iTheyOwe ?? 0, "text-rose-600 dark:text-rose-500", "le-debemos"],
+                        ["Nos debe", bloque.theyOweMe ?? 0, "text-amber-600 dark:text-amber-400", "nos-debe"],
+                        ["Saldo aplicable", bloque.prepayment ?? 0, "text-emerald-600 dark:text-emerald-500", "saldo-aplicable"],
+                    ].map(([label, amount, color, testId]) => (
+                        <div key={testId}>
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</div>
+                            {montosVisibles ? (
+                                <div className={`text-sm font-extrabold ${color}`} data-testid={`extracto-${testId}-${bloque.currency}`}>
+                                    {formatCurrency(amount, bloque.currency)}
+                                </div>
+                            ) : (
+                                <div className="text-sm font-extrabold text-muted-foreground" title="Sin permiso para ver montos">—</div>
+                            )}
+                        </div>
+                    ))}
                 </div>
             </div>
 
@@ -413,7 +412,6 @@ function BloqueExtractoProveedor({ bloque, montosVisiblesGlobal, allPayments, ca
                         <DataGridHeaderCell>Comprobante</DataGridHeaderCell>
                         <DataGridHeaderCell align="right">Cargo</DataGridHeaderCell>
                         <DataGridHeaderCell align="right">Abono</DataGridHeaderCell>
-                        <DataGridHeaderCell align="right">Saldo</DataGridHeaderCell>
                         {canEditarEliminar && <DataGridHeaderCell align="center">Acciones</DataGridHeaderCell>}
                     </DataGridHeaderRow>
                 </DataGridHeader>
@@ -432,7 +430,7 @@ function BloqueExtractoProveedor({ bloque, montosVisiblesGlobal, allPayments, ca
                             />
                         ))
                     ) : (
-                        <DataGridEmptyState colSpan={canEditarEliminar ? 7 : 6} title="Sin movimientos en esta moneda." />
+                        <DataGridEmptyState colSpan={canEditarEliminar ? 6 : 5} title="Sin movimientos en esta moneda." />
                     )}
                 </DataGridBody>
             </DataGrid>
@@ -484,9 +482,9 @@ function ReconciliacionSaldoOperador({ bloque, montosVisibles }) {
             data-testid={`reconciliacion-saldo-${bloque.currency}`}
         >
             <p className="text-xs text-amber-800 dark:text-amber-300">
-                <span className="font-bold">Este saldo es la posición neta.</span>{" "}
-                Con este operador {partes.join(", y ")}: son cosas distintas y no se cancelan entre sí,
-                por eso arriba se muestran por separado.
+                <span className="font-bold">Estas partidas no se compensan automáticamente.</span>{" "}
+                Con este operador {partes.join(", y ")}. Para descontar saldo a favor hay que usar la acción
+                &quot;Usar saldo a favor&quot;; los reembolsos se registran por separado.
             </p>
         </div>
     );
@@ -599,25 +597,6 @@ function FilaExtractoProveedor({ linea, currency, montosVisibles, allPayments, c
                     )
                 ) : (
                     <span className="text-slate-300 dark:text-slate-700">—</span>
-                )}
-            </DataGridCell>
-
-            {/* Saldo corriente: positivo = debemos (rojo), negativo = a favor (verde), cero = gris */}
-            <DataGridCell align="right">
-                {montosVisibles ? (
-                    <span
-                        className={`font-extrabold ${
-                            (linea.runningBalance ?? 0) > 0
-                                ? "text-rose-600 dark:text-rose-500"
-                                : (linea.runningBalance ?? 0) < 0
-                                ? "text-emerald-600 dark:text-emerald-500"
-                                : "text-slate-400 dark:text-slate-600"
-                        }`}
-                    >
-                        {formatCurrency(linea.runningBalance ?? 0, currency)}
-                    </span>
-                ) : (
-                    <span className="text-muted-foreground" title="Sin permiso para ver montos">—</span>
                 )}
             </DataGridCell>
 

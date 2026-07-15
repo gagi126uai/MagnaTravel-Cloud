@@ -334,6 +334,76 @@ public class MessageService : IMessageService
         return MapDelivery(delivery);
     }
 
+    public async Task<MessageDeliveryDto> SendPartialCreditNoteMessageAsync(
+        Guid bookingCancellationPublicId,
+        OperationActor actor,
+        CancellationToken cancellationToken)
+    {
+        await EnsureActorCanAsync(actor, Permissions.MessagesSend, cancellationToken);
+
+        var bc = await _db.BookingCancellations
+            .AsNoTracking()
+            .Include(item => item.Reserva).ThenInclude(reserva => reserva.Payer)
+            .Include(item => item.Lines)
+            .Include(item => item.CreditNotes).ThenInclude(note => note.CreditNoteInvoice)
+            .FirstOrDefaultAsync(item => item.PublicId == bookingCancellationPublicId, cancellationToken)
+            ?? throw new KeyNotFoundException("Cancelación no encontrada.");
+
+        if (bc.Lines.Count == 0
+            || bc.Lines.Any(line => line.Scope != BookingCancellationLineScope.Partial))
+            throw new InvalidOperationException("Esta cancelación no corresponde a una devolución parcial.");
+
+        var succeeded = bc.CreditNotes
+            .Where(note => note.Status == BookingCancellationCreditNoteStatus.Succeeded
+                && note.CreditNoteInvoice != null)
+            .ToList();
+        if (succeeded.Count != 1)
+            throw new InvalidOperationException("La nota de crédito todavía no está emitida o no es un documento único.");
+
+        var invoice = succeeded[0].CreditNoteInvoice!;
+        if (invoice.ReservaId != bc.ReservaId
+            || !InvoiceComprobanteHelpers.IsCreditNote(invoice.TipoComprobante)
+            || InvoiceFiscalStatusMapper.FromResultado(invoice.Resultado) != InvoiceFiscalStatus.Issued
+            || string.IsNullOrWhiteSpace(invoice.CAE))
+            throw new InvalidOperationException("La nota de crédito todavía no está emitida correctamente.");
+
+        await EnsureActorCanAccessReservaAsync(actor, bc.Reserva, Permissions.CobranzasViewAll, cancellationToken);
+
+        var customer = bc.Reserva.Payer
+            ?? throw new InvalidOperationException("La reserva no tiene cliente para enviar la nota de crédito.");
+        var phone = WhatsAppPhoneHelper.Canonicalize(customer.Phone)
+            ?? WhatsAppPhoneHelper.Canonicalize(bc.Reserva.WhatsAppPhoneOverride);
+        if (string.IsNullOrWhiteSpace(phone))
+            throw new InvalidOperationException("El cliente no tiene teléfono asociado.");
+
+        var pdfBytes = await _invoiceService.GetPdfAsync(invoice.Id, cancellationToken);
+        var number = $"{invoice.PuntoDeVenta:0000}-{invoice.NumeroComprobante:00000000}";
+        var fileName = $"Nota-de-credito-{number}.pdf";
+        var caption = $"Te compartimos la nota de crédito {number} por la devolución de un servicio de la reserva {bc.Reserva.NumeroReserva}.";
+        var result = await _whatsAppGateway.SendDocumentAsync(
+            phone, caption, fileName, "application/pdf", pdfBytes, cancellationToken);
+
+        var delivery = new MessageDelivery
+        {
+            ReservaId = bc.ReservaId,
+            CustomerId = customer.Id,
+            Channel = MessageDeliveryChannels.WhatsApp,
+            Kind = MessageDeliveryKinds.CreditNote,
+            Status = MessageDeliveryStatuses.Sent,
+            Phone = phone,
+            MessageText = caption,
+            AttachmentName = fileName,
+            BotMessageId = result.MessageId,
+            SentByUserId = actor.UserId,
+            SentByUserName = actor.UserName,
+            CreatedAt = DateTime.UtcNow,
+            SentAt = DateTime.UtcNow,
+        };
+        _db.MessageDeliveries.Add(delivery);
+        await _db.SaveChangesAsync(cancellationToken);
+        return MapDelivery(delivery);
+    }
+
     private async Task<ResolvedMessageRecipient> ResolveRecipientAsync(
         string personType,
         string personPublicIdOrLegacyId,

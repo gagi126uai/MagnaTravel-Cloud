@@ -283,4 +283,95 @@ public class MessageServiceSendInvoiceTests
 
         Assert.Equal(MessageDeliveryKinds.Invoice, delivery.Kind);
     }
+
+    [Fact]
+    public async Task PartialCreditNote_HappyPath_DerivesDocumentAndCustomerFromCancellation()
+    {
+        using var context = new AppDbContext(_dbOptions);
+        var payer = BuildCustomerWithPhone(1, "+5491155551234");
+        var reserva = BuildReserva(1, payer);
+        var supplier = new Supplier { Id = 1, Name = "Operador", IsActive = true };
+        var sale = BuildIssuedInvoice(100, reserva.Id);
+        var creditNote = BuildIssuedInvoice(101, reserva.Id);
+        creditNote.TipoComprobante = 8;
+        context.AddRange(payer, supplier, reserva, sale, creditNote);
+        await context.SaveChangesAsync();
+
+        var bc = new BookingCancellation
+        {
+            ReservaId = reserva.Id,
+            CustomerId = payer.Id,
+            SupplierId = supplier.Id,
+            OriginatingInvoiceId = sale.Id,
+            Status = BookingCancellationStatus.Closed,
+            Reason = "Cancelación parcial de prueba",
+        };
+        bc.Lines.Add(new BookingCancellationLine
+        {
+            SupplierId = supplier.Id,
+            Scope = BookingCancellationLineScope.Partial,
+            ServiceTable = CancellableServiceTable.Hotel,
+            ServiceId = 1,
+            Currency = "ARS",
+            LineSaleAmount = 1000m,
+        });
+        bc.CreditNotes.Add(new BookingCancellationCreditNote
+        {
+            OriginatingInvoiceId = sale.Id,
+            CreditNoteInvoiceId = creditNote.Id,
+            Status = BookingCancellationCreditNoteStatus.Succeeded,
+            ArcaCurrency = "PES",
+        });
+        context.BookingCancellations.Add(bc);
+        await context.SaveChangesAsync();
+        var (service, gateway, invoiceService) = BuildService(context);
+
+        var delivery = await service.SendPartialCreditNoteMessageAsync(bc.PublicId, AdminActor(), CancellationToken.None);
+
+        invoiceService.Verify(s => s.GetPdfAsync(creditNote.Id, It.IsAny<CancellationToken>()), Times.Once);
+        gateway.Verify(g => g.SendDocumentAsync(
+            It.IsAny<string>(), It.Is<string>(caption => caption.Contains("nota de crédito")),
+            It.Is<string>(name => name.StartsWith("Nota-de-credito-")), "application/pdf",
+            It.IsAny<byte[]>(), It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Equal(MessageDeliveryKinds.CreditNote, delivery.Kind);
+        Assert.Equal(MessageDeliveryKinds.CreditNote, (await context.MessageDeliveries.SingleAsync()).Kind);
+    }
+
+    [Fact]
+    public async Task PartialCreditNote_RejectsFullCancellationEvenWithSucceededCreditNote()
+    {
+        using var context = new AppDbContext(_dbOptions);
+        var payer = BuildCustomerWithPhone(1, "+5491155551234");
+        var reserva = BuildReserva(1, payer);
+        var supplier = new Supplier { Id = 1, Name = "Operador", IsActive = true };
+        var sale = BuildIssuedInvoice(110, reserva.Id);
+        var creditNote = BuildIssuedInvoice(111, reserva.Id);
+        creditNote.TipoComprobante = 8;
+        context.AddRange(payer, supplier, reserva, sale, creditNote);
+        await context.SaveChangesAsync();
+        var bc = new BookingCancellation
+        {
+            ReservaId = reserva.Id, CustomerId = payer.Id, SupplierId = supplier.Id,
+            OriginatingInvoiceId = sale.Id, Status = BookingCancellationStatus.Closed, Reason = "Total",
+        };
+        bc.Lines.Add(new BookingCancellationLine
+        {
+            SupplierId = supplier.Id, Scope = BookingCancellationLineScope.Full,
+            ServiceTable = CancellableServiceTable.Hotel, ServiceId = 1, Currency = "ARS",
+        });
+        bc.CreditNotes.Add(new BookingCancellationCreditNote
+        {
+            OriginatingInvoiceId = sale.Id, CreditNoteInvoiceId = creditNote.Id,
+            Status = BookingCancellationCreditNoteStatus.Succeeded,
+        });
+        context.Add(bc);
+        await context.SaveChangesAsync();
+        var (service, gateway, _) = BuildService(context);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.SendPartialCreditNoteMessageAsync(bc.PublicId, AdminActor(), CancellationToken.None));
+        gateway.Verify(g => g.SendDocumentAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<byte[]>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
 }

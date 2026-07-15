@@ -17,7 +17,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { operatorRefundsApi } from "../api/operatorRefundsApi";
 
-export function useOperatorRefundsPending(supplierPublicId) {
+export function useOperatorRefundsPending(supplierPublicId, enabled = true) {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -25,6 +25,12 @@ export function useOperatorRefundsPending(supplierPublicId) {
   // useCallback evita que fetchData cambie de referencia en cada render,
   // lo cual dispararía el useEffect en loop.
   const fetchData = useCallback(async () => {
+    if (!enabled || !supplierPublicId) {
+      setItems([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -35,7 +41,7 @@ export function useOperatorRefundsPending(supplierPublicId) {
     } finally {
       setLoading(false);
     }
-  }, [supplierPublicId]);
+  }, [supplierPublicId, enabled]);
 
   // useEffect con [fetchData]: carga datos al montar y cada vez que cambia
   // el proveedor (cuando supplierPublicId cambia, fetchData cambia también).

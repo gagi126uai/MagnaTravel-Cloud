@@ -80,6 +80,7 @@ function calcularTotalPorMoneda(servicios) {
 export function CancelarVariosServiciosInline({
   serviciosCancelables,
   reservaPublicId,
+  saleInvoices = [],
   blockReason,
   onCerrar,
   onCancelacionTerminada,
@@ -89,6 +90,9 @@ export function CancelarVariosServiciosInline({
 
   // Texto del motivo único para toda la tanda.
   const [motivo, setMotivo] = useState("");
+  const [targetInvoicePublicId, setTargetInvoicePublicId] = useState(
+    saleInvoices.length === 1 ? saleInvoices[0].publicId : ""
+  );
 
   // Estado del proceso de cancelación secuencial.
   // null = inactivo; objeto cuando está corriendo o terminó.
@@ -178,6 +182,8 @@ export function CancelarVariosServiciosInline({
           serviceTable,
           servicePublicId,
           reason: motivo.trim(),
+          ...(targetInvoicePublicId ? { targetInvoicePublicId } : {}),
+          ...(Number(svc.salePrice) > 0 ? { confirmedGrossCreditAmount: Number(svc.salePrice) } : {}),
         });
         resultados.push({ svc, ok: true, esBloqueo409: false });
       } catch (error) {
@@ -205,7 +211,7 @@ export function CancelarVariosServiciosInline({
     }
     // La sección sigue visible con procesoEstado.enProceso = false.
     // El usuario lee el resultado y cierra él mismo con el botón "Cerrar".
-  }, [serviciosSeleccionados, motivoValido, blockReason, reservaPublicId, motivo, onCancelacionTerminada]);
+  }, [serviciosSeleccionados, motivoValido, blockReason, reservaPublicId, motivo, onCancelacionTerminada, targetInvoicePublicId]);
 
   const procesoTerminado = procesoEstado && !procesoEstado.enProceso;
 
@@ -389,6 +395,26 @@ export function CancelarVariosServiciosInline({
           </div>
         )}
 
+        {saleInvoices.length > 1 && serviciosSeleccionados.length > 0 && !procesoTerminado && (
+          <div>
+            <label htmlFor="factura-destino-cancelar-varios" className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              Factura de estas devoluciones
+            </label>
+            <select
+              id="factura-destino-cancelar-varios"
+              value={targetInvoicePublicId}
+              onChange={(e) => setTargetInvoicePublicId(e.target.value)}
+              disabled={Boolean(procesoEstado?.enProceso)}
+              className="w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm dark:border-amber-700 dark:bg-slate-800 dark:text-white"
+              data-testid="select-factura-cancelar-varios"
+            >
+              <option value="">Elegí una factura</option>
+              {saleInvoices.map((invoice) => <option key={invoice.publicId} value={invoice.publicId}>{invoice.label}</option>)}
+            </select>
+            <p className="mt-1 text-xs text-slate-500">Si los servicios corresponden a facturas distintas, cancelalos en tandas separadas.</p>
+          </div>
+        )}
+
         {/* ─ Resultado del proceso (cuando ya terminó) ─────────────────── */}
         {procesoTerminado && (
           <div
@@ -486,6 +512,7 @@ export function CancelarVariosServiciosInline({
                   estaBloqueada ||
                   serviciosSeleccionados.length === 0 ||
                   !motivoValido ||
+                  (saleInvoices.length > 1 && !targetInvoicePublicId) ||
                   Boolean(procesoEstado?.enProceso)
                 }
                 data-testid="btn-confirmar-cancelar-varios"

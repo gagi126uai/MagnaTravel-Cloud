@@ -77,6 +77,13 @@ public class Payment : IHasPublicId
     public string EntryType { get; set; } = PaymentEntryTypes.Payment;
     public bool AffectsCash { get; set; } = true;
 
+    /// <summary>
+    /// Indica si el movimiento reduce la deuda operativa de la reserva. Un cobro de una Nota de Debito
+    /// documentada en una reserva anulada mueve caja y cancela el open item fiscal, pero no vuelve a pagar
+    /// la venta que ya fue anulada.
+    /// </summary>
+    public bool AffectsReservaBalance { get; set; } = true;
+
     // B1.15 Fase 1: trazabilidad de quien y cuando se registro el pago.
     // CreatedAt es NOT NULL (default DateTime.UtcNow / CURRENT_TIMESTAMP).
     // CreatedBy* es nullable para soportar backfill de historicos.

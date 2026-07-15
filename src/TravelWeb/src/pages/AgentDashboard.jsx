@@ -48,9 +48,9 @@ export default function AgentDashboard() {
                     <p className="mt-1 text-muted-foreground">Este es tu resumen operativo del dia.</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                    <button type="button" onClick={() => navigate("/quotes?create=1")} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-indigo-500/20 transition-colors hover:bg-indigo-700">
+                    <button type="button" onClick={() => navigate("/reservas?create=1")} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-indigo-500/20 transition-colors hover:bg-indigo-700">
                         <FileText className="h-4 w-4" />
-                        Nueva cotizacion
+                        Nuevo presupuesto
                     </button>
                     <button type="button" onClick={() => navigate("/crm")} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">
                         <Briefcase className="h-4 w-4" />
@@ -103,7 +103,7 @@ export default function AgentDashboard() {
                         <CardDescription>Entradas directas para seguir vendiendo</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-3">
-                        <ActionButton label="Nueva cotizacion" onClick={() => navigate("/quotes?create=1")} icon={FileText} />
+                        <ActionButton label="Nuevo presupuesto" onClick={() => navigate("/reservas?create=1")} icon={FileText} />
                         <ActionButton label="Posibles clientes" onClick={() => navigate("/crm")} icon={Briefcase} />
                         <ActionButton label="Clientes" onClick={() => navigate("/customers")} icon={Calendar} />
                     </CardContent>

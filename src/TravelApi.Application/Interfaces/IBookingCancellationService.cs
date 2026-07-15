@@ -110,6 +110,14 @@ public interface IBookingCancellationService
         string? userName,
         CancellationToken ct);
 
+    /// <summary>Resuelve factura y monto de una única línea T5 legacy todavía no emitida.</summary>
+    Task<BookingCancellationDto> ResolvePartialCreditNoteAsync(
+        Guid publicId,
+        ResolvePartialCreditNoteRequest request,
+        string userId,
+        string? userName,
+        CancellationToken ct);
+
     /// <summary>
     /// Aborta un BC en <c>Drafted</c>. Idempotente: si ya esta <c>Aborted</c>,
     /// retorna el DTO actual sin tocar nada. Si el BC esta en cualquier otro

@@ -86,7 +86,9 @@ public class CustomerPendingPenaltiesTests
         await context.SaveChangesAsync();
     }
 
-    private static async Task<int> SeedDebitNoteInvoiceAsync(AppDbContext context, AnnulmentStatus annulmentStatus)
+    private static async Task<int> SeedDebitNoteInvoiceAsync(
+        AppDbContext context, AnnulmentStatus annulmentStatus, decimal amount = 5000m,
+        string monId = "PES", int? reservaId = null)
     {
         var nd = new Invoice
         {
@@ -94,6 +96,9 @@ public class CustomerPendingPenaltiesTests
             PuntoDeVenta = 1,
             NumeroComprobante = 500,
             Resultado = "A",
+            ImporteTotal = amount,
+            MonId = monId,
+            ReservaId = reservaId,
             CAE = "77777777",
             AnnulmentStatus = annulmentStatus,
         };
@@ -255,7 +260,7 @@ public class CustomerPendingPenaltiesTests
         var customer = await AddCustomerAsync(context, "Cliente multimoneda");
 
         var reservaArs = await AddReservaAsync(context, customer.Id, "F-2026-1007", EstadoReserva.Cancelled, balance: 2000m);
-        var ndInvoiceId = await SeedDebitNoteInvoiceAsync(context, AnnulmentStatus.None);
+        var ndInvoiceId = await SeedDebitNoteInvoiceAsync(context, AnnulmentStatus.None, amount: 2000m);
         await AddCancellationRawAsync(
             context, reservaArs.Id,
             penalty: PenaltyStatus.Estimated,

@@ -204,6 +204,51 @@ public class PaymentServiceRegistrationTests
                 CancellationToken.None));
     }
 
+    [Fact]
+    public async Task CreatePaymentAsync_ForCancelledPenaltyDebitNote_DoesNotMintCustomerCredit()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        var customer = new Customer { FullName = "Cliente multa", IsActive = true };
+        var reserva = new Reserva
+        {
+            NumeroReserva = "F-2026-MULTA",
+            Name = "Reserva anulada",
+            Status = EstadoReserva.Cancelled,
+            Payer = customer,
+            TotalSale = 0m,
+            TotalPaid = 0m,
+            Balance = 0m
+        };
+        var debitNote = new Invoice
+        {
+            Reserva = reserva,
+            TipoComprobante = 12,
+            PuntoDeVenta = 1,
+            NumeroComprobante = 99,
+            Resultado = "A",
+            ImporteTotal = 300m,
+            MonId = "PES"
+        };
+        context.AddRange(customer, reserva, debitNote);
+        await context.SaveChangesAsync();
+
+        var dto = await BuildService(context).CreatePaymentAsync(
+            new CreatePaymentRequest
+            {
+                ReservaId = reserva.PublicId.ToString(),
+                LinkedInvoicePublicId = debitNote.PublicId.ToString(),
+                Amount = 300m,
+                Currency = "ARS",
+                Method = "Transfer"
+            },
+            CancellationToken.None);
+
+        Assert.Equal(300m, dto.Amount);
+        Assert.Empty(await context.ClientCreditEntries.Where(entry => entry.CustomerId == customer.Id).ToListAsync());
+        Assert.DoesNotContain(await context.Payments.ToListAsync(), payment =>
+            payment.Method == TravelApi.Infrastructure.Reservations.OverpaymentCreditCleanup.BridgeMethod);
+    }
+
     /// <summary>
     /// Comportamiento ACTUAL (no necesariamente deseado): el codigo no valida que
     /// Amount no exceda Balance. Este test documenta y bloquea regresion silenciosa

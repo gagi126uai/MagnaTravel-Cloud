@@ -89,6 +89,8 @@ public class QuotesController : ControllerBase
 
     [HttpPost("{publicIdOrLegacyId}/convert")]
     [RequirePermission(Permissions.CrmEdit)]
+    [RequirePermission(Permissions.ReservasEdit)]
+    [RequireOwnership(OwnedEntity.Quote, bypassPermission: Permissions.ReservasViewAll)]
     public async Task<ActionResult<QuoteConversionResultDto>> ConvertToFile(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         return Ok(await _quoteService.ConvertToFileAsync(publicIdOrLegacyId, cancellationToken));

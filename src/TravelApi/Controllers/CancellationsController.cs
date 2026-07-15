@@ -658,6 +658,42 @@ public class CancellationsController : ControllerBase
     }
 
     /// <summary>
+    /// T5 legacy: elige la factura y confirma el monto de una cancelación parcial ambigua.
+    /// No emite la NC; únicamente deja el snapshot de la línea listo para la doble confirmación.
+    /// </summary>
+    [HttpPatch("{publicId:guid}/resolve-partial-credit-note")]
+    [RequirePermission(Permissions.CobranzasInvoiceAnnul)]
+    [RequireOwnership(OwnedEntity.BookingCancellation, "publicId", bypassPermission: Permissions.ReservasViewAll)]
+    public async Task<ActionResult<BookingCancellationDto>> ResolvePartialCreditNote(
+        Guid publicId,
+        ResolvePartialCreditNoteRequest request,
+        CancellationToken cancellationToken)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
+        var userName = User.FindFirst("FullName")?.Value ?? User.FindFirst(ClaimTypes.Name)?.Value;
+        try
+        {
+            return Ok(await _bcService.ResolvePartialCreditNoteAsync(publicId, request, userId, userName, cancellationToken));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return Conflict(new { code = "CONCURRENT_EDIT", message = "Otra edición fue procesada primero, reintente." });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return SanitizedConflict(ex, publicId);
+        }
+        catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
+        }
+    }
+
+    /// <summary>
     /// Fase A (2026-06-28): cierre SIN multa de la pata del operador ("el operador no cobro multa / devuelve
     /// todo"). Es la rama ALTERNATIVA a <see cref="ConfirmPenalty"/>: el front ofrece las dos acciones cuando hay
     /// una multa pendiente. Limpia el boton pendiente dejando la penalidad en estado terminal "sin multa" y

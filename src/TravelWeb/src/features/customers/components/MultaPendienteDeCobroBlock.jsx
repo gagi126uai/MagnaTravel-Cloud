@@ -12,9 +12,7 @@
  * Se usa en CustomerAccountPage.jsx, en el carril de arriba (entre el encabezado y las
  * solapas), PRIMERO en ese carril — es deuda del cliente, lo más "urgente" ahí.
  *
- * Lista PASIVA (regla dura de la spec): cada fila es un link ENTERO a la ficha de la
- * reserva anulada (ahí vive el paso de la multa, decisión 2026-07-08); el bloque no tiene
- * botones de acción propios.
+ * La identidad de cada fila abre la reserva y una ND aprobada agrega la accion Cobrar.
  *
  * Se dibuja SOLO si el cliente tiene al menos una multa pendiente — si `pendingPenalties`
  * viene vacío o ausente, el componente no renderiza nada (ni título, ni "no hay multas"),
@@ -25,7 +23,7 @@
  * separada de este JSX para poder testearla con node:test.
  */
 import { Link } from "react-router-dom";
-import { AlertTriangle, ChevronRight } from "lucide-react";
+import { AlertTriangle, ChevronRight, DollarSign } from "lucide-react";
 import { formatCurrency } from "../../../lib/utils";
 import {
   armarRecuadroMultaPorMoneda,
@@ -45,7 +43,7 @@ const TONO_CHIP = {
   amber: "bg-amber-100 text-amber-700 dark:bg-amber-950/30 dark:text-amber-300",
 };
 
-export function MultaPendienteDeCobroBlock({ pendingPenalties }) {
+export function MultaPendienteDeCobroBlock({ pendingPenalties, onCobrar, canCobrar = false }) {
   // Cargando / sin datos todavía: el bloque simplemente no aparece (no parpadea con un
   // "$0" falso). Como CustomerAccountPage solo pasa `overview?.pendingPenalties` una vez
   // que el overview cargó, mientras carga este prop viene undefined y ya cae acá.
@@ -60,7 +58,10 @@ export function MultaPendienteDeCobroBlock({ pendingPenalties }) {
     >
       <div className="flex items-center gap-2 border-b border-amber-100 px-6 py-4 dark:border-amber-900/30">
         <AlertTriangle className="h-5 w-5 text-amber-500" aria-hidden="true" />
-        <h2 className="text-sm font-bold text-amber-800 dark:text-amber-300">Multa pendiente de cobro</h2>
+        <div>
+          <h2 className="text-sm font-bold text-amber-800 dark:text-amber-300">Multa pendiente de cobro</h2>
+          <p className="text-xs text-amber-700/80 dark:text-amber-300/70">Desglose incluido en el total “Debe” de la cuenta.</p>
+        </div>
       </div>
 
       {/* Un recuadro por moneda que tenga multas — regla dura multimoneda: nunca se
@@ -73,7 +74,12 @@ export function MultaPendienteDeCobroBlock({ pendingPenalties }) {
 
       <div className="divide-y divide-amber-100 border-t border-amber-100 dark:divide-amber-900/20 dark:border-amber-900/30">
         {items.map((item) => (
-          <FilaMultaPendiente key={item.reservaPublicId} item={item} />
+          <FilaMultaPendiente
+            key={item.debitNotePublicId || `${item.reservaPublicId}-${item.amount}-${item.currency}`}
+            item={item}
+            onCobrar={onCobrar}
+            canCobrar={canCobrar}
+          />
         ))}
       </div>
     </div>
@@ -109,21 +115,24 @@ function RecuadroMultaPorMoneda({ total }) {
 }
 
 /**
- * Fila pasiva de UNA multa: link entero a la ficha de la reserva anulada, sin botón
- * propio. `item.reservaPublicId` es el GUID interno (spec: "SOLO para el link/key,
- * NUNCA se muestra como texto") — acá solo se usa para armar la URL y la key de React.
+ * Fila de UNA multa: el detalle navega a la reserva y el botón de cobro queda como
+ * control hermano, sin anidar un botón interactivo dentro del link.
  */
-function FilaMultaPendiente({ item }) {
+function FilaMultaPendiente({ item, onCobrar, canCobrar }) {
   const chip = textoChipEstadoMulta(item.status);
+  const isCollectable = item.status === "pendingCollection" && Boolean(item.debitNotePublicId);
   return (
-    <Link
-      to={`/reservas/${item.reservaPublicId}`}
-      className="flex items-center justify-between gap-3 px-6 py-3 hover:bg-amber-100/40 dark:hover:bg-amber-900/10 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-inset"
+    <div
+      className="flex items-center justify-between gap-3 px-6 py-3 hover:bg-amber-100/40 dark:hover:bg-amber-900/10 transition-colors"
       data-testid={`fila-multa-pendiente-${item.reservaPublicId}`}
     >
-      <span className="min-w-0 truncate text-sm font-semibold text-slate-900 dark:text-white">
+      <Link
+        to={`/reservas/${item.reservaPublicId}`}
+        className="min-w-0 truncate text-sm font-semibold text-slate-900 hover:text-indigo-600 dark:text-white dark:hover:text-indigo-300"
+      >
         {item.numeroReserva} · {item.name}
-      </span>
+        {item.documentRef && <span className="ml-2 text-xs font-normal text-slate-500">ND {item.documentRef}</span>}
+      </Link>
       <span className="flex flex-shrink-0 items-center gap-3">
         <span className="text-sm font-bold text-slate-700 dark:text-slate-300">
           {formatCurrency(item.amount, item.currency)}
@@ -133,8 +142,12 @@ function FilaMultaPendiente({ item }) {
         >
           {chip.texto}
         </span>
-        <ChevronRight className="h-4 w-4 text-slate-400" aria-hidden="true" />
+        {isCollectable && canCobrar ? (
+          <button type="button" onClick={() => onCobrar?.(item)} className="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700">
+            <DollarSign className="h-3.5 w-3.5" aria-hidden="true" /> Cobrar
+          </button>
+        ) : <ChevronRight className="h-4 w-4 text-slate-400" aria-hidden="true" />}
       </span>
-    </Link>
+    </div>
   );
 }

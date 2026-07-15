@@ -17,9 +17,12 @@ const PAYMENT_CURRENCIES = ["ARS", "USD"];
 const today = () => new Date().toISOString().split("T")[0];
 
 function pendingCurrencyLines(reserva) {
-  const lines = Array.isArray(reserva?.porMoneda)
-    ? reserva.porMoneda.filter((line) => Number(line.balance ?? 0) > 0.01)
-    : [];
+  const source = Array.isArray(reserva?.debtByCurrency)
+    ? reserva.debtByCurrency.map((line) => ({ currency: line.currency, balance: line.amount }))
+    : Array.isArray(reserva?.porMoneda)
+      ? reserva.porMoneda
+      : [];
+  const lines = source.filter((line) => Number(line.balance ?? 0) > 0.01);
 
   // Las reservas previas al backfill no tienen porMoneda: conservamos compatibilidad sin inventar USD.
   return lines.length > 0
@@ -33,6 +36,10 @@ function firstCollectableReserva(reservas) {
   return reservas.find((reserva) => pendingCurrencyLines(reserva).length > 0) || reservas[0] || null;
 }
 
+function reservaPublicId(reserva) {
+  return reserva?.reservaPublicId || getPublicId(reserva);
+}
+
 function isCrossCurrency(payment) {
   return payment?.imputedCurrency != null && payment.imputedCurrency !== payment.currency;
 }
@@ -41,7 +48,16 @@ function isCrossCurrency(payment) {
  * Cobranza desde la cuenta del cliente. Usa exclusivamente el circuito canónico /payments:
  * éste conserva moneda e imputación y registra el movimiento de caja en la misma operación.
  */
-export default function CustomerPaymentModal({ isOpen, onClose, paymentToEdit, onSave, availableReservas = [] }) {
+export default function CustomerPaymentModal({
+  isOpen,
+  onClose,
+  paymentToEdit,
+  onSave,
+  availableReservas = [],
+  initialReservaPublicId = null,
+  initialLinkedInvoicePublicId = null,
+  initialImputedCurrency = null,
+}) {
   const [formData, setFormData] = useState({
     amount: "",
     method: "Transferencia",
@@ -62,9 +78,12 @@ export default function CustomerPaymentModal({ isOpen, onClose, paymentToEdit, o
 
     const reservaId = paymentToEdit
       ? getRelatedPublicId(paymentToEdit, "reservaPublicId", "reservaId")
-      : getPublicId(firstCollectableReserva(availableReservas));
-    const reserva = availableReservas.find((item) => String(getPublicId(item)) === String(reservaId));
-    const defaultCurrency = pendingCurrencyLines(reserva)[0]?.currency || paymentToEdit?.currency || "ARS";
+      : initialReservaPublicId || reservaPublicId(firstCollectableReserva(availableReservas));
+    const reserva = availableReservas.find((item) => String(reservaPublicId(item)) === String(reservaId));
+    const defaultCurrency = initialImputedCurrency
+      || pendingCurrencyLines(reserva)[0]?.currency
+      || paymentToEdit?.currency
+      || "ARS";
 
     setFormData({
       amount: paymentToEdit?.amount?.toString() || "",
@@ -79,13 +98,12 @@ export default function CustomerPaymentModal({ isOpen, onClose, paymentToEdit, o
     setExchangeRate(paymentToEdit?.exchangeRate != null ? String(paymentToEdit.exchangeRate) : "");
     setExchangeRateSource(paymentToEdit?.exchangeRateSource || 5);
     setExchangeRateAt(paymentToEdit?.exchangeRateAt ? paymentToEdit.exchangeRateAt.split("T")[0] : today());
-  }, [isOpen, paymentToEdit, availableReservas]);
+  }, [isOpen, paymentToEdit, availableReservas, initialReservaPublicId, initialImputedCurrency]);
 
   if (!isOpen) return null;
 
-  const selectedReserva = availableReservas.find((item) => String(getPublicId(item)) === String(formData.reservaPublicId));
+  const selectedReserva = availableReservas.find((item) => String(reservaPublicId(item)) === String(formData.reservaPublicId));
   const currencyLines = pendingCurrencyLines(selectedReserva);
-  const isMultiCurrency = currencyLines.length > 1;
   const crossCurrency = showOtherCurrency && formData.currency !== formData.imputedCurrency;
   const imputedLine = currencyLines.find((line) => line.currency === formData.imputedCurrency);
   const imputedBalance = Number(imputedLine?.balance ?? 0);
@@ -102,10 +120,10 @@ export default function CustomerPaymentModal({ isOpen, onClose, paymentToEdit, o
       : amount * rate;
   })();
 
-  const selectReserva = (reservaPublicId) => {
-    const reserva = availableReservas.find((item) => String(getPublicId(item)) === String(reservaPublicId));
+  const selectReserva = (selectedPublicId) => {
+    const reserva = availableReservas.find((item) => String(reservaPublicId(item)) === String(selectedPublicId));
     const currency = pendingCurrencyLines(reserva)[0]?.currency || "ARS";
-    setFormData((current) => ({ ...current, reservaPublicId, currency, imputedCurrency: currency }));
+    setFormData((current) => ({ ...current, reservaPublicId: selectedPublicId, currency, imputedCurrency: currency }));
     setShowOtherCurrency(false);
     setExchangeRate("");
   };
@@ -130,6 +148,7 @@ export default function CustomerPaymentModal({ isOpen, onClose, paymentToEdit, o
         method: formData.method,
         paidAt: new Date(formData.paidAt).toISOString(),
         notes: formData.notes,
+        linkedInvoicePublicId: initialLinkedInvoicePublicId || undefined,
       };
       if (crossCurrency) {
         Object.assign(payload, {
@@ -180,7 +199,7 @@ export default function CustomerPaymentModal({ isOpen, onClose, paymentToEdit, o
               <FileText className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
               <select disabled={Boolean(paymentToEdit)} value={formData.reservaPublicId} onChange={(event) => selectReserva(event.target.value)} className="w-full rounded-md border border-input bg-background py-2 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50">
                 <option value="">Seleccionar reserva...</option>
-                {availableReservas.map((reserva) => <option key={getPublicId(reserva)} value={getPublicId(reserva)}>{reserva.numeroReserva} - {reserva.name}</option>)}
+                {availableReservas.map((reserva) => <option key={reservaPublicId(reserva)} value={reservaPublicId(reserva)}>{reserva.numeroReserva} - {reserva.name || reserva.fileName}</option>)}
               </select>
             </div>
           </div>
@@ -188,11 +207,11 @@ export default function CustomerPaymentModal({ isOpen, onClose, paymentToEdit, o
           {currencyLines.length > 0 && (
             <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-800 dark:border-emerald-900/40 dark:bg-emerald-950/20 dark:text-emerald-300">
               Cobrás en {formData.imputedCurrency === "USD" ? "US$" : "$"} — saldo {formatCurrency(imputedBalance, formData.imputedCurrency)}
-              {isMultiCurrency && !showOtherCurrency && !paymentToEdit && <button type="button" onClick={() => setShowOtherCurrency(true)} className="ml-2 text-xs font-medium underline underline-offset-2">cobrar en otra moneda</button>}
+              {!showOtherCurrency && !paymentToEdit && <button type="button" onClick={() => setShowOtherCurrency(true)} className="ml-2 text-xs font-medium underline underline-offset-2">cobrar en otra moneda</button>}
             </div>
           )}
 
-          {(isMultiCurrency || Boolean(paymentToEdit && isCrossCurrency(paymentToEdit))) && showOtherCurrency && (
+          {showOtherCurrency && (
             <div className="grid grid-cols-2 gap-4">
               <label className="space-y-1.5 text-sm font-medium text-slate-700 dark:text-slate-300">Moneda del cobro
                 <select value={formData.currency} disabled={Boolean(paymentToEdit && isCrossCurrency(paymentToEdit))} onChange={(event) => setFormData((current) => ({ ...current, currency: event.target.value }))} className="block w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50">

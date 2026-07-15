@@ -38,6 +38,7 @@ public class CustomersController : ControllerBase
     // en sus defaults, asi que el gate no rompe las pantallas que ya operan clientes.
     [HttpGet]
     [RequirePermission(Permissions.ClientesView)]
+    [RequirePermission(Permissions.CobranzasView)]
     public async Task<ActionResult<PagedResponse<CustomerListItemDto>>> GetCustomers([FromQuery] CustomerListQuery query, CancellationToken cancellationToken = default)
     {
         var customers = await _customerService.GetCustomersAsync(query, cancellationToken);
@@ -46,6 +47,7 @@ public class CustomersController : ControllerBase
 
     [HttpGet("{publicIdOrLegacyId}")]
     [RequirePermission(Permissions.ClientesView)]
+    [RequirePermission(Permissions.CobranzasView)]
     public async Task<ActionResult<CustomerListItemDto>> GetCustomer(string publicIdOrLegacyId, CancellationToken cancellationToken)
     {
         try
@@ -67,8 +69,7 @@ public class CustomersController : ControllerBase
         try
         {
             var result = await _customerService.CreateCustomerAsync(MapCustomer(customer), cancellationToken);
-            var response = await _customerService.GetCustomerAsync(result.Id, cancellationToken);
-            return CreatedAtAction(nameof(GetCustomer), new { publicIdOrLegacyId = result.PublicId }, response);
+            return CreatedAtAction(nameof(GetCustomer), new { publicIdOrLegacyId = result.PublicId }, MapMutationResponse(result));
         }
         catch (InvalidOperationException ex)
         {
@@ -110,8 +111,7 @@ public class CustomersController : ControllerBase
         {
             var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Customer>(publicIdOrLegacyId, cancellationToken);
             var result = await _customerService.UpdateCustomerAsync(id, MapCustomer(customer), cancellationToken);
-            var response = await _customerService.GetCustomerAsync(result.Id, cancellationToken);
-            return Ok(response);
+            return Ok(MapMutationResponse(result));
         }
         catch (ArgumentException)
         {
@@ -140,6 +140,25 @@ public class CustomersController : ControllerBase
              return Problem(statusCode: StatusCodes.Status500InternalServerError, title: "No se pudo actualizar el cliente.");
         }
     }
+
+    private static object MapMutationResponse(Customer customer) => new
+    {
+        customer.PublicId,
+        customer.FullName,
+        customer.Email,
+        customer.Phone,
+        customer.DocumentType,
+        customer.DocumentNumber,
+        customer.Address,
+        customer.Notes,
+        customer.TaxId,
+        customer.TaxCondition,
+        customer.TaxConditionId,
+        customer.CreditLimit,
+        customer.BillingMode,
+        customer.PaymentTermsDays,
+        customer.IsActive
+    };
 
     [HttpDelete("{publicIdOrLegacyId}")]
     [RequirePermission(Permissions.ClientesEdit)]
@@ -249,6 +268,7 @@ public class CustomersController : ControllerBase
 
     [HttpGet("{publicIdOrLegacyId}/account/reservas")]
     [RequirePermission(Permissions.ClientesView)]
+    [RequirePermission(Permissions.CobranzasView)]
     public async Task<ActionResult<PagedResponse<CustomerAccountReservaListItemDto>>> GetCustomerAccountReservas(
         string publicIdOrLegacyId,
         [FromQuery] PagedQuery query,
@@ -287,6 +307,7 @@ public class CustomersController : ControllerBase
 
     [HttpGet("{publicIdOrLegacyId}/account/invoices")]
     [RequirePermission(Permissions.ClientesView)]
+    [RequirePermission(Permissions.CobranzasView)]
     public async Task<ActionResult<PagedResponse<InvoiceListDto>>> GetCustomerAccountInvoices(
         string publicIdOrLegacyId,
         [FromQuery] PagedQuery query,

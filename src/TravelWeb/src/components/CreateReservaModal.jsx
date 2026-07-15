@@ -7,14 +7,12 @@ import { getPublicId } from "../lib/publicIds";
 /**
  * Modal para crear una nueva reserva.
  *
- * ADR-020 (ciclo unico): toda reserva nace como COTIZACION (Quotation).
- * Ya no hay selector "Presupuesto vs Confirmada" — ese era el bug señalado por Gaston
- * ("me parece chocante poder crear una reserva directamente Confirmada").
- * El vendedor avanza el estado a mano cuando corresponde.
+ * Toda propuesta nueva nace como RESERVA-PRESUPUESTO (Budget).
+ * Ya no existe un circuito paralelo para crear cotizaciones legacy.
  *
  * Solo campos imprescindibles: cliente y fecha de inicio (opcional).
  */
-export default function CreateReservaModal({ isOpen, onClose, onSuccess }) {
+export default function CreateReservaModal({ isOpen, onClose, onSuccess, initialPayerId = "" }) {
     const [bgOpacity, setBgOpacity] = useState("opacity-0");
     const [scale, setScale] = useState("scale-95 opacity-0");
 
@@ -31,6 +29,9 @@ export default function CreateReservaModal({ isOpen, onClose, onSuccess }) {
     useEffect(() => {
         if (!isOpen) return undefined;
 
+        setFormData({ payerId: initialPayerId || "", startDate: "" });
+        setSearchTerm("");
+
         const timeoutId = setTimeout(() => {
             setBgOpacity("opacity-100");
             setScale("scale-100 opacity-100");
@@ -38,7 +39,7 @@ export default function CreateReservaModal({ isOpen, onClose, onSuccess }) {
         loadCustomers();
 
         return () => clearTimeout(timeoutId);
-    }, [isOpen]);
+    }, [isOpen, initialPayerId]);
 
     const loadCustomers = async () => {
         try {
@@ -65,16 +66,12 @@ export default function CreateReservaModal({ isOpen, onClose, onSuccess }) {
 
         setLoading(true);
         try {
-            // ADR-020: toda reserva nace como Quotation (Cotizacion).
-            // El backend ya tiene Quotation como estado inicial por defecto
-            // (EstadoReserva.Quotation en QuoteService.ConvertQuoteToReserva y CreateReservaAsync).
             const res = await api.post("/reservas", {
                 name: "",
                 payerId: formData.payerId || null,
                 startDate: formData.startDate ? new Date(formData.startDate).toISOString() : null,
-                status: 'Quotation',
             });
-            showSuccess("Reserva creada exitosamente");
+            showSuccess("Presupuesto creado");
             onSuccess(getPublicId(res));
             handleClose();
         } catch (error) {
@@ -101,10 +98,10 @@ export default function CreateReservaModal({ isOpen, onClose, onSuccess }) {
                 <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
                     <div>
                         <h2 className="text-xl font-bold bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent">
-                            Nueva Cotizacion
+                            Nuevo Presupuesto
                         </h2>
                         <p className="text-sm text-slate-500 dark:text-slate-400">
-                            Empieza el borrador — despues lo podes pasar a Presupuesto y mas.
+                            Crea la reserva en estado Presupuesto y carga sus servicios.
                         </p>
                     </div>
                     <button
@@ -185,7 +182,7 @@ export default function CreateReservaModal({ isOpen, onClose, onSuccess }) {
                                     Creando...
                                 </span>
                             ) : (
-                                "Crear Cotizacion"
+                                "Crear Presupuesto"
                             )}
                         </button>
                     </div>

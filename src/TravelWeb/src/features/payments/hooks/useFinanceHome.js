@@ -10,6 +10,8 @@ const emptyAlerts = {
   upcomingStarts: [],
   upcomingStartsWindowDays: null,
   costsToConfirm: [],
+  stuckOperatorRefunds: [],
+  abandonedOperatorRefunds: [],
   totalCount: 0,
 };
 

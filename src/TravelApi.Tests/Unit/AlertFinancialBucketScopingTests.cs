@@ -177,6 +177,10 @@ public class AlertFinancialBucketScopingTests
     {
         await using var ctx = new AppDbContext(NewDbOptions());
         ctx.Suppliers.Add(new Supplier { Id = 1, Name = "Mayorista", CurrentBalance = 500m, IsActive = true });
+        ctx.SupplierBalanceByCurrency.Add(new SupplierBalanceByCurrency
+        {
+            SupplierId = 1, Currency = "ARS", Balance = 500m
+        });
         await ctx.SaveChangesAsync();
 
         dynamic result = await NewService(ctx).GetAlertsAsync(
@@ -192,6 +196,10 @@ public class AlertFinancialBucketScopingTests
         // sin importar de quien sean las reservas (no se scopea por dueño, a diferencia de UrgentTrips).
         await using var ctx = new AppDbContext(NewDbOptions());
         ctx.Suppliers.Add(new Supplier { Id = 1, Name = "Mayorista", CurrentBalance = 500m, IsActive = true });
+        ctx.SupplierBalanceByCurrency.Add(new SupplierBalanceByCurrency
+        {
+            SupplierId = 1, Currency = "ARS", Balance = 500m
+        });
         await ctx.SaveChangesAsync();
 
         dynamic result = await NewService(ctx).GetAlertsAsync(

@@ -66,6 +66,10 @@ public class SuppliersController : ControllerBase
         {
             return NotFound();
         }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     [HttpPost]
@@ -93,7 +97,15 @@ public class SuppliersController : ControllerBase
         try
         {
             var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
-            var result = await _supplierService.UpdateSupplierAsync(id, MapSupplier(supplier), cancellationToken);
+            var mapped = MapSupplier(supplier);
+            // Clientes previos a este contrato no mandan InvoicingMode. Preservar el valor real evita convertir
+            // silenciosamente un intermediario en compra/reventa al editar telefono, estado u otro dato.
+            if (!supplier.InvoicingMode.HasValue)
+            {
+                var current = await _supplierService.GetSupplierAsync(id, cancellationToken);
+                mapped.InvoicingMode = current.InvoicingMode;
+            }
+            var result = await _supplierService.UpdateSupplierAsync(id, mapped, cancellationToken);
             return Ok(ToSupplierResponse(result));
         }
         catch (ArgumentException ex)
@@ -155,6 +167,88 @@ public class SuppliersController : ControllerBase
         }
     }
 
+    [HttpGet("{publicIdOrLegacyId}/invoices")]
+    [RequirePermission(Permissions.ProveedoresView)]
+    public async Task<ActionResult<IReadOnlyList<SupplierInvoiceDto>>> GetSupplierInvoices(
+        string publicIdOrLegacyId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
+            return Ok(await _supplierService.GetSupplierInvoicesAsync(id, cancellationToken));
+        }
+        catch (KeyNotFoundException) { return NotFound(); }
+    }
+
+    [HttpPost("{publicIdOrLegacyId}/invoices")]
+    [RequirePermission(Permissions.TesoreriaSupplierPayments)]
+    [RequirePermission(Permissions.CobranzasSeeCost)]
+    public async Task<ActionResult<SupplierInvoiceDto>> CreateSupplierInvoice(
+        string publicIdOrLegacyId, SupplierInvoiceCreateRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
+            var created = await _supplierService.CreateSupplierInvoiceAsync(id, request, cancellationToken);
+            return CreatedAtAction(nameof(GetSupplierInvoices), new { publicIdOrLegacyId }, created);
+        }
+        catch (KeyNotFoundException) { return NotFound(); }
+        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+        catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
+    }
+
+    [HttpPost("{publicIdOrLegacyId}/invoices/{invoicePublicId:guid}/applications")]
+    [RequirePermission(Permissions.TesoreriaSupplierPayments)]
+    [RequirePermission(Permissions.CobranzasSeeCost)]
+    public async Task<ActionResult<SupplierInvoiceDto>> ApplySupplierPaymentToInvoice(
+        string publicIdOrLegacyId, Guid invoicePublicId,
+        SupplierInvoicePaymentApplicationRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
+            return Ok(await _supplierService.ApplySupplierPaymentToInvoiceAsync(id, invoicePublicId, request, cancellationToken));
+        }
+        catch (KeyNotFoundException) { return NotFound(); }
+        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+        catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
+    }
+
+    [HttpPost("{publicIdOrLegacyId}/invoices/{invoicePublicId:guid}/applications/{applicationPublicId:guid}/reverse")]
+    [RequirePermission(Permissions.TesoreriaSupplierPayments)]
+    [RequirePermission(Permissions.CobranzasSeeCost)]
+    public async Task<ActionResult<SupplierInvoiceDto>> ReverseSupplierInvoicePaymentApplication(
+        string publicIdOrLegacyId, Guid invoicePublicId, Guid applicationPublicId,
+        SupplierInvoicePaymentApplicationReversalRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
+            return Ok(await _supplierService.ReverseSupplierInvoicePaymentApplicationAsync(
+                id, invoicePublicId, applicationPublicId, request.Reason, cancellationToken));
+        }
+        catch (KeyNotFoundException) { return NotFound(); }
+        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+        catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
+    }
+
+    [HttpPost("{publicIdOrLegacyId}/invoices/{invoicePublicId:guid}/void")]
+    [RequirePermission(Permissions.TesoreriaSupplierPayments)]
+    [RequirePermission(Permissions.CobranzasSeeCost)]
+    public async Task<ActionResult<SupplierInvoiceDto>> VoidSupplierInvoice(
+        string publicIdOrLegacyId, Guid invoicePublicId,
+        SupplierInvoiceVoidRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
+            return Ok(await _supplierService.VoidSupplierInvoiceAsync(id, invoicePublicId, request.Reason, cancellationToken));
+        }
+        catch (KeyNotFoundException) { return NotFound(); }
+        catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
+        catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
+    }
+
     [HttpGet("{publicIdOrLegacyId}/account/services")]
     [RequirePermission(Permissions.ProveedoresView)]
     public async Task<ActionResult<PagedResponse<SupplierAccountServiceListItemDto>>> GetSupplierAccountServices(
@@ -170,6 +264,10 @@ public class SuppliersController : ControllerBase
         catch (KeyNotFoundException)
         {
             return NotFound();
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
         }
     }
 
@@ -256,6 +354,10 @@ public class SuppliersController : ControllerBase
         {
             return NotFound();
         }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     [HttpPost("{publicIdOrLegacyId}/payments")]
@@ -279,6 +381,10 @@ public class SuppliersController : ControllerBase
         catch (InvalidOperationException)
         {
             return BadRequest(new { message = "No se pudo registrar el pago al proveedor." });
+        }
+        catch (BusinessInvariantViolationException ex)
+        {
+            return Conflict(new { message = ex.Message });
         }
     }
 
@@ -453,7 +559,8 @@ public class SuppliersController : ControllerBase
         // Configuracion de multas de cancelacion (2026-07-14): que tan seguido cobra multa este operador
         // (Unknown=0/RarelyCharges=1/UsuallyCharges=2). Default Unknown = sin pista en el paso de la multa.
         // Viaja como el INT del enum, mismo criterio que TreasuryFxAssumedByOverride de arriba.
-        supplier.PenaltyBehavior
+        supplier.PenaltyBehavior,
+        supplier.InvoicingMode
     };
 
     private static Supplier MapSupplier(SupplierUpsertRequest request) => new()
@@ -477,7 +584,8 @@ public class SuppliersController : ControllerBase
         // Configuracion de multas de cancelacion (2026-07-14): que tan seguido cobra multa este operador. La
         // validacion (que sea un valor definido del enum) la hace el servicio; si el request no lo manda, el
         // binder JSON lo deja en Unknown (default del enum), que es el valor correcto para "sin pista".
-        PenaltyBehavior = request.PenaltyBehavior
+        PenaltyBehavior = request.PenaltyBehavior,
+        InvoicingMode = request.InvoicingMode ?? SupplierInvoicingMode.TotalToCustomer
     };
 }
 
@@ -504,4 +612,6 @@ public record SupplierUpsertRequest(
     // Configuracion de multas de cancelacion (2026-07-14): que tan seguido cobra multa este operador
     // (Unknown=0/RarelyCharges=1/UsuallyCharges=2). Default Unknown ("no se sabe") — es el valor NORMAL,
     // el servicio lo asigna SIEMPRE (mismo criterio que TreasuryFxAssumedByOverride de arriba).
-    SupplierPenaltyBehavior PenaltyBehavior = SupplierPenaltyBehavior.Unknown);
+    SupplierPenaltyBehavior PenaltyBehavior = SupplierPenaltyBehavior.Unknown,
+    // Null = cliente legacy: en update se preserva el valor vigente; en alta se usa compra/reventa.
+    SupplierInvoicingMode? InvoicingMode = null);

@@ -224,6 +224,9 @@ public class PartialCreditNoteEmissionSummaryDto
     /// <summary>true si ya pasaron los 15 dias del plazo informativo. NO bloquea la emision.</summary>
     public bool Rg4540DeadlinePassed { get; set; }
 
+    /// <summary>Días corridos restantes, calculados server-side. Cero cuando el plazo ya venció.</summary>
+    public int Rg4540DaysRemaining { get; set; }
+
     /// <summary>
     /// true cuando la agencia es Responsable Inscripto: la emision automatica queda bloqueada hasta la firma
     /// de un contador matriculado sobre la alicuota de la porcion trasladada (fiscal, riesgo residual 1). Para
@@ -262,6 +265,9 @@ public class CancellationSaleInvoiceDto
 /// </summary>
 public class BookingCancellationCreditNoteDto
 {
+    /// <summary>Id público de la NC emitida; permite abrir su PDF o enviarla al cliente.</summary>
+    public Guid? PublicId { get; set; }
+
     /// <summary>Moneda de la NC en codigo ISO legible (ARS/USD). Derivada del MonId ARCA de la factura origen.</summary>
     public string Currency { get; set; } = string.Empty;
 
@@ -382,6 +388,18 @@ public record CancelServiceResultDto(
     string ServiceTable,
     int CancelledServicesCount,
     int TotalServicesWithSupplierCount
+);
+
+/// <summary>
+/// T5 legacy: completa factura destino y monto congelado de una única línea parcial que quedó ambigua.
+/// No emite; deja el evento listo para la confirmación fiscal explícita.
+/// </summary>
+public record ResolvePartialCreditNoteRequest(
+    [Required] Guid TargetInvoicePublicId,
+    [Range(typeof(decimal), "0.01", "999999999999.99")]
+    decimal ConfirmedGrossCreditAmount,
+    [Required, MinLength(10), MaxLength(500)]
+    string Reason
 );
 
 /// <summary>

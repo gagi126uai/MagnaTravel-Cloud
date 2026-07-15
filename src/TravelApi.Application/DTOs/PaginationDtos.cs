@@ -165,6 +165,7 @@ public class SupplierListQuery : PagedQuery
 public class SupplierAccountServicesQuery : PagedQuery
 {
     public string? Type { get; set; }
+    public string? Currency { get; set; }
 
     public SupplierAccountServicesQuery()
     {
@@ -175,6 +176,7 @@ public class SupplierAccountServicesQuery : PagedQuery
 
 public class SupplierAccountPaymentsQuery : PagedQuery
 {
+    public string? Currency { get; set; }
     public SupplierAccountPaymentsQuery()
     {
         SortBy = "paidAt";

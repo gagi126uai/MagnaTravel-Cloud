@@ -123,6 +123,30 @@ export async function showConfirm(input, text, confirmText = "Si, confirmar", co
   return result.isConfirmed;
 }
 
+export async function showTextPrompt({
+  title,
+  text,
+  placeholder = "",
+  confirmText = "Confirmar",
+  minLength = 1,
+}) {
+  const result = await Swal.fire({
+    title,
+    text,
+    input: "textarea",
+    inputPlaceholder: placeholder,
+    inputAttributes: { "aria-label": placeholder || title },
+    showCancelButton: true,
+    confirmButtonText: confirmText,
+    cancelButtonText: "Cancelar",
+    inputValidator: (value) => {
+      const trimmed = value?.trim() || "";
+      return trimmed.length >= minLength ? undefined : `Ingresá al menos ${minLength} caracteres.`;
+    },
+  });
+  return result.isConfirmed ? result.value.trim() : null;
+}
+
 export function showToastSuccess(message) {
   toast.success(normalizeMessage(message, ""));
 }

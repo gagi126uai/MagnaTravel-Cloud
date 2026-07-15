@@ -21,6 +21,7 @@ import {
     Landmark,
     Settings,
     ChevronRight,
+    FileText,
 } from "lucide-react";
 import { api } from "../../../api";
 import { AccountPageSkeleton } from "../../../components/ui/skeleton";
@@ -51,6 +52,7 @@ import { UsarSaldoOperadorInline } from "../components/UsarSaldoOperadorInline";
 import { ListaCuentasBancarias } from "../../../features/bank-accounts/components/ListaCuentasBancarias";
 import { OperatorRefundsPendingSection } from "../components/OperatorRefundsPendingSection";
 import { RegistrarReembolsoRecibidoInline } from "../components/RegistrarReembolsoRecibidoInline";
+import { SupplierInvoicesSection } from "../components/SupplierInvoicesSection";
 import { useOperatorRefundsPending } from "../hooks/useOperatorRefundsPending";
 // CURRENCY_OPTIONS se reutiliza del alta de operador para mantener las etiquetas consistentes.
 // No duplicamos el array: si el equipo agrega una moneda, se actualiza en un solo lugar.
@@ -75,6 +77,7 @@ import {
     penaltyBehaviorDesdeValorSelect,
 } from "../../../lib/supplierPenaltyBehavior.js";
 import { siguienteEstadoPenaltyBehavior, puedeGuardarConPenaltyBehavior } from "../lib/penaltyBehaviorState.js";
+import { supplierDueState } from "../lib/supplierAging.js";
 
 // Estado inicial vacío para la paginación de servicios.
 const emptyPage = {
@@ -260,6 +263,7 @@ function SupplierInlineEditForm({ supplier, onGuardado }) {
         // defaultPaymentTermDays: campo del modelo (ADR-041) que NO se muestra en la UI
         // pero se incluye en el PUT para no pisarlo con null en un FULL overwrite.
         defaultPaymentTermDays: null,
+        invoicingMode: 0,
     });
     const [saving, setSaving] = useState(false);
 
@@ -306,6 +310,7 @@ function SupplierInlineEditForm({ supplier, onGuardado }) {
             // Round-trip: preservamos el plazo de pago acordado (ADR-041) aunque no
             // lo mostremos en este form. Sin esto, el PUT lo pierde (full overwrite).
             defaultPaymentTermDays: supplier.defaultPaymentTermDays ?? null,
+            invoicingMode: supplier.invoicingMode ?? 0,
         });
     }, [supplier]);
 
@@ -439,6 +444,35 @@ function SupplierInlineEditForm({ supplier, onGuardado }) {
                         className={inputClass}
                         data-testid="supplier-datos-name"
                     />
+                </div>
+
+                <div className="space-y-2">
+                    <label className={labelClass}>Plazo habitual de pago (días)</label>
+                    <input
+                        type="number"
+                        min="0"
+                        value={formData.defaultPaymentTermDays ?? ""}
+                        onChange={(event) => setFormData((prev) => ({
+                            ...prev,
+                            defaultPaymentTermDays: event.target.value === "" ? null : Number(event.target.value),
+                        }))}
+                        className={inputClass}
+                        data-testid="supplier-datos-payment-term"
+                    />
+                    <p className="text-xs text-muted-foreground">Sirve para ordenar vencimientos; no mueve plata ni bloquea pagos.</p>
+                </div>
+
+                <div className="space-y-2">
+                    <label className={labelClass}>Cómo trabaja con la agencia</label>
+                    <select
+                        value={formData.invoicingMode}
+                        onChange={(event) => setFormData((prev) => ({ ...prev, invoicingMode: Number(event.target.value) }))}
+                        className={inputClass}
+                        data-testid="supplier-datos-invoicing-mode"
+                    >
+                        <option value={0}>Compra y reventa</option>
+                        <option value={1}>Intermediación (factura directo al cliente)</option>
+                    </select>
                 </div>
 
                 <div className="space-y-2">
@@ -1103,16 +1137,17 @@ const STATUS_ENDPOINT_BY_TYPE = {
     "Vuelo": "flight-segments",
     "Traslado": "transfer-bookings",
     "Paquete": "package-bookings",
+    "Asistencia": "assistance-bookings",
 };
 
 const STATUS_OPTIONS = ["Solicitado", "Confirmado", "Cancelado"];
 
-function ServiceStatusEditor({ service, onUpdated }) {
+function ServiceStatusEditor({ service, onUpdated, canEdit }) {
     const endpoint = STATUS_ENDPOINT_BY_TYPE[service.type];
     const [value, setValue] = useState(service.status || "Solicitado");
     const [saving, setSaving] = useState(false);
 
-    if (!endpoint) {
+    if (!endpoint || !canEdit) {
         // Servicio generico — no editable desde aca, mostramos texto plano
         return <span className="text-sm">{service.status || "-"}</span>;
     }
@@ -1164,7 +1199,7 @@ function ServiceStatusEditor({ service, onUpdated }) {
 // Editor inline del codigo de confirmacion del proveedor (PNR para vuelos,
 // ConfirmationNumber para el resto). Click para editar, Enter/blur para guardar,
 // Esc para cancelar.
-function ServiceConfirmationEditor({ service, onUpdated }) {
+function ServiceConfirmationEditor({ service, onUpdated, canEdit }) {
     const endpoint = STATUS_ENDPOINT_BY_TYPE[service.type];
     const [editing, setEditing] = useState(false);
     const [value, setValue] = useState(service.confirmation || "");
@@ -1175,7 +1210,7 @@ function ServiceConfirmationEditor({ service, onUpdated }) {
         if (!editing) setValue(service.confirmation || "");
     }, [service.confirmation, editing]);
 
-    if (!endpoint) {
+    if (!endpoint || !canEdit) {
         return <span className="font-mono text-xs">{service.confirmation || "-"}</span>;
     }
 
@@ -1330,7 +1365,8 @@ export default function SupplierAccountPage() {
     // Cargamos el conteo de reembolsos al montar para poder mostrar el badge.
     // OperatorRefundsPendingSection también carga sus propios datos internamente
     // cuando el usuario entra a la solapa — este call paralelo es intencional.
-    const { items: pendingRefundsItems, reload: reloadPendingRefundsBadge } = useOperatorRefundsPending(publicId);
+    const puedeVerReembolsos = hasPermission("tesoreria.supplier_payments");
+    const { items: pendingRefundsItems, reload: reloadPendingRefundsBadge } = useOperatorRefundsPending(publicId, puedeVerReembolsos);
     // Solo mostramos el badge si el usuario tiene permiso (de lo contrario el
     // endpoint habría devuelto 403 o vacío, y no tiene sentido mostrarlo).
     const cantidadReembolsosPendientes = hasPermission("tesoreria.supplier_payments")
@@ -1358,6 +1394,7 @@ export default function SupplierAccountPage() {
     // Si hay más de 200 pagos los más viejos no tendrán botón Editar (sí Eliminar).
     const loadAllPayments = useCallback(async () => {
         if (!publicId) return;
+        if (!hasPermission("tesoreria.supplier_payments")) return;
         try {
             const response = await api.get(
                 `/suppliers/${publicId}/account/payments?page=1&pageSize=200&sortBy=paidAt&sortDir=desc`
@@ -1372,6 +1409,10 @@ export default function SupplierAccountPage() {
 
     // Carga el saldo a favor y aplicaciones activas del proveedor.
     const loadSupplierCredit = useCallback(async () => {
+        if (!hasPermission("tesoreria.supplier_payments")) {
+            setSupplierCreditOverview(null);
+            return;
+        }
         try {
             const creditData = await api.get(`/suppliers/${publicId}/credit`);
             setSupplierCreditOverview(creditData);
@@ -1562,7 +1603,9 @@ export default function SupplierAccountPage() {
     const balancesByCurrency = overview?.balancesByCurrency || [];
 
     const puedeVerMontos = hasPermission("cobranzas.see_cost");
+    const puedeEditarReservas = hasPermission("reservas.edit");
     const puedeEditarEliminarPago = hasPermission("tesoreria.supplier_payments");
+    const puedeVerFacturasProveedor = hasPermission("cobranzas.see_cost");
 
     // Aplicaciones de saldo a favor vigentes (para el extracto).
     const activeApplications = supplierCreditOverview?.activeApplications ?? [];
@@ -1608,7 +1651,8 @@ export default function SupplierAccountPage() {
         { id: "cuenta-corriente",    label: "Cuenta corriente",    icon: CreditCard  },
         { id: "deuda-por-reserva",   label: "Deuda por reserva",   icon: Layers      },
         { id: "servicios-comprados", label: "Servicios comprados", icon: Building2   },
-        { id: "reembolsos",          label: labelReembolsos,        icon: RotateCcw   },
+        ...(puedeVerFacturasProveedor ? [{ id: "facturas-operador", label: "Facturas operador", icon: FileText }] : []),
+        ...(puedeVerReembolsos ? [{ id: "reembolsos", label: labelReembolsos, icon: RotateCcw }] : []),
         { id: "datos-bancarios",     label: "Datos bancarios",      icon: Landmark    },
         { id: "datos",               label: "Datos",                icon: Settings    },
     ];
@@ -1911,6 +1955,7 @@ export default function SupplierAccountPage() {
                                             <DataGridHeaderCell>Descripcion</DataGridHeaderCell>
                                             <DataGridHeaderCell>Reserva</DataGridHeaderCell>
                                             <DataGridHeaderCell>Fecha</DataGridHeaderCell>
+                                            <DataGridHeaderCell>Vencimiento</DataGridHeaderCell>
                                             <DataGridHeaderCell>Estado</DataGridHeaderCell>
                                             <DataGridHeaderCell>Codigo</DataGridHeaderCell>
                                             <DataGridHeaderCell align="right">Costo</DataGridHeaderCell>
@@ -1919,9 +1964,9 @@ export default function SupplierAccountPage() {
                                     </DataGridHeader>
                                     <DataGridBody>
                                         {servicesLoading ? (
-                                            <DataGridEmptyState colSpan={8} title="Cargando servicios..." />
+                                            <DataGridEmptyState colSpan={9} title="Cargando servicios..." />
                                         ) : services.length === 0 ? (
-                                            <DataGridEmptyState colSpan={8} title="No hay servicios para este filtro." />
+                                            <DataGridEmptyState colSpan={9} title="No hay servicios para este filtro." />
                                         ) : (
                                             services.map((service) => (
                                                 <DataGridRow key={getPublicId(service)}>
@@ -1950,14 +1995,28 @@ export default function SupplierAccountPage() {
                                                     </DataGridCell>
                                                     <DataGridCell>{formatDate(service.date)}</DataGridCell>
                                                     <DataGridCell>
+                                                        {(() => {
+                                                            const due = supplierDueState(service.suggestedDueDate);
+                                                            if (!due) return <span className="text-xs text-slate-400">Sin plazo</span>;
+                                                            const tone = due.tone === "overdue" || due.tone === "today"
+                                                                ? "text-rose-700 bg-rose-50 dark:text-rose-300 dark:bg-rose-950/30"
+                                                                : due.tone === "soon"
+                                                                    ? "text-amber-700 bg-amber-50 dark:text-amber-300 dark:bg-amber-950/30"
+                                                                    : "text-slate-600 bg-slate-50 dark:text-slate-300 dark:bg-slate-800";
+                                                            return <span className={`rounded px-2 py-1 text-xs font-semibold ${tone}`}>{due.label}</span>;
+                                                        })()}
+                                                    </DataGridCell>
+                                                    <DataGridCell>
                                                         <ServiceStatusEditor
                                                             service={service}
+                                                            canEdit={puedeEditarReservas}
                                                             onUpdated={() => { loadServices(); loadOverview(); }}
                                                         />
                                                     </DataGridCell>
                                                     <DataGridCell>
                                                         <ServiceConfirmationEditor
                                                             service={service}
+                                                            canEdit={puedeEditarReservas}
                                                             onUpdated={() => { loadServices(); loadOverview(); }}
                                                         />
                                                     </DataGridCell>
@@ -1999,6 +2058,11 @@ export default function SupplierAccountPage() {
                                                         <div className="text-xs text-slate-500 dark:text-slate-400">
                                                             Fecha {formatDate(service.date)}
                                                         </div>
+                                                        {service.suggestedDueDate && (
+                                                            <div className="text-xs font-semibold text-amber-700 dark:text-amber-300">
+                                                                {supplierDueState(service.suggestedDueDate)?.label}
+                                                            </div>
+                                                        )}
                                                         <div className="text-xs text-slate-500 dark:text-slate-400">
                                                             {service.reservaPublicId ? (
                                                                 <Link
@@ -2014,6 +2078,7 @@ export default function SupplierAccountPage() {
                                                         <div className="flex flex-wrap items-center gap-2 mt-1">
                                                             <ServiceStatusEditor
                                                                 service={service}
+                                                                canEdit={puedeEditarReservas}
                                                                 onUpdated={() => { loadServices(); loadOverview(); }}
                                                             />
                                                         </div>
@@ -2021,6 +2086,7 @@ export default function SupplierAccountPage() {
                                                             Codigo:{" "}
                                                             <ServiceConfirmationEditor
                                                                 service={service}
+                                                                canEdit={puedeEditarReservas}
                                                                 onUpdated={() => { loadServices(); loadOverview(); }}
                                                             />
                                                         </div>
@@ -2071,6 +2137,17 @@ export default function SupplierAccountPage() {
                         OperatorRefundsPendingSection se autogate con tesoreria.supplier_payments;
                         si el usuario no tiene ese permiso, no se renderiza nada.
                     ─────────────────────────────────────────────────────────────── */}
+                    {activeTab === "facturas-operador" && puedeVerFacturasProveedor && (
+                        <div id="panel-facturas-operador" role="tabpanel">
+                            <SupplierInvoicesSection
+                                supplierPublicId={publicId}
+                                overview={overview}
+                                canEdit={hasPermission("tesoreria.supplier_payments")}
+                                canApply={hasPermission("tesoreria.supplier_payments")}
+                            />
+                        </div>
+                    )}
+
                     {activeTab === "reembolsos" && (
                         <div id="panel-reembolsos" role="tabpanel">
                             {/* key=reembolsosTabRefreshKey: fuerza el remount (y por lo tanto el

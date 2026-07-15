@@ -518,6 +518,9 @@ public static class AuditActions
     /// </summary>
     public const string BookingCancellationForceApprovalCallbackNoop = "BookingCancellationForceApprovalCallback_NoOp";
 
+    /// <summary>T5: se resolvió manualmente factura+monto de una NC parcial legacy ambigua.</summary>
+    public const string PartialCreditNoteLegacyResolved = "PartialCreditNoteLegacyResolved";
+
     // ===== ADR-031 v2.1 — Asignaciones pasajero <-> servicio =====
 
     /// <summary>

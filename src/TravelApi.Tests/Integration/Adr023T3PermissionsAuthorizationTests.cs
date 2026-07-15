@@ -192,11 +192,24 @@ public class Adr023T3PermissionsAuthorizationTests : IClassFixture<CustomWebAppl
     }
 
     [Fact]
-    public async Task GET_Customers_WithClientesView_NotForbidden()
+    public async Task GET_Customers_WithClientesViewButNoCobranzasView_Returns403()
     {
         var role = "T3Cli-" + Guid.NewGuid().ToString("N")[..8];
         var userId = "t3-cust-list-ok-" + Guid.NewGuid().ToString("N")[..8];
         await SeedUserWithPermissionsAsync(role, userId, Permissions.ClientesView);
+
+        var client = CreateClientAs(userId, role);
+        var response = await client.GetAsync("/api/customers");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GET_Customers_WithBothPermissions_NotForbidden()
+    {
+        var role = "T3CliCob-" + Guid.NewGuid().ToString("N")[..8];
+        var userId = "t3-cust-list-ok-" + Guid.NewGuid().ToString("N")[..8];
+        await SeedUserWithPermissionsAsync(role, userId, Permissions.ClientesView, Permissions.CobranzasView);
 
         var client = CreateClientAs(userId, role);
         var response = await client.GetAsync("/api/customers");
@@ -255,6 +268,20 @@ public class Adr023T3PermissionsAuthorizationTests : IClassFixture<CustomWebAppl
         var role = "T3NoCli-" + Guid.NewGuid().ToString("N")[..8];
         var userId = "t3-acctres-deny-" + Guid.NewGuid().ToString("N")[..8];
         await SeedUserWithPermissionsAsync(role, userId); // sin clientes.view
+
+        var client = CreateClientAs(userId, role);
+        var response = await client.GetAsync($"/api/customers/{customerPublicId}/account/reservas");
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task GET_CustomerAccountReservas_WithClientesViewButNoCobranzasView_Returns403()
+    {
+        var customerPublicId = await SeedCustomerAsync();
+        var role = "T3CliNoCob-" + Guid.NewGuid().ToString("N")[..8];
+        var userId = "t3-acctres-partial-" + Guid.NewGuid().ToString("N")[..8];
+        await SeedUserWithPermissionsAsync(role, userId, Permissions.ClientesView);
 
         var client = CreateClientAs(userId, role);
         var response = await client.GetAsync($"/api/customers/{customerPublicId}/account/reservas");

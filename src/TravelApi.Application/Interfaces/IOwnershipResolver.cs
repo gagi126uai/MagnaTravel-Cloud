@@ -14,6 +14,8 @@ public enum OwnedEntity
     Voucher,
     Passenger,
     Assignment,
+    Lead,
+    Quote,
 
     // FC1.2.0 v3 (2026-05-17): entidades nuevas del modulo de cancelacion/refund.
     // OperatorRefundReceived NO se incluye a proposito: es back-office sin

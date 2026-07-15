@@ -55,6 +55,7 @@ public class Adr018Ronda7OptionalCabinVehicleConversionTests
         {
             QuoteNumber = "COT-R7",
             Title = "Ronda 7 opcionales",
+            Status = QuoteStatus.Accepted,
             TravelStartDate = DateTime.UtcNow.Date.AddDays(10),
             TravelEndDate = DateTime.UtcNow.Date.AddDays(12),
             Adults = 2,

@@ -151,6 +151,7 @@ export function EstadoCuentaClienteTab({
  */
 function BloqueExtractoCliente({ bloque }) {
   const saldoCierre = bloque.closingBalance ?? 0;
+  const creditoNoAplicado = bloque.unappliedCredit ?? 0;
   const nombreMoneda = bloque.currency === "USD" ? "Dólares" : "Pesos";
 
   return (
@@ -163,8 +164,8 @@ function BloqueExtractoCliente({ bloque }) {
             {nombreMoneda}
           </span>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Saldo</span>
+        <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Debe</span>
           <span
             className={`text-sm font-extrabold ${
               saldoCierre > 0
@@ -177,6 +178,14 @@ function BloqueExtractoCliente({ bloque }) {
           >
             {formatCurrency(saldoCierre, bloque.currency)}
           </span>
+          {creditoNoAplicado > 0 && (
+            <>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-600">Crédito no aplicado</span>
+              <span className="text-sm font-extrabold text-amber-600" data-testid={`extracto-credito-no-aplicado-${bloque.currency}`}>
+                {formatCurrency(creditoNoAplicado, bloque.currency)}
+              </span>
+            </>
+          )}
         </div>
       </div>
 

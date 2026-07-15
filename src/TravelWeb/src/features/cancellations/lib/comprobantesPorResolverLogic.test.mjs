@@ -10,8 +10,8 @@ test("textoQueFaltaNotaCredito: RequiresManualReview tiene su propio texto", () 
 });
 
 test("textoQueFaltaNotaCredito: cualquier otro estado (incl. ManualReviewPending) cae al texto genérico", () => {
-  assert.equal(textoQueFaltaNotaCredito("ManualReviewPending"), "Falta revisar y emitir la devolución");
-  assert.equal(textoQueFaltaNotaCredito(undefined), "Falta revisar y emitir la devolución");
+  assert.equal(textoQueFaltaNotaCredito("ManualReviewPending"), "Falta confirmar y emitir la devolución");
+  assert.equal(textoQueFaltaNotaCredito(undefined), "Falta confirmar y emitir la devolución");
 });
 
 test("fusionarComprobantesPorResolver: junta multas y NC en una sola lista, multas primero", () => {
@@ -31,9 +31,9 @@ test("fusionarComprobantesPorResolver: junta multas y NC en una sola lista, mult
   assert.equal(resultado[0].queFalta, "El cobro de la multa no salió — hay que reintentar");
 
   assert.equal(resultado[1].key, "nc-bc-2");
-  assert.equal(resultado[1].comprobante, "Devolución (NC)");
+  assert.equal(resultado[1].comprobante, "DEVOLUCIÓN · SERVICIO CANCELADO");
   assert.equal(resultado[1].reservaNumero, "F-2026-1031");
-  assert.equal(resultado[1].queFalta, "Falta revisar y emitir la devolución");
+  assert.equal(resultado[1].queFalta, "Falta confirmar y emitir la devolución");
 });
 
 test("fusionarComprobantesPorResolver: listas vacías o ausentes no rompen (defensivo)", () => {
