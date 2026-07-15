@@ -718,7 +718,7 @@ function SupplierInlineEditForm({ supplier, onGuardado }) {
  * Props:
  *   - publicId: string — publicId del proveedor (para el endpoint)
  */
-function SupplierDebtByReservaSection({ publicId }) {
+function SupplierDebtByReservaSection({ publicId, refreshKey }) {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -748,7 +748,7 @@ function SupplierDebtByReservaSection({ publicId }) {
     // Carga al montar y cada vez que cambia el proveedor activo.
     useEffect(() => {
         cargarDeuda();
-    }, [cargarDeuda]);
+    }, [cargarDeuda, refreshKey]);
 
     if (loading) {
         return (
@@ -1299,6 +1299,7 @@ export default function SupplierAccountPage() {
     // extractoRefreshKey: incrementar fuerza al extracto a recargar sin que el usuario
     // refresque la página manualmente.
     const [extractoRefreshKey, setExtractoRefreshKey] = useState(0);
+    const [deudaPorReservaRefreshKey, setDeudaPorReservaRefreshKey] = useState(0);
     const [showPagoInline, setShowPagoInline] = useState(false);
     const [paymentToEdit, setPaymentToEdit] = useState(null);
     // monedaUsandoSaldo: qué moneda tiene la ficha "Usar saldo a favor" abierta.
@@ -1433,6 +1434,7 @@ export default function SupplierAccountPage() {
         setShowPagoInline(false);
         setPaymentToEdit(null);
         setExtractoRefreshKey((k) => k + 1);
+        setDeudaPorReservaRefreshKey((k) => k + 1);
         await Promise.all([loadOverview(), loadAllPayments(), loadSupplierCredit()]);
     }, [loadOverview, loadAllPayments, loadSupplierCredit]);
 
@@ -1440,12 +1442,14 @@ export default function SupplierAccountPage() {
     const handleSaldoAplicado = useCallback(async () => {
         setMonedaUsandoSaldo(null);
         setExtractoRefreshKey((k) => k + 1);
+        setDeudaPorReservaRefreshKey((k) => k + 1);
         await Promise.all([loadOverview(), loadSupplierCredit()]);
     }, [loadOverview, loadSupplierCredit]);
 
     // Se llama al revertir una aplicación de saldo a favor.
     const handleRevertirAplicacionTerminada = useCallback(async () => {
         setExtractoRefreshKey((k) => k + 1);
+        setDeudaPorReservaRefreshKey((k) => k + 1);
         await Promise.all([loadOverview(), loadSupplierCredit()]);
     }, [loadOverview, loadSupplierCredit]);
 
@@ -1485,6 +1489,7 @@ export default function SupplierAccountPage() {
         try {
             await api.delete(`/suppliers/${publicId}/payments/${paymentId}`);
             setExtractoRefreshKey((k) => k + 1);
+            setDeudaPorReservaRefreshKey((k) => k + 1);
             await Promise.all([loadOverview(), loadAllPayments()]);
             showSuccess("Pago eliminado.");
         } catch (error) {
@@ -1807,6 +1812,7 @@ export default function SupplierAccountPage() {
                                 <PagarProveedorInline
                                     supplierId={getPublicId(supplier)}
                                     balancesByCurrency={balancesByCurrency}
+                                    openInvoicedCharges={overview?.openInvoicedCharges || []}
                                     paymentToEdit={paymentToEdit}
                                     onGuardado={handlePagoGuardado}
                                     onCancelar={() => {
@@ -1840,7 +1846,7 @@ export default function SupplierAccountPage() {
                     ─────────────────────────────────────────────────────────────── */}
                     {activeTab === "deuda-por-reserva" && (
                         <div id="panel-deuda-por-reserva" role="tabpanel">
-                            <SupplierDebtByReservaSection publicId={publicId} />
+                            <SupplierDebtByReservaSection publicId={publicId} refreshKey={deudaPorReservaRefreshKey} />
                         </div>
                     )}
 

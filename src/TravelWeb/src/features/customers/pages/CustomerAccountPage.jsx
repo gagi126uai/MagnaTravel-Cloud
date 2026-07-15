@@ -471,7 +471,7 @@ export default function CustomerAccountPage() {
       );
       setRevirtiendoAplicacionId(null);
       setMotivoReversion("");
-      await Promise.all([loadOverview(), loadCreditApplications()]);
+      await refreshAll();
     } catch (error) {
       setErrorReversion(getApiErrorMessage(error, "No se pudo revertir la aplicación. Intentá de nuevo."));
     } finally {
@@ -733,9 +733,9 @@ export default function CustomerAccountPage() {
                     moneda={creditEntry.currency}
                     saldoDisponible={Number(creditEntry.amount)}
                     reservasConDeuda={getReservasConDeudaEnMoneda(creditEntry.currency)}
-                    onConfirmado={() => {
+                    onConfirmado={async () => {
                       setMonedaFichaUsarSaldo(null);
-                      Promise.all([loadOverview(), loadCreditApplications(), loadDeudaClientePorReserva()]);
+                      await refreshAll();
                     }}
                     onCancelar={() => setMonedaFichaUsarSaldo(null)}
                   />

@@ -87,5 +87,7 @@ public record SupplierPaymentRequest(
     // ExchangeRate), el service calcula y registra el ajuste (Decision 3) — visible en el extracto del
     // operador como "Ajuste por el dólar" (regla dura de multimoneda: nunca "diferencia de cambio").
     // La pantalla que carga este campo es ADR-044 T4.
-    Guid? SettlesOperatorChargePublicId = null
+    Guid? SettlesOperatorChargePublicId = null,
+    // Fecha efectiva del egreso. Null conserva el comportamiento legacy (ahora UTC).
+    DateTime? PaidAt = null
 );

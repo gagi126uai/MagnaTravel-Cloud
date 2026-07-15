@@ -59,6 +59,8 @@ const FUENTES_TC = [
     { value: 1, label: "BCRA mayorista A3500" },
 ];
 
+const PAYMENT_CURRENCIES = ["ARS", "USD"];
+
 // Métodos de pago del proveedor: valores enum del backend (inglés, igual que el modal viejo).
 // IMPORTANTE: no cambiar estos valores sin cambiar también los registros existentes en base de datos.
 const METODOS_PAGO_PROVEEDOR = [
@@ -405,11 +407,10 @@ function SelectorServicioImputacion({ supplierId, reservaSeleccionada, servicioS
 
 // ─── Componente principal: formulario de pago en línea ────────────────────────
 
-export function PagarProveedorInline({ supplierId, balancesByCurrency, paymentToEdit = null, onGuardado, onCancelar }) {
+export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoicedCharges = [], paymentToEdit = null, onGuardado, onCancelar }) {
     // Determina la moneda con deuda activa (o la primera de la lista si todo está saldado)
     const monedaPrincipal = resolverMonedaPrincipalProveedor(balancesByCurrency);
 
-    // El proveedor tiene multi-moneda si hay más de una entrada en balancesByCurrency
     const esMultimoneda = Array.isArray(balancesByCurrency) && balancesByCurrency.length > 1;
 
     // true cuando estamos editando un pago existente (vs. creando uno nuevo)
@@ -421,6 +422,8 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, paymentTo
         paymentToEdit.imputedCurrency != null &&
         paymentToEdit.imputedCurrency !== paymentToEdit.currency
     );
+    const estaEditandoLiquidacion = esEdicion && Boolean(paymentToEdit.isOperatorChargeSettlement);
+    const edicionEconomicaBloqueada = estaEditandoCruzado || estaEditandoLiquidacion;
 
     // Permiso para ver montos de costo: controla si el saldo del banner se muestra o se enmascara.
     // Nota: el backend ya devuelve el saldo real; el enmascarado es solo visual.
@@ -450,6 +453,7 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, paymentTo
     const [reservasLoading, setReservasLoading] = useState(false);
     const [reservaSeleccionada, setReservaSeleccionada] = useState(null);
     const [servicioSeleccionado, setServicioSeleccionado] = useState(null);
+    const [cargoSeleccionadoId, setCargoSeleccionadoId] = useState("");
 
     const [saving, setSaving] = useState(false);
     const [errorGuardar, setErrorGuardar] = useState(null);
@@ -491,6 +495,7 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, paymentTo
         setErrorGuardar(null);
         setReservaSeleccionada(null);
         setServicioSeleccionado(null);
+        setCargoSeleccionadoId("");
     }, [paymentToEdit]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Carga las reservas con deuda al montar la ficha, para el selector de imputación
@@ -518,18 +523,42 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, paymentTo
 
     // Un pago cruza de moneda si el cajero elige pagar en una moneda distinta al saldo imputado.
     // En ese caso hay que informar el tipo de cambio para convertir correctamente.
-    const esCruzado = esMultimoneda && monedaPago !== saldoImputado;
+    const esCruzado = mostrarOtraMoneda && monedaPago !== saldoImputado;
 
     // El equivalente se calcula en tiempo real para mostrárselo al cajero antes de confirmar
     const montoEquivalente = calcularEquivalenteProveedor(monto, tipoCambio, monedaPago, saldoImputado);
 
-    // El saldo de la moneda principal para el banner
-    const saldoMonedaPrincipal = balancesByCurrency?.find(
-        (b) => b.currency === monedaPrincipal
+    const cargoSeleccionado = openInvoicedCharges.find(
+        (charge) => String(charge.publicId) === String(cargoSeleccionadoId)
+    ) || null;
+    const monedaBanner = cargoSeleccionado?.currency || monedaPrincipal;
+    const saldoBanner = balancesByCurrency?.find(
+        (balance) => balance.currency === monedaBanner
     )?.balance ?? null;
 
     // El formulario no se puede enviar si en un pago cruzado faltan el TC o la fecha del TC
     const camposIncompletosParaCruzado = esCruzado && (!tipoCambio || parseFloat(tipoCambio) <= 0 || !fechaTC);
+
+    const handleCargoChange = (publicId) => {
+        setCargoSeleccionadoId(publicId);
+        const charge = openInvoicedCharges.find((item) => String(item.publicId) === String(publicId));
+        if (!charge) {
+            setMonto("");
+            setMonedaPago(monedaPrincipal);
+            setSaldoImputado(monedaPrincipal);
+            setMostrarOtraMoneda(false);
+            setTipoCambio("");
+            setFechaTC(fechaHoy());
+            return;
+        }
+
+        setMonto(String(charge.amount));
+        setMonedaPago(charge.currency);
+        setSaldoImputado(charge.currency);
+        setMostrarOtraMoneda(false);
+        setReservaSeleccionada(null);
+        setServicioSeleccionado(null);
+    };
 
     const handleReservaChange = (e) => {
         const publicId = e.target.value;
@@ -553,15 +582,27 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, paymentTo
 
         setSaving(true);
         try {
-            if (esEdicion && estaEditandoCruzado) {
-                // Editar un pago cruzado: solo método, referencia y notas.
-                // El monto y el TC generaron asientos en el libro mayor; no se pueden cambiar.
-                const payloadParcial = {
+            if (esEdicion && edicionEconomicaBloqueada) {
+                // El endpoint valida el bloque económico completo aunque solo cambien datos auxiliares.
+                // Reenviamos la foto original para que monto, moneda, TC e imputación sigan inmutables.
+                const payloadInmutable = {
+                    amount: Number(paymentToEdit.amount),
+                    currency: paymentToEdit.currency,
+                    imputedCurrency: paymentToEdit.imputedCurrency,
+                    exchangeRate: paymentToEdit.exchangeRate,
+                    exchangeRateSource: paymentToEdit.exchangeRateSource,
+                    exchangeRateAt: paymentToEdit.exchangeRateAt,
+                    imputedAmount: paymentToEdit.imputedAmount,
+                    paidAt: paymentToEdit.paidAt,
+                    reservaId: paymentToEdit.reservaPublicId || null,
+                    isAdvanceToAccount: Boolean(paymentToEdit.isAdvanceToAccount),
+                    serviceRecordKind: paymentToEdit.serviceRecordKind || null,
+                    servicePublicId: paymentToEdit.servicePublicId || null,
                     method: metodo,
                     reference: referencia.trim() || null,
                     notes: notas.trim() || null,
                 };
-                await api.put(`/suppliers/${supplierId}/payments/${getPublicId(paymentToEdit)}`, payloadParcial);
+                await api.put(`/suppliers/${supplierId}/payments/${getPublicId(paymentToEdit)}`, payloadInmutable);
             } else if (esEdicion) {
                 // Editar un pago simple (no cruzado): se pueden cambiar todos los campos
                 const payload = construirPayloadPagoProveedor({
@@ -582,6 +623,7 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, paymentTo
                     servicePublicId: servicioSeleccionado?.servicePublicId || null,
                     esCruzado,
                     saldoImputado, tipoCambio, fuenteTC, fechaTC, montoEquivalente,
+                    settlesOperatorChargePublicId: cargoSeleccionado?.publicId || null,
                 });
                 await api.post(`/suppliers/${supplierId}/payments`, payload);
             }
@@ -623,9 +665,9 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, paymentTo
 
             {/* Aviso informativo en modo edición de pago cruzado:
                 el monto/TC no son editables porque ya están contabilizados. */}
-            {estaEditandoCruzado && (
+            {edicionEconomicaBloqueada && (
                 <div className="rounded-lg bg-amber-50 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-900/40 px-4 py-2 text-xs text-amber-700 dark:text-amber-300">
-                    Este pago fue registrado en otra moneda. Solo podés cambiar el método, la referencia y las notas.
+                    Este pago tiene datos contables vinculados. Solo podés cambiar el método, la referencia y las notas.
                 </div>
             )}
 
@@ -645,22 +687,22 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, paymentTo
                 {/* Banner: moneda principal + saldo actual.
                     Le confirma al cajero en qué moneda va a pagar antes de cualquier selector.
                     Enmascarado: si no tiene permiso cobranzas.see_cost, muestra "—" en vez del saldo. */}
-                {saldoMonedaPrincipal !== null && (
+                {saldoBanner !== null && (
                     <div
                         className="flex items-center justify-between rounded-lg bg-emerald-50 border border-emerald-200 dark:bg-emerald-950/20 dark:border-emerald-900/40 px-4 py-2"
                         data-testid="pago-banner-moneda-principal"
                     >
                         <span className="text-sm font-semibold text-emerald-800 dark:text-emerald-300">
-                            Pagás en {monedaPrincipal === "USD" ? "US$" : "$"} —{" "}
+                            Pagás en {monedaBanner === "USD" ? "US$" : "$"} —{" "}
                             deuda{" "}
                             {puedeVerMontos
-                                ? formatCurrency(saldoMonedaPrincipal, monedaPrincipal)
+                                ? formatCurrency(saldoBanner, monedaBanner)
                                 : <span className="text-slate-400" title="Sin permiso para ver montos">—</span>
                             }
                         </span>
                         {/* Link "pagar en otra moneda": solo en proveedores con deuda en ambas monedas.
                             No se muestra en modo edición de pago cruzado (ya está determinada la moneda). */}
-                        {esMultimoneda && !mostrarOtraMoneda && !estaEditandoCruzado && (
+                        {esMultimoneda && !mostrarOtraMoneda && !edicionEconomicaBloqueada && !cargoSeleccionado && (
                             <button
                                 type="button"
                                 onClick={() => setMostrarOtraMoneda(true)}
@@ -669,6 +711,31 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, paymentTo
                             >
                                 pagar en otra moneda
                             </button>
+                        )}
+                    </div>
+                )}
+
+                {!esEdicion && puedeVerMontos && openInvoicedCharges.length > 0 && (
+                    <div className="space-y-1 rounded-lg border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-900/40 dark:bg-amber-950/10">
+                        <label className="text-xs font-semibold text-amber-800 dark:text-amber-300">
+                            Liquidar cargo facturado aparte (opcional)
+                        </label>
+                        <select
+                            value={cargoSeleccionadoId}
+                            onChange={(event) => handleCargoChange(event.target.value)}
+                            className="w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-amber-400 dark:border-amber-800 dark:bg-slate-800 dark:text-white"
+                        >
+                            <option value="">Pago general, sin liquidar un cargo puntual</option>
+                            {openInvoicedCharges.map((charge) => (
+                                <option key={charge.publicId} value={charge.publicId}>
+                                    {charge.documentRef || "Sin referencia"} · {charge.numeroReserva} · {formatCurrency(charge.amount, charge.currency)}
+                                </option>
+                            ))}
+                        </select>
+                        {cargoSeleccionado && (
+                            <p className="text-xs text-amber-700 dark:text-amber-300">
+                                El monto y la moneda quedan fijados por el documento del operador.
+                            </p>
                         )}
                     </div>
                 )}
@@ -684,7 +751,7 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, paymentTo
                             min="0.01"
                             required={!esEdicion} // en edición de cruzado puede ir sin monto
                             value={monto}
-                            disabled={saving || estaEditandoCruzado}
+                            disabled={saving || edicionEconomicaBloqueada || Boolean(cargoSeleccionado)}
                             onChange={(e) => setMonto(e.target.value)}
                             className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                             placeholder="0,00"
@@ -693,19 +760,19 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, paymentTo
                     </div>
 
                     {/* Moneda del pago: solo visible cuando el usuario activó "pagar en otra moneda" */}
-                    {esMultimoneda && mostrarOtraMoneda && (
+                    {(esMultimoneda || edicionEconomicaBloqueada) && mostrarOtraMoneda && !cargoSeleccionado && (
                         <div className="space-y-1">
                             <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">Moneda del pago</label>
                             <select
                                 value={monedaPago}
-                                disabled={saving || estaEditandoCruzado}
+                                disabled={saving || edicionEconomicaBloqueada}
                                 onChange={(e) => setMonedaPago(e.target.value)}
                                 className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                                 data-testid="pago-moneda"
                             >
-                                {balancesByCurrency.map((b) => (
-                                    <option key={b.currency} value={b.currency}>
-                                        {b.currency === "USD" ? "US$ Dólares" : "$ Pesos"}
+                                {PAYMENT_CURRENCIES.map((currency) => (
+                                    <option key={currency} value={currency}>
+                                        {currency === "USD" ? "US$ Dólares" : "$ Pesos"}
                                     </option>
                                 ))}
                             </select>
@@ -713,12 +780,12 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, paymentTo
                     )}
 
                     {/* Imputar a: qué saldo se reduce. Solo en multimoneda con modo completo. */}
-                    {esMultimoneda && mostrarOtraMoneda && (
+                    {(esMultimoneda || edicionEconomicaBloqueada) && mostrarOtraMoneda && !cargoSeleccionado && (
                         <div className="space-y-1">
                             <label className="text-xs font-semibold text-slate-600 dark:text-slate-400">Imputar a</label>
                             <select
                                 value={saldoImputado}
-                                disabled={saving || estaEditandoCruzado}
+                                disabled={saving || edicionEconomicaBloqueada}
                                 onChange={(e) => setSaldoImputado(e.target.value)}
                                 className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                                 data-testid="pago-imputar-a"
@@ -754,7 +821,7 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, paymentTo
                         <input
                             type="date"
                             value={fecha}
-                            disabled={saving || estaEditandoCruzado}
+                            disabled={saving || edicionEconomicaBloqueada}
                             onChange={(e) => setFecha(e.target.value)}
                             className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                         />
@@ -806,7 +873,7 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, paymentTo
                                     step="0.01"
                                     min="0.01"
                                     value={tipoCambio}
-                                    disabled={saving || estaEditandoCruzado}
+                                    disabled={saving || edicionEconomicaBloqueada}
                                     onChange={(e) => setTipoCambio(e.target.value)}
                                     className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 dark:border-indigo-800 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                                     placeholder="1.200,00"
@@ -817,7 +884,7 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, paymentTo
                                 <label className="text-xs font-semibold text-indigo-700 dark:text-indigo-300">Fuente</label>
                                 <select
                                     value={fuenteTC}
-                                    disabled={saving || estaEditandoCruzado}
+                                    disabled={saving || edicionEconomicaBloqueada}
                                     onChange={(e) => setFuenteTC(Number(e.target.value))}
                                     className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 dark:border-indigo-800 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                                     data-testid="pago-fuente-tc"
@@ -832,7 +899,7 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, paymentTo
                                 <input
                                     type="date"
                                     value={fechaTC}
-                                    disabled={saving || estaEditandoCruzado}
+                                    disabled={saving || edicionEconomicaBloqueada}
                                     onChange={(e) => setFechaTC(e.target.value)}
                                     className="w-full rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400 dark:border-indigo-800 dark:bg-slate-800 dark:text-white disabled:opacity-50"
                                     data-testid="pago-fecha-tc"
@@ -853,7 +920,7 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, paymentTo
                 {/* Sección: imputar a reserva / servicio (opcional).
                     No mostramos esto en edición de pago cruzado para simplificar
                     (el pago ya tiene sus imputaciones registradas). */}
-                {!estaEditandoCruzado && (
+                {!edicionEconomicaBloqueada && !cargoSeleccionado && (
                     <div className="space-y-3 rounded-xl border border-slate-200 dark:border-slate-700 p-4 bg-slate-50/50 dark:bg-slate-800/30">
                         <div className="flex items-center gap-2">
                             <Layers className="h-4 w-4 text-slate-500" />

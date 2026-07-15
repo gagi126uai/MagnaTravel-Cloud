@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Reservations;
@@ -588,6 +589,27 @@ public class SupplierService : ISupplierService
             })
             .ToListAsync(cancellationToken);
 
+        var openInvoicedCharges = await _dbContext.BookingCancellationLineOperatorCharges
+            .AsNoTracking()
+            .Where(charge =>
+                charge.CollectionMode == PenaltyCollectionMode.FacturadaAparte
+                && charge.SettledBySupplierPaymentId == null
+                && charge.BookingCancellationLine.SupplierId == id
+                && charge.BookingCancellationLine.BookingCancellation.Status != BookingCancellationStatus.Aborted)
+            .OrderBy(charge => charge.ConfirmedAt)
+            .Select(charge => new SupplierOpenInvoicedChargeDto
+            {
+                PublicId = charge.PublicId,
+                ReservaPublicId = charge.BookingCancellationLine.BookingCancellation.Reserva!.PublicId,
+                NumeroReserva = charge.BookingCancellationLine.BookingCancellation.Reserva!.NumeroReserva,
+                FileName = charge.BookingCancellationLine.BookingCancellation.Reserva!.Name,
+                DocumentRef = charge.DocumentRef,
+                Currency = charge.Currency,
+                Amount = charge.Amount,
+                ConfirmedAt = charge.ConfirmedAt
+            })
+            .ToListAsync(cancellationToken);
+
         var overview = new SupplierAccountOverviewDto
         {
             Supplier = supplier,
@@ -599,7 +621,8 @@ public class SupplierService : ISupplierService
                 ServiceCount = serviceCount,
                 PaymentCount = paymentCount
             },
-            BalancesByCurrency = balancesByCurrency
+            BalancesByCurrency = balancesByCurrency,
+            OpenInvoicedCharges = openInvoicedCharges
         };
 
         // ADR-017 F1b: TODO el resumen es plata del lado costo/deuda (compras al
@@ -621,6 +644,10 @@ public class SupplierService : ISupplierService
                 line.TotalPaid = 0m;
                 line.Balance = 0m;
             }
+
+            // La lista es accionable y contiene referencias documentales: sin permiso de costos no se expone
+            // ni siquiera su existencia (el front tampoco ofrece la liquidacion puntual en ese caso).
+            overview.OpenInvoicedCharges.Clear();
         }
 
         return overview;
@@ -1167,6 +1194,16 @@ public class SupplierService : ISupplierService
                 throw new ArgumentException(
                     "Ese cargo del operador ya se pagó. Si el pago anterior era incorrecto, eliminalo primero.",
                     nameof(request));
+
+            var settlementCurrency = Monedas.Normalizar(currency.ImputedCurrency ?? currency.Currency);
+            var settlementAmount = currency.ImputedAmount ?? EconomicRulesHelper.RoundCurrency(request.Amount);
+            if (!string.Equals(settlementCurrency, Monedas.Normalizar(settledCharge.Currency), StringComparison.Ordinal)
+                || settlementAmount != EconomicRulesHelper.RoundCurrency(settledCharge.Amount))
+            {
+                throw new ArgumentException(
+                    "Para liquidar el cargo, el pago debe cubrir su monto completo en la misma moneda.",
+                    nameof(request));
+            }
         }
 
         var payment = new SupplierPayment
@@ -1186,7 +1223,7 @@ public class SupplierService : ISupplierService
             ServicioReservaId = imputation.ServicioReservaId,
             ServiceRecordKind = imputation.ServiceRecordKind,
             ServicePublicId = imputation.ServicePublicId,
-            PaidAt = DateTime.UtcNow
+            PaidAt = NormalizeToUtc(request.PaidAt) ?? DateTime.UtcNow
         };
 
         _dbContext.SupplierPayments.Add(payment);
@@ -1203,28 +1240,39 @@ public class SupplierService : ISupplierService
         // filter !IsDeleted excluye los borrados), por eso el pago debe estar guardado antes de
         // recalcular. Para un pago ARS no cruzado el escalar resultante es identico a la cuenta vieja
         // (deuda previa - Amount). Escalar y tabla hija quedan en la misma (segunda) SaveChanges.
-        await _dbContext.SaveChangesAsync(cancellationToken);
-
-        // ADR-044 T3b Decision 3: el pago YA tiene Id real (SaveChanges recien commiteo) — recien aca podemos
-        // marcar el cargo como liquidado (S2: red anti doble-liquidacion) y registrar el ajuste de diferencia de
-        // cambio de tesoreria del cargo que liquida (si corresponde). Sin efecto en el ajuste si el cargo no
-        // necesito conversion o el pago no fue cruzado (ver el motor para el detalle).
-        if (settledCharge is not null)
+        // Pago, caja, liquidacion del cargo, saldo y credito forman UNA unidad de trabajo. En particular,
+        // el xmin del cargo rechaza dos liquidaciones concurrentes; la transaccion evita que el perdedor deje
+        // un SupplierPayment/CashLedgerEntry huerfano antes de recibir el conflicto.
+        try
         {
-            settledCharge.SettledBySupplierPaymentId = payment.Id;
-            await TreasuryFxAdjustmentEngine.RegisterForInvoicedChargeAsync(
-                _dbContext, settledCharge, payment, _logger, cancellationToken);
-            await _dbContext.SaveChangesAsync(cancellationToken);
+            await RunInWriteTransactionAsync(async () =>
+            {
+                await _dbContext.SaveChangesAsync(cancellationToken);
+
+                // El pago ya tiene Id real: ahora se puede enlazar el cargo y calcular su ajuste FX.
+                if (settledCharge is not null)
+                {
+                    settledCharge.SettledBySupplierPaymentId = payment.Id;
+                    await TreasuryFxAdjustmentEngine.RegisterForInvoicedChargeAsync(
+                        _dbContext, settledCharge, payment, _logger, cancellationToken);
+                    await _dbContext.SaveChangesAsync(cancellationToken);
+                }
+
+                await PersistSupplierBalanceAsync(supplier, cancellationToken);
+                await _dbContext.SaveChangesAsync(cancellationToken);
+
+                // Si quedo sobrepago, materializar el saldo a favor dentro de la misma transaccion.
+                await ReconcileSupplierCreditAsync(
+                    supplier.Id, sourceSupplierPaymentId: payment.Id, cancellationToken);
+            }, cancellationToken);
         }
-
-        await PersistSupplierBalanceAsync(supplier, cancellationToken);
-        await _dbContext.SaveChangesAsync(cancellationToken);
-
-        // ADR-041 TANDA 3: si este pago dejo SOBREPAGO con el operador en alguna moneda, el excedente se
-        // materializa como SALDO A FAVOR consumible (SupplierCreditEntry). El recalculo de arriba ya dejo el
-        // Balance negativo committed; el reconciler lo lee y crea/ajusta el pool. No mueve la deuda (la caja
-        // ya conto el pago completo en TotalPaid): solo le da cara consumible al balance negativo.
-        await ReconcileSupplierCreditAsync(supplier.Id, sourceSupplierPaymentId: payment.Id, cancellationToken);
+        catch (DbUpdateConcurrencyException ex) when (settledCharge is not null)
+        {
+            throw new BusinessInvariantViolationException(
+                "Ese cargo del operador acaba de ser liquidado por otro pago. Actualizá la cuenta y volvé a intentar.",
+                invariantCode: "INV-ADR044-SUPPLIER-SETTLEMENT-CONCURRENCY",
+                inner: ex);
+        }
 
         return payment.PublicId;
     }
@@ -1232,7 +1280,7 @@ public class SupplierService : ISupplierService
     /// <summary>
     /// ADR-041 TANDA 3: mantiene el pool de saldo a favor con el operador (<c>SupplierCreditEntry</c>) en sync
     /// con el sobrepago derivado, por moneda. Se llama DESPUES de persistir la deuda del proveedor (el balance
-    /// ya esta committed). Sin auditoria/actor (jobs/tests) igual reconcilia el pool. Ver
+    /// ya esta disponible para leer dentro de la unidad de trabajo). Sin auditoria/actor (jobs/tests) igual reconcilia el pool. Ver
     /// <see cref="TravelApi.Infrastructure.Reservations.SupplierCreditReconciler"/>.
     /// </summary>
     private Task ReconcileSupplierCreditAsync(int supplierId, int? sourceSupplierPaymentId, CancellationToken cancellationToken)
@@ -1244,7 +1292,7 @@ public class SupplierService : ISupplierService
 
     /// <summary>
     /// ADR-041 TANDA 3: corre un cuerpo de escritura DENTRO de una transaccion (solo en provider relacional).
-    /// Lo usan la edicion y la baja de un pago: si el reconciler del saldo a favor LANZA (porque la edicion
+    /// Lo usan el alta, la edicion y la baja de un pago: si una etapa posterior LANZA (por ejemplo porque se
     /// destruiria un saldo ya aplicado a otra reserva), la transaccion revierte y el pago NO queda modificado
     /// a medias. En InMemory (tests) no hay transaccion: el mismo cuerpo corre sin envoltura (el throw se
     /// propaga igual y los tests de bloqueo lo validan). Mismo patron que <c>ClientCreditService</c>.
@@ -1297,6 +1345,35 @@ public class SupplierService : ISupplierService
         var imputation = await ResolveSupplierPaymentImputationAsync(
             id, request, currency, cancellationToken, excludePaymentId: payment.Id);
 
+        var settledCharge = await _dbContext.BookingCancellationLineOperatorCharges
+            .AsNoTracking()
+            .FirstOrDefaultAsync(c => c.SettledBySupplierPaymentId == payment.Id, cancellationToken);
+        if (settledCharge is not null)
+        {
+            var requestedPaidAt = NormalizeToUtc(request.PaidAt) ?? payment.PaidAt;
+            var changesEconomicData =
+                EconomicRulesHelper.RoundCurrency(request.Amount) != EconomicRulesHelper.RoundCurrency(payment.Amount)
+                || !string.Equals(currency.Currency, payment.Currency, StringComparison.Ordinal)
+                || !string.Equals(currency.ImputedCurrency, payment.ImputedCurrency, StringComparison.Ordinal)
+                || currency.ExchangeRate != payment.ExchangeRate
+                || currency.ExchangeRateSource != payment.ExchangeRateSource
+                || NormalizeToUtc(currency.ExchangeRateAt) != NormalizeToUtc(payment.ExchangeRateAt)
+                || currency.ImputedAmount != payment.ImputedAmount
+                || imputation.ReservaId != payment.ReservaId
+                || imputation.ServicioReservaId != payment.ServicioReservaId
+                || !string.Equals(imputation.ServiceRecordKind, payment.ServiceRecordKind, StringComparison.Ordinal)
+                || imputation.ServicePublicId != payment.ServicePublicId
+                || requestedPaidAt != NormalizeToUtc(payment.PaidAt);
+
+            if (changesEconomicData)
+            {
+                throw new BusinessInvariantViolationException(
+                    "Un pago que liquida un cargo del operador solo permite editar método, referencia y notas. " +
+                    "Para corregir monto, moneda, fecha o imputación, anulalo y registrá uno nuevo.",
+                    invariantCode: "INV-ADR044-SUPPLIER-SETTLEMENT-IMMUTABLE");
+            }
+        }
+
         payment.Amount = request.Amount;
         payment.Currency = currency.Currency;
         payment.ImputedCurrency = currency.ImputedCurrency;
@@ -1311,6 +1388,7 @@ public class SupplierService : ISupplierService
         payment.ServicioReservaId = imputation.ServicioReservaId;
         payment.ServiceRecordKind = imputation.ServiceRecordKind;
         payment.ServicePublicId = imputation.ServicePublicId;
+        payment.PaidAt = NormalizeToUtc(request.PaidAt) ?? payment.PaidAt;
 
         // ADR-022 §4.5: editar el monto = reversa del asiento viejo + asiento nuevo (orden estricto:
         // marcar viejo IsReversed ANTES de insertar). El libro conserva viejo (-) -> reversa (+) -> nuevo.
@@ -1443,6 +1521,17 @@ public class SupplierService : ISupplierService
         return (userId, userName);
     }
 
+    private static DateTime? NormalizeToUtc(DateTime? value)
+    {
+        if (value is null) return null;
+        return value.Value.Kind switch
+        {
+            DateTimeKind.Utc => value.Value,
+            DateTimeKind.Local => value.Value.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(value.Value, DateTimeKind.Utc)
+        };
+    }
+
     /// <summary>
     /// ADR-022 §4.5: marca el asiento vigente de un SupplierPayment como revertido e inserta su reversa,
     /// en el orden estricto del indice unico parcial (marcar viejo IsReversed=true ANTES de Add de la
@@ -1490,6 +1579,8 @@ public class SupplierService : ISupplierService
         foreach (var payment in payments)
         {
             payment.Amount = 0m;
+            payment.ExchangeRate = null;
+            payment.ImputedAmount = null;
         }
     }
 
@@ -1627,6 +1718,13 @@ public class SupplierService : ISupplierService
                 PublicId = payment.PublicId,
                 Amount = payment.Amount,
                 Currency = payment.Currency,
+                ImputedCurrency = payment.ImputedCurrency,
+                ExchangeRate = payment.ExchangeRate,
+                ExchangeRateSource = payment.ExchangeRateSource.HasValue
+                    ? (int?)payment.ExchangeRateSource.Value
+                    : null,
+                ExchangeRateAt = payment.ExchangeRateAt,
+                ImputedAmount = payment.ImputedAmount,
                 Method = payment.Method,
                 PaidAt = payment.PaidAt,
                 Reference = payment.Reference,
@@ -1638,7 +1736,9 @@ public class SupplierService : ISupplierService
                 IsAdvanceToAccount = payment.ReservaId == null,
                 // ADR-036 4c: si el pago se imputo a un servicio puntual, viaja el par (recordKind, publicId).
                 ServiceRecordKind = payment.ServiceRecordKind,
-                ServicePublicId = payment.ServicePublicId
+                ServicePublicId = payment.ServicePublicId,
+                IsOperatorChargeSettlement = _dbContext.BookingCancellationLineOperatorCharges
+                    .Any(charge => charge.SettledBySupplierPaymentId == payment.Id)
             });
     }
 

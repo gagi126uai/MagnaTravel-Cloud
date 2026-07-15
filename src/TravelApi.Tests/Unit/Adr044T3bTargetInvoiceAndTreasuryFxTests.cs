@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using TravelApi.Application.DTOs;
@@ -42,6 +44,25 @@ public class Adr044T3bTargetInvoiceAndTreasuryFxTests
             .ConfigureWarnings(w => w.Ignore(
                 Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning))
             .Options);
+
+    private static SupplierService NewSupplierServiceWithCostPermission(AppDbContext ctx)
+    {
+        const string userId = "supplier-payment-tester";
+        var accessor = new HttpContextAccessor
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity(
+                    new[] { new Claim(ClaimTypes.NameIdentifier, userId) }, "Test"))
+            }
+        };
+        var permissionResolver = new Mock<IUserPermissionResolver>();
+        IReadOnlySet<string> permissions = new HashSet<string> { Permissions.CobranzasSeeCost };
+        permissionResolver
+            .Setup(resolver => resolver.GetPermissionsAsync(userId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(permissions);
+        return new SupplierService(ctx, httpContextAccessor: accessor, permissionResolver: permissionResolver.Object);
+    }
 
     // =====================================================================================
     // Parte A (tests 1-5): Decision 1 (TargetInvoiceId) + Decision 2 (conversion de moneda),
@@ -1031,17 +1052,23 @@ public class Adr044T3bTargetInvoiceAndTreasuryFxTests
         var ctx = NewDbContext();
         var (_, _, charge, supplier) = await SeedChargeWithDefinitiveRateAsync(
             ctx, chargeAmount: 100m, definitiveRate: 1000m, collectionMode: PenaltyCollectionMode.FacturadaAparte);
-        var service = new TravelApi.Infrastructure.Services.SupplierService(ctx);
+        Assert.Empty((await new SupplierService(ctx)
+            .GetSupplierAccountOverviewAsync(supplier.Id, default)).OpenInvoicedCharges);
+        var service = NewSupplierServiceWithCostPermission(ctx);
 
         SupplierPaymentRequest PayRequest() => new SupplierPaymentRequest(
             Amount: 100m, Method: "Transfer", Reference: null, Notes: null, ReservaId: null,
             ServicioReservaId: null, IsAdvanceToAccount: true, Currency: "USD",
             SettlesOperatorChargePublicId: charge.PublicId);
 
+        var beforePayment = await service.GetSupplierAccountOverviewAsync(supplier.Id, default);
+        Assert.Equal(charge.PublicId, Assert.Single(beforePayment.OpenInvoicedCharges).PublicId);
+
         // Primer pago: liquida el cargo y lo marca.
         var firstPaymentPublicId = await service.AddSupplierPaymentAsync(supplier.Id, PayRequest(), default);
         var settledCharge = await ctx.BookingCancellationLineOperatorCharges.AsNoTracking().SingleAsync(c => c.Id == charge.Id);
         Assert.NotNull(settledCharge.SettledBySupplierPaymentId);
+        Assert.Empty((await service.GetSupplierAccountOverviewAsync(supplier.Id, default)).OpenInvoicedCharges);
 
         // Segundo pago sobre el MISMO cargo -> rechazo.
         var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
@@ -1054,6 +1081,52 @@ public class Adr044T3bTargetInvoiceAndTreasuryFxTests
         await service.DeleteSupplierPaymentAsync(supplier.Id, firstPaymentId, default);
         var afterDelete = await ctx.BookingCancellationLineOperatorCharges.AsNoTracking().SingleAsync(c => c.Id == charge.Id);
         Assert.Null(afterDelete.SettledBySupplierPaymentId);
+    }
+
+    [Theory]
+    [InlineData(99, "USD")]
+    [InlineData(100, "ARS")]
+    public async Task SupplierPayment_InvoicedChargeRequiresExactAmountAndCurrency(decimal amount, string currency)
+    {
+        var ctx = NewDbContext();
+        var (_, _, charge, supplier) = await SeedChargeWithDefinitiveRateAsync(
+            ctx, chargeAmount: 100m, definitiveRate: 1000m,
+            collectionMode: PenaltyCollectionMode.FacturadaAparte);
+        var service = NewSupplierServiceWithCostPermission(ctx);
+
+        var request = new SupplierPaymentRequest(
+            Amount: amount, Method: "Transfer", Reference: null, Notes: null, ReservaId: null,
+            ServicioReservaId: null, IsAdvanceToAccount: true, Currency: currency,
+            SettlesOperatorChargePublicId: charge.PublicId);
+
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.AddSupplierPaymentAsync(supplier.Id, request, default));
+
+        Assert.Empty(await ctx.SupplierPayments.ToListAsync());
+        Assert.Empty(await ctx.CashLedgerEntries.ToListAsync());
+    }
+
+    [Fact]
+    public async Task SupplierPayment_SettlingChargeCannotChangeEconomicData()
+    {
+        var ctx = NewDbContext();
+        var (_, _, charge, supplier) = await SeedChargeWithDefinitiveRateAsync(
+            ctx, chargeAmount: 100m, definitiveRate: 1000m,
+            collectionMode: PenaltyCollectionMode.FacturadaAparte);
+        var service = NewSupplierServiceWithCostPermission(ctx);
+        var original = new SupplierPaymentRequest(
+            Amount: 100m, Method: "Transfer", Reference: null, Notes: null, ReservaId: null,
+            ServicioReservaId: null, IsAdvanceToAccount: true, Currency: "USD",
+            SettlesOperatorChargePublicId: charge.PublicId);
+        var paymentPublicId = await service.AddSupplierPaymentAsync(supplier.Id, original, default);
+        var payment = await ctx.SupplierPayments.SingleAsync(p => p.PublicId == paymentPublicId);
+
+        var changed = original with { Amount = 101m, SettlesOperatorChargePublicId = null };
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            service.UpdateSupplierPaymentAsync(supplier.Id, payment.Id, changed, default));
+
+        Assert.Equal("INV-ADR044-SUPPLIER-SETTLEMENT-IMMUTABLE", ex.InvariantCode);
+        Assert.Equal(100m, (await ctx.SupplierPayments.AsNoTracking().SingleAsync()).Amount);
     }
 
     // ============================================================

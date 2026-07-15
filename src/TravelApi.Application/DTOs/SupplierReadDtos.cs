@@ -76,6 +76,24 @@ public class SupplierAccountOverviewDto
     /// igual que el resto de la cuenta.
     /// </summary>
     public List<SupplierAccountBalanceByCurrencyDto> BalancesByCurrency { get; set; } = new();
+
+    /// <summary>
+    /// Cargos facturados aparte todavía sin liquidar. El alta de pago usa el PublicId para asignar el egreso
+    /// al documento correcto; nunca se infiere por monto o por reserva.
+    /// </summary>
+    public List<SupplierOpenInvoicedChargeDto> OpenInvoicedCharges { get; set; } = new();
+}
+
+public class SupplierOpenInvoicedChargeDto
+{
+    public Guid PublicId { get; set; }
+    public Guid ReservaPublicId { get; set; }
+    public string NumeroReserva { get; set; } = string.Empty;
+    public string? FileName { get; set; }
+    public string? DocumentRef { get; set; }
+    public string Currency { get; set; } = Monedas.ARS;
+    public decimal Amount { get; set; }
+    public DateTime ConfirmedAt { get; set; }
 }
 
 /// <summary>
@@ -472,6 +490,16 @@ public class SupplierPaymentDto
     public decimal Amount { get; set; }
     /// <summary>ADR-021: moneda REAL del egreso (lo que salio de caja). Default ARS para el legacy.</summary>
     public string Currency { get; set; } = "ARS";
+    /// <summary>Moneda de la deuda imputada. Null cuando coincide con <see cref="Currency"/>.</summary>
+    public string? ImputedCurrency { get; set; }
+    /// <summary>Tipo de cambio aplicado (ARS por USD). Null en pagos no cruzados.</summary>
+    public decimal? ExchangeRate { get; set; }
+    /// <summary>Fuente del tipo de cambio serializada como entero. Null en pagos no cruzados.</summary>
+    public int? ExchangeRateSource { get; set; }
+    /// <summary>Fecha de referencia del tipo de cambio. Null en pagos no cruzados.</summary>
+    public DateTime? ExchangeRateAt { get; set; }
+    /// <summary>Monto que redujo la deuda en <see cref="ImputedCurrency"/>.</summary>
+    public decimal? ImputedAmount { get; set; }
     public string Method { get; set; } = string.Empty;
     public DateTime PaidAt { get; set; }
     public string? Reference { get; set; }
@@ -494,4 +522,10 @@ public class SupplierPaymentDto
 
     /// <summary>ADR-036 4c: PublicId del servicio imputado. Null = pago a nivel reserva o anticipo.</summary>
     public Guid? ServicePublicId { get; set; }
+
+    /// <summary>
+    /// Indica que el pago liquida un cargo facturado aparte. Cuando es true, los datos economicos del pago son
+    /// inmutables: para corregirlos hay que anular el pago y registrar uno nuevo.
+    /// </summary>
+    public bool IsOperatorChargeSettlement { get; set; }
 }
