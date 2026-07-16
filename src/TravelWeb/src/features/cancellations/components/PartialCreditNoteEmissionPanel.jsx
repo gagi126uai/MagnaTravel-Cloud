@@ -151,12 +151,12 @@ export function PartialCreditNoteEmissionPanel({ reserva, canEmit, onChanged }) 
       : "border-amber-200 bg-amber-50 dark:border-amber-900/50 dark:bg-amber-950/20";
 
   return (
-    <section className={`rounded-2xl border p-5 ${panelClass}`} data-testid={`t5-panel-${state}`} aria-label="Devolución por servicio cancelado">
+    <section className={`rounded-2xl border p-5 ${panelClass}`} data-testid={`t5-panel-${state}`} aria-label="Devolución por servicio anulado">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="space-y-2">
           <div className="flex items-center gap-2">
             {state === T5_STATE.SUCCEEDED ? <CheckCircle2 className="h-5 w-5 text-emerald-600" /> : state === T5_STATE.PROCESSING ? <Loader2 className="h-5 w-5 animate-spin text-amber-600" /> : <AlertTriangle className="h-5 w-5 text-amber-600" />}
-            <h3 className="font-black text-slate-900 dark:text-white">DEVOLUCIÓN · SERVICIO CANCELADO</h3>
+            <h3 className="font-black text-slate-900 dark:text-white">DEVOLUCIÓN · SERVICIO ANULADO</h3>
           </div>
 
           {state === T5_STATE.SUCCEEDED ? (
@@ -229,7 +229,7 @@ export function PartialCreditNoteEmissionPanel({ reserva, canEmit, onChanged }) 
         onClose={() => setConfirmOpen(false)}
         onConfirm={emit}
         title="¿Seguro?"
-        message="Se va a emitir la nota de crédito en AFIP por la devolución del servicio cancelado. Una vez emitida no se puede deshacer."
+        message="Se va a emitir la nota de crédito en AFIP por la devolución del servicio anulado. Una vez emitida no se puede deshacer."
         confirmText="Sí, emitir"
         cancelText="Volver"
         type="warning"

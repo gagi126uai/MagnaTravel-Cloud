@@ -1708,6 +1708,48 @@ public class BookingCancellationService
                         && c.Status == BookingCancellationCreditNoteStatus.Succeeded, ct);
     }
 
+    /// <summary>
+    /// Arma el mensaje de error cuando no pudimos determinar la condicion fiscal de alguna de las
+    /// tres fichas necesarias para facturar (agencia, operador, cliente). Antes el mensaje las
+    /// nombraba a las tres juntas sin decir CUAL faltaba ("no pudimos determinar la condicion fiscal
+    /// de la agencia, del operador o del cliente"), y el agente de viajes no sabia adonde ir a
+    /// arreglarlo. Ahora nombra explicitamente la o las fichas incompletas (con el nombre comercial
+    /// del operador si lo tenemos cargado) para que sepa exactamente que pantalla completar.
+    ///
+    /// <para><c>internal</c> (no <c>private</c>) para poder testearla directo, sin DB, desde
+    /// TravelApi.Tests (<c>InternalsVisibleTo</c> ya configurado en el csproj — mismo patron que
+    /// <see cref="EnsureConceptNotLockedByDebitNote"/>).</para>
+    /// </summary>
+    internal static string BuildTaxConditionUnknownMessage(
+        TaxConditionCanonical agencyCanonical,
+        TaxConditionCanonical supplierCanonical,
+        TaxConditionCanonical customerCanonical,
+        string? supplierName)
+    {
+        var incompleteFichas = new List<string>();
+
+        if (agencyCanonical == TaxConditionCanonical.Unknown)
+            incompleteFichas.Add("la ficha de la agencia (Configuración > Facturación)");
+
+        if (supplierCanonical == TaxConditionCanonical.Unknown)
+        {
+            incompleteFichas.Add(string.IsNullOrWhiteSpace(supplierName)
+                ? "la ficha del operador"
+                : $"la ficha del operador {supplierName}");
+        }
+
+        if (customerCanonical == TaxConditionCanonical.Unknown)
+            incompleteFichas.Add("la ficha del cliente");
+
+        // Junta las fichas faltantes en una frase legible ("A", "A y B" o "A, B y C"), en vez de un
+        // if/else por cada combinacion posible.
+        string fichasUnidas = incompleteFichas.Count <= 1
+            ? string.Join(string.Empty, incompleteFichas)
+            : string.Join(", ", incompleteFichas.Take(incompleteFichas.Count - 1)) + " y " + incompleteFichas[^1];
+
+        return $"Completá la condición fiscal en {fichasUnidas} para poder continuar.";
+    }
+
     public async Task<BookingCancellationDto> ConfirmAsync(
         Guid publicId,
         ConfirmCancellationRequest request,
@@ -1853,8 +1895,7 @@ public class BookingCancellationService
             customerCanonical == TaxConditionCanonical.Unknown)
         {
             throw new BusinessInvariantViolationException(
-                "No pudimos determinar la condición fiscal de la agencia, del operador o del cliente. " +
-                "Revisá esos datos antes de confirmar la cancelación.",
+                BuildTaxConditionUnknownMessage(agencyCanonical, supplierCanonical, customerCanonical, bc.Supplier?.Name),
                 invariantCode: "INV-118");
         }
 
@@ -2750,8 +2791,7 @@ public class BookingCancellationService
             || supplierCanonical == TaxConditionCanonical.Unknown
             || customerCanonical == TaxConditionCanonical.Unknown)
             throw new BusinessInvariantViolationException(
-                "No pudimos determinar la condición fiscal de la agencia, del operador o del cliente. " +
-                "Consultá con administración antes de emitir la devolución.",
+                BuildTaxConditionUnknownMessage(agencyCanonical, supplierCanonical, customerCanonical, bc.Supplier?.Name),
                 invariantCode: "INV-118");
 
         // Gate RI <-> firma de alicuota (fiscal, riesgo residual 1; diseño §6.1 punto 3 / §10 / §14 pregunta 1):
@@ -6797,7 +6837,7 @@ public class BookingCancellationService
                 return bc.SupplierId;
 
             throw new BusinessInvariantViolationException(
-                "El operador indicado no tiene servicios cancelados en esta anulación.",
+                "El operador indicado no tiene servicios anulados en esta anulación.",
                 invariantCode: "INV-ADR044-OPERATOR-NOT-FOUND");
         }
 

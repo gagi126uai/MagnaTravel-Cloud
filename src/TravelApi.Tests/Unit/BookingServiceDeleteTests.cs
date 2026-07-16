@@ -131,6 +131,54 @@ public class BookingServiceDeleteTests
         Assert.Equal(1, await context.HotelBookings.CountAsync());
     }
 
+    // Bug servicios huerfanos (2026-07-16): un hotel Cancelado que NUNCA se confirmo con el operador
+    // (ConfirmedAt null) antes caia en la rama "borrador" y se borraba fisico. El guard nuevo lo
+    // rechaza por el estado Cancelado en si mismo.
+    [Fact]
+    public async Task DeleteHotelAsync_CancelledWithoutConfirmedAt_Throws()
+    {
+        await using var context = CreateContext();
+        await SeedReservaAsync(context, EstadoReserva.Budget);
+        context.HotelBookings.Add(new HotelBooking
+        {
+            Id = 15, ReservaId = 1, HotelName = "Test", Status = "Cancelado",
+            ConfirmedAt = null,
+            CheckIn = DateTime.UtcNow.AddDays(10), CheckOut = DateTime.UtcNow.AddDays(13),
+            Adults = 2
+        });
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, CreateMapper());
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.DeleteHotelAsync(1, 15, CancellationToken.None));
+        Assert.Contains("anulado", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, await context.HotelBookings.CountAsync());
+    }
+
+    // Mismo bug, del lado del vuelo: cancelado por codigo IATA "UN" sin haber llegado a confirmarse
+    // (Status nunca paso por HK). Cubre la rama que mapea por codigo IATA, distinta de la generica.
+    [Fact]
+    public async Task DeleteFlightAsync_CancelledIataCodeWithoutConfirmedAt_Throws()
+    {
+        await using var context = CreateContext();
+        await SeedReservaAsync(context, EstadoReserva.Budget);
+        context.FlightSegments.Add(new FlightSegment
+        {
+            Id = 42, ReservaId = 1, AirlineCode = "AR", FlightNumber = "1234", Status = "UN",
+            TicketIssuedAt = null,
+            DepartureTime = DateTime.UtcNow.AddDays(15), ArrivalTime = DateTime.UtcNow.AddDays(15).AddHours(2)
+        });
+        await context.SaveChangesAsync();
+
+        var service = CreateService(context, CreateMapper());
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.DeleteFlightAsync(1, 42, CancellationToken.None));
+        Assert.Contains("anulado", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(1, await context.FlightSegments.CountAsync());
+    }
+
     // ===== BookingService.DeleteTransferAsync =====
 
     [Fact]

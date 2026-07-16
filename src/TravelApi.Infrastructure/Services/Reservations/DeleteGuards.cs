@@ -108,6 +108,12 @@ public static class DeleteGuards
     ///
     /// <para>Reglas:</para>
     /// <list type="number">
+    /// <item>Si el servicio esta Cancelado (<paramref name="serviceIsCancelled"/>) -> NUNCA se borra,
+    ///   tenga o no ConfirmedAt. Es historia de la reserva: puede tener multa, ajuste de tipo de
+    ///   cambio o nota de credito asociada (<c>BookingCancellationLine</c>), y esas lineas quedarian
+    ///   huerfanas si el servicio desaparece fisicamente. Se chequea PRIMERO, antes que el chequeo de
+    ///   "confirmado con el operador", para dar siempre el mensaje mas claro ("esta anulado") en vez
+    ///   del generico de confirmacion.</item>
     /// <item>Si el servicio fue confirmado por el operador (<paramref name="serviceIsOperatorConfirmed"/>
     ///   = ConfirmedAt != null O IsOperatorConfirmed O IsResolved) -> NO se borra: hay que CANCELARLO
     ///   (queda tachado y su monto se resta del saldo). Un aereo HK sin ticket entra aca: el PNR ya es
@@ -126,25 +132,35 @@ public static class DeleteGuards
         AppDbContext db,
         int reservaId,
         bool serviceIsOperatorConfirmed,
+        bool serviceIsCancelled,
         int? genericServiceId = null,
         CancellationToken ct = default,
         ILogger? logger = null)
     {
         if (reservaId == 0) return null; // servicios sin reserva (legacy) no aplican
 
-        // (1) Confirmado con el operador -> solo se cancela, no se borra.
+        // (1) Anulado (Cancelado) -> NUNCA se borra fisico, aunque nunca haya llegado a confirmarse
+        // con el operador. El bug que motivo este guard: un servicio cancelado SIN ConfirmedAt caia
+        // en la rama "borrador" de abajo y se borraba fisico, dejando huerfanas las lineas de
+        // cancelacion (multa, ajuste de tipo de cambio, nota de credito) que lo referencian.
+        if (serviceIsCancelled)
+        {
+            return "Este servicio está anulado y forma parte del historial de la reserva. No se puede eliminar.";
+        }
+
+        // (2) Confirmado con el operador -> solo se cancela, no se borra.
         if (serviceIsOperatorConfirmed)
         {
             return "No se puede borrar un servicio ya confirmado con el operador. Cancelalo " +
                    "(queda tachado, con quien y cuando, y su monto se resta del saldo del cliente).";
         }
 
-        // (2) Voucher emitido de la reserva.
+        // (3) Voucher emitido de la reserva.
         var hasIssuedVoucher = await db.Vouchers.AnyAsync(v => v.ReservaId == reservaId && v.Status == "Issued", ct);
         if (hasIssuedVoucher)
             return "No se pueden eliminar servicios de una reserva con vouchers ya emitidos. Anulá los vouchers primero.";
 
-        // (3) Pago soft-deleted vinculado a ESTE servicio generico (cascade hard-delete = riesgo fiscal).
+        // (4) Pago soft-deleted vinculado a ESTE servicio generico (cascade hard-delete = riesgo fiscal).
         // Solo el ServicioReserva generico tiene el link Payment.ServicioReservaId; los tipados no.
         if (genericServiceId.HasValue)
         {

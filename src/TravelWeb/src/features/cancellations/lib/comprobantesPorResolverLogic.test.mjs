@@ -31,7 +31,7 @@ test("fusionarComprobantesPorResolver: junta multas y NC en una sola lista, mult
   assert.equal(resultado[0].queFalta, "El cobro de la multa no salió — hay que reintentar");
 
   assert.equal(resultado[1].key, "nc-bc-2");
-  assert.equal(resultado[1].comprobante, "DEVOLUCIÓN · SERVICIO CANCELADO");
+  assert.equal(resultado[1].comprobante, "DEVOLUCIÓN · SERVICIO ANULADO");
   assert.equal(resultado[1].reservaNumero, "F-2026-1031");
   assert.equal(resultado[1].queFalta, "Falta confirmar y emitir la devolución");
 });

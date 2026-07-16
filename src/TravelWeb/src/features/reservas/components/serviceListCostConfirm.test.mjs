@@ -414,9 +414,16 @@ test("handleServiceUpdated: delta cero cuando costo no cambió (confirm sin modi
 // ─── Tests: etiquetaEstadoServicio (FIX 3: En espera vs Solicitado) ───────────
 // Regla Gaston 2026-06-08: en Cotización/Presupuesto el badge dice "En espera"
 // (nada se pidió al operador); recién en En gestión en adelante dice "Solicitado".
-// "Confirmado" y "Cancelado" siempre pasan directo (son estados del backend).
+// "Confirmado" siempre pasa directo (es un estado del backend).
+// 2026-07-16 (vocabulario "Cancelar" vs "Anular"): workflowStatus "Cancelado" (nombre
+// histórico del campo del backend) ahora se muestra como "Anulado" — ver el mapeo real
+// en ServiceList.jsx (misma función, con más casos: Finalizado, Lost/Cancelled, etc.).
+// Esta réplica local solo cubre los casos de este archivo de test.
 
 function etiquetaEstadoServicio(workflowStatus, reservaStatus) {
+    if (workflowStatus === 'Cancelado') {
+        return 'Anulado';
+    }
     if (workflowStatus && workflowStatus !== 'Solicitado') {
         return workflowStatus;
     }
@@ -449,9 +456,9 @@ test("etiquetaEstadoServicio: workflowStatus 'Confirmado' → siempre 'Confirmad
     assert.equal(etiquetaEstadoServicio('Confirmado', 'InManagement'), 'Confirmado');
 });
 
-test("etiquetaEstadoServicio: workflowStatus 'Cancelado' → siempre 'Cancelado'", () => {
-    assert.equal(etiquetaEstadoServicio('Cancelado', 'Budget'), 'Cancelado');
-    assert.equal(etiquetaEstadoServicio('Cancelado', 'Confirmed'), 'Cancelado');
+test("etiquetaEstadoServicio: workflowStatus 'Cancelado' → siempre 'Anulado' (2026-07-16, ya no dice 'Cancelado')", () => {
+    assert.equal(etiquetaEstadoServicio('Cancelado', 'Budget'), 'Anulado');
+    assert.equal(etiquetaEstadoServicio('Cancelado', 'Confirmed'), 'Anulado');
 });
 
 test("etiquetaEstadoServicio: workflowStatus 'Emitido' → pasa directo (estado del backend)", () => {

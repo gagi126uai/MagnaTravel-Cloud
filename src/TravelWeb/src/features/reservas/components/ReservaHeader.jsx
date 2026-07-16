@@ -282,8 +282,9 @@ export function ReservaHeader({
                     <ReservaStatusChips reserva={reserva} />
                 </div>
 
-                {/* Contador "N de M servicios cancelados" (ADR-025 DT.3.1 decision #1).
-                    Solo aparece cuando hay AL MENOS UN servicio cancelado.
+                {/* Contador "N de M servicios anulados" (ADR-025 DT.3.1 decision #1).
+                    Solo aparece cuando hay AL MENOS UN servicio anulado.
+                    Vocabulario del negocio (2026-07-16): "anular" = dejar sin efecto; "cancelar" = el cliente abona el total.
                     El dato viene del padre, calculado con calculateServiciosCanceladosResumen(allServices). */}
                 {serviciosCancelados && serviciosCancelados.cancelados > 0 && (
                     <p
@@ -291,7 +292,7 @@ export function ReservaHeader({
                         data-testid="contador-servicios-cancelados"
                     >
                         {serviciosCancelados.cancelados} de {serviciosCancelados.totalConProveedor}{' '}
-                        {serviciosCancelados.totalConProveedor === 1 ? 'servicio cancelado' : 'servicios cancelados'}
+                        {serviciosCancelados.totalConProveedor === 1 ? 'servicio anulado' : 'servicios anulados'}
                     </p>
                 )}
 

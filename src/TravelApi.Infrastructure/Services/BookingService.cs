@@ -959,7 +959,10 @@ public partial class BookingService : IBookingService
         var flightConfirmed = flight.ConfirmedAt != null
             || TravelApi.Domain.Reservations.ServiceResolutionRules.IsOperatorConfirmed(flight)
             || TravelApi.Domain.Reservations.ServiceResolutionRules.IsResolved(flight);
-        await EnsureCanRemoveServiceAsync(reservaId, flightConfirmed, ct);
+        // Un vuelo cancelado (codigo IATA UN/UC/HX/NO) NUNCA se borra fisico: es historia de la
+        // reserva y puede tener multa/ajuste de cambio/NC asociados (bug de servicios huerfanos).
+        var flightCancelled = TravelApi.Domain.Reservations.ServiceResolutionRules.IsCancelled(flight);
+        await EnsureCanRemoveServiceAsync(reservaId, flightConfirmed, flightCancelled, ct);
 
         // ADR-031 v2.1 (M1): limpiar las asignaciones de este servicio en la MISMA transaccion que el
         // borrado. RemoveRange aca + el SaveChanges de DeleteAsync (mismo _db) las agrupan juntas.
@@ -1269,7 +1272,9 @@ public partial class BookingService : IBookingService
         var hotelConfirmed = hotel.ConfirmedAt != null
             || TravelApi.Domain.Reservations.ServiceResolutionRules.IsOperatorConfirmed(hotel)
             || TravelApi.Domain.Reservations.ServiceResolutionRules.IsResolved(hotel);
-        await EnsureCanRemoveServiceAsync(reservaId, hotelConfirmed, ct);
+        // Un hotel cancelado NUNCA se borra fisico (mismo motivo que el vuelo: historia + lineas asociadas).
+        var hotelCancelled = TravelApi.Domain.Reservations.ServiceResolutionRules.IsCancelled(hotel);
+        await EnsureCanRemoveServiceAsync(reservaId, hotelConfirmed, hotelCancelled, ct);
 
         // ADR-031 v2.1 (M1): limpiar asignaciones en la misma transaccion que el borrado.
         await CleanupAssignmentsForDeletedServiceAsync(AssignmentServiceType.Hotel, hotel.Id, reservaId, ct);
@@ -1541,7 +1546,9 @@ public partial class BookingService : IBookingService
         var packageConfirmed = package.ConfirmedAt != null
             || TravelApi.Domain.Reservations.ServiceResolutionRules.IsOperatorConfirmed(package)
             || TravelApi.Domain.Reservations.ServiceResolutionRules.IsResolved(package);
-        await EnsureCanRemoveServiceAsync(reservaId, packageConfirmed, ct);
+        // Un paquete cancelado NUNCA se borra fisico (mismo motivo que el vuelo).
+        var packageCancelled = TravelApi.Domain.Reservations.ServiceResolutionRules.IsCancelled(package);
+        await EnsureCanRemoveServiceAsync(reservaId, packageConfirmed, packageCancelled, ct);
 
         // ADR-031 v2.1 (M1): limpiar asignaciones en la misma transaccion que el borrado.
         await CleanupAssignmentsForDeletedServiceAsync(AssignmentServiceType.Package, package.Id, reservaId, ct);
@@ -1828,7 +1835,9 @@ public partial class BookingService : IBookingService
         var transferConfirmed = transfer.ConfirmedAt != null
             || TravelApi.Domain.Reservations.ServiceResolutionRules.IsOperatorConfirmed(transfer)
             || TravelApi.Domain.Reservations.ServiceResolutionRules.IsResolved(transfer);
-        await EnsureCanRemoveServiceAsync(reservaId, transferConfirmed, ct);
+        // Un traslado cancelado NUNCA se borra fisico (mismo motivo que el vuelo).
+        var transferCancelled = TravelApi.Domain.Reservations.ServiceResolutionRules.IsCancelled(transfer);
+        await EnsureCanRemoveServiceAsync(reservaId, transferConfirmed, transferCancelled, ct);
 
         // ADR-031 v2.1 (M1): limpiar asignaciones en la misma transaccion que el borrado.
         await CleanupAssignmentsForDeletedServiceAsync(AssignmentServiceType.Transfer, transfer.Id, reservaId, ct);
@@ -1844,11 +1853,12 @@ public partial class BookingService : IBookingService
 
     // ADR-020 (F5): manda el servicio. Si fue confirmado por el operador no se borra, se cancela.
     // Los servicios tipados (flight/hotel/...) no tienen el link Payment.ServicioReservaId, asi que
-    // genericServiceId es siempre null aca.
-    private async Task EnsureCanRemoveServiceAsync(int reservaId, bool serviceIsOperatorConfirmed, CancellationToken ct)
+    // genericServiceId es siempre null aca. serviceIsCancelled agrega el rechazo duro: un servicio
+    // anulado tampoco se borra fisico, tenga o no ConfirmedAt (ver DeleteGuards).
+    private async Task EnsureCanRemoveServiceAsync(int reservaId, bool serviceIsOperatorConfirmed, bool serviceIsCancelled, CancellationToken ct)
     {
         var blockReason = await DeleteGuards.GetServiceDeleteBlockReasonAsync(
-            _db, reservaId, serviceIsOperatorConfirmed, genericServiceId: null, ct, _logger);
+            _db, reservaId, serviceIsOperatorConfirmed, serviceIsCancelled, genericServiceId: null, ct, _logger);
         if (blockReason != null)
         {
             _logger.LogInformation(
@@ -2134,7 +2144,9 @@ public partial class BookingService : IBookingService
         var assistanceConfirmed = assistance.ConfirmedAt != null
             || TravelApi.Domain.Reservations.ServiceResolutionRules.IsOperatorConfirmed(assistance)
             || TravelApi.Domain.Reservations.ServiceResolutionRules.IsResolved(assistance);
-        await EnsureCanRemoveServiceAsync(reservaId, assistanceConfirmed, ct);
+        // Una asistencia cancelada NUNCA se borra fisica (mismo motivo que el vuelo).
+        var assistanceCancelled = TravelApi.Domain.Reservations.ServiceResolutionRules.IsCancelled(assistance);
+        await EnsureCanRemoveServiceAsync(reservaId, assistanceConfirmed, assistanceCancelled, ct);
 
         // ADR-031 v2.1 (M1): limpiar asignaciones en la misma transaccion que el borrado.
         await CleanupAssignmentsForDeletedServiceAsync(AssignmentServiceType.Assistance, assistance.Id, reservaId, ct);

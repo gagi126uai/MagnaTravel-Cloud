@@ -516,7 +516,7 @@ export function useReservaDetail(reservaId, navigate) {
                 preserveOnError: true,
             });
 
-            showSuccess('Servicio cancelado. Quedó tachado en la lista de la reserva.');
+            showSuccess('Servicio anulado. Quedó tachado en la lista de la reserva.');
             return { ok: true, result };
         } catch (error) {
             // Devolvemos el error para que el llamador decida cómo mostrarlo.

@@ -1426,6 +1426,15 @@ más de una factura, y viene escondido con defaults.
 
 ## Las multas por anulación se ven en la cuenta del cliente (2026-07-15, decisiones traídas por Gastón)
 
+> **⚠️ PARCIALMENTE DEROGADO el 2026-07-16** — ver la sección "Extracto profesional + rediseño de la
+> cuenta corriente del cliente (2026-07-16)" al final. En concreto: el **P1 del 2026-07-15** ("la multa
+> vive SOLO en el bloque aparte; el extracto NO cambia y muestra solo viajes vivos") **YA NO VALE**. A
+> partir del 2026-07-16 las reservas anuladas y las multas **entran DENTRO del extracto** (anulada con
+> factura + nota de crédito como contra-asiento; multa como renglón que suma al saldo), y el saldo del
+> encabezado pasa a INCLUIR las multas. El resto del 2026-07-15 (distinguir la multa firme de la que
+> todavía no tiene comprobante; multimoneda dura) sigue vigente, pero mostrado dentro de la foto de
+> saldo y del extracto, no en un cartel apilado aparte.
+
 > **Origen:** Gastón reportó "las multas a cobrar al cliente no aparecen". La cuenta corriente del
 > cliente (`CustomerAccountPage`) escondía las reservas anuladas, y la multa solo vive en una
 > anulada → nunca se veía. Estas tres decisiones vinieron ya cerradas por él. Spec completa:
@@ -1548,3 +1557,138 @@ más de una factura, y viene escondido con defaults.
 - **(2026-07-15) Qué NO hacer:** ventana flotante (salvo el "¿Seguro?" de P2); editar monto/TC; pasar a
   pesos una factura en dólares; mostrar "diferencia de cambio"/"CAE"/"RG 4540"/Id/enum/texto de código;
   marcar la reserva Anulada; spinner que atrape; botones en la fila de la bandeja.
+
+## La multa cobrada del todo se ve "cerrada" en la ficha (2026-07-16, respuestas de Gastón)
+
+> **Origen:** el cartel de multa confirmada de la ficha (`OperatorPenaltyStepPanel`, familia `confirmada`,
+> estado backend `Done`) daba la multa por "terminada" apenas la Nota de Débito obtenía CAE, y NUNCA miraba
+> si el cliente ya la había PAGADO. Una multa emitida **y cobrada al 100%** seguía mostrando el cartel verde
+> con sus acciones para siempre. El backend expone un dato nuevo `IsFullyCollected`. Sesión de 3 preguntas;
+> Gastón eligió P1=B, P2=B, P3=B. Spec: `docs/ux/2026-07-16-multa-cobrada-cartel-cerrado.md`. **NO reabre**
+> nada del paso de multa (2026-07-08 / 2026-07-10 T4 / 2026-07-14) ni las 3 reglas de multimoneda (2026-06-09).
+
+- **(2026-07-16) El estado "cerrado" aparece SOLO cuando la multa está emitida (`Done`) Y cobrada al 100%
+  (`IsFullyCollected = true`).** Si no está cobrada del todo, el cartel sigue EXACTAMENTE como hoy (verde,
+  con sus acciones). Es la condición de "cero cambio" para el caso que hoy anda.
+- **(2026-07-16) Tratamiento visual: gris + ✓** (el registro de "esto ya está, nada que hacer"), reusando
+  el patrón existente **Finalizada = gris + ✅** (2026-07-05, P3). Deja el verde de "recién resuelto".
+- **(2026-07-16, P1=B) Texto:** título **"✓ Multa del operador cobrada"** + el monto a la derecha, y debajo
+  la línea **"Se cobró por completo el 12/07."** (fecha dd/MM). **Dependencia backend:** además de
+  `IsFullyCollected`, hace falta la **fecha en que se completó el cobro**; si esa fecha NO está disponible,
+  la línea cae al texto **"Ya se cobró por completo."** (el front nunca inventa la fecha — regla "lo dice el
+  backend", 2026-07-03).
+- **(2026-07-16, P2=B) "+ Agregar otro cargo de este operador" queda escondido detrás de un "Más ▾"** que
+  se abre con un clic (en línea, nunca ventana flotante). Sigue gateado por
+  `cancellations.classify_agency_penalty`; sin permiso, el "Más ▾" no aparece.
+- **(2026-07-16, P3=B) El "· Deshacer: el operador cobró mal esta multa" sigue disponible SIEMPRE**, a
+  perfil bajo (link chico, Admin-only, mientras el backend lo habilite). **NO desaparece a los 15 días.**
+  **La regla del 2026-07-14 (Deshacer de multa emitida) SIGUE VIGENTE, no se deroga:** pasados 15 días, el
+  aviso suave "convendría consultarlo con un contador" aparece DENTRO del panel `DeshacerMultaEmitidaInline`
+  al intentarlo, no en el cartel cerrado; el Deshacer sigue habilitado igual.
+- **(2026-07-16) Enmascarado:** sin permiso `cobranzas.see_cost`, el monto se muestra "—" (regla general
+  2026-06-05). El resto del cartel igual.
+- **(2026-07-16) Qué NO hacer:** dejar el verde con la multa cobrada; mostrar "+ Agregar otro cargo" en
+  primer plano; hacer desaparecer el Deshacer a los 15 días; inventar la fecha de cobro; ventana flotante
+  para el "Más ▾"; tocar el chip de estado de la reserva (sigue "Anulada") o el resto de la ficha
+  (solo lectura).
+
+## Extracto profesional + rediseño de la cuenta corriente del cliente (2026-07-16, respuestas de Gastón)
+
+> **Origen:** Gastón pidió "imagen profesional, sacar lo repetido, no parece un extracto de verdad" para
+> la cuenta corriente del cliente (`CustomerAccountPage`). Hoy la pantalla apila hasta 7 bloques de colores
+> antes de las solapas y repite la plata varias veces (chip "Debe" + cabecera del extracto; tarjetitas
+> "Cobrado/Documentado" vs. lo que el extracto ya totaliza; contadores "Reservas/Comprobantes" vs. las
+> solapas). Requisitos de fondo aprobados en concepto desde un informe de patrones ERP (SAP/Odoo/NetSuite).
+> Sesión de 6 preguntas; Gastón eligió la recomendada en TODAS (P1..P6 = A).
+> Spec completa: `docs/ux/2026-07-16-extracto-profesional-cuenta-cliente.md`. **NO reabrir.** Siguen
+> valiendo las 3 reglas duras de multimoneda (2026-06-09) y "el modal me parece horrible" (todo EN LÍNEA).
+
+- **(2026-07-16, P1=A) Las reservas ANULADAS y las MULTAS entran DENTRO del extracto.** La anulada se ve
+  con su **factura** (cargo) + su **nota de crédito** de anulación (abono) debajo, como contra-asiento que
+  la cancela: el saldo vuelve solo, nada desaparece. La **multa** se ve como un renglón (nota de débito)
+  que **SUMA al saldo**. **⚠️ Esto DEROGA el P1 del 2026-07-15** ("la multa vive SOLO en el bloque aparte;
+  el extracto NO cambia y muestra solo viajes vivos"). En consecuencia, **el saldo del encabezado pasa a
+  INCLUIR las multas**, para que siga coincidiendo con el saldo de cierre del extracto (era la preocupación
+  original del 2026-07-15). El bloque apilado "Multa pendiente de cobro" (`MultaPendienteDeCobroBlock`)
+  deja de dibujarse: su info pasa a la línea "Multas abiertas" de la foto de saldo + los renglones del extracto.
+- **(2026-07-16, P2=A) Una sola "foto de saldo" por moneda reemplaza los cartelitos apilados.** Un recuadro
+  con una columna por moneda (pesos / dólares, nunca sumados) y las líneas de composición:
+  **Facturado sin cobrar** · **Multas abiertas** (ámbar; con "(incluye $ X en trámite)" para la parte sin
+  comprobante todavía) · **Crédito a favor** (verde, resta) · **SALDO** al pie (rojo "debe" / verde "a
+  favor" / gris 0). Una línea solo aparece si tiene monto en esa moneda; "Facturado sin cobrar" y "SALDO"
+  siempre. El botón **"Usar saldo a favor"** y la lista de aplicaciones revertibles cuelgan de la foto
+  (EN LÍNEA), no como carteles sueltos arriba.
+- **(2026-07-16, P3=A) Se SACAN las 4 tarjetitas del encabezado** (Documentado / Cobrado / Reservas /
+  Comprobantes): repetían plata que el extracto ya totaliza y contadores que ya están en las solapas. La
+  identidad se reduce a una línea sobria (nombre + contactos + CUIT/DNI), sin el círculo gigante.
+- **(2026-07-16, P4=A) El extracto pasa a 5 columnas: Fecha · Documento · Debe · Haber · Saldo.** Se funden
+  "Concepto" y "Comprobante" en **Documento** = tipo + número + reserva (ej. "Factura B 0001-00012 · R-1042
+  Cancún"); el número de reserva es link a su ficha. El motivo va en criollo entre paréntesis
+  ((anulación), (multa), (efectivo)). Un bloque por moneda, cada uno con su "Saldo al día (debe): $ …".
+- **(2026-07-16, P5=A) Sin antigüedad de deuda (aging) por ahora.** Primero el extracto limpio; la
+  antigüedad se agrega más adelante si hace falta (coherente con "vencimientos = NO", 2026-06-22).
+- **(2026-07-16, P6=A) No se inventa pantalla nueva para el extracto por reserva.** Ese extracto YA existe
+  y YA está conectado dentro de la ficha de la reserva (`EstadoCuentaExtracto` en `ReservaDetailPage`); el
+  clic en el renglón del extracto del cliente lleva a `/reservas/{id}`, donde vive.
+- **(2026-07-16) El extracto es documento de CONSULTA:** solo lectura, sin botones de acción por renglón
+  (las acciones —ver PDF, eliminar cobro, anular recibo— viven en la ficha de la reserva). Se mantiene el
+  botón "Nuevo cobro" arriba de la solapa (acción de cabecera).
+- **(2026-07-16) Backend (no es decisión de UX, habilita la pantalla):** el extracto del cliente
+  (`CustomerAccountStatementBuilder`) debe dejar de excluir las anuladas e incluir factura + NC + multa
+  como renglones; el saldo por moneda del encabezado (`ReceivableByCurrency`) pasa a incluir las multas; y
+  se expone la **composición** del saldo (facturado sin cobrar / multas firmes + en trámite / crédito a
+  favor / saldo) para la foto, sin que el front re-sume. Detalle en la §7 de la spec.
+
+## Aplicar saldo a favor a una multa + neteo en la devolución (Tanda D1) (2026-07-16, respuestas de Gastón)
+
+> **Origen:** Tanda D1 aprobada por Gastón: (a) saldar una multa por anulación con el saldo a favor del
+> cliente; (b) al devolverle plata, descontar primero lo que debe (multa) y devolver la diferencia. Se
+> monta SOBRE el rediseño del extracto del mismo día (foto de saldo + [Usar saldo a favor] colgando de
+> ella). Sesión de 6 preguntas; Gastón eligió la recomendada en TODAS (P1..P6 = A). Spec completa:
+> `docs/ux/2026-07-16-aplicar-saldo-a-multa-y-neteo.md`. **NO reabrir.** Siguen valiendo las 3 reglas
+> duras de multimoneda (2026-06-09), "el modal me parece horrible" (todo EN LÍNEA), el extracto como
+> documento de consulta sin botones por renglón (2026-07-16 extracto P6/§3/§6) y todo el paso de multa.
+
+- **(2026-07-16) El disparador es SIEMPRE el botón [Usar saldo a favor] de la foto de saldo, NUNCA el
+  renglón del extracto.** Se suma un destino nuevo al desplegable "Destino" de la ficha
+  `UsarSaldoAFavorInline`: **"Aplicar a una multa"** (junto a Devolver por transferencia / Devolver en
+  efectivo / Aplicar a otra reserva / Dejar como crédito). Todo EN LÍNEA. Como aplicar saldo es
+  **revertible**, NO lleva cartel "¿Seguro?".
+- **(2026-07-16, P1 = A) Para saldar una multa, el usuario ELIGE cuál de una lista** (mismo patrón que
+  hoy elige la reserva destino en "Aplicar a otra reserva"). No se aplica sola a la más vieja. Cada fila:
+  `R-1050 · Bariloche — Multa por anulación` + debajo `Falta cobrar: $ 3.000`. El monto sugerido es el
+  menor entre lo que falta cobrar de la multa y el saldo disponible; editable hacia abajo (aplicación
+  parcial). Línea de resumen: "Se van a aplicar $ 3.000 del saldo a favor a la multa de la reserva
+  R-1050." Botón "Aplicar saldo", un solo click. Solo se listan multas FIRMES (con comprobante emitido);
+  las que están en trámite / en revisión NO se pueden saldar. Si no hay ninguna aplicable: "No hay
+  multas que puedas saldar con saldo a favor. (Las multas que todavía no tienen comprobante emitido no
+  se pueden saldar hasta que el comprobante salga.)"
+- **(2026-07-16, P2 = A) Saldar una multa con saldo a favor deja un renglón en el extracto, como un
+  pago** (Haber, baja el saldo): `Saldo a favor aplicado · R-1050 (multa)`. Al REVERTIR la aplicación,
+  aparece el renglón inverso (Debe) que devuelve el saldo al valor previo. En la foto de saldo, "Multas
+  abiertas" baja/sube en consecuencia. El backend arma el renglón; el front solo pinta.
+- **(2026-07-16, P3 = A) La previa del neteo se muestra tal cual la propuesta:** cuando se devuelve
+  plata (efectivo/transferencia) a un cliente que a la vez debe una multa firme, el servidor calcula el
+  desglose y el front lo pinta: "Este cliente tiene una multa sin pagar. Antes de devolverle, se
+  descuenta lo que debe: Saldo a favor $ 10.000 − Multa R-1050 (por anulación) $ 3.000 = Le devolvés
+  $ 7.000." El desglose y el neto los arma el servidor; el front no recalcula.
+- **(2026-07-16, P4 = A) En el neteo NO hay casillero de monto: se devuelve el neto completo de una.**
+  El botón lleva el neto: "Devolver $ 7.000". (Si el saldo a favor ≤ la multa, "Le devolvés $ 0" +
+  "Queda $ X de multa sin pagar" y el botón pasa a "Aplicar a la multa".) La previa se revalida al
+  confirmar: si la cuenta cambió mientras el usuario miraba, se rechaza con "La cuenta cambió mientras
+  mirabas esta pantalla. Actualizamos los números; revisá y volvé a confirmar." El recibo del egreso
+  lleva el desglose.
+- **(2026-07-16, P5 = A) No se puede "Deshacer" una multa que tiene saldo a favor aplicado.** Texto
+  exacto del freno en la ficha: "No se puede deshacer esta multa todavía: tiene $ 3.000 de saldo a favor
+  aplicados. Primero revertí esa aplicación desde la cuenta del cliente y después deshacé la multa." +
+  botón "Ir a la cuenta del cliente".
+- **(2026-07-16, P6 = A) El recibo de la devolución neteada lleva el desglose** (lo arma el backend):
+  "Devolución de saldo a favor / Saldo a favor $ 10.000 / Menos multa R-1050 −$ 3.000 / Total devuelto
+  $ 7.000." (Una línea "Menos multa R-…" por cada multa si hubo varias.)
+- **(2026-07-16) La lista de aplicaciones revertibles pasa a cubrir los dos destinos** (a otra reserva y
+  a una multa); título renombrado a "Saldo a favor aplicado". Cada fila revertible con motivo en línea,
+  igual que hoy.
+- **(2026-07-16) Enmascarado:** esta pantalla es del lado cliente; los montos que el cliente debe/pagó
+  se ven con `cobranzas.view`, sin necesitar `cobranzas.see_cost` (no hay "—" acá). Los flujos de
+  aplicar/devolver requieren `cobranzas.edit`: sin ese permiso, el botón [Usar saldo a favor] no aparece,
+  pero los números igual se ven.

@@ -14,16 +14,24 @@
  *   - Flag OFF: isAdmin() (comportamiento original)
  *   - Flag ON:  hasPermission("cobranzas.see_cost") (admin sigue pasando porque admin tiene todo)
  *
- * Papelera borrar vs cancelar (decisión #9 guia UX 2026-06-08):
+ * Papelera borrar vs anular (decisión #9 guia UX 2026-06-08):
  *   - Servicio NO confirmado por el operador → "¿Borrar?" → desaparece de la reserva.
- *   - Servicio YA confirmado por el operador → "¿Cancelar?" → queda tachado (con motivo opcional).
+ *   - Servicio YA confirmado por el operador → "¿Anular?" → queda tachado (con motivo opcional).
  *   La decisión la toma el sistema solo según esServicioResuelto(svc).
+ *   Un servicio YA anulado (esServicioAnulado(svc)) no ofrece ni Editar ni Borrar/Anular:
+ *   ya quedó sin efecto y es historia de la reserva (2026-07-16).
  *
- * Botón "Cancelar varios" (ADR-025):
- *   Permite cancelar múltiples servicios de una vez con un único motivo.
+ * Botón "Anular varios" (ADR-025):
+ *   Permite anular múltiples servicios de una vez con un único motivo.
  *   Despliega una sección INLINE debajo de la lista (no modal).
  *   Gateada por: el usuario debe tener permiso reservas.cancel.
  *   El bloqueo fiscal (serviceCancellationBlockReason) se propaga a la sección inline.
+ *
+ * Vocabulario "Cancelar" vs "Anular" (regla del dueño, 2026-07-16): en este producto
+ * "Cancelar" significa que el cliente pagó el total del servicio/viaje; "Anular"
+ * significa dejarlo sin efecto. Los textos visibles de este componente usan "Anular"
+ * para lo segundo — los identificadores de código (CancelarVariosServiciosInline,
+ * handleModalCancelar, etc.) se mantienen como están por ahora, son internos.
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -193,6 +201,23 @@ export function esServicioConfirmadoPorOperador(svc) {
 }
 
 /**
+ * Determina si un servicio ya está ANULADO (lo que el backend todavía llama
+ * workflowStatus "Cancelado" — nombre histórico del campo; la UI ya no debe decir
+ * "Cancelado" para esto: ver etiquetaEstadoServicio más abajo).
+ *
+ * Un servicio anulado es una TERCERA categoría, aparte de "resuelto" (confirmado por
+ * el operador) y "borrador" (todavía sin confirmar): es historia cerrada de la reserva.
+ * Puede tener una multa, un ajuste de tipo de cambio o una nota de crédito asociados
+ * (mismo criterio que usa el backend en DeleteGuards.cs para rechazar el borrado físico).
+ * Por eso nunca debe ofrecer Editar, Borrar, ni volver a Anular/Cancelar — y tampoco
+ * botones para "resolverlo" (Marcar Emitido, etc.), que no tienen sentido sobre algo
+ * que ya quedó sin efecto.
+ */
+function esServicioAnulado(svc) {
+    return (svc.workflowStatus || svc.status) === 'Cancelado';
+}
+
+/**
  * Devuelve la etiqueta de texto del badge de estado del servicio.
  *
  * Regla de negocio (Gaston 2026-06-08):
@@ -200,7 +225,7 @@ export function esServicioConfirmadoPorOperador(svc) {
  *     nada al operador — el badge dice "En espera", no "Solicitado".
  *   - A partir de "En gestion" (InManagement) en adelante, si el workflowStatus
  *     esta vacio o es el valor por defecto, el badge dice "Solicitado" (ya se pidio).
- *   - "Confirmado" y "Cancelado" siempre se muestran tal cual (llegan del backend).
+ *   - "Confirmado" siempre se muestra tal cual (llega del backend).
  *
  * ADR-036 (2026-06-21): cuando la reserva entera está deshecha (Lost o Cancelled),
  * TODOS sus servicios muestran "Anulado" — es SOLO presentación, no muta datos.
@@ -211,6 +236,13 @@ export function esServicioConfirmadoPorOperador(svc) {
  * 2026-06-24 (G1): cuando la reserva pasa a Closed (Finalizada), el backend marca
  * los servicios como "Finalizado". Este estado se muestra como "Finalizado" en verde
  * (completado), NO se tacha (no es cancelación sino cierre exitoso del viaje).
+ *
+ * Vocabulario "Cancelar" vs "Anular" (2026-07-16, regla del dueño):
+ *   El backend todavía llama "Cancelado" al workflowStatus interno de un servicio
+ *   individual (nombre histórico del campo), pero en la UI un servicio que se dejó
+ *   sin efecto se dice "Anulado" — "Cancelar" en este producto significa que el
+ *   cliente pagó el total, y no es el caso acá. Mapeamos el texto ACÁ (mismo patrón
+ *   que el override de Lost/Cancelled más arriba), sin tocar el dato del backend.
  *
  * @param {string|null} workflowStatus - Estado workflow del servicio (puede ser null/undefined)
  * @param {string} reservaStatus - Estado de la reserva (ej. "Quotation", "Budget", "InManagement")
@@ -225,8 +257,12 @@ function etiquetaEstadoServicio(workflowStatus, reservaStatus) {
     // No lo tratamos como cancelado: el viaje fue exitoso, no se tacha.
     if (workflowStatus === 'Finalizado') return 'Finalizado';
 
-    // "Confirmado", "Cancelado" y otros estados concretos del operador
-    // (ej. "Emitido", "HK") se muestran tal cual.
+    // Servicio individual anulado (workflowStatus "Cancelado" del backend): mostramos
+    // "Anulado", igual que hacemos arriba con la reserva completa Lost/Cancelled.
+    if (workflowStatus === 'Cancelado') return 'Anulado';
+
+    // "Confirmado" y otros estados concretos del operador (ej. "Emitido", "HK")
+    // se muestran tal cual.
     if (workflowStatus && workflowStatus !== 'Solicitado') {
         return workflowStatus;
     }
@@ -241,16 +277,27 @@ function etiquetaEstadoServicio(workflowStatus, reservaStatus) {
  * Color del badge segun la ETIQUETA visible (no solo el workflowStatus).
  * "En espera" (cotizacion/presupuesto, nada pedido aun) va gris neutro, distinto
  * del ambar de "Solicitado" (ya pedido al operador, esperando confirmacion).
- * "Anulado" (reserva Lost) va en gris sobrio (la reserva no prosperó).
+ * "Anulado" tiene DOS orígenes con color distinto a propósito:
+ *   - Reserva entera Lost/Cancelled: gris sobrio (la reserva no prosperó, nada para
+ *     remarcar puntualmente — se chequea PRIMERO, antes de mirar la etiqueta).
+ *   - Servicio individual anulado (workflowStatus "Cancelado") dentro de una reserva
+ *     que sigue viva: rosa/alerta, como ya era antes de renombrar el texto — suele
+ *     implicar plata en juego (multa o nota de crédito) que vale la pena remarcar.
  * "Finalizado" (2026-06-24): verde/slate — viaje exitoso, no es cancelación.
  *   Verde claro en vez del verde intenso de "Confirmado" para distinguirlos.
  */
 function claseColorEstadoServicio(workflowStatus, reservaStatus) {
+    // Reserva entera deshecha: gris sobrio, sin importar el workflowStatus de este
+    // servicio en particular (etiquetaEstadoServicio también le da prioridad a esto).
+    if (reservaStatus === 'Lost' || reservaStatus === 'Cancelled') {
+        return 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-500';
+    }
+
     const etiqueta = etiquetaEstadoServicio(workflowStatus, reservaStatus);
     if (etiqueta === 'Confirmado') return 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400';
-    if (etiqueta === 'Cancelado') return 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400';
-    // "Anulado" (Lost): gris sobrio — la reserva no prosperó, no queremos un color de alerta.
-    if (etiqueta === 'Anulado') return 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-500';
+    // Servicio anulado individualmente (antes decía "Cancelado" acá): mismo rosa/alerta
+    // de siempre, solo cambió el texto que se muestra.
+    if (etiqueta === 'Anulado') return 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400';
     if (etiqueta === 'En espera') return 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400';
     // "Finalizado": verde pálido / slate — el servicio se cumplió, el viaje terminó bien.
     // Se diferencia de "Confirmado" (verde intenso) para no confundir "en camino" con "cerrado".
@@ -274,11 +321,11 @@ function formatFechaSegura(valor) {
 }
 
 /**
- * Modal de confirmación para borrar o cancelar un servicio.
+ * Modal de confirmación para borrar o anular un servicio.
  *
  * Decisión #9 (guia UX 2026-06-08):
  * - Servicio NO confirmado: texto "¿Borrar?" → llama onBorrar.
- * - Servicio CONFIRMADO: texto "¿Cancelar?" + campo motivo obligatorio (min 10 chars) → llama onCancelar.
+ * - Servicio CONFIRMADO: texto "¿Anular?" + campo motivo obligatorio (min 10 chars) → llama onCancelar.
  *
  * El backend exige Reason entre 10 y 1000 caracteres. La validación se hace acá: el botón
  * permanece deshabilitado hasta que el motivo cumpla el mínimo. No se rellena texto automático.
@@ -359,7 +406,7 @@ function ModalBorrarVsCancelar({ service, saleInvoices = [], onBorrar, onCancela
             className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200"
             role="dialog"
             aria-modal="true"
-            aria-label={estaConfirmado ? 'Cancelar servicio' : 'Borrar servicio'}
+            aria-label={estaConfirmado ? 'Anular servicio' : 'Borrar servicio'}
             onKeyDown={handleCerrarConEscape}
         >
             <div className="w-full max-w-sm rounded-2xl border bg-white shadow-2xl dark:bg-slate-900 dark:border-slate-800">
@@ -368,7 +415,7 @@ function ModalBorrarVsCancelar({ service, saleInvoices = [], onBorrar, onCancela
                     <div className="flex items-center gap-2">
                         <Trash2 className="h-4 w-4 text-slate-500" />
                         <h3 className="font-bold text-slate-900 dark:text-white">
-                            {estaConfirmado ? 'Cancelar servicio' : 'Borrar servicio'}
+                            {estaConfirmado ? 'Anular servicio' : 'Borrar servicio'}
                         </h3>
                     </div>
                     <button
@@ -383,12 +430,12 @@ function ModalBorrarVsCancelar({ service, saleInvoices = [], onBorrar, onCancela
 
                 <div className="p-6 space-y-4">
                     {estaConfirmado ? (
-                        // Servicio ya confirmado por el operador: NO se puede borrar, solo cancelar.
+                        // Servicio ya confirmado por el operador: NO se puede borrar, solo anular.
                         // Quedará tachado en la lista con quién/cuándo.
                         <>
                             <p className="text-sm text-slate-600 dark:text-slate-300">
                                 <span className="font-bold">Este servicio ya está confirmado.</span>{' '}
-                                Al cancelarlo, queda tachado en la reserva (no desaparece) — hubo un compromiso real con el operador y puede haber penalidad o saldo a devolver al cliente.
+                                Al anularlo, queda tachado en la reserva (no desaparece) — hubo un compromiso real con el operador y puede haber penalidad o saldo a devolver al cliente.
                             </p>
                             <div>
                                 <label
@@ -402,7 +449,7 @@ function ModalBorrarVsCancelar({ service, saleInvoices = [], onBorrar, onCancela
                                     ref={motivoInputRef}
                                     value={motivo}
                                     onChange={(e) => setMotivo(e.target.value)}
-                                    placeholder="¿Por qué se cancela este servicio?"
+                                    placeholder="¿Por qué se anula este servicio?"
                                     rows={2}
                                     className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                                 />
@@ -472,7 +519,7 @@ function ModalBorrarVsCancelar({ service, saleInvoices = [], onBorrar, onCancela
                     <button
                         type="button"
                         onClick={handleConfirmar}
-                        // En el camino de cancelación (servicio confirmado) exigimos motivo válido.
+                        // En el camino de anulación (servicio confirmado) exigimos motivo válido.
                         // En el camino de borrado no hay textarea, así que no aplica la restricción.
                         disabled={loading || (estaConfirmado && (!motivoValido || (saleInvoices.length > 1 && !targetInvoicePublicId)))}
                         data-testid={estaConfirmado ? 'btn-confirm-cancel-service' : 'btn-confirm-delete-service'}
@@ -483,7 +530,7 @@ function ModalBorrarVsCancelar({ service, saleInvoices = [], onBorrar, onCancela
                         }`}
                     >
                         {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-                        {estaConfirmado ? 'Cancelar servicio' : 'Sí, borrar'}
+                        {estaConfirmado ? 'Anular servicio' : 'Sí, borrar'}
                     </button>
                 </div>
             </div>
@@ -542,7 +589,7 @@ function ModalBloqueoCancelacionServicio({ mensaje, onIrAFacturas, onClose }) {
                             id="bloqueo-cancelacion-titulo"
                             className="font-bold text-slate-900 dark:text-white"
                         >
-                            No se puede cancelar el servicio
+                            No se puede anular el servicio
                         </h3>
                     </div>
                     <button
@@ -561,7 +608,7 @@ function ModalBloqueoCancelacionServicio({ mensaje, onIrAFacturas, onClose }) {
                         {mensaje}
                     </div>
                     <p className="text-sm text-slate-600 dark:text-slate-300">
-                        Para poder cancelar este servicio primero hay que gestionar la nota de crédito
+                        Para poder anular este servicio primero hay que gestionar la nota de crédito
                         correspondiente en la sección de facturación de la reserva.
                     </p>
                 </div>
@@ -903,7 +950,7 @@ function MiniFormularioPasajerosFaltantes({ reservaId, reserva, servicio, covera
  *                                     El server siempre re-valida. Si no se pasa, el botón no aparece.
  *   serviceCancellationBlockReason  — string|null: motivo de bloqueo fiscal a nivel reserva (ADR-025).
  *                                     Si no es null, toda la reserva está bloqueada para cancelaciones.
- *                                     Se propaga a la sección inline "Cancelar varios".
+ *                                     Se propaga a la sección inline "Anular varios".
  *   onCancelacionVariosTerminada    — callback () => void: el padre recarga la reserva al terminar.
  *   pasajerosConNombre              — Array de pasajeros que ya tienen fullName cargado.
  *                                     Necesario para el control "Para: Todos" (Pieza A ADR-031 v2.1).
@@ -939,7 +986,7 @@ export function ServiceList({
     // Cuando es true se muestra el cartelito $/US$ en cada precio y la fila TOTAL al pie.
     // Regla ③: con false (o sin el prop) la lista se ve igual que siempre.
     esMultimoneda = false,
-    // ADR-025: "Cancelar varios" en línea.
+    // ADR-025: "Anular varios" en línea.
     canCancelServices = false,
     serviceCancellationBlockReason = null,
     onCancelacionVariosTerminada,
@@ -963,9 +1010,9 @@ export function ServiceList({
 
     // ── Guía UX 2026-06-22: botones de escritura ──────────────────────────────────
     // "Agregar / Editar" se ocultan cuando canEditServices.allowed === false.
-    // "Cancelar servicio" se oculta cuando canCancelServices.allowed === false (2026-06-24).
+    // "Anular servicio" se oculta cuando canCancelServices.allowed === false (2026-06-24).
     //   canCancelServices = true SOLO en {En gestión, Confirmada}.
-    //   En Cotización/Presupuesto es false → la acción "Cancelar" no aparece; solo "Borrar".
+    //   En Cotización/Presupuesto es false → la acción "Anular" no aparece; solo "Borrar".
     //   El ModalBorrarVsCancelar también lee esServicioConfirmadoPorOperador: si el servicio
     //   no está resuelto, el modal muestra "Borrar" aunque canCancelServices fuese true.
     //   Ambas condiciones trabajan juntas sin duplicar lógica de negocio.
@@ -1003,12 +1050,14 @@ export function ServiceList({
     // Guarda el mensaje descriptivo que vino del backend.
     const [modalBloqueo409, setModalBloqueo409] = useState(null);
 
-    // ADR-025: visibilidad de la sección inline "Cancelar varios".
-    // Solo se muestra cuando el usuario lo solicita con el botón "Cancelar varios".
+    // ADR-025: visibilidad de la sección inline "Anular varios" (el nombre interno del
+    // estado sigue diciendo "CancelarVarios" — es un identificador de código, no texto
+    // visible; ver esServicioAnulado para el porqué del vocabulario "Anular").
+    // Solo se muestra cuando el usuario lo solicita con el botón "Anular varios".
     const [showCancelarVarios, setShowCancelarVarios] = useState(false);
 
-    // Servicios "cancelables": los que tienen proveedor asignado Y no están ya cancelados.
-    // Estos son los candidatos para mostrar en la sección "Cancelar varios".
+    // Servicios "anulables": los que tienen proveedor asignado Y no están ya anulados.
+    // Estos son los candidatos para mostrar en la sección "Anular varios".
     // Misma lógica que calculateServiciosCanceladosResumen para determinar "con proveedor".
     const serviciosCancelables = (services || []).filter((svc) => {
         const tieneProveedor = Boolean(svc.supplierPublicId || svc.supplierId || svc.supplierName);
@@ -1019,7 +1068,7 @@ export function ServiceList({
 
     /**
      * Maneja el clic en la papelera de un servicio.
-     * Decide solo si mostrar el modal de "¿Borrar?" o "¿Cancelar?" según si el servicio
+     * Decide solo si mostrar el modal de "¿Borrar?" o "¿Anular?" según si el servicio
      * está confirmado por el operador (esServicioResuelto).
      * Decisión #9 (guia UX 2026-06-08).
      */
@@ -1046,14 +1095,14 @@ export function ServiceList({
             if (!respuesta?.ok && respuesta?.error?.status === 409) {
                 setModalBorrarCancelar(null);
                 setModalBloqueo409(
-                    getApiErrorMessage(respuesta.error, 'No se puede cancelar el servicio en este momento.')
+                    getApiErrorMessage(respuesta.error, 'No se puede anular el servicio en este momento.')
                 );
                 return;
             }
 
             // Cualquier otro error: mostramos toast genérico (el hook ya no lo muestra).
             if (!respuesta?.ok && respuesta?.error) {
-                showError(getApiErrorMessage(respuesta.error, 'No se pudo cancelar el servicio.'));
+                showError(getApiErrorMessage(respuesta.error, 'No se pudo anular el servicio.'));
             }
         }
         setModalBorrarCancelar(null);
@@ -1076,8 +1125,8 @@ export function ServiceList({
 
     return (
         <div>
-            {/* Modal de borrar vs cancelar: se abre al presionar la papelera de cualquier servicio.
-                El sistema decide solo el texto ("¿Borrar?" vs "¿Cancelar?") según si el operador confirmó. */}
+            {/* Modal de borrar vs anular: se abre al presionar la papelera de cualquier servicio.
+                El sistema decide solo el texto ("¿Borrar?" vs "¿Anular?") según si el operador confirmó. */}
             {modalBorrarCancelar && (
                 <ModalBorrarVsCancelar
                     service={modalBorrarCancelar}
@@ -1102,8 +1151,8 @@ export function ServiceList({
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
                 <h3 className="text-lg font-medium text-gray-900 dark:text-white">Servicios Contratados</h3>
                 <div className="flex flex-wrap gap-2 w-full sm:w-auto justify-end">
-                    {/* Botón "Cancelar varios": solo con permiso reservas.cancel, cuando hay cancelables
-                        Y cuando el backend habilita cancelar (puedeCancelarServicios).
+                    {/* Botón "Anular varios": solo con permiso reservas.cancel, cuando hay servicios
+                        anulables Y cuando el backend lo habilita (puedeCancelarServicios).
                         Guía UX 2026-06-22: ocultar en solo lectura según capability del backend. */}
                     {canCancelServices && puedeCancelarServicios && serviciosCancelables.length > 0 && !showCancelarVarios && (
                         <button
@@ -1113,7 +1162,7 @@ export function ServiceList({
                             className="flex items-center justify-center gap-2 border border-amber-300 bg-amber-50 text-amber-700 px-4 py-2 rounded-lg hover:bg-amber-100 transition-colors text-sm font-semibold dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-900/40"
                         >
                             <XSquare className="w-4 h-4" />
-                            Cancelar varios
+                            Anular varios
                         </button>
                     )}
                     {/* "Agregar Servicio": oculto en solo lectura (canEditServices.allowed === false).
@@ -1206,11 +1255,11 @@ export function ServiceList({
                                                 </div>
                                             </td>
                                             <td className="py-4 align-middle">
-                                                {/* Nombre tachado cuando el servicio está cancelado.
-                                                    El badge "Cancelado" ya aparece en la columna Estado.
+                                                {/* Nombre tachado cuando el servicio está anulado.
+                                                    El badge "Anulado" ya aparece en la columna Estado.
                                                     El tachado + quién/cuándo dan contexto adicional sin ser chillones. */}
                                                 <div className={`text-sm font-semibold line-clamp-1 ${
-                                                    (svc.workflowStatus || svc.status) === 'Cancelado'
+                                                    esServicioAnulado(svc)
                                                         ? 'line-through text-slate-400 dark:text-slate-500'
                                                         : 'text-slate-900 dark:text-white'
                                                 }`}>
@@ -1222,16 +1271,16 @@ export function ServiceList({
                                                     puedeVerProveedores={puedeVerProveedores}
                                                     testId={`chip-operador-desktop-${getReservationServicePublicId(svc)}`}
                                                 />
-                                                {/* Línea de auditoría de cancelación: quién y cuándo.
+                                                {/* Línea de auditoría de anulación: quién y cuándo.
                                                     cancelledAt y cancelledByUserName son proyectados por el backend
                                                     en los 6 DTOs de servicio (vuelo, hotel, traslado, paquete,
                                                     asistencia, genérico) y llegan al recargar la colección
-                                                    tras la cancelación.
+                                                    tras la anulación.
                                                     La línea se renderiza solo cuando ambos campos están presentes. */}
-                                                {(svc.workflowStatus || svc.status) === 'Cancelado' &&
+                                                {esServicioAnulado(svc) &&
                                                     (svc.cancelledAt || svc.cancelledByUserName) && (
                                                     <div className="mt-0.5 text-[10px] text-slate-400 dark:text-slate-500 flex items-center gap-1">
-                                                        <span>Cancelado</span>
+                                                        <span>Anulado</span>
                                                         {svc.cancelledByUserName && (
                                                             <span>por <span className="font-semibold">{svc.cancelledByUserName}</span></span>
                                                         )}
@@ -1385,7 +1434,7 @@ export function ServiceList({
                                                         Solo aparecen en InManagement Y cuando el servicio todavia no esta resuelto.
                                                         ADR-031: el botón también se gate-a si faltan datos de pasajeros
                                                         (el hint calcula la condición; el backend siempre re-valida). */}
-                                                    {reservaStatus === 'InManagement' && !esServicioResuelto(svc) && (() => {
+                                                    {reservaStatus === 'InManagement' && !esServicioResuelto(svc) && !esServicioAnulado(svc) && (() => {
                                                         // Calculamos el hint para este servicio.
                                                         // Si reserva es null (prop no pasada), no aplicamos gate.
                                                         const hint = reserva
@@ -1435,10 +1484,10 @@ export function ServiceList({
                                                     {/* Control "Para: Todos" (ADR-031 v2.1 — Pieza A).
                                                         Aparece en desktop antes de los botones Editar/Borrar.
                                                         Al tocarlo, despliega el panel de tildes en línea (PUT = escritura).
-                                                        D2: NO se muestra si el servicio está cancelado.
+                                                        D2: NO se muestra si el servicio está anulado.
                                                         Solo lectura: oculto cuando canEditServices.allowed === false
                                                         (mismo gate que Editar/Agregar — el PUT de asignaciones es escritura). */}
-                                                    {puedeEditarServicios && (svc.workflowStatus || svc.status) !== 'Cancelado' && (
+                                                    {puedeEditarServicios && !esServicioAnulado(svc) && (
                                                         <ControlAsignacionServicio
                                                             reservaId={reservaId}
                                                             serviceType={serviceType}
@@ -1452,10 +1501,14 @@ export function ServiceList({
                                                     )}
 
                                                     {/* Desktop: icono + palabra siempre visible (spec UX 2026-06-08).
-                                                        textoTacho es dinámico: "Cancelar" si el operador ya confirmó, "Borrar" si no.
+                                                        textoTacho es dinámico: "Anular" si el operador ya confirmó, "Borrar" si no.
                                                         aria-label y texto visible dicen lo mismo para coherencia con lectores de pantalla.
                                                         Guía UX 2026-06-22: en solo lectura (Traveling/Finalizada/etc.) se ocultan
-                                                        ambos botones; quedan visibles los datos del servicio y el badge de estado. */}
+                                                        ambos botones; quedan visibles los datos del servicio y el badge de estado.
+                                                        Servicio ya ANULADO (2026-07-16): tampoco se muestra ninguno de los dos —
+                                                        es historia cerrada de la reserva (ver esServicioAnulado), no hay nada
+                                                        para editar ni para volver a anular/borrar sobre algo que ya quedó sin efecto. */}
+                                                    {!esServicioAnulado(svc) && (
                                                     <div className="flex justify-end gap-1 transition-opacity">
                                                         {puedeEditarServicios && (
                                                             <button
@@ -1468,18 +1521,18 @@ export function ServiceList({
                                                                 Editar
                                                             </button>
                                                         )}
-                                                        {/* Papelera: abre el modal que decide borrar vs cancelar según decisión #9.
-                                                            Se oculta si no puede cancelar (solo lectura) o no puede editar (borrar
+                                                        {/* Papelera: abre el modal que decide borrar vs anular según decisión #9.
+                                                            Se oculta si no puede anular (solo lectura) o no puede editar (borrar
                                                             = editar en servicios no confirmados). */}
                                                         {(puedeEditarServicios || puedeCancelarServicios) && (() => {
                                                             const esConfirmado = esServicioConfirmadoPorOperador(svc);
-                                                            // Si está confirmado → cancelar (requiere puedeCancelarServicios)
+                                                            // Si está confirmado → anular (requiere puedeCancelarServicios)
                                                             // Si no está confirmado → borrar (requiere puedeEditarServicios)
                                                             const mostrarBotonDestructivo = esConfirmado
                                                                 ? puedeCancelarServicios
                                                                 : puedeEditarServicios;
                                                             if (!mostrarBotonDestructivo) return null;
-                                                            const textoTacho = esConfirmado ? 'Cancelar' : 'Borrar';
+                                                            const textoTacho = esConfirmado ? 'Anular' : 'Borrar';
                                                             return (
                                                                 <button
                                                                     onClick={() => handleTrashClick(svc)}
@@ -1493,6 +1546,7 @@ export function ServiceList({
                                                             );
                                                         })()}
                                                     </div>
+                                                    )}
                                                 </div>
                                             </td>
                                         </tr>
@@ -1503,10 +1557,10 @@ export function ServiceList({
                                             Solo aparece en InManagement + servicio no resuelto + coverage cargada.
                                             Si coverage no llegó aún, no mostramos (evita parpadeo incorrecto).
                                             La fila completa del servicio sigue visible arriba.
-                                            Guard de cancelado: no tiene sentido pedir nombres para un servicio
+                                            Guard de anulado: no tiene sentido pedir nombres para un servicio
                                             tachado — el control "Para:" ya lo ocultaba, el mini-form también. */}
                                         {reservaStatus === 'InManagement' && !esServicioResuelto(svc) &&
-                                            (svc.workflowStatus || svc.status) !== 'Cancelado' &&
+                                            !esServicioAnulado(svc) &&
                                             coverage && !coverage.isComplete &&
                                             (svc.recordKind === SERVICE_RECORD_KIND.FLIGHT ||
                                              svc.recordKind === SERVICE_RECORD_KIND.HOTEL ||
@@ -1624,9 +1678,9 @@ export function ServiceList({
                                             {etiquetaEstadoServicio(svc.workflowStatus, reservaStatus)}
                                         </span>
                                     </div>
-                                    {/* Nombre tachado en mobile cuando el servicio está cancelado */}
+                                    {/* Nombre tachado en mobile cuando el servicio está anulado */}
                                     <div className={`font-medium mb-1 line-clamp-1 ${
-                                        (svc.workflowStatus || svc.status) === 'Cancelado'
+                                        esServicioAnulado(svc)
                                             ? 'line-through text-slate-400 dark:text-slate-500'
                                             : 'text-slate-900 dark:text-white'
                                     }`}>
@@ -1638,11 +1692,11 @@ export function ServiceList({
                                         puedeVerProveedores={puedeVerProveedores}
                                         testId={`chip-operador-mobile-${getReservationServicePublicId(svc)}`}
                                     />
-                                    {/* Auditoria de cancelacion en mobile: quién y cuándo (campos opcionales del backend) */}
-                                    {(svc.workflowStatus || svc.status) === 'Cancelado' &&
+                                    {/* Auditoria de anulación en mobile: quién y cuándo (campos opcionales del backend) */}
+                                    {esServicioAnulado(svc) &&
                                         (svc.cancelledAt || svc.cancelledByUserName) && (
                                         <div className="mb-1 text-[10px] text-slate-400 dark:text-slate-500 flex items-center gap-1 flex-wrap">
-                                            <span>Cancelado</span>
+                                            <span>Anulado</span>
                                             {svc.cancelledByUserName && (
                                                 <span>por <span className="font-semibold">{svc.cancelledByUserName}</span></span>
                                             )}
@@ -1737,7 +1791,7 @@ export function ServiceList({
                                                 el botón se apaga y aparece el aviso ámbar.
                                                 El mini-formulario en línea no entra en la card mobile,
                                                 así que el aviso apunta a la solapa Pasajeros. */}
-                                            {reservaStatus === 'InManagement' && !esServicioResuelto(svc) && (() => {
+                                            {reservaStatus === 'InManagement' && !esServicioResuelto(svc) && !esServicioAnulado(svc) && (() => {
                                                 // Calculamos el hint igual que en desktop.
                                                 // Si reserva es null (prop no pasada), dejamos pasar sin gate.
                                                 const hint = reserva
@@ -1787,13 +1841,15 @@ export function ServiceList({
                                             })()}
                                             {/* Mobile: mismo patrón icono + palabra (spec UX 2026-06-08).
                                                 textoTachoMobile sincronizado con la lógica desktop para no bifurcar.
-                                                Guía UX 2026-06-22: ocultar botones de escritura en solo lectura. */}
-                                            {(puedeEditarServicios || puedeCancelarServicios) && (() => {
+                                                Guía UX 2026-06-22: ocultar botones de escritura en solo lectura.
+                                                Servicio ya ANULADO (2026-07-16): ídem desktop, no se muestra
+                                                ninguno de los dos botones (ver esServicioAnulado). */}
+                                            {!esServicioAnulado(svc) && (puedeEditarServicios || puedeCancelarServicios) && (() => {
                                                 const esConfirmadoMobile = esServicioConfirmadoPorOperador(svc);
                                                 const mostrarDestructivoMobile = esConfirmadoMobile
                                                     ? puedeCancelarServicios
                                                     : puedeEditarServicios;
-                                                const textoTachoMobile = esConfirmadoMobile ? 'Cancelar' : 'Borrar';
+                                                const textoTachoMobile = esConfirmadoMobile ? 'Anular' : 'Borrar';
                                                 return (
                                                     <div className="flex items-center gap-2">
                                                         {puedeEditarServicios && (
@@ -1807,7 +1863,7 @@ export function ServiceList({
                                                                 Editar
                                                             </button>
                                                         )}
-                                                        {/* Papelera mobile: mismo modal borrar vs cancelar */}
+                                                        {/* Papelera mobile: mismo modal borrar vs anular */}
                                                         {mostrarDestructivoMobile && (
                                                             <button
                                                                 onClick={() => handleTrashClick(svc)}
@@ -1828,9 +1884,9 @@ export function ServiceList({
                                     {/* Control "Para: Todos" en mobile (ADR-031 v2.1 — Pieza A).
                                         Va debajo del nombre del servicio, en línea propia, arriba de los botones.
                                         El panel de tildes se abre a ancho completo debajo del control.
-                                        D2: NO se muestra si el servicio está cancelado.
+                                        D2: NO se muestra si el servicio está anulado.
                                         Solo lectura: mismo gate que el control desktop (canEditServices). */}
-                                    {puedeEditarServicios && (svc.workflowStatus || svc.status) !== 'Cancelado' && (
+                                    {puedeEditarServicios && !esServicioAnulado(svc) && (
                                         <div className="mt-2">
                                             <ControlAsignacionServicio
                                                 reservaId={reservaId}
@@ -1853,7 +1909,7 @@ export function ServiceList({
                 </>
             )}
 
-            {/* ─ Sección inline "Cancelar varios" (ADR-025) ───────────────────────
+            {/* ─ Sección inline "Anular varios" (ADR-025) ───────────────────────
                 Se despliega debajo de la lista cuando el usuario presiona el botón.
                 Solo visible cuando showCancelarVarios = true.
                 El bloqueo fiscal (serviceCancellationBlockReason) se pasa hacia abajo:

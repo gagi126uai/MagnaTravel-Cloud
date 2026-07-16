@@ -241,6 +241,64 @@ public class ReservaServiceDeleteTests
         Assert.Equal(1, await context.Servicios.CountAsync());
     }
 
+    // ===== Bug servicios huerfanos (2026-07-16): un servicio Cancelado NUNCA se borra fisico =====
+    //
+    // Antes, un servicio con Status="Cancelado" que NUNCA llego a confirmarse con el operador
+    // (ConfirmedAt == null) caia en la rama "borrador" de DeleteGuards y se borraba fisico. Eso
+    // dejaba huerfanas las lineas de cancelacion (multa, ajuste de tipo de cambio, NC) que lo
+    // referencian por ServiceId (sin FK real, asi que la DB no lo impedia). El guard nuevo rechaza
+    // el borrado por el estado Cancelado en si mismo, sin importar ConfirmedAt.
+
+    [Fact]
+    public async Task RemoveServiceAsync_GenericCancelledWithoutConfirmedAt_Throws()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedReservaAsync(context, EstadoReserva.Budget);
+        context.Servicios.Add(new ServicioReserva
+        {
+            Id = 13, ReservaId = 1, ServiceType = "Otros", ProductType = "Generico",
+            Description = "Servicio anulado sin confirmar", Status = "Cancelado",
+            ConfirmedAt = null, // ESTE es el caso que se colaba: nunca se confirmo con el operador.
+            DepartureDate = DateTime.UtcNow.AddDays(5), CreatedAt = DateTime.UtcNow
+        });
+        await context.SaveChangesAsync();
+
+        var service = BuildService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.RemoveServiceAsync(13, CancellationToken.None));
+        Assert.Contains("anulado", ex.Message, StringComparison.OrdinalIgnoreCase);
+
+        // El servicio (y las hipoteticas lineas de cancelacion que lo referencian) sigue vivo.
+        Assert.Equal(1, await context.Servicios.CountAsync());
+    }
+
+    [Fact]
+    public async Task RemoveServiceAsync_GenericCancelledWithConfirmedAt_ThrowsWithCancelledMessage_NotConfirmedMessage()
+    {
+        // Un servicio puede haber sido confirmado por el operador ANTES de cancelarse. El guard de
+        // "anulado" debe ganarle al guard de "confirmado" para dar siempre el mensaje mas claro.
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedReservaAsync(context, EstadoReserva.Budget);
+        context.Servicios.Add(new ServicioReserva
+        {
+            Id = 14, ReservaId = 1, ServiceType = "Otros", ProductType = "Generico",
+            Description = "Servicio confirmado y despues anulado", Status = "Cancelado",
+            ConfirmedAt = DateTime.UtcNow.AddDays(-1),
+            DepartureDate = DateTime.UtcNow.AddDays(5), CreatedAt = DateTime.UtcNow
+        });
+        await context.SaveChangesAsync();
+
+        var service = BuildService(context);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.RemoveServiceAsync(14, CancellationToken.None));
+        Assert.Contains("anulado", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("confirmado con el operador", ex.Message, StringComparison.OrdinalIgnoreCase);
+
+        Assert.Equal(1, await context.Servicios.CountAsync());
+    }
+
     // ===== C25: Pin de contrato HTTP 409 (antes 400) =====
 
     [Fact]

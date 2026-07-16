@@ -1,30 +1,36 @@
 /**
- * Sección inline "Cancelar varios servicios" dentro del detalle de reserva.
+ * Sección inline "Anular varios servicios" dentro del detalle de reserva.
  *
  * Aparece debajo de la lista de servicios (no es modal) al presionar el botón
- * "Cancelar varios". Permite tildar múltiples servicios cancelables de una vez,
+ * "Anular varios". Permite tildar múltiples servicios anulables de una vez,
  * con un único motivo y mostrando el total a devolver al cliente POR MONEDA.
  *
+ * Vocabulario (regla del dueño, 2026-07-16): "Anular" es la palabra correcta para
+ * dejar un servicio sin efecto ("Cancelar" en este producto significa que el cliente
+ * pagó el total). Los textos que ve el usuario en este componente dicen "Anular";
+ * el nombre del componente y sus identificadores internos (endpoint cancel-service,
+ * handleConfirmar, etc.) se mantienen como están, son solo código.
+ *
  * Flujo:
- *   1. El usuario tilda los servicios que quiere cancelar (de distintos operadores OK).
+ *   1. El usuario tilda los servicios que quiere anular (de distintos operadores OK).
  *   2. Escribe un motivo único para toda la tanda (mín 10 caracteres).
  *   3. Presiona "Confirmar" → se llama POST /cancellations/cancel-service UNO POR UNO
  *      de forma secuencial (no hay endpoint batch).
  *   4. Al terminar (éxito total, parcial o fallo total), la sección NO se cierra sola.
- *      Se muestra el resultado por servicio: cuáles se cancelaron OK y cuáles fallaron
+ *      Se muestra el resultado por servicio: cuáles se anularon OK y cuáles fallaron
  *      con el motivo del error. El usuario lee y cierra él mismo con el botón "Cerrar".
  *   5. Si vuelve 409 (bloqueo fiscal), se muestra el cartel de bloqueo (no toast).
  *   6. Al terminar se recarga la reserva (via onCancelacionTerminada), para que los
- *      servicios cancelados OK desaparezcan de la lista del padre.
+ *      servicios anulados OK desaparezcan de la lista del padre.
  *
  * Decisión UX: NUNCA cerrar automáticamente si hubo algún fallo.
  *   El caso de éxito PARCIAL es justo cuando el usuario MÁS necesita saber qué quedó
- *   sin cancelar. Cerrar sola en ese caso haría creer que todo salió bien.
+ *   sin anular. Cerrar sola en ese caso haría creer que todo salió bien.
  *   Por consistencia, tampoco cerramos sola en éxito total: el usuario lee el
  *   resumen verde y cierra cuando esté listo.
  *
  * Bloqueo fiscal a nivel reserva:
- *   Si reserva.serviceCancellationBlockReason != null, NINGÚN servicio se puede cancelar:
+ *   Si reserva.serviceCancellationBlockReason != null, NINGÚN servicio se puede anular:
  *   - Los checkboxes aparecen deshabilitados.
  *   - Se muestra el motivo del bloqueo arriba del listado.
  *   - El botón "Confirmar" queda deshabilitado.
@@ -217,7 +223,7 @@ export function CancelarVariosServiciosInline({
         // Lo mostramos de forma distinta al resto de errores.
         // El cliente api.js (fetch nativo) pone el status en error.status directamente.
         const esBloqueo409 = error?.status === 409;
-        const mensajeError = extraerMensajeError(error, "No se pudo cancelar este servicio.");
+        const mensajeError = extraerMensajeError(error, "No se pudo anular este servicio.");
         resultados.push({ svc, ok: false, mensajeError, esBloqueo409 });
       }
 
@@ -254,18 +260,18 @@ export function CancelarVariosServiciosInline({
     <section
       data-testid="seccion-cancelar-varios"
       className="rounded-2xl border border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-950/20"
-      aria-label="Cancelar varios servicios"
+      aria-label="Anular varios servicios"
     >
       {/* ─ Header de la sección ─────────────────────────────────────────── */}
       <div className="flex items-center justify-between border-b border-amber-200 px-6 py-4 dark:border-amber-900/40">
         <h3 className="font-bold text-slate-900 dark:text-white text-base">
-          Cancelar varios servicios
+          Anular varios servicios
         </h3>
         <button
           type="button"
           onClick={onCerrar}
           disabled={procesoEstado?.enProceso}
-          aria-label="Cerrar sección de cancelar varios"
+          aria-label="Cerrar sección de anular varios"
           className="text-slate-400 hover:text-slate-600 transition-colors disabled:opacity-50 dark:hover:text-slate-200"
         >
           <X className="h-5 w-5" />
@@ -283,11 +289,11 @@ export function CancelarVariosServiciosInline({
             <Ban className="mt-0.5 h-4 w-4 flex-shrink-0 text-rose-600 dark:text-rose-400" />
             <div className="space-y-1 text-sm">
               <p className="font-bold text-rose-800 dark:text-rose-200">
-                No se puede cancelar: la reserva tiene un bloqueo fiscal activo
+                No se puede anular: la reserva tiene un bloqueo fiscal activo
               </p>
               <p className="text-rose-700 dark:text-rose-300">{blockReason}</p>
               <p className="text-xs text-rose-600 dark:text-rose-400">
-                Para cancelar servicios, primero hay que resolver la factura o el voucher que genera el bloqueo.
+                Para anular servicios, primero hay que resolver la factura o el voucher que genera el bloqueo.
               </p>
             </div>
           </div>
@@ -296,13 +302,13 @@ export function CancelarVariosServiciosInline({
         {/* ─ Lista de servicios cancelables con checkboxes ─────────────── */}
         {serviciosCancelables.length === 0 ? (
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            No hay servicios cancelables en esta reserva.
+            No hay servicios que se puedan anular en esta reserva.
           </p>
         ) : (
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                Servicios a cancelar
+                Servicios a anular
               </span>
               {/* Atajo seleccionar/deseleccionar todos */}
               {!estaBloqueada && !procesoEstado?.enProceso && !procesoTerminado && (
@@ -377,7 +383,7 @@ export function CancelarVariosServiciosInline({
                       <Loader2 className="h-4 w-4 animate-spin text-amber-500 flex-shrink-0" />
                     )}
                     {resultadoItem?.ok && (
-                      <CheckCircle2 className="h-4 w-4 text-emerald-500 flex-shrink-0" aria-label="Cancelado OK" />
+                      <CheckCircle2 className="h-4 w-4 text-emerald-500 flex-shrink-0" aria-label="Anulado OK" />
                     )}
                     {resultadoItem && !resultadoItem.ok && (
                       <span
@@ -453,7 +459,7 @@ export function CancelarVariosServiciosInline({
                   : "Estos servicios están incluidos en esta factura."}
               </p>
             )}
-            <p className="mt-1 text-xs text-slate-500">Si los servicios corresponden a facturas distintas, cancelalos en tandas separadas.</p>
+            <p className="mt-1 text-xs text-slate-500">Si los servicios corresponden a facturas distintas, anulalos en tandas separadas.</p>
           </div>
         )}
 
@@ -472,13 +478,13 @@ export function CancelarVariosServiciosInline({
           >
             {todosOk ? (
               <p className="font-bold">
-                Todos los servicios se cancelaron correctamente. La reserva se actualizó.
+                Todos los servicios se anularon correctamente. La reserva se actualizó.
               </p>
             ) : (
               <>
                 <p className="font-bold mb-2">
                   {procesoEstado.resultados.filter((r) => r.ok).length} de{" "}
-                  {procesoEstado.resultados.length} servicios cancelados.
+                  {procesoEstado.resultados.length} servicios anulados.
                 </p>
                 {procesoEstado.resultados
                   .filter((r) => !r.ok)
@@ -505,14 +511,14 @@ export function CancelarVariosServiciosInline({
               htmlFor="motivo-cancelar-varios"
               className="mb-1 block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400"
             >
-              Motivo de la cancelación
+              Motivo de la anulación
             </label>
             <textarea
               id="motivo-cancelar-varios"
               ref={motivoRef}
               value={motivo}
               onChange={(e) => setMotivo(e.target.value)}
-              placeholder="¿Por qué se cancelan estos servicios? (se aplica a todos los seleccionados)"
+              placeholder="¿Por qué se anulan estos servicios? (se aplica a todos los seleccionados)"
               rows={3}
               disabled={estaBloqueada || Boolean(procesoEstado?.enProceso)}
               className="w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-amber-500 focus:outline-none disabled:opacity-50 dark:border-amber-700 dark:bg-slate-800 dark:text-white"
@@ -562,8 +568,8 @@ export function CancelarVariosServiciosInline({
               >
                 {procesoEstado?.enProceso && <Loader2 className="h-4 w-4 animate-spin" />}
                 {procesoEstado?.enProceso
-                  ? `Cancelando...`
-                  : `Confirmar cancelación (${serviciosSeleccionados.length} servicio${serviciosSeleccionados.length !== 1 ? "s" : ""})`}
+                  ? `Anulando...`
+                  : `Confirmar anulación (${serviciosSeleccionados.length} servicio${serviciosSeleccionados.length !== 1 ? "s" : ""})`}
               </button>
             </>
           )}

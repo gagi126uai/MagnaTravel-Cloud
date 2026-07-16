@@ -22,6 +22,7 @@ import {
     Settings,
     ChevronRight,
     FileText,
+    AlertTriangle,
 } from "lucide-react";
 import { api } from "../../../api";
 import { AccountPageSkeleton } from "../../../components/ui/skeleton";
@@ -1707,6 +1708,33 @@ export default function SupplierAccountPage() {
                     />
                 </div>
             </div>
+
+            {/* Aviso pasivo (2026-07-16): un operador dado de alta rápido con el toggle
+                "Datos fiscales pendientes" (ver NuevoOperadorInline) queda para siempre sin
+                condición fiscal si nadie vuelve a completarla — y eso traba la facturación y
+                las anulaciones de ese operador más adelante. Es solo informativo: NO bloquea
+                ninguna acción de esta pantalla. Mismo estilo de franja de una línea que usa
+                ReservaLockBanner en la ficha de la reserva. */}
+            {!supplier?.taxCondition && (
+                <div
+                    data-testid="supplier-missing-tax-condition-banner"
+                    className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-200"
+                >
+                    <AlertTriangle className="h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+                    <span>
+                        <span className="font-bold">Faltan los datos fiscales de este operador.</span>
+                        {' '}Completá su condición fiscal para poder facturar y hacer anulaciones sin trabas.
+                    </span>
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab("datos")}
+                        data-testid="supplier-missing-tax-condition-cta"
+                        className="ml-auto flex-shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1 text-xs font-bold text-amber-800 transition-colors hover:bg-amber-100 dark:border-amber-700 dark:bg-slate-800 dark:text-amber-200 dark:hover:bg-amber-900/30"
+                    >
+                        Completar datos
+                    </button>
+                </div>
+            )}
 
             {/* ── Solapas (mismo patrón visual que la ficha de la reserva) ─────── */}
             <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/50">

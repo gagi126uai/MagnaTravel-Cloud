@@ -212,14 +212,14 @@ test("getApiErrorMessage — ProblemDetails 409 INV-ADR044-OPERATOR-NOT-FOUND �
         payload: {
             status: 409,
             title: "Operacion rechazada por una regla de negocio.",
-            detail: "El operador indicado no tiene servicios cancelados en esta anulación.",
+            detail: "El operador indicado no tiene servicios anulados en esta anulación.",
             invariantCode: "INV-ADR044-OPERATOR-NOT-FOUND",
             code: "business_invariant_violation",
         },
     };
     assert.strictEqual(
         getApiErrorMessage(error, "No se pudo cerrar la multa sin cobro. Probá de nuevo."),
-        "El operador indicado no tiene servicios cancelados en esta anulación."
+        "El operador indicado no tiene servicios anulados en esta anulación."
     );
 });
 

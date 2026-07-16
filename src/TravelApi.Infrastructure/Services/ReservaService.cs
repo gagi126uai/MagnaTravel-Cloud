@@ -3515,7 +3515,10 @@ public class ReservaService : IReservaService
             var confirmed = service.ConfirmedAt != null
                 || ServiceResolutionRules.IsOperatorConfirmed(service)
                 || ServiceResolutionRules.IsResolved(service);
-            await EnsureCanRemoveServiceAsync(service.ReservaId ?? 0, confirmed, service.Id, ct);
+            // Un servicio generico cancelado NUNCA se borra fisico: es historia de la reserva y
+            // puede tener multa/ajuste de cambio/NC asociados (bug de servicios huerfanos).
+            var cancelled = ServiceResolutionRules.IsCancelled(service);
+            await EnsureCanRemoveServiceAsync(service.ReservaId ?? 0, confirmed, cancelled, service.Id, ct);
             // ADR-022 §4.10 (fix P1): capturamos el proveedor antes de borrar el servicio para recalcular
             // su deuda despues (el servicio borrado deja de contar -> la deuda de ese proveedor baja).
             var removedSupplierId = service.SupplierId;
@@ -3536,7 +3539,8 @@ public class ReservaService : IReservaService
             var confirmed = flight.ConfirmedAt != null
                 || ServiceResolutionRules.IsOperatorConfirmed(flight)
                 || ServiceResolutionRules.IsResolved(flight);
-            await EnsureCanRemoveServiceAsync(flight.ReservaId, confirmed, null, ct);
+            var cancelled = ServiceResolutionRules.IsCancelled(flight);
+            await EnsureCanRemoveServiceAsync(flight.ReservaId, confirmed, cancelled, null, ct);
             await CleanupAssignmentsForDeletedServiceAsync(AssignmentServiceType.Flight, flight.Id, flight.ReservaId, ct);
             _context.FlightSegments.Remove(flight);
             var resId = flight.ReservaId;
@@ -3552,7 +3556,8 @@ public class ReservaService : IReservaService
             var confirmed = hotel.ConfirmedAt != null
                 || ServiceResolutionRules.IsOperatorConfirmed(hotel)
                 || ServiceResolutionRules.IsResolved(hotel);
-            await EnsureCanRemoveServiceAsync(hotel.ReservaId, confirmed, null, ct);
+            var cancelled = ServiceResolutionRules.IsCancelled(hotel);
+            await EnsureCanRemoveServiceAsync(hotel.ReservaId, confirmed, cancelled, null, ct);
             await CleanupAssignmentsForDeletedServiceAsync(AssignmentServiceType.Hotel, hotel.Id, hotel.ReservaId, ct);
             _context.HotelBookings.Remove(hotel);
             var resId = hotel.ReservaId;
@@ -3568,7 +3573,8 @@ public class ReservaService : IReservaService
             var confirmed = transfer.ConfirmedAt != null
                 || ServiceResolutionRules.IsOperatorConfirmed(transfer)
                 || ServiceResolutionRules.IsResolved(transfer);
-            await EnsureCanRemoveServiceAsync(transfer.ReservaId, confirmed, null, ct);
+            var cancelled = ServiceResolutionRules.IsCancelled(transfer);
+            await EnsureCanRemoveServiceAsync(transfer.ReservaId, confirmed, cancelled, null, ct);
             await CleanupAssignmentsForDeletedServiceAsync(AssignmentServiceType.Transfer, transfer.Id, transfer.ReservaId, ct);
             _context.TransferBookings.Remove(transfer);
             var resId = transfer.ReservaId;
@@ -3584,7 +3590,8 @@ public class ReservaService : IReservaService
             var confirmed = package.ConfirmedAt != null
                 || ServiceResolutionRules.IsOperatorConfirmed(package)
                 || ServiceResolutionRules.IsResolved(package);
-            await EnsureCanRemoveServiceAsync(package.ReservaId, confirmed, null, ct);
+            var cancelled = ServiceResolutionRules.IsCancelled(package);
+            await EnsureCanRemoveServiceAsync(package.ReservaId, confirmed, cancelled, null, ct);
             await CleanupAssignmentsForDeletedServiceAsync(AssignmentServiceType.Package, package.Id, package.ReservaId, ct);
             _context.PackageBookings.Remove(package);
             var resId = package.ReservaId;
@@ -3601,7 +3608,8 @@ public class ReservaService : IReservaService
             var confirmed = assistance.ConfirmedAt != null
                 || ServiceResolutionRules.IsOperatorConfirmed(assistance)
                 || ServiceResolutionRules.IsResolved(assistance);
-            await EnsureCanRemoveServiceAsync(assistance.ReservaId, confirmed, null, ct);
+            var cancelled = ServiceResolutionRules.IsCancelled(assistance);
+            await EnsureCanRemoveServiceAsync(assistance.ReservaId, confirmed, cancelled, null, ct);
             await CleanupAssignmentsForDeletedServiceAsync(AssignmentServiceType.Assistance, assistance.Id, assistance.ReservaId, ct);
             _context.AssistanceBookings.Remove(assistance);
             var resId = assistance.ReservaId;
@@ -3624,13 +3632,14 @@ public class ReservaService : IReservaService
 
     /// <summary>
     /// ADR-020 (F5): valida que un servicio se pueda BORRAR. Manda el servicio: si fue confirmado por
-    /// el operador (<paramref name="serviceIsOperatorConfirmed"/>) no se borra, se cancela. El guard
-    /// vive en DeleteGuards (compartido con BookingService).
+    /// el operador (<paramref name="serviceIsOperatorConfirmed"/>) no se borra, se cancela; si esta
+    /// Cancelado (<paramref name="serviceIsCancelled"/>) tampoco se borra NUNCA, tenga o no ConfirmedAt.
+    /// El guard vive en DeleteGuards (compartido con BookingService).
     /// </summary>
-    private async Task EnsureCanRemoveServiceAsync(int reservaId, bool serviceIsOperatorConfirmed, int? genericServiceId, CancellationToken ct)
+    private async Task EnsureCanRemoveServiceAsync(int reservaId, bool serviceIsOperatorConfirmed, bool serviceIsCancelled, int? genericServiceId, CancellationToken ct)
     {
         var blockReason = await DeleteGuards.GetServiceDeleteBlockReasonAsync(
-            _context, reservaId, serviceIsOperatorConfirmed, genericServiceId, ct, _logger);
+            _context, reservaId, serviceIsOperatorConfirmed, serviceIsCancelled, genericServiceId, ct, _logger);
         if (blockReason != null)
         {
             _logger.LogInformation(

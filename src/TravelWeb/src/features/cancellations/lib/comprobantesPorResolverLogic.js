@@ -54,7 +54,7 @@ export function fusionarComprobantesPorResolver(itemsMultas, itemsNotasCredito) 
 
   const filasNotasCredito = (Array.isArray(itemsNotasCredito) ? itemsNotasCredito : []).map((row) => ({
     key: `nc-${row.bookingCancellationPublicId}`,
-    comprobante: "DEVOLUCIÓN · SERVICIO CANCELADO",
+    comprobante: "DEVOLUCIÓN · SERVICIO ANULADO",
     reservaPublicId: row.reservaPublicId ?? null,
     reservaNumero: row.reservaNumero,
     queFalta: textoQueFaltaNotaCredito(row.status),
