@@ -2,18 +2,24 @@ using System.ComponentModel.DataAnnotations;
 
 namespace TravelApi.Application.DTOs;
 
+// OJO: en records los atributos de validacion van en el PARAMETRO del constructor primario
+// (sin "property:"). Con [property:] ASP.NET tira InvalidOperationException (500) al validar
+// el request ("validation metadata must be associated with the constructor parameter").
+// Bug real reportado por Gaston el 2026-06-06 (catalogo) y OTRA VEZ el 2026-07-16 (esta
+// pantalla: registrar factura del operador reventaba con el error generico en cada intento).
+// El guardian que impide que vuelva a entrar: RecordValidationAttributePlacementTests.
 public sealed record SupplierInvoiceCreateRequest(
-    [property: Required, MaxLength(80)] string Number,
-    [property: Required, MaxLength(3)] string Currency,
+    [Required, MaxLength(80)] string Number,
+    [Required, MaxLength(3)] string Currency,
     DateTime IssuedAt,
     DateTime DueDate,
-    [property: Required, MinLength(1)] IReadOnlyList<SupplierInvoiceLineRequest> Lines);
+    [Required, MinLength(1)] IReadOnlyList<SupplierInvoiceLineRequest> Lines);
 public sealed record SupplierInvoiceLineRequest(string ServiceRecordKind, Guid ServicePublicId, decimal Amount);
 public sealed record SupplierInvoicePaymentApplicationRequest(Guid SupplierPaymentPublicId, decimal Amount);
 public sealed record SupplierInvoicePaymentApplicationReversalRequest(
-    [property: Required, MinLength(10), MaxLength(500)] string Reason);
+    [Required, MinLength(10), MaxLength(500)] string Reason);
 public sealed record SupplierInvoiceVoidRequest(
-    [property: Required, MinLength(10), MaxLength(500)] string Reason);
+    [Required, MinLength(10), MaxLength(500)] string Reason);
 
 public sealed class SupplierInvoiceDto
 {

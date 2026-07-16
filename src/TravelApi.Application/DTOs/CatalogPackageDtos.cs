@@ -198,10 +198,14 @@ public class PreviewCountryEmbedDto
     public IReadOnlyList<PreviewCountryDestinationDto> Destinations { get; set; } = Array.Empty<PreviewCountryDestinationDto>();
 }
 
+// OJO: en records los atributos de validacion van en el PARAMETRO del constructor primario
+// (sin "property:") — con [property:] ASP.NET tira 500 al validar el body (mismo bug que
+// NewCatalogProductRequest 2026-06-06 y SupplierInvoiceCreateRequest 2026-07-16).
+// Guardian: RecordValidationAttributePlacementTests.
 public record PublicPackageLeadRequest(
-    [property: Required, MaxLength(150)] string FullName,
-    [property: Required, MaxLength(32)] string Phone,
-    [property: EmailAddress, MaxLength(254)] string? Email,
-    [property: MaxLength(2_000)] string? Message,
+    [Required, MaxLength(150)] string FullName,
+    [Required, MaxLength(32)] string Phone,
+    [EmailAddress, MaxLength(254)] string? Email,
+    [MaxLength(2_000)] string? Message,
     Guid? DeparturePublicId,
-    [property: MaxLength(200)] string? Website);
+    [MaxLength(200)] string? Website);
