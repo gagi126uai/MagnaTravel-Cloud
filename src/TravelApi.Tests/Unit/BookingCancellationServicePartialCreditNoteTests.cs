@@ -134,12 +134,22 @@ public class BookingCancellationServicePartialCreditNoteTests
         bool addNonHotelService = false,
         string vendedorUserId = "vendedor-1")
     {
+        // Tanda B (2026-07-16): ConfirmAsync resuelve las 3 condiciones fiscales SERVER-SIDE
+        // (ResolveServerSideTaxIdentity), no del request.SnapshotData que arma NewConfirmRequest()
+        // mas abajo (ese campo ahora se ignora). Sin esta fila de AfipSettings, ConfirmAsync
+        // rebotaria con INV-118 (agencia sin ficha) antes de llegar a lo que el test quiere probar.
+        if (!await ctx.AfipSettings.AnyAsync())
+        {
+            ctx.AfipSettings.Add(new AfipSettings { Cuit = 20111111112, TaxCondition = "Monotributo" });
+        }
+
         var customer = new Customer { FullName = "Cliente Test", IsActive = true };
         var supplier = new Supplier
         {
             Name = "Operador SRL",
             IsActive = true,
             InvoicingMode = SupplierInvoicingMode.TotalToCustomer,
+            TaxCondition = "IVA_RESP_INSCRIPTO",
         };
         ctx.Customers.Add(customer);
         ctx.Suppliers.Add(supplier);
@@ -398,6 +408,48 @@ public class BookingCancellationServicePartialCreditNoteTests
         // ahora deja rastro auditable en ReservaStatusChangeLog (sitio :821 de la cancelacion).
         Assert.Contains(ctx.ReservaStatusChangeLogs,
             l => l.ToStatus == EstadoReserva.PendingOperatorRefund);
+    }
+
+    // ============================================================
+    // Tanda B (2026-07-16, addendum M2): con la factura original en moneda extranjera, la moneda
+    // REAL ahora llega al calculator (antes siempre llegaba "ARS" hardcodeado, porque el snapshot
+    // salia de request.SnapshotData que el front mandaba fijo en ARS). Este test NO verifica que el
+    // calculator rutee a revision manual (eso es responsabilidad de FiscalLiquidationCalculator,
+    // testeado aparte) — verifica que el DATO DE ENTRADA que le llega es el correcto. Es la pieza
+    // que faltaba para que el calculator pueda tomar la decision correcta.
+    // ============================================================
+
+    [Fact]
+    public async Task ConfirmAsync_ForeignInvoice_PassesRealCurrencyToCalculator_NotHardcodedArs()
+    {
+        var (svc, ctx, _, _, _, _, calculatorMock, _, _) = BuildService(fc12On: true, fc13On: true);
+        var (bcPublicId, bc) = await SeedScenarioAsync(ctx);
+
+        // La factura original de este escenario nace en pesos (SeedScenarioAsync); la mutamos a
+        // USD con un TC confiable y su fuente registrada (mismo patron que una factura real emitida
+        // con ADR-012 multimoneda prendido).
+        var invoice = await ctx.Invoices.SingleAsync(i => i.Id == bc.OriginatingInvoiceId);
+        invoice.MonId = "DOL";
+        invoice.MonCotiz = 950m;
+        invoice.ExchangeRateSource = ExchangeRateSource.BNA_VendedorDivisa;
+        await ctx.SaveChangesAsync();
+
+        FiscalLiquidationInput? captured = null;
+        calculatorMock
+            .Setup(c => c.Calculate(It.IsAny<FiscalLiquidationInput>(), It.IsAny<OperationalFinanceSettings>()))
+            .Callback<FiscalLiquidationInput, OperationalFinanceSettings>((input, _) => captured = input)
+            .Returns(AutoApprovableDto());
+
+        await svc.ConfirmAsync(bcPublicId, NewConfirmRequest(), "user-1", "Admin", requesterIsAdmin: false, CancellationToken.None);
+
+        Assert.NotNull(captured);
+        // ANTES de esta tanda esto hubiera sido "ARS" siempre (el front lo hardcodeaba). Ahora es la
+        // moneda REAL de la factura, en ISO (no el codigo ARCA "DOL").
+        Assert.Equal("USD", captured!.Currency);
+
+        var reloadedBc = await ctx.BookingCancellations.AsNoTracking().SingleAsync(b => b.Id == bc.Id);
+        Assert.Equal("USD", reloadedBc.FiscalSnapshot!.CurrencyAtEvent);
+        Assert.Equal(950m, reloadedBc.FiscalSnapshot.ExchangeRateAtOriginalInvoice);
     }
 
     // ============================================================

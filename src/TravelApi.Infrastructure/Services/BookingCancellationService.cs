@@ -1750,6 +1750,69 @@ public class BookingCancellationService
         return $"Completá la condición fiscal en {fichasUnidas} para poder continuar.";
     }
 
+    /// <summary>
+    /// Tanda B (2026-07-16): las tres condiciones fiscales (agencia/operador/cliente) + los dos CUIT
+    /// que se congelan en el <see cref="FiscalSnapshot"/>, resueltos SIEMPRE del dato real de la BASE,
+    /// nunca de lo que mande el frontend.
+    ///
+    /// <para><b>Por que existe este record struct</b>: hasta esta tanda, el camino de anulacion TOTAL
+    /// (<see cref="ConfirmAsync"/>) tomaba las 3 condiciones fiscales de <c>request.SnapshotData</c> — un
+    /// payload que arma el frontend (<c>penaltyPayload.js</c>) con datos hardcodeados/adivinados (ej.
+    /// "Responsable Inscripto" fijo para el operador, "Consumidor Final" fijo para el cliente). Eso podia
+    /// hacer que una Nota de Credito saliera con el IVA MAL calculado si la ficha real era otra. El camino
+    /// T5 (anulacion parcial, <see cref="ConfirmPartialCancellationEmissionAsync"/>) YA resolvia esto
+    /// server-side; este helper es esa misma logica, extraida para que los dos caminos usen UNA sola
+    /// fuente de verdad y no puedan volver a desalinearse.</para>
+    ///
+    /// <para><b>Bloqueo, nunca default</b>: si alguna de las 3 fichas esta incompleta (condicion fiscal
+    /// vacia o no reconocida), NO se inventa un valor "razonable" — se corta la operacion con INV-118 y un
+    /// mensaje que le dice al usuario cual ficha ir a completar (<see cref="BuildTaxConditionUnknownMessage"/>).
+    /// Inventar aca seria falsificar un dato que despues viaja a un comprobante fiscal real.</para>
+    /// </summary>
+    internal readonly record struct FiscalTaxIdentity(
+        string AgencyTaxCondition,
+        string SupplierTaxCondition,
+        string CustomerTaxCondition,
+        string? SupplierTaxId,
+        string? CustomerTaxId);
+
+    /// <summary>
+    /// Ver <see cref="FiscalTaxIdentity"/>. Normaliza las 3 condiciones fiscales con
+    /// <see cref="TaxConditionNormalizer"/>, bloquea con INV-118 si alguna quedo <c>Unknown</c>, y devuelve
+    /// tambien los CUIT del operador y del cliente ya limpios (trim; string vacio/whitespace -> null).
+    ///
+    /// <para><c>internal</c> (no <c>private</c>) para poder testearlo directo desde TravelApi.Tests, sin
+    /// pasar por toda la orquestacion de <see cref="ConfirmAsync"/> — mismo patron que
+    /// <see cref="BuildTaxConditionUnknownMessage"/>.</para>
+    /// </summary>
+    internal static FiscalTaxIdentity ResolveServerSideTaxIdentity(
+        AfipSettings? afipSettings, Supplier? supplier, Customer? customer)
+    {
+        var agencyCanonical = TaxConditionNormalizer.Normalize(afipSettings?.TaxCondition);
+        var supplierCanonical = TaxConditionNormalizer.Normalize(supplier?.TaxCondition);
+        var customerCanonical = TaxConditionNormalizer.Normalize(customer?.TaxCondition);
+
+        if (agencyCanonical == TaxConditionCanonical.Unknown
+            || supplierCanonical == TaxConditionCanonical.Unknown
+            || customerCanonical == TaxConditionCanonical.Unknown)
+        {
+            throw new BusinessInvariantViolationException(
+                BuildTaxConditionUnknownMessage(agencyCanonical, supplierCanonical, customerCanonical, supplier?.Name),
+                invariantCode: "INV-118");
+        }
+
+        return new FiscalTaxIdentity(
+            TaxConditionNormalizer.ToStorageString(agencyCanonical),
+            TaxConditionNormalizer.ToStorageString(supplierCanonical),
+            TaxConditionNormalizer.ToStorageString(customerCanonical),
+            NormalizeTaxId(supplier?.TaxId),
+            NormalizeTaxId(customer?.TaxId));
+
+        // Un CUIT/CUIL cargado como "" o solo espacios NO es un dato: lo tratamos igual que si nunca
+        // se hubiera cargado (null), asi el snapshot no persiste basura.
+        static string? NormalizeTaxId(string? raw) => string.IsNullOrWhiteSpace(raw) ? null : raw.Trim();
+    }
+
     public async Task<BookingCancellationDto> ConfirmAsync(
         Guid publicId,
         ConfirmCancellationRequest request,
@@ -1788,6 +1851,9 @@ public class BookingCancellationService
             // ADR-013: Supplier para poder sugerir el default de la clasificacion de la
             // penalidad a partir de Supplier.PenaltyOwnership ("depende del operador").
             .Include(b => b.Supplier)
+            // Tanda B (2026-07-16): Customer para resolver su condicion fiscal server-side
+            // (ResolveServerSideTaxIdentity) en vez de confiar en lo que mandaba el frontend.
+            .Include(b => b.Customer)
             .FirstOrDefaultAsync(b => b.PublicId == publicId, ct)
             ?? throw new KeyNotFoundException($"BC {publicId} no encontrada.");
 
@@ -1851,9 +1917,12 @@ public class BookingCancellationService
                     entityId: bc.Id.ToString(),
                     reason: request.OverrideReason!.Trim(),
                     amount: bc.OriginatingInvoice?.ImporteTotal,
-                    // El snapshot fiscal todavia no se completa en este punto (step 7); tomamos la moneda del
-                    // request, que es la fuente de la que se construye CurrencyAtEvent mas abajo.
-                    currency: request.SnapshotData?.CurrencyAtEvent,
+                    // Tanda B: el snapshot fiscal todavia no se completa en este punto (step 7), pero
+                    // bc.OriginatingInvoice ya esta cargada (Include del paso 1) asi que podemos leer su
+                    // moneda real. ArcaCurrencyMapper.ToIso la deja en formato ISO ("ARS"/"USD") para que
+                    // el audit quede en el mismo formato que el resto del sistema, en vez del codigo ARCA
+                    // crudo ("PES"/"DOL") que nadie mas que AFIP entiende.
+                    currency: ArcaCurrencyMapper.ToIso(bc.OriginatingInvoice?.MonId) ?? bc.OriginatingInvoice?.MonId,
                     userId: userId,
                     userName: userName,
                     ct: ct);
@@ -1885,32 +1954,90 @@ public class BookingCancellationService
             }
         }
 
-        // 5) Normalizar condiciones fiscales y validar coherencia.
-        //    Si alguna queda Unknown → INV-118: snapshot inconsistente.
-        var agencyCanonical = TaxConditionNormalizer.Normalize(request.SnapshotData.AgencyTaxConditionAtEvent);
-        var supplierCanonical = TaxConditionNormalizer.Normalize(request.SnapshotData.SupplierTaxConditionAtEvent);
-        var customerCanonical = TaxConditionNormalizer.Normalize(request.SnapshotData.CustomerTaxConditionAtEvent);
-        if (agencyCanonical == TaxConditionCanonical.Unknown ||
-            supplierCanonical == TaxConditionCanonical.Unknown ||
-            customerCanonical == TaxConditionCanonical.Unknown)
-        {
-            throw new BusinessInvariantViolationException(
-                BuildTaxConditionUnknownMessage(agencyCanonical, supplierCanonical, customerCanonical, bc.Supplier?.Name),
-                invariantCode: "INV-118");
-        }
+        // 5) Tanda B (2026-07-16): resolver las 3 condiciones fiscales + los 2 CUIT SIEMPRE del dato
+        //    real de la base (agencia/operador/cliente), nunca de lo que mandaba el frontend en
+        //    request.SnapshotData. request.SnapshotData quedo IGNORADO desde esta tanda (ver DTO) — el
+        //    campo del request que antes se leia aca era, en la practica, un dato inventado por el
+        //    frontend (penaltyPayload.js hardcodeaba "Responsable Inscripto"/"Consumidor Final" y podia
+        //    subdeclarar el IVA de una agencia RI real). Si alguna ficha esta incompleta, ResolveServer-
+        //    SideTaxIdentity corta con INV-118 antes de seguir.
+        //
+        //    SIN BACKFILL a proposito: se verifico contra produccion (2026-07-16, ops-diagnostico
+        //    solo-lectura) que hay 14 BC de este camino con snapshot viejo (armado por el frontend) y
+        //    los 14 tienen su Nota de Credito YA EMITIDA (CreditNoteInvoiceId no nulo). El snapshot de
+        //    un BC con NC viva es evidencia congelada de lo que se emitio: no se reescribe. El barrido
+        //    de coherencia (agencia RI con snapshot Monotributo, el caso que si importaria corregir) dio
+        //    0 casos. Si en el futuro aparece alguno mal declarado, se corrige por NC+ND con firma de
+        //    contador — no reescribiendo este snapshot. Nota adicional (addendum M4): el discriminador
+        //    usado para esa verificacion (FiscalSnapshot_Source=1, BCRA_A3500) puede sobre-capturar
+        //    tambien snapshots viejos de T5 en moneda extranjera; irrelevante ya que no hay backfill que
+        //    dependa de precision quirurgica ahi.
+        var afipSettings = await _db.AfipSettings.AsNoTracking().FirstOrDefaultAsync(ct);
+        var taxIdentity = ResolveServerSideTaxIdentity(afipSettings, bc.Supplier, bc.Customer);
 
-        // 6) Validar Source / ManualJustification:
-        //    - Si Source=Manual, ManualJustification es obligatorio (INV-120).
-        //    - Si Source=Unset, rechazar (no se puede confirmar sin TC explicito).
-        if (request.SnapshotData.Source == ExchangeRateSource.Unset)
-            throw new BusinessInvariantViolationException(
-                "Falta indicar el tipo de cambio para poder confirmar la cancelación.",
-                invariantCode: "INV-118");
-        if (request.SnapshotData.Source == ExchangeRateSource.Manual &&
-            string.IsNullOrWhiteSpace(request.SnapshotData.ManualJustification))
-            throw new BusinessInvariantViolationException(
-                "Cuando usás un tipo de cambio manual tenés que indicar una justificación.",
-                invariantCode: "INV-120");
+        // 6) Tanda B: moneda + tipo de cambio + fuente, derivados de la factura ANCLA de esta
+        //    cancelacion (bc.OriginatingInvoice), espejando el mismo criterio que ya usa el camino T5
+        //    (ConfirmPartialCancellationEmissionAsync, "la NC NUNCA recotiza": hereda lo que la factura
+        //    ya tiene registrado). Antes, este camino tomaba currency/TC/Source de request.SnapshotData,
+        //    que el frontend mandaba SIEMPRE fijo en ARS/1.0/BCRA_A3500 — invisible para una anulacion en
+        //    dolares (el bug quedaba enmascarado).
+        //
+        //    ADR-042 multi-factura (M1 del addendum): una anulacion TOTAL puede anular varias facturas de
+        //    la reserva, pero bc.OriginatingInvoice es UNA sola, la ANCLA (la mas reciente, resuelta al
+        //    craftear el BC). El snapshot escalar de ESTE BC representa la moneda/TC de esa ancla; cada NC
+        //    hija se emite despues en SU PROPIA moneda re-derivada de SU factura (no de este snapshot) —
+        //    ver ResolveAndPreflightInvoicesToAnnulAsync mas abajo (step 7-ter), que no se toca.
+        var originatingInvoice = bc.OriginatingInvoice;
+        bool invoiceIsForeign =
+            !string.IsNullOrWhiteSpace(originatingInvoice.MonId)
+            && !string.Equals(originatingInvoice.MonId, "PES", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(originatingInvoice.MonId, "ARS", StringComparison.OrdinalIgnoreCase);
+
+        string currencyIso;
+        decimal exchangeRate;
+        ExchangeRateSource source;
+        string? manualJustification = null;
+
+        if (invoiceIsForeign)
+        {
+            // La factura original esta en moneda extranjera pero nunca registro de donde salio su TC
+            // (facturas legacy sin ExchangeRateSource, o algun camino que la creo sin pasar por el guard
+            // de InvoiceService). Antes esto quedaba ENMASCARADO: el request siempre mandaba ARS/1.0 y la
+            // NC total salia mal cotizada en silencio. Ahora se corta ANTES de emitir nada.
+            if (originatingInvoice.ExchangeRateSource is null
+                || originatingInvoice.ExchangeRateSource == ExchangeRateSource.Unset)
+                throw new BusinessInvariantViolationException(
+                    "Esta cancelación necesita que resuelvas el tipo de cambio de la factura original.",
+                    invariantCode: "INV-118");
+
+            currencyIso = ArcaCurrencyMapper.ToIso(originatingInvoice.MonId)
+                ?? originatingInvoice.MonId.Trim().ToUpperInvariant();
+            exchangeRate = originatingInvoice.MonCotiz;
+            source = originatingInvoice.ExchangeRateSource.Value;
+            manualJustification = originatingInvoice.ExchangeRateJustification;
+
+            // M3 (chequeo del revisor, addendum): el emisor de facturas (InvoiceService.
+            // ValidateMultiCurrencyInvoicingAsync) YA exige justificacion para toda factura extranjera al
+            // crearla, pero SOLO cuando el flag EnableMultiCurrencyInvoicing esta ON. Una factura vieja
+            // (creada con el flag OFF, o antes de que existiera ese guard) podria tener Source=Manual con
+            // ManualJustification vacia. Repetimos aca el mismo criterio INV-120 que el path viejo exigia
+            // sobre el request, pero ahora sobre el dato REAL de la factura — defensa en profundidad, no
+            // confiamos en que todas las facturas historicas hayan pasado por el guard nuevo.
+            if (source == ExchangeRateSource.Manual && string.IsNullOrWhiteSpace(manualJustification))
+                throw new BusinessInvariantViolationException(
+                    "La factura original tiene un tipo de cambio manual sin justificación registrada. " +
+                    "Cargá la justificación en la factura antes de continuar.",
+                    invariantCode: "INV-120");
+        }
+        else
+        {
+            // Pesos: no hay conversion que registrar (TC=1 siempre). BNA_Minorista es un valor
+            // no-Manual/no-Unset que alcanza para cumplir el CHECK del snapshot sin exigir una
+            // justificacion que no aplica a una factura en pesos. Mismo criterio que T5.
+            currencyIso = Monedas.ARS;
+            exchangeRate = 1m;
+            source = ExchangeRateSource.BNA_Minorista;
+        }
 
         // 7) Completar FiscalSnapshot.
         //
@@ -1923,14 +2050,18 @@ public class BookingCancellationService
         // en SubmitForReviewAsync FC1.3).
         bc.FiscalSnapshot = new FiscalSnapshot
         {
-            CurrencyAtEvent = request.SnapshotData.CurrencyAtEvent.ToUpperInvariant(),
-            ExchangeRateAtOriginalInvoice = request.SnapshotData.ExchangeRateAtOriginalInvoice,
-            Source = request.SnapshotData.Source,
-            ManualJustification = request.SnapshotData.ManualJustification,
+            CurrencyAtEvent = currencyIso.ToUpperInvariant(),
+            ExchangeRateAtOriginalInvoice = exchangeRate,
+            Source = source,
+            ManualJustification = manualJustification,
             FetchedAt = DateTime.UtcNow,
-            AgencyTaxConditionAtEvent = TaxConditionNormalizer.ToStorageString(agencyCanonical),
-            SupplierTaxConditionAtEvent = TaxConditionNormalizer.ToStorageString(supplierCanonical),
-            CustomerTaxConditionAtEvent = TaxConditionNormalizer.ToStorageString(customerCanonical),
+            AgencyTaxConditionAtEvent = taxIdentity.AgencyTaxCondition,
+            SupplierTaxConditionAtEvent = taxIdentity.SupplierTaxCondition,
+            CustomerTaxConditionAtEvent = taxIdentity.CustomerTaxCondition,
+            // Tanda B: los 2 CUIT estaban declarados en FiscalSnapshot desde FC1 pero nadie los poblaba
+            // en este camino (T5 tampoco los poblaba hasta esta misma tanda).
+            SupplierTaxIdAtEvent = taxIdentity.SupplierTaxId,
+            CustomerTaxIdAtEvent = taxIdentity.CustomerTaxId,
         };
 
         // 7-bis) ADR-013 (2026-06-01): capturar la clasificacion de la penalidad.
@@ -2780,25 +2911,20 @@ public class BookingCancellationService
             source = ExchangeRateSource.BNA_Minorista;
         }
 
-        // Condiciones fiscales: foto AL MOMENTO de emitir (agencia/operador/cliente), leidas del dato VIVO —
-        // igual criterio que "el usuario no inventa nada": esta pantalla no pide texto libre (P3=A de la spec
-        // UX, sin motivo nuevo), asi que las tres condiciones se resuelven server-side, nunca del front.
+        // Condiciones fiscales + CUIT: foto AL MOMENTO de emitir (agencia/operador/cliente), leidas del
+        // dato VIVO — igual criterio que "el usuario no inventa nada": esta pantalla no pide texto libre
+        // (P3=A de la spec UX, sin motivo nuevo), asi que las tres condiciones se resuelven server-side,
+        // nunca del front. Tanda B (2026-07-16): dedupe con ResolveServerSideTaxIdentity, el MISMO helper
+        // que usa ahora el camino de anulacion TOTAL — antes cada camino tenia su propia copia de esta
+        // logica y podian desalinearse.
         var afipSettings = await _db.AfipSettings.AsNoTracking().FirstOrDefaultAsync(ct);
-        var agencyCanonical = TaxConditionNormalizer.Normalize(afipSettings?.TaxCondition);
-        var supplierCanonical = TaxConditionNormalizer.Normalize(bc.Supplier?.TaxCondition);
-        var customerCanonical = TaxConditionNormalizer.Normalize(bc.Customer?.TaxCondition);
-        if (agencyCanonical == TaxConditionCanonical.Unknown
-            || supplierCanonical == TaxConditionCanonical.Unknown
-            || customerCanonical == TaxConditionCanonical.Unknown)
-            throw new BusinessInvariantViolationException(
-                BuildTaxConditionUnknownMessage(agencyCanonical, supplierCanonical, customerCanonical, bc.Supplier?.Name),
-                invariantCode: "INV-118");
+        var taxIdentity = ResolveServerSideTaxIdentity(afipSettings, bc.Supplier, bc.Customer);
 
         // Gate RI <-> firma de alicuota (fiscal, riesgo residual 1; diseño §6.1 punto 3 / §10 / §14 pregunta 1):
         // la emision automatica de NC parcial para agencia Responsable Inscripto queda BLOQUEADA hasta que un
         // contador matriculado firme el tratamiento de IVA de la porcion trasladada. Para Monotributo (la
         // condicion de la agencia hoy) esto NUNCA dispara — Factura C no discrimina IVA.
-        if (agencyCanonical == TaxConditionCanonical.ResponsableInscripto)
+        if (taxIdentity.AgencyTaxCondition == "RESPONSABLE_INSCRIPTO")
             throw new BusinessInvariantViolationException(
                 "Esta devolución necesita la firma del contador antes de emitirse.",
                 invariantCode: "INV-T5-EMIT-RI-SIGNOFF");
@@ -2813,9 +2939,12 @@ public class BookingCancellationService
             Source = source,
             ManualJustification = manualJustification,
             FetchedAt = DateTime.UtcNow,
-            AgencyTaxConditionAtEvent = TaxConditionNormalizer.ToStorageString(agencyCanonical),
-            SupplierTaxConditionAtEvent = TaxConditionNormalizer.ToStorageString(supplierCanonical),
-            CustomerTaxConditionAtEvent = TaxConditionNormalizer.ToStorageString(customerCanonical),
+            AgencyTaxConditionAtEvent = taxIdentity.AgencyTaxCondition,
+            SupplierTaxConditionAtEvent = taxIdentity.SupplierTaxCondition,
+            CustomerTaxConditionAtEvent = taxIdentity.CustomerTaxCondition,
+            // Tanda B: los 2 CUIT estaban declarados en FiscalSnapshot desde FC1 pero nadie los poblaba.
+            SupplierTaxIdAtEvent = taxIdentity.SupplierTaxId,
+            CustomerTaxIdAtEvent = taxIdentity.CustomerTaxId,
         };
         bc.Status = BookingCancellationStatus.AwaitingFiscalConfirmation;
         bc.ConfirmedWithClientAt ??= DateTime.UtcNow;

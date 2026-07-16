@@ -408,8 +408,16 @@ public record ResolvePartialCreditNoteRequest(
 /// <c>InvoiceService.EnqueueAnnulmentAsync</c>.
 ///
 /// <para>
-/// <b>SnapshotData</b> obligatorio: contiene las condiciones fiscales y TC que
-/// quedan congelados en el <c>FiscalSnapshot</c> (INV-118).
+/// <b>SnapshotData</b>: IGNORADO desde Tanda B (2026-07-16) — NO leer. Antes contenia las
+/// condiciones fiscales y el TC que se congelaban en el <c>FiscalSnapshot</c>, pero el
+/// frontend los adivinaba (<c>penaltyPayload.js</c> mandaba, por ejemplo, "Responsable
+/// Inscripto" fijo para el operador aunque su ficha real dijera otra cosa) y eso podia
+/// producir una Nota de Credito con el IVA mal calculado. Desde Tanda B,
+/// <c>BookingCancellationService.ConfirmAsync</c> resuelve las 3 condiciones fiscales y el
+/// TC SIEMPRE server-side (<c>ResolveServerSideTaxIdentity</c> + la factura original), y
+/// este campo queda opcional solo para no romper un frontend viejo en cache que todavia lo
+/// mande (el <c>System.Text.Json</c> del proyecto ignora props desconocidas/no usadas por
+/// default). Ver <see cref="FiscalSnapshotData"/>.
 /// </para>
 ///
 /// <para>
@@ -421,7 +429,8 @@ public record ResolvePartialCreditNoteRequest(
 /// </para>
 /// </summary>
 public record ConfirmCancellationRequest(
-    [Required] FiscalSnapshotData SnapshotData,
+    /// <summary>IGNORADO desde Tanda B — NO leer. Ver el comentario de la clase.</summary>
+    FiscalSnapshotData? SnapshotData,
     bool IsAdminOverride,
     [MaxLength(500)] string? OverrideReason,
     Guid? ApprovalRequestPublicId,

@@ -36,14 +36,10 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { AlertTriangle, CheckCircle2, Loader2, Ban, X } from "lucide-react";
-import { api } from "../../../api";
 import { cancellationsApi } from "../api/cancellationsApi";
 import { showSuccess, showError } from "../../../alerts";
 import { formatCurrency } from "../../../lib/utils";
-import {
-    buildPenaltyClassificationPayload,
-    buildSnapshotData,
-} from "../lib/penaltyPayload";
+import { buildPenaltyClassificationPayload } from "../lib/penaltyPayload";
 import {
     esAnulacionMultiFactura,
     todasLasNotasSalieronBien,
@@ -127,10 +123,6 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
     // el usuario lo vea sin que desaparezca el formulario con lo cargado.
     const [conflictMessage, setConflictMessage] = useState(null);
 
-    // Settings de AFIP/ARCA necesarios para construir el snapshot fiscal del paso confirm.
-    // Solo los usa el camino CreditNote; se precargan igual para tenerlos listos si hace falta.
-    const [afipSettings, setAfipSettings] = useState(null);
-
     // ── ADR-042: estado del flujo multi-factura (2+ facturas vivas) ────────────────────────
     // "form"               → panel normal (motivo + banner). Cubre TODO el comportamiento de
     //                         siempre (DirectCancel/PaymentsToCredit/CreditNote mono-factura).
@@ -158,8 +150,8 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
     // Fix reviewer (2026-07-02, punto 2): guarda si el componente sigue montado. Un tick del
     // polling puede tener su `await` en vuelo justo cuando el usuario cierra el panel (unmount);
     // sin este guard, la respuesta que llega DESPUÉS dispara setState sobre un componente ya
-    // desmontado (warning de React + fuga potencial). Mismo espíritu que el flag `cancelado`
-    // del efecto de afip-settings de acá arriba, pero accesible desde el intervalo también.
+    // desmontado (warning de React + fuga potencial). Mismo patrón que el flag `cancelado` que
+    // suele usarse en efectos async con fetch, pero accesible desde el intervalo también.
     const estaMontadoRef = useRef(true);
 
     // useEffect con []: corre una sola vez al montar el componente para resetear el estado.
@@ -168,7 +160,6 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
         setReason("");
         setProcessing(false);
         setConflictMessage(null);
-        setAfipSettings(null);
     }, []);
 
     // Limpieza del intervalo de polling al desmontar (evita un interval huérfano si el
@@ -178,23 +169,6 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
             estaMontadoRef.current = false;
             if (pollMultiRef.current) clearInterval(pollMultiRef.current);
         };
-    }, []);
-
-    // Precarga los settings de AFIP/ARCA en segundo plano al abrir el panel.
-    // Si falla, buildSnapshotData tiene fallbacks conservadores (Monotributo, Consumidor Final).
-    useEffect(() => {
-        let cancelado = false;
-
-        (async () => {
-            try {
-                const data = await api.get("/afip/settings");
-                if (!cancelado) setAfipSettings(data);
-            } catch {
-                // Fallback: buildSnapshotData usa valores conservadores si no hay settings.
-            }
-        })();
-
-        return () => { cancelado = true; };
     }, []);
 
     // ─── ADR-042: polling y handlers del flujo multi-factura ──────────────────────
@@ -308,9 +282,9 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
         setEstadoMulti("procesando-multi");
 
         const penaltyClassification = buildPenaltyClassificationPayload("operator_pass_through", null, null, null);
-        const snapshotData = buildSnapshotData(afipSettings);
+        // Tanda B (2026-07-16): ya no armamos ni mandamos "snapshotData". El backend resuelve
+        // las condiciones fiscales y el tipo de cambio SOLO, directo de la base.
         const payload = {
-            snapshotData,
             isAdminOverride: false,
             overrideReason: null,
             approvalRequestPublicId: null,
@@ -477,10 +451,9 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
             null
         );
 
-        const snapshotData = buildSnapshotData(afipSettings);
-
+        // Tanda B (2026-07-16): ya no armamos ni mandamos "snapshotData". El backend resuelve
+        // las condiciones fiscales y el tipo de cambio SOLO, directo de la base.
         const payload = {
-            snapshotData,
             isAdminOverride: false,
             overrideReason: null,
             approvalRequestPublicId: null,

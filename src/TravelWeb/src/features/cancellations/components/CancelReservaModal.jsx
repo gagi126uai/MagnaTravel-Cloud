@@ -23,14 +23,10 @@
 
 import { useState, useEffect } from "react";
 import { X, AlertTriangle, Info, Loader2, Ban } from "lucide-react";
-import { api } from "../../../api";
 import { cancellationsApi } from "../api/cancellationsApi";
 import { showSuccess, showError } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
-import {
-  buildPenaltyClassificationPayload,
-  buildSnapshotData,
-} from "../lib/penaltyPayload";
+import { buildPenaltyClassificationPayload } from "../lib/penaltyPayload";
 
 export default function CancelReservaModal({
   reserva,
@@ -47,11 +43,6 @@ export default function CancelReservaModal({
   // Se muestra en un banner dentro del modal, no en un toast, para que el usuario lo vea.
   const [conflictMessage, setConflictMessage] = useState(null);
 
-  // Settings de AFIP/ARCA necesarios para construir el snapshot fiscal del confirm.
-  // Se cargan en segundo plano al abrir el modal para tenerlos listos cuando el
-  // usuario aprieta "Cancelar reserva". No bloqueamos el botón por esto.
-  const [afipSettings, setAfipSettings] = useState(null);
-
   // Resetea el estado completo cuando el modal se abre de nuevo.
   // useEffect con [isOpen]: corre cada vez que cambia la visibilidad.
   useEffect(() => {
@@ -59,27 +50,6 @@ export default function CancelReservaModal({
     setReason("");
     setProcessing(false);
     setConflictMessage(null);
-    setAfipSettings(null);
-  }, [isOpen]);
-
-  // Precarga los settings de AFIP/ARCA en segundo plano al abrir el modal.
-  // Si falla, buildSnapshotData tiene fallbacks conservadores (Monotributo, Consumidor Final).
-  // useEffect con [isOpen]: se dispara al abrir.
-  useEffect(() => {
-    if (!isOpen) return;
-
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const data = await api.get("/afip/settings");
-        if (!cancelled) setAfipSettings(data);
-      } catch {
-        // Si falla, buildSnapshotData usa fallbacks — no bloqueamos al usuario.
-      }
-    })();
-
-    return () => { cancelled = true; };
   }, [isOpen]);
 
   if (!isOpen) return null;
@@ -135,11 +105,11 @@ export default function CancelReservaModal({
       null
     );
 
-    // El snapshot fiscal se construye con los settings precargados (o con fallbacks si fallaron).
-    const snapshotData = buildSnapshotData(afipSettings);
-
+    // Tanda B (2026-07-16): ya no armamos ni mandamos "snapshotData". El backend resuelve
+    // las condiciones fiscales y el tipo de cambio SOLO, directo de la base (agencia,
+    // operador, cliente y la factura original) — el campo que se mandaba antes lo
+    // adivinaba el frontend y quedó IGNORADO server-side.
     const payload = {
-      snapshotData,
       isAdminOverride: false,
       overrideReason: null,
       approvalRequestPublicId: null,

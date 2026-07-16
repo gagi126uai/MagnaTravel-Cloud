@@ -39,7 +39,9 @@ export const cancellationsApi = {
    *
    * @param {string} publicId - GUID del BookingCancellation.
    * @param {object} payload - Shape de ConfirmCancellationRequest.
-   *   - snapshotData: datos fiscales congelados (condiciones tributarias, moneda, TC).
+   *   - snapshotData: Tanda B (2026-07-16) — YA NO SE MANDA. El backend resuelve las
+   *     condiciones fiscales y el tipo de cambio el mismo, directo de la base. Si algun
+   *     caller viejo todavia lo manda, el backend lo ignora por completo.
    *   - isAdminOverride: bool, si el admin fuerza con un approval previo.
    *   - overrideReason: string opc, requerido si isAdminOverride=true.
    *   - approvalRequestPublicId: GUID opc, requerido si isAdminOverride=true.

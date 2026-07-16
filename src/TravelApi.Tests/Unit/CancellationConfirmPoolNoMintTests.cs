@@ -90,8 +90,16 @@ public class CancellationConfirmPoolNoMintTests
     private static async Task<(BookingCancellation Bc, Supplier Supplier, Reserva Reserva)> SeedPrepaidDraftAsync(
         AppDbContext ctx, decimal paid)
     {
+        // Tanda B (2026-07-16): ConfirmAsync resuelve las 3 condiciones fiscales SERVER-SIDE
+        // (ResolveServerSideTaxIdentity), no del request.SnapshotData de NewConfirmRequest() (ese
+        // campo ahora se ignora). Sin esta fila de AfipSettings, ConfirmAsync rebotaria con INV-118.
+        if (!await ctx.AfipSettings.AnyAsync())
+        {
+            ctx.AfipSettings.Add(new AfipSettings { Cuit = 20111111112, TaxCondition = "Monotributo" });
+        }
+
         var customer = new Customer { FullName = "Cliente", IsActive = true };
-        var supplier = new Supplier { Name = "Operador", IsActive = true };
+        var supplier = new Supplier { Name = "Operador", IsActive = true, TaxCondition = "IVA_RESP_INSCRIPTO" };
         ctx.Customers.Add(customer);
         ctx.Suppliers.Add(supplier);
         await ctx.SaveChangesAsync();

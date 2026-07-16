@@ -913,4 +913,56 @@ public class Adr044T5EmissionUnitTests
         var postCae = await h.Service.GetCancellationsWithMissingDebitNoteAsync(CancellationToken.None);
         Assert.Contains(postCae, p => p.BookingCancellationPublicId == bc.PublicId);
     }
+
+    // =====================================================================================
+    // Tanda B (2026-07-16): T5 dedupe con ResolveServerSideTaxIdentity — ahora tambien puebla
+    // los 2 CUIT (SupplierTaxIdAtEvent/CustomerTaxIdAtEvent), algo que NADIE poblaba antes de
+    // esta tanda (ni el camino total, ni T5). El gate RI-signoff (INV-T5-EMIT-RI-SIGNOFF, arriba
+    // en este archivo) y el resto de los tests de esta clase ya prueban que el dedupe no cambio
+    // ningun comportamiento existente — estos dos tests cubren SOLO lo nuevo.
+    // =====================================================================================
+
+    [Fact]
+    public async Task Emit_PopulatesSupplierAndCustomerCuit_FromRealFichas()
+    {
+        using var ctx = NewDbContext();
+        var (_, invoice, bc, _, supplier) = await SeedResolvedPartialAsync(ctx);
+        var h = BuildService(ctx);
+        SetupCreateEmitsCreditNote(h, invoice);
+
+        // Las fichas reales tienen CUIT cargado: el snapshot debe reflejarlas tal cual.
+        var supplierTracked = await ctx.Suppliers.SingleAsync(s => s.Id == supplier.Id);
+        supplierTracked.TaxId = "30-71159849-8";
+        var customerTracked = await ctx.Customers.SingleAsync(c => c.Id == bc.CustomerId);
+        customerTracked.TaxId = "20-33445566-7";
+        await ctx.SaveChangesAsync();
+
+        await h.Service.ConfirmPartialCancellationEmissionAsync(bc.PublicId, "u1", "U", CancellationToken.None);
+
+        var reloaded = await ctx.BookingCancellations.AsNoTracking().SingleAsync(b => b.Id == bc.Id);
+        Assert.Equal("30-71159849-8", reloaded.FiscalSnapshot!.SupplierTaxIdAtEvent);
+        Assert.Equal("20-33445566-7", reloaded.FiscalSnapshot.CustomerTaxIdAtEvent);
+    }
+
+    [Fact]
+    public async Task Emit_WhitespaceCuit_NormalizedToNull_NotPersistedAsGarbage()
+    {
+        using var ctx = NewDbContext();
+        var (_, invoice, bc, _, supplier) = await SeedResolvedPartialAsync(ctx);
+        var h = BuildService(ctx);
+        SetupCreateEmitsCreditNote(h, invoice);
+
+        // Fichas sin CUIT cargado (el caso de HOY para la mayoria de los operadores/clientes chicos):
+        // un CUIT en blanco no debe quedar persistido como cadena vacia/espacios, sino como null limpio.
+        var supplierTracked = await ctx.Suppliers.SingleAsync(s => s.Id == supplier.Id);
+        supplierTracked.TaxId = "   ";
+        await ctx.SaveChangesAsync();
+
+        await h.Service.ConfirmPartialCancellationEmissionAsync(bc.PublicId, "u1", "U", CancellationToken.None);
+
+        var reloaded = await ctx.BookingCancellations.AsNoTracking().SingleAsync(b => b.Id == bc.Id);
+        Assert.Null(reloaded.FiscalSnapshot!.SupplierTaxIdAtEvent);
+        // El cliente del seed no tiene TaxId cargado (null desde el vamos): mismo resultado.
+        Assert.Null(reloaded.FiscalSnapshot.CustomerTaxIdAtEvent);
+    }
 }

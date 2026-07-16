@@ -86,8 +86,16 @@ public class TotalCreditNoteBridgeReconciliationTests
 
     private static async Task<(Reserva reserva, Supplier supplier)> SeedReservaAsync(Harness h, bool payOperator = true)
     {
+        // Tanda B (2026-07-16): ConfirmAsync resuelve las 3 condiciones fiscales SERVER-SIDE
+        // (ResolveServerSideTaxIdentity), no del request.SnapshotData de NewConfirmRequest() (ese
+        // campo ahora se ignora). Sin esta fila de AfipSettings, ConfirmAsync rebotaria con INV-118.
+        if (!await h.Ctx.AfipSettings.AnyAsync())
+        {
+            h.Ctx.AfipSettings.Add(new AfipSettings { Cuit = 20111111112, TaxCondition = "Monotributo" });
+        }
+
         var customer = new Customer { FullName = "Cliente Test", IsActive = true };
-        var supplier = new Supplier { Name = "Operador Unico", IsActive = true };
+        var supplier = new Supplier { Name = "Operador Unico", IsActive = true, TaxCondition = "IVA_RESP_INSCRIPTO" };
         h.Ctx.Customers.Add(customer);
         h.Ctx.Suppliers.Add(supplier);
         await h.Ctx.SaveChangesAsync();

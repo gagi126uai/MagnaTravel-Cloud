@@ -110,8 +110,16 @@ public class Adr042MultiInvoiceCancellationTests
     /// <summary>Siembra reserva + hotel + operador. Devuelve (reserva, customer, supplier).</summary>
     private static async Task<(Reserva reserva, Customer customer, Supplier supplier)> SeedReservaAsync(Harness h)
     {
+        // Tanda B (2026-07-16): ConfirmAsync ahora resuelve las 3 condiciones fiscales SERVER-SIDE
+        // (ResolveServerSideTaxIdentity), no del request. Sin esto el test rebotaria con INV-118
+        // apenas se llame a ConfirmAsync (agencia sin fila en AfipSettings = condicion Unknown).
+        if (!await h.Ctx.AfipSettings.AnyAsync())
+        {
+            h.Ctx.AfipSettings.Add(new AfipSettings { Cuit = 20111111112, TaxCondition = "Monotributo" });
+        }
+
         var customer = new Customer { FullName = "Cliente Test", IsActive = true };
-        var supplier = new Supplier { Name = "Operador Unico", IsActive = true };
+        var supplier = new Supplier { Name = "Operador Unico", IsActive = true, TaxCondition = "IVA_RESP_INSCRIPTO" };
         h.Ctx.Customers.Add(customer);
         h.Ctx.Suppliers.Add(supplier);
         await h.Ctx.SaveChangesAsync();
@@ -233,6 +241,48 @@ public class Adr042MultiInvoiceCancellationTests
         h.InvoiceMock.Verify(s => s.EnqueueAnnulmentAsync(
             ars.Id, It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(),
             It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<int?>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Tanda B (2026-07-16, addendum M1a): con dos facturas vivas en monedas distintas, el snapshot
+    /// fiscal ESCALAR de este BC (<c>bc.FiscalSnapshot.CurrencyAtEvent</c>) representa la moneda del
+    /// ANCLA (<c>bc.OriginatingInvoiceId</c>, la mas reciente por CreatedAt) — NO un promedio ni la
+    /// moneda de la otra factura. Cada NC hija sale despues en SU PROPIA moneda (verificado arriba en
+    /// <see cref="Confirm_DosFacturas_CreaDosHijasPending_YEncolaUnaPorFactura"/>); este test agrega la
+    /// pieza que faltaba: que resolver el snapshot del ancla NO dispare un INV-118 falso solo porque
+    /// OTRA factura de la reserva esta en moneda extranjera.
+    /// </summary>
+    [Fact]
+    public async Task Confirm_DosFacturas_SnapshotEscalar_EsLaMonedaDelAncla_SinInv118Falso()
+    {
+        var h = BuildService();
+        var (reserva, _, _) = await SeedReservaAsync(h);
+        // La USD se agrega PRIMERO (queda mas vieja); la de pesos se agrega SEGUNDA -> es el ancla
+        // (bc.OriginatingInvoiceId = la mas reciente por CreatedAt, criterio ya vigente del ADR-042).
+        var usd = await AddSaleInvoiceAsync(h, reserva.Id, tipo: 6, numero: 1101, monId: "DOL", monCotiz: 1000m, total: 200m);
+        var ars = await AddSaleInvoiceAsync(h, reserva.Id, tipo: 6, numero: 1102, monId: "PES", monCotiz: 1m, total: 150_000m);
+
+        var draft = await h.Service.DraftAsync(
+            new DraftCancellationRequest(reserva.PublicId, "Anulacion mixta ARS ancla + USD hija"),
+            "vendedor-1", "Vendedor Uno", CancellationToken.None);
+
+        // No debe tirar NADA: la USD tiene cotizacion confiable (1000, no 0 ni 1), asi que ni el
+        // derivado del ancla ni el pre-flight (que recorre TODAS las facturas) la rechazan.
+        await h.Service.ConfirmAsync(
+            draft.PublicId, NewConfirmRequest(), "vendedor-1", "Vendedor Uno",
+            requesterIsAdmin: false, ct: CancellationToken.None);
+
+        var bc = await h.Ctx.BookingCancellations.AsNoTracking().SingleAsync(b => b.PublicId == draft.PublicId);
+        Assert.Equal(ars.Id, bc.OriginatingInvoiceId); // confirma cual quedo de ancla.
+        Assert.Equal("ARS", bc.FiscalSnapshot!.CurrencyAtEvent); // snapshot = moneda del ANCLA, no de la USD.
+        Assert.Equal(1m, bc.FiscalSnapshot.ExchangeRateAtOriginalInvoice);
+
+        var children = await h.Ctx.BookingCancellationCreditNotes.AsNoTracking()
+            .Where(c => c.OriginatingInvoiceId == usd.Id || c.OriginatingInvoiceId == ars.Id)
+            .ToListAsync();
+        Assert.Equal(2, children.Count);
+        Assert.Contains(children, c => c.OriginatingInvoiceId == usd.Id && c.ArcaCurrency == "DOL");
+        Assert.Contains(children, c => c.OriginatingInvoiceId == ars.Id && c.ArcaCurrency == "PES");
     }
 
     // ============================================================
@@ -448,12 +498,23 @@ public class Adr042MultiInvoiceCancellationTests
     // Pre-flight TC=1 -> no se emite NINGUNA NC (todo-o-nada al frente)
     // ============================================================
 
+    /// <summary>
+    /// Tanda B (2026-07-16, addendum M1c): con UNA sola factura viva, esa factura ES el ancla
+    /// (<c>bc.OriginatingInvoice</c>). Antes de esta tanda, ConfirmAsync tomaba moneda/TC del
+    /// request (que el front mandaba fijo en ARS), asi que la factura DOL con TC sospechoso
+    /// SOLO se detectaba mas abajo, en el pre-flight multi-factura (INV-156). Ahora ConfirmAsync
+    /// deriva moneda/TC/Source del ANCLA ANTES de llegar al pre-flight: como esta factura ancla es
+    /// extranjera y nunca registro de donde salio su TC (ExchangeRateSource null), el corte pasa a
+    /// ser INV-118 ("resolve el tipo de cambio de la factura original"), un paso ANTES que INV-156.
+    /// Es un cambio de mensaje aceptado por el revisor (mismo resultado: no se emite nada), no una
+    /// regresion — el siguiente test cubre que INV-156 SIGUE andando para una factura NO-ancla.
+    /// </summary>
     [Fact]
-    public async Task Preflight_FacturaExtranjeraTc1_NoEmiteNada_TiraInv156()
+    public async Task Preflight_FacturaExtranjeraTc1_ComoUnicaFactura_TiraInv118AntesQueInv156()
     {
         var h = BuildService();
         var (reserva, _, _) = await SeedReservaAsync(h);
-        // Factura USD con cotizacion sospechosa (==1): pre-flight la rechaza.
+        // Unica factura viva = el ancla. USD con cotizacion sospechosa (==1) Y sin ExchangeRateSource.
         await AddSaleInvoiceAsync(h, reserva.Id, 6, 12001, "DOL", 1m, 200m);
 
         var draft = await h.Service.DraftAsync(
@@ -462,9 +523,41 @@ public class Adr042MultiInvoiceCancellationTests
 
         var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
             h.Service.ConfirmAsync(draft.PublicId, NewConfirmRequest(), "vendedor-1", "Vendedor Uno", false, CancellationToken.None));
-        Assert.Equal("INV-156", ex.InvariantCode);
+        Assert.Equal("INV-118", ex.InvariantCode);
 
         // NO se creo ninguna hija ni se encolo nada.
+        Assert.Empty(await h.Ctx.BookingCancellationCreditNotes.AsNoTracking().ToListAsync());
+        h.InvoiceMock.Verify(s => s.EnqueueAnnulmentAsync(
+            It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(),
+            It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<int?>()), Times.Never);
+    }
+
+    /// <summary>
+    /// Tanda B: el pre-flight multi-factura (INV-156) SIGUE protegiendo a una factura NO-ancla con
+    /// TC sospechoso. El ancla (la mas reciente por CreatedAt: la de pesos, agregada segunda) resuelve
+    /// su snapshot sin problema; el pre-flight de <c>ResolveAndPreflightInvoicesToAnnulAsync</c> igual
+    /// recorre TODAS las facturas vivas de la reserva y encuentra la USD con TC=1 -> corta con INV-156
+    /// ANTES de crear ninguna hija (todo-o-nada al frente, sin importar cual sea el ancla).
+    /// </summary>
+    [Fact]
+    public async Task Preflight_SegundaFacturaExtranjeraTc1_ConAnclaEnPesos_SigueTirandoInv156()
+    {
+        var h = BuildService();
+        var (reserva, _, _) = await SeedReservaAsync(h);
+        // Factura USD sospechosa: NO es el ancla (se agrega primero, la de pesos es mas reciente).
+        await AddSaleInvoiceAsync(h, reserva.Id, 6, 12001, "DOL", 1m, 200m);
+        // Ancla: factura en pesos, agregada despues (mas reciente por CreatedAt).
+        await AddSaleInvoiceAsync(h, reserva.Id, 6, 12002, "PES", 1m, 100_000m);
+
+        var draft = await h.Service.DraftAsync(
+            new DraftCancellationRequest(reserva.PublicId, "Anulacion con una USD sin cotizacion y ancla en pesos"),
+            "vendedor-1", "Vendedor Uno", CancellationToken.None);
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.ConfirmAsync(draft.PublicId, NewConfirmRequest(), "vendedor-1", "Vendedor Uno", false, CancellationToken.None));
+        Assert.Equal("INV-156", ex.InvariantCode);
+
+        // NO se creo ninguna hija ni se encolo nada (todo-o-nada al frente).
         Assert.Empty(await h.Ctx.BookingCancellationCreditNotes.AsNoTracking().ToListAsync());
         h.InvoiceMock.Verify(s => s.EnqueueAnnulmentAsync(
             It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(),

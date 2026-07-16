@@ -1,14 +1,13 @@
 /**
- * Tests para la logica de construccion de payloads de penalidad y snapshot fiscal.
+ * Tests para la logica de construccion de payloads de penalidad.
  *
- * Testean buildPenaltyClassificationPayload y buildSnapshotData como funciones puras,
- * sin DOM ni React. Corren con: node --test src/features/cancellations/lib/*.test.mjs
+ * Testean buildPenaltyClassificationPayload como funcion pura, sin DOM ni React.
+ * Corren con: node --test src/features/cancellations/lib/*.test.mjs
  *
  * Por que son importantes estos tests:
  *   Los payloads se mandan directamente al backend de AFIP/ARCA (irreversible una vez
  *   emitida la ND). Un enum incorrecto (ej. mandar "Confirmed" en lugar de 1) causa
- *   400 del backend y la emision fallida. Un string de condicion fiscal mal formateado
- *   (ej. "ConsumidorFinal" sin espacio) causa INV-118. Estos tests protegen ese mapeo.
+ *   400 del backend y la emision fallida. Estos tests protegen ese mapeo.
  */
 
 import test from "node:test";
@@ -16,11 +15,9 @@ import assert from "node:assert/strict";
 
 import {
   buildPenaltyClassificationPayload,
-  buildSnapshotData,
   CONCEPT_KIND,
   PENALTY_STATUS,
   DEBIT_NOTE_PURPOSE,
-  EXCHANGE_RATE_SOURCE,
 } from "./penaltyPayload.js";
 
 // ============================================================================
@@ -142,69 +139,9 @@ test("DEBIT_NOTE_PURPOSE: PenaltyOrCancellationCharge = 0 (verificado en DebitNo
 });
 
 // ============================================================================
-// Seccion 2: buildSnapshotData — strings de condicion fiscal y source
+// Tanda B (2026-07-16): se elimino la Seccion 2 (buildSnapshotData) de este archivo,
+// junto con la funcion que testeaba. Esa funcion armaba el "snapshot fiscal" adivinando
+// datos (agencia/operador/cliente/TC) que el backend ahora resuelve el mismo, directo de
+// la base — el campo que el frontend mandaba quedo IGNORADO server-side. Ver
+// BookingCancellationService.ResolveServerSideTaxIdentity.
 // ============================================================================
-
-test("buildSnapshotData con settings: usa taxCondition de afipSettings", () => {
-  const settings = { taxCondition: "Responsable Inscripto" };
-  const result = buildSnapshotData(settings);
-  assert.equal(result.agencyTaxConditionAtEvent, "Responsable Inscripto");
-});
-
-test("buildSnapshotData con settings: Monotributo", () => {
-  const settings = { taxCondition: "Monotributo" };
-  const result = buildSnapshotData(settings);
-  assert.equal(result.agencyTaxConditionAtEvent, "Monotributo");
-});
-
-test("buildSnapshotData sin settings (null): fallback 'Monotributo' para la agencia", () => {
-  const result = buildSnapshotData(null);
-  assert.equal(result.agencyTaxConditionAtEvent, "Monotributo");
-});
-
-test("buildSnapshotData sin settings (undefined): fallback 'Monotributo' para la agencia", () => {
-  const result = buildSnapshotData(undefined);
-  assert.equal(result.agencyTaxConditionAtEvent, "Monotributo");
-});
-
-test("buildSnapshotData: supplierTaxConditionAtEvent = 'Responsable Inscripto' (con espacio, no guion bajo)", () => {
-  // "ResponsableInscripto" (sin espacio) NO lo acepta el normalizer → INV-118.
-  const result = buildSnapshotData(null);
-  assert.equal(result.supplierTaxConditionAtEvent, "Responsable Inscripto");
-  assert.notEqual(result.supplierTaxConditionAtEvent, "RESPONSABLE_INSCRIPTO");
-  assert.notEqual(result.supplierTaxConditionAtEvent, "ResponsableInscripto");
-});
-
-test("buildSnapshotData: customerTaxConditionAtEvent = 'Consumidor Final' (con espacio, no guion bajo)", () => {
-  // "ConsumidorFinal" (sin espacio) NO lo acepta el normalizer → INV-118.
-  const result = buildSnapshotData(null);
-  assert.equal(result.customerTaxConditionAtEvent, "Consumidor Final");
-  assert.notEqual(result.customerTaxConditionAtEvent, "CONSUMIDOR_FINAL");
-  assert.notEqual(result.customerTaxConditionAtEvent, "ConsumidorFinal");
-});
-
-test("buildSnapshotData: moneda ARS y tipo de cambio 1.0", () => {
-  const result = buildSnapshotData(null);
-  assert.equal(result.currencyAtEvent, "ARS");
-  assert.equal(result.exchangeRateAtOriginalInvoice, 1.0);
-});
-
-test("buildSnapshotData: source = BCRA_A3500 (int 1), NO Manual (int 5)", () => {
-  // BCRA_A3500 = 1 es valido para ARS sin justificacion.
-  // Manual = 5 exigiria manualJustification (INV-120) y el agente no lo ingresa para ARS.
-  const result = buildSnapshotData(null);
-  assert.equal(result.source, EXCHANGE_RATE_SOURCE.BCRA_A3500);
-  assert.equal(result.source, 1);
-  assert.notEqual(result.source, EXCHANGE_RATE_SOURCE.Manual);
-  assert.notEqual(result.source, 5);
-});
-
-test("buildSnapshotData: manualJustification es null para ARS", () => {
-  const result = buildSnapshotData(null);
-  assert.equal(result.manualJustification, null);
-});
-
-test("buildSnapshotData: settings con taxCondition vacio → fallback Monotributo", () => {
-  const result = buildSnapshotData({ taxCondition: "" });
-  assert.equal(result.agencyTaxConditionAtEvent, "Monotributo");
-});

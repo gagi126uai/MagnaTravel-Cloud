@@ -617,6 +617,14 @@ public class Adr044T5PartialCancellationTests
             new DraftCancellationRequest(reserva.PublicId, "Anular el resto de la reserva"),
             "vendedor-1", "Vendedor", CancellationToken.None);
 
+        // Tanda B (2026-07-16): ConfirmAsync resuelve las 3 condiciones fiscales SERVER-SIDE
+        // (ResolveServerSideTaxIdentity), no del request.SnapshotData de abajo (que ahora se ignora).
+        // Sin esta fila de AfipSettings + el TaxCondition del operador, ConfirmAsync rebotaria con
+        // INV-118 antes de llegar al calculator (que es lo que este test quiere verificar).
+        ctx.AfipSettings.Add(new AfipSettings { Cuit = 20111111112, TaxCondition = "Monotributo" });
+        supplier.TaxCondition = "IVA_RESP_INSCRIPTO";
+        await ctx.SaveChangesAsync();
+
         var confirmRequest = new ConfirmCancellationRequest(
             SnapshotData: new FiscalSnapshotData(
                 CurrencyAtEvent: "ARS", ExchangeRateAtOriginalInvoice: 1m, Source: ExchangeRateSource.Manual,

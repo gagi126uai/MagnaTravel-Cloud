@@ -125,8 +125,13 @@ public class CancellationTotalAnnulmentRecalcTests
         });
         await h.Ctx.SaveChangesAsync();
 
+        // Tanda B (2026-07-16): ConfirmAsync resuelve las 3 condiciones fiscales SERVER-SIDE
+        // (ResolveServerSideTaxIdentity), no del request.SnapshotData de NewConfirmRequest() (ese
+        // campo ahora se ignora). Sin esta fila de AfipSettings, ConfirmAsync rebotaria con INV-118.
+        h.Ctx.AfipSettings.Add(new AfipSettings { Cuit = 20111111112, TaxCondition = "Monotributo" });
+
         var customer = new Customer { FullName = "Cliente Test", IsActive = true };
-        var supplier = new Supplier { Name = "Operador Unico", IsActive = true };
+        var supplier = new Supplier { Name = "Operador Unico", IsActive = true, TaxCondition = "IVA_RESP_INSCRIPTO" };
         h.Ctx.Customers.Add(customer);
         h.Ctx.Suppliers.Add(supplier);
         await h.Ctx.SaveChangesAsync();
@@ -228,9 +233,12 @@ public class CancellationTotalAnnulmentRecalcTests
         // Reserva con DOS operadores (hotel A + traslado B), ambos con deuda viva previa.
         var h = BuildService();
 
+        // Tanda B (2026-07-16): ver comentario identico en ConfirmAsync_SingleSupplier_... arriba.
+        h.Ctx.AfipSettings.Add(new AfipSettings { Cuit = 20111111112, TaxCondition = "Monotributo" });
+
         var customer = new Customer { FullName = "Cliente Test", IsActive = true };
-        var supplierA = new Supplier { Name = "Operador A", IsActive = true };
-        var supplierB = new Supplier { Name = "Operador B", IsActive = true };
+        var supplierA = new Supplier { Name = "Operador A", IsActive = true, TaxCondition = "IVA_RESP_INSCRIPTO" };
+        var supplierB = new Supplier { Name = "Operador B", IsActive = true, TaxCondition = "IVA_RESP_INSCRIPTO" };
         h.Ctx.Customers.Add(customer);
         h.Ctx.Suppliers.Add(supplierA);
         h.Ctx.Suppliers.Add(supplierB);
@@ -301,8 +309,11 @@ public class CancellationTotalAnnulmentRecalcTests
     {
         var h = BuildService();
 
+        // Tanda B (2026-07-16): ver comentario identico en ConfirmAsync_SingleSupplier_... arriba.
+        h.Ctx.AfipSettings.Add(new AfipSettings { Cuit = 20111111112, TaxCondition = "Monotributo" });
+
         var customer = new Customer { FullName = "Cliente Test", IsActive = true };
-        var supplier = new Supplier { Name = "Operador Unico", IsActive = true };
+        var supplier = new Supplier { Name = "Operador Unico", IsActive = true, TaxCondition = "IVA_RESP_INSCRIPTO" };
         h.Ctx.Customers.Add(customer);
         h.Ctx.Suppliers.Add(supplier);
         await h.Ctx.SaveChangesAsync();

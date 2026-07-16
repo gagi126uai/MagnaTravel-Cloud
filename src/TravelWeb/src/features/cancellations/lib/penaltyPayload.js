@@ -1,6 +1,6 @@
 /**
- * Funciones puras para construir los payloads de penalidad y snapshot fiscal
- * del flujo de cancelacion de reservas (ADR-013/014).
+ * Funciones puras para construir los payloads de penalidad del flujo de
+ * cancelacion de reservas (ADR-013/014).
  *
  * Separadas de CancelReservaModal.jsx para ser testeables con node:test sin DOM.
  * El modal las importa y las llama internamente — el comportamiento es identico
@@ -9,7 +9,14 @@
  *
  * Funciones exportadas:
  *   - buildPenaltyClassificationPayload(selectedOption, agencyConceptKind, agencyPenaltyStatus, agencyPenaltyAmount)
- *   - buildSnapshotData(afipSettings)
+ *
+ * Tanda B (2026-07-16): se elimino buildSnapshotData de este archivo. Esa funcion armaba
+ * el "snapshot fiscal" (condiciones fiscales + tipo de cambio) que el frontend le mandaba
+ * al backend al confirmar una anulacion, pero lo hacia ADIVINANDO datos que no tenia (ej.
+ * "Responsable Inscripto" fijo para el operador, sin importar la ficha real). El backend
+ * ahora resuelve esos datos el mismo, directo de la base (BookingCancellationService.
+ * ResolveServerSideTaxIdentity + la factura original) — el campo que se mandaba quedo
+ * IGNORADO server-side. Ver docs/explicaciones de la Tanda B.
  */
 
 // ============================================================================
@@ -40,15 +47,6 @@ export const PENALTY_STATUS = {
 // DebitNotePurpose (verificado en DebitNotePurpose.cs — MVP solo tiene este valor)
 export const DEBIT_NOTE_PURPOSE = {
   PenaltyOrCancellationCharge: 0,
-};
-
-// ExchangeRateSource (verificado en ExchangeRateSource.cs)
-// Para ARS (rate = 1) usamos BCRA_A3500 = 1: es un source oficial valido,
-// no requiere ManualJustification (esa exigencia es solo para Manual = 5).
-// Unset = 0 es ILEGAL para confirmar (el backend lo rechaza con INV-118).
-export const EXCHANGE_RATE_SOURCE = {
-  BCRA_A3500: 1,
-  Manual: 5,
 };
 
 // ============================================================================
@@ -124,58 +122,4 @@ export function buildPenaltyClassificationPayload(
         confirmedPenaltyAmount: null,
       };
   }
-}
-
-// ============================================================================
-// buildSnapshotData
-// ============================================================================
-
-/**
- * Construye el snapshot fiscal a partir de los settings de /afip/settings.
- * El snapshot congela las condiciones fiscales al momento del evento.
- *
- * IMPORTANTE — strings de condicion fiscal:
- *   El backend normaliza los strings con TaxConditionNormalizer (case-insensitive,
- *   sin tildes). Si alguno queda Unknown, rechaza con INV-118 (400/409).
- *   Los valores aceptados estan documentados en TaxConditionNormalizer.cs.
- *   Usamos los formatos exactos del "texto libre" (con espacio, sin guion bajo)
- *   que el normalizer reconoce para customer y supplier.
- *
- * FUENTE de las condiciones fiscales:
- *   - agencia: afipSettings.taxCondition (ej. "Monotributo", "Responsable Inscripto").
- *   - supplier: el MVP usa "Responsable Inscripto" como fallback razonable para ARS.
- *     TODO M2: cuando ReservaDto exponga supplierTaxCondition del proveedor principal,
- *     reemplazar este fallback derivando el valor de la reserva.
- *   - customer: el MVP usa "Consumidor Final" como fallback razonable.
- *     TODO M2: cuando CustomerDto exponga taxCondition, derivar de reserva.payer.taxCondition.
- *
- * FUENTE del tipo de cambio para ARS:
- *   Para pesos (ARS), rate = 1 y Source = BCRA_A3500 (int 1). No es "Manual" (5):
- *   Manual requiere manualJustification (INV-120), que no pedimos al agente para ARS.
- *   BCRA_A3500 es un source oficial valido para operaciones en pesos.
- *
- * @param {object|null} afipSettings - Respuesta de GET /afip/settings, o null si fallo el fetch.
- * @returns {object} Objeto listo para mandar como snapshotData en ConfirmCancellationRequest.
- */
-export function buildSnapshotData(afipSettings) {
-  return {
-    currencyAtEvent: "ARS",
-    exchangeRateAtOriginalInvoice: 1.0,
-    // ExchangeRateSource int: BCRA_A3500 = 1 (NO es Manual = 5; Manual requiere justificacion).
-    source: EXCHANGE_RATE_SOURCE.BCRA_A3500,
-    manualJustification: null,
-    // Condicion fiscal de la agencia: viene de /afip/settings.
-    // El normalizer acepta "Monotributo" y "Responsable Inscripto" (con espacio).
-    agencyTaxConditionAtEvent: afipSettings?.taxCondition || "Monotributo",
-    // Condicion fiscal del proveedor: fallback "Responsable Inscripto" (con espacio).
-    // El normalizer acepta este formato y lo convierte a "RESPONSABLE_INSCRIPTO".
-    // "ResponsableInscripto" (sin espacio) NO lo acepta → INV-118.
-    // TODO M2: deducir del proveedor de la reserva cuando el DTO lo exponga.
-    supplierTaxConditionAtEvent: "Responsable Inscripto",
-    // Condicion fiscal del cliente: fallback "Consumidor Final" (con espacio).
-    // El normalizer acepta este formato y lo convierte a "CONSUMIDOR_FINAL".
-    // "ConsumidorFinal" (sin espacio) NO lo acepta → INV-118.
-    // TODO M2: deducir de reserva.payer.taxCondition cuando el CustomerDto lo exponga.
-    customerTaxConditionAtEvent: "Consumidor Final",
-  };
 }
