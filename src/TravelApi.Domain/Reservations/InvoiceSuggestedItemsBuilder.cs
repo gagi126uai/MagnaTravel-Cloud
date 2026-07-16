@@ -77,27 +77,33 @@ public static class InvoiceSuggestedItemsBuilder
 
         Classify(reserva.FlightSegments, linesByCurrency, excludedServices,
             ServiceResolutionRules.IsResolved, ServiceResolutionRules.IsCancelled,
-            flight => flight.Currency, flight => flight.SalePrice, DescribeFlight);
+            flight => flight.Currency, flight => flight.SalePrice, DescribeFlight,
+            CancellableServiceTable.Flight, flight => flight.PublicId);
 
         Classify(reserva.HotelBookings, linesByCurrency, excludedServices,
             ServiceResolutionRules.IsResolved, ServiceResolutionRules.IsCancelled,
-            hotel => hotel.Currency, hotel => hotel.SalePrice, DescribeHotel);
+            hotel => hotel.Currency, hotel => hotel.SalePrice, DescribeHotel,
+            CancellableServiceTable.Hotel, hotel => hotel.PublicId);
 
         Classify(reserva.TransferBookings, linesByCurrency, excludedServices,
             ServiceResolutionRules.IsResolved, ServiceResolutionRules.IsCancelled,
-            transfer => transfer.Currency, transfer => transfer.SalePrice, DescribeTransfer);
+            transfer => transfer.Currency, transfer => transfer.SalePrice, DescribeTransfer,
+            CancellableServiceTable.Transfer, transfer => transfer.PublicId);
 
         Classify(reserva.PackageBookings, linesByCurrency, excludedServices,
             ServiceResolutionRules.IsResolved, ServiceResolutionRules.IsCancelled,
-            package => package.Currency, package => package.SalePrice, DescribePackage);
+            package => package.Currency, package => package.SalePrice, DescribePackage,
+            CancellableServiceTable.Package, package => package.PublicId);
 
         Classify(reserva.AssistanceBookings, linesByCurrency, excludedServices,
             ServiceResolutionRules.IsResolved, ServiceResolutionRules.IsCancelled,
-            assistance => assistance.Currency, assistance => assistance.SalePrice, DescribeAssistance);
+            assistance => assistance.Currency, assistance => assistance.SalePrice, DescribeAssistance,
+            CancellableServiceTable.Assistance, assistance => assistance.PublicId);
 
         Classify(reserva.Servicios, linesByCurrency, excludedServices,
             ServiceResolutionRules.IsResolved, ServiceResolutionRules.IsCancelled,
-            service => service.Currency, service => service.SalePrice, DescribeGeneric);
+            service => service.Currency, service => service.SalePrice, DescribeGeneric,
+            CancellableServiceTable.Generic, service => service.PublicId);
 
         var groups = new List<InvoiceSuggestedItemGroup>();
         foreach (var (currency, lines) in linesByCurrency)
@@ -130,6 +136,13 @@ public static class InvoiceSuggestedItemsBuilder
     ///
     /// <para>Cada linea que entra es Quantity=1, UnitPrice=Total=SalePrice (una factura turistica describe
     /// el servicio, no desglosa por noche/pax — eso ya vive en el detalle del servicio).</para>
+    ///
+    /// <para><b>Trazabilidad al servicio de origen (2026-07-16)</b>: cada linea que entra al grupo lleva
+    /// tambien de que tabla y de que servicio concreto (<c>PublicId</c>) salio. Esto es lo que despues
+    /// permite, al crear la factura, grabar en <c>InvoiceItem</c> de que servicio proviene cada renglon
+    /// (objetivo: poder decirle al usuario en que factura esta un servicio cuando lo cancela). El caller
+    /// pasa la tabla fija de esta coleccion (ej. <c>CancellableServiceTable.Hotel</c> para
+    /// <c>reserva.HotelBookings</c>) y el extractor del <c>PublicId</c> de la entidad.</para>
     /// </summary>
     private static void Classify<T>(
         IEnumerable<T>? items,
@@ -139,7 +152,9 @@ public static class InvoiceSuggestedItemsBuilder
         Func<T, bool> isCancelled,
         Func<T, string?> currencyOf,
         Func<T, decimal> salePriceOf,
-        Func<T, string> describe)
+        Func<T, string> describe,
+        CancellableServiceTable serviceTable,
+        Func<T, Guid> publicIdOf)
     {
         if (items == null) return;
 
@@ -184,7 +199,9 @@ public static class InvoiceSuggestedItemsBuilder
                 Quantity: 1m,
                 UnitPrice: salePrice,
                 Total: salePrice,
-                AlicuotaIvaId: DefaultAlicuotaIvaId));
+                AlicuotaIvaId: DefaultAlicuotaIvaId,
+                SourceServiceTable: serviceTable,
+                SourceServicePublicId: publicIdOf(item)));
         }
     }
 
@@ -296,13 +313,21 @@ public record InvoiceSuggestedItemGroup(
 /// Hallazgo #9: una linea de factura sugerida desde un servicio. Tiene la misma forma que
 /// <c>InvoiceItemDto</c> (Description/Quantity/UnitPrice/Total/AlicuotaIvaId) para que el front la
 /// vuelque directo al modal sin transformar.
+///
+/// <para><b>SourceServiceTable/SourceServicePublicId (2026-07-16)</b>: de que servicio concreto salio
+/// esta linea. Siempre vienen completos aca (a diferencia de <c>InvoiceItem.SourceServiceTable</c>, que
+/// es nullable porque hay items legacy o conceptos sueltos sin servicio de origen): toda linea que arma
+/// este builder proviene de una entidad de servicio real con <c>PublicId</c>. El front los reenvia tal
+/// cual al crear la factura para que quede la trazabilidad grabada.</para>
 /// </summary>
 public record InvoiceSuggestedItem(
     string Description,
     decimal Quantity,
     decimal UnitPrice,
     decimal Total,
-    int AlicuotaIvaId);
+    int AlicuotaIvaId,
+    CancellableServiceTable SourceServiceTable,
+    Guid SourceServicePublicId);
 
 /// <summary>
 /// Tanda 6 (bug "$0 mudo"): resultado completo de <see cref="InvoiceSuggestedItemsBuilder.BuildWithDiagnostics"/>.

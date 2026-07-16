@@ -1,3 +1,10 @@
+// Mismo helper que usa construirOpcionesFacturaDestino (facturaDestinoLogic.js) para
+// el label "número + moneda + monto" del desplegable. Reusamos la función en vez de
+// reimplementar el formato a mano para que los dos lugares SIEMPRE muestren la plata
+// exactamente igual (ej. "$ 125.000,50" en ARS, "US$500,00" en USD) — evita que un
+// cambio de formato en un lugar se desalinee del otro con el tiempo.
+import { formatCurrency } from "../../../lib/utils.js";
+
 export const T5_STATE = Object.freeze({
   EMPTY: "empty",
   READY: "ready",
@@ -51,9 +58,26 @@ export function getActiveSaleInvoices(invoices) {
     .filter((invoice) => invoice?.resultado === "A" && Boolean(invoice?.cae ?? invoice?.CAE))
     .filter((invoice) => invoice?.annulmentStatus !== "Succeeded")
     .filter((invoice) => Boolean(invoice?.publicId))
-    .map((invoice) => ({
-      publicId: invoice.publicId,
-      label: `Factura ${invoice.invoiceType || ""} ${String(invoice.puntoDeVenta ?? 0).padStart(4, "0")}-${String(invoice.numeroComprobante ?? 0).padStart(8, "0")}`.replace(/\s+/g, " ").trim(),
-      amount: Number(invoice.importeTotal ?? 0),
-    }));
+    .map((invoice) => {
+      const numeroComprobante = `Factura ${invoice.invoiceType || ""} ${String(invoice.puntoDeVenta ?? 0).padStart(4, "0")}-${String(invoice.numeroComprobante ?? 0).padStart(8, "0")}`.replace(/\s+/g, " ").trim();
+      const amount = Number(invoice.importeTotal ?? 0);
+      // InvoiceDto.Currency (2026-07-16): moneda ISO de la factura ("ARS"/"USD"), con
+      // "ARS" como default legacy del propio backend (facturas viejas sin MonId
+      // reconocible). Nunca viene null, así que no hace falta un fallback acá.
+      const currency = invoice.currency || "ARS";
+      return {
+        publicId: invoice.publicId,
+        // Pedido de Gaston (2026-07-01): número + moneda + monto — mismo formato que
+        // construirOpcionesFacturaDestino (facturaDestinoLogic.js), reusando el mismo
+        // formatCurrency para que ambos desplegables muestren la plata idéntica.
+        label: `${numeroComprobante} — ${formatCurrency(amount, currency)}`,
+        amount,
+        currency,
+        // Trazabilidad de servicios (2026-07-16, InvoiceDto.ServicePublicIds): permite
+        // pre-seleccionar esta factura cuando se cancela un servicio que sabemos que
+        // está adentro (ver serviceInvoiceMatch.js). Facturas viejas sin trazabilidad
+        // traen [] y simplemente no participan de la sugerencia.
+        servicePublicIds: Array.isArray(invoice.servicePublicIds) ? invoice.servicePublicIds : [],
+      };
+    });
 }

@@ -2553,6 +2553,10 @@ public class ReservaService : IReservaService
         dto.HasInvoiceInProgress = file.Invoices.Any(i =>
             i.Resultado == "PENDING" && i.AnnulmentStatus != AnnulmentStatus.Succeeded);
 
+        // Sugerencia de factura al cancelar UN servicio (en vez de que el usuario adivine en un
+        // desplegable con varias facturas activas). Query batcheada aparte, ver el metodo.
+        await PopulateInvoiceServicePublicIdsAsync(file, dto, CancellationToken.None);
+
         // ADR-037 / cuadre POR MONEDA (2026-06-22): el escalar FacturadoNeto/DisponibleParaFacturar mezcla
         // monedas en multimoneda. Aca calculamos el facturado neto de CADA moneda por separado (facturas + ND
         // - NC vivas, agrupadas por la moneda ISO del comprobante) y lo cargamos en su linea de PorMoneda,
@@ -2929,6 +2933,71 @@ public class ReservaService : IReservaService
         {
             var entity = file.AssistanceBookings.FirstOrDefault(a => a.PublicId == itemDto.PublicId);
             itemDto.ProductCreatedInSale = entity?.RateId is int assistanceRateId && createdInSaleIds.Contains(assistanceRateId);
+        }
+    }
+
+    /// <summary>
+    /// Carga <c>InvoiceDto.ServicePublicIds</c> para que el frontend pueda PRE-SELECCIONAR la factura
+    /// correcta al cancelar un servicio de la reserva (en vez de que el usuario adivine en un
+    /// desplegable). Es solo informacion de lectura: NO cambia ninguna regla de cancelacion ni obliga
+    /// al usuario a nada, el sigue eligiendo la factura a mano.
+    ///
+    /// <para><b>Dos fuentes de trazabilidad, UNIDAS (2026-07-16)</b>: la lista sale de la union de (a)
+    /// <c>InvoiceItem.SourceServicePublicId</c> — la trazabilidad polimorfica NUEVA, que cubre los 6
+    /// tipos de servicio (vuelo/hotel/traslado/paquete/asistencia/generico) — y (b)
+    /// <c>InvoiceItem.SourceServicioReservaId</c> — la trazabilidad LEGACY (FC1.3/ADR-009), que solo
+    /// cubre el servicio generico. Un mismo item nunca aporta por las dos fuentes a la vez (son
+    /// caminos de escritura distintos), pero unimos igual por si una factura vieja tiene items con
+    /// legacy y una factura nueva tiene items con la trazabilidad nueva.</para>
+    ///
+    /// <para><b>Por que una query aparte (y no un Include mas arriba)</b>: mismo patron que
+    /// <see cref="StampProductCreatedInSaleAsync"/>. Traer <c>Invoices.Items.SourceServicioReserva</c>
+    /// con Include cargaria la entidad <c>ServicioReserva</c> COMPLETA por cada item con trazabilidad
+    /// (costo, comision, etc.) solo para leer un PublicId. Con una proyeccion batcheada (UNA sola
+    /// consulta SQL para TODAS las facturas de la reserva, filtrada por <c>InvoiceId IN (...)</c>) se
+    /// evita el N+1 y no se trae al proceso ningun dato de mas.</para>
+    /// </summary>
+    private async Task PopulateInvoiceServicePublicIdsAsync(Reserva file, ReservaDto dto, CancellationToken ct)
+    {
+        if (file.Invoices.Count == 0 || dto.Invoices.Count == 0) return;
+
+        var invoiceIds = file.Invoices.Select(i => i.Id).ToList();
+
+        // Solo los items CON trazabilidad (por cualquiera de las dos fuentes) entran en el resultado.
+        // Hoy la mayoria de los items no tiene ninguno de los dos datos (ver el XML-doc del campo en
+        // InvoiceDto): para esas facturas la lista queda vacia, nunca null.
+        var itemsWithSource = await _context.Set<InvoiceItem>()
+            .AsNoTracking()
+            .Where(item => invoiceIds.Contains(item.InvoiceId) &&
+                (item.SourceServicePublicId != null || item.SourceServicioReservaId != null))
+            .Select(item => new
+            {
+                item.InvoiceId,
+                DirectPublicId = item.SourceServicePublicId,
+                LegacyPublicId = item.SourceServicioReserva != null ? (Guid?)item.SourceServicioReserva.PublicId : null
+            })
+            .ToListAsync(ct);
+
+        if (itemsWithSource.Count == 0) return;
+
+        var servicePublicIdsByInvoiceId = itemsWithSource
+            .GroupBy(x => x.InvoiceId)
+            .ToDictionary(
+                g => g.Key,
+                g => g.Select(x => x.DirectPublicId)
+                      .Concat(g.Select(x => x.LegacyPublicId))
+                      .Where(publicId => publicId != null)
+                      .Select(publicId => publicId!.Value)
+                      .Distinct()
+                      .ToList());
+
+        foreach (var invoiceDto in dto.Invoices)
+        {
+            var entity = file.Invoices.FirstOrDefault(i => i.PublicId == invoiceDto.PublicId);
+            if (entity != null && servicePublicIdsByInvoiceId.TryGetValue(entity.Id, out var servicePublicIds))
+            {
+                invoiceDto.ServicePublicIds = servicePublicIds;
+            }
         }
     }
 

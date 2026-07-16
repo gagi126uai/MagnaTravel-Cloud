@@ -786,3 +786,127 @@ test("describirMotivoExclusion: sin motivo (undefined/null) → texto genérico,
   assert.equal(describirMotivoExclusion(undefined), "no se pudo incluir en la factura");
   assert.equal(describirMotivoExclusion(null), "no se pudo incluir en la factura");
 });
+
+// ─── Tests: trazabilidad de origen del renglón (2026-07-16) ──────────────────
+// itemBackendALocal (precarga) y el armado de items del payload de POST /invoices.
+// Copias de EmitirFacturaInline.jsx — si cambia el original, actualizar acá también.
+
+/**
+ * Copia de itemBackendALocal en EmitirFacturaInline.jsx.
+ */
+function itemBackendALocal(itemDto) {
+  return {
+    description: itemDto.description,
+    quantity: Number(itemDto.quantity),
+    unitPrice: Number(itemDto.unitPrice),
+    alicuotaIvaId: Number(itemDto.alicuotaIvaId),
+    sourceServiceTable: itemDto.sourceServiceTable ?? null,
+    sourceServicePublicId: itemDto.sourceServicePublicId ?? null,
+  };
+}
+
+/**
+ * Copia de crearItemNuevo en EmitirFacturaInline.jsx.
+ */
+function crearItemNuevo(isMonotributista) {
+  return {
+    description: "Servicios Turísticos",
+    quantity: 1,
+    unitPrice: 0,
+    alicuotaIvaId: isMonotributista ? 3 : 5,
+  };
+}
+
+/**
+ * Copia de la construcción de un renglón del payload dentro de handleConfirmarEmision.
+ */
+function construirItemPayload(item) {
+  const itemPayload = {
+    description: item.description,
+    quantity: Number(item.quantity),
+    unitPrice: Number(item.unitPrice),
+    total: Number(item.quantity) * Number(item.unitPrice),
+    alicuotaIvaId: Number(item.alicuotaIvaId),
+  };
+
+  if (item.sourceServiceTable && item.sourceServicePublicId) {
+    itemPayload.sourceServiceTable = item.sourceServiceTable;
+    itemPayload.sourceServicePublicId = item.sourceServicePublicId;
+  }
+
+  return itemPayload;
+}
+
+test("itemBackendALocal: conserva sourceServiceTable y sourceServicePublicId del DTO", () => {
+  const dto = {
+    description: "Hotel Bariloche",
+    quantity: 1,
+    unitPrice: 80000,
+    alicuotaIvaId: 5,
+    sourceServiceTable: "Hotel",
+    sourceServicePublicId: "hotel-abc-123",
+  };
+  const local = itemBackendALocal(dto);
+  assert.equal(local.sourceServiceTable, "Hotel");
+  assert.equal(local.sourceServicePublicId, "hotel-abc-123");
+});
+
+test("itemBackendALocal: sin origen en el DTO (defensivo) → null, no undefined", () => {
+  const dto = { description: "Concepto suelto", quantity: 1, unitPrice: 1000, alicuotaIvaId: 5 };
+  const local = itemBackendALocal(dto);
+  assert.equal(local.sourceServiceTable, null);
+  assert.equal(local.sourceServicePublicId, null);
+});
+
+test("crearItemNuevo: renglón agregado a mano NO tiene campos de origen (ni siquiera null)", () => {
+  const item = crearItemNuevo(false);
+  assert.equal("sourceServiceTable" in item, false, "No debe existir la propiedad en absoluto");
+  assert.equal("sourceServicePublicId" in item, false, "No debe existir la propiedad en absoluto");
+});
+
+test("construirItemPayload: renglón con origen completo → el payload lleva los dos campos", () => {
+  const item = itemBackendALocal({
+    description: "Vuelo Cancún",
+    quantity: 1,
+    unitPrice: 500,
+    alicuotaIvaId: 5,
+    sourceServiceTable: "Flight",
+    sourceServicePublicId: "flight-999",
+  });
+  const payload = construirItemPayload(item);
+  assert.equal(payload.sourceServiceTable, "Flight");
+  assert.equal(payload.sourceServicePublicId, "flight-999");
+});
+
+test("construirItemPayload: renglón editado por el usuario CONSERVA el origen", () => {
+  // Simula que el usuario tocó la descripción/monto de un renglón precargado
+  // (mismo patrón que handleItemChange: solo pisa el campo tocado).
+  const original = itemBackendALocal({
+    description: "Hotel Bariloche",
+    quantity: 1,
+    unitPrice: 80000,
+    alicuotaIvaId: 5,
+    sourceServiceTable: "Hotel",
+    sourceServicePublicId: "hotel-abc-123",
+  });
+  const editado = { ...original, description: "Hotel Bariloche (2 noches extra)", unitPrice: 95000 };
+  const payload = construirItemPayload(editado);
+  assert.equal(payload.description, "Hotel Bariloche (2 noches extra)");
+  assert.equal(payload.unitPrice, 95000);
+  assert.equal(payload.sourceServiceTable, "Hotel", "El origen debe sobrevivir a la edición");
+  assert.equal(payload.sourceServicePublicId, "hotel-abc-123", "El origen debe sobrevivir a la edición");
+});
+
+test("construirItemPayload: renglón agregado a mano → el payload NO lleva los campos (ni null)", () => {
+  const item = crearItemNuevo(false);
+  const payload = construirItemPayload(item);
+  assert.equal("sourceServiceTable" in payload, false, "No debe mandarse la propiedad en absoluto");
+  assert.equal("sourceServicePublicId" in payload, false, "No debe mandarse la propiedad en absoluto");
+});
+
+test("construirItemPayload: origen null (defensivo, DTO sin dato) → tampoco se manda", () => {
+  const item = itemBackendALocal({ description: "Concepto suelto", quantity: 1, unitPrice: 1000, alicuotaIvaId: 5 });
+  const payload = construirItemPayload(item);
+  assert.equal("sourceServiceTable" in payload, false);
+  assert.equal("sourceServicePublicId" in payload, false);
+});

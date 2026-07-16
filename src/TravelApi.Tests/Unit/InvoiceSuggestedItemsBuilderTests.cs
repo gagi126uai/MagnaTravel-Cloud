@@ -187,6 +187,69 @@ public class InvoiceSuggestedItemsBuilderTests
         Assert.Empty(groups);
     }
 
+    // ===================== Trazabilidad al servicio de origen (2026-07-16) =====================
+    // Objetivo de negocio: al cancelar UN servicio de una reserva con varias facturas, poder
+    // decirle al usuario en cual factura esta. Estos tests verifican que cada linea sugerida
+    // sepa DE QUE TABLA y DE QUE SERVICIO CONCRETO (PublicId) sale.
+
+    [Fact]
+    public void Build_GenericService_LineCarriesTableAndPublicId()
+    {
+        var reserva = new Reserva();
+        var service = new ServicioReserva { Status = "Confirmado", Description = "Excursion", SalePrice = 40m };
+        reserva.Servicios.Add(service);
+
+        var item = Assert.Single(Assert.Single(InvoiceSuggestedItemsBuilder.Build(reserva)).Items);
+
+        Assert.Equal(CancellableServiceTable.Generic, item.SourceServiceTable);
+        Assert.Equal(service.PublicId, item.SourceServicePublicId);
+    }
+
+    [Fact]
+    public void Build_FlightSegment_LineCarriesTableAndPublicId()
+    {
+        var reserva = new Reserva();
+        var flight = new FlightSegment { Status = "HK", TicketIssuedAt = DateTime.UtcNow, SalePrice = 500m };
+        reserva.FlightSegments.Add(flight);
+
+        var item = Assert.Single(Assert.Single(InvoiceSuggestedItemsBuilder.Build(reserva)).Items);
+
+        Assert.Equal(CancellableServiceTable.Flight, item.SourceServiceTable);
+        Assert.Equal(flight.PublicId, item.SourceServicePublicId);
+    }
+
+    [Fact]
+    public void Build_HotelBooking_LineCarriesTableAndPublicId()
+    {
+        var reserva = new Reserva();
+        var hotel = new HotelBooking { Status = "Confirmado", HotelName = "Sheraton", SalePrice = 200m };
+        reserva.HotelBookings.Add(hotel);
+
+        var item = Assert.Single(Assert.Single(InvoiceSuggestedItemsBuilder.Build(reserva)).Items);
+
+        Assert.Equal(CancellableServiceTable.Hotel, item.SourceServiceTable);
+        Assert.Equal(hotel.PublicId, item.SourceServicePublicId);
+    }
+
+    [Fact]
+    public void Build_TwoServicesOfSameType_EachLineCarriesItsOwnPublicId()
+    {
+        // Cada linea debe apuntar a SU PROPIO servicio, no mezclarse entre si.
+        var reserva = new Reserva();
+        var hotelUno = new HotelBooking { Status = "Confirmado", HotelName = "Uno", SalePrice = 100m };
+        var hotelDos = new HotelBooking { Status = "Confirmado", HotelName = "Dos", SalePrice = 150m };
+        reserva.HotelBookings.Add(hotelUno);
+        reserva.HotelBookings.Add(hotelDos);
+
+        var items = Assert.Single(InvoiceSuggestedItemsBuilder.Build(reserva)).Items;
+
+        Assert.Equal(2, items.Count);
+        var itemUno = items.Single(i => i.Description.Contains("Uno"));
+        var itemDos = items.Single(i => i.Description.Contains("Dos"));
+        Assert.Equal(hotelUno.PublicId, itemUno.SourceServicePublicId);
+        Assert.Equal(hotelDos.PublicId, itemDos.SourceServicePublicId);
+    }
+
     // ===================== Descripcion: cae a etiqueta generica si faltan datos =====================
 
     [Fact]

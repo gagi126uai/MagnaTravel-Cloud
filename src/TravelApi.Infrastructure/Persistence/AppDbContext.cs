@@ -832,6 +832,18 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             // Indice para queries inversas tipo "que items facture para este servicio".
             entity.HasIndex(i => i.SourceServicioReservaId)
                   .HasDatabaseName("IX_InvoiceItem_SourceServicioReservaId");
+
+            // Trazabilidad polimorfica (2026-07-16): SIN FK (mismo criterio que
+            // SupplierPayment.ServicePublicId) porque el servicio de origen puede vivir en
+            // cualquiera de las 6 tablas de CancellableServiceTable, no solo en ServicioReserva.
+            entity.Property(i => i.SourceServiceTable).HasConversion<int?>();
+
+            // Indice PARCIAL (solo filas con dato): sirve la lectura "que facturas tienen una
+            // linea de ESTE servicio" (ReservaService.PopulateInvoiceServicePublicIdsAsync) sin
+            // pesar el indice con las filas legacy que van a quedar en NULL por mucho tiempo.
+            entity.HasIndex(i => i.SourceServicePublicId)
+                  .HasDatabaseName("IX_InvoiceItem_SourceServicePublicId")
+                  .HasFilter("\"SourceServicePublicId\" IS NOT NULL");
         });
 
         // InvoiceTribute (Singular table from Program.cs)

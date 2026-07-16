@@ -33,6 +33,12 @@
  * Regla multimoneda DURA: NUNCA se suman pesos con dólares.
  * El total a devolver se agrupa y muestra POR MONEDA.
  *
+ * Factura de la devolución (2026-07-16): si hay 2+ facturas activas y TODOS los
+ * servicios tildados están adentro de la MISMA única factura (según
+ * InvoiceDto.ServicePublicIds), se preselecciona sola en el desplegable con un
+ * texto aclaratorio — ver sugerirFacturaParaServicios en lib/serviceInvoiceMatch.js.
+ * El usuario siempre puede cambiarla a mano.
+ *
  * Props:
  *   serviciosCancelables   — array de servicios candidatos (los "con proveedor" activos)
  *   reservaPublicId        — GUID de la reserva
@@ -42,10 +48,11 @@
  *                            el padre debe recargar los datos (sin cerrar la sección)
  */
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { X, Loader2, Ban, CheckCircle2, AlertTriangle } from "lucide-react";
 import { cancellationsApi } from "../../cancellations/api/cancellationsApi";
 import { getReservationServicePublicId } from "../lib/reservationServiceModel";
+import { sugerirFacturaParaServicios } from "../lib/serviceInvoiceMatch";
 import { formatCurrency } from "../../../lib/utils";
 
 // Mínimo de caracteres para el motivo (igual que en ModalBorrarVsCancelar del ServiceList).
@@ -125,6 +132,25 @@ export function CancelarVariosServiciosInline({
   // Regla dura: nunca mezclar monedas.
   const totalPorMoneda = calcularTotalPorMoneda(serviciosSeleccionados);
   const monedasConTotal = Object.entries(totalPorMoneda);
+
+  // Trazabilidad de origen (2026-07-16): si TODOS los servicios tildados están en
+  // los renglones de una única factura activa, la sugerimos sola. useMemo porque
+  // seleccionados (el Set de tildes) cambia en cada click y no queremos recalcular
+  // el matching contra saleInvoices en cada render que no toque la selección.
+  const publicIdFacturaSugerida = useMemo(
+    () => sugerirFacturaParaServicios(Array.from(seleccionados), saleInvoices),
+    [seleccionados, saleInvoices]
+  );
+
+  // Preseleccionamos la factura sugerida cada vez que cambia (por ejemplo, el
+  // usuario tilda otro servicio y ahora todos coinciden con una sola factura).
+  // Si deja de haber una única coincidencia (sugerencia null), NO borramos lo que
+  // el usuario ya haya elegido a mano — solo dejamos de imponer la sugerencia.
+  useEffect(() => {
+    if (publicIdFacturaSugerida) {
+      setTargetInvoicePublicId(publicIdFacturaSugerida);
+    }
+  }, [publicIdFacturaSugerida]);
 
   const handleToggleServicio = useCallback((publicId) => {
     setSeleccionados((prev) => {
@@ -407,10 +433,26 @@ export function CancelarVariosServiciosInline({
               disabled={Boolean(procesoEstado?.enProceso)}
               className="w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm dark:border-amber-700 dark:bg-slate-800 dark:text-white"
               data-testid="select-factura-cancelar-varios"
+              aria-describedby={
+                // Accesibilidad: el lector de pantalla anuncia la aclaración de la
+                // sugerencia como descripción del propio desplegable.
+                publicIdFacturaSugerida && targetInvoicePublicId === publicIdFacturaSugerida
+                  ? "hint-factura-sugerida-cancelar-varios"
+                  : undefined
+              }
             >
               <option value="">Elegí una factura</option>
               {saleInvoices.map((invoice) => <option key={invoice.publicId} value={invoice.publicId}>{invoice.label}</option>)}
             </select>
+            {/* Solo mientras la selección actual siga siendo la sugerida: si el
+                usuario elige otra factura a mano, el texto deja de aplicar. */}
+            {publicIdFacturaSugerida && targetInvoicePublicId === publicIdFacturaSugerida && (
+              <p id="hint-factura-sugerida-cancelar-varios" className="mt-1 text-xs text-emerald-600 dark:text-emerald-400" data-testid="hint-factura-sugerida">
+                {serviciosSeleccionados.length === 1
+                  ? "Este servicio está incluido en esta factura."
+                  : "Estos servicios están incluidos en esta factura."}
+              </p>
+            )}
             <p className="mt-1 text-xs text-slate-500">Si los servicios corresponden a facturas distintas, cancelalos en tandas separadas.</p>
           </div>
         )}

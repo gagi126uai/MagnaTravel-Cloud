@@ -49,7 +49,17 @@ public class MappingProfile : Profile
             .ForMember(dest => dest.OriginalInvoicePublicId, opt => opt.MapFrom(src => src.OriginalInvoice != null ? (Guid?)src.OriginalInvoice.PublicId : null))
             .ForMember(dest => dest.OriginalInvoiceNumeroComprobante, opt => opt.MapFrom(src => src.OriginalInvoice != null ? (long?)src.OriginalInvoice.NumeroComprobante : null))
             .ForMember(dest => dest.OriginalInvoiceTipoComprobante, opt => opt.MapFrom(src => src.OriginalInvoice != null ? (int?)src.OriginalInvoice.TipoComprobante : null))
-            .ForMember(dest => dest.OriginalInvoicePuntoDeVenta, opt => opt.MapFrom(src => src.OriginalInvoice != null ? (int?)src.OriginalInvoice.PuntoDeVenta : null));
+            .ForMember(dest => dest.OriginalInvoicePuntoDeVenta, opt => opt.MapFrom(src => src.OriginalInvoice != null ? (int?)src.OriginalInvoice.PuntoDeVenta : null))
+            // Tarea 2026-07-16 (label del desplegable de facturas en el front): Invoice.MonId viene en
+            // codigo ARCA ("PES"/"DOL"); el front necesita ISO ("ARS"/"USD"). Mismo helper y mismo
+            // default (ARS) que ReservaService usa para agrupar el extracto por moneda — fuente unica,
+            // no se duplica la tabla de mapeo.
+            .ForMember(dest => dest.Currency, opt => opt.MapFrom(src =>
+                TravelApi.Domain.Helpers.ArcaCurrencyMapper.ToIso(src.MonId) ?? TravelApi.Domain.Entities.Monedas.ARS))
+            // ServicePublicIds (sugerencia de factura al cancelar un servicio) NO sale de un Include
+            // de esta query: se calcula con una query batcheada aparte (evita N+1 con Items+SourceServicioReserva
+            // por cada factura) y se pisa DESPUES del mapeo en ReservaService.PopulateInvoiceServicePublicIdsAsync.
+            .ForMember(dest => dest.ServicePublicIds, opt => opt.Ignore());
 
         // === BOOKING SERVICES (con RatePublicId) ===
 

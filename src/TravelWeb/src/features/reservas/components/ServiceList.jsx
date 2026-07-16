@@ -40,6 +40,7 @@ import {
     SERVICE_RECORD_KIND,
     getReservationServicePublicId
 } from "../lib/reservationServiceModel";
+import { sugerirFacturaParaServicios } from "../lib/serviceInvoiceMatch";
 import { calcularHintPorTipo, calcularSlotsFaltantesDelSet } from "../lib/pasajeroHint";
 import { useServiceNominalCoverage } from "../lib/useServiceNominalCoverage";
 import { UpcomingStartPill, estaEnVentana } from "./UpcomingStartPill";
@@ -284,6 +285,11 @@ function formatFechaSegura(valor) {
  *
  * Accesibilidad: foco al textarea al montar (camino cancelación), Escape cierra, role="dialog".
  *
+ * Factura de la devolución (2026-07-16): si hay 2+ facturas activas y este servicio
+ * está adentro de los renglones de UNA sola de ellas (según InvoiceDto.ServicePublicIds),
+ * se preselecciona sola con un texto aclaratorio — ver sugerirFacturaParaServicios en
+ * lib/serviceInvoiceMatch.js. El usuario siempre puede cambiarla a mano.
+ *
  * Props:
  * - service: objeto del servicio
  * - onBorrar: () => void — callback cuando el usuario confirma borrar
@@ -294,8 +300,20 @@ function ModalBorrarVsCancelar({ service, saleInvoices = [], onBorrar, onCancela
     const estaConfirmado = esServicioConfirmadoPorOperador(service);
     const [motivo, setMotivo] = useState('');
     const [loading, setLoading] = useState(false);
+
+    // Trazabilidad de origen (2026-07-16): si ESTE servicio aparece en los renglones
+    // de una única factura activa, la sugerimos sola (el usuario la puede cambiar).
+    // Con una sola factura activa no hace falta sugerencia: ya se autocompletaba sola
+    // (regla anterior, sin ambigüedad posible). Con varias, antes el usuario tenía que
+    // adivinar; ahora, si sabemos el origen, se lo evitamos.
+    // Usamos el MISMO helper de identidad que CancelarVariosServiciosInline (cubre
+    // servicios que traen el GUID en otra propiedad, ej. id/servicePublicId).
+    const publicIdFacturaSugerida = sugerirFacturaParaServicios(
+        [getReservationServicePublicId(service)],
+        saleInvoices
+    );
     const [targetInvoicePublicId, setTargetInvoicePublicId] = useState(
-        saleInvoices.length === 1 ? saleInvoices[0].publicId : ''
+        saleInvoices.length === 1 ? saleInvoices[0].publicId : (publicIdFacturaSugerida || '')
     );
     const motivoInputRef = useRef(null);
 
@@ -407,10 +425,24 @@ function ModalBorrarVsCancelar({ service, saleInvoices = [], onBorrar, onCancela
                                         onChange={(e) => setTargetInvoicePublicId(e.target.value)}
                                         className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                                         data-testid="select-factura-devolucion"
+                                        aria-describedby={
+                                            // Accesibilidad: el lector de pantalla anuncia la aclaración
+                                            // de la sugerencia como descripción del propio desplegable.
+                                            publicIdFacturaSugerida && targetInvoicePublicId === publicIdFacturaSugerida
+                                                ? "hint-factura-sugerida-cancelar-servicio"
+                                                : undefined
+                                        }
                                     >
                                         <option value="">Elegí una factura</option>
                                         {saleInvoices.map((invoice) => <option key={invoice.publicId} value={invoice.publicId}>{invoice.label}</option>)}
                                     </select>
+                                    {/* Solo mientras la selección actual siga siendo la sugerida: si el
+                                        usuario elige otra factura a mano, el texto deja de aplicar. */}
+                                    {publicIdFacturaSugerida && targetInvoicePublicId === publicIdFacturaSugerida && (
+                                        <p id="hint-factura-sugerida-cancelar-servicio" className="mt-1 text-xs text-emerald-600 dark:text-emerald-400" data-testid="hint-factura-sugerida">
+                                            Este servicio está incluido en esta factura.
+                                        </p>
+                                    )}
                                 </div>
                             )}
                             {saleInvoices.length > 0 && (

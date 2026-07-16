@@ -601,7 +601,11 @@ public class InvoiceService : IInvoiceService
                         Quantity = item.Quantity,
                         UnitPrice = item.UnitPrice,
                         Total = item.Total,
-                        AlicuotaIvaId = item.AlicuotaIvaId
+                        AlicuotaIvaId = item.AlicuotaIvaId,
+                        // Trazabilidad al servicio de origen (ver el XML-doc de InvoiceItemDto): el
+                        // builder SIEMPRE la conoce, asi que viaja completa en la sugerencia.
+                        SourceServiceTable = item.SourceServiceTable.ToString(),
+                        SourceServicePublicId = item.SourceServicePublicId
                     })
                     .ToList()
             };

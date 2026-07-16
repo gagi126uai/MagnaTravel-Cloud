@@ -71,4 +71,37 @@ public class InvoiceItem
     /// </summary>
     public int? SourceServicioReservaId { get; set; }
     public ServicioReserva? SourceServicioReserva { get; set; }
+
+    // ============================================================
+    // Trazabilidad polimorfica linea de factura -> servicio de origen (2026-07-16).
+    // Objetivo de negocio: cuando el cliente cancela UN servicio de una reserva con
+    // varias facturas, poder decirle en cual factura esta ese servicio.
+    //
+    // Por que dos campos nuevos y no ampliar SourceServicioReservaId de arriba: esa FK
+    // SOLO puede apuntar a la tabla generica ServicioReserva. Los servicios de la
+    // reserva son POLIMORFICOS (viven en 6 tablas distintas: la generica + vuelo,
+    // hotel, traslado, paquete, asistencia — ver CancellableServiceTable). Mismo
+    // patron ya usado en SupplierPayment.ServicePublicId (ADR-036 4c): en vez de una
+    // FK de base de datos (que obligaria a 6 columnas FK nullable, una por tabla), se
+    // guarda el PAR (tabla, PublicId) SIN constraint de FK. La integridad no se valida
+    // al escribir: es metadata informativa para una sugerencia, no un dato critico de
+    // negocio — si el PublicId quedara huerfano, lo peor que pasa es que la sugerencia
+    // no aparece, nunca se rompe la factura.
+    // ============================================================
+
+    /// <summary>
+    /// En que tabla vive el servicio de origen de esta linea (Generic/Flight/Hotel/Transfer/
+    /// Package/Assistance). Va junto con <see cref="SourceServicePublicId"/>: o ambos estan
+    /// seteados o ambos quedan <c>null</c>. <c>null</c> en items legacy o conceptos sueltos sin
+    /// servicio de origen (ej. un cargo de gestion suelto).
+    /// </summary>
+    public CancellableServiceTable? SourceServiceTable { get; set; }
+
+    /// <summary>
+    /// <c>PublicId</c> del servicio concreto de origen de esta linea. Polimorfico (NO es una FK
+    /// de base de datos: el servicio puede estar en cualquiera de las 6 tablas de
+    /// <see cref="CancellableServiceTable"/>). <c>null</c> si la linea no tiene servicio de
+    /// origen puntual.
+    /// </summary>
+    public Guid? SourceServicePublicId { get; set; }
 }

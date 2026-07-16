@@ -237,6 +237,11 @@ const EXCHANGE_RATE_SOURCE_BNA_VENDEDOR_DIVISA = 6;
 /**
  * Crea un renglón vacío listo para agregar a la tabla de items.
  * isMonotributista=true → alícuota 0% (Factura C no discrimina IVA).
+ *
+ * A propósito NO lleva sourceServiceTable/sourceServicePublicId: es un renglón
+ * cargado a mano por el usuario, sin servicio de origen. Al armar el payload del
+ * POST estos campos directamente no se mandan (ni siquiera en null) para no
+ * confundir "sin origen" con "origen que se perdió".
  */
 function crearItemNuevo(isMonotributista) {
   return {
@@ -250,6 +255,15 @@ function crearItemNuevo(isMonotributista) {
 /**
  * Convierte un InvoiceItemDto del backend al shape local del formulario.
  * Usamos esta función para que la precarga desde suggested-items sea limpia.
+ *
+ * Trazabilidad de origen (2026-07-16): sourceServiceTable + sourceServicePublicId
+ * dicen de qué servicio de la reserva salió este renglón. Son campos INTERNOS —
+ * nunca se muestran en la tabla de renglones — que solo viajan de vuelta al backend
+ * al emitir la factura (ver el armado del payload en handleConfirmarEmision). Sirven
+ * para que, más adelante, al cancelar UN servicio, el sistema pueda decir en qué
+ * factura está sin que el usuario tenga que adivinar. Si el usuario edita la
+ * descripción o el monto de este renglón, el origen se conserva igual (handleItemChange
+ * solo pisa el campo tocado, no reconstruye el objeto).
  */
 function itemBackendALocal(itemDto) {
   return {
@@ -257,6 +271,8 @@ function itemBackendALocal(itemDto) {
     quantity: Number(itemDto.quantity),
     unitPrice: Number(itemDto.unitPrice),
     alicuotaIvaId: Number(itemDto.alicuotaIvaId),
+    sourceServiceTable: itemDto.sourceServiceTable ?? null,
+    sourceServicePublicId: itemDto.sourceServicePublicId ?? null,
   };
 }
 
@@ -695,13 +711,27 @@ export function EmitirFacturaInline({
     try {
       const payload = {
         reservaId: reservaId,
-        items: items.map((item) => ({
-          description: item.description,
-          quantity: Number(item.quantity),
-          unitPrice: Number(item.unitPrice),
-          total: Number(item.quantity) * Number(item.unitPrice),
-          alicuotaIvaId: Number(item.alicuotaIvaId),
-        })),
+        items: items.map((item) => {
+          const itemPayload = {
+            description: item.description,
+            quantity: Number(item.quantity),
+            unitPrice: Number(item.unitPrice),
+            total: Number(item.quantity) * Number(item.unitPrice),
+            alicuotaIvaId: Number(item.alicuotaIvaId),
+          };
+
+          // Trazabilidad de origen (2026-07-16): el backend acepta estos dos campos
+          // opcionales "o los dos o ninguno". Los renglones precargados desde servicios
+          // confirmados (aunque el usuario los haya editado) los traen; los agregados a
+          // mano con "Agregar renglón" no — y en ese caso NO se mandan (ni en null),
+          // para no fabricar un origen que no existe.
+          if (item.sourceServiceTable && item.sourceServicePublicId) {
+            itemPayload.sourceServiceTable = item.sourceServiceTable;
+            itemPayload.sourceServicePublicId = item.sourceServicePublicId;
+          }
+
+          return itemPayload;
+        }),
         tributes: tributes.map((t) => ({
           tributeId: Number(t.tributeId),
           description: t.description,

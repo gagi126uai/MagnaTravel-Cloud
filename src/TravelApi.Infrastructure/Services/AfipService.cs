@@ -740,14 +740,20 @@ public class AfipService : IAfipService
             tributosTotal = Math.Round(tributosTotal, 2);
             total = Math.Round(total, 2);
 
-            invoiceItems = request.Items.Select(i => new InvoiceItem
+            invoiceItems = request.Items.Select(i =>
             {
-                Description = i.Description,
-                Quantity = i.Quantity,
-                UnitPrice = i.UnitPrice,
-                Total = i.Total,
-                AlicuotaIvaId = i.AlicuotaIvaId,
-                ImporteIva = i.Total * GetVatMultiplier(i.AlicuotaIvaId)
+                var (sourceServiceTable, sourceServicePublicId) = ResolveInvoiceItemServiceSource(i);
+                return new InvoiceItem
+                {
+                    Description = i.Description,
+                    Quantity = i.Quantity,
+                    UnitPrice = i.UnitPrice,
+                    Total = i.Total,
+                    AlicuotaIvaId = i.AlicuotaIvaId,
+                    ImporteIva = i.Total * GetVatMultiplier(i.AlicuotaIvaId),
+                    SourceServiceTable = sourceServiceTable,
+                    SourceServicePublicId = sourceServicePublicId
+                };
             }).ToList();
         }
 
@@ -961,6 +967,7 @@ public class AfipService : IAfipService
                     acumuladoRedondeado += importeIvaItem;
                 }
 
+                var (sourceServiceTable, sourceServicePublicId) = ResolveInvoiceItemServiceSource(line);
                 items.Add(new InvoiceItem
                 {
                     Description = line.Description,
@@ -968,7 +975,9 @@ public class AfipService : IAfipService
                     UnitPrice = line.UnitPrice,
                     Total = line.Total,
                     AlicuotaIvaId = line.AlicuotaIvaId,
-                    ImporteIva = importeIvaItem
+                    ImporteIva = importeIvaItem,
+                    SourceServiceTable = sourceServiceTable,
+                    SourceServicePublicId = sourceServicePublicId
                 });
             }
         }
@@ -992,6 +1001,30 @@ public class AfipService : IAfipService
         9 => 0.025m, // 2.5%
         _ => 0m
     };
+
+    /// <summary>
+    /// Tarea 2026-07-16 (trazabilidad linea de factura -&gt; servicio de origen): decide que va a
+    /// <c>InvoiceItem.SourceServiceTable</c>/<c>SourceServicePublicId</c> a partir de lo que mando el
+    /// front en <see cref="InvoiceItemDto"/>.
+    ///
+    /// <para><b>Regla defensiva (el dato es metadata, NO plata)</b>: si viene solo uno de los dos
+    /// campos, o el texto de la tabla no matchea ningun valor de <see cref="CancellableServiceTable"/>,
+    /// devolvemos <c>(null, null)</c> — la linea se graba igual, simplemente sin trazabilidad. Nunca
+    /// se rechaza la factura por esto: perder la sugerencia de "en que factura esta este servicio" es
+    /// un costo aceptable, perder la factura por un campo informativo mal tipeado no lo es.</para>
+    /// </summary>
+    /// <param name="line">La linea del request tal cual la mando el front.</param>
+    /// <returns>El par (tabla, publicId) a persistir, o (null, null) si el dato viene incompleto/invalido.</returns>
+    internal static (CancellableServiceTable? Table, Guid? PublicId) ResolveInvoiceItemServiceSource(InvoiceItemDto line)
+    {
+        if (line.SourceServiceTable == null || line.SourceServicePublicId == null)
+            return (null, null);
+
+        if (!Enum.TryParse<CancellableServiceTable>(line.SourceServiceTable, ignoreCase: true, out var table))
+            return (null, null);
+
+        return (table, line.SourceServicePublicId);
+    }
 
     /// <summary>
     /// FC1.3.F2.5 (multimoneda) — fuente UNICA del fragmento SOAP &lt;MonId&gt;/&lt;MonCotiz&gt; que
