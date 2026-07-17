@@ -182,17 +182,40 @@ export const cancellationsApi = {
   /**
    * ADR-044 T5: confirma la emision fiscal de la devolucion parcial ya congelada.
    * Es idempotente del lado del backend y devuelve el BookingCancellation actualizado.
+   *
+   * Spec UX 2026-07-17 (T5 "resolver devoluciones VIEJAS"): `payload` es OPCIONAL. Sin el, se
+   * mantiene el comportamiento de siempre (emite la unica factura pendiente, caso normal 2026-07-15
+   * intacto). Con `{ targetInvoicePublicId }` (una fila puntual de la lista de devoluciones viejas),
+   * le dice al backend CUAL de las varias facturas resueltas hay que emitir ahora — cada fila se
+   * emite por separado, nunca todas juntas (regla dura: una NC es de una sola moneda).
+   *
+   * @param {string} publicId - GUID del BookingCancellation.
+   * @param {{targetInvoicePublicId: string}} [payload] - EmitPartialCreditNoteRequest.
+   * @returns {Promise<BookingCancellationDto>}
    */
-  emitPartialCreditNote: (publicId) =>
-    api.post(`/cancellations/${publicId}/emit-partial-credit-note`),
+  emitPartialCreditNote: (publicId, payload) =>
+    api.post(`/cancellations/${publicId}/emit-partial-credit-note`, payload),
 
-  /** T5 legacy: fija factura y monto de una única devolución parcial ambigua, sin emitirla. */
-  resolvePartialCreditNote: (publicId, targetInvoicePublicId, confirmedGrossCreditAmount, reason) =>
-    api.patch(`/cancellations/${publicId}/resolve-partial-credit-note`, {
-      targetInvoicePublicId,
-      confirmedGrossCreditAmount,
-      reason,
-    }),
+  /**
+   * T5 "resolver devoluciones VIEJAS" (spec UX 2026-07-17): fija factura y monto de UN servicio
+   * cancelado pendiente (un renglon de `partialCreditNoteEmission.lines[]`), sin emitirlo todavia.
+   * No emite; solo deja esa fila lista para que el boton "Emitir la devolución" de esa fila dispare
+   * `emitPartialCreditNote`.
+   *
+   * `bookingCancellationLinePublicId` SIEMPRE se manda: con varios servicios pendientes al mismo
+   * tiempo (el caso real de Gaston: hotel en dolares + excursion en pesos, mismo operador), el
+   * backend necesita saber CUAL renglon se esta resolviendo para no tocar los demas.
+   *
+   * @param {string} publicId - GUID del BookingCancellation.
+   * @param {object} payload - ResolvePartialCreditNoteRequest.
+   *   - targetInvoicePublicId: string GUID de la factura elegida (misma moneda que la linea).
+   *   - confirmedGrossCreditAmount: number (>0), monto bruto de la devolucion.
+   *   - reason: string (10..500 chars), por que corresponde esta factura y este monto.
+   *   - bookingCancellationLinePublicId: string GUID del renglon que se esta resolviendo.
+   * @returns {Promise<BookingCancellationDto>}
+   */
+  resolvePartialCreditNote: (publicId, payload) =>
+    api.patch(`/cancellations/${publicId}/resolve-partial-credit-note`, payload),
 
   /** Envía la NC T5 ya aprobada; documento y destinatario se derivan en el backend. */
   sendPartialCreditNote: (publicId) =>

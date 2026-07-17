@@ -4,6 +4,7 @@ import ConfirmModal from "../../../components/ConfirmModal";
 import { api } from "../../../api";
 import { showError, showSuccess } from "../../../alerts";
 import { cancellationsApi } from "../api/cancellationsApi";
+import { T5ResolverLegacyList } from "./T5ResolverLegacyList";
 import {
   T5_STATE,
   getActiveSaleInvoices,
@@ -30,10 +31,6 @@ export function PartialCreditNoteEmissionPanel({ reserva, canEmit, onChanged }) 
   const [sending, setSending] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const activeSaleInvoices = useMemo(() => getActiveSaleInvoices(reserva?.invoices), [reserva?.invoices]);
-  const [resolveInvoiceId, setResolveInvoiceId] = useState("");
-  const [resolveAmount, setResolveAmount] = useState("");
-  const [resolveReason, setResolveReason] = useState("");
-  const [resolving, setResolving] = useState(false);
 
   const refresh = useCallback(async ({ silent = false } = {}) => {
     if (!reservaPublicId) return;
@@ -53,10 +50,6 @@ export function PartialCreditNoteEmissionPanel({ reserva, canEmit, onChanged }) 
     setDismissed(false);
     refresh();
   }, [refresh]);
-
-  useEffect(() => {
-    if (activeSaleInvoices.length === 1) setResolveInvoiceId(activeSaleInvoices[0].publicId);
-  }, [activeSaleInvoices]);
 
   const state = resolvePartialCreditNoteEmissionState(cancellation);
   const summary = cancellation?.partialCreditNoteEmission;
@@ -82,28 +75,6 @@ export function PartialCreditNoteEmissionPanel({ reserva, canEmit, onChanged }) 
       await refresh({ silent: true });
     } finally {
       setSubmitting(false);
-    }
-  };
-
-  const resolveLegacy = async () => {
-    const amount = Number(resolveAmount);
-    if (!resolveInvoiceId || amount <= 0 || resolveReason.trim().length < 10) return;
-    setResolving(true);
-    setGuardMessage("");
-    try {
-      const updated = await cancellationsApi.resolvePartialCreditNote(
-        cancellation.publicId,
-        resolveInvoiceId,
-        amount,
-        resolveReason.trim()
-      );
-      setCancellation(updated);
-      showSuccess("Devolución resuelta. Ya podés confirmar la emisión.");
-    } catch (error) {
-      setGuardMessage(t5ErrorMessage(error));
-      await refresh({ silent: true });
-    } finally {
-      setResolving(false);
     }
   };
 
@@ -166,12 +137,25 @@ export function PartialCreditNoteEmissionPanel({ reserva, canEmit, onChanged }) 
           ) : state === T5_STATE.FAILED ? (
             <p className="text-sm text-rose-800 dark:text-rose-200">ARCA rechazó la devolución. {creditNote?.arcaErrorMessage || "Revisá los datos e intentá nuevamente."}</p>
           ) : state === T5_STATE.BLOCKED ? (
-            <p className="text-sm text-amber-800 dark:text-amber-200">{summary?.requiresAccountantSignoffForRi ? "La devolución necesita la firma de un contador antes de emitirse." : "Falta elegir o validar la factura correspondiente. Volvé a cancelar el servicio seleccionando una factura, o pedí revisión de este caso anterior."}</p>
+            // Con la lista de renglones (spec 2026-07-17), el mensaje genérico de "trabado" solo hace
+            // falta cuando el bloqueo NO es "hay que resolver factura/monto de servicios viejos" — es
+            // decir, cuando falta la firma del contador (RI) o cuando por algún motivo el backend no
+            // mandó ningún renglón (defensivo: no debería pasar, pero mejor avisar que quedar en blanco).
+            summary?.requiresAccountantSignoffForRi ? (
+              <p className="text-sm text-amber-800 dark:text-amber-200">La devolución necesita la firma de un contador antes de emitirse.</p>
+            ) : !(summary?.lines?.length > 0) ? (
+              <p className="text-sm text-amber-800 dark:text-amber-200">Falta elegir o validar la factura correspondiente. Volvé a cancelar el servicio seleccionando una factura, o pedí revisión de este caso anterior.</p>
+            ) : null
           ) : (
             <p className="text-sm text-slate-700 dark:text-slate-300">Falta confirmar y emitir la devolución.</p>
           )}
 
-          {state !== T5_STATE.SUCCEEDED && (
+          {/* El resumen "Monto / Factura / Saldo antes / TC" es de UNA sola factura destino (campos
+              legacy del backend, mantenidos por compatibilidad). Con la lista de renglones nueva
+              (2+ servicios, potencialmente en monedas distintas) NO se muestra acá: cada fila de la
+              lista ya lleva su propia factura y su propio monto — mezclarlos en un resumen único
+              violaría la regla dura "pesos y dólares nunca se suman" (2026-06-09). */}
+          {state !== T5_STATE.SUCCEEDED && !(state === T5_STATE.BLOCKED && summary?.lines?.length > 0) && (
             <div className="grid gap-x-8 gap-y-1 text-sm sm:grid-cols-2">
               <p><span className="text-slate-500">Monto:</span> <strong>{money(summary?.amountToCredit, summary?.targetInvoiceCurrency)}</strong></p>
               <p><span className="text-slate-500">Factura:</span> <strong>{summary?.targetInvoiceLabel || "Pendiente de resolver"}</strong></p>
@@ -182,28 +166,15 @@ export function PartialCreditNoteEmissionPanel({ reserva, canEmit, onChanged }) 
 
           {state !== T5_STATE.SUCCEEDED && <p className="flex items-center gap-1 text-xs text-slate-500"><Clock3 className="h-3.5 w-3.5" />{deadlineText}</p>}
           {guardMessage && <p role="alert" data-testid="t5-guard-message" className="text-sm font-semibold text-rose-700 dark:text-rose-300">{guardMessage}</p>}
-          {state === T5_STATE.BLOCKED && canEmit && !summary?.requiresAccountantSignoffForRi && activeSaleInvoices.length > 0 && (
-            <div className="mt-3 grid gap-3 rounded-xl border border-amber-200 bg-white/70 p-3 sm:grid-cols-2 dark:border-amber-800 dark:bg-slate-900/60" data-testid="t5-resolver-legacy">
-              <label className="text-xs font-bold text-slate-600 dark:text-slate-300">
-                Factura destino
-                <select value={resolveInvoiceId} onChange={(e) => setResolveInvoiceId(e.target.value)} className="mt-1 w-full rounded-lg border px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800">
-                  <option value="">Elegí una factura</option>
-                  {activeSaleInvoices.map((invoice) => <option key={invoice.publicId} value={invoice.publicId}>{invoice.label}</option>)}
-                </select>
-              </label>
-              <label className="text-xs font-bold text-slate-600 dark:text-slate-300">
-                Monto bruto
-                <input type="number" min="0.01" step="0.01" value={resolveAmount} onChange={(e) => setResolveAmount(e.target.value)} className="mt-1 w-full rounded-lg border px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
-              </label>
-              <label className="text-xs font-bold text-slate-600 dark:text-slate-300 sm:col-span-2">
-                Motivo de la resolución
-                <textarea value={resolveReason} onChange={(e) => setResolveReason(e.target.value)} rows={2} maxLength={500} placeholder="Explicá por qué corresponde esta factura y este monto" className="mt-1 w-full rounded-lg border px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-800" />
-                <span className="mt-1 block font-normal text-slate-500">Mínimo 10 caracteres.</span>
-              </label>
-              <button type="button" onClick={resolveLegacy} disabled={resolving || !resolveInvoiceId || Number(resolveAmount) <= 0 || resolveReason.trim().length < 10} className="self-end rounded-lg bg-amber-600 px-4 py-2 text-sm font-black text-white disabled:opacity-50 sm:col-span-2">
-                {resolving ? "Guardando..." : "Guardar y seguir"}
-              </button>
-            </div>
+          {state === T5_STATE.BLOCKED && !summary?.requiresAccountantSignoffForRi && summary?.lines?.length > 0 && (
+            <T5ResolverLegacyList
+              cancellationPublicId={cancellation.publicId}
+              lines={summary.lines}
+              activeSaleInvoices={activeSaleInvoices}
+              canEmit={canEmit}
+              refresh={refresh}
+              onChanged={onChanged}
+            />
           )}
         </div>
 

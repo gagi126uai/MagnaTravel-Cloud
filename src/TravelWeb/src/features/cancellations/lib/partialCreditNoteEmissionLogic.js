@@ -4,6 +4,7 @@
 // exactamente igual (ej. "$ 125.000,50" en ARS, "US$500,00" en USD) — evita que un
 // cambio de formato en un lugar se desalinee del otro con el tiempo.
 import { formatCurrency } from "../../../lib/utils.js";
+import { getApiErrorMessage } from "../../../lib/errors.js";
 
 export const T5_STATE = Object.freeze({
   EMPTY: "empty",
@@ -17,6 +18,18 @@ export const T5_STATE = Object.freeze({
 export function resolvePartialCreditNoteEmissionState(cancellation) {
   const summary = cancellation?.partialCreditNoteEmission;
   if (!summary) return T5_STATE.EMPTY;
+
+  // Spec UX 2026-07-17 (T5 "resolver devoluciones VIEJAS"): con la lista de renglones (`Lines`),
+  // el panel entero se queda mostrando la LISTA (BLOCKED) mientras falte resolver o emitir
+  // CUALQUIER fila — sin importar el estado de la última nota de crédito del array plano de abajo,
+  // que podría ser la de OTRA fila que ya terminó. Recién cuando TODAS las filas quedaron con su
+  // nota de crédito emitida, el estado sigue el camino de siempre (mira la última NC del array).
+  // Con 0 o 1 renglón (DTO legacy sin `Lines`, o compatibilidad hacia atrás) no aplica este atajo:
+  // se sigue exactamente el comportamiento de siempre, para no romper el caso normal ya aprobado.
+  const lines = Array.isArray(summary.lines) ? summary.lines : [];
+  if (lines.length >= 2 && lines.some((line) => line.creditNoteStatus !== "Succeeded")) {
+    return T5_STATE.BLOCKED;
+  }
 
   const notes = Array.isArray(cancellation?.creditNotes) ? cancellation.creditNotes : [];
   const latest = notes.at(-1);
@@ -48,7 +61,19 @@ export function t5ErrorMessage(error) {
     return "Falta elegir o validar la factura correspondiente antes de emitir.";
   }
   if (error?.status === 403) return "No tenés permiso para emitir esta devolución.";
-  return error?.payload?.message ?? error?.message ?? "No se pudo emitir la devolución. Intentá de nuevo.";
+  // Resto de invariantes T5 (ej. INV-T5-EMIT-SIBLING-UNRESOLVED "todavía hay servicios sin
+  // resolver...", INV-T5-ABORT-ALREADY-EMITTED): el backend ya manda un texto limpio en criollo
+  // en el body (BusinessInvariantViolationException, sin jerga ni IDs) — no hace falta mapear cada
+  // código acá, alcanza con mostrarlo tal cual.
+  //
+  // Retoque post-review (2026-07-17): solo mostramos un mensaje "libre" cuando viene del BODY real
+  // del servidor (`error.payload`, el JSON que arma parseErrorResponse en api.js). Sin `payload`
+  // (falla de red pura, timeout, error crudo de la librería HTTP) nunca leemos `error.message`
+  // directo — antes sí, y ese campo puede traer texto técnico en inglés sin traducir (ej. un
+  // statusText que ni siquiera esté en la lista de genéricos conocidos de lib/errors.js). Mejor
+  // pecar de cauto en el fallback y mostrar SIEMPRE el genérico en criollo en ese caso.
+  const backendMessage = error?.payload ? getApiErrorMessage(error, "") : "";
+  return backendMessage || "No se pudo emitir la devolución. Intentá de nuevo.";
 }
 
 export function getActiveSaleInvoices(invoices) {

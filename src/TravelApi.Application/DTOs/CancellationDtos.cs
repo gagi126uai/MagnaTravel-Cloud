@@ -233,6 +233,69 @@ public class PartialCreditNoteEmissionSummaryDto
     /// Monotributo (la condicion de la agencia hoy) esto siempre es false.
     /// </summary>
     public bool RequiresAccountantSignoffForRi { get; set; }
+
+    /// <summary>
+    /// Spec UX 2026-07-17 (T5 "resolver devoluciones VIEJAS"): una fila por CADA servicio cancelado con
+    /// devolucion Partial pendiente de este BC (resuelto o no). Reemplaza la vista "un solo pendiente" de los
+    /// campos de arriba (<see cref="TargetInvoicePublicId"/> etc., que siguen existiendo por compatibilidad)
+    /// por la lista completa que necesita el panel nuevo: nombre del servicio, operador, moneda y el monto
+    /// sugerido para precargar el casillero — todo resuelto server-side, cero internos (PublicId como handle).
+    /// </summary>
+    public List<PartialCreditNoteEmissionLineDto> Lines { get; set; } = new();
+}
+
+/// <summary>
+/// Spec UX 2026-07-17: una fila de la lista "Faltan resolver N devoluciones de servicios cancelados". Un
+/// <see cref="BookingCancellationLine"/> Partial de este BC, con lo que el front necesita para pintar la fila
+/// (resuelta o no) sin adivinar nada ni resolver nombres/monedas por su cuenta.
+/// </summary>
+public class PartialCreditNoteEmissionLineDto
+{
+    /// <summary>Handle publico del renglon (nunca el id interno). Se manda de vuelta al resolver esta fila.</summary>
+    public Guid LinePublicId { get; set; }
+
+    /// <summary>Nombre real del servicio cancelado (ej. "Hotel Maitei (Posadas)"), resuelto server-side.</summary>
+    public string ServiceName { get; set; } = string.Empty;
+
+    /// <summary>Nombre comercial del operador de este servicio.</summary>
+    public string SupplierName { get; set; } = string.Empty;
+
+    /// <summary>Moneda de ESTE servicio (ISO ARS/USD). La factura elegida para resolverlo debe ser de la misma.</summary>
+    public string Currency { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Precio de venta del servicio, congelado al cancelarlo. Es la sugerencia precargada (editable) del
+    /// casillero "¿Cuánto se le devuelve al cliente?".
+    /// </summary>
+    public decimal SuggestedAmount { get; set; }
+
+    /// <summary>true cuando esta fila ya tiene factura destino y monto confirmados (lista para emitir).</summary>
+    public bool IsResolved { get; set; }
+
+    /// <summary>Factura elegida para esta devolucion. Null mientras no se resolvio.</summary>
+    public Guid? TargetInvoicePublicId { get; set; }
+
+    /// <summary>Numero legible de la factura elegida, ej. "Factura B 0001-00012345". Null mientras no se resolvio.</summary>
+    public string? TargetInvoiceLabel { get; set; }
+
+    /// <summary>Monto bruto confirmado para esta devolucion. Null mientras no se resolvio.</summary>
+    public decimal? ConfirmedGrossCreditAmount { get; set; }
+
+    /// <summary>
+    /// Estado de la Nota de Credito de esta fila: null (todavia no se pidio emitir), "Pending" (emitiendo),
+    /// "Succeeded" (emitida), "Failed" (rechazada por ARCA). Cuando dos filas resuelven a la MISMA factura
+    /// comparten una unica NC (se emiten juntas) y por lo tanto el mismo estado.
+    /// </summary>
+    public string? CreditNoteStatus { get; set; }
+
+    /// <summary>Numero de la NC ya emitida (ej. "0003-00000123"). Null mientras no tiene CAE.</summary>
+    public string? CreditNoteNumeroComprobante { get; set; }
+
+    /// <summary>Motivo de AFIP cuando la NC de esta fila fue rechazada. Null si no fallo. Sin jerga tecnica.</summary>
+    public string? CreditNoteArcaErrorMessage { get; set; }
+
+    /// <summary>Id publico de la NC (para pedir su PDF / enviarla al cliente). Null mientras no tiene CAE.</summary>
+    public Guid? CreditNoteInvoicePublicId { get; set; }
 }
 
 /// <summary>
@@ -391,7 +454,8 @@ public record CancelServiceResultDto(
 );
 
 /// <summary>
-/// T5 legacy: completa factura destino y monto congelado de una única línea parcial que quedó ambigua.
+/// T5 legacy: completa factura destino y monto congelado de una línea parcial que quedó ambigua (una
+/// devolución "vieja" de un servicio cancelado ANTES de que el sistema supiera a qué factura correspondía).
 /// No emite; deja el evento listo para la confirmación fiscal explícita.
 /// </summary>
 public record ResolvePartialCreditNoteRequest(
@@ -399,7 +463,28 @@ public record ResolvePartialCreditNoteRequest(
     [Range(typeof(decimal), "0.01", "999999999999.99")]
     decimal ConfirmedGrossCreditAmount,
     [Required, MinLength(10), MaxLength(500)]
-    string Reason
+    string Reason,
+
+    /// <summary>
+    /// Spec UX 2026-07-17 (T5 "resolver devoluciones VIEJAS"): CUÁL renglón (servicio cancelado) se está
+    /// resolviendo, cuando la cancelación tiene VARIOS servicios pendientes al mismo tiempo (el caso real de
+    /// Gastón: hotel en dólares + excursión en pesos, mismo operador). Es el <c>PublicId</c> del
+    /// <c>BookingCancellationLine</c> — nunca un id interno.
+    ///
+    /// <para><b>Compatibilidad hacia atrás</b>: <c>null</c> (formulario viejo, un solo pendiente) sigue
+    /// funcionando SOLO si hay exactamente UN renglón pendiente de resolver. Si hay dos o más y no se indica
+    /// cuál, el servidor rechaza con un mensaje claro pidiendo que se especifique.</para>
+    /// </summary>
+    Guid? BookingCancellationLinePublicId = null
+);
+
+/// <summary>
+/// Spec UX 2026-07-17 (T5): cuál devolución resuelta se está emitiendo, cuando la cancelación tiene varios
+/// servicios pendientes que resuelven a facturas DISTINTAS. Sin body (o <c>TargetInvoicePublicId=null</c>): se
+/// mantiene el comportamiento de siempre (si hay una sola factura pendiente de emitir, se emite esa).
+/// </summary>
+public record EmitPartialCreditNoteRequest(
+    Guid? TargetInvoicePublicId = null
 );
 
 /// <summary>

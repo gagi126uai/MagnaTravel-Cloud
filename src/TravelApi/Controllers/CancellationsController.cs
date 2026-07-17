@@ -605,31 +605,37 @@ public class CancellationsController : ControllerBase
     /// y la bandeja "Comprobantes por resolver" (diseño §11: emision fiscal real contra ARCA es una accion
     /// sensible, no <c>ReservasCancel</c>). + ownership de la reserva.</para>
     ///
-    /// <para><b>Sin body</b>: a diferencia de <c>Confirm</c> (anulacion total), esta pantalla es de SOLO
-    /// LECTURA sobre el monto/moneda/TC (criterio matriculado + regla dura multimoneda): no hay nada que el
-    /// usuario tipee. La moneda/TC se heredan server-side de la factura destino; las condiciones fiscales se
-    /// leen del dato VIVO al momento de emitir (spec UX P3=A: "sin motivo nuevo, registro automático").</para>
+    /// <para><b>Body opcional</b> (<see cref="EmitPartialCreditNoteRequest"/>): a diferencia de <c>Confirm</c>
+    /// (anulacion total), esta pantalla es de SOLO LECTURA sobre el monto/moneda/TC (criterio matriculado +
+    /// regla dura multimoneda): no hay ningun dato de plata que el usuario tipee. La moneda/TC se heredan
+    /// server-side de la factura destino; las condiciones fiscales se leen del dato VIVO al momento de emitir
+    /// (spec UX P3=A: "sin motivo nuevo, registro automático"). Lo UNICO que el body puede traer es
+    /// <c>TargetInvoicePublicId</c> — spec UX 2026-07-17: cuando la cancelación tiene VARIOS servicios
+    /// resueltos contra facturas DISTINTAS (el caso real de Gastón: hotel USD + excursión ARS), cada
+    /// devolución se emite por separado y el botón "Emitir la devolución" de esa fila indica cuál factura.
+    /// Sin body (o sin ese campo), se mantiene el comportamiento de siempre.</para>
     ///
     /// <para><b>Mapeo de errores</b>: 404 (BC no existe); 409 <c>INV-T5-EMIT-STATE</c> (ya no está Drafted/
-    /// puramente parcial); 409 <c>INV-T5-EMIT-UNRESOLVED</c> (falta resolver factura o monto); 409
-    /// <c>INV-T5-EMIT-CAP</c> (el saldo de la factura cambió); 409 <c>INV-T5-EMIT-RI-SIGNOFF</c> (agencia RI,
-    /// pendiente firma del contador); 409 <c>INV-T5-EMIT-MULTI-INVOICE</c> (2+ facturas destino, fuera de
-    /// alcance MVP); 409 <c>CONCURRENT_EDIT</c> (xmin); 503 (DB caída). Todas sin jerga/IDs/enums en el body
-    /// (gate data-exposure).</para>
+    /// puramente parcial); 409 <c>INV-T5-EMIT-UNRESOLVED</c> (falta resolver factura o monto, o la factura
+    /// indicada no tiene nada pendiente); 409 <c>INV-T5-EMIT-CAP</c> (el saldo de la factura cambió); 409
+    /// <c>INV-T5-EMIT-RI-SIGNOFF</c> (agencia RI, pendiente firma del contador); 409
+    /// <c>INV-T5-EMIT-MULTI-INVOICE</c> (2+ facturas pendientes y no se indicó cuál); 409
+    /// <c>CONCURRENT_EDIT</c> (xmin); 503 (DB caída). Todas sin jerga/IDs/enums en el body (gate data-exposure).</para>
     /// </summary>
     [HttpPost("{publicId:guid}/emit-partial-credit-note")]
     [RequirePermission(Permissions.CobranzasInvoiceAnnul)]
     [RequireOwnership(OwnedEntity.BookingCancellation, "publicId", bypassPermission: Permissions.ReservasViewAll)]
     public async Task<ActionResult<BookingCancellationDto>> EmitPartialCreditNote(
         Guid publicId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        [FromBody] EmitPartialCreditNoteRequest? request = null)
     {
         var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
         var userName = User.FindFirst("FullName")?.Value ?? User.FindFirst(ClaimTypes.Name)?.Value;
 
         try
         {
-            var dto = await _bcService.ConfirmPartialCancellationEmissionAsync(publicId, userId, userName, cancellationToken);
+            var dto = await _bcService.ConfirmPartialCancellationEmissionAsync(publicId, userId, userName, cancellationToken, request);
             return Ok(dto);
         }
         catch (KeyNotFoundException)
@@ -658,8 +664,13 @@ public class CancellationsController : ControllerBase
     }
 
     /// <summary>
-    /// T5 legacy: elige la factura y confirma el monto de una cancelación parcial ambigua.
-    /// No emite la NC; únicamente deja el snapshot de la línea listo para la doble confirmación.
+    /// T5 legacy: elige la factura y confirma el monto de un servicio cancelado (una devolución vieja
+    /// pendiente). No emite la NC; únicamente deja esa línea lista para la confirmación de emisión.
+    ///
+    /// <para><b>Spec UX 2026-07-17 (varios pendientes)</b>: con VARIOS servicios pendientes al mismo tiempo
+    /// (el caso real de Gastón: hotel USD + excursión ARS), <c>request.BookingCancellationLinePublicId</c>
+    /// indica cuál se está resolviendo — el resto queda intacto. Con uno solo pendiente, se puede omitir
+    /// (compatibilidad con el formulario viejo).</para>
     /// </summary>
     [HttpPatch("{publicId:guid}/resolve-partial-credit-note")]
     [RequirePermission(Permissions.CobranzasInvoiceAnnul)]

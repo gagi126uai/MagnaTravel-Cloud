@@ -89,6 +89,35 @@ exposición de datos y seguridad según correspondiera) y deploy con CI verde.
   del chip de servicios.
 - Los mensajes "retry loop exhausted" viejos de FC4 (código muerto preexistente).
 
+## Segunda parte del día: las pruebas de Gaston destaparon 2 obras más (deploys 6 y 7)
+
+Gaston arrancó el checklist de pruebas y aparecieron dos problemas:
+
+1. **La 1046 no se podía resolver** ("Solo se puede resolver una devolución parcial
+   pendiente de un único servicio") y la pantalla era confusa ("no se entiende
+   nada" — feedback textual). Diagnóstico contra PROD: su trámite tenía DOS
+   servicios pendientes (USD 700 y ARS 720.000) y el resolver de la obra de ayer
+   solo soportaba UNO. → Obra completa con spec UX firmada (5 decisiones, todas
+   la recomendada): lista de devoluciones pendientes con "Resolver" por fila,
+   formulario con contexto (qué servicio, facturas filtradas por moneda, monto
+   sugerido, motivo explicado). Backend: resolver/emitir DE A UNA (cada factura
+   su NC), + FIX CRÍTICO descubierto en el camino: el reconciliador dejaba
+   huérfana a la segunda devolución al emitir la primera. + Candado nuevo
+   (decisión de Gaston): un trámite con una NC ya emitida no se puede anular
+   entero. + Guard del borde misma-factura. 4 reviews verdes.
+2. **Fechas corridas un día** (ponía 23/05 y veía 22/05): clásico error de zona
+   horaria (medianoche UTC mostrada en hora argentina retrocede un día). El dato
+   guardado siempre estuvo bien; fallaba el mostrar y el pre-cargar (¡editar
+   fechas sin tocar nada retrocedía la fecha de verdad!). Arreglado con el patrón
+   canónico del repo (leer el día del texto, sin conversión de zona) en la
+   función central + 8 pantallas, incluidas 3 de plata que importaban una copia.
+   Anotado para backend: 3 formularios siguen mandando el formato viejo porque
+   sus endpoints no normalizan (cambiarlos hoy daba error 500) — preparar el
+   backend y unificar.
+
+Obras futuras que dejaron anotadas los revisores: "Enviar al cliente" con más de
+una NC por anulación; foco/estados menores; los 3 endpoints sin normalizar fechas.
+
 ## Cómo probar a mano (para Gaston)
 
 1. Intentá borrar un servicio anulado → te frena con explicación.

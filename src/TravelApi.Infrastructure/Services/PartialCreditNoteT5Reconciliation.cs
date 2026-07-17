@@ -225,14 +225,50 @@ public static class PartialCreditNoteT5Reconciliation
             }
         }
 
+        // Spec UX 2026-07-17 (T5 varios pendientes): esta cancelacion puede tener OTROS servicios (otras
+        // lineas Partial) todavia sin su devolucion emitida — el caso real de Gastón (hotel USD + excursion
+        // ARS, cada uno con su propia NC). Si avanzaramos el BC a AwaitingOperatorRefund apenas se emite UNA
+        // de ellas, el guard de resolver/emitir (que exige bc.Status == Drafted) dejaria a las demas lineas
+        // HUERFANAS PARA SIEMPRE (AwaitingOperatorRefund nunca vuelve a Drafted por si solo). Por eso: solo
+        // avanzamos cuando NO queda ninguna otra linea pendiente (sin resolver, o resuelta pero sin su NC
+        // Succeeded todavia). Mientras quede alguna, el BC se queda en Drafted para que el resto se pueda
+        // seguir resolviendo/emitiendo, cada uno por separado.
+        var allPartialLineTargets = await db.BookingCancellationLines
+            .AsNoTracking()
+            .Where(l => l.BookingCancellationId == bookingCancellationId
+                     && l.Scope == BookingCancellationLineScope.Partial)
+            .Select(l => l.TargetInvoiceId)
+            .ToListAsync(ct);
+
+        var succeededInvoiceIdsSoFar = (await db.BookingCancellationCreditNotes
+            .AsNoTracking()
+            .Where(c => c.BookingCancellationId == bookingCancellationId
+                     && c.Status == BookingCancellationCreditNoteStatus.Succeeded)
+            .Select(c => c.OriginatingInvoiceId)
+            .ToListAsync(ct))
+            .ToHashSet();
+        // La hija de ESTA reconciliacion todavia no esta guardada (recien se marco Succeeded arriba, en
+        // memoria): la sumamos a mano para que la cuenta de "que falta" ya la contemple.
+        succeededInvoiceIdsSoFar.Add(child.OriginatingInvoiceId);
+
+        bool everyPartialLineHasItsCreditNoteIssued = allPartialLineTargets.All(targetInvoiceId =>
+            targetInvoiceId.HasValue && succeededInvoiceIdsSoFar.Contains(targetInvoiceId.Value));
+
         // Avanzar el BC T5 por SU circuito: el receivable del operador de ESTE servicio (nunca la reserva
         // entera). AwaitingOperatorRefund es el mismo estado que ya sabe cerrarse solo, sin reembolso
         // pendiente, via el barrido nocturno (BookingCancellationService.CloseZeroReceivableCancellationsAsync)
         // — no hace falta duplicar esa logica aca. NUNCA OnArcaSucceededAsync, NUNCA ND automatica, NUNCA
         // marcar la reserva cancelada (B1).
-        bc.Status = BookingCancellationStatus.AwaitingOperatorRefund;
+        if (everyPartialLineHasItsCreditNoteIssued)
+        {
+            bc.Status = BookingCancellationStatus.AwaitingOperatorRefund;
+            bc.OperatorRefundDueBy ??= await ResolveOperatorRefundDueByAsync(db, ct);
+        }
+        else
+        {
+            bc.Status = BookingCancellationStatus.Drafted;
+        }
         bc.ArcaErrorMessage = null;
-        bc.OperatorRefundDueBy ??= await ResolveOperatorRefundDueByAsync(db, ct);
 
         StageAudit(db, auditService, bc, child, resolvedInvoice, succeeded: true, remainingAfterThisNc, logger);
 

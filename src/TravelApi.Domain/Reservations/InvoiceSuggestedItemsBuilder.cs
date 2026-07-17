@@ -209,8 +209,14 @@ public static class InvoiceSuggestedItemsBuilder
     // Cada descripcion arma un texto corto que el operador reconoce en la factura. Si los campos
     // ricos estan vacios (dato viejo o incompleto), caemos a una etiqueta generica del tipo para
     // no emitir una linea con descripcion vacia (ARCA exige descripcion no vacia por item).
+    //
+    // PUBLIC (T5, 2026-07-17): ademas de armar la sugerencia de factura, estas mismas funciones
+    // resuelven el "nombre real del servicio" que necesita la pantalla de resolver devoluciones
+    // VIEJAS (BookingCancellationService.ResolvePendingLineServiceNamesAsync). Son funciones PURAS
+    // (entidad adentro, texto afuera): reusarlas evita tener DOS lugares que arman el mismo nombre
+    // y que con el tiempo terminen diciendo cosas distintas para el mismo servicio.
 
-    private static string DescribeFlight(FlightSegment flight)
+    public static string DescribeFlight(FlightSegment flight)
     {
         // Preferimos el nombre de producto cargado; si no, armamos "Aereo MIA-EZE" con los IATA.
         if (!string.IsNullOrWhiteSpace(flight.ProductName))
@@ -224,7 +230,7 @@ public static class InvoiceSuggestedItemsBuilder
         return "Aereo";
     }
 
-    private static string DescribeHotel(HotelBooking hotel)
+    public static string DescribeHotel(HotelBooking hotel)
     {
         string name = FirstNonEmpty(hotel.HotelName, hotel.City);
         if (name.Length == 0)
@@ -237,7 +243,7 @@ public static class InvoiceSuggestedItemsBuilder
         return $"Hotel {name}";
     }
 
-    private static string DescribeTransfer(TransferBooking transfer)
+    public static string DescribeTransfer(TransferBooking transfer)
     {
         if (!string.IsNullOrWhiteSpace(transfer.ProductName))
             return transfer.ProductName!.Trim();
@@ -250,7 +256,7 @@ public static class InvoiceSuggestedItemsBuilder
         return "Traslado";
     }
 
-    private static string DescribePackage(PackageBooking package)
+    public static string DescribePackage(PackageBooking package)
     {
         string name = FirstNonEmpty(package.PackageName);
         if (name.Length == 0)
@@ -263,7 +269,7 @@ public static class InvoiceSuggestedItemsBuilder
         return $"Paquete {name}";
     }
 
-    private static string DescribeAssistance(AssistanceBooking assistance)
+    public static string DescribeAssistance(AssistanceBooking assistance)
     {
         string plan = FirstNonEmpty(assistance.PlanType);
         if (plan.Length > 0)
@@ -272,7 +278,7 @@ public static class InvoiceSuggestedItemsBuilder
         return "Asistencia al viajero";
     }
 
-    private static string DescribeGeneric(ServicioReserva service)
+    public static string DescribeGeneric(ServicioReserva service)
     {
         // El servicio generico tiene una Description cargada por el operador; es lo mas fiel.
         if (!string.IsNullOrWhiteSpace(service.Description))

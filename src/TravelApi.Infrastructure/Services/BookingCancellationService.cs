@@ -2604,15 +2604,13 @@ public class BookingCancellationService
     /// remanente fresco antes de emitir (mismo <see cref="RunUnderInvoiceLockAsync{T}"/> que usa el cap de
     /// <see cref="CancelServiceAsync"/> y el camino legacy — TODOS comparten el MISMO remanente, sin flags).
     ///
-    /// <para><b>DEVIATION del diseño, documentada</b>: el diseño describe la emision "por cada factura destino
-    /// distinta involucrada — normalmente una". Esta implementacion soporta EXACTAMENTE una: si las lineas
-    /// Partial pendientes de este BC resolvieron a 2+ facturas distintas (un BC que acumulo cancelaciones de
-    /// servicios de la MISMA reserva contra facturas DIFERENTES antes de la primera emision — caso raro),
-    /// rebota <c>INV-T5-EMIT-MULTI-INVOICE</c> pidiendo resolucion manual. Motivo: <c>BuildPartialCreditNoteLines</c>
-    /// legacy lee <c>bc.FiscalLiquidation</c> (un VO por BC, no por factura); soportar N facturas de verdad
-    /// exigiria una liquidacion por factura y un manejo de <see cref="BookingCancellationStatus"/> compartido
-    /// entre N emisiones en vuelo — fuera del alcance de esta tanda. Ver §9 del diseño: ningun test obligatorio
-    /// ejercita el caso multi-factura-en-un-solo-BC (T-B2 es "2 BCs sobre la MISMA factura", lo opuesto).</para>
+    /// <para><b>Spec UX 2026-07-17 (T5 "resolver devoluciones VIEJAS")</b>: el caso real de Gastón (BC con DOS
+    /// servicios cancelados pendientes — hotel en dólares y excursión en pesos, mismo operador) destapó que el
+    /// viejo guard <c>partialLines.Count != 1</c> bloqueaba resolver UNO de varios. Ahora <see cref="SelectLineToResolve"/>
+    /// elige el renglón exacto (por <c>PublicId</c> si el request lo trae; si no, autodetecta cuando hay
+    /// exactamente uno pendiente — compatibilidad con el formulario viejo). Cada renglón se resuelve y emite
+    /// POR SEPARADO; los demás quedan intactos. El circuito de anulación TOTAL (líneas <c>Full</c> mezcladas)
+    /// sigue fuera de alcance de este paso, igual que antes.</para>
     /// </remarks>
     public async Task<BookingCancellationDto> ResolvePartialCreditNoteAsync(
         Guid publicId,
@@ -2627,18 +2625,23 @@ public class BookingCancellationService
             .FirstOrDefaultAsync(b => b.PublicId == publicId, ct)
             ?? throw new KeyNotFoundException($"Cancelación {publicId} no encontrada.");
 
-        var partialLines = bc.Lines.Where(l => l.Scope == BookingCancellationLineScope.Partial).ToList();
-        if (bc.Status != BookingCancellationStatus.Drafted
-            || partialLines.Count != 1
-            || bc.Lines.Any(l => l.Scope == BookingCancellationLineScope.Full))
+        // El circuito de anulacion TOTAL (lineas Full) es OTRO contrato — este paso de "resolver una
+        // devolucion vieja" sigue fuera de alcance cuando el BC mezcla lineas Full (mismo mensaje historico).
+        if (bc.Lines.Any(l => l.Scope == BookingCancellationLineScope.Full))
             throw new BusinessInvariantViolationException(
                 "Solo se puede resolver una devolución parcial pendiente de un único servicio.",
                 invariantCode: "INV-T5-RESOLVE-STATE");
 
-        if (bc.CreditNotes.Any(c => c.Status is BookingCancellationCreditNoteStatus.Pending or BookingCancellationCreditNoteStatus.Succeeded))
+        var partialLines = bc.Lines.Where(l => l.Scope == BookingCancellationLineScope.Partial).ToList();
+        if (bc.Status != BookingCancellationStatus.Drafted || partialLines.Count == 0)
             throw new BusinessInvariantViolationException(
-                "La devolución ya está emitida o en proceso y no se puede cambiar.",
-                invariantCode: "INV-T5-RESOLVE-FISCAL");
+                "Esta cancelación ya no está lista para resolver la devolución. Actualizá la página.",
+                invariantCode: "INV-T5-RESOLVE-STATE");
+
+        // Spec UX 2026-07-17: con VARIOS servicios pendientes, el request dice CUAL renglon se resuelve. Con
+        // uno solo pendiente, el formulario viejo (sin indicar renglon) lo sigue resolviendo sin fricción.
+        var selectedLine = SelectLineToResolve(bc, partialLines, request.BookingCancellationLinePublicId);
+        var linePublicId = selectedLine.PublicId;
 
         if (request.ConfirmedGrossCreditAmount <= 0m)
             throw new BusinessInvariantViolationException(
@@ -2659,17 +2662,36 @@ public class BookingCancellationService
                 "La factura elegida no está disponible para esta devolución.",
                 invariantCode: "INV-T5-RESOLVE-INVOICE");
 
+        // La factura elegida no puede tener YA una devolucion emitida o en proceso para esta cancelacion: la
+        // hija (BookingCancellationCreditNote) es unica por factura+BC, asi que resolver OTRO renglon contra
+        // una factura que ya tiene su devolucion en vuelo/emitida la pisaria.
+        if (bc.CreditNotes.Any(c => c.OriginatingInvoiceId == invoiceId
+                                 && c.Status is BookingCancellationCreditNoteStatus.Pending or BookingCancellationCreditNoteStatus.Succeeded))
+            throw new BusinessInvariantViolationException(
+                "Esta factura ya tiene una devolución emitida o en proceso para esta cancelación.",
+                invariantCode: "INV-T5-RESOLVE-FISCAL");
+
         await RunUnderInvoiceLockAsync(invoiceId, async () =>
         {
             await _db.Entry(bc).ReloadAsync(ct);
             await _db.Entry(bc).Collection(b => b.Lines).LoadAsync(ct);
             await _db.Entry(bc).Collection(b => b.CreditNotes).LoadAsync(ct);
 
-            var line = bc.Lines.SingleOrDefault(l => l.Scope == BookingCancellationLineScope.Partial);
             if (bc.Status != BookingCancellationStatus.Drafted
-                || line is null
-                || bc.Lines.Count(l => l.Scope == BookingCancellationLineScope.Partial) != 1
-                || bc.CreditNotes.Any(c => c.Status is BookingCancellationCreditNoteStatus.Pending or BookingCancellationCreditNoteStatus.Succeeded))
+                || bc.Lines.Any(l => l.Scope == BookingCancellationLineScope.Full))
+                throw new BusinessInvariantViolationException(
+                    "La devolución cambió mientras la estabas resolviendo. Actualizá la página.",
+                    invariantCode: "INV-T5-RESOLVE-STATE");
+
+            var line = bc.Lines.SingleOrDefault(
+                l => l.PublicId == linePublicId && l.Scope == BookingCancellationLineScope.Partial);
+            if (line is null)
+                throw new BusinessInvariantViolationException(
+                    "La devolución cambió mientras la estabas resolviendo. Actualizá la página.",
+                    invariantCode: "INV-T5-RESOLVE-STATE");
+
+            if (bc.CreditNotes.Any(c => c.OriginatingInvoiceId == invoiceId
+                                     && c.Status is BookingCancellationCreditNoteStatus.Pending or BookingCancellationCreditNoteStatus.Succeeded))
                 throw new BusinessInvariantViolationException(
                     "La devolución cambió mientras la estabas resolviendo. Actualizá la página.",
                     invariantCode: "INV-T5-RESOLVE-STATE");
@@ -2720,6 +2742,7 @@ public class BookingCancellationService
                 JsonSerializer.Serialize(new
                 {
                     reason,
+                    linePublicId = line.PublicId,
                     targetInvoicePublicId = invoice.PublicId,
                     confirmedGrossCreditAmount = request.ConfirmedGrossCreditAmount,
                     lineSaleAmount = line.LineSaleAmount,
@@ -2734,11 +2757,55 @@ public class BookingCancellationService
             ?? throw new InvalidOperationException("No se pudo completar la operación. Volvé a intentar.");
     }
 
+    /// <summary>
+    /// Spec UX 2026-07-17 (T5 varios pendientes): elige CUAL renglón Partial se está resolviendo. Si el
+    /// request trae <c>requestedLinePublicId</c>, usa ESE (validando que pertenezca a este BC y que su
+    /// devolución todavía no esté emitida). Si no lo trae (formulario viejo, compatibilidad hacia atrás),
+    /// autodetecta: con exactamente UN renglón pendiente lo usa sin fricción; con 0 o 2+, rechaza con un
+    /// mensaje claro en vez de adivinar cuál.
+    /// </summary>
+    private static BookingCancellationLine SelectLineToResolve(
+        BookingCancellation bc, List<BookingCancellationLine> partialLines, Guid? requestedLinePublicId)
+    {
+        // "Ya emitida" = su factura destino actual ya tiene una NC Succeeded para este BC. Una linea resuelta
+        // pero TODAVIA sin emitir (o con la NC rechazada) sigue siendo editable — no es "ya emitida".
+        bool IsAlreadyEmitted(BookingCancellationLine candidate) =>
+            candidate.TargetInvoiceId.HasValue
+            && bc.CreditNotes.Any(c => c.OriginatingInvoiceId == candidate.TargetInvoiceId.Value
+                                     && c.Status == BookingCancellationCreditNoteStatus.Succeeded);
+
+        if (requestedLinePublicId.HasValue)
+        {
+            var requested = partialLines.SingleOrDefault(l => l.PublicId == requestedLinePublicId.Value);
+            if (requested is null)
+                throw new BusinessInvariantViolationException(
+                    "El servicio indicado no corresponde a esta cancelación.",
+                    invariantCode: "INV-T5-RESOLVE-LINE");
+            if (IsAlreadyEmitted(requested))
+                throw new BusinessInvariantViolationException(
+                    "La devolución de este servicio ya está emitida y no se puede cambiar.",
+                    invariantCode: "INV-T5-RESOLVE-FISCAL");
+            return requested;
+        }
+
+        var eligible = partialLines.Where(l => !IsAlreadyEmitted(l)).ToList();
+        if (eligible.Count == 0)
+            throw new BusinessInvariantViolationException(
+                "Esta cancelación no tiene devoluciones pendientes de resolver.",
+                invariantCode: "INV-T5-RESOLVE-STATE");
+        if (eligible.Count > 1)
+            throw new BusinessInvariantViolationException(
+                "Esta cancelación tiene varios servicios pendientes de resolver: indicá cuál estás resolviendo.",
+                invariantCode: "INV-T5-RESOLVE-AMBIGUOUS");
+        return eligible[0];
+    }
+
     public async Task<BookingCancellationDto> ConfirmPartialCancellationEmissionAsync(
         Guid publicId,
         string userId,
         string? userName,
-        CancellationToken ct)
+        CancellationToken ct,
+        EmitPartialCreditNoteRequest? request = null)
     {
         // 1) Cargar el BC con lo que hace falta para decidir y para armar la NC.
         var bc = await _db.BookingCancellations
@@ -2760,44 +2827,74 @@ public class BookingCancellationService
                 "Esta cancelación ya no está lista para confirmar la devolución. Actualizá la página.",
                 invariantCode: "INV-T5-EMIT-STATE");
 
-        // 3) Todas las lineas Partial deben tener factura destino + monto resueltos (V3: la captura NUNCA
-        //    inventa un credito cuando la moneda no coincide o el TC es incoherente — queda pendiente de
-        //    resolucion manual EN LA FICHA). Si alguna quedo sin resolver, no se emite a ciegas.
-        if (partialLines.Any(l => l.TargetInvoiceId is null || l.ConfirmedGrossCreditAmount is null))
+        // 3) Spec UX 2026-07-17 (T5 varios pendientes): esta cancelacion puede tener VARIOS servicios, cada
+        //    uno resuelto (o no) contra SU propia factura. Ya NO exigimos que TODAS las lineas Partial esten
+        //    resueltas para emitir: alcanza con que haya AL MENOS UNA linea resuelta cuya devolucion todavia
+        //    no se emitio. Las lineas que sigan sin resolver quedan pendientes para una emision POSTERIOR
+        //    (una NC por factura — nunca se mezclan monedas ni servicios de facturas distintas en una sola NC).
+        var resolvedLines = partialLines
+            .Where(l => l.TargetInvoiceId is not null && l.ConfirmedGrossCreditAmount is not null)
+            .ToList();
+        if (resolvedLines.Count == 0)
             throw new BusinessInvariantViolationException(
                 "Esta cancelación necesita que resuelvas la factura o el monto antes de emitir la devolución.",
                 invariantCode: "INV-T5-EMIT-UNRESOLVED");
 
         // 4) Facturas destino cuya hija TODAVIA no tiene CAE (idempotencia defensiva: si por alguna razon ya
-        //    hay una hija Succeeded para una de las lineas, no la re-procesamos).
+        //    hay una hija Succeeded para una de las lineas resueltas, no la re-procesamos).
         var succeededInvoiceIds = bc.CreditNotes
             .Where(c => c.Status == BookingCancellationCreditNoteStatus.Succeeded)
             .Select(c => c.OriginatingInvoiceId)
             .ToHashSet();
-        var targetInvoiceIds = partialLines
+        var pendingTargetInvoiceIds = resolvedLines
             .Select(l => l.TargetInvoiceId!.Value)
             .Where(id => !succeededInvoiceIds.Contains(id))
             .Distinct()
             .ToList();
 
-        if (targetInvoiceIds.Count == 0)
+        if (pendingTargetInvoiceIds.Count == 0)
             throw new BusinessInvariantViolationException(
                 "Esta devolución ya fue emitida.",
                 invariantCode: "INV-T5-EMIT-ALREADY-DONE");
 
-        // 5) MVP: una sola factura destino por evento de emision (ver DEVIATION documentada arriba).
-        if (targetInvoiceIds.Count > 1)
+        // 5) Cual factura se emite AHORA: si el caller la indica (pantalla nueva, boton "Emitir la devolución"
+        //    de UNA fila puntual), usamos esa — validando que tenga algo pendiente de verdad. Sin indicarla
+        //    (formulario/boton viejo), se mantiene el comportamiento de siempre: si hay una sola factura
+        //    pendiente se emite esa; con 2+ y ninguna indicada, no adivinamos cual.
+        int targetInvoiceId;
+        if (request?.TargetInvoicePublicId is Guid requestedInvoicePublicId)
+        {
+            var requestedInvoiceId = await _db.Invoices.AsNoTracking()
+                .Where(i => i.PublicId == requestedInvoicePublicId)
+                .Select(i => (int?)i.Id)
+                .FirstOrDefaultAsync(ct)
+                ?? throw new BusinessInvariantViolationException(
+                    "La factura elegida no está disponible para esta devolución.",
+                    invariantCode: "INV-T5-EMIT-INVOICE");
+            if (!pendingTargetInvoiceIds.Contains(requestedInvoiceId))
+                throw new BusinessInvariantViolationException(
+                    "Esta factura no tiene ninguna devolución pendiente de emitir en esta cancelación.",
+                    invariantCode: "INV-T5-EMIT-UNRESOLVED");
+            targetInvoiceId = requestedInvoiceId;
+        }
+        else if (pendingTargetInvoiceIds.Count == 1)
+        {
+            targetInvoiceId = pendingTargetInvoiceIds[0];
+        }
+        else
+        {
             throw new BusinessInvariantViolationException(
-                "Esta cancelación tiene servicios que corresponden a más de una factura: por ahora hay que " +
-                "resolverlos y emitirlos por separado. Consultá con administración.",
+                "Esta cancelación tiene varias devoluciones pendientes: indicá cuál factura vas a emitir.",
                 invariantCode: "INV-T5-EMIT-MULTI-INVOICE");
-
-        var targetInvoiceId = targetInvoiceIds[0];
+        }
 
         // 6) Bajo el lock de la factura destino (el MISMO candado que toma el cap de CancelServiceAsync y el
         //    camino legacy de anulacion total — fuente unica del remanente, sin flags): re-validar todo con
         //    datos FRESCOS + armar + emitir la NC, todo o nada en una sola transaccion (M2 del review: si el
-        //    proceso muere antes del SaveChanges final, nada de esto persiste — el BC sigue Drafted).
+        //    proceso muere antes del SaveChanges final, nada de esto persiste — el BC sigue Drafted). Cada
+        //    llamada emite UNA factura; el resto de las lineas (de OTRAS facturas) quedan intactas para su
+        //    propia emision posterior — ver <see cref="PartialCreditNoteT5Reconciliation"/>, que deja el BC en
+        //    Drafted (no en AwaitingOperatorRefund) mientras queden lineas sin su devolucion emitida.
         await RunUnderInvoiceLockAsync(
             targetInvoiceId,
             () => EmitOnePartialCreditNoteAsync(bc, targetInvoiceId, userId, userName, ct),
@@ -2857,6 +2954,30 @@ public class BookingCancellationService
                 "La factura de esta devolución ya no está disponible. Consultá con administración.",
                 invariantCode: "INV-T5-EMIT-INVOICE-GONE");
 
+        // Moneda ARCA de la factura destino (se usa dos veces: el guard D1 de abajo y el guard de moneda de
+        // la propia linea, mas abajo — una sola formula, nunca duplicada).
+        var invoiceCurrencyArca = string.IsNullOrWhiteSpace(targetInvoice.MonId)
+            ? "PES"
+            : targetInvoice.MonId.Trim().ToUpperInvariant();
+
+        // Borde D1 (review 2026-07-17, mitigacion liviana): si queda alguna OTRA linea Partial de este MISMO
+        // BC todavia SIN resolver (TargetInvoiceId null) cuya moneda coincide con la de ESTA factura, no
+        // dejamos emitir todavia. Por que: la hija (BookingCancellationCreditNote) es UNICA por factura+BC;
+        // apenas esta NC quede Succeeded, el guard de resolver (INV-T5-RESOLVE-FISCAL) va a rechazar cualquier
+        // intento de resolver esa linea hermana contra la MISMA factura ("ya tiene una devolucion emitida") —
+        // dejandola HUERFANA para siempre, sin ninguna factura donde emitir su devolucion. Pedimos resolver
+        // primero lo que falta de la misma moneda para no llegar a ese callejon sin salida.
+        bool hasUnresolvedSiblingLineSameCurrency = bc.Lines.Any(l =>
+            l.Scope == BookingCancellationLineScope.Partial
+            && l.TargetInvoiceId is null
+            && string.Equals(
+                ArcaCurrencyMapper.TryMap(l.Currency), invoiceCurrencyArca, StringComparison.OrdinalIgnoreCase));
+        if (hasUnresolvedSiblingLineSameCurrency)
+            throw new BusinessInvariantViolationException(
+                "Todavía hay servicios sin resolver que podrían corresponder a esta misma factura. " +
+                "Resolvélos primero y después emití.",
+                invariantCode: "INV-T5-EMIT-SIBLING-UNRESOLVED");
+
         // Remanente FRESCO, releido bajo el lock (Bloqueante #1/#2 del review): anti-carrera con CUALQUIER otra
         // emision (parcial T5 o total legacy) que este acreditando la MISMA factura en simultaneo.
         var remaining = await ComputeInvoiceRemainingCreditableAmountAsync(
@@ -2869,9 +2990,6 @@ public class BookingCancellationService
         // Guard de moneda linea == moneda ARCA de la factura destino (defensa en profundidad: ya se valido en
         // la captura — ADR-044 T5 Addendum Decision A/B — pero nada impide que algo haya cambiado entretanto).
         var lineCurrencyArca = ArcaCurrencyMapper.TryMap(linesForInvoice[0].Currency);
-        var invoiceCurrencyArca = string.IsNullOrWhiteSpace(targetInvoice.MonId)
-            ? "PES"
-            : targetInvoice.MonId.Trim().ToUpperInvariant();
         bool currencyMatches = lineCurrencyArca is not null
             && string.Equals(lineCurrencyArca, invoiceCurrencyArca, StringComparison.OrdinalIgnoreCase);
         if (!currencyMatches)
@@ -3117,6 +3235,7 @@ public class BookingCancellationService
         await EnsureFeatureFlagOnAsync(ct);
 
         var bc = await _db.BookingCancellations
+            .Include(b => b.CreditNotes)
             .FirstOrDefaultAsync(b => b.PublicId == publicId, ct)
             ?? throw new KeyNotFoundException($"BC {publicId} no encontrada.");
 
@@ -3128,6 +3247,18 @@ public class BookingCancellationService
                 bc.PublicId);
             return (await MapToDtoAsync(bc.Id, ct))!;
         }
+
+        // DECISIÓN DEL DUEÑO (2026-07-17): con VARIOS servicios pendientes (spec UX T5), el BC puede seguir
+        // Drafted aunque YA haya emitido la devolucion de ALGUNO de ellos (PartialCreditNoteT5Reconciliation
+        // se lo guarda en Drafted a proposito, para poder seguir resolviendo el resto). Abortar el evento
+        // ENTERO en ese momento borraria el registro de cancelacion que explica una NC que ya salio con CAE
+        // real — un comprobante fiscal emitido sin su "por que" en el sistema. Por eso, apenas una hija tiene
+        // su devolucion Succeeded, el aborto total queda bloqueado: lo que falta se termina, nunca se descarta.
+        if (bc.CreditNotes.Any(c => c.Status == BookingCancellationCreditNoteStatus.Succeeded))
+            throw new BusinessInvariantViolationException(
+                "Esta devolución ya emitió una nota de crédito y no se puede anular entera. Terminá de resolver " +
+                "los servicios que faltan.",
+                invariantCode: "INV-T5-ABORT-ALREADY-EMITTED");
 
         // Solo se aborta desde Drafted (las otras transiciones tienen side-effects fiscales).
         if (bc.Status != BookingCancellationStatus.Drafted)
@@ -13185,8 +13316,11 @@ public class BookingCancellationService
             .Include(b => b.CreditNotes)
                 .ThenInclude(c => c.CreditNoteInvoice)
             // ADR-044 T5-emision (2026-07-15): las lineas Partial son las que necesita el contrato de la
-            // pantalla "confirmar y emitir la devolucion" (PartialCreditNoteEmission, mas abajo).
+            // pantalla "confirmar y emitir la devolucion" (PartialCreditNoteEmission, mas abajo). Spec UX
+            // 2026-07-17: cada fila de esa pantalla muestra el operador de SU linea (puede variar entre
+            // servicios de la misma cancelacion), asi que traemos el Supplier de cada linea tambien.
             .Include(b => b.Lines)
+                .ThenInclude(l => l.Supplier)
             .FirstOrDefaultAsync(b => b.Id == bcId, ct);
         if (bc is null) return null;
 
@@ -13403,7 +13537,151 @@ public class BookingCancellationService
             }
         }
 
+        // Spec UX 2026-07-17 (T5 "resolver devoluciones VIEJAS"): una fila por CADA servicio cancelado
+        // pendiente de este BC (resuelto o no), con lo que la lista nueva necesita para pintarse sin adivinar
+        // nada — nombre real del servicio, operador, moneda y el monto sugerido (LineSaleAmount).
+        dto.Lines = await BuildPartialCreditNoteEmissionLinesDtoAsync(bc, partialLines, ct);
+
         return dto;
+    }
+
+    /// <summary>
+    /// Spec UX 2026-07-17: arma una fila por cada linea Partial (resuelta o no) para la lista "Faltan
+    /// resolver N devoluciones de servicios cancelados". Resuelve el nombre real del servicio y de su
+    /// operador server-side (nunca deja que el front adivine con IDs internos).
+    /// </summary>
+    private async Task<List<PartialCreditNoteEmissionLineDto>> BuildPartialCreditNoteEmissionLinesDtoAsync(
+        BookingCancellation bc, List<BookingCancellationLine> partialLines, CancellationToken ct)
+    {
+        var serviceNames = await ResolvePendingLineServiceNamesAsync(partialLines, ct);
+
+        // Facturas destino de TODAS las lineas (resueltas o no), en un solo query (evita N+1: una fila por
+        // factura distinta, no una consulta por linea).
+        var targetInvoiceIds = partialLines
+            .Where(l => l.TargetInvoiceId.HasValue)
+            .Select(l => l.TargetInvoiceId!.Value)
+            .Distinct()
+            .ToList();
+        var targetInvoicesById = targetInvoiceIds.Count == 0
+            ? new Dictionary<int, (Guid PublicId, string Label)>()
+            : (await _db.Invoices.AsNoTracking()
+                .Where(i => targetInvoiceIds.Contains(i.Id))
+                .Select(i => new { i.Id, i.PublicId, i.TipoComprobante, i.PuntoDeVenta, i.NumeroComprobante })
+                .ToListAsync(ct))
+                .ToDictionary(
+                    i => i.Id,
+                    i => (i.PublicId, FormatComprobanteLabel(i.TipoComprobante, i.PuntoDeVenta, i.NumeroComprobante)));
+
+        var lines = new List<PartialCreditNoteEmissionLineDto>();
+        foreach (var line in partialLines.OrderBy(l => l.Id))
+        {
+            serviceNames.TryGetValue((line.ServiceTable, line.ServiceId), out var serviceName);
+
+            (Guid PublicId, string Label)? targetInvoice = line.TargetInvoiceId.HasValue
+                && targetInvoicesById.TryGetValue(line.TargetInvoiceId.Value, out var foundInvoice)
+                    ? foundInvoice
+                    : null;
+
+            // La NC de esta fila es la de SU factura destino (bc.CreditNotes ya viene incluida con la
+            // entidad — sin query extra). Dos filas que resuelven a la MISMA factura comparten NC (se emiten
+            // juntas), asi que comparten estado/numero/motivo.
+            BookingCancellationCreditNote? childCreditNote = line.TargetInvoiceId.HasValue
+                ? bc.CreditNotes.FirstOrDefault(c => c.OriginatingInvoiceId == line.TargetInvoiceId.Value)
+                : null;
+
+            lines.Add(new PartialCreditNoteEmissionLineDto
+            {
+                LinePublicId = line.PublicId,
+                ServiceName = string.IsNullOrWhiteSpace(serviceName) ? "Servicio cancelado" : serviceName!,
+                SupplierName = line.Supplier?.Name ?? string.Empty,
+                Currency = line.Currency,
+                SuggestedAmount = line.LineSaleAmount,
+                IsResolved = line.TargetInvoiceId.HasValue && line.ConfirmedGrossCreditAmount.HasValue,
+                TargetInvoicePublicId = targetInvoice?.PublicId,
+                TargetInvoiceLabel = targetInvoice?.Label,
+                ConfirmedGrossCreditAmount = line.ConfirmedGrossCreditAmount,
+                CreditNoteStatus = childCreditNote?.Status.ToString(),
+                CreditNoteNumeroComprobante =
+                    childCreditNote is { Status: BookingCancellationCreditNoteStatus.Succeeded, CreditNoteInvoice: { } succeededInvoice }
+                        ? FormatComprobanteLabel(succeededInvoice.TipoComprobante, succeededInvoice.PuntoDeVenta, succeededInvoice.NumeroComprobante)
+                        : null,
+                CreditNoteArcaErrorMessage =
+                    childCreditNote is { Status: BookingCancellationCreditNoteStatus.Failed }
+                        ? SanitizeArcaErrorForUser(childCreditNote.ArcaErrorMessage)
+                        : null,
+                CreditNoteInvoicePublicId = childCreditNote?.CreditNoteInvoice?.PublicId,
+            });
+        }
+        return lines;
+    }
+
+    /// <summary>
+    /// Resuelve el nombre real de cada servicio cancelado (ej. "Hotel Maitei (Posadas)") a partir de
+    /// (<see cref="CancellableServiceTable"/>, id interno). Una consulta liviana por tabla involucrada (nunca
+    /// una consulta por linea): el mismo patron que usa <c>BuildCancellationLinesAsync</c> para armar las
+    /// lineas al cancelar. Reusa las descripciones de <see cref="InvoiceSuggestedItemsBuilder"/> — la MISMA
+    /// funcion que ya arma el nombre del servicio para la factura sugerida, para que nunca digan cosas
+    /// distintas del mismo servicio en dos pantallas.
+    /// </summary>
+    private async Task<Dictionary<(CancellableServiceTable Table, int ServiceId), string>> ResolvePendingLineServiceNamesAsync(
+        List<BookingCancellationLine> partialLines, CancellationToken ct)
+    {
+        var names = new Dictionary<(CancellableServiceTable, int), string>();
+
+        var hotelIds = partialLines.Where(l => l.ServiceTable == CancellableServiceTable.Hotel).Select(l => l.ServiceId).Distinct().ToList();
+        if (hotelIds.Count > 0)
+        {
+            var hotels = await _db.HotelBookings.AsNoTracking().Where(h => hotelIds.Contains(h.Id)).ToListAsync(ct);
+            foreach (var hotel in hotels)
+                names[(CancellableServiceTable.Hotel, hotel.Id)] = InvoiceSuggestedItemsBuilder.DescribeHotel(hotel);
+        }
+
+        var flightIds = partialLines.Where(l => l.ServiceTable == CancellableServiceTable.Flight).Select(l => l.ServiceId).Distinct().ToList();
+        if (flightIds.Count > 0)
+        {
+            var flights = await _db.FlightSegments.AsNoTracking().Where(f => flightIds.Contains(f.Id)).ToListAsync(ct);
+            foreach (var flight in flights)
+                names[(CancellableServiceTable.Flight, flight.Id)] = InvoiceSuggestedItemsBuilder.DescribeFlight(flight);
+        }
+
+        var transferIds = partialLines.Where(l => l.ServiceTable == CancellableServiceTable.Transfer).Select(l => l.ServiceId).Distinct().ToList();
+        if (transferIds.Count > 0)
+        {
+            var transfers = await _db.TransferBookings.AsNoTracking().Where(t => transferIds.Contains(t.Id)).ToListAsync(ct);
+            foreach (var transfer in transfers)
+                names[(CancellableServiceTable.Transfer, transfer.Id)] = InvoiceSuggestedItemsBuilder.DescribeTransfer(transfer);
+        }
+
+        var packageIds = partialLines.Where(l => l.ServiceTable == CancellableServiceTable.Package).Select(l => l.ServiceId).Distinct().ToList();
+        if (packageIds.Count > 0)
+        {
+            var packages = await _db.PackageBookings.AsNoTracking().Where(p => packageIds.Contains(p.Id)).ToListAsync(ct);
+            foreach (var package in packages)
+                names[(CancellableServiceTable.Package, package.Id)] = InvoiceSuggestedItemsBuilder.DescribePackage(package);
+        }
+
+        var assistanceIds = partialLines.Where(l => l.ServiceTable == CancellableServiceTable.Assistance).Select(l => l.ServiceId).Distinct().ToList();
+        if (assistanceIds.Count > 0)
+        {
+            var assistances = await _db.AssistanceBookings.AsNoTracking().Where(a => assistanceIds.Contains(a.Id)).ToListAsync(ct);
+            foreach (var assistance in assistances)
+                names[(CancellableServiceTable.Assistance, assistance.Id)] = InvoiceSuggestedItemsBuilder.DescribeAssistance(assistance);
+        }
+
+        // Generico: ServiceId=0 es el centinela de backfill (ADR-025 DT.1.3, lineas viejas de anulacion TOTAL)
+        // y nunca deberia aparecer entre lineas Partial — igual filtramos por las > 0 para no pegarle a la
+        // tabla con un id que no existe.
+        var genericIds = partialLines
+            .Where(l => l.ServiceTable == CancellableServiceTable.Generic && l.ServiceId > 0)
+            .Select(l => l.ServiceId).Distinct().ToList();
+        if (genericIds.Count > 0)
+        {
+            var generics = await _db.Servicios.AsNoTracking().Where(s => genericIds.Contains(s.Id)).ToListAsync(ct);
+            foreach (var service in generics)
+                names[(CancellableServiceTable.Generic, service.Id)] = InvoiceSuggestedItemsBuilder.DescribeGeneric(service);
+        }
+
+        return names;
     }
 
     /// <summary>

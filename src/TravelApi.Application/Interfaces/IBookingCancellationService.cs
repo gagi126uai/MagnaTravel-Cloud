@@ -94,23 +94,44 @@ public interface IBookingCancellationService
     /// <c>OnArcaSucceededAsync</c>, que dispararia una anulacion TOTAL fantasma).
     ///
     /// <para><b>Guards duros (400/409)</b>: BC debe existir y estar <c>Drafted</c>, puramente parcial (≥1 linea
-    /// <c>Scope=Partial</c>, ninguna <c>Scope=Full</c>); todas sus lineas Partial deben tener factura destino y
-    /// monto resueltos (<c>INV-T5-EMIT-UNRESOLVED</c> si no); el monto no puede exceder el remanente FRESCO de
-    /// la factura destino, releido bajo el lock por factura (<c>INV-T5-EMIT-CAP</c> si otra emision lo consumio
-    /// mientras tanto); si la agencia es Responsable Inscripto, la emision automatica queda bloqueada
-    /// (<c>INV-T5-EMIT-RI-SIGNOFF</c>) hasta la firma de un contador matriculado sobre la alicuota (fiscal,
-    /// riesgo residual 1) — para Monotributo (la condicion de hoy) esto NO bloquea.</para>
+    /// <c>Scope=Partial</c>, ninguna <c>Scope=Full</c>); tiene que haber AL MENOS UNA linea Partial con factura
+    /// destino y monto resueltos y sin devolucion emitida todavia (<c>INV-T5-EMIT-UNRESOLVED</c> si no); el
+    /// monto no puede exceder el remanente FRESCO de la factura destino, releido bajo el lock por factura
+    /// (<c>INV-T5-EMIT-CAP</c> si otra emision lo consumio mientras tanto); si la agencia es Responsable
+    /// Inscripto, la emision automatica queda bloqueada (<c>INV-T5-EMIT-RI-SIGNOFF</c>) hasta la firma de un
+    /// contador matriculado sobre la alicuota (fiscal, riesgo residual 1) — para Monotributo (la condicion de
+    /// hoy) esto NO bloquea.</para>
     ///
     /// <para>El permiso de emision fiscal (mismo que anular-total, <c>cobranzas.invoice_annul</c>) y la
     /// ownership de la reserva los resuelve el controller server-side ANTES de llamar a este metodo.</para>
+    ///
+    /// <para><b>Spec UX 2026-07-17 (T5 varios pendientes)</b>: <paramref name="request"/> es opcional. Si la
+    /// cancelacion tiene VARIAS lineas Partial resueltas contra facturas DISTINTAS (el caso real de Gastón:
+    /// hotel USD + excursion ARS), cada devolucion se emite POR SEPARADO — el caller indica
+    /// <c>TargetInvoicePublicId</c> para decir cuál. Sin indicarlo, se mantiene el comportamiento de siempre:
+    /// si hay una sola factura pendiente de emitir, se emite esa (<c>INV-T5-EMIT-MULTI-INVOICE</c> si hay 2+ y
+    /// no se especifica cuál).</para>
+    ///
+    /// <para><b>Borde D1 (review 2026-07-17, mitigacion liviana)</b>: si esta cancelacion tiene OTRA linea
+    /// Partial todavia SIN resolver (sin factura destino elegida) cuya moneda coincide con la de la factura
+    /// que se esta por emitir, la emision se rechaza con <c>INV-T5-EMIT-SIBLING-UNRESOLVED</c>. Motivo: la
+    /// hija (NC) es unica por factura+BC — si esta NC queda emitida, el guard de resolver
+    /// (<c>INV-T5-RESOLVE-FISCAL</c>) va a impedir despues que esa linea hermana se resuelva contra la MISMA
+    /// factura, dejandola sin ninguna factura donde emitir su devolucion. Por eso se pide resolver primero
+    /// lo que falta de la misma moneda.</para>
     /// </summary>
     Task<BookingCancellationDto> ConfirmPartialCancellationEmissionAsync(
         Guid publicId,
         string userId,
         string? userName,
-        CancellationToken ct);
+        CancellationToken ct,
+        EmitPartialCreditNoteRequest? request = null);
 
-    /// <summary>Resuelve factura y monto de una única línea T5 legacy todavía no emitida.</summary>
+    /// <summary>
+    /// Resuelve factura y monto de una línea T5 legacy (una devolución vieja de un servicio cancelado)
+    /// todavía no emitida. Spec UX 2026-07-17: cuando hay VARIAS pendientes al mismo tiempo, el request debe
+    /// indicar <c>BookingCancellationLinePublicId</c> — las demás quedan intactas.
+    /// </summary>
     Task<BookingCancellationDto> ResolvePartialCreditNoteAsync(
         Guid publicId,
         ResolvePartialCreditNoteRequest request,
@@ -123,6 +144,11 @@ public interface IBookingCancellationService
     /// retorna el DTO actual sin tocar nada. Si el BC esta en cualquier otro
     /// estado, throws (transicion invalida — usar el flujo normal o
     /// <see cref="ForceArcaConfirmationAsync"/> segun corresponda).
+    ///
+    /// <para><b>DECISIÓN DEL DUEÑO (2026-07-17)</b>: bloqueado ADEMAS (<c>INV-T5-ABORT-ALREADY-EMITTED</c>) si
+    /// alguna hija <see cref="BookingCancellationCreditNote"/> ya esta <c>Succeeded</c>, aunque el BC siga
+    /// <c>Drafted</c> (caso T5 varios pendientes: el BC se queda Drafted mientras falte emitir OTRO servicio).
+    /// Abortar el evento entero borraria el registro que explica una NC que ya salio con CAE real.</para>
     /// </summary>
     Task<BookingCancellationDto> AbortAsync(
         Guid publicId,
