@@ -55,6 +55,17 @@ public class CancellationsControllerTests : IClassFixture<CustomWebApplicationFa
         settings.EnableNewCancellationFlow = true;
         await db.SaveChangesAsync();
 
+        // Tanda B (2026-07-16): ConfirmAsync resuelve la condicion fiscal de la AGENCIA server-side
+        // (ResolveServerSideTaxIdentity), leyendo la fila real de AfipSettings. Sin ella, cualquier
+        // POST a /confirm de este archivo rebota con INV-118 antes de llegar al gating que estos
+        // tests quieren probar. Guardado con AnyAsync: SeedAsync se llama una vez por [Fact] sobre la
+        // MISMA factory (mismo DbContext detras del WebApplicationFactory).
+        if (!await db.AfipSettings.AnyAsync())
+        {
+            db.AfipSettings.Add(new AfipSettings { Cuit = 20111111112, TaxCondition = "Monotributo" });
+            await db.SaveChangesAsync();
+        }
+
         if (!await roleMgr.RoleExistsAsync("Vendedor"))
             await roleMgr.CreateAsync(new IdentityRole("Vendedor"));
 

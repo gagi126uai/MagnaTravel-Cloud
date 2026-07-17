@@ -199,6 +199,17 @@ public sealed class BookingCancellationServicePartialCreditNoteIntegrationTests
         bool addNonHotelService = false,
         string vendedorUserId = "vendedor-1")
     {
+        // Tanda B (2026-07-16): ConfirmAsync resuelve la condicion fiscal de la AGENCIA server-side
+        // (ResolveServerSideTaxIdentity), leyendo la fila real de AfipSettings. Sin ella, Confirm
+        // rebota con INV-118 antes de llegar al guard FC1.3 (INV-FC1.3-007) o al calculator, que es
+        // lo que estos tests quieren probar. ResetDatabaseAsync (InitializeAsync) NO trunca
+        // "AfipSettings", asi que un solo seed por clase alcanza — guardado con AnyAsync igual, por si
+        // algun test llama a este helper mas de una vez.
+        if (!await ctx.AfipSettings.AnyAsync())
+        {
+            ctx.AfipSettings.Add(new AfipSettings { Cuit = 20111111112, TaxCondition = "Monotributo" });
+        }
+
         var customer = new Customer
         {
             FullName = "Cliente Test",

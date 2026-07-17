@@ -142,6 +142,16 @@ public sealed class FiscalLiquidationBackfillIntegrationTests
         AppDbContext ctx,
         SupplierInvoicingMode supplierMode = SupplierInvoicingMode.TotalToCustomer)
     {
+        // Tanda B (2026-07-16): ConfirmAsync resuelve la condicion fiscal de la AGENCIA server-side
+        // (ResolveServerSideTaxIdentity), leyendo la fila real de AfipSettings. Sin ella, Confirm
+        // rebota con INV-118 antes de que este test pueda ejercer EditLiquidation/el backfill.
+        // ResetDatabaseAsync no trunca "AfipSettings"; guardado con AnyAsync por si el helper se
+        // llama mas de una vez dentro de la misma clase.
+        if (!await ctx.AfipSettings.AnyAsync())
+        {
+            ctx.AfipSettings.Add(new AfipSettings { Cuit = 20111111112, TaxCondition = "Monotributo" });
+        }
+
         var customer = new Customer { FullName = "Cliente Backfill", TaxCondition = "Consumidor Final", IsActive = true };
         // supplierMode: TotalToCustomer (reseller, default) o CommissionOnly
         // (intermediario). El calculator usa Supplier.InvoicingMode como modo del

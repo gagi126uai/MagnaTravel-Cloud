@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
 
@@ -27,6 +28,28 @@ internal static class CancellationTestData
     public static async Task<(int CustomerId, int SupplierId, int ReservaId, int InvoiceId)>
         SeedBaseAsync(AppDbContext ctx)
     {
+        // Tanda B (2026-07-16): BookingCancellationService.ConfirmAsync ahora resuelve la condicion
+        // fiscal de la AGENCIA server-side (ResolveServerSideTaxIdentity), leyendo la fila real de
+        // AfipSettings en vez de un dato que mandaba el frontend. Sin esta fila, cualquier Confirm de
+        // este fixture rebotaria con INV-118 ANTES de llegar a lo que cada test de integracion quiere
+        // probar. Guardado con AnyAsync: ResetDatabaseAsync NO trunca "AfipSettings" (no es una tabla
+        // del modulo de cancelacion), asi que si SeedBaseAsync se llama mas de una vez dentro de la
+        // MISMA clase de test (mismo container Postgres, varios [Fact]) no queremos una segunda fila
+        // duplicada — dejariamos la eleccion de "cual fila lee ConfirmAsync" librada al azar.
+        //
+        // OJO: AnyAsync() consulta la BASE, no el ChangeTracker local — si un caller (ej.
+        // Adr044T5EmissionIntegrationTests) ya hizo ctx.AfipSettings.Add(...) SIN guardar todavia
+        // antes de llamar a este metodo, AnyAsync() no la ve (todavia no esta commiteada) y
+        // agregariamos una SEGUNDA fila en el mismo SaveChanges de mas abajo. Por eso el guard
+        // tambien mira el ChangeTracker (entidades ya en cola, pendientes de guardar).
+        bool alreadyQueuedOrPersisted =
+            ctx.ChangeTracker.Entries<AfipSettings>().Any(e => e.State == EntityState.Added)
+            || await ctx.AfipSettings.AnyAsync();
+        if (!alreadyQueuedOrPersisted)
+        {
+            ctx.AfipSettings.Add(new AfipSettings { Cuit = 20111111112, TaxCondition = "Monotributo" });
+        }
+
         var customer = new Customer
         {
             FullName = "Cliente Test",

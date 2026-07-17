@@ -106,6 +106,17 @@ public class PartialCreditNoteE2ETests : IClassFixture<CustomWebApplicationFacto
         settings.EnablePartialCreditNotes = true;
         await db.SaveChangesAsync();
 
+        // Tanda B (2026-07-16): ConfirmAsync/ConfirmPartialCancellationEmissionAsync resuelven la
+        // condicion fiscal de la AGENCIA server-side (ResolveServerSideTaxIdentity), leyendo la fila
+        // real de AfipSettings. Sin ella, Confirm rebota con INV-118 antes de llegar al flujo FC1.3
+        // que este test quiere ejercitar. Guardado con AnyAsync porque SeedAsync se llama una vez por
+        // [Fact] sobre la MISMA factory (mismo DbContext detras del WebApplicationFactory).
+        if (!await db.AfipSettings.AnyAsync())
+        {
+            db.AfipSettings.Add(new AfipSettings { Cuit = 20111111112, TaxCondition = "Monotributo" });
+            await db.SaveChangesAsync();
+        }
+
         if (!await roleMgr.RoleExistsAsync("Admin"))
             await roleMgr.CreateAsync(new IdentityRole("Admin"));
         if (!await roleMgr.RoleExistsAsync("Vendedor"))
