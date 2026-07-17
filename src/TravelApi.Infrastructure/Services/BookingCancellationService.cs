@@ -9018,6 +9018,20 @@ public class BookingCancellationService
                 "Indicá el documento del proveedor: un cargo facturado aparte necesita su referencia.",
                 nameof(request));
 
+        // Candado del contador (Flag 2, tanda de endurecimientos ADR-048 T2, 2026-07-17): una retencion fiscal
+        // (Withholding) es CREDITO FISCAL de la agencia -- nunca plata que el operador factura como deuda propia.
+        // "Facturada aparte" es exactamente lo opuesto: una deuda NUEVA que el operador le exige a la agencia con
+        // SU documento. Mezclar ambos conceptos en un mismo cargo haria que una retencion se sume como deuda al
+        // operador (el lector compartido de "facturado aparte", OperatorChargeInvoicedReader, filtra solo por
+        // CollectionMode, no por Kind). Hoy la UI no ofrece esta combinacion, pero el candado va aca -- el UNICO
+        // punto de escritura de un cargo nuevo -- para que sea inalcanzable tambien por un llamado directo a la API.
+        if (request.Kind == OperatorChargeKind.Withholding
+            && request.CollectionMode == PenaltyCollectionMode.FacturadaAparte)
+            throw new ArgumentException(
+                "Una retención fiscal no puede cargarse como \"facturada aparte\": es crédito fiscal de la agencia, " +
+                "nunca una deuda que el operador facture.",
+                nameof(request));
+
         // ADR-044 T3a (2026-07-10): coherencia ClientTransferMode <-> ManagementFeeAmount, espejo de los 2 CHECK
         // SQL de la migracion T3a. El monto del cargo de gestion es obligatorio CON "+ cargo de gestion" y tiene
         // que quedar vacio en cualquier otro modo (un monto cargado que nadie factura confundiria el extracto).

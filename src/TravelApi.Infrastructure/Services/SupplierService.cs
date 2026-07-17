@@ -3082,6 +3082,15 @@ public class SupplierService : ISupplierService
         // 1) Todos los servicios de la reserva (6 tablas), con su proveedor, costo, moneda y estado.
         var serviceRows = await BuildReservaServiceRowsAsync(reservaId, cancellationToken);
 
+        // 1-bis) ADR-048 T2 (2026-07-17, reglas 6 y 7 del modelo de estados derivados): de los servicios YA
+        // ANULADOS, cuales tienen un cargo REAL del operador (multa que le retuvo al reembolso, o un cargo que
+        // factura aparte) imputado a ESE servicio puntual. Se calcula ANTES de repartir pagos/saldo a favor
+        // (pasos 2 y 3) porque ambos necesitan saber que costo usar para cada servicio anulado: si no tiene
+        // cargo real, no genera deuda con nadie (se excluye mas abajo); si lo tiene, la deuda es SOLO ese cargo,
+        // nunca el costo pleno de la compra que quedo sin efecto.
+        var operatorChargesOfCancelledServices = await LoadCancelledServiceOperatorChargesAsync(
+            reservaId, serviceRows, cancellationToken);
+
         // 2) Pagos vivos al operador imputados a UN servicio de esta reserva. El query filter !IsDeleted ya
         //    excluye los anulados (self-healing). Sumamos el equivalente imputado por servicio (ImputedAmount
         //    si el pago cruzo moneda, si no el Amount), igual criterio que el resto de la cuenta del proveedor.
@@ -3107,7 +3116,7 @@ public class SupplierService : ISupplierService
         //    por el dueño: cubrio la deuda con saldo a favor y los servicios seguian "impagos"). Va DESPUES de los
         //    pagos de caja: el credito solo cubre lo que el efectivo dejo pendiente.
         var creditAppliedByService = await AttributeSupplierCreditToServicesAsync(
-            reservaId, serviceRows, paidByService, cancellationToken);
+            reservaId, serviceRows, paidByService, operatorChargesOfCancelledServices, cancellationToken);
 
         var dto = new ReservaSupplierPaymentStatusDto
         {
@@ -3128,10 +3137,22 @@ public class SupplierService : ISupplierService
                 continue;
             }
 
+            // ADR-048 T2 (regla 6/7): decide cuanto costo usar para ESTE servicio. Un servicio vivo usa su costo
+            // pleno de siempre; uno anulado SIN cargo real del operador queda afuera del listado (Applies=false);
+            // uno anulado CON cargo real usa solo ese cargo (nunca el costo pleno de la compra sin efecto).
+            var debtBasis = ResolveServiceDebtBasis(service, operatorChargesOfCancelledServices);
+            if (!debtBasis.Applies)
+            {
+                continue;
+            }
+
             paidByService.TryGetValue(service.PublicId, out var paid);
             creditAppliedByService.TryGetValue(service.PublicId, out var creditApplied);
-            decimal netCost = EconomicRulesHelper.RoundCurrency(service.NetCost);
-            paid = EconomicRulesHelper.RoundCurrency(paid);
+            decimal netCost = EconomicRulesHelper.RoundCurrency(debtBasis.CostBasis);
+            // La porcion que el operador YA RETUVO del reembolso (AlreadySettledByOperatorRetention) quedo saldada
+            // por construccion: se la descuenta de lo que devuelve, no hay ningun pago pendiente por hacer. Se
+            // suma al "pagado" para que un servicio anulado con multa retenida NUNCA aparezca como "impago".
+            paid = EconomicRulesHelper.RoundCurrency(paid + debtBasis.AlreadySettledByOperatorRetention);
             creditApplied = EconomicRulesHelper.RoundCurrency(creditApplied);
 
             // "Cubierto" = pagos de caja + saldo a favor aplicado. El estado y el pendiente se derivan de este
@@ -3139,6 +3160,12 @@ public class SupplierService : ISupplierService
             // efectivo. PaidToOperator sigue siendo SOLO caja; el credito se expone aparte para no confundir.
             decimal covered = EconomicRulesHelper.RoundCurrency(paid + creditApplied);
             decimal outstanding = EconomicRulesHelper.RoundCurrency(netCost - covered);
+            // N1 (review backend, tanda de endurecimientos T2, 2026-07-17): "lo que falta pagar" nunca es
+            // negativo -- si se cubrio de mas (pago o retencion por encima del costo/multa), el pendiente
+            // en PANTALLA se planta en 0, nunca en un numero negativo confuso para quien lo lee. Esto se vio
+            // primero en un anulado con multa retenida que ADEMAS tuvo un pago de caja historico (retencion +
+            // pago viejo superaban la multa), pero aplica igual para cualquier servicio sobre-cubierto.
+            decimal outstandingForDisplay = Math.Max(0m, outstanding);
 
             // El estado se deriva ANTES de enmascarar (no depende de ver montos): cubierto / algo / nada.
             string status = DeriveOperatorPaymentStatus(netCost, covered);
@@ -3153,7 +3180,7 @@ public class SupplierService : ISupplierService
                 NetCost = netCost,
                 PaidToOperator = paid,
                 CreditAppliedToOperator = creditApplied,
-                OutstandingToOperator = outstanding,
+                OutstandingToOperator = outstandingForDisplay,
                 Status = status
             };
 
@@ -3184,6 +3211,7 @@ public class SupplierService : ISupplierService
         int reservaId,
         List<ReservaServicePaymentRow> serviceRows,
         Dictionary<Guid, decimal> paidByService,
+        IReadOnlyDictionary<Guid, CancelledServiceOperatorCharge> operatorChargesOfCancelledServices,
         CancellationToken cancellationToken)
     {
         var result = new Dictionary<Guid, decimal>();
@@ -3216,14 +3244,22 @@ public class SupplierService : ISupplierService
         // FIFO cronologico: se cubren primero los servicios mas antiguos (mismo espiritu que el drenaje del pool).
         // Un servicio de operador CommissionOnly no genera deuda: no recibe credito (coherente con el loop que
         // arma la respuesta, que tambien lo excluye). Un servicio sin operador no tiene clave: se ignora.
+        //
+        // ADR-048 T2 (2026-07-17, regla 6/7): un servicio anulado SIN cargo real del operador tampoco genera
+        // deuda -- no puede "consumir" saldo a favor que despues no se le muestra a nadie (quedaria plata
+        // repartida a un servicio invisible en el listado, y otro servicio vivo la veria de menos). Por eso se
+        // filtra con el MISMO ResolveServiceDebtBasis que usa el listado final, y el tope de cada servicio anulado
+        // CON cargo real es el cargo, no el costo pleno de la compra.
         var orderedServices = serviceRows
             .Where(s => s.SupplierId.HasValue)
             .Where(s => !s.SupplierInvoicingMode.HasValue
                      || SupplierDebtCalculator.SupplierGeneratesPurchaseDebt(s.SupplierInvoicingMode.Value))
-            .OrderBy(s => s.CreatedAt)
-            .ThenBy(s => s.PublicId);
+            .Select(s => (Service: s, DebtBasis: ResolveServiceDebtBasis(s, operatorChargesOfCancelledServices)))
+            .Where(x => x.DebtBasis.Applies)
+            .OrderBy(x => x.Service.CreatedAt)
+            .ThenBy(x => x.Service.PublicId);
 
-        foreach (var service in orderedServices)
+        foreach (var (service, debtBasis) in orderedServices)
         {
             var key = (service.SupplierId!.Value, Monedas.Normalizar(service.Currency));
             if (!remainingByKey.TryGetValue(key, out var remaining)) continue;
@@ -3231,7 +3267,10 @@ public class SupplierService : ISupplierService
             if (remaining <= 0m) continue;
 
             paidByService.TryGetValue(service.PublicId, out var cashPaid);
-            decimal outstandingAfterCash = Math.Round(service.NetCost - cashPaid, 2, MidpointRounding.AwayFromZero);
+            // La porcion ya saldada por retencion del operador (solo aplica a servicios anulados con multa
+            // retenida) cuenta como "cubierta" antes de repartir credito, igual que en el listado final.
+            decimal effectiveCashPaid = cashPaid + debtBasis.AlreadySettledByOperatorRetention;
+            decimal outstandingAfterCash = Math.Round(debtBasis.CostBasis - effectiveCashPaid, 2, MidpointRounding.AwayFromZero);
             if (outstandingAfterCash <= 0m) continue;
 
             decimal take = Math.Min(remaining, outstandingAfterCash);
@@ -3241,6 +3280,139 @@ public class SupplierService : ISupplierService
 
         return result;
     }
+
+    // ===================================================================================================
+    // ADR-048 T2 (modelo de estados derivados, 2026-07-17, reglas 6/7): "un servicio anulado no genera deuda
+    // con el operador, salvo multa/cargo real del operador imputada a ese servicio".
+    // ===================================================================================================
+
+    /// <summary>
+    /// Cuanto costo usar para calcular la deuda con el operador de UN servicio, y si ese servicio entra o no
+    /// en el reporte. <see cref="Applies"/> = false significa "este servicio no genera deuda con el operador,
+    /// no se muestra" (servicio anulado sin cargo real). <see cref="CostBasis"/> es el costo pleno de la
+    /// compra para un servicio VIVO, o SOLO el monto del cargo real para uno anulado con cargo.
+    /// <see cref="AlreadySettledByOperatorRetention"/> es la porcion de ese cargo que el operador ya retuvo
+    /// del reembolso (saldada por construccion, nunca queda pendiente de pago).
+    /// </summary>
+    private readonly record struct ServiceDebtBasis(bool Applies, decimal CostBasis, decimal AlreadySettledByOperatorRetention);
+
+    /// <summary>
+    /// Multa/cargo REAL que el operador aplico sobre UN servicio anulado puntual, agregando todas sus lineas de
+    /// cancelacion (normalmente una sola). <see cref="RetainedAmount"/> = lo que el operador retuvo del reembolso
+    /// (columna fisica <c>BookingCancellationLine.RetainedDeductionAmount</c>, ya saldado por construccion: el
+    /// operador se lo descuenta de lo que devuelve, no hay ningun pago pendiente por hacer). <see cref="InvoicedApartAmount"/>
+    /// = cargos que el operador factura APARTE (<c>PenaltyCollectionMode.FacturadaAparte</c>): esta es DEUDA NUEVA
+    /// de la agencia, recien saldada cuando se le registra un <c>SupplierPayment</c> real (mismo circuito de
+    /// siempre, atado al <c>ServicePublicId</c>). Mismos dos campos, mismo criterio, que ya usa
+    /// <see cref="TravelApi.Infrastructure.Reservations.SupplierCancellationCircuitReader"/> para el extracto del
+    /// operador -- no se inventa un detector nuevo.
+    /// </summary>
+    private readonly record struct CancelledServiceOperatorCharge(decimal RetainedAmount, decimal InvoicedApartAmount)
+    {
+        public decimal TotalRealCharge => RetainedAmount + InvoicedApartAmount;
+    }
+
+    /// <summary>
+    /// Decide, para UN servicio, si genera deuda con el operador y con que costo. Un servicio VIVO siempre
+    /// aplica con su costo pleno (comportamiento de siempre). Un servicio ANULADO solo aplica si tiene un cargo
+    /// real del operador imputado (<paramref name="operatorChargesOfCancelledServices"/>); si lo tiene, el costo
+    /// es SOLO ese cargo -- nunca el costo pleno de la compra que quedo sin efecto (regla 7).
+    /// </summary>
+    private static ServiceDebtBasis ResolveServiceDebtBasis(
+        ReservaServicePaymentRow service,
+        IReadOnlyDictionary<Guid, CancelledServiceOperatorCharge> operatorChargesOfCancelledServices)
+    {
+        if (!service.IsCancelled)
+        {
+            return new ServiceDebtBasis(Applies: true, CostBasis: service.NetCost, AlreadySettledByOperatorRetention: 0m);
+        }
+
+        if (!operatorChargesOfCancelledServices.TryGetValue(service.PublicId, out var operatorCharge)
+            || operatorCharge.TotalRealCharge <= 0m)
+        {
+            // Servicio anulado SIN multa/cargo real del operador: no genera deuda con nadie (regla 6/7).
+            return new ServiceDebtBasis(Applies: false, CostBasis: 0m, AlreadySettledByOperatorRetention: 0m);
+        }
+
+        return new ServiceDebtBasis(
+            Applies: true,
+            CostBasis: operatorCharge.TotalRealCharge,
+            AlreadySettledByOperatorRetention: operatorCharge.RetainedAmount);
+    }
+
+    /// <summary>
+    /// Para los servicios YA ANULADOS de <paramref name="serviceRows"/>, busca sus lineas de cancelacion
+    /// (<see cref="BookingCancellationLine"/>) de esta reserva y suma, por servicio, cuanto retuvo el operador
+    /// del reembolso y cuanto factura aparte. Solo consulta la base si hay AL MENOS un servicio anulado (una
+    /// reserva sin anulaciones no paga el costo de esta consulta). Excluye las lineas de cancelaciones
+    /// <c>Aborted</c> (esas nunca tomaron efecto). Un servicio anulado que no aparece en el diccionario
+    /// resultante NO tuvo ningun cargo real -- el caller lo interpreta como "sin deuda" (regla 6/7).
+    /// </summary>
+    private async Task<Dictionary<Guid, CancelledServiceOperatorCharge>> LoadCancelledServiceOperatorChargesAsync(
+        int reservaId, List<ReservaServicePaymentRow> serviceRows, CancellationToken cancellationToken)
+    {
+        var result = new Dictionary<Guid, CancelledServiceOperatorCharge>();
+
+        var cancelledServices = serviceRows.Where(s => s.IsCancelled).ToList();
+        if (cancelledServices.Count == 0) return result;
+
+        var lines = await _dbContext.BookingCancellationLines
+            .AsNoTracking()
+            .Include(l => l.OperatorCharges)
+            .Where(l => l.BookingCancellation.ReservaId == reservaId
+                     && l.BookingCancellation.Status != BookingCancellationStatus.Aborted)
+            .ToListAsync(cancellationToken);
+        if (lines.Count == 0) return result;
+
+        // (tabla del servicio, id interno) -> cargo real acumulado. Se agrupa por (tabla, id) primero porque una
+        // linea de cancelacion no sabe el PublicId del servicio, solo su (ServiceTable, ServiceId) interno.
+        var chargeByServiceTableAndId = new Dictionary<(CancellableServiceTable Table, int ServiceId), CancelledServiceOperatorCharge>();
+        foreach (var line in lines)
+        {
+            decimal retained = line.RetainedDeductionAmount;
+            decimal invoicedApart = line.OperatorCharges
+                .Where(c => c.CollectionMode == PenaltyCollectionMode.FacturadaAparte)
+                .Sum(c => c.Amount);
+            if (retained <= 0m && invoicedApart <= 0m) continue;
+
+            var key = (line.ServiceTable, line.ServiceId);
+            chargeByServiceTableAndId.TryGetValue(key, out var accumulated);
+            chargeByServiceTableAndId[key] = new CancelledServiceOperatorCharge(
+                RetainedAmount: accumulated.RetainedAmount + retained,
+                InvoicedApartAmount: accumulated.InvoicedApartAmount + invoicedApart);
+        }
+        if (chargeByServiceTableAndId.Count == 0) return result;
+
+        foreach (var service in cancelledServices)
+        {
+            var table = MapRecordKindToCancellableServiceTable(service.RecordKind);
+            if (table is null) continue; // defensivo: recordKind desconocido (no deberia pasar, los 6 son fijos).
+
+            if (chargeByServiceTableAndId.TryGetValue((table.Value, service.ServiceRowId), out var charge))
+            {
+                result[service.PublicId] = charge;
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Traduce el "tipo de registro" que usa esta clase para pagos por servicio (<see cref="ServicePaymentRecordKinds"/>)
+    /// a la tabla que usa <see cref="BookingCancellationLine.ServiceTable"/> para referenciar el mismo servicio.
+    /// Son dos vocabularios del mismo concepto (uno para pagos, otro para cancelaciones) que hasta ahora nunca
+    /// necesitaron cruzarse; este mapeo 1 a 1 es la unica traduccion entre ambos.
+    /// </summary>
+    private static CancellableServiceTable? MapRecordKindToCancellableServiceTable(string recordKind) => recordKind switch
+    {
+        ServicePaymentRecordKinds.Flight => CancellableServiceTable.Flight,
+        ServicePaymentRecordKinds.Hotel => CancellableServiceTable.Hotel,
+        ServicePaymentRecordKinds.Transfer => CancellableServiceTable.Transfer,
+        ServicePaymentRecordKinds.Package => CancellableServiceTable.Package,
+        ServicePaymentRecordKinds.Assistance => CancellableServiceTable.Assistance,
+        ServicePaymentRecordKinds.Generic => CancellableServiceTable.Generic,
+        _ => null,
+    };
 
     /// <summary>
     /// Deriva el estado de pago al operador de un servicio: <c>paid</c> si lo pagado cubre el costo,
@@ -3260,11 +3432,19 @@ public class SupplierService : ISupplierService
     /// (2026-06-26) <see cref="SupplierInvoicingMode"/> nullable: el modo de facturacion del proveedor del
     /// servicio (null si el servicio no tiene proveedor). Se usa para NO reportar estado de pago al operador
     /// en servicios de proveedores CommissionOnly (intermediacion: no hay deuda con el operador).
+    ///
+    /// <para>ADR-048 T2 (2026-07-17, regla 6/7): <see cref="ServiceRowId"/> es el Id INTERNO (no el PublicId)
+    /// de la fila en su tabla tipada — hace falta para unir con <c>BookingCancellationLine.ServiceId</c>, que
+    /// referencia servicios por (tabla, id interno), no por PublicId. <see cref="IsCancelled"/> dice si el
+    /// servicio esta anulado, con el MISMO criterio que <see cref="ServiceResolutionRules.IsCancelled{T}"/>
+    /// usa por tipo (vuelo por codigo IATA via <c>MapFlightStatus</c>; el resto por texto generico via
+    /// <c>MapGenericStatus</c>) — no es un detector nuevo, es la misma regla aplicada sobre la fila proyectada
+    /// (esta consulta no trae la entidad tipada completa, solo sus campos sueltos).</para>
     /// </summary>
     private readonly record struct ReservaServicePaymentRow(
         string RecordKind, Guid PublicId, Guid? SupplierPublicId, int? SupplierId, string? SupplierName,
         decimal NetCost, string? Currency, string Status, SupplierInvoicingMode? SupplierInvoicingMode,
-        DateTime CreatedAt);
+        DateTime CreatedAt, int ServiceRowId, bool IsCancelled);
 
     /// <summary>
     /// Reune todos los servicios de una reserva (6 tablas) con su (recordKind, publicId, proveedor, costo,
@@ -3276,9 +3456,17 @@ public class SupplierService : ISupplierService
     {
         var rows = new List<ReservaServicePaymentRow>();
 
+        // ADR-048 T2 (2026-07-17): "anulado" se decide con el MISMO mapeo que usa ServiceResolutionRules.IsCancelled
+        // por tipo (vuelo = codigo IATA via MapFlightStatus; el resto = texto libre via MapGenericStatus). No se
+        // puede invocar ServiceResolutionRules.IsCancelled(entidadTipada) directo porque esta consulta solo trae los
+        // campos sueltos (proyeccion, no la entidad); estos dos helpers locales aplican EXACTAMENTE la misma regla
+        // sobre el campo Status crudo.
+        static bool IsFlightCancelled(string status) => WorkflowStatusHelper.MapFlightStatus(status) == WorkflowStatuses.Cancelado;
+        static bool IsGenericCancelled(string status) => WorkflowStatusHelper.MapGenericStatus(status) == WorkflowStatuses.Cancelado;
+
         var flights = await _dbContext.FlightSegments.AsNoTracking()
             .Where(s => s.ReservaId == reservaId)
-            .Select(s => new { s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status, s.CreatedAt })
+            .Select(s => new { s.Id, s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status, s.CreatedAt })
             .ToListAsync(cancellationToken);
         rows.AddRange(flights.Select(s => new ReservaServicePaymentRow(
             ServicePaymentRecordKinds.Flight, s.PublicId,
@@ -3287,11 +3475,11 @@ public class SupplierService : ISupplierService
             s.Supplier != null ? s.Supplier.Name : null,
             s.NetCost, s.Currency, s.Status,
             s.Supplier != null ? (SupplierInvoicingMode?)s.Supplier.InvoicingMode : null,
-            s.CreatedAt)));
+            s.CreatedAt, s.Id, IsFlightCancelled(s.Status))));
 
         var hotels = await _dbContext.HotelBookings.AsNoTracking()
             .Where(s => s.ReservaId == reservaId)
-            .Select(s => new { s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status, s.CreatedAt })
+            .Select(s => new { s.Id, s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status, s.CreatedAt })
             .ToListAsync(cancellationToken);
         rows.AddRange(hotels.Select(s => new ReservaServicePaymentRow(
             ServicePaymentRecordKinds.Hotel, s.PublicId,
@@ -3300,11 +3488,11 @@ public class SupplierService : ISupplierService
             s.Supplier != null ? s.Supplier.Name : null,
             s.NetCost, s.Currency, s.Status,
             s.Supplier != null ? (SupplierInvoicingMode?)s.Supplier.InvoicingMode : null,
-            s.CreatedAt)));
+            s.CreatedAt, s.Id, IsGenericCancelled(s.Status))));
 
         var transfers = await _dbContext.TransferBookings.AsNoTracking()
             .Where(s => s.ReservaId == reservaId)
-            .Select(s => new { s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status, s.CreatedAt })
+            .Select(s => new { s.Id, s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status, s.CreatedAt })
             .ToListAsync(cancellationToken);
         rows.AddRange(transfers.Select(s => new ReservaServicePaymentRow(
             ServicePaymentRecordKinds.Transfer, s.PublicId,
@@ -3313,11 +3501,11 @@ public class SupplierService : ISupplierService
             s.Supplier != null ? s.Supplier.Name : null,
             s.NetCost, s.Currency, s.Status,
             s.Supplier != null ? (SupplierInvoicingMode?)s.Supplier.InvoicingMode : null,
-            s.CreatedAt)));
+            s.CreatedAt, s.Id, IsGenericCancelled(s.Status))));
 
         var packages = await _dbContext.PackageBookings.AsNoTracking()
             .Where(s => s.ReservaId == reservaId)
-            .Select(s => new { s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status, s.CreatedAt })
+            .Select(s => new { s.Id, s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status, s.CreatedAt })
             .ToListAsync(cancellationToken);
         rows.AddRange(packages.Select(s => new ReservaServicePaymentRow(
             ServicePaymentRecordKinds.Package, s.PublicId,
@@ -3326,11 +3514,11 @@ public class SupplierService : ISupplierService
             s.Supplier != null ? s.Supplier.Name : null,
             s.NetCost, s.Currency, s.Status,
             s.Supplier != null ? (SupplierInvoicingMode?)s.Supplier.InvoicingMode : null,
-            s.CreatedAt)));
+            s.CreatedAt, s.Id, IsGenericCancelled(s.Status))));
 
         var assistances = await _dbContext.AssistanceBookings.AsNoTracking()
             .Where(s => s.ReservaId == reservaId)
-            .Select(s => new { s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status, s.CreatedAt })
+            .Select(s => new { s.Id, s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status, s.CreatedAt })
             .ToListAsync(cancellationToken);
         rows.AddRange(assistances.Select(s => new ReservaServicePaymentRow(
             ServicePaymentRecordKinds.Assistance, s.PublicId,
@@ -3339,11 +3527,11 @@ public class SupplierService : ISupplierService
             s.Supplier != null ? s.Supplier.Name : null,
             s.NetCost, s.Currency, s.Status,
             s.Supplier != null ? (SupplierInvoicingMode?)s.Supplier.InvoicingMode : null,
-            s.CreatedAt)));
+            s.CreatedAt, s.Id, IsGenericCancelled(s.Status))));
 
         var generics = await _dbContext.Servicios.AsNoTracking()
             .Where(s => s.ReservaId == reservaId)
-            .Select(s => new { s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status, s.CreatedAt })
+            .Select(s => new { s.Id, s.PublicId, s.Supplier, s.NetCost, s.Currency, s.Status, s.CreatedAt })
             .ToListAsync(cancellationToken);
         rows.AddRange(generics.Select(s => new ReservaServicePaymentRow(
             ServicePaymentRecordKinds.Generic, s.PublicId,
@@ -3352,7 +3540,7 @@ public class SupplierService : ISupplierService
             s.Supplier != null ? s.Supplier.Name : null,
             s.NetCost, s.Currency, s.Status,
             s.Supplier != null ? (SupplierInvoicingMode?)s.Supplier.InvoicingMode : null,
-            s.CreatedAt)));
+            s.CreatedAt, s.Id, IsGenericCancelled(s.Status))));
 
         return rows;
     }

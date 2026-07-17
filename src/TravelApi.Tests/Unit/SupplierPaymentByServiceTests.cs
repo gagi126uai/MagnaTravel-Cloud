@@ -394,7 +394,11 @@ public class SupplierPaymentByServiceTests
         var line = ServiceLine(statusDto, hotelA.PublicId);
         Assert.Equal(ServiceSupplierPaymentStatuses.Paid, line.Status);
         Assert.Equal(1500m, line.PaidToOperator);
-        Assert.Equal(-500m, line.OutstandingToOperator); // 1000 - 1500 = -500 (saldo a favor)
+        // (ADR-048 T2, tanda de endurecimientos N1, 2026-07-17) "Lo que falta pagar" nunca se muestra negativo:
+        // 1000 - 1500 = -500 en la cuenta interna, pero en PANTALLA se planta en 0 (el excedente sigue siendo
+        // saldo a favor real -- se ve en CreditAppliedToOperator/el pool del operador -- solo que ya no se
+        // "disfraza" de numero negativo en este campo).
+        Assert.Equal(0m, line.OutstandingToOperator);
     }
 
     [Fact]
@@ -448,7 +452,9 @@ public class SupplierPaymentByServiceTests
         var line = ServiceLine(statusDto, hotelA.PublicId);
         Assert.Equal(ServiceSupplierPaymentStatuses.Paid, line.Status);
         Assert.Equal(1200m, line.PaidToOperator);
-        Assert.Equal(-200m, line.OutstandingToOperator); // 1000 - 1200 = -200 (saldo a favor)
+        // (ADR-048 T2, tanda de endurecimientos N1, 2026-07-17) Igual que en el caso de un solo pago: el
+        // pendiente en PANTALLA nunca es negativo, aunque internamente 1000 - 1200 = -200 de saldo a favor.
+        Assert.Equal(0m, line.OutstandingToOperator);
     }
 
     // ============================= multimoneda =============================

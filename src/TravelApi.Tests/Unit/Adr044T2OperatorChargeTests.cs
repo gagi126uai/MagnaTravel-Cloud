@@ -286,6 +286,37 @@ public class Adr044T2OperatorChargeTests
             userId: "u", userName: "U", ct: default, userCanClassifyAgencyPenalty: true));
     }
 
+    /// <summary>
+    /// Candado del contador (Flag 2, tanda de endurecimientos ADR-048 T2, 2026-07-17): una retencion fiscal
+    /// (Withholding, credito fiscal de la agencia) NUNCA puede cargarse como "facturada aparte" (deuda NUEVA
+    /// que el operador le exige a la agencia). Si se permitiera, el lector compartido de deuda "facturada
+    /// aparte" (que filtra solo por CollectionMode, no por Kind) sumaria una retencion como si fuera deuda real
+    /// al operador. Hoy la UI no ofrece esta combinacion; este test fija que tampoco es alcanzable por API.
+    /// </summary>
+    [Fact]
+    public async Task AddOperatorCharge_Rejects_Withholding_With_FacturadaAparte()
+    {
+        var h = BuildService();
+        var (bc, _, _) = await SeedBcWithLineAsync(h.Ctx, refundCap: 1000m);
+        await h.Service.AllocateConfirmedPenaltyToLinesAsync(bc, 300m, "ARS", default, userId: "u", userName: "U");
+        bc.PenaltyStatus = PenaltyStatus.Confirmed;
+        await h.Ctx.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() => h.Service.AddOperatorChargeAsync(
+            bc.PublicId,
+            new AddOperatorChargeRequest(
+                Kind: OperatorChargeKind.Withholding,
+                CollectionMode: PenaltyCollectionMode.FacturadaAparte,
+                Amount: 80m,
+                Currency: "ARS",
+                DocumentRef: "FACT-OP-999"),
+            userId: "u", userName: "U", ct: default, userCanClassifyAgencyPenalty: true));
+
+        // No se creo NINGUN cargo nuevo: el rechazo es ANTES de escribir (transaccion nunca arranca).
+        Assert.Single(await h.Ctx.BookingCancellationLineOperatorCharges.ToListAsync());
+        Assert.Contains("crédito fiscal", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     // ============================================================
     // Caso 3/4 — Reverse con cargos mixtos: restaura EXACTO RetainedDeductionAmount, nunca Withholding/FacturadaAparte.
     // ============================================================
