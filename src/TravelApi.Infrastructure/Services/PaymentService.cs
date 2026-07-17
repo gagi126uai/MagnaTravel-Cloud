@@ -1496,24 +1496,20 @@ public class PaymentService : IPaymentService
                 $"La Nota de Debito esta expresada en {debitNoteCurrency}; el cobro debe imputarse a esa moneda.");
         }
 
-        var creditedAmount = await _dbContext.Invoices
-            .AsNoTracking()
-            .Where(invoice => invoice.OriginalInvoiceId == debitNote.Id
-                && invoice.Resultado == "A"
-                && invoice.AnnulmentStatus != AnnulmentStatus.Succeeded
-                && (invoice.TipoComprobante == 3 || invoice.TipoComprobante == 8
-                    || invoice.TipoComprobante == 13 || invoice.TipoComprobante == 53))
-            .SumAsync(invoice => (decimal?)invoice.ImporteTotal, cancellationToken) ?? 0m;
+        // TANDA C "la multa cobrada se ve cerrada" (2026-07-16): la cuenta de "cuanto le queda pendiente a la
+        // ND" se centralizo en DebitNoteOutstandingLookup + DebitNoteOutstandingRules (Dominio) para que este
+        // guard, la bandeja de multas del cliente y el cartel de la ficha nunca den numeros distintos. Antes
+        // esta cuenta se repetia inline aca con las mismas dos consultas.
+        var debitNoteIdAsList = new List<int> { debitNote.Id };
+        var creditedByDebitNote = await DebitNoteOutstandingLookup.LoadCreditedAmountsAsync(
+            _dbContext, debitNoteIdAsList, cancellationToken);
+        var collectedByDebitNote = await DebitNoteOutstandingLookup.LoadCollectedAmountsAsync(
+            _dbContext, debitNoteIdAsList, cancellationToken);
 
-        var collectedAmount = await _dbContext.Payments
-            .AsNoTracking()
-            .Where(payment => payment.LinkedInvoiceId == debitNote.Id
-                && payment.Status != "Cancelled"
-                && !payment.IsDeleted)
-            .SumAsync(payment => (decimal?)(payment.ImputedAmount ?? payment.Amount), cancellationToken) ?? 0m;
-
-        var outstanding = EconomicRulesHelper.RoundCurrency(
-            debitNote.ImporteTotal - creditedAmount - collectedAmount);
+        var outstanding = TravelApi.Domain.Reservations.DebitNoteOutstandingRules.ComputeOutstanding(
+            debitNote.ImporteTotal,
+            creditedByDebitNote.GetValueOrDefault(debitNote.Id),
+            collectedByDebitNote.GetValueOrDefault(debitNote.Id));
         if (outstanding <= 0m)
         {
             throw new InvalidOperationException("La Nota de Debito seleccionada ya no tiene saldo pendiente.");

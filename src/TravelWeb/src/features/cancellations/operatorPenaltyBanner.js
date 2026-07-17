@@ -28,6 +28,7 @@
  */
 
 import { debeMostrarReintentarDeshacer } from "./lib/undoDebitNoteLogic.js";
+import { formatCurrency } from "../../lib/utils.js";
 
 // Traduce cada estado del backend a un slug corto y estable, usado tanto para armar
 // el data-testid (banner-multa-<slug>) como — en algunos casos — el texto mostrado.
@@ -694,4 +695,89 @@ export function textoRastroDeshacerMulta(lastDebitNoteUndo) {
     texto += ".";
   }
   return texto;
+}
+
+// ============================================================================
+// "La multa cobrada se ve cerrada" (2026-07-16, spec
+// docs/ux/2026-07-16-multa-cobrada-cartel-cerrado.md). El cartel de la familia
+// "confirmada" (Done) daba la multa por "terminada" apenas la Nota de Débito tenía CAE,
+// sin mirar si el cliente ya la había PAGADO del todo. El backend ahora manda
+// `isFullyCollected` (bool) por situación — estas dos funciones traducen ese dato al
+// cartel gris "cerrado" que reemplaza al verde de siempre SOLO cuando corresponde.
+// ============================================================================
+
+/**
+ * True si la multa de este operador (familia "confirmada", ND con CAE) ya está cobrada
+ * al 100% y el cartel tiene que verse "cerrado" (gris + ✓) en vez del verde de "recién
+ * resuelto, todavía con acciones a la vista".
+ *
+ * Condición dura de "cero cambio" (spec, regla de compatibilidad): si el backend
+ * todavía no manda `isFullyCollected` (DTO viejo, llega `undefined`) o lo manda en
+ * `false`, esta función devuelve `false` y el cartel sigue EXACTAMENTE como antes de
+ * esta obra — nunca se asume "cerrado" por default.
+ *
+ * @param {{ isFullyCollected?: boolean }} situacion
+ * @returns {boolean}
+ */
+export function estaMultaOperadorCerrada(situacion) {
+  return situacion?.isFullyCollected === true;
+}
+
+/**
+ * Línea de detalle del cartel "cerrado" (spec sección "Texto exacto", P1=B). Usa la
+ * fecha en que el backend registró el cobro completo (`fullyCollectedAt`), formateada
+ * corta (DD/MM, mismo formato que `calcularAvisoPlazoDeshacerMulta`).
+ *
+ * Regla "el front no deduce, lo dice el backend" (2026-07-03): esta fecha es un dato
+ * DESEABLE, no obligatorio — si el backend manda `isFullyCollected: true` pero todavía
+ * no manda la fecha (o llega null/inválida), el texto degrada al fallback fijo de la
+ * spec. El front NUNCA inventa ni estima esta fecha.
+ *
+ * @param {string|null|undefined} fullyCollectedAtIso
+ * @returns {string}
+ */
+export function textoMultaCobradaCerrada(fullyCollectedAtIso) {
+  if (!fullyCollectedAtIso) return "Ya se cobró por completo.";
+
+  const fecha = new Date(fullyCollectedAtIso);
+  if (Number.isNaN(fecha.getTime())) return "Ya se cobró por completo."; // fecha invalida (defensivo) -> fallback, nunca se rompe ni se inventa.
+
+  return `Se cobró por completo el ${formatearFechaCorta(fullyCollectedAtIso)}.`;
+}
+
+/**
+ * Qué mostrar como monto en el cartel "cerrado" (spec 2026-07-16): MISMA regla de
+ * enmascarado que el resto de la ficha — sin permiso `cobranzas.see_cost` nunca se
+ * muestra el número real, va "—" (regla general 2026-06-05). Devuelve un descriptor
+ * en vez de JSX para que el componente decida cómo pintarlo (el "—" lleva un
+ * `title="Sin permiso para ver montos"` por accesibilidad; el monto real no).
+ *
+ * @param {{ amount?: number|null, currency?: string|null }} situacion
+ * @param {boolean} puedeVerMontos
+ * @returns {{ oculto: boolean, texto: string|null }}
+ */
+export function montoMultaOperadorCerradaParaMostrar(situacion, puedeVerMontos) {
+  if (!puedeVerMontos) return { oculto: true, texto: null };
+  if (situacion?.amount != null && situacion?.currency) {
+    return { oculto: false, texto: formatCurrency(situacion.amount, situacion.currency) };
+  }
+  return { oculto: false, texto: null };
+}
+
+/**
+ * True si, en el cartel "cerrado", hay que dibujar en línea el panel de "Agregar otro
+ * cargo" (`AgregarOtroCargoOperadorInline`) DEBAJO del "Más ▾" (spec 2026-07-16, P2=B).
+ * Es la MISMA regla que ya usaba el link a la vista en el cartel verde de siempre
+ * (`puedeAgregarOtroCargo && !mostrarDeshacerMulta`), con la condición nueva de que el
+ * agente además haya tocado "Más ▾" — antes de eso, el panel queda escondido.
+ *
+ * Extraída como función pura (en vez de dejar el `&&` encadenado directo en el JSX)
+ * porque es la regla central de la obra ("el link no va a la vista de entrada") y así
+ * queda cubierta por un test que no puede desalinearse del componente.
+ *
+ * @param {{ mostrarMasOpcionesCerrado: boolean, puedeAgregarOtroCargo: boolean, mostrarDeshacerMulta: boolean }} params
+ * @returns {boolean}
+ */
+export function debeMostrarPanelAgregarCargoEnCerrado({ mostrarMasOpcionesCerrado, puedeAgregarOtroCargo, mostrarDeshacerMulta }) {
+  return mostrarMasOpcionesCerrado === true && puedeAgregarOtroCargo === true && mostrarDeshacerMulta !== true;
 }

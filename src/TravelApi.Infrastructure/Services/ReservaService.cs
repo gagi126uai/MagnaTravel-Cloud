@@ -2471,20 +2471,16 @@ public class ReservaService : IReservaService
         // unica de la cuenta) desde las colecciones ya cargadas; no toca la tabla hija (eso es solo para
         // agregados cross-reserva en SQL). El enmascarado de TotalCost por moneda se aplica mas abajo en
         // ApplyCostMaskingAsync, junto con el escalar, para no dejar costos visibles por una moneda.
-        // Se calcula ACA, ANTES del contexto de plata de la anulada, porque el monto de la multa "pendiente de
-        // cobro" se netea contra el saldo de SU misma moneda (ver ComputePendingPenaltyForDisplay).
         var moneySummary = ReservaMoneyCalculator.Calculate(file);
-
-        // Saldo por moneda (ISO -> balance) para netear la multa contra lo ya cobrado en esa moneda.
-        var balanceByCurrency = moneySummary.PorMoneda.Values
-            .ToDictionary(line => line.Currency, line => line.Balance, StringComparer.OrdinalIgnoreCase);
 
         // Contexto de plata real en reservas ANULADAS (saldo a favor pendiente / multa cobrable / dato roto).
         // Null para el resto de los estados. Ver ReservationDebtRules. Necesita saber si hay una Nota de Debito
         // de multa viva -> una query chica al aggregate de cancelacion (el detalle no es hot path y ya hace
-        // varias queries pequenas). Se hace SOLO si la reserva esta anulada (adentro del helper).
+        // varias queries pequenas). Se hace SOLO si la reserva esta anulada (adentro del helper). El monto
+        // pendiente de la multa se calcula ND-BASED (contra la propia Nota de Debito), no contra el saldo de la
+        // reserva — ver el XML-doc de AggregatePendingPenaltiesByCurrency.
         var cancelledMoneyInfo = await DeriveCancelledMoneyContextAsync(
-            file.Id, file.Status, file.Balance, balanceByCurrency, CancellationToken.None);
+            file.Id, file.Status, file.Balance, CancellationToken.None);
         dto.CancelledMoneyContext = cancelledMoneyInfo.Context;
         dto.CancelledPenaltyAmount = cancelledMoneyInfo.PenaltyAmount;
         dto.CancelledPenaltyCurrency = cancelledMoneyInfo.PenaltyCurrency;
@@ -5172,7 +5168,7 @@ public class ReservaService : IReservaService
     /// "Multas en la cuenta del cliente" (2026-07-15): visibilidad ampliada a <c>internal</c> (era
     /// <c>private</c>) para que <see cref="TravelApi.Infrastructure.Services.CustomerService"/> reuse el MISMO
     /// criterio de "reserva anulada" al armar el bloque de multas pendientes, en vez de copiar la comparacion
-    /// de estados. Mismo patron ya usado con <see cref="ComputePendingPenaltyForDisplay"/>. Sin cambio de
+    /// de estados. Mismo patron ya usado con <see cref="AggregatePendingPenaltiesByCurrency"/>. Sin cambio de
     /// comportamiento: la firma y el cuerpo quedan identicos.
     /// </remarks>
     internal static bool IsCancelledLikeStatus(string? status)
@@ -5211,54 +5207,12 @@ public class ReservaService : IReservaService
            ?? Monedas.Normalizar(penaltyCurrencyAtEvent);
 
     /// <summary>
-    /// Monto de la multa que TODAVIA falta cobrar, para mostrar junto al cartel "Multa pendiente de cobro".
-    /// Es la multa BRUTA congelada (<c>PenaltyAmountAtEvent</c>) MENOS lo ya cobrado, en la moneda de la multa. Si el
-    /// cliente pagó parte de la multa, el bruto sobreestima; este número es el neto real que queda por cobrar.
-    ///
-    /// <para><b>De dónde sale "lo ya cobrado"</b>: el proyecto NO tiene un libro de imputación exacta pago-&gt;factura
-    /// (<c>Payment.LinkedInvoiceId</c> es informativo; los guards y la reconciliación NO lo miran — ver ADR-023 /
-    /// ADR-042). La verdad de la plata es POR MONEDA a nivel reserva: <c>ReservaMoneyByCurrency.Balance</c> = venta
-    /// confirmada - cobrado. En una reserva anulada con multa VIVA, ese saldo positivo en la moneda de la multa ES lo
-    /// que falta cobrar de la multa (la nota de crédito total ya barrió la venta; lo único que queda por cobrar es la
-    /// nota de débito de la multa). Por eso neteamos contra el saldo de esa moneda en vez de contra un vínculo
-    /// pago-&gt;ND que no existe como fuente de verdad.</para>
-    ///
-    /// <para>Se topea contra la multa bruta (por si en esa moneda hubiera otro cargo además de la multa) y se pisa en
-    /// 0 (por si ya se cobró todo). Si la reserva no tiene línea de plata en la moneda de la multa (dato faltante /
-    /// legacy sin backfill), se cae al bruto: es conservador (no esconder una cuenta por cobrar) y equivale al
-    /// comportamiento previo a este fix.</para>
-    ///
-    /// <para>Devuelve <c>null</c> si no hay monto bruto congelado (<paramref name="grossPenalty"/> null): pasa con
-    /// una ND emitida por la rama 1 del predicado sin snapshot de monto, o con datos legacy. En ese caso el front cae
-    /// a su propio fallback (el balance), igual que antes de este fix.</para>
-    /// </summary>
-    /// <remarks>
-    /// ADR-044 "Deshacer una multa ya emitida" (2026-07-14): visibilidad ampliada a <c>internal</c> (era
-    /// <c>private</c>) para que <see cref="TravelApi.Infrastructure.Services.DebitNoteAnnulmentReconciliation"/>
-    /// (misma formula: "cuanto de la multa ya esta cobrado") la reuse en vez de duplicarla. Sin cambio de
-    /// comportamiento: la firma y el cuerpo quedan identicos.
-    /// </remarks>
-    internal static decimal? ComputePendingPenaltyForDisplay(
-        decimal? grossPenalty, string penaltyCurrencyIso, IReadOnlyDictionary<string, decimal> balanceByCurrency)
-    {
-        // Sin monto bruto congelado no podemos netear; devolvemos null y el front usa su fallback (el balance).
-        if (grossPenalty is null)
-            return null;
-
-        if (!balanceByCurrency.TryGetValue(penaltyCurrencyIso, out var pendingInCurrency))
-            return grossPenalty; // sin dato por moneda: mostrar el bruto (conservador, = comportamiento previo).
-
-        var pending = Math.Min(grossPenalty.Value, pendingInCurrency);
-        return pending < 0m ? 0m : pending;
-    }
-
-    /// <summary>
     /// Deriva el contexto de plata de UNA reserva anulada (camino de detalle). Devuelve todo en null si la reserva
     /// NO esta anulada. Para las anuladas, consulta el respaldo fiscal de la multa (multa viva vs multa en revision)
     /// con los predicados compartidos y aplica la regla de dominio <see cref="ReservationDebtRules.DeriveForCancelled"/>.
     /// El monto de la multa solo se expone cuando el contexto es "multa por cobrar", y es lo PENDIENTE de cobro
-    /// (neto de lo ya pagado), no el bruto congelado — se netea contra el saldo de su moneda con
-    /// <paramref name="balanceByCurrency"/> (ver <see cref="ComputePendingPenaltyForDisplay"/>).
+    /// (neto de lo ya pagado), no el bruto congelado — se calcula ND-BASED, ver
+    /// <see cref="AggregatePendingPenaltiesByCurrency"/>.
     ///
     /// <para><b>ADR-044 T5 Addendum, Revision 2, fix B2 (2026-07-11)</b>: ANTES esta consulta tomaba
     /// <c>FirstOrDefaultAsync</c> SIN <c>OrderBy</c> sobre el predicado de multa viva, con el comentario
@@ -5272,8 +5226,7 @@ public class ReservaService : IReservaService
     /// hoy) rinde exactamente igual que antes (lista de un elemento -> mismo numero).</para>
     /// </summary>
     private async Task<CancelledMoneyInfo> DeriveCancelledMoneyContextAsync(
-        int reservaId, string? status, decimal balance,
-        IReadOnlyDictionary<string, decimal> balanceByCurrency, CancellationToken cancellationToken)
+        int reservaId, string? status, decimal balance, CancellationToken cancellationToken)
     {
         var empty = new CancelledMoneyInfo(null, null, null, Array.Empty<CancelledPenaltyByCurrencyDto>());
         if (!IsCancelledLikeStatus(status))
@@ -5284,10 +5237,10 @@ public class ReservaService : IReservaService
             .Where(bc => bc.ReservaId == reservaId);
 
         // Multa VIVA: TODAS las BC con respaldo fiscal firme (puede haber mas de una, Decision C), con su
-        // monto/moneda congelados para sumarlos por moneda.
+        // monto/moneda congelados + la ND vinculada (si ya se emitio) para calcular el pendiente ND-BASED.
         var liveSnapshots = await reservaCancellations
             .Where(CancellationPenaltyRules.LiveDebitNotePredicate)
-            .Select(bc => new { bc.PenaltyAmountAtEvent, bc.PenaltyCurrencyAtEvent })
+            .Select(bc => new { bc.PenaltyAmountAtEvent, bc.PenaltyCurrencyAtEvent, bc.DebitNoteInvoiceId })
             .ToListAsync(cancellationToken);
 
         ReservationDebtRules.DebitNoteBacking backing;
@@ -5314,49 +5267,105 @@ public class ReservaService : IReservaService
         if (context != ReservationDebtRules.CancelledMoneyContext.PenaltyReceivable || liveSnapshots.Count == 0)
             return new CancelledMoneyInfo(token, null, null, Array.Empty<CancelledPenaltyByCurrencyDto>());
 
-        var penaltiesByCurrency = AggregatePendingPenaltiesByCurrency(liveSnapshots
-            .Select(s => (s.PenaltyAmountAtEvent, s.PenaltyCurrencyAtEvent)), balanceByCurrency);
+        // Consulta batcheada de las NDs en juego (ImporteTotal/moneda, NC vivas asociadas, pagos vivos
+        // imputados). Con una reserva tiene, como mucho, un punado de BC vivas, asi que esto NUNCA es un N+1
+        // real (a diferencia del listado, que si agrupa por pagina).
+        var debitNoteIds = liveSnapshots
+            .Where(s => s.DebitNoteInvoiceId.HasValue)
+            .Select(s => s.DebitNoteInvoiceId!.Value)
+            .Distinct()
+            .ToList();
+        var debitNoteTotals = await DebitNoteOutstandingLookup.LoadDebitNoteTotalsAsync(
+            _context, debitNoteIds, cancellationToken);
+        var creditedByDebitNote = await DebitNoteOutstandingLookup.LoadCreditedAmountsAsync(
+            _context, debitNoteIds, cancellationToken);
+        var collectedByDebitNote = await DebitNoteOutstandingLookup.LoadCollectedAmountsAsync(
+            _context, debitNoteIds, cancellationToken);
+
+        var penaltiesByCurrency = AggregatePendingPenaltiesByCurrency(
+            liveSnapshots.Select(s => (s.PenaltyAmountAtEvent, s.PenaltyCurrencyAtEvent, s.DebitNoteInvoiceId)),
+            debitNoteTotals, creditedByDebitNote, collectedByDebitNote);
 
         var primary = penaltiesByCurrency.Count > 0 ? penaltiesByCurrency[0] : null;
         return new CancelledMoneyInfo(token, primary?.Amount, primary?.Currency, penaltiesByCurrency);
     }
 
     /// <summary>
-    /// ADR-044 T5 Addendum, Revision 2, fix B2 (2026-07-11): agrupa por moneda ISO las multas VIVAS congeladas
-    /// (<c>PenaltyAmountAtEvent</c>/<c>PenaltyCurrencyAtEvent</c> de cada BC), sumando el bruto de cada grupo y
-    /// neteando la suma contra lo ya cobrado en esa moneda (mismo criterio que
-    /// <see cref="ComputePendingPenaltyForDisplay"/>, aplicado a la suma en vez de a un solo monto). Filas con
-    /// monto bruto null se ignoran (mismo fallback que el caso singular: sin monto congelado no hay nada que
-    /// sumar). Devuelve la lista ordenada por moneda para que el orden sea deterministico.
+    /// TANDA C "la multa cobrada se ve cerrada" (2026-07-16): agrupa por moneda ISO las multas VIVAS de una
+    /// reserva anulada, calculando el PENDIENTE de cobro de cada una con la formula ND-BASED unica del modulo
+    /// (<see cref="TravelApi.Domain.Reservations.DebitNoteOutstandingRules.ComputeOutstanding"/>): importe total
+    /// de SU Nota de Debito, menos las NC vivas asociadas, menos los pagos vivos imputados a ELLA — no el saldo
+    /// de la reserva.
+    ///
+    /// <para><b>Por que dejo de netear contra el saldo de la reserva (fix "la multa cobrada se ve pendiente para
+    /// siempre")</b>: desde el 2026-07-15 un cobro real de multa en una reserva anulada se registra con
+    /// <c>Payment.AffectsReservaBalance=false</c> (para no mezclar la deuda fiscal de la ND, ya cobrada, con la
+    /// deuda operativa de la reserva, que la anulacion ya saldo). Eso significa que el saldo de la reserva YA NO
+    /// baja cuando el cliente paga la multa: la cuenta vieja (contra el saldo) quedaba pegada mostrando el bruto
+    /// entero como pendiente aunque estuviera cobrada. La cuenta correcta es la MISMA que valida un cobro nuevo
+    /// (<c>PaymentService.EnsureCancelledDebitNoteCollectableAsync</c>) y que arma la bandeja de multas del
+    /// cliente (<c>CustomerService.BuildPendingPenaltiesAsync</c>): contra la ND, no contra la reserva.</para>
+    ///
+    /// <para>Cuando una BC todavia no tiene ND emitida (su <c>DebitNoteInvoiceId</c> no aparece en
+    /// <paramref name="debitNoteTotals"/> — la ND se esta encolando/emitiendo, ADR-014) no existe todavia ningun
+    /// comprobante contra el cual se le pudiera haber cobrado o acreditado nada: el pendiente es directamente el
+    /// bruto congelado, igual que antes de esta tanda.</para>
+    ///
+    /// <para>Filas con monto bruto null se ignoran (sin monto congelado no hay nada que sumar). Es PURA (sin
+    /// acceso a base): los tres diccionarios ya vienen cargados por el caller con
+    /// <see cref="DebitNoteOutstandingLookup"/> en consultas batcheadas (nunca una por fila, ni una por pagina en
+    /// el listado). Devuelve la lista ordenada por moneda para que el orden sea deterministico.</para>
     /// </summary>
     /// <remarks>
     /// "Multas en la cuenta del cliente" (2026-07-15): visibilidad ampliada a <c>internal</c> (era
     /// <c>private</c>) para que <c>CustomerService</c> la reuse al completar el contexto de plata de la solapa
-    /// "Reservas" de la cuenta del cliente, en vez de duplicar la formula de neteo. Sin cambio de comportamiento.
+    /// "Reservas" de la cuenta del cliente, en vez de duplicar la formula.
     /// </remarks>
     internal static List<CancelledPenaltyByCurrencyDto> AggregatePendingPenaltiesByCurrency(
-        IEnumerable<(decimal? PenaltyAmountAtEvent, string? PenaltyCurrencyAtEvent)> liveSnapshots,
-        IReadOnlyDictionary<string, decimal> balanceByCurrency)
+        IEnumerable<(decimal? PenaltyAmountAtEvent, string? PenaltyCurrencyAtEvent, int? DebitNoteInvoiceId)> liveSnapshots,
+        IReadOnlyDictionary<int, (decimal ImporteTotal, string? MonId)> debitNoteTotals,
+        IReadOnlyDictionary<int, decimal> creditedByDebitNote,
+        IReadOnlyDictionary<int, decimal> collectedByDebitNote)
     {
-        var grossByCurrency = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+        var pendingByCurrency = new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var snapshot in liveSnapshots)
         {
             if (snapshot.PenaltyAmountAtEvent is null) continue;
-            var currency = NormalizePenaltyCurrencyForDisplay(snapshot.PenaltyCurrencyAtEvent);
-            grossByCurrency[currency] = grossByCurrency.TryGetValue(currency, out var acc)
-                ? acc + snapshot.PenaltyAmountAtEvent.Value
-                : snapshot.PenaltyAmountAtEvent.Value;
+
+            decimal outstanding;
+            string currency;
+
+            if (snapshot.DebitNoteInvoiceId is { } debitNoteId
+                && debitNoteTotals.TryGetValue(debitNoteId, out var debitNote))
+            {
+                // ND ya emitida: el pendiente se calcula CONTRA SU COMPROBANTE (fuente de verdad fiscal).
+                outstanding = TravelApi.Domain.Reservations.DebitNoteOutstandingRules.ComputeOutstanding(
+                    debitNote.ImporteTotal,
+                    creditedByDebitNote.GetValueOrDefault(debitNoteId),
+                    collectedByDebitNote.GetValueOrDefault(debitNoteId));
+                currency = NormalizePenaltyCurrencyForDisplay(debitNote.MonId);
+            }
+            else
+            {
+                // Sin ND emitida todavia (rama de emision diferida, ADR-014): no hay comprobante contra el cual
+                // se le haya podido cobrar o acreditar nada, asi que el pendiente es el bruto congelado tal cual.
+                outstanding = snapshot.PenaltyAmountAtEvent.Value;
+                currency = NormalizePenaltyCurrencyForDisplay(snapshot.PenaltyCurrencyAtEvent);
+            }
+
+            // Topeado a 0 para MOSTRAR (nunca "deuda negativa" en el cartel); ver el XML-doc de
+            // DebitNoteOutstandingRules sobre por que la regla de Dominio devuelve el crudo sin topear.
+            var pendingForDisplay = outstanding < 0m ? 0m : outstanding;
+            pendingByCurrency[currency] = pendingByCurrency.TryGetValue(currency, out var acc)
+                ? acc + pendingForDisplay
+                : pendingForDisplay;
         }
 
-        var result = new List<CancelledPenaltyByCurrencyDto>();
-        foreach (var (currency, grossAmount) in grossByCurrency.OrderBy(kv => kv.Key, StringComparer.Ordinal))
-        {
-            var pending = ComputePendingPenaltyForDisplay(grossAmount, currency, balanceByCurrency);
-            if (pending is null) continue; // sin bruto congelado (defensivo; ya filtrado arriba).
-            result.Add(new CancelledPenaltyByCurrencyDto { Currency = currency, Amount = pending.Value });
-        }
-
-        return result;
+        return pendingByCurrency
+            .OrderBy(kv => kv.Key, StringComparer.Ordinal)
+            .Select(kv => new CancelledPenaltyByCurrencyDto { Currency = kv.Key, Amount = kv.Value })
+            .ToList();
     }
 
     /// <summary>
@@ -5379,20 +5388,43 @@ public class ReservaService : IReservaService
         var publicIds = cancelledItems.Select(i => i.PublicId).ToList();
 
         // Query 1: reservas de la pagina con multa VIVA, con el monto/moneda congelados de CADA BC (puede haber
-        // mas de una fila por reserva, Decision C). Join explicito contra Reservas (no nav implicita) para
-        // resolver el PublicId y correr igual en Postgres e InMemory.
+        // mas de una fila por reserva, Decision C) + la ND vinculada (si ya se emitio). Join explicito contra
+        // Reservas (no nav implicita) para resolver el PublicId y correr igual en Postgres e InMemory.
         var liveRows = await (
             from bc in _context.BookingCancellations.AsNoTracking().Where(CancellationPenaltyRules.LiveDebitNotePredicate)
             join reservaPadre in _context.Reservas.AsNoTracking() on bc.ReservaId equals reservaPadre.Id
             where publicIds.Contains(reservaPadre.PublicId)
-            select new { reservaPadre.PublicId, bc.PenaltyAmountAtEvent, bc.PenaltyCurrencyAtEvent })
+            select new
+            {
+                reservaPadre.PublicId,
+                bc.PenaltyAmountAtEvent,
+                bc.PenaltyCurrencyAtEvent,
+                bc.DebitNoteInvoiceId
+            })
             .ToListAsync(cancellationToken);
 
         // Agrupa TODAS las filas vivas por reserva (ya no ".First()" de una sola): la suma por moneda se hace
         // mas abajo, por item, con AggregatePendingPenaltiesByCurrency.
         var liveRowsByPublicId = liveRows
             .GroupBy(r => r.PublicId)
-            .ToDictionary(g => g.Key, g => g.Select(r => (r.PenaltyAmountAtEvent, r.PenaltyCurrencyAtEvent)).ToList());
+            .ToDictionary(
+                g => g.Key,
+                g => g.Select(r => (r.PenaltyAmountAtEvent, r.PenaltyCurrencyAtEvent, r.DebitNoteInvoiceId)).ToList());
+
+        // TANDA C (2026-07-16): consulta batcheada de TODAS las NDs de la PAGINA entera (nunca una por fila, ni
+        // una por item dentro del foreach) — el pendiente ND-BASED de cada multa se calcula contra SU
+        // comprobante, ver el XML-doc de AggregatePendingPenaltiesByCurrency.
+        var debitNoteIds = liveRows
+            .Where(r => r.DebitNoteInvoiceId.HasValue)
+            .Select(r => r.DebitNoteInvoiceId!.Value)
+            .Distinct()
+            .ToList();
+        var debitNoteTotals = await DebitNoteOutstandingLookup.LoadDebitNoteTotalsAsync(
+            _context, debitNoteIds, cancellationToken);
+        var creditedByDebitNote = await DebitNoteOutstandingLookup.LoadCreditedAmountsAsync(
+            _context, debitNoteIds, cancellationToken);
+        var collectedByDebitNote = await DebitNoteOutstandingLookup.LoadCollectedAmountsAsync(
+            _context, debitNoteIds, cancellationToken);
 
         // Query 2: reservas de la pagina con multa EN REVISION (ND fallida/manual). Solo necesitamos el set de ids.
         var underReviewIds = (await (
@@ -5416,17 +5448,16 @@ public class ReservaService : IReservaService
             var context = ReservationDebtRules.DeriveForCancelled(item.Balance, backing);
             item.CancelledMoneyContext = ReservationDebtRules.ToDtoString(context);
 
-            // El monto de la multa solo acompaña al caso "multa por cobrar", y es lo PENDIENTE de cobro (neto de lo
-            // ya pagado en esa moneda), no el bruto congelado. Se netea contra el saldo por moneda que ya trae la
-            // fila (item.PorMoneda, llenado por FillPorMonedaForListAsync antes que este helper), con el MISMO
-            // criterio que el detalle (ver ComputePendingPenaltyForDisplay). Con 2+ BC vivas simultaneas, se SUMAN
-            // por moneda (ver AggregatePendingPenaltiesByCurrency) en vez de tomar una fila arbitraria.
+            // El monto de la multa solo acompaña al caso "multa por cobrar", y es lo PENDIENTE de cobro
+            // ND-BASED (contra la propia Nota de Debito, no contra el saldo de la reserva — ver el XML-doc de
+            // AggregatePendingPenaltiesByCurrency). Con 2+ BC vivas simultaneas, se SUMAN por moneda en vez de
+            // tomar una fila arbitraria; los tres diccionarios ya vienen cargados UNA sola vez para toda la
+            // pagina (sin N+1 dentro de este foreach).
             if (context == ReservationDebtRules.CancelledMoneyContext.PenaltyReceivable &&
                 liveRowsByPublicId.TryGetValue(item.PublicId, out var snapshots))
             {
-                var balanceByCurrency = item.PorMoneda
-                    .ToDictionary(line => line.Currency, line => line.Balance, StringComparer.OrdinalIgnoreCase);
-                var penaltiesByCurrency = AggregatePendingPenaltiesByCurrency(snapshots, balanceByCurrency);
+                var penaltiesByCurrency = AggregatePendingPenaltiesByCurrency(
+                    snapshots, debitNoteTotals, creditedByDebitNote, collectedByDebitNote);
                 item.CancelledPenaltiesByCurrency = penaltiesByCurrency;
 
                 var primary = penaltiesByCurrency.Count > 0 ? penaltiesByCurrency[0] : null;

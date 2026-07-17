@@ -136,8 +136,10 @@ public class ReservaServiceCancelledMoneyContextTests
     }
 
     // Siembra una factura de Nota de Débito con el estado de anulación pedido y devuelve su Id (para vincularla
-    // como DebitNoteInvoiceId y probar la guarda de "factura anulada = fuera del cartel").
-    private static async Task<int> SeedDebitNoteInvoiceAsync(AppDbContext context, AnnulmentStatus annulmentStatus)
+    // como DebitNoteInvoiceId y probar la guarda de "factura anulada = fuera del cartel"). ImporteTotal/MonId son
+    // opcionales (0/"PES" por defecto) porque los tests viejos solo necesitan el Id, no el monto de la ND.
+    private static async Task<int> SeedDebitNoteInvoiceAsync(
+        AppDbContext context, AnnulmentStatus annulmentStatus, decimal importeTotal = 0m, string monId = "PES")
     {
         var nd = new Invoice
         {
@@ -147,23 +149,29 @@ public class ReservaServiceCancelledMoneyContextTests
             Resultado = "A",
             CAE = "77777777",
             AnnulmentStatus = annulmentStatus,
+            ImporteTotal = importeTotal,
+            MonId = monId,
         };
         context.Invoices.Add(nd);
         await context.SaveChangesAsync();
         return nd.Id;
     }
 
-    // Siembra una línea de plata POR MONEDA materializada (ReservaMoneyByCurrency) con el saldo pedido. Es la que
-    // lee el listado (FillPorMonedaForListAsync) para netear la multa contra lo ya cobrado en esa moneda.
-    private static async Task SeedMoneyByCurrencyAsync(
-        AppDbContext context, int reservaId, string currency, decimal balance)
+    // TANDA C "la multa cobrada se ve cerrada" (2026-07-16): siembra un cobro REAL vinculado a una Nota de
+    // Debito (Payment.LinkedInvoiceId), la fuente de verdad ND-BASED de "cuanto ya se cobro". Reemplaza el viejo
+    // truco de simular el cobro bajando ReservaMoneyByCurrency.Balance: desde el 2026-07-15 un cobro real de
+    // multa en una reserva anulada NO mueve el saldo (Payment.AffectsReservaBalance=false), asi que ese truco ya
+    // no refleja la realidad.
+    private static async Task SeedPaymentLinkedToInvoiceAsync(
+        AppDbContext context, int linkedInvoiceId, decimal amount, string currency = "ARS")
     {
-        context.ReservaMoneyByCurrency.Add(new ReservaMoneyByCurrency
+        context.Payments.Add(new Payment
         {
-            ReservaId = reservaId,
+            LinkedInvoiceId = linkedInvoiceId,
+            Amount = amount,
             Currency = currency,
-            ConfirmedSale = balance, // coherencia mínima; el neteo solo lee Balance.
-            Balance = balance,
+            Status = "Paid",
+            AffectsReservaBalance = false, // fiel al comportamiento real de un cobro de ND en una anulada.
         });
         await context.SaveChangesAsync();
     }
@@ -521,21 +529,26 @@ public class ReservaServiceCancelledMoneyContextTests
     [Fact]
     public async Task List_PenaltyReceivable_ShowsPendingNetOfCollected()
     {
-        // Fix "monto del cartel = lo PENDIENTE de cobro": la multa bruta es 3500, pero el cliente ya pagó parte y
-        // el saldo por moneda quedó en 2500. El cartel debe mostrar 2500 (lo que falta cobrar), NO el bruto 3500.
+        // ND-BASED (TANDA C, 2026-07-16): la ND real vale 3500, y el cliente ya pago 1000 con un cobro real
+        // vinculado a esa ND (Payment.LinkedInvoiceId). El cartel debe mostrar 2500 (lo que falta cobrar), NO el
+        // bruto 3500. Desde el 2026-07-15 ese cobro real NO mueve el saldo de la reserva
+        // (Payment.AffectsReservaBalance=false), por eso el saldo queda en 3500 (congelado) y la cuenta correcta
+        // tiene que salir de la ND, no del saldo.
         await using var context = CreateContext();
         var reserva = new Reserva
         {
             Id = 1, NumeroReserva = "F-2026-0400", Name = "Anulada multa parcialmente cobrada",
-            Status = EstadoReserva.Cancelled, ResponsibleUserId = "vendedor-1", Balance = 2500m,
+            Status = EstadoReserva.Cancelled, ResponsibleUserId = "vendedor-1", Balance = 3500m,
             EndDate = new DateTime(2026, 06, 01, 0, 0, 0, DateTimeKind.Utc),
         };
         context.Reservas.Add(reserva);
         await context.SaveChangesAsync();
-        await SeedMoneyByCurrencyAsync(context, reserva.Id, "ARS", balance: 2500m);
+        var debitNoteId = await SeedDebitNoteInvoiceAsync(
+            context, AnnulmentStatus.None, importeTotal: 3500m, monId: "PES");
+        await SeedPaymentLinkedToInvoiceAsync(context, debitNoteId, amount: 1000m);
         await AddCancellationRawAsync(
-            context, reserva.Id, PenaltyStatus.Confirmed, DebitNoteStatus.Pending,
-            penaltyAmount: 3500m, penaltyCurrencyAtEvent: "PES");
+            context, reserva.Id, PenaltyStatus.Confirmed, DebitNoteStatus.Issued,
+            penaltyAmount: 3500m, penaltyCurrencyAtEvent: "PES", debitNoteInvoiceId: debitNoteId);
 
         var service = CreateService(context);
         var page = await service.GetReservasAsync(
@@ -550,7 +563,9 @@ public class ReservaServiceCancelledMoneyContextTests
     [Fact]
     public async Task List_PenaltyReceivable_NoCollection_ShowsGrossPenalty()
     {
-        // Sin cobros: el saldo por moneda == la multa entera (3500). El cartel muestra 3500 (min(3500, 3500)).
+        // ND-BASED (TANDA C, 2026-07-16): la ND todavia se esta emitiendo (Pending, ADR-014), asi que no existe
+        // comprobante contra el cual se le haya podido cobrar nada todavia: el cartel muestra el bruto congelado
+        // (3500) tal cual.
         await using var context = CreateContext();
         var reserva = new Reserva
         {
@@ -560,7 +575,6 @@ public class ReservaServiceCancelledMoneyContextTests
         };
         context.Reservas.Add(reserva);
         await context.SaveChangesAsync();
-        await SeedMoneyByCurrencyAsync(context, reserva.Id, "ARS", balance: 3500m);
         await AddCancellationRawAsync(
             context, reserva.Id, PenaltyStatus.Confirmed, DebitNoteStatus.Pending,
             penaltyAmount: 3500m, penaltyCurrencyAtEvent: "PES");

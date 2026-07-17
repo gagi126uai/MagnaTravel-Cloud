@@ -322,16 +322,21 @@ public sealed class BookingCancellationServiceTests
     }
 
     [Fact]
-    public async Task ConfirmAsync_SnapshotInconsistente_Rechaza_INV118()
+    public async Task ConfirmAsync_SnapshotEnvenenadoDelFront_SeIgnora_YGanaElDatoRealDeLasFichas()
     {
+        // Tanda B (2026-07-16): el snapshot fiscal ya NO viene del frontend — el servidor lo
+        // resuelve solo, desde las fichas reales (agencia/operador/cliente) y la factura ancla.
+        // Antes este test verificaba que un snapshot "Garbage" del front se RECHAZARA (INV-118);
+        // con el contrato nuevo ese payload directamente SE IGNORA: la confirmacion sale bien
+        // y lo persistido son los datos reales del seed, no la basura del request.
         var (service, ctx, _, _) = BuildService();
         var seed = await SeedScenarioAsync(ctx);
 
         var draft = await service.DraftAsync(
-            new DraftCancellationRequest(seed.ReservaPublicId, "Test snapshot inconsistente"),
+            new DraftCancellationRequest(seed.ReservaPublicId, "Test snapshot envenenado ignorado"),
             "user-vendor", null, CancellationToken.None);
 
-        var badRequest = new ConfirmCancellationRequest(
+        var poisonedRequest = new ConfirmCancellationRequest(
             SnapshotData: new FiscalSnapshotData(
                 CurrencyAtEvent: "ARS",
                 ExchangeRateAtOriginalInvoice: 1m,
@@ -344,9 +349,24 @@ public sealed class BookingCancellationServiceTests
             OverrideReason: null,
             ApprovalRequestPublicId: null);
 
-        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
-            service.ConfirmAsync(draft.PublicId, badRequest, "user-vendor", null, false, CancellationToken.None));
-        Assert.Equal("INV-118", ex.InvariantCode);
+        await service.ConfirmAsync(draft.PublicId, poisonedRequest, "user-vendor", null, false, CancellationToken.None);
+
+        var bc = await ctx.BookingCancellations
+            .AsNoTracking()
+            .FirstAsync(b => b.PublicId == draft.PublicId);
+
+        // Las condiciones persistidas son las canonicas derivadas de las fichas del seed
+        // (agencia Monotributo, operador IVA_RESP_INSCRIPTO, cliente Consumidor Final),
+        // jamas el "Garbage" que mando el request.
+        Assert.Equal("MONOTRIBUTISTA", bc.FiscalSnapshot!.AgencyTaxConditionAtEvent);
+        Assert.Equal("RESPONSABLE_INSCRIPTO", bc.FiscalSnapshot.SupplierTaxConditionAtEvent);
+        Assert.Equal("CONSUMIDOR_FINAL", bc.FiscalSnapshot.CustomerTaxConditionAtEvent);
+
+        // La moneda/TC/fuente salen de la factura ancla (en pesos), no del payload:
+        // el request mintio Source=Manual y el servidor igual persiste BNA_Minorista.
+        Assert.Equal("ARS", bc.FiscalSnapshot.CurrencyAtEvent);
+        Assert.Equal(1m, bc.FiscalSnapshot.ExchangeRateAtOriginalInvoice);
+        Assert.Equal(ExchangeRateSource.BNA_Minorista, bc.FiscalSnapshot.Source);
     }
 
     [Fact]

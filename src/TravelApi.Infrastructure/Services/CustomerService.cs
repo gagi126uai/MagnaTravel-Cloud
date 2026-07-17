@@ -768,31 +768,13 @@ public class CustomerService : ICustomerService
             })
             .ToDictionaryAsync(invoice => invoice.Id, cancellationToken);
 
-        var creditedByDebitNote = await _dbContext.Invoices
-            .AsNoTracking()
-            .Where(invoice => invoice.OriginalInvoiceId.HasValue
-                && debitNoteIds.Contains(invoice.OriginalInvoiceId.Value)
-                && invoice.Resultado == "A"
-                && invoice.AnnulmentStatus != AnnulmentStatus.Succeeded
-                && (invoice.TipoComprobante == 3 || invoice.TipoComprobante == 8
-                    || invoice.TipoComprobante == 13 || invoice.TipoComprobante == 53))
-            .GroupBy(invoice => invoice.OriginalInvoiceId!.Value)
-            .Select(group => new { DebitNoteId = group.Key, Amount = group.Sum(invoice => invoice.ImporteTotal) })
-            .ToDictionaryAsync(row => row.DebitNoteId, row => row.Amount, cancellationToken);
-
-        var collectedByDebitNote = await _dbContext.Payments
-            .AsNoTracking()
-            .Where(payment => payment.LinkedInvoiceId.HasValue
-                && debitNoteIds.Contains(payment.LinkedInvoiceId.Value)
-                && payment.Status != "Cancelled"
-                && !payment.IsDeleted)
-            .GroupBy(payment => payment.LinkedInvoiceId!.Value)
-            .Select(group => new
-            {
-                DebitNoteId = group.Key,
-                Amount = group.Sum(payment => payment.ImputedAmount ?? payment.Amount)
-            })
-            .ToDictionaryAsync(row => row.DebitNoteId, row => row.Amount, cancellationToken);
+        // TANDA C "la multa cobrada se ve cerrada" (2026-07-16): estas dos consultas (NC vivas asociadas + pagos
+        // vivos imputados) se centralizaron en DebitNoteOutstandingLookup para que esta bandeja, el guard de
+        // cobro (PaymentService) y el cartel de la ficha/listado (ReservaService) nunca diverjan.
+        var creditedByDebitNote = await DebitNoteOutstandingLookup.LoadCreditedAmountsAsync(
+            _dbContext, debitNoteIds, cancellationToken);
+        var collectedByDebitNote = await DebitNoteOutstandingLookup.LoadCollectedAmountsAsync(
+            _dbContext, debitNoteIds, cancellationToken);
 
         // Multas EN REVISION: el comprobante falló su emisión o quedó para revisión manual (back-office). Ya
         // cuenta como deuda del cliente (decisión del dueño, 2026-07-15) pero distinguida con su propio chip.
@@ -816,7 +798,8 @@ public class CustomerService : ICustomerService
             {
                 var credited = creditedByDebitNote.GetValueOrDefault(debitNote.Id);
                 var collected = collectedByDebitNote.GetValueOrDefault(debitNote.Id);
-                var outstanding = EconomicRulesHelper.RoundCurrency(debitNote.ImporteTotal - credited - collected);
+                var outstanding = TravelApi.Domain.Reservations.DebitNoteOutstandingRules.ComputeOutstanding(
+                    debitNote.ImporteTotal, credited, collected);
                 if (outstanding <= 0m) continue;
 
                 items.Add(BuildPendingPenaltyItem(
@@ -1487,17 +1470,41 @@ public class CustomerService : ICustomerService
         var publicIds = cancelledItems.Select(item => item.PublicId).ToList();
 
         // Query 1: filas de la pagina con multa VIVA, con el monto/moneda congelados de CADA BC (puede haber
-        // mas de una linea por reserva si hubo mas de una cancelacion parcial con multa propia).
+        // mas de una linea por reserva si hubo mas de una cancelacion parcial con multa propia) + la ND
+        // vinculada (si ya se emitio).
         var liveRows = await (
             from bc in _dbContext.BookingCancellations.AsNoTracking().Where(CancellationPenaltyRules.LiveDebitNotePredicate)
             join reservaPadre in _dbContext.Reservas.AsNoTracking() on bc.ReservaId equals reservaPadre.Id
             where publicIds.Contains(reservaPadre.PublicId)
-            select new { reservaPadre.PublicId, bc.PenaltyAmountAtEvent, bc.PenaltyCurrencyAtEvent })
+            select new
+            {
+                reservaPadre.PublicId,
+                bc.PenaltyAmountAtEvent,
+                bc.PenaltyCurrencyAtEvent,
+                bc.DebitNoteInvoiceId
+            })
             .ToListAsync(cancellationToken);
 
         var liveRowsByPublicId = liveRows
             .GroupBy(row => row.PublicId)
-            .ToDictionary(group => group.Key, group => group.Select(row => (row.PenaltyAmountAtEvent, row.PenaltyCurrencyAtEvent)).ToList());
+            .ToDictionary(
+                group => group.Key,
+                group => group.Select(row => (row.PenaltyAmountAtEvent, row.PenaltyCurrencyAtEvent, row.DebitNoteInvoiceId)).ToList());
+
+        // TANDA C (2026-07-16): consulta batcheada de TODAS las NDs de la PAGINA entera (mismo patron que
+        // ReservaService.FillCancelledMoneyContextForListAsync) — el pendiente de cada multa se calcula
+        // ND-BASED, contra SU comprobante, no contra el saldo de la reserva.
+        var debitNoteIds = liveRows
+            .Where(row => row.DebitNoteInvoiceId.HasValue)
+            .Select(row => row.DebitNoteInvoiceId!.Value)
+            .Distinct()
+            .ToList();
+        var debitNoteTotals = await DebitNoteOutstandingLookup.LoadDebitNoteTotalsAsync(
+            _dbContext, debitNoteIds, cancellationToken);
+        var creditedByDebitNote = await DebitNoteOutstandingLookup.LoadCreditedAmountsAsync(
+            _dbContext, debitNoteIds, cancellationToken);
+        var collectedByDebitNote = await DebitNoteOutstandingLookup.LoadCollectedAmountsAsync(
+            _dbContext, debitNoteIds, cancellationToken);
 
         // Query 2: filas de la pagina con multa EN REVISION. Solo necesitamos el set de PublicId.
         var underReviewIds = (await (
@@ -1521,13 +1528,12 @@ public class CustomerService : ICustomerService
             item.CancelledMoneyContext = ReservationDebtRules.ToDtoString(context);
 
             // El monto solo acompaña al caso "multa por cobrar" (PenaltyReceivable); es lo PENDIENTE de cobro
-            // (neto de lo ya pagado en esa moneda, no el bruto congelado) — mismo criterio que la ficha/listado.
+            // ND-BASED (contra la propia Nota de Debito) — mismo criterio que la ficha/listado.
             if (context == ReservationDebtRules.CancelledMoneyContext.PenaltyReceivable
                 && liveRowsByPublicId.TryGetValue(item.PublicId, out var snapshots))
             {
-                var balanceByCurrency = item.PorMoneda
-                    .ToDictionary(line => line.Currency, line => line.Balance, StringComparer.OrdinalIgnoreCase);
-                var penalties = ReservaService.AggregatePendingPenaltiesByCurrency(snapshots, balanceByCurrency);
+                var penalties = ReservaService.AggregatePendingPenaltiesByCurrency(
+                    snapshots, debitNoteTotals, creditedByDebitNote, collectedByDebitNote);
                 var primary = penalties.Count > 0 ? penalties[0] : null;
                 item.CancelledPenaltyAmount = primary?.Amount;
                 item.CancelledPenaltyCurrency = primary?.Currency;

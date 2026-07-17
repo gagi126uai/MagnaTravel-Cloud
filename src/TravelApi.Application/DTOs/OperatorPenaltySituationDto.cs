@@ -175,6 +175,28 @@ public class OperatorPenaltySituationDto
     /// tendria sentido.</para>
     /// </summary>
     public string? SuggestedPenaltyPath { get; set; }
+
+    /// <summary>
+    /// TANDA C "la multa cobrada se ve cerrada" (2026-07-16): true cuando la Nota de Debito de la multa ya tiene
+    /// CAE Y no le queda saldo pendiente de cobro (mismo criterio ND-BASED que valida un cobro nuevo:
+    /// <c>PaymentService.EnsureCancelledDebitNoteCollectableAsync</c> — su importe total, menos las Notas de
+    /// Credito asociadas, menos los pagos vivos imputados a ella, da 0 o menos).
+    ///
+    /// <para><b>Por que se agrega este campo</b>: ANTES el cartel de la ficha solo miraba si la ND tenia CAE
+    /// (<see cref="State"/> == "Done"), nunca si el cliente ya la habia pagado — asi que una multa cobrada
+    /// integramente seguia mostrando "pendiente de cobro" para siempre. Solo tiene sentido chequear esto cuando
+    /// hay una ND emitida en juego; en cualquier otro paso (pendiente de decidir, encolada, fallida, cerrada sin
+    /// multa) queda <c>false</c>.</para>
+    /// </summary>
+    public bool IsFullyCollected { get; set; }
+
+    /// <summary>
+    /// TANDA C (2026-07-16): fecha del ULTIMO pago vivo imputado a la Nota de Debito, solo cuando
+    /// <see cref="IsFullyCollected"/> es <c>true</c> (el momento en que quedo cerrada la multa). <c>null</c> si
+    /// no esta totalmente cobrada, o si no se pudo determinar un pago vinculado (dato legacy): el front tiene un
+    /// texto de reemplazo para ese caso.
+    /// </summary>
+    public DateTime? FullyCollectedAt { get; set; }
 }
 
 /// <summary>Valores posibles de <see cref="OperatorPenaltySituationDto.SuggestedPenaltyPath"/>.</summary>

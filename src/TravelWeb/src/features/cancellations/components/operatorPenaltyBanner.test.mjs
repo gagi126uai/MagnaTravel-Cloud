@@ -31,6 +31,10 @@ import {
   textoRastroDeshacerMulta,
   SUGGESTED_PENALTY_PATHS,
   sugerenciaCaminoMulta,
+  estaMultaOperadorCerrada,
+  textoMultaCobradaCerrada,
+  montoMultaOperadorCerradaParaMostrar,
+  debeMostrarPanelAgregarCargoEnCerrado,
 } from "../operatorPenaltyBanner.js";
 
 // ============================================================================
@@ -794,4 +798,100 @@ test("sugerenciaCaminoMulta: nunca esconde ni deshabilita ningún camino (los do
     const sugerencia = sugerenciaCaminoMulta(valor);
     assert.ok(sugerencia.siResaltado || sugerencia.noResaltado, `Con valor=${valor} algún camino debe seguir visible/resaltado`);
   }
+});
+
+// ============================================================================
+// "La multa cobrada se ve cerrada" (2026-07-16). El backend expone
+// `isFullyCollected` (bool) y `fullyCollectedAt` (fecha, opcional) por situación de
+// multa — estas dos funciones deciden si corresponde el cartel gris "cerrado" y qué
+// texto de detalle mostrar. Regla dura de la spec: "cero cambio" cuando el backend
+// todavía no manda el dato nuevo (false/undefined).
+// ============================================================================
+
+test("estaMultaOperadorCerrada: isFullyCollected true → cerrada", () => {
+  assert.equal(estaMultaOperadorCerrada({ isFullyCollected: true }), true);
+});
+
+test("estaMultaOperadorCerrada: isFullyCollected false → NO cerrada (cartel de siempre, sin cambios)", () => {
+  assert.equal(estaMultaOperadorCerrada({ isFullyCollected: false }), false);
+});
+
+test("estaMultaOperadorCerrada: isFullyCollected undefined (backend viejo, DTO sin el campo nuevo) → NO cerrada", () => {
+  assert.equal(estaMultaOperadorCerrada({}), false);
+  assert.equal(estaMultaOperadorCerrada(undefined), false);
+});
+
+test("textoMultaCobradaCerrada: con fecha válida → 'Se cobró por completo el DD/MM.' (mockup exacto de la spec)", () => {
+  assert.equal(textoMultaCobradaCerrada("2026-07-12T15:00:00Z"), "Se cobró por completo el 12/07.");
+});
+
+test("textoMultaCobradaCerrada: sin fecha (null/undefined) → fallback fijo 'Ya se cobró por completo.' (el front nunca inventa la fecha)", () => {
+  assert.equal(textoMultaCobradaCerrada(null), "Ya se cobró por completo.");
+  assert.equal(textoMultaCobradaCerrada(undefined), "Ya se cobró por completo.");
+});
+
+test("textoMultaCobradaCerrada: fecha inválida (defensivo) → mismo fallback, nunca rompe la pantalla", () => {
+  assert.equal(textoMultaCobradaCerrada("no-es-una-fecha"), "Ya se cobró por completo.");
+});
+
+test("montoMultaOperadorCerradaParaMostrar: sin permiso cobranzas.see_cost → oculto, nunca el número real", () => {
+  const resultado = montoMultaOperadorCerradaParaMostrar({ amount: 200, currency: "USD" }, false);
+  assert.equal(resultado.oculto, true);
+  assert.equal(resultado.texto, null);
+});
+
+test("montoMultaOperadorCerradaParaMostrar: con permiso y monto/moneda → texto formateado (mockup 'US$ 200')", () => {
+  const resultado = montoMultaOperadorCerradaParaMostrar({ amount: 200, currency: "USD" }, true);
+  assert.equal(resultado.oculto, false);
+  assert.equal(resultado.texto, "US$200,00");
+});
+
+test("montoMultaOperadorCerradaParaMostrar: con permiso pero sin amount/currency (defensivo) → no oculto, sin texto", () => {
+  const resultado = montoMultaOperadorCerradaParaMostrar({}, true);
+  assert.equal(resultado.oculto, false);
+  assert.equal(resultado.texto, null);
+});
+
+test("debeMostrarPanelAgregarCargoEnCerrado: 'Más ▾' cerrado (default) → el panel de agregar cargo NO se dibuja", () => {
+  assert.equal(
+    debeMostrarPanelAgregarCargoEnCerrado({
+      mostrarMasOpcionesCerrado: false,
+      puedeAgregarOtroCargo: true,
+      mostrarDeshacerMulta: false,
+    }),
+    false
+  );
+});
+
+test("debeMostrarPanelAgregarCargoEnCerrado: al tocar 'Más ▾' con permiso → se despliega el link de agregar cargo", () => {
+  assert.equal(
+    debeMostrarPanelAgregarCargoEnCerrado({
+      mostrarMasOpcionesCerrado: true,
+      puedeAgregarOtroCargo: true,
+      mostrarDeshacerMulta: false,
+    }),
+    true
+  );
+});
+
+test("debeMostrarPanelAgregarCargoEnCerrado: 'Más ▾' abierto pero SIN el permiso classify_agency_penalty → sigue sin dibujarse", () => {
+  assert.equal(
+    debeMostrarPanelAgregarCargoEnCerrado({
+      mostrarMasOpcionesCerrado: true,
+      puedeAgregarOtroCargo: false,
+      mostrarDeshacerMulta: false,
+    }),
+    false
+  );
+});
+
+test("debeMostrarPanelAgregarCargoEnCerrado: si se abrió 'Deshacer' en el medio, el panel de agregar cargo se cierra (no se amontonan dos acciones)", () => {
+  assert.equal(
+    debeMostrarPanelAgregarCargoEnCerrado({
+      mostrarMasOpcionesCerrado: true,
+      puedeAgregarOtroCargo: true,
+      mostrarDeshacerMulta: true,
+    }),
+    false
+  );
 });

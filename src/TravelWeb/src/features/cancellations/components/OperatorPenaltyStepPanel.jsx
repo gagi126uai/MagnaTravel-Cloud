@@ -30,6 +30,16 @@
  *     DeshacerMultaEmitidaInline — deja sin efecto el comprobante ENTERO (nunca un cargo
  *     suelto: regla fiscal dura, ver el archivo de ese componente).
  *
+ * "La multa cobrada se ve cerrada" (2026-07-16): dentro de la familia "confirmada", si
+ * ADEMÁS el cliente ya pagó el 100% de la multa (`situacion.isFullyCollected === true`,
+ * dato nuevo del backend), el cartel verde de siempre se reemplaza por uno GRIS con ✓ —
+ * "esto ya está, nada que hacer" en vez de "recién resuelto". El link de "Agregar otro
+ * cargo" pasa a estar escondido detrás de un "Más ▾"; el "Deshacer" sigue siempre
+ * visible igual (regla dura: NUNCA desaparece a los 15 días, ver
+ * `operatorPenaltyBanner.estaMultaOperadorCerrada`). Si `isFullyCollected` es
+ * false/undefined (backend viejo o multa recién emitida sin cobrar del todo), este
+ * cartel se ve EXACTAMENTE como antes de esta obra — cero cambio.
+ *
  * Las familias "pregunta" (PendingDecision) y "waived" (Waived) NO se dibujan acá: ya
  * tienen su propio bloque en ReservaDetailPage (los botones "Sí cobró/No cobró" y el
  * rastro + "Deshacer" respectivamente) — este componente no las duplica.
@@ -83,6 +93,10 @@ import {
   primerCargoTrasladableSinFacturaDestino,
   tituloProcesandoMulta,
   textoRastroDeshacerMulta,
+  estaMultaOperadorCerrada,
+  textoMultaCobradaCerrada,
+  montoMultaOperadorCerradaParaMostrar,
+  debeMostrarPanelAgregarCargoEnCerrado,
 } from "../operatorPenaltyBanner";
 import { useOperatorPenaltyPolling } from "../hooks/useOperatorPenaltyPolling";
 import { ConfirmarMultaOperadorInline } from "./ConfirmarMultaOperadorInline";
@@ -150,6 +164,11 @@ export function OperatorPenaltyStepPanel({
   // "Reintentar" de la familia "accionTrabada" cuando el estado es
   // "DebitNoteAnnulmentFailed" (el intento anterior de deshacer no se pudo emitir).
   const [mostrarDeshacerMulta, setMostrarDeshacerMulta] = useState(false);
+  // "La multa cobrada se ve cerrada" (2026-07-16, P2=B): en el cartel "cerrado" el link
+  // "+ Agregar otro cargo de este operador" NO va a la vista de entrada — queda detrás
+  // de este "Más ▾" que el agente abre con un clic. Arranca cerrado siempre (nunca se
+  // auto-expande), y solo se usa dentro de la rama "cerrada" de la familia "confirmada".
+  const [mostrarMasOpcionesCerrado, setMostrarMasOpcionesCerrado] = useState(false);
 
   const familia = familiaDeEstadoMulta(situacion.state);
   // ADR-044 T1: cuando hay más de un operador (nombreOperador viene informado), dos
@@ -237,6 +256,109 @@ export function OperatorPenaltyStepPanel({
     // esta ND nunca se deshizo). textoRastroDeshacerMulta degrada solo a null cuando
     // viene null (nunca se deshizo) — no hace falta chequear acá.
     const rastroDeshacer = textoRastroDeshacerMulta(situacion.lastDebitNoteUndo);
+
+    // "La multa cobrada se ve cerrada" (2026-07-16): si el cliente YA pagó el 100% de
+    // esta multa, el cartel de siempre (verde, con sus acciones a la vista para
+    // siempre) se reemplaza por uno gris "cerrado" — abajo, ANTES del cartel verde de
+    // toda la vida, para no tocar ni una línea de ese branch cuando
+    // `isFullyCollected` viene false/undefined (regla dura de compatibilidad de la spec).
+    if (estaMultaOperadorCerrada(situacion)) {
+      // Enmascarado de monto (regla 2026-06-05): función pura para que el "—" con
+      // permiso denegado nunca pueda desalinearse de la que ya usa el resto de la ficha.
+      const monto = montoMultaOperadorCerradaParaMostrar(situacion, puedeVerMontos);
+      // Regla central de la obra (P2=B): el link de "Agregar otro cargo" recién se
+      // dibuja EN LÍNEA cuando el agente tocó "Más ▾" — ver comentario de la función.
+      const mostrarPanelAgregarCargo = debeMostrarPanelAgregarCargoEnCerrado({
+        mostrarMasOpcionesCerrado,
+        puedeAgregarOtroCargo,
+        mostrarDeshacerMulta,
+      });
+
+      return (
+        <div className="space-y-3">
+          <div
+            className="rounded-xl border border-slate-200 bg-slate-100 p-4 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+            data-testid={testId}
+            role="status"
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+              <strong className="font-bold">
+                {tituloConNombreOperador(nombreOperador, "✓ Multa del operador cobrada")}
+              </strong>
+              {monto.oculto ? (
+                <span className="flex-shrink-0" title="Sin permiso para ver montos">—</span>
+              ) : monto.texto ? (
+                <span className="font-semibold flex-shrink-0" data-testid="multa-confirmada-monto">
+                  {monto.texto}
+                </span>
+              ) : null}
+            </div>
+
+            <p className="mt-1 text-slate-500 dark:text-slate-400" data-testid="multa-cerrada-detalle">
+              {textoMultaCobradaCerrada(situacion.fullyCollectedAt)}
+            </p>
+
+            {/* Fila de acciones a perfil bajo: "Más ▾" (esconde "Agregar otro cargo") +
+                "Deshacer" (Admin-only). Si no hay NINGUNA de las dos disponibles, no se
+                dibuja ni la fila ni el borde separador (mockup B de la spec). */}
+            {(puedeAgregarOtroCargo || puedeDeshacerMulta) && !mostrarDeshacerMulta && (
+              <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700 flex items-center gap-4">
+                {puedeAgregarOtroCargo && (
+                  <button
+                    type="button"
+                    onClick={() => setMostrarMasOpcionesCerrado((estabaAbierto) => !estabaAbierto)}
+                    aria-expanded={mostrarMasOpcionesCerrado}
+                    data-testid="btn-multa-cerrada-mas"
+                    className="text-xs font-medium text-slate-600 hover:text-slate-800 dark:text-slate-300 dark:hover:text-white transition-colors"
+                  >
+                    Más {mostrarMasOpcionesCerrado ? "▴" : "▾"}
+                  </button>
+                )}
+                {puedeDeshacerMulta && (
+                  <button
+                    type="button"
+                    onClick={() => setMostrarDeshacerMulta(true)}
+                    data-testid="btn-multa-deshacer-link"
+                    className="text-xs text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 transition-colors"
+                  >
+                    · Deshacer: el operador cobró mal esta multa
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Al abrir "Más ▾" aparece EN LÍNEA el mismo componente de siempre — que a
+                su vez arranca colapsado mostrando su propio link "+ Agregar otro cargo
+                de este operador" (mockup A de la spec). Nunca ventana flotante. */}
+            {mostrarPanelAgregarCargo && (
+              <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-700" data-testid="multa-cerrada-mas-panel">
+                <AgregarOtroCargoOperadorInline
+                  reservaPublicId={reservaPublicId}
+                  reservaNumero={reservaNumero}
+                  supplierPublicId={supplierPublicId}
+                  monedaSugerida={situacion.currency ?? monedaSugerida}
+                  onAgregado={onResuelto}
+                />
+              </div>
+            )}
+          </div>
+
+          {mostrarDeshacerMulta && (
+            <DeshacerMultaEmitidaInline
+              reservaPublicId={reservaPublicId}
+              reservaNumero={reservaNumero}
+              situacion={situacion}
+              puedeVerMontos={puedeVerMontos}
+              onDeshecho={() => {
+                setMostrarDeshacerMulta(false);
+                onResuelto();
+              }}
+              onCerrar={() => setMostrarDeshacerMulta(false)}
+            />
+          )}
+        </div>
+      );
+    }
 
     return (
       // Envoltorio "space-y-3": mismo patrón que el cartel Waived + DeshacerCierreSinMultaInline

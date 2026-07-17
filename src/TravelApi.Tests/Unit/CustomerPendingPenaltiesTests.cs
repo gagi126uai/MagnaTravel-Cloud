@@ -292,6 +292,41 @@ public class CustomerPendingPenaltiesTests
     }
 
     [Fact]
+    public async Task PartiallyCollectedDebitNote_ShowsOutstandingNetOfPayment()
+    {
+        // TANDA C (2026-07-16): parity check contra ReservaServiceCancelledMoneyContextTests.
+        // List_PenaltyReceivable_ShowsPendingNetOfCollected (MISMOS numeros: ND de 3500, pago vivo de 1000 ->
+        // pendiente 2500). Las dos lecturas comparten AHORA la MISMA formula (DebitNoteOutstandingLookup +
+        // DebitNoteOutstandingRules.ComputeOutstanding), asi que no pueden divergir por construccion.
+        await using var context = CreateContext();
+        var customer = await AddCustomerAsync(context, "Cliente con multa parcialmente cobrada");
+        var reserva = await AddReservaAsync(context, customer.Id, "F-2026-1011", EstadoReserva.Cancelled, balance: 3500m);
+        var ndInvoiceId = await SeedDebitNoteInvoiceAsync(context, AnnulmentStatus.None, amount: 3500m, monId: "PES");
+        context.Payments.Add(new Payment
+        {
+            LinkedInvoiceId = ndInvoiceId,
+            Amount = 1000m,
+            Status = "Paid",
+            AffectsReservaBalance = false,
+        });
+        await context.SaveChangesAsync();
+        await AddCancellationRawAsync(
+            context, reserva.Id,
+            penalty: PenaltyStatus.Confirmed,
+            debitNote: DebitNoteStatus.Issued,
+            penaltyAmount: 3500m,
+            penaltyCurrencyAtEvent: "PES",
+            debitNoteInvoiceId: ndInvoiceId);
+
+        var overview = await CreateService(context).GetCustomerAccountOverviewAsync(customer.Id, CancellationToken.None);
+
+        var item = Assert.Single(overview.PendingPenalties.Items);
+        Assert.Equal(2500m, item.Amount); // 3500 bruto - 1000 ya cobrado = 2500 pendiente.
+        Assert.Equal("ARS", item.Currency);
+        Assert.Equal(CustomerPendingPenaltyStatus.PendingCollection, item.Status);
+    }
+
+    [Fact]
     public async Task ReservasTab_ExposesCancelledMoneyContextForAnnulledRow()
     {
         // (g) La solapa "Reservas" de la cuenta del cliente (GetCustomerAccountReservasAsync) recibe el MISMO

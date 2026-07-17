@@ -774,6 +774,183 @@ public class CancellationCorrectPenaltyAndSituationTests
     }
 
     // ============================================================
+    // TANDA C "la multa cobrada se ve cerrada" (2026-07-16): IsFullyCollected/FullyCollectedAt del read-model.
+    // ANTES el cartel solo miraba si la ND tenia CAE (estado "Done"), nunca si el cliente ya la habia pagado.
+    // ============================================================
+
+    /// <summary>Lleva el BC a Confirmed con una ND EMITIDA (CAE) de un monto real, para probar la cuenta ND-BASED.</summary>
+    private static async Task<int> SeedIssuedDebitNoteWithAmountAsync(
+        Harness h, BookingCancellation bc, decimal importeTotal, string monId = "PES")
+    {
+        bc.ConceptKind = CancellationConceptKind.OperatorPenaltyPassThrough;
+        bc.PenaltyStatus = PenaltyStatus.Confirmed;
+        bc.PenaltyAmountAtEvent = importeTotal;
+        bc.PenaltyCurrencyAtEvent = monId;
+        bc.DebitNoteStatus = DebitNoteStatus.Issued;
+        bc.PenaltyConfirmedByUserId = "u";
+        bc.PenaltyConfirmedByUserName = "U";
+        bc.PenaltyConfirmedAt = DateTime.UtcNow.AddDays(-1);
+
+        var nd = new Invoice
+        {
+            TipoComprobante = 12, // ND C
+            PuntoDeVenta = 1,
+            NumeroComprobante = 500,
+            Resultado = "A",
+            CAE = "77777777",
+            ReservaId = bc.ReservaId,
+            ImporteTotal = importeTotal,
+            MonId = monId,
+        };
+        h.Ctx.Invoices.Add(nd);
+        await h.Ctx.SaveChangesAsync();
+
+        bc.DebitNoteInvoiceId = nd.Id;
+        await h.Ctx.SaveChangesAsync();
+        return nd.Id;
+    }
+
+    private static async Task SeedPaymentLinkedToDebitNoteAsync(
+        Harness h, int debitNoteId, decimal amount, DateTime createdAt,
+        string status = "Paid", bool isDeleted = false)
+    {
+        h.Ctx.Payments.Add(new Payment
+        {
+            LinkedInvoiceId = debitNoteId,
+            Amount = amount,
+            Status = status,
+            IsDeleted = isDeleted,
+            CreatedAt = createdAt,
+            AffectsReservaBalance = false, // fiel al comportamiento real de un cobro de ND en una anulada.
+        });
+        await h.Ctx.SaveChangesAsync();
+    }
+
+    private static async Task SeedCreditNoteAssociatedToDebitNoteAsync(Harness h, int debitNoteId, decimal amount)
+    {
+        h.Ctx.Invoices.Add(new Invoice
+        {
+            TipoComprobante = 13, // NC C
+            PuntoDeVenta = 1,
+            NumeroComprobante = 600,
+            Resultado = "A",
+            CAE = "88888888",
+            ImporteTotal = amount,
+            OriginalInvoiceId = debitNoteId,
+            AnnulmentStatus = AnnulmentStatus.None,
+        });
+        await h.Ctx.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task FullyCollected_WhenIssuedWithNoPayments_IsFalse()
+    {
+        // (a) multa emitida sin cobros: nada se pago todavia -> IsFullyCollected false.
+        var h = BuildService();
+        var (_, bc, _, reserva) = await SeedPostNcAsync(h.Ctx);
+        await SeedIssuedDebitNoteWithAmountAsync(h, bc, importeTotal: 1000m);
+
+        var sit = await h.Service.GetOperatorPenaltySituationAsync(
+            reserva.PublicId, userCanClassifyOperatorPenalty: true, isCallerAdmin: true, default);
+
+        Assert.False(sit.IsFullyCollected);
+        Assert.Null(sit.FullyCollectedAt);
+    }
+
+    [Fact]
+    public async Task FullyCollected_WhenPartiallyPaid_IsFalse()
+    {
+        // (b) cobro parcial: pago 400 de una ND de 1000 -> todavia queda pendiente -> IsFullyCollected false.
+        var h = BuildService();
+        var (_, bc, _, reserva) = await SeedPostNcAsync(h.Ctx);
+        var debitNoteId = await SeedIssuedDebitNoteWithAmountAsync(h, bc, importeTotal: 1000m);
+        await SeedPaymentLinkedToDebitNoteAsync(h, debitNoteId, amount: 400m, createdAt: DateTime.UtcNow.AddDays(-1));
+
+        var sit = await h.Service.GetOperatorPenaltySituationAsync(
+            reserva.PublicId, userCanClassifyOperatorPenalty: true, isCallerAdmin: true, default);
+
+        Assert.False(sit.IsFullyCollected);
+        Assert.Null(sit.FullyCollectedAt);
+    }
+
+    [Fact]
+    public async Task FullyCollected_WhenFullyPaid_IsTrue_WithLastPaymentDate()
+    {
+        // (c) cobro total en DOS pagos: el cartel debe pasar a "cobrada" con la fecha del pago MAS RECIENTE.
+        var h = BuildService();
+        var (_, bc, _, reserva) = await SeedPostNcAsync(h.Ctx);
+        var debitNoteId = await SeedIssuedDebitNoteWithAmountAsync(h, bc, importeTotal: 1000m);
+        var olderPaymentAt = DateTime.UtcNow.AddDays(-3);
+        var mostRecentPaymentAt = DateTime.UtcNow.AddDays(-1);
+        await SeedPaymentLinkedToDebitNoteAsync(h, debitNoteId, amount: 600m, createdAt: olderPaymentAt);
+        await SeedPaymentLinkedToDebitNoteAsync(h, debitNoteId, amount: 400m, createdAt: mostRecentPaymentAt);
+
+        var sit = await h.Service.GetOperatorPenaltySituationAsync(
+            reserva.PublicId, userCanClassifyOperatorPenalty: true, isCallerAdmin: true, default);
+
+        Assert.True(sit.IsFullyCollected);
+        Assert.Equal(mostRecentPaymentAt, sit.FullyCollectedAt);
+    }
+
+    [Fact]
+    public async Task FullyCollected_IgnoresCancelledAndDeletedPayments()
+    {
+        // (d) un pago CANCELADO o BORRADO no cuenta como cobrado: la ND de 1000 con un pago de 1000 pero
+        // Cancelled sigue mostrando "pendiente", no "cobrada".
+        var h = BuildService();
+        var (_, bc, _, reserva) = await SeedPostNcAsync(h.Ctx);
+        var debitNoteId = await SeedIssuedDebitNoteWithAmountAsync(h, bc, importeTotal: 1000m);
+        await SeedPaymentLinkedToDebitNoteAsync(
+            h, debitNoteId, amount: 1000m, createdAt: DateTime.UtcNow.AddDays(-1), status: "Cancelled");
+        await SeedPaymentLinkedToDebitNoteAsync(
+            h, debitNoteId, amount: 1000m, createdAt: DateTime.UtcNow.AddDays(-1), isDeleted: true);
+
+        var sit = await h.Service.GetOperatorPenaltySituationAsync(
+            reserva.PublicId, userCanClassifyOperatorPenalty: true, isCallerAdmin: true, default);
+
+        Assert.False(sit.IsFullyCollected);
+        Assert.Null(sit.FullyCollectedAt);
+    }
+
+    [Fact]
+    public async Task FullyCollected_CreditNoteReducesOutstanding()
+    {
+        // (e) una Nota de Credito asociada a la ND (por ejemplo, se anulo parcialmente la multa) reduce el
+        // pendiente igual que un cobro: NC de 1000 sobre una ND de 1000, sin ningun pago -> queda cobrada
+        // (nada por cobrar), pero sin fecha de pago (no hubo ningun Payment vivo vinculado).
+        var h = BuildService();
+        var (_, bc, _, reserva) = await SeedPostNcAsync(h.Ctx);
+        var debitNoteId = await SeedIssuedDebitNoteWithAmountAsync(h, bc, importeTotal: 1000m);
+        await SeedCreditNoteAssociatedToDebitNoteAsync(h, debitNoteId, amount: 1000m);
+
+        var sit = await h.Service.GetOperatorPenaltySituationAsync(
+            reserva.PublicId, userCanClassifyOperatorPenalty: true, isCallerAdmin: true, default);
+
+        Assert.True(sit.IsFullyCollected);
+        Assert.Null(sit.FullyCollectedAt); // cerrada por NC, no por un pago: no hay fecha de pago que mostrar.
+    }
+
+    [Theory]
+    [InlineData(DebitNoteStatus.Failed)]
+    [InlineData(DebitNoteStatus.Pending)]
+    [InlineData(DebitNoteStatus.ManualReview)]
+    [InlineData(DebitNoteStatus.NotApplicable)]
+    public async Task FullyCollected_WhenDebitNoteHasNoCae_IsAlwaysFalse(DebitNoteStatus debitNoteStatus)
+    {
+        // (f) multa sin CAE (encolada, fallida, en revision manual, o confirmada-sin-ND): sin comprobante
+        // emitido no hay nada que pueda estar "cobrado" -> siempre false, sin importar los datos.
+        var h = BuildService();
+        var (_, bc, _, reserva) = await SeedPostNcAsync(h.Ctx);
+        await SeedConfirmedStateAsync(h, bc, debitNoteStatus, withLinkedInvoice: debitNoteStatus == DebitNoteStatus.Pending);
+
+        var sit = await h.Service.GetOperatorPenaltySituationAsync(
+            reserva.PublicId, userCanClassifyOperatorPenalty: true, isCallerAdmin: true, default);
+
+        Assert.False(sit.IsFullyCollected);
+        Assert.Null(sit.FullyCollectedAt);
+    }
+
+    // ============================================================
     // ADR-044 T3b/T4 (2026-07-10, fix data-exposure): ManualReviewReason NUNCA porta el DebitNoteArcaErrorMessage
     // crudo. Solo viaja el mensaje LIMPIO fijo cuando el motivo es el caso derivable "falta elegir la factura".
     // ============================================================

@@ -6583,6 +6583,10 @@ public class BookingCancellationService
         // (DebitNoteInvoiceId=null), asi que la fila Succeeded apunta a una ND que ya no es la vigente.
         var lastDebitNoteUndo = await GetLastConsummatedDebitNoteUndoAsync(row.Id, ct);
 
+        // TANDA C "la multa cobrada se ve cerrada" (2026-07-16): ver el XML-doc de ComputeFullyCollectedAsync.
+        var (isFullyCollected, fullyCollectedAt) =
+            await ComputeFullyCollectedAsync(row.DebitNoteInvoiceId, row.DebitNoteStatus, ct);
+
         return new OperatorPenaltySituationDto
         {
             State = state.ToString(),
@@ -6618,15 +6622,79 @@ public class BookingCancellationService
             // seguido cobra multa este operador. Solo da algo distinto de null en la etapa de la pregunta
             // (PendingDecision) — ver el XML-doc de OperatorPenaltySituationRules.SuggestPenaltyPath.
             SuggestedPenaltyPath = OperatorPenaltySituationRules.SuggestPenaltyPath(state, row.SupplierPenaltyBehavior),
+            IsFullyCollected = isFullyCollected,
+            FullyCollectedAt = fullyCollectedAt,
         };
+    }
+
+    /// <summary>
+    /// TANDA C "la multa cobrada se ve cerrada" (2026-07-16): si la Nota de Debito de la multa ya tiene CAE Y no
+    /// le queda saldo pendiente de cobro, el cartel debe decir "cobrada" en vez de seguir mostrando "pendiente
+    /// de cobro" para siempre.
+    ///
+    /// <para><b>Por que ANTES esto no se detectaba</b>: el paso de la multa (<see cref="OperatorPenaltySituationRules.Derive"/>)
+    /// solo mira si la ND tiene CAE (estado <c>Done</c>), nunca si el cliente ya la pago. Y el otro camino que
+    /// existia para "cuanto falta cobrar" miraba el SALDO DE LA RESERVA — que desde el 2026-07-15 ya NO se mueve
+    /// con un cobro real de multa (<c>Payment.AffectsReservaBalance=false</c>, para no mezclar la deuda fiscal de
+    /// la ND con la deuda operativa de la reserva, que la anulacion ya salda). Resultado: una multa cobrada
+    /// integramente seguia mostrando "pendiente" para siempre.</para>
+    ///
+    /// <para>Se calcula ND-BASED (importe total de la ND, menos NC vivas asociadas, menos pagos vivos imputados
+    /// a ELLA), la MISMA formula que valida un cobro nuevo
+    /// (<c>PaymentService.EnsureCancelledDebitNoteCollectableAsync</c>) y que arma la bandeja de multas del
+    /// cliente (<c>CustomerService.BuildPendingPenaltiesAsync</c>) — ver <see cref="DebitNoteOutstandingLookup"/>
+    /// y <see cref="TravelApi.Domain.Reservations.DebitNoteOutstandingRules"/>.</para>
+    /// </summary>
+    private async Task<(bool IsFullyCollected, DateTime? FullyCollectedAt)> ComputeFullyCollectedAsync(
+        int? debitNoteInvoiceId, DebitNoteStatus debitNoteStatus, CancellationToken ct)
+    {
+        // Sin ND emitida con CAE en juego, no hay nada que pueda estar "cobrado" todavia.
+        if (!debitNoteInvoiceId.HasValue || debitNoteStatus != DebitNoteStatus.Issued)
+            return (false, null);
+
+        var debitNoteId = debitNoteInvoiceId.Value;
+        var debitNote = await _db.Invoices
+            .AsNoTracking()
+            .Where(invoice => invoice.Id == debitNoteId)
+            .Select(invoice => new { invoice.ImporteTotal, invoice.Resultado, invoice.TipoComprobante })
+            .FirstOrDefaultAsync(ct);
+
+        // Defensivo: sin comprobante valido de verdad (aprobado + realmente una Nota de Debito), no hay nada
+        // "cobrado" que mostrar (mismo guard que EnsureCancelledDebitNoteCollectableAsync).
+        if (debitNote is null
+            || debitNote.Resultado != "A"
+            || !InvoiceComprobanteHelpers.IsDebitNote(debitNote.TipoComprobante))
+            return (false, null);
+
+        var debitNoteIdAsList = new List<int> { debitNoteId };
+        var creditedByDebitNote = await DebitNoteOutstandingLookup.LoadCreditedAmountsAsync(_db, debitNoteIdAsList, ct);
+        var collectedByDebitNote = await DebitNoteOutstandingLookup.LoadCollectedAmountsAsync(_db, debitNoteIdAsList, ct);
+
+        var outstanding = TravelApi.Domain.Reservations.DebitNoteOutstandingRules.ComputeOutstanding(
+            debitNote.ImporteTotal,
+            creditedByDebitNote.GetValueOrDefault(debitNoteId),
+            collectedByDebitNote.GetValueOrDefault(debitNoteId));
+
+        if (outstanding > 0m)
+            return (false, null);
+
+        var fullyCollectedAt = await DebitNoteOutstandingLookup.LoadLastCollectionDateAsync(_db, debitNoteId, ct);
+        return (true, fullyCollectedAt);
     }
 
     /// <summary>
     /// ADR-044 "Deshacer una multa ya emitida" (M4, gap 3): calcula la porcion EFECTIVAMENTE COBRADA de la multa
     /// (lo que se acuñaria como saldo a favor si se deshace ahora), en la moneda de la ND. Espejo EXACTO de la
     /// formula del reconciliador (<c>DebitNoteAnnulmentReconciliation</c> / <c>CreateEntryFromDebitNoteUndoAsync</c>):
-    /// <c>max(0, gross − pendiente)</c>, con el pendiente neteado contra el saldo por moneda de la reserva via
-    /// <see cref="ReservaService.ComputePendingPenaltyForDisplay"/> (fuente unica, no se duplica la cuenta).
+    /// <c>max(0, gross − pendiente)</c>, con el pendiente neteado contra el SALDO POR MONEDA DE LA RESERVA (no
+    /// contra la ND) via <see cref="TravelApi.Domain.Reservations.OperatorPenaltyUndoRules.ComputeCollectedPenalty"/>.
+    ///
+    /// <para><b>TANDA C (2026-07-16), por que esto queda balance-based A PROPOSITO y NO se migra a ND-based</b>
+    /// junto con <see cref="ComputeFullyCollectedAsync"/>/el cartel de la ficha: acuñar saldo a favor es una
+    /// operacion IRREVERSIBLE de plata (crea un <c>ClientCreditEntry</c> real). Migrar esta cuenta especifica
+    /// requiere firma fiscal (el criterio "cuanto se le devuelve al cliente al deshacer una multa" es una
+    /// decision de negocio, no solo tecnica) — queda pendiente de confirmacion, fuera de esta tanda.</para>
+    ///
     /// Devuelve <c>null</c> si no hay monto congelado o la moneda no se puede resolver a ISO (el front omite la linea).
     /// </summary>
     private async Task<decimal?> ComputeCollectedPenaltyForUndoAsync(
@@ -6854,6 +6922,13 @@ public class BookingCancellationService
         var (hasPendingAnnulmentForBc, hasFailedAnnulmentForBc) =
             await GetDebitNoteAnnulmentFlagsAsync(bcRow.DebitNoteInvoiceId, ct);
 
+        // TANDA C "la multa cobrada se ve cerrada" (2026-07-16): la ND es COMPARTIDA a nivel de BC padre, asi
+        // que "esta totalmente cobrada" se calcula UNA sola vez y se reusa para todos los operadores SECUNDARIOS
+        // que comparten ese comprobante (los marcados IsOperatorSpecificManual tienen su PROPIA nota de debito
+        // complementaria, todavia sin modelar por operador — quedan en false/null, ver mas abajo).
+        var (isBcFullyCollected, bcFullyCollectedAt) =
+            await ComputeFullyCollectedAsync(bcRow.DebitNoteInvoiceId, bcRow.DebitNoteStatus, ct);
+
         // ADR-044 T3a (menor 3, review 2026-07-10): el estado del operador PRINCIPAL YA NO se pisa con
         // "MultiOperatorNeedsManualReview" por el solo hecho de que haya mas de un operador confirmado — ese
         // override MENTIA cuando el motor emite bien una ND multi-operador (el principal quedaba "necesita revision"
@@ -6931,6 +7006,12 @@ public class BookingCancellationService
                 SupplierName = first.SupplierName,
                 // Configuracion de multas de cancelacion (2026-07-14): misma regla PURA que el principal.
                 SuggestedPenaltyPath = OperatorPenaltySituationRules.SuggestPenaltyPath(state, first.SupplierPenaltyBehavior),
+                // TANDA C (2026-07-16): un operador con nota de debito complementaria PROPIA (IsOperatorSpecificManual)
+                // no comparte la ND del BC padre, asi que no hay forma de saber si SU comprobante esta cobrado
+                // (esa nota todavia no se modela por operador) -> false/null a proposito, igual que el resto de
+                // los GAPs conocidos de esta rama.
+                IsFullyCollected = !isOperatorSpecificManual && isBcFullyCollected,
+                FullyCollectedAt = !isOperatorSpecificManual && isBcFullyCollected ? bcFullyCollectedAt : null,
                 Charges = ChargesForSupplier(group.Key),
             });
         }
