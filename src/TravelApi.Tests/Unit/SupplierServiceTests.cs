@@ -2,6 +2,9 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
+using Moq;
+using TravelApi.Application.Constants;
+using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Services;
@@ -619,5 +622,218 @@ public class SupplierServiceTests
 
         var stored = await context.Suppliers.FindAsync(supplier.Id);
         Assert.Equal(Monedas.USD, stored!.DefaultCurrency);
+    }
+
+    // ================================================================
+    // Regla del dueño (2026-07-17): "el CUIT es una identidad; la condicion fiscal es un
+    // dato de HOY". CODE-13 se separa en dos ejes: el eje TaxId sigue bloqueado con factura
+    // viva de una reserva del proveedor (igual que antes); el eje TaxCondition se permite
+    // editar SIEMPRE, con auditoria.
+    // ================================================================
+
+    private static async Task<(Supplier supplier, Reserva reserva)> SeedSupplierWithLiveInvoiceAsync(AppDbContext context, int supplierId)
+    {
+        var supplier = new Supplier { Id = supplierId, Name = "Operador con factura", TaxId = null, TaxCondition = null };
+        var reserva = new Reserva
+        {
+            Id = supplierId,
+            NumeroReserva = $"F-SUP-{supplierId:D4}",
+            Name = "Reserva facturada",
+            Status = EstadoReserva.Confirmed
+        };
+        context.Suppliers.Add(supplier);
+        context.Reservas.Add(reserva);
+        await context.SaveChangesAsync();
+
+        context.HotelBookings.Add(new HotelBooking
+        {
+            Id = supplierId,
+            ReservaId = reserva.Id,
+            SupplierId = supplier.Id,
+            HotelName = "Hotel con factura",
+            CheckIn = DateTime.UtcNow.AddDays(10),
+            CheckOut = DateTime.UtcNow.AddDays(13),
+            SalePrice = 500m,
+            NetCost = 300m
+        });
+        context.Invoices.Add(new Invoice
+        {
+            Id = supplierId,
+            ReservaId = reserva.Id,
+            CAE = "012345",
+            AnnulmentStatus = AnnulmentStatus.None,
+            TipoComprobante = 6, // Factura B
+            ImporteTotal = 100m,
+            ImporteNeto = 82.64m,
+            ImporteIva = 17.36m
+        });
+        await context.SaveChangesAsync();
+        return (supplier, reserva);
+    }
+
+    /// <summary>
+    /// Cambiar SOLO la condicion fiscal (null -> valor) NO pasa por el guard CODE-13 aunque el proveedor tenga
+    /// una reserva con factura CAE viva referenciandolo: la condicion es un dato de HOY, no una identidad. Queda
+    /// auditada (accion SupplierTaxConditionChanged) con el viejo -&gt; nuevo valor.
+    /// </summary>
+    [Fact]
+    public async Task UpdateSupplierAsync_ChangingOnlyTaxCondition_WithLiveInvoice_AllowsAndAudits()
+    {
+        await using var context = CreateContext();
+        var (supplier, _) = await SeedSupplierWithLiveInvoiceAsync(context, supplierId: 60);
+        context.ChangeTracker.Clear();
+
+        var audit = new Mock<IAuditService>();
+        var service = new SupplierService(context, audit.Object);
+
+        var incoming = BuildIncomingSupplier(supplier, isActive: true);
+        incoming.TaxCondition = "IVA_RESP_INSCRIPTO"; // null -> RI
+
+        var result = await service.UpdateSupplierAsync(supplier.Id, incoming, CancellationToken.None);
+
+        Assert.Equal("IVA_RESP_INSCRIPTO", result.TaxCondition);
+
+        audit.Verify(a => a.StageBusinessEvent(
+            AuditActions.SupplierTaxConditionChanged,
+            "Supplier",
+            supplier.Id.ToString(),
+            It.Is<string>(d => d.Contains("(vacio)") && d.Contains("IVA_RESP_INSCRIPTO")),
+            It.IsAny<string>(),
+            It.IsAny<string>()), Times.Once);
+    }
+
+    /// <summary>Cambiar el CUIT con factura viva sigue bloqueado, con el mensaje nuevo (sin mencionar "condicion").</summary>
+    [Fact]
+    public async Task UpdateSupplierAsync_ChangingTaxId_WithLiveInvoice_Blocks()
+    {
+        await using var context = CreateContext();
+        var (supplier, _) = await SeedSupplierWithLiveInvoiceAsync(context, supplierId: 61);
+        context.ChangeTracker.Clear();
+
+        var service = new SupplierService(context);
+
+        var incoming = BuildIncomingSupplier(supplier, isActive: true);
+        incoming.TaxId = "30-11111111-1"; // CAMBIA el CUIT
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.UpdateSupplierAsync(supplier.Id, incoming, CancellationToken.None));
+
+        Assert.Contains("CUIT", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("condicion", ex.Message, StringComparison.OrdinalIgnoreCase);
+
+        var stored = await context.Suppliers.FindAsync(supplier.Id);
+        Assert.Null(stored!.TaxId);
+    }
+
+    /// <summary>Sin facturas vivas, cambiar el CUIT sigue permitido (comportamiento preexistente).</summary>
+    [Fact]
+    public async Task UpdateSupplierAsync_ChangingTaxId_WithoutInvoices_Allows()
+    {
+        await using var context = CreateContext();
+        var supplier = new Supplier { Name = "Operador limpio", TaxId = null };
+        context.Suppliers.Add(supplier);
+        await context.SaveChangesAsync();
+
+        var service = new SupplierService(context);
+
+        var incoming = BuildIncomingSupplier(supplier, isActive: true);
+        incoming.TaxId = "30-22222222-2";
+
+        var result = await service.UpdateSupplierAsync(supplier.Id, incoming, CancellationToken.None);
+
+        Assert.Equal("30-22222222-2", result.TaxId);
+    }
+
+    /// <summary>
+    /// N2(a) espejo del cliente: con FACTURA VIVA, si el PUT trae los DOS ejes a la vez (CUIT nuevo +
+    /// condicion nueva), el bloqueo del CUIT es TOTAL — no se persiste ninguno de los dos, ni se audita el
+    /// cambio de condicion.
+    /// </summary>
+    [Fact]
+    public async Task UpdateSupplierAsync_ChangingTaxIdAndTaxCondition_WithLiveInvoice_BlocksBothAndDoesNotAudit()
+    {
+        await using var context = CreateContext();
+        var (supplier, _) = await SeedSupplierWithLiveInvoiceAsync(context, supplierId: 62);
+        context.ChangeTracker.Clear();
+
+        var audit = new Mock<IAuditService>();
+        var service = new SupplierService(context, audit.Object);
+
+        var incoming = BuildIncomingSupplier(supplier, isActive: true);
+        incoming.TaxId = "30-44444444-4"; // CAMBIA el CUIT
+        incoming.TaxCondition = "IVA_RESP_INSCRIPTO"; // Y TAMBIEN cambia la condicion
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.UpdateSupplierAsync(supplier.Id, incoming, CancellationToken.None));
+
+        var stored = await context.Suppliers.FindAsync(supplier.Id);
+        Assert.Null(stored!.TaxId);
+        Assert.Null(stored.TaxCondition);
+
+        audit.Verify(a => a.StageBusinessEvent(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+    }
+
+    /// <summary>
+    /// N2(b) espejo del cliente: cambiar SOLO el CUIT audita SupplierTaxIdChanged pero NUNCA
+    /// SupplierTaxConditionChanged de rebote.
+    /// </summary>
+    [Fact]
+    public async Task UpdateSupplierAsync_ChangingOnlyTaxId_DoesNotAuditTaxConditionChange()
+    {
+        await using var context = CreateContext();
+        var supplier = new Supplier { Name = "Operador limpio", TaxId = "30-10000000-1", TaxCondition = "IVA_RESP_INSCRIPTO" };
+        context.Suppliers.Add(supplier);
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+
+        var audit = new Mock<IAuditService>();
+        var service = new SupplierService(context, audit.Object);
+
+        var incoming = BuildIncomingSupplier(supplier, isActive: true);
+        incoming.TaxId = "30-99999999-9"; // SOLO cambia el CUIT (TaxCondition round-tripeado sin cambios)
+
+        await service.UpdateSupplierAsync(supplier.Id, incoming, CancellationToken.None);
+
+        audit.Verify(a => a.StageBusinessEvent(
+            AuditActions.SupplierTaxIdChanged,
+            "Supplier", supplier.Id.ToString(),
+            It.Is<string>(d => d.Contains("30-10000000-1") && d.Contains("30-99999999-9")),
+            It.IsAny<string>(), It.IsAny<string>()), Times.Once);
+
+        audit.Verify(a => a.StageBusinessEvent(
+            AuditActions.SupplierTaxConditionChanged,
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()),
+            Times.Never);
+    }
+
+    /// <summary>
+    /// N2(c) espejo del cliente: PUT que OMITE TaxCondition sobre un proveedor Responsable Inscripto CON
+    /// factura viva: la condicion se PRESERVA y NO se audita.
+    /// </summary>
+    [Fact]
+    public async Task UpdateSupplierAsync_OmittingTaxCondition_WithLiveInvoice_PreservesAndDoesNotAudit()
+    {
+        await using var context = CreateContext();
+        var (supplier, _) = await SeedSupplierWithLiveInvoiceAsync(context, supplierId: 63);
+        supplier.TaxCondition = "IVA_RESP_INSCRIPTO";
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+
+        var audit = new Mock<IAuditService>();
+        var service = new SupplierService(context, audit.Object);
+
+        var incoming = BuildIncomingSupplier(supplier, isActive: true, overrideName: "Nombre editado");
+        incoming.TaxCondition = null; // el request omite el campo
+
+        var result = await service.UpdateSupplierAsync(supplier.Id, incoming, CancellationToken.None);
+
+        Assert.Equal("IVA_RESP_INSCRIPTO", result.TaxCondition);
+
+        audit.Verify(a => a.StageBusinessEvent(
+            AuditActions.SupplierTaxConditionChanged,
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()),
+            Times.Never);
     }
 }

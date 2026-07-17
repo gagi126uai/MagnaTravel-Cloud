@@ -123,8 +123,9 @@ public class CustomersController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            // B1.15 Fase 0' (CODE-06): MutationGuards rechaza cambios fiscales
-            // (TaxId/TaxCondition) cuando hay factura AFIP viva. 409 Conflict.
+            // B1.15 Fase 0' (CODE-06): MutationGuards rechaza cambios de CUIT (TaxId) cuando hay factura
+            // AFIP viva. La condicion fiscal (TaxCondition/TaxConditionId) se permite editar siempre desde
+            // 2026-07-17 (ver docstring de MutationGuards), asi que esta rama solo se dispara por CUIT. 409.
             return Conflict(new { message = ex.Message });
         }
         catch (Microsoft.EntityFrameworkCore.DbUpdateException)
@@ -667,7 +668,14 @@ public class CustomersController : ControllerBase
             Address = request.Address,
             Notes = request.Notes,
             TaxId = request.TaxId,
-            TaxCondition = request.TaxCondition ?? "Consumidor Final",
+            // Fix R1 (2026-07-17, hallazgo de la revision): el default "Consumidor Final" YA NO se aplica
+            // aca. El form de ficha del cliente (CustomerFormModal.jsx) solo manda taxConditionId — NUNCA el
+            // string taxCondition — asi que con el `?? "Consumidor Final"` viejo, CADA EDICION (aunque solo
+            // tocara el telefono) pisaba en silencio la condicion real del cliente con el default. Ahora el
+            // controller pasa el valor CRUDO (puede venir null); el default de ALTA se aplica UNA sola vez en
+            // CustomerService.CreateCustomerAsync, y en UPDATE el criterio es "omitido = se preserva" (mismo
+            // patron que DocumentType/DocumentNumber, ver CustomerService.UpdateCustomerAsync).
+            TaxCondition = request.TaxCondition,
             TaxConditionId = request.TaxConditionId,
             // ADR-023 T1.5: CreditLimit ya NO viaja en el request ni se mapea. La columna en DB queda intacta
             // (no se borran datos); simplemente deja de poder setearse por API. El campo sigue en el DTO de

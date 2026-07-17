@@ -72,6 +72,46 @@ public static class AuditActions
     /// </summary>
     public const string CustomerCreditConfigUpdated = "CustomerCreditConfigUpdated";
 
+    /// <summary>
+    /// (2026-07-17) Se cambio la CONDICION fiscal del cliente (<c>TaxConditionId</c>/<c>TaxCondition</c> —
+    /// Consumidor Final, Monotributo, Responsable Inscripto, Exento) SIN cambiar el CUIT. Decision del dueño:
+    /// la condicion es un dato de HOY (a diferencia del CUIT, que es una identidad y una vez que el cliente
+    /// facturo no se edita — ver <c>MutationGuards.GetCustomerTaxIdMutationBlockReasonAsync</c>, CODE-06), asi
+    /// que se permite editarla SIEMPRE, incluso con facturas vivas, pero queda auditada: el contador necesita
+    /// poder ver cuando cambio la condicion de un cliente que ya tiene historia fiscal. EntityName=Customer,
+    /// EntityId=Customer.Id. El detail JSON lleva el viejo -&gt; nuevo de TaxConditionId y TaxCondition.
+    /// </summary>
+    public const string CustomerTaxConditionChanged = "CustomerTaxConditionChanged";
+
+    /// <summary>
+    /// (2026-07-17, N1 de la revision) Se cambio el CUIT del cliente (<c>TaxId</c>) — solo se llega a este
+    /// evento cuando el cambio fue PERMITIDO (paso <c>MutationGuards.GetCustomerTaxIdMutationBlockReasonAsync</c>,
+    /// o el cliente no tenia factura viva). El CUIT es una IDENTIDAD, no un dato de HOY como la condicion (ver
+    /// <see cref="CustomerTaxConditionChanged"/>): un cambio legitimo (ej. corregir un typo cargado mal) igual
+    /// merece rastro para el contador. EntityName=Customer, EntityId=Customer.Id. El detail JSON lleva el
+    /// viejo -&gt; nuevo de TaxId.
+    /// </summary>
+    public const string CustomerTaxIdChanged = "CustomerTaxIdChanged";
+
+    /// <summary>
+    /// (2026-07-17, N1 de la revision) Espejo de <see cref="CustomerTaxIdChanged"/> del lado PROVEEDOR: se
+    /// cambio el CUIT del proveedor (<c>TaxId</c>) y el cambio fue PERMITIDO (no habia reservas con factura
+    /// viva referenciando al proveedor). EntityName=Supplier, EntityId=Supplier.Id. El detail JSON lleva el
+    /// viejo -&gt; nuevo de TaxId.
+    /// </summary>
+    public const string SupplierTaxIdChanged = "SupplierTaxIdChanged";
+
+    /// <summary>
+    /// (2026-07-17) Espejo de <see cref="CustomerTaxConditionChanged"/> del lado PROVEEDOR: se cambio la
+    /// CONDICION fiscal del proveedor (<c>TaxCondition</c>) SIN cambiar el CUIT. Mismo criterio: la condicion
+    /// del proveedor ni siquiera entra en ningun comprobante de venta (ese lleva los datos del cliente), asi
+    /// que editarla nunca compromete un comprobante ya emitido — se permite SIEMPRE, con auditoria. El CUIT del
+    /// proveedor sigue bloqueado si hay reservas con factura viva (ver
+    /// <c>MutationGuards.GetSupplierTaxIdMutationBlockReasonAsync</c>, CODE-13). EntityName=Supplier,
+    /// EntityId=Supplier.Id. El detail JSON lleva el viejo -&gt; nuevo de TaxCondition.
+    /// </summary>
+    public const string SupplierTaxConditionChanged = "SupplierTaxConditionChanged";
+
     // ===== Modulo cancelacion/refund (FC1.2) =====
 
     /// <summary>

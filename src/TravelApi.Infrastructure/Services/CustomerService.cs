@@ -260,6 +260,16 @@ public class CustomerService : ICustomerService
             }
         }
 
+        // Fix R1 (2026-07-17): el default "Consumidor Final" del ALTA vivia antes en el mapper del
+        // controller (coalesce `?? "Consumidor Final"`). Se movio aca a proposito: asi el controller puede
+        // pasar el valor CRUDO (potencialmente null) tanto en alta como en edicion, y UpdateCustomerAsync
+        // puede distinguir "el cliente nuevo no trae condicion todavia" (alta, se defaultea) de "el PUT de
+        // edicion omitio el campo" (se preserva el valor existente, ver UpdateCustomerAsync).
+        if (string.IsNullOrWhiteSpace(customer.TaxCondition))
+        {
+            customer.TaxCondition = "Consumidor Final";
+        }
+
         customer.IsActive = true;
         _dbContext.Customers.Add(customer);
         await _dbContext.SaveChangesAsync(cancellationToken);
@@ -363,24 +373,58 @@ public class CustomerService : ICustomerService
         var existing = await _dbContext.Customers.FindAsync(new object[] { id }, cancellationToken);
         if (existing == null) throw new KeyNotFoundException("Cliente no encontrado");
 
-        // B1.15 Fase 0' (CODE-06): bloquear cambios fiscales (TaxId, TaxConditionId,
-        // TaxCondition) cuando el cliente tiene factura emitida con CAE no anulada.
-        // Otros campos (FullName, Email, Phone, Address, Notes, IsActive,
-        // CreditLimit, DocumentType, DocumentNumber) siguen libres de editar —
-        // representan datos operativos del cliente, no del comprobante AFIP.
-        var fiscalDataChanged =
-            !string.Equals(existing.TaxId, customer.TaxId, StringComparison.Ordinal) ||
-            existing.TaxConditionId != customer.TaxConditionId ||
-            !string.Equals(existing.TaxCondition, customer.TaxCondition, StringComparison.Ordinal);
+        // B1.15 Fase 0' (CODE-06), separado en dos ejes el 2026-07-17 por decision del dueño:
+        // "el CUIT es una identidad; la condicion fiscal es un dato de HOY".
+        //
+        //  - taxIdChanged: el CUIT SI se sigue bloqueando si el cliente tiene factura con CAE
+        //    viva (identidad no reescribible sin anular el comprobante primero).
+        //  - taxConditionChanged: la condicion (TaxConditionId/TaxCondition, ej. Mono -> RI) se
+        //    permite editar SIEMPRE, incluso con facturas vivas — cada comprobante ya emitido
+        //    congelo su propia condicion al momento de facturar, la ficha de HOY no lo reescribe
+        //    (ver docstring de MutationGuards.GetCustomerTaxIdMutationBlockReasonAsync). Este eje
+        //    NUNCA pasa por el guard, pero SI queda auditado (accion CustomerTaxConditionChanged).
+        //
+        // Otros campos (FullName, Email, Phone, Address, Notes, IsActive, CreditLimit,
+        // DocumentType, DocumentNumber) siguen libres de editar sin guard ni auditoria especial —
+        // son datos operativos del cliente, no del comprobante AFIP.
+        //
+        // Fix R1 (2026-07-17, hallazgo de la revision): "omitido = se preserva", MISMO criterio que
+        // DocumentType/DocumentNumber (ADR-023 T1) de abajo. El form de ficha del cliente
+        // (CustomerFormModal.jsx) solo manda taxConditionId — NUNCA el string taxCondition — asi que si
+        // tratabamos "vino null" como "el usuario lo quiere en null/default", CADA EDICION (aunque solo
+        // tocara el telefono) pisaba en silencio la condicion real con el default. Por eso: si el campo
+        // viene vacio, se usa el valor YA GUARDADO como "entrante" — ni se persiste un cambio ni se dispara
+        // auditoria de condicion. OJO: esto no distingue "el front no mando el campo" de "alguien quiere
+        // borrarlo a proposito" (el contrato de hoy no permite distinguirlos); preservar ante vacio es el
+        // default seguro, igual que ya se documenta para DocumentType/DocumentNumber mas abajo.
+        var incomingTaxConditionId = customer.TaxConditionId ?? existing.TaxConditionId;
+        var incomingTaxCondition = string.IsNullOrWhiteSpace(customer.TaxCondition)
+            ? existing.TaxCondition
+            : customer.TaxCondition;
 
-        if (fiscalDataChanged)
+        var taxIdChanged = !string.Equals(existing.TaxId, customer.TaxId, StringComparison.Ordinal);
+        var taxConditionChanged =
+            existing.TaxConditionId != incomingTaxConditionId ||
+            !string.Equals(existing.TaxCondition, incomingTaxCondition, StringComparison.Ordinal);
+
+        if (taxIdChanged)
         {
+            // N2(a): si el guard bloquea, se sale ACA — antes de tocar cualquier campo fiscal (ni el CUIT
+            // ni la condicion). Con doble eje (CUIT + condicion) en el mismo PUT y factura viva, el bloqueo
+            // es TOTAL: no se persiste ni se audita la condicion tampoco, aunque esa parte sola hubiera sido
+            // valida por separado. Evita el mensaje contradictorio "no se puede" + "pero la condicion sí se
+            // guardó".
             var blockReason = await MutationGuards.GetCustomerTaxIdMutationBlockReasonAsync(_dbContext, id, cancellationToken);
             if (blockReason != null)
             {
                 throw new InvalidOperationException(blockReason);
             }
         }
+
+        // Snapshot ANTES de mutar: la auditoria necesita el valor viejo, no el que estamos por pisar.
+        var oldTaxId = existing.TaxId;
+        var oldTaxConditionId = existing.TaxConditionId;
+        var oldTaxCondition = existing.TaxCondition;
 
         existing.FullName = customer.FullName;
         existing.Email = customer.Email;
@@ -406,12 +450,64 @@ public class CustomerService : ICustomerService
         existing.TaxId = customer.TaxId;
         // ADR-023 T1.5: CreditLimit sale de la vista. Ya no llega por request (se quito de CustomerUpsertRequest
         // y de MapCustomer), asi que no se toca aca: el valor en DB queda como esta (columna historica).
-        existing.TaxConditionId = customer.TaxConditionId;
-        existing.TaxCondition = customer.TaxCondition;
+        existing.TaxConditionId = incomingTaxConditionId;
+        existing.TaxCondition = incomingTaxCondition;
+
+        var (actorUserId, actorUserName) = ResolveCurrentActor();
+
+        // N1 (2026-07-17): el CUIT es una IDENTIDAD; un cambio legitimo (ej. corregir un typo) tambien
+        // merece rastro, aunque haya pasado el guard porque no habia factura viva. Se audita SIEMPRE que
+        // realmente cambio (no en cada PUT: si el CUIT no se toco, no hay evento).
+        if (taxIdChanged)
+        {
+            _auditService?.StageBusinessEvent(
+                action: AuditActions.CustomerTaxIdChanged,
+                entityName: "Customer",
+                entityId: existing.Id.ToString(),
+                details: $"TaxId: {FormatNullableText(oldTaxId)} -> {FormatNullableText(customer.TaxId)}.",
+                userId: actorUserId,
+                userName: actorUserName);
+        }
+
+        if (taxConditionChanged)
+        {
+            var details =
+                $"TaxConditionId: {FormatNullableInt(oldTaxConditionId)} -> {FormatNullableInt(incomingTaxConditionId)}. " +
+                $"TaxCondition: {FormatNullableText(oldTaxCondition)} -> {FormatNullableText(incomingTaxCondition)}.";
+
+            _auditService?.StageBusinessEvent(
+                action: AuditActions.CustomerTaxConditionChanged,
+                entityName: "Customer",
+                entityId: existing.Id.ToString(),
+                details: details,
+                userId: actorUserId,
+                userName: actorUserName);
+        }
 
         await _dbContext.SaveChangesAsync(cancellationToken);
         return existing;
     }
+
+    /// <summary>
+    /// Resuelve el actor actual (userId, userName) para auditoria a partir del HttpContext. Si no hay
+    /// HttpContext (tests unitarios o jobs sin request en curso), devuelve "System"/"Sistema" — el mismo
+    /// criterio que <c>SupplierService.ResolveCurrentActor</c>, para no inventar un segundo mecanismo.
+    /// </summary>
+    private (string UserId, string UserName) ResolveCurrentActor()
+    {
+        var user = _httpContextAccessor?.HttpContext?.User;
+        if (user is null) return ("System", "Sistema");
+
+        var userId = user.FindFirstValue(ClaimTypes.NameIdentifier) ?? "System";
+        var userName = user.FindFirst("FullName")?.Value
+                       ?? user.FindFirstValue(ClaimTypes.Name)
+                       ?? "Sistema";
+        return (userId, userName);
+    }
+
+    private static string FormatNullableInt(int? value) => value?.ToString() ?? "(vacio)";
+
+    private static string FormatNullableText(string? value) => string.IsNullOrWhiteSpace(value) ? "(vacio)" : value;
 
     public async Task<Customer> UpdateCustomerCreditConfigAsync(
         int id,

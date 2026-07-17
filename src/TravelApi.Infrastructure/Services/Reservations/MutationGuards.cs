@@ -21,8 +21,11 @@ namespace TravelApi.Infrastructure.Services.Reservations;
 ///  - Pago vinculado a Receipt Issued/Voided o factura con CAE viva (CODE-01).
 ///  - Servicio/Booking de reserva con CAE viva o voucher Issued (CODE-04, CODE-05).
 ///  - Fechas de reserva con CAE viva o voucher Issued (CODE-03).
-///  - TaxId/TaxCondition Customer con factura CAE viva (CODE-06).
-///  - TaxId/TaxCondition Supplier con booking en reserva con CAE viva (CODE-13).
+///  - TaxId Customer con factura CAE viva (CODE-06). Ajustado 2026-07-17: la
+///    CONDICION fiscal (TaxConditionId/TaxCondition) YA NO entra en este guard —
+///    es dato de HOY, se edita siempre con auditoria (ver docstring del metodo).
+///  - TaxId Supplier con booking en reserva con CAE viva (CODE-13). Mismo ajuste
+///    2026-07-17: la CONDICION del proveedor se edita siempre con auditoria.
 ///  - Datos personales Pasajero con voucher Issued o reserva con CAE viva (CODE-14).
 ///
 /// "FACTURA viva" = <c>InvoiceComprobanteHelpers.IsCreditNote(i.TipoComprobante) == false
@@ -226,11 +229,25 @@ public static class MutationGuards
     }
 
     /// <summary>
-    /// CODE-06: bloquea cambiar datos fiscales del cliente (TaxId,
-    /// TaxConditionId, TaxCondition) cuando tiene al menos una factura con CAE
-    /// no anulada. Cambiar el CUIT del receptor de un comprobante AFIP no es
-    /// reversible — la factura quedo emitida con el TaxId original; cualquier
-    /// cambio rompe la inmutabilidad fiscal.
+    /// CODE-06: bloquea cambiar el CUIT del cliente (<c>TaxId</c>) cuando tiene al menos
+    /// una factura con CAE no anulada. El CUIT es una IDENTIDAD FISCAL: la factura AFIP ya
+    /// salio con el CUIT original impreso, y ese dato no se puede reescribir sin anular el
+    /// comprobante primero.
+    ///
+    /// <para><b>Decision del dueño (2026-07-17):</b> la CONDICION fiscal (<c>TaxConditionId</c>,
+    /// <c>TaxCondition</c> — Consumidor Final, Monotributo, Responsable Inscripto, Exento) es un
+    /// dato de HOY, no una identidad, y se puede editar SIEMPRE (con auditoria), aunque el cliente
+    /// tenga facturas vivas. Por eso este guard SOLO se dispara para el eje <c>TaxId</c> — el
+    /// caller (<c>CustomerService.UpdateCustomerAsync</c>) ya NO lo invoca cuando lo unico que
+    /// cambio fue la condicion.</para>
+    ///
+    /// <para><b>Por que es seguro permitir el cambio de condicion con facturas vivas</b>: la
+    /// historia fiscal de un comprobante NUNCA depende de la ficha del cliente al momento de
+    /// consultarla. Cada evento fiscal (factura, NC, ND) congela sus propios datos al momento de
+    /// emitirse — la factura ya emitida sigue teniendo la condicion con la que salio, la ficha del
+    /// cliente HOY es solo el dato VIGENTE para la proxima operacion. Un cliente pasa legitimamente
+    /// de Monotributo a Responsable Inscripto (o al reves) en la vida real: bloquear ese cambio
+    /// solo porque tiene facturas viejas emitidas seria una regla incorrecta, no una proteccion.</para>
     /// </summary>
     public static async Task<string?> GetCustomerTaxIdMutationBlockReasonAsync(
         AppDbContext db,
@@ -250,19 +267,32 @@ public static class MutationGuards
 
         if (hasLiveInvoice)
         {
-            return "No se pueden modificar los datos fiscales del cliente (CUIT/condicion ARCA) porque tiene facturas emitidas (CAE). " +
-                   "Anulá esas facturas con nota de credito antes de cambiar la condicion fiscal.";
+            return "No se puede modificar el CUIT del cliente porque tiene facturas emitidas (CAE) que lo referencian. " +
+                   "Si el titular cambió de CUIT, registrá un cliente nuevo.";
         }
 
         return null;
     }
 
     /// <summary>
-    /// CODE-13: bloquea cambiar datos fiscales del proveedor (TaxId,
-    /// TaxCondition) cuando tiene al menos un booking ligado a una reserva
-    /// con factura CAE no anulada. Aunque AFIP factura al cliente final, el
-    /// CUIT del proveedor aparece en informes de comisiones, conciliaciones
-    /// y en la trazabilidad fiscal del servicio.
+    /// CODE-13: bloquea cambiar el CUIT del proveedor (<c>TaxId</c>) cuando tiene al menos un
+    /// booking ligado a una reserva con factura CAE no anulada. Aunque AFIP factura al cliente
+    /// final (el proveedor nunca es el receptor del comprobante de venta), el CUIT del proveedor
+    /// aparece en informes de comisiones, conciliaciones y en la trazabilidad fiscal del servicio,
+    /// asi que se lo trata igual de estricto que una identidad: no se reescribe con historia viva.
+    ///
+    /// <para><b>Decision del dueño (2026-07-17):</b> la CONDICION fiscal del proveedor
+    /// (<c>TaxCondition</c> — RI, Monotributo, Exento) es un dato de HOY, no una identidad, y se
+    /// puede editar SIEMPRE (con auditoria), aunque el proveedor tenga reservas con facturas vivas.
+    /// Por eso este guard SOLO se dispara para el eje <c>TaxId</c> — el caller
+    /// (<c>SupplierService.UpdateSupplierAsync</c>) ya NO lo invoca cuando lo unico que cambio fue
+    /// la condicion.</para>
+    ///
+    /// <para><b>Por que es seguro</b>: la condicion fiscal del PROVEEDOR ni siquiera entra en el
+    /// comprobante de venta (ese lleva los datos del CLIENTE, no del operador) — no hay ningun
+    /// comprobante emitido cuya integridad dependa de la condicion vigente del proveedor. Y un
+    /// proveedor pasa legitimamente de Monotributo a Responsable Inscripto en la vida real:
+    /// bloquear ese cambio solo porque hay reservas facturadas seria una regla incorrecta.</para>
     /// </summary>
     public static async Task<string?> GetSupplierTaxIdMutationBlockReasonAsync(
         AppDbContext db,
@@ -297,8 +327,8 @@ public static class MutationGuards
 
         if (hasLiveInvoice)
         {
-            return "No se pueden modificar los datos fiscales del proveedor (CUIT/condicion ARCA) porque hay reservas con facturas emitidas (CAE) que lo referencian. " +
-                   "Anulá esas facturas primero o registrá un proveedor nuevo.";
+            return "No se puede modificar el CUIT del proveedor porque hay reservas con facturas emitidas que lo referencian. " +
+                   "Si la empresa cambió de CUIT, registrá un proveedor nuevo.";
         }
 
         return null;

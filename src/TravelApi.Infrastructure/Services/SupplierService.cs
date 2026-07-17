@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using TravelApi.Application.Constants;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -283,21 +284,49 @@ public class SupplierService : ISupplierService
             ? ValidateAndNormalizeDefaultCurrency(supplier.DefaultCurrency)
             : null;
 
-        // B1.15 Fase 0' (CODE-13): bloquear cambios fiscales (TaxId, TaxCondition)
-        // cuando hay reservas con factura CAE viva referenciando al proveedor.
-        // Otros campos siguen libres (Name/Email/Phone/Address/IsActive/ContactName).
-        var fiscalDataChanged =
-            !string.Equals(existing.TaxId, supplier.TaxId, StringComparison.Ordinal) ||
-            !string.Equals(existing.TaxCondition, supplier.TaxCondition, StringComparison.Ordinal);
+        // B1.15 Fase 0' (CODE-13), separado en dos ejes el 2026-07-17 por decision del dueño:
+        // "el CUIT es una identidad; la condicion fiscal es un dato de HOY".
+        //
+        //  - taxIdChanged: el CUIT SI se sigue bloqueando si hay reservas con factura CAE viva
+        //    referenciando al proveedor (identidad no reescribible).
+        //  - taxConditionChanged: la condicion (TaxCondition, ej. Mono -> RI) se permite editar
+        //    SIEMPRE, incluso con facturas vivas — la condicion del proveedor ni siquiera entra
+        //    en el comprobante de venta (ver docstring de
+        //    MutationGuards.GetSupplierTaxIdMutationBlockReasonAsync). Este eje NUNCA pasa por el
+        //    guard, pero SI queda auditado (accion SupplierTaxConditionChanged).
+        //
+        // Otros campos siguen libres sin guard ni auditoria especial (Name/Email/Phone/Address/
+        // IsActive/ContactName).
+        //
+        // Fix R1 (2026-07-17, hallazgo de la revision): "omitido = se preserva", mismo criterio que
+        // DocumentType/DocumentNumber de CustomerService. A diferencia del cliente, los DOS forms de
+        // operador que existen hoy (SupplierFormModal.jsx y la solapa "Datos" de SupplierAccountPage.jsx)
+        // SI redondean el valor actual de taxCondition en el PUT (lo precargan del operador y lo re-mandan
+        // tal cual si el usuario no lo toca) — asi que con el frontend real de hoy este campo casi nunca
+        // llega vacio en una edicion. Aun asi se aplica el mismo resguardo que en Customer: un PUT vacio
+        // PRESERVA la condicion existente en vez de borrarla, para no depender de que TODOS los callers
+        // presentes y futuros repitan ese round-trip a mano.
+        var incomingTaxCondition = string.IsNullOrWhiteSpace(supplier.TaxCondition)
+            ? existing.TaxCondition
+            : supplier.TaxCondition;
 
-        if (fiscalDataChanged)
+        var taxIdChanged = !string.Equals(existing.TaxId, supplier.TaxId, StringComparison.Ordinal);
+        var taxConditionChanged = !string.Equals(existing.TaxCondition, incomingTaxCondition, StringComparison.Ordinal);
+
+        if (taxIdChanged)
         {
+            // N2(a) espejo del cliente: si el guard bloquea, se sale ACA — antes de tocar CUALQUIER campo
+            // fiscal (ni CUIT ni condicion). Bloqueo TOTAL con doble eje + factura viva.
             var fiscalBlock = await MutationGuards.GetSupplierTaxIdMutationBlockReasonAsync(_dbContext, id, cancellationToken);
             if (fiscalBlock != null)
             {
                 throw new InvalidOperationException(fiscalBlock);
             }
         }
+
+        // Snapshot ANTES de mutar: la auditoria necesita el valor viejo, no el que estamos por pisar.
+        var oldTaxId = existing.TaxId;
+        var oldTaxCondition = existing.TaxCondition;
 
         // C29: guard de desactivacion. La regla de negocio operativa es "no se
         // borran proveedores, se desactivan", pero hasta este hotfix se podia
@@ -321,7 +350,7 @@ public class SupplierService : ISupplierService
         existing.Email = supplier.Email;
         existing.Phone = supplier.Phone;
         existing.TaxId = supplier.TaxId;
-        existing.TaxCondition = supplier.TaxCondition;
+        existing.TaxCondition = incomingTaxCondition;
         existing.Address = supplier.Address;
         existing.IsActive = supplier.IsActive;
         // ADR-041 TANDA 5: plazo de pago por defecto (null = se borra el plazo = sin vencimiento sugerido).
@@ -343,6 +372,34 @@ public class SupplierService : ISupplierService
         if (defaultCurrencyProvided)
         {
             existing.DefaultCurrency = normalizedDefaultCurrency;
+        }
+
+        var (actorUserId, actorUserName) = ResolveCurrentActor();
+
+        // N1 espejo del cliente (2026-07-17): el CUIT del proveedor tambien es una identidad; un cambio
+        // legitimo (typo corregido) merece rastro. Solo se audita cuando REALMENTE cambio.
+        if (taxIdChanged)
+        {
+            _auditService?.StageBusinessEvent(
+                action: AuditActions.SupplierTaxIdChanged,
+                entityName: "Supplier",
+                entityId: existing.Id.ToString(),
+                details: $"TaxId: {FormatNullableText(oldTaxId)} -> {FormatNullableText(supplier.TaxId)}.",
+                userId: actorUserId,
+                userName: actorUserName);
+        }
+
+        if (taxConditionChanged)
+        {
+            var details = $"TaxCondition: {FormatNullableText(oldTaxCondition)} -> {FormatNullableText(incomingTaxCondition)}.";
+
+            _auditService?.StageBusinessEvent(
+                action: AuditActions.SupplierTaxConditionChanged,
+                entityName: "Supplier",
+                entityId: existing.Id.ToString(),
+                details: details,
+                userId: actorUserId,
+                userName: actorUserName);
         }
 
         await _dbContext.SaveChangesAsync(cancellationToken);
@@ -1593,6 +1650,9 @@ public class SupplierService : ISupplierService
                        ?? "Sistema";
         return (userId, userName);
     }
+
+    /// <summary>Formatea un texto nullable para el detalle de auditoria (viejo -&gt; nuevo).</summary>
+    private static string FormatNullableText(string? value) => string.IsNullOrWhiteSpace(value) ? "(vacio)" : value;
 
     private static DateTime? NormalizeToUtc(DateTime? value)
     {
