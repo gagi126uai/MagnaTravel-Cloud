@@ -14,7 +14,28 @@ import {
   construirPayloadUndoDebitNote,
   debeMostrarReintentarDeshacer,
   debeMostrarMontoAFavor,
+  esErrorSaldoAplicadoAlDeshacerMulta,
 } from "./undoDebitNoteLogic.js";
+
+// ============================================================================
+// esErrorSaldoAplicadoAlDeshacerMulta (Tanda D1, 2026-07-16)
+// ============================================================================
+
+test("esErrorSaldoAplicadoAlDeshacerMulta: invariantCode INV-UNDO-CREDITBRIDGE → true", () => {
+  const error = { payload: { invariantCode: "INV-UNDO-CREDITBRIDGE", detail: "Esta multa tiene saldo a favor aplicado; revertí la aplicación antes de deshacerla." } };
+  assert.equal(esErrorSaldoAplicadoAlDeshacerMulta(error), true);
+});
+
+test("esErrorSaldoAplicadoAlDeshacerMulta: otro invariantCode → false", () => {
+  const error = { payload: { invariantCode: "INV-UNDO-LIVEPAYMENT" } };
+  assert.equal(esErrorSaldoAplicadoAlDeshacerMulta(error), false);
+});
+
+test("esErrorSaldoAplicadoAlDeshacerMulta: sin payload → false (nunca revienta)", () => {
+  assert.equal(esErrorSaldoAplicadoAlDeshacerMulta({}), false);
+  assert.equal(esErrorSaldoAplicadoAlDeshacerMulta(null), false);
+  assert.equal(esErrorSaldoAplicadoAlDeshacerMulta(undefined), false);
+});
 
 // ============================================================================
 // validarMotivoDeshacerMulta (5..500 caracteres, mismo límite que el resto de

@@ -11,13 +11,16 @@
  *     cierre (closingBalance), calculados por el servidor — por construcción
  *     el saldo de cierre reconcilia con el "Debe" del encabezado de la página.
  *
- * Estructura visual (mirroring de SupplierExtractoSection.jsx, ya aprobado):
+ * Estructura visual (Tanda D2, 2026-07-16 — extracto profesional, 5 columnas):
  *   ┌── Pesos ($) ───────────────────────────────────────────────┐
- *   │  Fecha | Concepto | Comprobante | Cargo | Abono | Saldo    │
+ *   │  Fecha | Documento | Debe | Haber | Saldo                  │
  *   └────────────────────────────────────────────────────────────┘
  *   ┌── Dólares (US$) ──────────────────────────────────────────┐
  *   │  ...                                                       │
  *   └────────────────────────────────────────────────────────────┘
+ * "Documento" funde las viejas columnas "Concepto" + "Comprobante" en una sola: tipo de
+ * comprobante + número (ej. "Factura 0001-00012"), con el número de reserva como link
+ * chico debajo (formatEtiquetaDocumentoExtracto, en estadoCuentaFormatting.js).
  *
  * Historia (2026-07-01): antes este componente armaba el extracto EN EL
  * NAVEGADOR, cruzando /account/payments + /account/invoices con un techo de
@@ -47,6 +50,7 @@ import { Link } from "react-router-dom";
 import { BookOpen, Loader2, Plus, RefreshCw } from "lucide-react";
 import { formatCurrency } from "../../../lib/utils";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
+import { formatEtiquetaDocumentoExtracto, formatCierreExtracto } from "../lib/estadoCuentaFormatting";
 import {
   DataGrid,
   DataGridBody,
@@ -146,58 +150,36 @@ export function EstadoCuentaClienteTab({
 
 /**
  * Tabla del extracto para una moneda.
- * Muestra cabecera con el saldo de cierre (closingBalance, calculado por el servidor)
- * y tabla de líneas. Estructura idéntica al BloqueExtractoProveedor de SupplierExtractoSection.
+ *
+ * Fix de revisión (2026-07-17, spec §1/§3): el cierre "Saldo al día (debe/a favor): $X"
+ * va AL PIE del bloque (como en el mockup firmado), no en la cabecera. Antes la
+ * cabecera tenía un chip "Debe: $X" que además decía siempre "Debe" aunque el saldo
+ * fuera a favor — mentira cuando `closingBalance` es negativo. La cabecera ahora solo
+ * identifica la moneda (badge + nombre); el "Crédito no aplicado" que vivía acá se
+ * mudó a la foto de saldo (FotoDeSaldoCuenta, spec §7.3) y no se duplica.
  */
 function BloqueExtractoCliente({ bloque }) {
   const saldoCierre = bloque.closingBalance ?? 0;
-  const creditoNoAplicado = bloque.unappliedCredit ?? 0;
   const nombreMoneda = bloque.currency === "USD" ? "Dólares" : "Pesos";
 
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-      {/* Cabecera: badge de moneda + nombre + saldo de cierre */}
-      <div className="flex items-center justify-between gap-3 border-b border-slate-100 bg-slate-50/30 px-5 py-3 dark:border-slate-800 dark:bg-slate-800/10">
-        <div className="flex items-center gap-2">
-          <CurrencyBadge currency={bloque.currency} />
-          <span className="text-sm font-bold text-slate-700 dark:text-slate-300">
-            {nombreMoneda}
-          </span>
-        </div>
-        <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Debe</span>
-          <span
-            className={`text-sm font-extrabold ${
-              saldoCierre > 0
-                ? "text-rose-600 dark:text-rose-500"
-                : saldoCierre < 0
-                ? "text-emerald-600 dark:text-emerald-500"
-                : "text-slate-400 dark:text-slate-600"
-            }`}
-            data-testid={`extracto-saldo-${bloque.currency}`}
-          >
-            {formatCurrency(saldoCierre, bloque.currency)}
-          </span>
-          {creditoNoAplicado > 0 && (
-            <>
-              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-600">Crédito no aplicado</span>
-              <span className="text-sm font-extrabold text-amber-600" data-testid={`extracto-credito-no-aplicado-${bloque.currency}`}>
-                {formatCurrency(creditoNoAplicado, bloque.currency)}
-              </span>
-            </>
-          )}
-        </div>
+      {/* Cabecera: solo identifica la moneda (badge + nombre) */}
+      <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50/30 px-5 py-3 dark:border-slate-800 dark:bg-slate-800/10">
+        <CurrencyBadge currency={bloque.currency} />
+        <span className="text-sm font-bold text-slate-700 dark:text-slate-300">
+          {nombreMoneda}
+        </span>
       </div>
 
-      {/* Tabla de movimientos del bloque */}
-      <DataGrid density="compact" minWidth="820px">
+      {/* Tabla de movimientos del bloque: 5 columnas (Tanda D2, spec §3) */}
+      <DataGrid density="compact" minWidth="720px">
         <DataGridHeader>
           <DataGridHeaderRow>
             <DataGridHeaderCell>Fecha</DataGridHeaderCell>
-            <DataGridHeaderCell>Concepto</DataGridHeaderCell>
-            <DataGridHeaderCell>Comprobante</DataGridHeaderCell>
-            <DataGridHeaderCell align="right">Cargo</DataGridHeaderCell>
-            <DataGridHeaderCell align="right">Abono</DataGridHeaderCell>
+            <DataGridHeaderCell>Documento</DataGridHeaderCell>
+            <DataGridHeaderCell align="right">Debe</DataGridHeaderCell>
+            <DataGridHeaderCell align="right">Haber</DataGridHeaderCell>
             <DataGridHeaderCell align="right">Saldo</DataGridHeaderCell>
           </DataGridHeaderRow>
         </DataGridHeader>
@@ -213,10 +195,31 @@ function BloqueExtractoCliente({ bloque }) {
               />
             ))
           ) : (
-            <DataGridEmptyState colSpan={6} title="Sin movimientos en esta moneda." />
+            <DataGridEmptyState colSpan={5} title="Sin movimientos en esta moneda." />
           )}
         </DataGridBody>
       </DataGrid>
+
+      {/* Cierre AL PIE del bloque (spec §1/§3, mockup firmado): "Saldo al día (debe/a
+          favor): $X" — la etiqueta cambia sola según el signo (nunca dice "debe" con un
+          saldo a favor). formatCierreExtracto es la función pura y testeada que decide
+          el texto exacto; este componente solo lo pinta. */}
+      <div
+        className="border-t border-slate-100 bg-slate-50/30 px-5 py-2.5 text-right dark:border-slate-800 dark:bg-slate-800/10"
+        data-testid={`extracto-cierre-${bloque.currency}`}
+      >
+        <span
+          className={`text-sm font-extrabold ${
+            saldoCierre > 0.01
+              ? "text-rose-600 dark:text-rose-500"
+              : saldoCierre < -0.01
+              ? "text-emerald-600 dark:text-emerald-500"
+              : "text-slate-400 dark:text-slate-600"
+          }`}
+        >
+          {formatCierreExtracto(saldoCierre, bloque.currency)}
+        </span>
+      </div>
     </div>
   );
 }
@@ -225,9 +228,11 @@ function BloqueExtractoCliente({ bloque }) {
 
 /**
  * Una fila del extracto del cliente.
- * `kind` ("Sale"/"Payment") solo se usa para decidir estilos (nunca se muestra como texto).
- * `sourcePublicId`/`reservaPublicId` son GUID internos: solo se usan para key/link,
- * nunca se muestran como texto — el texto visible de la reserva es `numeroReserva`.
+ * `kind` ("Invoice"/"DebitNote"/"CreditNote"/"Payment"/"CreditApplication") decide el
+ * texto de "Documento" (formatEtiquetaDocumentoExtracto) y el estilo — nunca se muestra
+ * el token crudo. `sourcePublicId`/`reservaPublicId` son GUID internos: solo se usan
+ * para key/link, nunca se muestran como texto — el texto visible de la reserva es
+ * `numeroReserva`.
  */
 function FilaExtractoCliente({ linea, currency }) {
   const esCargo = linea.charge > 0;
@@ -240,12 +245,14 @@ function FilaExtractoCliente({ linea, currency }) {
         {linea.date ? new Date(linea.date).toLocaleDateString("es-AR") : "—"}
       </DataGridCell>
 
-      {/* Concepto: negrita para cargos (deuda), normal para abonos.
-          Si el movimiento tiene reserva asociada, un link chiquito lleva a esa reserva
-          (ahí viven las acciones puntuales: ver factura, eliminar cobro, anular recibo). */}
+      {/* Documento (Tanda D2, spec §3): fusión de "Concepto" + "Comprobante" en una sola
+          columna — tipo + número (ej. "Factura 0001-00012"). Negrita para cargos (deuda),
+          normal para abonos. El número de reserva es un link chico debajo: lleva a la
+          ficha, donde viven las acciones puntuales (ver factura, eliminar cobro, anular
+          recibo) — este extracto es de solo lectura, sin botones por renglón. */}
       <DataGridCell>
         <span className={esCargo ? "font-medium text-slate-800 dark:text-slate-200" : "text-slate-600 dark:text-slate-400"}>
-          {linea.description || "—"}
+          {formatEtiquetaDocumentoExtracto(linea)}
         </span>
         {linea.reservaPublicId && linea.numeroReserva && (
           <Link
@@ -257,12 +264,7 @@ function FilaExtractoCliente({ linea, currency }) {
         )}
       </DataGridCell>
 
-      {/* Comprobante (nº de recibo u otra referencia); "—" si no hay */}
-      <DataGridCell className="font-mono text-xs text-slate-500 dark:text-slate-400">
-        {linea.documentRef || "—"}
-      </DataGridCell>
-
-      {/* Cargo: visible solo para ventas confirmadas; formateado en la moneda del bloque */}
+      {/* Debe: visible solo para cargos (venta/multa); formateado en la moneda del bloque */}
       <DataGridCell align="right">
         {esCargo ? (
           <span className="font-bold text-slate-800 dark:text-slate-200">
@@ -273,7 +275,8 @@ function FilaExtractoCliente({ linea, currency }) {
         )}
       </DataGridCell>
 
-      {/* Abono: visible solo para cobros; formateado en la moneda del bloque */}
+      {/* Haber: visible solo para abonos (cobro/NC/saldo a favor aplicado); formateado
+          en la moneda del bloque */}
       <DataGridCell align="right">
         {esAbono ? (
           <span className="font-bold text-emerald-600 dark:text-emerald-500">

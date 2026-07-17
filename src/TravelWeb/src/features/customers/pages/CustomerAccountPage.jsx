@@ -1,22 +1,25 @@
 /**
  * Cuenta corriente del cliente — 4 solapas.
  *
- * Layout:
- *   ┌── Encabezado (siempre visible) ──────────────────────────────────────────┐
- *   │  Identidad + tarjetas de resumen (Ventas/Cobrado/Reservas/Facturas)      │
- *   │  + chips de saldo por moneda ("Debe en $" / "Debe en US$")              │
- *   │  + carteles "A FAVOR" con botón "Usar saldo a favor"                    │
- *   │  + aplicaciones de saldo a favor vigentes (revertibles)                 │
+ * Layout (Tanda D2, spec `docs/ux/2026-07-16-extracto-profesional-cuenta-cliente.md`):
+ *   ┌── Barra superior ──────────────────────────────────────────────────────────┐
+ *   │  ← Nombre + contactos + CUIT/DNI (una línea sobria, sin avatar)  [+Nuevo]  │
+ *   ├── Foto de saldo (UN recuadro, una columna por moneda) ─────────────────────┤
+ *   │  Facturado sin cobrar / Multas abiertas / Crédito a favor / SALDO         │
+ *   │  + botón "Usar saldo a favor" (ficha inline) + lista de aplicaciones      │
  *   └──────────────────────────────────────────────────────────────────────────┘
  *   ┌── Solapas ───────────────────────────────────────────────────────────────┐
  *   │  Reservas  │  Estado de cuenta (default)  │  Facturación  │  Datos bancarios│
  *   └──────────────────────────────────────────────────────────────────────────┘
  *
- * Decisiones de diseño (spec sec.3, 2026-06-28):
+ * Decisiones de diseño (spec sec.3, 2026-06-28 + rediseño 2026-07-16):
  *   P10=A: solapa del dinero se llama "Estado de cuenta".
  *   P11=A: datos bancarios del cliente en su propia solapa "Datos bancarios".
- *   P12=A: tarjetas de resumen fijas arriba del encabezado, visibles en cualquier solapa.
  *   Nombre "Facturación" (no "Facturación AFIP": AFIP/ARCA solo aparece en el chip de cada comprobante).
+ *   (2026-07-16, P2/P3=A) Las 4 tarjetitas de resumen (Documentado/Cobrado/Reservas/
+ *   Comprobantes) y los carteles sueltos ("Debe en $", "A FAVOR", "Crédito no aplicado",
+ *   "Multa pendiente de cobro") se REEMPLAZAN por una única "foto de saldo"
+ *   (FotoDeSaldoCuenta) que ya incluye las multas en su composición — ver §7 de la spec.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
@@ -27,13 +30,13 @@ import {
   Phone,
   Receipt,
   Undo2,
-  Wallet,
 } from "lucide-react";
 import { api } from "../../../api";
 import { showError, showSuccess } from "../../../alerts";
 import { hasPermission } from "../../../auth";
 import CustomerPaymentModal from "../../../components/CustomerPaymentModal";
 import { UsarSaldoAFavorInline } from "../components/UsarSaldoAFavorInline";
+import { FotoDeSaldoCuenta } from "../components/FotoDeSaldoCuenta";
 import { ListaCuentasBancarias } from "../../bank-accounts/components/ListaCuentasBancarias";
 import { Button } from "../../../components/ui/button";
 import {
@@ -61,9 +64,14 @@ import { ReservaStatusBadge } from "../../reservas/components/ReservaStatusBadge
 import { getMoneyStatus, isReservaAnulada } from "../../reservas/moneyStatus";
 import { formatTipoComprobante } from "../lib/facturacionFilters";
 import { resolverFilaReservaAnuladaCuenta } from "../lib/pendingPenaltiesLogic";
+import { prefijoDestinoAplicacionSaldo } from "../lib/creditWithdrawalLogic";
 import { EstadoCuentaClienteTab } from "../components/EstadoCuentaClienteTab";
 import { FacturacionClienteTab } from "../components/FacturacionClienteTab";
-import { MultaPendienteDeCobroBlock } from "../components/MultaPendienteDeCobroBlock";
+// Tanda D2 (2026-07-16): MultaPendienteDeCobroBlock DEJA de renderizarse acá — su
+// información pasa a la línea "Multas abiertas" de la foto de saldo (FotoDeSaldoCuenta)
+// y a los renglones de multa dentro del extracto (EstadoCuentaClienteTab). El archivo
+// del componente NO se borra (puede volver a hacer falta si el bloque se reintroduce en
+// otra pantalla), solo deja de importarse/dibujarse acá.
 
 // ─── Constantes de paginación (solo usadas por la solapa Reservas) ───────────
 
@@ -448,12 +456,17 @@ export default function CustomerAccountPage() {
     }
   };
 
-  const handleRevertirAplicacion = async (applicationPublicId) => {
+  // Tanda D1 (2026-07-16): hay DOS rutas de reversión según el destino de la aplicación
+  // (mismo mecanismo interno, rutas separadas para que el backend distinga cada caso en
+  // su auditoría — ver ReverseCustomerCreditPenaltyApplication en CustomersController.cs).
+  // `destinationKind` viene del DTO de la aplicación, nunca se adivina acá.
+  const handleRevertirAplicacion = async (applicationPublicId, destinationKind) => {
     setGuardandoReversion(true);
     setErrorReversion(null);
     try {
+      const ruta = destinationKind === "multa" ? "penalty-applications" : "applications";
       await api.post(
-        `/customers/${publicId}/credit/applications/${applicationPublicId}/reverse`,
+        `/customers/${publicId}/credit/${ruta}/${applicationPublicId}/reverse`,
         { reason: motivoReversion.trim() || null }
       );
       setRevirtiendoAplicacionId(null);
@@ -475,34 +488,6 @@ export default function CustomerAccountPage() {
   // Reservas sin cancelar: para el picker del modal de cobro
   const availableReservas = deudaClientePorReserva || [];
 
-  // "Ventas" y "Cobrado" por moneda para las tarjetas del encabezado.
-  //
-  // Por qué se calculan acá y no vienen de summary: el backend NO expone
-  // TotalSales/TotalPaid desglosados por moneda (summary.TotalSales/TotalPaid son
-  // escalares que MEZCLAN pesos y dólares — el bug original que había que arreglar).
-  // Lo que sí trae desglosado por moneda es el extracto (account/statement): cada
-  // línea de venta confirmada es un "charge" y cada cobro es un "credit" de SU
-  // bloque de moneda. Sumando esos dos campos por bloque se obtiene el mismo total
-  // que "Ventas"/"Cobrado", pero correctamente separado por moneda (nunca sumando
-  // ARS + USD), sin inventar un campo que el backend no tiene.
-  const ventasPorMoneda = useMemo(() => {
-    const bloques = estadoCuenta?.currencies ?? [];
-    return bloques.map((bloque) => ({
-      currency: bloque.currency,
-      amount: (bloque.lines ?? []).reduce((acc, linea) => acc + (linea.charge ?? 0), 0),
-    }));
-  }, [estadoCuenta]);
-
-  const cobradoPorMoneda = useMemo(() => {
-    const bloques = estadoCuenta?.currencies ?? [];
-    return bloques.map((bloque) => ({
-      currency: bloque.currency,
-      amount: (bloque.lines ?? [])
-        .filter((linea) => linea.kind === "Payment")
-        .reduce((acc, linea) => acc + (linea.credit ?? 0), 0),
-    }));
-  }, [estadoCuenta]);
-
   // Filtra por moneda para el picker de "aplicar saldo a reserva específica"
   const getReservasConDeudaEnMoneda = useCallback((moneda) => {
     if (!deudaClientePorReserva) return [];
@@ -522,27 +507,32 @@ export default function CustomerAccountPage() {
     return <div className="py-12 text-center text-muted-foreground">No se encontraron datos del cliente.</div>;
   }
 
-  // Chips de saldo por moneda (multimoneda, separados).
-  // Usa summary.receivableByCurrency del backend (ADR-022 Capa 8).
-  // Si está vacío (sin deuda activa), no muestra el bloque rojo.
-  const saldoPorMoneda = Array.isArray(summary.receivableByCurrency)
-    ? summary.receivableByCurrency.filter((item) => (item.amount ?? 0) > 0)
-    : [];
-
-  // Cuando no hay deuda activa, muestra igualmente un chip verde/gris con el escalar legacy
-  const sinDeudaEnNingunaMoneda = saldoPorMoneda.length === 0;
-
   return (
     <div className="space-y-6">
-      {/* ── Barra de navegación superior ───────────────────────────────────── */}
+      {/* ── Barra superior: identidad sobria (P3=A, sin avatar) + acción de cabecera ── */}
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="icon" onClick={() => navigate("/customers")}>
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Cuenta Corriente</h1>
-            <p className="text-muted-foreground">{customer?.fullName}</p>
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">{customer?.fullName}</h1>
+            {/* Una sola línea sobria: nombre + contactos + CUIT/DNI (spec 2026-07-16, P3=A).
+                Antes había un círculo gigante con la inicial + tarjetas repetidas; el
+                nombre ya lo dice el título de arriba, esto solo agrega el contacto. */}
+            <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-sm text-slate-500 dark:text-slate-400">
+              {customer?.email && (
+                <span className="flex items-center gap-1">
+                  <Mail className="h-3.5 w-3.5" /> {customer.email}
+                </span>
+              )}
+              {customer?.phone && (
+                <span className="flex items-center gap-1">
+                  <Phone className="h-3.5 w-3.5" /> {customer.phone}
+                </span>
+              )}
+              {customer?.taxId && <span>CUIT/DNI {customer.taxId}</span>}
+            </div>
           </div>
         </div>
 
@@ -559,219 +549,58 @@ export default function CustomerAccountPage() {
         </Button>
       </div>
 
-      {/* ── Encabezado (siempre visible sobre las solapas) ─────────────────── */}
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-
-        {/* Tarjeta izquierda: identidad + resumen de actividad */}
-        <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
-          <div className="flex items-start gap-4">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-indigo-500 to-cyan-500 text-2xl font-bold text-white shadow-md">
-              {customer?.fullName?.charAt(0)?.toUpperCase() || "?"}
-            </div>
-            <div className="space-y-2">
-              <h2 className="text-xl font-bold text-slate-900 dark:text-white">{customer?.fullName}</h2>
-              <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-500">
-                {customer?.email && (
-                  <span className="flex items-center gap-1">
-                    <Mail className="h-3.5 w-3.5" /> {customer.email}
-                  </span>
-                )}
-                {customer?.phone && (
-                  <span className="flex items-center gap-1">
-                    <Phone className="h-3.5 w-3.5" /> {customer.phone}
-                  </span>
-                )}
-                {customer?.taxId && <span>CUIT/DNI {customer.taxId}</span>}
-              </div>
-            </div>
-          </div>
-
-          {/*
-            Tarjetas de resumen: Ventas / Cobrado / Reservas / Facturas (P12=A: fijas).
-            Ventas y Cobrado ahora muestran UNA línea por moneda (nunca suman ARS+USD).
-            Mientras el extracto todavía no cargó, se ve un "…" en vez de un número que
-            después cambiaría de golpe.
-          */}
-          <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-950/60">
-              <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">Documentado</div>
-              {loadingEstadoCuenta ? (
-                <div className="mt-1 text-lg font-bold text-slate-400">…</div>
-              ) : ventasPorMoneda.length === 0 ? (
-                <div className="mt-1 text-lg font-bold text-slate-900 dark:text-white">{formatCurrency(0, "ARS")}</div>
-              ) : (
-                ventasPorMoneda.map((item) => (
-                  <div key={item.currency} className="mt-1 text-lg font-bold text-slate-900 dark:text-white">
-                    {formatCurrency(item.amount, item.currency)}
-                  </div>
-                ))
-              )}
-            </div>
-            <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-950/60">
-              <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">Cobrado</div>
-              {loadingEstadoCuenta ? (
-                <div className="mt-1 text-lg font-bold text-slate-400">…</div>
-              ) : cobradoPorMoneda.length === 0 ? (
-                <div className="mt-1 text-lg font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(0, "ARS")}</div>
-              ) : (
-                cobradoPorMoneda.map((item) => (
-                  <div key={item.currency} className="mt-1 text-lg font-bold text-emerald-600 dark:text-emerald-400">
-                    {formatCurrency(item.amount, item.currency)}
-                  </div>
-                ))
-              )}
-            </div>
-            <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-950/60">
-              <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">Reservas</div>
-              <div className="mt-1 text-lg font-bold text-slate-900 dark:text-white">{summary.reservaCount || 0}</div>
-            </div>
-            <div className="rounded-xl bg-slate-50 p-4 dark:bg-slate-950/60">
-              <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">Comprobantes</div>
-              <div className="mt-1 text-lg font-bold text-slate-900 dark:text-white">{summary.invoiceCount || 0}</div>
-            </div>
-          </div>
-        </div>
-
-        {/*
-          Tarjeta derecha: chips de saldo por moneda ("Debe en $" / "Debe en US$").
-          Regla multimoneda: NUNCA se suman ARS y USD en un solo número.
-          Se usa summary.receivableByCurrency (ADR-022 Capa 8).
-          Si no hay deuda activa, se muestra un chip verde/neutro.
-        */}
-        <div className="flex flex-col gap-3">
-          {sinDeudaEnNingunaMoneda ? (
-            <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-6 shadow-sm dark:border-emerald-900/30 dark:bg-emerald-900/10 flex-1">
-              <div className="text-sm font-medium text-slate-500 dark:text-slate-400">Saldo</div>
-              <div className="mt-1 text-3xl font-bold text-emerald-600 dark:text-emerald-400">Al día</div>
-              <div className="mt-2 text-xs font-medium text-slate-400">Sin deuda pendiente</div>
-            </div>
-          ) : (
-            saldoPorMoneda.map((item) => (
-              <div
-                key={item.currency}
-                className="rounded-xl border border-rose-100 bg-rose-50 p-5 shadow-sm dark:border-rose-900/30 dark:bg-rose-900/10"
-                data-testid={`chip-saldo-${item.currency}`}
-              >
-                <div className="text-xs font-bold uppercase tracking-wider text-rose-700 dark:text-rose-400">
-                  Debe en {item.currency === "USD" ? "US$" : "$"}
-                </div>
-                <div className="mt-1 text-2xl font-bold text-rose-600 dark:text-rose-400">
-                  {formatCurrency(item.amount, item.currency)}
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-
       {/*
-        ── Bloque "Multa pendiente de cobro" (spec 2026-07-15) ─────────────────
-        PRIMERO en el carril de arriba: es deuda del cliente, lo más "urgente" acá.
-        Se dibuja solo cuando hay al menos una multa pendiente (el componente decide
-        eso solo, leyendo overview.pendingPenalties — nunca se recalcula acá).
+        ── Foto de saldo (Tanda D2, spec 2026-07-16) ───────────────────────────
+        UN solo recuadro reemplaza las 4 tarjetitas (Documentado/Cobrado/Reservas/
+        Comprobantes) + los carteles sueltos (chip "Debe", "A FAVOR", "Crédito no
+        aplicado", "Multa pendiente de cobro"). La composición YA incluye las multas
+        (summary.balanceCompositionByCurrency) — el front no vuelve a sumar nada.
       */}
-      <MultaPendienteDeCobroBlock
-        pendingPenalties={overview?.pendingPenalties}
-        canCobrar={hasPermission("cobranzas.edit")}
-        onCobrar={(item) => handleOpenModal(null, {
-          reservaPublicId: item.reservaPublicId,
-          linkedInvoicePublicId: item.debitNotePublicId,
-          imputedCurrency: item.currency,
-        })}
+      <FotoDeSaldoCuenta
+        composicion={summary.balanceCompositionByCurrency}
+        unappliedCreditByCurrency={summary.unappliedCreditByCurrency}
+        loading={loadingOverview}
+        canUsarSaldo={hasPermission("cobranzas.edit")}
+        monedaFichaAbierta={monedaFichaUsarSaldo}
+        onToggleUsarSaldo={(moneda) =>
+          setMonedaFichaUsarSaldo(monedaFichaUsarSaldo === moneda ? null : moneda)
+        }
       />
 
-      {/*
-        ── Carteles "A FAVOR" por moneda ───────────────────────────────────────
-        Un cartel por moneda con saldo a favor > 0. Regla multimoneda: uno por moneda,
-        nunca sumados. El botón "Usar saldo a favor" abre la ficha inline.
-      */}
-      {Array.isArray(summary.creditBalanceByCurrency) && summary.creditBalanceByCurrency.length > 0 && (
-        <div className="flex flex-col gap-3">
-          {summary.creditBalanceByCurrency.map((creditEntry) => (
-            <div key={creditEntry.currency}>
-              <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 dark:border-emerald-900/40 dark:bg-emerald-950/20">
-                <div>
-                  <div className="text-[11px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">
-                    A FAVOR EN {creditEntry.currency === "USD" ? "US$" : "$"}
-                  </div>
-                  <div className="mt-0.5 text-2xl font-bold text-emerald-700 dark:text-emerald-400">
-                    {creditEntry.currency === "USD"
-                      ? `US$${Number(creditEntry.amount).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                      : `$${Number(creditEntry.amount).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                    }
-                  </div>
-                  <div className="mt-1 text-xs text-emerald-600 dark:text-emerald-500">
-                    El cliente pagó de más en {creditEntry.currency === "USD" ? "dólares" : "pesos"}
-                  </div>
-                </div>
-                {hasPermission("cobranzas.edit") && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setMonedaFichaUsarSaldo(
-                        monedaFichaUsarSaldo === creditEntry.currency ? null : creditEntry.currency
-                      )
-                    }
-                    className="flex items-center gap-2 rounded-lg border border-emerald-300 bg-white px-4 py-2 text-sm font-semibold text-emerald-700 shadow-sm hover:bg-emerald-50 dark:border-emerald-800 dark:bg-slate-900 dark:text-emerald-400 dark:hover:bg-emerald-950/30 transition-colors"
-                    data-testid={`usar-saldo-btn-${creditEntry.currency}`}
-                  >
-                    <Wallet className="h-4 w-4" />
-                    {monedaFichaUsarSaldo === creditEntry.currency ? "Cerrar" : "Usar saldo a favor"}
-                  </button>
-                )}
-              </div>
-              {monedaFichaUsarSaldo === creditEntry.currency && (
-                <div className="mt-2">
-                  <UsarSaldoAFavorInline
-                    publicId={publicId}
-                    moneda={creditEntry.currency}
-                    saldoDisponible={Number(creditEntry.amount)}
-                    reservasConDeuda={getReservasConDeudaEnMoneda(creditEntry.currency)}
-                    onConfirmado={async () => {
-                      setMonedaFichaUsarSaldo(null);
-                      await refreshAll();
-                    }}
-                    onCancelar={() => setMonedaFichaUsarSaldo(null)}
-                  />
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {Array.isArray(summary.unappliedCreditByCurrency) && summary.unappliedCreditByCurrency.length > 0 && (
-        <div className="flex flex-col gap-3">
-          {summary.unappliedCreditByCurrency.map((entry) => (
-            <div
-              key={entry.currency}
-              className="rounded-xl border border-amber-200 bg-amber-50 px-5 py-4 dark:border-amber-900/40 dark:bg-amber-950/20"
-              data-testid={`credito-no-aplicado-${entry.currency}`}
-            >
-              <div className="text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
-                CRÉDITO NO APLICADO EN {entry.currency === "USD" ? "US$" : "$"}
-              </div>
-              <div className="mt-0.5 text-2xl font-bold text-amber-700 dark:text-amber-400">
-                {formatCurrency(entry.amount, entry.currency)}
-              </div>
-              <div className="mt-1 text-xs text-amber-700/80 dark:text-amber-500">
-                No reduce otras reservas hasta que se aplique expresamente.
-              </div>
-            </div>
-          ))}
-        </div>
+      {/* Ficha inline "Usar saldo a favor": cuelga de la foto de saldo (EN LÍNEA, nunca
+          ventana flotante), debajo de ella. `saldoDisponible` sale de creditBalanceByCurrency
+          (el mismo número que ya usa la línea "Crédito a favor" de la foto). */}
+      {monedaFichaUsarSaldo && (
+        <UsarSaldoAFavorInline
+          publicId={publicId}
+          moneda={monedaFichaUsarSaldo}
+          saldoDisponible={
+            Number(
+              summary.creditBalanceByCurrency?.find((c) => c.currency === monedaFichaUsarSaldo)?.amount ?? 0
+            )
+          }
+          reservasConDeuda={getReservasConDeudaEnMoneda(monedaFichaUsarSaldo)}
+          pendingPenaltyItems={overview?.pendingPenalties?.items}
+          onConfirmado={async () => {
+            setMonedaFichaUsarSaldo(null);
+            await refreshAll();
+          }}
+          onCancelar={() => setMonedaFichaUsarSaldo(null)}
+        />
       )}
 
       {/*
         ── Aplicaciones VIVAS de saldo a favor ─────────────────────────────────
-        Muestra saldos que ya se aplicaron a otras reservas y que se pueden revertir.
-        Cada fila tiene un formulario inline de reversión (sin modal).
+        Muestra saldos que ya se aplicaron (a otra reserva O a una multa, Tanda D1) y
+        que se pueden revertir. Cada fila tiene un formulario inline de reversión (sin
+        modal). Título renombrado a "Saldo a favor aplicado" (spec 2026-07-16 §6): cubre
+        los dos destinos posibles, no solo "otras reservas".
       */}
       {creditApplications.length > 0 && (
         <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 dark:border-indigo-900/40 dark:bg-indigo-950/10 overflow-hidden">
           <div className="px-5 py-3 border-b border-indigo-100 dark:border-indigo-900/30">
             <h3 className="text-sm font-bold text-indigo-800 dark:text-indigo-300">
-              Saldo a favor aplicado a otras reservas
+              Saldo a favor aplicado
             </h3>
           </div>
           <ul className="divide-y divide-indigo-100 dark:divide-indigo-900/20">
@@ -786,7 +615,7 @@ export default function CustomerAccountPage() {
                   <div className="flex items-start justify-between gap-3 flex-wrap">
                     <div className="min-w-0">
                       <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">
-                        Saldo a favor aplicado a{" "}
+                        {prefijoDestinoAplicacionSaldo(aplicacion.destinationKind)}{" "}
                         <Link
                           to={`/reservas/${aplicacion.targetReservaPublicId}`}
                           className="text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300 hover:underline"
@@ -854,7 +683,7 @@ export default function CustomerAccountPage() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleRevertirAplicacion(String(aplicacion.applicationPublicId))}
+                          onClick={() => handleRevertirAplicacion(String(aplicacion.applicationPublicId), aplicacion.destinationKind)}
                           disabled={guardandoReversion}
                           className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors"
                           data-testid={`confirmar-reversion-${aplicacion.applicationPublicId}`}

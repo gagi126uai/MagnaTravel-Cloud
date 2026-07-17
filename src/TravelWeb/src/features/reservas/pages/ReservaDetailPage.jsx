@@ -1325,6 +1325,9 @@ export default function ReservaDetailPage() {
               situacion={situacion}
               nombreOperador={hayMasDeUnOperadorConMulta(reserva) ? situacion.supplierName : undefined}
               supplierPublicId={situacion.supplierPublicId}
+              // Tanda D1 (2026-07-16): para el botón "Ir a la cuenta del cliente" que
+              // aparece si el Deshacer se frena por saldo a favor aplicado (spec §8).
+              customerPublicId={reserva.customerPublicId}
               monedaSugerida={elegirMonedaSugeridaParaMulta({
                 situacionCurrency: situacion?.currency,
                 porMoneda: reserva.porMoneda,

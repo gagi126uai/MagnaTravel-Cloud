@@ -645,6 +645,11 @@ public class CustomerService : ICustomerService
             .Where(item => item.Amount != 0m)
             .ToList();
 
+        // Se calculan ANTES del summary porque la composicion del saldo (BalanceCompositionByCurrency, Tanda
+        // D2) los necesita a los dos: asi no repetimos consultas, solo reordenamos lo que ya se pedia.
+        var pendingPenalties = await BuildPendingPenaltiesAsync(id, ownerScope, cancellationToken);
+        var creditBalanceByCurrency = await BuildCustomerCreditByCurrencyAsync(id, ownerScope, cancellationToken);
+
         var summary = new CustomerAccountSummaryDto
         {
             TotalSales = documentedByCurrency.Count == 1 ? documentedByCurrency[0].Amount : 0m,
@@ -674,8 +679,13 @@ public class CustomerService : ICustomerService
             // (mismo predicado en firme que el AR de tesoreria). El bolsillo de saldo a favor sigue local
             // (es de ClientCreditEntry, no de cuentas por cobrar).
             ReceivableByCurrency = receivableByCurrency,
-            CreditBalanceByCurrency = await BuildCustomerCreditByCurrencyAsync(id, ownerScope, cancellationToken),
-            UnappliedCreditByCurrency = unappliedCreditByCurrency
+            CreditBalanceByCurrency = creditBalanceByCurrency,
+            UnappliedCreditByCurrency = unappliedCreditByCurrency,
+            // Tanda D2 (extracto profesional, 2026-07-16): composicion del saldo por moneda para la foto de
+            // saldo del encabezado. Se arma con datos que YA calculamos arriba (el extracto + las multas
+            // pendientes de abajo), asi que no dispara ninguna consulta nueva.
+            BalanceCompositionByCurrency = BuildBalanceComposition(
+                documentedStatement, pendingPenalties.TotalsByCurrency, creditBalanceByCurrency)
         };
 
         return new CustomerAccountOverviewDto
@@ -684,8 +694,78 @@ public class CustomerService : ICustomerService
             Summary = summary,
             // "Multas en la cuenta del cliente" (2026-07-15): bloque APARTE del summary (no toca
             // ReceivableByCurrency ni el resto de los totales existentes).
-            PendingPenalties = await BuildPendingPenaltiesAsync(id, ownerScope, cancellationToken)
+            PendingPenalties = pendingPenalties
         };
+    }
+
+    /// <summary>
+    /// Tanda D2 (extracto profesional, 2026-07-16): arma la composicion del saldo POR MONEDA para la foto de
+    /// saldo del encabezado (ver <see cref="CustomerAccountBalanceCompositionDto"/>). Funcion PURA en memoria:
+    /// recibe datos ya calculados (el extracto y los totales de multas pendientes) y solo los recombina, sin
+    /// disparar ninguna consulta nueva.
+    ///
+    /// <para><b>Por que hace falta</b>: hoy el extracto mezcla venta documentada y multa firme en un unico
+    /// <c>ClosingBalance</c> por moneda (desde que el extracto paso a ser invoice-driven, commit 44fcea6). Esta
+    /// funcion separa esa mezcla en las piezas que la pantalla nueva necesita pintar sin volver a sumar nada.</para>
+    /// </summary>
+    private static List<CustomerAccountBalanceCompositionDto> BuildBalanceComposition(
+        CustomerAccountStatementDto statement,
+        List<CustomerPendingPenaltyTotalDto> penaltyTotalsByCurrency,
+        List<CurrencyAmountDto> creditBalanceByCurrency)
+    {
+        // Union de monedas: una moneda entra en la composicion si tiene AL MENOS un componente (extracto,
+        // multa o credito). Asi un cliente con credito en USD pero sin ninguna reserva en USD todavia
+        // igual recibe su fila (el front decide si la muestra).
+        var currencies = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var block in statement.Currencies) currencies.Add(block.Currency);
+        foreach (var penalty in penaltyTotalsByCurrency) currencies.Add(penalty.Currency);
+        foreach (var credit in creditBalanceByCurrency) currencies.Add(credit.Currency);
+
+        var result = new List<CustomerAccountBalanceCompositionDto>();
+        foreach (var currency in currencies)
+        {
+            // ClosingBalance de ESTA moneda: ya incluye la multa FIRME (tiene comprobante -> es un Charge mas
+            // del extracto), pero NUNCA la multa en tramite (todavia no tiene comprobante, no es un open item
+            // documentado). Ver el comentario de CustomerAccountBalanceCompositionDto para la identidad completa.
+            var closingBalance = statement.Currencies
+                .FirstOrDefault(block => block.Currency == currency)?.ClosingBalance ?? 0m;
+
+            var penaltyTotal = penaltyTotalsByCurrency.FirstOrDefault(p => p.Currency == currency);
+            var multasFirmes = penaltyTotal?.FirmAmount ?? 0m;
+            var multasEnTramite = penaltyTotal?.NotYetIssuedAmount ?? 0m;
+            var multasAbiertasBrutas = multasFirmes + multasEnTramite;
+
+            // Correccion M1 (review Tanda D2): "multasFirmes" sale de DebitNoteOutstandingRules (ND total menos
+            // lo credited/collected atado a ESA ND puntual); "closingBalance" sale del open item POR RESERVA del
+            // extracto (Charge-Credit de TODAS las lineas de la reserva, no solo las atadas a la ND). En el caso
+            // normal coinciden, pero si la reserva anulada tiene ADEMAS un credito grande sin imputar
+            // especificamente a la ND, esa reserva puede cerrar en saldo NEGATIVO (aporta 0 al ClosingBalance,
+            // el negativo se va a UnappliedCredit) mientras la ND sigue mostrando outstanding > 0. Restar
+            // multasFirmes de closingBalance daria "Facturado sin cobrar" NEGATIVO, algo que la pantalla nunca
+            // debe mostrar. Frenamos en 0 y el residuo que "no entro" se lo restamos a MultasAbiertas (tambien
+            // con piso 0): el split entre las dos lineas queda indicativo, pero el SALDO final (unas lineas mas
+            // abajo) es la fuente de verdad y NO se mueve un centavo por este ajuste (identidad verificada por
+            // test: closingBalance + multasEnTramite - creditoAFavor se preserva siempre).
+            var multaFirmeSobreCierre = Math.Max(0m, multasFirmes - closingBalance);
+            var facturadoSinCobrar = EconomicRulesHelper.RoundCurrency(Math.Max(0m, closingBalance - multasFirmes));
+            var multasAbiertas = EconomicRulesHelper.RoundCurrency(
+                Math.Max(0m, multasAbiertasBrutas - multaFirmeSobreCierre));
+
+            var creditoAFavor = creditBalanceByCurrency.FirstOrDefault(c => c.Currency == currency)?.Amount ?? 0m;
+            var saldo = EconomicRulesHelper.RoundCurrency(facturadoSinCobrar + multasAbiertas - creditoAFavor);
+
+            result.Add(new CustomerAccountBalanceCompositionDto
+            {
+                Currency = currency,
+                FacturadoSinCobrar = facturadoSinCobrar,
+                MultasAbiertas = multasAbiertas,
+                MultasEnTramite = EconomicRulesHelper.RoundCurrency(multasEnTramite),
+                CreditoAFavor = EconomicRulesHelper.RoundCurrency(creditoAFavor),
+                Saldo = saldo,
+            });
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -802,12 +882,17 @@ public class CustomerService : ICustomerService
                     debitNote.ImporteTotal, credited, collected);
                 if (outstanding <= 0m) continue;
 
+                // Correccion N3 (review Tanda D2): antes esta llamada pre-convertia con ArcaCurrencyMapper.ToIso
+                // Y BuildPendingPenaltyItem volvia a normalizar adentro (NormalizePenaltyCurrencyForDisplay ya
+                // hace ToIso ?? Monedas.Normalizar) -> doble conversion fragil. Se manda el MonId CRUDO, igual
+                // que las otras dos llamadas de este metodo (mas abajo), para que la normalizacion pase UNA sola
+                // vez y el bucket de moneda de la multa firme nunca pueda divergir del bucket del extracto.
                 items.Add(BuildPendingPenaltyItem(
                     reserva.PublicId,
                     reserva.NumeroReserva,
                     reserva.Name,
                     outstanding,
-                    Domain.Helpers.ArcaCurrencyMapper.ToIso(debitNote.MonId),
+                    debitNote.MonId,
                     CustomerPendingPenaltyStatus.PendingCollection,
                     debitNote.PublicId,
                     $"{debitNote.PuntoDeVenta:D5}-{debitNote.NumeroComprobante:D8}"));

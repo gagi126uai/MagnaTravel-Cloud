@@ -98,3 +98,29 @@ export function debeMostrarReintentarDeshacer({ canUndoDebitNote, esAdmin }) {
 export function debeMostrarMontoAFavor(collectedPenaltyAmount) {
   return typeof collectedPenaltyAmount === "number" && collectedPenaltyAmount > 0;
 }
+
+// ============================================================================
+// Tanda D1 (2026-07-16): "No se puede deshacer una multa con saldo a favor aplicado"
+// (spec `docs/ux/2026-07-16-aplicar-saldo-a-multa-y-neteo.md`, §8).
+// ============================================================================
+
+// Código de invariante que manda el backend (BookingCancellationService, guard B3) cuando
+// la ND tiene un puente de "saldo a favor aplicado" vivo — ver INV-UNDO-CREDITBRIDGE en
+// BookingCancellationService.cs. Se detecta por CÓDIGO (nunca por el texto del mensaje,
+// que puede cambiar de redacción) y el código en sí NUNCA se muestra al usuario.
+const INVARIANT_CODE_SALDO_APLICADO = "INV-UNDO-CREDITBRIDGE";
+
+/**
+ * True si el error que devolvió POST .../undo-debit-note es EXACTAMENTE el caso "esta
+ * multa tiene saldo a favor aplicado, hay que revertir esa aplicación antes de
+ * deshacerla" (spec §8). Se detecta leyendo `error.payload.invariantCode` (el ProblemDetails
+ * que arma GlobalExceptionHandler.cs para toda BusinessInvariantViolationException) — un
+ * código estable, no el texto del mensaje, que es el que se muestra al usuario tal cual.
+ *
+ * @param {{ payload?: { invariantCode?: string } }|null|undefined} error - el error que
+ *   lanza `api.js` (tiene `.payload` con el body JSON de la respuesta 409).
+ * @returns {boolean}
+ */
+export function esErrorSaldoAplicadoAlDeshacerMulta(error) {
+  return error?.payload?.invariantCode === INVARIANT_CODE_SALDO_APLICADO;
+}

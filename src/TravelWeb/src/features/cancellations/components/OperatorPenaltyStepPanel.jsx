@@ -137,6 +137,9 @@ const MOTIVO_WAIVE_DESDE_TRABADO = "Cerrada sin multa desde el paso trabado de l
  *   - onResuelto: callback de refresco SILENCIOSO (sin toast propio) que el padre ya usa
  *     tras una acción exitosa Y que este panel reutiliza para el auto-refresco de la
  *     familia "procesando" (ver useOperatorPenaltyPolling más abajo).
+ *   - customerPublicId (Tanda D1, 2026-07-16, opcional): publicId del cliente/pagador de
+ *     la reserva. Solo viaja hacia abajo, a DeshacerMultaEmitidaInline, para el botón
+ *     "Ir a la cuenta del cliente" del caso "multa con saldo a favor aplicado" (spec §8).
  */
 export function OperatorPenaltyStepPanel({
   reservaPublicId,
@@ -145,6 +148,7 @@ export function OperatorPenaltyStepPanel({
   monedaSugerida,
   nombreOperador,
   supplierPublicId,
+  customerPublicId,
   onResuelto,
 }) {
   const [buscando, setBuscando] = useState(false);
@@ -349,6 +353,7 @@ export function OperatorPenaltyStepPanel({
               reservaNumero={reservaNumero}
               situacion={situacion}
               puedeVerMontos={puedeVerMontos}
+              customerPublicId={customerPublicId}
               onDeshecho={() => {
                 setMostrarDeshacerMulta(false);
                 onResuelto();
@@ -435,6 +440,7 @@ export function OperatorPenaltyStepPanel({
             reservaNumero={reservaNumero}
             situacion={situacion}
             puedeVerMontos={puedeVerMontos}
+            customerPublicId={customerPublicId}
             onDeshecho={() => {
               setMostrarDeshacerMulta(false);
               onResuelto();
@@ -527,6 +533,7 @@ export function OperatorPenaltyStepPanel({
         reservaNumero={reservaNumero}
         situacion={situacion}
         puedeVerMontos={puedeVerMontos}
+        customerPublicId={customerPublicId}
         onDeshecho={() => {
           setMostrarDeshacerMulta(false);
           onResuelto();

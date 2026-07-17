@@ -173,6 +173,71 @@ public class CustomerAccountSummaryDto
     /// Se muestran separados y nunca reducen <see cref="ReceivableByCurrency"/> implicitamente.
     /// </summary>
     public List<CurrencyAmountDto> UnappliedCreditByCurrency { get; set; } = new();
+
+    /// <summary>
+    /// Tanda D2 (extracto profesional, 2026-07-16): composicion del saldo por moneda para la "foto de saldo"
+    /// del encabezado. Una fila por cada moneda con al menos un componente (facturado, multa o credito).
+    /// Ver <see cref="CustomerAccountBalanceCompositionDto"/> para el detalle de cada campo: el front pinta
+    /// estos numeros TAL CUAL, sin volver a sumar nada.
+    /// </summary>
+    public List<CustomerAccountBalanceCompositionDto> BalanceCompositionByCurrency { get; set; } = new();
+}
+
+/// <summary>
+/// Composicion del saldo de UNA moneda para la foto de saldo del encabezado de la cuenta del cliente (spec UX
+/// 2026-07-16, Tanda D2 "extracto profesional"). Antes de esta tanda, <see cref="CustomerAccountSummaryDto.ReceivableByCurrency"/>
+/// ya mezclaba venta documentada + multa firme en un solo numero sin distinguir (el front no podia separarlos
+/// sin volver a sumar renglones); esto expone las piezas SEPARADAS que la pantalla nueva necesita pintar.
+///
+/// <para><b>Identidad que cierra SIEMPRE, sin excepcion</b>: <c>Saldo = FacturadoSinCobrar + MultasAbiertas -
+/// CreditoAFavor</c>. En el caso normal, ademas, <c>FacturadoSinCobrar + (MultasAbiertas - MultasEnTramite)</c>
+/// (la parte YA documentada) coincide con el <c>ClosingBalance</c> de la MISMA moneda en
+/// <see cref="CustomerAccountStatementCurrencyBlockDto"/> (fuente unica: ambos salen del mismo extracto). La
+/// parte "en tramite" de la multa todavia no tiene comprobante, asi que no es un open item documentado y no
+/// esta en el extracto — solo en esta composicion, como aviso.</para>
+///
+/// <para><b>Caso de borde (review Tanda D2, M1)</b>: <see cref="FacturadoSinCobrar"/> NUNCA es negativo. Si
+/// una reserva anulada tiene un credito grande sin imputar especificamente a su ND (nota de debito de la
+/// multa), esa reserva puede cerrar en 0 en el extracto (el credito sobrante queda en UnappliedCredit) aunque
+/// la ND siga mostrando outstanding — restar la multa firme del cierre daria un "Facturado" negativo. En ese
+/// caso <see cref="FacturadoSinCobrar"/> se frena en 0 y el residuo se descuenta de <see cref="MultasAbiertas"/>
+/// (tambien con piso 0): el SPLIT entre las dos lineas pasa a ser indicativo en ese escenario puntual, pero
+/// <see cref="Saldo"/> es la fuente de verdad y jamas cambia por este ajuste.</para>
+/// </summary>
+public class CustomerAccountBalanceCompositionDto
+{
+    public string Currency { get; set; } = Monedas.ARS;
+
+    /// <summary>
+    /// Deuda de viajes VIVOS (venta confirmada y documentada, menos lo cobrado). NO incluye multas: esa plata
+    /// vive aparte en <see cref="MultasAbiertas"/> para que el front pueda mostrarla en su propia linea ambar.
+    /// Nunca es negativo (piso 0): ver el caso de borde documentado en la clase.
+    /// </summary>
+    public decimal FacturadoSinCobrar { get; set; }
+
+    /// <summary>
+    /// Total de multas por anulacion pendientes de cobro de esta moneda: la parte con comprobante emitido MAS
+    /// la parte todavia sin comprobante (<see cref="MultasEnTramite"/>), juntas. Es el numero grande de la
+    /// linea "Multas abiertas" de la foto de saldo.
+    /// </summary>
+    public decimal MultasAbiertas { get; set; }
+
+    /// <summary>
+    /// Subconjunto de <see cref="MultasAbiertas"/> que TODAVIA no tiene comprobante emitido (se esta emitiendo
+    /// o quedo en revision manual). El front la muestra como nota chica ambar debajo del numero grande
+    /// ("incluye $ X en tramite"), sin jerga fiscal. 0 si toda la multa abierta ya tiene comprobante.
+    /// </summary>
+    public decimal MultasEnTramite { get; set; }
+
+    /// <summary>Saldo a favor disponible del cliente en esta moneda. Mismo numero que <c>CreditBalanceByCurrency</c>.</summary>
+    public decimal CreditoAFavor { get; set; }
+
+    /// <summary>
+    /// Saldo final de la foto de saldo = FacturadoSinCobrar + MultasAbiertas - CreditoAFavor. Puede ser
+    /// negativo (el cliente tiene mas credito que deuda): el front lo pinta en verde "a favor" en ese caso,
+    /// en gris si es 0, y en rojo "debe" si es positivo.
+    /// </summary>
+    public decimal Saldo { get; set; }
 }
 
 /// <summary>

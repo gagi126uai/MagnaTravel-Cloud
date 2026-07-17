@@ -65,8 +65,11 @@ public readonly record struct CustomerAccountStatementInputLine(
 
 /// <summary>
 /// Una linea del extracto del cliente YA con su saldo corriente calculado. <see cref="RunningBalance"/> es el
-/// saldo acumulado de la moneda HASTA esta linea inclusive (positivo = el cliente debe; negativo = saldo a
-/// favor sin trasladar todavia).
+/// saldo TOTAL abierto de la moneda hasta esta linea inclusive, estilo extracto bancario: suma lo que el
+/// cliente debe en TODAS sus reservas de esta moneda en ese instante (open item, mismo criterio que
+/// <see cref="CustomerAccountStatementCurrencyBlock.ClosingBalance"/>), no solo el saldo de la reserva de
+/// esta linea puntual. Positivo = el cliente debe; nunca baja de 0 por el credito de OTRA reserva (ver
+/// <see cref="CustomerAccountStatementCurrencyBlock.UnappliedCredit"/>).
 /// </summary>
 public readonly record struct CustomerAccountStatementResultLine(
     DateTime Date,
@@ -193,8 +196,8 @@ public static class CustomerAccountStatementBuilder
     }
 
     /// <summary>
-    /// Arma el bloque de UNA moneda: ordena por fecha (estable) y va acumulando el saldo corriente
-    /// (cargo suma, abono resta). El saldo de cierre es el running balance de la ultima linea.
+    /// Arma el bloque de UNA moneda: ordena por fecha (estable) y va acumulando el saldo corriente. El saldo
+    /// de cierre es el running balance de la ultima linea (por construccion, ver mas abajo).
     /// </summary>
     private static CustomerAccountStatementCurrencyBlock BuildBlock(
         string currency,
@@ -205,17 +208,25 @@ public static class CustomerAccountStatementBuilder
         var ordered = inputLines.OrderBy(line => line.Date).ToList();
 
         var resultLines = new List<CustomerAccountStatementResultLine>(ordered.Count);
-        // El saldo corriente es por reserva. Un abono de R-B no puede disminuir el saldo mostrado de R-A.
+        // Guardamos el saldo INTERNO por reserva (necesario para saber cuanto aporta cada una), pero lo que se
+        // MUESTRA en cada linea (RunningBalance) es la suma de todos los saldos positivos vigentes en ese
+        // instante: el extracto del cliente cruza VARIAS reservas y tiene que leerse como UN extracto bancario
+        // (un solo numero corrido por moneda), no como el saldo aislado de la reserva de esa linea puntual.
         var runningByReserva = new Dictionary<Guid, decimal>();
 
         foreach (var line in ordered)
         {
             // Cargo suma a la deuda del cliente; abono la resta. Una linea trae uno u otro (el otro en 0); el
             // cobro puente de sobrepago trae Credit negativo, lo que devuelve saldo (correcto: saco el excedente).
-            var runningBalance = runningByReserva.GetValueOrDefault(line.ReservaPublicId);
-            runningBalance += line.Charge;
-            runningBalance -= line.Credit;
-            runningByReserva[line.ReservaPublicId] = runningBalance;
+            var reservaBalance = runningByReserva.GetValueOrDefault(line.ReservaPublicId);
+            reservaBalance += line.Charge;
+            reservaBalance -= line.Credit;
+            runningByReserva[line.ReservaPublicId] = reservaBalance;
+
+            // Open-item principle, igual que el ClosingBalance del bloque: el saldo corriente que se muestra
+            // suma SOLO los saldos positivos de cada reserva. El credito de una reserva (saldo negativo, p.ej.
+            // un sobrepago sin trasladar todavia) nunca compensa la deuda de otra por arte de este calculo.
+            var runningBalance = runningByReserva.Values.Where(balance => balance > 0m).Sum();
 
             resultLines.Add(new CustomerAccountStatementResultLine(
                 Date: line.Date,
@@ -232,7 +243,9 @@ public static class CustomerAccountStatementBuilder
         }
 
         // Open-item principle: el Debe suma solo saldos positivos por reserva. Los negativos quedan visibles
-        // como credito no aplicado y requieren una aplicacion explicita para cancelar otra deuda.
+        // como credito no aplicado y requieren una aplicacion explicita para cancelar otra deuda. Con el mismo
+        // criterio usado linea a linea arriba, esto coincide EXACTAMENTE con el RunningBalance de la ultima
+        // linea (si hay al menos una): el extracto siempre cierra con el numero que el cliente vio en la ultima fila.
         decimal closingBalance = runningByReserva.Values.Where(balance => balance > 0m).Sum();
         decimal unappliedCredit = -runningByReserva.Values.Where(balance => balance < 0m).Sum();
         return new CustomerAccountStatementCurrencyBlock(currency, resultLines, closingBalance, unappliedCredit);

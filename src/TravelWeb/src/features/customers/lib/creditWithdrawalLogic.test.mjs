@@ -375,6 +375,236 @@ test("monto sugerido cliente - debtByCurrency vacío → fallback al saldo dispo
 // ─── Test B1 del picker cliente: el ID de reserva viaja correctamente ──────────
 // Verifica que al armar el payload se usa reservaPublicId (no publicId ni undefined).
 
+// ─── Tests de la Tanda D1 (2026-07-16): aplicar saldo a una multa + neteo ─────
+
+import {
+  KIND_APLICAR_A_MULTA,
+  DESTINOS_RETIRO,
+  enriquecerMultasAplicables,
+  montoSugeridoAplicacionAMulta,
+  validarAplicacionAMulta,
+  armarPayloadAplicacionAMulta,
+  mapearKindARefundMethod,
+  armarPayloadRefundConNeteo,
+  previewsDifierenSignificativamente,
+  armarMensajeExitoNeteo,
+  prefijoDestinoAplicacionSaldo,
+  // Con alias porque el archivo ya tiene réplicas locales de estos tres nombres más
+  // arriba (patrón viejo del archivo) — estos SÍ son las funciones reales del módulo,
+  // para probar el fix de revisión 2026-07-17 (gate de exposición: el saldo del mensaje
+  // de error se formatea como plata, no como número crudo).
+  validarMontoRetiro as validarMontoRetiroReal,
+  validarAplicacion as validarAplicacionReal,
+} from "./creditWithdrawalLogic.js";
+
+// ─── Fix de revisión 2026-07-17: mensajes de error con plata formateada ───────
+// (gate de exposición: "...(1500.5)" está prohibido, tiene que decir "...($1.500,50)")
+
+test("validarMontoRetiro (real) - con moneda, el saldo del mensaje viene formateado como plata", () => {
+  const resultado = validarMontoRetiroReal(2000, 1500.5, "ARS");
+  assert.ok(resultado.includes("1.500,50"), `Esperaba plata formateada (es-AR), vino: "${resultado}"`);
+  assert.ok(!resultado.includes("1500.5"), "No debe quedar el número crudo con punto decimal");
+});
+
+test("validarMontoRetiro (real) - USD usa el símbolo US$", () => {
+  const resultado = validarMontoRetiroReal(500, 200, "USD");
+  assert.ok(resultado.includes("US$200"));
+});
+
+test("validarMontoRetiro (real) - sin moneda (caller viejo) cae al número plano, no revienta", () => {
+  const resultado = validarMontoRetiroReal(2000, 1500);
+  assert.ok(resultado.includes("1500"));
+});
+
+test("validarAplicacion (real) - con moneda, el saldo del mensaje viene formateado como plata", () => {
+  const resultado = validarAplicacionReal(2000, 1500.5, "guid-reserva-1", "ARS");
+  assert.ok(resultado.includes("1.500,50"), `Esperaba plata formateada (es-AR), vino: "${resultado}"`);
+});
+
+test("validarAplicacionAMulta (real) - con moneda, el tope del mensaje viene formateado como plata", () => {
+  const resultado = validarAplicacionAMulta(5000, { outstandingAmount: 1500.5 }, 10000, "ARS");
+  assert.ok(resultado.includes("1.500,50"), `Esperaba plata formateada (es-AR), vino: "${resultado}"`);
+});
+
+test("validarAplicacionAMulta (real) - sin moneda cae al número plano (compatibilidad)", () => {
+  const resultado = validarAplicacionAMulta(5000, { outstandingAmount: 3000 }, 10000);
+  assert.ok(resultado.includes("3000"));
+});
+
+test("DESTINOS_RETIRO incluye 'Aplicar a una multa' con el kind pseudo-4, entre las devoluciones y 'aplicar a otra reserva'", () => {
+  const indiceMulta = DESTINOS_RETIRO.findIndex((d) => d.kind === KIND_APLICAR_A_MULTA);
+  const indiceOtraReserva = DESTINOS_RETIRO.findIndex((d) => d.kind === 3);
+  assert.ok(indiceMulta !== -1, "Debe existir la opción 'Aplicar a una multa'");
+  assert.strictEqual(DESTINOS_RETIRO[indiceMulta].label, "Aplicar a una multa");
+  assert.ok(indiceMulta < indiceOtraReserva, "Debe ir antes que 'Aplicar a otra reserva'");
+});
+
+test("enriquecerMultasAplicables - cruza openPenalties con pendingPenalties.items por debitNotePublicId", () => {
+  const openPenalties = [
+    { reservaPublicId: "r-1", numeroReserva: "R-1050", debitNotePublicId: "nd-1", outstandingAmount: 3000 },
+  ];
+  const pendingPenaltyItems = [
+    { reservaPublicId: "r-1", debitNotePublicId: "nd-1", name: "Bariloche" },
+  ];
+  const resultado = enriquecerMultasAplicables(openPenalties, pendingPenaltyItems);
+  assert.strictEqual(resultado.length, 1);
+  assert.strictEqual(resultado[0].name, "Bariloche");
+  assert.strictEqual(resultado[0].outstandingAmount, 3000, "El monto SIEMPRE sale de openPenalties (neteado), nunca del item bruto");
+});
+
+test("enriquecerMultasAplicables - sin match en pendingPenalties.items, name queda null (nunca inventa un nombre)", () => {
+  const resultado = enriquecerMultasAplicables(
+    [{ reservaPublicId: "r-2", numeroReserva: "R-002", debitNotePublicId: "nd-2", outstandingAmount: 500 }],
+    []
+  );
+  assert.strictEqual(resultado[0].name, null);
+});
+
+test("enriquecerMultasAplicables - openPenalties vacío o null devuelve lista vacía", () => {
+  assert.deepEqual(enriquecerMultasAplicables(null, []), []);
+  assert.deepEqual(enriquecerMultasAplicables([], []), []);
+});
+
+test("montoSugeridoAplicacionAMulta - el menor entre lo que falta cobrar y el saldo disponible", () => {
+  assert.strictEqual(montoSugeridoAplicacionAMulta({ outstandingAmount: 3000 }, 10000), 3000);
+  assert.strictEqual(montoSugeridoAplicacionAMulta({ outstandingAmount: 8000 }, 2000), 2000);
+});
+
+test("montoSugeridoAplicacionAMulta - sin multa elegida devuelve 0", () => {
+  assert.strictEqual(montoSugeridoAplicacionAMulta(null, 5000), 0);
+});
+
+test("validarAplicacionAMulta - sin multa elegida devuelve error", () => {
+  const resultado = validarAplicacionAMulta(500, null, 1000);
+  assert.ok(resultado.includes("multa"));
+});
+
+test("validarAplicacionAMulta - monto 0 devuelve error", () => {
+  const resultado = validarAplicacionAMulta(0, { outstandingAmount: 3000 }, 10000);
+  assert.ok(resultado.includes("mayor a 0"));
+});
+
+test("validarAplicacionAMulta - monto excede lo que falta cobrar de la multa (aunque sobre saldo) devuelve error", () => {
+  const resultado = validarAplicacionAMulta(5000, { outstandingAmount: 3000 }, 10000);
+  assert.ok(resultado !== null);
+});
+
+test("validarAplicacionAMulta - monto excede el saldo disponible (aunque la multa deba más) devuelve error", () => {
+  const resultado = validarAplicacionAMulta(5000, { outstandingAmount: 8000 }, 2000);
+  assert.ok(resultado !== null);
+});
+
+test("validarAplicacionAMulta - monto igual al tope (mínimo entre multa y saldo) es válido", () => {
+  const resultado = validarAplicacionAMulta(3000, { outstandingAmount: 3000 }, 10000);
+  assert.strictEqual(resultado, null);
+});
+
+test("armarPayloadAplicacionAMulta - arma currency/amount/debitNotePublicId", () => {
+  const payload = armarPayloadAplicacionAMulta("ARS", "3000", "nd-guid-1");
+  assert.deepEqual(payload, { currency: "ARS", amount: 3000, debitNotePublicId: "nd-guid-1" });
+});
+
+test("mapearKindARefundMethod - kind 1 (efectivo) → PhysicalCash", () => {
+  assert.strictEqual(mapearKindARefundMethod(1), "PhysicalCash");
+});
+
+test("mapearKindARefundMethod - kind 2 (transferencia) → Transfer", () => {
+  assert.strictEqual(mapearKindARefundMethod(2), "Transfer");
+});
+
+test("mapearKindARefundMethod - cualquier otro kind → null", () => {
+  assert.strictEqual(mapearKindARefundMethod(0), null);
+  assert.strictEqual(mapearKindARefundMethod(3), null);
+});
+
+test("armarPayloadRefundConNeteo - transferencia con referencia", () => {
+  const payload = armarPayloadRefundConNeteo("ARS", 2, "TRANSF-1");
+  assert.deepEqual(payload, { currency: "ARS", refundMethod: "Transfer", reference: "TRANSF-1" });
+});
+
+test("armarPayloadRefundConNeteo - efectivo sin referencia queda undefined (nunca string vacío)", () => {
+  const payload = armarPayloadRefundConNeteo("USD", 1, "");
+  assert.strictEqual(payload.reference, undefined);
+});
+
+test("previewsDifierenSignificativamente - previas iguales → false", () => {
+  const previa = { availableCredit: 10000, totalOpenPenalties: 3000, netToRefund: 7000 };
+  assert.strictEqual(previewsDifierenSignificativamente(previa, { ...previa }), false);
+});
+
+test("previewsDifierenSignificativamente - cambió el total de multas abiertas → true", () => {
+  const previaVista = { availableCredit: 10000, totalOpenPenalties: 3000, netToRefund: 7000 };
+  const previaFresca = { availableCredit: 10000, totalOpenPenalties: 5000, netToRefund: 5000 };
+  assert.strictEqual(previewsDifierenSignificativamente(previaVista, previaFresca), true);
+});
+
+test("previewsDifierenSignificativamente - diferencia de un centavo por redondeo → false (dentro de tolerancia)", () => {
+  const previaVista = { availableCredit: 10000, totalOpenPenalties: 3000, netToRefund: 7000 };
+  const previaFresca = { availableCredit: 10000.005, totalOpenPenalties: 3000, netToRefund: 7000 };
+  assert.strictEqual(previewsDifierenSignificativamente(previaVista, previaFresca), false);
+});
+
+test("previewsDifierenSignificativamente - cualquiera de las dos previas null/undefined → true (nunca confiar en un dato faltante)", () => {
+  assert.strictEqual(previewsDifierenSignificativamente(null, { availableCredit: 1 }), true);
+  assert.strictEqual(previewsDifierenSignificativamente({ availableCredit: 1 }, null), true);
+});
+
+test("armarMensajeExitoNeteo - neto > 0 con UNA multa saldada", () => {
+  const resultado = {
+    currency: "ARS",
+    netRefunded: 7000,
+    penaltyApplications: [{ debitNotePublicId: "nd-1" }],
+  };
+  const preview = [{ debitNotePublicId: "nd-1", numeroReserva: "R-1050" }];
+  const mensaje = armarMensajeExitoNeteo(resultado, preview);
+  assert.ok(mensaje.includes("R-1050"));
+  assert.ok(mensaje.includes("quedó saldada"));
+});
+
+test("armarMensajeExitoNeteo - neto > 0 con VARIAS multas saldadas usa plural", () => {
+  const resultado = {
+    currency: "ARS",
+    netRefunded: 1000,
+    penaltyApplications: [{ debitNotePublicId: "nd-1" }, { debitNotePublicId: "nd-2" }],
+  };
+  const preview = [
+    { debitNotePublicId: "nd-1", numeroReserva: "R-1050" },
+    { debitNotePublicId: "nd-2", numeroReserva: "R-1099" },
+  ];
+  const mensaje = armarMensajeExitoNeteo(resultado, preview);
+  assert.ok(mensaje.includes("R-1050"));
+  assert.ok(mensaje.includes("R-1099"));
+  assert.ok(mensaje.includes("quedaron saldadas"));
+});
+
+test("armarMensajeExitoNeteo - neto = 0, todo se usó en multas → mensaje de aplicación, no de devolución", () => {
+  const resultado = {
+    currency: "ARS",
+    netRefunded: 0,
+    penaltyApplications: [{ debitNotePublicId: "nd-1" }],
+  };
+  const preview = [{ debitNotePublicId: "nd-1", numeroReserva: "R-1050" }];
+  const mensaje = armarMensajeExitoNeteo(resultado, preview);
+  assert.ok(mensaje.includes("No quedó nada para devolver"));
+  assert.ok(!mensaje.includes("saldada"), "No debe afirmar 'saldada' cuando el neto llegó a 0 (puede haber quedado parcial)");
+});
+
+test("armarMensajeExitoNeteo - sin multas aplicadas, solo devolución simple", () => {
+  const resultado = { currency: "USD", netRefunded: 300, penaltyApplications: [] };
+  const mensaje = armarMensajeExitoNeteo(resultado, []);
+  assert.ok(mensaje.includes("US$300"));
+  assert.ok(!mensaje.includes("multa"));
+});
+
+test("prefijoDestinoAplicacionSaldo - destino 'multa'", () => {
+  assert.strictEqual(prefijoDestinoAplicacionSaldo("multa"), "Saldo a favor aplicado a la multa de");
+});
+
+test("prefijoDestinoAplicacionSaldo - destino 'reserva' (o cualquier otro valor) usa el texto genérico", () => {
+  assert.strictEqual(prefijoDestinoAplicacionSaldo("reserva"), "Saldo a favor aplicado a");
+  assert.strictEqual(prefijoDestinoAplicacionSaldo(undefined), "Saldo a favor aplicado a");
+});
+
 test("armarPayloadAplicacion - usa reservaPublicId del DTO del nuevo endpoint (no publicId)", () => {
   // Shape real del nuevo endpoint GET /customers/{id}/account/debt-by-reserva
   const reservaDelNuevoEndpoint = {

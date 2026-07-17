@@ -32,7 +32,8 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { RotateCcw, Loader2, AlertTriangle, X } from "lucide-react";
+import { Link } from "react-router-dom";
+import { RotateCcw, Loader2, AlertTriangle, X, ArrowRight } from "lucide-react";
 import { cancellationsApi } from "../api/cancellationsApi";
 import { showSuccess } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
@@ -42,6 +43,7 @@ import {
   puedeEnviarDeshacerMulta,
   construirPayloadUndoDebitNote,
   debeMostrarMontoAFavor,
+  esErrorSaldoAplicadoAlDeshacerMulta,
 } from "../lib/undoDebitNoteLogic";
 import { calcularAvisoPlazoDeshacerMulta } from "../operatorPenaltyBanner";
 
@@ -58,6 +60,10 @@ const MOTIVO_MAX = 500;
  *     cobrada al cliente para la variante "ya pagó" (`collectedPenaltyAmount`).
  *   - puedeVerMontos: si el usuario tiene permiso `cobranzas.see_cost` — sin él, el
  *     monto se tapa con "—" en vez de desaparecer la frase (regla general 2026-06-05).
+ *   - customerPublicId (Tanda D1, 2026-07-16, opcional): publicId del cliente/pagador de
+ *     la reserva. Solo se usa para armar el link "Ir a la cuenta del cliente" cuando el
+ *     backend rechaza el deshacer porque la multa tiene saldo a favor aplicado (§8 de la
+ *     spec). Si no llega, el aviso de error se muestra igual, solo sin el botón de link.
  *   - onDeshecho: callback tras deshacer con éxito — el padre refresca la reserva.
  *   - onCerrar: callback para cerrar el panel sin guardar.
  */
@@ -66,6 +72,7 @@ export function DeshacerMultaEmitidaInline({
   reservaNumero,
   situacion,
   puedeVerMontos,
+  customerPublicId,
   onDeshecho,
   onCerrar,
 }) {
@@ -78,6 +85,10 @@ export function DeshacerMultaEmitidaInline({
   const [motivoTocado, setMotivoTocado] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMensaje, setErrorMensaje] = useState(null);
+  // Tanda D1 (2026-07-16, spec §8): true solo cuando el 409 es EXACTAMENTE "esta multa
+  // tiene saldo a favor aplicado" — agrega el botón "Ir a la cuenta del cliente" debajo
+  // del mensaje de error de siempre (que ya viene del servidor tal cual).
+  const [bloqueadoPorSaldoAplicado, setBloqueadoPorSaldoAplicado] = useState(false);
   // Paso 2: confirmación explícita antes de llamar al backend (mismo patrón que
   // DeshacerCierreSinMultaInline — esto reversa un comprobante con CAE, no es gratis).
   const [mostrarConfirmacion, setMostrarConfirmacion] = useState(false);
@@ -151,12 +162,18 @@ export function DeshacerMultaEmitidaInline({
 
     setSubmitting(true);
     setErrorMensaje(null);
+    setBloqueadoPorSaldoAplicado(false);
 
     try {
       await cancellationsApi.undoDebitNote(cancellationPublicId, construirPayloadUndoDebitNote(motivo).reason);
       showSuccess("Listo. El comprobante de la multa quedó sin efecto.", "Multa deshecha");
       onDeshecho();
     } catch (error) {
+      // Tanda D1 (2026-07-16, spec §8): un caso puntual de este 409 tiene salida propia
+      // — la multa no se puede deshacer porque tiene saldo a favor aplicado. Se detecta
+      // por código (nunca por texto) y se muestra el mensaje del servidor TAL CUAL, más
+      // el link a la cuenta del cliente (ahí vive la reversión de esa aplicación).
+      setBloqueadoPorSaldoAplicado(esErrorSaldoAplicadoAlDeshacerMulta(error));
       setErrorMensaje(getApiErrorMessage(error, "No se pudo deshacer la multa. Intentá de nuevo."));
       setMostrarConfirmacion(false);
       setSubmitting(false);
@@ -311,15 +328,30 @@ export function DeshacerMultaEmitidaInline({
             </div>
           )}
 
-          {/* Banner de error de API — datos intactos, el admin puede reintentar. */}
+          {/* Banner de error de API — datos intactos, el admin puede reintentar.
+              Tanda D1 (spec §8): cuando el error es "multa con saldo a favor aplicado",
+              se suma el botón que lleva a la cuenta del cliente (ahí vive la reversión
+              de esa aplicación) — el mensaje sigue siendo el que mandó el servidor. */}
           {errorMensaje && (
             <div
               role="alert"
-              className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200 flex items-start gap-2"
+              className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200 flex flex-col gap-2.5"
               data-testid="deshacer-multa-error"
             >
-              <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" aria-hidden="true" />
-              <span>{errorMensaje}</span>
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" aria-hidden="true" />
+                <span>{errorMensaje}</span>
+              </div>
+              {bloqueadoPorSaldoAplicado && customerPublicId && (
+                <Link
+                  to={`/customers/${customerPublicId}/account`}
+                  className="inline-flex items-center gap-1.5 self-start rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-50 dark:bg-slate-800 dark:text-rose-200 dark:border-rose-800 dark:hover:bg-slate-700 transition-colors"
+                  data-testid="deshacer-multa-ir-a-cuenta-cliente"
+                >
+                  Ir a la cuenta del cliente
+                  <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                </Link>
+              )}
             </div>
           )}
 
