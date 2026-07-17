@@ -5,10 +5,10 @@
 > esto es review estático contra el código. Todo lo que no pude verificar se dice con
 > esas palabras.
 
-> **VER "Re-review 2" AL FINAL (2026-07-17, 3ra pasada) — VEREDICTO VIGENTE: APROBADO.**
-> La 2da pasada rechazó el 1er intento de fix (no-op). La 3ra pasada (opt-in
-> `allowCorrectionWithinPar`) SÍ corrige el bloqueante y deja byte-idéntico al resto de los
-> callers. Lo de abajo (1ra y 2da pasada) se conserva como contexto histórico.
+> **VEREDICTO VIGENTE: APROBADO** — ver "Re-review 3 (delta post-CI)" al final. Recorrido:
+> 1ra pasada rechazó por B-1; 2da rechazó el 1er intento de fix (no-op); 3ra (opt-in
+> `allowCorrectionWithinPar`) aprobó; el CI destapó 6 tests de integración en rojo → la 4ta
+> pasada (Re-review 3) revierte un guard erróneo y re-aprueba. Lo de abajo es histórico.
 
 ## Veredicto
 
@@ -441,3 +441,54 @@ La Opción A elegida es correcta y más simple de razonar; dejo esto como follow
   no tracé línea por línea.
 - No re-verifiqué que la migración/otros gates de las pasadas anteriores no se hayan tocado en este 3er
   pase (el alcance del pedido fue el fix de B-1); asumo que no cambiaron.
+
+---
+
+# Re-review 3 (2026-07-17, delta post-CI) — reversión del guard erróneo en `OnAllCreditConsumedAsync`
+
+**Veredicto: APROBADO.** El CI destapó 6 tests de integración en rojo. La causa: el 1er fix de
+B-1 (commit `557be0e`) había metido, en el cierre-por-CLIENTE (`OnAllCreditConsumedAsync`), el
+mismo guard a nivel reserva que usa el cierre-por-OPERADOR. Eso acopla dos circuitos que ADR-033
+desacopla a propósito. La reversión lo saca. Verifiqué los 3 puntos pedidos, trazando, no por fe.
+
+**(a) La reversión es exactamente el comportamiento pre-Tanda-1 — y no rompe el fix B-1.** Comparé
+el bloque de cierre de `OnAllCreditConsumedAsync` del working tree contra `f74ce84` (commit previo
+a Tanda-1, `557be0e`): el código EJECUTABLE es byte-idéntico — `bc.Status = Closed; bc.ClosedAt =
+UtcNow;` y luego `ReservaStatusTransitioner.ApplyAsync(_db, bc.Reserva, Cancelled, "Forward", null,
+null, <mismo reason>, ct)` **incondicional**; lo único que cambió es el comentario (ahora explica
+la reversión). El guard `if (reservaStillOwedByOperator) {...} else {...}` que había metido `557be0e`
+desapareció, igual que el log condicional. El fix B-1 a nivel reserva NO se toca: vive en
+`CloseReservaIfOperatorRefundComplete` (`:3838`), que conserva su guard de reserva
+(`IsReservaOperatorRefundPendingAsync` 3-param, `:3874/:3877`); y en el applier opt-in (paso 6). El
+overload muerto `IsReservaOperatorRefundPendingAsync(int, ct)` se eliminó y no queda ninguna llamada
+colgada (única def en `:3800`, único call en `:3874`, ambos la versión 3-param → compila).
+
+**(b) El argumento ADR-033 es correcto contra el código real.** El cierre-por-cliente **era
+incondicional** antes de Tanda-1 (verificado en `f74ce84`). Y `RefundCap` es un TOPE, no una deuda
+exigida: el doc del enum `BookingCancellationLineRefundStatus` marca `Settled` como "cubrió el cap" y
+`None` cubre "la multa del operador se comió todo el cap"; `IsOperatorRefundPending` = `RefundCap>0 &&
+!Settled`, y `Settled` solo se alcanza con `ReceivedRefundAmount >= RefundCap`. Es legítimo y frecuente
+que el operador devuelva MENOS que el cap → la línea nunca llega a `Settled` → gatear el cierre-por-
+cliente con ese criterio dejaba la reserva colgada en "Esperando reembolso" aunque el cliente ya
+estuviera saldado. El residual con el operador se sigue rastreando a nivel PROVEEDOR (cta. cte./
+conciliación), no bloqueando el cartel de la reserva. Argumento sólido; la reversión es la conducta
+correcta, no un parche.
+
+**(c) Los 3 tests que fallaban vuelven a verde con la reversión (trazado).** Los tres asertan
+`EstadoReserva.Cancelled` DESPUÉS de que el cliente consume todo su crédito (camino
+`OnAllCreditConsumedAsync`), sin exigir que el operador haya saldado el `RefundCap`:
+`CancellationFlowE2ETests.HappyPath...:231`, `CancellationFlowE2ETests.Variante5...:724`,
+`ClientCreditServiceTests.Withdraw_UltimoRetiro...:586`. Con el guard de `557be0e`, si el operador
+no estaba `Settled`, la reserva quedaba en `PendingOperatorRefund` → los tres asserts fallaban. Con
+el cierre incondicional restaurado, la reserva vuelve a `Cancelled` → pasan. (El caso vecino
+`ClientCreditServiceTests:698`, `Assert.NotEqual(Cancelled)` para crédito no anclado con
+`BookingCancellationId == null`, es otro guard —OnAllCreditConsumed no se invoca— y no lo afecta la
+reversión.)
+
+## No verificado (delta)
+
+- No corrí el CI; la afirmación "los 3 vuelven a verde" es por traza de asserts + semántica de la
+  reversión. **Confirmar los 6 tests verdes en CI antes del deploy** (lección "verificado de verdad").
+- El rediseño de los 3 tests nuevos (E2E-2/E2E-3/test B-1 vía `ConfirmAsync → NC con CAE →
+  OnArcaSucceededAsync → AllocateAsync`) no lo re-tracé línea por línea (fuera del alcance "SOLO
+  a/b/c"); confío en que el patrón `CancellationFlowE2ETests` que replican ya está validado en CI.

@@ -111,6 +111,49 @@ public class ReservaTerminalDerivationTests
             ReservaTerminalDerivation.DetermineTerminalStatus(todasLasLineasDeLaReserva));
     }
 
+    // =========================================================================
+    // Tabla de verdad completa del criterio IsOperatorRefundPending, con CADA valor real del enum
+    // BookingCancellationLineRefundStatus (None/PendingOperatorRefund/Settled) cruzado con RefundCap
+    // cero/positivo. Agregada tras el hallazgo del CI (2026-07-17, 3ra pasada): el criterio en SÍ es
+    // correcto (hace justo lo que dice: "¿hay una línea con cap>0 sin Settled?"); el bug real estaba en
+    // OnAllCreditConsumedAsync, que usaba este criterio para una pregunta que NO es la suya (ver el
+    // comentario largo en BookingCancellationService.OnAllCreditConsumedAsync).
+    // =========================================================================
+
+    [Theory]
+    [InlineData(0, BookingCancellationLineRefundStatus.None, false)]
+    [InlineData(0, BookingCancellationLineRefundStatus.PendingOperatorRefund, false)] // cap 0 nunca genera deuda, aunque el status diga "pendiente" (dato inconsistente defensivo)
+    [InlineData(0, BookingCancellationLineRefundStatus.Settled, false)]
+    [InlineData(1000, BookingCancellationLineRefundStatus.None, true)] // cap>0 sin marcar aun (recien nacida la linea) -> cuenta como pendiente
+    [InlineData(1000, BookingCancellationLineRefundStatus.PendingOperatorRefund, true)]
+    [InlineData(1000, BookingCancellationLineRefundStatus.Settled, false)]
+    public void IsOperatorRefundPending_TablaDeVerdadPorCadaRefundStatusReal(
+        decimal refundCap, BookingCancellationLineRefundStatus status, bool expectedPending)
+    {
+        var lines = new[] { Line(refundCap, status) };
+        Assert.Equal(expectedPending, ReservaTerminalDerivation.IsOperatorRefundPending(lines));
+    }
+
+    [Fact]
+    public void ReembolsoParcialMenorAlCap_SigueContandoComoPendiente_PorDiseño()
+    {
+        // Reproduce el escenario REAL que rompio 3 tests preexistentes en CI (2026-07-17, 3ra pasada):
+        // el operador puede devolver MENOS que el RefundCap completo (el cap es un TOPE, no un monto
+        // exigido) y aun asi el circuito del CLIENTE puede quedar totalmente saldado con eso. El criterio
+        // PURO sigue diciendo "pendiente" en este caso (500 de 5000 no cubre el cap) — eso es CORRECTO
+        // para su proposito (¿el operador llego al tope?). La leccion NO es "arreglar este criterio": es
+        // que OnAllCreditConsumedAsync (el cierre por el lado del CLIENTE, ADR-033) NUNCA debe consultarlo,
+        // porque mide una pregunta distinta (ver BookingCancellationService.OnAllCreditConsumedAsync).
+        var lineaConReembolsoParcial = new BookingCancellationLine
+        {
+            RefundCap = 5000m,
+            ReceivedRefundAmount = 500m, // el operador ya devolvio esto; el cliente lo retiro entero
+            RefundStatus = BookingCancellationLineRefundStatus.PendingOperatorRefund, // 500 < 5000, nunca llega a Settled
+        };
+
+        Assert.True(ReservaTerminalDerivation.IsOperatorRefundPending(new[] { lineaConReembolsoParcial }));
+    }
+
     [Theory]
     [InlineData(EstadoReserva.InManagement, true)]
     [InlineData(EstadoReserva.Confirmed, true)]
