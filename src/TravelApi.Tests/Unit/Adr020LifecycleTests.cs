@@ -242,27 +242,33 @@ public class Adr020LifecycleTests
     // ===================== Reserva confirmada VACIADA de servicios =====================
 
     [Fact]
-    public async Task Engine_ConfirmedReservaEmptiedOfAllServices_StaysConfirmed_MarksWithEmptyMessage()
+    public async Task Engine_ConfirmedReservaEmptiedOfAllServices_TransitionsToCancelled()
     {
-        // Una reserva Confirmed que se quedo SIN servicios vivos (todos cancelados): NO regresa de estado y NO
-        // muestra el texto confuso "un servicio dejo de estar resuelto" (no hay servicios). Queda marcada con un
-        // mensaje que dice que se quedo sin servicios activos.
+        // ADR-048 (2026-07-17, modelo de estados derivados): una reserva Confirmed que se quedo SIN
+        // servicios vivos (todos cancelados) YA NO se queda "Confirmada con cambios" para siempre — pasa
+        // sola al terminal del par. Sin ninguna BookingCancellation con reembolso de operador pendiente
+        // (no se sembro ninguna en este test), el terminal que corresponde es "Anulada" (Cancelled).
         await using var ctx = NewContext();
         ctx.Reservas.Add(Reserva(1, EstadoReserva.Confirmed, responsibleUserId: "vendedor-1"));
         // Unico servicio: CANCELADO (no vivo). La reserva queda sin servicios activos.
         ctx.HotelBookings.Add(new HotelBooking { Id = 10, ReservaId = 1, HotelName = "H", Status = "Cancelado" });
         await ctx.SaveChangesAsync();
 
-        await NewEngine(ctx).EvaluateAndApplyAsync(1);
+        var changed = await NewEngine(ctx).EvaluateAndApplyAsync(1);
 
+        Assert.True(changed);
         var reserva = await ctx.Reservas.FindAsync(1);
-        Assert.Equal(EstadoReserva.Confirmed, reserva!.Status);
-        Assert.True(reserva.HasUnacknowledgedChanges);
+        Assert.Equal(EstadoReserva.Cancelled, reserva!.Status);
+        // Entrar al terminal apaga la marca "confirmada con cambios" (ReservaStateCleanupRules): ya no hay
+        // nada que revisar en una reserva anulada.
+        Assert.False(reserva.HasUnacknowledgedChanges);
 
-        // El mensaje NO debe afirmar que "un servicio dejo de estar resuelto" (texto confuso para una vacia).
-        Assert.DoesNotContain("dejaron de estar resueltos", reserva.LastRegressionReason ?? string.Empty);
-        // Debe explicar que la reserva quedo sin servicios activos.
-        Assert.Contains("sin servicios activos", reserva.LastRegressionReason ?? string.Empty);
+        // Rastro auditable (regla 10): la transicion automatica queda en el log, con actor "sistema".
+        var logEntry = ctx.ReservaStatusChangeLogs.Single(l => l.ReservaId == 1);
+        Assert.Equal(EstadoReserva.Confirmed, logEntry.FromStatus);
+        Assert.Equal(EstadoReserva.Cancelled, logEntry.ToStatus);
+        Assert.Equal("system:auto-state", logEntry.ByUserId); // actor sistema, no un usuario humano
+        Assert.Contains("anulada", logEntry.Reason ?? string.Empty, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

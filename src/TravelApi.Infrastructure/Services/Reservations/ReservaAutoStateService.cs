@@ -32,7 +32,14 @@ namespace TravelApi.Infrastructure.Services.Reservations;
 /// mantiene intacto.</para>
 ///
 /// <para>Concurrencia: last-write-wins aceptado (el motor es idempotente por evaluacion de estado
-/// total). La reconciliacion nocturna del job cura cualquier reserva que haya esquivado el chokepoint.</para>
+/// total).</para>
+///
+/// <para><b>ADR-048 (2026-07-17, regla 9 corregida por el dueño)</b>: YA NO existe una pasada nocturna que
+/// "cure" reservas desincronizadas — el estado se corrige SIEMPRE en el momento, en el mismo chokepoint
+/// que mueve la plata (<c>ReservaMoneyPersister</c>, via <see cref="TravelApi.Infrastructure.Reservations.ReservaTerminalTransitionApplier"/>).
+/// El job <c>ReservaLifecycleAutomationService</c> sigue existiendo (fuera de alcance eliminarlo) y de
+/// hecho tambien corre esta misma derivacion, pero es una red de seguridad incidental, NO el mecanismo de
+/// diseño: si un cambio toca la reserva, el estado sale correcto ahi mismo, sin esperar a la noche.</para>
 /// </summary>
 public class ReservaAutoStateService
 {
@@ -61,8 +68,19 @@ public class ReservaAutoStateService
     /// PRIMERA corrida tras el deploy marcaria en masa reservas historicas Confirmed que con las reglas nuevas
     /// tienen servicios sin resolver — un aviso por cada una seria ruido. La marca (HasUnacknowledgedChanges +
     /// el texto del motivo) SI se setea igual, solo se calla la campana.</para>
+    ///
+    /// <para><paramref name="skipTerminalDerivation"/> (ADR-048, M1): cuando es true, este metodo NO vuelve a
+    /// evaluar "tuvo servicios y todos anulados" (esa evaluacion ya corrio, en la MISMA transaccion, dentro de
+    /// <c>ReservaMoneyPersister</c> — via atomica B2). Lo usa <c>ReservaService.UpdateBalanceAsync</c> (que
+    /// SIEMPRE pasa por el persister antes de llamar aca) para no correr el motor dos veces. El resto de los
+    /// callers (ej. la reconciliacion nocturna, que NO pasa por el persister) lo dejan en el default
+    /// (<c>false</c>) para seguir cubriendo esa derivacion.</para>
     /// </summary>
-    public async Task<bool> EvaluateAndApplyAsync(int reservaId, bool suppressNotifications = false, CancellationToken ct = default)
+    public async Task<bool> EvaluateAndApplyAsync(
+        int reservaId,
+        bool suppressNotifications = false,
+        CancellationToken ct = default,
+        bool skipTerminalDerivation = false)
     {
         var reserva = await _context.Reservas
             .Include(r => r.FlightSegments)
@@ -88,9 +106,22 @@ public class ReservaAutoStateService
 
         if (isEngineState)
         {
+            // ADR-048 (INV-048-01, B1): si la reserva TUVO servicios y quedaron TODOS anulados, el terminal
+            // del par (Anulada / Esperando reembolso del operador — se decide a NIVEL RESERVA con todas sus
+            // cancelaciones) manda por sobre cualquier otra rama de abajo: no hay nada vivo que auto-confirmar
+            // ni que marcar "para revisar". Cubre TANTO InManagement como Confirmed (antes de este cambio,
+            // una reserva En gestion que se quedaba sin servicios no transicionaba a ningun lado).
+            bool terminalTransitioned = !skipTerminalDerivation
+                && await TravelApi.Infrastructure.Reservations.ReservaTerminalTransitionApplier
+                    .ApplyIfNeededAsync(_context, reserva, now, ct);
+
             bool allResolved = AllLiveServicesResolved(reserva);
 
-            if (string.Equals(reserva.Status, EstadoReserva.InManagement, StringComparison.OrdinalIgnoreCase) && allResolved)
+            if (terminalTransitioned)
+            {
+                anyChange = true;
+            }
+            else if (string.Equals(reserva.Status, EstadoReserva.InManagement, StringComparison.OrdinalIgnoreCase) && allResolved)
             {
                 await ApplyTransitionAsync(reserva, EstadoReserva.Confirmed, "Forward", now,
                     "Todos los servicios resueltos: confirmacion automatica", ct);
@@ -106,10 +137,11 @@ public class ReservaAutoStateService
             {
                 // CAMBIO DE FONDO (2026-06-24, alineado a Odoo/SAP): una reserva confirmada YA NO vuelve sola a
                 // "En gestion" cuando un servicio deja de estar resuelto (el operador cancelo/reprogramo, se
-                // agrego un servicio nuevo, o se quedo sin servicios vivos). Regresarla de estado era un
-                // movimiento automatico sorpresivo que pisaba lo que el usuario veia. En su lugar la dejamos
-                // EN Confirmed pero MARCADA "confirmada con cambios / revisar" (mismo mecanismo que usa la
-                // edicion de precio/costo, ADR-027): el sistema solo AVISA, la persona decide que hacer.
+                // agrego un servicio nuevo). Regresarla de estado era un movimiento automatico sorpresivo que
+                // pisaba lo que el usuario veia. En su lugar la dejamos EN Confirmed pero MARCADA "confirmada
+                // con cambios / revisar" (mismo mecanismo que usa la edicion de precio/costo, ADR-027): el
+                // sistema solo AVISA, la persona decide que hacer. NOTA (ADR-048): el subcaso "se quedo sin
+                // servicios vivos" YA NO llega aca — lo captura la rama del terminal de arriba.
                 //
                 // CRITICO (cobertura del hueco): mientras la marca este puesta, el gate de pase a "En viaje"
                 // (job nocturno y pase manual) NO promueve la reserva. Antes la regresion cumplia ese rol

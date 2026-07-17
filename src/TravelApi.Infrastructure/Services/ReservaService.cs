@@ -5001,8 +5001,15 @@ public class ReservaService : IReservaService
         // inmediatamente despues del recalculo de saldo (post-commit). Como TODOS los chokepoints de
         // mutacion de servicio (BookingService para los 5 tipos + Add/Update/Remove del generico) ya
         // llaman a UpdateBalanceAsync, enchufar el motor aca lo cubre todo sin tocar cada call-site.
+        //
+        // ADR-048 (M1, 2026-07-17): skipTerminalDerivation=true porque RecalculateMoneyAsync (arriba) YA
+        // paso por ReservaMoneyPersister, que corre la MISMA derivacion del terminal (Anulada / Esperando
+        // reembolso del operador) ANTES de su propio SaveChanges — asi que ese pedazo ya se resolvio y
+        // persistio junto con el saldo. Este llamado se queda SOLO con lo que el persister no cubre:
+        // estampar ConfirmedAt, auto-confirmar cuando corresponde, y la "campana" de avisar que hay
+        // cambios para revisar.
         if (_autoStateService != null)
-            await _autoStateService.EvaluateAndApplyAsync(reservaId);
+            await _autoStateService.EvaluateAndApplyAsync(reservaId, skipTerminalDerivation: true);
 
         // ADR-027: si fue una EDICION de precio/costo y la reserva quedo (o sigue) en estado vivo, dejamos
         // la marca "confirmada con cambios" Y registramos el detalle (que servicio, que campo, antes/despues).

@@ -1,9 +1,12 @@
-# BORRADOR — Modelo de estados derivados (para que Gaston apruebe las reglas UNA POR UNA)
+# Modelo de estados derivados — APROBADO POR GASTON (2026-07-17)
 
-> Estado: **PENDIENTE DE APROBACIÓN DEL DUEÑO**. Nada de esto se programa hasta
-> que Gaston apruebe o corrija cada regla. Preparado el 2026-07-17 tras la
-> captura de F-2026-1046 (tres afirmaciones falsas en una pantalla). Es LO
-> PRIMERO de la próxima sesión.
+> Estado: **APROBADO regla por regla el 2026-07-17** (AskUserQuestion, una por
+> una). 9 reglas aprobadas tal cual; la **regla 9 fue CORREGIDA por Gaston**:
+> la pasada nocturna queda AFUERA — el estado se corrige solo, en el momento,
+> en cada cambio, sin reparador batch. Las 3 preguntas: cartel **"Anulada"**,
+> transición **100% automática**, parcial **sigue "Confirmada"** con detalle
+> tachado por línea. Preparado tras la captura de F-2026-1046 (tres
+> afirmaciones falsas en una pantalla).
 
 ## El problema (diagnóstico verificado en código, no supuesto)
 
@@ -91,28 +94,28 @@ deuda al operador son a nivel reserva, no a nivel servicio.
    nunca sobre un anulado sin cargo. *El aviso fantasma exacto de la captura.*
 8. **Cabecera y chips leen la MISMA fuente derivada**; si dos superficies
    muestran cosas distintas, es un bug, no dos verdades.
-9. **El estado derivado se recalcula en cada cambio** (mismo punto donde hoy se
-   recalcula el saldo) **y la pasada nocturna lo repara**. *Reusa el motor que
-   ya funciona.*
+9. **(CORREGIDA POR GASTON 2026-07-17)** El estado derivado se recalcula **en
+   el momento, en cada cambio, siempre** (mismo punto donde hoy se recalcula el
+   saldo). **SIN pasada nocturna**: no existe "después lo arregla un proceso";
+   si un cambio toca la reserva, el estado sale correcto ahí mismo.
 10. **Todo cambio de estado derivado queda en el rastro** (quién/cuándo/por
     qué), aunque lo dispare el sistema.
 
-## Las 3 preguntas que deciden las reglas 2-3 (para Gaston)
+## Las 3 preguntas — RESPONDIDAS POR GASTON (2026-07-17)
 
-1. El estado terminal derivado: ¿se muestra como **"Anulada"** (mismo cartel de
-   hoy) o como cartel propio **"Sin servicios vigentes"** para no confundir con
-   el proceso fiscal de NC total?
-2. La transición: ¿**100% automática** (como En gestión→Confirmada) o un botón
-   **"Cerrar/Anular reserva"** que aprieta Gaston cuando quedó sin servicios?
-3. Anulación PARCIAL (quedan servicios vivos + anulados): ¿la cabecera sigue
-   "Confirmada" con el detalle por línea (recomendación, alineado a SAP/Odoo) o
-   un cartel intermedio "Anulada en parte"?
+1. Estado terminal derivado: **"Anulada"** (el mismo cartel de hoy; un solo
+   vocabulario).
+2. Transición: **100% automática** al anular el último servicio vivo (como En
+   gestión→Confirmada), registrada en el rastro (regla 10).
+3. Anulación PARCIAL: la cabecera **sigue "Confirmada"**, con lo anulado
+   tachado línea por línea (regla 6). Sin cartel intermedio.
 
 ## Principio de implementación (cuando se apruebe)
 
 UNA función de dominio por entidad (¿tiene servicios vivos? ¿está sin efecto?
 ¿qué comprobantes tiene?) → el ÚNICO escritor del estado derivado es el motor
-existente (ReservaAutoStateService, post-mutación + vigía nocturno como cura) →
+existente (ReservaAutoStateService, post-mutación SIEMPRE, en la misma
+transacción del cambio — SIN vigía nocturno, por decisión de Gaston) →
 los chips del front dejan de leer campos sueltos y solo pintan. Materializar el
 estado en la cabecera (como SAP) para poder filtrar/ordenar listados sin
 recalcular 6 colecciones por fila. Cada regla aprobada = una caminata E2E en CI.

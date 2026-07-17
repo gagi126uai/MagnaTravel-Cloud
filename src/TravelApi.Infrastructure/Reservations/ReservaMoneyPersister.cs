@@ -29,6 +29,12 @@ namespace TravelApi.Infrastructure.Reservations;
 /// <para><b>Es una proyeccion, no una segunda fuente de verdad</b>: la unica logica de calculo sigue
 /// viviendo en <c>ReservaMoneyCalculator</c>; la tabla hija es su materializado, reescrito en cada
 /// recalculo. Por eso el backfill (Capa 2) reusa este mismo persister.</para>
+///
+/// <para><b>ADR-048 (2026-07-17)</b>: este metodo es tambien el chokepoint elegido para la via ATOMICA
+/// del estado derivado de la reserva (B2): antes de su <c>SaveChangesAsync</c> invoca
+/// <see cref="ReservaTerminalTransitionApplier"/>, que lleva la reserva al terminal del par (Anulada /
+/// Esperando reembolso del operador) cuando corresponde. Asi el cambio de estado nunca queda en un
+/// commit separado del cambio de saldo — comparten la MISMA transaccion.</para>
 /// </summary>
 internal static class ReservaMoneyPersister
 {
@@ -36,7 +42,19 @@ internal static class ReservaMoneyPersister
     /// Carga la reserva con todos los Includes economicos, recalcula y persiste escalar + tabla hija.
     /// No hace nada si la reserva no existe (mismo comportamiento que las rutinas que reemplaza).
     /// </summary>
-    public static async Task PersistAsync(AppDbContext db, int reservaId, CancellationToken ct = default)
+    /// <param name="allowTerminalCorrectionWithinPar">
+    /// Default <c>false</c> (comportamiento de siempre). Ver el mismo parametro en
+    /// <see cref="ReservaTerminalTransitionApplier.ApplyIfNeededAsync"/>: solo hay que pasarlo en
+    /// <c>true</c> desde el UNICO caller que lo necesita (el fix de B-1 en
+    /// <c>BookingCancellationService.CancelServiceAsync</c>, paso 6). El resto de los callers de este
+    /// persister (pagos, AFIP, anulacion total, "anular con saldo a favor") deben dejarlo en <c>false</c>:
+    /// esos flujos ya deciden el cierre del par por su cuenta con reglas mas completas (multa/ND a medio
+    /// emitir, sincronizacion con BookingCancellation.Status, receivable a nivel proveedor) que este
+    /// persister no conoce — pasar <c>true</c> ahi les pisaria esa decision.
+    /// </param>
+    public static async Task PersistAsync(
+        AppDbContext db, int reservaId, CancellationToken ct = default,
+        bool allowTerminalCorrectionWithinPar = false)
     {
         // Grafo economico completo: pagos + 5 tipados + generico. Centralizado aca para que las tres
         // rutinas que delegan en este persister carguen exactamente el mismo grafo (antes cada una
@@ -66,7 +84,18 @@ internal static class ReservaMoneyPersister
         // 2) Tabla hija: upsert por moneda + borrar las monedas que ya no aplican.
         await SyncMoneyByCurrencyRowsAsync(db, reservaId, summary, ct);
 
-        // 3) Escalar y filas hijas en UNA sola SaveChangesAsync -> nunca divergen.
+        // 2-bis) ADR-048 (2026-07-17, modelo de estados derivados, via atomica B2): si la reserva "tuvo
+        //    servicios y los tiene todos anulados" (INV-048-01), esto la lleva al terminal del par
+        //    (Esperando reembolso del operador / Anulada, segun corresponda a nivel reserva con N
+        //    cancelaciones — B1) ANTES del SaveChanges de la plata. Asi estado y saldo quedan en el MISMO
+        //    commit: no existe una ventana donde el saldo ya se actualizo pero el cartel de la reserva
+        //    sigue mintiendo (regla 9, nada de "la proxima mutacion lo corrige"). Es un no-op si la
+        //    reserva no aplica (esta viva, o ya esta en el terminal correcto).
+        await ReservaTerminalTransitionApplier.ApplyIfNeededAsync(
+            db, reserva, DateTime.UtcNow, ct, allowCorrectionWithinPar: allowTerminalCorrectionWithinPar);
+
+        // 3) Escalar, filas hijas y (si aplico el punto anterior) el terminal derivado, todos en UNA sola
+        //    SaveChangesAsync -> nunca divergen.
         await db.SaveChangesAsync(ct);
 
         // 4) Comision del vendedor (auditoria ERP 2026-06-12, hallazgo #1): este es el chokepoint de la

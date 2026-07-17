@@ -178,11 +178,15 @@ public class Adr020StatusUnlockTests
         Assert.NotNull(hotel.CancelledAt); // rastro de cancelacion estampado
         // El candado nunca intervino (es realidad del operador, no edicion de la agencia).
         Assert.Empty(ctx.ReservaEditAuthorizationChanges);
-        // El servicio cancelado sale de la resolucion: la reserva NO regresa de estado (2026-06-24), queda
-        // Confirmed pero marcada "confirmada con cambios" (se quedo sin servicios vivos).
+        // ADR-048 (2026-07-17): el UNICO servicio de la reserva quedo cancelado -> "tuvo servicios y todos
+        // anulados" (INV-048-01). Antes (2026-06-24..2026-07-16) esto solo dejaba la reserva "Confirmed"
+        // marcada "confirmada con cambios" para siempre (la mentira de F-2026-1046). Ahora el motor la lleva
+        // sola al terminal del par: sin ninguna BookingCancellation con reembolso de operador pendiente
+        // (no se sembro ninguna en este test), el terminal es "Anulada" (Cancelled), y entrar a un terminal
+        // apaga la marca de revision (ReservaStateCleanupRules).
         var reserva = await ctx.Reservas.FindAsync(1);
-        Assert.Equal(EstadoReserva.Confirmed, reserva!.Status);
-        Assert.True(reserva.HasUnacknowledgedChanges);
+        Assert.Equal(EstadoReserva.Cancelled, reserva!.Status);
+        Assert.False(reserva.HasUnacknowledgedChanges);
     }
 
     [Fact]

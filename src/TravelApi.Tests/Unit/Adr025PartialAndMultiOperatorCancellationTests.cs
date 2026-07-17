@@ -198,8 +198,14 @@ public class Adr025PartialAndMultiOperatorCancellationTests
     [Fact]
     public async Task CancelService_DoesNotChangeReservaStatus_Decision1()
     {
+        // ADR-048 (2026-07-17): decision #1 (cancelar UN servicio no mueve el estado de la reserva) es
+        // valida cuando quedan OTROS servicios vivos — es la definicion misma de cancelacion PARCIAL. Por
+        // eso el seed necesita un segundo servicio confirmado (operador B) que sigue vivo despues de
+        // cancelar el hotel; sin el, cancelar el UNICO servicio "vacia" la reserva y el motor de estados la
+        // lleva sola al terminal del par (mismo bug que F-2026-1046 vino a cerrar) — ese es OTRO escenario,
+        // cubierto en Adr020LifecycleTests/ReservaTerminalDerivationTests, no este.
         using var ctx = NewDbContext();
-        var (reserva, _, _, _, hotel, _) = await SeedAsync(ctx);
+        var (reserva, _, _, _, hotel, _) = await SeedAsync(ctx, addSecondOperatorService: true);
         var service = BuildService(ctx);
 
         await service.CancelServiceAsync(
@@ -213,8 +219,14 @@ public class Adr025PartialAndMultiOperatorCancellationTests
     [Fact]
     public async Task CancelService_IsIdempotent_WhenAlreadyCancelled()
     {
+        // Mismo motivo que el test de arriba (ADR-048): con un SOLO servicio, cancelarlo auto-anula la
+        // reserva y un segundo intento de CancelServiceAsync ya no encuentra una reserva cancelable (rechaza
+        // ANTES de llegar al chequeo de idempotencia por-servicio) — eso es un comportamiento DISTINTO y
+        // correcto (candado de estado), no lo que este test quiere blindar. Con un segundo servicio vivo, la
+        // reserva sigue Confirmed despues del primer cancel y el segundo intento SI llega al chequeo de
+        // "ya estaba cancelado -> no-op" que este test verifica.
         using var ctx = NewDbContext();
-        var (reserva, _, _, _, hotel, _) = await SeedAsync(ctx);
+        var (reserva, _, _, _, hotel, _) = await SeedAsync(ctx, addSecondOperatorService: true);
         var service = BuildService(ctx);
         var req = new CancelServiceRequest(reserva.PublicId, "Hotel", hotel.PublicId, "Cliente baja el hotel");
 
@@ -223,6 +235,7 @@ public class Adr025PartialAndMultiOperatorCancellationTests
 
         Assert.Equal(1, first.CancelledServicesCount);
         Assert.Equal(1, second.CancelledServicesCount); // re-cancelar es no-op, no duplica el contador
+        Assert.Equal(2, second.TotalServicesWithSupplierCount); // hotel + transfer del operador B, sigue vivo
     }
 
     [Fact]

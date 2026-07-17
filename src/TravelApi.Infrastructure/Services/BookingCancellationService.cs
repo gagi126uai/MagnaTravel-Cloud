@@ -479,6 +479,10 @@ public class BookingCancellationService
             // 3) Recalcular la plata de la reserva: el servicio cancelado sale del saldo del cliente solo
             //    (ServiceResolutionRules lo excluye). ReservaMoneyPersister hace su propio SaveChanges (que
             //    tambien participa de la transaccion externa).
+            //    OJO (ADR-048 B-1): a esta altura la linea de cancelacion de ESTE servicio (con su
+            //    RefundCap) TODAVIA no existe (recien se crea en el paso 5, mas abajo) — por eso el paso 6
+            //    vuelve a llamar a este mismo persister al final, para re-derivar el terminal ya con esa
+            //    linea puesta. No borrar el paso 6 pensando que este ya alcanza.
             await TravelApi.Infrastructure.Reservations.ReservaMoneyPersister.PersistAsync(_db, reserva.Id, ct);
 
             // 4) B1 (OBLIGATORIO): recalcular la deuda del operador del servicio cancelado en la misma
@@ -525,6 +529,31 @@ public class BookingCancellationService
 
             // SaveChanges final: la linea de credito + la auditoria stageada, en la misma transaccion.
             await _db.SaveChangesAsync(ct);
+
+            // 6) ADR-048 B-1 (fix del review backend, 2026-07-17, 2da pasada): RE-DERIVAR el terminal ahora
+            //    que la linea de cancelacion (con su RefundCap) YA EXISTE en la base.
+            //
+            //    Por que hace falta: el paso 3 (arriba) corrio ReservaMoneyPersister.PersistAsync, que por
+            //    dentro deriva el terminal ANTES de que este paso 5 creara la BC + linea. Si el operador
+            //    debia reembolso por ESTE servicio (RefundCap>0) y ninguna otra BC de la reserva ya lo
+            //    arrastraba pendiente, el paso 3 no tenia forma de verlo (la linea todavia no existia) y
+            //    pudo haber derivado "Anulada" en vez de "Esperando reembolso del operador".
+            //
+            //    Por que hace falta allowTerminalCorrectionWithinPar=true: la 1ra version de este fix
+            //    volvia a llamar al persister SIN el flag, y no alcanzaba — a esta altura la reserva YA
+            //    esta en el terminal (Cancelled, seteado por el paso 3), y sin el flag el applier NUNCA
+            //    re-evalua un estado ya terminal (para no pisarle la decision a ConfirmAsync/anulacion
+            //    total ni a AnnulWithPaymentsToCreditAsync, que dejan la reserva a proposito en un estado
+            //    del par con una regla mas completa que este persister no conoce). Este SI es el caller
+            //    correcto para pedir la correccion: es el UNICO camino que crea una linea de RefundCap
+            //    DESPUES de haber corrido la 1ra derivacion sin ella.
+            //
+            //    Es idempotente (si el paso 3 ya habia acertado, este segundo paso no cambia nada) y ya
+            //    trae la derivacion del terminal adentro (ReservaTerminalTransitionApplier), asi que no
+            //    duplicamos esa logica aca. Corre DENTRO de la misma transaccion externa (atomico con todo
+            //    lo de arriba).
+            await TravelApi.Infrastructure.Reservations.ReservaMoneyPersister.PersistAsync(
+                _db, reserva.Id, ct, allowTerminalCorrectionWithinPar: true);
 
             // Pasos B/C (2026-06-29): NO disparamos el reconcile del pool aca a proposito. La cancelacion parcial
             // deja la caja del operador en negativo, pero el receivable que lo compensa lo ancla la LINEA parcial
@@ -3753,6 +3782,43 @@ public class BookingCancellationService
     }
 
     /// <summary>
+    /// ADR-048 (2026-07-17, B1): pregunta A NIVEL RESERVA si el operador todavia debe algun reembolso,
+    /// juntando las lineas de TODAS las cancelaciones (BC) de la reserva desde BD. Usalo cuando NINGUNA
+    /// linea se mutó en memoria todavía sin commitear (ej. <see cref="OnAllCreditConsumedAsync"/>, que solo
+    /// toca el <c>ClientCreditEntry</c>, no las lineas del BC).
+    /// </summary>
+    private async Task<bool> IsReservaOperatorRefundPendingAsync(int reservaId, CancellationToken ct)
+    {
+        var allLinesOfReserva = await _db.BookingCancellationLines
+            .AsNoTracking()
+            .Where(line => line.BookingCancellation.ReservaId == reservaId)
+            .ToListAsync(ct);
+
+        return ReservaTerminalDerivation.IsOperatorRefundPending(allLinesOfReserva);
+    }
+
+    /// <summary>
+    /// ADR-048 (2026-07-17, B1): igual que la sobrecarga de arriba, pero para el caso donde la BC
+    /// <paramref name="excludeBcId"/> tiene lineas mutadas EN MEMORIA todavia sin commitear (patron HC1,
+    /// ver <see cref="CloseReservaIfOperatorRefundComplete"/>). Combina las lineas de las OTRAS BC de la
+    /// reserva (leidas de BD, no las toco esta operacion) con <paramref name="excludedBcLinesInMemory"/>
+    /// (el estado MAS RECIENTE de la BC actual, todavia en memoria).
+    /// </summary>
+    private async Task<bool> IsReservaOperatorRefundPendingAsync(
+        int reservaId,
+        int excludeBcId,
+        IEnumerable<BookingCancellationLine> excludedBcLinesInMemory,
+        CancellationToken ct)
+    {
+        var otherBcLines = await _db.BookingCancellationLines
+            .AsNoTracking()
+            .Where(line => line.BookingCancellation.ReservaId == reservaId && line.BookingCancellationId != excludeBcId)
+            .ToListAsync(ct);
+
+        return ReservaTerminalDerivation.IsOperatorRefundPending(otherBcLines.Concat(excludedBcLinesInMemory));
+    }
+
+    /// <summary>
     /// ADR-033 (2026-06-18): cierra la RESERVA (<c>PendingOperatorRefund</c> -> <c>Cancelled</c>) cuando el
     /// OPERADOR reembolso el total esperado de la cancelacion, SIN esperar a que el cliente consuma su saldo
     /// a favor. Antes de ADR-033 la reserva solo se cerraba via <see cref="OnAllCreditConsumedAsync"/> (cuando
@@ -3770,6 +3836,11 @@ public class BookingCancellationService
     ///
     /// <para><b>Patron HC1</b>: corre DENTRO de la tx envolvente del <c>OperatorRefundService.AllocateAsync</c>.
     /// Modifica en memoria y NO hace <c>SaveChanges</c> — el caller commitea TODO junto.</para>
+    ///
+    /// <para><b>B1 (ADR-048, 2026-07-17)</b>: el cierre se decide a NIVEL RESERVA (todas las lineas con
+    /// <c>RefundCap&gt;0</c> de TODAS las cancelaciones de la reserva, no solo de esta BC). Antes de este
+    /// cambio, con dos cancelaciones simultaneas de la misma reserva (una por cada servicio cancelado), la
+    /// primera que se saldaba cerraba la reserva aunque la otra siguiera esperando su reembolso.</para>
     /// </summary>
     private async Task CloseReservaIfOperatorRefundComplete(BookingCancellation bc, CancellationToken ct)
     {
@@ -3779,7 +3850,7 @@ public class BookingCancellationService
         if (bc.Reserva is null || bc.Reserva.Status != EstadoReserva.PendingOperatorRefund)
             return;
 
-        // Leemos las lineas del BC desde el ChangeTracker, NO desde una query a BD.
+        // Leemos las lineas de ESTA BC desde el ChangeTracker, NO desde una query a BD.
         //
         // Por que: el caller (OperatorRefundService.AllocateAsync) acaba de mutar
         // line.ReceivedRefundAmount y line.RefundStatus EN MEMORIA via
@@ -3787,37 +3858,36 @@ public class BookingCancellationService
         // Una query a BD (incluso con Include) podria devolver valores persistidos viejos.
         // El ChangeTracker es la unica fuente que refleja el estado in-memory mas reciente
         // — mismo enfoque que OnAllocationVoidedAsync usa para leer lo no persistido.
-        var lines = _db.ChangeTracker
+        var thisBcLines = _db.ChangeTracker
             .Entries<BookingCancellationLine>()
             .Select(entry => entry.Entity)
             .Where(line => line.BookingCancellationId == bc.Id)
             .ToList();
 
-        // Solo cuentan las lineas que ESPERABAN reembolso del operador (RefundCap > 0).
-        // Si no hay ninguna (no se esperaba refund por esta via), NO cerramos: el cierre
-        // por refund total no aplica.
-        var linesExpectingRefund = lines
-            .Where(line => line.RefundCap > 0m)
-            .ToList();
-
-        if (linesExpectingRefund.Count == 0)
+        // Guard: si ESTA BC no tenia ninguna linea que esperara reembolso (RefundCap > 0), este camino
+        // de cierre no aplica — la reserva puede cerrarse por otra via (ej. OnAllCreditConsumedAsync).
+        bool thisBcExpectedRefund = thisBcLines.Any(line => line.RefundCap > 0m);
+        if (!thisBcExpectedRefund)
             return;
 
-        // "Totalmente reembolsada" (criterio conservador): TODAS las lineas que esperaban
-        // refund quedaron Settled. DistributeReceivedRefundToOperatorLines marca Settled
-        // exactamente cuando ReceivedRefundAmount >= RefundCap, asi que mirar el RefundStatus
-        // es equivalente a comparar montos, pero mas legible y menos sensible a redondeos.
-        bool fullyRefunded = linesExpectingRefund
-            .All(line => line.RefundStatus == BookingCancellationLineRefundStatus.Settled);
+        // B1 (ADR-048, 2026-07-17, modelo de estados derivados): el cierre se decide a NIVEL RESERVA, no
+        // por-BC. Una reserva puede tener varias cancelaciones (BC) a lo largo del tiempo — cada servicio
+        // cancelado deja su propio circuito de reembolso. Si solo mirara ESTA BC, la PRIMERA que se salda
+        // cerraria la reserva entera aunque OTRA cancelacion de la misma reserva siga esperando su
+        // reembolso: un cierre prematuro con plata pendiente invisible. Por eso preguntamos por TODAS las
+        // lineas con RefundCap>0 de TODAS las BC de la reserva (mismo helper de dominio que usa el motor
+        // de estados), combinando lo que YA esta en BD (otras BC) con lo que esta BC tiene mutado en
+        // memoria todavia sin commitear (patron HC1, arriba).
+        bool reservaStillOwedByOperator = await IsReservaOperatorRefundPendingAsync(
+            bc.ReservaId, excludeBcId: bc.Id, excludedBcLinesInMemory: thisBcLines, ct);
 
-        if (!fullyRefunded)
+        if (reservaStillOwedByOperator)
         {
             _logger.LogDebug(
-                "CloseReservaIfOperatorRefundComplete: BC {BcPublicId} aun no esta totalmente reembolsada " +
-                "({SettledCount}/{Total} lineas Settled). Reserva sigue en PendingOperatorRefund.",
-                bc.PublicId,
-                linesExpectingRefund.Count(l => l.RefundStatus == BookingCancellationLineRefundStatus.Settled),
-                linesExpectingRefund.Count);
+                "CloseReservaIfOperatorRefundComplete: la reserva {ReservaPublicId} todavia tiene reembolso " +
+                "del operador pendiente en alguna de sus cancelaciones (BC {BcPublicId} incluida o no). " +
+                "Reserva sigue en PendingOperatorRefund.",
+                bc.Reserva.PublicId, bc.PublicId);
             return;
         }
 
@@ -4664,12 +4734,32 @@ public class BookingCancellationService
 
         bc.Status = BookingCancellationStatus.Closed;
         bc.ClosedAt = DateTime.UtcNow;
-        // Transición a Cancelled + rastro + descarte de la marca por el PUNTO ÚNICO de transición. Lo dispara el
-        // consumo total del crédito (callback del sistema), sin actor humano -> ByUserId null, documentado en la razón.
-        await ReservaStatusTransitioner.ApplyAsync(
-            _db, bc.Reserva, EstadoReserva.Cancelled, "Forward",
-            actorUserId: null, actorUserName: null,
-            reason: "Cancelacion (ADR-002): credito del cliente consumido en su totalidad, cancelacion cerrada (sistema).", ct: ct);
+
+        // B1 (ADR-048, 2026-07-17): consumir el credito del CLIENTE no implica que el OPERADOR ya devolvio
+        // todo (ADR-033 los desacopla), y ademas la RESERVA puede tener OTRA cancelacion (BC) con su
+        // propio reembolso todavia pendiente. El BC de arriba SI cierra igual (ya cumplio su parte del
+        // circuito de credito del cliente) — lo que se guarda es la transicion de la RESERVA: solo pasa a
+        // Cancelled si NINGUNA linea con RefundCap>0 de NINGUNA cancelacion de la reserva sigue esperando
+        // al operador. Si alguna sigue pendiente, la reserva se queda en PendingOperatorRefund.
+        bool reservaStillOwedByOperator = await IsReservaOperatorRefundPendingAsync(bc.ReservaId, ct);
+
+        if (reservaStillOwedByOperator)
+        {
+            _logger.LogInformation(
+                "OnAllCreditConsumedAsync: BC {BcPublicId} se cierra (credito del cliente consumido), pero la " +
+                "reserva {ReservaPublicId} todavia tiene reembolso del operador pendiente en otra cancelacion. " +
+                "La reserva sigue en PendingOperatorRefund.",
+                bc.PublicId, bc.Reserva.PublicId);
+        }
+        else
+        {
+            // Transición a Cancelled + rastro + descarte de la marca por el PUNTO ÚNICO de transición. Lo dispara el
+            // consumo total del crédito (callback del sistema), sin actor humano -> ByUserId null, documentado en la razón.
+            await ReservaStatusTransitioner.ApplyAsync(
+                _db, bc.Reserva, EstadoReserva.Cancelled, "Forward",
+                actorUserId: null, actorUserName: null,
+                reason: "Cancelacion (ADR-002): credito del cliente consumido en su totalidad, cancelacion cerrada (sistema).", ct: ct);
+        }
 
         // Audit dedicado del cierre del BC para que el contador pueda buscar
         // "cuando se cerro la cancelacion #X" sin tener que mirar el ultimo
@@ -4694,8 +4784,8 @@ public class BookingCancellationService
             ct: ct);
 
         _logger.LogInformation(
-            "BC {BcPublicId} closed via OnAllCreditConsumedAsync (Reserva -> Cancelled).",
-            bc.PublicId);
+            "BC {BcPublicId} closed via OnAllCreditConsumedAsync (Reserva -> {ReservaOutcome}).",
+            bc.PublicId, reservaStillOwedByOperator ? "sigue en PendingOperatorRefund (B1, otra BC pendiente)" : "Cancelled");
 
         // FC1.2.7b counter: cierre del BC = ciclo completo (Drafted → Closed).
         // El delta entre cancellation_drafted y cancellation_closed indica cuantas
