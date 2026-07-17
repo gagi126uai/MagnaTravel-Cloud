@@ -1831,22 +1831,10 @@ public class BookingCancellationService
     /// </summary>
     private static TaxConditionCanonical ResolveCustomerTaxConditionCanonical(Customer? customer)
     {
-        var fromText = TaxConditionNormalizer.Normalize(customer?.TaxCondition);
-        if (fromText != TaxConditionCanonical.Unknown)
-        {
-            return fromText;
-        }
-
-        if (customer?.TaxConditionId is int taxConditionId)
-        {
-            var label = CustomerTaxConditionCatalog.TryGetLabel(taxConditionId);
-            if (label != null)
-            {
-                return TaxConditionNormalizer.Normalize(label);
-            }
-        }
-
-        return TaxConditionCanonical.Unknown;
+        // Delega en el catalogo (Domain) para que este NO sea el unico lugar con la formula: la solapa
+        // "Datos" de la ficha del cliente (CustomerService.GetCustomerAccountOverviewAsync) necesita el MISMO
+        // veredicto "condicion pendiente" sin duplicar esta logica (2026-07-17).
+        return CustomerTaxConditionCatalog.ResolveCanonical(customer?.TaxCondition, customer?.TaxConditionId);
     }
 
     public async Task<BookingCancellationDto> ConfirmAsync(

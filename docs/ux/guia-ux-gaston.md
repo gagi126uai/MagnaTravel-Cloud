@@ -1767,3 +1767,44 @@ más de una factura, y viene escondido con defaults.
   se ven con `cobranzas.view`, sin necesitar `cobranzas.see_cost` (no hay "—" acá). Los flujos de
   aplicar/devolver requieren `cobranzas.edit`: sin ese permiso, el botón [Usar saldo a favor] no aparece,
   pero los números igual se ven.
+
+## Editar los datos del cliente desde su ficha — solapa "Datos" + aviso fiscal (2026-07-17)
+
+> **Origen:** callejón sin salida reportado por Gastón (molesto). Emitir una devolución avisaba
+> "Completá la condición fiscal en la ficha del cliente para poder continuar", pero la ficha del
+> cliente (`CustomerAccountPage`, rediseñada el 2026-07-16 con el extracto profesional) NO tenía
+> ninguna forma de editar datos fiscales — solo el modal del listado los editaba. El mensaje mandaba
+> a un lugar sin la acción. **Sin preguntas a Gastón: todo es espejo del patrón ya aprobado para la
+> ficha del OPERADOR** (solapa "Datos" en línea 2026-06-28 P6=A + banner ámbar "Faltan los datos
+> fiscales…" 2026-07-16). Spec completa: `docs/ux/2026-07-17-ficha-cliente-solapa-datos.md`.
+> **NO reabrir.** Siguen valiendo "el modal me parece horrible" (todo EN LÍNEA) y "el front no
+> deduce, lo dice el backend" (2026-07-03).
+
+- **(2026-07-17) La ficha del cliente gana una 5ta solapa "Datos"** (última, después de "Datos
+  bancarios"), con edición EN LÍNEA sin ventana — espejo de la solapa "Datos" del operador
+  (`SupplierInlineEditForm`). Campos = subconjunto del cliente: Nombre completo\* · Documento/Pasaporte
+  · CUIT/DNI (con búsqueda AFIP) · Condición fiscal (AFIP)\* · Email · Teléfono · Dirección · Cliente
+  activo. NO lleva los campos propios del operador (moneda por defecto, plazo de pago, cómo trabaja,
+  ajuste por el dólar, comportamiento con multas), así que **no hay "Más detalles"**. Obligatorios
+  para guardar: Nombre completo + Condición fiscal.
+- **(2026-07-17) Aviso ámbar "Faltan los datos fiscales de este cliente."** (franja de una línea entre
+  la foto de saldo y las solapas) + botón **"Completar datos"** que abre la solapa "Datos" — espejo
+  exacto del banner del operador. **Se enciende con el veredicto del backend
+  `CustomerAccountOverviewDto.hasPendingTaxData` (el mismo que traba la devolución), NUNCA con
+  `!taxConditionId`** (el cliente siempre defaultea a Consumidor Final). Es informativo: no bloquea
+  nada de esta pantalla. Texto exacto: "**Faltan los datos fiscales de este cliente.** Completá su
+  condición fiscal para poder facturar, anular y emitir devoluciones sin trabas."
+- **(2026-07-17) Candado SOLO del CUIT cuando el cliente ya tiene facturas** (`overview.taxIdLocked`):
+  se deshabilitan únicamente el campo CUIT/DNI y el botón de búsqueda AFIP; **la condición fiscal y el
+  resto de los campos SIEMPRE quedan editables**. Una sola línea en criollo debajo del CUIT, texto
+  exacto: "El CUIT no se puede cambiar acá (los comprobantes ya salieron con ese CUIT); si el titular
+  cambió de CUIT, registrá un cliente nuevo." (Patrón candado ADR-035 A / fase 4: campo mostrado
+  deshabilitado, no escondido; nunca deriva a "administración", 2026-07-08.)
+- **(2026-07-17) Guardado OK:** "Datos del cliente guardados correctamente." + recarga del overview.
+  **Error recuperable:** ficha abierta con todo intacto + cartel rojo arriba de los botones ("No se
+  pudo guardar. Revisá la conexión y probá de nuevo."), reintenta en el mismo botón (Ronda 2,
+  2026-06-06). **Sin `clientes.edit`:** solapa en solo lectura (campos deshabilitados, sin "Guardar").
+- **(2026-07-17) Datos del backend (ya expuestos):** `CustomerAccountOverviewDto.hasPendingTaxData`
+  (banner) · `CustomerAccountOverviewDto.taxIdLocked` (candado del CUIT) · `GET /api/customers/{id}`
+  (taxId, taxConditionId, documentType, documentNumber, email, phone, address, isActive). El PUT reusa
+  el endpoint que ya usa el modal del listado.

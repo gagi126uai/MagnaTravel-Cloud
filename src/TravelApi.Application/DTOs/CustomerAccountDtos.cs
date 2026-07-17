@@ -35,6 +35,30 @@ public class CustomerAccountOverviewDto
     /// cliente no tiene ninguna multa pendiente — el front esconde el bloque entero en ese caso.
     /// </summary>
     public CustomerPendingPenaltiesDto PendingPenalties { get; set; } = new();
+
+    /// <summary>
+    /// Solapa "Datos" de la ficha del cliente (spec UX §7, 2026-07-17): <c>true</c> cuando la condición
+    /// fiscal del cliente todavía no se puede identificar — el MISMO veredicto que usa el motor de
+    /// anulaciones para bloquear con INV-118 (<c>BookingCancellationService.ResolveServerSideTaxIdentity</c>,
+    /// vía <see cref="TravelApi.Domain.Helpers.CustomerTaxConditionCatalog.ResolveCanonical"/>).
+    ///
+    /// <para>Con el default de alta "Consumidor Final" esto va a ser <c>false</c> casi siempre — el caso real
+    /// es un cliente viejo con el texto Y el código vacíos/rotos (dato legacy). La pantalla usa este flag
+    /// para mostrar el banner "faltan datos fiscales"; NO recalcula nada del lado del navegador.</para>
+    /// </summary>
+    public bool HasPendingTaxData { get; set; }
+
+    /// <summary>
+    /// Solapa "Datos" de la ficha del cliente (spec UX §7, 2026-07-17): <c>true</c> cuando el CUIT del
+    /// cliente está bloqueado porque tiene al menos una factura viva (CAE, no anulada) que lo referencia —
+    /// mismo veredicto que <c>MutationGuards.GetCustomerTaxIdMutationBlockReasonAsync</c> (CODE-06).
+    ///
+    /// <para>Ojo: desde la decisión del dueño del 2026-07-17, este candado aplica SOLO al CUIT — la
+    /// CONDICIÓN fiscal (Monotributo/RI/Exento/Consumidor Final) se edita siempre, con auditoría, aunque el
+    /// cliente tenga facturas vivas. Por eso el nombre es <c>TaxIdLocked</c> y no un genérico
+    /// "FiscalDataLocked" que mentiría sobre qué campo está realmente trabado.</para>
+    /// </summary>
+    public bool TaxIdLocked { get; set; }
 }
 
 /// <summary>

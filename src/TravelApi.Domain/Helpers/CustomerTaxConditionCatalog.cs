@@ -89,6 +89,39 @@ public static class CustomerTaxConditionCatalog
     /// cualquiera de la ficha (ej. el telefono) nunca pise la condicion fiscal por accidente.</item>
     /// </list>
     /// </summary>
+    /// <summary>
+    /// Resuelve la condicion fiscal CANONICA (<see cref="TaxConditionCanonical"/>) del cliente para saber si
+    /// esta "pendiente" (Unknown) o no. Es la MISMA formula que usa el motor de anulaciones para bloquear con
+    /// INV-118 (<c>BookingCancellationService.ResolveServerSideTaxIdentity</c>) — la extrajimos aca, a este
+    /// catalogo, para que un segundo consumidor (la solapa "Datos" de la ficha del cliente) pueda mostrar el
+    /// mismo veredicto sin inventar una segunda formula que se pueda desalinear con el tiempo.
+    ///
+    /// <para><b>Orden de resolucion (igual al que ya usaba el motor de anulaciones)</b>: primero el TEXTO
+    /// (<paramref name="taxConditionText"/>) via <see cref="TaxConditionNormalizer"/>; si el texto esta vacio
+    /// o no normaliza, se cae al CODIGO AFIP (<paramref name="taxConditionId"/>) buscando su label en este
+    /// catalogo. Si ninguno de los dos resuelve, el resultado es <see cref="TaxConditionCanonical.Unknown"/> —
+    /// "faltan datos fiscales".</para>
+    /// </summary>
+    public static TaxConditionCanonical ResolveCanonical(string? taxConditionText, int? taxConditionId)
+    {
+        var fromText = TaxConditionNormalizer.Normalize(taxConditionText);
+        if (fromText != TaxConditionCanonical.Unknown)
+        {
+            return fromText;
+        }
+
+        if (taxConditionId is int id)
+        {
+            var label = TryGetLabel(id);
+            if (label != null)
+            {
+                return TaxConditionNormalizer.Normalize(label);
+            }
+        }
+
+        return TaxConditionCanonical.Unknown;
+    }
+
     public static (int? TaxConditionId, string TaxCondition) ResolveIncoming(
         int? incomingId, string? incomingText, int? existingId, string existingText)
     {

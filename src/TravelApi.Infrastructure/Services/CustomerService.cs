@@ -88,6 +88,10 @@ public class CustomerService : ICustomerService
             FullName = customer.FullName,
             Email = customer.Email,
             Phone = customer.Phone,
+            // Bug real encontrado 2026-07-17: DocumentType estaba declarado en el DTO pero nunca se
+            // seleccionaba aca (solo su hermano DocumentNumber) — la ficha del cliente nunca podia mostrar
+            // "DNI 30.405.060", solo el numero suelto.
+            DocumentType = customer.DocumentType,
             DocumentNumber = customer.DocumentNumber,
             Address = customer.Address,
             Notes = customer.Notes,
@@ -201,6 +205,8 @@ public class CustomerService : ICustomerService
                 FullName = found.FullName,
                 Email = found.Email,
                 Phone = found.Phone,
+                // Mismo bug de GetCustomersAsync (ver comentario ahi): DocumentType faltaba en la proyeccion.
+                DocumentType = found.DocumentType,
                 DocumentNumber = found.DocumentNumber,
                 Address = found.Address,
                 Notes = found.Notes,
@@ -670,24 +676,49 @@ public class CustomerService : ICustomerService
     public async Task<CustomerAccountOverviewDto> GetCustomerAccountOverviewAsync(int id, CancellationToken cancellationToken)
     {
         var ownerScope = await GetOwnerScopeOrNullAsync(cancellationToken);
-        var customer = await _dbContext.Customers
+
+        // Tanda "Datos" (2026-07-17): ademas de los campos que ya mostraba el overview, traemos
+        // TaxCondition/TaxConditionId SOLO para calcular HasPendingTaxData mas abajo — no se persisten en el
+        // DTO como texto plano porque la ficha ya los obtiene tipados desde GetCustomerAsync.
+        var customerRow = await _dbContext.Customers
             .AsNoTracking()
             .Where(entity => entity.Id == id)
-            .Select(entity => new CustomerAccountCustomerDto
+            .Select(entity => new
             {
-                PublicId = entity.PublicId,
-                FullName = entity.FullName,
-                Email = entity.Email,
-                Phone = entity.Phone,
-                TaxId = entity.TaxId,
-                CreditLimit = entity.CreditLimit
+                Dto = new CustomerAccountCustomerDto
+                {
+                    PublicId = entity.PublicId,
+                    FullName = entity.FullName,
+                    Email = entity.Email,
+                    Phone = entity.Phone,
+                    TaxId = entity.TaxId,
+                    CreditLimit = entity.CreditLimit
+                },
+                entity.TaxCondition,
+                entity.TaxConditionId
             })
             .FirstOrDefaultAsync(cancellationToken);
 
-        if (customer == null)
+        if (customerRow == null)
         {
             throw new KeyNotFoundException("Cliente no encontrado");
         }
+
+        var customer = customerRow.Dto;
+
+        // "Faltan datos fiscales" (spec UX §7): MISMA formula que usa el motor de anulaciones para bloquear
+        // con INV-118 — ver el docstring de HasPendingTaxData en el DTO. Con el default de alta "Consumidor
+        // Final" esto casi siempre da false; el caso real es un cliente legacy con texto y codigo rotos.
+        var taxConditionCanonical = CustomerTaxConditionCatalog.ResolveCanonical(
+            customerRow.TaxCondition, customerRow.TaxConditionId);
+        var hasPendingTaxData = taxConditionCanonical == TaxConditionCanonical.Unknown;
+
+        // "CUIT bloqueado" (CODE-06): MISMO guard que ya usa CustomerService.UpdateCustomerAsync para
+        // rechazar el cambio de CUIT. No lo invocamos con la intencion de bloquear nada aca — es de solo
+        // lectura, para que la pantalla pueda deshabilitar el campo ANTES de que el usuario intente guardar.
+        var taxIdBlockReason = await MutationGuards.GetCustomerTaxIdMutationBlockReasonAsync(
+            _dbContext, id, cancellationToken);
+        var taxIdLocked = taxIdBlockReason != null;
 
         // La cuenta del cliente se apoya en open items documentados: comprobantes aprobados menos cobros e
         // imputaciones explicitas. Cada moneda conserva su propio saldo; nunca se compensan ARS y USD.
@@ -797,7 +828,11 @@ public class CustomerService : ICustomerService
             Summary = summary,
             // "Multas en la cuenta del cliente" (2026-07-15): bloque APARTE del summary (no toca
             // ReceivableByCurrency ni el resto de los totales existentes).
-            PendingPenalties = pendingPenalties
+            PendingPenalties = pendingPenalties,
+            // Solapa "Datos" (spec UX §7, 2026-07-17): veredictos calculados arriba con las MISMAS formulas
+            // que usa la emision/CODE-06 — la pantalla no recalcula nada, solo lee estos dos flags.
+            HasPendingTaxData = hasPendingTaxData,
+            TaxIdLocked = taxIdLocked
         };
     }
 

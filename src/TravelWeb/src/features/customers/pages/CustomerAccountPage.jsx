@@ -24,6 +24,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
+  AlertTriangle,
   ArrowLeft,
   Loader2,
   Mail,
@@ -65,8 +66,10 @@ import { getMoneyStatus, isReservaAnulada } from "../../reservas/moneyStatus";
 import { formatTipoComprobante } from "../lib/facturacionFilters";
 import { resolverFilaReservaAnuladaCuenta } from "../lib/pendingPenaltiesLogic";
 import { prefijoDestinoAplicacionSaldo } from "../lib/creditWithdrawalLogic";
+import { debeMostrarBannerDatosFiscales } from "../lib/datosClienteLogic";
 import { EstadoCuentaClienteTab } from "../components/EstadoCuentaClienteTab";
 import { FacturacionClienteTab } from "../components/FacturacionClienteTab";
+import { DatosClienteTab } from "../components/DatosClienteTab";
 // Tanda D2 (2026-07-16): MultaPendienteDeCobroBlock DEJA de renderizarse acá — su
 // información pasa a la línea "Multas abiertas" de la foto de saldo (FotoDeSaldoCuenta)
 // y a los renglones de multa dentro del extracto (EstadoCuentaClienteTab). El archivo
@@ -714,6 +717,37 @@ export default function CustomerAccountPage() {
         </div>
       )}
 
+      {/*
+        ── Banner "Faltan los datos fiscales" (spec 2026-07-17, §4) ─────────────
+        Espejo exacto del banner del operador (supplier-missing-tax-condition-banner):
+        franja ámbar de una línea, SOLO informativa (no bloquea nada de esta pantalla).
+        Se enciende con overview.hasPendingTaxData — NUNCA se recalcula acá (el mismo
+        veredicto que hoy traba facturar/anular/devolver, ver docstring del DTO backend).
+        Nace del callejón sin salida que reportó Gastón: la devolución avisaba "completá
+        la condición fiscal" pero la ficha no tenía forma de editarla — ahora el botón
+        de este banner lleva directo a la solapa "Datos" nueva.
+      */}
+      {debeMostrarBannerDatosFiscales(overview?.hasPendingTaxData) && (
+        <div
+          data-testid="customer-missing-tax-condition-banner"
+          className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-200"
+        >
+          <AlertTriangle className="h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+          <span>
+            <span className="font-bold">Faltan los datos fiscales de este cliente.</span>{" "}
+            Completá su condición fiscal para poder facturar, anular y emitir devoluciones sin trabas.
+          </span>
+          <button
+            type="button"
+            onClick={() => setActiveTab("datos")}
+            data-testid="customer-missing-tax-condition-cta"
+            className="ml-auto flex-shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1 text-xs font-bold text-amber-800 transition-colors hover:bg-amber-100 dark:border-amber-700 dark:bg-slate-800 dark:text-amber-200 dark:hover:bg-amber-900/30"
+          >
+            Completar datos
+          </button>
+        </div>
+      )}
+
       {/* ── Solapas ─────────────────────────────────────────────────────────── */}
       <div className="flex flex-col gap-4">
         {/* Barra de solapas con data-testid estables */}
@@ -723,6 +757,7 @@ export default function CustomerAccountPage() {
             { key: "estadoDeCuenta", label: "Estado de cuenta", count: null },
             { key: "facturacion", label: "Facturación", count: summary.invoiceCount || 0 },
             { key: "datosBancarios", label: "Datos bancarios", count: null },
+            { key: "datos", label: "Datos", count: null },
           ].map((tab) => (
             <button
               key={tab.key}
@@ -941,6 +976,22 @@ export default function CustomerAccountPage() {
             title="Datos bancarios del cliente"
             canEdit={hasPermission("clientes.edit")}
           />
+        )}
+
+        {/* ── Contenido de la solapa Datos ──────────────────────────────────
+            Edición en línea de identidad + condición fiscal del cliente (spec
+            2026-07-17). Reemplaza al modal del listado como lugar para editar
+            desde la ficha; ese modal sigue existiendo solo para el alta. */}
+        {activeTab === "datos" && (
+          <div>
+            <h2 className="mb-6 text-lg font-semibold">Datos del cliente</h2>
+            <DatosClienteTab
+              customerPublicId={publicId}
+              taxIdLocked={overview?.taxIdLocked}
+              canEdit={hasPermission("clientes.edit")}
+              onGuardado={loadOverview}
+            />
+          </div>
         )}
       </div>
 
