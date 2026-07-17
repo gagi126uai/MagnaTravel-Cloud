@@ -1790,7 +1790,7 @@ public class BookingCancellationService
     {
         var agencyCanonical = TaxConditionNormalizer.Normalize(afipSettings?.TaxCondition);
         var supplierCanonical = TaxConditionNormalizer.Normalize(supplier?.TaxCondition);
-        var customerCanonical = TaxConditionNormalizer.Normalize(customer?.TaxCondition);
+        var customerCanonical = ResolveCustomerTaxConditionCanonical(customer);
 
         if (agencyCanonical == TaxConditionCanonical.Unknown
             || supplierCanonical == TaxConditionCanonical.Unknown
@@ -1811,6 +1811,42 @@ public class BookingCancellationService
         // Un CUIT/CUIL cargado como "" o solo espacios NO es un dato: lo tratamos igual que si nunca
         // se hubiera cargado (null), asi el snapshot no persiste basura.
         static string? NormalizeTaxId(string? raw) => string.IsNullOrWhiteSpace(raw) ? null : raw.Trim();
+    }
+
+    /// <summary>
+    /// Red de seguridad ACOTADA (2026-07-17, obra del bug "edito la condicion fiscal del cliente y no
+    /// hace nada"): si el TEXTO de la condicion fiscal del cliente (<c>Customer.TaxCondition</c>) esta
+    /// vacio o NO NORMALIZA, se intenta resolver por el CODIGO AFIP (<c>Customer.TaxConditionId</c>, via
+    /// <see cref="CustomerTaxConditionCatalog"/>) antes de bloquear con INV-118.
+    ///
+    /// <para>LIMITE IMPORTANTE (review 2026-07-17, H1): este fallback NO cubre la fila del bug real —
+    /// un texto VALIDO pero EQUIVOCADO (ej. Id=1 RI con texto viejo "Consumidor Final") normaliza bien
+    /// y GANA; el codigo ni se consulta. Esa fila la sanan (a) la migracion de reparacion
+    /// RepairCustomerTaxConditionTextFromId (una sola vez, sobre lo ya desalineado en la base) y (b) el
+    /// fix de <c>CustomerService</c> que desde ahora deriva SIEMPRE el texto del codigo (evita que se
+    /// vuelva a desalinear). El fallback solo protege contra textos vacios/rotos futuros.</para>
+    ///
+    /// <para>Solo aplica al CLIENTE: <c>Supplier.TaxCondition</c> y <c>AgencySettings.TaxCondition</c> no
+    /// tienen un codigo AFIP equivalente cargado desde un dropdown propio, asi que no hay de donde caer.</para>
+    /// </summary>
+    private static TaxConditionCanonical ResolveCustomerTaxConditionCanonical(Customer? customer)
+    {
+        var fromText = TaxConditionNormalizer.Normalize(customer?.TaxCondition);
+        if (fromText != TaxConditionCanonical.Unknown)
+        {
+            return fromText;
+        }
+
+        if (customer?.TaxConditionId is int taxConditionId)
+        {
+            var label = CustomerTaxConditionCatalog.TryGetLabel(taxConditionId);
+            if (label != null)
+            {
+                return TaxConditionNormalizer.Normalize(label);
+            }
+        }
+
+        return TaxConditionCanonical.Unknown;
     }
 
     public async Task<BookingCancellationDto> ConfirmAsync(

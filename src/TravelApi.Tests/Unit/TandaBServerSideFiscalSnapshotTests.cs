@@ -118,6 +118,57 @@ public class TandaBServerSideFiscalSnapshotTests
     }
 
     // ============================================================
+    // Parte 1-bis (2026-07-17, fix de raiz del bug "edito la condicion fiscal del cliente y no hace
+    // nada"): defensa en profundidad para el TEXTO desalineado del cliente. Cubre el caso de un
+    // cliente que quedo con TaxConditionId cargado pero TaxCondition roto/viejo (el estado exacto en
+    // el que el bug real dejaba a un cliente antes de existir CustomerTaxConditionCatalog): el
+    // resolver ahora cae al codigo AFIP antes de bloquear con INV-118.
+    // ============================================================
+
+    [Fact]
+    public void ResolveServerSideTaxIdentity_CustomerTextUnknown_ButIdKnown_FallsBackToId()
+    {
+        var afipSettings = new AfipSettings { TaxCondition = "Monotributo" };
+        var supplier = new Supplier { Name = "Operador", TaxCondition = "IVA_RESP_INSCRIPTO" };
+        // Exactamente el estado desalineado del bug real: el texto quedo vacio/roto pero el codigo
+        // (elegido en el desplegable de la ficha) SI esta bien cargado.
+        var customer = new Customer { FullName = "Cliente", TaxCondition = "", TaxConditionId = 1 };
+
+        var identity = BookingCancellationService.ResolveServerSideTaxIdentity(afipSettings, supplier, customer);
+
+        Assert.Equal("RESPONSABLE_INSCRIPTO", identity.CustomerTaxCondition);
+    }
+
+    [Fact]
+    public void ResolveServerSideTaxIdentity_CustomerTextValid_IdIsNotConsulted()
+    {
+        // Si el texto YA normaliza, el codigo ni se mira (evita que un Id desalineado con un texto
+        // BUENO pise un dato correcto — el texto explicito sigue ganando cuando es valido).
+        var afipSettings = new AfipSettings { TaxCondition = "Monotributo" };
+        var supplier = new Supplier { Name = "Operador", TaxCondition = "IVA_RESP_INSCRIPTO" };
+        var customer = new Customer { FullName = "Cliente", TaxCondition = "Exento", TaxConditionId = 1 };
+
+        var identity = BookingCancellationService.ResolveServerSideTaxIdentity(afipSettings, supplier, customer);
+
+        Assert.Equal("EXENTO", identity.CustomerTaxCondition);
+    }
+
+    [Fact]
+    public void ResolveServerSideTaxIdentity_CustomerTextUnknown_AndIdAlsoMissing_StillThrowsInv118()
+    {
+        // Sin texto Y sin codigo: la ficha esta genuinamente incompleta, sigue bloqueando (no hay
+        // ningun dato del que el fallback pueda derivar algo).
+        var afipSettings = new AfipSettings { TaxCondition = "Monotributo" };
+        var supplier = new Supplier { Name = "Operador", TaxCondition = "IVA_RESP_INSCRIPTO" };
+        var customer = new Customer { FullName = "Cliente", TaxCondition = "", TaxConditionId = null };
+
+        var ex = Assert.Throws<BusinessInvariantViolationException>(() =>
+            BookingCancellationService.ResolveServerSideTaxIdentity(afipSettings, supplier, customer));
+
+        Assert.Equal("INV-118", ex.InvariantCode);
+    }
+
+    // ============================================================
     // Parte 2 — ConfirmAsync extremo a extremo (InMemory).
     // ============================================================
 

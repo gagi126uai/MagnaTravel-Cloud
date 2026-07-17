@@ -5,6 +5,7 @@ using TravelApi.Application.Constants;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Helpers;
 using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Reservations;
@@ -260,15 +261,18 @@ public class CustomerService : ICustomerService
             }
         }
 
-        // Fix R1 (2026-07-17): el default "Consumidor Final" del ALTA vivia antes en el mapper del
-        // controller (coalesce `?? "Consumidor Final"`). Se movio aca a proposito: asi el controller puede
-        // pasar el valor CRUDO (potencialmente null) tanto en alta como en edicion, y UpdateCustomerAsync
-        // puede distinguir "el cliente nuevo no trae condicion todavia" (alta, se defaultea) de "el PUT de
-        // edicion omitio el campo" (se preserva el valor existente, ver UpdateCustomerAsync).
-        if (string.IsNullOrWhiteSpace(customer.TaxCondition))
-        {
-            customer.TaxCondition = "Consumidor Final";
-        }
+        // Fix R2 (2026-07-17, causa raiz del bug "edito la condicion fiscal y no hace nada"): antes esta
+        // funcion solo defaulteaba el TEXTO cuando venia vacio, sin mirar el CODIGO (TaxConditionId). Un
+        // alta que llegaba con codigo (ej. 1 = Responsable Inscripto) pero sin texto (el formulario del
+        // cliente nunca manda el texto) quedaba con Id=1 y texto="Consumidor Final" (desalineados desde el
+        // dia 1). Ahora se resuelve con el catalogo UNICO (ver docstring de
+        // CustomerTaxConditionCatalog.ResolveIncoming): si vino un codigo, el texto SIEMPRE sale de ahi.
+        // "existingId: null, existingText: Consumidor Final" representa el estado de un cliente que
+        // todavia no existe (el default de alta de siempre).
+        var (resolvedTaxConditionId, resolvedTaxCondition) = CustomerTaxConditionCatalog.ResolveIncoming(
+            customer.TaxConditionId, customer.TaxCondition, existingId: null, existingText: "Consumidor Final");
+        customer.TaxConditionId = resolvedTaxConditionId;
+        customer.TaxCondition = resolvedTaxCondition;
 
         customer.IsActive = true;
         _dbContext.Customers.Add(customer);
@@ -388,19 +392,22 @@ public class CustomerService : ICustomerService
         // DocumentType, DocumentNumber) siguen libres de editar sin guard ni auditoria especial —
         // son datos operativos del cliente, no del comprobante AFIP.
         //
-        // Fix R1 (2026-07-17, hallazgo de la revision): "omitido = se preserva", MISMO criterio que
-        // DocumentType/DocumentNumber (ADR-023 T1) de abajo. El form de ficha del cliente
-        // (CustomerFormModal.jsx) solo manda taxConditionId — NUNCA el string taxCondition — asi que si
-        // tratabamos "vino null" como "el usuario lo quiere en null/default", CADA EDICION (aunque solo
-        // tocara el telefono) pisaba en silencio la condicion real con el default. Por eso: si el campo
-        // viene vacio, se usa el valor YA GUARDADO como "entrante" — ni se persiste un cambio ni se dispara
-        // auditoria de condicion. OJO: esto no distingue "el front no mando el campo" de "alguien quiere
-        // borrarlo a proposito" (el contrato de hoy no permite distinguirlos); preservar ante vacio es el
-        // default seguro, igual que ya se documenta para DocumentType/DocumentNumber mas abajo.
-        var incomingTaxConditionId = customer.TaxConditionId ?? existing.TaxConditionId;
-        var incomingTaxCondition = string.IsNullOrWhiteSpace(customer.TaxCondition)
-            ? existing.TaxCondition
-            : customer.TaxCondition;
+        // Fix R2 (2026-07-17, causa raiz del bug "edito la condicion fiscal del cliente y no hace nada"):
+        // el Fix R1 de esta misma tarde solucionaba el "pisado silencioso" (omitir el campo ya no borraba
+        // la condicion real) pero dejaba un agujero: el form de ficha del cliente (CustomerFormModal.jsx)
+        // SOLO manda taxConditionId — NUNCA el string taxCondition — asi que con el criterio viejo
+        // ("omitido = se preserva") el CODIGO se actualizaba bien pero el TEXTO quedaba SIEMPRE con el
+        // valor anterior (nunca se derivaba del codigo nuevo). Resultado: el vendedor cambiaba la condicion
+        // en la ficha, el desplegable mostraba el cambio guardado al reabrir, pero
+        // BookingCancellationService.ResolveServerSideTaxIdentity (que solo lee el TEXTO) seguia viendo la
+        // condicion vieja y bloqueaba la devolucion con "completa la condicion fiscal".
+        //
+        // Ahora los dos campos se resuelven JUNTOS con el catalogo UNICO (ver docstring de
+        // CustomerTaxConditionCatalog.ResolveIncoming): si vino un codigo, el texto SIEMPRE sale de ahi
+        // (nunca puede quedar un codigo nuevo con un texto viejo). El criterio "omitido = se preserva"
+        // para DocumentType/DocumentNumber de mas abajo NO cambia.
+        var (incomingTaxConditionId, incomingTaxCondition) = CustomerTaxConditionCatalog.ResolveIncoming(
+            customer.TaxConditionId, customer.TaxCondition, existing.TaxConditionId, existing.TaxCondition);
 
         var taxIdChanged = !string.Equals(existing.TaxId, customer.TaxId, StringComparison.Ordinal);
         var taxConditionChanged =
