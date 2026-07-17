@@ -1618,7 +1618,10 @@ public class CustomerService : ICustomerService
                 // ADR-044 "Deshacer una multa ya emitida": el puente de multa deshecha tampoco es un cobro real;
                 // su Notes no debe filtrarse a la pestaña Pagos del cliente. Method + !AffectsCash lo identifica.
                 || (payment.Method == ClientCreditService.DebitNoteUndoBridgeMethod
-                    && !payment.AffectsCash)));
+                    && !payment.AffectsCash)
+                // Tanda D1 (2026-07-16): idem para el puente de saldo a favor aplicado contra una MULTA.
+                || (payment.Method == AppliedCreditBridge.PenaltyBridgeMethod
+                    && !payment.AffectsCash && payment.AppliedFromCreditWithdrawalId != null)));
 
         if (!string.IsNullOrWhiteSpace(query.Search))
         {

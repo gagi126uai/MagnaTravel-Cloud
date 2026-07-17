@@ -497,6 +497,156 @@ public class CustomersController : ControllerBase
         }
     }
 
+    // ===================================================================================================
+    // Tanda D1 (2026-07-16) — saldo a favor del cliente APLICADO CONTRA UNA MULTA + neteo automatico al
+    // devolver. Mismos gates que el bloque FC4 de arriba: lectura clientes.view+cobranzas.view, escritura
+    // cobranzas.edit. La ownership de la reserva de la multa la valida el service (403 si esta a cargo de
+    // otro vendedor y el usuario no ve todas las cobranzas).
+    // ===================================================================================================
+
+    /// <summary>Vista previa (solo lectura) de cuanto se le devolveria al cliente si pide su saldo a favor ahora, neteado contra sus multas abiertas.</summary>
+    [HttpGet("{publicIdOrLegacyId}/credit/refund-netting-preview")]
+    [RequirePermission(Permissions.ClientesView)]
+    [RequirePermission(Permissions.CobranzasView)]
+    public async Task<ActionResult<RefundNettingPreviewDto>> GetCustomerRefundNettingPreview(
+        string publicIdOrLegacyId, [FromQuery] string currency, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Customer>(publicIdOrLegacyId, cancellationToken);
+            return Ok(await _clientCreditService.GetCustomerRefundNettingPreviewAsync(id, currency, cancellationToken));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>Aplica saldo a favor del cliente contra UNA multa (Nota de Debito de una reserva anulada del mismo cliente, misma moneda).</summary>
+    [HttpPost("{publicIdOrLegacyId}/credit/apply-to-penalty")]
+    [RequirePermission(Permissions.CobranzasEdit)]
+    public async Task<ActionResult<ClientCreditApplicationResultDto>> ApplyCustomerCreditToPenalty(
+        string publicIdOrLegacyId, [FromBody] ApplyCreditToPenaltyRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Customer>(publicIdOrLegacyId, cancellationToken);
+            var (userId, userName) = ResolveActor();
+            var result = await _clientCreditService.ApplyCustomerCreditToPenaltyAsync(id, request, userId, userName, cancellationToken);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // La reserva de la multa no esta a cargo del usuario actual (y este no ve todas las cobranzas).
+            return new ObjectResult(PermissionDeniedProblemFactory.OwnershipRequired(OwnedEntity.Reserva.ToString()))
+            {
+                StatusCode = StatusCodes.Status403Forbidden
+            };
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (BusinessInvariantViolationException ex)
+        {
+            // Gate de comprobante sin CAE / moneda cruzada / cliente equivocado / tope superado / sin pool (409).
+            return Conflict(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Modulo deshabilitado (feature flag off), o la ND no corresponde a una multa documentada.
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>Devuelve el saldo a favor del cliente en una moneda, neteando automaticamente contra sus multas abiertas de esa moneda antes de calcular el egreso.</summary>
+    [HttpPost("{publicIdOrLegacyId}/credit/refund-with-netting")]
+    [RequirePermission(Permissions.CobranzasEdit)]
+    public async Task<ActionResult<RefundWithNettingResultDto>> RefundCustomerCreditWithNetting(
+        string publicIdOrLegacyId, [FromBody] RefundWithNettingRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Customer>(publicIdOrLegacyId, cancellationToken);
+            var (userId, userName) = ResolveActor();
+            var result = await _clientCreditService.RefundCustomerCreditWithNettingAsync(id, request, userId, userName, cancellationToken);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (BusinessInvariantViolationException ex)
+        {
+            // Sin saldo a favor disponible / Ley 25.345 sobre el neto en efectivo (409).
+            return Conflict(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Modulo deshabilitado (feature flag off).
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Revierte una aplicacion de saldo a favor CONTRA UNA MULTA (mismo mecanismo de reversa que
+    /// <see cref="ReverseCustomerCreditApplication"/>, ruta dedicada para que el front la distinga en el
+    /// extracto). El puente de multa se revierte con el MISMO metodo de servicio: el bolsillo se re-incrementa
+    /// y la ND vuelve a su saldo pendiente anterior.
+    /// </summary>
+    [HttpPost("{publicIdOrLegacyId}/credit/penalty-applications/{applicationPublicId:guid}/reverse")]
+    [RequirePermission(Permissions.CobranzasEdit)]
+    public async Task<ActionResult<ClientCreditApplicationResultDto>> ReverseCustomerCreditPenaltyApplication(
+        string publicIdOrLegacyId,
+        Guid applicationPublicId,
+        [FromBody] ReverseClientCreditApplicationRequest request,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Customer>(publicIdOrLegacyId, cancellationToken);
+            var (userId, userName) = ResolveActor();
+            var result = await _clientCreditService.ReverseCustomerCreditApplicationAsync(
+                id, applicationPublicId, request, userId, userName, cancellationToken);
+            return Ok(result);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return new ObjectResult(PermissionDeniedProblemFactory.OwnershipRequired(OwnedEntity.Reserva.ToString()))
+            {
+                StatusCode = StatusCodes.Status403Forbidden
+            };
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (BusinessInvariantViolationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { message = ex.Message });
+        }
+    }
+
     /// <summary>Actor actual (userId, userName) para auditoria de las operaciones de saldo a favor del cliente.</summary>
     private (string UserId, string? UserName) ResolveActor()
     {

@@ -231,6 +231,17 @@ public static class AuditActions
     public const string ClientCreditApplicationReversed = "ClientCreditApplicationReversed";
 
     /// <summary>
+    /// Tanda D1 (2026-07-16): se APLICO saldo a favor del cliente contra UNA MULTA (Nota de Debito de una
+    /// reserva anulada del mismo cliente), sin mover caja. Se emite UN evento por bolsillo drenado (misma
+    /// convencion que <see cref="ClientCreditApplied"/>), staged en la misma transaccion que el retiro + el
+    /// Payment puente. El detail JSON lleva withdrawalPublicId, entryPublicId, customerPublicId,
+    /// debitNotePublicId, reservaPublicId (la reserva ANULADA dueña de la multa), currency y amount — NUNCA
+    /// datos sensibles. La reversa de esta aplicacion reusa <see cref="ClientCreditApplicationReversed"/> (el
+    /// puente de multa se revierte con el mismo mecanismo que el puente a otra reserva).
+    /// </summary>
+    public const string ClientCreditAppliedToPenalty = "ClientCreditAppliedToPenalty";
+
+    /// <summary>
     /// (2026-06-25): se ANULO una reserva en firme SIN factura pero CON cobros vivos (caso (3) del flujo
     /// unificado de "Anular reserva"). La reserva paso a <c>Cancelled</c> y la plata cobrada se convirtio en
     /// SALDO A FAVOR del cliente (un <see cref="ClientCreditEntry"/> por cada moneda con cobros vivos), sin

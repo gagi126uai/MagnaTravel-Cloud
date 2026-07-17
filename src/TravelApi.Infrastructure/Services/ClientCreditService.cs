@@ -664,14 +664,17 @@ public class ClientCreditService : IClientCreditService
             ?? throw new KeyNotFoundException(
                 $"ClientCreditWithdrawal {withdrawalPublicId} no encontrado.");
 
-        // 2) Solo se revierte una APLICACION a otra reserva. Los otros kinds (efectivo, transferencia,
-        //    KeptAsCredit, ReversedToOperator) tienen sus propios flujos de anulacion; no se mezclan aca.
-        //    ValidationException -> el controller la traduce a 400 (request mal dirigido), no a 409.
+        // 2) Solo se revierte una APLICACION (a otra reserva O a una multa: ambas comparten el mismo Kind
+        //    AppliedToNewBooking, ver ApplyCreditToPenaltyCoreOnEntries). Los otros kinds (efectivo,
+        //    transferencia, KeptAsCredit, ReversedToOperator) tienen sus propios flujos de anulacion; no se
+        //    mezclan aca. ValidationException -> el controller la traduce a 400 (request mal dirigido), no a 409.
+        //    Cosmetico (fix post-review Tanda D1): el mensaje NO debe asumir "a otra reserva" (tambien se usa
+        //    para multas) ni exponer el nombre interno del Kind en ingles.
         if (withdrawal.Kind != WithdrawalKind.AppliedToNewBooking)
         {
             throw new System.ComponentModel.DataAnnotations.ValidationException(
-                $"Solo se puede revertir una aplicacion de saldo a favor a otra reserva " +
-                $"(kind AppliedToNewBooking). Este retiro es {withdrawal.Kind}.");
+                "Este retiro no corresponde a una aplicación de saldo a favor (a otra reserva o a una multa), " +
+                "asi que no se puede revertir por acá.");
         }
 
         var entry = withdrawal.Entry;
@@ -1366,15 +1369,21 @@ public class ClientCreditService : IClientCreditService
             });
         }
 
-        // Aplicaciones VIVAS de saldo a favor a otras reservas del cliente: cada Payment puente activo
-        // (Method=SaldoAFavorAplicado, !IsDeleted) atado a un retiro AppliedToNewBooking de un bolsillo de ESTE
-        // cliente. Una sola query (proyeccion) para no disparar N+1: trae directo el numero de la reserva destino.
-        // Por INV-093 la reserva destino siempre es del MISMO cliente, asi que el titular es el propio cliente.
-        // El front muestra estas filas en el extracto con un boton "Revertir" por cada una (revierte por su
-        // ApplicationPublicId). Asi un apply que drenó N bolsillos queda como N filas independientes.
+        // Aplicaciones VIVAS de saldo a favor: cada Payment puente activo (!IsDeleted) atado a un retiro
+        // AppliedToNewBooking de un bolsillo de ESTE cliente. Una sola query (proyeccion) para no disparar
+        // N+1: trae directo el numero de la reserva destino. Por INV-093 la reserva destino siempre es del
+        // MISMO cliente, asi que el titular es el propio cliente. El front muestra estas filas en el extracto
+        // con un boton "Revertir" por cada una (revierte por su ApplicationPublicId). Asi un apply que drenó N
+        // bolsillos queda como N filas independientes.
+        //
+        // Tanda D1 (2026-07-16): AHORA acepta DOS Methods — el puente "aplicado a otra reserva" (BridgeMethod)
+        // Y el puente "aplicado a una multa" (PenaltyBridgeMethod, con LinkedInvoiceId != null apuntando a la
+        // ND). p.Reserva sigue siendo la reserva ANULADA dueña de la multa en ese segundo caso (el puente vive
+        // ahi), asi que TargetReservaPublicId/Number siguen siendo correctos sin cambios; solo se suma
+        // DestinationKind + el numero de la ND para que el front etiquete cada fila correctamente.
         var applicationQuery = _db.Payments
             .AsNoTracking()
-            .Where(p => p.Method == AppliedCreditBridge.BridgeMethod
+            .Where(p => (p.Method == AppliedCreditBridge.BridgeMethod || p.Method == AppliedCreditBridge.PenaltyBridgeMethod)
                      && !p.AffectsCash
                      && !p.IsDeleted
                      && p.AppliedFromCreditWithdrawalId != null
@@ -1398,23 +1407,54 @@ public class ClientCreditService : IClientCreditService
                 p.Currency,
                 p.Amount,
                 AppliedAt = p.PaidAt,
+                p.Method,
+                p.LinkedInvoiceId,
                 TargetReservaPublicId = p.Reserva != null ? p.Reserva.PublicId : Guid.Empty,
                 TargetReservaNumber = p.Reserva != null ? p.Reserva.NumeroReserva : null,
             })
             .ToListAsync(ct);
 
+        // Para las filas de destino "multa" (LinkedInvoiceId != null), resolvemos el numero legible de la ND
+        // en UNA query batcheada (sin N+1).
+        var debitNoteIdsInApplications = applicationRows
+            .Where(r => r.LinkedInvoiceId.HasValue)
+            .Select(r => r.LinkedInvoiceId!.Value)
+            .Distinct()
+            .ToList();
+        var debitNoteDisplayById = debitNoteIdsInApplications.Count == 0
+            ? new Dictionary<int, (Guid PublicId, string Display)>()
+            : await _db.Invoices
+                .AsNoTracking()
+                .Where(i => debitNoteIdsInApplications.Contains(i.Id))
+                .Select(i => new { i.Id, i.PublicId, i.PuntoDeVenta, i.NumeroComprobante })
+                .ToDictionaryAsync(
+                    i => i.Id,
+                    i => (PublicId: i.PublicId, Display: $"{i.PuntoDeVenta:D5}-{i.NumeroComprobante:D8}"),
+                    ct);
+
         dto.ActiveApplications = applicationRows
             .OrderByDescending(r => r.AppliedAt)
-            .Select(r => new ClientCreditApplicationLineDto
+            .Select(r =>
             {
-                ApplicationPublicId = r.ApplicationPublicId,
-                EntryPublicId = r.EntryPublicId,
-                Currency = Monedas.Normalizar(r.Currency),
-                Amount = r.Amount,
-                TargetReservaPublicId = r.TargetReservaPublicId,
-                TargetReservaNumber = r.TargetReservaNumber,
-                TargetReservaHolderName = customer.FullName, // INV-093: el titular del destino es este mismo cliente
-                AppliedAt = r.AppliedAt,
+                bool isPenalty = r.Method == AppliedCreditBridge.PenaltyBridgeMethod && r.LinkedInvoiceId.HasValue;
+                debitNoteDisplayById.TryGetValue(r.LinkedInvoiceId ?? -1, out var debitNoteDisplay);
+
+                return new ClientCreditApplicationLineDto
+                {
+                    ApplicationPublicId = r.ApplicationPublicId,
+                    EntryPublicId = r.EntryPublicId,
+                    Currency = Monedas.Normalizar(r.Currency),
+                    Amount = r.Amount,
+                    TargetReservaPublicId = r.TargetReservaPublicId,
+                    TargetReservaNumber = r.TargetReservaNumber,
+                    TargetReservaHolderName = customer.FullName, // INV-093: el titular del destino es este mismo cliente
+                    AppliedAt = r.AppliedAt,
+                    DestinationKind = isPenalty
+                        ? ClientCreditApplicationDestinationKind.Penalty
+                        : ClientCreditApplicationDestinationKind.Reserva,
+                    DebitNotePublicId = isPenalty ? debitNoteDisplay.PublicId : null,
+                    DebitNoteDisplayNumber = isPenalty ? debitNoteDisplay.Display : null,
+                };
             })
             .ToList();
 
@@ -1714,12 +1754,15 @@ public class ClientCreditService : IClientCreditService
             throw new KeyNotFoundException("Aplicacion de saldo a favor no encontrada");
         }
 
-        // Solo se revierte una APLICACION a otra reserva. Los otros kinds (efectivo, transferencia, etc.) tienen
-        // sus propios flujos. Mismo criterio (409) que el lado operador.
+        // Solo se revierte una APLICACION (a otra reserva O a una multa: ambas comparten el mismo Kind
+        // AppliedToNewBooking). Los otros kinds (efectivo, transferencia, etc.) tienen sus propios flujos.
+        // Mismo criterio (409) que el lado operador. Cosmetico (fix post-review Tanda D1): el mensaje NO debe
+        // asumir "a otra reserva" (esta misma ruta reversa tambien aplicaciones contra multas).
         if (withdrawal.Kind != WithdrawalKind.AppliedToNewBooking)
         {
             throw new BusinessInvariantViolationException(
-                "Solo se puede revertir una aplicacion de saldo a favor a otra reserva (no otro tipo de retiro).",
+                "Este retiro no corresponde a una aplicación de saldo a favor (a otra reserva o a una multa), " +
+                "asi que no se puede revertir por acá.",
                 invariantCode: "INV-CLICREDIT-005");
         }
 
@@ -1836,6 +1879,793 @@ public class ClientCreditService : IClientCreditService
         }
     }
 
+    // =========================================================================
+    // Tanda D1 (2026-07-16): saldo a favor del cliente APLICADO CONTRA UNA MULTA + neteo automatico al
+    // devolver. Reusa el mismo modelo de puente que la aplicacion a otra reserva (ClientCreditWithdrawal +
+    // Payment puente), con dos diferencias: el Payment lleva LinkedInvoiceId=la ND (el enganche que hace que
+    // DebitNoteOutstandingLookup lo cuente como cobrado) y AffectsReservaBalance=false (no toca el saldo
+    // operativo de la reserva ya anulada, igual que un cobro real de multa).
+    //
+    // DISCIPLINA DE RETRY (por que TODO — lecturas frescas Y Add() — vive DENTRO del closure reintentable):
+    // el patron histórico del modulo (WithdrawAsync/TryApplyCustomerCreditOnceAsync/PaymentService.CreatePaymentAsync)
+    // arma las entidades UNA vez, FUERA del bloque que reintenta, porque ahi solo hay UNA entidad. Aca el neteo
+    // puede tocar VARIAS Notas de Debito en un solo pedido (un Add() por cada una); si el Add() quedara fuera
+    // del closure y Npgsql reintentara la transaccion entera ante un error transitorio, el ChangeTracker
+    // acumularia entidades DUPLICADAS de la corrida anterior (fila de pago repetida = plata fantasma). Por eso
+    // el closure reintentable arranca con _db.ChangeTracker.Clear() y hace TODO adentro (lecturas frescas +
+    // gate + Add() + SaveChanges): cada intento es una unidad limpia y autocontenida, segura de repetir.
+    // =========================================================================
+
+    /// <summary>Tanda D1: una multa ABIERTA (ND aprobada con CAE, saldo pendiente &gt; 0) candidata a recibir saldo a favor.</summary>
+    private sealed record OpenPenaltyRow(
+        int BcId,
+        int ReservaId,
+        Guid ReservaPublicId,
+        string NumeroReserva,
+        int DebitNoteId,
+        Guid DebitNotePublicId,
+        string DebitNoteDisplayNumber,
+        decimal ImporteTotal,
+        decimal Outstanding,
+        DateTime DebitNoteCreatedAt);
+
+    /// <summary>
+    /// Tanda D1 (fix N2/N3 post-review): multas FIRMES de un cliente en UNA moneda, mas antigua primero (por
+    /// fecha de la ND — FIFO, mismo criterio de antiguedad que el resto del modulo). Reusa la MISMA rama de
+    /// <c>CancellationPenaltyRules.LiveDebitNotePredicate</c> que ya usa la bandeja de multas del cliente
+    /// (solo "ND emitida y no anulada": una multa sin ND todavia, o en revision, no es un open item cobrable) +
+    /// <c>DebitNoteOutstandingLookup</c>/<c>DebitNoteOutstandingRules</c> — la MISMA fuente que el cartel de la
+    /// ficha, para que "cuanto debe" nunca diverja entre pantallas.
+    ///
+    /// <para><b>Regla del dueño ("el neteo descuenta TODO lo que debe")</b>: a proposito SIN filtro por
+    /// vendedor responsable NI por estado de la reserva. Es deuda DEL CLIENTE, no del vendedor — filtrar por
+    /// vendedor haria que el neteo devuelva de mas si el cliente tiene una multa en una reserva de OTRO
+    /// vendedor. Tampoco filtra por reserva Cancelled/PendingOperatorRefund: una cancelacion PARCIAL (ADR-025)
+    /// puede dejar una ND firme sobre una reserva que sigue VIVA, y esa deuda tambien hay que netearla. La
+    /// autorizacion de ownership se valida en el ENDPOINT (cobranzas.edit), no aca.</para>
+    /// </summary>
+    private async Task<List<OpenPenaltyRow>> LoadOpenPenaltiesForCustomerAsync(
+        int customerId, string currency, CancellationToken ct)
+    {
+        var normalizedCurrency = Monedas.Normalizar(currency);
+
+        // Solo la rama "ND VIVA emitida" (ver el XML-doc de CancellationPenaltyRules): una multa Issuing o
+        // UnderReview no tiene comprobante fiscal aprobado, asi que no es un open item cobrable todavia. El
+        // join directo contra bc.Reserva.PayerId reemplaza el filtro previo por estado de reserva.
+        var liveRows = await _db.BookingCancellations
+            .AsNoTracking()
+            .Where(bc => bc.Reserva.PayerId == customerId
+                && bc.DebitNoteStatus == DebitNoteStatus.Issued
+                && bc.DebitNoteInvoiceId != null
+                && bc.DebitNoteInvoice != null
+                && bc.DebitNoteInvoice.AnnulmentStatus != AnnulmentStatus.Succeeded)
+            .Select(bc => new
+            {
+                bc.Id,
+                bc.ReservaId,
+                bc.DebitNoteInvoiceId,
+                ReservaPublicId = bc.Reserva.PublicId,
+                bc.Reserva.NumeroReserva
+            })
+            .ToListAsync(ct);
+        if (liveRows.Count == 0) return new List<OpenPenaltyRow>();
+
+        // Dedupe por ND (riesgo de seguridad senalado en review): si mas de una BC apuntara a la MISMA ND
+        // (por ejemplo, una BC padre y una BC hija de una cancelacion multi-operador compartiendo la misma
+        // Nota de Debito), sin este paso el neteo la aplicaria DOS VECES contra el mismo pool del cliente.
+        var dedupedRows = liveRows
+            .GroupBy(r => r.DebitNoteInvoiceId!.Value)
+            .Select(g => g.First())
+            .ToList();
+
+        var debitNoteIds = dedupedRows.Select(r => r.DebitNoteInvoiceId!.Value).ToList();
+        var debitNotes = await _db.Invoices
+            .AsNoTracking()
+            .Where(i => debitNoteIds.Contains(i.Id))
+            .Select(i => new
+            {
+                i.Id,
+                i.PublicId,
+                i.TipoComprobante,
+                i.ImporteTotal,
+                i.MonId,
+                i.PuntoDeVenta,
+                i.NumeroComprobante,
+                i.Resultado,
+                i.CreatedAt
+            })
+            .ToDictionaryAsync(i => i.Id, ct);
+
+        var creditedByDebitNote = await DebitNoteOutstandingLookup.LoadCreditedAmountsAsync(_db, debitNoteIds, ct);
+        var collectedByDebitNote = await DebitNoteOutstandingLookup.LoadCollectedAmountsAsync(_db, debitNoteIds, ct);
+
+        var result = new List<OpenPenaltyRow>();
+        foreach (var row in dedupedRows)
+        {
+            if (!debitNotes.TryGetValue(row.DebitNoteInvoiceId!.Value, out var debitNote)) continue;
+            if (debitNote.Resultado != "A" || !InvoiceComprobanteHelpers.IsDebitNote(debitNote.TipoComprobante)) continue;
+
+            var debitNoteCurrency = Monedas.Normalizar(ArcaCurrencyMapper.ToIso(debitNote.MonId));
+            if (!string.Equals(debitNoteCurrency, normalizedCurrency, StringComparison.Ordinal)) continue;
+
+            var outstanding = TravelApi.Domain.Reservations.DebitNoteOutstandingRules.ComputeOutstanding(
+                debitNote.ImporteTotal,
+                creditedByDebitNote.GetValueOrDefault(debitNote.Id),
+                collectedByDebitNote.GetValueOrDefault(debitNote.Id));
+            if (outstanding <= 0m) continue;
+
+            result.Add(new OpenPenaltyRow(
+                BcId: row.Id,
+                ReservaId: row.ReservaId,
+                ReservaPublicId: row.ReservaPublicId,
+                NumeroReserva: row.NumeroReserva,
+                DebitNoteId: debitNote.Id,
+                DebitNotePublicId: debitNote.PublicId,
+                DebitNoteDisplayNumber: $"{debitNote.PuntoDeVenta:D5}-{debitNote.NumeroComprobante:D8}",
+                ImporteTotal: debitNote.ImporteTotal,
+                Outstanding: outstanding,
+                DebitNoteCreatedAt: debitNote.CreatedAt));
+        }
+
+        // FIFO por antiguedad de la ND; empate estable por BcId ascendente (para que, si el neteo llega a
+        // tocar varias BCs en la misma transaccion, siempre las visite en el MISMO orden entre corridas).
+        return result
+            .OrderBy(r => r.DebitNoteCreatedAt)
+            .ThenBy(r => r.BcId)
+            .ToList();
+    }
+
+    /// <summary>Tanda D1: re-lee credited/collected FRESCOS de una ND puntual y recalcula su pendiente. Solo lecturas.</summary>
+    private async Task<decimal> RecomputeFreshOutstandingAsync(int debitNoteId, decimal importeTotal, CancellationToken ct)
+    {
+        var ids = new List<int> { debitNoteId };
+        var credited = await DebitNoteOutstandingLookup.LoadCreditedAmountsAsync(_db, ids, ct);
+        var collected = await DebitNoteOutstandingLookup.LoadCollectedAmountsAsync(_db, ids, ct);
+        return TravelApi.Domain.Reservations.DebitNoteOutstandingRules.ComputeOutstanding(
+            importeTotal, credited.GetValueOrDefault(debitNoteId), collected.GetValueOrDefault(debitNoteId));
+    }
+
+    /// <summary>Tanda D1: bolsillos del cliente con saldo, en UNA moneda, TRACKEADOS (se van a mutar), orden FIFO.</summary>
+    private async Task<List<ClientCreditEntry>> LoadFifoCreditEntriesAsync(int customerId, string currency, CancellationToken ct)
+    {
+        var entries = await _db.ClientCreditEntries
+            .Where(e => e.CustomerId == customerId && e.RemainingBalance > 0m)
+            .ToListAsync(ct);
+        return entries
+            .Where(e => Monedas.Normalizar(e.Currency) == currency)
+            .OrderBy(e => e.CreatedAt)
+            .ThenBy(e => e.Id)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Tanda D1: NUCLEO sincronico (sin I/O) de "aplicar <paramref name="amountToApply"/> contra UNA ND",
+    /// drenando <paramref name="currencyEntriesFifo"/> — una lista YA CARGADA y TRACKEADA que el caller puede
+    /// reusar entre VARIAS llamadas (el neteo aplica contra N NDs con el MISMO pool de bolsillos, mutandolo en
+    /// memoria a medida que cada ND consume su parte; no se puede re-consultar la base a mitad de camino
+    /// porque nada esta guardado todavia). Arma (Add, sin SaveChanges) el/los <see cref="ClientCreditWithdrawal"/>
+    /// + Payment puente + auditoria STAGED. Tira <see cref="BusinessInvariantViolationException"/> INV-085 si
+    /// <paramref name="amountToApply"/> supera lo que queda en el pool.
+    /// </summary>
+    private (ClientCreditWithdrawal FirstWithdrawal, ClientCreditEntry FirstEntry) ApplyCreditToPenaltyCoreOnEntries(
+        List<ClientCreditEntry> currencyEntriesFifo,
+        Customer customer,
+        string currency,
+        decimal amountToApply,
+        int debitNoteId,
+        Guid debitNotePublicId,
+        int reservaId,
+        Guid reservaPublicId,
+        string userId,
+        string? userName)
+    {
+        decimal pool = currencyEntriesFifo.Sum(e => e.RemainingBalance);
+        if (amountToApply > pool)
+        {
+            throw new BusinessInvariantViolationException(
+                "El monto a aplicar supera el saldo a favor disponible del cliente en esa moneda.",
+                invariantCode: "INV-085");
+        }
+
+        decimal remainingToApply = amountToApply;
+        ClientCreditWithdrawal? firstWithdrawal = null;
+        ClientCreditEntry? firstEntry = null;
+
+        foreach (var entry in currencyEntriesFifo)
+        {
+            if (remainingToApply <= 0m) break;
+            if (entry.RemainingBalance <= 0m) continue; // ya agotado por una aplicacion previa de ESTE MISMO pedido
+
+            decimal take = Math.Min(entry.RemainingBalance, remainingToApply);
+            entry.RemainingBalance = ReservationEconomicPolicy.RoundCurrency(entry.RemainingBalance - take);
+            if (entry.RemainingBalance <= 0m)
+            {
+                entry.RemainingBalance = 0m;
+                entry.IsFullyConsumed = true;
+            }
+            remainingToApply = ReservationEconomicPolicy.RoundCurrency(remainingToApply - take);
+
+            var withdrawal = new ClientCreditWithdrawal
+            {
+                ClientCreditEntryId = entry.Id,
+                Entry = entry,
+                Kind = WithdrawalKind.AppliedToNewBooking,
+                Amount = take,
+                ExecutedAt = DateTime.UtcNow,
+                ExecutedByUserId = userId,
+                ExecutedByUserName = userName ?? string.Empty,
+                ManualCashMovementId = null,
+                ApprovalRequestId = null,
+            };
+            _db.ClientCreditWithdrawals.Add(withdrawal);
+            firstWithdrawal ??= withdrawal;
+            firstEntry ??= entry;
+
+            // Payment puente POSITIVO: NO mueve caja, y a diferencia del puente de "aplicado a otra reserva"
+            // lleva LinkedInvoiceId=la ND (el enganche con DebitNoteOutstandingLookup) y
+            // AffectsReservaBalance=false (no infla ni desinfla el saldo OPERATIVO de la reserva ya anulada,
+            // igual que un cobro real de multa vigente desde 44fcea6).
+            var bridge = new Payment
+            {
+                ReservaId = reservaId,
+                LinkedInvoiceId = debitNoteId,
+                Amount = take,
+                Currency = currency,
+                ImputedCurrency = null,
+                Method = AppliedCreditBridge.PenaltyBridgeMethod,
+                AffectsCash = false,
+                AffectsReservaBalance = false,
+                EntryType = PaymentEntryTypes.Payment,
+                Status = "Paid",
+                PaidAt = DateTime.UtcNow,
+                Notes = $"Saldo a favor aplicado a multa (bolsillo {entry.PublicId}).",
+                CreatedByUserId = userId,
+                CreatedByUserName = userName,
+                AppliedFromCreditWithdrawal = withdrawal,
+            };
+            _db.Payments.Add(bridge);
+
+            _auditService.StageBusinessEvent(
+                action: AuditActions.ClientCreditAppliedToPenalty,
+                entityName: AuditActions.ClientCreditWithdrawalEntityName,
+                entityId: withdrawal.PublicId.ToString(),
+                details: JsonSerializer.Serialize(new
+                {
+                    withdrawalPublicId = withdrawal.PublicId,
+                    entryPublicId = entry.PublicId,
+                    customerPublicId = customer.PublicId,
+                    debitNotePublicId,
+                    reservaPublicId,
+                    currency,
+                    amount = take,
+                }),
+                userId: userId,
+                userName: userName);
+        }
+
+        return (firstWithdrawal!, firstEntry!);
+    }
+
+    // =========================================================================
+    // ApplyCustomerCreditToPenaltyAsync (con retry de concurrencia)
+    // =========================================================================
+
+    public async Task<ClientCreditApplicationResultDto> ApplyCustomerCreditToPenaltyAsync(
+        int customerId,
+        ApplyCreditToPenaltyRequest request,
+        string userId,
+        string? userName,
+        CancellationToken ct)
+    {
+        if (request.Amount <= 0m)
+        {
+            throw new ArgumentException("El monto a aplicar debe ser mayor a 0.", nameof(request));
+        }
+        if (!Monedas.EsSoportada(request.Currency))
+        {
+            throw new ArgumentException("Moneda no soportada.", nameof(request));
+        }
+
+        await EnsureFeatureFlagOnAsync(ct);
+
+        for (var attempt = 0; attempt < MaxConcurrencyRetries; attempt++)
+        {
+            try
+            {
+                return await TryApplyCustomerCreditToPenaltyOnceAsync(customerId, request, userId, userName, ct);
+            }
+            catch (DbUpdateConcurrencyException ex)
+            {
+                _logger.LogWarning(ex,
+                    "ApplyCustomerCreditToPenaltyAsync concurrency conflict on attempt {Attempt}/{Max} for customer {CustomerId}. Retrying.",
+                    attempt + 1, MaxConcurrencyRetries, customerId);
+
+                _db.ChangeTracker.Clear();
+                if (attempt == MaxConcurrencyRetries - 1) throw;
+                await Task.Delay((int)Math.Pow(4, attempt) * 100, ct);
+            }
+        }
+
+        // Inalcanzable en la practica (el loop de arriba siempre retorna o relanza en el ultimo intento), pero
+        // si algun dia se alcanzara el mensaje NO debe filtrar el nombre del metodo ni quedar en ingles.
+        throw new InvalidOperationException("No pudimos completar la operación por un problema de concurrencia. Probá de nuevo.");
+    }
+
+    private async Task<ClientCreditApplicationResultDto> TryApplyCustomerCreditToPenaltyOnceAsync(
+        int customerId,
+        ApplyCreditToPenaltyRequest request,
+        string userId,
+        string? userName,
+        CancellationToken ct)
+    {
+        string currency = Monedas.Normalizar(request.Currency);
+        decimal amount = ReservationEconomicPolicy.RoundCurrency(request.Amount);
+
+        ClientCreditApplicationResultDto? result = null;
+
+        async Task ApplyAndPersistAsync()
+        {
+            // Ver la nota "DISCIPLINA DE RETRY" arriba: el closure entero arranca limpio.
+            _db.ChangeTracker.Clear();
+
+            var customer = await _db.Customers.FirstOrDefaultAsync(c => c.Id == customerId, ct)
+                ?? throw new KeyNotFoundException("Cliente no encontrado");
+
+            var debitNote = await _db.Invoices
+                .AsNoTracking()
+                .Where(i => i.PublicId == request.DebitNotePublicId)
+                .Select(i => new { i.Id, i.PublicId })
+                .FirstOrDefaultAsync(ct)
+                ?? throw new KeyNotFoundException("Nota de Debito no encontrada");
+
+            var bc = await _db.BookingCancellations
+                .Include(b => b.Reserva)
+                .FirstOrDefaultAsync(b => b.DebitNoteInvoiceId == debitNote.Id, ct)
+                ?? throw new KeyNotFoundException("La Nota de Debito no corresponde a ninguna multa de cancelacion.");
+
+            if (bc.Reserva.PayerId != customerId)
+            {
+                throw new BusinessInvariantViolationException(
+                    "La multa no pertenece a este cliente. No se puede aplicar saldo de un cliente a la multa de otro.",
+                    invariantCode: "INV-093");
+            }
+
+            var ownerScope = await GetTargetReservaOwnerScopeOrNullAsync(ct);
+            if (ownerScope is not null
+                && !string.Equals(bc.Reserva.ResponsibleUserId, ownerScope, StringComparison.Ordinal))
+            {
+                throw new UnauthorizedAccessException(
+                    "La reserva de la multa no esta asignada al usuario actual. No se puede aplicar saldo a una " +
+                    "multa a cargo de otro vendedor.");
+            }
+
+            if (bc.DebitNoteStatus != DebitNoteStatus.Issued)
+            {
+                throw new BusinessInvariantViolationException(
+                    "La multa todavía no tiene un comprobante fiscal vigente (se está emitiendo, o el que tenía " +
+                    "se deshizo); no se puede aplicar saldo hasta que tenga uno aprobado.",
+                    invariantCode: "INV-CLICREDIT-PENALTY-CAE");
+            }
+
+            // Gate + tope, LECTURA FRESCA (misma regla que un cobro real de multa): dos applies concurrentes
+            // contra la MISMA ND no pueden validar ambos contra el mismo saldo pendiente.
+            await CancelledDebitNoteCollectionGate.EnsureCollectableAsync(
+                _db, bc.ReservaId, debitNote.Id, currency, amount, ct);
+
+            var currencyEntries = await LoadFifoCreditEntriesAsync(customerId, currency, ct);
+
+            var (firstWithdrawal, firstEntry) = ApplyCreditToPenaltyCoreOnEntries(
+                currencyEntries, customer, currency, amount,
+                debitNote.Id, debitNote.PublicId, bc.ReservaId, bc.Reserva.PublicId, userId, userName);
+
+            await _db.SaveChangesAsync(ct);
+
+            decimal availableAfter = await GetCustomerAvailableBalanceAsync(customerId, currency, ct);
+
+            _logger.LogInformation(
+                "metric:client_credit_applied_to_penalty | CustomerId={CustomerId} Currency={Currency} Amount={Amount} DebitNoteId={DebitNoteId}",
+                customerId, currency, amount, debitNote.Id);
+
+            result = new ClientCreditApplicationResultDto
+            {
+                ApplicationPublicId = firstWithdrawal.PublicId,
+                EntryPublicId = firstEntry.PublicId,
+                Currency = currency,
+                Amount = amount,
+                TargetReservaPublicId = bc.Reserva.PublicId,
+                DebitNotePublicId = debitNote.PublicId,
+                IsReversal = false,
+                AvailableBalanceAfter = availableAfter,
+            };
+        }
+
+        if (_db.Database.IsRelational())
+        {
+            var strategy = _db.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async () =>
+            {
+                await using var transaction = await _db.Database.BeginTransactionAsync(
+                    System.Data.IsolationLevel.Serializable, ct);
+                await ApplyAndPersistAsync();
+                await transaction.CommitAsync(ct);
+            });
+        }
+        else
+        {
+            await ApplyAndPersistAsync();
+        }
+
+        return result!;
+    }
+
+    // =========================================================================
+    // Neteo automatico en devolucion: preview (solo lectura) + confirmacion atomica.
+    // =========================================================================
+
+    public async Task<RefundNettingPreviewDto> GetCustomerRefundNettingPreviewAsync(
+        int customerId, string currency, CancellationToken ct)
+    {
+        if (!Monedas.EsSoportada(currency))
+        {
+            throw new ArgumentException("Moneda no soportada.", nameof(currency));
+        }
+        var normalizedCurrency = Monedas.Normalizar(currency);
+
+        var customerExists = await _db.Customers.AsNoTracking().AnyAsync(c => c.Id == customerId, ct);
+        if (!customerExists) throw new KeyNotFoundException("Cliente no encontrado");
+
+        decimal availableCredit = await GetCustomerAvailableBalanceAsync(customerId, normalizedCurrency, ct);
+        var openPenalties = await LoadOpenPenaltiesForCustomerAsync(customerId, normalizedCurrency, ct);
+
+        var lines = openPenalties
+            .Select(p => new RefundNettingPenaltyLineDto
+            {
+                ReservaPublicId = p.ReservaPublicId,
+                NumeroReserva = p.NumeroReserva,
+                DebitNotePublicId = p.DebitNotePublicId,
+                DebitNoteDisplayNumber = p.DebitNoteDisplayNumber,
+                OutstandingAmount = p.Outstanding,
+            })
+            .ToList();
+
+        decimal totalOpenPenalties = ReservationEconomicPolicy.RoundCurrency(lines.Sum(l => l.OutstandingAmount));
+        decimal netToRefund = Math.Max(0m, ReservationEconomicPolicy.RoundCurrency(availableCredit - totalOpenPenalties));
+
+        return new RefundNettingPreviewDto
+        {
+            Currency = normalizedCurrency,
+            AvailableCredit = availableCredit,
+            OpenPenalties = lines,
+            TotalOpenPenalties = totalOpenPenalties,
+            NetToRefund = netToRefund,
+            PlainExplanation = BuildRefundPlainExplanation(availableCredit, totalOpenPenalties, netToRefund, normalizedCurrency),
+        };
+    }
+
+    /// <summary>Tanda D1: texto en criollo del preview de neteo, sin cifras internas ni jerga.</summary>
+    private static string BuildRefundPlainExplanation(
+        decimal availableCredit, decimal totalOpenPenalties, decimal netToRefund, string currency)
+    {
+        var prefix = string.Equals(currency, Monedas.USD, StringComparison.Ordinal) ? "US$" : "$";
+
+        if (totalOpenPenalties <= 0m)
+        {
+            return $"Te devolvemos {prefix}{FormatMoneyPlain(netToRefund)} = todo tu saldo a favor " +
+                   $"(no tenés multas pendientes en {currency}).";
+        }
+
+        decimal remainingPenaltyDebt = Math.Max(0m, ReservationEconomicPolicy.RoundCurrency(totalOpenPenalties - availableCredit));
+        if (remainingPenaltyDebt > 0m)
+        {
+            return $"Tu saldo a favor ({prefix}{FormatMoneyPlain(availableCredit)}) no alcanza para cubrir tus " +
+                   $"multas pendientes ({prefix}{FormatMoneyPlain(totalOpenPenalties)}): se aplica todo contra " +
+                   $"multas y quedan {prefix}{FormatMoneyPlain(remainingPenaltyDebt)} sin cubrir. No hay nada para devolver.";
+        }
+
+        if (netToRefund <= 0m)
+        {
+            return $"Tu saldo a favor ({prefix}{FormatMoneyPlain(availableCredit)}) se usa completo para pagar " +
+                   $"tus multas pendientes ({prefix}{FormatMoneyPlain(totalOpenPenalties)}); no queda nada para devolver.";
+        }
+
+        return $"Te devolvemos {prefix}{FormatMoneyPlain(netToRefund)} = {prefix}{FormatMoneyPlain(availableCredit)} " +
+               $"a favor − {prefix}{FormatMoneyPlain(totalOpenPenalties)} de multa.";
+    }
+
+    /// <summary>Formato criollo de un monto para texto (es-AR: punto de miles, sin decimales si es entero).</summary>
+    private static string FormatMoneyPlain(decimal amount)
+    {
+        var culture = System.Globalization.CultureInfo.GetCultureInfo("es-AR");
+        bool hasCents = amount != Math.Truncate(amount);
+        return amount.ToString(hasCents ? "N2" : "N0", culture);
+    }
+
+    // =========================================================================
+    // RefundCustomerCreditWithNettingAsync (con retry de concurrencia)
+    // =========================================================================
+
+    public async Task<RefundWithNettingResultDto> RefundCustomerCreditWithNettingAsync(
+        int customerId,
+        RefundWithNettingRequest request,
+        string userId,
+        string? userName,
+        CancellationToken ct)
+    {
+        if (!Monedas.EsSoportada(request.Currency))
+        {
+            throw new ArgumentException("Moneda no soportada.", nameof(request));
+        }
+
+        // Gate de exposicion de datos: el mensaje de error NO debe nombrar los tokens internos del contrato
+        // (PhysicalCash/Transfer) — el contrato de la API sigue aceptando esos mismos valores, solo cambia el
+        // TEXTO que ve el usuario final.
+        var refundKind = request.RefundMethod switch
+        {
+            "PhysicalCash" => WithdrawalKind.PhysicalCash,
+            "Transfer" => WithdrawalKind.Transfer,
+            _ => throw new ArgumentException(
+                "Elegí una forma de devolución válida: efectivo o transferencia.", nameof(request)),
+        };
+
+        await EnsureFeatureFlagOnAsync(ct);
+
+        for (var attempt = 0; attempt < MaxConcurrencyRetries; attempt++)
+        {
+            try
+            {
+                return await TryRefundCustomerCreditWithNettingOnceAsync(customerId, request, refundKind, userId, userName, ct);
+            }
+            catch (DbUpdateConcurrencyException ex)
+            {
+                _logger.LogWarning(ex,
+                    "RefundCustomerCreditWithNettingAsync concurrency conflict on attempt {Attempt}/{Max} for customer {CustomerId}. Retrying.",
+                    attempt + 1, MaxConcurrencyRetries, customerId);
+
+                _db.ChangeTracker.Clear();
+                if (attempt == MaxConcurrencyRetries - 1) throw;
+                await Task.Delay((int)Math.Pow(4, attempt) * 100, ct);
+            }
+        }
+
+        // Inalcanzable en la practica (el loop de arriba siempre retorna o relanza en el ultimo intento), pero
+        // si algun dia se alcanzara el mensaje NO debe filtrar el nombre del metodo ni quedar en ingles.
+        throw new InvalidOperationException("No pudimos completar la operación por un problema de concurrencia. Probá de nuevo.");
+    }
+
+    private async Task<RefundWithNettingResultDto> TryRefundCustomerCreditWithNettingOnceAsync(
+        int customerId,
+        RefundWithNettingRequest request,
+        WithdrawalKind refundKind,
+        string userId,
+        string? userName,
+        CancellationToken ct)
+    {
+        string currency = Monedas.Normalizar(request.Currency);
+        RefundWithNettingResultDto? result = null;
+
+        async Task RefundAndNetAsync()
+        {
+            // Ver la nota "DISCIPLINA DE RETRY" arriba: el closure entero arranca limpio y hace TODO adentro
+            // (lecturas frescas, gate por ND, Add() y SaveChanges), para poder repetirse entero sin dejar
+            // basura duplicada en el ChangeTracker.
+            _db.ChangeTracker.Clear();
+
+            var customer = await _db.Customers.FirstOrDefaultAsync(c => c.Id == customerId, ct)
+                ?? throw new KeyNotFoundException("Cliente no encontrado");
+
+            decimal availableCreditBefore = await GetCustomerAvailableBalanceAsync(customerId, currency, ct);
+            if (availableCreditBefore <= 0m)
+            {
+                throw new BusinessInvariantViolationException(
+                    "No hay saldo a favor disponible en esa moneda para devolver.",
+                    invariantCode: "INV-CLICREDIT-NOCREDIT");
+            }
+
+            var openPenalties = await LoadOpenPenaltiesForCustomerAsync(customerId, currency, ct);
+            var currencyEntries = await LoadFifoCreditEntriesAsync(customerId, currency, ct);
+
+            // 1) Netear FIFO contra cada multa abierta, con el pendiente RE-LEIDO fresco (revalidacion
+            //    acumulada por ND, M2): si otra operacion ya la toco desde que armamos openPenalties, se
+            //    respeta el numero nuevo (incluso si eso significa saltearla por completo).
+            decimal poolRemaining = availableCreditBefore;
+            decimal totalAppliedToPenalties = 0m;
+            var penaltyApplications = new List<ClientCreditApplicationResultDto>();
+            var nettedAgainst = new List<(string NumeroReserva, decimal Amount)>();
+
+            foreach (var penalty in openPenalties)
+            {
+                if (poolRemaining <= 0m) break;
+
+                var freshOutstanding = await RecomputeFreshOutstandingAsync(penalty.DebitNoteId, penalty.ImporteTotal, ct);
+                if (freshOutstanding <= 0m) continue; // ya se salvo por otra via mientras tanto
+
+                decimal take = ReservationEconomicPolicy.RoundCurrency(Math.Min(poolRemaining, freshOutstanding));
+                if (take <= 0m) continue;
+
+                var (firstWithdrawal, firstEntry) = ApplyCreditToPenaltyCoreOnEntries(
+                    currencyEntries, customer, currency, take,
+                    penalty.DebitNoteId, penalty.DebitNotePublicId, penalty.ReservaId, penalty.ReservaPublicId,
+                    userId, userName);
+
+                poolRemaining = ReservationEconomicPolicy.RoundCurrency(poolRemaining - take);
+                totalAppliedToPenalties = ReservationEconomicPolicy.RoundCurrency(totalAppliedToPenalties + take);
+                nettedAgainst.Add((penalty.NumeroReserva, take));
+
+                penaltyApplications.Add(new ClientCreditApplicationResultDto
+                {
+                    ApplicationPublicId = firstWithdrawal.PublicId,
+                    EntryPublicId = firstEntry.PublicId,
+                    Currency = currency,
+                    Amount = take,
+                    TargetReservaPublicId = penalty.ReservaPublicId,
+                    DebitNotePublicId = penalty.DebitNotePublicId,
+                    IsReversal = false,
+                    AvailableBalanceAfter = poolRemaining,
+                });
+            }
+
+            decimal netToRefund = poolRemaining;
+
+            // 2) El neto (si sobra algo) se devuelve como egreso REAL de caja, drenando los MISMOS bolsillos
+            //    (currencyEntries, ya parcialmente consumidos por el paso 1) FIFO. Ley 25.345 se valida sobre
+            //    el NETO COMPLETO, ANTES de tocar nada — nunca fragmentado por bolsillo (fraccionar el mismo
+            //    egreso en varios movimientos chicos para esquivar el tope seria eludir la ley a proposito).
+            Guid? withdrawalPublicId = null;
+            if (netToRefund > 0m)
+            {
+                if (refundKind == WithdrawalKind.PhysicalCash)
+                {
+                    var settings = await _settings.GetEntityAsync(ct);
+                    if (netToRefund > settings.Ley25345ThresholdAmount)
+                    {
+                        throw new BusinessInvariantViolationException(
+                            $"Ley 25.345: no se puede devolver en efectivo más de ${settings.Ley25345ThresholdAmount:N2}. " +
+                            $"El neto a devolver es ${netToRefund:N2}. Usá transferencia bancaria en su lugar.",
+                            invariantCode: "INV-094");
+                    }
+                    if (netToRefund > settings.PhysicalRefundAlertThreshold)
+                    {
+                        _logger.LogWarning(
+                            "metric:physical_refund_alert | CustomerId={CustomerId} Amount={Amount} Threshold={Threshold} UserId={UserId}",
+                            customerId, netToRefund, settings.PhysicalRefundAlertThreshold, userId);
+                        _auditService.StageBusinessEvent(
+                            action: AuditActions.ClientCreditPhysicalRefundAlert,
+                            entityName: AuditActions.ClientCreditEntryEntityName,
+                            entityId: customer.PublicId.ToString(),
+                            details: JsonSerializer.Serialize(new
+                            {
+                                customerPublicId = customer.PublicId,
+                                amount = netToRefund,
+                                currency,
+                                threshold = settings.PhysicalRefundAlertThreshold,
+                            }),
+                            userId: userId,
+                            userName: userName);
+                    }
+                }
+
+                var receiptText = BuildRefundReceiptText(availableCreditBefore, nettedAgainst, netToRefund, currency);
+
+                decimal remainingNet = netToRefund;
+                foreach (var entry in currencyEntries)
+                {
+                    if (remainingNet <= 0m) break;
+                    if (entry.RemainingBalance <= 0m) continue;
+
+                    decimal take = ReservationEconomicPolicy.RoundCurrency(Math.Min(entry.RemainingBalance, remainingNet));
+                    var withdrawalRequest = new WithdrawClientCreditRequest(
+                        Kind: refundKind,
+                        Amount: take,
+                        PaymentMethodOverride: null,
+                        AppliedToReservaPublicId: null,
+                        ApprovalRequestPublicId: null,
+                        Reference: request.Reference);
+
+                    var withdrawal = BuildWithdrawalAndMovement(
+                        entry, withdrawalRequest, refundKind, userId, userName,
+                        descriptionOverride: receiptText);
+
+                    // OJO trainee/junior: BuildWithdrawalAndMovement NO decrementa RemainingBalance (ese paso
+                    // vive en WithdrawAsync.PersistAndFinalizeAsync, que aca NO se usa — el neteo arma su
+                    // propio flujo atomico multi-destino). Hay que hacerlo a mano aca, igual criterio que el
+                    // resto del modulo (redondeo + IsFullyConsumed cuando llega a 0).
+                    entry.RemainingBalance = ReservationEconomicPolicy.RoundCurrency(entry.RemainingBalance - take);
+                    if (entry.RemainingBalance <= 0m)
+                    {
+                        entry.RemainingBalance = 0m;
+                        entry.IsFullyConsumed = true;
+                    }
+
+                    withdrawalPublicId ??= withdrawal.PublicId;
+                    remainingNet = ReservationEconomicPolicy.RoundCurrency(remainingNet - take);
+
+                    _auditService.StageBusinessEvent(
+                        action: AuditActions.ClientCreditWithdrawn,
+                        entityName: AuditActions.ClientCreditWithdrawalEntityName,
+                        entityId: withdrawal.PublicId.ToString(),
+                        details: JsonSerializer.Serialize(new
+                        {
+                            withdrawalPublicId = withdrawal.PublicId,
+                            entryPublicId = entry.PublicId,
+                            customerPublicId = customer.PublicId,
+                            kind = withdrawal.Kind.ToString(),
+                            amount = take,
+                            currency,
+                            nettedAgainst = nettedAgainst.Select(n => new { numeroReserva = n.NumeroReserva, amount = n.Amount }),
+                        }),
+                        userId: userId,
+                        userName: userName);
+                }
+            }
+
+            await _db.SaveChangesAsync(ct);
+
+            var finalReceiptText = netToRefund > 0m
+                ? BuildRefundReceiptText(availableCreditBefore, nettedAgainst, netToRefund, currency)
+                : BuildRefundReceiptText(availableCreditBefore, nettedAgainst, 0m, currency);
+
+            _logger.LogInformation(
+                "metric:client_credit_refund_with_netting | CustomerId={CustomerId} Currency={Currency} TotalAppliedToPenalties={TotalAppliedToPenalties} NetRefunded={NetRefunded}",
+                customerId, currency, totalAppliedToPenalties, netToRefund);
+
+            result = new RefundWithNettingResultDto
+            {
+                Currency = currency,
+                AvailableCreditBefore = availableCreditBefore,
+                PenaltyApplications = penaltyApplications,
+                TotalAppliedToPenalties = totalAppliedToPenalties,
+                NetRefunded = netToRefund,
+                RefundMethod = request.RefundMethod,
+                WithdrawalPublicId = withdrawalPublicId,
+                ReceiptText = finalReceiptText,
+            };
+        }
+
+        if (_db.Database.IsRelational())
+        {
+            var strategy = _db.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async () =>
+            {
+                await using var transaction = await _db.Database.BeginTransactionAsync(
+                    System.Data.IsolationLevel.Serializable, ct);
+                await RefundAndNetAsync();
+                await transaction.CommitAsync(ct);
+            });
+        }
+        else
+        {
+            await RefundAndNetAsync();
+        }
+
+        return result!;
+    }
+
+    /// <summary>
+    /// Tanda D1: texto del recibo del egreso con el desglose exacto acordado con el dueño: saldo a favor, cada
+    /// multa descontada y el total devuelto (o la aclaracion de que no queda nada si el neto es 0).
+    /// </summary>
+    private static string BuildRefundReceiptText(
+        decimal availableCreditBefore,
+        IReadOnlyList<(string NumeroReserva, decimal Amount)> nettedAgainst,
+        decimal netRefunded,
+        string currency)
+    {
+        var prefix = string.Equals(currency, Monedas.USD, StringComparison.Ordinal) ? "US$" : "$";
+        var lines = new List<string>
+        {
+            "Devolución de saldo a favor",
+            $"Saldo a favor {prefix}{FormatMoneyPlain(availableCreditBefore)}",
+        };
+        foreach (var (numeroReserva, amount) in nettedAgainst)
+        {
+            lines.Add($"Menos multa {numeroReserva} −{prefix}{FormatMoneyPlain(amount)}");
+        }
+        lines.Add(netRefunded > 0m
+            ? $"Total devuelto {prefix}{FormatMoneyPlain(netRefunded)}"
+            : "No queda saldo para devolver.");
+        return string.Join("\n", lines);
+    }
+
     /// <summary>FC4: saldo a favor disponible (Σ RemainingBalance) del cliente en una moneda, leido fresco.</summary>
     private async Task<decimal> GetCustomerAvailableBalanceAsync(int customerId, string currency, CancellationToken ct)
     {
@@ -1862,9 +2692,10 @@ public class ClientCreditService : IClientCreditService
         var settings = await _settings.GetEntityAsync(ct);
         if (!settings.EnableNewCancellationFlow)
         {
+            // Gate de exposicion de datos: el mensaje NUNCA debe nombrar la llave interna del flag.
+            // El controller devuelve ex.Message tal cual al usuario final (no-programador).
             throw new InvalidOperationException(
-                "El modulo de cancelacion/refund no esta habilitado en este ambiente " +
-                "(EnableNewCancellationFlow=false).");
+                "Esta operación no está disponible por ahora. Probá de nuevo más tarde.");
         }
     }
 
@@ -1914,7 +2745,8 @@ public class ClientCreditService : IClientCreditService
         WithdrawalKind kind,
         string userId,
         string? userName,
-        string? approvalRequestId = null)
+        string? approvalRequestId = null,
+        string? descriptionOverride = null)
     {
         var withdrawal = new ClientCreditWithdrawal
         {
@@ -1959,6 +2791,14 @@ public class ClientCreditService : IClientCreditService
         if (!string.IsNullOrWhiteSpace(request.Reference))
         {
             movement.Reference = request.Reference;
+        }
+
+        // Tanda D1 (2026-07-16): el neteo en devolucion arma su propio texto de recibo con el desglose exacto
+        // (saldo a favor menos cada multa descontada). El builder solo sabe armar una Description generica
+        // ("Retiro credito cliente ..."); el caller que SI conoce el desglose la pisa aca.
+        if (!string.IsNullOrWhiteSpace(descriptionOverride))
+        {
+            movement.Description = descriptionOverride;
         }
         _db.ManualCashMovements.Add(movement);
 

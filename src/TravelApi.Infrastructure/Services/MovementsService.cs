@@ -70,9 +70,12 @@ public class MovementsService : IMovementsService
                 // mostrando como su propio tipo (comportamiento historico). Por eso filtramos por Method.
                 // ADR-044 "Deshacer una multa ya emitida": el puente de multa deshecha (Method=MultaDeshecha,
                 // AffectsCash=false) tampoco es movimiento de caja -> no se lista en Movimientos.
+                // Tanda D1 (2026-07-16): idem el puente de saldo a favor aplicado contra una MULTA
+                // (Method=SaldoAFavorAplicadoAMulta).
                 .Where(p => p.Method != OverpaymentCreditCleanup.BridgeMethod
                     && p.Method != AppliedCreditBridge.BridgeMethod
-                    && p.Method != ClientCreditService.DebitNoteUndoBridgeMethod);
+                    && p.Method != ClientCreditService.DebitNoteUndoBridgeMethod
+                    && p.Method != AppliedCreditBridge.PenaltyBridgeMethod);
 
             if (ownerScope is not null)
             {

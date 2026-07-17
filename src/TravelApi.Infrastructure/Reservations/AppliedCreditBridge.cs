@@ -32,12 +32,34 @@ public static class AppliedCreditBridge
     public const string BridgeMethod = "SaldoAFavorAplicado";
 
     /// <summary>
+    /// Tanda D1 (2026-07-16): Method del Payment puente cuando el saldo a favor del cliente se aplica contra
+    /// una MULTA (Nota de Debito de una reserva anulada) en vez de contra la deuda operativa de otra reserva.
+    /// Mismo mecanismo que <see cref="BridgeMethod"/> (Payment positivo, <c>AffectsCash=false</c>, atado por
+    /// <see cref="Payment.AppliedFromCreditWithdrawalId"/>), pero con dos diferencias clave: lleva ADEMAS
+    /// <see cref="Payment.LinkedInvoiceId"/> apuntando a la ND (el enganche que hace que
+    /// <c>DebitNoteOutstandingLookup</c> lo cuente como "cobrado" — cero denormalizacion nueva) y
+    /// <see cref="Payment.AffectsReservaBalance"/> = false (igual que un cobro real de multa: no debe inflar ni
+    /// desinflar el saldo OPERATIVO de una reserva ya anulada). Un Method propio evita que este puente se
+    /// confunda con el de aplicacion a otra reserva en los reportes y en el gate de "es un puente interno".
+    /// </summary>
+    public const string PenaltyBridgeMethod = "SaldoAFavorAplicadoAMulta";
+
+    /// <summary>
     /// Mensaje de negocio cuando un usuario intenta borrar o editar DIRECTAMENTE el Payment puente de un saldo
     /// a favor aplicado. El puente es respaldo interno: cambiarlo a mano desincroniza el bolsillo del cliente
     /// respecto de la deuda que pago en la reserva destino. Se gestiona desde el saldo a favor, no desde el pago.
     /// </summary>
     public const string DirectBridgeMutationBlockReason =
         "Este movimiento es el respaldo interno de un saldo a favor aplicado a esta reserva; " +
+        "gestionalo desde el saldo a favor del cliente.";
+
+    /// <summary>
+    /// Tanda D1: mismo mensaje que <see cref="DirectBridgeMutationBlockReason"/> pero para el puente de saldo a
+    /// favor aplicado a una MULTA. Se gestiona desde el saldo a favor del cliente, nunca editando/borrando el
+    /// pago puente ni emitiendole un comprobante.
+    /// </summary>
+    public const string PenaltyDirectBridgeMutationBlockReason =
+        "Este movimiento es el respaldo interno de un saldo a favor aplicado a una multa; " +
         "gestionalo desde el saldo a favor del cliente.";
 
     /// <summary>
@@ -58,6 +80,18 @@ public static class AppliedCreditBridge
     }
 
     /// <summary>
+    /// Tanda D1: true si <paramref name="payment"/> ES el Payment puente de un saldo a favor aplicado contra una
+    /// MULTA. Misma firma que <see cref="IsAppliedCreditBridge"/> pero con <see cref="PenaltyBridgeMethod"/>.
+    /// Igual que el resto de los checks de este archivo, recibe la entidad materializada y NO se traduce a SQL.
+    /// </summary>
+    public static bool IsPenaltyCreditBridge(Payment payment)
+    {
+        return payment.Method == PenaltyBridgeMethod
+            && !payment.AffectsCash
+            && payment.AppliedFromCreditWithdrawalId != null;
+    }
+
+    /// <summary>
     /// FC4: predicado UNICO, traducible a SQL, que excluye AMBOS puentes internos de las listas de pagos
     /// visibles (el de sobrepago de <see cref="OverpaymentCreditCleanup"/> y el de aplicacion de aca).
     ///
@@ -70,10 +104,18 @@ public static class AppliedCreditBridge
     /// <para>Devuelve true cuando el pago ES un puente interno (de sobrepago O de aplicacion). Los call-sites
     /// la usan negada (<c>.Where(p =&gt; !AppliedCreditBridge.IsInternalBridge(p))</c> via la version compilada,
     /// o expandiendo esta condicion).</para>
+    ///
+    /// <para><b>Tanda D1 (2026-07-16)</b>: se sumo una TERCERA rama para el puente de saldo a favor aplicado a
+    /// una MULTA (<see cref="PenaltyBridgeMethod"/>). Al igual que las otras dos, cada call-site sigue
+    /// expandiendo esta condicion inline (ver los 6 sitios documentados en el review de la tanda) porque EF no
+    /// traduce bien invocar una <c>Expression</c> compartida dentro de otra query — esta propiedad queda como la
+    /// referencia canonica de "cuales son, exactamente, las tres condiciones" para que los 6 sitios no
+    /// diverjan a mano.</para>
     /// </summary>
     public static Expression<Func<Payment, bool>> IsInternalBridgePredicate =>
         p => (p.Method == OverpaymentCreditCleanup.BridgeMethod && !p.AffectsCash && p.OriginalPaymentId != null)
-          || (p.Method == BridgeMethod && !p.AffectsCash && p.AppliedFromCreditWithdrawalId != null);
+          || (p.Method == BridgeMethod && !p.AffectsCash && p.AppliedFromCreditWithdrawalId != null)
+          || (p.Method == PenaltyBridgeMethod && !p.AffectsCash && p.AppliedFromCreditWithdrawalId != null);
 
     // =====================================================================================================
     // FC4 REVERSA (2026-06-18): deshacer la aplicacion de un saldo a favor a otra reserva.
@@ -87,8 +129,18 @@ public static class AppliedCreditBridge
     /// <summary>
     /// FC4 reversa: encuentra el <see cref="Payment"/> puente VIVO (no soft-deleted) de un withdrawal de
     /// aplicacion. Devuelve <c>null</c> si no hay puente vivo (caso tipico: ya se reverso antes -> el puente
-    /// quedo soft-deleted). El predicado replica EXACTAMENTE <see cref="IsAppliedCreditBridge"/> pero en
-    /// forma traducible a SQL (compara solo columnas escalares) y filtrando por el withdrawal.
+    /// quedo soft-deleted). El predicado replica EXACTAMENTE <see cref="IsAppliedCreditBridge"/> /
+    /// <see cref="IsPenaltyCreditBridge"/> pero en forma traducible a SQL (compara solo columnas escalares) y
+    /// filtrando por el withdrawal.
+    ///
+    /// <para><b>B1 (Tanda D1, 2026-07-16)</b>: ANTES este metodo filtraba SOLO por <see cref="BridgeMethod"/>
+    /// (el puente de "aplicado a otra reserva"). Con la aparicion del puente de "aplicado a una multa"
+    /// (<see cref="PenaltyBridgeMethod"/>), un withdrawal de ese segundo tipo no matcheaba NUNCA -> la reversa
+    /// (<see cref="GetReverseBlockReason"/>) interpretaba "no hay puente vivo" y abortaba con "ya fue
+    /// revertida", aunque la aplicacion seguia activa. Se generaliza para aceptar CUALQUIERA de los dos
+    /// methods: <see cref="Payment.AppliedFromCreditWithdrawalId"/> ya es 1:1 con el withdrawal (un withdrawal tiene A
+    /// LO SUMO un puente vivo), asi que aceptar ambos methods es seguro — nunca puede matchear el puente de
+    /// OTRO withdrawal por error.</para>
     /// </summary>
     public static Task<Payment?> FindLiveBridgeAsync(
         AppDbContext db,
@@ -98,7 +150,7 @@ public static class AppliedCreditBridge
         return db.Payments
             .FirstOrDefaultAsync(p =>
                 p.AppliedFromCreditWithdrawalId == withdrawalId &&
-                p.Method == BridgeMethod &&
+                (p.Method == BridgeMethod || p.Method == PenaltyBridgeMethod) &&
                 !p.AffectsCash &&
                 !p.IsDeleted, ct);
     }

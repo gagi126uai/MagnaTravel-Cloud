@@ -12,14 +12,21 @@ namespace TravelApi.Domain.Reservations;
 /// agujero: sólo reconoce como "cobrado" lo que un saldo POSITIVO (multa aún por cobrar, convención del
 /// display) dejó por debajo del bruto.</para>
 ///
-/// <para><b>Contexto del producto (investigación 2026-07-14)</b>: HOY no existe ningún camino para registrar
-/// un cobro contra la multa de una reserva anulada — el alta de cobro (<c>PaymentService.CreatePaymentAsync</c>
-/// / <c>ReservaService.AddPaymentAsync</c>) exige <c>EnsureCollectable</c> → estado de venta firme, que EXCLUYE
-/// Cancelled/PendingOperatorRefund. Por eso, en la práctica, <see cref="ComputeCollectedPenalty"/> devuelve 0
-/// (la reserva anulada queda con saldo &lt;= 0) y el deshacer NO acuña nada. La rama "pagada" es defensiva para
-/// un futuro camino de cobro; y es COHERENTE con ese futuro: si algún día un cobro de multa dejara saldo a
-/// favor (saldo &lt; 0), ese cobro YA acuña su propio crédito de sobrepago
-/// (<c>ConvertOverpaymentToClientCreditAsync</c>), así que acá devolver 0 evita el DOBLE crédito.</para>
+/// <para><b>Contexto del producto — CORREGIDO (Tanda D1, 2026-07-16)</b>: esta nota decía que "HOY no existe
+/// ningún camino para registrar un cobro contra la multa de una reserva anulada". Eso dejó de ser cierto desde
+/// el commit <c>44fcea6</c> (2026-07-05): <c>PaymentService.CreatePaymentAsync</c> SÍ admite un camino
+/// EXCEPCIONAL y acotado para una reserva <c>Cancelled</c>/<c>PendingOperatorRefund</c> — cobrar (en efectivo o
+/// transferencia) contra una Nota de Débito de multa aprobada, con tope su saldo pendiente
+/// (<c>PaymentService.EnsureCancelledDebitNoteCollectableAsync</c>, hoy delegado en
+/// <c>CancelledDebitNoteCollectionGate</c>). Desde la Tanda D1 existe TAMBIÉN el saldo a favor del cliente
+/// aplicado contra esa misma ND (<c>ClientCreditService.ApplyCustomerCreditToPenaltyAsync</c>), sin mover caja.
+/// Ninguno de los dos caminos toca <c>Reserva.Balance</c> (ambos setean
+/// <c>Payment.AffectsReservaBalance = false</c> a propósito, para no mezclar la deuda fiscal de la ND con la
+/// deuda operativa de la reserva ya anulada) — por eso <see cref="ComputeCollectedPenalty"/> (que SÍ mira el
+/// saldo de la reserva) sigue sin ver esos cobros y, en la práctica, sigue devolviendo 0 para el caso normal. El
+/// guard duro que evita el CRÉDITO FANTASMA cuando hay plata real de por medio ya NO es esta regla: es el
+/// bloqueo del Deshacer en <c>BookingCancellationService.EnsureUndoDebitNoteAllowedAsync</c> (Tanda D1, B3), que
+/// rechaza deshacer una ND con algún <c>Payment</c> vivo (puente O cobro real) todavía imputado contra ella.</para>
 /// </summary>
 public static class OperatorPenaltyUndoRules
 {

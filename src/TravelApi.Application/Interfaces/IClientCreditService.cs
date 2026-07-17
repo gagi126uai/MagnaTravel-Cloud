@@ -229,4 +229,63 @@ public interface IClientCreditService
         string userId,
         string? userName,
         CancellationToken ct);
+
+    // =====================================================================================================
+    // Tanda D1 (2026-07-16): saldo a favor del cliente APLICADO CONTRA UNA MULTA + neteo automatico al
+    // devolver. La reversa REUSA ReverseCustomerCreditApplicationAsync (de arriba) sin cambios: el puente de
+    // multa es, para la reversa, "un puente mas" (ver AppliedCreditBridge.FindLiveBridgeAsync generalizado).
+    // =====================================================================================================
+
+    /// <summary>
+    /// Tanda D1: APLICA saldo a favor del cliente contra UNA multa (Nota de Debito de una reserva ANULADA del
+    /// MISMO cliente, MISMA moneda). Drena los bolsillos por antiguedad (FIFO) hasta cubrir el monto pedido,
+    /// topeado por el saldo REAL pendiente de la ND (nunca sobre-aplica). Por cada bolsillo tocado crea un
+    /// Payment "puente" positivo con <c>LinkedInvoiceId</c> = la ND (asi <c>DebitNoteOutstandingLookup</c> lo
+    /// cuenta como cobrado, sin denormalizacion nueva) y <c>AffectsReservaBalance = false</c> (no toca el saldo
+    /// operativo de la reserva anulada, igual que un cobro real de multa).
+    ///
+    /// <para><b>Gate</b>: la ND debe estar APROBADA con CAE (<c>DebitNoteStatus.Issued</c> + <c>Resultado == "A"</c>);
+    /// sin eso se rechaza (409) y el saldo se puede dejar como credito para aplicar mas adelante. Mismo tope y
+    /// misma coherencia de moneda que un cobro real (<c>CancelledDebitNoteCollectionGate</c>).</para>
+    /// </summary>
+    /// <exception cref="ArgumentException">Monto &lt;= 0 o moneda no soportada.</exception>
+    /// <exception cref="KeyNotFoundException">Cliente o Nota de Debito inexistentes.</exception>
+    /// <exception cref="UnauthorizedAccessException">La reserva de la multa esta a cargo de otro vendedor.</exception>
+    /// <exception cref="TravelApi.Domain.Exceptions.BusinessInvariantViolationException">Gate de CAE, moneda cruzada, tope, cliente equivocado o pool insuficiente.</exception>
+    /// <exception cref="InvalidOperationException">El modulo de cancelacion/refund esta deshabilitado en este ambiente (gate de feature flag, separado del gate de CAE de arriba).</exception>
+    Task<ClientCreditApplicationResultDto> ApplyCustomerCreditToPenaltyAsync(
+        int customerId,
+        ApplyCreditToPenaltyRequest request,
+        string userId,
+        string? userName,
+        CancellationToken ct);
+
+    /// <summary>
+    /// Tanda D1: vista PREVIA (solo lectura, no muta nada) de "si el cliente pide de vuelta su saldo a favor en
+    /// esta moneda ahora, cuanto se le devuelve despues de netear contra sus multas abiertas de esa moneda". El
+    /// backend revalida todo al confirmar (<see cref="RefundCustomerCreditWithNettingAsync"/>); este preview es
+    /// solo para que el cashier le explique el numero al cliente antes de tocar nada.
+    /// </summary>
+    Task<RefundNettingPreviewDto> GetCustomerRefundNettingPreviewAsync(
+        int customerId,
+        string currency,
+        CancellationToken ct);
+
+    /// <summary>
+    /// Tanda D1: devuelve el saldo a favor del cliente en una moneda, NETEANDO automaticamente contra sus
+    /// multas abiertas de esa moneda antes de calcular el egreso. Transaccion ATOMICA unica: por cada multa
+    /// abierta (FIFO por antiguedad) aplica saldo hasta agotar el pool o la deuda; lo que sobra se devuelve
+    /// como egreso de caja real (efectivo o transferencia, con Ley 25.345 sobre la porcion efectivo del NETO
+    /// completo, no fragmentado por bolsillo). Sin <c>Amount</c> en el request: el neto SIEMPRE es el resultado
+    /// de netear todo (decision del dueño) — nunca un monto tecleado.
+    /// </summary>
+    /// <exception cref="ArgumentException">Moneda no soportada o metodo de devolucion invalido.</exception>
+    /// <exception cref="KeyNotFoundException">Cliente inexistente.</exception>
+    /// <exception cref="TravelApi.Domain.Exceptions.BusinessInvariantViolationException">Sin saldo a favor disponible en esa moneda, o Ley 25.345 sobre el neto en efectivo.</exception>
+    Task<RefundWithNettingResultDto> RefundCustomerCreditWithNettingAsync(
+        int customerId,
+        RefundWithNettingRequest request,
+        string userId,
+        string? userName,
+        CancellationToken ct);
 }

@@ -8119,6 +8119,42 @@ public class BookingCancellationService
                 invariantCode: "INV-UNDO-001");
         }
 
+        // B3 (Tanda D1, 2026-07-16): GUARD AMPLIO de plata — bloquear si existe algun Payment VIVO imputado a
+        // esta ND (LinkedInvoiceId == la ND) que NO afecte el saldo operativo de la reserva
+        // (AffectsReservaBalance == false). Esa condicion cubre DOS casos, a proposito:
+        //   1) El puente de saldo a favor APLICADO a esta multa (ClientCreditService.ApplyCustomerCreditToPenaltyAsync,
+        //      Method=SaldoAFavorAplicadoAMulta): si se deshiciera la ND sin revertir antes esta aplicacion, el
+        //      reconciliador (OperatorPenaltyUndoRules.ComputeCollectedPenalty) NO ve este puente (mira el saldo
+        //      de la reserva, que el puente a proposito no toca) y NO re-acuñaria ese credito -> la plata que ya
+        //      salio de un bolsillo del cliente desaparece sin dejar rastro recuperable.
+        //   2) Un cobro REAL en efectivo/transferencia contra la ND (PaymentService.CreatePaymentAsync, rama
+        //      isCancelledLike, vigente desde 44fcea6): mismo agujero preexistente — deshacer la ND perderia la
+        //      plata que el cliente ya pago, porque tampoco mueve el saldo de la reserva.
+        // El mensaje distingue los dos casos para que el usuario sepa exactamente que resolver primero.
+        var livePenaltyPayments = await _db.Payments
+            .AsNoTracking()
+            .Where(p => p.LinkedInvoiceId == bc.DebitNoteInvoiceId.Value
+                     && !p.AffectsReservaBalance
+                     && p.Status != "Cancelled"
+                     && !p.IsDeleted)
+            .Select(p => new { p.Method })
+            .ToListAsync(ct);
+        if (livePenaltyPayments.Count > 0)
+        {
+            bool hasCreditBridge = livePenaltyPayments.Any(p =>
+                p.Method == AppliedCreditBridge.PenaltyBridgeMethod);
+            if (hasCreditBridge)
+            {
+                throw new BusinessInvariantViolationException(
+                    "Esta multa tiene saldo a favor aplicado; revertí la aplicación antes de deshacerla.",
+                    invariantCode: "INV-UNDO-CREDITBRIDGE");
+            }
+
+            throw new BusinessInvariantViolationException(
+                "Esta multa tiene un cobro registrado; resolvé ese cobro antes de poder deshacerla.",
+                invariantCode: "INV-UNDO-LIVEPAYMENT");
+        }
+
         // Regla dura #10: no anular dos veces el mismo comprobante (ya hay una anulacion viva o consumada para
         // ESTA ND). El indice unico filtrado de la tabla ya lo impide a nivel base; esto da el 409 legible.
         var hasLiveAnnulment = await _db.Set<BookingCancellationDebitNoteAnnulment>()

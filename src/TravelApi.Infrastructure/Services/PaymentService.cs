@@ -234,16 +234,21 @@ public class PaymentService : IPaymentService
 
         // (2026-06-26, P1=B) Saldo a favor APLICADO este mes (linea chica "+ $X aplicados de saldo a favor",
         // debajo del cobrado real). NO es plata nueva: son los Payment PUENTE POSITIVOS de aplicacion de credito
-        // — MISMO criterio canonico que AppliedCreditBridge.IsAppliedCreditBridge (Method "SaldoAFavorAplicado",
-        // AffectsCash=false, AppliedFromCreditWithdrawalId != null), expandido inline porque ese helper recibe la
-        // entidad ya materializada y no se traduce a SQL. Solo los POSITIVOS de APLICACION: el puente NEGATIVO de
-        // sobrepago usa otro Method/FK (OriginalPaymentId) y el de anulacion->credito tampoco matchea este Method.
+        // — MISMO criterio canonico que AppliedCreditBridge.IsAppliedCreditBridge (Method "SaldoAFavorAplicado" O
+        // "SaldoAFavorAplicadoAMulta", AffectsCash=false, AppliedFromCreditWithdrawalId != null), expandido inline
+        // porque ese helper recibe la entidad ya materializada y no se traduce a SQL. Solo los POSITIVOS de
+        // APLICACION: el puente NEGATIVO de sobrepago usa otro Method/FK (OriginalPaymentId) y el de
+        // anulacion->credito tampoco matchea estos Methods.
+        //
+        // N1 (fix post-review Tanda D1, 2026-07-16): ANTES esta metrica solo contaba BridgeMethod (aplicado a
+        // OTRA RESERVA); una aplicacion de saldo a favor CONTRA UNA MULTA (PenaltyBridgeMethod) tambien es
+        // saldo a favor aplicado y quedaba afuera del numero.
         var creditApplicationsQuery = _dbContext.Payments
             .AsNoTracking()
             .Where(p =>
                 !p.IsDeleted &&
                 p.Status != "Cancelled" &&
-                p.Method == AppliedCreditBridge.BridgeMethod &&
+                (p.Method == AppliedCreditBridge.BridgeMethod || p.Method == AppliedCreditBridge.PenaltyBridgeMethod) &&
                 !p.AffectsCash &&
                 p.AppliedFromCreditWithdrawalId != null &&
                 p.Amount > 0 &&
@@ -435,13 +440,15 @@ public class PaymentService : IPaymentService
         var ownerScope = await GetOwnerScopeOrNullAsync(cancellationToken);
 
         var paymentsQuery = ApplyPaymentSearch(_dbContext.Payments.AsNoTracking(), query.Search);
-        // ADR-022 §4.9 (fix S1-bis) + FC4 (2026-06-14): la lista global de pagos (GET /payments) proyecta a
-        // PaymentDto, que expone Notes; los Payment puente (sobrepago Y saldo a favor aplicado) son respaldo
-        // interno, no cobros reales -> se excluyen AMBOS. Predicado UNICO centralizado en AppliedCreditBridge
-        // para no repetir las dos condiciones en cada sitio (y que no se desincronicen).
+        // ADR-022 §4.9 (fix S1-bis) + FC4 (2026-06-14) + Tanda D1 (2026-07-16): la lista global de pagos
+        // (GET /payments) proyecta a PaymentDto, que expone Notes; los Payment puente (sobrepago, saldo a favor
+        // aplicado a otra reserva Y saldo a favor aplicado a una multa) son respaldo interno, no cobros reales
+        // -> se excluyen los TRES. Ver AppliedCreditBridge.IsInternalBridgePredicate para la referencia canonica
+        // de estas condiciones (EF no traduce bien invocarla directo, por eso queda expandida aca).
         paymentsQuery = paymentsQuery.Where(p => !(
             (p.Method == OverpaymentCreditCleanup.BridgeMethod && !p.AffectsCash && p.OriginalPaymentId != null)
-            || (p.Method == AppliedCreditBridge.BridgeMethod && !p.AffectsCash && p.AppliedFromCreditWithdrawalId != null)));
+            || (p.Method == AppliedCreditBridge.BridgeMethod && !p.AffectsCash && p.AppliedFromCreditWithdrawalId != null)
+            || (p.Method == AppliedCreditBridge.PenaltyBridgeMethod && !p.AffectsCash && p.AppliedFromCreditWithdrawalId != null)));
         if (ownerScope is not null)
         {
             paymentsQuery = paymentsQuery.Where(p => p.Reserva != null && p.Reserva.ResponsibleUserId == ownerScope);
@@ -685,11 +692,14 @@ public class PaymentService : IPaymentService
             // el puente invitaria al usuario a borrarlo. "Recaudado" se calcula sumando esta lista en el front,
             // por lo que ocultar el puente hace que muestre lo que el cliente pagó de verdad; el saldo grande de
             // la reserva se calcula aparte (server-side) y no cambia.
-            // FC4 (2026-06-14): excluir AMBOS puentes (sobrepago + saldo a favor aplicado). El de aplicacion
-            // es positivo, asi que sin esto aparece como un "cobro" extra en el historial de la reserva.
+            // FC4 (2026-06-14) + Tanda D1 (2026-07-16): excluir los TRES puentes (sobrepago, saldo a favor
+            // aplicado a otra reserva y saldo a favor aplicado a una multa). Los dos de aplicacion son
+            // POSITIVOS, asi que sin esto aparecen como un "cobro" extra en el historial de la reserva —y en
+            // una reserva anulada, ademas, filtrarian el GUID interno del bolsillo via Notes.
             .Where(p => !(
                 (p.Method == OverpaymentCreditCleanup.BridgeMethod && !p.AffectsCash && p.OriginalPaymentId != null)
-                || (p.Method == AppliedCreditBridge.BridgeMethod && !p.AffectsCash && p.AppliedFromCreditWithdrawalId != null)))
+                || (p.Method == AppliedCreditBridge.BridgeMethod && !p.AffectsCash && p.AppliedFromCreditWithdrawalId != null)
+                || (p.Method == AppliedCreditBridge.PenaltyBridgeMethod && !p.AffectsCash && p.AppliedFromCreditWithdrawalId != null)))
             .OrderByDescending(p => p.PaidAt)
             .ProjectTo<PaymentDto>(_mapper.ConfigurationProvider)
             .ToListAsync(cancellationToken);
@@ -927,6 +937,12 @@ public class PaymentService : IPaymentService
         if (AppliedCreditBridge.IsAppliedCreditBridge(payment))
             throw new InvalidOperationException(
                 "No se puede emitir comprobante de un saldo a favor aplicado; no es un cobro real.");
+
+        // Tanda D1 (2026-07-16): mismo bloqueo para el puente de saldo a favor aplicado contra una MULTA.
+        // Tambien es positivo y pasa el filtro de arriba, pero tampoco es un cobro real.
+        if (AppliedCreditBridge.IsPenaltyCreditBridge(payment))
+            throw new InvalidOperationException(
+                "No se puede emitir comprobante de un saldo a favor aplicado a una multa; no es un cobro real.");
 
         if (string.IsNullOrWhiteSpace(payment.EntryType))
         {
@@ -1460,66 +1476,11 @@ public class PaymentService : IPaymentService
         decimal imputedAmount,
         CancellationToken cancellationToken)
     {
-        if (!linkedInvoiceId.HasValue)
-        {
-            throw new InvalidOperationException(
-                "Para cobrar una multa de una reserva anulada debe seleccionar su Nota de Debito aprobada.");
-        }
-
-        var debitNote = await _dbContext.Invoices
-            .AsNoTracking()
-            .Where(invoice => invoice.Id == linkedInvoiceId.Value && invoice.ReservaId == reservaId)
-            .Select(invoice => new
-            {
-                invoice.Id,
-                invoice.TipoComprobante,
-                invoice.ImporteTotal,
-                invoice.MonId,
-                invoice.Resultado
-            })
-            .FirstOrDefaultAsync(cancellationToken);
-
-        if (debitNote is null
-            || debitNote.Resultado != "A"
-            || !InvoiceComprobanteHelpers.IsDebitNote(debitNote.TipoComprobante))
-        {
-            throw new InvalidOperationException(
-                "La multa debe estar documentada por una Nota de Debito aprobada de esta reserva.");
-        }
-
-        var debitNoteCurrency = Monedas.Normalizar(
-            TravelApi.Domain.Helpers.ArcaCurrencyMapper.ToIso(debitNote.MonId));
-        var imputedCurrency = Monedas.Normalizar(rawImputedCurrency);
-        if (!string.Equals(debitNoteCurrency, imputedCurrency, StringComparison.Ordinal))
-        {
-            throw new InvalidOperationException(
-                $"La Nota de Debito esta expresada en {debitNoteCurrency}; el cobro debe imputarse a esa moneda.");
-        }
-
-        // TANDA C "la multa cobrada se ve cerrada" (2026-07-16): la cuenta de "cuanto le queda pendiente a la
-        // ND" se centralizo en DebitNoteOutstandingLookup + DebitNoteOutstandingRules (Dominio) para que este
-        // guard, la bandeja de multas del cliente y el cartel de la ficha nunca den numeros distintos. Antes
-        // esta cuenta se repetia inline aca con las mismas dos consultas.
-        var debitNoteIdAsList = new List<int> { debitNote.Id };
-        var creditedByDebitNote = await DebitNoteOutstandingLookup.LoadCreditedAmountsAsync(
-            _dbContext, debitNoteIdAsList, cancellationToken);
-        var collectedByDebitNote = await DebitNoteOutstandingLookup.LoadCollectedAmountsAsync(
-            _dbContext, debitNoteIdAsList, cancellationToken);
-
-        var outstanding = TravelApi.Domain.Reservations.DebitNoteOutstandingRules.ComputeOutstanding(
-            debitNote.ImporteTotal,
-            creditedByDebitNote.GetValueOrDefault(debitNote.Id),
-            collectedByDebitNote.GetValueOrDefault(debitNote.Id));
-        if (outstanding <= 0m)
-        {
-            throw new InvalidOperationException("La Nota de Debito seleccionada ya no tiene saldo pendiente.");
-        }
-
-        if (EconomicRulesHelper.RoundCurrency(imputedAmount) > outstanding)
-        {
-            throw new InvalidOperationException(
-                $"El cobro imputado supera el saldo pendiente de la Nota de Debito ({outstanding:0.00} {debitNoteCurrency}).");
-        }
+        // TANDA D1 (2026-07-16): el gate en si (ND aprobada, moneda coherente, tope contra el pendiente) se
+        // extrajo a CancelledDebitNoteCollectionGate para que ClientCreditService lo reuse tal cual cuando el
+        // saldo a favor del cliente paga la multa (sin mover caja). Mismo tope, mismo criterio, una sola fuente.
+        await CancelledDebitNoteCollectionGate.EnsureCollectableAsync(
+            _dbContext, reservaId, linkedInvoiceId, rawImputedCurrency, imputedAmount, cancellationToken);
     }
 
     private (string? UserId, string? UserName) ResolveLedgerActor()
@@ -1635,6 +1596,15 @@ public class PaymentService : IPaymentService
                 "UpdatePaymentAsync rejected (direct applied-credit-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
                 paymentId, payment.ReservaId);
             throw new InvalidOperationException(AppliedCreditBridge.DirectBridgeMutationBlockReason);
+        }
+
+        // Tanda D1 (2026-07-16): mismo candado para el puente de saldo a favor aplicado contra una MULTA.
+        if (AppliedCreditBridge.IsPenaltyCreditBridge(payment))
+        {
+            _logger.LogWarning(
+                "UpdatePaymentAsync rejected (direct penalty-credit-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
+                paymentId, payment.ReservaId);
+            throw new InvalidOperationException(AppliedCreditBridge.PenaltyDirectBridgeMutationBlockReason);
         }
 
         // ADR-044 "Deshacer una multa ya emitida" (2026-07-14): mismo candado para el puente de multa deshecha.
@@ -1894,6 +1864,15 @@ public class PaymentService : IPaymentService
                 "{Operation} rejected (direct applied-credit-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
                 operationName, payment.Id, payment.ReservaId);
             throw new InvalidOperationException(AppliedCreditBridge.DirectBridgeMutationBlockReason);
+        }
+
+        // Tanda D1 (2026-07-16): mismo candado para el puente de saldo a favor aplicado contra una MULTA.
+        if (AppliedCreditBridge.IsPenaltyCreditBridge(payment))
+        {
+            _logger.LogWarning(
+                "{Operation} rejected (direct penalty-credit-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
+                operationName, payment.Id, payment.ReservaId);
+            throw new InvalidOperationException(AppliedCreditBridge.PenaltyDirectBridgeMutationBlockReason);
         }
 
         // ADR-044 "Deshacer una multa ya emitida" (2026-07-14): mismo candado para el puente de multa deshecha.

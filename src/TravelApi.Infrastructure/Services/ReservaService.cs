@@ -3827,11 +3827,13 @@ public class ReservaService : IReservaService
             // usuario no ve una "fila rara negativa" borrable y "Recaudado" suma lo que el cliente pagó de
             // verdad. El saldo de la reserva NO depende de esta lista (se calcula server-side), asi que ocultar
             // el puente no descuadra el numero grande; el excedente vive en el bolsillo del cliente.
-            // FC4 (2026-06-14): excluir tambien el puente de saldo a favor APLICADO (positivo). Sin esto,
-            // aplicar saldo a favor mostraria un "cobro" extra en el historial de la reserva destino.
+            // FC4 (2026-06-14) + Tanda D1 (2026-07-16): excluir tambien los puentes de saldo a favor APLICADO
+            // (positivos), tanto el de otra reserva como el de una multa. Sin esto, aplicar saldo a favor
+            // mostraria un "cobro" extra en el historial de la reserva destino.
             .Where(p => !(
                 (p.Method == OverpaymentCreditCleanup.BridgeMethod && !p.AffectsCash && p.OriginalPaymentId != null)
-                || (p.Method == AppliedCreditBridge.BridgeMethod && !p.AffectsCash && p.AppliedFromCreditWithdrawalId != null)))
+                || (p.Method == AppliedCreditBridge.BridgeMethod && !p.AffectsCash && p.AppliedFromCreditWithdrawalId != null)
+                || (p.Method == AppliedCreditBridge.PenaltyBridgeMethod && !p.AffectsCash && p.AppliedFromCreditWithdrawalId != null)))
             .OrderByDescending(p => p.PaidAt)
             .ProjectTo<PaymentDto>(_mapper.ConfigurationProvider)
             .ToListAsync();
@@ -3960,6 +3962,16 @@ public class ReservaService : IReservaService
             throw new InvalidOperationException(AppliedCreditBridge.DirectBridgeMutationBlockReason);
         }
 
+        // Tanda D1 (2026-07-16): mismo candado para el puente de saldo a favor aplicado contra una MULTA
+        // (path legacy nested).
+        if (AppliedCreditBridge.IsPenaltyCreditBridge(payment))
+        {
+            _logger.LogWarning(
+                "UpdatePaymentAsync (legacy via reserva) rejected (direct penalty-credit-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
+                paymentId, reservaId);
+            throw new InvalidOperationException(AppliedCreditBridge.PenaltyDirectBridgeMutationBlockReason);
+        }
+
         // ADR-033 (2026-06-16, E3/A2): el gate de ESTADO operativo se ELIMINO tambien en este path legacy
         // anidado, igual que en PaymentService.UpdatePaymentAsync. Editar libre lo restringe la inmutabilidad
         // fiscal (MutationGuards, abajo) + los guards de puente (arriba), no el estado de la reserva.
@@ -4067,6 +4079,16 @@ public class ReservaService : IReservaService
                 "DeletePaymentAsync (legacy via reserva) rejected (direct applied-credit-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
                 paymentId, reservaId);
             throw new InvalidOperationException(AppliedCreditBridge.DirectBridgeMutationBlockReason);
+        }
+
+        // Tanda D1 (2026-07-16): mismo candado para el puente de saldo a favor aplicado contra una MULTA
+        // (path legacy nested).
+        if (AppliedCreditBridge.IsPenaltyCreditBridge(payment))
+        {
+            _logger.LogWarning(
+                "DeletePaymentAsync (legacy via reserva) rejected (direct penalty-credit-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
+                paymentId, reservaId);
+            throw new InvalidOperationException(AppliedCreditBridge.PenaltyDirectBridgeMutationBlockReason);
         }
 
         // ADR-033 (2026-06-16, E3/A2): el gate de ESTADO operativo se ELIMINO tambien en este path legacy

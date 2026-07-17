@@ -11,6 +11,7 @@ using TravelApi.Domain.Entities;
 using TravelApi.Domain.Exceptions;
 using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
+using TravelApi.Infrastructure.Reservations;
 using TravelApi.Infrastructure.Services;
 using Xunit;
 
@@ -355,6 +356,102 @@ public class Adr044UndoIssuedDebitNoteServiceTests
             h.Service.UndoIssuedDebitNoteAsync(
                 bcId, "Deshacer una ND con impuestos.", "u", "U", default, requesterIsAdmin: true));
         Assert.Equal("INV-UNDO-MANUAL", ex.InvariantCode);
+    }
+
+    // ============================================================
+    // Tanda D1 (2026-07-16) B3 — guard AMPLIO: bloquear si hay un Payment VIVO imputado a la ND que NO afecta
+    // el saldo operativo de la reserva (AffectsReservaBalance=false). Cubre el puente de saldo a favor aplicado
+    // Y un cobro real (efectivo/transferencia) vigente desde 44fcea6.
+    // ============================================================
+
+    [Fact]
+    public async Task Undo_WhenPenaltyHasLiveCreditBridge_Rebounds409_INV_UNDO_CREDITBRIDGE()
+    {
+        // Si el cliente ya aplico saldo a favor contra esta multa, deshacer la ND perderia esa plata: el
+        // reconciliador (OperatorPenaltyUndoRules, balance-based) no ve el puente porque a proposito no toca
+        // el saldo de la reserva.
+        var h = BuildService();
+        var (bcId, bc, nd, _, _, _) = await SeedIssuedDebitNoteAsync(h.Ctx);
+
+        h.Ctx.Payments.Add(new Payment
+        {
+            ReservaId = bc.ReservaId,
+            LinkedInvoiceId = nd.Id,
+            Amount = 5000m,
+            Currency = "ARS",
+            Method = AppliedCreditBridge.PenaltyBridgeMethod,
+            AffectsCash = false,
+            AffectsReservaBalance = false,
+            EntryType = PaymentEntryTypes.Payment,
+            Status = "Paid",
+            PaidAt = DateTime.UtcNow,
+        });
+        await h.Ctx.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.UndoIssuedDebitNoteAsync(
+                bcId, "Deshacer con saldo aplicado.", "u", "U", default, requesterIsAdmin: true));
+        Assert.Equal("INV-UNDO-CREDITBRIDGE", ex.InvariantCode);
+    }
+
+    [Fact]
+    public async Task Undo_WhenPenaltyHasLiveRealCashPayment_Rebounds409_INV_UNDO_LIVEPAYMENT()
+    {
+        // Agujero preexistente (vigente desde 44fcea6): un cobro REAL en efectivo/transferencia contra la ND
+        // tampoco mueve el saldo de la reserva -> deshacer perderia esa plata igual que con el puente.
+        var h = BuildService();
+        var (bcId, bc, nd, _, _, _) = await SeedIssuedDebitNoteAsync(h.Ctx);
+
+        h.Ctx.Payments.Add(new Payment
+        {
+            ReservaId = bc.ReservaId,
+            LinkedInvoiceId = nd.Id,
+            Amount = 5000m,
+            Currency = "ARS",
+            Method = "Transfer",
+            AffectsCash = true,
+            AffectsReservaBalance = false,
+            EntryType = PaymentEntryTypes.Payment,
+            Status = "Paid",
+            PaidAt = DateTime.UtcNow,
+        });
+        await h.Ctx.SaveChangesAsync();
+
+        var ex = await Assert.ThrowsAsync<BusinessInvariantViolationException>(() =>
+            h.Service.UndoIssuedDebitNoteAsync(
+                bcId, "Deshacer con cobro real.", "u", "U", default, requesterIsAdmin: true));
+        Assert.Equal("INV-UNDO-LIVEPAYMENT", ex.InvariantCode);
+    }
+
+    [Fact]
+    public async Task Undo_WhenCreditBridgeAlreadyReversed_IsAllowed()
+    {
+        // Anti falso-positivo: un puente YA revertido (soft-deleted) no bloquea el deshacer.
+        var h = BuildService();
+        var (bcId, bc, nd, _, _, _) = await SeedIssuedDebitNoteAsync(h.Ctx);
+
+        h.Ctx.Payments.Add(new Payment
+        {
+            ReservaId = bc.ReservaId,
+            LinkedInvoiceId = nd.Id,
+            Amount = 5000m,
+            Currency = "ARS",
+            Method = AppliedCreditBridge.PenaltyBridgeMethod,
+            AffectsCash = false,
+            AffectsReservaBalance = false,
+            EntryType = PaymentEntryTypes.Payment,
+            Status = "Paid",
+            PaidAt = DateTime.UtcNow,
+            IsDeleted = true,
+            DeletedAt = DateTime.UtcNow,
+        });
+        await h.Ctx.SaveChangesAsync();
+        SetupCreateAsyncEmitsCreditNote(h);
+
+        var dto = await h.Service.UndoIssuedDebitNoteAsync(
+            bcId, "Deshacer con puente ya revertido.", "u", "U", default, requesterIsAdmin: true);
+
+        Assert.NotNull(dto);
     }
 
     // ============================================================
