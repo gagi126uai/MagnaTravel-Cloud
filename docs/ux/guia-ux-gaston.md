@@ -9,7 +9,7 @@
 
 ## Reglas generales (valen para toda la app)
 
-- **(2026-06-05) Basta de formularios "aclarativos".** Nada de cartelitos explicativos, leyendas largas ni "(opcional)" repartidos por el formulario: confunden al usuario. El formulario muestra solo lo imprescindible; lo secundario va escondido detrás de un "Más detalles". Si un campo necesita explicación, el diseño está mal. **(Excepción puntual aprobada 2026-07-14, P0:** la línea que explica por qué la multa va en la moneda de la factura — ver sección "Explicar POR QUÉ la multa va en la moneda de la factura". Es una regla fiscal no obvia; es la ÚNICA excepción, no habilita más cartelitos.)
+- **(2026-06-05) Basta de formularios "aclarativos".** Nada de cartelitos explicativos, leyendas largas ni "(opcional)" repartidos por el formulario: confunden al usuario. El formulario muestra solo lo imprescindible; lo secundario va escondido detrás de un "Más detalles". Si un campo necesita explicación, el diseño está mal. **(Excepción puntual aprobada 2026-07-14, P0:** la línea que explica por qué la multa va en la moneda de la factura — ver sección "Explicar POR QUÉ la multa va en la moneda de la factura". Es una regla fiscal no obvia.) **(Segunda excepción puntual aprobada 2026-07-17, P2:** la línea + las ayuditas de campo del paso "resolver devoluciones VIEJAS de servicios cancelados" — ver sección T5 2026-07-17. Justificada por ser un caso raro de datos viejos y por pedido explícito de Gastón al probarlo.) Estas excepciones son acotadas a esas dos pantallas; NO habilitan más cartelitos en el resto de la app.
 - **(2026-06-05) Lo "opcional" no se decide solo.** Qué campo es obligatorio y cuál no lo define el experto de dominio + Gastón, nunca el programador. Referencia validada: para cargar un servicio lo imprescindible es operador, fechas, pasajeros, costo, venta y moneda; el resto (confirmación del operador, régimen, etc.) puede ir después.
 
 ## Formularios
@@ -1557,6 +1557,81 @@ más de una factura, y viene escondido con defaults.
 - **(2026-07-15) Qué NO hacer:** ventana flotante (salvo el "¿Seguro?" de P2); editar monto/TC; pasar a
   pesos una factura en dólares; mostrar "diferencia de cambio"/"CAE"/"RG 4540"/Id/enum/texto de código;
   marcar la reserva Anulada; spinner que atrape; botones en la fila de la bandeja.
+
+## T5 — resolver devoluciones VIEJAS de servicios cancelados, de a una y con contexto (2026-07-17, respuestas de Gastón)
+
+> **Origen:** Gastón probó en vivo (2026-07-16) el sub-estado "trabado" del panel `DEVOLUCIÓN · SERVICIO
+> CANCELADO` — el que aparece SOLO en casos VIEJOS, donde el sistema no había guardado (recién desde
+> 2026-07-16) a qué factura correspondía cada servicio cancelado. Su reserva tenía DOS servicios cancelados
+> esperando devolución, del mismo operador y en monedas distintas (un hotel de US$ 700 y una excursión de
+> $ 720.000). La pantalla (1) no le decía cuál estaba resolviendo → mezcló los dos y tecleó 700000; (2)
+> solo soportaba UN servicio pendiente (coincide con el guard de backend `INV-T5-RESOLVE-STATE`); (3) no
+> explicaba qué es "monto bruto" ni para qué el motivo. Textual: "esa pantalla es muy poco intuitiva, no te
+> indica qué hay que poner, no se entiende nada". Sesión de 5 preguntas; Gastón eligió la recomendada en
+> TODAS (P1..P5 = A). Spec: `docs/ux/2026-07-17-t5-resolver-devoluciones-viejas.md`. **NO reabrir.**
+> **NO cambia** el caso normal (2026-07-15): una vez resuelta, cada devolución se emite con ESE flujo tal
+> cual. Siguen valiendo las 3 reglas duras de multimoneda (2026-06-09).
+
+- **(2026-07-17) Este paso reemplaza el formulario pelado** que se agregó el 2026-07-16
+  (`t5-resolver-legacy`: desplegable "Factura destino" + casillero "Monto bruto" + "Motivo"). Ese formulario
+  quedó descartado por confuso y por soportar un solo servicio.
+
+- **(2026-07-17, P1=A) Cuando hay varios servicios cancelados esperando devolución, se muestran TODOS en una
+  lista a la vista**, uno abajo del otro, cada uno con nombre del servicio · operador · moneda + monto de
+  venta a la derecha, y un botón **"Resolver"** por fila. Se resuelve **de a uno**; los demás quedan a la
+  vista esperando. Arriba, un contador de progreso: `Faltan resolver {N} devoluciones … · {resueltas} de
+  {N} listas`. Las reglas de multimoneda mandan: pesos y dólares en filas separadas, nunca un total
+  mezclado.
+
+- **(2026-07-17, P2=A) Va una línea explicativa arriba de la lista** (excepción puntual a "nada de
+  aclaraciones", justificada por ser un caso raro de datos viejos + pedido explícito de Gastón). Texto
+  EXACTO: *"Estos servicios se cancelaron cuando el sistema todavía no guardaba a qué factura correspondía
+  cada uno. Decinos de qué factura sale cada devolución y por cuánto, y el sistema la emite."*
+
+- **(2026-07-17) El formulario de resolver se abre EN LÍNEA debajo de la fila** (nunca ventana), con el
+  nombre del servicio y su moneda SIEMPRE a la vista arriba (`Resolver la devolución de: {servicio} —
+  {moneda}{monto}`), para que no se mezcle con otro. Tres preguntas, en criollo:
+  - **"¿De qué factura sale esta devolución?"** — desplegable **filtrado por la moneda del servicio** (un
+    servicio en dólares solo ve facturas en dólares; en pesos, solo en pesos — la moneda la manda la factura,
+    2026-06-09). Reusa `ElegirFacturaDestinoInline` y el formato `Factura B 0001-00012345 — US$ 900`
+    (2026-07-10 P5). Ayuda: *"Solo aparecen facturas en {dólares|pesos}: la moneda la manda la factura."*
+  - **(P3=A) "¿Cuánto se le devuelve al cliente?"** — precargado con el precio de venta (`LineSaleAmount`)
+    en amarillo (patrón tarifario 2026-06-05), editable, con la moneda del servicio al lado (nunca deja
+    elegir moneda). Ayuda EXACTA: *"Es el total de este servicio en la factura, con impuestos incluidos. Te
+    lo sugerimos por el precio de venta; corregilo solo si en la factura fue otro número."*
+  - **(P4=A) "¿Por qué corresponde esta factura y este monto?"** — texto **obligatorio** (unas palabras).
+    Ayuda EXACTA: *"Queda registrado para explicar esta devolución."*
+  - Botones: **"Cancelar"** (cierra esa fila, no pierde las demás) · **"Guardar esta devolución"**
+    (deshabilitado hasta factura + monto > 0 + motivo; se bloquea mientras guarda, no guarda dos veces).
+
+- **(2026-07-17) Al guardar, la fila queda "Resuelto ✓ · Factura … · monto"** y aparece su bloque "listo
+  para emitir" del caso normal (2026-07-15 §2). El contador sube. **Cada devolución se emite por separado:
+  como son de monedas distintas, son notas de crédito distintas, JAMÁS una sola.** Emitir dispara el flujo
+  ya aprobado (¿Seguro? → emitiendo → emitida → rechazada). Cuando todas quedaron emitidas, el panel
+  desaparece de la tira de avisos (no queda cartel vacío).
+
+- **(2026-07-17, P5=A) Si un servicio está en una moneda para la que la reserva no tiene ninguna factura,**
+  esa fila muestra un cartel neutro en vez del desplegable vacío: *"No encontramos una factura en
+  {dólares|pesos} en esta reserva. Revisá que la factura de este servicio exista antes de emitir la
+  devolución."* NO deriva a "administración" (2026-07-08); NO ofrece una factura de otra moneda; sin botón
+  "Guardar" en ese estado.
+
+- **(2026-07-17) Error del server al guardar (recuperable):** el formulario de esa fila queda con TODO lo
+  cargado intacto + cartel rojo *"No se pudo guardar. Revisá la conexión y probá de nuevo."*, reintenta en
+  el mismo botón (Ronda 2, 2026-06-06). Errores de guarda del backend (tope de saldo, moneda incoherente):
+  mensaje neutro en criollo, sin IDs/enums/texto de código.
+
+- **(2026-07-17) Permiso `cobranzas.invoice_annul`:** sin él, las filas se ven (solo lectura) pero sin
+  botón "Resolver" ni "Emitir"; nunca aparece el formulario.
+
+- **(2026-07-17) Dependencia de backend (no es UX):** aflojar el guard `INV-T5-RESOLVE-STATE` para resolver
+  UNO de VARIOS pendientes; exponer por renglón nombre del servicio/operador/moneda/`LineSaleAmount`; validar
+  EN EL SERVER que la factura elegida sea de la moneda del servicio (no confiar en el filtro del front).
+
+- **(2026-07-17) Qué NO hacer:** ventana flotante (salvo el "¿Seguro?" de emitir); ofrecer factura de otra
+  moneda; sumar/mezclar pesos con dólares o mostrar total general; una sola NC para dos monedas; casillero
+  de monto vacío y sin ayuda; perder lo cargado ante error recuperable; derivar a "administración"; botones
+  en la fila de la bandeja (sigue pasiva, la resolución vive en la ficha).
 
 ## La multa cobrada del todo se ve "cerrada" en la ficha (2026-07-16, respuestas de Gastón)
 

@@ -19,11 +19,39 @@ const leadFormInitialState = {
   website: "",
 };
 
+// Bug "fechas corridas un día" (2026-07-16): departure.startDate es una fecha-solo-día
+// (el día de salida del paquete, sin hora) que el backend guarda como medianoche UTC.
+// Si la pasábamos directo por new Date(value) y pedíamos el día en hora LOCAL del
+// navegador, en Argentina (UTC-3) la medianoche UTC del día 23 caía a las 21:00 del
+// día 22 y esta página pública mostraba "22 de mayo de 2026" en vez de "23 de mayo".
+//
+// Regex que reconoce una fecha-solo-día: "2026-05-23" cruda, o la misma serializada
+// por el backend como medianoche UTC ("2026-05-23T00:00:00[.000][Z]").
+const FECHA_SOLO_DIA_REGEX = /^(\d{4})-(\d{2})-(\d{2})(?:T00:00:00(?:\.\d+)?Z?)?$/;
+
 function formatDate(value) {
   if (!value) {
     return "-";
   }
 
+  // Fecha-solo-día: construimos el Date con los componentes LOCALES (año, mes, día)
+  // en vez de parsear el string ISO directo — así toLocaleDateString() no lo corre de
+  // día por la conversión UTC→local. Mismo truco que supplierAging.js.
+  if (typeof value === "string") {
+    const match = FECHA_SOLO_DIA_REGEX.exec(value);
+    if (match) {
+      const [, anio, mes, dia] = match;
+      const fechaLocal = new Date(Number(anio), Number(mes) - 1, Number(dia));
+      return fechaLocal.toLocaleDateString("es-AR", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      });
+    }
+  }
+
+  // Instante real con hora (poco frecuente en esta página, pero se preserva el
+  // comportamiento de siempre: se muestra en hora local del visitante).
   const date = new Date(value);
   return Number.isNaN(date.getTime())
     ? "-"

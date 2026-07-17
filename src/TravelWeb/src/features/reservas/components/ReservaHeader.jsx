@@ -5,15 +5,22 @@ import { getStatusConfig, translateStatus, isStatusLocked, isReservaEnEstadoVivo
 import { ReservaStatusChips } from "./ReservaStatusChips";
 import { isAdmin } from "../../../auth";
 
+// Bug "fechas corridas un día" (2026-07-16): startDate/endDate de la reserva son
+// fechas-solo-día (el usuario elige un día calendario, no una hora). El backend las
+// guarda como medianoche UTC ("...T00:00:00Z"). Si las pasamos por new Date(value)
+// y pedimos el día en hora LOCAL (UTC-3), la medianoche UTC del 23/05 cae a las
+// 21:00 del 22/05 en Argentina y el usuario ve "22/05/2026" en vez de "23/05/2026".
+// Por eso leemos el día/mes/año directo del texto (string-split), igual que
+// MonthNavigator y ReprogramarViajeModal — nunca pasamos por new Date() para esto.
 function formatTripDate(value) {
     if (!value) return null;
-    try {
-        const d = new Date(value);
-        if (isNaN(d.getTime())) return null;
-        return d.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
-    } catch {
-        return null;
-    }
+    const soloFecha = String(value).split("T")[0];
+    // Validacion numerica estricta (mismo criterio que la formatDate central):
+    // un valor que no sea yyyy-MM-dd de verdad devuelve null, jamas texto basura.
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(soloFecha);
+    if (!match) return null;
+    const [, anio, mes, dia] = match;
+    return `${dia}/${mes}/${anio}`;
 }
 
 /**

@@ -68,8 +68,9 @@ function buildAssistancePayload(form, canSeeCost) {
     const payload = {
         // ADR-018: identidad en planType, no en description
         planType: form.planName?.trim() || "",
-        validFrom: form.validFrom ? `${form.validFrom}T00:00:00.000Z` : null,
-        validTo: form.validTo ? `${form.validTo}T00:00:00.000Z` : null,
+        // Fecha de pared sin conversión UTC, igual que Hotel/Vuelo (bug fechas corridas 2026-07-16).
+        validFrom: form.validFrom ? `${form.validFrom}T00:00:00` : null,
+        validTo: form.validTo ? `${form.validTo}T00:00:00` : null,
         adults: form.passengers ? Number(form.passengers) : 1,
         supplierId: form.supplierId || null,
         netCost: canSeeCost ? redondearDinero(Number(form.unitNetCost) || 0) : 0,
@@ -298,6 +299,26 @@ test("buildAssistancePayload: con newCatalogProduct → sin rateId; supplierId d
     assert.equal(payload.rateId, undefined);
     assert.ok(payload.newCatalogProduct);
     assert.equal(payload.supplierId, "supplier-5");
+});
+
+test("buildAssistancePayload: fechas se mandan SIN sufijo Z (bug fechas corridas 2026-07-16)", () => {
+    // El backend normaliza esta fecha con NormalizeCalendarDate (BookingService) tomando
+    // solo el día calendario — mandar con "Z" de más solo agrega ruido al contrato.
+    const form = {
+        planName: "AC 150",
+        validFrom: "2026-08-12",
+        validTo: "2026-08-19",
+        passengers: 1,
+        supplierId: "supplier-1",
+        unitNetCost: 40,
+        unitSalePrice: 50,
+        currency: "ARS",
+        rateId: "rate-1",
+        newCatalogProduct: null,
+    };
+    const payload = buildAssistancePayload(form, true);
+    assert.equal(payload.validFrom, "2026-08-12T00:00:00");
+    assert.equal(payload.validTo, "2026-08-19T00:00:00");
 });
 
 test("buildAssistancePayload: sin permiso → netCost = 0", () => {

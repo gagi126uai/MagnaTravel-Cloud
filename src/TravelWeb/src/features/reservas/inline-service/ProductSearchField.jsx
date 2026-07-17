@@ -22,6 +22,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { Search, RefreshCw, Plus } from "lucide-react";
 import { api } from "../../../api";
 import { hasPermission } from "../../../auth";
+import { formatDate } from "../../../lib/utils";
 
 // Mínimo de caracteres para lanzar la búsqueda (igual al backend)
 const MIN_QUERY_LENGTH = 2;
@@ -43,17 +44,17 @@ function formatDropdownPrice(value) {
 }
 
 /**
- * Convierte una fecha ISO a texto legible para el dropdown.
- * ej: "2026-05-22T..." → "22/05/2026"
+ * Convierte la fecha/hora de la última venta a texto legible para el dropdown.
+ * ej: "2026-05-22T14:03:00Z" → "22/05/2026"
+ *
+ * soldAt es un instante REAL (CreatedAt del servicio vendido, no una fecha-solo-día
+ * elegida por el usuario), así que corresponde mostrarlo en hora local — usamos la
+ * formatDate() central de utils.js, que ya distingue ambos casos (ver su comentario).
  */
 function formatSoldDate(isoDate) {
     if (!isoDate) return null;
-    try {
-        const date = new Date(isoDate);
-        return date.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
-    } catch {
-        return null;
-    }
+    const formateada = formatDate(isoDate);
+    return formateada === "-" ? null : formateada;
 }
 
 /**

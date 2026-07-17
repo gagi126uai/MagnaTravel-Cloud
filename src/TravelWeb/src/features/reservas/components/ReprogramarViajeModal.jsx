@@ -4,22 +4,27 @@ import { api } from '../../../api';
 import { getApiErrorMessage } from '../../../lib/errors';
 
 /**
- * Convierte cualquier valor de fecha (ISO string, Date) a "YYYY-MM-DD" para
- * usarlo como value de un <input type="date">.
+ * Convierte un valor de fecha ISO (string) a "YYYY-MM-DD" para usarlo como
+ * value de un <input type="date">.
  * Devuelve "" si el valor es nulo, inválido o no parseable.
+ *
+ * Bug "fechas corridas un día" (2026-07-16): esta función PRE-RELLENA la
+ * referencia de "salida actual" del modal. Antes usaba
+ * new Date(value).getFullYear()/getMonth()/getDate(), que lee los componentes
+ * en hora LOCAL del navegador. Como el backend guarda startDate/endDate como
+ * medianoche UTC, en Argentina (UTC-3) eso corría el día hacia atrás y el
+ * modal mostraba la salida actual un día antes de la real. Ahora leemos el
+ * día calendario directo del texto (string-split), sin pasar por new Date()
+ * — mismo patrón que formatearFechaLegible/calcularDeltaDias más abajo.
  */
 function toDateInputValue(value) {
     if (!value) return '';
-    try {
-        const d = new Date(value);
-        if (isNaN(d.getTime())) return '';
-        const yyyy = d.getFullYear();
-        const mm = String(d.getMonth() + 1).padStart(2, '0');
-        const dd = String(d.getDate()).padStart(2, '0');
-        return `${yyyy}-${mm}-${dd}`;
-    } catch {
-        return '';
-    }
+    const soloFecha = String(value).split('T')[0];
+    const partes = soloFecha.split('-');
+    if (partes.length !== 3) return '';
+    const [anio, mes, dia] = partes;
+    if (!/^\d{4}$/.test(anio) || !/^\d{2}$/.test(mes) || !/^\d{2}$/.test(dia)) return '';
+    return `${anio}-${mes}-${dia}`;
 }
 
 /**

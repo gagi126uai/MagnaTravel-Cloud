@@ -52,8 +52,43 @@ export function formatCurrency(amount, currency) {
     }).format(number);
 }
 
+// Bug "fechas corridas un día" (reportado 2026-07-16): reconoce una fecha que en
+// realidad es "un día calendario" (no un instante real con hora). Dos formas posibles:
+//   1. "2026-05-23"                      → value crudo de un <input type="date">
+//   2. "2026-05-23T00:00:00[.000][Z]"    → el backend guarda esas fechas como
+//      medianoche UTC (columnas timestamp with time zone que no tienen hora real).
+// En ambos casos el "23" es el día que el usuario eligió — NO hay que convertirlo a
+// hora local, porque en Argentina (UTC-3) la medianoche UTC del día 23 cae a las
+// 21:00 del día 22, y new Date(...).toLocaleDateString() mostraría "22/05/2026".
+const FECHA_SOLO_DIA_REGEX = /^(\d{4})-(\d{2})-(\d{2})(?:T00:00:00(?:\.\d+)?Z?)?$/;
+
+/**
+ * Formatea una fecha para mostrarla al usuario como "DD/MM/AAAA".
+ *
+ * Discrimina dos casos (ver FECHA_SOLO_DIA_REGEX arriba):
+ *   - Fecha-solo-día (input date, o medianoche UTC guardada por el backend):
+ *     se lee el día/mes/año directo del texto (string-split), sin pasar por
+ *     new Date(), para no correr el día por la zona horaria del navegador.
+ *   - Cualquier otro instante (ej. createdAt de una factura, con hora real):
+ *     se sigue mostrando en hora LOCAL como antes — ahí sí importa la zona
+ *     horaria del usuario, porque es un evento que pasó a una hora concreta.
+ *
+ * Nota: si por coincidencia un evento con hora real ocurrió EXACTO a la
+ * medianoche UTC, esta función lo trata igual que una fecha-solo-día (mismo
+ * día calendario, sin desfase). Es una ambigüedad inherente al formato — no
+ * hay forma de distinguir ambos casos solo mirando el string.
+ */
 export function formatDate(date) {
     if (!date) return "-";
+
+    if (typeof date === "string") {
+        const match = FECHA_SOLO_DIA_REGEX.exec(date);
+        if (match) {
+            const [, anio, mes, dia] = match;
+            return `${dia}/${mes}/${anio}`;
+        }
+    }
+
     return new Date(date).toLocaleDateString("es-AR", {
         day: "2-digit",
         month: "2-digit",

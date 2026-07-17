@@ -61,8 +61,9 @@ function buildPackagePayload(form, canSeeCost) {
         // ADR-018: identidad en packageName, no en description
         packageName: form.packageName?.trim() || "",
         // endDate es OPCIONAL en ADR-018; si no viene, se omite (null)
-        endDate: form.endDate ? `${form.endDate}T00:00:00.000Z` : null,
-        startDate: form.startDate ? `${form.startDate}T00:00:00.000Z` : null,
+        // Fecha de pared sin conversión UTC, igual que Hotel/Vuelo (bug fechas corridas 2026-07-16).
+        endDate: form.endDate ? `${form.endDate}T00:00:00` : null,
+        startDate: form.startDate ? `${form.startDate}T00:00:00` : null,
         adults: pasajeros,
         supplierId: form.supplierId || null,
         netCost: canSeeCost ? netCostTotal : 0,
@@ -401,6 +402,27 @@ test("buildPackagePayload: ADR-018 — endDate presente → se serializa correct
     };
     const payload = buildPackagePayload(form, true);
     assert.ok(payload.endDate?.startsWith("2026-08-19"), "endDate debe serializar la fecha correcta");
+});
+
+test("buildPackagePayload: fechas se mandan SIN sufijo Z (bug fechas corridas 2026-07-16)", () => {
+    // El backend normaliza esta fecha con NormalizeCalendarDate (BookingService) tomando
+    // solo el día calendario — mandar con "Z" de más solo agrega ruido al contrato.
+    const form = {
+        packageName: "Iguazú 7 noches",
+        startDate: "2026-08-12",
+        endDate: "2026-08-19",
+        passengers: 2,
+        supplierId: "supplier-1",
+        unitNetCost: 0,
+        unitSalePrice: 250000,
+        currency: "ARS",
+        rateId: "rate-1",
+        roomBase: "double",
+        newCatalogProduct: null,
+    };
+    const payload = buildPackagePayload(form, true);
+    assert.equal(payload.startDate, "2026-08-12T00:00:00");
+    assert.equal(payload.endDate, "2026-08-19T00:00:00");
 });
 
 // ─── Tests ADR-018: round-trip de edición para Paquete ───────────────────────

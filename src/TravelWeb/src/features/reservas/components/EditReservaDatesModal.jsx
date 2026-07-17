@@ -2,18 +2,23 @@ import { useEffect, useState } from "react";
 import { X, Calendar } from "lucide-react";
 
 // ISO yyyy-mm-dd para inputs type=date a partir de un valor que puede ser ISO/Date.
+//
+// Bug "fechas corridas un día" (2026-07-16): esta función PRE-RELLENA el input.
+// Antes usaba new Date(value).getFullYear()/getMonth()/getDate(), que lee los
+// componentes en hora LOCAL del navegador. Como el backend guarda startDate/endDate
+// como medianoche UTC, en Argentina (UTC-3) eso corría el día hacia atrás: si el
+// usuario abría "Editar fechas" SIN tocar nada y guardaba, mandaba de vuelta el día
+// ANTERIOR al que tenía la reserva (corrompía el dato real, no solo la vista).
+// Ahora leemos el día calendario directo del texto (string-split), sin pasar por
+// new Date() — mismo patrón que MonthNavigator/ReprogramarViajeModal.
 function toDateInputValue(value) {
     if (!value) return "";
-    try {
-        const d = new Date(value);
-        if (isNaN(d.getTime())) return "";
-        const yyyy = d.getFullYear();
-        const mm = String(d.getMonth() + 1).padStart(2, "0");
-        const dd = String(d.getDate()).padStart(2, "0");
-        return `${yyyy}-${mm}-${dd}`;
-    } catch {
-        return "";
-    }
+    const soloFecha = String(value).split("T")[0];
+    const partes = soloFecha.split("-");
+    if (partes.length !== 3) return "";
+    const [anio, mes, dia] = partes;
+    if (!/^\d{4}$/.test(anio) || !/^\d{2}$/.test(mes) || !/^\d{2}$/.test(dia)) return "";
+    return `${anio}-${mes}-${dia}`;
 }
 
 /**

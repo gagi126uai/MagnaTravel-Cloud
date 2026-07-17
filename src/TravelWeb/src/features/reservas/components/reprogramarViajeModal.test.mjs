@@ -2,6 +2,7 @@
  * Tests de lógica pura de ReprogramarViajeModal.
  *
  * Cubre:
+ *   - toDateInputValue: pre-relleno del input de fecha (bug fechas corridas 2026-07-16)
  *   - calcularDeltaDias: diferencia en días entre dos fechas (positiva, negativa, cero)
  *   - calcularNuevaFechaFin: nuevo regreso dado un delta
  *   - Casos límite: fechas inválidas, null, sin fecha de salida
@@ -16,6 +17,16 @@ import assert from "node:assert/strict";
 
 // ─── Lógica pura copiada de ReprogramarViajeModal.jsx ────────────────────────
 // Copiamos las funciones exportadas para poder testearlas sin cargar React.
+
+function toDateInputValue(value) {
+    if (!value) return '';
+    const soloFecha = String(value).split('T')[0];
+    const partes = soloFecha.split('-');
+    if (partes.length !== 3) return '';
+    const [anio, mes, dia] = partes;
+    if (!/^\d{4}$/.test(anio) || !/^\d{2}$/.test(mes) || !/^\d{2}$/.test(dia)) return '';
+    return `${anio}-${mes}-${dia}`;
+}
 
 function calcularDeltaDias(fechaDesde, fechaHasta) {
     if (!fechaDesde || !fechaHasta) return null;
@@ -79,6 +90,52 @@ function calcularTextoCorrimiento(deltaDias) {
 function puedeEnviar(nuevaSalida, enviando) {
     return Boolean(nuevaSalida) && !enviando;
 }
+
+// ─── Tests: toDateInputValue (bug fechas corridas 2026-07-16) ────────────────
+// Esta función pre-rellena el campo "salida actual" del modal. El bug real: si
+// leía la fecha en hora LOCAL de un ISO en medianoche UTC, mostraba (y podía
+// volver a guardar) el día ANTERIOR al real.
+
+test("toDateInputValue: medianoche UTC con Z → mismo día calendario", () => {
+    assert.equal(toDateInputValue("2026-05-23T00:00:00Z"), "2026-05-23");
+});
+
+test("toDateInputValue: fecha-solo-día sin hora → mismo día", () => {
+    assert.equal(toDateInputValue("2026-05-23"), "2026-05-23");
+});
+
+test("toDateInputValue: fin de mes (31/05) → no salta a junio", () => {
+    assert.equal(toDateInputValue("2026-05-31T00:00:00Z"), "2026-05-31");
+});
+
+test("toDateInputValue: fin de año (31/12) → no salta al año siguiente", () => {
+    assert.equal(toDateInputValue("2026-12-31T00:00:00Z"), "2026-12-31");
+});
+
+test("toDateInputValue: 1 de enero → no retrocede al 31/12 del año anterior", () => {
+    assert.equal(toDateInputValue("2026-01-01T00:00:00Z"), "2026-01-01");
+});
+
+test("toDateInputValue: 29 de febrero bisiesto → se preserva", () => {
+    assert.equal(toDateInputValue("2028-02-29T00:00:00Z"), "2028-02-29");
+});
+
+test("toDateInputValue: valor vacío/null → cadena vacía", () => {
+    assert.equal(toDateInputValue(null), "");
+    assert.equal(toDateInputValue(undefined), "");
+    assert.equal(toDateInputValue(""), "");
+});
+
+test("toDateInputValue: texto sin formato de fecha → cadena vacía", () => {
+    assert.equal(toDateInputValue("no-es-fecha"), "");
+});
+
+test("toDateInputValue: ida y vuelta — el día elegido es el día que vuelve a aparecer", () => {
+    // Simula: reserva.startDate viene del backend como medianoche UTC del día elegido.
+    const diaElegidoOriginalmente = "2026-05-23";
+    const respuestaSimuladaDelBackend = `${diaElegidoOriginalmente}T00:00:00Z`;
+    assert.equal(toDateInputValue(respuestaSimuladaDelBackend), diaElegidoOriginalmente);
+});
 
 // ─── Tests: calcularDeltaDias ─────────────────────────────────────────────────
 

@@ -1,3 +1,5 @@
+import { formatDate as formatDateCentral } from "../../../lib/utils.js";
+
 export const creditNoteTypes = [3, 8, 13, 53];
 
 /**
@@ -38,12 +40,30 @@ export function formatCurrency(amount, currency = "ARS") {
 /** @deprecated Usar formatCurrency(amount, "ARS") */
 export const currencyFormatter = arsFormatter;
 
+/**
+ * Formatea una fecha para mostrarla al usuario.
+ *
+ * Bug "fechas corridas un día" (2026-07-16, módulo de plata — un día corrido acá es
+ * grave: cambia a qué mes/cobranza pertenece un movimiento). Reusamos la formatDate()
+ * central de utils.js, que ya distingue fecha-solo-día (input date, o medianoche UTC
+ * guardada por el backend, ej. item.startDate de un viaje) de un instante real con
+ * hora (ej. invoice.createdAt) — ver el comentario de esa función para el detalle.
+ *
+ * El parámetro `options` se mantiene por compatibilidad de firma: ningún call site
+ * actual lo usa, pero si alguno llega a pasarlo, respetamos el comportamiento viejo
+ * (Intl.DateTimeFormat vía toLocaleDateString) en vez de forzar el formato DD/MM/AAAA
+ * fijo de la función central.
+ */
 export function formatDate(date, options) {
   if (!date) {
     return "-";
   }
 
-  return new Date(date).toLocaleDateString("es-AR", options);
+  if (options) {
+    return new Date(date).toLocaleDateString("es-AR", options);
+  }
+
+  return formatDateCentral(date);
 }
 
 export function formatDateTime(date) {

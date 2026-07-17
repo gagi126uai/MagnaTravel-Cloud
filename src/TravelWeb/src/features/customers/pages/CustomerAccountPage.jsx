@@ -59,7 +59,7 @@ import { AccountPageSkeleton } from "../../../components/ui/skeleton";
 import { useDebounce } from "../../../hooks/useDebounce";
 import { getApiErrorMessage, isDatabaseUnavailableError } from "../../../lib/errors";
 import { getPublicId } from "../../../lib/publicIds";
-import { formatCurrency } from "../../../lib/utils";
+import { formatCurrency, formatDate as formatDateShared } from "../../../lib/utils";
 import { ReservaStatusBadge } from "../../reservas/components/ReservaStatusBadge";
 import { getMoneyStatus, isReservaAnulada } from "../../reservas/moneyStatus";
 import { formatTipoComprobante } from "../lib/facturacionFilters";
@@ -87,9 +87,13 @@ const emptyPage = {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+// Bug "fechas corridas un día" (2026-07-17): esta copia local parseaba el string con
+// new Date() y mostraba el día anterior para fechas-solo-día guardadas como medianoche
+// UTC (startDate del viaje). Delega en la formatDate central de lib/utils, que ya
+// distingue día-calendario (lee el texto tal cual) de instante-con-hora (hora local).
 const formatDate = (dateString) => {
   if (!dateString) return "-";
-  return new Date(dateString).toLocaleDateString("es-AR");
+  return formatDateShared(dateString);
 };
 
 /**

@@ -12,9 +12,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { formatDate } from "../../../lib/utils.js";
+
 // ─── Lógica pura extraída de ProductSearchField ───────────────────────────────
 // Estas funciones representan exactamente las reglas que el componente aplica.
 // Si cambia la lógica allá, actualizar acá.
+
+/**
+ * Copia de formatSoldDate (ProductSearchField.jsx), que ahora delega en la
+ * formatDate() central de utils.js — se testea contra el módulo real.
+ */
+function formatSoldDate(isoDate) {
+    if (!isoDate) return null;
+    const formateada = formatDate(isoDate);
+    return formateada === "-" ? null : formateada;
+}
 
 const MIN_QUERY_LENGTH = 2;
 
@@ -208,4 +220,18 @@ test("tipo null → 'servicio' (fallback genérico)", () => {
 
 test("tipo undefined → 'servicio' (fallback genérico)", () => {
     assert.equal(nombreTipoServicio(undefined), "servicio");
+});
+
+// ─── Tests: formatSoldDate (última venta) — bug fechas corridas 2026-07-16 ───
+// soldAt es un instante REAL (CreatedAt del servicio vendido), no una fecha-solo-día
+// elegida por el usuario, así que corresponde mostrarlo en hora local (comportamiento
+// sin cambios). Estos tests confirman que delegar en la formatDate() central no
+// rompió el caso de uso real de este dropdown.
+
+test("formatSoldDate: null → null", () => {
+    assert.equal(formatSoldDate(null), null);
+});
+
+test("formatSoldDate: timestamp real con hora → fecha en formato DD/MM/AAAA", () => {
+    assert.equal(formatSoldDate("2026-05-22T14:03:00Z"), formatDate("2026-05-22T14:03:00Z"));
 });
