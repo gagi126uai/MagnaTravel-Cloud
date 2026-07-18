@@ -1602,7 +1602,17 @@ public class AfipService : IAfipService
 
             if (IsCreditNote(invoice.TipoComprobante))
             {
+                // La NC SI mueve plata (genera la reversion economica del pago) -> recalculo COMPLETO
+                // (cobro + facturacion), via el chokepoint unico.
                 await ApplyCreditNoteEconomicReversalAsync(invoice.Id);
+            }
+            else
+            {
+                // ADR-048 T5 fix B1 (2026-07-17, review backend): una FACTURA DE VENTA o una ND recien
+                // aprobada NO mueve el saldo de la reserva (ADR-037 desacople) y por eso nunca pasa por el
+                // recalculo completo de plata -> sin este refresco, el eje de facturacion materializado
+                // (que el listado ahora lee) quedaba con el valor VIEJO para siempre.
+                await RefreshInvoicingAxisForNonCreditNoteAsync(invoice);
             }
 
             // Reconciliar la anulacion vinculada: si esta ND aprobada era la multa de una anulacion,
@@ -1727,6 +1737,28 @@ public class AfipService : IAfipService
     private static bool IsCreditNote(int tipoComprobante)
     {
         return tipoComprobante == 3 || tipoComprobante == 8 || tipoComprobante == 13 || tipoComprobante == 53;
+    }
+
+    /// <summary>
+    /// ADR-048 T5 fix B1 (2026-07-17, review backend) — <c>internal</c> para tests directos, mismo criterio
+    /// de visibilidad que <see cref="ApplyCreditNoteEconomicReversalAsync"/>.
+    ///
+    /// <para>Se llama DESPUES de que <paramref name="invoice"/> quedó <c>Resultado="A"</c> (CAE aprobado)
+    /// para cualquier comprobante que NO sea Nota de Crédito (factura de venta o Nota de Débito) — los dos
+    /// call-sites son <c>ProcessInvoiceJob</c> (POST directo) y <c>HandleStaleInvoiceIdempotencyKeyAsync</c>
+    /// (recovery de idempotencia): en AMBOS, ARCA ya aprobó el comprobante y el bruto/neto facturado de la
+    /// reserva cambió, pero el saldo NO (ADR-037 desacople) — por eso el refresco es SOLO del eje de
+    /// facturación (<see cref="Reservations.ReservaMoneyPersister.RefreshInvoicingAxisOnlyAsync"/>), nunca
+    /// el recálculo completo de plata que sí necesita una Nota de Crédito.</para>
+    ///
+    /// <para>No-op si la factura no tiene reserva asociada (dato viejo/factura suelta).</para>
+    /// </summary>
+    internal async Task RefreshInvoicingAxisForNonCreditNoteAsync(Invoice invoice)
+    {
+        if (!invoice.ReservaId.HasValue) return;
+
+        await TravelApi.Infrastructure.Reservations.ReservaMoneyPersister.RefreshInvoicingAxisOnlyAsync(
+            _context, invoice.ReservaId.Value);
     }
 
     /// <summary>
@@ -2787,6 +2819,14 @@ public class AfipService : IAfipService
             if (IsCreditNote(invoice.TipoComprobante))
             {
                 await ApplyCreditNoteEconomicReversalAsync(invoice.Id);
+            }
+            else
+            {
+                // ADR-048 T5 fix B1: mismo refresco liviano que el path normal (arriba) — este es el
+                // MISMO evento de "una factura de venta o ND quedo Resultado=A", solo que llego por la
+                // via de recovery de idempotencia en vez del POST directo. Sin esto, una factura
+                // recuperada por este camino dejaba la columna vieja igual que por el bug original.
+                await RefreshInvoicingAxisForNonCreditNoteAsync(invoice);
             }
 
             // Reconciliar la anulacion vinculada tambien cuando el CAE se DERIVA por recovery de

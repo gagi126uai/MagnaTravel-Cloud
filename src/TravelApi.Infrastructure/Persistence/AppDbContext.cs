@@ -498,6 +498,14 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             // se maneja con re-chequeo defensivo del estado origen (ver ReservaLifecycleAutomationService y
             // ReservaAutoStateService) + reconciliacion nocturna. Mejora futura: locking optimista fino.
             entity.Property(f => f.WhatsAppPhoneOverride).HasMaxLength(50);
+
+            // ADR-048 T5 (2026-07-17, hardening): indices de los dos ejes materializados. Habilitan que un
+            // filtro/orden futuro del listado (ej. "mostrame las Facturada y devuelta") corra indexado en
+            // SQL sin tener que recomputar el eje fila por fila. No son FK ni columnas compuestas: no
+            // aplica la trampa de "indice compuesto/parcial dropea el indice de la FK".
+            entity.HasIndex(f => f.DerivedCollectionStatus);
+            entity.HasIndex(f => f.DerivedInvoicingStatus);
+
             entity.HasIndex(f => f.NumeroReserva).IsUnique();
             entity.HasIndex(f => new { f.Status, f.StartDate, f.CreatedAt });
 

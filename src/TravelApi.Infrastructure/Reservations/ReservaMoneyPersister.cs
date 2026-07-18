@@ -35,6 +35,10 @@ namespace TravelApi.Infrastructure.Reservations;
 /// <see cref="ReservaTerminalTransitionApplier"/>, que lleva la reserva al terminal del par (Anulada /
 /// Esperando reembolso del operador) cuando corresponde. Asi el cambio de estado nunca queda en un
 /// commit separado del cambio de saldo — comparten la MISMA transaccion.</para>
+///
+/// <para><b>ADR-048 T5 (2026-07-17, hardening)</b>: en la MISMA pasada tambien materializa los DOS ejes
+/// secundarios (<c>Reserva.DerivedCollectionStatus</c> / <c>Reserva.DerivedInvoicingStatus</c>) via
+/// <see cref="ReservaDerivedAxesProjector"/> — mismo commit, mismo chokepoint, unico escritor.</para>
 /// </summary>
 internal static class ReservaMoneyPersister
 {
@@ -59,6 +63,10 @@ internal static class ReservaMoneyPersister
         // Grafo economico completo: pagos + 5 tipados + generico. Centralizado aca para que las tres
         // rutinas que delegan en este persister carguen exactamente el mismo grafo (antes cada una
         // mantenia su propia lista de Includes y podian desincronizarse al agregar un tipo de servicio).
+        //
+        // ADR-048 T5: se agrega Include(Invoices) — antes no hacia falta aca (la plata de la reserva no
+        // depende de los comprobantes), pero el eje de facturacion materializado (DerivedInvoicingStatus)
+        // SI necesita los comprobantes para calcular el cuadre (ver ReservaDerivedAxesProjector).
         var reserva = await db.Reservas
             .Include(f => f.Payments)
             .Include(f => f.Servicios)
@@ -67,6 +75,7 @@ internal static class ReservaMoneyPersister
             .Include(f => f.TransferBookings)
             .Include(f => f.PackageBookings)
             .Include(f => f.AssistanceBookings)
+            .Include(f => f.Invoices)
             .FirstOrDefaultAsync(f => f.Id == reservaId, ct);
 
         if (reserva == null) return;
@@ -83,6 +92,14 @@ internal static class ReservaMoneyPersister
 
         // 2) Tabla hija: upsert por moneda + borrar las monedas que ya no aplican.
         await SyncMoneyByCurrencyRowsAsync(db, reservaId, summary, ct);
+
+        // 2-ter) ADR-048 T5 (2026-07-17, hardening): materializa los dos ejes secundarios (cobro /
+        //    facturacion) en la cabecera de la reserva, en la MISMA pasada — mismo commit que el escalar
+        //    y la tabla hija de arriba. Se recalculan SIEMPRE, sin mirar Status: por eso no hace falta un
+        //    caso especial para el par {Cancelled, PendingOperatorRefund} (B3, ver el XML-doc del
+        //    proyector). "reserva.Invoices" ya viene cargado por el Include de arriba.
+        reserva.DerivedCollectionStatus = ReservaDerivedAxesProjector.ProjectCollectionStatus(summary);
+        reserva.DerivedInvoicingStatus = ReservaDerivedAxesProjector.ProjectInvoicingStatus(summary.TotalSale, reserva.Invoices);
 
         // 2-bis) ADR-048 (2026-07-17, modelo de estados derivados, via atomica B2): si la reserva "tuvo
         //    servicios y los tiene todos anulados" (INV-048-01), esto la lleva al terminal del par
@@ -105,6 +122,46 @@ internal static class ReservaMoneyPersister
         //    guarda sus propios cambios en una SaveChanges separada. Si el toggle EnableSellerCommissions
         //    esta apagado, el persister es un no-op total (comportamiento byte-identico a antes).
         await CommissionAccrualPersister.RecalculateAsync(db, reservaId, ct);
+    }
+
+    /// <summary>
+    /// ADR-048 T5 fix B1 (2026-07-17, review backend): refresca SOLO <c>Reserva.DerivedInvoicingStatus</c>
+    /// — sin tocar cobro, servicios ni pagos. Existe para los caminos que cambian un COMPROBANTE (factura
+    /// de venta o Nota de Debito con CAE aprobado) pero que NUNCA mueven el saldo de la reserva (ADR-037:
+    /// facturar esta desacoplado del cobro), y por eso normalmente NO pasan por <see cref="PersistAsync"/>.
+    ///
+    /// <para><b>El bug que esto cierra</b>: antes de este fix, el UNICO camino que refrescaba
+    /// <c>DerivedInvoicingStatus</c> era <see cref="PersistAsync"/> (llamado, para comprobantes, SOLO
+    /// cuando se aprueba una Nota de Credito — <c>AfipService.ApplyCreditNoteEconomicReversalAsync</c>).
+    /// Emitir una FACTURA DE VENTA o una ND nunca pasaba por ahi, asi que la columna quedaba con el valor
+    /// del ULTIMO movimiento de plata (tipicamente "NotInvoiced") para siempre — el listado (que ahora lee
+    /// la columna) mentia "Sin facturar" mientras el detalle (que sigue derivando en vivo) decia
+    /// "Facturada total". Ver <c>docs/architecture/2026-07-17-t5-review-backend.md</c> §B1.</para>
+    ///
+    /// <para><b>Por que NO recalcular todo (por que no llamar <see cref="PersistAsync"/> aca en su
+    /// lugar)</b>: emitir/anular un comprobante NO cambia <c>TotalSale</c> (que sale de los SERVICIOS, no
+    /// de los comprobantes) ni el saldo del cliente en el circuito normal (eso lo mueve un Payment, no una
+    /// Invoice) — por eso el proyector puede usar el <c>TotalSale</c> YA PERSISTIDO tal cual, sin
+    /// recorrer de nuevo las 6 colecciones de servicios ni los pagos. Recalcular todo en CADA emision de
+    /// factura (el camino MAS FRECUENTE de mutacion de comprobantes) seria carga de escritura innecesaria
+    /// en el camino caliente. Si algun dia una emision SI llegara a mover plata (hoy no pasa en ningun
+    /// flujo conocido), ese camino debe seguir usando <see cref="PersistAsync"/> completo, no este atajo.</para>
+    ///
+    /// <para><b>Para Notas de Credito seguí usando <see cref="PersistAsync"/> completo</b> (via
+    /// <c>AfipService.ApplyCreditNoteEconomicReversalAsync</c>): una NC SI mueve plata (genera la reversion
+    /// economica del pago), asi que necesita el recalculo completo de cobro + facturacion, no este atajo.</para>
+    /// </summary>
+    public static async Task RefreshInvoicingAxisOnlyAsync(AppDbContext db, int reservaId, CancellationToken ct = default)
+    {
+        var reserva = await db.Reservas
+            .Include(f => f.Invoices)
+            .FirstOrDefaultAsync(f => f.Id == reservaId, ct);
+
+        if (reserva == null) return;
+
+        reserva.DerivedInvoicingStatus = ReservaDerivedAxesProjector.ProjectInvoicingStatus(reserva.TotalSale, reserva.Invoices);
+
+        await db.SaveChangesAsync(ct);
     }
 
     /// <summary>

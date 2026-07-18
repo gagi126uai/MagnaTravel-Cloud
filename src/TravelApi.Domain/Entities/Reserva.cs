@@ -346,6 +346,28 @@ public class Reserva : IHasPublicId
     /// <summary>Cuando se marco el ultimo motivo de revision (par de <see cref="LastRegressionReason"/>).</summary>
     public DateTime? LastRegressionAt { get; set; }
 
+    /// <summary>
+    /// ADR-048 T5 (2026-07-17, hardening — MATERIALIZACION de ejes secundarios): proyeccion persistida
+    /// del estado de COBRO (mismos valores que <c>ReservaCollectionStatus.Derive</c>: "ConDeuda" /
+    /// "SaldoAFavor" / "Saldado" / "SinMovimientos"). NO es una segunda fuente de verdad: el UNICO
+    /// escritor es la derivacion pura que corre dentro de <c>ReservaMoneyPersister.PersistAsync</c> (la
+    /// MISMA funcion que ya usan el detalle y el listado en vivo), en la MISMA <c>SaveChangesAsync</c> que
+    /// la plata (regla 9, atomico). Nace <c>null</c> en reservas viejas hasta que la migracion de
+    /// reparacion unica las rellena; una vez rellena, ninguna lectura la recalcula por su cuenta
+    /// (INV-048-10). Sirve para que los LISTADOS puedan filtrar/ordenar por este eje sin recomputar sobre
+    /// las filas hijas de cada pagina (patron de "columna de proyeccion" tipo SAP/Odoo).
+    /// </summary>
+    [MaxLength(20)]
+    public string? DerivedCollectionStatus { get; set; }
+
+    /// <summary>
+    /// ADR-048 T5: mismo mecanismo que <see cref="DerivedCollectionStatus"/>, pero para el eje de
+    /// FACTURACION (mismos valores que <c>ReservaInvoicingStatus.Derive</c>: "NotInvoiced" /
+    /// "PartiallyInvoiced" / "FullyInvoiced" / "FullyReturned"). Escrito por el mismo unico punto.
+    /// </summary>
+    [MaxLength(20)]
+    public string? DerivedInvoicingStatus { get; set; }
+
     // === ADR-027 (auditoria ERP, hallazgo #10): "confirmada con cambios" ===
     // Cuando el operador confirma un servicio PERO con otro precio/condicion, el vendedor edita el
     // servicio para reflejarlo. Si la reserva YA estaba en un estado vivo (En gestion en adelante),

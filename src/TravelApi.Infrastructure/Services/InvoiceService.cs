@@ -2599,6 +2599,19 @@ public class InvoiceService : IInvoiceService
             originalInvoice.AnnulledAt = DateTime.UtcNow;
             await _context.SaveChangesAsync(ct);
 
+            // ADR-048 T5 fix B1 (2026-07-17, review backend): esta NC parcial recuperada por
+            // idempotencia tambien queda con CAE aprobado (Resultado="A") y por lo tanto cambia el
+            // BRUTO/NETO facturado de la reserva — sin este refresco, el eje de facturacion
+            // materializado (que el listado lee) quedaba con el valor viejo, igual que el bug de B1 en
+            // AfipService. Refresco LIVIANO (solo la columna de facturacion): esta rama de recovery no
+            // toca el circuito de cobro (esa es una limitacion pre-existente de este camino, fuera del
+            // alcance de este fix — ver el reporte de la tanda).
+            if (originalInvoice.ReservaId.HasValue)
+            {
+                await TravelApi.Infrastructure.Reservations.ReservaMoneyPersister.RefreshInvoicingAxisOnlyAsync(
+                    _context, originalInvoice.ReservaId.Value, ct);
+            }
+
             _logger.LogWarning(
                 "Idempotency recovery (caso A): derivado CAE de comprobante ya emitido. " +
                 "OriginalInvoiceId={InvoiceId} CAE={Cae}",

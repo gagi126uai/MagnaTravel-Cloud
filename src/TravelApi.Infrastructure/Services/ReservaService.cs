@@ -2234,16 +2234,24 @@ public class ReservaService : IReservaService
             summary.GrossProfit = 0m;
         }
 
+        // ADR-048 T5 (2026-07-17, hardening): lee los DOS ejes YA MATERIALIZADOS en la cabecera de cada
+        // reserva (columna, no recalculo), en UNA query chica batcheada por PublicId. Con esto en mano,
+        // los dos Fill* de abajo solo tienen que salir a buscar la version EN VIVO para las filas que
+        // todavia no tengan el eje materializado (reservas legacy sin backfill, o que nunca pasaron por
+        // ReservaMoneyPersister) — el resto de la pagina no dispara ninguna query pesada.
+        var materializedAxes = await FetchMaterializedDerivedAxesAsync(
+            paged.Items.Select(i => i.PublicId).ToList(), cancellationToken);
+
         // ADR-021 Capa 5: detalle por moneda del listado. A diferencia del detalle (que recalcula con el
         // calculator desde las colecciones cargadas), el listado lee la tabla hija materializada
         // ReservaMoneyByCurrency en UNA sola query batcheada por los PublicId de la pagina (evita N+1 y no
         // trae todas las colecciones de cada reserva). El TotalCost por moneda se enmascara igual que el escalar.
-        await FillPorMonedaForListAsync(paged.Items, seeCost, cancellationToken);
+        await FillPorMonedaForListAsync(paged.Items, seeCost, materializedAxes, cancellationToken);
 
         // ADR-037 Capa carril de facturacion: estado de facturacion derivado por fila, en UNA query agrupada
         // por reserva (sin N+1). El facturado neto no es costo: no se enmascara por ver-costos (es lo mismo
         // que ya se muestra en el cuadre del detalle).
-        await FillInvoicingStatusForListAsync(paged.Items, cancellationToken);
+        await FillInvoicingStatusForListAsync(paged.Items, materializedAxes, cancellationToken);
 
         // Contexto de plata real en las filas ANULADAS (saldo a favor pendiente / multa cobrable / dato roto).
         // Una sola query batcheada por pagina, y solo si hay filas anuladas (ver el helper). Ver ReservationDebtRules.
@@ -2254,13 +2262,49 @@ public class ReservaService : IReservaService
     }
 
     /// <summary>
+    /// ADR-048 T5 (2026-07-17, hardening): trae los DOS ejes ya MATERIALIZADOS en la cabecera de cada
+    /// reserva de la pagina (<c>Reserva.DerivedCollectionStatus</c> / <c>DerivedInvoicingStatus</c>,
+    /// escritos por <c>ReservaMoneyPersister</c> en cada mutacion de plata — ver
+    /// <c>ReservaDerivedAxesProjector</c>). Una sola query chica por PublicId, igual de barata que
+    /// preguntar por cualquier otro escalar de la cabecera (no hay join a tablas hijas ni agregacion).
+    ///
+    /// <para>El valor de cada eje puede venir <c>null</c> si la reserva todavia no paso por el persister
+    /// (legacy sin la migracion de reparacion, o recien creada sin ningun movimiento de plata todavia):
+    /// <see cref="FillPorMonedaForListAsync"/> y <see cref="FillInvoicingStatusForListAsync"/> usan ese
+    /// <c>null</c> como señal de "esta fila necesita el calculo EN VIVO de siempre" (fallback, sin cambiar
+    /// el resultado final — solo cambia CUANTAS filas necesitan la query pesada).</para>
+    /// </summary>
+    private async Task<Dictionary<Guid, (string? Collection, string? Invoicing)>> FetchMaterializedDerivedAxesAsync(
+        IReadOnlyList<Guid> publicIds, CancellationToken cancellationToken)
+    {
+        if (publicIds.Count == 0)
+            return new Dictionary<Guid, (string?, string?)>();
+
+        var rows = await _context.Reservas
+            .AsNoTracking()
+            .Where(r => publicIds.Contains(r.PublicId))
+            .Select(r => new { r.PublicId, r.DerivedCollectionStatus, r.DerivedInvoicingStatus })
+            .ToListAsync(cancellationToken);
+
+        return rows.ToDictionary(r => r.PublicId, r => (r.DerivedCollectionStatus, r.DerivedInvoicingStatus));
+    }
+
+    /// <summary>
     /// ADR-021 Capa 5: llena <c>PorMoneda</c>/<c>EsMultimoneda</c> de cada fila del listado leyendo la
     /// tabla hija materializada <c>ReservaMoneyByCurrency</c>. Una sola query por los PublicId de la pagina
     /// (no recalcula ni trae colecciones por reserva). Si <paramref name="seeCost"/> es false, el costo de
     /// cada moneda se enmascara a 0 (mismo criterio que el escalar TotalCost).
+    ///
+    /// <para>ADR-048 T5: <c>CollectionStatus</c> se toma DIRECTO de <paramref name="materializedAxes"/>
+    /// cuando esta disponible (columna ya calculada, sin recalcular nada); solo se vuelve a derivar EN VIVO
+    /// para las filas donde ese eje todavia es <c>null</c> (fallback, ver
+    /// <see cref="FetchMaterializedDerivedAxesAsync"/>). <c>PorMoneda</c> se sigue completando SIEMPRE (es
+    /// informacion aparte, el desglose por moneda, no el eje derivado).</para>
     /// </summary>
     private async Task FillPorMonedaForListAsync(
-        IReadOnlyList<ReservaListDto> items, bool seeCost, CancellationToken cancellationToken)
+        IReadOnlyList<ReservaListDto> items, bool seeCost,
+        IReadOnlyDictionary<Guid, (string? Collection, string? Invoicing)> materializedAxes,
+        CancellationToken cancellationToken)
     {
         if (items.Count == 0) return;
 
@@ -2287,10 +2331,21 @@ public class ReservaService : IReservaService
             .GroupBy(row => row.ReservaPublicId)
             .ToDictionary(g => g.Key, g => g.ToList());
 
+        // ADR-048 T5: las filas cuyo eje de cobro YA esta materializado (columna no-null) no necesitan
+        // volver a derivarlo aca abajo; se toma tal cual. El resto sigue el camino EN VIVO de siempre.
         foreach (var item in items)
         {
+            bool hasMaterializedCollectionStatus =
+                materializedAxes.TryGetValue(item.PublicId, out var axesForItem) && axesForItem.Collection != null;
+
             if (!byReserva.TryGetValue(item.PublicId, out var reservaRows))
             {
+                if (hasMaterializedCollectionStatus)
+                {
+                    item.CollectionStatus = axesForItem.Collection!;
+                    continue;
+                }
+
                 // Sin filas hijas (reserva nueva sin servicios, saldada en 0, o legacy sin backfill): no hay
                 // detalle por moneda. Usamos el escalar de la fila para deuda/saldo a favor, y las senales de
                 // actividad (vendio algo / cobro algo) para distinguir "SinMovimientos" de "Saldado".
@@ -2327,6 +2382,14 @@ public class ReservaService : IReservaService
 
             item.EsMultimoneda = item.PorMoneda.Count > 1;
 
+            // ADR-048 T5: si esta reserva ya tiene el eje de cobro MATERIALIZADO, se usa directo (misma
+            // regla, ya calculada por el persister) — no hace falta volver a correr Derive() aca.
+            if (hasMaterializedCollectionStatus)
+            {
+                item.CollectionStatus = axesForItem.Collection!;
+                continue;
+            }
+
             // ADR-033 (E7/A5): estado de cobro derivado del saldo POR MONEDA de las filas hijas.
             // H1 (2026-06-24): pasamos tambien las senales de actividad (cargos / cobros) para que una reserva
             // con todo en 0 pero SIN movimientos diga "SinMovimientos" y no "Saldado" (que el front pinta "pagada").
@@ -2356,17 +2419,42 @@ public class ReservaService : IReservaService
     /// entero". Las reservas sin comprobantes vivos no aparecen en el agregado: quedan en "NotInvoiced" (el
     /// default del DTO, bruto 0), que sigue siendo correcto. El <c>vendido</c> sale del escalar
     /// <c>TotalSale</c> que cada fila ya trae (consistente con la limitacion escalar v1 del carril).</para>
+    ///
+    /// <para>ADR-048 T5 (2026-07-17, hardening): las filas cuyo eje YA esta MATERIALIZADO
+    /// (<paramref name="materializedAxes"/>, columna de la cabecera) se resuelven directo, SIN entrar a
+    /// esta query — que termina corriendo solo para el subconjunto (usualmente vacio, una vez que la
+    /// migracion de reparacion corrio) que todavia no tiene el eje calculado.</para>
     /// </summary>
     private async Task FillInvoicingStatusForListAsync(
-        IReadOnlyList<ReservaListDto> items, CancellationToken cancellationToken)
+        IReadOnlyList<ReservaListDto> items,
+        IReadOnlyDictionary<Guid, (string? Collection, string? Invoicing)> materializedAxes,
+        CancellationToken cancellationToken)
     {
         if (items.Count == 0) return;
 
-        var publicIds = items.Select(i => i.PublicId).ToList();
+        // Filas con el eje YA materializado: se aplican directo y quedan afuera de la query de abajo.
+        var itemsNeedingLiveCompute = new List<ReservaListDto>();
+        foreach (var item in items)
+        {
+            if (materializedAxes.TryGetValue(item.PublicId, out var axes) && axes.Invoicing != null)
+            {
+                item.InvoicingStatus = axes.Invoicing;
+            }
+            else
+            {
+                itemsNeedingLiveCompute.Add(item);
+            }
+        }
 
-        // Tipos de NOTA DE CREDITO (restan en el cuadre). Mismo conjunto que la bandeja de facturacion
-        // (InvoiceService) y que InvoiceComprobanteHelpers: A=3, B=8, C=13, M=53. El resto (facturas y ND) suma.
+        if (itemsNeedingLiveCompute.Count == 0) return;
+
+        var publicIds = itemsNeedingLiveCompute.Select(i => i.PublicId).ToList();
+
+        // Tipos AFIP conocidos. Mismo conjunto que InvoiceComprobanteHelpers.Categorize (Invoice/DebitNote/
+        // CreditNote); cualquier TipoComprobante fuera de estos 12 es "dato corrupto" y NO cuenta (ver mas
+        // abajo). A=1/6/11/51 factura, ND=2/7/12/52, NC=3/8/13/53 (restan en el cuadre).
         var creditNoteTipos = new[] { 3, 8, 13, 53 };
+        var invoiceOrDebitNoteTipos = new[] { 1, 6, 11, 51, 2, 7, 12, 52 };
 
         // Una fila por reserva con su facturado neto Y su bruto emitido. Join explicito contra Reservas (no
         // nav implicita) para resolver el PublicId con el que matchear el DTO y correr igual en Postgres e
@@ -2383,15 +2471,19 @@ public class ReservaService : IReservaService
             select new
             {
                 ReservaPublicId = byReserva.Key,
-                // NOTA (M2 del review backend, 2026-07-17, riesgo bajo, NO se toca en esta tanda): un
-                // TipoComprobante fuera de {1,2,3,6,7,8,11,12,13,51,52,53} (dato corrupto) cuenta aca
-                // como factura (neto y bruto), mientras que el calculador de dominio lo trata como
-                // Unknown (no cuenta). Solo diverge con un CAE aprobado de tipo desconocido, algo que
-                // no deberia poder pasar en un comprobante real.
+                // ADR-048 T5 (2026-07-17, review backend, item N1/#4): ALINEADO con el criterio del
+                // escritor go-forward (ReservaDerivedAxesProjector -> ReservaInvoicingCuadreCalculator ->
+                // InvoiceComprobanteHelpers.Categorize). Antes esta query trataba "cualquier tipo que no
+                // sea Nota de Credito" como si sumara — un TipoComprobante corrupto (fuera de los 12
+                // conocidos) con CAE aprobado hubiera sumado aca pero el proyector lo hubiera tratado como
+                // Unknown (0). Ahora los tres (proyector, este query y el backfill SQL de la migracion)
+                // usan el MISMO criterio: un tipo desconocido no suma ni resta, en ningun lado.
                 FacturadoNeto = byReserva.Sum(invoice =>
                     creditNoteTipos.Contains(invoice.TipoComprobante)
                         ? -invoice.ImporteTotal
-                        : invoice.ImporteTotal),
+                        : invoiceOrDebitNoteTipos.Contains(invoice.TipoComprobante)
+                            ? invoice.ImporteTotal
+                            : 0m),
                 // Bruto: SOLO Facturas + ND, la NC no participa (ni suma ni resta). Espejo inline de
                 // ReservaInvoicingCuadreCalculator.IsInvoiceOrDebitNote (EF no traduce el helper).
                 //
@@ -2402,13 +2494,13 @@ public class ReservaService : IReservaService
                 // este patron ya esta probado en produccion por FacturadoNeto. Mismo resultado, cero
                 // riesgo nuevo de traduccion.
                 BrutoEmitido = byReserva.Sum(invoice =>
-                    creditNoteTipos.Contains(invoice.TipoComprobante) ? 0m : invoice.ImporteTotal)
+                    invoiceOrDebitNoteTipos.Contains(invoice.TipoComprobante) ? invoice.ImporteTotal : 0m)
             }).ToListAsync(cancellationToken);
 
         var cuadreByReserva = facturadoByReserva
             .ToDictionary(row => row.ReservaPublicId, row => (row.FacturadoNeto, row.BrutoEmitido));
 
-        foreach (var item in items)
+        foreach (var item in itemsNeedingLiveCompute)
         {
             var (facturadoNeto, brutoEmitido) = cuadreByReserva.TryGetValue(item.PublicId, out var cuadre)
                 ? cuadre
