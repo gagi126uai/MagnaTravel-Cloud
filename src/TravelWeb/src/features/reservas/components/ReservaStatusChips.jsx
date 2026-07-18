@@ -7,7 +7,7 @@ import { getMoneyStatus } from "../moneyStatus";
  * Un rótulo = un solo eje. Regla de Gastón 2026-06-22 (refinamiento por review):
  *   - Eje Pago:    Pagada / Sin movimientos / Debe — no viaja (+ Saldo a favor / Multa, en anuladas)
  *   - Eje Viaje:   Vencida con deuda  ← SOLO este caso; "En viaje" lo dice el badge grande.
- *   - Eje Factura: Sin facturar / Facturada en parte / Facturada total
+ *   - Eje Factura: Sin facturar / Facturada en parte / Facturada total / Facturada y devuelta (ADR-048 T3)
  *
  * Tanda 6 (2026-07-05): el Eje Pago YA NO decide mirando collectionStatus/balance acá —
  * delega en getMoneyStatus (../moneyStatus.js), la fuente ÚNICA de esta categorización
@@ -47,6 +47,15 @@ const INVOICING_CHIP = {
         label: 'Facturada total',
         className: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-800',
         title: 'La venta está facturada en su totalidad.',
+    },
+    // ADR-048 T3/T4 (2026-07-17, spec Punto 2, P1=B FIRMADA): la reserva SÍ tuvo factura, pero
+    // una Nota de Crédito la devolvió entera (neto quedó en ~0). Gris pizarra + tilde ✓ (misma
+    // familia neutra que "Sin facturar", pero la tilde comunica "ciclo cerrado" en vez de
+    // "todavía nada" — nunca hay que mostrar "Sin facturar" acá, sería la mentira que esto corrige).
+    FullyReturned: {
+        label: '✓ Facturada y devuelta',
+        className: 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700',
+        title: 'Se facturó y después se devolvió con una nota de crédito. No queda saldo facturado.',
     },
 };
 

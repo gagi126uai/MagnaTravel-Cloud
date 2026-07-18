@@ -58,6 +58,7 @@ import { formatCurrency } from "../../../lib/utils";
 import { useReservaSupplierPaymentStatus } from "../lib/useReservaSupplierPaymentStatus";
 import { buscarEstadoPagoServicio, puedenVerseMontos } from "../lib/supplierPaymentStatusLogic";
 import { OperadorPagoStatusBadge } from "./OperadorPagoStatusBadge";
+import { CancellationPenaltyLabel } from "./CancellationPenaltyLabel";
 
 /**
  * Convierte el recordKind del frontend al serviceType que espera el endpoint de nominal-coverage.
@@ -1365,16 +1366,31 @@ export function ServiceList({
                                                     {/* ADR-036 P4=B: etiqueta de pago al operador por servicio.
                                                         Estado (pagado/parcial/impago) visible para todos.
                                                         Montos solo si amountsVisible (cobranzas.see_cost).
-                                                        Si el endpoint falló, pagoOperadorDto es null → badge no aparece. */}
-                                                    <OperadorPagoStatusBadge
-                                                        servicioStatus={buscarEstadoPagoServicio(
-                                                            svc.recordKind,
-                                                            getReservationServicePublicId(svc),
-                                                            pagoOperadorDto
-                                                        )}
-                                                        amountsVisible={pagoOperadorAmountsVisible}
-                                                        loading={pagoOperadorLoading}
-                                                    />
+                                                        Si el endpoint falló, pagoOperadorDto es null → badge no aparece.
+                                                        Regla 6/7 del modelo de estados (2026-07-17): en un servicio
+                                                        ANULADO este badge no tiene sentido (ya no hay "pago al operador"
+                                                        vivo que reportar) — se apaga acá y, si dejó multa, en su lugar
+                                                        aparece la etiqueta "Con multa" de abajo. */}
+                                                    {!esServicioAnulado(svc) && (
+                                                        <OperadorPagoStatusBadge
+                                                            servicioStatus={buscarEstadoPagoServicio(
+                                                                svc.recordKind,
+                                                                getReservationServicePublicId(svc),
+                                                                pagoOperadorDto
+                                                            )}
+                                                            amountsVisible={pagoOperadorAmountsVisible}
+                                                            loading={pagoOperadorLoading}
+                                                        />
+                                                    )}
+                                                    {/* Etiqueta "Con multa" / "✓ Multa cobrada" (spec P3 FIRMADA):
+                                                        solo sobre un servicio anulado que dejó multa confirmada del
+                                                        operador. Null (sin multa) o el campo ausente → no se muestra
+                                                        nada, la fila queda solo con el badge "Anulado" de arriba. */}
+                                                    {esServicioAnulado(svc) && (
+                                                        <CancellationPenaltyLabel
+                                                            cancellationPenaltyState={svc.cancellationPenaltyState}
+                                                        />
+                                                    )}
                                                 </div>
                                             </td>
 
@@ -1383,8 +1399,17 @@ export function ServiceList({
                                                 - Rama flag ON + see_cost + tipo específico: td con align-top y CostConfirmCell
                                                 - Rama genérica/flag OFF: td EXACTAMENTE igual al td original de HEAD */}
                                             {mostrarCosto && puedeConfirmarCosto && !isGeneric ? (
-                                                // Flag ON + see_cost + tipo específico: celda con pill y botón de confirmación
-                                                <td className="py-4 align-top text-right pr-4">
+                                                // Flag ON + see_cost + tipo específico: celda con pill y botón de confirmación.
+                                                // FIX B1 (review frontend 2026-07-17): esta rama se había quedado afuera del
+                                                // tachado de la regla 6 — un servicio anulado con este flag+permiso mostraba
+                                                // el costo neto SIN tachar. Se tacha la celda ENTERA (mismo criterio que la
+                                                // rama simple de abajo): la línea de tachado atraviesa visualmente todo el
+                                                // contenido de CostConfirmCell, sin tocar ese componente (que sigue
+                                                // permitiendo confirmar costo sobre un anulado — decisión del dueño
+                                                // documentada en CostConfirmCell.jsx, no se toca en esta tanda).
+                                                <td className={`py-4 align-top text-right pr-4 ${
+                                                    esServicioAnulado(svc) ? 'line-through text-slate-400 dark:text-slate-500' : ''
+                                                }`}>
                                                     {/* Cartelito de moneda solo cuando la reserva mezcla monedas */}
                                                     {esMultimoneda && svc.currency && (
                                                         <span className="inline-block mb-1">
@@ -1399,7 +1424,14 @@ export function ServiceList({
                                                 </td>
                                             ) : mostrarCosto ? (
                                                 // Flag OFF o genérico: td IDÉNTICO al HEAD (align-middle, sin span extra)
-                                                <td className="py-4 align-middle text-right text-xs text-slate-500 font-mono pr-4">
+                                                // Regla 6 del modelo de estados (2026-07-17): el costo de un servicio
+                                                // anulado se tacha igual que su nombre (mismo patrón visual aprobado,
+                                                // ServiceList.jsx:1261) — es historia de la reserva, no un dato vivo.
+                                                <td className={`py-4 align-middle text-right text-xs font-mono pr-4 ${
+                                                    esServicioAnulado(svc)
+                                                        ? 'line-through text-slate-400 dark:text-slate-500'
+                                                        : 'text-slate-500'
+                                                }`}>
                                                     {/* Cartelito de moneda solo en modo multimoneda */}
                                                     {esMultimoneda && svc.currency && (
                                                         <span className="inline-flex items-center gap-1 justify-end">
@@ -1410,7 +1442,15 @@ export function ServiceList({
                                                 </td>
                                             ) : null}
 
-                                            <td className="py-4 align-middle text-right text-xs font-bold text-slate-900 dark:text-white font-mono pr-4">
+                                            {/* Precio venta: mismo tachado que el costo cuando el servicio está
+                                                anulado. En vivo mantiene el énfasis fuerte (font-bold + texto oscuro)
+                                                que ya tenía; el tachado lo pierde a propósito (deja de ser el
+                                                importe "actual" de la reserva). */}
+                                            <td className={`py-4 align-middle text-right text-xs font-mono pr-4 ${
+                                                esServicioAnulado(svc)
+                                                    ? 'line-through text-slate-400 dark:text-slate-500'
+                                                    : 'font-bold text-slate-900 dark:text-white'
+                                            }`}>
                                                 {/* Cartelito de moneda: solo en modo multimoneda. La moneda viene del servicio. */}
                                                 {esMultimoneda && svc.currency && (
                                                     <span className="inline-flex items-center gap-1 justify-end mb-0.5">
@@ -1716,16 +1756,26 @@ export function ServiceList({
                                     )}
 
                                     {/* ADR-036 P4=B: etiqueta de pago al operador en mobile.
-                                        Mismo dato que desktop; se ubica debajo del nombre y las pills. */}
-                                    <OperadorPagoStatusBadge
-                                        servicioStatus={buscarEstadoPagoServicio(
-                                            svc.recordKind,
-                                            getReservationServicePublicId(svc),
-                                            pagoOperadorDto
-                                        )}
-                                        amountsVisible={pagoOperadorAmountsVisible}
-                                        loading={pagoOperadorLoading}
-                                    />
+                                        Mismo dato que desktop; se ubica debajo del nombre y las pills.
+                                        Regla 6/7 (2026-07-17): apagada en anulado, reemplazada por
+                                        "Con multa"/"✓ Multa cobrada" cuando corresponde — mismo criterio
+                                        que la versión desktop. */}
+                                    {!esServicioAnulado(svc) && (
+                                        <OperadorPagoStatusBadge
+                                            servicioStatus={buscarEstadoPagoServicio(
+                                                svc.recordKind,
+                                                getReservationServicePublicId(svc),
+                                                pagoOperadorDto
+                                            )}
+                                            amountsVisible={pagoOperadorAmountsVisible}
+                                            loading={pagoOperadorLoading}
+                                        />
+                                    )}
+                                    {esServicioAnulado(svc) && (
+                                        <CancellationPenaltyLabel
+                                            cancellationPenaltyState={svc.cancellationPenaltyState}
+                                        />
+                                    )}
 
                                     <div className="flex justify-between items-end">
                                         <div className="text-[11px] text-slate-500 flex flex-col gap-0.5">
@@ -1741,8 +1791,14 @@ export function ServiceList({
                                                     ` al ${formatFechaSegura(svc.validTo)}`}
                                             </span>
                                             <div className="flex gap-2 items-center mt-1 flex-wrap">
-                                                {/* Precio de venta: con cartelito de moneda en modo multimoneda */}
-                                                <span className="font-bold text-slate-900 dark:text-white inline-flex items-center gap-1">
+                                                {/* Precio de venta: con cartelito de moneda en modo multimoneda.
+                                                    Regla 6 (2026-07-17): tachado en anulado, mismo criterio que
+                                                    el nombre y que la columna equivalente de escritorio. */}
+                                                <span className={`inline-flex items-center gap-1 ${
+                                                    esServicioAnulado(svc)
+                                                        ? 'line-through text-slate-400 dark:text-slate-500'
+                                                        : 'font-bold text-slate-900 dark:text-white'
+                                                }`}>
                                                     Venta:{" "}
                                                     {esMultimoneda && svc.currency && (
                                                         <CurrencyBadge currency={svc.currency} />
@@ -1752,15 +1808,26 @@ export function ServiceList({
                                                 {/* Costo en mobile: gateado igual que en desktop */}
                                                 {mostrarCosto && (
                                                     puedeConfirmarCosto && !isGeneric ? (
-                                                        // Con flag ON + see_cost: celda interactiva
-                                                        <CostConfirmCellMobile
-                                                            service={svc}
-                                                            reservaId={reservaId}
-                                                            onConfirmado={crearCallbackConfirmado(svc.recordKind)}
-                                                        />
+                                                        // Con flag ON + see_cost: celda interactiva.
+                                                        // FIX B1 (review frontend 2026-07-17): mismo criterio que la rama
+                                                        // desktop — se envuelve en un <span> tachado cuando el servicio
+                                                        // está anulado, sin tocar CostConfirmCellMobile (que sigue
+                                                        // permitiendo confirmar costo sobre un anulado, decisión del
+                                                        // dueño ya documentada en ese componente).
+                                                        <span className={esServicioAnulado(svc) ? 'line-through text-slate-400 dark:text-slate-500' : ''}>
+                                                            <CostConfirmCellMobile
+                                                                service={svc}
+                                                                reservaId={reservaId}
+                                                                onConfirmado={crearCallbackConfirmado(svc.recordKind)}
+                                                            />
+                                                        </span>
                                                     ) : (
-                                                        // Sin flag o sin permiso: número simple
-                                                        <span className="text-[9px] opacity-70 inline-flex items-center gap-1">
+                                                        // Sin flag o sin permiso: número simple, tachado en anulado.
+                                                        <span className={`text-[9px] inline-flex items-center gap-1 ${
+                                                            esServicioAnulado(svc)
+                                                                ? 'line-through text-slate-400 dark:text-slate-500'
+                                                                : 'opacity-70'
+                                                        }`}>
                                                             Costo:{" "}
                                                             {esMultimoneda && svc.currency && (
                                                                 <CurrencyBadge currency={svc.currency} />

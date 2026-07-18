@@ -833,7 +833,7 @@ export default function CustomerAccountPage() {
                         // C2: ContextoAnuladaCuenta decide si esta fila "debe" de verdad o es una
                         // reserva anulada con su propio contexto — nunca recalculamos balance>0 acá.
                         const lineasMoneda = getLineasMonedaCuenta(reserva);
-                        const esAnuladaFila = isReservaAnulada(reserva.status);
+                        const esAnuladaFila = isReservaAnulada(reserva);
                         return (
                           <DataGridRow key={getPublicId(reserva)}>
                             <DataGridCell>{formatDate(reserva.startDate || reserva.createdAt)}</DataGridCell>
@@ -885,7 +885,10 @@ export default function CustomerAccountPage() {
                   <MobileRecordList>
                     {reservas.map((reserva) => {
                       const lineasMoneda = getLineasMonedaCuenta(reserva);
-                      const esAnuladaFila = isReservaAnulada(reserva.status);
+                      // Fix M1 (review frontend 2026-07-17): la fila desktop ya pasaba la reserva
+                      // completa (:836) para que isReservaAnulada pueda leer reserva.isVoided del
+                      // backend; acá pasaba solo el status y se salteaba ese campo si el DTO lo suma.
+                      const esAnuladaFila = isReservaAnulada(reserva);
                       return (
                         <MobileRecordCard
                           key={getPublicId(reserva)}

@@ -17,7 +17,7 @@ import { getMoneyStatus, isReservaAnulada } from "../moneyStatus.js";
 
 // ─── isReservaAnulada ────────────────────────────────────────────────────────
 
-test("isReservaAnulada: Cancelled y PendingOperatorRefund son anuladas", () => {
+test("isReservaAnulada: Cancelled y PendingOperatorRefund son anuladas (fallback por string, sin isVoided)", () => {
   assert.equal(isReservaAnulada("Cancelled"), true);
   assert.equal(isReservaAnulada("PendingOperatorRefund"), true);
 });
@@ -26,6 +26,38 @@ test("isReservaAnulada: el resto de los estados no son anulados", () => {
   assert.equal(isReservaAnulada("Quotation"), false);
   assert.equal(isReservaAnulada("Confirmed"), false);
   assert.equal(isReservaAnulada("Closed"), false);
+  assert.equal(isReservaAnulada(undefined), false);
+});
+
+// ─── ADR-048 T4/B3 (2026-07-17): isReservaAnulada lee reserva.isVoided del backend ──
+// Fuente única del par Cancelled + PendingOperatorRefund (EstadoReserva.IsVoidedStatus).
+// El front YA NO decide "anulada" comparando el string de estado cuando el DTO trae
+// el booleano explícito — solo cae al fallback por nombre para DTOs viejos sin el campo.
+
+test("isReservaAnulada: reserva.isVoided=true manda, sin importar el string de estado", () => {
+  // Caso hipotético (defensivo): si el backend algún día agrega un tercer estado "sin
+  // efecto", el front lo reconoce YA por el booleano, sin esperar un deploy que le
+  // enseñe el nombre nuevo del estado.
+  assert.equal(isReservaAnulada({ status: "AlgunEstadoFuturo", isVoided: true }), true);
+});
+
+test("isReservaAnulada: reserva.isVoided=false manda, aunque el status legacy sea Cancelled", () => {
+  assert.equal(isReservaAnulada({ status: "Cancelled", isVoided: false }), false);
+});
+
+test("isReservaAnulada: reserva.isVoided=true con status Cancelled/PendingOperatorRefund reales (caso normal)", () => {
+  assert.equal(isReservaAnulada({ status: "Cancelled", isVoided: true }), true);
+  assert.equal(isReservaAnulada({ status: "PendingOperatorRefund", isVoided: true }), true);
+});
+
+test("isReservaAnulada: DTO SIN isVoided (legacy, ej. fila de cuenta corriente) cae al fallback por estado", () => {
+  assert.equal(isReservaAnulada({ status: "Cancelled" }), true);
+  assert.equal(isReservaAnulada({ status: "PendingOperatorRefund" }), true);
+  assert.equal(isReservaAnulada({ status: "Confirmed" }), false);
+});
+
+test("isReservaAnulada: reserva null/undefined no revienta", () => {
+  assert.equal(isReservaAnulada(null), false);
   assert.equal(isReservaAnulada(undefined), false);
 });
 
@@ -108,6 +140,51 @@ test("Anulada sin cancelledMoneyContext (null explícito): no muestra nada", () 
   const result = getMoneyStatus(reserva);
   assert.equal(result.kind, "none");
   assert.equal(result.label, null);
+});
+
+// ─── Spec P2=A FIRMADA (2026-07-17): anulada SIN plata en juego → sin chip de Pago ──
+// ReservaStatusChips.jsx solo pinta un chip cuando getMoneyStatus devuelve un "kind"
+// que reconoce (saldoAFavorAnulada/multaPorCobrar/etc); kind:"none" = no hay <span> de
+// Pago en la cabecera. Este test fija ese contrato para la reserva "anulada limpia".
+
+test("P2=A: anulada sin saldo a favor NI multa (balance 0, isVoided true) → kind 'none' → sin chip de Pago", () => {
+  const reserva = {
+    status: "Cancelled",
+    isVoided: true,
+    cancelledMoneyContext: null,
+    balance: 0,
+  };
+  const result = getMoneyStatus(reserva);
+  assert.equal(result.kind, "none");
+  assert.equal(result.label, null);
+  // Nunca "Sin movimientos": esa es justo la mentira que la regla 4 del modelo prohíbe.
+  assert.notEqual(result.label, "Sin movimientos");
+});
+
+test("P2=A: PendingOperatorRefund limpio (sin plata) también da kind 'none'", () => {
+  const reserva = {
+    status: "PendingOperatorRefund",
+    isVoided: true,
+    cancelledMoneyContext: null,
+    balance: 0,
+  };
+  const result = getMoneyStatus(reserva);
+  assert.equal(result.kind, "none");
+});
+
+// ─── B3: el circuito de anulación se lee vía isVoided, no vía comparación de string ──
+
+test("B3: reserva con isVoided=true y contexto de multa entra a la rama de anulación aunque el status sea uno nuevo", () => {
+  const reserva = {
+    status: "AlgunEstadoFuturo",
+    isVoided: true,
+    cancelledMoneyContext: "MultaPorCobrar",
+    cancelledPenaltyAmount: 1000,
+    cancelledPenaltyCurrency: "ARS",
+  };
+  const result = getMoneyStatus(reserva);
+  assert.equal(result.kind, "multaPorCobrar");
+  assert.equal(result.label, "Multa por anulación pendiente de cobro");
 });
 
 // ─── Reservas ANULADAS sin el campo (DTO legacy, ej. cuenta del cliente) ───

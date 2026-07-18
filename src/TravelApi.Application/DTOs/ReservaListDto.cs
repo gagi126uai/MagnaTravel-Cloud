@@ -29,6 +29,12 @@ public class ReservaListDto
     public bool HasOverdueDebt { get; set; }
 
     /// <summary>
+    /// ADR-048 T4/B3 (2026-07-17): mismo campo y mismo criterio que <c>ReservaDto.IsVoided</c>, para que la
+    /// fila del listado use la MISMA fuente que la ficha (ver el XML-doc completo alla).
+    /// </summary>
+    public bool IsVoided { get; set; }
+
+    /// <summary>
     /// Contexto de PLATA REAL en una reserva anulada. Null salvo en estados de cancelacion (Cancelled /
     /// PendingOperatorRefund). Mismo criterio y tokens que el detalle (ver <c>ReservaDto.CancelledMoneyContext</c>
     /// y <c>ReservationDebtRules</c>): "SaldoAFavorPendiente" | "MultaPorCobrar" | "MultaEnRevision" |

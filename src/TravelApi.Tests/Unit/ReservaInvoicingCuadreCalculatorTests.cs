@@ -137,6 +137,59 @@ public class ReservaInvoicingCuadreCalculatorTests
         Assert.False(r.Excedido);
     }
 
+    // ============================================================================================
+    // ADR-048 T3 (2026-07-17): BrutoEmitido = Factura + ND vivas, SIN restar la NC. Existe para
+    // que ReservaInvoicingStatus distinga "nunca hubo comprobante" de "hubo comprobante y se
+    // devolvio entero" (mentira #2: el chip decia "Sin facturar" en el segundo caso).
+    // ============================================================================================
+
+    [Fact]
+    public void BrutoEmitido_SinComprobantes_EsCero()
+    {
+        var r = ReservaInvoicingCuadreCalculator.Calculate(80_000m, new List<CuadreInvoiceLine>());
+        Assert.Equal(0m, r.BrutoEmitido);
+    }
+
+    [Fact]
+    public void BrutoEmitido_FacturaAnuladaMasNC_NoBajaConLaNC()
+    {
+        // Misma anulacion total del test de arriba (neto queda en 0), pero el BRUTO sigue en 80k:
+        // la NC no participa del bruto (ni suma ni resta), solo del neto.
+        var r = ReservaInvoicingCuadreCalculator.Calculate(80_000m, new[]
+        {
+            Live(11, 80_000m), // Factura C (anulada, pero CAE aprobado cuenta)
+            Live(13, 80_000m), // NC C
+        });
+
+        Assert.Equal(0m, r.FacturadoNeto);
+        Assert.Equal(80_000m, r.BrutoEmitido);
+    }
+
+    [Fact]
+    public void BrutoEmitido_NotaDeDebito_Suma_IgualQueFactura()
+    {
+        // La ND tambien es parte del bruto (es un cargo al cliente, igual que la factura).
+        var r = ReservaInvoicingCuadreCalculator.Calculate(90_000m, new[]
+        {
+            Live(11, 80_000m), // Factura C
+            Live(12, 10_000m), // ND C
+        });
+
+        Assert.Equal(90_000m, r.BrutoEmitido);
+    }
+
+    [Fact]
+    public void BrutoEmitido_ComprobanteNoVivo_NoSuma()
+    {
+        // Una factura sin CAE vivo (rechazada/pendiente) no cuenta ni en el neto ni en el bruto.
+        var r = ReservaInvoicingCuadreCalculator.Calculate(80_000m, new[]
+        {
+            new CuadreInvoiceLine(11, 100_000m, IsLive: false),
+        });
+
+        Assert.Equal(0m, r.BrutoEmitido);
+    }
+
     [Fact]
     public void ComprobantesNoVivos_NoCuentan()
     {

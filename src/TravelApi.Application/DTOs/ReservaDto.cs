@@ -275,6 +275,16 @@ public class ReservaDto
     public bool HasOverdueDebt { get; set; }
 
     /// <summary>
+    /// ADR-048 T4/B3 (2026-07-17, modelo de estados derivados): true si la reserva quedo SIN EFECTO —
+    /// cubre el PAR de estados <see cref="TravelApi.Domain.Entities.EstadoReserva.VoidedStatuses"/>
+    /// (Cancelled + PendingOperatorRefund, mientras el operador todavia no termino de devolver la plata).
+    /// El frontend usa ESTE campo para decidir "es una anulada" en vez de comparar el string de Status a
+    /// mano: asi, si algun dia se agrega un tercer estado "sin efecto", ninguna pantalla queda mintiendo
+    /// por comparar solo contra "Cancelled". Fuente unica: <c>EstadoReserva.IsVoidedStatus</c>.
+    /// </summary>
+    public bool IsVoided { get; set; }
+
+    /// <summary>
     /// Contexto de PLATA REAL en una reserva anulada. Null salvo en estados de cancelacion (Cancelled /
     /// PendingOperatorRefund). Una reserva anulada NO muestra "deuda" generica: muestra solo plata con
     /// contexto. Tokens (castellano, consistente con collectionStatus; el front los traduce a la etiqueta
@@ -448,12 +458,14 @@ public class ReservaDto
     public string CollectionStatus { get; set; } = ReservaCollectionStatus.NoCharges;
 
     /// <summary>
-    /// ADR-037 (2026-06-21): ESTADO DE FACTURACION derivado del cuadre VENDIDO vs FACTURADO NETO (no
-    /// persistido, no es columna). Carril SEPARADO de <see cref="CollectionStatus"/> (cobro) y del estado
-    /// operativo. Valores: "NotInvoiced" (sin facturar), "PartiallyInvoiced" (facturada en parte),
-    /// "FullyInvoiced" (facturada total o de mas). Por MONTO (decision H1): "total" = facturadoNeto &gt;= vendido.
-    /// Escalar v1 (decision H4): deriva de <see cref="FacturadoNeto"/>/<see cref="TotalSale"/> escalares.
-    /// Lo calcula <c>ReservaInvoicingStatus.Derive</c> en el backend (fuente unica).
+    /// ADR-037 (2026-06-21) + ADR-048 T3 (2026-07-17): ESTADO DE FACTURACION derivado del cuadre VENDIDO vs
+    /// FACTURADO NETO (no persistido, no es columna). Carril SEPARADO de <see cref="CollectionStatus"/>
+    /// (cobro) y del estado operativo. Valores: "NotInvoiced" (nunca se facturo nada), "PartiallyInvoiced"
+    /// (facturada en parte), "FullyInvoiced" (facturada total o de mas), "FullyReturned" (SE facturo y una
+    /// Nota de Credito lo devolvio entero — distinto de "NotInvoiced": esta reserva SI tiene rastro fiscal).
+    /// Por MONTO (decision H1): "total" = facturadoNeto &gt;= vendido. Escalar v1 (decision H4): deriva de
+    /// <see cref="FacturadoNeto"/>/<see cref="TotalSale"/> escalares. Lo calcula
+    /// <c>ReservaInvoicingStatus.Derive</c> en el backend (fuente unica).
     /// </summary>
     public string InvoicingStatus { get; set; } = ReservaInvoicingStatus.NotInvoiced;
 

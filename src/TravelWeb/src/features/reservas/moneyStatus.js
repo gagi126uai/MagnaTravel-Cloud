@@ -25,15 +25,39 @@
  * una multa confirmada cuya Nota de Débito falló o quedó en revisión manual todavía no
  * tiene comprobante válido, así que tampoco se muestra al vendedor (mismo tratamiento
  * que "Inconsistente"; la diferencia la maneja el back-office desde su propia bandeja).
+ *
+ * ADR-048 T4/B3 (2026-07-17, modelo de estados derivados): "reserva anulada" (sin efecto)
+ * dejó de decidirse comparando el string de estado a mano acá — ahora se lee el booleano
+ * `isVoided` que manda el backend (fuente única del dominio: EstadoReserva.IsVoidedStatus,
+ * cubre el PAR Cancelled + PendingOperatorRefund). Se mantiene un fallback por estado SOLO
+ * para DTOs viejos que todavía no mandan `isVoided` (ver isReservaAnulada más abajo).
  */
 
-// Estados donde la reserva quedó "sin efecto" por un proceso de anulación. Fuera de
-// estos dos estados, la plata se lee del circuito de cobro normal (collectionStatus).
-const ESTADOS_ANULADOS = new Set(["Cancelled", "PendingOperatorRefund"]);
+// Fallback LEGACY (no es la fuente de verdad): algunos DTOs chicos del front todavía no
+// mandan el booleano `isVoided` del backend (hoy: la fila de reserva dentro de la cuenta
+// corriente del cliente, CustomerAccountReservaListItemDto). Mientras ese DTO no lo sume,
+// seguimos reconociendo el par de estados por su nombre para no perder el circuito de
+// anulación en esa pantalla. Cuando todos los DTOs manden `isVoided`, este Set se borra.
+const ESTADOS_ANULADOS_FALLBACK = new Set(["Cancelled", "PendingOperatorRefund"]);
 
-/** True si el estado corresponde a una reserva anulada (deshecha con proceso fiscal). */
-export function isReservaAnulada(status) {
-  return ESTADOS_ANULADOS.has(status);
+/**
+ * True si la reserva quedó "sin efecto" (deshecha con proceso fiscal, cubre el par
+ * Cancelled + PendingOperatorRefund). Preferí SIEMPRE pasar la reserva completa (no solo
+ * el status): así se lee `reserva.isVoided` del backend, la fuente única del dominio.
+ * Si el DTO no trae ese campo (ver ESTADOS_ANULADOS_FALLBACK), se cae al chequeo por
+ * nombre de estado como red de seguridad.
+ *
+ * @param {object|string} reservaOrStatus - la reserva completa (preferido) o, por
+ *   compatibilidad con llamadores viejos, directamente el string de estado.
+ */
+export function isReservaAnulada(reservaOrStatus) {
+  if (reservaOrStatus && typeof reservaOrStatus === "object") {
+    if (typeof reservaOrStatus.isVoided === "boolean") {
+      return reservaOrStatus.isVoided;
+    }
+    return ESTADOS_ANULADOS_FALLBACK.has(reservaOrStatus.status);
+  }
+  return ESTADOS_ANULADOS_FALLBACK.has(reservaOrStatus);
 }
 
 /**
@@ -67,7 +91,9 @@ export function getMoneyStatus(reserva) {
     return { kind: "none", label: null, tone: "neutral" };
   }
 
-  return isReservaAnulada(reserva.status)
+  // Pasamos la reserva COMPLETA (no solo el status) para que isReservaAnulada pueda leer
+  // reserva.isVoided del backend — la fuente única del par Cancelled/PendingOperatorRefund.
+  return isReservaAnulada(reserva)
     ? getMoneyStatusAnulada(reserva)
     : getMoneyStatusEstadoVivo(reserva);
 }

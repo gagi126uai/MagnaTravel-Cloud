@@ -32,6 +32,10 @@ import { MarkLostModal } from "../components/MarkLostModal";
 import { CorregirEntradaViajeModal } from "../components/CorregirEntradaViajeModal";
 import { ReprogramarViajeModal } from "../components/ReprogramarViajeModal";
 import { isStatusLocked, isReservaEnEstadoVivo } from "../components/ReservaStatusBadge";
+// ADR-048 T4/B3 (2026-07-17): fuente ÚNICA de "reserva sin efecto" (par Cancelled +
+// PendingOperatorRefund). Los helpers de más abajo la reusan en vez de comparar el
+// string de estado a mano.
+import { isReservaAnulada } from "../moneyStatus";
 import { useReservaDetail } from "../hooks/useReservaDetail";
 import { useOperationalFlags } from "../../../contexts/OperationalFlagsContext";
 import { useAlerts } from "../../../contexts/AlertsContext";
@@ -98,8 +102,7 @@ function esEstadoCongelado(reserva) {
   return (
     reserva.status === "Traveling" ||
     reserva.status === "Lost" ||
-    reserva.status === "Cancelled" ||
-    reserva.status === "PendingOperatorRefund" ||
+    isReservaAnulada(reserva) ||
     reserva.invoicingStatus === "FullyInvoiced"
   );
 }
@@ -124,8 +127,7 @@ function esCongeladoParaRecibos(reserva) {
   return (
     reserva.status === "Traveling" ||
     reserva.status === "Lost" ||
-    reserva.status === "Cancelled" ||
-    reserva.status === "PendingOperatorRefund"
+    isReservaAnulada(reserva)
   );
 }
 
@@ -1363,7 +1365,7 @@ export default function ReservaDetailPage() {
           {/* ADR-037: ya no hay "Reabrila para facturar". La facturación se desacopló del estado:
               se factura directo desde Finalizada (botón "Emitir factura" en la solapa Cuenta). */}
         </div>
-      ) : (reserva.status === "PendingOperatorRefund" || reserva.status === "Cancelled") ? (
+      ) : isReservaAnulada(reserva) ? (
         // (2026-07-04) Llega Cancelled aca SOLO cuando tiene paso de multa (la rama simple de arriba ya se lo
         // llevo si no lo tenia). Reusa exactamente el mismo bloque que "esperando reembolso" para no duplicar UI.
         (() => {

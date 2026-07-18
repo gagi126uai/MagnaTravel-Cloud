@@ -45,4 +45,7 @@ public class ServicioReservaDto
     // ni fiscales: no se enmascaran. Mapean por convencion (mismo nombre que la entidad ServicioReserva).
     public DateTime? CancelledAt { get; set; }
     public string? CancelledByUserName { get; set; }
+    // ADR-048 T4 (2026-07-17): etiqueta "Con multa"/"Multa cobrada" por servicio. Ver el XML-doc completo
+    // en HotelBookingDto.CancellationPenaltyState.
+    public string? CancellationPenaltyState { get; set; }
 }

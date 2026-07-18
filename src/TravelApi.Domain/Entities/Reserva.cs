@@ -184,6 +184,34 @@ public static class EstadoReserva
     public static bool IsSaleFirmStatus(string? status)
         => ContainsStatus(SaleFirmStatuses, status);
 
+    /// <summary>
+    /// ADR-048 B3 (2026-07-17, modelo de estados derivados): el PAR de estados que significan "esta
+    /// reserva quedo SIN EFECTO" (una anulacion, completa o esperando que el operador termine de
+    /// devolver la plata). Es la UNICA definicion de este concepto en todo el dominio — antes estaba
+    /// hardcodeada en varios lugares sueltos (backend Y frontend) comparando el string a mano, y
+    /// bastaba con olvidarse de uno de los dos estados para que una pantalla mintiera (ej: una reserva
+    /// <see cref="PendingOperatorRefund"/> mostrando "Debe" en vez del circuito de anulacion).
+    ///
+    /// <para><b>Por que un PAR y no un solo estado</b>: <see cref="PendingOperatorRefund"/> es el paso
+    /// intermedio normal de TODA anulacion mientras el operador todavia no termino de devolver la
+    /// plata (ver <see cref="PendingOperatorRefund"/>); recien pasa a <see cref="Cancelled"/> cuando esa
+    /// devolucion se completa. Las dos son "sin efecto" para el cliente: el viaje no va a pasar, la
+    /// diferencia es solo si queda un tramite de plata pendiente puertas adentro.</para>
+    /// </summary>
+    public static readonly string[] VoidedStatuses =
+    {
+        Cancelled,
+        PendingOperatorRefund
+    };
+
+    /// <summary>
+    /// True si el estado significa "reserva sin efecto" (ver <see cref="VoidedStatuses"/>). Es el booleano
+    /// <c>IsVoided</c> que expone <c>ReservaDto</c>/<c>ReservaListDto</c> al frontend: el front deja de
+    /// comparar el string de estado a mano y lee este campo (ADR-048 T4, INV-048-08).
+    /// </summary>
+    public static bool IsVoidedStatus(string? status)
+        => ContainsStatus(VoidedStatuses, status);
+
     /// <summary>Busqueda case-insensitive de un estado en una lista (helper interno de las reglas de estado).</summary>
     private static bool ContainsStatus(string[] statuses, string? status)
     {

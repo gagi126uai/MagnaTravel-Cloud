@@ -27,13 +27,22 @@ public readonly record struct CuadreInvoiceLineByCurrency(
 /// facturo NETO (facturas + notas de debito - notas de credito) y cuanto queda
 /// disponible para facturar. <see cref="Excedido"/> es true cuando ya se facturo
 /// MAS de lo vendido (over-invoicing) — el caso que queremos avisar.
+///
+/// <para><see cref="BrutoEmitido"/> (ADR-048 T3, 2026-07-17): a diferencia de
+/// <see cref="FacturadoNeto"/>, este NO resta las Notas de Credito — es la suma cruda de
+/// Facturas + Notas de Debito con CAE vivo. Existe para distinguir "esta reserva NUNCA tuvo
+/// un comprobante" (bruto = 0) de "tuvo un comprobante y despues se le hizo una NC que dejo el
+/// neto en 0" (bruto &gt; 0, neto ~ 0). Sin esta senal, <see cref="ReservaInvoicingStatus"/>
+/// confundia ambos casos bajo el mismo chip "Sin facturar" — la reserva quedaba mintiendo que
+/// nunca se le facturo nada cuando en realidad se le facturo y se le devolvio.</para>
 /// </summary>
 public readonly record struct ReservaInvoicingCuadre(
     decimal Vendido,
     decimal FacturadoNeto,
     decimal Disponible,
     bool Excedido,
-    decimal Exceso);
+    decimal Exceso,
+    decimal BrutoEmitido);
 
 /// <summary>
 /// Calculador PURO del cuadre entre lo VENDIDO en la reserva y lo FACTURADO al cliente.
@@ -56,12 +65,18 @@ public static class ReservaInvoicingCuadreCalculator
     public static ReservaInvoicingCuadre Calculate(decimal vendido, IEnumerable<CuadreInvoiceLine> lines)
     {
         decimal facturadoNeto = 0m;
+        decimal brutoEmitido = 0m;
 
         foreach (var line in lines)
         {
             // Reusa la MISMA regla de signo (factura/ND suma, NC resta, vivo, tipo conocido) que el
             // calculo por moneda, para que el escalar y el detalle nunca diverjan.
             facturadoNeto += SignedNetAmount(line.TipoComprobante, line.ImporteTotal, line.IsLive);
+
+            // ADR-048 T3: el bruto SOLO suma Factura/ND (nunca resta la NC), para saber si alguna vez
+            // hubo un comprobante emitido, sin importar si despues se devolvio.
+            if (line.IsLive && IsInvoiceOrDebitNote(line.TipoComprobante))
+                brutoEmitido += line.ImporteTotal;
         }
 
         decimal disponible = vendido - facturadoNeto;
@@ -73,7 +88,8 @@ public static class ReservaInvoicingCuadreCalculator
             FacturadoNeto: facturadoNeto,
             Disponible: disponible,
             Excedido: excedido,
-            Exceso: exceso);
+            Exceso: exceso,
+            BrutoEmitido: brutoEmitido);
     }
 
     /// <summary>
@@ -167,4 +183,14 @@ public static class ReservaInvoicingCuadreCalculator
                 return 0m;
         }
     }
+
+    /// <summary>
+    /// True si el comprobante es Factura o Nota de Debito (el lado que SUMA en el cuadre).
+    /// Usado para armar <see cref="ReservaInvoicingCuadre.BrutoEmitido"/>: a diferencia de
+    /// <see cref="SignedNetAmount"/>, la Nota de Credito NUNCA participa aca (ni sumando ni
+    /// restando) porque el bruto responde "hubo un comprobante emitido", no "cuanto queda neto".
+    /// </summary>
+    private static bool IsInvoiceOrDebitNote(int tipoComprobante)
+        => InvoiceComprobanteHelpers.Categorize(tipoComprobante) is
+            InvoiceComprobanteCategory.Invoice or InvoiceComprobanteCategory.DebitNote;
 }

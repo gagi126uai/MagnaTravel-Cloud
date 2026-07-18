@@ -26,7 +26,7 @@ import { getMoneyStatus, isReservaAnulada } from "../moneyStatus";
  */
 export function ReservaSummaryStrip({ reserva }) {
     const admin = isAdmin();
-    const anulada = isReservaAnulada(reserva.status);
+    const anulada = isReservaAnulada(reserva);
     const moneyStatus = getMoneyStatus(reserva);
 
     // --- Modo multimoneda (dos monedas en esta reserva) ---

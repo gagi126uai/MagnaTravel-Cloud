@@ -2350,9 +2350,12 @@ public class ReservaService : IReservaService
     /// estado por reserva. La factura anulada sigue sumando y su Nota de Credito resta: la anulacion se
     /// cuenta una sola vez (sin esto, full daba -monto y parcial restaba de mas).
     ///
-    /// <para>Las reservas sin comprobantes vivos no aparecen en el agregado: quedan en "NotInvoiced" (el
-    /// default del DTO), que es lo correcto. El <c>vendido</c> sale del escalar <c>TotalSale</c> que cada
-    /// fila ya trae (consistente con la limitacion escalar v1 del carril).</para>
+    /// <para>ADR-048 T3 (2026-07-17, regla 5): la MISMA query agrupada trae tambien el BRUTO EMITIDO
+    /// (Facturas + ND, SIN restar la NC) — necesario para que <see cref="ReservaInvoicingStatus.Derive"/>
+    /// distinga "esta reserva nunca tuvo un comprobante" de "tuvo un comprobante y la NC lo devolvio
+    /// entero". Las reservas sin comprobantes vivos no aparecen en el agregado: quedan en "NotInvoiced" (el
+    /// default del DTO, bruto 0), que sigue siendo correcto. El <c>vendido</c> sale del escalar
+    /// <c>TotalSale</c> que cada fila ya trae (consistente con la limitacion escalar v1 del carril).</para>
     /// </summary>
     private async Task FillInvoicingStatusForListAsync(
         IReadOnlyList<ReservaListDto> items, CancellationToken cancellationToken)
@@ -2365,8 +2368,9 @@ public class ReservaService : IReservaService
         // (InvoiceService) y que InvoiceComprobanteHelpers: A=3, B=8, C=13, M=53. El resto (facturas y ND) suma.
         var creditNoteTipos = new[] { 3, 8, 13, 53 };
 
-        // Una fila por reserva con su facturado neto. Join explicito contra Reservas (no nav implicita) para
-        // resolver el PublicId con el que matchear el DTO y correr igual en Postgres e InMemory.
+        // Una fila por reserva con su facturado neto Y su bruto emitido. Join explicito contra Reservas (no
+        // nav implicita) para resolver el PublicId con el que matchear el DTO y correr igual en Postgres e
+        // InMemory.
         var facturadoByReserva = await (
             from invoice in _context.Invoices.AsNoTracking()
             join reservaPadre in _context.Reservas.AsNoTracking() on invoice.ReservaId equals reservaPadre.Id
@@ -2379,19 +2383,37 @@ public class ReservaService : IReservaService
             select new
             {
                 ReservaPublicId = byReserva.Key,
+                // NOTA (M2 del review backend, 2026-07-17, riesgo bajo, NO se toca en esta tanda): un
+                // TipoComprobante fuera de {1,2,3,6,7,8,11,12,13,51,52,53} (dato corrupto) cuenta aca
+                // como factura (neto y bruto), mientras que el calculador de dominio lo trata como
+                // Unknown (no cuenta). Solo diverge con un CAE aprobado de tipo desconocido, algo que
+                // no deberia poder pasar en un comprobante real.
                 FacturadoNeto = byReserva.Sum(invoice =>
                     creditNoteTipos.Contains(invoice.TipoComprobante)
                         ? -invoice.ImporteTotal
-                        : invoice.ImporteTotal)
+                        : invoice.ImporteTotal),
+                // Bruto: SOLO Facturas + ND, la NC no participa (ni suma ni resta). Espejo inline de
+                // ReservaInvoicingCuadreCalculator.IsInvoiceOrDebitNote (EF no traduce el helper).
+                //
+                // M1 del review backend (2026-07-17): forma TERNARIO-ADENTRO-DEL-SUM, igual que el
+                // hermano FacturadoNeto de arriba (la NC aporta 0 en vez de restar). Elegida a proposito
+                // en vez de .Where(...).Sum(...) sobre el IGrouping: esa forma no estaba verificada
+                // contra la traduccion SQL de Postgres (los unit tests corren InMemory), mientras que
+                // este patron ya esta probado en produccion por FacturadoNeto. Mismo resultado, cero
+                // riesgo nuevo de traduccion.
+                BrutoEmitido = byReserva.Sum(invoice =>
+                    creditNoteTipos.Contains(invoice.TipoComprobante) ? 0m : invoice.ImporteTotal)
             }).ToListAsync(cancellationToken);
 
-        var netoByReserva = facturadoByReserva
-            .ToDictionary(row => row.ReservaPublicId, row => row.FacturadoNeto);
+        var cuadreByReserva = facturadoByReserva
+            .ToDictionary(row => row.ReservaPublicId, row => (row.FacturadoNeto, row.BrutoEmitido));
 
         foreach (var item in items)
         {
-            var facturadoNeto = netoByReserva.TryGetValue(item.PublicId, out var neto) ? neto : 0m;
-            item.InvoicingStatus = ReservaInvoicingStatus.Derive(item.TotalSale, facturadoNeto);
+            var (facturadoNeto, brutoEmitido) = cuadreByReserva.TryGetValue(item.PublicId, out var cuadre)
+                ? cuadre
+                : (0m, 0m);
+            item.InvoicingStatus = ReservaInvoicingStatus.Derive(item.TotalSale, facturadoNeto, brutoEmitido);
         }
     }
 
@@ -2539,7 +2561,11 @@ public class ReservaService : IReservaService
         // ADR-037 (carril de facturacion DERIVADO): estado de facturacion calculado del cuadre escalar
         // (vendido vs facturado neto). Eje independiente del cobro y del estado operativo. Fuente unica:
         // ReservaInvoicingStatus.Derive (probado, un solo lugar), espejo de CollectionStatus.
-        dto.InvoicingStatus = ReservaInvoicingStatus.Derive(file.TotalSale, cuadre.FacturadoNeto);
+        //
+        // ADR-048 T3 (2026-07-17, regla 5): se le pasa tambien el bruto emitido (cuadre.BrutoEmitido, ya
+        // calculado arriba con las mismas Invoices), para que una reserva con NC total ("factura y se
+        // devolvio") no vuelva a caer en "Sin facturar" como si nunca se le hubiera facturado nada.
+        dto.InvoicingStatus = ReservaInvoicingStatus.Derive(file.TotalSale, cuadre.FacturadoNeto, cuadre.BrutoEmitido);
 
         // (2026-06-24): hay una factura EN PROCESO (encolada, esperando CAE). El cuadre de arriba NO la cuenta
         // (solo suma Resultado="A"), asi que sin este flag el front mostraria "Sin facturar" y volveria a
@@ -2716,6 +2742,11 @@ public class ReservaService : IReservaService
                     operatorPenaltyOutcome = OperatorPenaltySituationRules.ToOutcome(situationState);
             }
         }
+
+        // ADR-048 T4 (2026-07-17, spec "etiqueta Con multa"): proyecta, POR SERVICIO anulado, si dejo una
+        // multa confirmada y en que paso esta (todavia por cobrar / ya cobrada). Reusa dto.OperatorPenaltySituations
+        // recien calculado arriba (mismo dato que el chip Pago), asi que va DESPUES de ese bloque.
+        await StampCancellationPenaltyPerServiceAsync(file, dto, CancellationToken.None);
 
         // Solo "Pending" + permiso habilita los botones. El resto de los outcomes (Confirmed/Waived/None) ya no
         // son "pendientes": el boton no aplica. Derivar de un unico outcome mantiene una sola verdad.
@@ -5157,6 +5188,9 @@ public class ReservaService : IReservaService
         // NO se toca IsEconomicallySettled (gate AFIP), se recibe ya calculado.
         dto.HasOverdueDebt = ReservationDebtRules.HasOverdueDebt(
             dto.Status, dto.EndDate, dto.IsEconomicallySettled, DateTime.UtcNow);
+        // ADR-048 T4/B3 (2026-07-17): booleano UNICO de "reserva sin efecto" (cubre el par Cancelled +
+        // PendingOperatorRefund). El front deja de hardcodear esos dos strings y lee este campo.
+        dto.IsVoided = EstadoReserva.IsVoidedStatus(dto.Status);
     }
 
     private static void ApplyEconomicFlags(ReservaListDto dto, OperationalFinanceSettings settings)
@@ -5186,6 +5220,237 @@ public class ReservaService : IReservaService
         // NO se toca IsEconomicallySettled (gate AFIP), se recibe ya calculado.
         dto.HasOverdueDebt = ReservationDebtRules.HasOverdueDebt(
             dto.Status, dto.EndDate, dto.IsEconomicallySettled, DateTime.UtcNow);
+        // ADR-048 T4/B3 (2026-07-17): mismo booleano que el detalle (ver el XML-doc en el overload de
+        // ReservaDto), para que el listado y la ficha usen la MISMA fuente de "sin efecto".
+        dto.IsVoided = EstadoReserva.IsVoidedStatus(dto.Status);
+    }
+
+    /// <summary>
+    /// ADR-048 T4 (2026-07-17, spec docs/ux/2026-07-17-t4-estados-derivados-ficha-reserva.md, Punto 4):
+    /// llena <c>CancellationPenaltyState</c> en los 6 DTOs de servicio (Hotel/Flight/Transfer/Package/
+    /// Assistance/Generico, ya mapeados dentro de <paramref name="dto"/>). Para cada servicio anulado con
+    /// una multa del operador en juego, marca si esa multa esta CONFIRMADA-Y-COBRADA ("Collected") o
+    /// sigue sin cerrar de un modo u otro ("Pending": confirmada sin cobrar del todo, O todavia en
+    /// tramite/sin confirmar — spec Punto 4, sub-caso "Con multa").
+    ///
+    /// <para><b>No recalcula nada nuevo</b> (regla del dueño, ver spec): las dos fuentes ya existen y las
+    /// reusa tal cual:</para>
+    /// <list type="bullet">
+    ///   <item>"Multa CONFIRMADA de esta linea" sale de <see cref="BookingCancellationLine.PenaltyStatus"/> +
+    ///   <see cref="BookingCancellationLine.PenaltyAmount"/> (una linea = un servicio, ADR-025).</item>
+    ///   <item>"Multa EN TRAMITE" (Estimated, todavia sin monto por-linea porque el reparto recien pasa al
+    ///   confirmar) sale de <c>dto.OperatorPenaltySituations</c> con <c>State == "PendingDecision"</c> —
+    ///   el MISMO gate que ya gobierna el boton "Confirmar multa / Cerrar sin multa" de la ficha.</item>
+    ///   <item>"Cobrada por completo" sale de <c>dto.OperatorPenaltySituations.IsFullyCollected</c> (TANDA C
+    ///   2026-07-16), correlacionado por OPERADOR — misma granularidad que ya usa el chip Pago.</item>
+    /// </list>
+    ///
+    /// <para><b>FIX B1 (review backend 2026-07-17)</b>: <c>OperatorPenaltySituations</c> se arma sobre UNA
+    /// sola cancelacion (la MAS RECIENTE no abortada de la reserva —
+    /// <c>BookingCancellationService.GetOperatorPenaltySituationsAsync</c>, orden <c>DraftedAt DESC</c>).
+    /// Una reserva puede tener VARIAS cancelaciones no abortadas del MISMO operador a lo largo del tiempo
+    /// (ADR-025: se anula un servicio ahora y otro despues). Antes de este fix, una linea de una
+    /// cancelacion VIEJA heredaba el "cobrada por completo" de la cancelacion NUEVA de ese mismo operador
+    /// (mintiendo "Multa cobrada" sobre una ND que en realidad nunca se cobro). Ahora "Collected" SOLO se
+    /// estampa cuando la linea pertenece EXACTAMENTE a la cancelacion correlacionada (<c>bcCorrelacionadaId</c>,
+    /// calculada abajo con el MISMO criterio <c>DraftedAt DESC</c>); toda linea confirmada de OTRA
+    /// cancelacion cae a "Pending" (default seguro: la multa existe de verdad — PenaltyAmount>0 confirmado
+    /// — pero no podemos afirmar que esta cobrada sin la ND de SU propia cancelacion). Mismo criterio para
+    /// la rama "en tramite": solo se estampa sobre lineas de la cancelacion correlacionada (es la unica de
+    /// la que sabemos, sin recalcular el gate, si la decision sigue abierta).</para>
+    ///
+    /// <para><b>Limite conocido</b> (documentado, no bloqueante): dentro de la MISMA cancelacion, la
+    /// correlacion sigue siendo POR OPERADOR, no por Nota de Debito individual — si un mismo operador tiene
+    /// dos servicios cancelados EN LA MISMA cancelacion con multas en pasos distintos, ambos heredan el
+    /// mismo estado (mismo nivel de detalle que ya expone <c>OperatorPenaltySituationDto</c> hoy; benigno
+    /// porque dentro de un mismo BC la ND es compartida). Los servicios de la tabla Generica ademas dependen
+    /// de que <c>ServicioReserva.Supplier</c> este cargado; si no lo esta, la etiqueta se degrada en
+    /// silencio a "Pending" (nunca "Collected" sin poder confirmarlo) — mismo criterio de "degradacion
+    /// silenciosa" que ya usa el badge de pago al operador en el front cuando el endpoint falla.</para>
+    /// </summary>
+    /// <summary>
+    /// Fila minima (tabla, id interno del servicio, id interno del operador) de una
+    /// <see cref="BookingCancellationLine"/>, usada por <see cref="StampCancellationPenaltyPerServiceAsync"/>
+    /// para la rama "multa en tramite" (DC1) — no lleva monto porque a esa altura del flujo (Estimated,
+    /// sin confirmar) todavia no existe el reparto por linea.
+    /// </summary>
+    private readonly record struct CancellationLineTableRow(
+        CancellableServiceTable ServiceTable, int ServiceId, int SupplierId);
+
+    private async Task StampCancellationPenaltyPerServiceAsync(Reserva file, ReservaDto dto, CancellationToken cancellationToken)
+    {
+        // Solo consultamos si la reserva tiene AL MENOS un servicio anulado (mismo guard que usa T2 en
+        // SupplierService.LoadCancelledServiceOperatorChargesAsync): una reserva sin anulaciones no paga
+        // el costo de esta query extra. Reusa ServiceResolutionRules.IsCancelled — la MISMA regla que ya
+        // decide "anulado" en el resto del sistema (banner, tachado, T2), sin reimplementarla.
+        bool tieneAlgunServicioAnulado =
+            file.Servicios.Any(ServiceResolutionRules.IsCancelled)
+            || file.FlightSegments.Any(ServiceResolutionRules.IsCancelled)
+            || file.HotelBookings.Any(ServiceResolutionRules.IsCancelled)
+            || file.TransferBookings.Any(ServiceResolutionRules.IsCancelled)
+            || file.PackageBookings.Any(ServiceResolutionRules.IsCancelled)
+            || file.AssistanceBookings.Any(ServiceResolutionRules.IsCancelled);
+        if (!tieneAlgunServicioAnulado) return;
+
+        // La cancelacion CORRELACIONADA: la MISMA que alimenta dto.OperatorPenaltySituations (la mas
+        // reciente no abortada de la reserva). Mismo criterio EXACTO — DraftedAt DESC — que
+        // BookingCancellationService.GetOperatorPenaltySituationsAsync, para que las dos fuentes tengan
+        // SIEMPRE el mismo alcance (fix B1). Null si la reserva no tiene ninguna cancelacion no abortada
+        // (no deberia pasar si tieneAlgunServicioAnulado es true, pero se maneja defensivo mas abajo).
+        var bcCorrelacionadaId = await _context.BookingCancellations
+            .AsNoTracking()
+            .Where(b => b.ReservaId == file.Id && b.Status != BookingCancellationStatus.Aborted)
+            .OrderByDescending(b => b.DraftedAt)
+            .Select(b => (int?)b.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        // Lineas de cancelacion CON multa CONFIRMADA (monto>0) de esta reserva, de TODAS las cancelaciones
+        // no abortadas (no solo la correlacionada: una linea vieja con multa confirmada sigue siendo "Con
+        // multa" real, aunque no podamos afirmar que este cobrada — ver fix B1 en el switch de abajo). Una
+        // linea = un servicio (ADR-025), asi que (ServiceTable, ServiceId) identifica exactamente cual fila
+        // de cual coleccion tipada hay que marcar.
+        var lineasConMultaConfirmada = await _context.BookingCancellationLines
+            .AsNoTracking()
+            .Where(l => l.BookingCancellation.ReservaId == file.Id
+                     && l.BookingCancellation.Status != BookingCancellationStatus.Aborted
+                     && l.PenaltyStatus == PenaltyStatus.Confirmed
+                     && l.PenaltyAmount != null && l.PenaltyAmount > 0m)
+            .Select(l => new { l.ServiceTable, l.ServiceId, l.SupplierId, l.BookingCancellationId })
+            .ToListAsync(cancellationToken);
+
+        // DC1 (2026-07-17, spec firmada): operadores cuya multa sigue EN TRAMITE (Estimated, esperando que
+        // el vendedor confirme o cierre sin multa) dentro de la cancelacion correlacionada. A nivel de
+        // LINEA todavia no hay monto (el reparto proporcional recien pasa al confirmar la multa), asi que
+        // esto se lee del read-model ya calculado arriba, NO de PenaltyAmount.
+        var supplierPublicIdsConDecisionPendiente = dto.OperatorPenaltySituations
+            .Where(s => s.State == nameof(OperatorPenaltySituationState.PendingDecision) && s.SupplierPublicId.HasValue)
+            .Select(s => s.SupplierPublicId!.Value)
+            .ToHashSet();
+
+        // Lineas de la cancelacion correlacionada que pueden estar "en tramite" (sin filtrar por
+        // PenaltyStatus/monto: a esta altura todavia no sabemos el reparto). Solo se piden si hay algun
+        // operador con decision pendiente — evita una query vacia inutil en el caso comun (multa ya
+        // confirmada o reserva sin multa en juego).
+        var lineasCandidatasATramite = new List<CancellationLineTableRow>();
+        if (bcCorrelacionadaId.HasValue && supplierPublicIdsConDecisionPendiente.Count > 0)
+        {
+            // Proyeccion a tipo anonimo (traduccion SQL garantizada) y RECIEN despues se materializa al
+            // record struct — mismo patron de dos pasos que ya usa SupplierService para este tipo de fila
+            // (evita depender de que EF Core traduzca un constructor no-anonimo dentro del Select).
+            var filas = await _context.BookingCancellationLines
+                .AsNoTracking()
+                .Where(l => l.BookingCancellationId == bcCorrelacionadaId.Value)
+                .Select(l => new { l.ServiceTable, l.ServiceId, l.SupplierId })
+                .ToListAsync(cancellationToken);
+            lineasCandidatasATramite = filas
+                .Select(f => new CancellationLineTableRow(f.ServiceTable, f.ServiceId, f.SupplierId))
+                .ToList();
+        }
+
+        if (lineasConMultaConfirmada.Count == 0 && lineasCandidatasATramite.Count == 0) return;
+
+        // Mapa SupplierPublicId <-> Id interno del operador. Las lineas de cancelacion referencian al
+        // operador por Id interno; el read-model de situaciones lo expone por PublicId. Se arma recorriendo
+        // los operadores YA cargados en memoria (Include de la query del detalle): no hace falta una query
+        // nueva para esto.
+        var supplierIdPorPublicId = new Dictionary<Guid, int>();
+        void RegistrarProveedor(Supplier? proveedor)
+        {
+            if (proveedor is not null) supplierIdPorPublicId[proveedor.PublicId] = proveedor.Id;
+        }
+        foreach (var hb in file.HotelBookings) RegistrarProveedor(hb.Supplier);
+        foreach (var fs in file.FlightSegments) RegistrarProveedor(fs.Supplier);
+        foreach (var tb in file.TransferBookings) RegistrarProveedor(tb.Supplier);
+        foreach (var pb in file.PackageBookings) RegistrarProveedor(pb.Supplier);
+        foreach (var ab in file.AssistanceBookings) RegistrarProveedor(ab.Supplier);
+
+        var cobradaPorCompletoPorSupplierId = new Dictionary<int, bool>();
+        foreach (var situacion in dto.OperatorPenaltySituations)
+        {
+            if (situacion.SupplierPublicId is Guid supplierPublicId
+                && supplierIdPorPublicId.TryGetValue(supplierPublicId, out var supplierId))
+            {
+                cobradaPorCompletoPorSupplierId[supplierId] = situacion.IsFullyCollected;
+            }
+        }
+        var supplierIdsConDecisionPendiente = supplierPublicIdsConDecisionPendiente
+            .Where(pid => supplierIdPorPublicId.ContainsKey(pid))
+            .Select(pid => supplierIdPorPublicId[pid])
+            .ToHashSet();
+
+        // Busca el PublicId (int Id interno -> Guid publico) de la entidad de origen dentro de la
+        // coleccion tipada que corresponde. Es el mismo puente (tabla, id interno) -> PublicId que ya usa
+        // la linea de cancelacion para referenciar servicios (ADR-025 §6.3 opcion a) — acá SOLO se lo lee.
+        Guid? BuscarPublicId(CancellableServiceTable tabla, int serviceId) => tabla switch
+        {
+            CancellableServiceTable.Hotel => file.HotelBookings.FirstOrDefault(e => e.Id == serviceId)?.PublicId,
+            CancellableServiceTable.Flight => file.FlightSegments.FirstOrDefault(e => e.Id == serviceId)?.PublicId,
+            CancellableServiceTable.Transfer => file.TransferBookings.FirstOrDefault(e => e.Id == serviceId)?.PublicId,
+            CancellableServiceTable.Package => file.PackageBookings.FirstOrDefault(e => e.Id == serviceId)?.PublicId,
+            CancellableServiceTable.Assistance => file.AssistanceBookings.FirstOrDefault(e => e.Id == serviceId)?.PublicId,
+            CancellableServiceTable.Generic => file.Servicios.FirstOrDefault(e => e.Id == serviceId)?.PublicId,
+            _ => null,
+        };
+
+        // Estado final por servicio (PublicId -> "Pending"|"Collected"). Se arma en un diccionario antes de
+        // tocar los DTOs para poder aplicar la prioridad correcta: una linea CONFIRMADA (Pass A) manda
+        // siempre; la rama "en tramite" (Pass B) solo llena lo que Pass A no cubrio.
+        var estadoPorServicio = new Dictionary<Guid, string>();
+
+        // Pass A — lineas con multa CONFIRMADA (monto>0). "Collected" SOLO si la linea es de la cancelacion
+        // CORRELACIONADA (fix B1); toda otra combinacion (otra cancelacion, o sin dato de cobro) cae a
+        // "Pending" — nunca se afirma cobro sin poder verificarlo contra SU PROPIA nota de debito.
+        foreach (var linea in lineasConMultaConfirmada)
+        {
+            var publicId = BuscarPublicId(linea.ServiceTable, linea.ServiceId);
+            if (publicId is not Guid servicePublicId) continue; // defensivo: servicio no encontrado (no deberia pasar).
+
+            bool esDeLaCancelacionCorrelacionada =
+                bcCorrelacionadaId.HasValue && linea.BookingCancellationId == bcCorrelacionadaId.Value;
+            bool estaCobradaPorCompleto =
+                esDeLaCancelacionCorrelacionada
+                && cobradaPorCompletoPorSupplierId.TryGetValue(linea.SupplierId, out var cobrada)
+                && cobrada;
+
+            estadoPorServicio[servicePublicId] = estaCobradaPorCompleto ? "Collected" : "Pending";
+        }
+
+        // Pass B — lineas de la cancelacion correlacionada cuyo operador todavia tiene la multa EN TRAMITE
+        // (DC1). Nunca pisa un "Collected"/"Pending" ya puesto por Pass A (una linea con multa confirmada
+        // manda sobre la lectura "en tramite" del read-model, que es mas gruesa).
+        foreach (var linea in lineasCandidatasATramite)
+        {
+            if (!supplierIdsConDecisionPendiente.Contains(linea.SupplierId)) continue;
+
+            var publicId = BuscarPublicId(linea.ServiceTable, linea.ServiceId);
+            if (publicId is not Guid servicePublicId) continue;
+
+            if (!estadoPorServicio.ContainsKey(servicePublicId))
+                estadoPorServicio[servicePublicId] = "Pending";
+        }
+
+        if (estadoPorServicio.Count == 0) return;
+
+        foreach (var (servicePublicId, estado) in estadoPorServicio)
+        {
+            var hotel = dto.HotelBookings.FirstOrDefault(x => x.PublicId == servicePublicId);
+            if (hotel is not null) { hotel.CancellationPenaltyState = estado; continue; }
+
+            var vuelo = dto.FlightSegments.FirstOrDefault(x => x.PublicId == servicePublicId);
+            if (vuelo is not null) { vuelo.CancellationPenaltyState = estado; continue; }
+
+            var traslado = dto.TransferBookings.FirstOrDefault(x => x.PublicId == servicePublicId);
+            if (traslado is not null) { traslado.CancellationPenaltyState = estado; continue; }
+
+            var paquete = dto.PackageBookings.FirstOrDefault(x => x.PublicId == servicePublicId);
+            if (paquete is not null) { paquete.CancellationPenaltyState = estado; continue; }
+
+            var asistencia = dto.AssistanceBookings.FirstOrDefault(x => x.PublicId == servicePublicId);
+            if (asistencia is not null) { asistencia.CancellationPenaltyState = estado; continue; }
+
+            var generico = dto.Servicios.FirstOrDefault(x => x.PublicId == servicePublicId);
+            if (generico is not null) { generico.CancellationPenaltyState = estado; }
+        }
     }
 
     /// <summary>
@@ -5197,11 +5462,15 @@ public class ReservaService : IReservaService
     /// "Multas en la cuenta del cliente" (2026-07-15): visibilidad ampliada a <c>internal</c> (era
     /// <c>private</c>) para que <see cref="TravelApi.Infrastructure.Services.CustomerService"/> reuse el MISMO
     /// criterio de "reserva anulada" al armar el bloque de multas pendientes, en vez de copiar la comparacion
-    /// de estados. Mismo patron ya usado con <see cref="AggregatePendingPenaltiesByCurrency"/>. Sin cambio de
-    /// comportamiento: la firma y el cuerpo quedan identicos.
+    /// de estados. Mismo patron ya usado con <see cref="AggregatePendingPenaltiesByCurrency"/>.
+    ///
+    /// <para>ADR-048 B3 (2026-07-17): delega en <see cref="EstadoReserva.IsVoidedStatus"/>, la fuente UNICA
+    /// del dominio para "reserva sin efecto" (mismo par de estados que antes: <see cref="EstadoReserva.Cancelled"/>
+    /// / <see cref="EstadoReserva.PendingOperatorRefund"/>). Se mantiene este metodo como alias por
+    /// compatibilidad con los llamadores existentes; no se duplica la lista de estados.</para>
     /// </remarks>
     internal static bool IsCancelledLikeStatus(string? status)
-        => status == EstadoReserva.Cancelled || status == EstadoReserva.PendingOperatorRefund;
+        => EstadoReserva.IsVoidedStatus(status);
 
     // El "respaldo fiscal de la multa" (viva / en revision / ninguno) se decide con los predicados compartidos de
     // CancellationPenaltyRules, reusados IDENTICOS aca (detalle + listado) y en el vigia de coherencia (W5), asi los

@@ -61,5 +61,13 @@ public class HotelBookingDto
     // que la entidad HotelBooking). No hay motivo de cancelacion a nivel servicio (solo va al audit log).
     public DateTime? CancelledAt { get; set; }
     public string? CancelledByUserName { get; set; }
+    // ADR-048 T4 (2026-07-17, spec "etiqueta Con multa"): si ESTE servicio anulado tiene multa del
+    // operador en juego (confirmada o todavia en tramite), dice en que paso esta: "Pending" (en tramite,
+    // o confirmada pero todavia sin cobrar del todo -> etiqueta ambar "Con multa") o "Collected"
+    // (confirmada Y cobrada por completo -> etiqueta gris "Multa cobrada"). Null = este servicio no tiene
+    // multa (no se muestra ninguna etiqueta). Se calcula reusando la MISMA fuente que ya alimenta el chip
+    // Pago y el paso de multa de la ficha (BookingCancellationLine + OperatorPenaltySituations) — no es un
+    // dato nuevo, es su proyeccion por servicio. Ver ReservaService.StampCancellationPenaltyPerServiceAsync.
+    public string? CancellationPenaltyState { get; set; }
 }
 

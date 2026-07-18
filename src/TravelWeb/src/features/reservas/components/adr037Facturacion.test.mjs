@@ -14,10 +14,14 @@ import assert from 'node:assert/strict';
  */
 
 // ── Réplica: mapeo del chip de facturación (ReservaStatusChips INVOICING_CHIP) ──
+// ADR-048 T4 (2026-07-17, spec Punto 2, P1=B FIRMADA): se sumó "FullyReturned" →
+// "✓ Facturada y devuelta". A diferencia de los otros tres valores, este NUNCA cae en
+// el fallback "Sin facturar" (esa es justo la mentira que la spec corrige).
 const INVOICING_LABEL = {
     NotInvoiced: 'Sin facturar',
     PartiallyInvoiced: 'Facturada en parte',
     FullyInvoiced: 'Facturada total',
+    FullyReturned: '✓ Facturada y devuelta',
 };
 function labelChipFactura(invoicingStatus) {
     return (INVOICING_LABEL[invoicingStatus] || INVOICING_LABEL.NotInvoiced);
@@ -32,9 +36,35 @@ test('chip factura: PartiallyInvoiced → "Facturada en parte"', () => {
 test('chip factura: FullyInvoiced → "Facturada total"', () => {
     assert.equal(labelChipFactura('FullyInvoiced'), 'Facturada total');
 });
+test('chip factura: FullyReturned → "✓ Facturada y devuelta" (ADR-048 T4, P1=B FIRMADA)', () => {
+    assert.equal(labelChipFactura('FullyReturned'), '✓ Facturada y devuelta');
+});
 test('chip factura: valor ausente/desconocido → "Sin facturar" (fallback)', () => {
     assert.equal(labelChipFactura(undefined), 'Sin facturar');
     assert.equal(labelChipFactura('Otra'), 'Sin facturar');
+});
+test('chip factura: FullyReturned NUNCA cae en el fallback "Sin facturar" (la mentira que corrige T4)', () => {
+    assert.notEqual(labelChipFactura('FullyReturned'), 'Sin facturar');
+});
+
+// ── Réplica: mapeo del chip de facturación en el Estado de Cuenta
+//    (EstadoCuentaResumen.jsx ChipInvoicingStatus) — mismo cuarto valor, mismo texto,
+//    para que las dos pantallas digan exactamente lo mismo. ANTES de T4 esta función
+//    devolvía null (el chip desaparecía) para "FullyReturned": un hueco visual.
+function labelChipFacturaEstadoCuenta(status) {
+    if (!status || status === 'NotInvoiced') return 'Sin facturar';
+    if (status === 'PartiallyInvoiced') return 'Facturada en parte';
+    if (status === 'FullyInvoiced') return 'Facturada total';
+    if (status === 'FullyReturned') return '✓ Facturada y devuelta';
+    return null;
+}
+test('chip factura (Estado de Cuenta): FullyReturned → "✓ Facturada y devuelta", ya NO desaparece', () => {
+    assert.equal(labelChipFacturaEstadoCuenta('FullyReturned'), '✓ Facturada y devuelta');
+});
+test('chip factura (Estado de Cuenta): los tres valores previos siguen iguales', () => {
+    assert.equal(labelChipFacturaEstadoCuenta(null), 'Sin facturar');
+    assert.equal(labelChipFacturaEstadoCuenta('PartiallyInvoiced'), 'Facturada en parte');
+    assert.equal(labelChipFacturaEstadoCuenta('FullyInvoiced'), 'Facturada total');
 });
 
 // El chip de facturación se muestra SIEMPRE (en cualquier estado).

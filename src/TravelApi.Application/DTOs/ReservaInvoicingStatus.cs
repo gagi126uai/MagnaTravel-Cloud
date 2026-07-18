@@ -29,7 +29,7 @@ namespace TravelApi.Application.DTOs;
 /// </summary>
 public static class ReservaInvoicingStatus
 {
-    /// <summary>No hay nada facturado (facturadoNeto en ~0). Chip "Sin facturar".</summary>
+    /// <summary>Nunca hubo un comprobante emitido para esta reserva. Chip "Sin facturar".</summary>
     public const string NotInvoiced = "NotInvoiced";
 
     /// <summary>Hay algo facturado pero menos que lo vendido. Chip "Facturada en parte".</summary>
@@ -39,25 +39,46 @@ public static class ReservaInvoicingStatus
     public const string FullyInvoiced = "FullyInvoiced";
 
     /// <summary>
-    /// Deriva el estado de facturacion a partir del cuadre escalar. Regla (ADR-037):
-    ///   - <c>facturadoNeto &lt;= epsilon</c>                          -&gt; "NotInvoiced" (sin facturar);
-    ///   - <c>epsilon &lt; facturadoNeto &lt; vendido - epsilon</c>    -&gt; "PartiallyInvoiced" (facturada en parte);
-    ///   - <c>facturadoNeto &gt;= vendido - epsilon</c>                -&gt; "FullyInvoiced" (total o excedido).
+    /// ADR-048 T3 (2026-07-17, regla 5): SI hubo un comprobante emitido (bruto con CAE &gt; 0) pero una
+    /// Nota de Credito lo devolvio por completo (neto ~ 0). Chip "Facturada y devuelta".
+    ///
+    /// <para>Antes del ADR-048 este caso caia en <see cref="NotInvoiced"/> — el chip mentia "Sin facturar"
+    /// sobre una reserva que SI tuvo un comprobante fiscal (y su NC de anulacion). Ese colapso escondia el
+    /// rastro fiscal al usuario, exactamente la mentira #2 que este ADR corrige (ver documento de diseno
+    /// en <c>docs/architecture/2026-07-17-modelo-estados-derivados-DISENO-implementacion.md</c>).</para>
+    /// </summary>
+    public const string FullyReturned = "FullyReturned";
+
+    /// <summary>
+    /// Deriva el estado de facturacion a partir del cuadre escalar. Regla (ADR-037, ampliada por ADR-048 T3):
+    ///   - <c>facturadoNeto &lt;= epsilon &amp;&amp; brutoEmitido &lt;= epsilon</c> -&gt; "NotInvoiced" (nunca se facturo);
+    ///   - <c>facturadoNeto &lt;= epsilon &amp;&amp; brutoEmitido &gt; epsilon</c>  -&gt; "FullyReturned" (se facturo y se devolvio);
+    ///   - <c>epsilon &lt; facturadoNeto &lt; vendido - epsilon</c>                 -&gt; "PartiallyInvoiced" (facturada en parte);
+    ///   - <c>facturadoNeto &gt;= vendido - epsilon</c>                            -&gt; "FullyInvoiced" (total o excedido).
     ///
     /// <para>Misma tolerancia de centavo que <see cref="ReservaCollectionStatus"/> (los importes ya vienen
-    /// redondeados a 2 decimales desde el calculador de plata). El orden de los chequeos importa: primero
-    /// "sin facturar", despues "total" (incluye el caso vendido &lt;= 0 con algo facturado), si no "parcial".</para>
+    /// redondeados a 2 decimales desde el calculador de plata). El orden de los chequeos importa: primero el
+    /// bloque "neto ~0" (que ahora se bifurca en dos segun el bruto), despues "total" (incluye el caso vendido
+    /// &lt;= 0 con algo facturado), si no "parcial".</para>
+    ///
+    /// <para><paramref name="brutoEmitido"/> es la suma de Facturas + Notas de Debito con CAE vivo, SIN restar
+    /// las Notas de Credito (ver <c>ReservaInvoicingCuadre.BrutoEmitido</c> en
+    /// <c>TravelApi.Domain.Reservations</c>). Una reserva con
+    /// facturacion PARCIAL (neto &gt; epsilon) sigue el camino de siempre: la distincion nueva solo aplica
+    /// cuando el neto qued&#243; en ~0, que es el unico caso donde "nunca facture" y "facture y me devolvieron
+    /// todo" se confundian.</para>
     /// </summary>
-    public static string Derive(decimal vendido, decimal facturadoNeto)
+    public static string Derive(decimal vendido, decimal facturadoNeto, decimal brutoEmitido)
     {
         // Umbral por debajo del centavo: mismo epsilon que ReservaCollectionStatus, para no clasificar como
         // facturado/no-facturado un resto de redondeo.
         const decimal epsilon = 0.005m;
 
-        // Sin (o casi sin) nada facturado: "Sin facturar". Cubre tambien NC que dejaron el neto en ~0 o en
-        // negativo (una reserva con NC que supera a sus facturas: no hay facturacion viva, vuelve a "Sin facturar").
+        // Neto en ~0 (o negativo, una NC que supera a sus facturas): puede ser "nunca se facturo nada" O
+        // "se facturo y una NC lo devolvio entero". El bruto es la unica senal que distingue los dos casos
+        // (ver XML-doc de la clase).
         if (facturadoNeto <= epsilon)
-            return NotInvoiced;
+            return brutoEmitido > epsilon ? FullyReturned : NotInvoiced;
 
         // Se facturo lo vendido o de mas: "Facturada total". El borde usa el mismo epsilon para tolerar el
         // ultimo centavo. Tambien cae aca el caso degenerado vendido <= 0 con algo facturado (over-invoicing).
