@@ -682,7 +682,7 @@ public class PaymentService : IPaymentService
 
     public async Task<IEnumerable<PaymentDto>> GetPaymentsForReservaAsync(int ReservaId, CancellationToken cancellationToken)
     {
-        return await _dbContext.Payments
+        var payments = await _dbContext.Payments
             .AsNoTracking()
             .Include(p => p.Receipt)
             .Where(p => p.ReservaId == ReservaId)
@@ -703,6 +703,80 @@ public class PaymentService : IPaymentService
             .OrderByDescending(p => p.PaidAt)
             .ProjectTo<PaymentDto>(_mapper.ConfigurationProvider)
             .ToListAsync(cancellationToken);
+
+        // Tanda 6 (contrato pantalla-motor, 2026-07-20): ESTE es el endpoint que la ficha de la reserva usa
+        // de verdad para pintar Editar/Eliminar por cobro (useReservaDetail.js -> GET /payments/reserva/{id}
+        // -> reserva.payments[] -> EstadoCuentaExtracto -> PaymentReceiptActions). El otro camino que arma
+        // PaymentDto (ReservaService.GetReservaByIdAsync, el detalle completo de la reserva) ya poblaba estas
+        // capacidades; este quedaba con el default (null, "no calculado") y el front lo interpretaba como
+        // "sin bloqueo" (degradacion elegante) — pero es EXACTAMENTE el endpoint que hoy alimenta la fila, asi
+        // que dejarlo sin poblar significaba que el candado por-pago de esta tanda nunca se veia en la
+        // pantalla real. Se completa aca.
+        await PopulatePaymentCapabilitiesAsync(ReservaId, payments, cancellationToken);
+
+        return payments;
+    }
+
+    /// <summary>
+    /// Tanda 6 (contrato pantalla-motor, 2026-07-20): estampa <c>CanEdit</c>/<c>CanDelete</c> en cada
+    /// <see cref="PaymentDto"/> ya armado por <see cref="GetPaymentsForReservaAsync(int, CancellationToken)"/>.
+    /// Misma regla que <c>ReservaService.PopulatePaymentCapabilities</c> (fuente unica:
+    /// <see cref="PaymentCapabilityPolicy"/>, mapeo final por <see cref="PaymentCapabilityDtoMapper"/>), pero
+    /// los HECHOS se juntan distinto porque este camino ya salio de un <c>ProjectTo</c> (no hay entidades
+    /// <c>Payment</c>/<c>Invoice</c> cargadas en memoria, solo los DTOs):
+    ///  - el estado del recibo sale de <c>PaymentDto.Receipt</c> (ya lo trae el <c>ProjectTo</c> de arriba,
+    ///    porque el query hace <c>.Include(p =&gt; p.Receipt)</c> — CERO consulta extra para esto);
+    ///  - si la factura vinculada esta VIVA hace falta el <c>PublicId</c> de las facturas vivas de la
+    ///    reserva, que <c>PaymentDto.RelatedInvoicePublicId</c> SI trae pero sin saber si esa factura sigue
+    ///    viva — por eso la UNICA consulta nueva de este metodo trae el set de PublicId de facturas vivas de
+    ///    la reserva (no una consulta por pago: si la reserva no tiene ningun pago vinculado a una factura,
+    ///    ni siquiera se dispara).
+    /// </summary>
+    private async Task PopulatePaymentCapabilitiesAsync(
+        int reservaId, List<PaymentDto> payments, CancellationToken cancellationToken)
+    {
+        if (payments.Count == 0) return;
+
+        // Solo pedimos las facturas si hace falta: ningun pago de esta pagina esta vinculado a una factura ->
+        // no hay nada que "viva" pueda cambiar, nos ahorramos la consulta.
+        //
+        // OJO EF Core: traemos PublicId+TipoComprobante+CAE+AnnulmentStatus con un SELECT liviano (sin
+        // materializar la entidad Invoice completa) y evaluamos InvoiceComprobanteHelpers.IsLiveInvoice
+        // DESPUES, en memoria (.ToListAsync() primero, .Where(...) despues) — ese helper NO se puede meter
+        // adentro del .Where() de una query LINQ-to-SQL: EF Core no lo traduce a SQL (ver el docstring de la
+        // clase), asi que intentarlo tira InvalidOperationException en runtime contra Postgres real (In-Memory
+        // no lo hubiera detectado, por eso el test de integracion de este endpoint corre contra Postgres).
+        var anyPaymentLinkedToInvoice = payments.Any(p => p.RelatedInvoicePublicId.HasValue);
+        var liveInvoicePublicIdSet = new HashSet<Guid>();
+        if (anyPaymentLinkedToInvoice)
+        {
+            var reservaInvoices = await _dbContext.Invoices.AsNoTracking()
+                .Where(i => i.ReservaId == reservaId)
+                .Select(i => new { i.PublicId, i.TipoComprobante, i.CAE, i.AnnulmentStatus })
+                .ToListAsync(cancellationToken);
+
+            foreach (var invoice in reservaInvoices)
+            {
+                if (InvoiceComprobanteHelpers.IsLiveInvoice(invoice.TipoComprobante, invoice.CAE, invoice.AnnulmentStatus))
+                    liveInvoicePublicIdSet.Add(invoice.PublicId);
+            }
+        }
+
+        foreach (var paymentDto in payments)
+        {
+            var hasIssuedReceipt = paymentDto.Receipt is not null
+                && string.Equals(paymentDto.Receipt.Status, PaymentReceiptStatuses.Issued, StringComparison.OrdinalIgnoreCase);
+            var hasOnlyVoidedReceipt = paymentDto.Receipt is not null && !hasIssuedReceipt;
+            var isLinkedToAnyInvoice = paymentDto.RelatedInvoicePublicId.HasValue;
+            var isLinkedToLiveInvoice = isLinkedToAnyInvoice
+                && liveInvoicePublicIdSet.Contains(paymentDto.RelatedInvoicePublicId!.Value);
+
+            PaymentCapabilityDtoMapper.Apply(paymentDto, new PaymentCapabilityContext(
+                HasIssuedReceipt: hasIssuedReceipt,
+                HasOnlyVoidedReceipt: hasOnlyVoidedReceipt,
+                IsLinkedToLiveInvoice: isLinkedToLiveInvoice,
+                IsLinkedToAnyInvoice: isLinkedToAnyInvoice));
+        }
     }
 
     public async Task<PaymentReceiptDto> IssueReceiptAsync(string paymentPublicIdOrLegacyId, CancellationToken cancellationToken)

@@ -2882,6 +2882,13 @@ public class ReservaService : IReservaService
             OperatorPenaltyOutcome: operatorPenaltyOutcome);
         dto.Capabilities = MapCapabilities(ReservaCapabilityPolicy.For(capabilityContext));
 
+        // Tanda 6 (contrato pantalla-motor, 2026-07-20): capacidad de editar/eliminar CADA cobro puntual, no
+        // solo la reserva entera (dto.Capabilities.CanEditOrDeletePayment de arriba es por ESTADO, no mira el
+        // pago). dto.Payments ya viene armado (mapeo del inicio del metodo) y file.Payments/file.Invoices ya
+        // estan cargados por el Include del query -- se resuelve todo en memoria, sin una consulta nueva por
+        // cada cobro (evita N+1 en una reserva con muchos pagos).
+        PopulatePaymentCapabilities(file, dto);
+
         // Derivado de "tiene CAE vivo": el front explica por que cancelar exige pasar por la NC primero.
         dto.RequiresInvoiceAnnulmentToCancel = hasLiveCae;
 
@@ -2979,6 +2986,58 @@ public class ReservaService : IReservaService
             .Select(line => (line.Currency, line.Balance))
             .ToList();
         return ReservaPrimaryCurrency.Resolve(lines);
+    }
+
+    /// <summary>
+    /// Tanda 6 (contrato pantalla-motor, 2026-07-20): estampa en CADA <see cref="PaymentDto"/> de la lista si
+    /// ese cobro puntual admite editar/eliminar, con el motivo cuando no. Antes la ficha solo miraba la
+    /// capacidad de la RESERVA (<c>CanEditOrDeletePayment</c>, que solo mira el ESTADO); un cobro con recibo
+    /// ya emitido o atado a una factura con CAE seguia mostrando "Editar"/"Eliminar" activos hasta que el
+    /// usuario llenaba el formulario y el guard real lo rechazaba recien ahi.
+    ///
+    /// <para>Fuente unica: <see cref="PaymentCapabilityPolicy"/> (Domain, pura) — la MISMA regla que usan los
+    /// guards reales de escritura (<c>MutationGuards.GetPaymentMutationBlockReasonAsync</c> /
+    /// <c>DeleteGuards.GetPaymentDeleteBlockReasonAsync</c>). Esta funcion solo JUNTA los hechos; no vuelve a
+    /// decidir el motivo por su cuenta, y delega el mapeo final a <see cref="PaymentCapabilityDtoMapper"/> —
+    /// el MISMO helper que usa <c>PaymentService.GetPaymentsForReservaAsync</c> (el otro camino que arma
+    /// <c>payments[]</c> para la ficha) — asi la ficha y el guard nunca pueden divergir.</para>
+    ///
+    /// <para>Sin consultas nuevas a la base: <c>file.Payments[].Receipt</c> viene del <c>Include</c> del query
+    /// de <see cref="GetReservaByIdAsync(int)"/>, y <c>file.Invoices</c> (todas las facturas de la reserva)
+    /// tambien. Recorrer esas listas ya cargadas en memoria es barato aunque la reserva tenga muchos cobros —
+    /// evita el N+1 de preguntarle a la base por cada pago.</para>
+    /// </summary>
+    private static void PopulatePaymentCapabilities(Reserva file, ReservaDto dto)
+    {
+        // Set de IDs de facturas VIVAS de la reserva (no NC, con CAE, no anulada con exito). Se calcula UNA
+        // sola vez para toda la lista de pagos, no una vez por pago.
+        var liveInvoiceIds = file.Invoices
+            .Where(i => InvoiceComprobanteHelpers.IsLiveInvoice(i.TipoComprobante, i.CAE, i.AnnulmentStatus))
+            .Select(i => i.Id)
+            .ToHashSet();
+
+        var paymentsByPublicId = file.Payments.ToDictionary(p => p.PublicId);
+
+        foreach (var paymentDto in dto.Payments)
+        {
+            // Defensivo: dto.Payments viene de mapear file.Payments 1 a 1 (mismo PublicId), pero si algun dia
+            // no matchea preferimos dejar el campo en null (capacidad "no calculada") antes que reventar la
+            // ficha entera o mentir con un candado sin motivo — ver la nota null-vs-Allowed=false en PaymentDto.
+            if (!paymentsByPublicId.TryGetValue(paymentDto.PublicId, out var payment))
+                continue;
+
+            var hasIssuedReceipt = payment.Receipt is not null
+                && string.Equals(payment.Receipt.Status, PaymentReceiptStatuses.Issued, StringComparison.OrdinalIgnoreCase);
+            var hasOnlyVoidedReceipt = payment.Receipt is not null && !hasIssuedReceipt;
+            var isLinkedToAnyInvoice = payment.RelatedInvoiceId.HasValue;
+            var isLinkedToLiveInvoice = isLinkedToAnyInvoice && liveInvoiceIds.Contains(payment.RelatedInvoiceId!.Value);
+
+            PaymentCapabilityDtoMapper.Apply(paymentDto, new PaymentCapabilityContext(
+                HasIssuedReceipt: hasIssuedReceipt,
+                HasOnlyVoidedReceipt: hasOnlyVoidedReceipt,
+                IsLinkedToLiveInvoice: isLinkedToLiveInvoice,
+                IsLinkedToAnyInvoice: isLinkedToAnyInvoice));
+        }
     }
 
     /// <summary>

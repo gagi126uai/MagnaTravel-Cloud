@@ -57,6 +57,21 @@ public static class InvoiceComprobanteHelpers
     public static bool IsCreditNote(int tipoComprobante)
         => tipoComprobante is 3 or 8 or 13 or 53;
 
+    /// <summary>
+    /// True si el comprobante es una FACTURA VIVA fiscalmente: no es Nota de Credito, ya tiene CAE asignado
+    /// (AFIP lo sello) y su anulacion no fue exitosa. Es el mismo criterio de "factura viva" que ya usan los
+    /// guards de mutacion/borrado (MutationGuards/DeleteGuards, capa Infrastructure) para decidir si un
+    /// comprobante sigue contando como vigente.
+    ///
+    /// <para>Pensado para evaluarse sobre datos YA CARGADOS en memoria (por ejemplo, recorriendo la coleccion
+    /// <c>Reserva.Invoices</c> que un query ya trajo con <c>Include</c>), no dentro de una query LINQ-to-SQL:
+    /// EF Core no traduce este helper a SQL (ver nota de la clase); ahi sigue la expansion inline de siempre.</para>
+    /// </summary>
+    public static bool IsLiveInvoice(int tipoComprobante, string? cae, AnnulmentStatus annulmentStatus)
+        => !IsCreditNote(tipoComprobante)
+           && !string.IsNullOrEmpty(cae)
+           && annulmentStatus != AnnulmentStatus.Succeeded;
+
     /// <summary>Clasifica el tipo de comprobante en su categoria fiscal.</summary>
     public static InvoiceComprobanteCategory Categorize(int tipoComprobante) =>
         tipoComprobante switch

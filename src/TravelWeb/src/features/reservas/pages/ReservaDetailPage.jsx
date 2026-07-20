@@ -42,6 +42,7 @@ import { isReservaAnulada } from "../moneyStatus";
 // anular un comprobante requiere autorización de un supervisor.
 import RequestApprovalModal from "../../approvals/components/RequestApprovalModal";
 import { resolverAccionAlFallarComprobante, armarEtiquetaComprobante } from "../lib/receiptApprovalFlow";
+import { resolverBloqueoFilaCobro } from "../lib/paymentRowGuard";
 import { useReservaDetail } from "../hooks/useReservaDetail";
 import { useOperationalFlags } from "../../../contexts/OperationalFlagsContext";
 import { useAlerts } from "../../../contexts/AlertsContext";
@@ -370,26 +371,94 @@ function canIssuePaymentReceipt(payment) {
 }
 
 /**
+ * Botones Editar/Eliminar de UN cobro puntual, con el candado por-pago de la Tanda 6
+ * (spec docs/ux/2026-07-20-t5-a-t9-contrato-pantalla-motor.md): si ESTE pago tiene un
+ * recibo emitido, un recibo anulado o está atado a una factura con CAE vivo, los botones
+ * quedan grises (visibles, NO clickeables) con el motivo real del backend debajo — nunca
+ * se ocultan, porque esto es un candado fiscal, no una acción ya cumplida (regla 2026-06-26).
+ *
+ * Se usa en los tres estados posibles de PaymentReceiptActions (con recibo, por emitir,
+ * sin comprobante) para no repetir la misma lógica tres veces.
+ */
+function EditarEliminarCobro({ payment, onEditarCobro, onEliminarCobro }) {
+  const { editarBloqueado, eliminarBloqueado, motivo } = resolverBloqueoFilaCobro(payment);
+
+  return (
+    <>
+      {typeof onEditarCobro === "function" && (
+        <button
+          type="button"
+          onClick={editarBloqueado ? undefined : () => onEditarCobro(payment)}
+          disabled={editarBloqueado}
+          className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-bold transition-colors ${
+            editarBloqueado
+              ? "cursor-not-allowed border-slate-100 text-slate-300 dark:border-slate-800 dark:text-slate-600"
+              : "border-slate-200 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          }`}
+          title={editarBloqueado ? motivo : "Editar cobro"}
+          aria-label="Editar cobro"
+          data-testid="btn-editar-cobro"
+        >
+          <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+          Editar
+        </button>
+      )}
+      {typeof onEliminarCobro === "function" && (
+        <button
+          type="button"
+          onClick={eliminarBloqueado ? undefined : () => onEliminarCobro(payment)}
+          disabled={eliminarBloqueado}
+          className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-xs font-bold transition-colors ${
+            eliminarBloqueado
+              ? "cursor-not-allowed border-slate-100 text-slate-300 dark:border-slate-800 dark:text-slate-600"
+              : "border-rose-200 text-rose-600 hover:bg-rose-50 dark:border-rose-900/30 dark:text-rose-400 dark:hover:bg-rose-900/20"
+          }`}
+          title={eliminarBloqueado ? motivo : "Eliminar cobro"}
+          aria-label="Eliminar cobro"
+          data-testid="btn-eliminar-cobro"
+        >
+          <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+          Eliminar
+        </button>
+      )}
+      {/* Renglón con candado, SIEMPRE a la vista (nada de tooltip, regla 2026-06-08).
+          Texto real del backend tal cual, sin reescribirlo (MutationGuards.cs / DeleteGuards.cs). */}
+      {motivo && (
+        <p className="w-full text-[11px] leading-snug text-slate-500 dark:text-slate-400" role="note">
+          🔒 {motivo}
+        </p>
+      )}
+    </>
+  );
+}
+
+/**
  * Acciones del comprobante de pago (recibo) de un cobro individual.
  *
  * Incluye también Editar cobro y Eliminar cobro.
- * Hay dos criterios distintos de bloqueo (ADR-037 + BUG IMP-3 fix 2026-06-24):
+ * Hay TRES criterios distintos de bloqueo (ADR-037 + BUG IMP-3 fix 2026-06-24 + Tanda 6 2026-07-20):
  *
  *   - `congelado`: controla emitir/anular el RECIBO del cobro.
  *     Verdadero en estados operativos terminales (Traveling/Lost/Cancelled/PendingOperatorRefund).
  *     Usa esCongeladoParaRecibos(), que NO incluye FullyInvoiced (facturación y cobranza son
  *     ejes separados en ADR-037).
  *
- *   - `canEditarEliminar`: controla los botones Editar y Eliminar del cobro en sí.
- *     Viene de la capacidad `canEditOrDeletePayment.allowed` del DTO del backend.
- *     El backend ya considera el estado de la reserva (Closed/terminal → false).
- *     Si el backend no la envía, se asume false por seguridad.
+ *   - `canEditarEliminar`: controla si Editar/Eliminar se ofrecen SIQUIERA para este cobro
+ *     a nivel RESERVA. Viene de la capacidad `canEditOrDeletePayment.allowed` del DTO del
+ *     backend. El backend ya considera el estado de la reserva (Closed/terminal → false).
+ *     Si el backend no la envía, se asume false por seguridad. Cuando es false, los botones
+ *     directamente NO aparecen (estado "no aplicable todavía / ya no aplicable", no candado).
+ *
+ *   - Candado por PAGO puntual (Tanda 6, nuevo): aunque `canEditarEliminar` sea true, ESTE
+ *     cobro individual puede tener su propio candado (recibo emitido, recibo anulado, factura
+ *     con CAE vivo) — lo resuelve `EditarEliminarCobro` leyendo `payment.canEdit`/`canDelete`.
+ *     Acá los botones SÍ se muestran, pero grises con el motivo al lado (candado fiscal).
  *
  * Decisión de UX 2026-06-22: "ver/imprimir un papel ya hecho" sí; "crear/anular/editar" no.
  *
  * Props:
  *  - congelado: boolean — solo afecta emitir/anular el RECIBO (no editar/eliminar el cobro).
- *  - canEditarEliminar: boolean — si el backend permite editar o eliminar este cobro.
+ *  - canEditarEliminar: boolean — si el backend permite editar o eliminar cobros en esta reserva.
  *  - onEditarCobro: callback(payment) — abre RegistrarCobroInline en modo edición.
  *  - onEliminarCobro: callback(payment) — pide confirmación y elimina el cobro.
  */
@@ -398,6 +467,8 @@ function PaymentReceiptActions({ payment, onView, onIssue, onVoid, congelado, ca
 
   // Un cobro con recibo anulado ya fue procesado formalmente; no tiene sentido editarlo
   // aunque el capability diga que se puede. El recibo anulado es un "techo" extra.
+  // (Este check local NO cambia con la Tanda 6: sigue ocultando Editar/Eliminar por completo
+  // cuando el recibo de ESTE cobro está anulado, sin pasar por el candado gris — spec T6 2026-07-20.)
   const reciboAnulado = receipt?.status === "Voided";
 
   // Gobernado por la capacidad real del backend + guard de recibo anulado.
@@ -441,36 +512,10 @@ function PaymentReceiptActions({ payment, onView, onIssue, onVoid, congelado, ca
         ) : null}
 
         {/* B1: Editar / Eliminar cobro — solo en estados editables y si el recibo no está anulado.
-            Un recibo anulado implica que el cobro ya fue procesado formalmente; no se edita. */}
+            Un recibo anulado implica que el cobro ya fue procesado formalmente; no se edita.
+            Dentro de EditarEliminarCobro se aplica además el candado por-pago de la Tanda 6. */}
         {cobroEsEditable && (
-          <>
-            {typeof onEditarCobro === "function" && (
-              <button
-                type="button"
-                onClick={() => onEditarCobro(payment)}
-                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-                title="Editar cobro"
-                aria-label="Editar cobro"
-                data-testid="btn-editar-cobro"
-              >
-                <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-                Editar
-              </button>
-            )}
-            {typeof onEliminarCobro === "function" && (
-              <button
-                type="button"
-                onClick={() => onEliminarCobro(payment)}
-                className="inline-flex items-center gap-1 rounded-lg border border-rose-200 px-2 py-1 text-xs font-bold text-rose-600 transition-colors hover:bg-rose-50 dark:border-rose-900/30 dark:text-rose-400 dark:hover:bg-rose-900/20"
-                title="Eliminar cobro"
-                aria-label="Eliminar cobro"
-                data-testid="btn-eliminar-cobro"
-              >
-                <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                Eliminar
-              </button>
-            )}
-          </>
+          <EditarEliminarCobro payment={payment} onEditarCobro={onEditarCobro} onEliminarCobro={onEliminarCobro} />
         )}
       </div>
     );
@@ -490,33 +535,9 @@ function PaymentReceiptActions({ payment, onView, onIssue, onVoid, congelado, ca
           <Receipt className="h-3.5 w-3.5" aria-hidden="true" />
           Emitir comprobante
         </button>
-        {/* B1: también disponible Editar / Eliminar cuando aún no hay recibo */}
-        {typeof onEditarCobro === "function" && (
-          <button
-            type="button"
-            onClick={() => onEditarCobro(payment)}
-            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-            title="Editar cobro"
-            aria-label="Editar cobro"
-            data-testid="btn-editar-cobro"
-          >
-            <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-            Editar
-          </button>
-        )}
-        {typeof onEliminarCobro === "function" && (
-          <button
-            type="button"
-            onClick={() => onEliminarCobro(payment)}
-            className="inline-flex items-center gap-1 rounded-lg border border-rose-200 px-2 py-1 text-xs font-bold text-rose-600 transition-colors hover:bg-rose-50 dark:border-rose-900/30 dark:text-rose-400 dark:hover:bg-rose-900/20"
-            title="Eliminar cobro"
-            aria-label="Eliminar cobro"
-            data-testid="btn-eliminar-cobro"
-          >
-            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-            Eliminar
-          </button>
-        )}
+        {/* B1: también disponible Editar / Eliminar cuando aún no hay recibo.
+            Mismo candado por-pago de la Tanda 6 aplicado adentro de EditarEliminarCobro. */}
+        <EditarEliminarCobro payment={payment} onEditarCobro={onEditarCobro} onEliminarCobro={onEliminarCobro} />
       </div>
     );
   }
@@ -524,33 +545,9 @@ function PaymentReceiptActions({ payment, onView, onIssue, onVoid, congelado, ca
   return (
     <div className="flex flex-wrap items-center gap-2">
       <span className="text-xs text-slate-400">Sin comprobante</span>
-      {/* B1: Editar / Eliminar disponibles aunque no haya comprobante (entryType puente, etc.) */}
-      {typeof onEditarCobro === "function" && (
-        <button
-          type="button"
-          onClick={() => onEditarCobro(payment)}
-          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs font-bold text-slate-600 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
-          title="Editar cobro"
-          aria-label="Editar cobro"
-          data-testid="btn-editar-cobro"
-        >
-          <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-          Editar
-        </button>
-      )}
-      {typeof onEliminarCobro === "function" && (
-        <button
-          type="button"
-          onClick={() => onEliminarCobro(payment)}
-          className="inline-flex items-center gap-1 rounded-lg border border-rose-200 px-2 py-1 text-xs font-bold text-rose-600 transition-colors hover:bg-rose-50 dark:border-rose-900/30 dark:text-rose-400 dark:hover:bg-rose-900/20"
-          title="Eliminar cobro"
-          aria-label="Eliminar cobro"
-          data-testid="btn-eliminar-cobro"
-        >
-          <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-          Eliminar
-        </button>
-      )}
+      {/* B1: Editar / Eliminar disponibles aunque no haya comprobante (entryType puente, etc.).
+          Mismo candado por-pago de la Tanda 6 aplicado adentro de EditarEliminarCobro. */}
+      <EditarEliminarCobro payment={payment} onEditarCobro={onEditarCobro} onEliminarCobro={onEliminarCobro} />
     </div>
   );
 }

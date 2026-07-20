@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Infrastructure.Services.Reservations;
@@ -315,6 +316,13 @@ public static class DeleteGuards
     /// solicitado por Gaston al introducir el endpoint /receipt/void (Vendedores
     /// pueden anular recibos para corregir errores operativos comunes; obligar a
     /// contactar al Admin para borrar el Payment hace inviable el flujo).
+    ///
+    /// Tanda 6 (contrato pantalla-motor, 2026-07-20): este metodo solo JUNTA los hechos desde la base; la
+    /// REGLA que decide el texto del bloqueo vive en <see cref="PaymentCapabilityPolicy"/> (Domain, pura) —
+    /// la MISMA que usa el armado de la ficha (<c>ReservaService.GetReservaByIdAsync</c>) para apagar
+    /// "Eliminar" por fila ANTES de que el usuario llegue a este guard. De paso se corrigio una errata de
+    /// redaccion que arrastraba el mensaje de "comprobante vigente" (decia "anular"/"Anula" en vez de
+    /// "eliminar"/"Anulá" — ver <see cref="PaymentCapabilityPolicy.DeleteBlockedByIssuedReceiptReason"/>).
     /// </summary>
     public static async Task<string?> GetPaymentDeleteBlockReasonAsync(
         AppDbContext db,
@@ -335,24 +343,22 @@ public static class DeleteGuards
             .Select(r => r.Status)
             .ToListAsync(ct);
 
-        var hasIssued = receiptStatuses.Any(s => string.Equals(s, PaymentReceiptStatuses.Issued, StringComparison.OrdinalIgnoreCase));
-        if (hasIssued)
-        {
-            // Si coexisten Issued + Voided (reemision), prevalece el mensaje del Issued:
-            // ese es el recibo activo que el usuario tiene que anular primero.
-            return "No se puede anular el pago porque tiene un comprobante vigente. Anula primero el comprobante.";
-        }
+        // Si coexisten Issued + Voided (reemision), prevalece el bloqueo del Issued:
+        // ese es el recibo activo que el usuario tiene que anular primero.
+        var hasIssuedReceipt = receiptStatuses.Any(s =>
+            string.Equals(s, PaymentReceiptStatuses.Issued, StringComparison.OrdinalIgnoreCase));
 
         // Solo Voided: la fila se preserva via DeleteBehavior.Restrict pero el
         // delete (soft) del Payment puede proceder. La numeracion correlativa
         // queda intacta. Audit trail: VoidedAt/VoidedByUser*/VoidReason permanecen.
+        // (Por eso el contexto de abajo NO pasa HasOnlyVoidedReceipt: para ELIMINAR, un recibo Voided-solo
+        // no bloquea — ver el doc de PaymentCapabilityPolicy.EvaluateDelete.)
 
-        if (payment.RelatedInvoiceId.HasValue)
-        {
-            return "No se puede eliminar el pago porque esta vinculado a una factura. " +
-                   "Generá una nota de credito si corresponde.";
-        }
-
-        return null;
+        var context = new PaymentCapabilityContext(
+            HasIssuedReceipt: hasIssuedReceipt,
+            HasOnlyVoidedReceipt: false,
+            IsLinkedToLiveInvoice: false,
+            IsLinkedToAnyInvoice: payment.RelatedInvoiceId.HasValue);
+        return PaymentCapabilityPolicy.For(context).CanDelete.Reason;
     }
 }
