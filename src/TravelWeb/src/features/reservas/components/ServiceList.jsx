@@ -945,7 +945,9 @@ function MiniFormularioPasajerosFaltantes({ reservaId, reserva, servicio, covera
  *   onServiceResolved               — callback() cuando un servicio se resuelve (marcar emitido / no requiere confirmacion)
  *                                     El padre recarga la reserva para reflejar el nuevo estado.
  *   onIrAFacturas                   — callback () => void para navegar a la solapa "Estado de Cuenta" (facturas).
- *                                     Se usa en el modal de bloqueo 409 para llevar al usuario a las facturas.
+ *                                     Se usa en el modal de bloqueo 409 del flujo individual y también se
+ *                                     reenvía a la sección "Anular varios" (Tanda 4: misma paridad de ayuda
+ *                                     en filas fallidas por bloqueo fiscal).
  *                                     Opcional; si no se pasa, el botón no aparece.
  *   canCancelServices               — bool: si el usuario tiene permiso reservas.cancel (UI-only gate).
  *                                     El server siempre re-valida. Si no se pasa, el botón no aparece.
@@ -1989,6 +1991,7 @@ export function ServiceList({
                         reservaPublicId={reservaId}
                         saleInvoices={saleInvoices}
                         blockReason={serviceCancellationBlockReason}
+                        onIrAFacturas={onIrAFacturas}
                         onCerrar={() => setShowCancelarVarios(false)}
                         onCancelacionTerminada={() => {
                             // Solo recargamos los datos del padre — NO cerramos la sección.

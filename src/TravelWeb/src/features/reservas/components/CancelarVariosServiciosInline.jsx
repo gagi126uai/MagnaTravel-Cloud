@@ -52,14 +52,21 @@
  *   onCerrar               — callback: el usuario cerró la sección (botón Cerrar / X)
  *   onCancelacionTerminada — callback: el proceso terminó y hubo al menos un éxito;
  *                            el padre debe recargar los datos (sin cerrar la sección)
+ *   onIrAFacturas          — callback () => void para navegar a la solapa "Estado de Cuenta"
+ *                            (facturas) de la reserva. Mismo callback que ya usa el flujo
+ *                            individual en ServiceList.jsx (ModalBloqueoCancelacionServicio).
+ *                            Se muestra como botón en cada fila que falló por bloqueo fiscal
+ *                            (esBloqueo409 === true) — Tanda 4, paridad con el flujo individual.
+ *                            Opcional; si no se pasa, el botón no aparece.
  */
 
 import { useState, useRef, useEffect, useMemo, useCallback } from "react";
-import { X, Loader2, Ban, CheckCircle2, AlertTriangle } from "lucide-react";
+import { X, Loader2, Ban, CheckCircle2, AlertTriangle, FileText } from "lucide-react";
 import { cancellationsApi } from "../../cancellations/api/cancellationsApi";
 import { getReservationServicePublicId } from "../lib/reservationServiceModel";
 import { sugerirFacturaParaServicios } from "../lib/serviceInvoiceMatch";
 import { formatCurrency } from "../../../lib/utils";
+import { normalizeMessage } from "../../../lib/errors";
 
 // Mínimo de caracteres para el motivo (igual que en ModalBorrarVsCancelar del ServiceList).
 const MOTIVO_MIN_CHARS = 10;
@@ -97,6 +104,7 @@ export function CancelarVariosServiciosInline({
   blockReason,
   onCerrar,
   onCancelacionTerminada,
+  onIrAFacturas,
 }) {
   // Conjunto de publicIds de servicios tildados por el usuario.
   const [seleccionados, setSeleccionados] = useState(new Set());
@@ -491,12 +499,32 @@ export function CancelarVariosServiciosInline({
                   .map((r, i) => (
                     <div key={i} className="flex items-start gap-2 text-xs mt-1">
                       <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5" />
-                      <span>
-                        <strong>{r.svc.name}:</strong>{" "}
-                        {r.esBloqueo409
-                          ? `Bloqueo fiscal — ${r.mensajeError}`
-                          : r.mensajeError}
-                      </span>
+                      <div>
+                        <span>
+                          <strong>{r.svc.name}:</strong>{" "}
+                          {r.esBloqueo409
+                            ? `Bloqueo fiscal — ${r.mensajeError}`
+                            : r.mensajeError}
+                        </span>
+                        {/* Paridad con el flujo individual (ModalBloqueoCancelacionServicio
+                            en ServiceList.jsx): si la fila falló por bloqueo fiscal, ofrecemos
+                            el mismo camino para resolverlo. Filas con otro tipo de error (ej.
+                            "Tipo de servicio no reconocido") no lo muestran — ahí no hay
+                            factura que ir a ver. */}
+                        {r.esBloqueo409 && onIrAFacturas && (
+                          <div className="mt-1">
+                            <button
+                              type="button"
+                              data-testid={`btn-ir-a-facturas-${getReservationServicePublicId(r.svc)}`}
+                              onClick={onIrAFacturas}
+                              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-indigo-700"
+                            >
+                              <FileText className="h-3.5 w-3.5" />
+                              Ver facturas de la reserva
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   ))}
               </>
@@ -592,21 +620,26 @@ export function CancelarVariosServiciosInline({
  *   error.code     → string|null
  *   error.payload  → body JSON completo del backend (puede traer title, message, etc.)
  *
- * La lectura de error.message directamente ya devuelve el mensaje listo.
- * Revisamos también error.payload por si el backend trae detalles adicionales.
+ * getApiErrorMessage (lib/errors.js) ya sabe leer payload y message en ese
+ * orden y filtra los textos crudos de red/proxy en inglés.
  */
 function extraerMensajeError(error, fallback) {
   if (!error) return fallback;
 
-  // error.message ya viene normalizado por parseErrorResponse en api.js.
-  // Es la fuente más confiable para este cliente.
-  if (typeof error.message === "string" && error.message) return error.message;
+  // error.message es la fuente principal, pero pasa por el saneador canónico:
+  // si la falla es de transporte (red caída, "Bad Gateway" y otros statusText
+  // en inglés sin body del servidor) muestra el genérico en español en vez
+  // del texto crudo.
+  if (typeof error.message === "string" && error.message) {
+    return normalizeMessage(error.message, fallback);
+  }
 
-  // Revisamos el payload (body JSON del backend) como respaldo.
+  // Respaldo: el body JSON del backend (message/title) o un body de texto plano.
   const payload = error?.payload;
-  if (typeof payload?.message === "string" && payload.message) return payload.message;
-  if (typeof payload?.title === "string" && payload.title) return payload.title;
-  if (typeof payload === "string" && payload) return payload;
+  if (payload !== undefined && payload !== null) {
+    const mensajePayload = normalizeMessage(payload, "");
+    if (mensajePayload) return mensajePayload;
+  }
 
   return fallback;
 }

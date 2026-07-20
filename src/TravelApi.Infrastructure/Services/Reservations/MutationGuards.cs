@@ -2,6 +2,7 @@ using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
 
 namespace TravelApi.Infrastructure.Services.Reservations;
@@ -109,6 +110,13 @@ public static class MutationGuards
     /// monto/metodo/referencia post-recibo o post-CAE rompe la inmutabilidad
     /// fiscal: el recibo entregado al cliente y la factura AFIP ya reflejan
     /// los datos originales.
+    ///
+    /// Tanda 6 (contrato pantalla-motor, 2026-07-20): este metodo solo JUNTA los hechos desde la base
+    /// (que recibo tiene, si su factura vinculada esta viva); la REGLA que decide el texto del bloqueo vive
+    /// en <see cref="PaymentCapabilityPolicy"/> (Domain, pura) — la MISMA que usa el armado de la ficha
+    /// (<c>ReservaService.GetReservaByIdAsync</c>) para apagar "Editar" por fila ANTES de que el usuario
+    /// llegue a este guard. Un solo lugar decide el texto; este metodo y el armado del DTO nunca pueden
+    /// divergir en el motivo.
     /// </summary>
     public static async Task<string?> GetPaymentMutationBlockReasonAsync(
         AppDbContext db,
@@ -128,39 +136,30 @@ public static class MutationGuards
             .Select(r => r.Status)
             .ToListAsync(ct);
 
-        if (receiptStatuses.Count > 0)
-        {
-            var hasIssued = receiptStatuses.Any(s =>
-                string.Equals(s, PaymentReceiptStatuses.Issued, StringComparison.OrdinalIgnoreCase));
-            if (hasIssued)
-            {
-                return "No se puede editar el pago porque tiene un recibo emitido. " +
-                       "Anulá el recibo y registrá un nuevo pago.";
-            }
-
-            // Solo Voided.
-            return "No se puede editar el pago porque tiene un recibo anulado que debe preservarse para auditoria.";
-        }
+        var hasIssuedReceipt = receiptStatuses.Any(s =>
+            string.Equals(s, PaymentReceiptStatuses.Issued, StringComparison.OrdinalIgnoreCase));
+        var hasOnlyVoidedReceipt = !hasIssuedReceipt && receiptStatuses.Count > 0;
 
         // Vinculado a factura: si la factura esta viva (CAE no anulado), el pago
         // forma parte del comprobante AFIP y no se toca.
         // Excluimos las NC (ver doc de la clase): una NC no mantiene vivo al pago.
+        var isLinkedToLiveInvoice = false;
         if (payment.RelatedInvoiceId.HasValue)
         {
-            var invoiceLive = await db.Invoices.AsNoTracking().AnyAsync(
+            isLinkedToLiveInvoice = await db.Invoices.AsNoTracking().AnyAsync(
                 i => i.Id == payment.RelatedInvoiceId.Value
                      && !LiveInvoiceCreditNoteTypes.Contains(i.TipoComprobante) // excluye NC
                      && !string.IsNullOrEmpty(i.CAE)
                      && i.AnnulmentStatus != AnnulmentStatus.Succeeded,
                 ct);
-            if (invoiceLive)
-            {
-                return "No se puede editar el pago porque esta vinculado a una factura emitida (CAE). " +
-                       "Generá una nota de credito si corresponde.";
-            }
         }
 
-        return null;
+        var context = new PaymentCapabilityContext(
+            HasIssuedReceipt: hasIssuedReceipt,
+            HasOnlyVoidedReceipt: hasOnlyVoidedReceipt,
+            IsLinkedToLiveInvoice: isLinkedToLiveInvoice,
+            IsLinkedToAnyInvoice: payment.RelatedInvoiceId.HasValue);
+        return PaymentCapabilityPolicy.For(context).CanEdit.Reason;
     }
 
     /// <summary>
@@ -381,19 +380,17 @@ public static class MutationGuards
 
     /// <summary>
     /// ADR-025 (read-model para el front de cancelacion parcial, 2026-06-13): devuelve el motivo por el
-    /// que NINGUN servicio de la reserva se puede cancelar (factura con CAE viva o voucher emitido), o
-    /// <c>null</c> si se puede cancelar. El bloqueo es a NIVEL RESERVA (igual que el resto de los guards
-    /// de mutacion, CODE-04/05): si la reserva esta congelada fiscalmente, todos sus servicios lo estan.
+    /// que NINGUN servicio de la reserva se puede anular (factura con CAE viva O voucher emitido), o
+    /// <c>null</c> si se puede anular.
     ///
-    /// <para>Existe para que la pantalla de detalle pueda PRE-BLOQUEAR los casilleros de "cancelar varios
-    /// servicios" sin tener que intentar la cancelacion y comerse el 409. Es la MISMA fuente de verdad
-    /// que usa <c>BookingCancellationService.ResolveServiceCancellationBlockReasonAsync</c> al cancelar
-    /// (que termina en <see cref="GetReservaMutationBlockReasonInternalAsync"/>), asi que lo que el front
-    /// ve y lo que el backend enforza nunca pueden divergir.</para>
-    ///
-    /// <para>El mensaje es del candado fiscal (CAE/voucher). El bloqueo por ESTADO de la reserva (p. ej.
-    /// ya cancelada) lo resuelve la maquina de estados aparte; aca solo cubrimos el candado fiscal, que
-    /// es lo que el front todavia no podia conocer por estado.</para>
+    /// <para><b>OJO — regla VIEJA, sin caller productivo desde Tanda 4 (2026-07-20):</b> esta regla
+    /// (CAE viva O voucher) fue la fuente de verdad hasta ADR-044 T5 (2026-07-11), pero el guard real que
+    /// corre al anular un servicio (<c>BookingCancellationService.CancelServiceAsync</c>) cambio: dejo de
+    /// frenar solo por factura viva (factura+NC es el camino normal del negocio) y ahora usa
+    /// <see cref="GetReservaVoucherOnlyBlockReasonAsync"/> (SOLO voucher). Usar este metodo para pre-bloquear
+    /// la pantalla hoy mentiria (frenaria de mas). Se mantiene porque sus tests documentan la regla vieja
+    /// (<c>MutationGuardsTests.cs</c>); si necesitas el pre-chequeo real, usa
+    /// <see cref="GetReservaVoucherOnlyBlockReasonAsync"/>.</para>
     /// </summary>
     public static Task<string?> GetReservaCancellationBlockReasonAsync(
         AppDbContext db,
@@ -425,7 +422,7 @@ public static class MutationGuards
 
         if (await HasIssuedVoucherForReservaAsync(db, reservaId, ct))
         {
-            return "No se puede cancelar este servicio: la reserva tiene vouchers emitidos. " +
+            return "No se puede anular este servicio: la reserva tiene vouchers emitidos. " +
                    "Anulá los vouchers primero si necesitás corregir datos.";
         }
 

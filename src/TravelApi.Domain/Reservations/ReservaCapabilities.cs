@@ -159,7 +159,7 @@ public static class ReservaCapabilityPolicy
     /// servicio se BORRA, no se cancela (nada se concreto); en viaje/terminales no aplica. Sin datos sensibles.
     /// </summary>
     public const string ServiceNotCancellableStatusReason =
-        "En este estado los servicios no se cancelan. En un presupuesto, para sacar un servicio borralo.";
+        "En este estado los servicios no se anulan. En un presupuesto, para sacar un servicio borralo.";
 
     /// <summary>
     /// G5 (2026-06-24): no se puede reprogramar el viaje en este estado. Reprogramar (mover la fecha de salida)

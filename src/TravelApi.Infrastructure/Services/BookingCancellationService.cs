@@ -434,8 +434,8 @@ public class BookingCancellationService
         //    ANTES de tocar nada (409 explicito), en vez de cancelar dejando ese hueco sin rastro.
         if (reserva.PayerId is null && await ReservaHasLiveSaleInvoiceAsync(reserva.Id, ct))
             throw new InvalidOperationException(
-                "No se puede cancelar este servicio: la reserva tiene una factura emitida pero no tiene un " +
-                "cliente asignado para facturarle la nota de crédito. Asigná un cliente a la reserva antes de cancelar.");
+                "No se puede anular este servicio: la reserva tiene una factura emitida pero no tiene un " +
+                "cliente asignado para facturarle la nota de crédito. Asigná un cliente a la reserva antes de anular.");
 
         // 1) PLAN de credito (solo LECTURA): resolvemos el Id del servicio, las facturas de venta vivas y a
         //    que factura le corresponde el credito ANTES de abrir la transaccion. Asi la transaccion de mas
@@ -904,9 +904,9 @@ public class BookingCancellationService
 
         if (wouldBeRefundCap > 0m)
             throw new InvalidOperationException(
-                "No se puede cancelar este servicio todavía: ya tiene pagos al operador y la reserva aún no tiene " +
+                "No se puede anular este servicio todavía: ya tiene pagos al operador y la reserva aún no tiene " +
                 "factura emitida para registrar el reembolso a tu favor. Emití la factura de venta o gestioná el " +
-                "reembolso con el operador antes de cancelar el servicio.");
+                "reembolso con el operador antes de anular el servicio.");
     }
 
     /// <summary>

@@ -2745,13 +2745,21 @@ public class ReservaService : IReservaService
         dto.HasLiveEditAuthorization = liveAuthExpiry.HasValue;
         dto.EditAuthorizationExpiresAt = liveAuthExpiry;
 
-        // ADR-025 (read-model cancelacion parcial): motivo del candado fiscal que impide cancelar CUALQUIER
-        // servicio (factura CAE viva o voucher emitido), o null si se puede cancelar. El front pre-bloquea
-        // los casilleros con esto. Reusamos el guard (fuente unica) en vez de recalcular: lo que se ve es
-        // exactamente lo que el backend enforza al cancelar. Costo: 2 AnyAsync chicos en el detalle (no hot
-        // path; misma magnitud que la query de autorizacion de arriba).
+        // ADR-025 + ADR-044 T5 Addendum (Tanda 4, 2026-07-20): motivo del candado fiscal que impide anular
+        // CUALQUIER servicio, o null si se puede anular. El front pre-bloquea los casilleros con esto.
+        //
+        // OJO ACA: antes esta linea llamaba a GetReservaCancellationBlockReasonAsync, que frenaba con
+        // factura CAE viva O voucher emitido. Esa regla quedo VIEJA: desde ADR-044 T5 (2026-07-11) el guard
+        // real que corre al anular un servicio (BookingCancellationService.CancelServiceAsync) YA NO bloquea
+        // por factura viva sola -- factura con NC resuelta es el camino normal del negocio. Solo el voucher
+        // entregado sigue frenando (un voucher ya en manos del cliente no se reescribe). Con la llamada
+        // vieja, esta pantalla fantaseaba un bloqueo que el motor ya no aplicaba: reservas facturadas pero
+        // sin voucher aparecian "no se puede anular" aunque el backend las dejaba anular sin problema.
+        //
+        // El swap de abajo (mismo guard que usa CancelServiceAsync, fuente unica) hace que lo que el front
+        // ve y lo que el backend enforza NUNCA diverjan. Costo: 1 AnyAsync chico en el detalle (antes eran 2).
         dto.ServiceCancellationBlockReason =
-            await MutationGuards.GetReservaCancellationBlockReasonAsync(_context, file.Id, CancellationToken.None);
+            await MutationGuards.GetReservaVoucherOnlyBlockReasonAsync(_context, file.Id, CancellationToken.None);
 
         // ADR-035 (2026-06-19): bloque de CAPACIDADES (fuente unica que el front lee para apagar botones con
         // motivo) y MONEDA PRINCIPAL del cobro. Se calculan al final, con la plata ya armada (PorMoneda) y los

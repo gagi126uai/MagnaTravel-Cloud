@@ -24,6 +24,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { normalizeMessage, SPANISH_NETWORK_GENERIC } from "../../../lib/errors.js";
+
 // ─── Lógica pura copiada de CancelarVariosServiciosInline.jsx ────────────────
 // (Copiada en vez de importada porque el runner es Node puro sin bundler.
 //  Si cambia la función original, actualizar acá también.)
@@ -51,19 +53,23 @@ function filtrarServiciosCancelables(services) {
  *   error.status   → número HTTP
  *   error.payload  → body JSON del backend
  *
- * Esta función extrae el mensaje más legible disponible.
+ * Esta función extrae el mensaje más legible disponible. Es réplica exacta de
+ * la del componente (que no se puede importar por ser .jsx), pero delega en el
+ * MISMO normalizeMessage real de lib/errors.js — así el filtro de textos de
+ * transporte en inglés se prueba de verdad, no una copia que pueda divergir.
  */
 function extraerMensajeError(error, fallback) {
   if (!error) return fallback;
 
-  // error.message ya viene normalizado por parseErrorResponse en api.js.
-  if (typeof error.message === "string" && error.message) return error.message;
+  if (typeof error.message === "string" && error.message) {
+    return normalizeMessage(error.message, fallback);
+  }
 
-  // Revisamos el payload (body JSON del backend) como respaldo.
   const payload = error?.payload;
-  if (typeof payload?.message === "string" && payload.message) return payload.message;
-  if (typeof payload?.title === "string" && payload.title) return payload.title;
-  if (typeof payload === "string" && payload) return payload;
+  if (payload !== undefined && payload !== null) {
+    const mensajePayload = normalizeMessage(payload, "");
+    if (mensajePayload) return mensajePayload;
+  }
 
   return fallback;
 }
@@ -233,6 +239,18 @@ test("extraerMensajeError: error con payload.title cuando no hay message → lo 
 test("extraerMensajeError: error con payload como string → lo usa", () => {
   const error = { message: "", status: 400, payload: "Motivo inválido" };
   assert.equal(extraerMensajeError(error, "fallback"), "Motivo inválido");
+});
+
+test("extraerMensajeError: statusText crudo de gateway (sin body del server) → genérico en español, nunca inglés", () => {
+  // Un 502/504 del proxy llega sin body JSON; api.js deja el statusText crudo
+  // en error.message. La fila fallida del lote NO debe mostrar "Bad Gateway".
+  const error = { message: "Bad Gateway", status: 502 };
+  assert.equal(extraerMensajeError(error, "fallback"), SPANISH_NETWORK_GENERIC);
+});
+
+test("extraerMensajeError: falla de red pura (Failed to fetch) → genérico en español", () => {
+  const error = new Error("Failed to fetch");
+  assert.equal(extraerMensajeError(error, "fallback"), SPANISH_NETWORK_GENERIC);
 });
 
 test("extraerMensajeError: error sin ningún campo útil → devuelve fallback", () => {
