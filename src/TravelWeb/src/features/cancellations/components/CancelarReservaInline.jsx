@@ -20,11 +20,22 @@
  * (la que salió no se deshace) hasta reintentar la que falta. Con 1 sola factura no cambia nada
  * (regresión cero). Spec completa: docs/ux/2026-07-01-anulacion-multifactura.md.
  *
+ * Tanda 3 "contrato pantalla-motor" (2026-07-20, spec docs/ux/2026-07-20-t3-t4-contrato-pantalla-motor.md):
+ * los tres puntos donde el panel puede recibir un 409 (annul-with-credit, draft() y confirm())
+ * ahora muestran el motivo REAL que calculó el motor (mapa código → criollo en
+ * lib/anularReservaRechazoLogic.js), en vez de un cartel genérico siempre igual. Único caso con
+ * botón: el freno de plata R1 (operador ya cobrado, reserva sin factura para anclar el
+ * reembolso) muestra "Emitir factura", que abre el panel EmitirFacturaInline que YA existe en
+ * la ficha (D1 firmada el 2026-07-18 — no se construye nada nuevo).
+ *
  * Props:
  *   - reserva: objeto de la reserva (necesita publicId, numeroReserva, customerName,
  *              cancellationCase, cancellationCreditByCurrency, requiresInvoiceAnnulmentToCancel).
  *   - onCancelado: callback luego de confirmar exitosamente (nombre legacy mantenido).
  *   - onCerrar: callback cuando el usuario cierra el panel sin anular.
+ *   - onIrAEmitirFactura: (Tanda 3, opcional) callback () => void para el botón "Emitir factura"
+ *     del freno de plata R1. Cierra este panel y abre EmitirFacturaInline en la ficha — lo
+ *     resuelve el padre (ReservaDetailPage), que ya controla cuál panel inline está abierto.
  *   - onSilentRefresh: (ADR-042, opcional) callback para refrescar la reserva/extracto en
  *     segundo plano SIN cerrar el panel — se llama en cuanto el resultado de las notas de
  *     crédito queda resuelto (éxito o revisión), mientras el vendedor sigue viendo el cartel.
@@ -35,11 +46,12 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { AlertTriangle, CheckCircle2, Loader2, Ban, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Loader2, Ban, X, FileText } from "lucide-react";
 import { cancellationsApi } from "../api/cancellationsApi";
 import { showSuccess, showError } from "../../../alerts";
 import { formatCurrency } from "../../../lib/utils";
 import { buildPenaltyClassificationPayload } from "../lib/penaltyPayload";
+import { resolverTextoRechazoAnularReserva } from "../lib/anularReservaRechazoLogic";
 import {
     esAnulacionMultiFactura,
     todasLasNotasSalieronBien,
@@ -113,7 +125,7 @@ function formatearMontosSaldoAFavor(creditByCurrency) {
 
 // ─── Componente ───────────────────────────────────────────────────────────────
 
-export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilentRefresh, bookingCancellationToRetry }) {
+export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilentRefresh, bookingCancellationToRetry, onIrAEmitirFactura }) {
     const [reason, setReason] = useState("");
 
     // `processing` cubre todas las llamadas internas como un único loading visible al usuario.
@@ -122,6 +134,11 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
     // Mensaje de conflicto (400/409 recuperable). Se muestra en un banner inline para que
     // el usuario lo vea sin que desaparezca el formulario con lo cargado.
     const [conflictMessage, setConflictMessage] = useState(null);
+
+    // Tanda 3: único código de la tabla que suma un botón al cartel de conflicto (freno de
+    // plata R1). Va aparte de conflictMessage porque los otros 8 códigos del mapa NUNCA lo
+    // necesitan — sería un campo casi siempre en false si lo metiéramos dentro del mensaje.
+    const [conflictMostrarBotonEmitirFactura, setConflictMostrarBotonEmitirFactura] = useState(false);
 
     // ── ADR-042: estado del flujo multi-factura (2+ facturas vivas) ────────────────────────
     // "form"               → panel normal (motivo + banner). Cubre TODO el comportamiento de
@@ -160,6 +177,7 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
         setReason("");
         setProcessing(false);
         setConflictMessage(null);
+        setConflictMostrarBotonEmitirFactura(false);
     }, []);
 
     // Limpieza del intervalo de polling al desmontar (evita un interval huérfano si el
@@ -309,9 +327,13 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
             if (error?.status === 409 && error?.payload?.requiresApproval === true) {
                 setConflictMessage(TEXTO_REQUIERE_APROBACION_MULTI);
             } else if (error?.status === 409) {
-                setConflictMessage(
+                // Tanda 3 (2026-07-20): este handler llama al MISMO confirm() que el camino
+                // mono-factura de handleCancelar — mismo mapa código → criollo, misma función.
+                const { texto } = resolverTextoRechazoAnularReserva(
+                    error,
                     "No se pudo confirmar la anulación. Probá de nuevo; si el problema sigue, contactá a administración."
                 );
+                setConflictMessage(texto);
             } else {
                 showError("No se pudo confirmar la anulación. Probá de nuevo en unos segundos.");
             }
@@ -358,6 +380,7 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
 
         setProcessing(true);
         setConflictMessage(null);
+        setConflictMostrarBotonEmitirFactura(false);
 
         const caso = determinarCasoAnulacion(reserva);
 
@@ -386,9 +409,15 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
                 } else if (error?.status === 404) {
                     showError("No encontramos la reserva. Recargá la página.");
                 } else if (error?.status === 409) {
-                    setConflictMessage(
+                    // Tanda 3 (2026-07-20): el motor manda un código propio para cada uno de los 4
+                    // rechazos posibles de este endpoint (ANNUL_CREDIT_*). El mapa vive en
+                    // anularReservaRechazoLogic.js — mismo mapeo que usan los otros 2 puntos de abajo.
+                    const { texto, mostrarBotonEmitirFactura } = resolverTextoRechazoAnularReserva(
+                        error,
                         "No se pudo anular la reserva. Probá de nuevo; si el problema sigue, contactá a administración."
                     );
+                    setConflictMessage(texto);
+                    setConflictMostrarBotonEmitirFactura(mostrarBotonEmitirFactura);
                 } else {
                     showError("No se pudo anular la reserva. Probá de nuevo en unos segundos.");
                 }
@@ -407,13 +436,17 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
         try {
             draft = await cancellationsApi.draft(reserva.publicId, trimmedReason);
         } catch (error) {
-            // NUNCA mostramos el texto crudo del backend. Si el backend devuelve un código
-            // interno (INV-081, INV-100 u otro), el mensaje es siempre neutro: nunca mencionamos
-            // solapas inexistentes ni códigos técnicos.
+            // Tanda 3 (2026-07-20): INV-152/081/100 ya traen su código real en invariantCode.
+            // El mapa de anularReservaRechazoLogic.js decide el texto; si el código no está
+            // catalogado (o no vino ninguno), cae al mismo texto neutro de siempre — NUNCA
+            // mostramos el texto crudo del backend fuera de esa tabla.
             if (error?.status === 409) {
-                setConflictMessage(
+                const { texto, mostrarBotonEmitirFactura } = resolverTextoRechazoAnularReserva(
+                    error,
                     "No se pudo iniciar la anulación. Probá de nuevo; si el problema sigue, contactá a administración."
                 );
+                setConflictMessage(texto);
+                setConflictMostrarBotonEmitirFactura(mostrarBotonEmitirFactura);
             } else {
                 showError("No se pudo iniciar la anulación. Probá de nuevo en unos segundos.");
             }
@@ -470,13 +503,20 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
             // NUNCA mostramos el texto crudo del backend.
             const code = error?.payload?.code || error?.payload?.invariantCode || "";
             if (error?.status === 409 && code === "CONCURRENT_EDIT") {
+                // CONCURRENT_EDIT ya funciona bien — spec Tanda 3: "no se toca".
                 setConflictMessage(
                     "Otro usuario modificó esta cancelación al mismo tiempo. Recargá la página y volvé a intentar."
                 );
             } else if (error?.status === 409) {
-                setConflictMessage(
+                // Tanda 3 (2026-07-20): agrega INV-093 e INV-100 al mismo mapa código → criollo
+                // que usan los otros 2 puntos de swallow (misma función, un solo lugar para
+                // agregar códigos nuevos).
+                const { texto, mostrarBotonEmitirFactura } = resolverTextoRechazoAnularReserva(
+                    error,
                     "No se pudo confirmar la anulación. Probá de nuevo; si el problema sigue, contactá a administración."
                 );
+                setConflictMessage(texto);
+                setConflictMostrarBotonEmitirFactura(mostrarBotonEmitirFactura);
             } else {
                 showError("No se pudo confirmar la anulación. Probá de nuevo en unos segundos.");
             }
@@ -575,7 +615,10 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
                         </div>
                     )}
 
-                    {/* ── Error de conflicto (400/409 recuperable) ── */}
+                    {/* ── Error de conflicto (400/409 recuperable) ──
+                        Tanda 3 (2026-07-20): único código de la tabla con botón es el freno de
+                        plata R1 (ANNUL_CREDIT_UNANCHORED_OPERATOR_REFUND) — abre EmitirFacturaInline,
+                        que ya existe en la ficha (D1 firmada, no se construye nada nuevo). */}
                     {conflictMessage && (
                         <div
                             role="alert"
@@ -583,7 +626,20 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
                             data-testid="cancelar-inline-conflict-msg"
                         >
                             <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" aria-hidden="true" />
-                            <span>{conflictMessage}</span>
+                            <div className="flex flex-col gap-2 flex-1">
+                                <span>{conflictMessage}</span>
+                                {conflictMostrarBotonEmitirFactura && onIrAEmitirFactura && (
+                                    <button
+                                        type="button"
+                                        data-testid="cancelar-inline-btn-emitir-factura"
+                                        onClick={onIrAEmitirFactura}
+                                        className="inline-flex items-center gap-2 self-start rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-indigo-700"
+                                    >
+                                        <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+                                        Emitir factura
+                                    </button>
+                                )}
+                            </div>
                         </div>
                     )}
 

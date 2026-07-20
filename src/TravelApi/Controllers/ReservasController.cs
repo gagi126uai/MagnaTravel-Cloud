@@ -9,6 +9,7 @@ using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Errors;
 
 namespace TravelApi.Controllers;
@@ -691,7 +692,16 @@ public class ReservasController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
-            // Precondiciones de negocio (estado no firme, factura CAE viva, sin cobros): conflicto de estado.
+            // Precondiciones de negocio (estado no firme, factura CAE viva, sin cobros, freno de plata R1):
+            // conflicto de estado. Tanda 3 "contrato pantalla-motor" (2026-07-20, Decision C = envelope
+            // aditivo): cuando el rechazo es uno de los 4 casos catalogados, sumamos `code` al body SIN
+            // tocar el `message` de siempre — el frontend (Tanda 4) lo usa para mostrar un cartel especifico
+            // o el boton "Emitir factura" (D1 firmada). Cualquier otro InvalidOperationException de esta rama
+            // (poco frecuente / no catalogado) sigue viajando solo con `message`, exactamente como hasta ahora.
+            if (ex is AnnulWithCreditRejectedException rejected)
+            {
+                return Conflict(new { code = rejected.Code, message = rejected.Message });
+            }
             return Conflict(new { message = ex.Message });
         }
         catch (Exception ex)

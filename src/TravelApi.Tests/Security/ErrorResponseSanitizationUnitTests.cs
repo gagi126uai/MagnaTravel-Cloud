@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.Extensions.Logging.Abstractions;
 using TravelApi.Application.DTOs;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Errors;
 using TravelApi.Middleware;
 using TravelApi.Tests.Fixtures;
@@ -308,6 +309,37 @@ public class ErrorResponseSanitizationUnitTests
         Assert.Contains("Base de datos no disponible", body);
         Assert.DoesNotContain("db-secret-host", body, StringComparison.Ordinal);
         Assert.DoesNotContain("Timeout", body, StringComparison.OrdinalIgnoreCase);
+        AssertNoTechnicalLeak(body);
+    }
+
+    // =====================================================================
+    // C) Tanda 3 "contrato pantalla-motor" (2026-07-20): el 409 de anular/confirmar una cancelacion
+    //    (draft/confirm de BookingCancellation, INV-152/081/100/093) YA viaja con su codigo de negocio en
+    //    `invariantCode` porque nace como BusinessInvariantViolationException — el GlobalExceptionHandler lo
+    //    agrega hace tiempo (ver arriba en el propio middleware). Este test cierra la verificacion pedida por
+    //    la Tanda 3: cada uno de los 4 codigos que el frontend va a mapear (spec UX 2026-07-20) efectivamente
+    //    llega en el body 409, Y el mensaje de negocio en español sigue intacto (Decision C, envelope aditivo:
+    //    esta tanda NO cambia ni un caracter de esos mensajes, solo confirma que el codigo ya viajaba).
+    // =====================================================================
+    [Theory]
+    [InlineData("INV-152", "Esta reserva tiene servicios de más de un operador; no se puede anular desde acá.")]
+    [InlineData("INV-081", "Esta reserva ya tiene una anulación activa en curso.")]
+    [InlineData("INV-100", "La factura de esta reserva ya fue anulada con una nota de crédito.")]
+    [InlineData("INV-093", "Esta anulación cambió de estado mientras la tenías abierta.")]
+    public async Task BusinessInvariantViolation_AnnulReservaCodes_CarryInvariantCode_AndKeepMessageIntact(
+        string invariantCode, string businessMessage)
+    {
+        var (status, body) = await RunHandlerAsync(
+            new BusinessInvariantViolationException(businessMessage, invariantCode: invariantCode));
+
+        Assert.Equal(StatusCodes.Status409Conflict, status);
+
+        // El codigo estable llega SIN transformar (mismo texto que usa BookingCancellationService al lanzar).
+        Assert.Contains($"\"invariantCode\":\"{invariantCode}\"", body, StringComparison.Ordinal);
+
+        // El mensaje de negocio en español (lo que el vendedor lee) llega intacto, sin recortar ni reemplazar
+        // por el generico — a diferencia del InvalidOperationException "tecnico" que SI se sanea.
+        Assert.Contains(businessMessage, body, StringComparison.Ordinal);
         AssertNoTechnicalLeak(body);
     }
 }

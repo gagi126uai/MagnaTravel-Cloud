@@ -50,6 +50,10 @@ import {
     MENSAJE_EXITO_CREDIT_NOTE,
     TEXTO_REQUIERE_APROBACION_MULTI,
 } from "./cancelarReservaCopy.js";
+// Tanda 3 (2026-07-20): el mapeo código → texto criollo del 409 ahora vive en un módulo real
+// (no una réplica) — se importa directo para que este archivo no mantenga una segunda copia
+// que pueda divergir de lib/anularReservaRechazoLogic.test.mjs, que ya lo testea a fondo.
+import { resolverTextoRechazoAnularReserva } from "../lib/anularReservaRechazoLogic.js";
 
 // ─── Réplica de determinarCasoAnulacion (CancelarReservaInline.jsx) ───────────
 
@@ -152,9 +156,13 @@ function determinarCartelVisible(caso) {
  *
  * ADR-042 (2026-07-01): se sacó el mensaje especial de INV-100 ("más de una factura
  * emitida... contactá a administración") — esa política vieja ya no aplica: ahora se
- * puede anular una reserva con varias facturas (ver multiCreditNoteFlow.js). Si el
- * backend igual devolviera INV-100 por otra causa, cae al mensaje 409 genérico (neutro,
- * nunca menciona facturas ni solapas inexistentes).
+ * puede anular una reserva con varias facturas (ver multiCreditNoteFlow.js).
+ *
+ * Tanda 3 "contrato pantalla-motor" (2026-07-20): el 409 ya NO cae siempre al mismo
+ * mensaje genérico — usa el mapa código → criollo real (anularReservaRechazoLogic.js),
+ * que resuelve los 4 códigos ANNUL_CREDIT_* propios de este endpoint (agregados por el
+ * backend en esta misma tanda) y cae al mismo texto neutro de siempre para cualquier
+ * otro código (o ninguno).
  *
  * @returns {{ tipo: "conflicto"|"toast", mensaje: string }}
  */
@@ -169,10 +177,11 @@ function mapearErrorAnnulWithCredit(error) {
         return { tipo: "toast", mensaje: "No encontramos la reserva. Recargá la página." };
     }
     if (error?.status === 409) {
-        return {
-            tipo: "conflicto",
-            mensaje: "No se pudo anular la reserva. Probá de nuevo; si el problema sigue, contactá a administración.",
-        };
+        const { texto } = resolverTextoRechazoAnularReserva(
+            error,
+            "No se pudo anular la reserva. Probá de nuevo; si el problema sigue, contactá a administración."
+        );
+        return { tipo: "conflicto", mensaje: texto };
     }
     return { tipo: "toast", mensaje: "No se pudo anular la reserva. Probá de nuevo en unos segundos." };
 }
@@ -194,10 +203,13 @@ function mapearErrorConfirmarMulti(error) {
         return { estadoMulti: "form", conflictMessage: TEXTO_REQUIERE_APROBACION_MULTI };
     }
     if (error?.status === 409) {
-        return {
-            estadoMulti: "form",
-            conflictMessage: "No se pudo confirmar la anulación. Probá de nuevo; si el problema sigue, contactá a administración.",
-        };
+        // Tanda 3 (2026-07-20): este handler llama al mismo confirm() que el camino
+        // mono-factura — mismo mapa código → criollo (INV-093/INV-100 incluidos).
+        const { texto } = resolverTextoRechazoAnularReserva(
+            error,
+            "No se pudo confirmar la anulación. Probá de nuevo; si el problema sigue, contactá a administración."
+        );
+        return { estadoMulti: "form", conflictMessage: texto };
     }
     return { estadoMulti: "form", toast: "No se pudo confirmar la anulación. Probá de nuevo en unos segundos." };
 }
@@ -544,18 +556,23 @@ test("error 404 → toast, mensaje de reserva no encontrada + instrucción de re
     assert.match(r.mensaje, /recargá/i);
 });
 
-test("error 409 INV-100 (código viejo, si el backend lo devolviera igual) → mensaje neutro genérico, sin mencionar facturas ni solapas", () => {
-    // ADR-042: ya no existe el mensaje especial de INV-100. Si el backend devolviera ese código
-    // por cualquier otra causa, cae al 409 genérico — nunca menciona "más de una factura" ni
-    // manda a una solapa Facturas inexistente.
-    const r = mapearErrorAnnulWithCredit({ status: 409, payload: { invariantCode: "INV-100" } });
+test("error 409 con un código ANNUL_CREDIT_* mapeado (ej. reserva no firme) → mensaje real de la Tanda 3, no el genérico", () => {
+    const r = mapearErrorAnnulWithCredit({ status: 409, payload: { code: "ANNUL_CREDIT_NOT_FIRM_STATE" } });
+    assert.equal(r.tipo, "conflicto");
+    assert.match(r.mensaje, /En gestión ni Confirmada/);
+});
+
+test("error 409 sin ningún código catalogado → mensaje neutro genérico (fallback, política sin cambios)", () => {
+    // ADR-042: ya no existe el mensaje especial de INV-100 mencionando "más de una factura" ni
+    // una solapa inexistente. Un código sin catalogar sigue cayendo al genérico de siempre.
+    const r = mapearErrorAnnulWithCredit({ status: 409, payload: { code: "ALGO_SIN_CATALOGAR" } });
     assert.equal(r.tipo, "conflicto");
     assert.equal(r.mensaje, "No se pudo anular la reserva. Probá de nuevo; si el problema sigue, contactá a administración.");
     assert.ok(!/más de una factura/i.test(r.mensaje));
     assert.ok(!/solapa Facturas/i.test(r.mensaje));
 });
 
-test("error 409 genérico → inline, mensaje de 'no se pudo anular'", () => {
+test("error 409 genérico (sin payload) → inline, mensaje de 'no se pudo anular'", () => {
     const r = mapearErrorAnnulWithCredit({ status: 409, payload: {} });
     assert.equal(r.tipo, "conflicto");
     assert.match(r.mensaje, /no se pudo anular/i);
@@ -607,6 +624,12 @@ test("confirmarMulti: 409 sin requiresApproval → mensaje genérico de confirma
     assert.equal(r.estadoMulti, "form");
     assert.match(r.conflictMessage, /no se pudo confirmar/i);
     assert.notEqual(r.conflictMessage, TEXTO_REQUIERE_APROBACION_MULTI);
+});
+
+test("confirmarMulti: 409 con INV-093 → usa el mismo mapa código → criollo que el camino mono-factura (Tanda 3)", () => {
+    const r = mapearErrorConfirmarMulti({ status: 409, payload: { code: "business_invariant_violation", invariantCode: "INV-093" } });
+    assert.equal(r.estadoMulti, "form");
+    assert.match(r.conflictMessage, /cambió de estado mientras la tenías abierta/);
 });
 
 test("confirmarMulti: requiresApproval=true pero status !== 409 → NO dispara el mensaje específico (degradación segura)", () => {

@@ -15,6 +15,7 @@ using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Application.Mappings;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Reservations;
@@ -317,9 +318,12 @@ public class AnnulWithPaymentsToCreditTests
         var reservaPublicId = await context.Reservas.AsNoTracking()
             .Where(r => r.Id == 1).Select(r => r.PublicId).FirstAsync();
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Tanda 3 "contrato pantalla-motor" (2026-07-20): factura viva -> AnnulWithCreditRejectedException con
+        // Code=LiveInvoice (subclase de InvalidOperationException; el mensaje sigue siendo el mismo de siempre).
+        var ex = await Assert.ThrowsAsync<AnnulWithCreditRejectedException>(() =>
             BuildReservaService(context).AnnulWithPaymentsToCreditAsync(
                 reservaPublicId.ToString(), reason: ValidReason, actorUserId: "u1", actorUserName: "User One"));
+        Assert.Equal(AnnulWithCreditRejectedException.Codes.LiveInvoice, ex.Code);
 
         // No se creo credito ni puente, y la reserva sigue Confirmed (no se anulo).
         Assert.Empty(await context.ClientCreditEntries.AsNoTracking().ToListAsync());
@@ -415,9 +419,12 @@ public class AnnulWithPaymentsToCreditTests
         var reservaPublicId = await context.Reservas.AsNoTracking()
             .Where(r => r.Id == 1).Select(r => r.PublicId).FirstAsync();
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Tanda 3 "contrato pantalla-motor" (2026-07-20): estado no firme -> AnnulWithCreditRejectedException
+        // con Code=NotFirmState (mismo mensaje de siempre, solo se agrega el Code).
+        var ex = await Assert.ThrowsAsync<AnnulWithCreditRejectedException>(() =>
             BuildReservaService(context).AnnulWithPaymentsToCreditAsync(
                 reservaPublicId.ToString(), reason: ValidReason, actorUserId: "u1", actorUserName: "User One"));
+        Assert.Equal(AnnulWithCreditRejectedException.Codes.NotFirmState, ex.Code);
 
         Assert.Empty(await context.ClientCreditEntries.AsNoTracking().ToListAsync());
     }
@@ -615,9 +622,12 @@ public class AnnulWithPaymentsToCreditTests
         var reservaPublicId = await context.Reservas.AsNoTracking()
             .Where(r => r.Id == 1).Select(r => r.PublicId).FirstAsync();
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Tanda 3 "contrato pantalla-motor" (2026-07-20): sin pagador -> AnnulWithCreditRejectedException con
+        // Code=NoPayer (mismo mensaje de siempre, solo se agrega el Code).
+        var ex = await Assert.ThrowsAsync<AnnulWithCreditRejectedException>(() =>
             BuildReservaService(context).AnnulWithPaymentsToCreditAsync(
                 reservaPublicId.ToString(), ValidReason, "u1", "User One"));
+        Assert.Equal(AnnulWithCreditRejectedException.Codes.NoPayer, ex.Code);
 
         // NADA mutado: sigue Confirmed, sin credito, sin puente. La plata NO desaparece.
         var after = await context.Reservas.AsNoTracking().FirstAsync(r => r.Id == 1);

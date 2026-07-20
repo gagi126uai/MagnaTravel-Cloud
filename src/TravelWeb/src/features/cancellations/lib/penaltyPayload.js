@@ -2,10 +2,11 @@
  * Funciones puras para construir los payloads de penalidad del flujo de
  * cancelacion de reservas (ADR-013/014).
  *
- * Separadas de CancelReservaModal.jsx para ser testeables con node:test sin DOM.
- * El modal las importa y las llama internamente — el comportamiento es identico
- * a antes de la extraccion, pero ahora los casos de negocio se pueden verificar
- * sin montar React.
+ * Originalmente separadas de CancelReservaModal.jsx (retirado en la Tanda 3 del "contrato
+ * pantalla-motor", 2026-07-20 — reemplazado por CancelarReservaInline.jsx) para ser
+ * testeables con node:test sin DOM. CancelarReservaInline.jsx las importa y las llama
+ * internamente hoy — el comportamiento es identico, los casos de negocio se pueden
+ * verificar sin montar React.
  *
  * Funciones exportadas:
  *   - buildPenaltyClassificationPayload(selectedOption, agencyConceptKind, agencyPenaltyStatus, agencyPenaltyAmount)

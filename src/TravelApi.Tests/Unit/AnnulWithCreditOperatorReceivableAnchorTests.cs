@@ -18,6 +18,7 @@ using TravelApi.Application.Interfaces;
 using TravelApi.Application.Mappings;
 using TravelApi.Controllers;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Reservations;
@@ -214,8 +215,11 @@ public class AnnulWithCreditOperatorReceivableAnchorTests
         var service = BuildReservaServiceWithGuard(ctx);
 
         // Plata pagada al operador + sin factura que ancle el receivable -> la guarda lanza (409 en el controller).
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Tanda 3 "contrato pantalla-motor" (2026-07-20): AnnulWithCreditRejectedException agrega el
+        // Code=UnanchoredOperatorRefund al body 409, sin cambiar el mensaje (subclase de InvalidOperationException).
+        var ex = await Assert.ThrowsAsync<AnnulWithCreditRejectedException>(() =>
             service.AnnulWithPaymentsToCreditAsync(reservaPublicId, ValidReason, "admin-1", "Admin"));
+        Assert.Equal(AnnulWithCreditRejectedException.Codes.UnanchoredOperatorRefund, ex.Code);
 
         // NADA mutado: la reserva sigue Confirmed y el servicio sigue VIVO (no se cancelo).
         var reserva = await ctx.Reservas.AsNoTracking().FirstAsync(r => r.PublicId.ToString() == reservaPublicId);
@@ -240,7 +244,7 @@ public class AnnulWithCreditOperatorReceivableAnchorTests
 
         var service = BuildReservaServiceWithGuard(ctx);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAsync<AnnulWithCreditRejectedException>(() =>
             service.AnnulWithPaymentsToCreditAsync(reservaPublicId, ValidReason, "admin-1", "Admin"));
 
         // El servicio sigue vivo (la anulacion se bloqueo): la caja del operador NO es negativa, asi que cualquier
@@ -320,8 +324,10 @@ public class AnnulWithCreditOperatorReceivableAnchorTests
         var service = BuildReservaServiceWithGuard(ctx);
 
         // Sigue rechazando por la precondicion fiscal (factura viva) -> deriva al camino formal de NC, sin tocar nada.
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Tanda 3 (2026-07-20): Code=LiveInvoice, mismo mensaje de siempre.
+        var ex = await Assert.ThrowsAsync<AnnulWithCreditRejectedException>(() =>
             service.AnnulWithPaymentsToCreditAsync(reservaPublicId, ValidReason, "admin-1", "Admin"));
+        Assert.Equal(AnnulWithCreditRejectedException.Codes.LiveInvoice, ex.Code);
 
         var reserva = await ctx.Reservas.AsNoTracking().FirstAsync(r => r.PublicId.ToString() == reservaPublicId);
         Assert.Equal(EstadoReserva.Confirmed, reserva.Status);
@@ -421,7 +427,7 @@ public class AnnulWithCreditOperatorReceivableAnchorTests
         var service = BuildReservaServiceWithGuard(ctx);
 
         // El cap en USD (50.000) hace que la suma cross-currency sea > 0 -> bloquea igual que en ARS.
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAsync<AnnulWithCreditRejectedException>(() =>
             service.AnnulWithPaymentsToCreditAsync(reserva.PublicId.ToString(), ValidReason, "admin-1", "Admin"));
 
         var reloaded = await ctx.Reservas.AsNoTracking().FirstAsync(r => r.Id == reserva.Id);
@@ -451,7 +457,7 @@ public class AnnulWithCreditOperatorReceivableAnchorTests
 
         var service = BuildReservaServiceWithGuard(ctx);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAsync<AnnulWithCreditRejectedException>(() =>
             service.AnnulWithPaymentsToCreditAsync(reserva.PublicId.ToString(), ValidReason, "admin-1", "Admin"));
 
         var reloaded = await ctx.Reservas.AsNoTracking().FirstAsync(r => r.Id == reserva.Id);
@@ -510,7 +516,7 @@ public class AnnulWithCreditOperatorReceivableAnchorTests
 
         var service = BuildReservaServiceWithGuard(ctx);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAsync<AnnulWithCreditRejectedException>(() =>
             service.AnnulWithPaymentsToCreditAsync(reserva.PublicId.ToString(), ValidReason, "admin-1", "Admin"));
 
         var reloaded = await ctx.Reservas.AsNoTracking().FirstAsync(r => r.Id == reserva.Id);
@@ -603,7 +609,7 @@ public class AnnulWithCreditOperatorReceivableAnchorTests
 
         var service = BuildReservaServiceWithGuard(ctx);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAsync<AnnulWithCreditRejectedException>(() =>
             service.AnnulWithPaymentsToCreditAsync(reserva.PublicId.ToString(), ValidReason, "admin-1", "Admin"));
 
         var reloaded = await ctx.Reservas.AsNoTracking().FirstAsync(r => r.Id == reserva.Id);
@@ -652,5 +658,62 @@ public class AnnulWithCreditOperatorReceivableAnchorTests
         var messageProperty = conflict.Value!.GetType().GetProperty("message");
         Assert.NotNull(messageProperty);
         Assert.Equal(guardMessage, (string?)messageProperty!.GetValue(conflict.Value));
+
+        // El body de un InvalidOperationException "a secas" (sin Code) NO trae la propiedad `code` — es el
+        // fallback de siempre, intacto (Tanda 3 solo agrega `code` cuando el tipo real es AnnulWithCreditRejectedException).
+        Assert.Null(conflict.Value.GetType().GetProperty("code"));
+    }
+
+    // ============================================================
+    // (11) MAPEO CONTROLLER — Tanda 3 "contrato pantalla-motor" (2026-07-20): cuando el service lanza
+    //      AnnulWithCreditRejectedException, el controller SUMA `code` al body 409 sin tocar el `message`
+    //      de siempre (envelope aditivo, Decision C del plan). Mismo precedente de mock que (10).
+    // ============================================================
+    [Fact]
+    public async Task AnnulWithCreditController_MapsRejectedException_To409Conflict_WithCodeAndMessage()
+    {
+        const string guardMessage =
+            "No se puede anular esta reserva con saldo a favor todavía: ya se le pagó al operador por uno o más " +
+            "servicios y la reserva aún no tiene factura emitida para registrar el reembolso a tu favor. Emití la " +
+            "factura de venta o gestioná el reembolso con el operador antes de anular la reserva.";
+
+        var reservaService = new Mock<IReservaService>();
+        reservaService
+            .Setup(s => s.AnnulWithPaymentsToCreditAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new AnnulWithCreditRejectedException(
+                AnnulWithCreditRejectedException.Codes.UnanchoredOperatorRefund, guardMessage));
+
+        var controller = new ReservasController(
+            reservaService.Object, Mock.Of<IVoucherService>(), Mock.Of<ITimelineService>(),
+            Mock.Of<ISupplierService>(), Mock.Of<IEntityReferenceResolver>(), Mock.Of<IBookingService>(),
+            NullLogger<ReservasController>.Instance);
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity(
+                    new[] { new Claim(ClaimTypes.NameIdentifier, "admin-1") }, "Test")),
+            },
+        };
+
+        var result = await controller.AnnulWithCredit(
+            "reserva-1", new AnnulWithCreditRequest(ValidReason), CancellationToken.None);
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal(StatusCodes.Status409Conflict, conflict.StatusCode);
+
+        // El message sigue siendo EXACTAMENTE el mismo que veia el usuario antes de esta tanda (leemos la
+        // propiedad directamente: serializar escaparia los acentos y rompe la comparacion).
+        var messageProperty = conflict.Value!.GetType().GetProperty("message");
+        Assert.NotNull(messageProperty);
+        Assert.Equal(guardMessage, (string?)messageProperty!.GetValue(conflict.Value));
+
+        // Y ahora, ADEMAS, viaja el code estable que el frontend (Tanda 4) usa para el cartel con camino.
+        var codeProperty = conflict.Value.GetType().GetProperty("code");
+        Assert.NotNull(codeProperty);
+        Assert.Equal(
+            AnnulWithCreditRejectedException.Codes.UnanchoredOperatorRefund,
+            (string?)codeProperty!.GetValue(conflict.Value));
     }
 }

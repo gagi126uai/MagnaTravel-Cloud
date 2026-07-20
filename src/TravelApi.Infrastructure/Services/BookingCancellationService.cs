@@ -942,7 +942,11 @@ public class BookingCancellationService
             reserva, BookingCancellationLineScope.Full, onlyServiceTable: null, onlyServiceId: null, ct);
 
         if (wouldBeRefundCap > 0m)
-            throw new InvalidOperationException(
+            // Tanda 3 "contrato pantalla-motor" (2026-07-20): AnnulWithCreditRejectedException agrega un
+            // Code estable al body 409 (ANNUL_CREDIT_UNANCHORED_OPERATOR_REFUND) SIN cambiar el mensaje de
+            // siempre — el frontend lo usa para ofrecer el boton "Emitir factura" (D1 firmada por Gastón).
+            throw new AnnulWithCreditRejectedException(
+                AnnulWithCreditRejectedException.Codes.UnanchoredOperatorRefund,
                 "No se puede anular esta reserva con saldo a favor todavía: ya se le pagó al operador por uno o más " +
                 "servicios y la reserva aún no tiene factura emitida para registrar el reembolso a tu favor. Emití la " +
                 "factura de venta o gestioná el reembolso con el operador antes de anular la reserva.");

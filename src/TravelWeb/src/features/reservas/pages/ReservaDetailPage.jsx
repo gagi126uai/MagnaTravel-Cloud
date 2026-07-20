@@ -2438,6 +2438,14 @@ export default function ReservaDetailPage() {
                     refrescarExtracto();
                     fetchReserva({ showLoading: false, preserveOnError: true });
                   }}
+                  // Tanda 3 "contrato pantalla-motor" (2026-07-20): botón "Emitir factura" del
+                  // freno de plata R1. Cierra este panel y abre el de emisión de factura que ya
+                  // existe en la ficha — mismo patrón que el resto de los paneles inline (solo
+                  // uno abierto a la vez).
+                  onIrAEmitirFactura={() => {
+                    setShowCancelInline(false);
+                    setShowFacturaInline(true);
+                  }}
                 />
               )}
 

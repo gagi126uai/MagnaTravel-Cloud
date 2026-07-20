@@ -13,6 +13,7 @@ using TravelApi.Application.Contracts.Reservations;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
@@ -1234,7 +1235,10 @@ public class ReservaService : IReservaService
             || string.Equals(reserva.Status, EstadoReserva.Confirmed, StringComparison.OrdinalIgnoreCase);
         if (!isAnnulableState)
         {
-            throw new InvalidOperationException(
+            // Tanda 3 "contrato pantalla-motor" (2026-07-20): AnnulWithCreditRejectedException agrega un
+            // Code estable al body 409 SIN cambiar el mensaje de siempre (ver el comentario de la excepcion).
+            throw new AnnulWithCreditRejectedException(
+                AnnulWithCreditRejectedException.Codes.NotFirmState,
                 "Esta acción solo aplica a una reserva en firme (En gestión o Confirmada). " +
                 "En este estado no se puede anular con saldo a favor.");
         }
@@ -1250,7 +1254,8 @@ public class ReservaService : IReservaService
             ct);
         if (hasLiveCae)
         {
-            throw new InvalidOperationException(
+            throw new AnnulWithCreditRejectedException(
+                AnnulWithCreditRejectedException.Codes.LiveInvoice,
                 "La reserva tiene factura emitida. Para deshacerla hay que anularla por el camino formal " +
                 "(se emite Nota de Crédito).");
         }
@@ -1270,7 +1275,8 @@ public class ReservaService : IReservaService
         //    que PayerId null es perfectamente aceptable.
         if (hasLivePayments && reserva.PayerId is null)
         {
-            throw new InvalidOperationException(
+            throw new AnnulWithCreditRejectedException(
+                AnnulWithCreditRejectedException.Codes.NoPayer,
                 "La reserva tiene cobros pero no tiene un cliente pagador asignado; no se puede generar saldo a favor.");
         }
 
