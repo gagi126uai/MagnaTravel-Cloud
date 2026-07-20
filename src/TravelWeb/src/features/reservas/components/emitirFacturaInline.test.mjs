@@ -910,3 +910,40 @@ test("construirItemPayload: origen null (defensivo, DTO sin dato) → tampoco se
   assert.equal("sourceServiceTable" in payload, false);
   assert.equal("sourceServicePublicId" in payload, false);
 });
+
+// ─── Tests: bloqueadoPorEstado (Tanda 5, 2026-07-20, contrato pantalla-motor) ─
+// Copia del derivado de EmitirFacturaInline.jsx. Antes de este cambio, la ficha
+// dejaba llenar el formulario entero en un estado no facturable y recién al
+// clickear "Emitir factura" el backend rechazaba con el enum crudo del estado
+// (ej. "estado 'InManagement'"). Ahora la ficha lee la MISMA capacidad que ya
+// usa la barra de acciones (canInvoiceSale) para bloquear ANTES del formulario.
+
+/**
+ * Copia de la derivación bloqueadoPorEstado en EmitirFacturaInline.jsx.
+ */
+function esBloqueadoPorEstado(reserva) {
+  return Boolean(reserva && reserva.capabilities?.canInvoiceSale?.allowed === false);
+}
+
+test("bloqueadoPorEstado — canInvoiceSale.allowed=false → true (se bloquea)", () => {
+  const reserva = { capabilities: { canInvoiceSale: { allowed: false, reason: "No se puede facturar en este estado." } } };
+  assert.equal(esBloqueadoPorEstado(reserva), true);
+});
+
+test("bloqueadoPorEstado — canInvoiceSale.allowed=true → false (formulario normal)", () => {
+  const reserva = { capabilities: { canInvoiceSale: { allowed: true, reason: null } } };
+  assert.equal(esBloqueadoPorEstado(reserva), false);
+});
+
+test("bloqueadoPorEstado — sin capabilities en el DTO (degradación) → false, no bloquea por las dudas", () => {
+  // Mismo criterio de degradación elegante que usa la barra de acciones de ReservaDetailPage
+  // (facturaHabilitada = !capFactura || capFactura.allowed): un DTO viejo sin capabilities
+  // no debe trabar la ficha.
+  const reserva = { customerName: "Fam. García" };
+  assert.equal(esBloqueadoPorEstado(reserva), false);
+});
+
+test("bloqueadoPorEstado — reserva null/undefined → false, no revienta", () => {
+  assert.equal(esBloqueadoPorEstado(null), false);
+  assert.equal(esBloqueadoPorEstado(undefined), false);
+});

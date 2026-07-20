@@ -374,9 +374,12 @@ public class InvoiceService : IInvoiceService
                 .CanInvoiceSale;
             if (!invoiceCapability.Allowed)
             {
-                throw new InvalidOperationException(
-                    $"No se puede facturar una reserva en estado '{reserva.Status}'. " +
-                    "La factura de venta se emite desde Confirmada en adelante, salvo en reservas anuladas.");
+                // Fix T5 (2026-07-20, contrato pantalla-motor): antes este mensaje interpolaba el enum crudo
+                // del estado (ej. "estado 'InManagement'"), un nombre tecnico en ingles que llegaba tal cual
+                // a la pantalla. Reusamos la MISMA constante que ya usa la capacidad de dominio (fuente unica
+                // compartida con el front), asi el texto que ve el usuario nunca depende de como se llama el
+                // estado puertas adentro del sistema.
+                throw new InvalidOperationException(ReservaCapabilityPolicy.NotInvoiceableStatusReason);
             }
         }
 

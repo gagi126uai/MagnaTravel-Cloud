@@ -137,6 +137,37 @@ public class InvoiceServiceStateGuardTests
         Assert.Single(captured); // llego a emitir (no lo freno el guard de estado)
     }
 
+    // Fix T5 (2026-07-20, contrato pantalla-motor): antes el mensaje de rechazo interpolaba el enum crudo
+    // del estado (ej. "estado 'InManagement'"), un nombre tecnico en ingles a la vista del usuario. Este
+    // test es el candado que evita que ese enum-leak vuelva a colarse: el mensaje real que ve el usuario
+    // NUNCA debe contener el nombre interno del estado, sea cual sea el estado que lo genero.
+    [Theory]
+    [InlineData(EstadoReserva.InManagement)]
+    [InlineData(EstadoReserva.Quotation)]
+    [InlineData(EstadoReserva.Budget)]
+    [InlineData(EstadoReserva.Cancelled)]
+    [InlineData(EstadoReserva.Lost)]
+    [InlineData(EstadoReserva.PendingOperatorRefund)]
+    public async Task NormalInvoice_OnNonInvoiceableStatus_MessageHasNoInternalStateNames(string status)
+    {
+        using var context = new AppDbContext(_dbOptions);
+        await SeedReservaAsync(context, status);
+        var service = BuildService(context, out _);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.CreateAsync(BuildRequest(isCreditNote: false), "u1", "User 1", CancellationToken.None));
+
+        Assert.DoesNotContain("InManagement", ex.Message);
+        Assert.DoesNotContain("Quotation", ex.Message);
+        Assert.DoesNotContain("Budget", ex.Message);
+        Assert.DoesNotContain("Confirmed", ex.Message);
+        Assert.DoesNotContain("Cancelled", ex.Message);
+        Assert.DoesNotContain("Lost", ex.Message);
+        Assert.DoesNotContain("PendingOperatorRefund", ex.Message);
+        Assert.DoesNotContain("'", ex.Message); // sin comillas envolviendo un nombre de estado
+        Assert.Equal(TravelApi.Domain.Reservations.ReservaCapabilityPolicy.NotInvoiceableStatusReason, ex.Message);
+    }
+
     [Fact]
     public async Task CreditNote_OnCancelledReserva_IsNotBlockedByStateGuard()
     {

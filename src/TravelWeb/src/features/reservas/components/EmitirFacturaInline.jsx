@@ -374,6 +374,18 @@ export function EmitirFacturaInline({
     reserva && !reserva.isEconomicallySettled && !reserva.canEmitAfipInvoice
   );
 
+  // Tanda 5 (2026-07-20, contrato pantalla-motor): la barra de acciones de la ficha
+  // (ReservaDetailPage) ya esconde el botón "Emitir factura" cuando la reserva no está
+  // en un estado facturable — pero esta ficha se puede abrir igual desde otro lugar sin
+  // pasar por ese filtro (ej. el botón "Emitir factura" del cartel de candado R1 en el
+  // servicio, que se agrega en otra tanda). Leemos la MISMA capacidad que ya viaja en
+  // el DTO de la reserva (canInvoiceSale, fuente única compartida con el back) para
+  // bloquear ANTES de mostrar el formulario, en vez de dejar que el usuario lo llene
+  // entero y recién ahí se entere.
+  const bloqueadoPorEstado = Boolean(
+    reserva && reserva.capabilities?.canInvoiceSale?.allowed === false
+  );
+
   // Fix B1: detectar si la reserva SOLO tiene servicios en USD pero el flag está OFF.
   // En ese caso no se pueden precargar los montos (se emitirían como pesos) y hay que
   // mostrar un aviso claro en lugar de dejar los campos en cero sin explicación.
@@ -858,12 +870,51 @@ export function EmitirFacturaInline({
           </div>
         )}
 
+        {/* Tanda 5 (2026-07-20, contrato pantalla-motor): bloqueo duro por estado de la
+            reserva — se muestra apenas se abre la ficha, ANTES de que el usuario llene
+            el formulario. A diferencia del bloqueo por deuda (bloqueadoPorDeuda, más abajo),
+            acá NO hay override posible: un estado que no admite facturar no tiene excepción.
+            Por eso el formulario entero queda oculto, con un solo botón "Cerrar". */}
+        {!cargandoInicial && bloqueadoPorEstado && (
+          <div
+            className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-4 dark:border-rose-900/40 dark:bg-rose-900/20"
+            data-testid="bloque-estado-no-facturable"
+          >
+            <div className="flex items-start gap-3 text-rose-700 dark:text-rose-300">
+              <AlertCircle className="w-5 h-5 mt-0.5 flex-shrink-0" />
+              <div className="space-y-1">
+                <div className="font-semibold">No se puede facturar todavía</div>
+                <p className="text-sm">
+                  {/* El texto viene del backend (ReservaCapabilityPolicy.NotInvoiceableStatusReason),
+                      la MISMA constante que usa InvoiceService al rechazar el POST. El fallback local
+                      solo se usa si por algún motivo el DTO llega sin el motivo (degradación defensiva,
+                      no debería pasar en un uso normal). */}
+                  {reserva?.capabilities?.canInvoiceSale?.reason ||
+                    "No se puede facturar en este estado. La factura de venta se emite desde Confirmada en adelante, salvo en reservas anuladas."}
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                onClick={onCancelar}
+                className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-600 dark:hover:bg-slate-700 transition-colors"
+                data-testid="btn-cerrar-bloqueo-estado"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* H2: el contenido del formulario solo se muestra en estado "idle".
             En los demás estados (procesando/éxito/rechazo/timeout) el cuerpo
             de la ficha queda vacío y el estado visual se muestra FUERA del div px-6 py-5. */}
         {/* F4-8: el formulario sigue visible mientras dura el preflight-cargando.
             Solo desaparece cuando el bloqueo ya se decidió o se avanza a confirmando. */}
-        {!cargandoInicial && (estadoEmision === "idle" || estadoEmision === "preflight-cargando") && (
+        {/* Tanda 5: el bloqueo por estado tiene prioridad — si está activo, el formulario
+            normal (incluido el bloqueo por deuda) directamente no se arma. */}
+        {!cargandoInicial && !bloqueadoPorEstado && (estadoEmision === "idle" || estadoEmision === "preflight-cargando") && (
           <>
             {/* Bloque de deuda / override ──────────────────────────────── */}
             {(requiereOverride || bloqueadoPorDeuda) && (
