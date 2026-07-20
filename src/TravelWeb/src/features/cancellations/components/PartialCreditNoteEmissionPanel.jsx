@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Clock3, Eye, Loader2, RefreshCw, Send } from "lucide-react";
 import ConfirmModal from "../../../components/ConfirmModal";
 import { api } from "../../../api";
-import { showError, showSuccess } from "../../../alerts";
+import { showSuccess } from "../../../alerts";
+import { getApiErrorMessage } from "../../../lib/errors.js";
 import { cancellationsApi } from "../api/cancellationsApi";
 import { T5ResolverLegacyList } from "./T5ResolverLegacyList";
 import {
@@ -29,6 +30,9 @@ export function PartialCreditNoteEmissionPanel({ reserva, canEmit, onChanged }) 
   const [submitting, setSubmitting] = useState(false);
   const [guardMessage, setGuardMessage] = useState("");
   const [sending, setSending] = useState(false);
+  // Spec T9 (2026-07-20): "Ver PDF" no tenía loading propio, a diferencia de "Enviar al cliente".
+  // Lo agregamos para evitar doble clic mientras se pide el blob del PDF.
+  const [pdfLoading, setPdfLoading] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const activeSaleInvoices = useMemo(() => getActiveSaleInvoices(reserva?.invoices), [reserva?.invoices]);
 
@@ -48,6 +52,9 @@ export function PartialCreditNoteEmissionPanel({ reserva, canEmit, onChanged }) 
 
   useEffect(() => {
     setDismissed(false);
+    // Al cambiar de reserva, el cartel de error de la reserva anterior no
+    // debe quedar pegado en la nueva.
+    setGuardMessage("");
     refresh();
   }, [refresh]);
 
@@ -80,27 +87,44 @@ export function PartialCreditNoteEmissionPanel({ reserva, canEmit, onChanged }) 
 
   const pdf = async () => {
     if (!creditNote?.publicId) return;
+    // Spec T9 (2026-07-20): el error va al cartel `guardMessage` de la ficha, nunca a un toast —
+    // un toast se pierde justo cuando el vendedor necesita leer con calma qué pasó y reintentar.
+    setPdfLoading(true);
+    setGuardMessage("");
     try {
       const response = await api.get(`/invoices/${creditNote.publicId}/pdf`, { responseType: "blob" });
       const url = window.URL.createObjectURL(new Blob([response], { type: "application/pdf" }));
       window.open(url, "_blank");
       window.setTimeout(() => window.URL.revokeObjectURL(url), 60000);
-    } catch {
-      showError("No se pudo abrir la nota de crédito.");
+    } catch (error) {
+      setGuardMessage(getApiErrorMessage(
+        error,
+        "No pudimos abrir la nota de crédito. Volvé a intentarlo apretando \"Ver PDF\" de nuevo.",
+      ));
+    } finally {
+      setPdfLoading(false);
     }
   };
 
   const send = async () => {
     if (!creditNote?.publicId || !reserva?.customerPublicId) {
-      showError("La reserva no tiene un cliente con contacto para enviar la devolución.");
+      // Mismo cartel que el resto de esta ficha (antes era toast) — coherencia: nada de toast acá,
+      // ni para este pre-chequeo ni para el error real de más abajo.
+      setGuardMessage("La reserva no tiene un cliente con contacto para enviar la devolución.");
       return;
     }
     setSending(true);
+    setGuardMessage("");
     try {
       await cancellationsApi.sendPartialCreditNote(cancellation.publicId);
+      // El toast de ÉXITO sí es el patrón normal de la app; la regla "nada de toast" es
+      // específicamente para errores en fichas en línea, no para confirmaciones de éxito.
       showSuccess("Nota de crédito enviada al cliente.");
-    } catch {
-      showError("No se pudo enviar la nota de crédito. Intentá de nuevo.");
+    } catch (error) {
+      setGuardMessage(getApiErrorMessage(
+        error,
+        "No pudimos enviar la nota de crédito. Volvé a intentarlo apretando \"Enviar al cliente\" de nuevo.",
+      ));
     } finally {
       setSending(false);
     }
@@ -181,7 +205,7 @@ export function PartialCreditNoteEmissionPanel({ reserva, canEmit, onChanged }) 
         <div className="flex shrink-0 flex-wrap gap-2">
           {state === T5_STATE.SUCCEEDED ? (
             <>
-              <button type="button" onClick={pdf} disabled={!creditNote?.publicId} className="inline-flex items-center gap-2 rounded-lg border border-emerald-300 px-3 py-2 text-sm font-bold text-emerald-800 disabled:opacity-50"><Eye className="h-4 w-4" />Ver PDF</button>
+              <button type="button" onClick={pdf} disabled={pdfLoading || !creditNote?.publicId} className="inline-flex items-center gap-2 rounded-lg border border-emerald-300 px-3 py-2 text-sm font-bold text-emerald-800 disabled:opacity-50"><Eye className="h-4 w-4" />Ver PDF</button>
               <button type="button" onClick={send} disabled={sending || !creditNote?.publicId} className="inline-flex items-center gap-2 rounded-lg bg-emerald-700 px-3 py-2 text-sm font-bold text-white disabled:opacity-50"><Send className="h-4 w-4" />{sending ? "Enviando..." : "Enviar al cliente"}</button>
             </>
           ) : (state === T5_STATE.READY || state === T5_STATE.FAILED) && canEmit ? (
