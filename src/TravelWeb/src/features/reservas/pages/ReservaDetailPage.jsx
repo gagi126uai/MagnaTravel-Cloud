@@ -14,6 +14,7 @@ import { ReservaVoucherTab } from "../../../components/ReservaVoucherTab";
 // migrados a EstadoCuentaExtracto.jsx. Se conserva este comentario para contexto
 // en caso de que alguien agregue una tabla nueva en esta página.
 import { getApiErrorMessage } from "../../../lib/errors";
+import { formatCurrency } from "../../../lib/utils";
 import { getPublicId, getRelatedPublicId } from "../../../lib/publicIds";
 import { CapacityWarning } from "../components/CapacityWarning";
 import { AvisosPlegadosBar } from "../components/AvisosPlegadosBar";
@@ -36,6 +37,11 @@ import { isStatusLocked, isReservaEnEstadoVivo } from "../components/ReservaStat
 // PendingOperatorRefund). Los helpers de más abajo la reusan en vez de comparar el
 // string de estado a mano.
 import { isReservaAnulada } from "../moneyStatus";
+// Tanda 2 (2026-07-18, spec docs/ux/2026-07-18-t1-t2-contrato-pantalla-motor.md):
+// mismo modal y mismo comportamiento que Cobranzas → Movimientos cuando emitir o
+// anular un comprobante requiere autorización de un supervisor.
+import RequestApprovalModal from "../../approvals/components/RequestApprovalModal";
+import { resolverAccionAlFallarComprobante, armarEtiquetaComprobante } from "../lib/receiptApprovalFlow";
 import { useReservaDetail } from "../hooks/useReservaDetail";
 import { useOperationalFlags } from "../../../contexts/OperationalFlagsContext";
 import { useAlerts } from "../../../contexts/AlertsContext";
@@ -753,6 +759,11 @@ export default function ReservaDetailPage() {
   const [showCorrectTravelingModal, setShowCorrectTravelingModal] = useState(false);
   // Tanda 3 (2026-06-23): modal "Reprogramar viaje" — mueve todas las fechas de servicios.
   const [showRescheduleModal, setShowRescheduleModal] = useState(false);
+  // Tanda 2 contrato pantalla-motor (2026-07-18): contexto del modal "Solicitar
+  // aprobación" cuando emitir/anular un comprobante de cobro devuelve 409
+  // requiresApproval. null = modal cerrado. Mismo patrón que useFinanceActions
+  // (onApprovalRequired) usa en Cobranzas → Movimientos.
+  const [approvalContext, setApprovalContext] = useState(null);
 
   // ADR-031 v2.1 — Pieza C: estado del readiness. Se declara aquí porque useState
   // siempre va al inicio del componente, pero el useEffect que lo carga se mueve
@@ -953,6 +964,19 @@ export default function ReservaDetailPage() {
       refrescarExtracto();
       await fetchReserva({ showLoading: false, preserveOnError: true });
     } catch (error) {
+      // Tanda 2 (2026-07-18): si el motor pide autorización (409 requiresApproval),
+      // abrimos directo el mismo modal que usa Cobranzas → Movimientos en vez de
+      // dejar al vendedor con un cartel de error sin ninguna salida.
+      const accion = resolverAccionAlFallarComprobante(error);
+      if (accion.requiereAutorizacion) {
+        setApprovalContext({
+          requestType: accion.requestType,
+          entityType: accion.entityType,
+          entityId: accion.entityId,
+          entityLabel: armarEtiquetaComprobante(payment, formatCurrency),
+        });
+        return;
+      }
       showError(getApiErrorMessage(error, "No se pudo emitir el comprobante."));
     }
   };
@@ -971,6 +995,18 @@ export default function ReservaDetailPage() {
       refrescarExtracto();
       await fetchReserva({ showLoading: false, preserveOnError: true });
     } catch (error) {
+      // Mismo enganche que handleIssueReceipt: 409 requiresApproval → modal de
+      // autorización directo, sin cartel intermedio (paridad con Movimientos).
+      const accion = resolverAccionAlFallarComprobante(error);
+      if (accion.requiereAutorizacion) {
+        setApprovalContext({
+          requestType: accion.requestType,
+          entityType: accion.entityType,
+          entityId: accion.entityId,
+          entityLabel: armarEtiquetaComprobante(payment, formatCurrency),
+        });
+        return;
+      }
       showError(getApiErrorMessage(error, "No se pudo anular el comprobante."));
     }
   };
@@ -2580,6 +2616,25 @@ export default function ReservaDetailPage() {
           showSuccess(`Viaje reprogramado. Nueva salida: ${nuevaSalida}.`);
           fetchReserva({ showLoading: false, preserveOnError: true });
         }}
+      />
+
+      {/* Tanda 2 contrato pantalla-motor (2026-07-18): modal "Solicitar aprobación"
+          cuando emitir o anular el comprobante de un cobro requiere autorización.
+          Mismo componente y mismo comportamiento que Cobranzas → Movimientos: sin
+          cartel intermedio, se abre directo apenas el motor lo pide. */}
+      <RequestApprovalModal
+        isOpen={Boolean(approvalContext)}
+        onClose={() => setApprovalContext(null)}
+        onCreated={() => {
+          // El vendedor ya ve la confirmación adentro del propio modal (showSuccess
+          // interno). Cerramos el modal; el reintento de emitir/anular lo hace él
+          // manualmente cuando el Administrador o Colaborador apruebe la solicitud.
+          setApprovalContext(null);
+        }}
+        requestType={approvalContext?.requestType}
+        entityType={approvalContext?.entityType}
+        entityId={approvalContext?.entityId}
+        entityLabel={approvalContext?.entityLabel}
       />
     </div>
   );
