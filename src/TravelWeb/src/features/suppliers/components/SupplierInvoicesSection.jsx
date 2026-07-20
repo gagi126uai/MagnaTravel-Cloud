@@ -5,7 +5,7 @@ import { formatCurrency, formatDate } from "../../../lib/utils";
 import { getPublicId } from "../../../lib/publicIds";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { showError, showSuccess, showTextPrompt } from "../../../alerts";
-import { classifySupplierInvoices } from "../lib/supplierInvoiceClassification";
+import { classifySupplierInvoices, operadorFacturaDirectoAlCliente } from "../lib/supplierInvoiceClassification";
 
 const kindByType = {
   Vuelo: "flight", Hotel: "hotel", Traslado: "transfer",
@@ -14,7 +14,12 @@ const kindByType = {
 
 const statusLabel = { pendiente: "Pendiente", pago_parcial: "Pago parcial", pagada: "Pagada", anulada: "Anulada" };
 
-export function SupplierInvoicesSection({ supplierPublicId, overview, canEdit, canApply }) {
+export function SupplierInvoicesSection({ supplierPublicId, overview, canEdit, canApply, invoicingMode }) {
+  // Tanda 1 (contrato pantalla-motor, 2026-07-18): si el operador factura directo al
+  // cliente, nunca genera cuenta por pagar de la agencia → "Nueva factura" se esconde
+  // (no se agrisa con cartel: precedente ADR-036 punto 4, P3=A).
+  const puedeCrearFactura = canEdit && !operadorFacturaDirectoAlCliente(invoicingMode);
+
   const [invoices, setInvoices] = useState([]);
   const [servicesPage, setServicesPage] = useState({ items: [], page: 1, totalPages: 0 });
   const [serviceSearch, setServiceSearch] = useState("");
@@ -157,7 +162,7 @@ export function SupplierInvoicesSection({ supplierPublicId, overview, canEdit, c
     <div className="rounded-xl border bg-card p-4">
       <div className="flex items-start justify-between gap-3">
         <div><h2 className="font-semibold">Facturas recibidas del operador</h2><p className="text-xs text-muted-foreground">Documento comercial, no fiscal AFIP. Reclasifica servicios existentes; no duplica la deuda.</p></div>
-        {canEdit && <button type="button" onClick={() => setShowCreate((x) => !x)} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white">{showCreate ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />} Nueva factura</button>}
+        {puedeCrearFactura && <button type="button" onClick={() => setShowCreate((x) => !x)} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white">{showCreate ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />} Nueva factura</button>}
       </div>
       {classification.length > 0 && <div className="mt-4 grid gap-3 sm:grid-cols-2">
         {classification.map((row) => <div key={row.currency} className="rounded-lg bg-slate-50 p-3 dark:bg-slate-900">

@@ -1265,7 +1265,9 @@ public class SupplierService : ISupplierService
 
         if (request.Amount <= 0)
         {
-            throw new ArgumentException("El monto debe ser mayor a 0");
+            // Tanda 1 contrato pantalla-motor (2026-07-18): validacion de negocio -> excepcion propia del
+            // circuito (ver SupplierPaymentValidationException), no ArgumentException generica.
+            throw new SupplierPaymentValidationException("El monto debe ser mayor a 0");
         }
 
         // ADR-021: resolver y validar el bloque de moneda/TC server-side (no confiar en el front). Para un
@@ -1299,26 +1301,28 @@ public class SupplierService : ISupplierService
                     cancellationToken)
                 ?? throw new KeyNotFoundException("El cargo del operador indicado no existe para este proveedor.");
 
+            // (2026-07-18) Estos 3 rechazos eran ArgumentException(message, nameof(request)): el segundo
+            // argumento agrega el sufijo tecnico "(Parameter 'request')" al Message completo, que es
+            // justo el tipo de leak que esta excepcion propia evita. SupplierPaymentValidationException
+            // no tiene (ni necesita) ParamName: el mensaje ya es autocontenido para el usuario final.
             if (settledCharge.CollectionMode != PenaltyCollectionMode.FacturadaAparte)
-                throw new ArgumentException(
-                    "Este pago solo puede liquidar un cargo del operador facturado aparte.", nameof(request));
+                throw new SupplierPaymentValidationException(
+                    "Este pago solo puede liquidar un cargo del operador facturado aparte.");
 
             // S2 (bloqueante security, 2026-07-10): RED DURA anti doble-liquidacion. Si el cargo YA fue liquidado
             // por otro pago vivo, rechazamos — sin esto se podia pagar dos veces el mismo cargo al operador y
             // generar dos ajustes de diferencia de cambio.
             if (settledCharge.SettledBySupplierPaymentId.HasValue)
-                throw new ArgumentException(
-                    "Ese cargo del operador ya se pagó. Si el pago anterior era incorrecto, eliminalo primero.",
-                    nameof(request));
+                throw new SupplierPaymentValidationException(
+                    "Ese cargo del operador ya se pagó. Si el pago anterior era incorrecto, eliminalo primero.");
 
             var settlementCurrency = Monedas.Normalizar(currency.ImputedCurrency ?? currency.Currency);
             var settlementAmount = currency.ImputedAmount ?? EconomicRulesHelper.RoundCurrency(request.Amount);
             if (!string.Equals(settlementCurrency, Monedas.Normalizar(settledCharge.Currency), StringComparison.Ordinal)
                 || settlementAmount != EconomicRulesHelper.RoundCurrency(settledCharge.Amount))
             {
-                throw new ArgumentException(
-                    "Para liquidar el cargo, el pago debe cubrir su monto completo en la misma moneda.",
-                    nameof(request));
+                throw new SupplierPaymentValidationException(
+                    "Para liquidar el cargo, el pago debe cubrir su monto completo en la misma moneda.");
             }
         }
 
@@ -1447,13 +1451,13 @@ public class SupplierService : ISupplierService
 
         if (request.Amount <= 0)
         {
-            throw new ArgumentException("El monto debe ser mayor a 0");
+            throw new SupplierPaymentValidationException("El monto debe ser mayor a 0");
         }
 
         if (await _dbContext.SupplierInvoicePaymentApplications
                 .AnyAsync(x => x.SupplierPaymentId == payment.Id && !x.IsReversed, cancellationToken))
         {
-            throw new InvalidOperationException(
+            throw new SupplierPaymentValidationException(
                 "El pago está aplicado a una factura del operador. Revertí esa aplicación antes de editarlo.");
         }
 
@@ -1556,7 +1560,7 @@ public class SupplierService : ISupplierService
         if (await _dbContext.SupplierInvoicePaymentApplications
                 .AnyAsync(x => x.SupplierPaymentId == payment.Id && !x.IsReversed, cancellationToken))
         {
-            throw new InvalidOperationException(
+            throw new SupplierPaymentValidationException(
                 "El pago está aplicado a una factura del operador. Anulá o corregí esa conciliación antes de eliminarlo.");
         }
 
@@ -2288,20 +2292,34 @@ public class SupplierService : ISupplierService
     /// <summary>
     /// ADR-021 + ADR-022 §4 P4: valida y resuelve el bloque de moneda/TC de un pago a proveedor. Es la unica
     /// fuente server-side (no confiar en el front). Para un pago ARS no cruzado el bloque queda en null.
-    /// Lanza <see cref="ArgumentException"/> (el controller la traduce a 400) si el bloque es incoherente.
+    /// Lanza <see cref="SupplierPaymentValidationException"/> (el controller la traduce a 400) si el bloque
+    /// es incoherente.
     /// </summary>
     private static PaymentCurrencyResolver.Resolved ResolvePaymentCurrencyBlock(SupplierPaymentRequest request)
     {
         var roundedAmount = EconomicRulesHelper.RoundCurrency(request.Amount);
-        return PaymentCurrencyResolver.Resolve(
-            amount: roundedAmount,
-            rawCurrency: request.Currency,
-            rawImputedCurrency: request.ImputedCurrency,
-            exchangeRate: request.ExchangeRate,
-            exchangeRateSource: request.ExchangeRateSource,
-            exchangeRateAt: request.ExchangeRateAt,
-            imputedAmount: request.ImputedAmount,
-            round: EconomicRulesHelper.RoundCurrency);
+        try
+        {
+            return PaymentCurrencyResolver.Resolve(
+                amount: roundedAmount,
+                rawCurrency: request.Currency,
+                rawImputedCurrency: request.ImputedCurrency,
+                exchangeRate: request.ExchangeRate,
+                exchangeRateSource: request.ExchangeRateSource,
+                exchangeRateAt: request.ExchangeRateAt,
+                imputedAmount: request.ImputedAmount,
+                round: EconomicRulesHelper.RoundCurrency);
+        }
+        catch (ArgumentException ex)
+        {
+            // (2026-07-18) PaymentCurrencyResolver es COMPARTIDO con PaymentService (cobros a cliente): no
+            // le cambiamos el tipo de excepcion alla porque no sabemos que otros catches dependen de el.
+            // Aca, del lado del pago a PROVEEDOR, lo unico que hace falta es que el controller pueda
+            // distinguir "esto es un mensaje de negocio, mostralo" de "esto es un ArgumentException de
+            // framework que no deberia llegar al usuario". El mensaje del resolver ya esta curado en
+            // español para el usuario final, asi que se reusa tal cual.
+            throw new SupplierPaymentValidationException(ex.Message);
+        }
     }
 
     /// <summary>
@@ -2332,7 +2350,7 @@ public class SupplierService : ISupplierService
         // No se puede pedir imputar a una reserva Y marcar anticipo a cuenta a la vez: son caminos opuestos.
         if (hasReserva && request.IsAdvanceToAccount)
         {
-            throw new ArgumentException(
+            throw new SupplierPaymentValidationException(
                 "Un pago no puede imputarse a una reserva y marcarse como anticipo a cuenta a la vez.");
         }
 
@@ -2344,13 +2362,13 @@ public class SupplierService : ISupplierService
         {
             if (!hasReserva)
             {
-                throw new ArgumentException(
+                throw new SupplierPaymentValidationException(
                     "Para imputar el pago a un servicio hay que indicar tambien su reserva.");
             }
             normalizedServiceKind = ServicePaymentRecordKinds.Normalize(request.ServiceRecordKind);
             if (normalizedServiceKind is null)
             {
-                throw new ArgumentException("El tipo de servicio para imputar el pago no es valido.");
+                throw new SupplierPaymentValidationException("El tipo de servicio para imputar el pago no es valido.");
             }
         }
 
@@ -2409,7 +2427,7 @@ public class SupplierService : ISupplierService
             supplierId, reservaId.Value, excludePaymentId, cancellationToken);
         if (supplierDebtInReserva.Count == 0)
         {
-            throw new InvalidOperationException(
+            throw new SupplierPaymentValidationException(
                 "La reserva no tiene servicios de este proveedor para imputar el pago.");
         }
 
@@ -2429,7 +2447,7 @@ public class SupplierService : ISupplierService
         // para un prepago en otra moneda esta el pago "a cuenta" (sin reserva), que no se cruza con la reserva.
         if (!supplierDebtInReserva.ContainsKey(imputedCurrency))
         {
-            throw new InvalidOperationException(
+            throw new SupplierPaymentValidationException(
                 "El pago no coincide con ninguna moneda de la deuda de este proveedor en la reserva.");
         }
 
@@ -2451,14 +2469,14 @@ public class SupplierService : ISupplierService
     /// ADR-036 4c: resuelve un servicio por (recordKind, publicId) y valida que exista, sea de ESTE proveedor
     /// y de ESTA reserva. Devuelve el PublicId confirmado (id polimorfico que se persiste en el pago) junto con
     /// el COSTO y la MONEDA del servicio, que luego se usan para validar moneda y tope por servicio.
-    /// Lanza <see cref="InvalidOperationException"/> si el servicio no cumple (el controller lo traduce a 400).
+    /// Lanza <see cref="SupplierPaymentValidationException"/> si el servicio no cumple (el controller lo traduce a 400).
     /// </summary>
     private async Task<ResolvedServiceForPayment> ResolveServiceForSupplierPaymentAsync(
         int supplierId, int reservaId, string recordKind, string servicePublicIdRaw, CancellationToken cancellationToken)
     {
         if (!Guid.TryParse(servicePublicIdRaw, out var servicePublicId))
         {
-            throw new ArgumentException("El identificador del servicio no es valido.");
+            throw new SupplierPaymentValidationException("El identificador del servicio no es valido.");
         }
 
         // Cada tipo vive en su propia tabla; consultamos solo la que corresponde al recordKind. La condicion
@@ -2491,7 +2509,7 @@ public class SupplierService : ISupplierService
 
         if (match is null)
         {
-            throw new InvalidOperationException(
+            throw new SupplierPaymentValidationException(
                 "El servicio indicado no existe, no es de este proveedor o no pertenece a la reserva.");
         }
 
@@ -2507,7 +2525,7 @@ public class SupplierService : ISupplierService
     /// (un servicio en USD se paga en USD, o con un pago cruzado cuyo equivalente imputado es USD). Es la unica
     /// validacion por servicio: el TOPE por monto se elimino (decision del dueño) — un pago PUEDE exceder el costo
     /// del servicio y el excedente queda como saldo a favor con el operador en esa moneda. Lanza
-    /// <see cref="InvalidOperationException"/> (el controller la traduce a 400 con un mensaje generico).
+    /// <see cref="SupplierPaymentValidationException"/> (el controller la traduce a 400 con el mensaje real).
     /// </summary>
     private static void EnsureServicePaymentCurrencyMatchesService(
         ResolvedServiceForPayment service,
@@ -2518,7 +2536,7 @@ public class SupplierService : ISupplierService
 
         if (!string.Equals(imputedCurrency, service.Currency, StringComparison.Ordinal))
         {
-            throw new InvalidOperationException(
+            throw new SupplierPaymentValidationException(
                 "La moneda del pago no coincide con la del costo del servicio.");
         }
     }

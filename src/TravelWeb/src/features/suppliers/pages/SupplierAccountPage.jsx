@@ -2172,6 +2172,7 @@ export default function SupplierAccountPage() {
                                 overview={overview}
                                 canEdit={hasPermission("tesoreria.supplier_payments")}
                                 canApply={hasPermission("tesoreria.supplier_payments")}
+                                invoicingMode={supplier?.invoicingMode}
                             />
                         </div>
                     )}

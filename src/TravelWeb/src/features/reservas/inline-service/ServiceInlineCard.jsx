@@ -789,7 +789,7 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                             {/* Ganancia: solo para quien tiene permiso de ver costos */}
                             {canSeeCost && totalesFooter.ganancia !== null && (
                                 <span className={totalesFooter.ganancia >= 0 ? "font-semibold text-emerald-600" : "font-semibold text-red-600"}>
-                                    GanÃ¡s {formatearPrecio(totalesFooter.ganancia)}
+                                    Ganás {formatearPrecio(totalesFooter.ganancia)}
                                 </span>
                             )}
                         </>

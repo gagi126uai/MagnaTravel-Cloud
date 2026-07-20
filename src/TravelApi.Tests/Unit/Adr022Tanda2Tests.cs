@@ -14,6 +14,7 @@ using TravelApi.Application.Contracts.Files;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
@@ -399,7 +400,7 @@ public class Adr022Tanda2Tests
             ReservaId: reserva.PublicId.ToString(), ServicioReservaId: null,
             IsAdvanceToAccount: false, Currency: Monedas.USD);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAsync<SupplierPaymentValidationException>(() =>
             service.AddSupplierPaymentAsync(supplier.Id, request, CancellationToken.None));
         Assert.Equal(0, await context.SupplierPayments.CountAsync());
     }
@@ -417,7 +418,7 @@ public class Adr022Tanda2Tests
         await new SupplierService(context).UpdateBalanceAsync(supplier.Id, CancellationToken.None);
 
         var service = new SupplierService(context);
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAsync<SupplierPaymentValidationException>(() =>
             service.AddSupplierPaymentAsync(
                 supplier.Id, PaymentImputedToReserva(100m, reserva.PublicId.ToString()), CancellationToken.None));
         Assert.Equal(0, await context.SupplierPayments.CountAsync());
@@ -460,7 +461,7 @@ public class Adr022Tanda2Tests
             Amount: 100m, Method: "Transfer", Reference: null, Notes: null,
             ReservaId: reserva.PublicId.ToString(), ServicioReservaId: null, IsAdvanceToAccount: true);
 
-        await Assert.ThrowsAsync<ArgumentException>(() =>
+        await Assert.ThrowsAsync<SupplierPaymentValidationException>(() =>
             service.AddSupplierPaymentAsync(supplier.Id, request, CancellationToken.None));
         Assert.Equal(0, await context.SupplierPayments.CountAsync());
     }

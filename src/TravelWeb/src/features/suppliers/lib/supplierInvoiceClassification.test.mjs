@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { classifySupplierInvoices } from "./supplierInvoiceClassification.js";
+import { classifySupplierInvoices, operadorFacturaDirectoAlCliente } from "./supplierInvoiceClassification.js";
 
 test("factura reclasifica compromiso sin duplicar la cuenta por pagar", () => {
   const result = classifySupplierInvoices(
@@ -18,4 +18,21 @@ test("clasificacion de facturas nunca mezcla ARS con USD ni cuenta anuladas", ()
     { currency: "ARS", committedUnbilled: 100, billedPending: 0, paymentsUnapplied: 0 },
     { currency: "USD", committedUnbilled: 30, billedPending: 20, paymentsUnapplied: 0 },
   ]);
+});
+
+// ─── operadorFacturaDirectoAlCliente (Tanda 1, contrato pantalla-motor, 2026-07-18) ────
+// Un operador "Intermediación (factura directo al cliente)" (invoicingMode=1) nunca
+// genera cuenta por pagar de la agencia → "Nueva factura" se esconde para él.
+
+test("operadorFacturaDirectoAlCliente — invoicingMode 1 (Intermediación) es true", () => {
+  assert.equal(operadorFacturaDirectoAlCliente(1), true);
+});
+
+test("operadorFacturaDirectoAlCliente — invoicingMode 0 (Compra y reventa) es false", () => {
+  assert.equal(operadorFacturaDirectoAlCliente(0), false);
+});
+
+test("operadorFacturaDirectoAlCliente — invoicingMode null/undefined (legacy) es false", () => {
+  assert.equal(operadorFacturaDirectoAlCliente(null), false);
+  assert.equal(operadorFacturaDirectoAlCliente(undefined), false);
 });

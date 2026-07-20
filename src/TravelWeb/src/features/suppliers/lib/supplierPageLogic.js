@@ -16,6 +16,10 @@ import { formatCurrency } from "../../../lib/utils.js";
  *   - validarFormularioReembolsoRecibido: validación local antes de llamar al backend (§4)
  *   - construirTextoCuentaReembolso: desglose "Pagaste − Multa [− Ya devuelto] = te devuelven" o el
  *     motivo en criollo cuando el estimado da $0 (decisiones 1 y 4, spec 2026-07-03)
+ *   - filtrarServiciosPorMonedaDePago: pre-chequeo (a) de la Tanda 1 (contrato pantalla-motor,
+ *     2026-07-18) — el selector de servicio solo lista los que están en la moneda del pago
+ *   - hayServiciosDelProveedorEnReserva: pre-chequeo (b) de la misma tanda — si la reserva
+ *     elegida no tiene NINGÚN servicio de este proveedor, hay que avisar antes de confirmar
  */
 
 /**
@@ -147,6 +151,46 @@ export function construirPayloadPagoProveedor({
         exchangeRateAt: new Date(fechaTC).toISOString(),
         imputedAmount: montoEquivalente,
     };
+}
+
+// ─── Tanda 1 (contrato pantalla-motor, 2026-07-18): pre-chequeos del pago al proveedor ──
+// Spec: docs/ux/2026-07-18-t1-t2-contrato-pantalla-motor.md, sección TANDA 1.
+// Objetivo: atajar ANTES del clic los dos casos de error que el back ya rechazaba
+// (moneda del pago ≠ moneda del servicio / reserva sin servicios de este proveedor),
+// para que el vendedor ni siquiera pueda armar el pago mal.
+
+/**
+ * Filtra los servicios de una reserva para quedarse solo con los que están en la
+ * MISMA moneda que el pago (pre-chequeo (a)). Así el selector nunca deja elegir un
+ * servicio cuya moneda no coincide con la que el cajero eligió para pagar.
+ *
+ * Igual que en el backend (ADR-021 §15.4): `currency` nulo/vacío en un servicio
+ * legacy significa ARS (se normaliza acá con el mismo criterio que el resto del front).
+ *
+ * @param {Array<{ currency?: string|null }>} servicios
+ * @param {string} monedaPago — "ARS" | "USD"
+ * @returns {Array} subconjunto de servicios en esa moneda
+ */
+export function filtrarServiciosPorMonedaDePago(servicios, monedaPago) {
+    const lista = Array.isArray(servicios) ? servicios : [];
+    return lista.filter((s) => (s.currency || "ARS") === monedaPago);
+}
+
+/**
+ * Pre-chequeo (b): ¿esta reserva tiene AL MENOS UN servicio de este proveedor
+ * (en cualquier moneda)? Si no, hay que avisar ANTES de habilitar "Confirmar" en
+ * vez de dejar que el vendedor se entere recién con el 409 del backend.
+ *
+ * OJO: recibe la lista SIN filtrar por moneda (todas las monedas), porque la
+ * pregunta es "¿existe algún servicio de este proveedor acá?", no "¿hay alguno
+ * en la moneda que elegí ahora?" — ese segundo caso lo cubre el filtro (a) y no
+ * bloquea nada (el vendedor puede simplemente no imputar a un servicio puntual).
+ *
+ * @param {Array} serviciosDeLaReserva — servicios de este proveedor en la reserva elegida
+ * @returns {boolean} true si hay al menos uno
+ */
+export function hayServiciosDelProveedorEnReserva(serviciosDeLaReserva) {
+    return Array.isArray(serviciosDeLaReserva) && serviciosDeLaReserva.length > 0;
 }
 
 /**

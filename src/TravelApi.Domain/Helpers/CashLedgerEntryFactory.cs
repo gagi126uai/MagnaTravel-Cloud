@@ -56,8 +56,13 @@ public static class CashLedgerEntryFactory
     public static CashLedgerEntry ForSupplierPayment(SupplierPayment payment, string? actorUserId, string? actorUserName)
     {
         if (payment is null) throw new ArgumentNullException(nameof(payment));
+        // Red de seguridad interna: SupplierService ya valida Amount > 0 ANTES de llegar aca, asi que esto
+        // no deberia dispararse nunca en uso normal. Si igual se dispara (bug futuro), el mensaje NO debe
+        // nombrar la clase/campo interno (SupplierPayment.Amount) — queda en espanol llano, y como es un
+        // InvalidOperationException "comun" (no SupplierPaymentValidationException) el controller NO la
+        // atrapa: cae al GlobalExceptionHandler, que muestra el generico amigable (nunca este texto).
         if (payment.Amount <= 0m)
-            throw new InvalidOperationException("SupplierPayment.Amount debe ser > 0 para asentar en el Libro de Caja.");
+            throw new InvalidOperationException("El monto del pago al proveedor debe ser mayor a 0 para registrarlo en el libro de caja.");
 
         return new CashLedgerEntry
         {

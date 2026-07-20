@@ -1071,9 +1071,13 @@ public class Adr044T3bTargetInvoiceAndTreasuryFxTests
         Assert.Empty((await service.GetSupplierAccountOverviewAsync(supplier.Id, default)).OpenInvoicedCharges);
 
         // Segundo pago sobre el MISMO cargo -> rechazo.
-        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+        // (2026-07-18) Tanda 1 pantalla-motor: este throw ahora es SupplierPaymentValidationException
+        // (antes ArgumentException con nameof(request), que dejaba el sufijo tecnico "Parameter 'request'"
+        // pegado al mensaje que veia el vendedor).
+        var ex = await Assert.ThrowsAsync<SupplierPaymentValidationException>(() =>
             service.AddSupplierPaymentAsync(supplier.Id, PayRequest(), default));
         Assert.Contains("ya se pagó", ex.Message);
+        Assert.DoesNotContain("Parameter", ex.Message);
 
         // Al eliminar el pago que liquidaba, se limpia la marca y el cargo puede volver a pagarse.
         var firstPaymentId = await ctx.SupplierPayments.Where(p => p.PublicId == firstPaymentPublicId)
@@ -1099,7 +1103,7 @@ public class Adr044T3bTargetInvoiceAndTreasuryFxTests
             ServicioReservaId: null, IsAdvanceToAccount: true, Currency: currency,
             SettlesOperatorChargePublicId: charge.PublicId);
 
-        await Assert.ThrowsAsync<ArgumentException>(() =>
+        await Assert.ThrowsAsync<SupplierPaymentValidationException>(() =>
             service.AddSupplierPaymentAsync(supplier.Id, request, default));
 
         Assert.Empty(await ctx.SupplierPayments.ToListAsync());

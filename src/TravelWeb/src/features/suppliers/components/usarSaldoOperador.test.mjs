@@ -4,6 +4,8 @@
  * Cubre las validaciones y transformaciones que ocurren en UsarSaldoOperadorInline:
  *   - filtrado de reservas por moneda
  *   - cálculo del monto sugerido (min entre deuda del destino y saldo disponible)
+ *   - cálculo del TOPE real del input (mismo min, pero recalculado en cada cambio de
+ *     reserva elegida — Tanda 1 del contrato pantalla-motor, 2026-07-18)
  *   - validación del monto antes del POST
  *   - construcción del payload para POST /suppliers/{id}/credit/apply
  *
@@ -46,10 +48,24 @@ function calcularMontoSugerido(reserva, moneda, saldoDisponible) {
 }
 
 /**
- * Valida los datos del formulario antes de confirmar la aplicación.
- * Regla: monto > 0 y monto <= saldo disponible.
+ * Calcula el TOPE real del monto a aplicar (no solo la sugerencia inicial): el menor
+ * entre el saldo a favor disponible y la deuda de la reserva elegida. El backend
+ * (ApplyCreditAsync, INV-SUPCREDIT-003 / M1) nunca deja aplicar más de lo que la reserva
+ * debe, aunque sobre saldo a favor — si no, el excedente queda "atrapado" en el destino.
+ * Sin reserva elegida todavía, el tope es simplemente el saldo disponible.
  */
-function validarAplicacionOperador(monto, saldoDisponible, reservaDestinoSeleccionada) {
+function calcularTopeMontoOperador(reservaDestinoSeleccionada, moneda, saldoDisponible) {
+  if (!reservaDestinoSeleccionada) return saldoDisponible;
+  const lineaMoneda = (reservaDestinoSeleccionada.currencies ?? []).find((c) => c.currency === moneda);
+  const deudaDestino = lineaMoneda ? (lineaMoneda.balance ?? 0) : 0;
+  return Math.min(saldoDisponible, deudaDestino);
+}
+
+/**
+ * Valida los datos del formulario antes de confirmar la aplicación.
+ * Regla: monto > 0 y monto <= tope real (el menor entre saldo disponible y deuda del destino).
+ */
+function validarAplicacionOperador(monto, saldoDisponible, reservaDestinoSeleccionada, moneda) {
   if (!reservaDestinoSeleccionada) {
     return "Elegí una reserva destino antes de confirmar.";
   }
@@ -59,8 +75,9 @@ function validarAplicacionOperador(monto, saldoDisponible, reservaDestinoSelecci
     return "El monto tiene que ser mayor a 0.";
   }
 
-  if (montoNum > saldoDisponible) {
-    return `El monto no puede superar el saldo disponible (${saldoDisponible}).`;
+  const tope = calcularTopeMontoOperador(reservaDestinoSeleccionada, moneda, saldoDisponible);
+  if (montoNum > tope) {
+    return `El monto no puede superar ${tope} (lo que debe esta reserva, o el saldo disponible).`;
   }
 
   return null;
@@ -163,50 +180,84 @@ test("calcularMontoSugerido — cuando la reserva no tiene deuda en la moneda, s
   assert.equal(calcularMontoSugerido(reserva, "USD", 800), 0);
 });
 
+// ─── Tests del tope real (saldo disponible vs. deuda del destino) ────────────
+// Bug corregido: el input solo topeaba contra saldoDisponible, pero el backend
+// (INV-SUPCREDIT-003 / M1) también topea contra la deuda de la reserva elegida.
+// Antes esto dejaba cargar de más y el 409 recién aparecía al confirmar.
+
+test("calcularTopeMontoOperador — sin reserva elegida, el tope es el saldo disponible", () => {
+  assert.equal(calcularTopeMontoOperador(null, "ARS", 1000), 1000);
+});
+
+test("calcularTopeMontoOperador — la deuda del destino es MENOR al saldo: tope = deuda del destino", () => {
+  const reserva = { currencies: [{ currency: "ARS", balance: 300 }] };
+  assert.equal(calcularTopeMontoOperador(reserva, "ARS", 1000), 300);
+});
+
+test("calcularTopeMontoOperador — el saldo disponible es MENOR a la deuda del destino: tope = saldo disponible", () => {
+  const reserva = { currencies: [{ currency: "ARS", balance: 5000 }] };
+  assert.equal(calcularTopeMontoOperador(reserva, "ARS", 1000), 1000);
+});
+
 // ─── Tests de validación del formulario ───────────────────────────────────────
 
 test("validarAplicacionOperador — sin reserva destino devuelve error", () => {
-  const error = validarAplicacionOperador("500", 1000, null);
+  const error = validarAplicacionOperador("500", 1000, null, "ARS");
   assert.ok(error);
   assert.ok(error.includes("Elegí una reserva destino"));
 });
 
 test("validarAplicacionOperador — monto 0 devuelve error", () => {
-  const error = validarAplicacionOperador("0", 1000, { id: "r1" });
+  const reserva = { currencies: [{ currency: "ARS", balance: 1000 }] };
+  const error = validarAplicacionOperador("0", 1000, reserva, "ARS");
   assert.ok(error);
   assert.ok(error.includes("mayor a 0"));
 });
 
 test("validarAplicacionOperador — monto vacío devuelve error", () => {
-  const error = validarAplicacionOperador("", 1000, { id: "r1" });
+  const reserva = { currencies: [{ currency: "ARS", balance: 1000 }] };
+  const error = validarAplicacionOperador("", 1000, reserva, "ARS");
   assert.ok(error);
 });
 
 test("validarAplicacionOperador — monto negativo devuelve error", () => {
-  const error = validarAplicacionOperador("-100", 1000, { id: "r1" });
+  const reserva = { currencies: [{ currency: "ARS", balance: 1000 }] };
+  const error = validarAplicacionOperador("-100", 1000, reserva, "ARS");
   assert.ok(error);
   assert.ok(error.includes("mayor a 0"));
 });
 
-test("validarAplicacionOperador — monto mayor al saldo disponible devuelve error", () => {
-  const error = validarAplicacionOperador("1500", 1000, { id: "r1" });
+test("validarAplicacionOperador — monto mayor al saldo disponible (y la deuda alcanza) devuelve error", () => {
+  const reserva = { currencies: [{ currency: "ARS", balance: 5000 }] };
+  const error = validarAplicacionOperador("1500", 1000, reserva, "ARS");
   assert.ok(error);
-  assert.ok(error.includes("saldo disponible"));
   assert.ok(error.includes("1000"));
 });
 
-test("validarAplicacionOperador — monto igual al saldo disponible es válido", () => {
-  const error = validarAplicacionOperador("1000", 1000, { id: "r1" });
+test("validarAplicacionOperador — monto mayor a la deuda del destino (aunque sobre saldo) devuelve error", () => {
+  // Regresión del bug: hay saldo de sobra (1000) pero la reserva solo debe 300.
+  const reserva = { currencies: [{ currency: "ARS", balance: 300 }] };
+  const error = validarAplicacionOperador("500", 1000, reserva, "ARS");
+  assert.ok(error);
+  assert.ok(error.includes("300"));
+  assert.ok(error.includes("esta reserva"));
+});
+
+test("validarAplicacionOperador — monto igual al saldo disponible es válido (la deuda alcanza)", () => {
+  const reserva = { currencies: [{ currency: "ARS", balance: 1000 }] };
+  const error = validarAplicacionOperador("1000", 1000, reserva, "ARS");
   assert.equal(error, null);
 });
 
 test("validarAplicacionOperador — monto menor al saldo disponible es válido", () => {
-  const error = validarAplicacionOperador("500", 1000, { id: "r1" });
+  const reserva = { currencies: [{ currency: "ARS", balance: 1000 }] };
+  const error = validarAplicacionOperador("500", 1000, reserva, "ARS");
   assert.equal(error, null);
 });
 
 test("validarAplicacionOperador — string numérico con decimales es válido", () => {
-  const error = validarAplicacionOperador("99.99", 1000, { id: "r1" });
+  const reserva = { currencies: [{ currency: "ARS", balance: 1000 }] };
+  const error = validarAplicacionOperador("99.99", 1000, reserva, "ARS");
   assert.equal(error, null);
 });
 

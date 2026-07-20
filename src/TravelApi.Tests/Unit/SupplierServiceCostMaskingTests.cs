@@ -10,6 +10,7 @@ using Moq;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Services;
 using Xunit;
@@ -410,7 +411,9 @@ public class SupplierServiceCostMaskingTests
             .FirstAsync(r => r.NumeroReserva == "F-2026-MASK")).PublicId.ToString();
         var request = new SupplierPaymentRequest(999m, "Transfer", null, null, reservaPublicId, null, Currency: "USD");
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        // (2026-07-18) Tanda 1 pantalla-motor: este rechazo ahora es SupplierPaymentValidationException
+        // (antes InvalidOperationException "a secas").
+        var ex = await Assert.ThrowsAsync<SupplierPaymentValidationException>(
             () => service.AddSupplierPaymentAsync(supplier.Id, request, CancellationToken.None));
 
         // El mensaje NO debe revelar montos de deuda/costo al caller sin see_cost.
@@ -429,12 +432,12 @@ public class SupplierServiceCostMaskingTests
             .FirstAsync(r => r.NumeroReserva == "F-2026-MASK")).PublicId.ToString();
         var request = new SupplierPaymentRequest(999m, "Transfer", null, null, reservaPublicId, null, Currency: "USD");
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        var ex = await Assert.ThrowsAsync<SupplierPaymentValidationException>(
             () => service.AddSupplierPaymentAsync(supplier.Id, request, CancellationToken.None));
 
-        // ADR-017 F1b: el mensaje de error es generico para TODOS (incluso con see_cost),
-        // porque SuppliersController lo traduce a un mensaje HTTP generico. El masking real de
-        // montos vive en los DTOs de la cuenta del proveedor, no en los mensajes de error.
+        // ADR-017 F1b: el mensaje de error es el MISMO texto para TODOS (con o sin see_cost) porque nunca
+        // incluyo montos de entrada — el masking real de montos vive en los DTOs de la cuenta del
+        // proveedor, no hace falta variar el mensaje de error segun el permiso.
         Assert.DoesNotContain("100", ex.Message);
         Assert.Contains("no coincide", ex.Message);
     }

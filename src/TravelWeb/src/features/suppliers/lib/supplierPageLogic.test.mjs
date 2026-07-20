@@ -9,6 +9,8 @@ import {
     aplanarReembolsosPendientesPorMoneda,
     validarFormularioReembolsoRecibido,
     construirTextoCuentaReembolso,
+    filtrarServiciosPorMonedaDePago,
+    hayServiciosDelProveedorEnReserva,
 } from "./supplierPageLogic.js";
 
 // ─── resolverMonedaPrincipalProveedor ────────────────────────────────────────
@@ -807,5 +809,68 @@ describe("validarFormularioReembolsoRecibido", () => {
             fecha: "2026-07-01",
         });
         assert.equal(mensaje, null);
+    });
+});
+
+// ─── filtrarServiciosPorMonedaDePago (Tanda 1, contrato pantalla-motor, 2026-07-18) ──────
+// Pre-chequeo (a): el selector de servicio solo lista los que coinciden con la moneda del pago.
+
+describe("filtrarServiciosPorMonedaDePago", () => {
+    it("devuelve solo los servicios en la moneda del pago", () => {
+        const servicios = [
+            { publicId: "s1", currency: "USD" },
+            { publicId: "s2", currency: "ARS" },
+            { publicId: "s3", currency: "USD" },
+        ];
+        const resultado = filtrarServiciosPorMonedaDePago(servicios, "USD");
+        assert.deepEqual(resultado.map((s) => s.publicId), ["s1", "s3"]);
+    });
+
+    it("trata currency null/vacío como ARS (servicios legacy, ADR-021 §15.4)", () => {
+        const servicios = [
+            { publicId: "s1", currency: null },
+            { publicId: "s2", currency: "" },
+            { publicId: "s3", currency: "USD" },
+        ];
+        const resultado = filtrarServiciosPorMonedaDePago(servicios, "ARS");
+        assert.deepEqual(resultado.map((s) => s.publicId), ["s1", "s2"]);
+    });
+
+    it("si cambia la moneda del pago, la lista se recalcula sola (misma entrada, otra moneda)", () => {
+        const servicios = [
+            { publicId: "s1", currency: "USD" },
+            { publicId: "s2", currency: "ARS" },
+        ];
+        assert.deepEqual(filtrarServiciosPorMonedaDePago(servicios, "USD").map((s) => s.publicId), ["s1"]);
+        assert.deepEqual(filtrarServiciosPorMonedaDePago(servicios, "ARS").map((s) => s.publicId), ["s2"]);
+    });
+
+    it("devuelve vacío cuando ningún servicio matchea la moneda", () => {
+        const servicios = [{ publicId: "s1", currency: "ARS" }];
+        assert.deepEqual(filtrarServiciosPorMonedaDePago(servicios, "USD"), []);
+    });
+
+    it("no rompe con entrada null/undefined", () => {
+        assert.deepEqual(filtrarServiciosPorMonedaDePago(null, "ARS"), []);
+        assert.deepEqual(filtrarServiciosPorMonedaDePago(undefined, "ARS"), []);
+    });
+});
+
+// ─── hayServiciosDelProveedorEnReserva (Tanda 1, contrato pantalla-motor, 2026-07-18) ────
+// Pre-chequeo (b): avisar ANTES de confirmar si la reserva elegida no tiene ningún
+// servicio de este proveedor (mismo caso que el backend rechazaba con un 409 tardío).
+
+describe("hayServiciosDelProveedorEnReserva", () => {
+    it("true cuando hay al menos un servicio", () => {
+        assert.equal(hayServiciosDelProveedorEnReserva([{ publicId: "s1" }]), true);
+    });
+
+    it("false cuando la lista está vacía", () => {
+        assert.equal(hayServiciosDelProveedorEnReserva([]), false);
+    });
+
+    it("false con null/undefined (todavía no cargó o no hay reserva elegida)", () => {
+        assert.equal(hayServiciosDelProveedorEnReserva(null), false);
+        assert.equal(hayServiciosDelProveedorEnReserva(undefined), false);
     });
 });

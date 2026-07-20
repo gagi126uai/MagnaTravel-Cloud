@@ -114,6 +114,22 @@ export function UsarSaldoOperadorInline({
     setMonto(String(montoSugerido > 0 ? montoSugerido : saldoDisponible));
   }, [moneda, saldoDisponible]);
 
+  // Deuda de la reserva ELEGIDA en la moneda de la ficha (0 si todavía no se eligió ninguna).
+  // La usamos para el tope real del monto: el backend nunca deja aplicar más de lo que esa
+  // reserva debe, aunque el saldo a favor disponible sea mayor (si no, el saldo queda "atrapado").
+  const deudaDestinoSeleccionada = useMemo(() => {
+    if (!reservaDestinoSeleccionada) return 0;
+    const lineaMoneda = (reservaDestinoSeleccionada.currencies ?? []).find((c) => c.currency === moneda);
+    return lineaMoneda ? (lineaMoneda.balance ?? 0) : 0;
+  }, [reservaDestinoSeleccionada, moneda]);
+
+  // Tope real del monto a aplicar: el menor entre el saldo a favor disponible y la deuda
+  // de la reserva elegida. Antes el input solo topeaba contra saldoDisponible, lo que dejaba
+  // cargar de más y el backend lo rechazaba recién al confirmar (409 tardío).
+  const topeMonto = reservaDestinoSeleccionada
+    ? Math.min(saldoDisponible, deudaDestinoSeleccionada)
+    : saldoDisponible;
+
   // Filtra las reservas según el texto del buscador (client-side, sin nueva llamada).
   const reservasFiltradas = useMemo(() => {
     if (!busquedaReserva.trim()) return reservasConDeuda;
@@ -139,9 +155,11 @@ export function UsarSaldoOperadorInline({
       setErrorValidacion("El monto tiene que ser mayor a 0.");
       return;
     }
-    if (montoNum > saldoDisponible) {
+    // Tope real = lo menor entre el saldo disponible y la deuda de la reserva elegida
+    // (mismo criterio que valida el backend en ApplyCreditAsync, INV-SUPCREDIT-003 / M1).
+    if (montoNum > topeMonto) {
       setErrorValidacion(
-        `El monto no puede superar el saldo disponible (${formatCurrency(saldoDisponible, moneda)}).`
+        `El monto no puede superar ${formatCurrency(topeMonto, moneda)} (lo que debe esta reserva, o el saldo disponible).`
       );
       return;
     }
@@ -374,7 +392,7 @@ export function UsarSaldoOperadorInline({
         >
           Monto a aplicar
           <span className="ml-1 font-normal text-slate-400">
-            (máx. {formatCurrency(saldoDisponible, moneda)})
+            (máx. {formatCurrency(topeMonto, moneda)})
           </span>
         </label>
         <input
@@ -382,7 +400,7 @@ export function UsarSaldoOperadorInline({
           type="number"
           step="0.01"
           min="0.01"
-          max={saldoDisponible}
+          max={topeMonto}
           value={monto}
           onChange={(e) => {
             setMonto(e.target.value);

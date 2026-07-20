@@ -374,13 +374,18 @@ public class SuppliersController : ControllerBase
         {
             return NotFound();
         }
-        catch (ArgumentException)
+        // Antes estos dos catch eran ArgumentException/InvalidOperationException "a secas": propagaban el
+        // mensaje real de negocio (moneda equivocada, cargo ya liquidado, servicio de otro operador, etc),
+        // PERO de paso tambien atrapaban sin querer cualquier excepcion de esos mismos tipos que viniera de
+        // un bug de framework, con mensaje en ingles o con internals. Ahora SupplierService lanza una
+        // excepcion PROPIA del circuito (SupplierPaymentValidationException) para sus validaciones de
+        // negocio, y este catch atrapa SOLO esa: cualquier otro Argument/InvalidOperationException real de
+        // framework ya NO cae aca, sigue de largo y el GlobalExceptionHandler lo convierte en el generico
+        // amigable (2026-07-18, Tanda 1 del plan de remediacion pantalla-motor — fix del mecanismo tras
+        // review backend + data-exposure).
+        catch (SupplierPaymentValidationException ex)
         {
-            return BadRequest(new { message = "No se pudo registrar el pago al proveedor." });
-        }
-        catch (InvalidOperationException)
-        {
-            return BadRequest(new { message = "No se pudo registrar el pago al proveedor." });
+            return BadRequest(new { message = ex.Message });
         }
         catch (BusinessInvariantViolationException ex)
         {
@@ -403,13 +408,20 @@ public class SuppliersController : ControllerBase
         {
             return NotFound();
         }
-        catch (ArgumentException)
+        // Mismo criterio que AddSupplierPayment de arriba: catch especifico de la excepcion de negocio del
+        // circuito, no un Argument/InvalidOperationException ancho (Tanda 1 del plan de remediacion
+        // pantalla-motor, 2026-07-18).
+        catch (SupplierPaymentValidationException ex)
         {
-            return BadRequest(new { message = "No se pudo actualizar el pago al proveedor." });
+            return BadRequest(new { message = ex.Message });
         }
-        catch (InvalidOperationException)
+        // N1 (review backend, 2026-07-18): UpdateSupplierPaymentAsync tambien puede rechazar por el
+        // invariante "un pago que liquida un cargo del operador es inmutable en lo economico" (ver
+        // INV-ADR044-SUPPLIER-SETTLEMENT-IMMUTABLE). AddSupplierPayment ya mapea BusinessInvariantViolationException
+        // a 409; faltaba la misma simetria aca.
+        catch (BusinessInvariantViolationException ex)
         {
-            return BadRequest(new { message = "No se pudo actualizar el pago al proveedor." });
+            return Conflict(new { message = ex.Message });
         }
     }
 
@@ -428,7 +440,12 @@ public class SuppliersController : ControllerBase
         {
             return NotFound();
         }
-        catch (InvalidOperationException ex)
+        // Mismo mecanismo que Add/Update (2026-07-18, Tanda 1): catch especifico de la excepcion de negocio
+        // del circuito, no un InvalidOperationException ancho. Se mantiene el status 409 que ya tenia este
+        // endpoint (a diferencia de Add/Update que usan 400): borrar un pago que esta aplicado a una factura
+        // es un conflicto con el ESTADO actual del pago, no un dato invalido en el request — no se toco esa
+        // semantica, solo el tipo de excepcion que se atrapa.
+        catch (SupplierPaymentValidationException ex)
         {
             return Conflict(new { message = ex.Message });
         }

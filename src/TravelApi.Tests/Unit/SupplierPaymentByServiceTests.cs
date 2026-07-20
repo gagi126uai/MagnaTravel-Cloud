@@ -10,6 +10,7 @@ using Moq;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Services;
@@ -287,7 +288,10 @@ public class SupplierPaymentByServiceTests
         var hotelOfB = await AddConfirmedHotelAsync(context, supplierB.Id, reserva.Id, netCost: 1000m);
 
         var service = CreateService(context);
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // (2026-07-18) Tanda 1 pantalla-motor: SupplierService ahora lanza la excepcion propia del circuito
+        // (SupplierPaymentValidationException), que hereda de InvalidOperationException pero xUnit exige
+        // tipo EXACTO en Assert.ThrowsAsync<T>, asi que el test se actualiza al tipo nuevo.
+        await Assert.ThrowsAsync<SupplierPaymentValidationException>(() =>
             service.AddSupplierPaymentAsync(
                 supplierA.Id, PaymentToService(500m, reserva, ServicePaymentRecordKinds.Hotel, hotelOfB.PublicId), CancellationToken.None));
     }
@@ -305,7 +309,7 @@ public class SupplierPaymentByServiceTests
 
         var service = CreateService(context);
         // Imputamos a reservaA pero apuntando a un servicio que vive en reservaB.
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAsync<SupplierPaymentValidationException>(() =>
             service.AddSupplierPaymentAsync(
                 supplier.Id, PaymentToService(300m, reservaA, ServicePaymentRecordKinds.Hotel, hotelInB.PublicId), CancellationToken.None));
     }
@@ -318,14 +322,14 @@ public class SupplierPaymentByServiceTests
         var reserva = await AddReservaAsync(context, "F-009");
         var hotel = await AddConfirmedHotelAsync(context, supplier.Id, reserva.Id, netCost: 1000m);
 
-        // Pago con ServicePublicId pero SIN ReservaId -> ArgumentException (un servicio vive dentro de una reserva).
+        // Pago con ServicePublicId pero SIN ReservaId -> rechazo de negocio (un servicio vive dentro de una reserva).
         var badRequest = new SupplierPaymentRequest(
             Amount: 500m, Method: "Transfer", Reference: null, Notes: null,
             ReservaId: null, ServicioReservaId: null, IsAdvanceToAccount: false,
             ServiceRecordKind: ServicePaymentRecordKinds.Hotel, ServicePublicId: hotel.PublicId.ToString());
 
         var service = CreateService(context);
-        await Assert.ThrowsAsync<ArgumentException>(() =>
+        await Assert.ThrowsAsync<SupplierPaymentValidationException>(() =>
             service.AddSupplierPaymentAsync(supplier.Id, badRequest, CancellationToken.None));
     }
 
@@ -343,7 +347,7 @@ public class SupplierPaymentByServiceTests
             ServiceRecordKind: "no-existe", ServicePublicId: hotel.PublicId.ToString());
 
         var service = CreateService(context);
-        await Assert.ThrowsAsync<ArgumentException>(() =>
+        await Assert.ThrowsAsync<SupplierPaymentValidationException>(() =>
             service.AddSupplierPaymentAsync(supplier.Id, badRequest, CancellationToken.None));
     }
 
@@ -365,7 +369,7 @@ public class SupplierPaymentByServiceTests
 
         var service = CreateService(context);
         // Pago en ARS imputado al servicio USD -> rechazado por moneda (no por tope de reserva: hay deuda ARS).
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAsync<SupplierPaymentValidationException>(() =>
             service.AddSupplierPaymentAsync(
                 supplier.Id,
                 PaymentToService(1000m, reserva, ServicePaymentRecordKinds.Hotel, usdHotel.PublicId, currency: null),

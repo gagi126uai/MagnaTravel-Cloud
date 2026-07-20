@@ -40,6 +40,8 @@ import {
     resolverMonedaPrincipalProveedor,
     calcularEquivalenteProveedor,
     construirPayloadPagoProveedor,
+    filtrarServiciosPorMonedaDePago,
+    hayServiciosDelProveedorEnReserva,
 } from "../lib/supplierPageLogic";
 import { OWNER_TYPE, ACCOUNT_TYPE, resolverCuentaPrincipalPorMoneda } from "../../bank-accounts/lib/bankAccountLogic";
 
@@ -311,62 +313,33 @@ function RecuadroDatosTransferencia({ supplierId, monedaPago }) {
 
 // ─── Selector de servicio de una reserva ─────────────────────────────────────
 
+// Mapeo de tipo (backend en español) → recordKind (string que manda el frontend al backend)
+function tipoARecordKind(tipo) {
+    const mapa = { "Hotel": "hotel", "Vuelo": "flight", "Aereo": "flight", "Traslado": "transfer", "Paquete": "package", "Asistencia": "assistance" };
+    return mapa[tipo] || "generic";
+}
+
 /**
  * Permite imputar un pago a un servicio concreto de una reserva del proveedor.
- * Carga los servicios del proveedor y filtra por la reserva elegida (client-side).
- * Solo aparece cuando el usuario ya seleccionó una reserva.
+ * Componente de presentación puro: la carga de servicios y el filtro por moneda del
+ * pago (pre-chequeo (a) de la Tanda 1) viven en el padre `PagarProveedorInline`, porque
+ * ese mismo dato también decide si se muestra el aviso "esta reserva no tiene servicios
+ * de este proveedor" (pre-chequeo (b)) — cargarlo una sola vez evita pedidos duplicados.
+ *
+ * Si `servicios` llega vacío (después del filtro por moneda) pero SÍ hay servicios de
+ * este proveedor en la reserva en OTRA moneda, se lo decimos: no es el mismo caso que
+ * "esta reserva no tiene servicios de este proveedor" (ese lo bloquea el padre).
  */
-function SelectorServicioImputacion({ supplierId, reservaSeleccionada, servicioSeleccionado, onServicioChange }) {
-    const [servicios, setServicios] = useState([]);
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState(null);
-
-    useEffect(() => {
-        if (!supplierId || !reservaSeleccionada?.reservaPublicId) {
-            setServicios([]);
-            return;
-        }
-
-        let cancelled = false;
-        setLoading(true);
-        setError(null);
-
-        // Buscamos por número de reserva para reducir el resultado, luego filtramos por publicId.
-        const params = new URLSearchParams({ pageSize: "100", sortBy: "date", sortDir: "asc" });
-        if (reservaSeleccionada.numeroReserva) {
-            params.set("search", reservaSeleccionada.numeroReserva);
-        }
-
-        api.get(`/suppliers/${supplierId}/account/services?${params.toString()}`)
-            .then((response) => {
-                if (cancelled) return;
-                const items = response?.items || [];
-                // Filtro client-side: solo los servicios de ESTA reserva concreta
-                const deEstaReserva = items.filter(
-                    (s) => String(s.reservaPublicId || "").toLowerCase() ===
-                           String(reservaSeleccionada.reservaPublicId || "").toLowerCase()
-                );
-                setServicios(deEstaReserva);
-            })
-            .catch((err) => {
-                if (cancelled) return;
-                console.warn("[SelectorServicioImputacion] Error cargando servicios:", err?.message);
-                setError("No se pudieron cargar los servicios de esta reserva.");
-            })
-            .finally(() => { if (!cancelled) setLoading(false); });
-
-        return () => { cancelled = true; };
-    }, [supplierId, reservaSeleccionada?.reservaPublicId, reservaSeleccionada?.numeroReserva]);
-
-    // Mapeo de tipo (backend en español) → recordKind (string que manda el frontend al backend)
-    function tipoARecordKind(tipo) {
-        const mapa = { "Hotel": "hotel", "Vuelo": "flight", "Aereo": "flight", "Traslado": "transfer", "Paquete": "package", "Asistencia": "assistance" };
-        return mapa[tipo] || "generic";
+function SelectorServicioImputacion({ servicios, hayServiciosEnOtraMoneda, servicioSeleccionado, onServicioChange }) {
+    if (servicios.length === 0) {
+        return (
+            <div className="text-xs text-muted-foreground italic">
+                {hayServiciosEnOtraMoneda
+                    ? "Este proveedor no tiene servicios en esta reserva en la moneda del pago."
+                    : "Este proveedor no tiene servicios en esta reserva."}
+            </div>
+        );
     }
-
-    if (loading) return <div className="text-xs text-muted-foreground italic">Cargando servicios…</div>;
-    if (error) return <div className="text-xs text-amber-600 dark:text-amber-400">{error}</div>;
-    if (servicios.length === 0) return <div className="text-xs text-muted-foreground italic">Este proveedor no tiene servicios en esta reserva.</div>;
 
     return (
         <div className="space-y-1">
@@ -521,6 +494,84 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
         setServicioSeleccionado(null);
     }, [reservaSeleccionada]);
 
+    // ── Servicios del proveedor en la reserva elegida (Tanda 1, 2026-07-18) ────────────
+    // Se cargan ACÁ (no dentro del selector de servicio) porque el mismo dato alimenta
+    // DOS pre-chequeos a la vez:
+    //   (a) el selector de servicio filtra por la moneda del pago (filtrarServiciosPorMonedaDePago)
+    //   (b) si la reserva no tiene NINGÚN servicio de este proveedor, se avisa antes de
+    //       habilitar "Confirmar" (hayServiciosDelProveedorEnReserva)
+    // Sin esto habría que duplicar el pedido al backend o levantar el estado del hijo,
+    // que es más frágil.
+    const [serviciosReserva, setServiciosReserva] = useState([]);
+    const [serviciosReservaLoading, setServiciosReservaLoading] = useState(false);
+    const [serviciosReservaError, setServiciosReservaError] = useState(null);
+
+    useEffect(() => {
+        if (!supplierId || !reservaSeleccionada?.reservaPublicId) {
+            setServiciosReserva([]);
+            setServiciosReservaError(null);
+            return;
+        }
+
+        let cancelled = false;
+        setServiciosReservaLoading(true);
+        setServiciosReservaError(null);
+
+        // Buscamos por número de reserva para reducir el resultado, luego filtramos por publicId.
+        const params = new URLSearchParams({ pageSize: "100", sortBy: "date", sortDir: "asc" });
+        if (reservaSeleccionada.numeroReserva) {
+            params.set("search", reservaSeleccionada.numeroReserva);
+        }
+
+        api.get(`/suppliers/${supplierId}/account/services?${params.toString()}`)
+            .then((response) => {
+                if (cancelled) return;
+                const items = response?.items || [];
+                // Filtro client-side: solo los servicios de ESTA reserva concreta (todas las monedas)
+                const deEstaReserva = items.filter(
+                    (s) => String(s.reservaPublicId || "").toLowerCase() ===
+                           String(reservaSeleccionada.reservaPublicId || "").toLowerCase()
+                );
+                setServiciosReserva(deEstaReserva);
+            })
+            .catch((err) => {
+                if (cancelled) return;
+                console.warn("[PagarProveedorInline] Error cargando servicios de la reserva:", err?.message);
+                setServiciosReservaError("No se pudieron cargar los servicios de esta reserva.");
+            })
+            .finally(() => { if (!cancelled) setServiciosReservaLoading(false); });
+
+        return () => { cancelled = true; };
+    }, [supplierId, reservaSeleccionada?.reservaPublicId, reservaSeleccionada?.numeroReserva]);
+
+    // Pre-chequeo (b): reserva elegida sin NINGÚN servicio de este proveedor.
+    // Solo lo afirmamos cuando terminó de cargar sin error (mientras carga, no mostramos
+    // el aviso para no asustar al vendedor con un "no tiene servicios" que todavía no se sabe).
+    const reservaSinServiciosDelProveedor =
+        Boolean(reservaSeleccionada) &&
+        !serviciosReservaLoading &&
+        !serviciosReservaError &&
+        !hayServiciosDelProveedorEnReserva(serviciosReserva);
+
+    // Pre-chequeo (a): el selector de servicio solo lista los que están en la moneda del pago.
+    // Se recalcula solo cada vez que monedaPago cambia (el link "pagar en otra moneda").
+    const serviciosFiltradosPorMoneda = filtrarServiciosPorMonedaDePago(serviciosReserva, monedaPago);
+
+    // Si el cajero cambia la moneda del pago y el servicio que tenía elegido queda fuera
+    // de la lista filtrada, lo deseleccionamos. Sin esto, el payload podría mandar un
+    // servicio cuya moneda ya NO coincide con la del pago — justo el error #5 del backend
+    // ("La moneda del pago no coincide con la del costo del servicio") que este pre-chequeo
+    // existe para evitar. Deps: solo monedaPago (no serviciosFiltradosPorMoneda, que es un
+    // array nuevo en cada render y dispararía el efecto todo el tiempo).
+    useEffect(() => {
+        if (!servicioSeleccionado) return;
+        const sigueDisponible = serviciosFiltradosPorMoneda.some(
+            (s) => String(s.publicId) === servicioSeleccionado.servicePublicId
+        );
+        if (!sigueDisponible) setServicioSeleccionado(null);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [monedaPago]);
+
     // Un pago cruza de moneda si el cajero elige pagar en una moneda distinta al saldo imputado.
     // En ese caso hay que informar el tipo de cambio para convertir correctamente.
     const esCruzado = mostrarOtraMoneda && monedaPago !== saldoImputado;
@@ -577,6 +628,13 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
         }
         if (!esEdicion && camposIncompletosParaCruzado) {
             setErrorGuardar("Para pagos cruzados tenés que completar el tipo de cambio y la fecha.");
+            return;
+        }
+        // Defensa en profundidad: el botón ya queda deshabilitado en este caso (pre-chequeo (b),
+        // Tanda 1), pero repetimos la validación acá por si el estado cambió mientras la ficha
+        // estaba abierta (ej. otra pestaña canceló el último servicio de esa reserva).
+        if (reservaSinServiciosDelProveedor) {
+            setErrorGuardar("Esta reserva no tiene servicios de este proveedor para imputar el pago.");
             return;
         }
 
@@ -951,17 +1009,39 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
                                         <option disabled>— No hay reservas con deuda —</option>
                                     )}
                                 </select>
+
+                                {/* Pre-chequeo (b), Tanda 1 (2026-07-18): aviso ANTES de habilitar
+                                    "Confirmar" si la reserva elegida no tiene ningún servicio de
+                                    este proveedor. Mismo lugar donde van el resto de los avisos
+                                    de la ficha (ej. "El monto tiene que ser mayor a 0"). */}
+                                {reservaSinServiciosDelProveedor && (
+                                    <p
+                                        className="text-xs text-amber-600 dark:text-amber-400"
+                                        role="alert"
+                                        data-testid="pago-reserva-sin-servicios"
+                                    >
+                                        Esta reserva no tiene servicios de este proveedor para imputar el pago.
+                                    </p>
+                                )}
                             </div>
                         )}
 
-                        {/* Selector de servicio: aparece solo cuando el usuario eligió una reserva */}
-                        {reservaSeleccionada && (
-                            <SelectorServicioImputacion
-                                supplierId={supplierId}
-                                reservaSeleccionada={reservaSeleccionada}
-                                servicioSeleccionado={servicioSeleccionado}
-                                onServicioChange={setServicioSeleccionado}
-                            />
+                        {/* Selector de servicio: aparece solo cuando el usuario eligió una reserva
+                            que SÍ tiene servicios de este proveedor. Si no tiene ninguno, ya se
+                            avisó arriba y no hay nada para elegir. */}
+                        {reservaSeleccionada && !reservaSinServiciosDelProveedor && (
+                            serviciosReservaLoading ? (
+                                <div className="text-xs text-muted-foreground italic">Cargando servicios…</div>
+                            ) : serviciosReservaError ? (
+                                <div className="text-xs text-amber-600 dark:text-amber-400">{serviciosReservaError}</div>
+                            ) : (
+                                <SelectorServicioImputacion
+                                    servicios={serviciosFiltradosPorMoneda}
+                                    hayServiciosEnOtraMoneda={serviciosReserva.length > 0}
+                                    servicioSeleccionado={servicioSeleccionado}
+                                    onServicioChange={setServicioSeleccionado}
+                                />
+                            )
                         )}
                     </div>
                 )}
@@ -989,7 +1069,7 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
                     </button>
                     <button
                         type="submit"
-                        disabled={saving || (!esEdicion && camposIncompletosParaCruzado)}
+                        disabled={saving || (!esEdicion && camposIncompletosParaCruzado) || reservaSinServiciosDelProveedor}
                         className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 shadow-sm transition-colors disabled:opacity-50 flex items-center gap-2"
                         data-testid="pago-confirmar"
                     >
