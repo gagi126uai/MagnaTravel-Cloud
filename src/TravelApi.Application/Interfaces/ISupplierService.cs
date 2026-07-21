@@ -16,6 +16,13 @@ public interface ISupplierService
     Task<PagedResponse<SupplierAccountServiceListItemDto>> GetSupplierAccountServicesAsync(int id, SupplierAccountServicesQuery query, CancellationToken cancellationToken);
     Task<PagedResponse<SupplierPaymentDto>> GetSupplierAccountPaymentsAsync(int id, SupplierAccountPaymentsQuery query, CancellationToken cancellationToken);
     Task<Guid> AddSupplierPaymentAsync(int id, SupplierPaymentRequest request, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Rediseno "Registrar pago" (2026-07-20): a donde impacto un pago recien registrado (reserva/servicio
+    /// imputado + saldo restante recalculado), para el cartel de exito de la pantalla. Se llama DESPUES de
+    /// <see cref="AddSupplierPaymentAsync"/>, con el PublicId que devolvio esa llamada.
+    /// </summary>
+    Task<SupplierPaymentImpactDto> GetSupplierPaymentImpactAsync(int id, Guid paymentPublicId, CancellationToken cancellationToken);
     Task UpdateSupplierPaymentAsync(int id, int paymentId, SupplierPaymentRequest request, CancellationToken cancellationToken);
     Task DeleteSupplierPaymentAsync(int id, int paymentId, CancellationToken cancellationToken);
     Task<IEnumerable<SupplierPaymentDto>> GetSupplierPaymentsHistoryAsync(int id, CancellationToken cancellationToken);

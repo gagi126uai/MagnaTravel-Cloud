@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
+using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Infrastructure.Persistence;
@@ -219,5 +220,38 @@ public sealed class SupplierAccountEmptyCurrencyIntegrationTests
 
         var arsBalance = Assert.Single(overview.BalancesByCurrency, b => b.Currency == "ARS");
         Assert.Equal(1000m, arsBalance.ConfirmedPurchases);
+    }
+
+    /// <summary>
+    /// Rediseno "Registrar pago" (2026-07-20, backend Tanda unica, punto 5.2.4 del analisis): la linea del
+    /// PAGO en el extracto ahora lleva ademas <c>ReservaNumero</c>, para que se pueda ver "a que reserva bajo
+    /// esta plata" sin tener que ir a comparar saldos a mano. Prueba contra Postgres REAL (no InMemory) porque
+    /// este circuito ya tuvo un bug de agregacion con Postgres que InMemory no reproducia.
+    /// </summary>
+    [Fact]
+    public async Task ExtractoDeLaCuentaCorriente_LineaDePago_LlevaElNumeroDeLaReservaImputada()
+    {
+        var (supplierId, reservaSanaPublicId) = await SeedSupplierWithLegacyAndSaneReservaAsync(legacyCurrency: null);
+
+        await using (var writeCtx = _fixture.CreateDbContext())
+        {
+            var writerService = BuildServiceWithCostVisibility(writeCtx);
+            var request = new SupplierPaymentRequest(
+                Amount: 800m, Method: "Transfer", Reference: null, Notes: null,
+                ReservaId: reservaSanaPublicId.ToString(), ServicioReservaId: null, IsAdvanceToAccount: false,
+                Currency: "USD");
+            await writerService.AddSupplierPaymentAsync(supplierId, request, CancellationToken.None);
+        }
+
+        await using var readCtx = _fixture.CreateDbContext();
+        var readerService = BuildServiceWithCostVisibility(readCtx);
+        var statement = await readerService.GetSupplierAccountStatementAsync(supplierId, CancellationToken.None);
+
+        var usdBlock = Assert.Single(statement.Currencies, block => block.Currency == "USD");
+        var paymentLine = Assert.Single(usdBlock.Lines, line => line.Credit == 800m);
+
+        Assert.Equal("F-2026-SANA", paymentLine.ReservaNumero);
+        // Este pago no se imputo a un servicio puntual (fue a nivel reserva): sin descripcion de servicio.
+        Assert.Null(paymentLine.ServicioDescripcion);
     }
 }

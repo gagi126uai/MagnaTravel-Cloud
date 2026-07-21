@@ -393,3 +393,175 @@ export function validarFormularioReembolsoRecibido({ filaSeleccionada, monto, fe
 
     return null;
 }
+
+// ─── Rediseño "Registrar pago" (2026-07-20): flujo de 2 pasos aprobado por el dueño ──────
+// Spec: docs/architecture/2026-07-20-analisis-cuenta-proveedor-vs-erps.md, sección 5.
+// Paso 1 = elegir A QUÉ reserva/servicio se paga (grilla, no un desplegable escondido al
+// final del formulario). Paso 2 = confirmar monto/método con el destino ya fijado. Estas
+// funciones son las que arman los datos de esos dos pasos:
+//   - armarFilasDeudaPorReserva / agruparServiciosPorReserva / construirDetalleFilaDeuda:
+//     arman la grilla del Paso 1.
+//   - construirMensajeExitoPago: arma el cartel de éxito de después de guardar, usando
+//     SIEMPRE el `impact` que devuelve el backend (nunca un cálculo hecho a mano acá).
+
+/**
+ * Convierte la respuesta de GET /suppliers/{id}/account/debt-by-reserva (agrupada por
+ * reserva, con una lista de monedas adentro de cada una) en FILAS PLANAS para la grilla
+ * del Paso 1: una fila por cada combinación reserva+moneda que tenga deuda real (> 0).
+ *
+ * Por qué filtramos por saldo > 0: `debt-by-reserva` también puede traer líneas en 0 o
+ * negativas (sobrepago/saldo a favor de esa reserva puntual) — el Paso 1 es "¿qué le debés
+ * a este proveedor?", no un listado general de todos los movimientos.
+ *
+ * FIX review 2026-07-21 (bloqueante frontend-reviewer #2): ese filtro por saldo asumía que
+ * el número que llega SIEMPRE representa la deuda real. Pero sin el permiso
+ * `cobranzas.see_cost`, el backend enmascara `Balance` a 0 en TODAS las líneas por igual
+ * (no solo en las que de verdad están saldadas) — filtrar por `balance > 0` dejaba la
+ * grilla siempre vacía para ese perfil, aunque SÍ hubiera deuda real, y el cajero quedaba
+ * sin poder elegir ninguna reserva (rompía la imputación, no solo la vista de montos).
+ * Con `puedeVerMontos=false` mostramos TODAS las filas igual (la columna "Debe" se pinta
+ * como "—" en el componente) — el backend vuelve a validar la imputación real al confirmar
+ * el pago, así que no hay riesgo de negocio en mostrar de más acá.
+ *
+ * @param {Array<{reservaPublicId:string, numeroReserva?:string, fileName?:string, currencies?:Array<{currency:string, balance:number}>}>} reservasConDeuda
+ * @param {{puedeVerMontos?: boolean}} [opciones] — puedeVerMontos=false desactiva el filtro por saldo (ver arriba)
+ * @returns {Array<{reservaPublicId:string, numeroReserva:string, fileName:string|null, currency:string, balance:number}>}
+ */
+export function armarFilasDeudaPorReserva(reservasConDeuda, { puedeVerMontos = true } = {}) {
+    const filas = [];
+    for (const reserva of Array.isArray(reservasConDeuda) ? reservasConDeuda : []) {
+        const monedas = Array.isArray(reserva?.currencies) ? reserva.currencies : [];
+        for (const linea of monedas) {
+            const balance = Number(linea?.balance ?? 0);
+            // Umbral de medio centavo: mismo criterio que el resto de la pantalla
+            // (ver debeMostrarseEnGrisNeutro) para no mostrar "deuda" por un resto de redondeo.
+            // Sin permiso de ver costos, el número está enmascarado (siempre 0) y no sirve
+            // como filtro — se incluyen todas las combinaciones reserva+moneda que trajo el
+            // backend, sin importar el balance.
+            if (puedeVerMontos && balance <= 0.005) continue;
+            filas.push({
+                reservaPublicId: reserva.reservaPublicId,
+                numeroReserva: reserva.numeroReserva || "Reserva",
+                fileName: reserva.fileName || null,
+                currency: linea.currency,
+                balance,
+            });
+        }
+    }
+    return filas;
+}
+
+/**
+ * Agrupa la lista PLANA de servicios del proveedor (GET /suppliers/{id}/account/services)
+ * por reserva, para poder armar el texto de "Detalle" de cada fila de la grilla del Paso 1
+ * sin pedirle un endpoint nuevo al backend — `debt-by-reserva` solo trae el TOTAL por
+ * moneda, no el desglose por servicio.
+ *
+ * @param {Array<{reservaPublicId?:string, type?:string, description?:string, currency?:string}>} servicios
+ * @returns {Record<string, Array<{type:string, description:string|null, currency:string}>>} mapa reservaPublicId → servicios de esa reserva
+ */
+export function agruparServiciosPorReserva(servicios) {
+    const mapa = {};
+    for (const servicio of Array.isArray(servicios) ? servicios : []) {
+        const clave = servicio?.reservaPublicId ? String(servicio.reservaPublicId) : null;
+        if (!clave) continue; // sin reserva asociada, no aporta al detalle de ninguna fila
+        if (!mapa[clave]) mapa[clave] = [];
+        mapa[clave].push({
+            type: servicio.type || "Servicio",
+            description: servicio.description || null,
+            currency: servicio.currency || "ARS",
+        });
+    }
+    return mapa;
+}
+
+/**
+ * Arma el texto de la columna "Detalle" de una fila de la grilla del Paso 1
+ * (ej. "Hotel — Bariloche"), mirando los servicios de ESA reserva en la MISMA moneda de
+ * la fila. Si hay más de un servicio, se nombra el primero y se suman los demás
+ * ("y 2 más") para no romper el ancho de la grilla. Si no encontramos ningún servicio
+ * (por ejemplo, la deuda viene de un cargo del operador facturado aparte sin servicio
+ * puntual asociado), usamos el nombre de la reserva como respaldo.
+ *
+ * @param {{reservaPublicId:string, currency:string, fileName?:string|null}} fila
+ * @param {Record<string, Array<{type:string, description:string|null, currency:string}>>} serviciosPorReserva
+ * @returns {string}
+ */
+export function construirDetalleFilaDeuda(fila, serviciosPorReserva) {
+    const servicios = (serviciosPorReserva || {})[String(fila?.reservaPublicId)] || [];
+    const enEstaMoneda = servicios.filter((s) => (s.currency || "ARS") === fila?.currency);
+
+    if (enEstaMoneda.length === 0) {
+        return fila?.fileName || "—";
+    }
+
+    const etiquetas = enEstaMoneda.map((s) => (s.description ? `${s.type} — ${s.description}` : s.type));
+    if (etiquetas.length === 1) return etiquetas[0];
+    return `${etiquetas[0]} y ${etiquetas.length - 1} más`;
+}
+
+/**
+ * Arma el mensaje del cartel de éxito que se muestra después de registrar un pago NUEVO
+ * (reemplaza el cierre silencioso que tenía la ficha antes del rediseño). Usa el `impact`
+ * que devuelve el backend en la respuesta del POST — NUNCA recalculamos el saldo restante
+ * acá: si lo hiciéramos a mano, un pago cruzado de moneda o un cargo liquidado aparte
+ * podrían mostrar un número distinto al que el resto de la pantalla ve un segundo después
+ * (el backend recalcula con el mismo motor que "Deuda por reserva").
+ *
+ * Cuatro casos:
+ *   1. Sin `impact` (`null`/`undefined` — no debería pasar en producción, pero el POST YA
+ *      se guardó del lado del servidor cuando esta función se llama): mensaje genérico
+ *      "Pago registrado.". FIX bloqueante (review 2026-07-21, frontend-reviewer +
+ *      security-data-risk-reviewer, convergente): antes esta función devolvía `null` en
+ *      este caso, y el componente interpretaba "sin cartel" como "el pago no se guardó" —
+ *      volvía a mostrar el formulario con el botón "Confirmar pago" habilitado, y como el
+ *      pago "a cuenta" no tiene tope ni idempotencia, un segundo clic generaba un pago
+ *      DUPLICADO real. Ahora esta función SIEMPRE devuelve un mensaje: el pago ya se
+ *      guardó, así que SIEMPRE hay que avisarlo, aunque sea con el texto más genérico.
+ *   2. Pago "a cuenta" (sin reserva imputada, `wasImputedToReserva=false`): mensaje fijo
+ *      de saldo a favor, sin montos (no hay "deuda que bajó" que mostrar).
+ *   3. Pago imputado a una reserva, SIN permiso de ver montos (`amountsVisible=false`):
+ *      solo decimos A QUÉ reserva se pagó, sin números — nunca se muestran montos a
+ *      alguien sin permiso de costo, ni siquiera el que él mismo acaba de escribir.
+ *   4. Pago imputado a una reserva, CON permiso: "Bajó la deuda... en $X" + si queda
+ *      saldo pendiente o la reserva quedó saldada.
+ *
+ * @param {{impact: object|null|undefined, montoImputado: number, monedaImputada: string}} datos
+ * @returns {{tipo: "generico"|"a-cuenta"|"reserva-sin-monto"|"reserva", lineas: string[]}} NUNCA null — el pago ya se guardó, siempre hay algo que avisar
+ */
+export function construirMensajeExitoPago({ impact, montoImputado, monedaImputada }) {
+    if (!impact) {
+        return { tipo: "generico", lineas: ["Pago registrado."] };
+    }
+
+    if (!impact.wasImputedToReserva) {
+        return {
+            tipo: "a-cuenta",
+            lineas: ["Pago registrado como saldo a favor. Podés usarlo en cualquier reserva de este proveedor."],
+        };
+    }
+
+    const nombreReserva = impact.numeroReserva ? `la reserva ${impact.numeroReserva}` : "la reserva";
+    const detalle = impact.servicioDescripcion || impact.fileName || null;
+    const referenciaDestino = detalle ? `${nombreReserva} (${detalle})` : nombreReserva;
+
+    if (!impact.amountsVisible) {
+        return {
+            tipo: "reserva-sin-monto",
+            lineas: [`Pago registrado a ${referenciaDestino}.`],
+        };
+    }
+
+    const montoTexto = formatCurrency(montoImputado, monedaImputada || impact.currency);
+    const quedaSaldada = Math.abs(Number(impact.remainingBalance ?? 0)) < 0.005;
+
+    return {
+        tipo: "reserva",
+        lineas: [
+            `Bajó la deuda de ${referenciaDestino} en ${montoTexto}.`,
+            quedaSaldada
+                ? "Esa reserva queda saldada con este operador."
+                : `Quedan ${formatCurrency(impact.remainingBalance, impact.currency)} pendientes.`,
+        ],
+    };
+}

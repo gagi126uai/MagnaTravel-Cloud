@@ -24,17 +24,20 @@ public class SuppliersController : ControllerBase
     private readonly IEntityReferenceResolver _entityReferenceResolver;
     private readonly ISupplierCreditService _supplierCreditService;
     private readonly IOperatorRefundReadModelService _operatorRefundReadModel;
+    private readonly ILogger<SuppliersController> _logger;
 
     public SuppliersController(
         ISupplierService supplierService,
         IEntityReferenceResolver entityReferenceResolver,
         ISupplierCreditService supplierCreditService,
-        IOperatorRefundReadModelService operatorRefundReadModel)
+        IOperatorRefundReadModelService operatorRefundReadModel,
+        ILogger<SuppliersController> logger)
     {
         _supplierService = supplierService;
         _entityReferenceResolver = entityReferenceResolver;
         _supplierCreditService = supplierCreditService;
         _operatorRefundReadModel = operatorRefundReadModel;
+        _logger = logger;
     }
 
     [HttpGet]
@@ -368,7 +371,26 @@ public class SuppliersController : ControllerBase
         {
             var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
             var paymentPublicId = await _supplierService.AddSupplierPaymentAsync(id, request, cancellationToken);
-            return Ok(new { Message = "Pago registrado correctamente", PaymentPublicId = paymentPublicId });
+
+            // Rediseno "Registrar pago" (2026-07-20, punto 5.2.3 del analisis): el pago YA quedo persistido;
+            // ahora releemos a donde impacto (reserva/servicio + saldo restante recalculado) para que el
+            // cartel de exito de la pantalla pueda decir "bajo la deuda de la reserva 1051 en $X, quedan $Y"
+            // en vez de solo confirmar que se guardo. Aditivo: Message/PaymentPublicId no cambian de forma.
+            //
+            // B1 del review (2026-07-21): esta lectura corre DESPUES del commit. Si fallara, NO puede
+            // convertir un pago ya guardado en una respuesta de error ("volve a intentar" duplicaria la
+            // plata: el alta no tiene clave de idempotencia). Un fallo aca degrada a Impact = null y la
+            // pantalla muestra el exito generico.
+            SupplierPaymentImpactDto? impact = null;
+            try
+            {
+                impact = await _supplierService.GetSupplierPaymentImpactAsync(id, paymentPublicId, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "No se pudo armar el impacto del pago {PaymentPublicId} recien registrado", paymentPublicId);
+            }
+            return Ok(new { Message = "Pago registrado correctamente", PaymentPublicId = paymentPublicId, Impact = impact });
         }
         catch (KeyNotFoundException)
         {

@@ -96,7 +96,18 @@ public readonly record struct SupplierAccountStatementInputLine(
     // PublicId del documento de origen (el servicio comprado o el pago) que origino la linea. El builder no
     // lo interpreta: solo lo arrastra hasta la linea de resultado para que el front cuelgue acciones por
     // renglon (ver el servicio, ver/anular el pago).
-    Guid? SourcePublicId);
+    Guid? SourcePublicId,
+    // ================================================================================================
+    // Tanda backend "Registrar pago" (2026-07-20): a que reserva/servicio bajo la plata de un ABONO
+    // (pago al operador). Van AL FINAL y son OPCIONALES (default null) a proposito: son campos nuevos
+    // que solo poblamos para las lineas de PAGO (ver PaymentLine); las de COMPRA los dejan en null porque
+    // ya llevan la reserva en DocumentRef. Ponerlos al final evita romper los callers existentes que
+    // arman la linea con argumentos posicionales (los tests del builder, por ejemplo).
+    // ================================================================================================
+    /// <summary>Numero de la reserva a la que se imputo el pago. Null si es un anticipo "a cuenta" o si la linea es una compra.</summary>
+    string? ReservaNumero = null,
+    /// <summary>Descripcion del servicio puntual imputado (si el pago se imputo a un servicio, no a toda la reserva). Null en el resto de los casos.</summary>
+    string? ServicioDescripcion = null);
 
 /// <summary>
 /// Una linea del extracto del proveedor YA con su saldo corriente calculado. <see cref="RunningBalance"/>
@@ -112,7 +123,11 @@ public readonly record struct SupplierAccountStatementResultLine(
     decimal Charge,
     decimal Credit,
     decimal RunningBalance,
-    Guid? SourcePublicId);
+    Guid? SourcePublicId,
+    /// <summary>Numero de la reserva a la que se imputo el pago (ver <see cref="SupplierAccountStatementInputLine.ReservaNumero"/>).</summary>
+    string? ReservaNumero = null,
+    /// <summary>Descripcion del servicio puntual imputado (ver <see cref="SupplierAccountStatementInputLine.ServicioDescripcion"/>).</summary>
+    string? ServicioDescripcion = null);
 
 /// <summary>
 /// Un bloque del extracto: todas las lineas de UNA moneda, en orden cronologico, con su saldo de cierre.
@@ -215,7 +230,12 @@ public static class SupplierAccountStatementBuilder
         string description,
         string? documentRef,
         SupplierDebtCalculator.SupplierPaymentInput payment,
-        Guid? sourcePublicId)
+        Guid? sourcePublicId,
+        // Tanda backend "Registrar pago" (2026-07-20): a que reserva/servicio bajo esta plata. Opcionales
+        // (null = anticipo "a cuenta", sin reserva imputada) para no romper a los callers/tests que ya
+        // arman una linea de pago sin estos dos datos nuevos.
+        string? reservaNumero = null,
+        string? servicioDescripcion = null)
         => new(
             Date: date,
             Kind: SupplierAccountStatementLineKinds.Payment,
@@ -224,7 +244,9 @@ public static class SupplierAccountStatementBuilder
             Currency: SupplierDebtCalculator.ImputedCurrencyOf(payment),
             Charge: 0m,
             Credit: SupplierDebtCalculator.ImputedAmountOf(payment),
-            SourcePublicId: sourcePublicId);
+            SourcePublicId: sourcePublicId,
+            ReservaNumero: reservaNumero,
+            ServicioDescripcion: servicioDescripcion);
 
     /// <summary>
     /// Arma el extracto a partir de las lineas planas. Las agrupa por moneda (orden alfabetico estable entre
@@ -289,7 +311,9 @@ public static class SupplierAccountStatementBuilder
                 Charge: line.Charge,
                 Credit: line.Credit,
                 RunningBalance: runningBalance,
-                SourcePublicId: line.SourcePublicId));
+                SourcePublicId: line.SourcePublicId,
+                ReservaNumero: line.ReservaNumero,
+                ServicioDescripcion: line.ServicioDescripcion));
         }
 
         decimal closingBalance = resultLines.Count > 0 ? resultLines[^1].RunningBalance : 0m;

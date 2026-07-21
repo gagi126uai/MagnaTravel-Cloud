@@ -803,9 +803,22 @@ public class SupplierService : ISupplierService
                 payment.Amount,
                 payment.Currency,
                 payment.ImputedCurrency,
-                payment.ImputedAmount
+                payment.ImputedAmount,
+                // (2026-07-20) A que reserva/servicio bajo la plata (5.2.4 del rediseno "Registrar pago").
+                // NumeroReserva viaja SIEMPRE (ver decision de visibilidad en el DTO); ServiceRecordKind +
+                // ServicePublicId son la referencia polimorfica que resolvemos en lote mas abajo.
+                NumeroReserva = payment.Reserva != null ? payment.Reserva.NumeroReserva : null,
+                payment.ServiceRecordKind,
+                payment.ServicePublicId
             })
             .ToListAsync(cancellationToken);
+
+        // (2026-07-20) Resolvemos EN LOTE la descripcion de los servicios imputados de todos los pagos (una
+        // query por tabla de servicio, no una por pago) para no meter un N+1 en extractos largos.
+        var serviceDescriptionKeys = paymentRows
+            .Where(p => !string.IsNullOrWhiteSpace(p.ServiceRecordKind) && p.ServicePublicId.HasValue)
+            .Select(p => (RecordKind: p.ServiceRecordKind!, ServicePublicId: p.ServicePublicId!.Value));
+        var serviceDescriptions = await ResolveServiceDescriptionsAsync(serviceDescriptionKeys, cancellationToken);
 
         // SEC-1: el metodo/referencia de un pago son datos de TESORERIA. El extracto lo ve cualquiera con
         // proveedores.view (p.ej. un vendedor), pero esos detalles solo se exponen con tesoreria.supplier_payments.
@@ -840,12 +853,21 @@ public class SupplierService : ISupplierService
                 : "Pago al operador";
             string? documentRef = canSeePaymentDetails ? payment.Reference : null;
 
+            // (2026-07-20) A diferencia de description/documentRef de arriba, esto NO depende de
+            // canSeePaymentDetails: es identidad de la reserva/servicio, no un dato de tesoreria (ver
+            // decision documentada en el XML-doc de SupplierAccountStatementLineDto).
+            string? servicioDescripcion = !string.IsNullOrWhiteSpace(payment.ServiceRecordKind) && payment.ServicePublicId.HasValue
+                ? serviceDescriptions.GetValueOrDefault((payment.ServiceRecordKind, payment.ServicePublicId.Value))
+                : null;
+
             inputLines.Add(SupplierAccountStatementBuilder.PaymentLine(
                 date: payment.PaidAt,
                 description: description,
                 documentRef: documentRef,
                 payment: paymentInput,
-                sourcePublicId: payment.PublicId));
+                sourcePublicId: payment.PublicId,
+                reservaNumero: payment.NumeroReserva,
+                servicioDescripcion: servicioDescripcion));
         }
 
         var statement = SupplierAccountStatementBuilder.Build(inputLines);
@@ -945,7 +967,12 @@ public class SupplierService : ISupplierService
         Guid? SourcePublicId,
         string Currency,
         decimal Charge,
-        decimal Credit);
+        decimal Credit,
+        // Tanda backend "Registrar pago" (2026-07-20): solo las lineas de CAJA de tipo Payment traen estos
+        // dos datos (ver BuildMergedLines); el circuito de cancelacion y el saldo a favor aplicado los dejan
+        // en null porque no son un pago imputado a un servicio/reserva de la misma forma.
+        string? ReservaNumero = null,
+        string? ServicioDescripcion = null);
 
     /// <summary>
     /// Mapea el extracto del dominio (value object puro) al DTO de salida.
@@ -1058,7 +1085,11 @@ public class SupplierService : ISupplierService
                     Currency = line.Currency,
                     Charge = canSeeCost ? EconomicRulesHelper.RoundCurrency(line.Charge) : 0m,
                     Credit = canSeeCost ? EconomicRulesHelper.RoundCurrency(line.Credit) : 0m,
-                    RunningBalance = canSeeCost ? EconomicRulesHelper.RoundCurrency(runningBalance) : 0m
+                    RunningBalance = canSeeCost ? EconomicRulesHelper.RoundCurrency(runningBalance) : 0m,
+                    // (2026-07-20) SIEMPRE visibles, sin masking: son identidad de la reserva/servicio, no un
+                    // monto de costo ni un dato de tesoreria (ver el XML-doc del DTO).
+                    ReservaNumero = line.ReservaNumero,
+                    ServicioDescripcion = line.ServicioDescripcion
                 });
             }
 
@@ -1106,7 +1137,9 @@ public class SupplierService : ISupplierService
                     SourcePublicId: line.SourcePublicId,
                     Currency: line.Currency,
                     Charge: line.Charge,
-                    Credit: line.Credit));
+                    Credit: line.Credit,
+                    ReservaNumero: line.ReservaNumero,
+                    ServicioDescripcion: line.ServicioDescripcion));
             }
         }
 
@@ -1395,6 +1428,73 @@ public class SupplierService : ISupplierService
         }
 
         return payment.PublicId;
+    }
+
+    /// <summary>
+    /// Rediseno "Registrar pago" (2026-07-20, backend Tanda unica aprobada por el dueño, punto 5.2.3 del
+    /// analisis <c>docs/architecture/2026-07-20-analisis-cuenta-proveedor-vs-erps.md</c>): a donde impacto un
+    /// pago que se acaba de registrar, para armar el cartel de exito de la pantalla ("Bajo la deuda de la
+    /// reserva 1051 en $45.000, quedan $12.000 pendientes" / "Quedo como saldo a favor con el operador").
+    ///
+    /// <para><b>Se llama DESPUES de <see cref="AddSupplierPaymentAsync"/></b>, releyendo el pago YA
+    /// persistido: el saldo restante se RECALCULA con el mismo motor que "Deuda por reserva"
+    /// (<see cref="CalculateSupplierDebtInReservaAsync"/>), nunca se estima restando el monto del pago a mano.
+    /// Restar a mano seria fragil (un pago cruzado de moneda no resta 1 a 1, un cargo del operador liquidado
+    /// aparte tampoco) y podria mostrar un numero distinto al que el usuario ve un segundo despues en el
+    /// resto de la ficha.</para>
+    /// </summary>
+    public async Task<SupplierPaymentImpactDto> GetSupplierPaymentImpactAsync(
+        int id, Guid paymentPublicId, CancellationToken cancellationToken)
+    {
+        var payment = await _dbContext.SupplierPayments
+            .AsNoTracking()
+            .Include(p => p.Reserva)
+            .FirstOrDefaultAsync(p => p.SupplierId == id && p.PublicId == paymentPublicId, cancellationToken);
+        if (payment is null)
+        {
+            throw new KeyNotFoundException("Pago no encontrado");
+        }
+
+        bool canSeeCost = await CanSeeSupplierCostFiguresAsync(cancellationToken);
+        string imputedCurrency = Monedas.Normalizar(payment.ImputedCurrency ?? payment.Currency);
+
+        // ADR-022 §4 P4: sin ReservaId el pago es un anticipo "a cuenta" (no imputado a ninguna reserva
+        // puntual). No hay deuda-por-reserva que recalcular: el impacto es "quedo como saldo a favor".
+        if (payment.ReservaId is null)
+        {
+            return new SupplierPaymentImpactDto
+            {
+                WasImputedToReserva = false,
+                Currency = imputedCurrency,
+                AmountsVisible = canSeeCost
+            };
+        }
+
+        // Recalculo POST-PERSISTENCIA: el pago ya esta guardado, asi que este calculo ya lo incluye (no se
+        // excluye ningun pago del cliente que llama). Reusa la MISMA funcion que "Deuda por reserva".
+        var debtByCurrency = await CalculateSupplierDebtInReservaAsync(
+            id, payment.ReservaId.Value, excludePaymentId: null, cancellationToken);
+        decimal remainingBalance = debtByCurrency.TryGetValue(imputedCurrency, out var debtLine) ? debtLine.Balance : 0m;
+
+        string? servicioDescripcion = null;
+        if (!string.IsNullOrWhiteSpace(payment.ServiceRecordKind) && payment.ServicePublicId.HasValue)
+        {
+            var descriptions = await ResolveServiceDescriptionsAsync(
+                new[] { (payment.ServiceRecordKind!, payment.ServicePublicId.Value) }, cancellationToken);
+            descriptions.TryGetValue((payment.ServiceRecordKind!, payment.ServicePublicId.Value), out servicioDescripcion);
+        }
+
+        return new SupplierPaymentImpactDto
+        {
+            WasImputedToReserva = true,
+            ReservaPublicId = payment.Reserva?.PublicId,
+            NumeroReserva = payment.Reserva?.NumeroReserva,
+            FileName = payment.Reserva?.Name,
+            ServicioDescripcion = servicioDescripcion,
+            Currency = imputedCurrency,
+            RemainingBalance = canSeeCost ? EconomicRulesHelper.RoundCurrency(remainingBalance) : 0m,
+            AmountsVisible = canSeeCost
+        };
     }
 
     /// <summary>
@@ -2519,6 +2619,93 @@ public class SupplierService : ISupplierService
 
     /// <summary>Servicio resuelto para imputar un pago: su PublicId + el costo y la moneda contra los que se valida.</summary>
     private readonly record struct ResolvedServiceForPayment(Guid PublicId, decimal NetCost, string Currency);
+
+    /// <summary>
+    /// Rediseno "Registrar pago" (2026-07-20): resuelve en LOTE la descripcion legible de varios servicios
+    /// imputados a pagos del proveedor (ej. "Hotel Bariloche (Bariloche)"), para el extracto y para el cartel
+    /// de exito del alta. Agrupa las claves por tipo de registro y hace UNA query por tabla (no una por pago),
+    /// para no meter un N+1 en un extracto con muchos pagos imputados a servicios.
+    ///
+    /// <para>La REDACCION de cada descripcion es la MISMA formula que ya usa <see cref="BuildSupplierServicesQuery"/>
+    /// para la solapa "Servicios comprados" — se duplica aca (en vez de compartir un helper) porque EF Core no
+    /// puede traducir una llamada a un metodo comun dentro de un <c>Select</c> LINQ-to-SQL; mantenerla igual a
+    /// mano evita que el mismo servicio tenga dos textos distintos segun la pantalla.</para>
+    /// </summary>
+    private async Task<Dictionary<(string RecordKind, Guid ServicePublicId), string?>> ResolveServiceDescriptionsAsync(
+        IEnumerable<(string RecordKind, Guid ServicePublicId)> keys, CancellationToken cancellationToken)
+    {
+        var result = new Dictionary<(string, Guid), string?>();
+        var groupedByKind = keys.Distinct().GroupBy(k => k.RecordKind, StringComparer.Ordinal);
+
+        foreach (var group in groupedByKind)
+        {
+            var servicePublicIds = group.Select(k => k.ServicePublicId).ToList();
+
+            switch (group.Key)
+            {
+                case ServicePaymentRecordKinds.Flight:
+                    var flights = await _dbContext.FlightSegments.AsNoTracking()
+                        .Where(s => servicePublicIds.Contains(s.PublicId))
+                        .Select(s => new { s.PublicId, s.AirlineName, s.FlightNumber, s.Origin, s.Destination })
+                        .ToListAsync(cancellationToken);
+                    foreach (var flight in flights)
+                        result[(group.Key, flight.PublicId)] = ((flight.AirlineName ?? string.Empty) + " " + (flight.FlightNumber ?? string.Empty)
+                            + " (" + (flight.Origin ?? string.Empty) + "-" + (flight.Destination ?? string.Empty) + ")").Trim();
+                    break;
+
+                case ServicePaymentRecordKinds.Hotel:
+                    var hotels = await _dbContext.HotelBookings.AsNoTracking()
+                        .Where(s => servicePublicIds.Contains(s.PublicId))
+                        .Select(s => new { s.PublicId, s.HotelName, s.City })
+                        .ToListAsync(cancellationToken);
+                    foreach (var hotel in hotels)
+                        result[(group.Key, hotel.PublicId)] = ((hotel.HotelName ?? string.Empty) + " (" + (hotel.City ?? string.Empty) + ")").Trim();
+                    break;
+
+                case ServicePaymentRecordKinds.Transfer:
+                    var transfers = await _dbContext.TransferBookings.AsNoTracking()
+                        .Where(s => servicePublicIds.Contains(s.PublicId))
+                        .Select(s => new { s.PublicId, s.VehicleType, s.PickupLocation, s.DropoffLocation })
+                        .ToListAsync(cancellationToken);
+                    foreach (var transfer in transfers)
+                        result[(group.Key, transfer.PublicId)] = ((transfer.VehicleType ?? string.Empty) + " (" + (transfer.PickupLocation ?? string.Empty)
+                            + " -> " + (transfer.DropoffLocation ?? string.Empty) + ")").Trim();
+                    break;
+
+                case ServicePaymentRecordKinds.Package:
+                    var packages = await _dbContext.PackageBookings.AsNoTracking()
+                        .Where(s => servicePublicIds.Contains(s.PublicId))
+                        .Select(s => new { s.PublicId, s.PackageName })
+                        .ToListAsync(cancellationToken);
+                    foreach (var package in packages)
+                        result[(group.Key, package.PublicId)] = package.PackageName;
+                    break;
+
+                case ServicePaymentRecordKinds.Assistance:
+                    var assistances = await _dbContext.AssistanceBookings.AsNoTracking()
+                        .Where(s => servicePublicIds.Contains(s.PublicId))
+                        .Select(s => new { s.PublicId, s.PlanType, s.CoverageZone })
+                        .ToListAsync(cancellationToken);
+                    foreach (var assistance in assistances)
+                        result[(group.Key, assistance.PublicId)] = ((assistance.PlanType ?? "Seguro") + " (" + (assistance.CoverageZone ?? string.Empty) + ")").Trim();
+                    break;
+
+                case ServicePaymentRecordKinds.Generic:
+                    var generics = await _dbContext.Servicios.AsNoTracking()
+                        .Where(s => servicePublicIds.Contains(s.PublicId))
+                        .Select(s => new { s.PublicId, s.Description, s.ServiceType })
+                        .ToListAsync(cancellationToken);
+                    foreach (var generic in generics)
+                        result[(group.Key, generic.PublicId)] = generic.Description ?? generic.ServiceType;
+                    break;
+
+                // Un recordKind desconocido (dato viejo/corrupto) simplemente no aporta descripcion: el
+                // caller ya maneja "sin descripcion" como null, no hace falta lanzar aca.
+            }
+        }
+
+        return result;
+    }
 
     /// <summary>
     /// (2026-06-26) Valida que un pago imputado a UN servicio concreto sea EN LA MONEDA del costo del servicio

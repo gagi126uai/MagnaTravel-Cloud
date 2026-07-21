@@ -292,7 +292,7 @@ function SupplierInlineEditForm({ supplier, onGuardado }) {
     const [masDetallesAbierto, setMasDetallesAbierto] = useState(false);
 
     // Inicializa el formulario con los datos del proveedor cuando llegan del servidor.
-    // Cada vez que el proveedor se recarga (handlePagoGuardado llama loadOverview, etc.)
+    // Cada vez que el proveedor se recarga (handlePagoRegistrado llama loadOverview, etc.)
     // el formulario vuelve a los valores guardados. Esto está comentado para que quede claro.
     useEffect(() => {
         if (!supplier) return;
@@ -1338,6 +1338,11 @@ export default function SupplierAccountPage() {
     const [deudaPorReservaRefreshKey, setDeudaPorReservaRefreshKey] = useState(0);
     const [showPagoInline, setShowPagoInline] = useState(false);
     const [paymentToEdit, setPaymentToEdit] = useState(null);
+    // Fix bloqueante (review 2026-07-21, security-data-risk-reviewer): PagarProveedorInline
+    // avisa acá cada vez que tiene un guardado en curso (POST/PUT en vuelo), para poder
+    // deshabilitar el botón "Registrar pago / Cerrar" de arriba mientras tanto — sin esto,
+    // el cajero podía cerrar la ficha desde ESE botón a mitad de un guardado.
+    const [pagoGuardando, setPagoGuardando] = useState(false);
     // monedaUsandoSaldo: qué moneda tiene la ficha "Usar saldo a favor" abierta.
     // null = ninguna abierta. Solo una moneda puede estar abierta a la vez.
     const [monedaUsandoSaldo, setMonedaUsandoSaldo] = useState(null);
@@ -1471,14 +1476,45 @@ export default function SupplierAccountPage() {
 
     // ─── Handlers ─────────────────────────────────────────────────────────────
 
-    // Refresca overview, pagos y extracto después de guardar un pago.
-    const handlePagoGuardado = useCallback(async () => {
-        setShowPagoInline(false);
-        setPaymentToEdit(null);
+    // FIX bloqueante (review 2026-07-21, dos revisores convergentes): antes esta MISMA
+    // función refrescaba Y cerraba la ficha a la vez, y PagarProveedorInline la llamaba
+    // recién cuando el cajero cerraba el cartel de éxito — si cerraba la ficha desde OTRO
+    // lado (el botón de arriba) mientras el cartel estaba abierto, nunca se refrescaba nada.
+    // Ahora el refresco y el cierre son DOS funciones separadas:
+    //   - handlePagoRegistrado: SOLO refresca. La llama PagarProveedorInline apenas el
+    //     guardado resuelve OK del lado del servidor (prop onGuardado), sin esperar a que
+    //     el cajero cierre nada — así el dato nunca queda desactualizado.
+    //   - handleCerrarFichaPago: SOLO cierra la ficha (sin refrescar por su cuenta). La usa
+    //     tanto "Cancelar"/la X (cancelar sin haber guardado nada) como "Cerrar"/"Ver cuenta"
+    //     del cartel de éxito (ahí el refresco ya ocurrió antes, vía handlePagoRegistrado).
+    const handlePagoRegistrado = useCallback(async () => {
         setExtractoRefreshKey((k) => k + 1);
         setDeudaPorReservaRefreshKey((k) => k + 1);
         await Promise.all([loadOverview(), loadAllPayments(), loadSupplierCredit()]);
     }, [loadOverview, loadAllPayments, loadSupplierCredit]);
+
+    const handleCerrarFichaPago = useCallback(() => {
+        setShowPagoInline(false);
+        setPaymentToEdit(null);
+        // Por las dudas: si por algún motivo saving no se apagó del lado del hijo antes de
+        // cerrar, no dejamos el botón de arriba bloqueado para siempre.
+        setPagoGuardando(false);
+    }, []);
+
+    // Botón "Registrar pago" / "Cerrar" de arriba de la ficha (alterna mostrarla u ocultarla).
+    // Al cerrar desde ACÁ (en vez de los botones propios de la ficha), refrescamos igual por
+    // las dudas de que haya un pago recién guardado que el cajero no llegó a confirmar con
+    // "Cerrar"/"Ver cuenta" — cerrar sin haber guardado nada solo dispara pedidos de más,
+    // que no rompen nada.
+    const handleToggleFichaPago = useCallback(() => {
+        if (pagoGuardando) return; // defensa en profundidad: el botón ya queda disabled=true
+        if (showPagoInline) {
+            handlePagoRegistrado();
+            handleCerrarFichaPago();
+        } else {
+            setShowPagoInline(true);
+        }
+    }, [pagoGuardando, showPagoInline, handlePagoRegistrado, handleCerrarFichaPago]);
 
     // Se llama al completar una aplicación de saldo a favor.
     const handleSaldoAplicado = useCallback(async () => {
@@ -1549,6 +1585,10 @@ export default function SupplierAccountPage() {
         setShowPagoInline(false);
         setPaymentToEdit(null);
         setAllPayments([]);
+        // Al cambiar de proveedor el overview viejo no sirve: se anula para que
+        // la guarda del esqueleto vuelva a mostrar la carga inicial (y no se vea
+        // un instante la cuenta del proveedor anterior).
+        setOverview(null);
         setExtractoRefreshKey(0);
         setMonedaUsandoSaldo(null);
         setShowReembolsoInline(false);
@@ -1578,7 +1618,12 @@ export default function SupplierAccountPage() {
 
     // ─── Guardas de estado ────────────────────────────────────────────────────
 
-    if (loadingOverview) {
+    // El esqueleto de página entera es SOLO para la carga inicial (o cambio de
+    // proveedor, que resetea overview a null). En un refresco con datos ya en
+    // pantalla (ej. tras registrar un pago) NO se puede desmontar la página:
+    // se llevaría puesta la ficha de pago con su cartel de éxito (bug cazado
+    // por el E2E real del rediseño 2026-07-21).
+    if (loadingOverview && !overview) {
         return <AccountPageSkeleton />;
     }
 
@@ -1790,12 +1835,16 @@ export default function SupplierAccountPage() {
 
                                     {hasPermission("tesoreria.supplier_payments") && (
                                         <>
-                                            {/* "Registrar pago": alterna la ficha de pago en línea */}
+                                            {/* "Registrar pago": alterna la ficha de pago en línea.
+                                                Fix bloqueante (review 2026-07-21): deshabilitado mientras
+                                                PagarProveedorInline tiene un guardado en curso (pagoGuardando),
+                                                para que el cajero no pueda cerrar la ficha a mitad de un POST/PUT. */}
                                             <button
                                                 type="button"
-                                                onClick={() => setShowPagoInline((prev) => !prev)}
+                                                onClick={handleToggleFichaPago}
+                                                disabled={pagoGuardando}
                                                 data-testid="btn-registrar-pago"
-                                                className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors ${
+                                                className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                                                     showPagoInline
                                                         ? "bg-slate-500 hover:bg-slate-600"
                                                         : "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-500/20"
@@ -1886,11 +1935,9 @@ export default function SupplierAccountPage() {
                                     balancesByCurrency={balancesByCurrency}
                                     openInvoicedCharges={overview?.openInvoicedCharges || []}
                                     paymentToEdit={paymentToEdit}
-                                    onGuardado={handlePagoGuardado}
-                                    onCancelar={() => {
-                                        setShowPagoInline(false);
-                                        setPaymentToEdit(null);
-                                    }}
+                                    onGuardado={handlePagoRegistrado}
+                                    onCancelar={handleCerrarFichaPago}
+                                    onSavingChange={setPagoGuardando}
                                 />
                             )}
 

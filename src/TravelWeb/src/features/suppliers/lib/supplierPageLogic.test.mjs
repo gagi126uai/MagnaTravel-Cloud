@@ -11,7 +11,12 @@ import {
     construirTextoCuentaReembolso,
     filtrarServiciosPorMonedaDePago,
     hayServiciosDelProveedorEnReserva,
+    armarFilasDeudaPorReserva,
+    agruparServiciosPorReserva,
+    construirDetalleFilaDeuda,
+    construirMensajeExitoPago,
 } from "./supplierPageLogic.js";
+import { formatCurrency } from "../../../lib/utils.js";
 
 // ─── resolverMonedaPrincipalProveedor ────────────────────────────────────────
 
@@ -872,5 +877,368 @@ describe("hayServiciosDelProveedorEnReserva", () => {
     it("false con null/undefined (todavía no cargó o no hay reserva elegida)", () => {
         assert.equal(hayServiciosDelProveedorEnReserva(null), false);
         assert.equal(hayServiciosDelProveedorEnReserva(undefined), false);
+    });
+});
+
+// ─── armarFilasDeudaPorReserva (rediseño 2026-07-20, Paso 1 "¿Qué estás pagando?") ────
+
+describe("armarFilasDeudaPorReserva", () => {
+    it("null/undefined/no-array no rompen, devuelven []", () => {
+        assert.deepEqual(armarFilasDeudaPorReserva(null), []);
+        assert.deepEqual(armarFilasDeudaPorReserva(undefined), []);
+        assert.deepEqual(armarFilasDeudaPorReserva("no es un array"), []);
+    });
+
+    it("una reserva con una sola moneda con deuda genera una fila", () => {
+        const reservas = [{
+            reservaPublicId: "r1",
+            numeroReserva: "F-2026-1051",
+            fileName: "Familia Pérez",
+            currencies: [{ currency: "ARS", balance: 45000 }],
+        }];
+        const filas = armarFilasDeudaPorReserva(reservas);
+        assert.equal(filas.length, 1);
+        assert.equal(filas[0].reservaPublicId, "r1");
+        assert.equal(filas[0].numeroReserva, "F-2026-1051");
+        assert.equal(filas[0].fileName, "Familia Pérez");
+        assert.equal(filas[0].currency, "ARS");
+        assert.equal(filas[0].balance, 45000);
+    });
+
+    it("una reserva con deuda en DOS monedas genera DOS filas", () => {
+        const reservas = [{
+            reservaPublicId: "r1",
+            numeroReserva: "F-1",
+            currencies: [
+                { currency: "ARS", balance: 1000 },
+                { currency: "USD", balance: 120 },
+            ],
+        }];
+        const filas = armarFilasDeudaPorReserva(reservas);
+        assert.equal(filas.length, 2);
+        assert.deepEqual(filas.map((f) => f.currency), ["ARS", "USD"]);
+    });
+
+    it("una línea con balance 0 NO genera fila (no hay deuda que pagar)", () => {
+        const reservas = [{
+            reservaPublicId: "r1",
+            currencies: [{ currency: "ARS", balance: 0 }],
+        }];
+        assert.deepEqual(armarFilasDeudaPorReserva(reservas), []);
+    });
+
+    it("una línea con balance negativo (saldo a favor de esa reserva) NO genera fila", () => {
+        const reservas = [{
+            reservaPublicId: "r1",
+            currencies: [{ currency: "ARS", balance: -500 }],
+        }];
+        assert.deepEqual(armarFilasDeudaPorReserva(reservas), []);
+    });
+
+    it("un resto de redondeo menor a medio centavo se trata como cero (sin fila)", () => {
+        const reservas = [{
+            reservaPublicId: "r1",
+            currencies: [{ currency: "ARS", balance: 0.001 }],
+        }];
+        assert.deepEqual(armarFilasDeudaPorReserva(reservas), []);
+    });
+
+    it("varias reservas producen filas independientes, cada una con sus propios datos", () => {
+        const reservas = [
+            { reservaPublicId: "r1", numeroReserva: "F-1", currencies: [{ currency: "ARS", balance: 1000 }] },
+            { reservaPublicId: "r2", numeroReserva: "F-2", currencies: [{ currency: "USD", balance: 200 }] },
+        ];
+        const filas = armarFilasDeudaPorReserva(reservas);
+        assert.equal(filas.length, 2);
+        assert.equal(filas[0].numeroReserva, "F-1");
+        assert.equal(filas[1].numeroReserva, "F-2");
+    });
+
+    it("numeroReserva/fileName ausentes caen a defaults seguros", () => {
+        const reservas = [{ reservaPublicId: "r1", currencies: [{ currency: "ARS", balance: 500 }] }];
+        const filas = armarFilasDeudaPorReserva(reservas);
+        assert.equal(filas[0].numeroReserva, "Reserva");
+        assert.equal(filas[0].fileName, null);
+    });
+
+    it("reserva sin currencies (undefined) no rompe, no genera filas", () => {
+        assert.deepEqual(armarFilasDeudaPorReserva([{ reservaPublicId: "r1" }]), []);
+    });
+
+    // FIX bloqueante (review 2026-07-21, frontend-reviewer #2): sin cobranzas.see_cost el
+    // backend enmascara Balance a 0 en TODAS las líneas por igual — filtrar por balance>0
+    // dejaba la grilla siempre vacía para ese perfil, aunque hubiera deuda real, y el
+    // cajero se quedaba sin poder elegir ninguna reserva (rompía la imputación, no solo
+    // el número mostrado).
+    it("puedeVerMontos=false: NO filtra por balance, incluye filas con balance 0 (enmascarado)", () => {
+        const reservas = [{
+            reservaPublicId: "r1",
+            numeroReserva: "F-1",
+            currencies: [{ currency: "ARS", balance: 0 }], // el backend manda 0 por masking, no porque esté saldada
+        }];
+        const filas = armarFilasDeudaPorReserva(reservas, { puedeVerMontos: false });
+        assert.equal(filas.length, 1);
+        assert.equal(filas[0].numeroReserva, "F-1");
+        assert.equal(filas[0].balance, 0);
+    });
+
+    it("puedeVerMontos=false: también incluye una reserva con varias monedas, todas en 0", () => {
+        const reservas = [{
+            reservaPublicId: "r1",
+            numeroReserva: "F-1",
+            currencies: [
+                { currency: "ARS", balance: 0 },
+                { currency: "USD", balance: 0 },
+            ],
+        }];
+        const filas = armarFilasDeudaPorReserva(reservas, { puedeVerMontos: false });
+        assert.equal(filas.length, 2);
+    });
+
+    it("puedeVerMontos=true (default, sin pasar el parámetro): sigue filtrando como antes", () => {
+        const reservas = [{ reservaPublicId: "r1", currencies: [{ currency: "ARS", balance: 0 }] }];
+        assert.deepEqual(armarFilasDeudaPorReserva(reservas), []);
+        assert.deepEqual(armarFilasDeudaPorReserva(reservas, { puedeVerMontos: true }), []);
+    });
+
+    it("puedeVerMontos=false con reservas sin currencies no rompe", () => {
+        assert.deepEqual(armarFilasDeudaPorReserva([{ reservaPublicId: "r1" }], { puedeVerMontos: false }), []);
+    });
+});
+
+// ─── agruparServiciosPorReserva (rediseño 2026-07-20, detalle del Paso 1) ─────────────
+
+describe("agruparServiciosPorReserva", () => {
+    it("null/undefined/no-array no rompen, devuelven {}", () => {
+        assert.deepEqual(agruparServiciosPorReserva(null), {});
+        assert.deepEqual(agruparServiciosPorReserva(undefined), {});
+    });
+
+    it("agrupa varios servicios de la MISMA reserva bajo la misma clave", () => {
+        const servicios = [
+            { reservaPublicId: "r1", type: "Hotel", description: "Bariloche", currency: "ARS" },
+            { reservaPublicId: "r1", type: "Traslado", description: "Aeropuerto", currency: "ARS" },
+            { reservaPublicId: "r2", type: "Paquete", description: "Cancún", currency: "USD" },
+        ];
+        const mapa = agruparServiciosPorReserva(servicios);
+        assert.equal(mapa.r1.length, 2);
+        assert.equal(mapa.r2.length, 1);
+        assert.equal(mapa.r1[0].type, "Hotel");
+        assert.equal(mapa.r2[0].description, "Cancún");
+    });
+
+    it("servicios sin reservaPublicId se ignoran (no aportan a ninguna fila)", () => {
+        const servicios = [{ type: "Hotel", description: "Sin reserva", currency: "ARS" }];
+        assert.deepEqual(agruparServiciosPorReserva(servicios), {});
+    });
+
+    it("currency ausente cae a ARS (mismo criterio legacy que el resto de la pantalla)", () => {
+        const servicios = [{ reservaPublicId: "r1", type: "Hotel", currency: null }];
+        const mapa = agruparServiciosPorReserva(servicios);
+        assert.equal(mapa.r1[0].currency, "ARS");
+    });
+
+    it("reservaPublicId numérico o de otro tipo se normaliza a string (clave consistente)", () => {
+        const servicios = [{ reservaPublicId: 123, type: "Hotel", currency: "ARS" }];
+        const mapa = agruparServiciosPorReserva(servicios);
+        assert.ok(mapa["123"]);
+    });
+});
+
+// ─── construirDetalleFilaDeuda (rediseño 2026-07-20, columna "Detalle" del Paso 1) ────
+
+describe("construirDetalleFilaDeuda", () => {
+    it("un solo servicio en la misma reserva y moneda: 'Tipo — Descripción'", () => {
+        const fila = { reservaPublicId: "r1", currency: "ARS", fileName: "Familia Pérez" };
+        const mapa = { r1: [{ type: "Hotel", description: "Bariloche", currency: "ARS" }] };
+        assert.equal(construirDetalleFilaDeuda(fila, mapa), "Hotel — Bariloche");
+    });
+
+    it("servicio sin descripción: solo el tipo", () => {
+        const fila = { reservaPublicId: "r1", currency: "ARS" };
+        const mapa = { r1: [{ type: "Hotel", description: null, currency: "ARS" }] };
+        assert.equal(construirDetalleFilaDeuda(fila, mapa), "Hotel");
+    });
+
+    it("varios servicios en la misma moneda: nombra el primero y suma 'y N más'", () => {
+        const fila = { reservaPublicId: "r1", currency: "ARS" };
+        const mapa = {
+            r1: [
+                { type: "Hotel", description: "Bariloche", currency: "ARS" },
+                { type: "Traslado", description: "Aeropuerto", currency: "ARS" },
+                { type: "Asistencia", description: null, currency: "ARS" },
+            ],
+        };
+        assert.equal(construirDetalleFilaDeuda(fila, mapa), "Hotel — Bariloche y 2 más");
+    });
+
+    it("filtra por la MONEDA de la fila: un servicio en otra moneda no cuenta", () => {
+        const fila = { reservaPublicId: "r1", currency: "USD", fileName: "Familia Pérez" };
+        const mapa = { r1: [{ type: "Hotel", description: "Bariloche", currency: "ARS" }] };
+        assert.equal(construirDetalleFilaDeuda(fila, mapa), "Familia Pérez");
+    });
+
+    it("sin servicios para esa reserva: usa fileName como respaldo", () => {
+        const fila = { reservaPublicId: "r1", currency: "ARS", fileName: "Familia Pérez" };
+        assert.equal(construirDetalleFilaDeuda(fila, {}), "Familia Pérez");
+    });
+
+    it("sin servicios NI fileName: '—' (nunca deja la celda vacía)", () => {
+        const fila = { reservaPublicId: "r1", currency: "ARS", fileName: null };
+        assert.equal(construirDetalleFilaDeuda(fila, {}), "—");
+    });
+
+    it("mapa de servicios null/undefined no rompe", () => {
+        const fila = { reservaPublicId: "r1", currency: "ARS", fileName: "Familia Pérez" };
+        assert.equal(construirDetalleFilaDeuda(fila, null), "Familia Pérez");
+        assert.equal(construirDetalleFilaDeuda(fila, undefined), "Familia Pérez");
+    });
+});
+
+// ─── construirMensajeExitoPago (rediseño 2026-07-20, cartel de éxito) ─────────────────
+
+describe("construirMensajeExitoPago", () => {
+    // FIX bloqueante (review 2026-07-21): antes esta función devolvía null cuando faltaba
+    // `impact`, y el componente interpretaba "sin cartel" = "no se guardó", reabriendo el
+    // formulario con "Confirmar pago" habilitado → doble pago real (el pago a cuenta no
+    // tiene tope ni idempotencia). Ahora SIEMPRE devuelve un mensaje: el POST ya se guardó
+    // del lado del servidor cuando se llama a esta función, así que siempre hay que avisarlo.
+    it("impact null/undefined: NUNCA devuelve null, cae al mensaje genérico 'Pago registrado.'", () => {
+        const conNull = construirMensajeExitoPago({ impact: null, montoImputado: 100, monedaImputada: "ARS" });
+        const conUndefined = construirMensajeExitoPago({ impact: undefined, montoImputado: 100, monedaImputada: "ARS" });
+        assert.notEqual(conNull, null);
+        assert.notEqual(conUndefined, null);
+        assert.equal(conNull.tipo, "generico");
+        assert.deepEqual(conNull.lineas, ["Pago registrado."]);
+        assert.deepEqual(conUndefined.lineas, ["Pago registrado."]);
+    });
+
+    it("pago a cuenta (wasImputedToReserva=false): mensaje fijo de saldo a favor, sin montos", () => {
+        const resultado = construirMensajeExitoPago({
+            impact: { wasImputedToReserva: false, currency: "ARS", amountsVisible: true },
+            montoImputado: 5000,
+            monedaImputada: "ARS",
+        });
+        assert.equal(resultado.tipo, "a-cuenta");
+        assert.equal(resultado.lineas.length, 1);
+        assert.match(resultado.lineas[0], /saldo a favor/i);
+        // Nunca menciona un monto en el pago a cuenta (el impact no trae "cuánto" para este caso)
+        assert.ok(!/\$/.test(resultado.lineas[0]));
+    });
+
+    it("pago imputado a reserva SIN permiso de ver montos (amountsVisible=false): solo el destino, sin números", () => {
+        const resultado = construirMensajeExitoPago({
+            impact: {
+                wasImputedToReserva: true,
+                numeroReserva: "F-2026-1051",
+                amountsVisible: false,
+            },
+            montoImputado: 45000,
+            monedaImputada: "ARS",
+        });
+        assert.equal(resultado.tipo, "reserva-sin-monto");
+        assert.equal(resultado.lineas.length, 1);
+        assert.equal(resultado.lineas[0], "Pago registrado a la reserva F-2026-1051.");
+        assert.ok(!/\$/.test(resultado.lineas[0]), "no debe exponer montos sin permiso");
+    });
+
+    it("pago imputado a reserva CON permiso, queda saldo pendiente: dos líneas con el monto y el resto", () => {
+        const resultado = construirMensajeExitoPago({
+            impact: {
+                wasImputedToReserva: true,
+                numeroReserva: "F-2026-1051",
+                servicioDescripcion: "Hotel Bariloche",
+                currency: "ARS",
+                remainingBalance: 12000,
+                amountsVisible: true,
+            },
+            montoImputado: 45000,
+            monedaImputada: "ARS",
+        });
+        assert.equal(resultado.tipo, "reserva");
+        assert.equal(resultado.lineas.length, 2);
+        assert.equal(
+            resultado.lineas[0],
+            `Bajó la deuda de la reserva F-2026-1051 (Hotel Bariloche) en ${formatCurrency(45000, "ARS")}.`
+        );
+        assert.equal(resultado.lineas[1], `Quedan ${formatCurrency(12000, "ARS")} pendientes.`);
+    });
+
+    it("pago imputado a reserva CON permiso, queda saldada (remainingBalance=0): frase de saldada, no '$0'", () => {
+        const resultado = construirMensajeExitoPago({
+            impact: {
+                wasImputedToReserva: true,
+                numeroReserva: "F-2026-1051",
+                currency: "ARS",
+                remainingBalance: 0,
+                amountsVisible: true,
+            },
+            montoImputado: 45000,
+            monedaImputada: "ARS",
+        });
+        assert.equal(resultado.lineas[1], "Esa reserva queda saldada con este operador.");
+    });
+
+    it("resto de redondeo menor a medio centavo también cuenta como saldada", () => {
+        const resultado = construirMensajeExitoPago({
+            impact: {
+                wasImputedToReserva: true,
+                numeroReserva: "F-1",
+                currency: "ARS",
+                remainingBalance: 0.001,
+                amountsVisible: true,
+            },
+            montoImputado: 1000,
+            monedaImputada: "ARS",
+        });
+        assert.equal(resultado.lineas[1], "Esa reserva queda saldada con este operador.");
+    });
+
+    it("sin servicioDescripcion pero con fileName: usa el fileName como detalle entre paréntesis", () => {
+        const resultado = construirMensajeExitoPago({
+            impact: {
+                wasImputedToReserva: true,
+                numeroReserva: "F-1",
+                fileName: "Familia Pérez",
+                currency: "ARS",
+                remainingBalance: 0,
+                amountsVisible: true,
+            },
+            montoImputado: 1000,
+            monedaImputada: "ARS",
+        });
+        assert.match(resultado.lineas[0], /la reserva F-1 \(Familia Pérez\)/);
+    });
+
+    it("sin servicioDescripcion NI fileName: menciona la reserva sin paréntesis", () => {
+        const resultado = construirMensajeExitoPago({
+            impact: {
+                wasImputedToReserva: true,
+                numeroReserva: "F-1",
+                currency: "ARS",
+                remainingBalance: 0,
+                amountsVisible: true,
+            },
+            montoImputado: 1000,
+            monedaImputada: "ARS",
+        });
+        assert.match(resultado.lineas[0], /^Bajó la deuda de la reserva F-1 en/);
+        assert.ok(!resultado.lineas[0].includes("("));
+    });
+
+    it("el monto mostrado es el imputado en la moneda imputada (pago cruzado): usa montoEquivalente, no el monto de caja", () => {
+        // Ej.: pagó $120.000 en pesos para cancelar deuda en dólares; el equivalente imputado es US$100.
+        const resultado = construirMensajeExitoPago({
+            impact: {
+                wasImputedToReserva: true,
+                numeroReserva: "F-1",
+                currency: "USD",
+                remainingBalance: 0,
+                amountsVisible: true,
+            },
+            montoImputado: 100, // ya convertido a USD por el llamador (esCruzado ? montoEquivalente : monto)
+            monedaImputada: "USD",
+        });
+        assert.ok(resultado.lineas[0].includes(formatCurrency(100, "USD")));
     });
 });

@@ -503,6 +503,62 @@ public class SupplierAccountStatementLineDto
 
     /// <summary>Saldo corriente de la moneda hasta esta linea inclusive. Enmascarado a 0 sin see_cost.</summary>
     public decimal RunningBalance { get; set; }
+
+    // ====================================================================================================
+    // Rediseno "Registrar pago" (2026-07-20, backend Tanda unica aprobada por el dueño, punto 5.2.4 de
+    // docs/architecture/2026-07-20-analisis-cuenta-proveedor-vs-erps.md): antes esta linea, para un pago,
+    // solo decia el METODO ("Transferencia") o "Pago al operador" — nunca A QUE reserva/servicio bajo esa
+    // plata. Estos dos campos cierran ese hueco.
+    //
+    // DECISION DE VISIBILIDAD (documentada aca porque no es obvia): a diferencia de Description/DocumentRef
+    // de una linea de pago (que dependen de canSeePaymentDetails, un permiso de TESORERIA sobre metodo y
+    // referencia), estos dos campos son SIEMPRE visibles, con el MISMO criterio que ya usa el resto de la
+    // cuenta del proveedor para la identidad de la reserva (ver SupplierDebtReservaLineDto: "numero, nombre
+    // viajan SIEMPRE; los MONTOS respetan see_cost"). Son informacion OPERATIVA ("esta plata bajo la deuda
+    // de la reserva 1051"), no un dato de tesoreria como el medio de pago o el numero de comprobante — un
+    // vendedor sin permiso de tesoreria igual necesita poder rastrear a que reserva corresponde un pago.
+    // Null en lineas de compra (no aplica) y en pagos "a cuenta" (sin reserva imputada).
+    // ====================================================================================================
+
+    /// <summary>Numero de la reserva a la que se imputo el pago. Solo en lineas de pago con reserva imputada.</summary>
+    public string? ReservaNumero { get; set; }
+
+    /// <summary>Descripcion del servicio puntual imputado, si el pago se imputo a un servicio concreto (no a toda la reserva).</summary>
+    public string? ServicioDescripcion { get; set; }
+}
+
+/// <summary>
+/// Rediseno "Registrar pago" (2026-07-20, backend Tanda unica, punto 5.2.3 del analisis): a donde impacto un
+/// pago recien registrado, para el cartel de exito de la pantalla ("Bajo la deuda de la reserva 1051 en
+/// $45.000, quedan $12.000 pendientes" / "Quedo como saldo a favor con el operador"). Se arma DESPUES de
+/// persistir el pago, releyendolo de la base: <see cref="RemainingBalance"/> es el saldo REAL recalculado con
+/// el mismo motor que "Deuda por reserva" (nunca una resta estimada a mano), asi el cartel nunca puede
+/// mostrar un numero distinto del que despues ve el usuario en el resto de la ficha.
+/// </summary>
+public class SupplierPaymentImpactDto
+{
+    /// <summary>true si el pago se imputo a una reserva concreta; false si quedo "a cuenta" (anticipo sin reserva, ver ADR-022 §4 P4).</summary>
+    public bool WasImputedToReserva { get; set; }
+
+    public Guid? ReservaPublicId { get; set; }
+    public string? NumeroReserva { get; set; }
+    public string? FileName { get; set; }
+
+    /// <summary>Descripcion del servicio puntual imputado, si el pago se imputo a un servicio concreto (no a toda la reserva).</summary>
+    public string? ServicioDescripcion { get; set; }
+
+    /// <summary>Moneda de la deuda que bajo con este pago (la imputada, no necesariamente la de caja si el pago cruzo de moneda).</summary>
+    public string Currency { get; set; } = Monedas.ARS;
+
+    /// <summary>
+    /// Saldo restante de la deuda con este proveedor, en ESTA reserva y ESTA moneda, DESPUES de este pago.
+    /// 0 si el pago fue "a cuenta" (no hay reserva contra la que calcular saldo) o si el caller no puede ver
+    /// montos de costo (ver <see cref="AmountsVisible"/>).
+    /// </summary>
+    public decimal RemainingBalance { get; set; }
+
+    /// <summary>true si el caller puede ver montos de costo (cobranzas.see_cost); si false, RemainingBalance viene en 0.</summary>
+    public bool AmountsVisible { get; set; }
 }
 
 public class SupplierPaymentDto

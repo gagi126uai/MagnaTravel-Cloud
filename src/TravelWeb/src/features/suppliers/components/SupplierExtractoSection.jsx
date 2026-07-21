@@ -522,12 +522,37 @@ export function esLineaDeCircuitoCancelacion(kind) {
   );
 }
 
+/**
+ * Rediseño "Registrar pago" (2026-07-20, punto 5.2.4 del análisis
+ * `docs/architecture/2026-07-20-analisis-cuenta-proveedor-vs-erps.md`): antes, la línea
+ * de un pago en el extracto solo mostraba el MÉTODO ("Transferencia"/"Efectivo"...) y
+ * nunca decía a qué reserva se había imputado — para saber "¿esto bajó la deuda de la
+ * 1051?" había que ir a mano a otra solapa a comparar de memoria. El backend ahora manda
+ * `reservaNumero`/`servicioDescripcion` en cada línea de pago (viajan SIEMPRE, incluso
+ * sin el permiso de tesorería, porque son identidad de la reserva, no un dato de caja).
+ *
+ * Arma el sufijo " · Reserva F-2026-1051 (Hotel Bariloche)" para agregar después de la
+ * descripción de una línea de PAGO. Exportada como función PURA (mismo patrón que
+ * `esLineaDeCircuitoCancelacion`) para poder testearla sin montar el componente.
+ *
+ * @param {{kind?:string, reservaNumero?:string|null, servicioDescripcion?:string|null}} linea
+ * @returns {string|null} el sufijo, o null si el pago fue "a cuenta" (sin reserva imputada)
+ */
+export function construirSufijoDestinoPago(linea) {
+    if (linea?.kind !== "Payment") return null;
+    if (!linea?.reservaNumero) return null; // pago a cuenta: no hay reserva que nombrar
+    return linea.servicioDescripcion
+        ? ` · Reserva ${linea.reservaNumero} (${linea.servicioDescripcion})`
+        : ` · Reserva ${linea.reservaNumero}`;
+}
+
 function FilaExtractoProveedor({ linea, currency, montosVisibles, allPayments, canEditarEliminar, onEditarPago, onEliminarPago }) {
     // Purchase → columna Cargo (cargamos deuda); Payment → columna Abono (abonamos deuda)
     const esCargo = linea.charge > 0;
     const esAbono = linea.credit > 0;
     const esPago = linea.kind === "Payment";
     const esCircuito = esLineaDeCircuitoCancelacion(linea.kind);
+    const sufijoDestino = construirSufijoDestinoPago(linea);
 
     // Cruzamos sourcePublicId de la línea con la lista de pagos completos del padre.
     // Así tenemos el objeto completo (con method, reference, exchangeRate, etc.)
@@ -554,6 +579,11 @@ function FilaExtractoProveedor({ linea, currency, montosVisibles, allPayments, c
                     title={esCircuito ? "Movimiento de una anulación: reduce lo que el operador te tiene que devolver (no es una compra nueva)." : undefined}
                 >
                     {linea.description || "—"}
+                    {/* Rediseño 2026-07-20: a qué reserva/servicio bajó la plata de este pago.
+                        Viaja siempre (identidad, no dato de tesorería) — ver construirSufijoDestinoPago. */}
+                    {sufijoDestino && (
+                        <span className="text-slate-400 dark:text-slate-500 font-normal">{sufijoDestino}</span>
+                    )}
                 </span>
                 {esCircuito && (
                     <span
