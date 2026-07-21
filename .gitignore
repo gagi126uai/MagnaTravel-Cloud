@@ -57,3 +57,6 @@ graphify-out/
 
 # Carpetas .claude anidadas (config local de agentes)
 **/.claude/
+
+# Archivos temporales de bloqueo de Word
+~$*.docx
