@@ -172,7 +172,7 @@ public class OperatorRefundVoidAndReassociateGuardTests
         Assert.DoesNotContain("ClientRefundReversal", ex.Message);
         Assert.DoesNotContain("allocation", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("saldo a favor", ex.Message);
-        Assert.Contains("Tesorería", ex.Message);
+        Assert.Contains("requiere autorización", ex.Message);
 
         // No debe haber mutado nada: la allocation sigue viva.
         var reloaded = await ctx.OperatorRefundAllocations.AsNoTracking().SingleAsync(a => a.Id == allocation.Id);
@@ -195,11 +195,139 @@ public class OperatorRefundVoidAndReassociateGuardTests
         Assert.DoesNotContain("ClientRefundReversal", ex.Message);
         Assert.DoesNotContain("allocation", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("saldo a favor", ex.Message);
-        Assert.Contains("Tesorería", ex.Message);
+        Assert.Contains("requiere autorización", ex.Message);
 
         // No debe haber mutado nada: la allocation vieja sigue apuntando al BC original.
         var reloaded = await ctx.OperatorRefundAllocations.AsNoTracking().SingleAsync(a => a.Id == allocation.Id);
         Assert.False(reloaded.IsVoided);
         Assert.Single(await ctx.OperatorRefundAllocations.ToListAsync());
+    }
+
+    /// <summary>
+    /// Siembra una allocation que YA esta anulada (IsVoided=true), sin saldo a favor asociado — el
+    /// escenario minimo para disparar el guard de "doble anulacion" / "reasociar algo ya anulado".
+    /// A diferencia de <see cref="SeedConsumedCreditAsync"/>, este guard se dispara en el paso 2 (antes
+    /// de mirar el ClientCreditEntry), asi que no hace falta sembrar un retiro consumido.
+    /// </summary>
+    private static async Task<(OperatorRefundAllocation Allocation, BookingCancellation NewBc)> SeedAlreadyVoidedAllocationAsync(AppDbContext ctx)
+    {
+        var customer = new Customer { FullName = "Cliente con reembolso ya anulado", IsActive = true };
+        var supplier = new Supplier { Name = "Operador Guard Voided", IsActive = true };
+        ctx.Customers.Add(customer);
+        ctx.Suppliers.Add(supplier);
+        await ctx.SaveChangesAsync();
+
+        var reserva = new Reserva { NumeroReserva = "R-GUARD-VOIDED-1", Name = "Reserva guard voided", PayerId = customer.Id };
+        var reservaDestino = new Reserva { NumeroReserva = "R-GUARD-VOIDED-2", Name = "Reserva guard voided destino", PayerId = customer.Id };
+        ctx.Reservas.AddRange(reserva, reservaDestino);
+        await ctx.SaveChangesAsync();
+
+        var invoice = new Invoice { TipoComprobante = 11, PuntoDeVenta = 1, NumeroComprobante = 701, ImporteTotal = 500m, ReservaId = reserva.Id };
+        ctx.Invoices.Add(invoice);
+        await ctx.SaveChangesAsync();
+
+        var snapshot = new FiscalSnapshot
+        {
+            CurrencyAtEvent = "ARS",
+            AgencyTaxConditionAtEvent = "RESPONSABLE_INSCRIPTO",
+            SupplierTaxConditionAtEvent = "RESPONSABLE_INSCRIPTO",
+            Source = ExchangeRateSource.Manual,
+            ExchangeRateAtOriginalInvoice = 1m,
+            FetchedAt = DateTime.UtcNow,
+        };
+
+        var bc = new BookingCancellation
+        {
+            ReservaId = reserva.Id,
+            CustomerId = customer.Id,
+            SupplierId = supplier.Id,
+            OriginatingInvoiceId = invoice.Id,
+            Status = BookingCancellationStatus.ClientCreditApplied,
+            Reason = "Cancelacion con reembolso ya anulado por error de carga",
+            DraftedByUserId = "vendedor-1",
+            FiscalSnapshot = snapshot,
+        };
+        var newBc = new BookingCancellation
+        {
+            ReservaId = reservaDestino.Id,
+            CustomerId = customer.Id,
+            SupplierId = supplier.Id,
+            OriginatingInvoiceId = invoice.Id,
+            Status = BookingCancellationStatus.AwaitingOperatorRefund,
+            Reason = "Cancelacion destino para reasociar (caso ya anulado)",
+            DraftedByUserId = "vendedor-1",
+            FiscalSnapshot = snapshot,
+        };
+        ctx.BookingCancellations.AddRange(bc, newBc);
+        await ctx.SaveChangesAsync();
+
+        var refund = new OperatorRefundReceived
+        {
+            SupplierId = supplier.Id,
+            ReceivedAmount = 500m,
+            AllocatedAmount = 0m,
+            Currency = "ARS",
+            ReceivedByUserId = "cajero-1",
+        };
+        ctx.OperatorRefundReceived.Add(refund);
+        await ctx.SaveChangesAsync();
+
+        // La allocation nace YA anulada: es lo unico que necesitamos para que el guard del paso 2
+        // (antes de tocar ClientCreditEntry) dispare.
+        var allocation = new OperatorRefundAllocation
+        {
+            OperatorRefundReceivedId = refund.Id,
+            BookingCancellationId = bc.Id,
+            GrossAmount = 500m,
+            NetAmount = 500m,
+            CreatedByUserId = "cajero-1",
+            IsVoided = true,
+            VoidedAt = DateTime.UtcNow,
+            VoidedByUserId = "cajero-1",
+            VoidedReason = "Anulada previamente por error de carga (seed de test).",
+        };
+        ctx.OperatorRefundAllocations.Add(allocation);
+        await ctx.SaveChangesAsync();
+
+        return (allocation, newBc);
+    }
+
+    [Fact]
+    public async Task VoidAllocation_WhenAlreadyVoided_RejectsWithPlainSpanishMessage_NoInternalNamesOrCodes()
+    {
+        await using var ctx = NewDbContext();
+        var (allocation, _) = await SeedAlreadyVoidedAllocationAsync(ctx);
+        var service = BuildService(ctx);
+
+        var ex = await Assert.ThrowsAsync<TravelApi.Domain.Exceptions.BusinessInvariantViolationException>(() =>
+            service.VoidAllocationAsync(
+                allocation.PublicId,
+                new VoidAllocationRequest("Intento de anular dos veces el mismo reembolso por error."),
+                userId: "cajero-1", userName: "Cajero Uno", ct: CancellationToken.None));
+
+        // El mensaje es el nuevo texto en criollo, sin jerga interna. El invariantCode ("INV-093") vive
+        // en la propiedad tipada de la excepcion para logs — no debe aparecer dentro del texto del mensaje.
+        Assert.DoesNotContain("allocation", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("INV-", ex.Message);
+        Assert.Contains("ya estaba deshecho", ex.Message);
+    }
+
+    [Fact]
+    public async Task ReassociateAllocation_WhenAlreadyVoided_RejectsWithPlainSpanishMessage_NoInternalNamesOrCodes()
+    {
+        await using var ctx = NewDbContext();
+        var (allocation, newBc) = await SeedAlreadyVoidedAllocationAsync(ctx);
+        var service = BuildService(ctx);
+
+        var ex = await Assert.ThrowsAsync<TravelApi.Domain.Exceptions.BusinessInvariantViolationException>(() =>
+            service.ReassociateAllocationAsync(
+                allocation.PublicId,
+                new ReassociateAllocationRequest(newBc.PublicId, "Intento de reasociar un reembolso ya anulado por error."),
+                userId: "cajero-1", userName: "Cajero Uno", ct: CancellationToken.None));
+
+        Assert.DoesNotContain("allocation", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("INV-", ex.Message);
+        Assert.Contains("anulado", ex.Message);
+        Assert.Contains("no se puede mover", ex.Message);
     }
 }

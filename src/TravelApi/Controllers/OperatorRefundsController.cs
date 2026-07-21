@@ -6,6 +6,7 @@ using TravelApi.Application.Exceptions;
 using TravelApi.Application.Interfaces;
 using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Errors;
 
 namespace TravelApi.Controllers;
@@ -294,6 +295,14 @@ public class OperatorRefundsController : ControllerBase
         {
             return NotFound();
         }
+        catch (BusinessInvariantViolationException ex)
+        {
+            // Este catch va ANTES que el de InvalidOperationException a proposito: el GlobalExceptionHandler
+            // (que atrapa esta excepcion si no la capturamos aca) adjunta el codigo interno de invariante
+            // (ej. "INV-093") al ProblemDetails. Ese codigo es para diagnostico/logs, no para el usuario final
+            // (gate de exposicion de datos) — por eso acá devolvemos SOLO el mensaje en criollo, sin el código.
+            return Conflict(new { message = ex.Message });
+        }
         catch (InvalidOperationException ex)
         {
             return Conflict(new { message = ex.Message });
@@ -344,6 +353,13 @@ public class OperatorRefundsController : ControllerBase
                 entityType = ex.EntityType,
                 entityId = ex.EntityId,
             });
+        }
+        catch (BusinessInvariantViolationException ex)
+        {
+            // Mismo motivo que en VoidAllocation: sin este catch, el GlobalExceptionHandler adjunta el
+            // codigo interno de invariante (ej. "INV-093", "INV-118") a la respuesta, y ese codigo no debe
+            // llegar al navegador (gate de exposicion de datos). Con este catch solo viaja el mensaje en criollo.
+            return Conflict(new { message = ex.Message });
         }
         catch (InvalidOperationException ex)
         {

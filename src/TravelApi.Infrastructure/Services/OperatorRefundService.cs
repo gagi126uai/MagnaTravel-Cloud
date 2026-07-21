@@ -1130,7 +1130,7 @@ public class OperatorRefundService : IOperatorRefundService
         if (allocation.IsVoided)
         {
             throw new BusinessInvariantViolationException(
-                "La allocation ya esta anulada. No se puede anular dos veces.",
+                "Este reembolso ya estaba deshecho. No hace falta volver a deshacerlo.",
                 invariantCode: "INV-093");
         }
 
@@ -1155,7 +1155,7 @@ public class OperatorRefundService : IOperatorRefundService
                 throw new InvalidOperationException(
                     "No se puede anular este reembolso: el saldo a favor que generó ya fue retirado o " +
                     "aplicado por el cliente. Para deshacerlo primero hay que revertir ese uso del saldo, " +
-                    "lo cual requiere autorización — consultá con Tesorería.");
+                    "y eso requiere autorización.");
             }
 
             // El entry queda con balance cero + IsFullyConsumed = true (asi no
@@ -1299,7 +1299,7 @@ public class OperatorRefundService : IOperatorRefundService
         if (oldAllocation.IsVoided)
         {
             throw new BusinessInvariantViolationException(
-                "La allocation ya esta anulada. No se puede reasociar.",
+                "Este reembolso está anulado, así que no se puede mover a otra reserva.",
                 invariantCode: "INV-093");
         }
 
@@ -1319,7 +1319,7 @@ public class OperatorRefundService : IOperatorRefundService
                 throw new InvalidOperationException(
                     "No se puede reasociar este reembolso a otra reserva: el saldo a favor que generó ya " +
                     "fue retirado o aplicado por el cliente. Para reasociarlo primero hay que revertir ese " +
-                    "uso del saldo, lo cual requiere autorización — consultá con Tesorería.");
+                    "uso del saldo, y eso requiere autorización.");
             }
         }
 
