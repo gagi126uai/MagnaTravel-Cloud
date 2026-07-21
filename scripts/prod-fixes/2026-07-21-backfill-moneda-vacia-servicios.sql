@@ -1,3 +1,7 @@
+-- SUPERSEDIDO (2026-07-21): este saneo ahora viaja como migracion EF
+-- (20260721054235_BackfillMonedaVaciaServiciosLegacy) y se aplica solo con el deploy.
+-- Se conserva como referencia del conteo/validacion previa.
+
 -- ============================================================================================
 -- Backfill: normalizar moneda vacia/NULL a 'ARS' en las 6 tablas de servicios de reserva.
 -- Fecha: 2026-07-21
