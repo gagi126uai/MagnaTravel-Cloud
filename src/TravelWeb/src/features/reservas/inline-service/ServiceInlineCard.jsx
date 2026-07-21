@@ -1,12 +1,12 @@
 ﻿/**
- * Ficha de carga en lÃ­nea de servicios de una reserva.
- * Reemplaza al modal ServiceFormModal cuando el flag EnableCatalogFindOrCreate estÃ¡ ON.
+ * Ficha de carga en línea de servicios de una reserva.
+ * Reemplaza al modal ServiceFormModal cuando el flag EnableCatalogFindOrCreate está ON.
  *
  * Se abre DEBAJO de la lista de servicios (inline, sin ventana emergente).
- * Al guardar, la ficha se cierra y el servicio aparece como una fila mÃ¡s.
+ * Al guardar, la ficha se cierra y el servicio aparece como una fila más.
  *
- * PestaÃ±as: Hotel | AÃ©reo | Traslado | Paquete | Asistencia
- * F2 parte 2: todos los tipos implementados (el genÃ©rico/ServicioReserva queda en modal viejo).
+ * Pestañas: Hotel | Aéreo | Traslado | Paquete | Asistencia
+ * F2 parte 2: todos los tipos implementados (el genérico/ServicioReserva queda en modal viejo).
  *
  * Flujo de guardado por tipo:
  *   - Producto existente (rateId): POST /reservas/{id}/{tipo} con rateId
@@ -14,7 +14,7 @@
  *   - Editar (serviceToEdit): PUT /reservas/{id}/{tipo}/{serviceId}
  *
  * Si el guardado falla, la ficha queda abierta con los datos intactos y muestra
- * un cartel rojo arriba de los botones (nunca se pierde lo cargado â€” guÃ­a UX ronda 2).
+ * un cartel rojo arriba de los botones (nunca se pierde lo cargado — guía UX ronda 2).
  */
 
 import { useState, useCallback } from "react";
@@ -29,20 +29,20 @@ import { TransferInlineForm, calcularTotalesTraslado } from "./TransferInlineFor
 import { PackageInlineForm, calcularTotalesPaquete } from "./PackageInlineForm";
 import { AssistanceInlineForm, calcularTotalesAsistencia } from "./AssistanceInlineForm";
 
-// â”€â”€â”€ ConfiguraciÃ³n de pestaÃ±as â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Configuración de pestañas ────────────────────────────────────────────────
 
 const TABS = [
     { id: "Hotel", label: "Hotel", icon: Hotel },
-    { id: "Aereo", label: "AÃ©reo", icon: Plane },
+    { id: "Aereo", label: "Aéreo", icon: Plane },
     { id: "Traslado", label: "Traslado", icon: Car },
     { id: "Paquete", label: "Paquete", icon: Package },
     { id: "Asistencia", label: "Asistencia", icon: ShieldCheck },
 ];
 
-// â”€â”€â”€ Mapa de tipo de pestaÃ±a â†’ segmento de endpoint â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Mapa de tipo de pestaña → segmento de endpoint ──────────────────────────
 
 // Necesario para construir las URLs de POST/PUT de cada tipo.
-// El genÃ©rico (ServicioReserva) queda en el modal viejo y NO aparece aquÃ­.
+// El genérico (ServicioReserva) queda en el modal viejo y NO aparece aquí.
 const TAB_ENDPOINTS = {
     Hotel: "hotels",
     Aereo: "flights",
@@ -67,7 +67,7 @@ const MEAL_PLAN_LEGACY = {
 const ROOM_TYPE_CANONICOS = ["Single", "Doble", "Triple", "Cuadruple", "Familiar"];
 // Solo equivalencias INEQUIVOCAS. "Suite" y "FamiliarCuadruple" no tienen equivalente claro
 // en la lista canonica -> caen al default (son datos de prueba pre-lanzamiento; si algun dia
-// importara, la decision de equivalencia es del dueÃ±o, no nuestra).
+// importara, la decision de equivalencia es del dueño, no nuestra).
 const ROOM_TYPE_LEGACY = {
     Simple: "Single",
 };
@@ -91,7 +91,7 @@ function buildHotelFormInitial(serviceToEdit) {
             passengers: "", rooms: 1, supplierId: "",
             unitNetCost: "", unitSalePrice: "", currency: "ARS",
             // Defaults que coinciden con el modal viejo y con el backend (no-nullables).
-            // Los selects siempre muestran un valor, asÃ­ que estos nunca quedan vacÃ­os.
+            // Los selects siempre muestran un valor, así que estos nunca quedan vacíos.
             mealPlan: "Desayuno",
             roomType: "Doble",
             confirmationNumber: "",
@@ -136,7 +136,7 @@ function buildFlightFormInitial(serviceToEdit) {
             pnr: "", ticketNumber: "", scheduleNotes: "",
             baggage: "",
             // cabinClass: "" = "Sin especificar" (igual que el modal viejo). El select
-            // siempre tiene opciones, asÃ­ que "" nunca queda colgado.
+            // siempre tiene opciones, así que "" nunca queda colgado.
             cabinClass: "",
             rateId: null, newCatalogProduct: null,
         };
@@ -218,7 +218,7 @@ function buildPackageFormInitial(serviceToEdit) {
     if (!serviceToEdit) {
         return {
             packageName: "", supplierId: "", startDate: "",
-            // endDate es opcional; se inicializa vacÃ­o (paquetes sin fecha de fin cargada).
+            // endDate es opcional; se inicializa vacío (paquetes sin fecha de fin cargada).
             endDate: "",
             passengers: "",
             // roomBase almacena el valor "double"/"triple"/etc del campo occupancyBase del backend.
@@ -234,13 +234,13 @@ function buildPackageFormInitial(serviceToEdit) {
     // El paquete guarda netCost/salePrice como total; dividimos por pasajeros para el precio por persona
     const pasajeros = Math.max(Number(serviceToEdit.adults) || Number(serviceToEdit.passengers) || 1, 1);
     return {
-        // ADR-018: la identidad del paquete se guarda en packageName (que ya existÃ­a).
+        // ADR-018: la identidad del paquete se guarda en packageName (que ya existía).
         // Fallback a description/name para servicios cargados antes de ADR-018.
         packageName: serviceToEdit.packageName || serviceToEdit.description || serviceToEdit.name || "",
         supplierId: serviceToEdit.supplierId || serviceToEdit.supplierPublicId || "",
         startDate: (serviceToEdit.startDate || "").split("T")[0] || "",
         // Round-trip: poblar endDate desde el backend si viene cargado.
-        // Paquetes viejos (endDate null) quedan con string vacÃ­o â†’ campo opcional en la UI.
+        // Paquetes viejos (endDate null) quedan con string vacío → campo opcional en la UI.
         endDate: (serviceToEdit.endDate || "").split("T")[0] || "",
         passengers: String(pasajeros),
         // Round-trip: el backend devuelve occupancyBase en PackageBookingDto
@@ -276,7 +276,7 @@ function buildAssistanceFormInitial(serviceToEdit) {
         validFrom: (serviceToEdit.validFrom || "").split("T")[0] || "",
         validTo: (serviceToEdit.validTo || "").split("T")[0] || "",
         passengers: String(pasajeros),
-        // Asistencia: precio por persona por dÃ­a. No podemos dividir por dÃ­as aquÃ­ porque
+        // Asistencia: precio por persona por día. No podemos dividir por días aquí porque
         // no tenemos el campo calcularDiasVigencia disponible en el constructor del estado;
         // si el backend guarda el unitPrice en el futuro se puede ajustar.
         // Por ahora dejamos el total como referencia y el vendedor lo ajusta.
@@ -290,10 +290,10 @@ function buildAssistanceFormInitial(serviceToEdit) {
     };
 }
 
-// â”€â”€â”€ DetecciÃ³n de pestaÃ±a inicial cuando se edita un servicio â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Detección de pestaña inicial cuando se edita un servicio ─────────────────
 
 /**
- * Dado un servicio a editar, devuelve el id de la pestaÃ±a que debe activarse.
+ * Dado un servicio a editar, devuelve el id de la pestaña que debe activarse.
  * Usa el recordKind que el modelo normalizado pone en cada servicio.
  */
 function detectarTabParaEdicion(serviceToEdit) {
@@ -303,24 +303,24 @@ function detectarTabParaEdicion(serviceToEdit) {
     if (kind === "transfer") return "Traslado";
     if (kind === "package") return "Paquete";
     if (kind === "assistance") return "Asistencia";
-    return "Hotel"; // hotel es el default y tambiÃ©n el tipo mÃ¡s comÃºn
+    return "Hotel"; // hotel es el default y también el tipo más común
 }
 
 // â”€â”€â”€ Componente principal ServiceInlineCard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /**
  * Props:
- *   reservaId     â€” publicId de la reserva (para los endpoints)
- *   serviceToEdit â€” si viene, la ficha se abre en modo ediciÃ³n con los datos precargados
- *   suppliers     â€” lista de proveedores del contexto de la reserva
- *   onGuardado    â€” callback que se llama con opciones despuÃ©s de guardar exitosamente
- *   onCancelar    â€” callback para cerrar la ficha sin guardar
+ *   reservaId     — publicId de la reserva (para los endpoints)
+ *   serviceToEdit — si viene, la ficha se abre en modo edición con los datos precargados
+ *   suppliers     — lista de proveedores del contexto de la reserva
+ *   onGuardado    — callback que se llama con opciones después de guardar exitosamente
+ *   onCancelar    — callback para cerrar la ficha sin guardar
  */
 export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuardado, onCancelar }) {
     const canSeeCost = hasPermission("cobranzas.see_cost");
 
-    // La pestaÃ±a activa: si estamos editando, detectamos el tipo automÃ¡ticamente.
-    // Al editar, la pestaÃ±a queda bloqueada (no se puede cambiar de tipo).
+    // La pestaña activa: si estamos editando, detectamos el tipo automáticamente.
+    // Al editar, la pestaña queda bloqueada (no se puede cambiar de tipo).
     const [tabActiva, setTabActiva] = useState(() => detectarTabParaEdicion(serviceToEdit));
 
     // â”€â”€â”€ Estados de formulario por tipo â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -347,75 +347,75 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
         Asistencia: formAsistencia,
     }[tabActiva];
 
-    // â”€â”€â”€ ValidaciÃ³n por tipo â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ─── Validación por tipo ──────────────────────────────────────────────────
 
     const validarForm = useCallback(() => {
         if (tabActiva === "Hotel") {
-            if (!formHotel.hotelName?.trim()) return "EscribÃ­ el nombre del hotel.";
-            if (!formHotel.checkIn) return "ElegÃ­ la fecha de entrada.";
-            if (!formHotel.checkOut) return "ElegÃ­ la fecha de salida.";
+            if (!formHotel.hotelName?.trim()) return "Escribí el nombre del hotel.";
+            if (!formHotel.checkIn) return "Elegí la fecha de entrada.";
+            if (!formHotel.checkOut) return "Elegí la fecha de salida.";
             const noches = calcularNoches(formHotel.checkIn, formHotel.checkOut);
             if (noches <= 0) return "La fecha de salida debe ser posterior a la de entrada.";
-            if (!formHotel.unitSalePrice || Number(formHotel.unitSalePrice) <= 0) return "IngresÃ¡ el precio de venta por noche.";
+            if (!formHotel.unitSalePrice || Number(formHotel.unitSalePrice) <= 0) return "Ingresá el precio de venta por noche.";
             // RoomType y MealPlan son obligatorios en el backend (non-nullable). Los selects
-            // tienen defaults asÃ­ que esto solo puede pasar si el estado se cargÃ³ mal externamente.
-            if (!formHotel.mealPlan) return "SeleccionÃ¡ el rÃ©gimen del hotel.";
-            if (!formHotel.roomType) return "SeleccionÃ¡ el tipo de habitaciÃ³n.";
-            if (!formHotel.newCatalogProduct && !formHotel.supplierId) return "ElegÃ­ el operador.";
+            // tienen defaults así que esto solo puede pasar si el estado se cargó mal externamente.
+            if (!formHotel.mealPlan) return "Seleccioná el régimen del hotel.";
+            if (!formHotel.roomType) return "Seleccioná el tipo de habitación.";
+            if (!formHotel.newCatalogProduct && !formHotel.supplierId) return "Elegí el operador.";
             if (formHotel.newCatalogProduct) {
-                if (!formHotel.newCatalogProduct.name?.trim()) return "IngresÃ¡ el nombre del hotel nuevo.";
+                if (!formHotel.newCatalogProduct.name?.trim()) return "Ingresá el nombre del hotel nuevo.";
                 if (!formHotel.newCatalogProduct.city?.trim()) return "La ciudad es obligatoria para crear un hotel nuevo.";
-                if (!formHotel.newCatalogProduct.supplierPublicId) return "ElegÃ­ el operador del hotel nuevo.";
+                if (!formHotel.newCatalogProduct.supplierPublicId) return "Elegí el operador del hotel nuevo.";
             }
         }
 
         if (tabActiva === "Aereo") {
-            if (!formVuelo.routeName?.trim()) return "EscribÃ­ la ruta o aerolÃ­nea.";
-            if (!formVuelo.departureDate) return "ElegÃ­ la fecha de ida.";
-            if (!formVuelo.salePrice || Number(formVuelo.salePrice) <= 0) return "IngresÃ¡ el precio de venta.";
-            if (!formVuelo.newCatalogProduct && !formVuelo.supplierId) return "ElegÃ­ el operador o consolidador.";
+            if (!formVuelo.routeName?.trim()) return "Escribí la ruta o aerolínea.";
+            if (!formVuelo.departureDate) return "Elegí la fecha de ida.";
+            if (!formVuelo.salePrice || Number(formVuelo.salePrice) <= 0) return "Ingresá el precio de venta.";
+            if (!formVuelo.newCatalogProduct && !formVuelo.supplierId) return "Elegí el operador o consolidador.";
             if (formVuelo.newCatalogProduct) {
-                if (!formVuelo.newCatalogProduct.name?.trim()) return "IngresÃ¡ el nombre de la ruta nueva.";
-                if (!formVuelo.newCatalogProduct.supplierPublicId) return "ElegÃ­ el operador del vuelo nuevo.";
+                if (!formVuelo.newCatalogProduct.name?.trim()) return "Ingresá el nombre de la ruta nueva.";
+                if (!formVuelo.newCatalogProduct.supplierPublicId) return "Elegí el operador del vuelo nuevo.";
             }
         }
 
         if (tabActiva === "Traslado") {
-            if (!formTraslado.routeName?.trim()) return "EscribÃ­ el trayecto del traslado.";
-            if (!formTraslado.pickupDate) return "ElegÃ­ la fecha del traslado.";
-            if (!formTraslado.salePrice || Number(formTraslado.salePrice) <= 0) return "IngresÃ¡ el precio de venta.";
-            if (!formTraslado.newCatalogProduct && !formTraslado.supplierId) return "ElegÃ­ el operador.";
+            if (!formTraslado.routeName?.trim()) return "Escribí el trayecto del traslado.";
+            if (!formTraslado.pickupDate) return "Elegí la fecha del traslado.";
+            if (!formTraslado.salePrice || Number(formTraslado.salePrice) <= 0) return "Ingresá el precio de venta.";
+            if (!formTraslado.newCatalogProduct && !formTraslado.supplierId) return "Elegí el operador.";
             if (formTraslado.newCatalogProduct) {
-                if (!formTraslado.newCatalogProduct.name?.trim()) return "IngresÃ¡ el nombre del trayecto nuevo.";
-                if (!formTraslado.newCatalogProduct.supplierPublicId) return "ElegÃ­ el operador del traslado nuevo.";
+                if (!formTraslado.newCatalogProduct.name?.trim()) return "Ingresá el nombre del trayecto nuevo.";
+                if (!formTraslado.newCatalogProduct.supplierPublicId) return "Elegí el operador del traslado nuevo.";
             }
         }
 
         if (tabActiva === "Paquete") {
-            if (!formPaquete.packageName?.trim()) return "EscribÃ­ el nombre del paquete.";
-            if (!formPaquete.startDate) return "ElegÃ­ la fecha de salida.";
-            // ValidaciÃ³n de coherencia de fechas: fin no puede ser anterior a salida.
-            // endDate es opcional; solo se valida cuando el usuario la cargÃ³.
+            if (!formPaquete.packageName?.trim()) return "Escribí el nombre del paquete.";
+            if (!formPaquete.startDate) return "Elegí la fecha de salida.";
+            // Validación de coherencia de fechas: fin no puede ser anterior a salida.
+            // endDate es opcional; solo se valida cuando el usuario la cargó.
             if (formPaquete.endDate && formPaquete.startDate && formPaquete.endDate < formPaquete.startDate) {
                 return "La fecha de fin no puede ser anterior a la salida.";
             }
-            if (!formPaquete.unitSalePrice || Number(formPaquete.unitSalePrice) <= 0) return "IngresÃ¡ el precio de venta por persona.";
-            if (!formPaquete.newCatalogProduct && !formPaquete.supplierId) return "ElegÃ­ el operador.";
+            if (!formPaquete.unitSalePrice || Number(formPaquete.unitSalePrice) <= 0) return "Ingresá el precio de venta por persona.";
+            if (!formPaquete.newCatalogProduct && !formPaquete.supplierId) return "Elegí el operador.";
             if (formPaquete.newCatalogProduct) {
-                if (!formPaquete.newCatalogProduct.name?.trim()) return "IngresÃ¡ el nombre del paquete nuevo.";
-                if (!formPaquete.newCatalogProduct.supplierPublicId) return "ElegÃ­ el operador del paquete nuevo.";
+                if (!formPaquete.newCatalogProduct.name?.trim()) return "Ingresá el nombre del paquete nuevo.";
+                if (!formPaquete.newCatalogProduct.supplierPublicId) return "Elegí el operador del paquete nuevo.";
             }
         }
 
         if (tabActiva === "Asistencia") {
-            if (!formAsistencia.planName?.trim()) return "EscribÃ­ el plan o cobertura.";
-            if (!formAsistencia.validFrom) return "ElegÃ­ la fecha de inicio de vigencia.";
-            if (!formAsistencia.validTo) return "ElegÃ­ la fecha de fin de vigencia.";
-            if (!formAsistencia.unitSalePrice || Number(formAsistencia.unitSalePrice) <= 0) return "IngresÃ¡ el precio de venta por persona/dÃ­a.";
-            if (!formAsistencia.newCatalogProduct && !formAsistencia.supplierId) return "ElegÃ­ el proveedor.";
+            if (!formAsistencia.planName?.trim()) return "Escribí el plan o cobertura.";
+            if (!formAsistencia.validFrom) return "Elegí la fecha de inicio de vigencia.";
+            if (!formAsistencia.validTo) return "Elegí la fecha de fin de vigencia.";
+            if (!formAsistencia.unitSalePrice || Number(formAsistencia.unitSalePrice) <= 0) return "Ingresá el precio de venta por persona/día.";
+            if (!formAsistencia.newCatalogProduct && !formAsistencia.supplierId) return "Elegí el proveedor.";
             if (formAsistencia.newCatalogProduct) {
-                if (!formAsistencia.newCatalogProduct.name?.trim()) return "IngresÃ¡ el nombre del plan nuevo.";
-                if (!formAsistencia.newCatalogProduct.supplierPublicId) return "ElegÃ­ el proveedor del plan nuevo.";
+                if (!formAsistencia.newCatalogProduct.name?.trim()) return "Ingresá el nombre del plan nuevo.";
+                if (!formAsistencia.newCatalogProduct.supplierPublicId) return "Elegí el proveedor del plan nuevo.";
             }
         }
 
@@ -449,7 +449,7 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 // RoomType y MealPlan son string NO-nullables en el backend (CreateHotelRequest /
                 // UpdateHotelRequest). Con null el backend responde 400. Usamos el mismo default
                 // que el modal viejo: Doble / Desayuno. Los selects siempre tienen un valor
-                // seleccionado, asÃ­ que || "X" es solo un fallback de seguridad extra.
+                // seleccionado, así que || "X" es solo un fallback de seguridad extra.
                 mealPlan: formHotel.mealPlan || "Desayuno",
                 roomType: formHotel.roomType || "Doble",
                 confirmationNumber: formHotel.confirmationNumber || null,
@@ -470,7 +470,7 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 // ADR-018: la identidad del vuelo va en productName, no en description.
                 // El backend (FlightSegment) tiene columna ProductName (varchar200, nullable).
                 productName: formVuelo.routeName?.trim() || "",
-                // Hora de pared sin conversiÃ³n UTC (vÃ©ase ServiceFormModal lÃ­nea ~2286)
+                // Hora de pared sin conversión UTC (véase ServiceFormModal línea ~2286)
                 departureTime: formVuelo.departureDate ? `${formVuelo.departureDate}T00:00:00` : null,
                 arrivalTime: formVuelo.returnDate ? `${formVuelo.returnDate}T00:00:00` : null,
                 passengerCount: formVuelo.passengers ? Number(formVuelo.passengers) : null,
@@ -484,7 +484,7 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 ticketNumber: formVuelo.ticketNumber || null,
                 notes: formVuelo.scheduleNotes || null,
                 baggage: formVuelo.baggage || null,
-                // cabinClass: null cuando no se eligiÃ³ (backend lo relaja a opcional).
+                // cabinClass: null cuando no se eligió (backend lo relaja a opcional).
                 // Con || null: "" â†’ null, "Economy" â†’ "Economy", etc.
                 cabinClass: formVuelo.cabinClass || null,
             };
@@ -517,7 +517,7 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 direction: formTraslado.movementType || null,
                 // serviceMode: "private" o "shared"; el select ya almacena el valor backend.
                 serviceMode: formTraslado.transferType || null,
-                // vehicleType: texto libre opcional; null cuando no se especificÃ³.
+                // vehicleType: texto libre opcional; null cuando no se especificó.
                 vehicleType: formTraslado.vehicleType || null,
                 isRoundTrip: false,
             };
@@ -537,11 +537,11 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
 
             const payload = {
                 // ADR-018: la identidad del paquete va en packageName (campo pre-existente en PackageBooking).
-                // El ADR relajÃ³ Destination y EndDate a nullable; no se mandan desde la ficha inline.
+                // El ADR relajó Destination y EndDate a nullable; no se mandan desde la ficha inline.
                 packageName: formPaquete.packageName?.trim() || "",
-                // Fecha de pared sin conversiÃ³n UTC, igual que Hotel/Vuelo mÃ¡s arriba (bug fechas
+                // Fecha de pared sin conversión UTC, igual que Hotel/Vuelo más arriba (bug fechas
                 // corridas 2026-07-16). El backend normaliza esto con NormalizeCalendarDate
-                // (BookingService), que acepta tanto con Z como sin Z â€” pero unificamos el contrato.
+                // (BookingService), que acepta tanto con Z como sin Z — pero unificamos el contrato.
                 startDate: formPaquete.startDate ? `${formPaquete.startDate}T00:00:00` : null,
                 // endDate es OPCIONAL en ADR-018: si el form no lo tiene, se omite. El backend coalesce a startDate.
                 endDate: formPaquete.endDate ? `${formPaquete.endDate}T00:00:00` : null,
@@ -553,7 +553,7 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 tax: 0,
                 currency: formPaquete.currency || "ARS",
                 itinerary: formPaquete.itinerary || null,
-                // El nÃºmero de file va en confirmationNumber (el backend tiene ese campo)
+                // El número de file va en confirmationNumber (el backend tiene ese campo)
                 confirmationNumber: formPaquete.fileNumber || null,
                 // occupancyBase: "double", "triple", etc. El select ya almacena el valor backend.
                 occupancyBase: formPaquete.roomBase || null,
@@ -571,11 +571,11 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
         if (tabActiva === "Asistencia") {
             const payload = {
                 // ADR-018: la identidad de la asistencia va en planType, no en description.
-                // El backend (AssistanceBooking) ya tenÃ­a PlanType nullable.
+                // El backend (AssistanceBooking) ya tenía PlanType nullable.
                 planType: formAsistencia.planName?.trim() || "",
-                // Fecha de pared sin conversiÃ³n UTC, igual que Hotel/Vuelo mÃ¡s arriba (bug fechas
+                // Fecha de pared sin conversión UTC, igual que Hotel/Vuelo más arriba (bug fechas
                 // corridas 2026-07-16). El backend normaliza esto con NormalizeCalendarDate
-                // (BookingService), que acepta tanto con Z como sin Z â€” pero unificamos el contrato.
+                // (BookingService), que acepta tanto con Z como sin Z — pero unificamos el contrato.
                 validFrom: formAsistencia.validFrom ? `${formAsistencia.validFrom}T00:00:00` : null,
                 validTo: formAsistencia.validTo ? `${formAsistencia.validTo}T00:00:00` : null,
                 adults: formAsistencia.passengers ? Number(formAsistencia.passengers) : 1,
@@ -626,8 +626,8 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
 
             onGuardado({ showLoading: false, preserveOnError: true });
         } catch (error) {
-            // Si falla, la ficha queda abierta con todo intacto + cartel rojo (guÃ­a UX ronda 2)
-            setErrorGuardado(getApiErrorMessage(error, "No se pudo guardar. RevisÃ¡ la conexiÃ³n y probÃ¡ de nuevo."));
+            // Si falla, la ficha queda abierta con todo intacto + cartel rojo (guía UX ronda 2)
+            setErrorGuardado(getApiErrorMessage(error, "No se pudo guardar. Revisá la conexión y probá de nuevo."));
         } finally {
             setGuardando(false);
         }
@@ -686,7 +686,7 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
         return { ventaTotal: 0, ganancia: null, mostrar: false };
     })();
 
-    // â”€â”€â”€ Label del botÃ³n de guardar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ─── Label del botón de guardar ───────────────────────────────────────────
 
     const tieneProductoNuevo = formActivo?.newCatalogProduct != null;
     const tiposLabel = { Hotel: "hotel", Aereo: "vuelo", Traslado: "traslado", Paquete: "paquete", Asistencia: "asistencia" };
@@ -704,7 +704,7 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
             className="border-2 border-blue-500 rounded-xl bg-white p-5 mt-4 shadow-sm"
             data-testid="service-inline-card"
         >
-            {/* PESTAÃ‘AS */}
+            {/* PESTAÑAS */}
             <div className="flex gap-2 mb-5 flex-wrap" role="tablist" aria-label="Tipo de servicio">
                 {TABS.map(({ id, label, icon: Icon }) => {
                     const estaActiva = tabActiva === id;
@@ -733,7 +733,7 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 })}
             </div>
 
-            {/* CONTENIDO DE LA PESTAÃ‘A ACTIVA */}
+            {/* CONTENIDO DE LA PESTAÑA ACTIVA */}
             <div role="tabpanel">
                 {tabActiva === "Hotel" && (
                     <HotelInlineForm
@@ -798,7 +798,7 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
 
                 {/* Derecha: cartel de error + botones */}
                 <div className="flex flex-col items-end gap-2 w-full sm:w-auto">
-                    {/* Error arriba de los botones (guÃ­a UX ronda 2: nunca se pierde lo cargado) */}
+                    {/* Error arriba de los botones (guía UX ronda 2: nunca se pierde lo cargado) */}
                     {errorGuardado && (
                         <div
                             className="flex items-start gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 w-full sm:w-auto max-w-sm"
@@ -826,7 +826,7 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                             className="px-5 py-2 text-sm font-semibold bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
                             data-testid="inline-card-guardar"
                         >
-                            {guardando ? "Guardandoâ€¦" : labelBotonGuardar}
+                            {guardando ? "Guardando…" : labelBotonGuardar}
                         </button>
                     </div>
                 </div>

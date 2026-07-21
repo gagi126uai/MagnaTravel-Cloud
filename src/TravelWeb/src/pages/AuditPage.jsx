@@ -330,7 +330,7 @@ function NarrativeSummary({ log }) {
       summary = `modificó ${firstTwo} y ${fieldCount - 2} campo(s) más de ${entity}`;
     }
   } else {
-    summary = `${translateAction(log.action).toLowerCase()} â€” ${entity}`;
+    summary = `${translateAction(log.action).toLowerCase()} — ${entity}`;
   }
 
   return (

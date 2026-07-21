@@ -251,7 +251,7 @@ export default function SettingsPage() {
 
   const handleLogoutBot = async () => {
     const confirmed = await showConfirm(
-      "Â¿Cerrar sesión de WhatsApp?",
+      "¿Cerrar sesión de WhatsApp?",
       "El bot dejará de funcionar hasta que vuelvas a escanear el QR.",
       "Sí, cerrar sesión",
       "red"
@@ -446,7 +446,7 @@ export default function SettingsPage() {
 
   const deleteCommissionRule = async (id) => {
     const confirmed = await showConfirm(
-      "Â¿Eliminar regla?",
+      "¿Eliminar regla?",
       "Esta acción no se puede deshacer y afectará el cálculo de comisiones futuro.",
       "Sí, eliminar",
       "red"
@@ -515,7 +515,7 @@ export default function SettingsPage() {
   const handleDeleteUser = async (user) => {
     const confirmed = await showConfirm(
       "Eliminar Usuario",
-      `Â¿Estás seguro de que deseas eliminar permanentemente a ${user.fullName}? Esta acción no se puede deshacer.`,
+      `¿Estás seguro de que deseas eliminar permanentemente a ${user.fullName}? Esta acción no se puede deshacer.`,
       "Sí, eliminar",
       "red"
     );

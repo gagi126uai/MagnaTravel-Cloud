@@ -4062,7 +4062,7 @@ public class ReservaService : IReservaService
         file.EnsureCollectable();
 
         if (payment.Amount <= 0) throw new ArgumentException("El monto debe ser mayor a 0");
-        if (string.IsNullOrWhiteSpace(payment.Method)) throw new ArgumentException("Debe seleccionar un mÃ©todo de pago");
+        if (string.IsNullOrWhiteSpace(payment.Method)) throw new ArgumentException("Debe seleccionar un método de pago");
         
         payment.ReservaId = reservaId;
         payment.PaidAt = payment.PaidAt == default ? DateTime.UtcNow : payment.PaidAt.ToUniversalTime();

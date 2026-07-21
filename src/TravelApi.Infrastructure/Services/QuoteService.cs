@@ -219,7 +219,7 @@ public class QuoteService : IQuoteService
     public async Task<Quote> UpdateAsync(int id, Quote updated, CancellationToken cancellationToken)
     {
         var quote = await _db.Quotes.FindAsync(new object[] { id }, cancellationToken)
-            ?? throw new KeyNotFoundException($"CotizaciÃ³n {id} no encontrada.");
+            ?? throw new KeyNotFoundException($"Cotización {id} no encontrada.");
 
         quote.Title = updated.Title;
         quote.Description = updated.Description;
@@ -240,7 +240,7 @@ public class QuoteService : IQuoteService
     {
         var quote = await _db.Quotes.Include(q => q.Items)
             .FirstOrDefaultAsync(q => q.Id == id, cancellationToken)
-            ?? throw new KeyNotFoundException($"CotizaciÃ³n {id} no encontrada.");
+            ?? throw new KeyNotFoundException($"Cotización {id} no encontrada.");
 
         _db.QuoteItems.RemoveRange(quote.Items);
         _db.Quotes.Remove(quote);
@@ -250,7 +250,7 @@ public class QuoteService : IQuoteService
     public async Task<Quote> AddItemAsync(int quoteId, QuoteItem item, CancellationToken cancellationToken)
     {
         var quote = await _db.Quotes.FindAsync(new object[] { quoteId }, cancellationToken)
-            ?? throw new KeyNotFoundException($"CotizaciÃ³n {quoteId} no encontrada.");
+            ?? throw new KeyNotFoundException($"Cotización {quoteId} no encontrada.");
 
         item.QuoteId = quoteId;
         item.CreatedAt = DateTime.UtcNow;
@@ -300,7 +300,7 @@ public class QuoteService : IQuoteService
     public async Task<Quote> UpdateStatusAsync(int id, string status, CancellationToken cancellationToken)
     {
         var quote = await _db.Quotes.FindAsync(new object[] { id }, cancellationToken)
-            ?? throw new KeyNotFoundException($"CotizaciÃ³n {id} no encontrada.");
+            ?? throw new KeyNotFoundException($"Cotización {id} no encontrada.");
 
         quote.Status = status;
         if (quote.LeadId.HasValue && (status == QuoteStatus.Sent || status == QuoteStatus.Accepted))
