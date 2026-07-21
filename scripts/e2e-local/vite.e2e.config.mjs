@@ -12,7 +12,10 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       "/api": {
-        target: "http://localhost:60663",
+        // Puerto configurable: Windows a veces reserva rangos (error 10013)
+        // tras un reinicio; si 60663 cae en un rango excluido, exportar
+        // E2E_API_PORT con uno libre (netsh interface ipv4 show excludedportrange).
+        target: "http://localhost:" + (process.env.E2E_API_PORT || "60663"),
         changeOrigin: true,
       },
     },
