@@ -66,4 +66,9 @@ public class TransferBookingDto
     // ADR-048 T4 (2026-07-17): etiqueta "Con multa"/"Multa cobrada" por servicio. Ver el XML-doc completo
     // en HotelBookingDto.CancellationPenaltyState.
     public string? CancellationPenaltyState { get; set; }
+    /// <summary>
+    /// Tanda 7 (2026-07-20): si ESTE servicio admite "Anular", y el motivo cuando no. Ver el XML-doc
+    /// completo en <see cref="HotelBookingDto.CanCancel"/>.
+    /// </summary>
+    public CapabilityDto? CanCancel { get; set; }
 }

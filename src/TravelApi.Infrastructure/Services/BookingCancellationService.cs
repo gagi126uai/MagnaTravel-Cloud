@@ -412,7 +412,11 @@ public class BookingCancellationService
         //    voucher entregado no se reescribe. InvalidOperationException -> 409 (igual que siempre).
         var voucherBlockReason = await MutationGuards.GetReservaVoucherOnlyBlockReasonAsync(_db, reserva.Id, ct);
         if (voucherBlockReason is not null)
-            throw new InvalidOperationException(voucherBlockReason);
+            // Tanda 7 "contrato pantalla-motor" (2026-07-20): ServiceCancellationRejectedException agrega un
+            // Code estable al body 409 (CANCEL_SERVICE_VOUCHER_LIVE) SIN cambiar el mensaje de siempre — el
+            // frontend lo usa para mostrar el cartel/boton correcto (nunca el texto fijo de "nota de credito").
+            throw new ServiceCancellationRejectedException(
+                ServiceCancellationRejectedException.Codes.VoucherLive, voucherBlockReason);
 
         // 0-bis) R1 (Pasos B/C, plata viva, 2026-06-30): NO cancelar un servicio PAGADO al operador si no se puede
         //    ANCLAR el receivable "me tiene que devolver". El registro del lado-operador (la linea de cancelacion
@@ -433,9 +437,12 @@ public class BookingCancellationService
         //    vino a cerrar. Sin Payer no hay a quien facturarle la Nota de Credito, asi que ahora se bloquea
         //    ANTES de tocar nada (409 explicito), en vez de cancelar dejando ese hueco sin rastro.
         if (reserva.PayerId is null && await ReservaHasLiveSaleInvoiceAsync(reserva.Id, ct))
-            throw new InvalidOperationException(
-                "No se puede anular este servicio: la reserva tiene una factura emitida pero no tiene un " +
-                "cliente asignado para facturarle la nota de crédito. Asigná un cliente a la reserva antes de anular.");
+            // Tanda 7 (2026-07-20): mismo envelope aditivo que el candado de voucher de arriba
+            // (CANCEL_SERVICE_NO_PAYER). El texto viene de ServiceCancellationPreflightPolicy (Domain), la
+            // MISMA fuente que usa el pre-chequeo del GET — no se duplica la redaccion.
+            throw new ServiceCancellationRejectedException(
+                ServiceCancellationRejectedException.Codes.NoPayer,
+                ServiceCancellationPreflightPolicy.NoPayerBlockedReason);
 
         // 1) PLAN de credito (solo LECTURA): resolvemos el Id del servicio, las facturas de venta vivas y a
         //    que factura le corresponde el credito ANTES de abrir la transaccion. Asi la transaccion de mas
@@ -903,10 +910,12 @@ public class BookingCancellationService
             reserva, BookingCancellationLineScope.Partial, serviceTable, serviceId.Value, ct);
 
         if (wouldBeRefundCap > 0m)
-            throw new InvalidOperationException(
-                "No se puede anular este servicio todavía: ya tiene pagos al operador y la reserva aún no tiene " +
-                "factura emitida para registrar el reembolso a tu favor. Emití la factura de venta o gestioná el " +
-                "reembolso con el operador antes de anular el servicio.");
+            // Tanda 7 (2026-07-20): mismo envelope aditivo que los otros dos candados de CancelServiceAsync
+            // (CANCEL_SERVICE_UNANCHORED_OPERATOR_REFUND). El frontend usa este code para ofrecer el boton
+            // "Emitir factura" (D1 firmada por Gaston, 2026-07-18) en vez del texto fijo de "nota de credito".
+            throw new ServiceCancellationRejectedException(
+                ServiceCancellationRejectedException.Codes.UnanchoredOperatorRefund,
+                ServiceCancellationPreflightPolicy.UnanchoredOperatorRefundBlockedReason);
     }
 
     /// <summary>
@@ -992,6 +1001,229 @@ public class BookingCancellationService
                 : "No se puede cambiar el operador de este servicio: hay pagos a este operador por esta reserva que " +
                   "todavía no tienen factura que los respalde. Emití la factura de venta o gestioná el reembolso con " +
                   "el operador antes de cambiar el operador.");
+    }
+
+    /// <summary>
+    /// Tanda 7 "contrato pantalla-motor" (2026-07-20): pre-chequeo READ-ONLY del candado R1 (plata pagada al
+    /// operador sin factura) para el GET de la ficha. Lo usa <c>ReservaService.GetReservaByIdAsync</c> para
+    /// apagar la papelera de "anular servicio" ANTES de que el usuario la clickee, en vez de dejar que
+    /// explote recien al POST.
+    ///
+    /// <para><b>Short-circuit obligatorio (B1 del review de arquitectura, no negociable)</b>: primero se
+    /// pregunta UNA sola vez si la reserva tiene factura de venta viva, con el MISMO predicado exacto que
+    /// ancla R1 (<see cref="ReservaHasLiveSaleInvoiceAsync"/>). Con factura viva, R1 NUNCA bloquea a nadie
+    /// (el ancla ya existe) — se devuelve el conjunto vacio de servicios bloqueados SIN pagar ninguna
+    /// consulta mas. En ese mismo caso "con factura" es donde puede aplicar el otro candado uniforme (sin
+    /// cliente asignado).</para>
+    ///
+    /// <para><b>Reconstrucción SOLO en el caso sin-factura — cada servicio se evalua AISLADO, no en pool
+    /// compartido (fix post-review, 2026-07-20)</b>: la primera version de este metodo reusaba
+    /// <see cref="BuildCancellationLinesAsync"/> + <see cref="AssignRefundCapsAsync"/> en alcance
+    /// <see cref="BookingCancellationLineScope.Full"/>, que reparte GREEDY el pool pagado al operador entre
+    /// TODOS los servicios candidatos del batch (correcto para "anular la reserva ENTERA", donde todas las
+    /// lineas compiten de verdad por el mismo pool AL MISMO TIEMPO). Pero el guard real de UN servicio
+    /// suelto (<see cref="EnsurePaidServiceCancellationHasReceivableAnchorAsync"/>) evalua ESE servicio
+    /// AISLADO: ve el pool COMPLETO (menos lo ya consumido por <see cref="BookingCancellationLine"/>
+    /// REALES/persistidas), sin competir con servicios hermanos que todavia no se estan cancelando. Con 2+
+    /// servicios vivos del mismo operador+moneda y pool insuficiente para todos, el reparto greedy le daba
+    /// RefundCap 0 al servicio evaluado DESPUES en el batch -> el flag decia "se puede anular" -> el usuario
+    /// clickeaba -> el guard real (evaluado aislado, con el pool COMPLETO) igual lo rechazaba. Falso negativo
+    /// siempre en la MISMA direccion peor (mostrar habilitado lo que en realidad esta bloqueado).
+    ///
+    /// <para>El fix: <see cref="BuildOperatorPaidServiceCandidatesAsync"/> junta los candidatos SIN calcular
+    /// ningun cap (solo (tabla, id, operador, moneda, costo)), y <see cref="ComputeAvailableOperatorRefundPoolAsync"/>
+    /// arma el pool YA reducido por el consumo de lineas REALES persistidas (el mismo primer tramo que hace
+    /// <see cref="AssignRefundCapsAsync"/>) — pero SIN el reparto secuencial entre candidatos. Cada candidato
+    /// se topea CONTRA ESE MISMO pool completo, exactamente como lo veria el guard real si se lo evaluara a
+    /// el solo. Sigue siendo UN SOLO BATCH de queries para toda la reserva (no una consulta por servicio):
+    /// el fix corrige la ARITMETICA del reparto, no reintroduce el N+1 que el review original ya habia
+    /// cerrado.</para>
+    /// </summary>
+    public async Task<ServiceCancellationPreflightResult> GetServiceCancellationPreflightAsync(
+        int reservaId, CancellationToken ct)
+    {
+        var emptyBlockedSet = (IReadOnlySet<(CancellableServiceTable ServiceTable, int ServiceId)>)
+            new HashSet<(CancellableServiceTable, int)>();
+
+        var reserva = await _db.Reservas.AsNoTracking().FirstOrDefaultAsync(r => r.Id == reservaId, ct);
+        if (reserva is null) return new ServiceCancellationPreflightResult(false, emptyBlockedSet);
+
+        bool hasLiveSaleInvoice = await ReservaHasLiveSaleInvoiceAsync(reservaId, ct);
+        if (hasLiveSaleInvoice)
+        {
+            // Con factura viva: R1 esta resuelto para TODA la reserva (el ancla ya existe), asi que no hace
+            // falta reconstruir nada. El unico candado uniforme que puede seguir aplicando es "factura viva
+            // sin cliente asignado" (exige la factura Y la ausencia de Payer, por eso solo se evalua aca).
+            bool hasLiveSaleInvoiceWithoutPayer = reserva.PayerId is null;
+            return new ServiceCancellationPreflightResult(hasLiveSaleInvoiceWithoutPayer, emptyBlockedSet);
+        }
+
+        // Sin factura viva: "sin cliente" no puede aplicar (ese candado exige la factura primero). Se juntan
+        // los candidatos (servicios vivos con operador) en UN batch, sin calcular cap todavia.
+        var candidates = await BuildOperatorPaidServiceCandidatesAsync(reservaId, ct);
+        if (candidates.Count == 0) return new ServiceCancellationPreflightResult(false, emptyBlockedSet);
+
+        var supplierIds = candidates.Select(c => c.SupplierId).Distinct().ToList();
+        var pool = await ComputeAvailableOperatorRefundPoolAsync(reservaId, supplierIds, ct);
+
+        // Cada candidato se topea contra el pool COMPLETO (nunca decrementado por sus hermanos del batch):
+        // asi replica exactamente lo que veria el guard real si evaluara a ESE servicio aislado.
+        var blockedServices = candidates
+            .Where(c =>
+            {
+                decimal available = pool.TryGetValue((c.SupplierId, c.Currency), out var v) ? v : 0m;
+                decimal cap = Math.Min(available, c.NetCost);
+                return cap > 0m;
+            })
+            .Select(c => (c.Table, c.ServiceId))
+            .ToHashSet();
+
+        return new ServiceCancellationPreflightResult(false, blockedServices);
+    }
+
+    /// <summary>
+    /// Fila minima de un servicio CANDIDATO a bloquear por R1 en el pre-chequeo: tiene operador asignado y no
+    /// esta cancelado todavia. A diferencia de <see cref="BuildCancellationLinesAsync"/>, NO arma entidades
+    /// <see cref="BookingCancellationLine"/> ni calcula ningun cap — es SOLO el insumo (operador, moneda,
+    /// costo) que <see cref="GetServiceCancellationPreflightAsync"/> topea despues, cada uno AISLADO, contra
+    /// <see cref="ComputeAvailableOperatorRefundPoolAsync"/>.
+    /// </summary>
+    private readonly record struct OperatorPaidServiceCandidate(
+        CancellableServiceTable Table, int ServiceId, int SupplierId, string Currency, decimal NetCost);
+
+    /// <summary>
+    /// Tanda 7, fix post-review (2026-07-20): junta, en UN batch de 6 queries (mismas tablas que
+    /// <see cref="BuildCancellationLinesAsync"/>), los servicios VIVOS de la reserva que tienen operador
+    /// asignado — los unicos que pueden tener plata pagada al operador sin ancla. Ordenados por Id para que
+    /// el resultado sea deterministico (no depende del orden fisico que devuelva la base).
+    /// </summary>
+    private async Task<List<OperatorPaidServiceCandidate>> BuildOperatorPaidServiceCandidatesAsync(
+        int reservaId, CancellationToken ct)
+    {
+        var candidates = new List<OperatorPaidServiceCandidate>();
+
+        void AddIfLive(
+            CancellableServiceTable table, int serviceId, int? supplierId, string? currency,
+            decimal netCost, bool isCancelled)
+        {
+            if (supplierId is null) return;   // sin operador no hay plata que anclar
+            if (isCancelled) return;          // ya cancelado: no es candidato a "anular ahora"
+
+            candidates.Add(new OperatorPaidServiceCandidate(
+                table, serviceId, supplierId.Value,
+                string.IsNullOrWhiteSpace(currency) ? Monedas.ARS : currency!, netCost));
+        }
+
+        var hotels = await _db.HotelBookings.AsNoTracking()
+            .Where(h => h.ReservaId == reservaId)
+            .OrderBy(h => h.Id)
+            .Select(h => new { h.Id, h.SupplierId, h.Currency, h.NetCost, h.Status })
+            .ToListAsync(ct);
+        foreach (var h in hotels)
+            AddIfLive(CancellableServiceTable.Hotel, h.Id, h.SupplierId, h.Currency, h.NetCost,
+                isCancelled: WorkflowStatusHelper.MapGenericStatus(h.Status ?? string.Empty) == WorkflowStatuses.Cancelado);
+
+        var flights = await _db.FlightSegments.AsNoTracking()
+            .Where(f => f.ReservaId == reservaId)
+            .OrderBy(f => f.Id)
+            .Select(f => new { f.Id, f.SupplierId, f.Currency, f.NetCost, f.Status })
+            .ToListAsync(ct);
+        foreach (var f in flights)
+            AddIfLive(CancellableServiceTable.Flight, f.Id, f.SupplierId, f.Currency, f.NetCost,
+                isCancelled: WorkflowStatusHelper.MapFlightStatus(f.Status ?? string.Empty) == WorkflowStatuses.Cancelado);
+
+        var transfers = await _db.TransferBookings.AsNoTracking()
+            .Where(t => t.ReservaId == reservaId)
+            .OrderBy(t => t.Id)
+            .Select(t => new { t.Id, t.SupplierId, t.Currency, t.NetCost, t.Status })
+            .ToListAsync(ct);
+        foreach (var t in transfers)
+            AddIfLive(CancellableServiceTable.Transfer, t.Id, t.SupplierId, t.Currency, t.NetCost,
+                isCancelled: WorkflowStatusHelper.MapGenericStatus(t.Status ?? string.Empty) == WorkflowStatuses.Cancelado);
+
+        var packages = await _db.PackageBookings.AsNoTracking()
+            .Where(p => p.ReservaId == reservaId)
+            .OrderBy(p => p.Id)
+            .Select(p => new { p.Id, p.SupplierId, p.Currency, p.NetCost, p.Status })
+            .ToListAsync(ct);
+        foreach (var p in packages)
+            AddIfLive(CancellableServiceTable.Package, p.Id, p.SupplierId, p.Currency, p.NetCost,
+                isCancelled: WorkflowStatusHelper.MapGenericStatus(p.Status ?? string.Empty) == WorkflowStatuses.Cancelado);
+
+        var assistances = await _db.AssistanceBookings.AsNoTracking()
+            .Where(a => a.ReservaId == reservaId)
+            .OrderBy(a => a.Id)
+            .Select(a => new { a.Id, a.SupplierId, a.Currency, a.NetCost, a.Status })
+            .ToListAsync(ct);
+        foreach (var a in assistances)
+            AddIfLive(CancellableServiceTable.Assistance, a.Id, a.SupplierId, a.Currency, a.NetCost,
+                isCancelled: WorkflowStatusHelper.MapGenericStatus(a.Status ?? string.Empty) == WorkflowStatuses.Cancelado);
+
+        var generics = await _db.Servicios.AsNoTracking()
+            .Where(s => s.ReservaId == reservaId && s.SupplierId != null)
+            .OrderBy(s => s.Id)
+            .Select(s => new { s.Id, s.SupplierId, s.Currency, s.NetCost, s.Status })
+            .ToListAsync(ct);
+        foreach (var s in generics)
+            AddIfLive(CancellableServiceTable.Generic, s.Id, s.SupplierId, s.Currency, s.NetCost,
+                isCancelled: WorkflowStatusHelper.MapGenericStatus(s.Status ?? string.Empty) == WorkflowStatuses.Cancelado);
+
+        return candidates;
+    }
+
+    /// <summary>
+    /// Tanda 7, fix post-review (2026-07-20): arma el pool de plata pagada al operador POR (operador,
+    /// moneda), ya reducido por lo que las <see cref="BookingCancellationLine"/> REALES (persistidas, de BCs
+    /// no abortados) ya reservaron — el MISMO primer tramo que <see cref="AssignRefundCapsAsync"/> (pool de
+    /// <see cref="SupplierPayments"/> + descuento de <c>existingLineConsumption</c>).
+    ///
+    /// <para><b>Deliberadamente NO reparte el pool entre candidatos</b> (a diferencia de
+    /// <see cref="AssignRefundCapsAsync"/>, que si lo hace — a proposito — para la anulacion TOTAL
+    /// simultanea): el pre-chequeo necesita el pool COMPLETO disponible para topear CADA candidato aislado,
+    /// igual que veria el guard real si evaluara a ese candidato solo. NO persiste nada.</para>
+    /// </summary>
+    private async Task<Dictionary<(int SupplierId, string Currency), decimal>> ComputeAvailableOperatorRefundPoolAsync(
+        int reservaId, IReadOnlyCollection<int> supplierIds, CancellationToken ct)
+    {
+        var paymentRows = await _db.SupplierPayments
+            .Where(p => p.ReservaId == reservaId && supplierIds.Contains(p.SupplierId))
+            .Select(p => new { p.SupplierId, p.Amount, p.Currency, p.ImputedCurrency, p.ImputedAmount })
+            .ToListAsync(ct);
+
+        var pool = new Dictionary<(int SupplierId, string Currency), decimal>();
+        foreach (var payment in paymentRows)
+        {
+            bool isCrossCurrency =
+                !string.IsNullOrWhiteSpace(payment.ImputedCurrency)
+                && !string.Equals(payment.ImputedCurrency, payment.Currency, StringComparison.OrdinalIgnoreCase);
+
+            string currency = isCrossCurrency ? payment.ImputedCurrency! : payment.Currency;
+            decimal amount = isCrossCurrency ? (payment.ImputedAmount ?? 0m) : payment.Amount;
+
+            var key = (payment.SupplierId, currency);
+            pool[key] = pool.TryGetValue(key, out var acc) ? acc + amount : amount;
+        }
+
+        // Mismo descuento que AssignRefundCapsAsync: lo que las lineas REALES (persistidas, de BCs no
+        // abortados) ya reservaron del pool no vuelve a estar disponible para el pre-chequeo.
+        var existingLineConsumption = await _db.BookingCancellationLines
+            .Where(l => l.BookingCancellation.ReservaId == reservaId
+                     && l.BookingCancellation.Status != BookingCancellationStatus.Aborted
+                     && supplierIds.Contains(l.SupplierId))
+            .Select(l => new { l.SupplierId, l.Currency, l.RefundCap, l.RetainedDeductionAmount })
+            .ToListAsync(ct);
+
+        foreach (var existing in existingLineConsumption)
+        {
+            decimal alreadyConsumed = existing.RefundCap + existing.RetainedDeductionAmount;
+            if (alreadyConsumed <= 0m) continue;
+
+            var key = (existing.SupplierId, existing.Currency);
+            if (pool.TryGetValue(key, out var available))
+                pool[key] = Math.Max(0m, available - alreadyConsumed);
+        }
+
+        return pool;
     }
 
     /// <summary>
@@ -12235,8 +12467,14 @@ public class BookingCancellationService
             lineNetCosts.Add(netCost);
         }
 
+        // N2 (backend-dotnet-reviewer, 2026-07-20): .OrderBy(Id) en las 6 queries — antes el orden de
+        // reparto del pool entre lineas dependia de lo que Postgres/InMemory devolvieran sin ORDER BY
+        // (implementation-defined). No cambia A QUIEN se le reparte el pool (eso sigue siendo intencional
+        // en la anulacion TOTAL simultanea, ver AssignRefundCapsAsync), solo hace ese orden DETERMINISTICO
+        // (id mas chico primero) en vez de arbitrario.
         var hotels = await _db.HotelBookings.AsNoTracking()
             .Where(h => h.ReservaId == reserva.Id)
+            .OrderBy(h => h.Id)
             .Select(h => new { h.Id, h.SupplierId, h.Currency, h.SalePrice, h.NetCost, h.Status })
             .ToListAsync(ct);
         foreach (var h in hotels)
@@ -12245,6 +12483,7 @@ public class BookingCancellationService
 
         var flights = await _db.FlightSegments.AsNoTracking()
             .Where(f => f.ReservaId == reserva.Id)
+            .OrderBy(f => f.Id)
             .Select(f => new { f.Id, f.SupplierId, f.Currency, f.SalePrice, f.NetCost, f.Status })
             .ToListAsync(ct);
         foreach (var f in flights)
@@ -12254,6 +12493,7 @@ public class BookingCancellationService
 
         var transfers = await _db.TransferBookings.AsNoTracking()
             .Where(t => t.ReservaId == reserva.Id)
+            .OrderBy(t => t.Id)
             .Select(t => new { t.Id, t.SupplierId, t.Currency, t.SalePrice, t.NetCost, t.Status })
             .ToListAsync(ct);
         foreach (var t in transfers)
@@ -12262,6 +12502,7 @@ public class BookingCancellationService
 
         var packages = await _db.PackageBookings.AsNoTracking()
             .Where(p => p.ReservaId == reserva.Id)
+            .OrderBy(p => p.Id)
             .Select(p => new { p.Id, p.SupplierId, p.Currency, p.SalePrice, p.NetCost, p.Status })
             .ToListAsync(ct);
         foreach (var p in packages)
@@ -12270,6 +12511,7 @@ public class BookingCancellationService
 
         var assistances = await _db.AssistanceBookings.AsNoTracking()
             .Where(a => a.ReservaId == reserva.Id)
+            .OrderBy(a => a.Id)
             .Select(a => new { a.Id, a.SupplierId, a.Currency, a.SalePrice, a.NetCost, a.Status })
             .ToListAsync(ct);
         foreach (var a in assistances)
@@ -12279,6 +12521,7 @@ public class BookingCancellationService
         // Generico: SupplierId nullable; los que no tienen operador no generan linea.
         var generics = await _db.Servicios.AsNoTracking()
             .Where(s => s.ReservaId == reserva.Id && s.SupplierId != null)
+            .OrderBy(s => s.Id)
             .Select(s => new { s.Id, s.SupplierId, s.Currency, s.SalePrice, s.NetCost, s.Status })
             .ToListAsync(ct);
         foreach (var s in generics)

@@ -2761,6 +2761,12 @@ public class ReservaService : IReservaService
         dto.ServiceCancellationBlockReason =
             await MutationGuards.GetReservaVoucherOnlyBlockReasonAsync(_context, file.Id, CancellationToken.None);
 
+        // Tanda 7 "contrato pantalla-motor" (2026-07-20): pre-chequeo POR SERVICIO de "anular" (voucher / R1
+        // plata pagada al operador sin factura / factura viva sin cliente asignado). Va JUSTO DESPUES de la
+        // linea de arriba porque reusa dto.ServiceCancellationBlockReason (el voucher ya resuelto) en vez de
+        // volver a consultarlo.
+        await StampServiceCancellationCapabilitiesAsync(file, dto, CancellationToken.None);
+
         // ADR-035 (2026-06-19): bloque de CAPACIDADES (fuente unica que el front lee para apagar botones con
         // motivo) y MONEDA PRINCIPAL del cobro. Se calculan al final, con la plata ya armada (PorMoneda) y los
         // comprobantes ya incluidos (file.Invoices).
@@ -5615,6 +5621,82 @@ public class ReservaService : IReservaService
 
             var generico = dto.Servicios.FirstOrDefault(x => x.PublicId == servicePublicId);
             if (generico is not null) { generico.CancellationPenaltyState = estado; }
+        }
+    }
+
+    /// <summary>
+    /// Tanda 7 "contrato pantalla-motor" (2026-07-20): estampa, en CADA servicio de la ficha, si la papelera
+    /// de "Anular" debe ir apagada y por que — pre-chequeo de los 3 candados reales de
+    /// <c>BookingCancellationService.CancelServiceAsync</c> (voucher emitido, R1 plata pagada al operador sin
+    /// factura, factura viva sin cliente asignado). La FUENTE UNICA de la regla es
+    /// <see cref="ServiceCancellationPreflightPolicy"/> (Domain, pura): esta funcion solo JUNTA los hechos
+    /// (desde <c>dto.ServiceCancellationBlockReason</c>, ya resuelto arriba, y desde el pre-chequeo R1 de
+    /// <see cref="IBookingCancellationService.GetServiceCancellationPreflightAsync"/>) y delega la decision.
+    ///
+    /// <para><b>Costo (B1 del review de arquitectura)</b>: con factura de venta viva (el caso normal), el
+    /// pre-chequeo R1 es UN solo predicado booleano ya resuelto — cero reconstruccion. Sin factura viva Y con
+    /// servicios pagados al operador (la minoria), <c>GetServiceCancellationPreflightAsync</c> junta los
+    /// candidatos en un UNICO batch para toda la reserva (no una consulta por servicio) pero topea a CADA
+    /// candidato AISLADO contra el pool completo (fix post-review, 2026-07-20): no reparte el pool entre
+    /// servicios hermanos, para no dar falsos negativos frente al guard real (que evalua un servicio suelto
+    /// aislado). Detalle completo en el XML-doc de <c>GetServiceCancellationPreflightAsync</c>.</para>
+    ///
+    /// <para><b>Nulo, no false, cuando no se calcula</b> (mismo criterio que <c>PaymentDto.CanEdit</c>,
+    /// Tanda 6): si <c>_cancellationService</c> no esta inyectado (tests unitarios con el ctor de 5 args),
+    /// esta funcion no toca ningun <c>CanCancel</c> — quedan en <c>null</c> ("no calculado"), nunca en
+    /// <c>Allowed=false</c> sin motivo.</para>
+    /// </summary>
+    private async Task StampServiceCancellationCapabilitiesAsync(Reserva file, ReservaDto dto, CancellationToken ct)
+    {
+        if (_cancellationService is null) return;
+
+        var preflight = await _cancellationService.GetServiceCancellationPreflightAsync(file.Id, ct);
+        // Defensivo: un mock PARCIAL de IBookingCancellationService (MockBehavior.Loose, sin configurar este
+        // metodo en particular) devuelve null en vez de tirar. Mismo criterio que "_cancellationService is
+        // null" de arriba: si no hay dato confiable, no se calcula (los CanCancel quedan en null, nunca en
+        // Allowed=false sin motivo).
+        if (preflight is null) return;
+        bool hasLiveVoucher = dto.ServiceCancellationBlockReason is not null;
+
+        CapabilityDto Evaluate(CancellableServiceTable table, int serviceId)
+        {
+            var ctxServicio = new ServiceCancellationPreflightContext(
+                HasLiveVoucher: hasLiveVoucher,
+                HasLiveSaleInvoiceWithoutPayer: preflight.HasLiveSaleInvoiceWithoutPayer,
+                HasUnanchoredOperatorRefund: preflight.ServicesBlockedByUnanchoredOperatorRefund.Contains((table, serviceId)));
+            var cap = ServiceCancellationPreflightPolicy.Evaluate(ctxServicio);
+            return new CapabilityDto { Allowed = cap.Allowed, Reason = cap.Reason };
+        }
+
+        foreach (var hotel in file.HotelBookings)
+        {
+            var row = dto.HotelBookings.FirstOrDefault(x => x.PublicId == hotel.PublicId);
+            if (row is not null) row.CanCancel = Evaluate(CancellableServiceTable.Hotel, hotel.Id);
+        }
+        foreach (var flight in file.FlightSegments)
+        {
+            var row = dto.FlightSegments.FirstOrDefault(x => x.PublicId == flight.PublicId);
+            if (row is not null) row.CanCancel = Evaluate(CancellableServiceTable.Flight, flight.Id);
+        }
+        foreach (var transfer in file.TransferBookings)
+        {
+            var row = dto.TransferBookings.FirstOrDefault(x => x.PublicId == transfer.PublicId);
+            if (row is not null) row.CanCancel = Evaluate(CancellableServiceTable.Transfer, transfer.Id);
+        }
+        foreach (var package in file.PackageBookings)
+        {
+            var row = dto.PackageBookings.FirstOrDefault(x => x.PublicId == package.PublicId);
+            if (row is not null) row.CanCancel = Evaluate(CancellableServiceTable.Package, package.Id);
+        }
+        foreach (var assistance in file.AssistanceBookings)
+        {
+            var row = dto.AssistanceBookings.FirstOrDefault(x => x.PublicId == assistance.PublicId);
+            if (row is not null) row.CanCancel = Evaluate(CancellableServiceTable.Assistance, assistance.Id);
+        }
+        foreach (var generic in file.Servicios)
+        {
+            var row = dto.Servicios.FirstOrDefault(x => x.PublicId == generic.PublicId);
+            if (row is not null) row.CanCancel = Evaluate(CancellableServiceTable.Generic, generic.Id);
         }
     }
 

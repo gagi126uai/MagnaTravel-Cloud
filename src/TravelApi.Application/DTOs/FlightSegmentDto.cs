@@ -79,4 +79,10 @@ public class FlightSegmentDto
     // en HotelBookingDto.CancellationPenaltyState (mismo campo, mismo criterio, replicado en los 6 DTOs
     // de servicio).
     public string? CancellationPenaltyState { get; set; }
+    /// <summary>
+    /// Tanda 7 (2026-07-20): si ESTE servicio admite "Anular", y el motivo cuando no. Ver el XML-doc
+    /// completo en <see cref="HotelBookingDto.CanCancel"/> (mismo campo, mismo criterio, replicado en los
+    /// 6 DTOs de servicio).
+    /// </summary>
+    public CapabilityDto? CanCancel { get; set; }
 }

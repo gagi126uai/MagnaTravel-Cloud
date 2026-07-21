@@ -69,5 +69,31 @@ public class HotelBookingDto
     // Pago y el paso de multa de la ficha (BookingCancellationLine + OperatorPenaltySituations) — no es un
     // dato nuevo, es su proyeccion por servicio. Ver ReservaService.StampCancellationPenaltyPerServiceAsync.
     public string? CancellationPenaltyState { get; set; }
+
+    // ====================================================================================
+    // Tanda 7 (plan "contrato pantalla-motor", 2026-07-20). ANTES la papelera de "anular
+    // servicio" se ofrecia SIEMPRE, sin avisar de voucher emitido / plata pagada al operador
+    // sin factura (R1) / factura viva sin cliente asignado: el usuario clickeaba y recien ahi
+    // se enteraba del motivo. Este campo deja que el front apague la papelera de ESTE
+    // servicio puntual, con el motivo al lado, ANTES de que el usuario la clickee.
+    //
+    // Fuente unica de la regla: ServiceCancellationPreflightPolicy (Domain), que evalua los
+    // MISMOS 3 hechos que el guard real de escritura (BookingCancellationService.CancelServiceAsync)
+    // — voucher / R1 por-servicio / sin-cliente — en el MISMO orden. Se calcula UNA vez por
+    // reserva en ReservaService.GetReservaByIdAsync (StampServiceCancellationCapabilitiesAsync).
+    //
+    // NULO vs Allowed=false (misma decision que PaymentDto.CanEdit/CanDelete, Tanda 6): el
+    // default es NULL, no un CapabilityDto con Allowed=false. Un caller sin IBookingCancellationService
+    // inyectado (ej. tests unitarios con el ctor de 5 args) deja este campo en null — "no se
+    // calculo", NO "esta bloqueado". Un front que todavia no lo lee sigue funcionando igual
+    // que antes de esta tanda.
+    // ====================================================================================
+
+    /// <summary>
+    /// Si ESTE servicio admite "Anular", y el motivo cuando no (voucher emitido / R1 pago sin factura /
+    /// factura viva sin cliente asignado). <c>null</c> = todavia no se calculo (ver nota arriba); NO
+    /// significa bloqueado.
+    /// </summary>
+    public CapabilityDto? CanCancel { get; set; }
 }
 

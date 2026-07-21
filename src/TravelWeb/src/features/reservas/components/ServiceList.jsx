@@ -50,6 +50,7 @@ import {
 } from "../lib/reservationServiceModel";
 import { sugerirFacturaParaServicios } from "../lib/serviceInvoiceMatch";
 import { calcularHintPorTipo, calcularSlotsFaltantesDelSet } from "../lib/pasajeroHint";
+import { resolverBloqueoAnularServicio, resolverRechazoAnularServicio } from "../lib/serviceCancellationGuard";
 import { useServiceNominalCoverage } from "../lib/useServiceNominalCoverage";
 import { UpcomingStartPill, estaEnVentana } from "./UpcomingStartPill";
 import { CostConfirmCell, CostConfirmCellMobile } from "./CostConfirmCell";
@@ -540,22 +541,35 @@ function ModalBorrarVsCancelar({ service, saleInvoices = [], onBorrar, onCancela
 }
 
 /**
- * Modal que aparece cuando el backend rechaza la cancelacion de un servicio con 409.
- * Esto ocurre cuando hay una factura con CAE viva o un voucher emitido que bloquea la
- * cancelacion fiscal (el backend no puede modificar un comprobante ya enviado a AFIP/ARCA).
+ * Modal que aparece cuando el backend rechaza la anulacion de un servicio con 409.
+ * Esto ocurre por uno de 3 motivos reales (Tanda 7, 2026-07-20): voucher emitido vivo,
+ * pago al operador sin factura de venta (freno de plata R1), o factura viva sin cliente
+ * asignado. Antes de esta tanda el modal mostraba SIEMPRE el mismo parrafo generico de
+ * "nota de credito" con el mismo boton "Ver facturas" sin importar el motivo real — ahora
+ * cada motivo tiene SU propio boton, elegido por el `code` que manda el backend (nunca
+ * adivinando el motivo comparando el texto del mensaje).
  *
- * El mensaje descriptivo viene del backend (no generamos uno generico).
- * El boton "Ver facturas" navega a la solapa "Estado de Cuenta" donde estan los Documentos
- * Fiscales AFIP de la reserva.
+ * El mensaje descriptivo viene del backend TAL CUAL (no se reescribe en el front).
  *
  * Accesibilidad: foco al boton "Entendido" al montar, Escape cierra, role="dialog".
  *
  * Props:
  * - mensaje: string con el detalle del error que mando el backend
- * - onIrAFacturas: () => void — navega a la solapa de facturacion
+ * - rechazo: { codigoConocido: boolean, boton: "emitir-factura"|"ver-vouchers"|null } —
+ *   salida de resolverRechazoAnularServicio. Si el codigo NO es ninguno de los 3
+ *   catalogados (carrera fuera de lo esperado, o backend viejo sin `code`), caemos al
+ *   camino de respaldo que existia antes de esta tanda (parrafo generico + "Ver facturas"),
+ *   para no dejar al usuario sin ningun proximo paso.
+ * - onIrAFacturas: () => void — navega a la solapa "Estado de Cuenta" (camino de respaldo)
+ * - onIrAEmitirFactura: () => void — abre la ficha de emision de factura (motivo R1, D1 firmada)
+ * - onIrAVouchers: () => void — navega a la solapa "Vouchers" (motivo voucher vivo)
  * - onClose: () => void
  */
-function ModalBloqueoCancelacionServicio({ mensaje, onIrAFacturas, onClose }) {
+function ModalBloqueoCancelacionServicio({ mensaje, rechazo, onIrAFacturas, onIrAEmitirFactura, onIrAVouchers, onClose }) {
+    // Si no llega ningun rechazo estructurado (por si algun caller viejo sigue pasando
+    // solo el mensaje), tratamos como "codigo no conocido" — mismo camino de respaldo.
+    const codigoConocido = rechazo?.codigoConocido === true;
+    const boton = rechazo?.boton ?? null;
     // Al abrir el modal de bloqueo, enfocamos el botón "Entendido" para que el usuario
     // pueda cerrarlo con Enter o con Escape sin tener que mover el mouse.
     const entendidoButtonRef = useRef(null);
@@ -604,14 +618,22 @@ function ModalBloqueoCancelacionServicio({ mensaje, onIrAFacturas, onClose }) {
                 </div>
 
                 <div className="p-6 space-y-4">
-                    {/* El mensaje viene del backend con el detalle fiscal (factura con CAE, voucher emitido, etc.) */}
+                    {/* El mensaje viene del backend con el detalle real (voucher vivo, pago al
+                        operador sin factura, o factura viva sin cliente asignado) — se muestra
+                        TAL CUAL, sin reescribirlo. */}
                     <div className="rounded-xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-200">
                         {mensaje}
                     </div>
-                    <p className="text-sm text-slate-600 dark:text-slate-300">
-                        Para poder anular este servicio primero hay que gestionar la nota de crédito
-                        correspondiente en la sección de facturación de la reserva.
-                    </p>
+                    {/* Camino de respaldo (Tanda 7): solo cuando el motivo NO es ninguno de los 3
+                        catalogados por `code` — mismo parrafo generico que existia antes de esta
+                        tanda, para no dejar al usuario sin ningun proximo paso ante un 409
+                        inesperado. Con codigo conocido, el texto real de arriba ya alcanza. */}
+                    {!codigoConocido && (
+                        <p className="text-sm text-slate-600 dark:text-slate-300">
+                            Para poder anular este servicio primero hay que gestionar la nota de crédito
+                            correspondiente en la sección de facturación de la reserva.
+                        </p>
+                    )}
                 </div>
 
                 <div className="flex flex-col sm:flex-row justify-end gap-3 border-t border-slate-100 px-6 py-4 dark:border-slate-800">
@@ -623,7 +645,43 @@ function ModalBloqueoCancelacionServicio({ mensaje, onIrAFacturas, onClose }) {
                     >
                         Entendido
                     </button>
-                    {onIrAFacturas && (
+                    {/* Motivo R1 (pago al operador sin factura) — D1 firmada 2026-07-18: boton
+                        "Emitir factura" que abre la ficha de emision en la misma reserva. */}
+                    {boton === "emitir-factura" && onIrAEmitirFactura && (
+                        <button
+                            type="button"
+                            data-testid="btn-ir-a-emitir-factura"
+                            onClick={() => {
+                                onIrAEmitirFactura();
+                                onClose();
+                            }}
+                            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-indigo-700"
+                        >
+                            <FileText className="h-4 w-4" />
+                            Emitir factura
+                        </button>
+                    )}
+                    {/* Motivo voucher vivo — mismo patron que "Ver facturas", pero a la solapa
+                        correcta (Vouchers, no Estado de Cuenta). */}
+                    {boton === "ver-vouchers" && onIrAVouchers && (
+                        <button
+                            type="button"
+                            data-testid="btn-ir-a-vouchers"
+                            onClick={() => {
+                                onIrAVouchers();
+                                onClose();
+                            }}
+                            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-indigo-700"
+                        >
+                            <FileText className="h-4 w-4" />
+                            Ver vouchers de la reserva
+                        </button>
+                    )}
+                    {/* Camino de respaldo: mismo boton "Ver facturas" de siempre, solo cuando el
+                        motivo no esta catalogado por `code`. El motivo "sin cliente" (catalogado
+                        pero sin pantalla que lo resuelva, ver backlog de la spec) tampoco muestra
+                        boton — el texto real ya dice que falta. */}
+                    {!codigoConocido && onIrAFacturas && (
                         <button
                             type="button"
                             data-testid="btn-ir-a-facturas"
@@ -949,6 +1007,13 @@ function MiniFormularioPasajerosFaltantes({ reservaId, reserva, servicio, covera
  *                                     reenvía a la sección "Anular varios" (Tanda 4: misma paridad de ayuda
  *                                     en filas fallidas por bloqueo fiscal).
  *                                     Opcional; si no se pasa, el botón no aparece.
+ *   onIrAEmitirFactura              — callback () => void: abre la ficha de emisión de factura en la misma
+ *                                     reserva (Tanda 7, D1 firmada 2026-07-18). Se usa en el modal de bloqueo
+ *                                     409 cuando el motivo es "pago al operador sin factura" (R1).
+ *                                     Opcional; si no se pasa, el botón no aparece.
+ *   onIrAVouchers                   — callback () => void: navega a la solapa "Vouchers" de la reserva
+ *                                     (Tanda 7). Se usa en el modal de bloqueo 409 cuando el motivo es
+ *                                     "voucher emitido vivo". Opcional; si no se pasa, el botón no aparece.
  *   canCancelServices               — bool: si el usuario tiene permiso reservas.cancel (UI-only gate).
  *                                     El server siempre re-valida. Si no se pasa, el botón no aparece.
  *   serviceCancellationBlockReason  — string|null: motivo de bloqueo fiscal a nivel reserva (ADR-025).
@@ -985,6 +1050,8 @@ export function ServiceList({
     onServiceConfirmed,
     onServiceResolved,
     onIrAFacturas,
+    onIrAEmitirFactura,
+    onIrAVouchers,
     // Multimoneda (2026-06-11): true cuando la reserva mezcla servicios en ARS y USD.
     // Cuando es true se muestra el cartelito $/US$ en cada precio y la fila TOTAL al pie.
     // Regla ③: con false (o sin el prop) la lista se ve igual que siempre.
@@ -1049,8 +1116,10 @@ export function ServiceList({
     const [modalBorrarCancelar, setModalBorrarCancelar] = useState(null);
 
     // Estado del modal de bloqueo fiscal 409: se abre cuando el backend rechaza la
-    // cancelacion porque hay factura con CAE viva o voucher emitido.
-    // Guarda el mensaje descriptivo que vino del backend.
+    // anulacion de un servicio (voucher vivo, pago al operador sin factura, o factura
+    // viva sin cliente asignado — Tanda 7, 2026-07-20).
+    // Guarda { mensaje, rechazo } — el texto real del backend y el botón que corresponde
+    // según el `code` (resolverRechazoAnularServicio).
     const [modalBloqueo409, setModalBloqueo409] = useState(null);
 
     // ADR-025: visibilidad de la sección inline "Anular varios" (el nombre interno del
@@ -1094,12 +1163,16 @@ export function ServiceList({
 
             // Si la cancelación fue bloqueada por el backend (409), mostramos el modal
             // explicativo en vez del toast genérico de error.
-            // El 409 ocurre cuando hay factura con CAE viva o voucher emitido.
+            // El 409 ocurre por voucher vivo, pago al operador sin factura (R1), o factura
+            // viva sin cliente asignado (Tanda 7). resolverRechazoAnularServicio lee el
+            // `code` del body para elegir el botón correcto — el mensaje sigue viniendo
+            // del backend tal cual.
             if (!respuesta?.ok && respuesta?.error?.status === 409) {
                 setModalBorrarCancelar(null);
-                setModalBloqueo409(
-                    getApiErrorMessage(respuesta.error, 'No se puede anular el servicio en este momento.')
-                );
+                setModalBloqueo409({
+                    mensaje: getApiErrorMessage(respuesta.error, 'No se puede anular el servicio en este momento.'),
+                    rechazo: resolverRechazoAnularServicio(respuesta.error),
+                });
                 return;
             }
 
@@ -1145,8 +1218,11 @@ export function ServiceList({
                 mostramos el mensaje del backend + el camino para resolver (ir a facturas). */}
             {modalBloqueo409 && (
                 <ModalBloqueoCancelacionServicio
-                    mensaje={modalBloqueo409}
+                    mensaje={modalBloqueo409.mensaje}
+                    rechazo={modalBloqueo409.rechazo}
                     onIrAFacturas={onIrAFacturas}
+                    onIrAEmitirFactura={onIrAEmitirFactura}
+                    onIrAVouchers={onIrAVouchers}
                     onClose={() => setModalBloqueo409(null)}
                 />
             )}
@@ -1550,8 +1626,23 @@ export function ServiceList({
                                                         Servicio ya ANULADO (2026-07-16): tampoco se muestra ninguno de los dos —
                                                         es historia cerrada de la reserva (ver esServicioAnulado), no hay nada
                                                         para editar ni para volver a anular/borrar sobre algo que ya quedó sin efecto. */}
-                                                    {!esServicioAnulado(svc) && (
-                                                    <div className="flex justify-end gap-1 transition-opacity">
+                                                    {!esServicioAnulado(svc) && (() => {
+                                                        const esConfirmado = esServicioConfirmadoPorOperador(svc);
+                                                        // Tanda 7 (2026-07-20): pre-chequeo de "puedo anular ESTE
+                                                        // servicio" — solo aplica al camino "Anular" (servicio ya
+                                                        // confirmado). "Borrar" un borrador no pasa por estos
+                                                        // candados fiscales (voucher vivo / pago al operador sin
+                                                        // factura / factura viva sin cliente). canCancel llega null
+                                                        // cuando el backend todavía no lo calculó (DTO viejo) → no
+                                                        // bloqueamos nada, degradación elegante (mismo criterio que
+                                                        // canEdit/canDelete del pago, Tanda 6).
+                                                        const bloqueoAnular = esConfirmado
+                                                            ? resolverBloqueoAnularServicio(svc)
+                                                            : { bloqueado: false, motivo: null };
+
+                                                        return (
+                                                        <>
+                                                        <div className="flex justify-end gap-1 transition-opacity">
                                                         {puedeEditarServicios && (
                                                             <button
                                                                 onClick={() => onEditService(svc)}
@@ -1567,7 +1658,6 @@ export function ServiceList({
                                                             Se oculta si no puede anular (solo lectura) o no puede editar (borrar
                                                             = editar en servicios no confirmados). */}
                                                         {(puedeEditarServicios || puedeCancelarServicios) && (() => {
-                                                            const esConfirmado = esServicioConfirmadoPorOperador(svc);
                                                             // Si está confirmado → anular (requiere puedeCancelarServicios)
                                                             // Si no está confirmado → borrar (requiere puedeEditarServicios)
                                                             const mostrarBotonDestructivo = esConfirmado
@@ -1575,6 +1665,26 @@ export function ServiceList({
                                                                 : puedeEditarServicios;
                                                             if (!mostrarBotonDestructivo) return null;
                                                             const textoTacho = esConfirmado ? 'Anular' : 'Borrar';
+
+                                                            // Tanda 7: la palabra sigue a la vista siempre (regla
+                                                            // 2026-06-08), solo cambia el color y se saca el onClick
+                                                            // — el motivo real va en el chip de abajo.
+                                                            if (bloqueoAnular.bloqueado) {
+                                                                return (
+                                                                    <button
+                                                                        type="button"
+                                                                        disabled
+                                                                        data-testid={`btn-delete-service-${getReservationServicePublicId(svc)}`}
+                                                                        aria-label={`${textoTacho} servicio bloqueado: ${bloqueoAnular.motivo}`}
+                                                                        title={bloqueoAnular.motivo}
+                                                                        className="inline-flex items-center gap-1 p-1.5 text-slate-300 dark:text-slate-600 rounded text-xs font-semibold cursor-not-allowed"
+                                                                    >
+                                                                        <Trash2 className="w-4 h-4" />
+                                                                        {textoTacho}
+                                                                    </button>
+                                                                );
+                                                            }
+
                                                             return (
                                                                 <button
                                                                     onClick={() => handleTrashClick(svc)}
@@ -1587,8 +1697,22 @@ export function ServiceList({
                                                                 </button>
                                                             );
                                                         })()}
-                                                    </div>
-                                                    )}
+                                                        </div>
+                                                        {/* Chip "al lado" de la papelera (precedente 2026-06-13):
+                                                            motivo real del backend, sin parafrasearlo. Mismo formato
+                                                            chico que ya usa el hint de pasajeros faltantes. Nada de
+                                                            tooltip: este texto queda siempre a la vista. */}
+                                                        {bloqueoAnular.bloqueado && (
+                                                            <span
+                                                                className="max-w-[220px] text-right text-[10px] font-semibold text-amber-700 dark:text-amber-400"
+                                                                data-testid={`aviso-bloqueo-anular-${getReservationServicePublicId(svc)}`}
+                                                            >
+                                                                🔒 {bloqueoAnular.motivo}
+                                                            </span>
+                                                        )}
+                                                        </>
+                                                        );
+                                                    })()}
                                                 </div>
                                             </td>
                                         </tr>
@@ -1919,7 +2043,15 @@ export function ServiceList({
                                                     ? puedeCancelarServicios
                                                     : puedeEditarServicios;
                                                 const textoTachoMobile = esConfirmadoMobile ? 'Anular' : 'Borrar';
+                                                // Tanda 7 (2026-07-20): mismo pre-chequeo que desktop — solo
+                                                // aplica al camino "Anular" (servicio confirmado). canCancel
+                                                // null → no calculado todavía, no bloqueamos (degradación elegante).
+                                                const bloqueoAnularMobile = esConfirmadoMobile
+                                                    ? resolverBloqueoAnularServicio(svc)
+                                                    : { bloqueado: false, motivo: null };
+
                                                 return (
+                                                    <div className="flex flex-col items-end gap-1">
                                                     <div className="flex items-center gap-2">
                                                         {puedeEditarServicios && (
                                                             <button
@@ -1932,18 +2064,43 @@ export function ServiceList({
                                                                 Editar
                                                             </button>
                                                         )}
-                                                        {/* Papelera mobile: mismo modal borrar vs anular */}
+                                                        {/* Papelera mobile: mismo modal borrar vs anular.
+                                                            Tanda 7: gris + sin onClick cuando el pre-chequeo bloquea. */}
                                                         {mostrarDestructivoMobile && (
-                                                            <button
-                                                                onClick={() => handleTrashClick(svc)}
-                                                                data-testid={`btn-delete-service-mobile-${getReservationServicePublicId(svc)}`}
-                                                                aria-label={`${textoTachoMobile} servicio`}
-                                                                className="inline-flex items-center gap-1 p-2 text-red-500 rounded-lg bg-red-50 dark:bg-red-900/20 text-xs font-semibold"
-                                                            >
-                                                                <Trash2 className="w-3.5 h-3.5" />
-                                                                {textoTachoMobile}
-                                                            </button>
+                                                            bloqueoAnularMobile.bloqueado ? (
+                                                                <button
+                                                                    type="button"
+                                                                    disabled
+                                                                    data-testid={`btn-delete-service-mobile-${getReservationServicePublicId(svc)}`}
+                                                                    aria-label={`${textoTachoMobile} servicio bloqueado: ${bloqueoAnularMobile.motivo}`}
+                                                                    title={bloqueoAnularMobile.motivo}
+                                                                    className="inline-flex items-center gap-1 p-2 text-slate-300 dark:text-slate-600 rounded-lg bg-slate-50 dark:bg-slate-800 text-xs font-semibold cursor-not-allowed"
+                                                                >
+                                                                    <Trash2 className="w-3.5 h-3.5" />
+                                                                    {textoTachoMobile}
+                                                                </button>
+                                                            ) : (
+                                                                <button
+                                                                    onClick={() => handleTrashClick(svc)}
+                                                                    data-testid={`btn-delete-service-mobile-${getReservationServicePublicId(svc)}`}
+                                                                    aria-label={`${textoTachoMobile} servicio`}
+                                                                    className="inline-flex items-center gap-1 p-2 text-red-500 rounded-lg bg-red-50 dark:bg-red-900/20 text-xs font-semibold"
+                                                                >
+                                                                    <Trash2 className="w-3.5 h-3.5" />
+                                                                    {textoTachoMobile}
+                                                                </button>
+                                                            )
                                                         )}
+                                                    </div>
+                                                    {/* Chip "al lado" de la papelera, mismo criterio que desktop. */}
+                                                    {bloqueoAnularMobile.bloqueado && (
+                                                        <span
+                                                            className="max-w-[200px] text-right text-[10px] font-semibold text-amber-700 dark:text-amber-400"
+                                                            data-testid={`aviso-bloqueo-anular-mobile-${getReservationServicePublicId(svc)}`}
+                                                        >
+                                                            🔒 {bloqueoAnularMobile.motivo}
+                                                        </span>
+                                                    )}
                                                     </div>
                                                 );
                                             })()}

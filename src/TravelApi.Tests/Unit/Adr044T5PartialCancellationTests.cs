@@ -503,11 +503,14 @@ public class Adr044T5PartialCancellationTests
 
         var service = BuildService(ctx);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Tanda 7 "contrato pantalla-motor" (2026-07-20): el candado de voucher ahora tira
+        // ServiceCancellationRejectedException (mismo InvalidOperationException + Code aditivo CANCEL_SERVICE_VOUCHER_LIVE).
+        var ex = await Assert.ThrowsAsync<ServiceCancellationRejectedException>(() =>
             service.CancelServiceAsync(
                 new CancelServiceRequest(reserva.PublicId, "Hotel", hotel.PublicId, "Intento con voucher emitido"),
                 "v1", "V", CancellationToken.None));
         Assert.Contains("voucher", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(ServiceCancellationRejectedException.Codes.VoucherLive, ex.Code);
 
         Assert.Empty(await ctx.BookingCancellationLines.ToListAsync());
         var hotelReloaded = await ctx.HotelBookings.AsNoTracking().FirstAsync(h => h.Id == hotel.Id);
@@ -546,10 +549,13 @@ public class Adr044T5PartialCancellationTests
 
         var service = BuildService(ctx);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Tanda 7 "contrato pantalla-motor" (2026-07-20): mismo InvalidOperationException de siempre + Code
+        // aditivo CANCEL_SERVICE_NO_PAYER.
+        var ex = await Assert.ThrowsAsync<ServiceCancellationRejectedException>(() =>
             service.CancelServiceAsync(
                 new CancelServiceRequest(reserva.PublicId, "Hotel", hotel.PublicId, "Intento sin payer"),
                 "v1", "V", CancellationToken.None));
+        Assert.Equal(ServiceCancellationRejectedException.Codes.NoPayer, ex.Code);
 
         var hotelReloaded = await ctx.HotelBookings.AsNoTracking().FirstAsync(h => h.Id == hotel.Id);
         Assert.False(TravelApi.Domain.Reservations.ServiceResolutionRules.IsCancelled(hotelReloaded));

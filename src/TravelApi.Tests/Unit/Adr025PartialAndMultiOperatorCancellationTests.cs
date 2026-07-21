@@ -785,7 +785,10 @@ public class Adr025PartialAndMultiOperatorCancellationTests
         });
         await ctx.SaveChangesAsync();
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Tanda 7 "contrato pantalla-motor" (2026-07-20): el candado de voucher ahora tira
+        // ServiceCancellationRejectedException (Assert.ThrowsAsync exige el tipo EXACTO, no alcanza con que
+        // sea InvalidOperationException por herencia).
+        await Assert.ThrowsAsync<TravelApi.Domain.Exceptions.ServiceCancellationRejectedException>(() =>
             service.CancelServiceAsync(
                 new CancelServiceRequest(reserva.PublicId, "Hotel", hotel.PublicId, "Intento bajar el hotel con voucher emitido"),
                 "vendedor-1", "Vendedor", CancellationToken.None));

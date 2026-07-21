@@ -2165,6 +2165,16 @@ export default function ReservaDetailPage() {
                 onCancelService={(service, motivo, creditSelection) => handleCancelService(service, motivo, creditSelection)}
                 saleInvoices={activeSaleInvoices}
                 onIrAFacturas={() => setActiveTab("account")}
+                // Tanda 7 "contrato pantalla-motor" (2026-07-20): botones de camino del
+                // modal de bloqueo 409 al anular UN servicio. Mismo patrón que la Tanda 3
+                // (CancelarReservaInline → onIrAEmitirFactura): hay que navegar a la solapa
+                // ANTES de activar el panel/tab, porque ServiceList vive en la solapa
+                // "services" y esos paneles solo se montan dentro de otras solapas.
+                onIrAEmitirFactura={() => {
+                    setActiveTab("account");
+                    setShowFacturaInline(true);
+                }}
+                onIrAVouchers={() => setActiveTab("voucher")}
                 // ADR-025: "Cancelar varios" en línea.
                 // canCancelServices: gate UI-only; el server siempre re-valida.
                 canCancelServices={canCancelReserva}

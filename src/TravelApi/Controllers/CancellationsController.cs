@@ -9,6 +9,7 @@ using TravelApi.Application.Exceptions;
 using TravelApi.Application.Interfaces;
 using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Domain.Helpers;
 using TravelApi.Errors;
 
@@ -1295,6 +1296,18 @@ public class CancellationsController : ControllerBase
         var message = ArcaErrorSanitizer.IsLikelyTechnical(ex.Message)
             ? "No se pudo completar la operación. Volvé a intentar."
             : ex.Message;
+
+        // Tanda 7 "contrato pantalla-motor" (2026-07-20, mismo envelope aditivo que la Tanda 3 en
+        // ReservasController.AnnulWithCredit): cuando el rechazo es uno de los 3 candados catalogados de
+        // "anular servicio" (voucher / R1 / sin cliente), sumamos `code` al body SIN tocar el `message` de
+        // siempre — el frontend lo usa para mostrar el cartel/boton correcto en vez del texto fijo de "nota
+        // de credito". Cualquier otro InvalidOperationException de este metodo (la gran mayoria de los
+        // endpoints de este controller) sigue viajando solo con `message`, exactamente como hasta ahora.
+        if (ex is ServiceCancellationRejectedException rejected)
+        {
+            return Conflict(new { code = rejected.Code, message });
+        }
+
         return Conflict(new { message });
     }
 

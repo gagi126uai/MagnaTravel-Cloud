@@ -454,6 +454,29 @@ public record CancelServiceResultDto(
 );
 
 /// <summary>
+/// Tanda 7 del plan "contrato pantalla-motor" (2026-07-20): resultado READ-ONLY del pre-chequeo de "anular
+/// servicio" para el GET de la ficha. Lo arma
+/// <c>IBookingCancellationService.GetServiceCancellationPreflightAsync</c> con el short-circuit obligado
+/// (B1 del review de arquitectura): con factura de venta viva, <see cref="ServicesBlockedByUnanchoredOperatorRefund"/>
+/// viene SIEMPRE vacio sin reconstruir nada (R1 solo muerde sin factura).
+/// </summary>
+/// <param name="HasLiveSaleInvoiceWithoutPayer">
+/// True si la reserva tiene factura de venta viva pero no tiene un cliente (Payer) asignado. Aplica a TODOS
+/// los servicios por igual (no varia por servicio).
+/// </param>
+/// <param name="ServicesBlockedByUnanchoredOperatorRefund">
+/// Los servicios (tabla + id interno) cuyo RefundCap reconstruido es mayor a cero SIN que la reserva tenga
+/// factura de venta viva — exactamente los que
+/// <c>BookingCancellationService.EnsurePaidServiceCancellationHasReceivableAnchorAsync</c> bloquearia si se
+/// intentara anular AHORA. Vacio cuando la reserva SI tiene factura viva (short-circuit) o cuando ningun
+/// servicio tiene plata pagada al operador.
+/// </param>
+public record ServiceCancellationPreflightResult(
+    bool HasLiveSaleInvoiceWithoutPayer,
+    IReadOnlySet<(CancellableServiceTable ServiceTable, int ServiceId)> ServicesBlockedByUnanchoredOperatorRefund
+);
+
+/// <summary>
 /// T5 legacy: completa factura destino y monto congelado de una línea parcial que quedó ambigua (una
 /// devolución "vieja" de un servicio cancelado ANTES de que el sistema supiera a qué factura correspondía).
 /// No emite; deja el evento listo para la confirmación fiscal explícita.

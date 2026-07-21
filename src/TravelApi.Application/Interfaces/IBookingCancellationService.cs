@@ -234,6 +234,30 @@ public interface IBookingCancellationService
     Task EnsureServiceOperatorOrCurrencyChangeHasReceivableAnchorAsync(
         int reservaId, CancellableServiceTable serviceTable, int serviceId, bool isCurrencyChange, CancellationToken ct);
 
+    /// <summary>
+    /// Tanda 7 (plan "contrato pantalla-motor", 2026-07-20): pre-chequeo READ-ONLY para el GET de la ficha
+    /// de la reserva. Le dice a <c>ReservaService.GetReservaByIdAsync</c>, SIN mutar nada, que servicios
+    /// quedarian bloqueados por el candado R1 (plata pagada al operador sin factura) si se intentara anular
+    /// AHORA, y si la reserva esta en el caso "factura viva sin cliente asignado".
+    ///
+    /// <para><b>Short-circuit obligatorio (B1 del review de arquitectura)</b>: primero se pregunta UNA sola
+    /// vez si la reserva tiene factura de venta viva (mismo predicado exacto que ancla R1,
+    /// <c>ReservaHasLiveSaleInvoiceAsync</c>). Con factura viva, R1 NUNCA bloquea a nadie (el ancla ya
+    /// existe) — se devuelve el conjunto vacio SIN reconstruir ninguna linea. Solo en el caso SIN factura se
+    /// juntan, en UN solo batch para TODOS los servicios de la reserva (no un query por servicio), los
+    /// candidatos con operador vivo.</para>
+    ///
+    /// <para><b>Cada candidato se evalua AISLADO contra el pool completo (fix post-review, 2026-07-20)</b>:
+    /// a diferencia del reparto GREEDY que usa el flujo real de anular la reserva ENTERA (donde todas las
+    /// lineas compiten de verdad por el mismo pool al mismo tiempo), este pre-chequeo topea cada servicio
+    /// contra el pool disponible COMPLETO (solo reducido por lineas REALES ya persistidas) — exactamente lo
+    /// que veria el guard real de UN servicio suelto si se lo evaluara aislado. Con 2+ servicios del mismo
+    /// operador+moneda y pool insuficiente para todos, esto puede marcar a MAS de un servicio como
+    /// bloqueado (nunca menos de los que el guard real rechazaria). Detalle completo en el XML-doc de
+    /// <c>BookingCancellationService.GetServiceCancellationPreflightAsync</c> (Infrastructure).</para>
+    /// </summary>
+    Task<ServiceCancellationPreflightResult> GetServiceCancellationPreflightAsync(int reservaId, CancellationToken ct);
+
     // ===== Reacciones internas (llamadas desde otros services del modulo) =====
 
     /// <summary>

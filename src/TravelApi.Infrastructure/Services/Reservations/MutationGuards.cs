@@ -422,8 +422,10 @@ public static class MutationGuards
 
         if (await HasIssuedVoucherForReservaAsync(db, reservaId, ct))
         {
-            return "No se puede anular este servicio: la reserva tiene vouchers emitidos. " +
-                   "Anulá los vouchers primero si necesitás corregir datos.";
+            // Tanda 7 "contrato pantalla-motor" (2026-07-20): el texto ahora vive UNA sola vez en
+            // ServiceCancellationPreflightPolicy (Domain) — lo usan tanto este guard real como el
+            // pre-chequeo del GET de la ficha, para que nunca puedan divergir. Mismo texto de siempre.
+            return ServiceCancellationPreflightPolicy.VoucherBlockedReason;
         }
 
         return null;

@@ -12,6 +12,7 @@ using TravelApi.Application.DTOs;
 using TravelApi.Application.DTOs.Cancellation;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Services;
 using Xunit;
@@ -114,10 +115,15 @@ public class PartialCancellationPaidServiceNoInvoiceGuardTests
         var (reserva, _, hotel) = await SeedAsync(ctx, paidImputedToReserva: 50_000m);
         var service = BuildBcService(ctx);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Tanda 7 "contrato pantalla-motor" (2026-07-20): el candado R1 ahora tira ServiceCancellationRejectedException
+        // (mismo InvalidOperationException de siempre + un Code aditivo) para que el frontend pueda ofrecer el
+        // boton "Emitir factura" en vez de adivinar el motivo por texto.
+        var ex = await Assert.ThrowsAsync<ServiceCancellationRejectedException>(() =>
             service.CancelServiceAsync(
                 new CancelServiceRequest(reserva.PublicId, "Hotel", hotel.PublicId, "Cliente baja el hotel"),
                 "vendedor-1", "Vendedor", CancellationToken.None));
+
+        Assert.Equal(ServiceCancellationRejectedException.Codes.UnanchoredOperatorRefund, ex.Code);
 
         // Mensaje saneado: habla de facturar/reembolso, sin internals (ids, nombres de clase, RefundCap, etc.).
         Assert.Contains("factura", ex.Message, StringComparison.OrdinalIgnoreCase);
@@ -160,8 +166,9 @@ public class PartialCancellationPaidServiceNoInvoiceGuardTests
         var (reserva, supplier, hotel) = await SeedAsync(ctx, paidImputedToReserva: 50_000m);
         var bcService = BuildBcService(ctx);
 
-        // El intento de cancelar el servicio pagado sin factura se bloquea (el servicio queda vivo).
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // El intento de cancelar el servicio pagado sin factura se bloquea (el servicio queda vivo). Tipo
+        // EXACTO (Assert.ThrowsAsync no reconoce herencia): ServiceCancellationRejectedException.
+        await Assert.ThrowsAsync<ServiceCancellationRejectedException>(() =>
             bcService.CancelServiceAsync(
                 new CancelServiceRequest(reserva.PublicId, "Hotel", hotel.PublicId, "intento"),
                 "vendedor-1", "Vendedor", CancellationToken.None));
