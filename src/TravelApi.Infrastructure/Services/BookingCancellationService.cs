@@ -8660,8 +8660,14 @@ public class BookingCancellationService
             .AnyAsync(t => t.InvoiceId == bc.DebitNoteInvoiceId.Value, ct);
         if (ndHasTributes)
         {
+            // Tanda 8 (2026-07-20, D3 firmada por Gaston): el texto viejo mandaba a "una persona" sin decir
+            // quien ni donde -> el usuario que esta mirando la pantalla, que YA es un humano, no sabia que
+            // hacer. Ahora el mensaje nombra el area concreta (Cobranzas y Facturacion) para que el frontend
+            // pueda ofrecer un boton que lleve ahi. El invariantCode NO cambia: es el mismo hook que el
+            // frontend ya usa para detectar este caso por codigo (nunca por texto).
             throw new BusinessInvariantViolationException(
-                "El comprobante de esta multa tiene impuestos asociados. Este caso lo tiene que revisar una persona.",
+                "El comprobante de esta multa tiene impuestos provinciales incluidos. No se puede deshacer solo: " +
+                "hace falta que alguien de Cobranzas y Facturación lo revise a mano.",
                 invariantCode: "INV-UNDO-MANUAL");
         }
 

@@ -44,6 +44,7 @@ import {
   construirPayloadUndoDebitNote,
   debeMostrarMontoAFavor,
   esErrorSaldoAplicadoAlDeshacerMulta,
+  esErrorRevisionManualAlDeshacerMulta,
 } from "../lib/undoDebitNoteLogic";
 import { calcularAvisoPlazoDeshacerMulta } from "../operatorPenaltyBanner";
 
@@ -89,6 +90,11 @@ export function DeshacerMultaEmitidaInline({
   // tiene saldo a favor aplicado" — agrega el botón "Ir a la cuenta del cliente" debajo
   // del mensaje de error de siempre (que ya viene del servidor tal cual).
   const [bloqueadoPorSaldoAplicado, setBloqueadoPorSaldoAplicado] = useState(false);
+  // Tanda 8 (2026-07-20, D3 firmada): true solo cuando el 409 es EXACTAMENTE "el
+  // comprobante tiene impuestos provinciales asociados, no se puede deshacer solo" —
+  // agrega el botón "Ir a Cobranzas y Facturación" debajo del mensaje de error de
+  // siempre (mismo patrón que bloqueadoPorSaldoAplicado, un caso distinto).
+  const [bloqueadoPorRevisionManual, setBloqueadoPorRevisionManual] = useState(false);
   // Paso 2: confirmación explícita antes de llamar al backend (mismo patrón que
   // DeshacerCierreSinMultaInline — esto reversa un comprobante con CAE, no es gratis).
   const [mostrarConfirmacion, setMostrarConfirmacion] = useState(false);
@@ -163,6 +169,7 @@ export function DeshacerMultaEmitidaInline({
     setSubmitting(true);
     setErrorMensaje(null);
     setBloqueadoPorSaldoAplicado(false);
+    setBloqueadoPorRevisionManual(false);
 
     try {
       await cancellationsApi.undoDebitNote(cancellationPublicId, construirPayloadUndoDebitNote(motivo).reason);
@@ -174,6 +181,10 @@ export function DeshacerMultaEmitidaInline({
       // por código (nunca por texto) y se muestra el mensaje del servidor TAL CUAL, más
       // el link a la cuenta del cliente (ahí vive la reversión de esa aplicación).
       setBloqueadoPorSaldoAplicado(esErrorSaldoAplicadoAlDeshacerMulta(error));
+      // Tanda 8 (2026-07-20, D3 firmada): otro caso puntual con salida propia — el
+      // comprobante tiene impuestos provinciales asociados, hace falta que alguien de
+      // Cobranzas y Facturación lo revise a mano. Mismo criterio: código, no texto.
+      setBloqueadoPorRevisionManual(esErrorRevisionManualAlDeshacerMulta(error));
       setErrorMensaje(getApiErrorMessage(error, "No se pudo deshacer la multa. Intentá de nuevo."));
       setMostrarConfirmacion(false);
       setSubmitting(false);
@@ -349,6 +360,22 @@ export function DeshacerMultaEmitidaInline({
                   data-testid="deshacer-multa-ir-a-cuenta-cliente"
                 >
                   Ir a la cuenta del cliente
+                  <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                </Link>
+              )}
+              {/* Tanda 8 (2026-07-20, D3 firmada): el comprobante tiene impuestos
+                  provinciales asociados — este caso no se resuelve solo desde acá, hace
+                  falta que alguien de Cobranzas y Facturación lo revise a mano. La
+                  bandeja "Comprobantes por resolver" ya existe (/facturacion, solapa
+                  "Comprobantes por resolver"), mismo destino que usa el resto del
+                  producto para casos de revisión manual. */}
+              {bloqueadoPorRevisionManual && (
+                <Link
+                  to="/facturacion?tab=comprobantes"
+                  className="inline-flex items-center gap-1.5 self-start rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-50 dark:bg-slate-800 dark:text-rose-200 dark:border-rose-800 dark:hover:bg-slate-700 transition-colors"
+                  data-testid="deshacer-multa-ir-a-cobranzas"
+                >
+                  Ir a Cobranzas y Facturación
                   <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
                 </Link>
               )}

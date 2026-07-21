@@ -15,6 +15,7 @@ import {
   debeMostrarReintentarDeshacer,
   debeMostrarMontoAFavor,
   esErrorSaldoAplicadoAlDeshacerMulta,
+  esErrorRevisionManualAlDeshacerMulta,
 } from "./undoDebitNoteLogic.js";
 
 // ============================================================================
@@ -35,6 +36,31 @@ test("esErrorSaldoAplicadoAlDeshacerMulta: sin payload → false (nunca revienta
   assert.equal(esErrorSaldoAplicadoAlDeshacerMulta({}), false);
   assert.equal(esErrorSaldoAplicadoAlDeshacerMulta(null), false);
   assert.equal(esErrorSaldoAplicadoAlDeshacerMulta(undefined), false);
+});
+
+// ============================================================================
+// esErrorRevisionManualAlDeshacerMulta (Tanda 8, 2026-07-20 — D3 firmada)
+// ============================================================================
+
+test("esErrorRevisionManualAlDeshacerMulta: invariantCode INV-UNDO-MANUAL → true", () => {
+  const error = {
+    payload: {
+      invariantCode: "INV-UNDO-MANUAL",
+      detail: "El comprobante de esta multa tiene impuestos provinciales incluidos. No se puede deshacer solo: hace falta que alguien de Cobranzas y Facturación lo revise a mano.",
+    },
+  };
+  assert.equal(esErrorRevisionManualAlDeshacerMulta(error), true);
+});
+
+test("esErrorRevisionManualAlDeshacerMulta: otro invariantCode → false", () => {
+  const error = { payload: { invariantCode: "INV-UNDO-MULTIOP" } };
+  assert.equal(esErrorRevisionManualAlDeshacerMulta(error), false);
+});
+
+test("esErrorRevisionManualAlDeshacerMulta: sin payload → false (nunca revienta)", () => {
+  assert.equal(esErrorRevisionManualAlDeshacerMulta({}), false);
+  assert.equal(esErrorRevisionManualAlDeshacerMulta(null), false);
+  assert.equal(esErrorRevisionManualAlDeshacerMulta(undefined), false);
 });
 
 // ============================================================================

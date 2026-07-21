@@ -124,3 +124,31 @@ const INVARIANT_CODE_SALDO_APLICADO = "INV-UNDO-CREDITBRIDGE";
 export function esErrorSaldoAplicadoAlDeshacerMulta(error) {
   return error?.payload?.invariantCode === INVARIANT_CODE_SALDO_APLICADO;
 }
+
+// ============================================================================
+// Tanda 8 (2026-07-20, D3 firmada 2026-07-18): "No se puede deshacer una multa con
+// impuestos provinciales (IIBB) asociados a su comprobante" (spec
+// `docs/ux/2026-07-20-t5-a-t9-contrato-pantalla-motor.md`, Tanda 8).
+// ============================================================================
+
+// Código de invariante que manda el backend (BookingCancellationService, guard de
+// tributos) cuando la ND de la multa tiene impuestos provinciales (IIBB) asociados —
+// revertir los renglones pisaría esos tributos sin reversarlos (fuga fiscal), así que
+// ese caso no se puede resolver solo desde este panel. Ver INV-UNDO-MANUAL en
+// BookingCancellationService.cs. Mismo criterio que INVARIANT_CODE_SALDO_APLICADO más
+// arriba: se detecta por CÓDIGO, nunca por el texto del mensaje.
+const INVARIANT_CODE_REVISION_MANUAL = "INV-UNDO-MANUAL";
+
+/**
+ * True si el error que devolvió POST .../undo-debit-note es EXACTAMENTE el caso "el
+ * comprobante de esta multa tiene impuestos provinciales asociados, hace falta que
+ * alguien de Cobranzas y Facturación lo revise a mano" (spec Tanda 8). Se detecta
+ * leyendo `error.payload.invariantCode`, igual que `esErrorSaldoAplicadoAlDeshacerMulta`.
+ *
+ * @param {{ payload?: { invariantCode?: string } }|null|undefined} error - el error que
+ *   lanza `api.js` (tiene `.payload` con el body JSON de la respuesta 409).
+ * @returns {boolean}
+ */
+export function esErrorRevisionManualAlDeshacerMulta(error) {
+  return error?.payload?.invariantCode === INVARIANT_CODE_REVISION_MANUAL;
+}
