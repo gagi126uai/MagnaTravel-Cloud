@@ -122,3 +122,31 @@ revisó y deployó de corrido:
 - Commit `66d52e77`, CI verde, deploy OK. **El circuito proveedor queda con
   P1 y P2 completas; siguen P3 (avisar si bajás el costo por debajo de lo
   ya pagado) y P4 (retoques restantes).**
+
+---
+
+## AGREGADO 2 (misma noche): la Tanda P3 también salió entera
+
+Gaston pidió seguir con P3 y respondió la única pregunta de diseño (tras
+confirmar, guarda calladito). Quedó en producción:
+
+- **Qué hace**: si editás un servicio y le ponés un costo más bajo que lo que
+  ya le pagaste al operador, aparece un cartel naranja con los números
+  exactos ("Le pagaste $200,00, el costo nuevo es $100,00: van a quedar
+  $100,00 a tu favor con el operador") y dos botones: "Sí, confirmar" o
+  "Volver a corregir". No te frena — te hace decidir a propósito. Y el saldo
+  a favor con el operador se actualiza EN EL MOMENTO (antes quedaba
+  desactualizado hasta el próximo movimiento).
+- **Bloqueante real cazado por la review**: si la sincronización rechazaba
+  (caso: subir el costo cuando ese saldo ya se usó en otra reserva), la
+  edición quedaba guardada a medias con un error confuso. Se cerró
+  envolviendo todo en una única transacción — probado contra la base real
+  que si algo falla, NADA queda guardado.
+- **Bonus del E2E**: el cartelito "Pago parcial al operador" de la fila
+  quedaba viejo hasta apretar F5 (dos verdades contradictorias en la misma
+  fila). Arreglado y verificado en vivo.
+- **E2E real 18/18** con capturas en `scripts/e2e-local/shots-p3/`.
+  Commit `1a3734c8`, CI verde, deploy OK.
+
+**El circuito proveedor queda con P1, P2 y P3 completas. Falta P4 (retoques
+menores) y la prueba a mano de Gaston.**
