@@ -1004,6 +1004,53 @@ public class BookingCancellationService
     }
 
     /// <summary>
+    /// P1 "circuito proveedor" (2026-07-21): impide BAJAR el estado de un servicio de Confirmado a
+    /// no-confirmado (ej. "des-confirmar" desde la ficha de edición) cuando ese servicio tiene plata
+    /// pagada al operador y la reserva NO tiene factura de venta viva que ancle el reembolso. Es la
+    /// CUARTA cara de la familia R1: comparte el núcleo <see cref="ComputeUnanchoredOperatorRefundCapAsync"/>
+    /// con <see cref="EnsurePaidServiceCancellationHasReceivableAnchorAsync"/> (anular un servicio),
+    /// <see cref="EnsureReservaAnnulHasReceivableAnchorAsync"/> (anular la reserva) y
+    /// <see cref="EnsureServiceOperatorOrCurrencyChangeHasReceivableAnchorAsync"/> (reasignar operador/
+    /// moneda) — así los cuatro candados de "plata pagada sin ancla" no pueden divergir con el tiempo.
+    ///
+    /// <para><b>Por qué existe (hallazgo de Gaston, 2026-07-21)</b>: antes de esta tanda, "bajar el
+    /// estado" tenía su PROPIA regla, más ancha e imprecisa: bloqueaba mirando el TOTAL de
+    /// <c>SupplierPayments</c> de TODA la reserva (no de este servicio puntual) y nunca miraba si ya
+    /// había factura de venta viva. Resultado: para el MISMO riesgo de plata, "anular servicio" ofrecía
+    /// el camino correcto ("Emití la factura") pero "bajar el estado" pedía justo lo contrario ("Anulá
+    /// los pagos al proveedor"). Ahora las dos acciones comparten predicado, código y mensaje (con el
+    /// verbo adaptado a la acción real).</para>
+    ///
+    /// <para>El caller (<c>BookingService</c>, en los 11 sitios donde se cambia el status de un
+    /// servicio tipado) es responsable de invocar esto SOLO cuando
+    /// <c>ReservaCapacityRules.IsStatusDowngradeFromConfirmed</c> da true — así no se paga el costo de
+    /// reconstruir el RefundCap en la gran mayoría de las ediciones, que no tocan el estado. READ-ONLY:
+    /// no persiste nada.</para>
+    /// </summary>
+    public async Task EnsureServiceStatusDowngradeHasReceivableAnchorAsync(
+        int reservaId, CancellableServiceTable serviceTable, int serviceId, CancellationToken ct)
+    {
+        var reserva = await _db.Reservas.AsNoTracking()
+            .FirstOrDefaultAsync(r => r.Id == reservaId, ct);
+        if (reserva is null) return; // la reserva la valida el propio Update; aca no bloqueamos.
+
+        // Mismo núcleo que los otros tres candados de la familia, en alcance PARCIAL filtrado a ESTE
+        // servicio: 0 = impago / con factura viva / sin operador -> sin fuga. > 0 = hay plata pagada al
+        // operador IMPUTADA A ESTA RESERVA por este servicio que quedaría colgada al bajarle el estado.
+        decimal wouldBeRefundCap = await ComputeUnanchoredOperatorRefundCapAsync(
+            reserva, BookingCancellationLineScope.Partial, serviceTable, serviceId, ct);
+
+        if (wouldBeRefundCap > 0m)
+            // Mismo Code que "anular servicio" (CANCEL_SERVICE_UNANCHORED_OPERATOR_REFUND): es el
+            // MISMO riesgo de plata visto desde otro botón, así que cuando el frontend conecte esta
+            // pantalla (tanda aparte) puede reusar el mismo mapeo code -> botón "Emitir factura" sin
+            // agregar una entrada nueva a serviceCancellationGuard.js.
+            throw new ServiceCancellationRejectedException(
+                ServiceCancellationRejectedException.Codes.UnanchoredOperatorRefund,
+                ServiceCancellationPreflightPolicy.UnanchoredOperatorRefundBlockedReasonForStatusDowngrade);
+    }
+
+    /// <summary>
     /// Tanda 7 "contrato pantalla-motor" (2026-07-20): pre-chequeo READ-ONLY del candado R1 (plata pagada al
     /// operador sin factura) para el GET de la ficha. Lo usa <c>ReservaService.GetReservaByIdAsync</c> para
     /// apagar la papelera de "anular servicio" ANTES de que el usuario la clickee, en vez de dejar que

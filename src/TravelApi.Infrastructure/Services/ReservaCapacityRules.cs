@@ -298,41 +298,32 @@ public static class ReservaCapacityRules
     }
 
     /// <summary>
-    /// Bloquea cambio de Status confirmado -> no-confirmado si la Reserva tiene
-    /// SupplierPayments registrados. Razon: el balance del proveedor ya cuenta esos
-    /// pagos contra el servicio confirmado; degradarlo a Solicitado/Cancelado
-    /// rompe la coherencia (pagos colgando, balance sucio).
+    /// P1 "circuito proveedor" (2026-07-21): true si el cambio de estado de un servicio es una
+    /// "bajada de estado" — vengo de un estado que SI contaba como confirmado con el operador (ver
+    /// <see cref="ConfirmedServiceStatuses"/>) y voy a un estado que YA NO cuenta como confirmado
+    /// (ej. Confirmado -&gt; Solicitado, o Confirmado -&gt; Cancelado).
     ///
-    /// Granularidad: a nivel Reserva (limitacion del modelo, SupplierPayment no
-    /// apunta a HotelBooking/TransferBooking/etc. especifico). Si hay 2 hoteles y
-    /// solo se pago uno, igual no podras des-confirmar el otro hasta anular los pagos.
+    /// <para>Es el gate BARATO (sin tocar la base) que decide si vale la pena correr el candado de
+    /// plata pagada al operador
+    /// (<see cref="TravelApi.Application.Interfaces.IBookingCancellationService.EnsureServiceStatusDowngradeHasReceivableAnchorAsync"/>,
+    /// que SI consulta pagos y facturas). Un cambio que NO es una bajada de estado (ej. Solicitado
+    /// -&gt; Confirmado) nunca necesita ese candado.</para>
     ///
-    /// Devuelve mensaje accionable o null si el cambio es permitido.
+    /// <para><b>Historia</b>: hasta esta tanda, este mismo chequeo terminaba en un bloqueo propio
+    /// que sumaba <c>SupplierPayments</c> de TODA la reserva (no del servicio puntual) y nunca
+    /// miraba si ya habia factura de venta viva — una regla distinta y mas ancha que la de "anular
+    /// servicio" (R1), que para el MISMO riesgo de plata daba una instruccion contradictoria
+    /// ("anula los pagos" en vez de "emiti la factura"). Ahora las dos acciones comparten el mismo
+    /// candado preciso; ver <see cref="TravelApi.Infrastructure.Services.BookingCancellationService.EnsureServiceStatusDowngradeHasReceivableAnchorAsync"/>.</para>
     /// </summary>
-    public static async Task<string?> GetStatusDowngradeBlockReasonAsync(
-        AppDbContext db,
-        int reservaId,
-        string serviceLabel,
-        string? oldServiceStatus,
-        string? newServiceStatus,
-        CancellationToken ct = default)
+    public static bool IsStatusDowngradeFromConfirmed(string? oldServiceStatus, string? newServiceStatus)
     {
         if (string.IsNullOrWhiteSpace(oldServiceStatus) || string.IsNullOrWhiteSpace(newServiceStatus))
-            return null;
+            return false;
 
-        // Solo aplica si: pasaba de confirmado a no-confirmado.
         var wasConfirmed = ConfirmedServiceStatuses.Contains(oldServiceStatus);
         var willBeConfirmed = ConfirmedServiceStatuses.Contains(newServiceStatus);
-        if (!wasConfirmed || willBeConfirmed) return null;
-
-        var totalPaid = await db.SupplierPayments.AsNoTracking()
-            .Where(p => p.ReservaId == reservaId)
-            .SumAsync(p => (decimal?)p.Amount, ct) ?? 0m;
-        if (totalPaid <= 0m) return null;
-
-        return $"No se puede degradar el estado del servicio '{serviceLabel}' (de '{oldServiceStatus}' a '{newServiceStatus}'): " +
-               $"esta reserva tiene pagos al proveedor registrados por ${totalPaid:N2}. " +
-               "Anula los pagos al proveedor antes de des-confirmar.";
+        return wasConfirmed && !willBeConfirmed;
     }
 
     /// <summary>

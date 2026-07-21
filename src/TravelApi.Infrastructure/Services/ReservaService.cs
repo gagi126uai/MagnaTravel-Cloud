@@ -14,6 +14,7 @@ using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Exceptions;
+using TravelApi.Domain.Helpers;
 using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
@@ -3447,7 +3448,8 @@ public class ReservaService : IReservaService
         string? warning = null;
         if (request.NetCost > request.SalePrice)
         {
-            warning = $"Atención: el costo ({request.NetCost:C}) supera el precio de venta ({request.SalePrice:C}). Se está vendiendo a pérdida.";
+            warning = $"Atención: el costo (${CurrencyDisplayFormat.Amount(request.NetCost)}) supera el precio de venta " +
+                      $"(${CurrencyDisplayFormat.Amount(request.SalePrice)}). Se está vendiendo a pérdida.";
         }
 
         var reservation = new ServicioReserva
@@ -5070,7 +5072,7 @@ public class ReservaService : IReservaService
         // Saldo pendiente CON tolerancia de redondeo: un resto de centavo (tipico en cobro cruzado de
         // moneda) no debe trabar el cierre. Antes "Balance > 0" exacto frenaba el cierre por 1 centavo.
         if (!customerTravelsOnAccount && !EconomicRulesHelper.IsEconomicallySettled(file))
-            throw new InvalidOperationException($"No se puede cerrar la reserva porque tiene un saldo pendiente de {file.Balance:N2}.");
+            throw new InvalidOperationException($"No se puede cerrar la reserva porque tiene un saldo pendiente de {CurrencyDisplayFormat.Amount(file.Balance)}.");
         file.ClosedAt = DateTime.UtcNow;
     }
 

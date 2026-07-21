@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { Clock, CreditCard, Download, Eye, ExternalLink, FileText, History, Loader2, Paperclip, Pencil, Receipt, Send, Trash2, Users, Plus, RefreshCw, Check, Ban } from "lucide-react";
 import { api } from "../../../api";
 import { showConfirm, showError, showSuccess } from "../../../alerts";
@@ -659,7 +659,12 @@ function PassengerCountsWidget({ initial, expectedCapacity = 0, onSave }) {
 export default function ReservaDetailPage() {
   const { publicId } = useParams();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState("services");
+  const location = useLocation();
+  // "Ir a la reserva a facturar" (link desde la cuenta del operador, Tanda P1):
+  // la ficha aterriza directo en Estado de Cuenta con el panel de factura
+  // abierto — el link cumple lo que promete, sin que el usuario busque solo.
+  const llegoParaFacturar = Boolean(location.state?.irAFacturar);
+  const [activeTab, setActiveTab] = useState(llegoParaFacturar ? "account" : "services");
 
   // ADR-020: enableSoldToSettleStates eliminado del ciclo. El ciclo es unico y directo.
   // Solo leemos los flags que siguen vigentes.
@@ -742,7 +747,7 @@ export default function ReservaDetailPage() {
   const [cobroAEditar, setCobroAEditar] = useState(null);
   // Ficha de emisión de factura en línea (2026-06-13, guia-ux-gaston.md): reemplaza CreateInvoiceModal.
   // Solo una ficha abierta a la vez: si está abierta la factura, se oculta el botón de cobro y viceversa.
-  const [showFacturaInline, setShowFacturaInline] = useState(false);
+  const [showFacturaInline, setShowFacturaInline] = useState(llegoParaFacturar);
   // ADR-031: el flujo Budget→InManagement ya no pasa por un modal centralizado.
   // El widget de cantidades avanza la reserva directo (sin confirmación extra).
   // confirmReservaModal fue eliminado — ya no hay seteo en isOpen:true en ningún camino.
@@ -2213,6 +2218,13 @@ export default function ReservaDetailPage() {
                   onCancelar={() => {
                     setShowInlineCard(false);
                     setServiceToEditInline(null);
+                  }}
+                  // P1 "circuito proveedor" (2026-07-21): mismo cableado que ServiceList
+                  // (onIrAEmitirFactura más abajo) — hay que cambiar de solapa ANTES de abrir
+                  // el panel, porque EmitirFacturaInline vive en la solapa "account".
+                  onIrAEmitirFactura={() => {
+                    setActiveTab("account");
+                    setShowFacturaInline(true);
                   }}
                 />
               )}

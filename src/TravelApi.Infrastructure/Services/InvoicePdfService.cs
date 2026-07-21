@@ -6,6 +6,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Helpers;
 
 using TravelApi.Application.Interfaces;
 
@@ -218,8 +219,8 @@ public class InvoicePdfService : IInvoicePdfService
                     table.Cell().Element(CellStyle).Text(index.ToString());
                     table.Cell().Element(CellStyle).Text(item.Description);
                     table.Cell().Element(CellStyle).AlignRight().Text(item.Quantity.ToString("0.##"));
-                    table.Cell().Element(CellStyle).AlignRight().Text($"$ {item.UnitPrice:N2}");
-                    table.Cell().Element(CellStyle).AlignRight().Text($"$ {item.Total:N2}");
+                    table.Cell().Element(CellStyle).AlignRight().Text($"$ {CurrencyDisplayFormat.Amount(item.UnitPrice)}");
+                    table.Cell().Element(CellStyle).AlignRight().Text($"$ {CurrencyDisplayFormat.Amount(item.Total)}");
                     index++;
                 }
 
@@ -231,8 +232,8 @@ public class InvoicePdfService : IInvoicePdfService
                     table.Cell().Element(CellStyle).AlignRight().Text("1");
                     var isA = invoice.TipoComprobante == 1 || invoice.TipoComprobante == 2 || invoice.TipoComprobante == 3;
                     var unitPrice = isA ? invoice.ImporteNeto : invoice.ImporteTotal;
-                    table.Cell().Element(CellStyle).AlignRight().Text($"$ {unitPrice:N2}");
-                    table.Cell().Element(CellStyle).AlignRight().Text($"$ {unitPrice:N2}");
+                    table.Cell().Element(CellStyle).AlignRight().Text($"$ {CurrencyDisplayFormat.Amount(unitPrice)}");
+                    table.Cell().Element(CellStyle).AlignRight().Text($"$ {CurrencyDisplayFormat.Amount(unitPrice)}");
                 }
 
                 static IContainer CellStyle(IContainer container) => 
@@ -245,28 +246,28 @@ public class InvoicePdfService : IInvoicePdfService
                 c.Item().Row(r =>
                 {
                     r.RelativeItem().Text("Subtotal Neto:").AlignRight();
-                    r.ConstantItem(100).Text($"$ {invoice.ImporteNeto:N2}").AlignRight();
+                    r.ConstantItem(100).Text($"$ {CurrencyDisplayFormat.Amount(invoice.ImporteNeto)}").AlignRight();
                 });
-                
+
                 c.Item().Row(r =>
                 {
                     r.RelativeItem().Text("IVA:").AlignRight();
-                    r.ConstantItem(100).Text($"$ {invoice.ImporteIva:N2}").AlignRight();
+                    r.ConstantItem(100).Text($"$ {CurrencyDisplayFormat.Amount(invoice.ImporteIva)}").AlignRight();
                 });
-                
+
                 foreach(var t in invoice.Tributes)
                 {
                     c.Item().Row(r =>
                     {
                         r.RelativeItem().Text($"{t.Description}:").AlignRight();
-                        r.ConstantItem(100).Text($"$ {t.Importe:N2}").AlignRight();
+                        r.ConstantItem(100).Text($"$ {CurrencyDisplayFormat.Amount(t.Importe)}").AlignRight();
                     });
                 }
 
                 c.Item().PaddingTop(5).Row(r =>
                 {
                     r.RelativeItem().Text("TOTAL:").Bold().FontSize(14).AlignRight();
-                    r.ConstantItem(100).Text($"$ {invoice.ImporteTotal:N2}").Bold().FontSize(14).AlignRight();
+                    r.ConstantItem(100).Text($"$ {CurrencyDisplayFormat.Amount(invoice.ImporteTotal)}").Bold().FontSize(14).AlignRight();
                 });
 
                 // ADR-012 MVP (facturar en USD, RG ARCA 5616/2024): cuando la factura es en

@@ -3457,7 +3457,8 @@ public class InvoiceService : IInvoiceService
             .Where(r => r.Id == invoice.ReservaId)
             .Select(r => r.NumeroReserva)
             .FirstOrDefaultAsync(ct) ?? string.Empty;
-        var message = $"{actor} facturó la reserva {numeroReserva} aunque todavía tenía un saldo pendiente de {invoice.OutstandingBalanceAtIssuance:C2}.";
+        var message = $"{actor} facturó la reserva {numeroReserva} aunque todavía tenía un saldo pendiente de " +
+                      $"${CurrencyDisplayFormat.Amount(invoice.OutstandingBalanceAtIssuance)}.";
 
         // D4 (2026-07-05): mismo criterio que CreateNotification — despachar por el servicio (SignalR + clave de
         // resolucion) si hay contenedor; caer al Add directo en unit tests sin DI.

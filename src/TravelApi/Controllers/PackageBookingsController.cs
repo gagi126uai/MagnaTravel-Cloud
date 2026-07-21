@@ -6,6 +6,7 @@ using TravelApi.Application.Exceptions;
 using TravelApi.Application.Interfaces;
 using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 
 namespace TravelApi.Controllers;
 
@@ -97,6 +98,10 @@ public class PackageBookingsController : ControllerBase
             // B1.15 Fase 0' (CODE-04): MutationGuards rechaza con factura AFIP
             // viva o voucher Issued. Tambien guards de status existentes
             // (downgrade/capacity). 409 Conflict para todos.
+            // P1 "circuito proveedor" (2026-07-21): mismo envelope aditivo `code` que
+            // HotelBookingsController.Update — el frontend lo usara en otra tanda.
+            if (ex is ServiceCancellationRejectedException rejected)
+                return Conflict(new { code = rejected.Code, message = ex.Message });
             return Conflict(new { message = ex.Message });
         }
         catch
@@ -137,7 +142,13 @@ public class PackageBookingsController : ControllerBase
             return Ok(await _bookingService.UpdatePackageStatusAsync(publicIdOrLegacyId, req.Status, req.ConfirmationNumber, ct));
         }
         catch (KeyNotFoundException) { return NotFound(); }
-        catch (InvalidOperationException ex) { return Conflict(new { message = ex.Message }); }
+        catch (InvalidOperationException ex)
+        {
+            // P1 "circuito proveedor" (2026-07-21): mismo envelope aditivo `code` que Update (arriba).
+            if (ex is ServiceCancellationRejectedException rejected)
+                return Conflict(new { code = rejected.Code, message = ex.Message });
+            return Conflict(new { message = ex.Message });
+        }
         catch (ArgumentException ex) { return BadRequest(new { message = ex.Message }); }
     }
 

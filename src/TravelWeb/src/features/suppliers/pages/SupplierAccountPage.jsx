@@ -43,6 +43,10 @@ import { MobileRecordCard, MobileRecordList } from "../../../components/ui/Mobil
 import { PaginationFooter } from "../../../components/ui/PaginationFooter";
 import { formatCurrency, formatDate } from "../../../lib/utils";
 import { showSuccess, showError, showConfirm } from "../../../alerts";
+// P1 "circuito proveedor" (2026-07-21): mismo motivo/código que "anular servicio" (Tanda 7),
+// reusado acá para el PATCH de "bajar el estado" desde la cuenta del proveedor. No se duplica
+// el mapeo code → botón, se importa la misma lib pura.
+import { resolverRechazoAnularServicio } from "../../reservas/lib/serviceCancellationGuard";
 import { getPublicId } from "../../../lib/publicIds";
 import { useDebounce } from "../../../hooks/useDebounce";
 import { getApiErrorMessage, isDatabaseUnavailableError } from "../../../lib/errors";
@@ -1147,6 +1151,12 @@ function ServiceStatusEditor({ service, onUpdated, canEdit }) {
     const endpoint = STATUS_ENDPOINT_BY_TYPE[service.type];
     const [value, setValue] = useState(service.status || "Solicitado");
     const [saving, setSaving] = useState(false);
+    // P1 "circuito proveedor" (2026-07-21): cuando el PATCH de "bajar el estado" choca con el
+    // candado R1 (el servicio ya tiene pagos al operador y la reserva no tiene factura de venta
+    // para anclar el reembolso), el backend manda el MISMO code que "anular servicio". Guardamos
+    // acá el mensaje real + si corresponde ofrecer el camino "Emitir factura" — la fila queda con
+    // un aviso fijo (no un toast que desaparece) porque el usuario necesita el link a la reserva.
+    const [bloqueoPagoSinFactura, setBloqueoPagoSinFactura] = useState(null);
 
     if (!endpoint || !canEdit) {
         // Servicio generico — no editable desde aca, mostramos texto plano
@@ -1159,6 +1169,7 @@ function ServiceStatusEditor({ service, onUpdated, canEdit }) {
         const previous = value;
         setValue(newStatus);
         setSaving(true);
+        setBloqueoPagoSinFactura(null);
         try {
             await api.patch(`/${endpoint}/${service.publicId}/status`, { status: newStatus });
             showSuccess(`Estado actualizado a "${newStatus}"`);
@@ -1168,7 +1179,17 @@ function ServiceStatusEditor({ service, onUpdated, canEdit }) {
             // Usamos getApiErrorMessage para evitar que strings de red en inglés
             // ("Failed to fetch", "Internal Server Error") lleguen al usuario.
             setValue(previous);
-            showError(getApiErrorMessage(error, "No se pudo actualizar el estado."), "No se pudo cambiar el estado");
+            const mensaje = getApiErrorMessage(error, "No se pudo actualizar el estado.");
+            // Mismo código que "anular servicio" (CODIGO_RECHAZO_ANULAR_SERVICIO.PAGO_SIN_FACTURA):
+            // reusamos la lib de la Tanda 7 para no adivinar el motivo comparando texto.
+            const rechazo = resolverRechazoAnularServicio(error);
+            if (rechazo.boton === "emitir-factura") {
+                // El aviso fijo de abajo ya cuenta el motivo con su link: un toast
+                // encima seria señal duplicada compitiendo por la atencion.
+                setBloqueoPagoSinFactura({ mensaje, reservaPublicId: service.reservaPublicId || null });
+            } else {
+                showError(mensaje, "No se pudo cambiar el estado");
+            }
         } finally {
             setSaving(false);
         }
@@ -1181,17 +1202,40 @@ function ServiceStatusEditor({ service, onUpdated, canEdit }) {
             : "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-800";
 
     return (
-        <select
-            value={value}
-            onChange={handleChange}
-            disabled={saving}
-            className={`rounded-md border text-xs font-bold px-2 py-1 ${colorClass} disabled:opacity-50`}
-            title="Cambiar estado del servicio"
-        >
-            {STATUS_OPTIONS.map((opt) => (
-                <option key={opt} value={opt}>{opt}</option>
-            ))}
-        </select>
+        <div className="flex flex-col items-start gap-1">
+            <select
+                value={value}
+                onChange={handleChange}
+                disabled={saving}
+                className={`rounded-md border text-xs font-bold px-2 py-1 ${colorClass} disabled:opacity-50`}
+                title="Cambiar estado del servicio"
+            >
+                {STATUS_OPTIONS.map((opt) => (
+                    <option key={opt} value={opt}>{opt}</option>
+                ))}
+            </select>
+            {/* Aviso fijo (no un toast que desaparece): el usuario necesita el link a la reserva
+                para poder resolver el bloqueo, así que lo dejamos visible en la fila. */}
+            {bloqueoPagoSinFactura && (
+                <div
+                    className="max-w-[220px] rounded-md border border-rose-200 bg-rose-50 px-2 py-1.5 text-[11px] leading-snug text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
+                    role="alert"
+                    data-testid="status-editor-bloqueo-pago-sin-factura"
+                >
+                    <p>{bloqueoPagoSinFactura.mensaje}</p>
+                    {bloqueoPagoSinFactura.reservaPublicId && (
+                        <Link
+                            to={`/reservas/${bloqueoPagoSinFactura.reservaPublicId}`}
+                            state={{ irAFacturar: true }}
+                            className="mt-1 inline-flex items-center gap-1 font-bold text-indigo-600 hover:underline dark:text-indigo-400"
+                        >
+                            <FileText className="h-3 w-3" />
+                            Ir a la reserva a facturar
+                        </Link>
+                    )}
+                </div>
+            )}
+        </div>
     );
 }
 

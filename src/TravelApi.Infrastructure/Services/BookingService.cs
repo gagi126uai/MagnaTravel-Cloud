@@ -129,6 +129,37 @@ public partial class BookingService : IBookingService
             isCurrencyChange: currencyChanged && !operatorChanged, ct);
     }
 
+    /// <summary>
+    /// P1 "circuito proveedor" (2026-07-21): candado compartido de "bajar el estado" de un servicio
+    /// TIPADO (de Confirmado a Solicitado/Cancelado). Reemplaza al viejo
+    /// <c>ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync</c>, que bloqueaba mirando el total
+    /// de pagos de TODA la reserva y nunca miraba si había factura viva — una regla distinta y más
+    /// ancha que la de "anular servicio" para el MISMO riesgo de plata.
+    ///
+    /// <para>Se invoca en los 11 sitios donde <c>BookingService</c> cambia el status de un servicio
+    /// (los 5 <c>Update*Async</c> completos y los 5 <c>Update*StatusAsync</c> del PATCH liviano de la
+    /// cuenta del proveedor). Primero corre el gate BARATO (sin tocar la base,
+    /// <see cref="ReservaCapacityRules.IsStatusDowngradeFromConfirmed"/>): solo si el cambio es
+    /// realmente una bajada desde un estado confirmado se paga el costo de reconstruir el RefundCap.
+    /// Delega en el mismo núcleo de cancelación que <see cref="GuardOperatorOrCurrencyReassignmentAsync"/>
+    /// (familia R1). Si <c>_cancellationService</c> es null (tests con ctor viejo) no corre — en
+    /// producción la DI siempre lo inyecta (está registrado).</para>
+    /// </summary>
+    private async Task GuardStatusDowngradeAsync(
+        int reservaId,
+        CancellableServiceTable serviceTable,
+        int serviceId,
+        string? oldServiceStatus,
+        string? newServiceStatus,
+        CancellationToken ct)
+    {
+        if (_cancellationService is null) return;
+        if (!ReservaCapacityRules.IsStatusDowngradeFromConfirmed(oldServiceStatus, newServiceStatus)) return;
+
+        await _cancellationService.EnsureServiceStatusDowngradeHasReceivableAnchorAsync(
+            reservaId, serviceTable, serviceId, ct);
+    }
+
     // === RATE RESOLUTION (Snapshot) ===
     // Resuelve el RateId público a interno y aplica snapshot de precios si corresponde.
     private async Task<int?> ResolveRateIdAsync(string? ratePublicIdOrLegacyId, CancellationToken ct)
@@ -887,9 +918,8 @@ public partial class BookingService : IBookingService
         // Guard 1: en reserva Operativo/Closed el servicio debe quedar confirmado
         var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, reservaId, label, flight.Status, ct);
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
-        // Guard 2: no degradar de confirmado a no-confirmado si hay pagos al proveedor
-        var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, reservaId, label, oldStatus, flight.Status, ct);
-        if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
+        // Guard 2: no bajar el estado de confirmado a no-confirmado con plata pagada al operador sin ancla.
+        await GuardStatusDowngradeAsync(reservaId, CancellableServiceTable.Flight, flight.Id, oldStatus, flight.Status, ct);
 
         // ADR-031 (bypass B1): el aereo RESUELVE por TicketIssuedAt (que la edicion no setea), gate
         // defensivo hoy. Cableado para que ninguna ruta de edicion futura deje el vuelo resuelto sin nombres.
@@ -1222,8 +1252,7 @@ public partial class BookingService : IBookingService
         var label = $"Hotel {hotel.HotelName ?? "sin nombre"}";
         var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, reservaId, label, hotel.Status, ct);
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
-        var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, reservaId, label, oldStatus, hotel.Status, ct);
-        if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
+        await GuardStatusDowngradeAsync(reservaId, CancellableServiceTable.Hotel, hotel.Id, oldStatus, hotel.Status, ct);
 
         // ADR-031 (bypass B1): la edicion puede dejar el hotel resuelto (transicion no-resuelto ->
         // resuelto) -> exigir el titular ANTES de persistir.
@@ -1507,8 +1536,7 @@ public partial class BookingService : IBookingService
         var label = $"Paquete {package.PackageName ?? "sin nombre"}";
         var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, reservaId, label, package.Status, ct);
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
-        var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, reservaId, label, oldStatus, package.Status, ct);
-        if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
+        await GuardStatusDowngradeAsync(reservaId, CancellableServiceTable.Package, package.Id, oldStatus, package.Status, ct);
 
         // ADR-031 (bypass B1): la edicion puede dejar el paquete resuelto -> exigir el nombre de TODOS
         // los declarados ANTES de persistir.
@@ -1806,8 +1834,7 @@ public partial class BookingService : IBookingService
         var label = $"Transfer {transfer.VehicleType ?? ""}".Trim();
         var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, reservaId, label, transfer.Status, ct);
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
-        var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, reservaId, label, oldStatus, transfer.Status, ct);
-        if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
+        await GuardStatusDowngradeAsync(reservaId, CancellableServiceTable.Transfer, transfer.Id, oldStatus, transfer.Status, ct);
 
         // ADR-031 (bypass B1): la edicion puede dejar el traslado resuelto -> exigir el titular ANTES de persistir.
         await EnsureNominalCoverageBeforeResolvingAsync(
@@ -2123,8 +2150,7 @@ public partial class BookingService : IBookingService
         var label = $"Asistencia {assistance.PlanType ?? "seguro"}";
         var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, reservaId, label, assistance.Status, ct);
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
-        var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, reservaId, label, oldStatus, assistance.Status, ct);
-        if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
+        await GuardStatusDowngradeAsync(reservaId, CancellableServiceTable.Assistance, assistance.Id, oldStatus, assistance.Status, ct);
 
         // ADR-031 (bypass B1): la edicion puede dejar la asistencia resuelta -> exigir nombre +
         // documento + fecha de nacimiento de TODOS los declarados ANTES de persistir.
@@ -2238,8 +2264,7 @@ public partial class BookingService : IBookingService
         var label = $"Hotel {hotel.HotelName ?? "sin nombre"}";
         var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, hotel.ReservaId, label, newStatus, ct);
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
-        var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, hotel.ReservaId, label, oldStatus, newStatus, ct);
-        if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
+        await GuardStatusDowngradeAsync(hotel.ReservaId, CancellableServiceTable.Hotel, hotel.Id, oldStatus, newStatus, ct);
 
         var hotelWasResolved = ServiceResolutionRules.IsResolved(hotel);
         hotel.Status = newStatus;
@@ -2288,8 +2313,7 @@ public partial class BookingService : IBookingService
         var label = $"Transfer {transfer.VehicleType ?? ""}".Trim();
         var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, transfer.ReservaId, label, newStatus, ct);
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
-        var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, transfer.ReservaId, label, oldStatus, newStatus, ct);
-        if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
+        await GuardStatusDowngradeAsync(transfer.ReservaId, CancellableServiceTable.Transfer, transfer.Id, oldStatus, newStatus, ct);
 
         var transferWasResolved = ServiceResolutionRules.IsResolved(transfer);
         transfer.Status = newStatus;
@@ -2334,8 +2358,7 @@ public partial class BookingService : IBookingService
         var label = $"Paquete {package.PackageName ?? "sin nombre"}";
         var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, package.ReservaId, label, newStatus, ct);
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
-        var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, package.ReservaId, label, oldStatus, newStatus, ct);
-        if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
+        await GuardStatusDowngradeAsync(package.ReservaId, CancellableServiceTable.Package, package.Id, oldStatus, newStatus, ct);
 
         var packageWasResolved = ServiceResolutionRules.IsResolved(package);
         package.Status = newStatus;
@@ -2382,8 +2405,7 @@ public partial class BookingService : IBookingService
         var label = $"Vuelo {ServiceDisplayName.ForFlight(flight.ProductName, flight.AirlineCode, flight.FlightNumber)}";
         var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, flight.ReservaId, label, newStatus, ct);
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
-        var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, flight.ReservaId, label, oldStatus, newStatus, ct);
-        if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
+        await GuardStatusDowngradeAsync(flight.ReservaId, CancellableServiceTable.Flight, flight.Id, oldStatus, newStatus, ct);
 
         var flightWasResolvedOnStatus = ServiceResolutionRules.IsResolved(flight);
         flight.Status = newStatus;
@@ -2550,8 +2572,7 @@ public partial class BookingService : IBookingService
         var label = $"Asistencia {assistance.PlanType ?? "seguro"}";
         var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, assistance.ReservaId, label, newStatus, ct);
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
-        var downgradeReason = await ReservaCapacityRules.GetStatusDowngradeBlockReasonAsync(_db, assistance.ReservaId, label, oldStatus, newStatus, ct);
-        if (downgradeReason != null) throw new InvalidOperationException(downgradeReason);
+        await GuardStatusDowngradeAsync(assistance.ReservaId, CancellableServiceTable.Assistance, assistance.Id, oldStatus, newStatus, ct);
 
         var assistanceWasResolved = ServiceResolutionRules.IsResolved(assistance);
         assistance.Status = newStatus;

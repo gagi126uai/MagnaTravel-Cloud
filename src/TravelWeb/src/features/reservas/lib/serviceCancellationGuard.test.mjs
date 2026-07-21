@@ -119,3 +119,27 @@ test("code desconocido (no catalogado) → código NO conocido, sin botón", () 
   assert.equal(resultado.codigoConocido, false);
   assert.equal(resultado.boton, null);
 });
+
+// ─── P1 "circuito proveedor" (2026-07-21): mismo código, un caller nuevo ─────
+//
+// Bajar el workflowStatus de un servicio con pagos al operador ya cobrados también pasa
+// por el candado R1 (ahora los 10 endpoints Update/UpdateStatus de los 5 tipos devuelven
+// el MISMO code que "anular servicio"). ServiceInlineCard.jsx (editor de Hotel/Vuelo/
+// Traslado/Paquete/Asistencia) reusa esta misma función para decidir el botón — este test
+// documenta que el 409 del PUT de edición se resuelve igual que el 409 de cancel-service,
+// sin que el editor necesite su propio mapeo de códigos.
+test("editor de servicio (PUT/PATCH de edición) con code R1 → mismo botón 'Emitir factura' que anular", () => {
+  const error = {
+    status: 409,
+    payload: {
+      code: CODIGO_RECHAZO_ANULAR_SERVICIO.PAGO_SIN_FACTURA,
+      message:
+        "No se puede bajar el estado de este servicio todavía: ya tiene pagos al operador y la reserva aún no tiene factura emitida para registrar el reembolso a tu favor. Emití la factura de venta o gestioná el reembolso con el operador antes de cambiar el estado del servicio.",
+    },
+  };
+
+  const resultado = resolverRechazoAnularServicio(error);
+
+  assert.equal(resultado.codigoConocido, true);
+  assert.equal(resultado.boton, "emitir-factura");
+});

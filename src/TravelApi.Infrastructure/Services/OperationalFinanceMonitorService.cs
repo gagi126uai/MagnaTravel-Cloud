@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Helpers;
 using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
 
@@ -88,7 +89,8 @@ public class OperationalFinanceMonitorService
                     Priority = "Urgent",
                     RelatedEntityId = reserva.Id,
                     RelatedEntityType = NotificationRelatedEntityTypes.ReservaUnpaidDeparture,
-                    Message = $"La reserva {reserva.NumeroReserva} sale el {reserva.StartDate:dd/MM/yyyy} y todavía tiene {reserva.Balance:C2} sin cobrar."
+                    Message = $"La reserva {reserva.NumeroReserva} sale el {reserva.StartDate:dd/MM/yyyy} y todavía tiene " +
+                              $"${CurrencyDisplayFormat.Amount(reserva.Balance)} sin cobrar."
                 });
             }
         }

@@ -1223,7 +1223,19 @@ public class SupplierService : ISupplierService
         }
 
         servicesQuery = ApplySupplierAccountServiceOrdering(servicesQuery, query);
-        var page = await servicesQuery.ToPagedResponseAsync(query, cancellationToken);
+
+        // P1 "circuito proveedor" (2026-07-21, D3 firmada por Gaston): "Nueva factura del proveedor" solo
+        // debe ofrecer servicios CONFIRMADOS con el operador — los que realmente generan deuda, misma regla
+        // oficial que WorkflowStatusHelper.CountsForSupplierDebtByType. Un servicio "Solicitado" todavia no
+        // le debe nada al operador; facturarlo seria fabricar deuda que no existe.
+        //
+        // Por que se pagina EN MEMORIA en este caso: la regla CountsForSupplierDebtByType es codigo C# (mapea
+        // texto/codigos IATA a Confirmado/Solicitado/Cancelado) y EF Core no la puede traducir a SQL — mismo
+        // motivo por el que GetSupplierAccountStatementAsync ya materializa antes de aplicar este filtro. El
+        // volumen es chico (servicios de UN proveedor), asi que el costo es aceptable.
+        var page = query.ConfirmedOnly
+            ? await BuildConfirmedOnlyServicesPageAsync(servicesQuery, query, cancellationToken)
+            : await servicesQuery.ToPagedResponseAsync(query, cancellationToken);
 
         // ADR-041 TANDA 5: vencimiento sugerido por linea. El plazo vive en el maestro del proveedor (todas
         // las filas son de ESTE proveedor), asi que lo leemos UNA vez y derivamos la fecha por servicio.
@@ -1251,6 +1263,33 @@ public class SupplierService : ISupplierService
         }
 
         return page;
+    }
+
+    /// <summary>
+    /// P1 "circuito proveedor" (2026-07-21): variante EN MEMORIA de <see cref="PagedQueryExtensions.ToPagedResponseAsync{T}"/>
+    /// para cuando hace falta filtrar por <c>WorkflowStatusHelper.CountsForSupplierDebtByType</c> (regla que
+    /// EF Core no puede traducir a SQL). Trae TODAS las filas que matchean los filtros SQL-traducibles (tipo/
+    /// moneda/busqueda) ya ordenadas, filtra en memoria por "confirmado con el operador" y recien ahi pagina
+    /// (Skip/Take) — el orden que trajo SQL se preserva porque filtrar no reordena.
+    /// </summary>
+    private static async Task<PagedResponse<SupplierAccountServiceListItemDto>> BuildConfirmedOnlyServicesPageAsync(
+        IQueryable<SupplierAccountServiceListItemDto> orderedServicesQuery,
+        SupplierAccountServicesQuery query,
+        CancellationToken cancellationToken)
+    {
+        var allMatching = await orderedServicesQuery.ToListAsync(cancellationToken);
+        var confirmedOnly = allMatching
+            .Where(item => WorkflowStatusHelper.CountsForSupplierDebtByType(item.Type, item.Status))
+            .ToList();
+
+        var page = query.GetNormalizedPage();
+        var pageSize = query.GetNormalizedPageSize();
+        var items = confirmedOnly
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToList();
+
+        return PagedResponse<SupplierAccountServiceListItemDto>.Create(items, page, pageSize, confirmedOnly.Count);
     }
 
     public async Task<PagedResponse<SupplierPaymentDto>> GetSupplierAccountPaymentsAsync(

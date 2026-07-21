@@ -630,7 +630,7 @@ public class CustomerService : ICustomerService
             limits.Count == 0
                 ? "(sin limites)"
                 : string.Join(", ", limits.OrderBy(kvp => kvp.Key, StringComparer.Ordinal)
-                    .Select(kvp => $"{kvp.Key}:{kvp.Value:N2}"));
+                    .Select(kvp => $"{kvp.Key}:{CurrencyDisplayFormat.Amount(kvp.Value)}"));
 
         return $"BillingMode: {FormatMode(oldMode)} -> {FormatMode(newMode)}. " +
                $"PaymentTermsDays: {oldTerms} -> {newTerms}. " +

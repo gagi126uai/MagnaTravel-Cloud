@@ -1,3 +1,9 @@
+> **DECISIONES FIRMADAS POR GASTON (2026-07-21, en sesión):** D1 regla única
+> des-confirmar=anular (recomendada) · D2 costo<pagado: aviso+confirmación
+> (recomendada) · D3 "Nueva factura" solo confirmados (recomendada) · D4 orden
+> P1→P2(reembolsos)→P3(costo)→P4(resto) (recomendado). El aviso fijo con link
+> en la cuenta del operador reusa el patrón D1 ya aprobado el 2026-07-18.
+
 # Inventario de coherencia del circuito PROVEEDOR
 
 **Fecha**: 2026-07-21

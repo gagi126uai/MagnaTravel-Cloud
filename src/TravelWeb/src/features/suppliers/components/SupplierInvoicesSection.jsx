@@ -49,8 +49,14 @@ export function SupplierInvoicesSection({ supplierPublicId, overview, canEdit, c
     const timeout = setTimeout(async () => {
       setLoadingServices(true);
       try {
+        // confirmedOnly=true (P1 "circuito proveedor", 2026-07-21): "Nueva factura del
+        // operador" solo debe ofrecer para elegir servicios que YA cuentan como deuda real
+        // (regla oficial de WorkflowStatusHelper.CountsForSupplierDebtByType). Un servicio
+        // todavía "Solicitado" (sin confirmar) no genera deuda con el operador, así que no
+        // tiene sentido facturarlo acá. Este filtro es SOLO de esta sección — "Servicios
+        // comprados" y la grilla del pago siguen mostrando todo, sin cambios.
         const response = await api.get(
-          `/suppliers/${supplierPublicId}/account/services?page=${servicePageNumber}&pageSize=25&currency=${form.currency}&search=${encodeURIComponent(serviceSearch)}`,
+          `/suppliers/${supplierPublicId}/account/services?page=${servicePageNumber}&pageSize=25&currency=${form.currency}&search=${encodeURIComponent(serviceSearch)}&confirmedOnly=true`,
         );
         setServicesPage(response || { items: [], page: 1, totalPages: 0 });
       } catch (error) {
@@ -193,7 +199,7 @@ export function SupplierInvoicesSection({ supplierPublicId, overview, canEdit, c
           <span className="text-xs text-muted-foreground">Pendiente {formatCurrency(service.remainingToInvoice, form.currency)}</span>
           {form.selected[id] && <input type="number" min="0.01" max={service.remainingToInvoice} step="0.01" value={form.selected[id].amount} onClick={(e) => e.stopPropagation()} onChange={(e) => updateSelectedAmount(service, e.target.value)} className="w-28 rounded border bg-background px-2 py-1 text-right text-sm font-semibold" aria-label={`Importe a facturar de ${service.type}`} />}
         </label>; })}
-        {eligibleServices.length === 0 && <p className="p-3 text-sm text-muted-foreground">No hay servicios disponibles en esta moneda.</p>}
+        {eligibleServices.length === 0 && <p className="p-3 text-sm text-muted-foreground">No hay servicios confirmados pendientes de facturar en esta moneda. Los servicios sin confirmar todavía no se pueden facturar.</p>}
       </div>
       <div className="flex items-center justify-between text-sm">
         <button type="button" disabled={servicePageNumber <= 1} onClick={() => setServicePageNumber((page) => page - 1)} className="rounded border px-3 py-1 disabled:opacity-40">Anterior</button>

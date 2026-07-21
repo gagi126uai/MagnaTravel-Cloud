@@ -235,6 +235,32 @@ public interface IBookingCancellationService
         int reservaId, CancellableServiceTable serviceTable, int serviceId, bool isCurrencyChange, CancellationToken ct);
 
     /// <summary>
+    /// P1 "circuito proveedor" (2026-07-21): impide BAJAR el estado de un servicio de Confirmado a
+    /// no-confirmado (ej. "des-confirmar" desde la ficha de edición) cuando ese servicio tiene plata
+    /// pagada al operador y la reserva NO tiene factura de venta viva que ancle el reembolso. Es la
+    /// CUARTA cara de la familia R1, junto con "anular un servicio suelto" (<c>CancelServiceAsync</c>),
+    /// <see cref="EnsureReservaAnnulHasReceivableAnchorAsync"/> (anular la reserva entera) y
+    /// <see cref="EnsureServiceOperatorOrCurrencyChangeHasReceivableAnchorAsync"/> (reasignar operador/
+    /// moneda): las cuatro reconstruyen el mismo <c>RefundCap</c> del servicio (lo pagado al operador
+    /// IMPUTADO A ESTA RESERVA, topeado por su costo) y solo bloquean si da &gt; 0.
+    ///
+    /// <para><b>Por qué existe (hallazgo de Gaston, 2026-07-21)</b>: antes de esta tanda, "bajar el
+    /// estado" tenía su PROPIA regla, más ancha e imprecisa (miraba el total de pagos de TODA la
+    /// reserva, no de este servicio, y nunca miraba si ya había factura viva) — mismo riesgo de plata
+    /// que "anular servicio", pero con una instrucción CONTRADICTORIA. Ahora comparten predicado y
+    /// mensaje.</para>
+    ///
+    /// <para>El caller (<c>BookingService</c>) debe invocarlo SOLO cuando
+    /// <c>ReservaCapacityRules.IsStatusDowngradeFromConfirmed</c> da true, para no pagar el costo de
+    /// reconstruir el RefundCap en cambios de estado que no son una bajada. Lanza
+    /// <c>ServiceCancellationRejectedException</c> (409, mismo <c>Code</c> que "anular servicio") solo
+    /// cuando hay plata sin ancla; no bloquea con factura viva, servicio impago, o sin operador.
+    /// READ-ONLY: no persiste nada.</para>
+    /// </summary>
+    Task EnsureServiceStatusDowngradeHasReceivableAnchorAsync(
+        int reservaId, CancellableServiceTable serviceTable, int serviceId, CancellationToken ct);
+
+    /// <summary>
     /// Tanda 7 (plan "contrato pantalla-motor", 2026-07-20): pre-chequeo READ-ONLY para el GET de la ficha
     /// de la reserva. Le dice a <c>ReservaService.GetReservaByIdAsync</c>, SIN mutar nada, que servicios
     /// quedarian bloqueados por el candado R1 (plata pagada al operador sin factura) si se intentara anular

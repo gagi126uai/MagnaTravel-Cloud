@@ -167,6 +167,13 @@ public class SupplierAccountServicesQuery : PagedQuery
     public string? Type { get; set; }
     public string? Currency { get; set; }
 
+    // P1 "circuito proveedor" (2026-07-21): opt-in para "Nueva factura del proveedor" (D3 firmada por
+    // Gaston). Esa pantalla solo debe ofrecer servicios CONFIRMADOS con el operador (los que realmente
+    // generan deuda — misma regla oficial que WorkflowStatusHelper.CountsForSupplierDebtByType). Default
+    // false: la solapa "Servicios comprados" y el detalle de la grilla de pago siguen viendo TODO como
+    // hoy (Solicitado + Confirmado), sin este parametro no cambia nada.
+    public bool ConfirmedOnly { get; set; }
+
     public SupplierAccountServicesQuery()
     {
         SortBy = "date";

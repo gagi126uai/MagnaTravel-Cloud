@@ -18,11 +18,12 @@
  */
 
 import { useState, useCallback } from "react";
-import { Hotel, Plane, Car, Package, ShieldCheck, AlertCircle } from "lucide-react";
+import { Hotel, Plane, Car, Package, ShieldCheck, AlertCircle, FileText } from "lucide-react";
 import { hasPermission } from "../../../auth";
 import { api } from "../../../api";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { getReservationServicePublicId } from "../lib/reservationServiceModel";
+import { resolverRechazoAnularServicio } from "../lib/serviceCancellationGuard";
 import { HotelInlineForm, calcularNoches, redondearDinero, formatearPrecio } from "./HotelInlineForm";
 import { FlightInlineForm, calcularTotalesVuelo } from "./FlightInlineForm";
 import { TransferInlineForm, calcularTotalesTraslado } from "./TransferInlineForm";
@@ -310,13 +311,18 @@ function detectarTabParaEdicion(serviceToEdit) {
 
 /**
  * Props:
- *   reservaId     — publicId de la reserva (para los endpoints)
- *   serviceToEdit — si viene, la ficha se abre en modo edición con los datos precargados
- *   suppliers     — lista de proveedores del contexto de la reserva
- *   onGuardado    — callback que se llama con opciones después de guardar exitosamente
- *   onCancelar    — callback para cerrar la ficha sin guardar
+ *   reservaId          — publicId de la reserva (para los endpoints)
+ *   serviceToEdit       — si viene, la ficha se abre en modo edición con los datos precargados
+ *   suppliers           — lista de proveedores del contexto de la reserva
+ *   onGuardado          — callback que se llama con opciones después de guardar exitosamente
+ *   onCancelar          — callback para cerrar la ficha sin guardar
+ *   onIrAEmitirFactura   — callback () => void: abre la ficha de emisión de factura en la
+ *     solapa de Facturación de la MISMA reserva (patrón Tanda 7 de ServiceList/ReservaDetailPage).
+ *     Se usa cuando el PUT de edición rechaza con 409 porque el servicio ya tiene pagos al
+ *     operador y la reserva todavía no tiene factura para anclar el reembolso (P1 "circuito
+ *     proveedor", 2026-07-21). Opcional: si no llega, el botón simplemente no se muestra.
  */
-export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuardado, onCancelar }) {
+export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuardado, onCancelar, onIrAEmitirFactura }) {
     const canSeeCost = hasPermission("cobranzas.see_cost");
 
     // La pestaña activa: si estamos editando, detectamos el tipo automáticamente.
@@ -334,6 +340,11 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
     // Estado de guardado
     const [guardando, setGuardando] = useState(false);
     const [errorGuardado, setErrorGuardado] = useState(null);
+    // Motivo estructurado del último rechazo 409 (P1 "circuito proveedor", 2026-07-21):
+    // { codigoConocido, boton } salido de resolverRechazoAnularServicio. Se usa SOLO para
+    // decidir si mostramos el botón "Emitir factura" junto al cartel de error — el texto
+    // que se ve siempre es errorGuardado (el mensaje real del backend), nunca se inventa acá.
+    const [rechazoGuardado, setRechazoGuardado] = useState(null);
 
     const esEdicion = Boolean(serviceToEdit);
 
@@ -605,6 +616,7 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
 
     const handleGuardar = async () => {
         setErrorGuardado(null);
+        setRechazoGuardado(null);
 
         const errorValidacion = validarForm();
         if (errorValidacion) {
@@ -628,6 +640,12 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
         } catch (error) {
             // Si falla, la ficha queda abierta con todo intacto + cartel rojo (guía UX ronda 2)
             setErrorGuardado(getApiErrorMessage(error, "No se pudo guardar. Revisá la conexión y probá de nuevo."));
+            // P1 "circuito proveedor" (2026-07-21): el PUT de edición ahora puede rechazar con el
+            // MISMO código que "anular servicio" (el servicio ya tiene pagos al operador y la
+            // reserva no tiene factura para anclar el reembolso). Reusamos la lib de la Tanda 7
+            // para decidir si corresponde ofrecer el botón "Emitir factura" — nunca se adivina
+            // el motivo comparando el texto del mensaje.
+            setRechazoGuardado(resolverRechazoAnularServicio(error));
         } finally {
             setGuardando(false);
         }
@@ -801,12 +819,28 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                     {/* Error arriba de los botones (guía UX ronda 2: nunca se pierde lo cargado) */}
                     {errorGuardado && (
                         <div
-                            className="flex items-start gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 w-full sm:w-auto max-w-sm"
+                            className="flex flex-col gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 w-full sm:w-auto max-w-sm"
                             role="alert"
                             data-testid="inline-card-error"
                         >
-                            <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                            <span>{errorGuardado}</span>
+                            <div className="flex items-start gap-2">
+                                <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                                <span>{errorGuardado}</span>
+                            </div>
+                            {/* Motivo R1 (pago al operador sin factura viva) — mismo botón que la
+                                Tanda 7 del modal de "anular servicio": lleva a la solapa de
+                                Facturación de esta misma reserva para emitir la factura pendiente. */}
+                            {rechazoGuardado?.boton === "emitir-factura" && onIrAEmitirFactura && (
+                                <button
+                                    type="button"
+                                    data-testid="inline-card-emitir-factura"
+                                    onClick={onIrAEmitirFactura}
+                                    className="inline-flex items-center gap-1.5 self-start rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-indigo-700"
+                                >
+                                    <FileText className="w-3.5 h-3.5" />
+                                    Emitir factura
+                                </button>
+                            )}
                         </div>
                     )}
                     <div className="flex gap-2">

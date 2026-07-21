@@ -866,8 +866,8 @@ public class ClientCreditService : IClientCreditService
         if (request.Amount > settings.Ley25345ThresholdAmount)
         {
             throw new BusinessInvariantViolationException(
-                $"Ley 25.345: no se puede retirar en efectivo más de ${settings.Ley25345ThresholdAmount:N2}. " +
-                $"Se intentó retirar ${request.Amount:N2}. Usá transferencia bancaria en su lugar.",
+                $"Ley 25.345: no se puede retirar en efectivo más de ${CurrencyDisplayFormat.Amount(settings.Ley25345ThresholdAmount)}. " +
+                $"Se intentó retirar ${CurrencyDisplayFormat.Amount(request.Amount)}. Usá transferencia bancaria en su lugar.",
                 invariantCode: "INV-094");
         }
 
@@ -1050,8 +1050,8 @@ public class ClientCreditService : IClientCreditService
         if (appliedAmount > targetDebtInCreditCurrency)
         {
             throw new BusinessInvariantViolationException(
-                $"El monto a aplicar (${appliedAmount:N2} {creditCurrency}) supera la deuda de la reserva " +
-                $"destino en esa moneda (${targetDebtInCreditCurrency:N2}). Aplica como mucho la deuda.",
+                $"El monto a aplicar (${CurrencyDisplayFormat.Amount(appliedAmount)} {creditCurrency}) supera la deuda de la reserva " +
+                $"destino en esa moneda (${CurrencyDisplayFormat.Amount(targetDebtInCreditCurrency)}). Aplica como mucho la deuda.",
                 invariantCode: "INV-097");
         }
 
@@ -2519,8 +2519,8 @@ public class ClientCreditService : IClientCreditService
                     if (netToRefund > settings.Ley25345ThresholdAmount)
                     {
                         throw new BusinessInvariantViolationException(
-                            $"Ley 25.345: no se puede devolver en efectivo más de ${settings.Ley25345ThresholdAmount:N2}. " +
-                            $"El neto a devolver es ${netToRefund:N2}. Usá transferencia bancaria en su lugar.",
+                            $"Ley 25.345: no se puede devolver en efectivo más de ${CurrencyDisplayFormat.Amount(settings.Ley25345ThresholdAmount)}. " +
+                            $"El neto a devolver es ${CurrencyDisplayFormat.Amount(netToRefund)}. Usá transferencia bancaria en su lugar.",
                             invariantCode: "INV-094");
                     }
                     if (netToRefund > settings.PhysicalRefundAlertThreshold)
@@ -2727,8 +2727,8 @@ public class ClientCreditService : IClientCreditService
         if (request.Amount > entry.RemainingBalance)
         {
             throw new BusinessInvariantViolationException(
-                $"El monto solicitado (${request.Amount:N2}) supera el saldo disponible " +
-                $"(${entry.RemainingBalance:N2}) del cliente.",
+                $"El monto solicitado (${CurrencyDisplayFormat.Amount(request.Amount)}) supera el saldo disponible " +
+                $"(${CurrencyDisplayFormat.Amount(entry.RemainingBalance)}) del cliente.",
                 invariantCode: "INV-085");
         }
     }

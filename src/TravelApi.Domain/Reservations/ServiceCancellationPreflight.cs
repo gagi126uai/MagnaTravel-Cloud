@@ -50,6 +50,20 @@ public static class ServiceCancellationPreflightPolicy
         "factura emitida para registrar el reembolso a tu favor. Emití la factura de venta o gestioná el " +
         "reembolso con el operador antes de anular el servicio.";
 
+    /// <summary>
+    /// P1 "circuito proveedor" (2026-07-21): variante de <see cref="UnanchoredOperatorRefundBlockedReason"/>
+    /// para BAJAR EL ESTADO de un servicio (de Confirmado a Solicitado/Cancelado, desde la ficha de
+    /// edición) en vez de anularlo. Es el MISMO riesgo de plata y la MISMA instrucción de qué hacer —
+    /// solo cambia el verbo de la primera frase para que el mensaje describa la acción real que el
+    /// vendedor intentó. Antes de esta tanda, este camino tenía un mensaje distinto que pedía
+    /// exactamente lo contrario ("anulá los pagos al proveedor"); ver
+    /// docs/architecture/2026-07-21-circuito-proveedor-inventario.md, hallazgo #1.
+    /// </summary>
+    public const string UnanchoredOperatorRefundBlockedReasonForStatusDowngrade =
+        "No se puede bajar el estado de este servicio todavía: ya tiene pagos al operador y la reserva " +
+        "aún no tiene factura emitida para registrar el reembolso a tu favor. Emití la factura de venta " +
+        "o gestioná el reembolso con el operador antes de cambiar el estado del servicio.";
+
     public const string NoPayerBlockedReason =
         "No se puede anular este servicio: la reserva tiene una factura emitida pero no tiene un " +
         "cliente asignado para facturarle la nota de crédito. Asigná un cliente a la reserva antes de anular.";

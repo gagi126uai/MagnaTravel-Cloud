@@ -94,7 +94,7 @@ public static class CancelledDebitNoteCollectionGate
         if (ReservationEconomicPolicy.RoundCurrency(imputedAmount) > outstanding)
         {
             throw new InvalidOperationException(
-                $"El monto imputado supera el saldo pendiente de la Nota de Debito ({outstanding:0.00} {debitNoteCurrency}).");
+                $"El monto imputado supera el saldo pendiente de la Nota de Debito ({CurrencyDisplayFormat.Amount(outstanding)} {debitNoteCurrency}).");
         }
 
         return new Result(debitNote.Id, debitNoteCurrency, outstanding);

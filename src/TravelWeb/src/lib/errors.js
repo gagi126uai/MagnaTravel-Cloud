@@ -35,6 +35,8 @@ const HTTP_STATUSTEXT_EXACT = new Set([
   "forbidden",            // 403
   "not found",            // 404
   "too many requests",    // 429
+  // 4xx (statusText sin body)
+  "conflict",              // 409
   // 5xx
   "internal server error", // 500
   "bad gateway",           // 502
