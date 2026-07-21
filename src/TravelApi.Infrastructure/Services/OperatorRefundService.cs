@@ -1148,9 +1148,14 @@ public class OperatorRefundService : IOperatorRefundService
                 .Any(w => w.Kind != WithdrawalKind.KeptAsCredit);
             if (hasConsumedWithdrawals)
             {
+                // Mensaje en criollo, sin nombres de clase internos (gate de exposicion de datos): el saldo a
+                // favor que generó este reembolso ya salió de caja (retiro en efectivo/transferencia) o se
+                // aplicó a otra reserva. No se puede simplemente "deshacer" ese movimiento: primero hay que
+                // revertirlo con autorización (circuito de Tesorería), y recién ahí anular el reembolso.
                 throw new InvalidOperationException(
-                    "La allocation tiene retiros consumidos por el cliente. " +
-                    "Iniciar un ClientRefundReversal antes de anular la allocation.");
+                    "No se puede anular este reembolso: el saldo a favor que generó ya fue retirado o " +
+                    "aplicado por el cliente. Para deshacerlo primero hay que revertir ese uso del saldo, " +
+                    "lo cual requiere autorización — consultá con Tesorería.");
             }
 
             // El entry queda con balance cero + IsFullyConsumed = true (asi no
@@ -1309,9 +1314,12 @@ public class OperatorRefundService : IOperatorRefundService
             var hasConsumed = oldCreditEntry.Withdrawals.Any(w => w.Kind != WithdrawalKind.KeptAsCredit);
             if (hasConsumed)
             {
+                // Mismo criterio criollo que TryVoidOnceAsync (ver comentario ahi): no se puede mover a otra
+                // reserva un reembolso cuyo saldo a favor ya salio de caja o se aplico a otra reserva.
                 throw new InvalidOperationException(
-                    "La allocation tiene retiros consumidos por el cliente. " +
-                    "No se puede reasociar — iniciar un ClientRefundReversal primero.");
+                    "No se puede reasociar este reembolso a otra reserva: el saldo a favor que generó ya " +
+                    "fue retirado o aplicado por el cliente. Para reasociarlo primero hay que revertir ese " +
+                    "uso del saldo, lo cual requiere autorización — consultá con Tesorería.");
             }
         }
 
