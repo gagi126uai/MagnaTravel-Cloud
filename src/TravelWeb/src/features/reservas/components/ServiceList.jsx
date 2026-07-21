@@ -1070,9 +1070,15 @@ export function ServiceList({
     // ── ADR-036 punto 4c: estado de pago al operador por servicio ─────────────────
     // Cargamos el estado de pago al montar. Si falla, degradamos silenciosamente:
     // statusDto queda null y los badges simplemente no aparecen (no rompemos la solapa).
-    // El hook ya maneja el ciclo de vida (cancel en cleanup), así que una sola llamada
-    // carga los datos de TODOS los servicios de una vez.
-    const { statusDto: pagoOperadorDto, loading: pagoOperadorLoading } = useReservaSupplierPaymentStatus(reservaId);
+    //
+    // Fix E2E P3 (2026-07-22): le pasamos `reserva` como segundo argumento (refreshSignal).
+    // ReservaDetailPage arma un objeto `reserva` NUEVO cada vez que corre `fetchReserva`
+    // (edición de servicio, pago, cancelación, etc. — ver useReservaDetail.js), así que esta
+    // referencia cambia exactamente en los mismos momentos en que la lista de servicios se
+    // recarga. Reusamos esa misma señal en vez de armar un canal de recarga aparte: cuando
+    // `reserva` cambia, el hook vuelve a pedir el estado de pagos al operador, y el badge dice
+    // lo mismo que la fila (antes de este fix quedaba con el dato viejo hasta hacer F5).
+    const { statusDto: pagoOperadorDto, loading: pagoOperadorLoading } = useReservaSupplierPaymentStatus(reservaId, reserva);
 
     // amountsVisible viene del DTO raíz: el backend ya sabe si el usuario tiene
     // cobranzas.see_cost y enmascara los montos a 0 cuando no lo tiene.

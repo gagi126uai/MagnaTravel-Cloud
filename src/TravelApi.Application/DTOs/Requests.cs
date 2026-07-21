@@ -109,7 +109,13 @@ public record UpdateFlightRequest(
     DateTime? TicketingDeadline = null,
     // Auditoria ERP 2026-06-12 (item 5): fecha limite de pago al operador del segmento. Opcional al
     // final, anti-clobber en el UPDATE igual que TicketingDeadline. Ver FlightSegment.OperatorPaymentDeadline.
-    DateTime? OperatorPaymentDeadline = null
+    DateTime? OperatorPaymentDeadline = null,
+    // Tanda P2 "circuito proveedor" (2026-07-21, decision D2 firmada por Gaston): si el costo nuevo queda
+    // por debajo de lo ya pagado al operador, el service pide confirmacion (409 con code
+    // COST_BELOW_PAID_CONFIRMATION_REQUIRED) antes de guardar. El front reintenta el MISMO request con
+    // este campo en true una vez que el usuario confirmo el cartel. Default false: mismo comportamiento
+    // de siempre para cualquier caller que no lo conoce todavia. Mismo patron que CreateInvoiceRequest.ForceIssue.
+    bool ConfirmCostBelowPaid = false
 );
 
 public record CreateHotelRequest(
@@ -163,7 +169,9 @@ public record UpdateHotelRequest(
     // Auditoria ERP 2026-06-12 (item 5): fecha limite de pago al operador. Opcional al final. En el
     // UPDATE el map la IGNORA (anti-clobber): un modal viejo que no la manda llega null y borraria una
     // fecha cargada; el service la asigna a mano solo cuando viene con valor (ver UpdateHotelAsync).
-    DateTime? OperatorPaymentDeadline = null
+    DateTime? OperatorPaymentDeadline = null,
+    // Tanda P2 "circuito proveedor" (2026-07-21, decision D2 firmada por Gaston): ver UpdateFlightRequest.
+    bool ConfirmCostBelowPaid = false
 );
 
 public record CreateTransferRequest(
@@ -226,7 +234,9 @@ public record UpdateTransferRequest(
     string? ProductName = null,
     // Auditoria ERP 2026-06-12 (item 5): fecha limite de pago al operador. Opcional al final, anti-clobber
     // en el UPDATE (el map la ignora; el service la asigna si viene con valor). Ver TransferBooking.OperatorPaymentDeadline.
-    DateTime? OperatorPaymentDeadline = null
+    DateTime? OperatorPaymentDeadline = null,
+    // Tanda P2 "circuito proveedor" (2026-07-21, decision D2 firmada por Gaston): ver UpdateFlightRequest.
+    bool ConfirmCostBelowPaid = false
 );
 
 // Bloque 3: Asistencia al viajero (seguro). Espeja a CreateHotelRequest/UpdateHotelRequest:
@@ -272,7 +282,9 @@ public record UpdateAssistanceRequest(
     decimal Tax = 0,
     // Auditoria ERP 2026-06-12 (item 5): fecha limite de pago al operador. Opcional al final, anti-clobber
     // en el UPDATE (el map la ignora; el service la asigna si viene con valor). Ver AssistanceBooking.OperatorPaymentDeadline.
-    DateTime? OperatorPaymentDeadline = null
+    DateTime? OperatorPaymentDeadline = null,
+    // Tanda P2 "circuito proveedor" (2026-07-21, decision D2 firmada por Gaston): ver UpdateFlightRequest.
+    bool ConfirmCostBelowPaid = false
 );
 
 public record CreatePackageRequest(
@@ -323,5 +335,7 @@ public record UpdatePackageRequest(
     string? OccupancyBase = null,
     // Auditoria ERP 2026-06-12 (item 5): fecha limite de pago al operador. Opcional al final, anti-clobber
     // en el UPDATE (el map la ignora; el service la asigna si viene con valor). Ver PackageBooking.OperatorPaymentDeadline.
-    DateTime? OperatorPaymentDeadline = null
+    DateTime? OperatorPaymentDeadline = null,
+    // Tanda P2 "circuito proveedor" (2026-07-21, decision D2 firmada por Gaston): ver UpdateFlightRequest.
+    bool ConfirmCostBelowPaid = false
 );

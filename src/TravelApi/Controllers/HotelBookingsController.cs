@@ -93,6 +93,15 @@ public class HotelBookingsController : ControllerBase
         {
             return BadRequest(new { message = ex.Message });
         }
+        catch (BusinessInvariantViolationException ex)
+        {
+            // Fix B1 (review 2026-07-21): SupplierCreditReconciler puede rechazar la edicion (ej. subir el
+            // costo o reasignar el operador saca un saldo a favor que YA se aplico a otra reserva -
+            // INV-SUPCREDIT-001). Sin este catch el GlobalExceptionHandler adjunta el codigo interno de
+            // invariante a la respuesta (gate de exposicion de datos); aca viaja SOLO el mensaje en
+            // criollo, que el reconciler ya redacta pensado para el usuario final.
+            return Conflict(new { message = ex.Message });
+        }
         catch (InvalidOperationException ex)
         {
             // B1.15 Fase 0' (CODE-04): MutationGuards rechaza con factura AFIP
@@ -103,6 +112,11 @@ public class HotelBookingsController : ControllerBase
             // factura" en vez de un texto fijo.
             if (ex is ServiceCancellationRejectedException rejected)
                 return Conflict(new { code = rejected.Code, message = ex.Message });
+            // P2 "circuito proveedor" (2026-07-21): AVISO de costo por debajo de lo pagado al operador.
+            // Mismo envelope aditivo `code`; el frontend lo usa para ofrecer el cartel "Confirmar y
+            // guardar igual" en vez de un texto fijo.
+            if (ex is CostBelowPaidConfirmationRequiredException costBelowPaid)
+                return Conflict(new { code = costBelowPaid.Code, message = ex.Message });
             return Conflict(new { message = ex.Message });
         }
         catch

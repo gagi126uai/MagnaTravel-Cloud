@@ -3282,6 +3282,23 @@ public class SupplierService : ISupplierService
     // ===================================================================================================
 
     /// <summary>
+    /// Tanda P2 "circuito proveedor" (2026-07-21): suma de <c>SupplierPayments</c> vivos (el filtro global
+    /// <c>!IsDeleted</c> ya excluye los anulados) imputados a UN servicio puntual de una reserva. Usa el
+    /// equivalente imputado (<c>ImputedAmount</c>) cuando el pago cruzo moneda, igual que el paso 2 de
+    /// <see cref="GetReservaSupplierPaymentStatusAsync"/> — misma regla, sin reconstruir toda la reserva.
+    /// </summary>
+    public async Task<decimal> GetCashPaidToOperatorForServiceAsync(
+        int reservaId, string serviceRecordKind, Guid servicePublicId, CancellationToken cancellationToken)
+    {
+        decimal paid = await _dbContext.SupplierPayments
+            .Where(p => p.ReservaId == reservaId
+                     && p.ServiceRecordKind == serviceRecordKind
+                     && p.ServicePublicId == servicePublicId)
+            .SumAsync(p => (decimal?)(p.ImputedAmount ?? p.Amount), cancellationToken) ?? 0m;
+        return EconomicRulesHelper.RoundCurrency(paid);
+    }
+
+    /// <summary>
     /// Estado de pago al operador de todos los servicios de una reserva. Por cada servicio (de las 6 tablas)
     /// suma los pagos VIVOS al operador imputados a ese servicio puntual (ADR-036 4c) y deriva paid/partial/
     /// unpaid contra su costo. Los montos respetan el masking see_cost; el estado lo ven todos.

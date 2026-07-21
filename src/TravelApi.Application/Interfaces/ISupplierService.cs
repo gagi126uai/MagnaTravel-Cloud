@@ -43,6 +43,21 @@ public interface ISupplierService
     Task<ReservaSupplierPaymentStatusDto> GetReservaSupplierPaymentStatusAsync(int reservaId, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Tanda P2 "circuito proveedor" (2026-07-21): total EN CAJA ya pagado al operador, imputado a UN
+    /// servicio puntual de una reserva (<c>SupplierPayments.ServiceRecordKind</c> + <c>ServicePublicId</c>,
+    /// equivalente imputado si el pago cruzo moneda). Mismo criterio "pagado por servicio" que usa
+    /// <see cref="GetReservaSupplierPaymentStatusAsync"/> (campo <c>PaidToOperator</c>), pero acotado a UN
+    /// servicio: el guard de edicion de costo que lo consume corre en cada <c>Update*Async</c> tipado y no
+    /// puede pagar el costo de reconstruir toda la reserva por cada edicion.
+    ///
+    /// <para><b>Solo caja, sin saldo a favor aplicado a proposito</b>: el saldo a favor del operador es
+    /// credito, no plata que efectivamente salio; el guard que usa este numero avisa sobre plata REAL que
+    /// quedaria de mas al bajar el costo, no sobre deuda ya cubierta con credito.</para>
+    /// </summary>
+    Task<decimal> GetCashPaidToOperatorForServiceAsync(
+        int reservaId, string serviceRecordKind, Guid servicePublicId, CancellationToken cancellationToken);
+
+    /// <summary>
     /// TANDA 1 (cuenta corriente del proveedor): EXTRACTO de la Cuenta por Pagar como libro mayor, SEPARADO
     /// por moneda y con saldo corriente. Cargos = compras confirmadas del operador; abonos = pagos al operador.
     /// El saldo de cierre de cada moneda coincide con <c>SupplierBalanceByCurrency.Balance</c> (misma fuente de

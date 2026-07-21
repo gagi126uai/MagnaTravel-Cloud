@@ -15,15 +15,21 @@
  *
  * Si el guardado falla, la ficha queda abierta con los datos intactos y muestra
  * un cartel rojo arriba de los botones (nunca se pierde lo cargado — guía UX ronda 2).
+ *
+ * P3 "circuito proveedor" (spec 2026-07-22): al editar, si el costo nuevo queda por
+ * debajo de lo ya pagado al operador, el motor no bloquea pero pide confirmar (409 +
+ * code COST_BELOW_PAID_CONFIRMATION_REQUIRED) — se muestra un cartel ÁMBAR de aviso
+ * (distinto del rojo de error) con "Volver a corregir" / "Sí, confirmar".
  */
 
 import { useState, useCallback } from "react";
-import { Hotel, Plane, Car, Package, ShieldCheck, AlertCircle, FileText } from "lucide-react";
+import { Hotel, Plane, Car, Package, ShieldCheck, AlertCircle, AlertTriangle, FileText } from "lucide-react";
 import { hasPermission } from "../../../auth";
 import { api } from "../../../api";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { getReservationServicePublicId } from "../lib/reservationServiceModel";
 import { resolverRechazoAnularServicio } from "../lib/serviceCancellationGuard";
+import { esRechazoCostoMenorAPagado, agregarConfirmacionCostoMenorAPagado } from "../lib/costConfirmationGuard";
 import { HotelInlineForm, calcularNoches, redondearDinero, formatearPrecio } from "./HotelInlineForm";
 import { FlightInlineForm, calcularTotalesVuelo } from "./FlightInlineForm";
 import { TransferInlineForm, calcularTotalesTraslado } from "./TransferInlineForm";
@@ -50,6 +56,19 @@ const TAB_ENDPOINTS = {
     Traslado: "transfers",
     Paquete: "packages",
     Asistencia: "assistances",
+};
+
+// ─── Id del campo "Costo" por pestaña (P3, spec 2026-07-22) ──────────────────
+
+// Cuando el vendedor elige "Volver a corregir" en el aviso de costo por debajo de lo
+// pagado, el foco tiene que volver al campo de costo — pero cada tipo de servicio lo
+// llama distinto (ver los 5 Inline*Form). Este mapa evita hardcodear el id en el handler.
+const CAMPO_COSTO_POR_TAB = {
+    Hotel: "hotel-costo-noche",
+    Aereo: "flight-costo",
+    Traslado: "transfer-costo",
+    Paquete: "package-costo-persona",
+    Asistencia: "assistance-costo",
 };
 
 // â”€â”€â”€ Estado inicial por tipo â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -345,6 +364,11 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
     // decidir si mostramos el botón "Emitir factura" junto al cartel de error — el texto
     // que se ve siempre es errorGuardado (el mensaje real del backend), nunca se inventa acá.
     const [rechazoGuardado, setRechazoGuardado] = useState(null);
+    // Aviso ÁMBAR de la P3 "circuito proveedor" (2026-07-22): el motor pidió confirmar que
+    // bajar el costo del operador genera saldo a favor. Guarda el `message` tal cual del
+    // backend (con el monto exacto) — nunca convive con errorGuardado (cartel rojo), son
+    // dos estados mutuamente excluyentes que se limpian entre sí en cada intento de guardado.
+    const [avisoCostoMenorAPagado, setAvisoCostoMenorAPagado] = useState(null);
 
     const esEdicion = Boolean(serviceToEdit);
 
@@ -614,19 +638,17 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
 
     // â”€â”€â”€ Guardar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-    const handleGuardar = async () => {
-        setErrorGuardado(null);
-        setRechazoGuardado(null);
-
-        const errorValidacion = validarForm();
-        if (errorValidacion) {
-            setErrorGuardado(errorValidacion);
-            return;
-        }
-
+    // Arma y envía el PUT/POST del tipo activo. `confirmarCostoMenor` es el flag de la P3:
+    // cuando es true, reusa el MISMO `buildPayload()` de siempre y le suma
+    // `confirmCostBelowPaid: true` (no hay un builder aparte para el reenvío — es
+    // exactamente el mismo guardado, solo que con la marca de confirmación puesta).
+    const enviarGuardado = async (confirmarCostoMenor) => {
         setGuardando(true);
         try {
-            const payload = buildPayload();
+            const payloadBase = buildPayload();
+            const payload = confirmarCostoMenor
+                ? agregarConfirmacionCostoMenorAPagado(payloadBase)
+                : payloadBase;
             const endpointSegmento = TAB_ENDPOINTS[tabActiva];
 
             if (esEdicion) {
@@ -636,12 +658,25 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 await api.post(`/reservas/${reservaId}/${endpointSegmento}`, payload);
             }
 
+            // Guardado normal, igual que cualquier edición exitosa: la ficha se cierra en
+            // silencio (spec P3, decisión de Gastón 2026-07-21: "guarda calladito", sin
+            // cartelito verde extra tras confirmar).
             onGuardado({ showLoading: false, preserveOnError: true });
         } catch (error) {
+            // P3 "circuito proveedor" (2026-07-22): si el motor pide confirmar la baja de
+            // costo por debajo de lo pagado y todavía no reenviamos con la marca puesta,
+            // este 409 puntual se muestra como AVISO ámbar (no error) — nunca junto al
+            // cartel rojo. Si YA reenviamos con la marca y el motor vuelve a rechazar (otra
+            // causa), cae al cartel rojo de siempre, como cualquier otro fallo de guardado.
+            if (!confirmarCostoMenor && esRechazoCostoMenorAPagado(error)) {
+                setAvisoCostoMenorAPagado(getApiErrorMessage(error, "Confirmá para continuar."));
+                return;
+            }
+
             // Si falla, la ficha queda abierta con todo intacto + cartel rojo (guía UX ronda 2)
             setErrorGuardado(getApiErrorMessage(error, "No se pudo guardar. Revisá la conexión y probá de nuevo."));
-            // P1 "circuito proveedor" (2026-07-21): el PUT de edición ahora puede rechazar con el
-            // MISMO código que "anular servicio" (el servicio ya tiene pagos al operador y la
+            // P1 "circuito proveedor" (2026-07-21): el PUT de edición también puede rechazar con
+            // el MISMO código que "anular servicio" (el servicio ya tiene pagos al operador y la
             // reserva no tiene factura para anclar el reembolso). Reusamos la lib de la Tanda 7
             // para decidir si corresponde ofrecer el botón "Emitir factura" — nunca se adivina
             // el motivo comparando el texto del mensaje.
@@ -649,6 +684,36 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
         } finally {
             setGuardando(false);
         }
+    };
+
+    const handleGuardar = async () => {
+        setErrorGuardado(null);
+        setRechazoGuardado(null);
+        setAvisoCostoMenorAPagado(null);
+
+        const errorValidacion = validarForm();
+        if (errorValidacion) {
+            setErrorGuardado(errorValidacion);
+            return;
+        }
+
+        await enviarGuardado(false);
+    };
+
+    // "Sí, confirmar" del aviso ámbar: reenvía el MISMO guardado (buildPayload() reconstruye
+    // el payload desde el estado actual del formulario, que no cambió desde el intento
+    // anterior) con la marca de confirmación. No hace falta re-validar: nada se editó.
+    const handleConfirmarCostoMenor = async () => {
+        setAvisoCostoMenorAPagado(null);
+        await enviarGuardado(true);
+    };
+
+    // "Volver a corregir" del aviso ámbar: solo saca el cartel, la ficha queda intacta y el
+    // foco vuelve al campo de Costo del tipo activo para que el vendedor corrija el número
+    // (spec P3 §2 — a diferencia de "Cancelar", esto NO cierra la ficha ni pierde datos).
+    const handleVolverACorregirCosto = () => {
+        setAvisoCostoMenorAPagado(null);
+        document.getElementById(CAMPO_COSTO_POR_TAB[tabActiva])?.focus();
     };
 
     // â”€â”€â”€ Calcular totales para el footer (por tipo activo) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -814,8 +879,46 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                     )}
                 </div>
 
-                {/* Derecha: cartel de error + botones */}
+                {/* Derecha: cartel de aviso/error + botones */}
                 <div className="flex flex-col items-end gap-2 w-full sm:w-auto">
+                    {/* Aviso ÁMBAR de la P3 (spec 2026-07-22): bajar el costo del operador por
+                        debajo de lo ya pagado no bloquea, pero el motor pide confirmar antes de
+                        guardar (genera saldo a favor con ese operador). Nunca se muestra junto
+                        al cartel rojo de error — son dos estados mutuamente excluyentes. */}
+                    {avisoCostoMenorAPagado && (
+                        <div
+                            className="flex flex-col gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 w-full sm:w-auto max-w-sm"
+                            role="alert"
+                            data-testid="inline-card-confirmar-costo"
+                        >
+                            <div className="flex items-start gap-2">
+                                <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                                {/* El texto es el message tal cual del motor (es-AR, con el monto
+                                    exacto de la diferencia) — el front nunca lo reescribe ni calcula. */}
+                                <span>{avisoCostoMenorAPagado}</span>
+                            </div>
+                            <div className="flex gap-2 self-end">
+                                <button
+                                    type="button"
+                                    onClick={handleVolverACorregirCosto}
+                                    disabled={guardando}
+                                    className="px-3 py-1.5 text-xs font-semibold text-amber-800 border border-amber-300 rounded-lg hover:bg-amber-100 disabled:opacity-50 transition-colors"
+                                    data-testid="confirmar-costo-corregir"
+                                >
+                                    Volver a corregir
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleConfirmarCostoMenor}
+                                    disabled={guardando}
+                                    className="px-3 py-1.5 text-xs font-semibold bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50 transition-colors"
+                                    data-testid="confirmar-costo-si"
+                                >
+                                    {guardando ? "Guardando…" : "Sí, confirmar"}
+                                </button>
+                            </div>
+                        </div>
+                    )}
                     {/* Error arriba de los botones (guía UX ronda 2: nunca se pierde lo cargado) */}
                     {errorGuardado && (
                         <div

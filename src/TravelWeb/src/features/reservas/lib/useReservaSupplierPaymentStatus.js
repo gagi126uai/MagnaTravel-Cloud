@@ -14,22 +14,35 @@
  *     de la solapa sigue funcionando (NO rompemos la pantalla por este dato).
  *   - amountsVisible = false → el backend ya enmascaró los montos a 0 → no mostramos cifras.
  *
+ * Fix E2E P3 (2026-07-22): antes este hook SOLO recargaba cuando cambiaba `reservaId`
+ * (o sea, una vez por reserva). Si el vendedor editaba un servicio (o pagaba, cancelaba,
+ * etc.) SIN salir de la página, el badge "Pago parcial al operador" quedaba con el dato
+ * viejo mientras el resto de la fila (Costo Neto) ya mostraba el valor nuevo — dos
+ * afirmaciones contradictorias en la misma fila hasta que el vendedor apretaba F5.
+ *
  * Props:
- *   reservaId — publicId de la reserva (string). Si es null/undefined, no se llama al backend.
+ *   reservaId     — publicId de la reserva (string). Si es null/undefined, no se llama al backend.
+ *   refreshSignal — cualquier valor que cambie de referencia cuando la pantalla ya recargó
+ *     los servicios (ej. el objeto `reserva` completo, que ReservaDetailPage reemplaza por
+ *     uno nuevo cada vez que corre `fetchReserva`). Es OPCIONAL para no romper otras pantallas
+ *     que llamen a este hook con un solo argumento (siguen recargando solo por reservaId,
+ *     comportamiento idéntico al de antes de este fix).
  */
 
 import { useState, useEffect } from "react";
 import { api } from "../../../api";
 
-export function useReservaSupplierPaymentStatus(reservaId) {
+export function useReservaSupplierPaymentStatus(reservaId, refreshSignal) {
     const [statusDto, setStatusDto] = useState(null);
     const [loading, setLoading] = useState(false);
     // error se guarda para reportar en consola, pero el componente lo ignora
     // (degradación silenciosa: si falla, simplemente no se muestran las etiquetas).
     const [error, setError] = useState(null);
 
-    // Carga los estados de pago al montar o cuando cambia la reserva.
-    // useEffect vacío-de-reservaId: no cargamos si no hay reservaId.
+    // Carga los estados de pago al montar, cuando cambia la reserva, y también cuando
+    // `refreshSignal` cambia de referencia (por ejemplo, tras editar un servicio y que la
+    // pantalla vuelva a pedir la reserva completa). Sin `refreshSignal` en las dependencias,
+    // este efecto no se enteraba de esos cambios porque `reservaId` no varía entre ediciones.
     useEffect(() => {
         if (!reservaId) return;
 
@@ -56,7 +69,7 @@ export function useReservaSupplierPaymentStatus(reservaId) {
         // Limpieza: si la reserva cambia antes de que llegue la respuesta,
         // ignoramos el resultado para no mostrar datos de otra reserva.
         return () => { cancelled = true; };
-    }, [reservaId]);
+    }, [reservaId, refreshSignal]);
 
     return { statusDto, loading, error };
 }

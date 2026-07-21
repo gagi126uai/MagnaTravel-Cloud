@@ -9,6 +9,7 @@ using TravelApi.Application.Contracts.Reservations;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Domain.Helpers;
 using TravelApi.Domain.Interfaces;
 using TravelApi.Domain.Reservations;
@@ -158,6 +159,152 @@ public partial class BookingService : IBookingService
 
         await _cancellationService.EnsureServiceStatusDowngradeHasReceivableAnchorAsync(
             reservaId, serviceTable, serviceId, ct);
+    }
+
+    /// <summary>
+    /// Tanda P2 "circuito proveedor" (2026-07-21, decision D2 firmada por Gaston): AVISO (no bloqueo)
+    /// cuando el costo (<c>NetCost</c>) NUEVO de un servicio queda por debajo de lo que ya se le pago al
+    /// operador por ESE servicio puntual. Se invoca en los 5 <c>Update*Async</c> tipados, DESPUES de
+    /// resolver el costo final (<see cref="ResolveUpdateCostFieldsAsync"/>) y ANTES de persistir.
+    ///
+    /// <para><b>Por que "aviso" y no bloqueo</b>: bajar el costo puede ser un descuento real que dio el
+    /// operador (a diferencia de la familia R1, que bloquea de forma dura porque cancelar/reasignar SIN
+    /// ancla borra plata de la reserva). Acá alcanza con que quien edita CONFIRME a proposito que la
+    /// diferencia va a quedar como saldo a favor con el operador — el caller reintenta el mismo request
+    /// con <c>ConfirmCostBelowPaid = true</c> para saltear este aviso.</para>
+    ///
+    /// <para><b>No corre si cambio el operador o la moneda</b>: ese caso ya lo cubre el candado A4
+    /// (<see cref="GuardOperatorOrCurrencyReassignmentAsync"/>), que SI bloquea de forma dura con su propio
+    /// mensaje ("emiti la factura o gestiona el reembolso"). Evaluar los dos guards juntos duplicaria el
+    /// aviso sobre el mismo cambio de plata.</para>
+    /// </summary>
+    private async Task GuardCostBelowPaidConfirmationAsync(
+        int reservaId,
+        string serviceRecordKind,
+        Guid servicePublicId,
+        int oldSupplierId,
+        int newSupplierId,
+        string? oldCurrency,
+        string? newCurrency,
+        decimal newNetCost,
+        bool confirmCostBelowPaid,
+        CancellationToken ct)
+    {
+        bool operatorChanged = newSupplierId != oldSupplierId;
+        bool currencyChanged = !string.Equals(
+            Monedas.Normalizar(oldCurrency), Monedas.Normalizar(newCurrency), StringComparison.Ordinal);
+        if (operatorChanged || currencyChanged) return;
+
+        // El caller ya vio el aviso en un intento anterior y confirmo que quiere guardar igual.
+        if (confirmCostBelowPaid) return;
+
+        decimal paidToOperator = await _supplierService.GetCashPaidToOperatorForServiceAsync(
+            reservaId, serviceRecordKind, servicePublicId, ct);
+        if (paidToOperator <= 0m) return; // nada pagado todavia: no hay riesgo de dejar plata de mas
+
+        if (newNetCost >= paidToOperator) return; // el costo nuevo sigue cubriendo lo pagado
+
+        decimal difference = paidToOperator - newNetCost;
+        string currency = Monedas.Normalizar(newCurrency);
+        throw new CostBelowPaidConfirmationRequiredException(
+            CostBelowPaidConfirmationRequiredException.Codes.ConfirmationRequired,
+            $"Le pagaste al operador ${CurrencyDisplayFormat.Amount(paidToOperator)} {currency} por este servicio y el costo " +
+            $"nuevo es ${CurrencyDisplayFormat.Amount(newNetCost)} {currency}. Si guardás, van a quedar " +
+            $"${CurrencyDisplayFormat.Amount(difference)} {currency} como saldo a favor con el operador. Confirmá para guardar igual.");
+    }
+
+    /// <summary>
+    /// Tanda P2 "circuito proveedor" (2026-07-21, alcance B): sincroniza el pool de saldo a favor del
+    /// operador cuando una edicion de servicio movio la plata que le corresponde (costo, proveedor o
+    /// moneda). Antes de esta tanda, el pool quedaba DESINCRONIZADO hasta el proximo pago/anulacion, porque
+    /// <c>SupplierCreditReconciler</c> nunca se disparaba en el camino de edicion — solo en pagos y
+    /// cancelaciones. Se invoca DESPUES de <c>_supplierService.UpdateBalanceAsync</c> (que ya dejo
+    /// <c>SupplierBalanceByCurrency</c> fresco; el reconciler lee de ahi) para cada proveedor afectado.
+    ///
+    /// <para><b>No corre en ediciones que no tocan plata</b> (ej. cambiar el nombre del hotel o las fechas):
+    /// el caller solo invoca esto cuando <c>NetCost</c>, proveedor o moneda cambiaron.</para>
+    /// </summary>
+    private async Task ReconcileSupplierCreditAfterCostEditAsync(int supplierId, CancellationToken ct)
+    {
+        if (supplierId <= 0) return;
+        var (userId, userName) = GetActor();
+        await TravelApi.Infrastructure.Reservations.SupplierCreditReconciler.ReconcileAsync(
+            _db, supplierId, sourceSupplierPaymentId: null, userId, userName, _auditService, ct);
+    }
+
+    /// <summary>
+    /// Punto ÚNICO donde los 5 <c>Update*Async</c> tipados recalculan el saldo del proveedor DESPUES de
+    /// persistir la edicion. Reemplaza el bloque <c>if/else if</c> que estaba repetido igual en los 5
+    /// metodos (mismo criterio: si el proveedor no cambio, recalcula uno solo; si cambio, recalcula el
+    /// saliente y el entrante por separado). Tanda P2 (2026-07-21, alcance B) le agrega la sincronizacion
+    /// del pool de saldo a favor (<see cref="ReconcileSupplierCreditAfterCostEditAsync"/>), pero SOLO
+    /// cuando <paramref name="moneyMoved"/> es true (el caller lo calcula: cambio el costo, el proveedor o
+    /// la moneda) — una edicion que no toca plata no necesita reconciliar nada.
+    /// </summary>
+    private async Task RefreshSupplierBalanceAfterServiceEditAsync(
+        int oldSupplierId, int newSupplierId, bool moneyMoved, CancellationToken ct)
+    {
+        if (oldSupplierId > 0 && oldSupplierId == newSupplierId)
+        {
+            await _supplierService.UpdateBalanceAsync(newSupplierId, ct);
+            if (moneyMoved) await ReconcileSupplierCreditAfterCostEditAsync(newSupplierId, ct);
+        }
+        else if (oldSupplierId != newSupplierId)
+        {
+            if (oldSupplierId > 0) await _supplierService.UpdateBalanceAsync(oldSupplierId, ct);
+            if (newSupplierId > 0) await _supplierService.UpdateBalanceAsync(newSupplierId, ct);
+            if (moneyMoved)
+            {
+                // Reconciliamos LOS DOS: el saliente perdio la compra que tenia imputada (su pool puede
+                // bajar) y el entrante la gano (su pool puede subir).
+                if (oldSupplierId > 0) await ReconcileSupplierCreditAfterCostEditAsync(oldSupplierId, ct);
+                if (newSupplierId > 0) await ReconcileSupplierCreditAfterCostEditAsync(newSupplierId, ct);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Punto ÚNICO (fix B1, review 2026-07-21) que envuelve "persistir la edición del servicio" +
+    /// "recalcular el saldo del proveedor" + "reconciliar su pool de saldo a favor"
+    /// (<see cref="RefreshSupplierBalanceAfterServiceEditAsync"/>) en UNA transacción. Antes de este fix las
+    /// tres cosas corrían como llamadas sueltas, cada una con su propio <c>SaveChanges</c>: si el
+    /// reconciler chocaba contra <c>INV-SUPCREDIT-001</c> (el sobrepago que se le quiere sacar al costo YA
+    /// se aplicó a otra reserva), la edición del servicio quedaba GUARDADA de todos modos — commit parcial,
+    /// y el usuario veía un error como si nada se hubiera guardado.
+    ///
+    /// <para><b>Mismo patrón provider-aware que <c>SupplierService.RunSerializableTransactionAsync</c></b>:
+    /// contra Postgres (relacional) abre una transacción <c>Serializable</c> real vía
+    /// <c>CreateExecutionStrategy</c> (soporta el retry automático de Npgsql ante reintentos
+    /// transitorios); contra el proveedor InMemory de los tests unitarios (que no soporta
+    /// transacciones) corre el mismo cuerpo SIN transacción — mismo resultado funcional, la atomicidad
+    /// real solo se valida contra Postgres (test de integración dedicado).</para>
+    /// </summary>
+    private async Task PersistServiceEditAndRefreshSupplierBalanceAsync(
+        Func<CancellationToken, Task> persistServiceEdit,
+        int oldSupplierId,
+        int newSupplierId,
+        bool moneyMoved,
+        CancellationToken ct)
+    {
+        if (!_db.Database.IsRelational())
+        {
+            // InMemory (tests unitarios): no soporta BeginTransactionAsync. Corremos el cuerpo directo,
+            // igual criterio que SupplierService.RunSerializableTransactionAsync y
+            // PartialCreditNoteT5Reconciliation.TryReconcileAsync.
+            await persistServiceEdit(ct);
+            await RefreshSupplierBalanceAfterServiceEditAsync(oldSupplierId, newSupplierId, moneyMoved, ct);
+            return;
+        }
+
+        var strategy = _db.Database.CreateExecutionStrategy();
+        await strategy.ExecuteAsync(async () =>
+        {
+            await using var transaction = await _db.Database.BeginTransactionAsync(
+                System.Data.IsolationLevel.Serializable, ct);
+            await persistServiceEdit(ct);
+            await RefreshSupplierBalanceAfterServiceEditAsync(oldSupplierId, newSupplierId, moneyMoved, ct);
+            await transaction.CommitAsync(ct);
+        });
     }
 
     // === RATE RESOLUTION (Snapshot) ===
@@ -933,16 +1080,18 @@ public partial class BookingService : IBookingService
             reservaId, CancellableServiceTable.Flight, flight.Id, oldSupplierId, flight.SupplierId,
             oldCurrency, flight.Currency, debtServiceType: "Vuelo", oldStatus: oldStatus, ct);
 
-        await _flightRepo.UpdateAsync(flight, ct);
-        if (oldSupplierId > 0 && oldSupplierId == flight.SupplierId)
-        {
-            await _supplierService.UpdateBalanceAsync(flight.SupplierId, ct);
-        }
-        else if (oldSupplierId != flight.SupplierId)
-        {
-            if (oldSupplierId > 0) await _supplierService.UpdateBalanceAsync(oldSupplierId, ct);
-            if (flight.SupplierId > 0) await _supplierService.UpdateBalanceAsync(flight.SupplierId, ct);
-        }
+        // Tanda P2 "circuito proveedor" (2026-07-21): AVISO si el costo nuevo queda por debajo de lo ya
+        // pagado al operador (mismo proveedor y moneda; el cambio de proveedor/moneda ya lo cubrio el
+        // guard de arriba). Tambien corre ANTES de persistir.
+        await GuardCostBelowPaidConfirmationAsync(
+            reservaId, ServicePaymentRecordKinds.Flight, flight.PublicId, oldSupplierId, flight.SupplierId,
+            oldCurrency, flight.Currency, flight.NetCost, req.ConfirmCostBelowPaid, ct);
+
+        bool flightMoneyMoved = oldNetCost != flight.NetCost
+            || oldSupplierId != flight.SupplierId
+            || !string.Equals(Monedas.Normalizar(oldCurrency), Monedas.Normalizar(flight.Currency), StringComparison.Ordinal);
+        await PersistServiceEditAndRefreshSupplierBalanceAsync(
+            c => _flightRepo.UpdateAsync(flight, c), oldSupplierId, flight.SupplierId, flightMoneyMoved, ct);
 
         await RecalculateReservationScheduleAsync(reservaId, ct);
         // ADR-027 (detalle): marca "confirmada con cambios" + registra el detalle (que servicio, antes/despues)
@@ -1267,16 +1416,18 @@ public partial class BookingService : IBookingService
             reservaId, CancellableServiceTable.Hotel, hotel.Id, oldSupplierId, hotel.SupplierId,
             oldCurrency, hotel.Currency, debtServiceType: "Hotel", oldStatus: oldStatus, ct);
 
-        await _hotelRepo.UpdateAsync(hotel, ct);
-        if (oldSupplierId > 0 && oldSupplierId == hotel.SupplierId)
-        {
-            await _supplierService.UpdateBalanceAsync(hotel.SupplierId, ct);
-        }
-        else if (oldSupplierId != hotel.SupplierId)
-        {
-            if (oldSupplierId > 0) await _supplierService.UpdateBalanceAsync(oldSupplierId, ct);
-            if (hotel.SupplierId > 0) await _supplierService.UpdateBalanceAsync(hotel.SupplierId, ct);
-        }
+        // Tanda P2 "circuito proveedor" (2026-07-21): AVISO si el costo nuevo queda por debajo de lo ya
+        // pagado al operador (mismo proveedor y moneda; el cambio de proveedor/moneda ya lo cubrio el
+        // guard de arriba). Tambien corre ANTES de persistir.
+        await GuardCostBelowPaidConfirmationAsync(
+            reservaId, ServicePaymentRecordKinds.Hotel, hotel.PublicId, oldSupplierId, hotel.SupplierId,
+            oldCurrency, hotel.Currency, hotel.NetCost, req.ConfirmCostBelowPaid, ct);
+
+        bool hotelMoneyMoved = oldNetCost != hotel.NetCost
+            || oldSupplierId != hotel.SupplierId
+            || !string.Equals(Monedas.Normalizar(oldCurrency), Monedas.Normalizar(hotel.Currency), StringComparison.Ordinal);
+        await PersistServiceEditAndRefreshSupplierBalanceAsync(
+            c => _hotelRepo.UpdateAsync(hotel, c), oldSupplierId, hotel.SupplierId, hotelMoneyMoved, ct);
 
         await RecalculateReservationScheduleAsync(reservaId, ct);
         // ADR-027 (detalle): marca "confirmada con cambios" + registra el detalle si cambio precio/costo.
@@ -1550,16 +1701,18 @@ public partial class BookingService : IBookingService
             reservaId, CancellableServiceTable.Package, package.Id, oldSupplierId, package.SupplierId,
             oldCurrency, package.Currency, debtServiceType: "Paquete", oldStatus: oldStatus, ct);
 
-        await _packageRepo.UpdateAsync(package, ct);
-        if (oldSupplierId > 0 && oldSupplierId == package.SupplierId)
-        {
-            await _supplierService.UpdateBalanceAsync(package.SupplierId, ct);
-        }
-        else if (oldSupplierId != package.SupplierId)
-        {
-            if (oldSupplierId > 0) await _supplierService.UpdateBalanceAsync(oldSupplierId, ct);
-            if (package.SupplierId > 0) await _supplierService.UpdateBalanceAsync(package.SupplierId, ct);
-        }
+        // Tanda P2 "circuito proveedor" (2026-07-21): AVISO si el costo nuevo queda por debajo de lo ya
+        // pagado al operador (mismo proveedor y moneda; el cambio de proveedor/moneda ya lo cubrio el
+        // guard de arriba). Tambien corre ANTES de persistir.
+        await GuardCostBelowPaidConfirmationAsync(
+            reservaId, ServicePaymentRecordKinds.Package, package.PublicId, oldSupplierId, package.SupplierId,
+            oldCurrency, package.Currency, package.NetCost, req.ConfirmCostBelowPaid, ct);
+
+        bool packageMoneyMoved = oldNetCost != package.NetCost
+            || oldSupplierId != package.SupplierId
+            || !string.Equals(Monedas.Normalizar(oldCurrency), Monedas.Normalizar(package.Currency), StringComparison.Ordinal);
+        await PersistServiceEditAndRefreshSupplierBalanceAsync(
+            c => _packageRepo.UpdateAsync(package, c), oldSupplierId, package.SupplierId, packageMoneyMoved, ct);
 
         await RecalculateReservationScheduleAsync(reservaId, ct);
         // ADR-027 (detalle): marca "confirmada con cambios" + registra el detalle si cambio precio/costo.
@@ -1847,16 +2000,18 @@ public partial class BookingService : IBookingService
             reservaId, CancellableServiceTable.Transfer, transfer.Id, oldSupplierId, transfer.SupplierId,
             oldCurrency, transfer.Currency, debtServiceType: "Traslado", oldStatus: oldStatus, ct);
 
-        await _transferRepo.UpdateAsync(transfer, ct);
-        if (oldSupplierId > 0 && oldSupplierId == transfer.SupplierId)
-        {
-            await _supplierService.UpdateBalanceAsync(transfer.SupplierId, ct);
-        }
-        else if (oldSupplierId != transfer.SupplierId)
-        {
-            if (oldSupplierId > 0) await _supplierService.UpdateBalanceAsync(oldSupplierId, ct);
-            if (transfer.SupplierId > 0) await _supplierService.UpdateBalanceAsync(transfer.SupplierId, ct);
-        }
+        // Tanda P2 "circuito proveedor" (2026-07-21): AVISO si el costo nuevo queda por debajo de lo ya
+        // pagado al operador (mismo proveedor y moneda; el cambio de proveedor/moneda ya lo cubrio el
+        // guard de arriba). Tambien corre ANTES de persistir.
+        await GuardCostBelowPaidConfirmationAsync(
+            reservaId, ServicePaymentRecordKinds.Transfer, transfer.PublicId, oldSupplierId, transfer.SupplierId,
+            oldCurrency, transfer.Currency, transfer.NetCost, req.ConfirmCostBelowPaid, ct);
+
+        bool transferMoneyMoved = oldNetCost != transfer.NetCost
+            || oldSupplierId != transfer.SupplierId
+            || !string.Equals(Monedas.Normalizar(oldCurrency), Monedas.Normalizar(transfer.Currency), StringComparison.Ordinal);
+        await PersistServiceEditAndRefreshSupplierBalanceAsync(
+            c => _transferRepo.UpdateAsync(transfer, c), oldSupplierId, transfer.SupplierId, transferMoneyMoved, ct);
 
         await RecalculateReservationScheduleAsync(reservaId, ct);
         // ADR-027 (detalle): marca "confirmada con cambios" + registra el detalle si cambio precio/costo.
@@ -2164,16 +2319,18 @@ public partial class BookingService : IBookingService
             reservaId, CancellableServiceTable.Assistance, assistance.Id, oldSupplierId, assistance.SupplierId,
             oldCurrency, assistance.Currency, debtServiceType: "Asistencia", oldStatus: oldStatus, ct);
 
-        await _assistanceRepo.UpdateAsync(assistance, ct);
-        if (oldSupplierId > 0 && oldSupplierId == assistance.SupplierId)
-        {
-            await _supplierService.UpdateBalanceAsync(assistance.SupplierId, ct);
-        }
-        else if (oldSupplierId != assistance.SupplierId)
-        {
-            if (oldSupplierId > 0) await _supplierService.UpdateBalanceAsync(oldSupplierId, ct);
-            if (assistance.SupplierId > 0) await _supplierService.UpdateBalanceAsync(assistance.SupplierId, ct);
-        }
+        // Tanda P2 "circuito proveedor" (2026-07-21): AVISO si el costo nuevo queda por debajo de lo ya
+        // pagado al operador (mismo proveedor y moneda; el cambio de proveedor/moneda ya lo cubrio el
+        // guard de arriba). Tambien corre ANTES de persistir.
+        await GuardCostBelowPaidConfirmationAsync(
+            reservaId, ServicePaymentRecordKinds.Assistance, assistance.PublicId, oldSupplierId, assistance.SupplierId,
+            oldCurrency, assistance.Currency, assistance.NetCost, req.ConfirmCostBelowPaid, ct);
+
+        bool assistanceMoneyMoved = oldNetCost != assistance.NetCost
+            || oldSupplierId != assistance.SupplierId
+            || !string.Equals(Monedas.Normalizar(oldCurrency), Monedas.Normalizar(assistance.Currency), StringComparison.Ordinal);
+        await PersistServiceEditAndRefreshSupplierBalanceAsync(
+            c => _assistanceRepo.UpdateAsync(assistance, c), oldSupplierId, assistance.SupplierId, assistanceMoneyMoved, ct);
 
         await RecalculateReservationScheduleAsync(reservaId, ct);
         // ADR-027 (detalle): marca "confirmada con cambios" + registra el detalle si cambio precio/costo.
