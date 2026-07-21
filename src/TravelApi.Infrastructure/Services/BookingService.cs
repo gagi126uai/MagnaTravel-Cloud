@@ -583,6 +583,15 @@ public partial class BookingService : IBookingService
             // CostToConfirm es MARCA de costo (ADR-017, guia UX linea 81): se oculta junto con los montos.
             foreach (var dto in dtos) { dto.NetCost = 0m; dto.Tax = 0m; dto.CostToConfirm = false; }
         }
+
+        // Fix E2E Tanda 7 (2026-07-20): este endpoint es el que la ficha usa DE VERDAD para pintar la lista
+        // de vuelos (useReservaDetail.js, no ReservaService.GetReservaByIdAsync). Sin este stamp, CanCancel
+        // quedaba siempre null y la papelera se ofrecia activa aunque el motor bloquee por R1/voucher/sin-cliente.
+        var inputs = await ServiceCancellationCapabilityStamper.LoadInputsAsync(_db, _cancellationService, reservaId, ct);
+        if (inputs is not null)
+            foreach (var dto in dtos)
+                dto.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Flight, dto.PublicId);
+
         return dtos;
     }
 
@@ -1003,6 +1012,15 @@ public partial class BookingService : IBookingService
             // CostToConfirm es MARCA de costo (ADR-017, guia UX linea 81): se oculta junto con los montos.
             foreach (var dto in dtos) { dto.NetCost = 0m; dto.Tax = 0m; dto.CostToConfirm = false; }
         }
+
+        // Fix E2E Tanda 7 (2026-07-20): este endpoint es el que la ficha usa DE VERDAD para pintar la lista
+        // de hoteles (useReservaDetail.js, no ReservaService.GetReservaByIdAsync). Sin este stamp, CanCancel
+        // quedaba siempre null y la papelera se ofrecia activa aunque el motor bloquee por R1/voucher/sin-cliente.
+        var inputs = await ServiceCancellationCapabilityStamper.LoadInputsAsync(_db, _cancellationService, reservaId, ct);
+        if (inputs is not null)
+            foreach (var dto in dtos)
+                dto.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Hotel, dto.PublicId);
+
         return dtos;
     }
 
@@ -1313,6 +1331,15 @@ public partial class BookingService : IBookingService
             // CostToConfirm es MARCA de costo (ADR-017, guia UX linea 81): se oculta junto con los montos.
             foreach (var dto in dtos) { dto.NetCost = 0m; dto.Tax = 0m; dto.CostToConfirm = false; }
         }
+
+        // Fix E2E Tanda 7 (2026-07-20): este endpoint es el que la ficha usa DE VERDAD para pintar la lista
+        // de paquetes (useReservaDetail.js, no ReservaService.GetReservaByIdAsync). Sin este stamp, CanCancel
+        // quedaba siempre null y la papelera se ofrecia activa aunque el motor bloquee por R1/voucher/sin-cliente.
+        var inputs = await ServiceCancellationCapabilityStamper.LoadInputsAsync(_db, _cancellationService, reservaId, ct);
+        if (inputs is not null)
+            foreach (var dto in dtos)
+                dto.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Package, dto.PublicId);
+
         return dtos;
     }
 
@@ -1587,6 +1614,15 @@ public partial class BookingService : IBookingService
             // CostToConfirm es MARCA de costo (ADR-017, guia UX linea 81): se oculta junto con los montos.
             foreach (var dto in dtos) { dto.NetCost = 0m; dto.Tax = 0m; dto.CostToConfirm = false; }
         }
+
+        // Fix E2E Tanda 7 (2026-07-20): este endpoint es el que la ficha usa DE VERDAD para pintar la lista
+        // de traslados (useReservaDetail.js, no ReservaService.GetReservaByIdAsync). Sin este stamp, CanCancel
+        // quedaba siempre null y la papelera se ofrecia activa aunque el motor bloquee por R1/voucher/sin-cliente.
+        var inputs = await ServiceCancellationCapabilityStamper.LoadInputsAsync(_db, _cancellationService, reservaId, ct);
+        if (inputs is not null)
+            foreach (var dto in dtos)
+                dto.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Transfer, dto.PublicId);
+
         return dtos;
     }
 
@@ -1912,6 +1948,15 @@ public partial class BookingService : IBookingService
             // CostToConfirm es MARCA de costo (ADR-017, guia UX linea 81): se oculta junto con los montos.
             foreach (var dto in dtos) { dto.NetCost = 0m; dto.Tax = 0m; dto.CostToConfirm = false; }
         }
+
+        // Fix E2E Tanda 7 (2026-07-20): este endpoint es el que la ficha usa DE VERDAD para pintar la lista
+        // de asistencias (useReservaDetail.js, no ReservaService.GetReservaByIdAsync). Sin este stamp, CanCancel
+        // quedaba siempre null y la papelera se ofrecia activa aunque el motor bloquee por R1/voucher/sin-cliente.
+        var inputs = await ServiceCancellationCapabilityStamper.LoadInputsAsync(_db, _cancellationService, reservaId, ct);
+        if (inputs is not null)
+            foreach (var dto in dtos)
+                dto.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Assistance, dto.PublicId);
+
         return dtos;
     }
 

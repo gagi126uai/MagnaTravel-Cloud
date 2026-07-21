@@ -465,15 +465,21 @@ public record CancelServiceResultDto(
 /// los servicios por igual (no varia por servicio).
 /// </param>
 /// <param name="ServicesBlockedByUnanchoredOperatorRefund">
-/// Los servicios (tabla + id interno) cuyo RefundCap reconstruido es mayor a cero SIN que la reserva tenga
-/// factura de venta viva — exactamente los que
+/// Los servicios (tabla + <c>PublicId</c>) cuyo RefundCap reconstruido es mayor a cero SIN que la reserva
+/// tenga factura de venta viva — exactamente los que
 /// <c>BookingCancellationService.EnsurePaidServiceCancellationHasReceivableAnchorAsync</c> bloquearia si se
 /// intentara anular AHORA. Vacio cuando la reserva SI tiene factura viva (short-circuit) o cuando ningun
 /// servicio tiene plata pagada al operador.
+///
+/// <para>Fix E2E (2026-07-20): clave por <c>PublicId</c> (no por id interno) a proposito — los DTOs de
+/// servicio (los que arma <c>ReservaService.GetReservaByIdAsync</c> Y los 5 endpoints de sub-coleccion por
+/// tipo, <c>BookingService.Get{Hotels,Flights,Transfers,Packages,Assistances}Async</c>) solo exponen
+/// <c>PublicId</c>, nunca el id interno. Con la clave por <c>PublicId</c> ningun consumidor necesita una
+/// query extra de "mapear PublicId a id interno" solo para leer este flag.</para>
 /// </param>
 public record ServiceCancellationPreflightResult(
     bool HasLiveSaleInvoiceWithoutPayer,
-    IReadOnlySet<(CancellableServiceTable ServiceTable, int ServiceId)> ServicesBlockedByUnanchoredOperatorRefund
+    IReadOnlySet<(CancellableServiceTable ServiceTable, Guid ServicePublicId)> ServicesBlockedByUnanchoredOperatorRefund
 );
 
 /// <summary>

@@ -5648,55 +5648,45 @@ public class ReservaService : IReservaService
     /// </summary>
     private async Task StampServiceCancellationCapabilitiesAsync(Reserva file, ReservaDto dto, CancellationToken ct)
     {
-        if (_cancellationService is null) return;
-
-        var preflight = await _cancellationService.GetServiceCancellationPreflightAsync(file.Id, ct);
-        // Defensivo: un mock PARCIAL de IBookingCancellationService (MockBehavior.Loose, sin configurar este
-        // metodo en particular) devuelve null en vez de tirar. Mismo criterio que "_cancellationService is
-        // null" de arriba: si no hay dato confiable, no se calcula (los CanCancel quedan en null, nunca en
-        // Allowed=false sin motivo).
-        if (preflight is null) return;
-        bool hasLiveVoucher = dto.ServiceCancellationBlockReason is not null;
-
-        CapabilityDto Evaluate(CancellableServiceTable table, int serviceId)
-        {
-            var ctxServicio = new ServiceCancellationPreflightContext(
-                HasLiveVoucher: hasLiveVoucher,
-                HasLiveSaleInvoiceWithoutPayer: preflight.HasLiveSaleInvoiceWithoutPayer,
-                HasUnanchoredOperatorRefund: preflight.ServicesBlockedByUnanchoredOperatorRefund.Contains((table, serviceId)));
-            var cap = ServiceCancellationPreflightPolicy.Evaluate(ctxServicio);
-            return new CapabilityDto { Allowed = cap.Allowed, Reason = cap.Reason };
-        }
+        // Fix E2E (2026-07-20): el armado de los hechos (voucher + preflight R1/sin-cliente) vive en
+        // ServiceCancellationCapabilityStamper (Infrastructure/Services/Reservations), UNICO lugar que
+        // tambien usan los 5 endpoints de sub-coleccion (BookingService.Get*Async) — asi el detalle completo
+        // y lo que la ficha carga DE VERDAD nunca pueden divergir. knownHasLiveVoucher evita recalcular el
+        // guard de voucher que ya se resolvio arriba para dto.ServiceCancellationBlockReason.
+        var inputs = await ServiceCancellationCapabilityStamper.LoadInputsAsync(
+            _context, _cancellationService, file.Id, ct,
+            knownHasLiveVoucher: dto.ServiceCancellationBlockReason is not null);
+        if (inputs is null) return;
 
         foreach (var hotel in file.HotelBookings)
         {
             var row = dto.HotelBookings.FirstOrDefault(x => x.PublicId == hotel.PublicId);
-            if (row is not null) row.CanCancel = Evaluate(CancellableServiceTable.Hotel, hotel.Id);
+            if (row is not null) row.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Hotel, hotel.PublicId);
         }
         foreach (var flight in file.FlightSegments)
         {
             var row = dto.FlightSegments.FirstOrDefault(x => x.PublicId == flight.PublicId);
-            if (row is not null) row.CanCancel = Evaluate(CancellableServiceTable.Flight, flight.Id);
+            if (row is not null) row.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Flight, flight.PublicId);
         }
         foreach (var transfer in file.TransferBookings)
         {
             var row = dto.TransferBookings.FirstOrDefault(x => x.PublicId == transfer.PublicId);
-            if (row is not null) row.CanCancel = Evaluate(CancellableServiceTable.Transfer, transfer.Id);
+            if (row is not null) row.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Transfer, transfer.PublicId);
         }
         foreach (var package in file.PackageBookings)
         {
             var row = dto.PackageBookings.FirstOrDefault(x => x.PublicId == package.PublicId);
-            if (row is not null) row.CanCancel = Evaluate(CancellableServiceTable.Package, package.Id);
+            if (row is not null) row.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Package, package.PublicId);
         }
         foreach (var assistance in file.AssistanceBookings)
         {
             var row = dto.AssistanceBookings.FirstOrDefault(x => x.PublicId == assistance.PublicId);
-            if (row is not null) row.CanCancel = Evaluate(CancellableServiceTable.Assistance, assistance.Id);
+            if (row is not null) row.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Assistance, assistance.PublicId);
         }
         foreach (var generic in file.Servicios)
         {
             var row = dto.Servicios.FirstOrDefault(x => x.PublicId == generic.PublicId);
-            if (row is not null) row.CanCancel = Evaluate(CancellableServiceTable.Generic, generic.Id);
+            if (row is not null) row.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Generic, generic.PublicId);
         }
     }
 

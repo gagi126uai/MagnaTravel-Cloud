@@ -1042,8 +1042,8 @@ public class BookingCancellationService
     public async Task<ServiceCancellationPreflightResult> GetServiceCancellationPreflightAsync(
         int reservaId, CancellationToken ct)
     {
-        var emptyBlockedSet = (IReadOnlySet<(CancellableServiceTable ServiceTable, int ServiceId)>)
-            new HashSet<(CancellableServiceTable, int)>();
+        var emptyBlockedSet = (IReadOnlySet<(CancellableServiceTable ServiceTable, Guid ServicePublicId)>)
+            new HashSet<(CancellableServiceTable, Guid)>();
 
         var reserva = await _db.Reservas.AsNoTracking().FirstOrDefaultAsync(r => r.Id == reservaId, ct);
         if (reserva is null) return new ServiceCancellationPreflightResult(false, emptyBlockedSet);
@@ -1075,7 +1075,7 @@ public class BookingCancellationService
                 decimal cap = Math.Min(available, c.NetCost);
                 return cap > 0m;
             })
-            .Select(c => (c.Table, c.ServiceId))
+            .Select(c => (c.Table, c.ServicePublicId))
             .ToHashSet();
 
         return new ServiceCancellationPreflightResult(false, blockedServices);
@@ -1086,10 +1086,12 @@ public class BookingCancellationService
     /// esta cancelado todavia. A diferencia de <see cref="BuildCancellationLinesAsync"/>, NO arma entidades
     /// <see cref="BookingCancellationLine"/> ni calcula ningun cap — es SOLO el insumo (operador, moneda,
     /// costo) que <see cref="GetServiceCancellationPreflightAsync"/> topea despues, cada uno AISLADO, contra
-    /// <see cref="ComputeAvailableOperatorRefundPoolAsync"/>.
+    /// <see cref="ComputeAvailableOperatorRefundPoolAsync"/>. Se identifica por <c>PublicId</c> (no por id
+    /// interno) porque el resultado final (<see cref="ServiceCancellationPreflightResult"/>) es lo que
+    /// consumen los DTOs de servicio, que solo exponen <c>PublicId</c> (fix E2E, 2026-07-20).
     /// </summary>
     private readonly record struct OperatorPaidServiceCandidate(
-        CancellableServiceTable Table, int ServiceId, int SupplierId, string Currency, decimal NetCost);
+        CancellableServiceTable Table, Guid ServicePublicId, int SupplierId, string Currency, decimal NetCost);
 
     /// <summary>
     /// Tanda 7, fix post-review (2026-07-20): junta, en UN batch de 6 queries (mismas tablas que
@@ -1103,69 +1105,69 @@ public class BookingCancellationService
         var candidates = new List<OperatorPaidServiceCandidate>();
 
         void AddIfLive(
-            CancellableServiceTable table, int serviceId, int? supplierId, string? currency,
+            CancellableServiceTable table, Guid servicePublicId, int? supplierId, string? currency,
             decimal netCost, bool isCancelled)
         {
             if (supplierId is null) return;   // sin operador no hay plata que anclar
             if (isCancelled) return;          // ya cancelado: no es candidato a "anular ahora"
 
             candidates.Add(new OperatorPaidServiceCandidate(
-                table, serviceId, supplierId.Value,
+                table, servicePublicId, supplierId.Value,
                 string.IsNullOrWhiteSpace(currency) ? Monedas.ARS : currency!, netCost));
         }
 
         var hotels = await _db.HotelBookings.AsNoTracking()
             .Where(h => h.ReservaId == reservaId)
             .OrderBy(h => h.Id)
-            .Select(h => new { h.Id, h.SupplierId, h.Currency, h.NetCost, h.Status })
+            .Select(h => new { h.PublicId, h.SupplierId, h.Currency, h.NetCost, h.Status })
             .ToListAsync(ct);
         foreach (var h in hotels)
-            AddIfLive(CancellableServiceTable.Hotel, h.Id, h.SupplierId, h.Currency, h.NetCost,
+            AddIfLive(CancellableServiceTable.Hotel, h.PublicId, h.SupplierId, h.Currency, h.NetCost,
                 isCancelled: WorkflowStatusHelper.MapGenericStatus(h.Status ?? string.Empty) == WorkflowStatuses.Cancelado);
 
         var flights = await _db.FlightSegments.AsNoTracking()
             .Where(f => f.ReservaId == reservaId)
             .OrderBy(f => f.Id)
-            .Select(f => new { f.Id, f.SupplierId, f.Currency, f.NetCost, f.Status })
+            .Select(f => new { f.PublicId, f.SupplierId, f.Currency, f.NetCost, f.Status })
             .ToListAsync(ct);
         foreach (var f in flights)
-            AddIfLive(CancellableServiceTable.Flight, f.Id, f.SupplierId, f.Currency, f.NetCost,
+            AddIfLive(CancellableServiceTable.Flight, f.PublicId, f.SupplierId, f.Currency, f.NetCost,
                 isCancelled: WorkflowStatusHelper.MapFlightStatus(f.Status ?? string.Empty) == WorkflowStatuses.Cancelado);
 
         var transfers = await _db.TransferBookings.AsNoTracking()
             .Where(t => t.ReservaId == reservaId)
             .OrderBy(t => t.Id)
-            .Select(t => new { t.Id, t.SupplierId, t.Currency, t.NetCost, t.Status })
+            .Select(t => new { t.PublicId, t.SupplierId, t.Currency, t.NetCost, t.Status })
             .ToListAsync(ct);
         foreach (var t in transfers)
-            AddIfLive(CancellableServiceTable.Transfer, t.Id, t.SupplierId, t.Currency, t.NetCost,
+            AddIfLive(CancellableServiceTable.Transfer, t.PublicId, t.SupplierId, t.Currency, t.NetCost,
                 isCancelled: WorkflowStatusHelper.MapGenericStatus(t.Status ?? string.Empty) == WorkflowStatuses.Cancelado);
 
         var packages = await _db.PackageBookings.AsNoTracking()
             .Where(p => p.ReservaId == reservaId)
             .OrderBy(p => p.Id)
-            .Select(p => new { p.Id, p.SupplierId, p.Currency, p.NetCost, p.Status })
+            .Select(p => new { p.PublicId, p.SupplierId, p.Currency, p.NetCost, p.Status })
             .ToListAsync(ct);
         foreach (var p in packages)
-            AddIfLive(CancellableServiceTable.Package, p.Id, p.SupplierId, p.Currency, p.NetCost,
+            AddIfLive(CancellableServiceTable.Package, p.PublicId, p.SupplierId, p.Currency, p.NetCost,
                 isCancelled: WorkflowStatusHelper.MapGenericStatus(p.Status ?? string.Empty) == WorkflowStatuses.Cancelado);
 
         var assistances = await _db.AssistanceBookings.AsNoTracking()
             .Where(a => a.ReservaId == reservaId)
             .OrderBy(a => a.Id)
-            .Select(a => new { a.Id, a.SupplierId, a.Currency, a.NetCost, a.Status })
+            .Select(a => new { a.PublicId, a.SupplierId, a.Currency, a.NetCost, a.Status })
             .ToListAsync(ct);
         foreach (var a in assistances)
-            AddIfLive(CancellableServiceTable.Assistance, a.Id, a.SupplierId, a.Currency, a.NetCost,
+            AddIfLive(CancellableServiceTable.Assistance, a.PublicId, a.SupplierId, a.Currency, a.NetCost,
                 isCancelled: WorkflowStatusHelper.MapGenericStatus(a.Status ?? string.Empty) == WorkflowStatuses.Cancelado);
 
         var generics = await _db.Servicios.AsNoTracking()
             .Where(s => s.ReservaId == reservaId && s.SupplierId != null)
             .OrderBy(s => s.Id)
-            .Select(s => new { s.Id, s.SupplierId, s.Currency, s.NetCost, s.Status })
+            .Select(s => new { s.PublicId, s.SupplierId, s.Currency, s.NetCost, s.Status })
             .ToListAsync(ct);
         foreach (var s in generics)
-            AddIfLive(CancellableServiceTable.Generic, s.Id, s.SupplierId, s.Currency, s.NetCost,
+            AddIfLive(CancellableServiceTable.Generic, s.PublicId, s.SupplierId, s.Currency, s.NetCost,
                 isCancelled: WorkflowStatusHelper.MapGenericStatus(s.Status ?? string.Empty) == WorkflowStatuses.Cancelado);
 
         return candidates;

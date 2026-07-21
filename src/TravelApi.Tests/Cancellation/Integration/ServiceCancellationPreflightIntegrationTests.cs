@@ -16,6 +16,7 @@ using TravelApi.Domain.Exceptions;
 using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
+using TravelApi.Infrastructure.Repositories;
 using TravelApi.Infrastructure.Services;
 using TravelApi.Tests.Fixtures;
 using Xunit;
@@ -131,6 +132,23 @@ public sealed class ServiceCancellationPreflightIntegrationTests
             }
         }
 
+        // (a-bis) el camino REAL de la ficha (GET /reservas/{id}/hotels) bloquea igual a los DOS.
+        await using (var collectionCtx = _fixture.CreateDbContext())
+        await using (var collectionBcCtx = _fixture.CreateDbContext())
+        {
+            var bookingService = BuildBookingService(collectionCtx, BuildBookingCancellationService(collectionBcCtx));
+            var hotelesDeLaColeccion = (await bookingService.GetHotelsAsync(reservaId, CancellationToken.None)).ToList();
+            Assert.Equal(2, hotelesDeLaColeccion.Count);
+
+            foreach (var hotelDto in hotelesDeLaColeccion)
+            {
+                Assert.NotNull(hotelDto.CanCancel);
+                Assert.False(hotelDto.CanCancel!.Allowed,
+                    $"GET /reservas/{{id}}/hotels: servicio {hotelDto.PublicId} deberia estar bloqueado por R1.");
+                Assert.Equal(ServiceCancellationPreflightPolicy.UnanchoredOperatorRefundBlockedReason, hotelDto.CanCancel.Reason);
+            }
+        }
+
         // (b) cruce contra el guard REAL: intentar anular CADA UNO por separado (en contextos independientes,
         // sin que el intento anterior haya mutado nada) tiene que rechazar con el mismo motivo/codigo.
         foreach (var servicePublicId in new[] { hotelAPublicId, hotelBPublicId })
@@ -172,9 +190,13 @@ public sealed class ServiceCancellationPreflightIntegrationTests
     // ---------- el corazon del cross-check ----------
 
     /// <summary>
-    /// Pide el DTO (el flag <c>canCancel</c> del servicio) y, en un contexto INDEPENDIENTE, intenta anular
-    /// DE VERDAD con <c>CancelServiceAsync</c> — el guard real. Verifica que los dos coinciden EXACTO: el
-    /// flag dice bloqueado con el motivo/codigo X, y el guard real rechaza con ESE MISMO motivo/codigo.
+    /// Pide el DTO (el flag <c>canCancel</c> del servicio) por LOS DOS caminos que pueden armar
+    /// <c>reserva.hotelBookings[]</c> — <c>ReservaService.GetReservaByIdAsync</c> (el detalle completo) y
+    /// <c>BookingService.GetHotelsAsync</c> (<c>GET /reservas/{id}/hotels</c>, el que la ficha usa DE VERDAD
+    /// segun <c>useReservaDetail.js</c> — hallazgo E2E real, 2026-07-20: el primero SI calculaba el flag, el
+    /// segundo NO) — y, en un contexto INDEPENDIENTE, intenta anular DE VERDAD con
+    /// <c>CancelServiceAsync</c> — el guard real. Verifica que los TRES coinciden EXACTO: los dos caminos
+    /// dicen bloqueado con el motivo/codigo X, y el guard real rechaza con ESE MISMO motivo/codigo.
     /// </summary>
     private async Task AssertFlagMatchesRealRejectionAsync(
         int reservaId, Guid reservaPublicId, Guid hotelPublicId, string expectedReason, string expectedCode)
@@ -189,6 +211,19 @@ public sealed class ServiceCancellationPreflightIntegrationTests
             Assert.NotNull(hotelDto.CanCancel);
             Assert.False(hotelDto.CanCancel!.Allowed);
             Assert.Equal(expectedReason, hotelDto.CanCancel.Reason);
+        }
+
+        await using (var collectionCtx = _fixture.CreateDbContext())
+        await using (var collectionBcCtx = _fixture.CreateDbContext())
+        {
+            var bookingService = BuildBookingService(collectionCtx, BuildBookingCancellationService(collectionBcCtx));
+            var hotelesDeLaColeccion = (await bookingService.GetHotelsAsync(reservaId, CancellationToken.None)).ToList();
+            var hotelDeLaColeccion = Assert.Single(hotelesDeLaColeccion);
+
+            Assert.NotNull(hotelDeLaColeccion.CanCancel);
+            Assert.False(hotelDeLaColeccion.CanCancel!.Allowed,
+                "GET /reservas/{id}/hotels (el camino real de la ficha) tiene que bloquear igual que el detalle completo.");
+            Assert.Equal(expectedReason, hotelDeLaColeccion.CanCancel.Reason);
         }
 
         await using (var actCtx = _fixture.CreateDbContext())
@@ -475,5 +510,41 @@ public sealed class ServiceCancellationPreflightIntegrationTests
             settingsMock.Object,
             new Mock<IFiscalLiquidationCalculator>().Object,
             new Mock<IAdminUserCountService>().Object);
+    }
+
+    /// <summary>
+    /// Arma un <see cref="BookingService"/> real apuntando al Postgres del fixture — el service que atiende
+    /// de verdad <c>GET /reservas/{id}/hotels</c> (y los otros 4 endpoints de sub-coleccion por tipo), el
+    /// camino que <c>useReservaDetail.js</c> usa para pintar la ficha (hallazgo E2E real, 2026-07-20).
+    /// <see cref="IBookingCancellationService"/> real inyectado (necesario para que el stamp de T7 calcule
+    /// el flag; sin esto quedaria en null, igual que <c>BuildReservaService</c>).
+    /// </summary>
+    private static BookingService BuildBookingService(AppDbContext context, IBookingCancellationService cancellationService)
+    {
+        var reservaServiceMock = new Mock<IReservaService>();
+        reservaServiceMock.Setup(s => s.UpdateBalanceAsync(It.IsAny<int>())).Returns(Task.CompletedTask);
+        reservaServiceMock.Setup(s => s.UpdateBalanceAsync(It.IsAny<int>(), It.IsAny<bool>())).Returns(Task.CompletedTask);
+
+        var supplierServiceMock = new Mock<ISupplierService>();
+        supplierServiceMock.Setup(s => s.UpdateBalanceAsync(It.IsAny<int>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        return new BookingService(
+            new Repository<FlightSegment>(context),
+            new Repository<HotelBooking>(context),
+            new Repository<PackageBooking>(context),
+            new Repository<TransferBooking>(context),
+            new Repository<AssistanceBooking>(context),
+            new Repository<Reserva>(context),
+            new Repository<Supplier>(context),
+            reservaServiceMock.Object,
+            supplierServiceMock.Object,
+            context,
+            new MapperConfiguration(c => c.AddProfile<MappingProfile>()).CreateMapper(),
+            NullLogger<BookingService>.Instance,
+            permissionResolver: null,
+            httpContextAccessor: null,
+            settingsService: null,
+            auditService: null,
+            cancellationService: cancellationService);
     }
 }

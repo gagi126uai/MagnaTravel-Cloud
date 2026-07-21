@@ -160,8 +160,8 @@ public class ServiceCancellationPreflightServiceTests
 
         Assert.False(result.HasLiveSaleInvoiceWithoutPayer); // sin factura, este candado no puede aplicar
         var blocked = result.ServicesBlockedByUnanchoredOperatorRefund;
-        Assert.Contains((CancellableServiceTable.Hotel, hotelPagado.Id), blocked);
-        Assert.DoesNotContain((CancellableServiceTable.Hotel, hotelImpago.Id), blocked); // impago: sin pool propio, RefundCap 0
+        Assert.Contains((CancellableServiceTable.Hotel, hotelPagado.PublicId), blocked);
+        Assert.DoesNotContain((CancellableServiceTable.Hotel, hotelImpago.PublicId), blocked); // impago: sin pool propio, RefundCap 0
     }
 
     [Fact]
