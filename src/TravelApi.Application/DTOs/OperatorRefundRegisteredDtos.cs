@@ -33,6 +33,13 @@ public class OperatorRefundRegisteredItemDto
     /// <summary>Cliente titular de la reserva/cancelacion a la que se imputo este reembolso.</summary>
     public string ClienteNombre { get; set; } = string.Empty;
 
+    /// <summary>
+    /// PublicId del cliente titular. Pantalla P2 (2026-07-22): lo usa el boton "Ir a la cuenta del cliente"
+    /// que aparece cuando el reembolso no se puede deshacer/reasociar porque el cliente ya gasto ese saldo
+    /// (ver <c>OperatorRefundActionRejectedException.Codes.CreditAlreadyUsed</c>).
+    /// </summary>
+    public Guid ClientePublicId { get; set; }
+
     /// <summary>Moneda ISO del reembolso (la del ingreso padre: la allocation no tiene columna de moneda propia).</summary>
     public string Currency { get; set; } = "ARS";
 

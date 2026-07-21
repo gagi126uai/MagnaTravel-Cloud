@@ -1152,7 +1152,8 @@ public class OperatorRefundService : IOperatorRefundService
                 // favor que generó este reembolso ya salió de caja (retiro en efectivo/transferencia) o se
                 // aplicó a otra reserva. No se puede simplemente "deshacer" ese movimiento: primero hay que
                 // revertirlo con autorización (circuito de Tesorería), y recién ahí anular el reembolso.
-                throw new InvalidOperationException(
+                throw new OperatorRefundActionRejectedException(
+                    OperatorRefundActionRejectedException.Codes.CreditAlreadyUsed,
                     "No se puede anular este reembolso: el saldo a favor que generó ya fue retirado o " +
                     "aplicado por el cliente. Para deshacerlo primero hay que revertir ese uso del saldo, " +
                     "y eso requiere autorización.");
@@ -1316,7 +1317,8 @@ public class OperatorRefundService : IOperatorRefundService
             {
                 // Mismo criterio criollo que TryVoidOnceAsync (ver comentario ahi): no se puede mover a otra
                 // reserva un reembolso cuyo saldo a favor ya salio de caja o se aplico a otra reserva.
-                throw new InvalidOperationException(
+                throw new OperatorRefundActionRejectedException(
+                    OperatorRefundActionRejectedException.Codes.CreditAlreadyUsed,
                     "No se puede reasociar este reembolso a otra reserva: el saldo a favor que generó ya " +
                     "fue retirado o aplicado por el cliente. Para reasociarlo primero hay que revertir ese " +
                     "uso del saldo, y eso requiere autorización.");

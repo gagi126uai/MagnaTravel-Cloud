@@ -303,6 +303,14 @@ public class OperatorRefundsController : ControllerBase
             // (gate de exposicion de datos) — por eso acá devolvemos SOLO el mensaje en criollo, sin el código.
             return Conflict(new { message = ex.Message });
         }
+        catch (OperatorRefundActionRejectedException ex)
+        {
+            // Pantalla P2 "deshacer/reasociar reembolso" (2026-07-22): este catch va ANTES que el de
+            // InvalidOperationException a proposito (misma tecnica que ServiceCancellationRejectedException
+            // en CancellationsController) — sumamos `code` al body SIN tocar el `message` de siempre, para
+            // que el frontend pueda mostrar el boton "Ir a la cuenta del cliente" sin adivinar comparando texto.
+            return Conflict(new { message = ex.Message, code = ex.Code });
+        }
         catch (InvalidOperationException ex)
         {
             return Conflict(new { message = ex.Message });
@@ -360,6 +368,12 @@ public class OperatorRefundsController : ControllerBase
             // codigo interno de invariante (ej. "INV-093", "INV-118") a la respuesta, y ese codigo no debe
             // llegar al navegador (gate de exposicion de datos). Con este catch solo viaja el mensaje en criollo.
             return Conflict(new { message = ex.Message });
+        }
+        catch (OperatorRefundActionRejectedException ex)
+        {
+            // Mismo motivo que en VoidAllocation (ver comentario ahi): sumamos `code` al body sin tocar el
+            // `message`, para que el frontend elija el boton "Ir a la cuenta del cliente" sin adivinar texto.
+            return Conflict(new { message = ex.Message, code = ex.Code });
         }
         catch (InvalidOperationException ex)
         {

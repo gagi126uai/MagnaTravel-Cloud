@@ -72,4 +72,67 @@ export const operatorRefundsApi = {
    * @returns {Promise<object>} OperatorRefundAllocationDto
    */
   recordAndAllocate: (payload) => api.post("/operator-refunds/record-and-allocate", payload),
+
+  /**
+   * Tanda P2 "circuito proveedor" (2026-07-22): reembolsos YA REGISTRADOS de un operador
+   * (vivos y deshechos), paginado. Hermano de `getPendingBySupplier`: ese dice cuánto FALTA
+   * cobrarle al operador, este dice qué ya se anotó como recibido — la solapa lo usa para
+   * ofrecer "Deshacer" y "Corregir reserva" sobre una fila puntual.
+   *
+   * Permiso requerido: tesoreria.supplier_payments (mismo que el bloque "a cobrar").
+   *
+   * @param {string} supplierPublicId - GUID del proveedor.
+   * @param {{ page?: number, pageSize?: number }} paging
+   * @returns {Promise<{items: OperatorRefundRegisteredItemDto[], page:number, pageSize:number,
+   *   totalCount:number, totalPages:number, hasNextPage:boolean, hasPreviousPage:boolean}>}
+   *   Cada item tiene: publicId, refundReceivedPublicId, reservaPublicId, numeroReserva,
+   *   clienteNombre, clientePublicId, currency, netAmount, amountsMasked, registeredAt,
+   *   isVoided, voidedAt, voidedReason.
+   */
+  getRegisteredBySupplier: (supplierPublicId, { page = 1, pageSize = 25 } = {}) => {
+    const params = new URLSearchParams();
+    params.append("page", String(page));
+    params.append("pageSize", String(pageSize));
+    return api.get(`/suppliers/${supplierPublicId}/operator-refunds/registered?${params.toString()}`);
+  },
+
+  /**
+   * Deshace (soft-void) una imputación ya registrada — botón "Deshacer" de la solapa
+   * "Reembolsos". La fila NUNCA se borra: el motor la deja tachada como rastro auditable.
+   * Libera el cap del ingreso físico para poder volver a imputarlo bien.
+   *
+   * El motivo es OBLIGATORIO (mínimo 20 caracteres, lo exige VoidAllocationRequest).
+   * Permiso requerido: caja.edit.
+   *
+   * DELETE con body: `api.delete` no tiene un parámetro `data` como post/put/patch, así que
+   * el body se arma a mano igual que hace `createRequestOptions` para los otros verbos
+   * (JSON.stringify) — el cliente HTTP ya sabe agregar el Content-Type correcto al ver que
+   * `options.body` no es undefined (ver `shouldSetJsonContentType` en api.js).
+   *
+   * @param {string} allocationPublicId - GUID de la imputación (allocation) a deshacer.
+   * @param {string} reason - Motivo (>= 20 caracteres).
+   * @returns {Promise<object>} OperatorRefundAllocationDto (la fila ya con IsVoided=true)
+   */
+  voidAllocation: (allocationPublicId, reason) =>
+    api.delete(`/operator-refunds/allocations/${allocationPublicId}`, {
+      body: JSON.stringify({ reason }),
+    }),
+
+  /**
+   * Mueve una imputación ya registrada de la reserva equivocada a la correcta — botón
+   * "Corregir reserva". Atómico en el backend: deshace la vieja y crea la nueva en una
+   * sola transacción, así nunca queda la plata "en el aire" a mitad de camino.
+   *
+   * El motivo es OBLIGATORIO (mínimo 20 caracteres, lo exige ReassociateAllocationRequest).
+   * Permiso requerido: caja.edit.
+   *
+   * @param {string} allocationPublicId - GUID de la imputación (allocation) a mover.
+   * @param {{ newBookingCancellationPublicId: string, reason: string }} payload
+   * @returns {Promise<object>} OperatorRefundAllocationDto (la fila ya en la reserva nueva)
+   */
+  reassociateAllocation: (allocationPublicId, { newBookingCancellationPublicId, reason }) =>
+    api.patch(`/operator-refunds/allocations/${allocationPublicId}/reassociate`, {
+      newBookingCancellationPublicId,
+      reason,
+    }),
 };

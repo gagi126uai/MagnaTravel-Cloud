@@ -56,6 +56,7 @@ import { PagarProveedorInline } from "../components/PagarProveedorInline";
 import { UsarSaldoOperadorInline } from "../components/UsarSaldoOperadorInline";
 import { ListaCuentasBancarias } from "../../../features/bank-accounts/components/ListaCuentasBancarias";
 import { OperatorRefundsPendingSection } from "../components/OperatorRefundsPendingSection";
+import { OperatorRefundsRegisteredSection } from "../components/OperatorRefundsRegisteredSection";
 import { RegistrarReembolsoRecibidoInline } from "../components/RegistrarReembolsoRecibidoInline";
 import { SupplierInvoicesSection } from "../components/SupplierInvoicesSection";
 import { useOperatorRefundsPending } from "../hooks/useOperatorRefundsPending";
@@ -1392,9 +1393,10 @@ export default function SupplierAccountPage() {
     const [monedaUsandoSaldo, setMonedaUsandoSaldo] = useState(null);
     // showReembolsoInline: si la ficha "Registrar reembolso recibido" está abierta (§4, 2026-07-01).
     const [showReembolsoInline, setShowReembolsoInline] = useState(false);
-    // reembolsosTabRefreshKey: forzamos el remount de OperatorRefundsPendingSection al registrar
-    // un reembolso desde Cuenta corriente, para que la solapa "Reembolsos" quede consistente
-    // sin que el usuario tenga que refrescar la página a mano.
+    // reembolsosTabRefreshKey: forzamos el remount de los DOS bloques de la solapa "Reembolsos"
+    // (OperatorRefundsPendingSection + OperatorRefundsRegisteredSection, Tanda P2 2026-07-22) al
+    // registrar/deshacer/corregir un reembolso, para que la solapa quede consistente sin que el
+    // usuario tenga que refrescar la página a mano.
     const [reembolsosTabRefreshKey, setReembolsosTabRefreshKey] = useState(0);
 
     // ─── Datos de soporte para el extracto ───────────────────────────────────
@@ -1581,6 +1583,17 @@ export default function SupplierAccountPage() {
     // numérico de la solapa "Reembolsos", y el contenido de esa misma solapa (remount por key).
     const handleReembolsoRegistrado = useCallback(async () => {
         setShowReembolsoInline(false);
+        setExtractoRefreshKey((k) => k + 1);
+        setReembolsosTabRefreshKey((k) => k + 1);
+        await Promise.all([loadOverview(), reloadPendingRefundsBadge()]);
+    }, [loadOverview, reloadPendingRefundsBadge]);
+
+    // Tanda P2 "circuito proveedor" (2026-07-22): se llama al Deshacer o Corregir un
+    // reembolso YA registrado. Mismo criterio que handleReembolsoRegistrado de arriba —
+    // hay que dejar consistentes el extracto de encabezado, el bloque "a cobrar" (puede
+    // reaparecer un pendiente si se deshizo un reembolso) y la propia solapa "ya
+    // registrados" (esta última se recarga sola, adentro de OperatorRefundsRegisteredSection).
+    const handleReembolsoAccionCompletada = useCallback(async () => {
         setExtractoRefreshKey((k) => k + 1);
         setReembolsosTabRefreshKey((k) => k + 1);
         await Promise.all([loadOverview(), reloadPendingRefundsBadge()]);
@@ -2270,14 +2283,21 @@ export default function SupplierAccountPage() {
 
                     {activeTab === "reembolsos" && (
                         <div id="panel-reembolsos" role="tabpanel">
-                            {/* key=reembolsosTabRefreshKey: fuerza el remount (y por lo tanto el
-                                refetch) de esta sección cuando se registra un reembolso desde
-                                "Cuenta corriente", para que la solapa no quede con datos viejos. */}
-                            <OperatorRefundsPendingSection
-                                key={reembolsosTabRefreshKey}
-                                supplierPublicId={publicId}
-                                showSupplierColumn={false}
-                            />
+                            {/* key=reembolsosTabRefreshKey en el contenedor: fuerza el remount (y por
+                                lo tanto el refetch) de LOS DOS bloques de esta solapa cuando se
+                                registra, deshace o corrige un reembolso — desde "Cuenta corriente" o
+                                desde acá mismo (Tanda P2) — para que nunca quede uno de los dos
+                                bloques con datos viejos mientras el otro ya se actualizó. */}
+                            <div key={reembolsosTabRefreshKey}>
+                                <OperatorRefundsPendingSection
+                                    supplierPublicId={publicId}
+                                    showSupplierColumn={false}
+                                />
+                                <OperatorRefundsRegisteredSection
+                                    supplierPublicId={publicId}
+                                    onAccionCompletada={handleReembolsoAccionCompletada}
+                                />
+                            </div>
                         </div>
                     )}
 

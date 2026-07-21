@@ -179,7 +179,14 @@ Al apretar **"Corregir reserva"** en una fila, se abre **debajo de esa fila** un
 
 ## PREGUNTAS PARA GASTON
 
-> Todo lo demás de esta pantalla ya está cubierto por tus decisiones anteriores (ver sección 2) y no se pregunta. Estas 4 son las únicas que la guía no responde.
+> **✅ RESPONDIDAS Y FIRMADAS por Gaston el 2026-07-21** (eligió la recomendación en las 4):
+> **P1 = A** (bloque aparte "Reembolsos ya registrados" debajo del de "a cobrar") ·
+> **P2 = A** (alcanza el motivo obligatorio ≥20, sin "¿Seguro?" extra) ·
+> **P3 = A** (lista filtrada: solo anulaciones del mismo operador en la misma moneda) ·
+> **P4 = B** con botón **"Ir a la cuenta del cliente"** (cartel que explica + botón directo; la bandeja de Cobranzas queda para más adelante si aparece el caso gemelo).
+> Con esto la spec queda CERRADA para implementación.
+
+> Todo lo demás de esta pantalla ya está cubierto por tus decisiones anteriores (ver sección 2) y no se pregunta. Estas 4 eran las únicas que la guía no respondía.
 
 ### Tema: cómo se ven los reembolsos que ya anotaste
 Contexto: hoy la solapa "Reembolsos" solo muestra lo que el operador **todavía te debe**. Para poder deshacer o corregir uno, primero hay que **verlo**. Necesitamos mostrar también los reembolsos que **ya anotaste como recibidos**.

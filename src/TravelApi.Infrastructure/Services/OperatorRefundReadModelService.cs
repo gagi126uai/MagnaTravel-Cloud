@@ -112,6 +112,7 @@ public class OperatorRefundReadModelService : IOperatorRefundReadModelService
                 ReservaPublicId = a.BookingCancellation.Reserva.PublicId,
                 NumeroReserva = a.BookingCancellation.Reserva.NumeroReserva,
                 ClienteNombre = a.BookingCancellation.Customer.FullName,
+                ClientePublicId = a.BookingCancellation.Customer.PublicId,
                 // La allocation no tiene columna de moneda propia: hereda la del ingreso padre (ver el
                 // comentario de OperatorRefundAllocation en el dominio). La normalizamos DESPUES de traer la
                 // pagina (ver el loop de abajo): Monedas.Normalizar no es un metodo que EF pueda traducir a

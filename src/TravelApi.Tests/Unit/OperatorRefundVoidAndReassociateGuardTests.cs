@@ -8,6 +8,7 @@ using Moq;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Services;
 using Xunit;
@@ -162,7 +163,7 @@ public class OperatorRefundVoidAndReassociateGuardTests
         var (allocation, _) = await SeedConsumedCreditAsync(ctx);
         var service = BuildService(ctx);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var ex = await Assert.ThrowsAsync<OperatorRefundActionRejectedException>(() =>
             service.VoidAllocationAsync(
                 allocation.PublicId,
                 new VoidAllocationRequest("Intento de deshacer un reembolso ya consumido por el cliente."),
@@ -173,6 +174,10 @@ public class OperatorRefundVoidAndReassociateGuardTests
         Assert.DoesNotContain("allocation", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("saldo a favor", ex.Message);
         Assert.Contains("requiere autorización", ex.Message);
+
+        // Pantalla P2 (2026-07-22): el frontend NO adivina esta causa comparando texto — necesita el `code`
+        // estructurado para ofrecer el boton "Ir a la cuenta del cliente".
+        Assert.Equal(OperatorRefundActionRejectedException.Codes.CreditAlreadyUsed, ex.Code);
 
         // No debe haber mutado nada: la allocation sigue viva.
         var reloaded = await ctx.OperatorRefundAllocations.AsNoTracking().SingleAsync(a => a.Id == allocation.Id);
@@ -186,7 +191,7 @@ public class OperatorRefundVoidAndReassociateGuardTests
         var (allocation, newBc) = await SeedConsumedCreditAsync(ctx);
         var service = BuildService(ctx);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var ex = await Assert.ThrowsAsync<OperatorRefundActionRejectedException>(() =>
             service.ReassociateAllocationAsync(
                 allocation.PublicId,
                 new ReassociateAllocationRequest(newBc.PublicId, "Intento de mover un reembolso ya consumido por el cliente."),
@@ -196,6 +201,7 @@ public class OperatorRefundVoidAndReassociateGuardTests
         Assert.DoesNotContain("allocation", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("saldo a favor", ex.Message);
         Assert.Contains("requiere autorización", ex.Message);
+        Assert.Equal(OperatorRefundActionRejectedException.Codes.CreditAlreadyUsed, ex.Code);
 
         // No debe haber mutado nada: la allocation vieja sigue apuntando al BC original.
         var reloaded = await ctx.OperatorRefundAllocations.AsNoTracking().SingleAsync(a => a.Id == allocation.Id);

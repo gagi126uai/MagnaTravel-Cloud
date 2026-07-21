@@ -171,6 +171,10 @@ public class OperatorRefundRegisteredReadModelTests
         Assert.Null(live.VoidedAt);
         Assert.Null(live.VoidedReason);
         Assert.Equal("Familia Garcia", live.ClienteNombre);
+        // SeedAsync siembra un unico cliente ("Familia Garcia") duenio de las 3 reservas: lo recuperamos
+        // de la base para comparar el PublicId real, sin hardcodear un Guid en el test.
+        var seededCustomer = await ctx.Customers.SingleAsync(c => c.FullName == "Familia Garcia");
+        Assert.Equal(seededCustomer.PublicId, live.ClientePublicId);
         Assert.Equal("USD", live.Currency);
         Assert.Equal(400m, live.NetAmount);
         Assert.False(live.AmountsMasked);
