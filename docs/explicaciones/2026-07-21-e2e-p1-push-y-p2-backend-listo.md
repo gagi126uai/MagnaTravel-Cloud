@@ -94,3 +94,31 @@ paginado con tope). 7 tests nuevos, módulo 157/157.
   expone internals si algún día se activa.
 - Model-binding de paginado (`?page=abc`) devuelve el 400 crudo de framework —
   sistémico a todos los endpoints paginados, no de esta obra.
+
+---
+
+## AGREGADO (misma noche): la pantalla de P2 también salió
+
+Gaston volvió, respondió las 4 preguntas (eligió las 4 recomendadas; en la
+última, el botón lleva a la cuenta del cliente) y la pantalla se construyó,
+revisó y deployó de corrido:
+
+- **Qué hace**: en la solapa Reembolsos del operador ahora hay un bloque
+  "Reembolsos ya registrados". Cada reembolso vivo tiene "Deshacer" (con
+  motivo obligatorio de 20 letras y contador) y "Corregir reserva" (lista
+  solo las anulaciones válidas: mismo operador, misma moneda). La fila
+  deshecha queda tachada con su motivo, como rastro. Si la plata ya se le
+  devolvió al cliente, el cartel lo explica y un botón te lleva a la cuenta
+  del cliente — el sistema lo detecta por un código interno del rechazo,
+  nunca adivinando por el texto.
+- **Bloqueante real cazado por la review**: faltaba el aviso "No tenés
+  permiso para ver los montos." en el bloque nuevo. Arreglado y re-revisado.
+- **E2E real 29/29** con la app corriendo (capturas en
+  `scripts/e2e-local/shots-p2/`): registrar, deshacer, corregir, vacío y
+  la higiene de textos. Lo único NO caminado en vivo: el caso "la plata ya
+  se usó" (necesita un retiro consumido; lo cubren los tests unitarios).
+- Armando el guion aparecieron 5 trampas del seed local (documentadas con
+  comentarios en `e2e-p2-reembolsos.js`) — oro para el próximo E2E.
+- Commit `66d52e77`, CI verde, deploy OK. **El circuito proveedor queda con
+  P1 y P2 completas; siguen P3 (avisar si bajás el costo por debajo de lo
+  ya pagado) y P4 (retoques restantes).**
