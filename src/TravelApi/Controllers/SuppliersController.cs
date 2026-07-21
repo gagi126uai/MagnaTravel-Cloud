@@ -341,6 +341,30 @@ public class SuppliersController : ControllerBase
         }
     }
 
+    // Tanda P2 "circuito proveedor" (2026-07-22): hermano de "pending" de arriba, pero con lo YA REGISTRADO.
+    // El bloque "pending" de la solapa dice cuanto FALTA cobrarle al operador; este dice que reembolsos YA se
+    // anotaron como recibidos (vivos y deshechos), para que la pantalla pueda ofrecer "Deshacer" y "Corregir
+    // reserva" sobre una fila puntual (los dos endpoints de accion ya existen en OperatorRefundsController).
+    // MISMO permiso y MISMO criterio de seguridad que "pending": tesoreria.supplier_payments (no
+    // proveedores.view) porque el read-model expone el nombre del cliente de cada reserva anulada.
+    [HttpGet("{publicIdOrLegacyId}/operator-refunds/registered")]
+    [RequirePermission(Permissions.TesoreriaSupplierPayments)]
+    public async Task<ActionResult<PagedResponse<OperatorRefundRegisteredItemDto>>> GetSupplierRegisteredOperatorRefunds(
+        string publicIdOrLegacyId,
+        [FromQuery] OperatorRefundRegisteredQuery query,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Supplier>(publicIdOrLegacyId, cancellationToken);
+            return Ok(await _operatorRefundReadModel.GetSupplierRegisteredRefundsAsync(id, query, cancellationToken));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
     [HttpGet("{publicIdOrLegacyId}/account/payments")]
     [RequirePermission(Permissions.TesoreriaSupplierPayments)]
     public async Task<ActionResult<PagedResponse<SupplierPaymentDto>>> GetSupplierAccountPayments(

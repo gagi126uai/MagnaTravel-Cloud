@@ -191,6 +191,20 @@ public class SupplierAccountPaymentsQuery : PagedQuery
     }
 }
 
+/// <summary>
+/// Tanda P2 "circuito proveedor" (2026-07-22): paginado del listado "reembolsos ya registrados" de un
+/// operador (ver <see cref="OperatorRefundRegisteredItemDto"/>). Orden por defecto: mas nuevas primero,
+/// para que lo recien cargado aparezca arriba.
+/// </summary>
+public class OperatorRefundRegisteredQuery : PagedQuery
+{
+    public OperatorRefundRegisteredQuery()
+    {
+        SortBy = "registeredAt";
+        SortDir = "desc";
+    }
+}
+
 public class CollectionWorklistQuery : PagedQuery
 {
     public string Urgency { get; set; } = "all";

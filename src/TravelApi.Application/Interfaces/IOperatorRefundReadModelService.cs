@@ -27,4 +27,14 @@ public interface IOperatorRefundReadModelService
     /// Cruza clientes/operadores -> el controller la gatea con un permiso mas fuerte que el de ver un proveedor.
     /// </summary>
     Task<IReadOnlyList<OperatorRefundPendingItemDto>> GetAllPendingRefundsAsync(CancellationToken ct);
+
+    /// <summary>
+    /// Tanda P2 "circuito proveedor" (2026-07-22): reembolsos YA REGISTRADOS del operador <paramref name="supplierId"/>
+    /// (una fila por <c>OperatorRefundAllocation</c>, mas nuevas primero). A diferencia de
+    /// <see cref="GetSupplierPendingRefundsAsync"/> (lo que FALTA cobrarle), esto es el historial de lo que ya se
+    /// anoto como recibido — lo necesita la pantalla para poder ofrecer "Deshacer" y "Corregir reserva" sobre una
+    /// fila puntual. Incluye TANTO las vivas como las deshechas (soft-void); no las esconde.
+    /// </summary>
+    Task<PagedResponse<OperatorRefundRegisteredItemDto>> GetSupplierRegisteredRefundsAsync(
+        int supplierId, OperatorRefundRegisteredQuery query, CancellationToken ct);
 }

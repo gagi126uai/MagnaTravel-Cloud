@@ -84,6 +84,95 @@ public class OperatorRefundReadModelService : IOperatorRefundReadModelService
     }
 
     /// <summary>
+    /// Tanda P2 "circuito proveedor" (2026-07-22): reembolsos YA REGISTRADOS de un operador (una fila por
+    /// <c>OperatorRefundAllocation</c>). Ver <see cref="IOperatorRefundReadModelService.GetSupplierRegisteredRefundsAsync"/>.
+    ///
+    /// <para><b>Por que se proyecta directo a SQL (a diferencia del read-model de pendientes de arriba)</b>: aca no
+    /// hay que agrupar lineas ni derivar semaforos — es una proyeccion 1 a 1 de la allocation con sus 2 joins
+    /// (reserva, cliente). Se puede traducir entero a SQL, asi que paginamos en la base (mismo patron que
+    /// <c>GetSupplierAccountPaymentsAsync</c>) en vez de traer todo a memoria.</para>
+    ///
+    /// <para><b>Sin filtro de query filter</b>: <c>OperatorRefundAllocation</c> NO tiene <c>HasQueryFilter</c> de
+    /// soft-delete en <c>AppDbContext</c> (verificado) — el "borrado" de una allocation es el flag propio
+    /// <c>IsVoided</c>, no un soft-delete global. Por eso esta consulta trae las deshechas SIN necesitar
+    /// <c>IgnoreQueryFilters</c>: no hay filtro que las esconda.</para>
+    /// </summary>
+    public async Task<PagedResponse<OperatorRefundRegisteredItemDto>> GetSupplierRegisteredRefundsAsync(
+        int supplierId, OperatorRefundRegisteredQuery query, CancellationToken ct)
+    {
+        var canSeeCost = await CanSeeCostAsync(ct);
+
+        var allocationsQuery = _db.OperatorRefundAllocations
+            .AsNoTracking()
+            .Where(a => a.Refund.SupplierId == supplierId)
+            .Select(a => new OperatorRefundRegisteredItemDto
+            {
+                PublicId = a.PublicId,
+                RefundReceivedPublicId = a.Refund.PublicId,
+                ReservaPublicId = a.BookingCancellation.Reserva.PublicId,
+                NumeroReserva = a.BookingCancellation.Reserva.NumeroReserva,
+                ClienteNombre = a.BookingCancellation.Customer.FullName,
+                // La allocation no tiene columna de moneda propia: hereda la del ingreso padre (ver el
+                // comentario de OperatorRefundAllocation en el dominio). La normalizamos DESPUES de traer la
+                // pagina (ver el loop de abajo): Monedas.Normalizar no es un metodo que EF pueda traducir a
+                // SQL dentro del Select, y este mismo patron (normalizar en memoria, no en el arbol de
+                // expresion) ya lo usa el read-model de pendientes de arriba.
+                Currency = a.Refund.Currency,
+                NetAmount = a.NetAmount,
+                RegisteredAt = a.CreatedAt,
+                IsVoided = a.IsVoided,
+                VoidedAt = a.VoidedAt,
+                VoidedReason = a.VoidedReason,
+            });
+
+        allocationsQuery = ApplyOperatorRefundRegisteredOrdering(allocationsQuery, query);
+        var page = await allocationsQuery.ToPagedResponseAsync(query, ct);
+
+        foreach (var item in page.Items)
+        {
+            // Paridad con el read-model de pendientes (Monedas.Normalizar): blinda monedas legacy raras
+            // (minusculas, con espacios) y deja todo en el mismo formato ISO que espera el frontend.
+            item.Currency = Monedas.Normalizar(item.Currency);
+
+            // Saneo de datos LEGACY (gate de exposicion de datos, 2026-07-22): antes de este fix,
+            // OperatorRefundService.ReassociateAllocationAsync guardaba el motivo del soft-void con el
+            // prefijo en ingles "Reassociate: ". Esas filas YA estan escritas en la base con ese texto; el
+            // fix de origen (prefijo "Corrección de reserva: ") solo aplica hacia adelante. Lo saneamos aca,
+            // en memoria despues de traer la pagina, para que la pantalla NUNCA muestre jerga de codigo aunque
+            // el dato sea viejo — sin tener que correr una migracion de datos para esto.
+            const string legacyReassociatePrefix = "Reassociate: ";
+            if (item.VoidedReason != null && item.VoidedReason.StartsWith(legacyReassociatePrefix, StringComparison.Ordinal))
+            {
+                item.VoidedReason = "Corrección de reserva: " + item.VoidedReason[legacyReassociatePrefix.Length..];
+            }
+        }
+
+        // ADR-017 F1b: NetAmount es plata del lado costo (lo que el operador termino devolviendo). Sin
+        // cobranzas.see_cost se enmascara a 0; el resto de la fila (reserva, cliente, fecha, deshecho) sigue
+        // visible igual que en el resto de la cuenta del proveedor.
+        if (!canSeeCost)
+        {
+            foreach (var item in page.Items)
+            {
+                item.NetAmount = 0m;
+                item.AmountsMasked = true;
+            }
+        }
+
+        return page;
+    }
+
+    /// <summary>Orden de "reembolsos ya registrados": por defecto mas nuevas primero (lo recien cargado arriba).</summary>
+    private static IQueryable<OperatorRefundRegisteredItemDto> ApplyOperatorRefundRegisteredOrdering(
+        IQueryable<OperatorRefundRegisteredItemDto> query, OperatorRefundRegisteredQuery request)
+    {
+        var desc = request.IsSortDescending();
+        return desc
+            ? query.OrderByDescending(item => item.RegisteredAt).ThenByDescending(item => item.PublicId)
+            : query.OrderBy(item => item.RegisteredAt).ThenBy(item => item.PublicId);
+    }
+
+    /// <summary>
     /// Carga en batch (6 queries por tabla, no N+1) si el servicio de cada linea todavia cuenta como compra
     /// confirmada del operador. Reusa el MISMO batch-loader del extracto (<see cref="SupplierCancellationCircuitReader"/>)
     /// para que la solapa "Reembolsos" y el "me tiene que devolver" del extracto salgan del mismo calculo.

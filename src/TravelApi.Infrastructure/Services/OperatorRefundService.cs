@@ -1388,7 +1388,9 @@ public class OperatorRefundService : IOperatorRefundService
         oldAllocation.IsVoided = true;
         oldAllocation.VoidedAt = DateTime.UtcNow;
         oldAllocation.VoidedByUserId = userId;
-        oldAllocation.VoidedReason = $"Reassociate: {request.Reason.Trim()}";
+        // Gate de exposicion de datos: este texto llega TAL CUAL a la pantalla (fila "Deshecho"/"Corregido"
+        // de la solapa Reembolsos), asi que el prefijo va en espanol de negocio, nunca en jerga de codigo.
+        oldAllocation.VoidedReason = $"Corrección de reserva: {request.Reason.Trim()}";
 
         // ADR-044 T3b Decision 3 (M4, K1, 2026-07-10): la reasociacion SI es un reemplazo (a diferencia del void
         // PURO de VoidAllocationAsync, que anula sin sustituto): la MISMA plata pasa a liquidar el/los cargo(s)
