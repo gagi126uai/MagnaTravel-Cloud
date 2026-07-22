@@ -258,7 +258,10 @@ public class Adr032CollectableStateRuleTests
         var reserva = await SeedReservaAsync(context, status);
         var service = BuildPaymentService(context);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Tanda de saneo (2026-07-22): PaymentService.CreatePaymentAsync ahora rechaza con
+        // PaymentValidationException (mensaje de negocio), no con InvalidOperationException "a secas". xUnit
+        // exige tipo EXACTO en Assert.ThrowsAsync<T>, asi que el test se actualiza al tipo nuevo.
+        await Assert.ThrowsAsync<PaymentValidationException>(() =>
             service.CreatePaymentAsync(
                 new CreatePaymentRequest { ReservaId = reserva.PublicId.ToString(), Amount = 300m, Method = "Transfer" },
                 CancellationToken.None));
@@ -470,8 +473,9 @@ public class Adr032CollectableStateRuleTests
 
         await MoveReservaToStatusAsync(context, reserva.Id, EstadoReserva.Cancelled);
 
-        // ADR-035: en terminal NO se edita el cobro (la salida es anularlo). 409 (InvalidOperationException).
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // ADR-035: en terminal NO se edita el cobro (la salida es anularlo). 409 (PaymentValidationException,
+        // Tanda de saneo 2026-07-22: el camino CANONICO ya no tira InvalidOperationException "a secas").
+        await Assert.ThrowsAsync<PaymentValidationException>(() =>
             paymentService.UpdatePaymentAsync(
                 p.PublicId.ToString(),
                 new UpdatePaymentRequest { Amount = 400m, Method = "Cash" },
@@ -493,8 +497,9 @@ public class Adr032CollectableStateRuleTests
 
         await MoveReservaToStatusAsync(context, reserva.Id, EstadoReserva.Closed);
 
-        // ADR-035: en terminal NO se borra el cobro (la salida es anularlo). 409 (InvalidOperationException).
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // ADR-035: en terminal NO se borra el cobro (la salida es anularlo). 409 (PaymentValidationException,
+        // Tanda de saneo 2026-07-22: el camino CANONICO ya no tira InvalidOperationException "a secas").
+        await Assert.ThrowsAsync<PaymentValidationException>(() =>
             paymentService.DeletePaymentAsync(p.PublicId.ToString(), CancellationToken.None));
 
         var payment = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(x => x.PublicId == p.PublicId);
@@ -581,12 +586,15 @@ public class Adr032CollectableStateRuleTests
                 CancellationToken.None);
             await MoveReservaToStatusAsync(context, reserva.Id, terminalStatus);
 
-            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            // Tanda de saneo (2026-07-22): el camino CANONICO (PaymentService) ya tira PaymentValidationException,
+            // no InvalidOperationException "a secas" — el camino LEGACY de abajo todavia no se convirtio (queda
+            // fuera de esta obra), por eso sigue esperando el tipo base.
+            await Assert.ThrowsAsync<PaymentValidationException>(() =>
                 paymentService.UpdatePaymentAsync(
                     p.PublicId.ToString(),
                     new UpdatePaymentRequest { Amount = 400m, Method = "Cash" },
                     CancellationToken.None));
-            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            await Assert.ThrowsAsync<PaymentValidationException>(() =>
                 paymentService.DeletePaymentAsync(p.PublicId.ToString(), CancellationToken.None));
         }
 
@@ -668,7 +676,8 @@ public class Adr032CollectableStateRuleTests
         await paymentService.IssueReceiptAsync(p.PublicId.ToString(), CancellationToken.None);
         await MoveReservaToStatusAsync(context, reserva.Id, EstadoReserva.Closed);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Tanda de saneo (2026-07-22): el guard fiscal de DeletePaymentCoreAsync tira PaymentValidationException.
+        await Assert.ThrowsAsync<PaymentValidationException>(() =>
             paymentService.DeletePaymentAsync(p.PublicId.ToString(), CancellationToken.None));
 
         var payment = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(x => x.PublicId == p.PublicId);
@@ -744,7 +753,9 @@ public class Adr032CollectableStateRuleTests
         await paymentService.IssueReceiptAsync(p.PublicId.ToString(), CancellationToken.None);
         await MoveReservaToStatusAsync(context, reserva.Id, EstadoReserva.Cancelled);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Tanda de saneo (2026-07-22): tipo exacto PaymentValidationException; el mensaje de negocio se
+        // mantiene identico (sigue siendo el guard fiscal de DeletePaymentCoreAsync).
+        var ex = await Assert.ThrowsAsync<PaymentValidationException>(() =>
             paymentService.AnnulPaymentAsync(p.PublicId.ToString(), reason: "intento", CancellationToken.None));
         Assert.Contains("comprobante vigente", ex.Message);
 
@@ -780,7 +791,8 @@ public class Adr032CollectableStateRuleTests
         paymentEntity.RelatedInvoiceId = invoice.Id;
         await context.SaveChangesAsync();
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Tanda de saneo (2026-07-22): tipo exacto PaymentValidationException; mensaje de negocio identico.
+        var ex = await Assert.ThrowsAsync<PaymentValidationException>(() =>
             paymentService.AnnulPaymentAsync(p.PublicId.ToString(), reason: "intento", CancellationToken.None));
         Assert.Contains("vinculado a una factura", ex.Message);
 
@@ -814,7 +826,8 @@ public class Adr032CollectableStateRuleTests
 
         var paymentService = BuildPaymentService(context);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Tanda de saneo (2026-07-22): tipo exacto PaymentValidationException; mensaje de negocio identico.
+        var ex = await Assert.ThrowsAsync<PaymentValidationException>(() =>
             paymentService.AnnulPaymentAsync(bridge.PublicId.ToString(), reason: null, CancellationToken.None));
         Assert.Equal(OverpaymentCreditCleanup.DirectBridgeMutationBlockReason, ex.Message);
 
@@ -844,7 +857,8 @@ public class Adr032CollectableStateRuleTests
 
         var paymentService = BuildPaymentService(context);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Tanda de saneo (2026-07-22): tipo exacto PaymentValidationException; mensaje de negocio identico.
+        var ex = await Assert.ThrowsAsync<PaymentValidationException>(() =>
             paymentService.AnnulPaymentAsync(bridge.PublicId.ToString(), reason: null, CancellationToken.None));
         Assert.Equal(AppliedCreditBridge.DirectBridgeMutationBlockReason, ex.Message);
 
@@ -892,7 +906,8 @@ public class Adr032CollectableStateRuleTests
 
         var paymentService = BuildPaymentService(context);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Tanda de saneo (2026-07-22): tipo exacto PaymentValidationException; mensaje de negocio identico.
+        var ex = await Assert.ThrowsAsync<PaymentValidationException>(() =>
             paymentService.AnnulPaymentAsync(bridge.PublicId.ToString(), reason: null, CancellationToken.None));
         Assert.Equal(TravelApi.Infrastructure.Services.ClientCreditService.DirectBridgeMutationBlockReason, ex.Message);
 
@@ -911,7 +926,8 @@ public class Adr032CollectableStateRuleTests
 
         var paymentService = BuildPaymentService(context);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Tanda de saneo (2026-07-22): tipo exacto PaymentValidationException; mensaje de negocio identico.
+        var ex = await Assert.ThrowsAsync<PaymentValidationException>(() =>
             paymentService.UpdatePaymentAsync(
                 bridge.PublicId.ToString(),
                 new UpdatePaymentRequest { Amount = -5_000m, Method = "MultaDeshecha" },
@@ -986,7 +1002,9 @@ public class Adr032CollectableStateRuleTests
 
         var thrown = Assert.Throws<System.Reflection.TargetInvocationException>(
             () => guard.Invoke(null, new object[] { payment }));
-        var inner = Assert.IsType<InvalidOperationException>(thrown.InnerException);
+        // Tanda de saneo (2026-07-22): EnsureNotAlreadyAnnulled ahora tira PaymentValidationException (sigue
+        // heredando de InvalidOperationException, pero el tipo EXACTO cambio); mensaje de negocio identico.
+        var inner = Assert.IsType<PaymentValidationException>(thrown.InnerException);
         Assert.Equal("El cobro ya está anulado.", inner.Message);
     }
 

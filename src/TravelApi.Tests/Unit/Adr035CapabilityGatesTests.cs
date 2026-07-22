@@ -14,6 +14,7 @@ using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Application.Mappings;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Services;
@@ -123,7 +124,9 @@ public class Adr035CapabilityGatesTests
         var reserva = await SeedReservaWithDebtAsync(ctx, status);
         var service = NewPaymentService(ctx);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Tanda de saneo (2026-07-22): PaymentService rechaza con PaymentValidationException (mensaje de
+        // negocio), no InvalidOperationException "a secas". xUnit exige tipo EXACTO en Assert.ThrowsAsync<T>.
+        await Assert.ThrowsAsync<PaymentValidationException>(() =>
             service.CreatePaymentAsync(
                 new CreatePaymentRequest
                 {
@@ -188,7 +191,8 @@ public class Adr035CapabilityGatesTests
         var payment = await SeedPaymentAsync(ctx, reserva);
         var service = NewPaymentService(ctx);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Tanda de saneo (2026-07-22): tipo exacto PaymentValidationException.
+        await Assert.ThrowsAsync<PaymentValidationException>(() =>
             service.DeletePaymentAsync(payment.PublicId.ToString(), CancellationToken.None));
 
         // El pago sigue vivo (no se borro).
@@ -206,7 +210,8 @@ public class Adr035CapabilityGatesTests
         var payment = await SeedPaymentAsync(ctx, reserva);
         var service = NewPaymentService(ctx);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Tanda de saneo (2026-07-22): tipo exacto PaymentValidationException.
+        await Assert.ThrowsAsync<PaymentValidationException>(() =>
             service.UpdatePaymentAsync(
                 payment.PublicId.ToString(),
                 new UpdatePaymentRequest { Amount = 500m, Method = "Cash" },

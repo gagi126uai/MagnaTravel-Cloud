@@ -9,6 +9,7 @@ using Moq;
 using TravelApi.Application.Interfaces;
 using TravelApi.Application.Mappings;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Services;
 using Xunit;
@@ -156,7 +157,9 @@ public class Adr021CrossCurrencyPaymentServiceTests
             ExchangeRateAt = DateTime.UtcNow
         }, CancellationToken.None);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Tanda de saneo (2026-07-22): tipo exacto PaymentValidationException (hereda de
+        // InvalidOperationException, pero xUnit exige tipo EXACTO en Assert.ThrowsAsync<T>).
+        await Assert.ThrowsAsync<PaymentValidationException>(() =>
             service.UpdatePaymentAsync(dto.PublicId.ToString(), new UpdatePaymentRequest
             {
                 Amount = 90000m, // cambia el monto -> rechazado

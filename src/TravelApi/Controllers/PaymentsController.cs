@@ -6,6 +6,7 @@ using TravelApi.Application.Exceptions;
 using TravelApi.Application.Interfaces;
 using TravelApi.Authorization;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Errors;
 
 namespace TravelApi.Controllers;
@@ -85,13 +86,25 @@ public class PaymentsController : ControllerBase
                 StatusCode = StatusCodes.Status403Forbidden
             };
         }
-        catch (InvalidOperationException ex)
+        // Cierre de vector N1 (2026-07-22, hallado por data-exposure-reviewer): "reserva no encontrada" ahora
+        // es KeyNotFoundException -> 404 sin cuerpo, igual que TODOS los demas endpoints de este controller.
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        // Tanda de saneo (2026-07-22): antes este catch era InvalidOperationException "a secas", igual que el
+        // catch ancho que tenia SuppliersController antes del fix (Tanda 1, 2026-07-18). El problema: ese catch
+        // ancho tambien atrapaba cualquier InvalidOperationException real de framework y le devolvia su
+        // Message crudo al vendedor (posible texto en ingles / internals). Ahora PaymentService tira
+        // PaymentValidationException para sus rechazos de NEGOCIO (mensaje ya pensado para el usuario) y este
+        // catch atrapa SOLO esa. Cierre de vector N1 (2026-07-22): tambien se elimino el catch (ArgumentException)
+        // que quedaba en paralelo — atrapaba de mas (ArgumentNullException/ArgumentOutOfRangeException de
+        // framework, con Message en ingles y nombre de parametro interno) y devolvia ese texto crudo al
+        // vendedor. Un ArgumentException real de framework ya NO cae aca: sigue de largo y el
+        // GlobalExceptionHandler lo convierte en el 500 generico amigable (mismo mecanismo que SuppliersController).
+        catch (PaymentValidationException ex)
         {
             return Conflict(new { message = ex.Message });
-        }
-        catch (ArgumentException ex)
-        {
-            return BadRequest(new { message = ex.Message });
         }
         catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
         {
@@ -113,7 +126,9 @@ public class PaymentsController : ControllerBase
         {
             return NotFound();
         }
-        catch (InvalidOperationException ex)
+        // Catch especifico de la excepcion de negocio del circuito (Tanda de saneo, 2026-07-22): un
+        // InvalidOperationException real de framework ya NO cae aca (ver comentario de CreatePayment arriba).
+        catch (PaymentValidationException ex)
         {
             // B1.15 (2026-05-11): los guards nuevos (pago anulado/eliminado, receipt
             // Voided previo) son condiciones de conflicto reales, no errores de
@@ -169,7 +184,9 @@ public class PaymentsController : ControllerBase
         {
             return NotFound();
         }
-        catch (InvalidOperationException ex)
+        // Catch especifico de la excepcion de negocio del circuito (Tanda de saneo, 2026-07-22): ver
+        // comentario de CreatePayment arriba para el mecanismo completo.
+        catch (PaymentValidationException ex)
         {
             return Conflict(new { message = ex.Message });
         }
@@ -193,9 +210,14 @@ public class PaymentsController : ControllerBase
         {
             return NotFound();
         }
-        catch (InvalidOperationException)
+        // Tanda de saneo (2026-07-22): antes este catch era InvalidOperationException ancho y tapaba el
+        // motivo real con un cartel fijo ("No se pudo generar el PDF..."), aunque PaymentService.GetReceiptPdfAsync
+        // ya sabia la razon exacta (todavia no se emitio el comprobante). Ahora el service tira
+        // PaymentValidationException con el mensaje real, y el catch atrapa SOLO esa: un InvalidOperationException
+        // de framework sigue de largo y el GlobalExceptionHandler lo convierte en el 500 generico correcto.
+        catch (PaymentValidationException ex)
         {
-            return BadRequest(new { message = "No se pudo generar el PDF del comprobante." });
+            return BadRequest(new { message = ex.Message });
         }
         catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
         {
@@ -244,7 +266,9 @@ public class PaymentsController : ControllerBase
         {
             return NotFound();
         }
-        catch (InvalidOperationException ex)
+        // Catch especifico de la excepcion de negocio del circuito (Tanda de saneo, 2026-07-22): ver
+        // comentario de CreatePayment arriba para el mecanismo completo.
+        catch (PaymentValidationException ex)
         {
             // B1.15 Fase 0' (CODE-01): MutationGuards rechaza editar pagos con
             // recibo emitido o factura AFIP viva. 409 Conflict es coherente con
@@ -284,7 +308,9 @@ public class PaymentsController : ControllerBase
         {
             return NotFound();
         }
-        catch (InvalidOperationException ex)
+        // Catch especifico de la excepcion de negocio del circuito (Tanda de saneo, 2026-07-22): ver
+        // comentario de CreatePayment arriba para el mecanismo completo.
+        catch (PaymentValidationException ex)
         {
             // 409 Conflict: el cobro es un puente (lo anula el sistema) o tiene recibo/CAE vivo
             // (el camino correcto es la anulacion fiscal, no esta ruta).
@@ -309,7 +335,9 @@ public class PaymentsController : ControllerBase
         {
             return NotFound();
         }
-        catch (InvalidOperationException ex)
+        // Catch especifico de la excepcion de negocio del circuito (Tanda de saneo, 2026-07-22): ver
+        // comentario de CreatePayment arriba para el mecanismo completo.
+        catch (PaymentValidationException ex)
         {
             // 409 Conflict: el pago tiene un recibo Issued o esta vinculado a una
             // factura. (Receipt Voided ya NO bloquea — la fila Receipt se preserva

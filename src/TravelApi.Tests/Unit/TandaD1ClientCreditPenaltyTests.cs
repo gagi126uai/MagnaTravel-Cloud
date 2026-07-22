@@ -292,7 +292,9 @@ public class TandaD1ClientCreditPenaltyTests
         await context.SaveChangesAsync();
 
         var service = CreateService(context);
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Tanda de saneo (2026-07-22): CancelledDebitNoteCollectionGate ahora tira PaymentValidationException
+        // (mensaje de negocio), no InvalidOperationException "a secas". Mensaje identico.
+        var ex = await Assert.ThrowsAsync<PaymentValidationException>(() =>
             service.ApplyCustomerCreditToPenaltyAsync(
                 customer.Id, new ApplyCreditToPenaltyRequest(Monedas.ARS, 1000m, nd.PublicId),
                 UserId, "Tester", CancellationToken.None));
@@ -308,7 +310,8 @@ public class TandaD1ClientCreditPenaltyTests
         var (_, nd, _) = await SeedIssuedPenaltyAsync(context, customer.Id, "F-2026-2005", ndAmount: 3000m, monId: "DOL");
 
         var service = CreateService(context);
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Tanda de saneo (2026-07-22): tipo exacto PaymentValidationException; mensaje identico.
+        var ex = await Assert.ThrowsAsync<PaymentValidationException>(() =>
             service.ApplyCustomerCreditToPenaltyAsync(
                 customer.Id, new ApplyCreditToPenaltyRequest(Monedas.ARS, 1000m, nd.PublicId),
                 UserId, "Tester", CancellationToken.None));
@@ -324,7 +327,8 @@ public class TandaD1ClientCreditPenaltyTests
         var (_, nd, _) = await SeedIssuedPenaltyAsync(context, customer.Id, "F-2026-2006", ndAmount: 1000m);
 
         var service = CreateService(context);
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Tanda de saneo (2026-07-22): tipo exacto PaymentValidationException; mensaje identico.
+        var ex = await Assert.ThrowsAsync<PaymentValidationException>(() =>
             service.ApplyCustomerCreditToPenaltyAsync(
                 customer.Id, new ApplyCreditToPenaltyRequest(Monedas.ARS, 1500m, nd.PublicId),
                 UserId, "Tester", CancellationToken.None));
@@ -384,7 +388,8 @@ public class TandaD1ClientCreditPenaltyTests
         Assert.Equal(300m, await OutstandingAsync(context, nd.Id));
 
         // Un segundo pedido IDENTICO (el mismo monto original, 700) ya no entra: solo quedan 300 pendientes.
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Tanda de saneo (2026-07-22): tipo exacto PaymentValidationException; mensaje identico.
+        var ex = await Assert.ThrowsAsync<PaymentValidationException>(() =>
             service.ApplyCustomerCreditToPenaltyAsync(
                 customer.Id, new ApplyCreditToPenaltyRequest(Monedas.ARS, 700m, nd.PublicId),
                 UserId, "Tester", CancellationToken.None));

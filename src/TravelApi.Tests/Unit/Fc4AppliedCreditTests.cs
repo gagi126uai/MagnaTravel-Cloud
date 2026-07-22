@@ -309,7 +309,10 @@ public class Fc4AppliedCreditTests
             .FirstAsync(p => p.AppliedFromCreditWithdrawalId != null);
 
         var paymentService = BuildPaymentService(context);
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Tanda de saneo (2026-07-22): PaymentService.IssueReceiptAsync ahora rechaza el puente FC4 con
+        // PaymentValidationException (mensaje de negocio), no con InvalidOperationException "a secas". xUnit
+        // exige tipo EXACTO en Assert.ThrowsAsync<T>, asi que el test se actualiza al tipo nuevo.
+        var ex = await Assert.ThrowsAsync<PaymentValidationException>(() =>
             paymentService.IssueReceiptAsync(bridge.Id, CancellationToken.None));
         Assert.Contains("saldo a favor aplicado", ex.Message);
     }

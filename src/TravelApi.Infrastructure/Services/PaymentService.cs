@@ -12,6 +12,7 @@ using TravelApi.Application.DTOs;
 using TravelApi.Application.Exceptions;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Reservations;
@@ -122,7 +123,10 @@ public class PaymentService : IPaymentService
             _logger.LogWarning(
                 "Payment edit/delete rejected by state gate. PaymentId={PaymentId} ReservaId={ReservaId} Status={Status}.",
                 payment.Id, reservaId, status);
-            throw new InvalidOperationException(capability.Reason);
+            // Tanda de saneo (2026-07-22): PaymentValidationException, no InvalidOperationException "a secas"
+            // (mismo mecanismo que SupplierPaymentValidationException del lado proveedor). Ver docstring de la
+            // excepcion para el motivo completo.
+            throw new PaymentValidationException(capability.Reason);
         }
     }
 
@@ -791,8 +795,15 @@ public class PaymentService : IPaymentService
         var reserva = await _dbContext.Reservas
             .FirstOrDefaultAsync(r => r.Id == reservaId, cancellationToken);
 
+        // Vector N1 (cierre 2026-07-22): esto es un "no encontrado", igual que TODOS los demas casos de
+        // esta clase (ver ResolveRequiredIdAsync mas abajo y el resolver de EntityReferenceResolver, ambos
+        // tiran KeyNotFoundException). Antes tiraba ArgumentException "a secas", que el controller atrapaba
+        // con un catch ancho y devolvia 400 con ex.Message crudo — el mismo tipo de fuga que la obra de
+        // saneo vino a cerrar. En la practica es defensa en profundidad (el resolver de arriba ya valida que
+        // el id exista), pero si alguna vez se dispara, ahora es un 404 limpio, igual que el resto de los
+        // endpoints de este controller.
         if (reserva == null)
-            throw new ArgumentException("Reserva no encontrada.");
+            throw new KeyNotFoundException("Reserva no encontrada.");
 
         // B1.15 Fase 2a (review final): ownership check para POST /api/payments.
         // El attribute RequireOwnership no aplica porque la reserva viene en el body,
@@ -814,13 +825,17 @@ public class PaymentService : IPaymentService
         {
             var paymentCapability = ReservaCapabilityPolicy.For(BuildCapabilityContext(reserva)).CanRegisterPayment;
             if (!paymentCapability.Allowed)
-                throw new InvalidOperationException(paymentCapability.Reason);
+                throw new PaymentValidationException(paymentCapability.Reason);
 
             reserva.EnsureCollectable();
         }
 
+        // Vector N1 (cierre 2026-07-22): validacion de negocio del monto cargado por el vendedor ->
+        // PaymentValidationException (mensaje ya pensado para el usuario), no ArgumentException "a secas".
+        // El controller ya NO tiene catch (ArgumentException): un ArgumentException real de framework
+        // (por ejemplo de una libreria de terceros) sigue de largo y cae al 500 generico amigable.
         if (request.Amount <= 0)
-            throw new ArgumentException("El monto debe ser mayor a 0.");
+            throw new PaymentValidationException("El monto debe ser mayor a 0.");
 
         var amount = EconomicRulesHelper.RoundCurrency(request.Amount);
 
@@ -993,7 +1008,7 @@ public class PaymentService : IPaymentService
         // emitir un recibo dejaria numero correlativo huerfano y trazabilidad rota.
         if (payment.IsDeleted || string.Equals(payment.Status, "Cancelled", StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidOperationException(
+            throw new PaymentValidationException(
                 "No se puede emitir el comprobante porque el pago esta anulado o eliminado.");
         }
 
@@ -1002,20 +1017,20 @@ public class PaymentService : IPaymentService
             : payment.EntryType;
 
         if (entryType != PaymentEntryTypes.Payment || payment.Amount <= 0)
-            throw new InvalidOperationException("Solo los pagos positivos pueden emitir comprobante.");
+            throw new PaymentValidationException("Solo los pagos positivos pueden emitir comprobante.");
 
         // FC4 (2026-06-14): el Payment puente de un saldo a favor APLICADO es positivo (pasa el filtro de
         // arriba) pero NO es un cobro real — es el respaldo interno de aplicar el bolsillo a esta reserva, no
         // entro plata a caja. Emitir un recibo/comprobante de caja sobre el seria fiscalmente falso. Se
         // bloquea explicitamente (los campos escalares del puente ya vienen cargados en este query).
         if (AppliedCreditBridge.IsAppliedCreditBridge(payment))
-            throw new InvalidOperationException(
+            throw new PaymentValidationException(
                 "No se puede emitir comprobante de un saldo a favor aplicado; no es un cobro real.");
 
         // Tanda D1 (2026-07-16): mismo bloqueo para el puente de saldo a favor aplicado contra una MULTA.
         // Tambien es positivo y pasa el filtro de arriba, pero tampoco es un cobro real.
         if (AppliedCreditBridge.IsPenaltyCreditBridge(payment))
-            throw new InvalidOperationException(
+            throw new PaymentValidationException(
                 "No se puede emitir comprobante de un saldo a favor aplicado a una multa; no es un cobro real.");
 
         if (string.IsNullOrWhiteSpace(payment.EntryType))
@@ -1036,7 +1051,7 @@ public class PaymentService : IPaymentService
             // caso y se rechaza para no perder trazabilidad accidentalmente.
             if (string.Equals(payment.Receipt.Status, PaymentReceiptStatuses.Voided, StringComparison.OrdinalIgnoreCase))
             {
-                throw new InvalidOperationException(
+                throw new PaymentValidationException(
                     $"Ya existe un comprobante anulado N° {payment.Receipt.ReceiptNumber} para este pago. " +
                     "No se puede reemitir.");
             }
@@ -1046,7 +1061,7 @@ public class PaymentService : IPaymentService
         }
 
         var reservaIdForReceipt = payment.ReservaId
-            ?? throw new InvalidOperationException("El pago no esta vinculado a una reserva.");
+            ?? throw new PaymentValidationException("El pago no esta vinculado a una reserva.");
 
         var receipt = await CreateReceiptWithCorrelativeNumberAsync(
             payment.Id, reservaIdForReceipt, payment.Amount, cancellationToken);
@@ -1112,6 +1127,12 @@ public class PaymentService : IPaymentService
         // Inalcanzable: el ultimo intento NO esta cubierto por el filtro `when (attempt < maxAttempts)`,
         // asi que su DbUpdateException se propaga desde dentro del loop. Esta linea solo existe para que
         // el compilador acepte que el metodo siempre retorna o lanza.
+        //
+        // Tanda de saneo (2026-07-22): a proposito NO se convierte a PaymentValidationException. Esto no es
+        // un rechazo de NEGOCIO (el vendedor no hizo nada mal), es una falla real e infrecuente del sistema
+        // (5 colisiones seguidas de numero de recibo). El controller ya NO tiene un catch ancho de
+        // InvalidOperationException, asi que este caso sigue de largo y el GlobalExceptionHandler lo convierte
+        // en el 500 generico correcto — antes, con el catch ancho, se disfrazaba de un 409 de negocio.
         throw new InvalidOperationException(
             "No se pudo generar un numero de recibo unico tras varios intentos.");
     }
@@ -1136,7 +1157,7 @@ public class PaymentService : IPaymentService
         // termina como DbUpdateException = 500 inesperado para el cliente.
         if (reason != null && reason.Length > 500)
         {
-            throw new InvalidOperationException("El motivo no puede superar los 500 caracteres.");
+            throw new PaymentValidationException("El motivo no puede superar los 500 caracteres.");
         }
 
         var paymentId = await ResolveRequiredIdAsync<Payment>(paymentPublicIdOrLegacyId, cancellationToken);
@@ -1160,7 +1181,7 @@ public class PaymentService : IPaymentService
             // (la 2da ademas es idempotente desde la perspectiva del cliente, pero el
             // contract devuelve 409 para que el frontend refresque su estado y no
             // muestre el boton).
-            throw new InvalidOperationException("El comprobante no existe o ya esta anulado.");
+            throw new PaymentValidationException("El comprobante no existe o ya esta anulado.");
         }
 
         // B1.15 Fase D (2026-05-11): workflow de aprobacion. Si policy requiere
@@ -1178,7 +1199,7 @@ public class PaymentService : IPaymentService
             {
                 if (_approvalService is null)
                 {
-                    throw new InvalidOperationException(
+                    throw new PaymentValidationException(
                         "Workflow de aprobaciones no disponible. Contactar al Administrador.");
                 }
 
@@ -1246,7 +1267,7 @@ public class PaymentService : IPaymentService
         if (payment == null)
             throw new KeyNotFoundException("Pago no encontrado.");
 
-        var receipt = payment.Receipt ?? throw new InvalidOperationException("El pago aun no tiene comprobante emitido.");
+        var receipt = payment.Receipt ?? throw new PaymentValidationException("El pago aun no tiene comprobante emitido.");
         var agency = await _dbContext.AgencySettings.FirstOrDefaultAsync(cancellationToken) ?? new AgencySettings();
 
         // ADR-041: datos bancarios de la AGENCIA para que el cliente sepa a donde transferir el saldo. Se consulta
@@ -1659,7 +1680,7 @@ public class PaymentService : IPaymentService
             _logger.LogWarning(
                 "UpdatePaymentAsync rejected (direct overpayment-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
                 paymentId, payment.ReservaId);
-            throw new InvalidOperationException(OverpaymentCreditCleanup.DirectBridgeMutationBlockReason);
+            throw new PaymentValidationException(OverpaymentCreditCleanup.DirectBridgeMutationBlockReason);
         }
 
         // FC4 (2026-06-14): mismo candado para el OTRO puente (saldo a favor aplicado). Editarlo a mano
@@ -1669,7 +1690,7 @@ public class PaymentService : IPaymentService
             _logger.LogWarning(
                 "UpdatePaymentAsync rejected (direct applied-credit-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
                 paymentId, payment.ReservaId);
-            throw new InvalidOperationException(AppliedCreditBridge.DirectBridgeMutationBlockReason);
+            throw new PaymentValidationException(AppliedCreditBridge.DirectBridgeMutationBlockReason);
         }
 
         // Tanda D1 (2026-07-16): mismo candado para el puente de saldo a favor aplicado contra una MULTA.
@@ -1678,7 +1699,7 @@ public class PaymentService : IPaymentService
             _logger.LogWarning(
                 "UpdatePaymentAsync rejected (direct penalty-credit-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
                 paymentId, payment.ReservaId);
-            throw new InvalidOperationException(AppliedCreditBridge.PenaltyDirectBridgeMutationBlockReason);
+            throw new PaymentValidationException(AppliedCreditBridge.PenaltyDirectBridgeMutationBlockReason);
         }
 
         // ADR-044 "Deshacer una multa ya emitida" (2026-07-14): mismo candado para el puente de multa deshecha.
@@ -1688,7 +1709,7 @@ public class PaymentService : IPaymentService
             _logger.LogWarning(
                 "UpdatePaymentAsync rejected (direct debit-note-undo-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
                 paymentId, payment.ReservaId);
-            throw new InvalidOperationException(ClientCreditService.DirectBridgeMutationBlockReason);
+            throw new PaymentValidationException(ClientCreditService.DirectBridgeMutationBlockReason);
         }
 
         // ADR-033 (2026-06-16, E3/A2): habia quitado TODO gate de estado para editar (editar libremente lo
@@ -1697,7 +1718,7 @@ public class PaymentService : IPaymentService
         // ahi la correccion es ANULAR con rastro (AnnulPaymentAsync, que NO pasa por esta compuerta a
         // proposito). Sigue permitido editar en los estados vivos (En gestion/Confirmada/...), asi que NO se
         // reabre la cobrabilidad de alta de ADR-033. Es la PRIMERA COMPUERTA; los guards fiscales/de puente de
-        // abajo siguen siendo la defensa final. InvalidOperationException -> 409.
+        // abajo siguen siendo la defensa final. PaymentValidationException -> 409 (Tanda de saneo 2026-07-22).
         await EnsurePaymentEditableByStateAsync(payment, cancellationToken);
 
         // B1.15 Fase 0' (CODE-01): inmutabilidad post-recibo / post-CAE. Editar
@@ -1710,7 +1731,7 @@ public class PaymentService : IPaymentService
             _logger.LogWarning(
                 "UpdatePaymentAsync rejected. PaymentId={PaymentId} ReservaId={ReservaId}. Reason={Reason}",
                 paymentId, payment.ReservaId, blockReason);
-            throw new InvalidOperationException(blockReason);
+            throw new PaymentValidationException(blockReason);
         }
 
         // ADR-021 §2.8 (B3): un pago CRUZADO (moneda real != moneda imputada) es INMUTABLE en su bloque
@@ -1728,7 +1749,7 @@ public class PaymentService : IPaymentService
                 _logger.LogWarning(
                     "UpdatePaymentAsync rejected (cross-currency amount edit). PaymentId={PaymentId} ReservaId={ReservaId}.",
                     paymentId, payment.ReservaId);
-                throw new InvalidOperationException(
+                throw new PaymentValidationException(
                     "No se puede editar el monto de un cobro en moneda distinta a la del saldo. Anulalo y registralo de nuevo.");
             }
 
@@ -1756,7 +1777,7 @@ public class PaymentService : IPaymentService
                 _logger.LogWarning(
                     "UpdatePaymentAsync rejected (overpayment credit already consumed). PaymentId={PaymentId} ReservaId={ReservaId}.",
                     paymentId, payment.ReservaId);
-                throw new InvalidOperationException(overpaymentBlock);
+                throw new PaymentValidationException(overpaymentBlock);
             }
             var (cleanupActorUserId, cleanupActorUserName) = ResolveLedgerActor();
             await OverpaymentCreditCleanup.ReverseOverpaymentArtifactsAsync(
@@ -1818,7 +1839,8 @@ public class PaymentService : IPaymentService
         // estados un cobro NO se borra, se ANULA con rastro (AnnulPaymentAsync, que NO pasa por esta compuerta
         // a proposito — sigue siendo la salida valida en terminal y deja PaymentAnnulled). En los estados
         // vivos el DELETE sigue permitido y lo restringen los guards fiscal (dentro de DeletePaymentCoreAsync)
-        // y de puente (arriba). PRIMERA COMPUERTA; defensa final intacta. InvalidOperationException -> 409.
+        // y de puente (arriba). PRIMERA COMPUERTA; defensa final intacta. PaymentValidationException -> 409
+        // (Tanda de saneo 2026-07-22).
         await EnsurePaymentEditableByStateAsync(payment, cancellationToken);
 
         await DeletePaymentCoreAsync(payment, cancellationToken);
@@ -1907,12 +1929,12 @@ public class PaymentService : IPaymentService
     /// ADR-032 (review): corta cualquier intento de anular/borrar un cobro que YA esta anulado
     /// (soft-deleted). El caller lo cargo con FindAsync, que ignora el filtro global !IsDeleted, asi que
     /// puede traer una fila ya borrada. Re-procesarla duplicaria el evento de auditoria y volveria a correr
-    /// la limpieza de sobrepago. Tira InvalidOperationException -> el controller la mapea a 409.
+    /// la limpieza de sobrepago. Tira PaymentValidationException -> el controller la mapea a 409.
     /// </summary>
     private static void EnsureNotAlreadyAnnulled(Payment payment)
     {
         if (payment.IsDeleted)
-            throw new InvalidOperationException(AlreadyAnnulledMessage);
+            throw new PaymentValidationException(AlreadyAnnulledMessage);
     }
 
     /// <summary>
@@ -1928,7 +1950,7 @@ public class PaymentService : IPaymentService
             _logger.LogWarning(
                 "{Operation} rejected (direct overpayment-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
                 operationName, payment.Id, payment.ReservaId);
-            throw new InvalidOperationException(OverpaymentCreditCleanup.DirectBridgeMutationBlockReason);
+            throw new PaymentValidationException(OverpaymentCreditCleanup.DirectBridgeMutationBlockReason);
         }
 
         // FC4 (2026-06-14): mismo candado para el puente de saldo a favor aplicado.
@@ -1937,7 +1959,7 @@ public class PaymentService : IPaymentService
             _logger.LogWarning(
                 "{Operation} rejected (direct applied-credit-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
                 operationName, payment.Id, payment.ReservaId);
-            throw new InvalidOperationException(AppliedCreditBridge.DirectBridgeMutationBlockReason);
+            throw new PaymentValidationException(AppliedCreditBridge.DirectBridgeMutationBlockReason);
         }
 
         // Tanda D1 (2026-07-16): mismo candado para el puente de saldo a favor aplicado contra una MULTA.
@@ -1946,7 +1968,7 @@ public class PaymentService : IPaymentService
             _logger.LogWarning(
                 "{Operation} rejected (direct penalty-credit-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
                 operationName, payment.Id, payment.ReservaId);
-            throw new InvalidOperationException(AppliedCreditBridge.PenaltyDirectBridgeMutationBlockReason);
+            throw new PaymentValidationException(AppliedCreditBridge.PenaltyDirectBridgeMutationBlockReason);
         }
 
         // ADR-044 "Deshacer una multa ya emitida" (2026-07-14): mismo candado para el puente de multa deshecha.
@@ -1955,7 +1977,7 @@ public class PaymentService : IPaymentService
             _logger.LogWarning(
                 "{Operation} rejected (direct debit-note-undo-bridge mutation). PaymentId={PaymentId} ReservaId={ReservaId}.",
                 operationName, payment.Id, payment.ReservaId);
-            throw new InvalidOperationException(ClientCreditService.DirectBridgeMutationBlockReason);
+            throw new PaymentValidationException(ClientCreditService.DirectBridgeMutationBlockReason);
         }
     }
 
@@ -1977,7 +1999,7 @@ public class PaymentService : IPaymentService
             _logger.LogWarning(
                 "DeletePaymentCoreAsync rejected (fiscal guard). PaymentId={PaymentId} ReservaId={ReservaId}. Reason={Reason}",
                 paymentId, payment.ReservaId, blockReason);
-            throw new InvalidOperationException(blockReason);
+            throw new PaymentValidationException(blockReason);
         }
 
         // ADR-022 §4.9 (fix S1): si este cobro genero un saldo a favor de sobrepago YA usado, no se anula
@@ -1989,7 +2011,7 @@ public class PaymentService : IPaymentService
             _logger.LogWarning(
                 "DeletePaymentCoreAsync rejected (overpayment credit already consumed). PaymentId={PaymentId} ReservaId={ReservaId}.",
                 paymentId, payment.ReservaId);
-            throw new InvalidOperationException(overpaymentBlock);
+            throw new PaymentValidationException(overpaymentBlock);
         }
         var (overpaymentActorUserId, overpaymentActorUserName) = ResolveLedgerActor();
         await OverpaymentCreditCleanup.ReverseOverpaymentArtifactsAsync(

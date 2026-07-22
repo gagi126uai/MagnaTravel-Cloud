@@ -8,6 +8,7 @@ using Moq;
 using TravelApi.Application.Interfaces;
 using TravelApi.Application.Mappings;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Services;
 using Xunit;
@@ -174,7 +175,9 @@ public class PaymentServiceRegistrationTests
 
         var service = BuildService(context);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // Tanda de saneo (2026-07-22): tipo exacto PaymentValidationException (hereda de
+        // InvalidOperationException, pero xUnit exige tipo EXACTO en Assert.ThrowsAsync<T>).
+        await Assert.ThrowsAsync<PaymentValidationException>(() =>
             service.CreatePaymentAsync(
                 new CreatePaymentRequest
                 {
@@ -193,7 +196,9 @@ public class PaymentServiceRegistrationTests
 
         var service = BuildService(context);
 
-        await Assert.ThrowsAsync<ArgumentException>(() =>
+        // Cierre de vector N1 (2026-07-22): "El monto debe ser mayor a 0." ahora es PaymentValidationException
+        // (mensaje de negocio), no ArgumentException "a secas" — el controller ya no tiene ese catch ancho.
+        var ex = await Assert.ThrowsAsync<PaymentValidationException>(() =>
             service.CreatePaymentAsync(
                 new CreatePaymentRequest
                 {
@@ -202,6 +207,7 @@ public class PaymentServiceRegistrationTests
                     Method = "Transfer"
                 },
                 CancellationToken.None));
+        Assert.Equal("El monto debe ser mayor a 0.", ex.Message);
     }
 
     [Fact]

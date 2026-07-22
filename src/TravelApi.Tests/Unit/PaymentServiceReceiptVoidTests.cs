@@ -10,6 +10,7 @@ using TravelApi.Application.Exceptions;
 using TravelApi.Application.Interfaces;
 using TravelApi.Application.Mappings;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Services;
 using Xunit;
@@ -110,7 +111,9 @@ public class PaymentServiceReceiptVoidTests
 
         var service = BuildPaymentService(context);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        // Tanda de saneo (2026-07-22): tipo exacto PaymentValidationException (hereda de
+        // InvalidOperationException, pero xUnit exige tipo EXACTO en Assert.ThrowsAsync<T>).
+        var ex = await Assert.ThrowsAsync<PaymentValidationException>(
             () => service.IssueReceiptAsync(paymentId: 201, CancellationToken.None));
         Assert.Contains("anulado o eliminado", ex.Message, StringComparison.OrdinalIgnoreCase);
 
@@ -128,7 +131,7 @@ public class PaymentServiceReceiptVoidTests
 
         var service = BuildPaymentService(context);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        var ex = await Assert.ThrowsAsync<PaymentValidationException>(
             () => service.IssueReceiptAsync(paymentId: 202, CancellationToken.None));
         Assert.Contains("anulado o eliminado", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(0, await context.PaymentReceipts.CountAsync(r => r.PaymentId == 202));
@@ -152,7 +155,7 @@ public class PaymentServiceReceiptVoidTests
 
         var service = BuildPaymentService(context);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        var ex = await Assert.ThrowsAsync<PaymentValidationException>(
             () => service.IssueReceiptAsync(paymentId: 203, CancellationToken.None));
         Assert.Contains("REC-VOIDED-001", ex.Message);
 
@@ -239,7 +242,7 @@ public class PaymentServiceReceiptVoidTests
 
         var service = BuildPaymentService(context);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        var ex = await Assert.ThrowsAsync<PaymentValidationException>(
             () => service.VoidReceiptAsync(
                 payment.PublicId.ToString(),
                 reason: null, userId: "admin", userName: null,
@@ -258,7 +261,7 @@ public class PaymentServiceReceiptVoidTests
 
         var service = BuildPaymentService(context);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        var ex = await Assert.ThrowsAsync<PaymentValidationException>(
             () => service.VoidReceiptAsync(
                 payment.PublicId.ToString(),
                 reason: null, userId: "admin", userName: null,

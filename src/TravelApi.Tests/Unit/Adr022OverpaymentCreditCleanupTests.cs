@@ -11,6 +11,7 @@ using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Application.Mappings;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Reservations;
@@ -180,7 +181,8 @@ public class Adr022OverpaymentCreditCleanupTests
         await context.SaveChangesAsync();
 
         // Anular debe BLOQUEAR.
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        // Tanda de saneo (2026-07-22): tipo exacto PaymentValidationException; mensaje identico.
+        var ex = await Assert.ThrowsAsync<PaymentValidationException>(
             () => BuildPaymentService(context).DeletePaymentAsync(paymentDto.PublicId.ToString(), CancellationToken.None));
         Assert.Contains("saldo a favor", ex.Message, StringComparison.OrdinalIgnoreCase);
 
@@ -280,7 +282,8 @@ public class Adr022OverpaymentCreditCleanupTests
         });
         await context.SaveChangesAsync();
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        // Tanda de saneo (2026-07-22): tipo exacto PaymentValidationException; mensaje identico.
+        var ex = await Assert.ThrowsAsync<PaymentValidationException>(
             () => BuildPaymentService(context).UpdatePaymentAsync(
                 paymentDto.PublicId.ToString(),
                 new UpdatePaymentRequest { Amount = 120m, Method = "Transfer" },
@@ -356,7 +359,8 @@ public class Adr022OverpaymentCreditCleanupTests
         var bridgePublicId = GetLiveBridgePublicId(context, sourcePaymentId);
 
         // Intentar borrar el puente DIRECTAMENTE (como si el usuario clickeara la fila negativa).
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        // Tanda de saneo (2026-07-22): tipo exacto PaymentValidationException; mensaje identico.
+        var ex = await Assert.ThrowsAsync<PaymentValidationException>(
             () => BuildPaymentService(context).DeletePaymentAsync(bridgePublicId.ToString(), CancellationToken.None));
         Assert.Contains("respaldo interno", ex.Message, StringComparison.OrdinalIgnoreCase);
 
@@ -376,7 +380,8 @@ public class Adr022OverpaymentCreditCleanupTests
         var sourcePaymentId = await context.Payments.Where(p => p.PublicId == paymentDto.PublicId).Select(p => p.Id).FirstAsync();
         var bridgePublicId = GetLiveBridgePublicId(context, sourcePaymentId);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        // Tanda de saneo (2026-07-22): tipo exacto PaymentValidationException; mensaje identico.
+        var ex = await Assert.ThrowsAsync<PaymentValidationException>(
             () => BuildPaymentService(context).UpdatePaymentAsync(
                 bridgePublicId.ToString(),
                 new UpdatePaymentRequest { Amount = -10m, Method = OverpaymentCreditCleanup.BridgeMethod },

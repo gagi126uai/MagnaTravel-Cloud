@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Domain.Helpers;
 using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
@@ -28,8 +29,18 @@ public static class CancelledDebitNoteCollectionGate
 
     /// <summary>
     /// Valida el gate completo y devuelve el <see cref="Result"/> con la moneda y el saldo pendiente de la ND.
-    /// Tira <see cref="InvalidOperationException"/> (el caller la traduce a 409) si algo no corresponde: sin ND
-    /// vinculada, ND no aprobada, moneda distinta, sin saldo pendiente, o monto que supera lo pendiente.
+    /// Tira <see cref="PaymentValidationException"/> (mensaje de negocio, pensado para el usuario) si algo no
+    /// corresponde: sin ND vinculada, ND no aprobada, moneda distinta, sin saldo pendiente, o monto que supera
+    /// lo pendiente.
+    ///
+    /// <para>Tanda de saneo (2026-07-22): antes tiraba <see cref="InvalidOperationException"/> "a secas". Como
+    /// este gate lo llaman DOS callers (<c>PaymentService</c> para el cobro real de una multa, y
+    /// <c>ClientCreditService</c> cuando el saldo a favor del cliente paga la multa), se eligio
+    /// <c>PaymentValidationException</c> — sigue heredando de <see cref="InvalidOperationException"/>, asi que
+    /// el catch ancho que todavia tiene <c>CustomersController</c> para el segundo caso lo sigue atrapando
+    /// igual. El primer caso (<c>PaymentsController</c>) ya tiene el catch ESPECIFICO de esta tanda, que solo
+    /// funciona si el gate tira este tipo (si siguiera tirando InvalidOperationException "a secas", el mensaje
+    /// de negocio se perdia y el usuario veia el 500 generico).</para>
     /// </summary>
     public static async Task<Result> EnsureCollectableAsync(
         AppDbContext db,
@@ -41,7 +52,7 @@ public static class CancelledDebitNoteCollectionGate
     {
         if (!linkedInvoiceId.HasValue)
         {
-            throw new InvalidOperationException(
+            throw new PaymentValidationException(
                 "Para cobrar una multa de una reserva anulada debe seleccionar su Nota de Debito aprobada.");
         }
 
@@ -62,7 +73,7 @@ public static class CancelledDebitNoteCollectionGate
             || debitNote.Resultado != "A"
             || !InvoiceComprobanteHelpers.IsDebitNote(debitNote.TipoComprobante))
         {
-            throw new InvalidOperationException(
+            throw new PaymentValidationException(
                 "La multa debe estar documentada por una Nota de Debito aprobada de esta reserva.");
         }
 
@@ -70,7 +81,7 @@ public static class CancelledDebitNoteCollectionGate
         var imputedCurrency = Monedas.Normalizar(rawImputedCurrency);
         if (!string.Equals(debitNoteCurrency, imputedCurrency, StringComparison.Ordinal))
         {
-            throw new InvalidOperationException(
+            throw new PaymentValidationException(
                 $"La Nota de Debito esta expresada en {debitNoteCurrency}; el cobro debe imputarse a esa moneda.");
         }
 
@@ -88,12 +99,12 @@ public static class CancelledDebitNoteCollectionGate
             collectedByDebitNote.GetValueOrDefault(debitNote.Id));
         if (outstanding <= 0m)
         {
-            throw new InvalidOperationException("La Nota de Debito seleccionada ya no tiene saldo pendiente.");
+            throw new PaymentValidationException("La Nota de Debito seleccionada ya no tiene saldo pendiente.");
         }
 
         if (ReservationEconomicPolicy.RoundCurrency(imputedAmount) > outstanding)
         {
-            throw new InvalidOperationException(
+            throw new PaymentValidationException(
                 $"El monto imputado supera el saldo pendiente de la Nota de Debito ({CurrencyDisplayFormat.Amount(outstanding)} {debitNoteCurrency}).");
         }
 

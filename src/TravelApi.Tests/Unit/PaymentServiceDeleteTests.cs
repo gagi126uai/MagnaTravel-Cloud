@@ -12,6 +12,7 @@ using TravelApi.Application.Interfaces;
 using TravelApi.Application.Mappings;
 using TravelApi.Controllers;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Infrastructure.Identity;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Services;
@@ -147,7 +148,10 @@ public class PaymentServiceDeleteTests
 
         var service = BuildPaymentService(context);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        // Tanda de saneo (2026-07-22): PaymentService.DeletePaymentAsync ahora tira PaymentValidationException
+        // (hereda de InvalidOperationException, pero xUnit exige tipo EXACTO en Assert.ThrowsAsync<T>, asi que
+        // el test se actualiza al tipo nuevo — mismo criterio que SupplierPaymentByServiceTests).
+        var ex = await Assert.ThrowsAsync<PaymentValidationException>(
             () => service.DeletePaymentAsync(payment.PublicId.ToString(), CancellationToken.None));
         // Mensaje actualizado 2026-05-11: "comprobante vigente" en vez de "recibo emitido"
         // — la nueva semantica diferencia Issued (bloqueante) vs Voided (no bloqueante).
@@ -241,7 +245,8 @@ public class PaymentServiceDeleteTests
 
         var service = BuildPaymentService(context);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        // Tanda de saneo (2026-07-22): tipo exacto PaymentValidationException (ver comentario mas arriba).
+        var ex = await Assert.ThrowsAsync<PaymentValidationException>(
             () => service.DeletePaymentAsync(payment.PublicId.ToString(), CancellationToken.None));
         // Mensaje actualizado 2026-05-11.
         Assert.Contains("comprobante vigente", ex.Message, StringComparison.OrdinalIgnoreCase);
@@ -274,7 +279,8 @@ public class PaymentServiceDeleteTests
 
         var service = BuildPaymentService(context);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+        // Tanda de saneo (2026-07-22): tipo exacto PaymentValidationException (ver comentario mas arriba).
+        var ex = await Assert.ThrowsAsync<PaymentValidationException>(
             () => service.DeletePaymentAsync(payment.PublicId.ToString(), CancellationToken.None));
         Assert.Contains("factura", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("nota de crédito", ex.Message, StringComparison.OrdinalIgnoreCase);
@@ -362,12 +368,19 @@ public class PaymentServiceDeleteTests
     // ===== Pin del contrato HTTP 409 en ambos controllers =====
 
     [Fact]
-    public async Task PaymentsController_DeletePayment_MapsInvalidOperationExceptionTo409()
+    public async Task PaymentsController_DeletePayment_MapsPaymentValidationExceptionTo409()
     {
+        // Tanda de saneo (2026-07-22): antes este test pineaba que un InvalidOperationException "a secas"
+        // se mapeaba a 409 — ese era justamente el catch ANCHO que se cerro (podia atrapar sin querer un
+        // InvalidOperationException real de framework y devolver su Message crudo al vendedor). Ahora el
+        // contrato es: PaymentValidationException (la excepcion de NEGOCIO del circuito) -> 409 con su
+        // mensaje. Un InvalidOperationException de framework (no de negocio) YA NO cae en este catch: sigue
+        // de largo y el GlobalExceptionHandler lo convierte en el 500 generico, sin eco-ar el mensaje tecnico.
+        // (Analogo del lado proveedor, ya con test de integracion propio: SupplierPaymentErrorMessagePropagationTests.)
         var paymentService = new Mock<IPaymentService>();
         paymentService
             .Setup(s => s.DeletePaymentAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("No se puede anular el pago porque tiene un comprobante vigente. Anula primero el comprobante."));
+            .ThrowsAsync(new PaymentValidationException("No se puede anular el pago porque tiene un comprobante vigente. Anula primero el comprobante."));
 
         var controller = new PaymentsController(paymentService.Object);
 

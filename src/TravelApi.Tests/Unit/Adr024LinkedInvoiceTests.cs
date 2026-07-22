@@ -13,6 +13,7 @@ using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Application.Mappings;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Exceptions;
 using TravelApi.Domain.Helpers;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Services;
@@ -219,7 +220,9 @@ public class Adr024LinkedInvoiceTests
         Assert.True(persisted.AffectsCash);
         Assert.Equal(debitNote.Id, persisted.LinkedInvoiceId);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => service.CreatePaymentAsync(new CreatePaymentRequest
+        // Tanda de saneo (2026-07-22): CancelledDebitNoteCollectionGate ahora tira PaymentValidationException
+        // (mensaje de negocio), no InvalidOperationException "a secas". Mensaje identico.
+        var ex = await Assert.ThrowsAsync<PaymentValidationException>(() => service.CreatePaymentAsync(new CreatePaymentRequest
         {
             ReservaId = reserva.PublicId.ToString(),
             Amount = 301m,
