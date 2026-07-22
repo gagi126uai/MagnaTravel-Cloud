@@ -1,3 +1,22 @@
+## ⚖️ PRODUCT CONSTITUTION — BINDING (owner's rule, 2026-07-22)
+
+`docs/estandares/2026-07-22-constitucion-producto-v1.md` is the single source
+of transversal rules, SIGNED IN FULL by the owner (plus its two companion
+docs: `...-huecos-expertos-erp.md` E-1..E-18 and `...-huecos-expertos-rubro.md`
+A-1..A-20, both also signed). It is BINDING for every agent:
+
+1. **Every brief to an implementing agent MUST cite the applicable rule
+   numbers** (e.g. "respect P-3, F-2, T-1"). Subagents start with no memory —
+   the rules travel in the brief, always.
+2. **Every reviewer verifies against rule numbers**, not personal judgment,
+   and cites the violated rule number in any blocking finding.
+3. **No work is built without a spec that cites which rules it applies.**
+   Owner signature required when it touches screens, money, or business.
+4. **Anything the constitution does not cover gets asked to the owner** (with
+   options + a single recommendation); his answer becomes a new numbered rule.
+5. E-*/A-* rules are signed OBJECTIVES (not all built yet): new work must
+   never contradict them; their build order is decided with the owner.
+
 ## Agent routing
 
 Use specialized agents based on risk and scope.
