@@ -117,6 +117,13 @@ export function ReservaSummaryStrip({ reserva }) {
     // reserva.totalPaid del backend directamente, igual que el path multimoneda de arriba.
     const collected = reserva.totalPaid ?? 0;
 
+    // Fix formato gringo (seguimiento Tanda P4, 2026-07-22): formatCurrency(amount) SIN
+    // currency explícita cae en el formato legacy en-US ("$700.00" con punto) para no romper
+    // call sites viejos (ver lib/utils.js). Estas tarjetas mono-moneda no pasaban currency,
+    // por eso mostraban plata "a la gringa" en vez de es-AR ("$ 700,00"). Se pasa explícita
+    // reserva.porMoneda?.[0]?.currency (o "ARS" si el DTO todavía no la trae), mismo patrón
+    // que ya usa EstadoCuentaResumen.jsx en la pestaña "Venta y facturación".
+
     return (
         <div className={`grid grid-cols-2 ${admin ? 'md:grid-cols-3' : 'md:grid-cols-2'} gap-6 mb-10 pb-8 border-b border-slate-100 dark:border-slate-800/50`}>
 
@@ -133,13 +140,13 @@ export function ReservaSummaryStrip({ reserva }) {
                             Saldo a Cobrar
                         </p>
                         <p className={`text-3xl font-extrabold leading-none ${moneyStatus.tone === 'danger' ? 'text-rose-600 dark:text-rose-500' : 'text-slate-300 dark:text-slate-700'}`}>
-                            {formatCurrency(reserva.balance)}
+                            {formatCurrency(reserva.balance, reserva.porMoneda?.[0]?.currency ?? "ARS")}
                             {moneyStatus.tone === 'danger' && <span className="inline-block ml-2 w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse align-middle" />}
                         </p>
                         {/* "de $X presupuestado" solo si totalSale difiere del balance (hay servicios no confirmados aún) */}
                         {reserva.totalSale > 0 && (
                             <p className="text-xs text-slate-400 dark:text-slate-500">
-                                de {formatCurrency(reserva.totalSale)} presupuestado
+                                de {formatCurrency(reserva.totalSale, reserva.porMoneda?.[0]?.currency ?? "ARS")} presupuestado
                             </p>
                         )}
                     </>
@@ -149,7 +156,7 @@ export function ReservaSummaryStrip({ reserva }) {
             <div className="space-y-1">
                 <p className="text-[10px] uppercase tracking-widest font-bold text-slate-400 dark:text-slate-500">Recaudado</p>
                 <p className="text-3xl font-extrabold text-emerald-600 dark:text-emerald-500 leading-none">
-                    {formatCurrency(collected)}
+                    {formatCurrency(collected, reserva.porMoneda?.[0]?.currency ?? "ARS")}
                 </p>
             </div>
 
@@ -157,7 +164,7 @@ export function ReservaSummaryStrip({ reserva }) {
                 <div className="space-y-1">
                     <p className="text-[10px] uppercase tracking-widest font-bold text-slate-400 dark:text-slate-500">Inversión (Costo)</p>
                     <p className="text-3xl font-bold text-slate-400 dark:text-slate-600 leading-none">
-                        {formatCurrency(reserva.totalCost)}
+                        {formatCurrency(reserva.totalCost, reserva.porMoneda?.[0]?.currency ?? "ARS")}
                     </p>
                 </div>
             )}
@@ -192,9 +199,11 @@ function BloqueContextoAnulado({ moneyStatus, reserva }) {
     }
 
     const esMultaEnAmbar = moneyStatus.kind === 'multaPorCobrar';
+    // Fallback a "ARS" si no hay porMoneda cargado: sin currency explícita, formatCurrency
+    // usa el formato legacy en-US ("$700.00") en vez del formato argentino ("$ 700,00").
     const monto = esMultaEnAmbar
-        ? formatCurrency(moneyStatus.amount, moneyStatus.amountCurrency)
-        : formatCurrency(Math.abs(reserva.balance ?? 0), reserva.porMoneda?.[0]?.currency);
+        ? formatCurrency(moneyStatus.amount, moneyStatus.amountCurrency ?? "ARS")
+        : formatCurrency(Math.abs(reserva.balance ?? 0), reserva.porMoneda?.[0]?.currency ?? "ARS");
 
     return (
         <>

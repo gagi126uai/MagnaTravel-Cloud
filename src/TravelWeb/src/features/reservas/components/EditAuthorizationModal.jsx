@@ -82,8 +82,8 @@ export function EditAuthorizationModal({ reservaPublicId, onClose, onAuthorized 
                         // --- Vista del admin: puede destrabar escribiendo el motivo ---
                         <>
                             <p className="text-sm text-slate-600 dark:text-slate-300">
-                                Esta reserva esta confirmada y tiene el candado activo.
-                                Como administrador, podes desbloquearla por 30 minutos.
+                                Esta reserva está confirmada y tiene el candado activo.
+                                Como administrador, podés desbloquearla por 30 minutos.
                                 El motivo queda registrado en el historial.
                             </p>
                             <div>
@@ -97,7 +97,7 @@ export function EditAuthorizationModal({ reservaPublicId, onClose, onAuthorized 
                                     id="motivo-autorizacion"
                                     value={motivo}
                                     onChange={(e) => setMotivo(e.target.value)}
-                                    placeholder="Explica por que necesitas hacer este cambio (minimo 10 caracteres)"
+                                    placeholder="Explicá por qué necesitás hacer este cambio (mínimo 10 caracteres)"
                                     rows={3}
                                     className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
                                 />
@@ -111,7 +111,7 @@ export function EditAuthorizationModal({ reservaPublicId, onClose, onAuthorized 
                     ) : (
                         // --- Vista del vendedor comun: no puede destrabar, informa quien puede ---
                         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-800/50 dark:bg-amber-950/30 dark:text-amber-200">
-                            <p className="font-bold mb-1">Esta reserva esta confirmada y no se puede editar.</p>
+                            <p className="font-bold mb-1">Esta reserva está confirmada y no se puede editar.</p>
                             <p>Pedile a un administrador que la destrabe. El desbloqueo dura 30 minutos y queda registrado.</p>
                         </div>
                     )}
