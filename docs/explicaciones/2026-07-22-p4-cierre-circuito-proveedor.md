@@ -51,3 +51,35 @@ memoria de retomo). Seguimientos menores anotados para un barrido futuro:
 formato con punto ($700.00) en las tarjetas resumen de la ficha, tildes del
 modal de autorización, y el botón "Emitir factura" que la transición
 Presupuesto→En gestión todavía no ofrece (muestra el mensaje plano, alcanza).
+
+---
+
+## AGREGADO (madrugada): puntos de cierre y dos cazas más de los gates
+
+Después de P4 se cerraron los puntos que habían pedido las reviews:
+
+- **Barrido completo del formato gringo**: Reportes, el buscador, la papelera
+  de pagos, los números del listado de reservas y el modal del operador (que
+  además ahora muestra el saldo POR MONEDA y distingue "sin permiso" de "sin
+  saldo"). Toda la plata visible quedó en formato argentino.
+- **El buscador mostraba la forma de pago en inglés crudo** ("Transfer",
+  "Paid") — cazado por el gate de exposición. Ahora: Transferencia/Pagado, con
+  guion seguro si aparece un valor desconocido.
+- **Aviso claro cuando "El cliente aceptó" rebota por el candado de plata**:
+  cartel fijo con el motivo real del motor. La primera versión ofrecía un
+  botón "Emitir factura" que el paseo E2E demostró ROTO (la reserva sigue en
+  Presupuesto, donde no se puede facturar) — se sacó el botón: el cartel
+  explica y no promete lo imposible. Verificado en vivo.
+- **Limpieza de la API**: se dejó de mandar un campo que la pantalla nunca
+  usó, y se agregaron los tests que pidieron las reviews.
+
+Commit `a28fdccc`, CI verde, deploy OK.
+
+**Anotado para después** (no urgente): los totales sumados de Reportes y el
+listado pueden mezclar pesos y dólares en una sola cifra (deuda vieja de
+diseño, el arreglo real es backend y conecta con el norte multimoneda); y la
+pregunta de negocio de si puede existir plata pagada al operador con la
+reserva todavía en Presupuesto (el candado defensivo ya lo cubre).
+
+**Con esto, el circuito proveedor queda cerrado del todo del lado del
+sistema. Falta únicamente la prueba a mano de Gaston en producción.**
