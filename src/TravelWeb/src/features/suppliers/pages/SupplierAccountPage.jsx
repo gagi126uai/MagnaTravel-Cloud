@@ -27,6 +27,7 @@ import {
 import { api } from "../../../api";
 import { AccountPageSkeleton } from "../../../components/ui/skeleton";
 import { DatabaseUnavailableState } from "../../../components/ui/DatabaseUnavailableState";
+import { CartelEmergente, CARTEL_EMERGENTE_VARIANTES } from "../../../components/CartelEmergente";
 import {
     DataGrid,
     DataGridBody,
@@ -1215,27 +1216,24 @@ function ServiceStatusEditor({ service, onUpdated, canEdit }) {
                     <option key={opt} value={opt}>{opt}</option>
                 ))}
             </select>
-            {/* Aviso fijo (no un toast que desaparece): el usuario necesita el link a la reserva
-                para poder resolver el bloqueo, así que lo dejamos visible en la fila. */}
-            {bloqueoPagoSinFactura && (
-                <div
-                    className="max-w-[220px] rounded-md border border-rose-200 bg-rose-50 px-2 py-1.5 text-[11px] leading-snug text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
-                    role="alert"
-                    data-testid="status-editor-bloqueo-pago-sin-factura"
-                >
-                    <p>{bloqueoPagoSinFactura.mensaje}</p>
-                    {bloqueoPagoSinFactura.reservaPublicId && (
-                        <Link
-                            to={`/reservas/${bloqueoPagoSinFactura.reservaPublicId}`}
-                            state={{ irAFacturar: true }}
-                            className="mt-1 inline-flex items-center gap-1 font-bold text-indigo-600 hover:underline dark:text-indigo-400"
-                        >
-                            <FileText className="h-3 w-3" />
-                            Ir a la reserva a facturar
-                        </Link>
-                    )}
-                </div>
-            )}
+            {/* Aviso 1 del inventario (spec 2026-07-22): rechazo largo del motor → ventana
+                única, no un recuadro incrustado en la fila que deformaba la tabla. */}
+            <CartelEmergente
+                isOpen={Boolean(bloqueoPagoSinFactura)}
+                variant={CARTEL_EMERGENTE_VARIANTES.BLOQUEO}
+                message={bloqueoPagoSinFactura?.mensaje}
+                onClose={() => setBloqueoPagoSinFactura(null)}
+                dataTestId="status-editor-bloqueo-pago-sin-factura"
+                action={
+                    bloqueoPagoSinFactura?.reservaPublicId
+                        ? {
+                            label: "Ir a la reserva a facturar",
+                            to: `/reservas/${bloqueoPagoSinFactura.reservaPublicId}`,
+                            state: { irAFacturar: true },
+                        }
+                        : null
+                }
+            />
         </div>
     );
 }

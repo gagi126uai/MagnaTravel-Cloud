@@ -161,14 +161,17 @@ function check(name, ok, detail) {
   // pago — por eso el boton "Emitir factura" del editor es inalcanzable salvo carrera.
   // Lo que SI se verifica: cartel con mensaje limpio, SIN boton "Emitir factura" (el
   // motivo no es el del pago), y la ficha queda abierta sin perder lo cargado.
+  // Nota (spec cartel emergente 2026-07-22): el rechazo LARGO del motor ahora sale en
+  // ventana ("inline-card-rechazo-motor"), no incrustado — "inline-card-error" quedo
+  // reservado para las validaciones CORTAS de campo, que siguen en linea.
   await page.getByRole("button", { name: "Servicios" }).first().click().catch(async () => {
     await page.getByRole("tab", { name: "Servicios" }).first().click();
   });
   await page.getByRole("button", { name: "Editar servicio" }).first().click();
   await page.getByRole("button", { name: "Guardar cambios" }).waitFor();
   await page.getByRole("button", { name: "Guardar cambios" }).click();
-  await page.locator('[data-testid="inline-card-error"]').waitFor({ timeout: 15000 });
-  const cartelEditor = await page.locator('[data-testid="inline-card-error"]').innerText();
+  await page.locator('[data-testid="inline-card-rechazo-motor"]').waitFor({ timeout: 15000 });
+  const cartelEditor = await page.locator('[data-testid="inline-card-rechazo-motor"]').innerText();
   await page.screenshot({ path: SHOTS + "/3-editor-rechazo-limpio.png", fullPage: true });
   check("(c) Editor: el rechazo muestra un cartel con mensaje limpio (sin internals)",
     !/GUID|[0-9a-f]{8}-[0-9a-f]{4}-|Conflict|Exception|undefined|CANCEL_SERVICE|degradar/i.test(cartelEditor), cartelEditor.slice(0, 160));

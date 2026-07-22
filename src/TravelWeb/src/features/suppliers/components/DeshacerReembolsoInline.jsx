@@ -96,6 +96,7 @@ export function DeshacerReembolsoInline({ item, onCerrar, onCompletado }) {
         mensaje={errorMensaje}
         mostrarBotonCuentaCliente={mostrarBotonCuentaCliente}
         clientePublicId={item.clientePublicId}
+        onClose={() => setErrorMensaje(null)}
       />
 
       <div>

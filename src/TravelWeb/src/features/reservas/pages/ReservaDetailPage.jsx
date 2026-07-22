@@ -5,6 +5,7 @@ import { api } from "../../../api";
 import { showConfirm, showError, showSuccess } from "../../../alerts";
 import ReservaTimeline from "../../../components/ReservaTimeline";
 import ConfirmModal from "../../../components/ConfirmModal";
+import { CartelEmergente, CARTEL_EMERGENTE_VARIANTES } from "../../../components/CartelEmergente";
 import PassengerFormModal from "../../../components/PassengerFormModal";
 import { ReservaDocumentsTab } from "../../../components/ReservaDocumentsTab";
 import ServiceFormModal from "../../../components/ServiceFormModal";
@@ -1291,23 +1292,17 @@ export default function ReservaDetailPage() {
           desde otras pantallas (ServiceStatusEditor en SupplierAccountPage), que SÍ
           tiene botón porque ahí el ancla (factura) puede existir en otra reserva ya
           operativa — ese caso no es este. */}
-      {statusChangeBlockedByMoneyGuard && (
-        <div
-          className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
-          role="alert"
-          data-testid="status-bloqueo-aviso"
-        >
-          <p>{statusChangeBlockedByMoneyGuard.mensaje}</p>
-          <button
-            type="button"
-            data-testid="status-bloqueo-cerrar"
-            onClick={() => setStatusChangeBlockedByMoneyGuard(null)}
-            className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-rose-700"
-          >
-            Entendido
-          </button>
-        </div>
-      )}
+      <CartelEmergente
+        isOpen={Boolean(statusChangeBlockedByMoneyGuard)}
+        variant={CARTEL_EMERGENTE_VARIANTES.BLOQUEO}
+        message={statusChangeBlockedByMoneyGuard?.mensaje}
+        onClose={() => setStatusChangeBlockedByMoneyGuard(null)}
+        dataTestId="status-bloqueo-aviso"
+        closeTestId="status-bloqueo-cerrar"
+        // Sin botón de acción: FIX B1 (2026-07-22) — el único escenario donde este aviso
+        // aparece es con la reserva en Presupuesto, donde todavía no se puede facturar
+        // (ver el comentario largo que queda arriba, en el JSX de este bloque original).
+      />
 
       <ReservaSummaryStrip reserva={reserva} />
 

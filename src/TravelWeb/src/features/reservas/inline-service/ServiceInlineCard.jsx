@@ -13,22 +13,29 @@
  *   - Producto nuevo (newCatalogProduct): POST con newCatalogProduct (mutuamente excluyente con rateId)
  *   - Editar (serviceToEdit): PUT /reservas/{id}/{tipo}/{serviceId}
  *
- * Si el guardado falla, la ficha queda abierta con los datos intactos y muestra
- * un cartel rojo arriba de los botones (nunca se pierde lo cargado — guía UX ronda 2).
+ * Si el guardado falla, la ficha queda intacta detrás (nunca se pierde lo cargado — guía
+ * UX ronda 2). Hay DOS tipos de error, tratados distinto (spec del cartel emergente
+ * 2026-07-22, sección 2 — "la raya"):
+ *   - Corto, de un CAMPO (validarForm, nunca llegó a la API): sigue incrustado, pegado a
+ *     los botones (cartel rojo chico, testid "inline-card-error").
+ *   - Largo, del MOTOR (409/400 real del backend): se muestra en el Cartel Emergente
+ *     (ventana), nunca incrustado — puede traer el botón "Emitir factura" si el motivo es
+ *     "pago al operador sin factura viva".
  *
- * P3 "circuito proveedor" (spec 2026-07-22): al editar, si el costo nuevo queda por
- * debajo de lo ya pagado al operador, el motor no bloquea pero pide confirmar (409 +
- * code COST_BELOW_PAID_CONFIRMATION_REQUIRED) — se muestra un cartel ÁMBAR de aviso
- * (distinto del rojo de error) con "Volver a corregir" / "Sí, confirmar".
+ * P3 "circuito proveedor" (spec 2026-07-22, P1=A del cartel emergente): al editar, si el
+ * costo nuevo queda por debajo de lo ya pagado al operador, el motor no bloquea pero pide
+ * confirmar (409 + code COST_BELOW_PAID_CONFIRMATION_REQUIRED) — también se muestra en el
+ * Cartel Emergente (traje ámbar de confirmación) con "Volver a corregir" / "Sí, confirmar".
  */
 
 import { useState, useCallback } from "react";
-import { Hotel, Plane, Car, Package, ShieldCheck, AlertCircle, AlertTriangle, FileText } from "lucide-react";
+import { Hotel, Plane, Car, Package, ShieldCheck, AlertCircle } from "lucide-react";
 import { hasPermission } from "../../../auth";
 import { api } from "../../../api";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { getReservationServicePublicId } from "../lib/reservationServiceModel";
 import { resolverRechazoAnularServicio } from "../lib/serviceCancellationGuard";
+import { CartelEmergente, CARTEL_EMERGENTE_VARIANTES } from "../../../components/CartelEmergente";
 import { esRechazoCostoMenorAPagado, agregarConfirmacionCostoMenorAPagado } from "../lib/costConfirmationGuard";
 import { HotelInlineForm, calcularNoches, redondearDinero, formatearPrecio } from "./HotelInlineForm";
 import { FlightInlineForm, calcularTotalesVuelo } from "./FlightInlineForm";
@@ -358,16 +365,21 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
 
     // Estado de guardado
     const [guardando, setGuardando] = useState(false);
-    const [errorGuardado, setErrorGuardado] = useState(null);
-    // Motivo estructurado del último rechazo 409 (P1 "circuito proveedor", 2026-07-21):
-    // { codigoConocido, boton } salido de resolverRechazoAnularServicio. Se usa SOLO para
-    // decidir si mostramos el botón "Emitir factura" junto al cartel de error — el texto
-    // que se ve siempre es errorGuardado (el mensaje real del backend), nunca se inventa acá.
-    const [rechazoGuardado, setRechazoGuardado] = useState(null);
-    // Aviso ÁMBAR de la P3 "circuito proveedor" (2026-07-22): el motor pidió confirmar que
-    // bajar el costo del operador genera saldo a favor. Guarda el `message` tal cual del
-    // backend (con el monto exacto) — nunca convive con errorGuardado (cartel rojo), son
-    // dos estados mutuamente excluyentes que se limpian entre sí en cada intento de guardado.
+    // Error CORTO de validación de un campo (lo calcula validarForm() antes de llamar a la
+    // API — nunca pasó por el motor). Spec del cartel emergente (2026-07-22, sección 2):
+    // este tipo de error sigue INCRUSTADO junto a los botones, nunca en ventana.
+    const [errorValidacion, setErrorValidacion] = useState(null);
+    // Rechazo LARGO del motor (409/400 real que devolvió el backend al intentar guardar).
+    // Spec del cartel emergente (2026-07-22): esto sí es "lo intentaste y el motor te frenó"
+    // → va al Cartel Emergente (ventana), nunca incrustado en la ficha.
+    // `boton` sale de resolverRechazoAnularServicio (mismo mapeo que "anular servicio": el
+    // backend manda el MISMO code cuando el motivo es "pago al operador sin factura viva").
+    const [rechazoMotor, setRechazoMotor] = useState(null);
+    // Aviso ÁMBAR de la P3 "circuito proveedor" (2026-07-22, P1=A del cartel emergente): el
+    // motor pidió confirmar que bajar el costo del operador genera saldo a favor. Guarda el
+    // `message` tal cual del backend (con el monto exacto) — nunca convive con rechazoMotor
+    // (cartel rojo), son dos estados mutuamente excluyentes que se limpian entre sí en cada
+    // intento de guardado. También va al Cartel Emergente (traje confirmación, ámbar).
     const [avisoCostoMenorAPagado, setAvisoCostoMenorAPagado] = useState(null);
 
     const esEdicion = Boolean(serviceToEdit);
@@ -673,27 +685,32 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 return;
             }
 
-            // Si falla, la ficha queda abierta con todo intacto + cartel rojo (guía UX ronda 2)
-            setErrorGuardado(getApiErrorMessage(error, "No se pudo guardar. Revisá la conexión y probá de nuevo."));
+            // Si falla, la ficha queda abierta con todo intacto (guía UX ronda 2) y el rechazo
+            // real del motor se muestra en el Cartel Emergente (spec 2026-07-22).
             // P1 "circuito proveedor" (2026-07-21): el PUT de edición también puede rechazar con
             // el MISMO código que "anular servicio" (el servicio ya tiene pagos al operador y la
             // reserva no tiene factura para anclar el reembolso). Reusamos la lib de la Tanda 7
             // para decidir si corresponde ofrecer el botón "Emitir factura" — nunca se adivina
             // el motivo comparando el texto del mensaje.
-            setRechazoGuardado(resolverRechazoAnularServicio(error));
+            setRechazoMotor({
+                mensaje: getApiErrorMessage(error, "No se pudo guardar. Revisá la conexión y probá de nuevo."),
+                boton: resolverRechazoAnularServicio(error).boton,
+            });
         } finally {
             setGuardando(false);
         }
     };
 
     const handleGuardar = async () => {
-        setErrorGuardado(null);
-        setRechazoGuardado(null);
+        setErrorValidacion(null);
+        setRechazoMotor(null);
         setAvisoCostoMenorAPagado(null);
 
-        const errorValidacion = validarForm();
-        if (errorValidacion) {
-            setErrorGuardado(errorValidacion);
+        const mensajeValidacion = validarForm();
+        if (mensajeValidacion) {
+            // Error corto de campo: nunca pasó por el motor, queda incrustado (no es un
+            // rechazo del backend, así que no corresponde al Cartel Emergente).
+            setErrorValidacion(mensajeValidacion);
             return;
         }
 
@@ -881,46 +898,27 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
 
                 {/* Derecha: cartel de aviso/error + botones */}
                 <div className="flex flex-col items-end gap-2 w-full sm:w-auto">
-                    {/* Aviso ÁMBAR de la P3 (spec 2026-07-22): bajar el costo del operador por
-                        debajo de lo ya pagado no bloquea, pero el motor pide confirmar antes de
-                        guardar (genera saldo a favor con ese operador). Nunca se muestra junto
-                        al cartel rojo de error — son dos estados mutuamente excluyentes. */}
-                    {avisoCostoMenorAPagado && (
-                        <div
-                            className="flex flex-col gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 w-full sm:w-auto max-w-sm"
-                            role="alert"
-                            data-testid="inline-card-confirmar-costo"
-                        >
-                            <div className="flex items-start gap-2">
-                                <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                                {/* El texto es el message tal cual del motor (es-AR, con el monto
-                                    exacto de la diferencia) — el front nunca lo reescribe ni calcula. */}
-                                <span>{avisoCostoMenorAPagado}</span>
-                            </div>
-                            <div className="flex gap-2 self-end">
-                                <button
-                                    type="button"
-                                    onClick={handleVolverACorregirCosto}
-                                    disabled={guardando}
-                                    className="px-3 py-1.5 text-xs font-semibold text-amber-800 border border-amber-300 rounded-lg hover:bg-amber-100 disabled:opacity-50 transition-colors"
-                                    data-testid="confirmar-costo-corregir"
-                                >
-                                    Volver a corregir
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={handleConfirmarCostoMenor}
-                                    disabled={guardando}
-                                    className="px-3 py-1.5 text-xs font-semibold bg-amber-600 text-white rounded-lg hover:bg-amber-700 disabled:opacity-50 transition-colors"
-                                    data-testid="confirmar-costo-si"
-                                >
-                                    {guardando ? "Guardando…" : "Sí, confirmar"}
-                                </button>
-                            </div>
-                        </div>
-                    )}
-                    {/* Error arriba de los botones (guía UX ronda 2: nunca se pierde lo cargado) */}
-                    {errorGuardado && (
+                    {/* Aviso 6 del inventario (spec 2026-07-22, P1=A): bajar el costo del operador
+                        por debajo de lo ya pagado no bloquea, pero el motor pide confirmar antes
+                        de guardar (genera saldo a favor con ese operador) — va al Cartel
+                        Emergente igual que un rechazo, según lo que eligió Gastón. */}
+                    <CartelEmergente
+                        isOpen={Boolean(avisoCostoMenorAPagado)}
+                        variant={CARTEL_EMERGENTE_VARIANTES.CONFIRMACION}
+                        // El texto es el message tal cual del motor (es-AR, con el monto exacto
+                        // de la diferencia) — el front nunca lo reescribe ni lo calcula.
+                        message={avisoCostoMenorAPagado}
+                        onClose={handleVolverACorregirCosto}
+                        closeLabel="Volver a corregir"
+                        closeTestId="confirmar-costo-corregir"
+                        onConfirm={handleConfirmarCostoMenor}
+                        isConfirming={guardando}
+                        actionTestId="confirmar-costo-si"
+                        dataTestId="inline-card-confirmar-costo"
+                    />
+                    {/* Error CORTO de un campo (validarForm): sigue incrustado, pegado a los
+                        botones — nunca pasó por el motor, así que no es un rechazo "real". */}
+                    {errorValidacion && (
                         <div
                             className="flex flex-col gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 w-full sm:w-auto max-w-sm"
                             role="alert"
@@ -928,24 +926,29 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                         >
                             <div className="flex items-start gap-2">
                                 <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                                <span>{errorGuardado}</span>
+                                <span>{errorValidacion}</span>
                             </div>
-                            {/* Motivo R1 (pago al operador sin factura viva) — mismo botón que la
-                                Tanda 7 del modal de "anular servicio": lleva a la solapa de
-                                Facturación de esta misma reserva para emitir la factura pendiente. */}
-                            {rechazoGuardado?.boton === "emitir-factura" && onIrAEmitirFactura && (
-                                <button
-                                    type="button"
-                                    data-testid="inline-card-emitir-factura"
-                                    onClick={onIrAEmitirFactura}
-                                    className="inline-flex items-center gap-1.5 self-start rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-indigo-700"
-                                >
-                                    <FileText className="w-3.5 h-3.5" />
-                                    Emitir factura
-                                </button>
-                            )}
                         </div>
                     )}
+                    {/* Aviso 3 del inventario (spec 2026-07-22): rechazo LARGO del motor (409/400
+                        real) → Cartel Emergente, nunca incrustado. Guía UX ronda 2 sigue firme:
+                        la ficha queda abierta con todo lo cargado intacto detrás de la ventana. */}
+                    <CartelEmergente
+                        isOpen={Boolean(rechazoMotor)}
+                        variant={CARTEL_EMERGENTE_VARIANTES.BLOQUEO}
+                        message={rechazoMotor?.mensaje}
+                        onClose={() => setRechazoMotor(null)}
+                        dataTestId="inline-card-rechazo-motor"
+                        actionTestId="inline-card-emitir-factura"
+                        // Motivo R1 (pago al operador sin factura viva) — mismo botón que la
+                        // Tanda 7 del modal de "anular servicio": lleva a la solapa de
+                        // Facturación de esta misma reserva para emitir la factura pendiente.
+                        action={
+                            rechazoMotor?.boton === "emitir-factura" && onIrAEmitirFactura
+                                ? { label: "Emitir factura", onClick: onIrAEmitirFactura }
+                                : null
+                        }
+                    />
                     <div className="flex gap-2">
                         <button
                             type="button"

@@ -46,8 +46,9 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { AlertTriangle, CheckCircle2, Loader2, Ban, X, FileText } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Loader2, Ban, X } from "lucide-react";
 import { cancellationsApi } from "../api/cancellationsApi";
+import { CartelEmergente, CARTEL_EMERGENTE_VARIANTES } from "../../../components/CartelEmergente";
 import { showSuccess, showError } from "../../../alerts";
 import { formatCurrency } from "../../../lib/utils";
 import { buildPenaltyClassificationPayload } from "../lib/penaltyPayload";
@@ -621,34 +622,29 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
                         </div>
                     )}
 
-                    {/* ── Error de conflicto (400/409 recuperable) ──
+                    {/* Aviso 4 del inventario (spec cartel emergente 2026-07-22): rechazo LARGO
+                        del motor al anular → ventana, no un recuadro incrustado en el panel.
                         Tanda 3 (2026-07-20): único código de la tabla con botón es el freno de
                         plata R1 (ANNUL_CREDIT_UNANCHORED_OPERATOR_REFUND) — abre EmitirFacturaInline,
                         que ya existe en la ficha (D1 firmada, no se construye nada nuevo).
-                        Cuando este cartel está presente, tapa al cartel del caso de arriba (ver P4-2). */}
-                    {conflictMessage && (
-                        <div
-                            role="alert"
-                            className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800 dark:bg-rose-950/30 dark:border-rose-800 dark:text-rose-200 flex items-start gap-2"
-                            data-testid="cancelar-inline-conflict-msg"
-                        >
-                            <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" aria-hidden="true" />
-                            <div className="flex flex-col gap-2 flex-1">
-                                <span>{conflictMessage}</span>
-                                {conflictMostrarBotonEmitirFactura && onIrAEmitirFactura && (
-                                    <button
-                                        type="button"
-                                        data-testid="cancelar-inline-btn-emitir-factura"
-                                        onClick={onIrAEmitirFactura}
-                                        className="inline-flex items-center gap-2 self-start rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white transition-colors hover:bg-indigo-700"
-                                    >
-                                        <FileText className="h-3.5 w-3.5" aria-hidden="true" />
-                                        Emitir factura
-                                    </button>
-                                )}
-                            </div>
-                        </div>
-                    )}
+                        Al estar en ventana, ya no hace falta "tapar" el cartel del caso de arriba
+                        (P4-2): el cartel de arriba y esta ventana nunca compiten por el mismo
+                        espacio — igual seguimos ocultando el cartel del caso mientras hay error
+                        (ver el `!conflictMessage &&` de los banners de arriba), que sigue siendo
+                        la señal correcta de "no expliques qué iba a pasar, ya no va a pasar". */}
+                    <CartelEmergente
+                        isOpen={Boolean(conflictMessage)}
+                        variant={CARTEL_EMERGENTE_VARIANTES.BLOQUEO}
+                        message={conflictMessage}
+                        onClose={() => setConflictMessage(null)}
+                        dataTestId="cancelar-inline-conflict-msg"
+                        actionTestId="cancelar-inline-btn-emitir-factura"
+                        action={
+                            conflictMostrarBotonEmitirFactura && onIrAEmitirFactura
+                                ? { label: "Emitir factura", onClick: onIrAEmitirFactura }
+                                : null
+                        }
+                    />
 
                     {/* ── Motivo obligatorio ── */}
                     <div>

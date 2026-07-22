@@ -168,6 +168,7 @@ export function CorregirReembolsoInline({ item, supplierId, onCerrar, onCompleta
         mensaje={errorMensaje}
         mostrarBotonCuentaCliente={mostrarBotonCuentaCliente}
         clientePublicId={item.clientePublicId}
+        onClose={() => setErrorMensaje(null)}
       />
 
       {destinos.length === 0 ? (

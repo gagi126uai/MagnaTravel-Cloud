@@ -33,13 +33,15 @@ function formatTripDate(value) {
  *   InManagement → (automatico al resolverse todos los servicios) → Confirmed
  *   Confirmed (candado) → (automatico al llegar la fecha de salida) → Traveling
  *   Traveling → [Cerrar reserva] → Closed
- *   Cualquier etapa activa → [Anular] (con proceso fiscal)
+ *   Cualquier etapa activa → [Anular reserva] (con proceso fiscal)
  *   Quotation/Budget → [Perdido] (discreto, no hubo compra)
  *
  * ADR-036 (2026-06-21):
  *   - "Apartar para liquidar" (Traveling→ToSettle) ELIMINADO: ya no existe "A liquidar".
  *   - "Finalizar / Marcar liquidada" (ToSettle→Closed) ELIMINADO: idem.
- *   - El boton que antes decia "Cancelar" ahora dice "Anular" (anular = deshacer el viaje).
+ *   - El boton que antes decia "Cancelar" ahora dice "Anular reserva" (anular = deshacer el
+ *     viaje; texto aclarado 2026-07-22 — P2 firmado por Gaston, distingue este botón del de
+ *     "Anular servicio" por fila y "Anular varios servicios" de la lista).
  *   - Si el backend indica que no se puede eliminar (capability=false), el boton "Eliminar" no aparece.
  *
  * ADR-037 (2026-06-21):
@@ -491,7 +493,7 @@ export function ReservaHeader({
                                 }`}
                             >
                                 <Ban className="w-4 h-4" />
-                                Anular
+                                Anular reserva
                             </button>
                         )}
 

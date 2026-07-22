@@ -1236,9 +1236,11 @@ export function ServiceList({
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
                 <h3 className="text-lg font-medium text-gray-900 dark:text-white">Servicios Contratados</h3>
                 <div className="flex flex-wrap gap-2 w-full sm:w-auto justify-end">
-                    {/* Botón "Anular varios": solo con permiso reservas.cancel, cuando hay servicios
-                        anulables Y cuando el backend lo habilita (puedeCancelarServicios).
-                        Guía UX 2026-06-22: ocultar en solo lectura según capability del backend. */}
+                    {/* Botón "Anular varios servicios": solo con permiso reservas.cancel, cuando hay
+                        servicios anulables Y cuando el backend lo habilita (puedeCancelarServicios).
+                        Guía UX 2026-06-22: ocultar en solo lectura según capability del backend.
+                        Texto aclarado 2026-07-22 (P2 firmado por Gaston): ya decía así la sección que
+                        este botón abre (CancelarVariosServiciosInline) — solo faltaba el disparador. */}
                     {canCancelServices && puedeCancelarServicios && serviciosCancelables.length > 0 && !showCancelarVarios && (
                         <button
                             type="button"
@@ -1247,7 +1249,7 @@ export function ServiceList({
                             className="flex items-center justify-center gap-2 border border-amber-300 bg-amber-50 text-amber-700 px-4 py-2 rounded-lg hover:bg-amber-100 transition-colors text-sm font-semibold dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-900/40"
                         >
                             <XSquare className="w-4 h-4" />
-                            Anular varios
+                            Anular varios servicios
                         </button>
                     )}
                     {/* "Agregar Servicio": oculto en solo lectura (canEditServices.allowed === false).
@@ -1625,7 +1627,10 @@ export function ServiceList({
                                                     )}
 
                                                     {/* Desktop: icono + palabra siempre visible (spec UX 2026-06-08).
-                                                        textoTacho es dinámico: "Anular" si el operador ya confirmó, "Borrar" si no.
+                                                        textoTacho es dinámico: "Anular servicio" si el operador ya confirmó,
+                                                        "Borrar" si no (texto aclarado 2026-07-22, P2 firmado por Gaston — el de
+                                                        "Borrar" NO se toca, solo distingue el de "Anular" del de la cabecera
+                                                        "Anular reserva" y el de la lista "Anular varios servicios").
                                                         aria-label y texto visible dicen lo mismo para coherencia con lectores de pantalla.
                                                         Guía UX 2026-06-22: en solo lectura (Traveling/Finalizada/etc.) se ocultan
                                                         ambos botones; quedan visibles los datos del servicio y el badge de estado.
@@ -1670,18 +1675,22 @@ export function ServiceList({
                                                                 ? puedeCancelarServicios
                                                                 : puedeEditarServicios;
                                                             if (!mostrarBotonDestructivo) return null;
-                                                            const textoTacho = esConfirmado ? 'Anular' : 'Borrar';
-
-                                                            // Tanda 7: la palabra sigue a la vista siempre (regla
-                                                            // 2026-06-08), solo cambia el color y se saca el onClick
-                                                            // — el motivo real va en el chip de abajo.
+                                                            // P2 firmado por Gaston (2026-07-22): "Anular" pasa a "Anular
+                                                            // servicio" para distinguirlo de "Anular reserva" (cabecera) y
+                                                            // "Anular varios servicios" (lista). "Borrar" NO se toca (es
+                                                            // otra acción, un servicio que ni llegó a confirmarse).
+                                                            const textoTacho = esConfirmado ? 'Anular servicio' : 'Borrar';
+                                                            // El bloqueado SOLO puede darse con esConfirmado=true (ver
+                                                            // bloqueoAnular arriba), así que acá textoTacho siempre es
+                                                            // "Anular servicio" — el aria-label ya no necesita agregarle
+                                                            // "servicio" de nuevo (evita el "servicio servicio" repetido).
                                                             if (bloqueoAnular.bloqueado) {
                                                                 return (
                                                                     <button
                                                                         type="button"
                                                                         disabled
                                                                         data-testid={`btn-delete-service-${getReservationServicePublicId(svc)}`}
-                                                                        aria-label={`${textoTacho} servicio bloqueado: ${bloqueoAnular.motivo}`}
+                                                                        aria-label={`${textoTacho} bloqueado: ${bloqueoAnular.motivo}`}
                                                                         title={bloqueoAnular.motivo}
                                                                         className="inline-flex items-center gap-1 p-1.5 text-slate-300 dark:text-slate-600 rounded text-xs font-semibold cursor-not-allowed"
                                                                     >
@@ -1691,11 +1700,16 @@ export function ServiceList({
                                                                 );
                                                             }
 
+                                                            // Acá sí puede ser cualquiera de los dos casos: "Anular
+                                                            // servicio" ya trae la palabra completa (no se le vuelve a
+                                                            // agregar "servicio"); "Borrar" sigue sumándosela en el
+                                                            // aria-label para que el lector de pantalla diga a qué aplica
+                                                            // (igual que siempre — el texto visible de "Borrar" no cambia).
                                                             return (
                                                                 <button
                                                                     onClick={() => handleTrashClick(svc)}
                                                                     data-testid={`btn-delete-service-${getReservationServicePublicId(svc)}`}
-                                                                    aria-label={`${textoTacho} servicio`}
+                                                                    aria-label={esConfirmado ? textoTacho : `${textoTacho} servicio`}
                                                                     className="inline-flex items-center gap-1 p-1.5 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded text-xs font-semibold"
                                                                 >
                                                                     <Trash2 className="w-4 h-4" />
@@ -2048,7 +2062,10 @@ export function ServiceList({
                                                 const mostrarDestructivoMobile = esConfirmadoMobile
                                                     ? puedeCancelarServicios
                                                     : puedeEditarServicios;
-                                                const textoTachoMobile = esConfirmadoMobile ? 'Anular' : 'Borrar';
+                                                // P2 firmado por Gaston (2026-07-22): mismo cambio de texto que
+                                                // desktop — "Anular servicio" distingue esta fila de "Anular
+                                                // reserva"/"Anular varios servicios"; "Borrar" no se toca.
+                                                const textoTachoMobile = esConfirmadoMobile ? 'Anular servicio' : 'Borrar';
                                                 // Tanda 7 (2026-07-20): mismo pre-chequeo que desktop — solo
                                                 // aplica al camino "Anular" (servicio confirmado). canCancel
                                                 // null → no calculado todavía, no bloqueamos (degradación elegante).
@@ -2074,11 +2091,14 @@ export function ServiceList({
                                                             Tanda 7: gris + sin onClick cuando el pre-chequeo bloquea. */}
                                                         {mostrarDestructivoMobile && (
                                                             bloqueoAnularMobile.bloqueado ? (
+                                                                // Igual que desktop: bloqueado solo puede darse con
+                                                                // esConfirmadoMobile=true, así que textoTachoMobile ya
+                                                                // es "Anular servicio" — no se le vuelve a agregar "servicio".
                                                                 <button
                                                                     type="button"
                                                                     disabled
                                                                     data-testid={`btn-delete-service-mobile-${getReservationServicePublicId(svc)}`}
-                                                                    aria-label={`${textoTachoMobile} servicio bloqueado: ${bloqueoAnularMobile.motivo}`}
+                                                                    aria-label={`${textoTachoMobile} bloqueado: ${bloqueoAnularMobile.motivo}`}
                                                                     title={bloqueoAnularMobile.motivo}
                                                                     className="inline-flex items-center gap-1 p-2 text-slate-300 dark:text-slate-600 rounded-lg bg-slate-50 dark:bg-slate-800 text-xs font-semibold cursor-not-allowed"
                                                                 >
@@ -2089,7 +2109,7 @@ export function ServiceList({
                                                                 <button
                                                                     onClick={() => handleTrashClick(svc)}
                                                                     data-testid={`btn-delete-service-mobile-${getReservationServicePublicId(svc)}`}
-                                                                    aria-label={`${textoTachoMobile} servicio`}
+                                                                    aria-label={esConfirmadoMobile ? textoTachoMobile : `${textoTachoMobile} servicio`}
                                                                     className="inline-flex items-center gap-1 p-2 text-red-500 rounded-lg bg-red-50 dark:bg-red-900/20 text-xs font-semibold"
                                                                 >
                                                                     <Trash2 className="w-3.5 h-3.5" />
