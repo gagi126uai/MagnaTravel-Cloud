@@ -17,6 +17,14 @@ import { Lock, LockOpen, AlertTriangle } from 'lucide-react';
  *    El vendedor ve "Pedir autorizacion"; el admin puede abrir el modal para destrabar.
  *    (Decision #1 y #2 guia UX 2026-06-08).
  *
+ *    Retoque P4-3 (2026-07-22, spec docs/ux/2026-07-22-p4-retoques-circuito-proveedor.md,
+ *    P3=A): el texto de ESTA franja ahora distingue por el permiso
+ *    reservas.authorize_locked_edit (prop `puedeAutorizar`) — el MISMO permiso que ya usa
+ *    EditAuthorizationModal para decidir si mostrar el formulario de destrabe directo. Antes
+ *    la franja le decia "pedi autorizacion" al admin tambien, aunque el modal que abre ese
+ *    mismo boton ya lo dejara destrabar solo — el texto quedaba incoherente con lo que
+ *    ofrecia. El modal en si NO cambia.
+ *
  * Formato UNA LÍNEA (spec UX 2026-07-05, respuesta 4B — "arriba la foto, abajo solo lo
  * que hay que hacer"): las tres variantes usan la misma franja fina de un solo renglón
  * (icono + texto corto + botón a la derecha si corresponde), en vez del bloque tipo
@@ -31,6 +39,10 @@ import { Lock, LockOpen, AlertTriangle } from 'lucide-react';
  * - regressionReason: string|null — motivo de la regresion (del campo lastRegressionReason del DTO)
  * - hasLiveEditAuthorization: boolean — true si hay una autorizacion de edicion vigente
  * - editAuthorizationExpiresAt: string|null — ISO datetime del vencimiento de la autorizacion
+ * - puedeAutorizar: boolean — true si el usuario tiene el permiso reservas.authorize_locked_edit
+ *   (P4-3). Cambia solo el TEXTO de la franja ambar; el onRequestEdit sigue abriendo el mismo
+ *   EditAuthorizationModal de siempre, que ya sabe mostrar el formulario de destrabe para este
+ *   mismo permiso.
  */
 export function ReservaLockBanner({
     isLocked,
@@ -39,6 +51,7 @@ export function ReservaLockBanner({
     regressionReason,
     hasLiveEditAuthorization,
     editAuthorizationExpiresAt,
+    puedeAutorizar = false,
 }) {
     // Franja de regresion automatica (naranja): prioridad maxima, va ANTES que el candado.
     // Es el mensaje mas urgente: el operador cancelo/reprogramo algo y la reserva retrocedio.
@@ -88,6 +101,17 @@ export function ReservaLockBanner({
 
     // Franja ambar: reserva bloqueada sin autorizacion activa. Achicada a una línea
     // fina (spec 2026-07-05, respuesta 4B): texto corto + botón a la derecha.
+    //
+    // P4-3: el Admin (puedeAutorizar=true) ve un texto distinto porque, a diferencia del
+    // vendedor, el mismo boton lo va a dejar destrabar la reserva el mismo (no pedirle
+    // permiso a otro) — el onRequestEdit y el modal que abre son EXACTAMENTE los mismos
+    // para los dos roles, solo cambia como se lo anunciamos.
+    const tituloFranja = puedeAutorizar ? 'Reserva confirmada (con candado).' : 'Reserva confirmada.';
+    const textoFranja = puedeAutorizar
+        ? 'Podés destrabarla para editar.'
+        : 'Para cambiar algo, pedí autorización.';
+    const textoBoton = puedeAutorizar ? 'Destrabar reserva' : 'Pedí autorización';
+
     return (
         <div
             data-testid="reserva-lock-banner"
@@ -95,8 +119,8 @@ export function ReservaLockBanner({
         >
             <Lock className="h-4 w-4 flex-shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
             <span>
-                <span className="font-bold">Reserva confirmada.</span>
-                {' '}Para cambiar algo, pedí autorización.
+                <span className="font-bold">{tituloFranja}</span>
+                {' '}{textoFranja}
             </span>
             {onRequestEdit && (
                 <button
@@ -105,7 +129,7 @@ export function ReservaLockBanner({
                     data-testid="reserva-request-edit-btn"
                     className="ml-auto flex-shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1 text-xs font-bold text-amber-800 transition-colors hover:bg-amber-100 dark:border-amber-700 dark:bg-slate-800 dark:text-amber-200 dark:hover:bg-amber-900/30"
                 >
-                    Pedí autorización
+                    {textoBoton}
                 </button>
             )}
         </div>

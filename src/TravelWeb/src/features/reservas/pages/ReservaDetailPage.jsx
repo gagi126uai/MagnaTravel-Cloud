@@ -465,15 +465,18 @@ function EditarEliminarCobro({ payment, onEditarCobro, onEliminarCobro }) {
 function PaymentReceiptActions({ payment, onView, onIssue, onVoid, congelado, canEditarEliminar, onEditarCobro, onEliminarCobro }) {
   const receipt = getPaymentReceipt(payment);
 
-  // Un cobro con recibo anulado ya fue procesado formalmente; no tiene sentido editarlo
-  // aunque el capability diga que se puede. El recibo anulado es un "techo" extra.
-  // (Este check local NO cambia con la Tanda 6: sigue ocultando Editar/Eliminar por completo
-  // cuando el recibo de ESTE cobro está anulado, sin pasar por el candado gris — spec T6 2026-07-20.)
+  // Solo trazabilidad del documento (para el chip gris "Comprobante anulado").
+  // Retoque P4-1 (2026-07-22): este flag YA NO decide si se muestran los botones — eso
+  // ahora lo manda el motor por cobro (payment.canEdit/canDelete, resuelto adentro de
+  // EditarEliminarCobro). Antes acá se escondían Editar Y Eliminar a mano con recibo
+  // anulado, aunque el motor permitiera Eliminar: la pantalla mentía. Ver spec
+  // docs/ux/2026-07-22-p4-retoques-circuito-proveedor.md (P1=A).
   const reciboAnulado = receipt?.status === "Voided";
 
-  // Gobernado por la capacidad real del backend + guard de recibo anulado.
-  // canEditarEliminar=false en Closed, terminal u otros estados que el backend restrinja.
-  const cobroEsEditable = Boolean(canEditarEliminar) && !reciboAnulado;
+  // Gobernado solo por la capacidad de la RESERVA (Closed/terminal → false). El candado
+  // por-cobro (recibo anulado, recibo emitido, factura con CAE) ya no se resuelve acá:
+  // lo hace EditarEliminarCobro con el motivo real del backend, botón por botón.
+  const cobroEsEditable = Boolean(canEditarEliminar);
 
   if (receipt) {
     return (
@@ -511,9 +514,9 @@ function PaymentReceiptActions({ payment, onView, onIssue, onVoid, congelado, ca
           </>
         ) : null}
 
-        {/* B1: Editar / Eliminar cobro — solo en estados editables y si el recibo no está anulado.
-            Un recibo anulado implica que el cobro ya fue procesado formalmente; no se edita.
-            Dentro de EditarEliminarCobro se aplica además el candado por-pago de la Tanda 6. */}
+        {/* B1: Editar / Eliminar cobro — se ofrecen si la reserva lo permite, incluso con
+            recibo anulado (Eliminar puede seguir habilitado; el candado por-pago de la
+            Tanda 6, adentro de EditarEliminarCobro, es quien decide botón por botón). */}
         {cobroEsEditable && (
           <EditarEliminarCobro payment={payment} onEditarCobro={onEditarCobro} onEliminarCobro={onEliminarCobro} />
         )}
@@ -1928,6 +1931,9 @@ export default function ReservaDetailPage() {
         regressionReason={reserva.lastRegressionReason ?? null}
         hasLiveEditAuthorization={reserva.hasLiveEditAuthorization ?? false}
         editAuthorizationExpiresAt={reserva.editAuthorizationExpiresAt ?? null}
+        // P4-3: mismo permiso que ya usa EditAuthorizationModal para decidir si el usuario
+        // destraba directo. La franja tiene que anunciar lo mismo que el modal va a ofrecer.
+        puedeAutorizar={hasPermission("reservas.authorize_locked_edit")}
       />
 
       {/* (2026-07-05) Banner "En corrección" ELIMINADO (spec UX, respuesta 2B): quedaba

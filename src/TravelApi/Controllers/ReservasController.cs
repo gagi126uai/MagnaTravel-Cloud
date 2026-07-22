@@ -1108,6 +1108,12 @@ public class ReservasController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
+            // Tanda P4 "circuito proveedor" (2026-07-22): si el rechazo es el candado de plata pagada al
+            // operador sin factura (mismo Code que "anular servicio"/"bajar el estado" — ahora tambien
+            // dispara al normalizar servicios en "cliente aceptó"), sumamos `code` al body SIN tocar
+            // `message`, mismo patron aditivo que ya usan HotelBookingsController y hermanos.
+            if (ex is ServiceCancellationRejectedException rejected)
+                return BadRequest(new { message = ex.Message, code = rejected.Code });
             return BadRequest(new { message = ex.Message });
         }
         catch (Exception ex)

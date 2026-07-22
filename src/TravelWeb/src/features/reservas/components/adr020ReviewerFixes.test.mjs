@@ -5,6 +5,7 @@
  * - B1: esServicioResuelto / esServicioConfirmadoPorOperador (papelera borrar vs cancelar)
  * - B2: lógica del banner de regresión (lastRegressionReason + status)
  * - N3: banner destrabada vs candado (hasLiveEditAuthorization)
+ * - P4-3 (2026-07-22): texto de la franja ámbar según reservas.authorize_locked_edit
  * - N5: statusConfig tiene Lost con line-through
  * - D2: delta optimista del balance solo para servicios confirmados
  * - ResumenServiciosResueltos: excluye Cancelados, solo activo en InManagement
@@ -44,6 +45,28 @@ function decidirModoBanner({ isLocked, hasRegressionWarning, hasLiveEditAuthoriz
     if (!isLocked) return "none";
     if (hasLiveEditAuthorization) return "unlocked";
     return "locked";
+}
+
+/**
+ * Réplica del texto/botón de la franja ámbar "locked" (P4-3, spec
+ * docs/ux/2026-07-22-p4-retoques-circuito-proveedor.md, P3=A).
+ * `puedeAutorizar` viene del MISMO permiso que EditAuthorizationModal usa para decidir si
+ * el usuario destraba directo (reservas.authorize_locked_edit): la franja tiene que
+ * anunciar lo mismo que el modal, que abre el mismo onRequestEdit para los dos roles.
+ */
+function elegirTextoBannerLocked(puedeAutorizar) {
+    if (puedeAutorizar) {
+        return {
+            titulo: "Reserva confirmada (con candado).",
+            texto: "Podés destrabarla para editar.",
+            boton: "Destrabar reserva",
+        };
+    }
+    return {
+        titulo: "Reserva confirmada.",
+        texto: "Para cambiar algo, pedí autorización.",
+        boton: "Pedí autorización",
+    };
 }
 
 // ─── Lógica pura copiada de ResumenServiciosResueltos (ServiceList.jsx) ───────
@@ -190,6 +213,37 @@ test("banner: isLocked=false sin regresion → none (no se muestra)", () => {
         hasLiveEditAuthorization: false,
     });
     assert.equal(modo, "none");
+});
+
+// ─── Tests: texto de la franja ámbar según el permiso (P4-3, 2026-07-22) ──────
+
+test("P4-3 banner locked: vendedor SIN el permiso → texto y botón quedan EXACTAMENTE como antes", () => {
+    const resultado = elegirTextoBannerLocked(false);
+    assert.deepEqual(resultado, {
+        titulo: "Reserva confirmada.",
+        texto: "Para cambiar algo, pedí autorización.",
+        boton: "Pedí autorización",
+    });
+});
+
+test("P4-3 banner locked: admin CON el permiso → invita a destrabar, no a pedir autorización", () => {
+    const resultado = elegirTextoBannerLocked(true);
+    assert.deepEqual(resultado, {
+        titulo: "Reserva confirmada (con candado).",
+        texto: "Podés destrabarla para editar.",
+        boton: "Destrabar reserva",
+    });
+});
+
+test("P4-3 banner locked: el texto del admin nunca menciona 'pedí autorización' (no debe quedar mezclado)", () => {
+    const resultado = elegirTextoBannerLocked(true);
+    const textoCompleto = `${resultado.titulo} ${resultado.texto} ${resultado.boton}`;
+    assert.ok(!/pedí autorización/i.test(textoCompleto));
+});
+
+test("P4-3 banner locked: puedeAutorizar undefined (DTO/permiso no cargado aún) → se comporta como vendedor (conservador)", () => {
+    const resultado = elegirTextoBannerLocked(undefined);
+    assert.equal(resultado.boton, "Pedí autorización");
 });
 
 // ─── Tests: statusConfig Lost tiene line-through (N5) ─────────────────────────

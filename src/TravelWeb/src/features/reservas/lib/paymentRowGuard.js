@@ -24,8 +24,9 @@ export function resolverBloqueoFilaCobro(payment) {
   const canDelete = payment?.canDelete;
 
   // Degradación elegante: si el backend todavía no manda estos campos (DTO viejo),
-  // no se agrega ningún bloqueo nuevo — el gating existente (estado de la reserva +
-  // recibo anulado local) sigue mandando solo, tal como funcionaba antes de esta tanda.
+  // no se agrega ningún bloqueo nuevo — solo queda el gating por estado de la reserva.
+  // (P4 2026-07-21: el candado local por recibo anulado ya no existe; el motor decide
+  // botón por botón con canEdit/canDelete.)
   const editarBloqueado = canEdit ? canEdit.allowed === false : false;
   const eliminarBloqueado = canDelete ? canDelete.allowed === false : false;
 

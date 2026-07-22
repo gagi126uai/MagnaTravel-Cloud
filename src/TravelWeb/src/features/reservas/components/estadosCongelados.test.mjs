@@ -172,6 +172,13 @@ test("recibos: null → false (degradación elegante)", () => {
  *
  * BUG IMP-3 fix 2026-06-24: Editar/Eliminar ya no dependen de `congelado` sino de
  * `canEditarEliminar` (la capacidad real del backend).
+ *
+ * P4-1 fix 2026-07-22 (spec docs/ux/2026-07-22-p4-retoques-circuito-proveedor.md, P1=A):
+ * `cobroEditable` (si se OFRECE SIQUIERA el bloque Editar/Eliminar) ya NO resta el guard
+ * local de recibo anulado — antes escondía los DOS botones aunque el motor permitiera
+ * Eliminar. Ahora `cobroEditable` depende solo de `canEditarEliminar` (nivel reserva); el
+ * candado POR BOTÓN con recibo anulado (Editar gris, Eliminar normal si el motor lo permite)
+ * lo resuelve el motor por cobro — ver paymentRowGuard.test.mjs, que ya cubre ese caso.
  */
 function resolverAccionesRecibo({ receipt, payment, congelado, canEditarEliminar }) {
   const tieneRecibo = Boolean(receipt);
@@ -180,9 +187,9 @@ function resolverAccionesRecibo({ receipt, payment, congelado, canEditarEliminar
     (payment?.entryType === "Payment") &&
     Number(payment?.amount || 0) > 0;
 
-  // Editar/Eliminar: se rigen por la capacidad del backend + guard de recibo anulado.
-  // BUG IMP-3 fix: antes era !congelado && !reciboAnulado.
-  const cobroEditable = Boolean(canEditarEliminar) && !estaAnulado;
+  // Se rige solo por la capacidad de RESERVA del backend (P4-1: sin guard local de recibo
+  // anulado). El candado por-cobro se testea aparte en paymentRowGuard.test.mjs.
+  const cobroEditable = Boolean(canEditarEliminar);
 
   if (tieneRecibo) {
     return {
@@ -276,7 +283,9 @@ test("recibo: con recibo vigente + canEditarEliminar=false (Closed) → Editar y
   assert.equal(result.anularVisible, true, "Anular sigue disponible si no congelado");
 });
 
-test("recibo: comprobante ya anulado en CONGELADO → solo chip visible (sin Ver PDF ni Anular)", () => {
+test("recibo: comprobante ya anulado en CONGELADO + canEditarEliminar=false → solo chip visible (sin Ver PDF ni Anular ni Editar)", () => {
+  // Acá Editar/Eliminar quedan ocultos por canEditarEliminar=false (reserva congelada),
+  // no por el recibo anulado — ver el test P4-1 de abajo para el caso donde SÍ están disponibles.
   const result = resolverAccionesRecibo({
     receipt: { status: "Voided", receiptNumber: "R-002" },
     payment: { entryType: "Payment", amount: 1000 },
@@ -286,7 +295,22 @@ test("recibo: comprobante ya anulado en CONGELADO → solo chip visible (sin Ver
   assert.equal(result.chipVisible, true);
   assert.equal(result.verPdfVisible, false);
   assert.equal(result.anularVisible, false);
-  assert.equal(result.editarVisible, false, "Recibo anulado bloquea Editar aunque el capability lo permita");
+  assert.equal(result.editarVisible, false, "Editar oculto por canEditarEliminar=false (nivel reserva)");
+});
+
+test("P4-1: comprobante anulado + canEditarEliminar=true → Editar/Eliminar YA NO se ocultan (antes: bug, se escondían los dos)", () => {
+  // Antes de P4-1, un guard local `!reciboAnulado` escondía ambos botones sin importar
+  // lo que dijera el backend, aunque el motor permitiera Eliminar. Ahora se OFRECEN
+  // (cobroEditable solo mira canEditarEliminar); cuál queda gris y cuál habilitado lo
+  // decide el motor por botón (payment.canEdit/canDelete) — cubierto en paymentRowGuard.test.mjs.
+  const result = resolverAccionesRecibo({
+    receipt: { status: "Voided", receiptNumber: "R-002" },
+    payment: { entryType: "Payment", amount: 1000 },
+    congelado: false,
+    canEditarEliminar: true,
+  });
+  assert.equal(result.editarVisible, true, "Se ofrece Editar (puede quedar gris según el motor, pero ya no se esconde)");
+  assert.equal(result.eliminarVisible, true, "Se ofrece Eliminar; el motor permite eliminar cobros con recibo anulado");
 });
 
 // ── Sin recibo ─────────────────────────────────────────────────────────────────
@@ -342,21 +366,27 @@ test("sin recibo: cobro no emitible (ajuste/crédito) en normal + canEditarElimi
 /**
  * BUG IMP-3 fix: Editar y Eliminar cobro se gobiernan por la capacidad del backend.
  * Ya no dependen de !congelado; el backend decide según el estado de la reserva.
+ *
+ * P4-1 fix (2026-07-22): ya NO recibe `reciboAnulado` — ese guard local se sacó porque
+ * escondía los botones aunque el motor permitiera Eliminar (ver spec P1=A). El único
+ * criterio para OFRECER el bloque es la capacidad de reserva.
  */
-function muestraAccionesCobro({ canEditarEliminar, reciboAnulado }) {
-  return Boolean(canEditarEliminar) && !reciboAnulado;
+function muestraAccionesCobro({ canEditarEliminar }) {
+  return Boolean(canEditarEliminar);
 }
 
-test("acciones cobro: canEditarEliminar=true sin recibo anulado → Editar y Eliminar visibles", () => {
-  assert.equal(muestraAccionesCobro({ canEditarEliminar: true, reciboAnulado: false }), true);
+test("acciones cobro: canEditarEliminar=true → Editar y Eliminar se OFRECEN (visibles)", () => {
+  assert.equal(muestraAccionesCobro({ canEditarEliminar: true }), true);
 });
 
 test("acciones cobro: canEditarEliminar=false (Closed/terminal) → Editar y Eliminar OCULTOS", () => {
-  assert.equal(muestraAccionesCobro({ canEditarEliminar: false, reciboAnulado: false }), false);
+  assert.equal(muestraAccionesCobro({ canEditarEliminar: false }), false);
 });
 
-test("acciones cobro: recibo anulado (aunque canEditarEliminar=true) → Editar y Eliminar OCULTOS", () => {
-  assert.equal(muestraAccionesCobro({ canEditarEliminar: true, reciboAnulado: true }), false);
+test("P4-1: acciones cobro: canEditarEliminar=true CON recibo anulado → se siguen OFRECIENDO (ya no se esconden por completo)", () => {
+  // El caso puntual "recibo anulado" ya no es parámetro de esta función: el candado por-cobro
+  // vive en paymentRowGuard.js (payment.canEdit/canDelete), no acá.
+  assert.equal(muestraAccionesCobro({ canEditarEliminar: true }), true);
 });
 
 // ─── Réplica: botones de escritura en vouchers (Zona C) ───────────────────────

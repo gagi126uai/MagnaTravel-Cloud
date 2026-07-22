@@ -6101,28 +6101,132 @@ public class ReservaService : IReservaService
     /// data preexistente. En el flujo normal, los servicios creados en Presupuesto
     /// ya quedan en "Solicitado" gracias a ReservaCapacityRules.ShouldForceSolicitadoStatusAsync
     /// que aplica BookingService al crear/actualizar.
+    ///
+    /// <para><b>Candado R1 (Tanda P4 "circuito proveedor", 2026-07-22)</b>: si alguno de los
+    /// servicios que se va a normalizar venia en un estado que YA contaba como confirmado con el
+    /// proveedor (<see cref="ReservaCapacityRules.ConfirmedServiceStatuses"/>), bajarlo a "Solicitado"
+    /// es la MISMA bajada de estado que <c>BookingService</c> ya protege en sus 11 sitios
+    /// (<c>GuardStatusDowngradeAsync</c>, familia R1): si ese servicio tiene plata pagada al operador
+    /// y la reserva NO tiene factura de venta viva que ancle el reembolso, la bajada silenciosa
+    /// dejaria esa plata sin rastro. Antes de esta tanda este metodo no pasaba por ese candado —
+    /// como es el UNICO llamador (<see cref="EnsureReadinessForSaleAsync"/>, transicion manual
+    /// Presupuesto -&gt; En gestion) hoy no deberia haber plata pagada en Presupuesto en el flujo
+    /// normal, pero por bypass de API o data preexistente el riesgo es real (por eso el metodo
+    /// existe: es una defensa contra ESE mismo tipo de bypass).</para>
+    ///
+    /// <para><b>Atomico por construccion</b>: primero se VALIDAN todos los candidatos (sin tocar
+    /// ninguna entidad) y recien despues, si NINGUNO rebota, se aplica el cambio de estado a todos.
+    /// Si un solo servicio esta bloqueado, se aborta la normalizacion COMPLETA (nada baja de estado)
+    /// con un mensaje que dice cual servicio la frena — el <c>SaveChanges</c> real sucede recien al
+    /// final de <c>UpdateStatusAsync</c>, asi que mientras no se asigne <c>Status</c> en memoria no hay
+    /// nada que revertir.</para>
     /// </summary>
     private async Task NormalizeAllServicesToSolicitadoAsync(int reservaId)
     {
-        var hotels = await _context.HotelBookings.Where(h => h.ReservaId == reservaId && h.Status != "Solicitado").ToListAsync();
+        var hotels = await _context.HotelBookings
+            .Where(h => h.ReservaId == reservaId && h.Status != "Solicitado")
+            .ToListAsync();
+        var transfers = await _context.TransferBookings
+            .Where(t => t.ReservaId == reservaId && t.Status != "Solicitado")
+            .ToListAsync();
+        var packages = await _context.PackageBookings
+            .Where(p => p.ReservaId == reservaId && p.Status != "Solicitado")
+            .ToListAsync();
+        var flights = await _context.FlightSegments
+            .Where(f => f.ReservaId == reservaId && f.Status != "Solicitado")
+            .ToListAsync();
+        var assistances = await _context.AssistanceBookings
+            .Where(a => a.ReservaId == reservaId && a.Status != "Solicitado")
+            .ToListAsync();
+        var generics = await _context.Servicios
+            .Where(s => s.ReservaId == reservaId && s.Status != "Solicitado")
+            .ToListAsync();
+
+        // Candado R1: corre ANTES de mutar ningun Status. Si algun servicio bloquea, tira y nada
+        // de lo de abajo llega a ejecutarse.
+        if (_cancellationService is not null)
+        {
+            foreach (var h in hotels)
+                await EnsureNormalizationDowngradeIsAnchoredAsync(
+                    reservaId, CancellableServiceTable.Hotel, h.Id, h.Status,
+                    $"el hotel '{h.HotelName ?? "sin nombre"}'");
+
+            foreach (var t in transfers)
+                await EnsureNormalizationDowngradeIsAnchoredAsync(
+                    reservaId, CancellableServiceTable.Transfer, t.Id, t.Status,
+                    BuildTransferLabel(t.ProductName, t.PickupLocation, t.DropoffLocation, t.VehicleType));
+
+            foreach (var p in packages)
+                await EnsureNormalizationDowngradeIsAnchoredAsync(
+                    reservaId, CancellableServiceTable.Package, p.Id, p.Status,
+                    $"el paquete '{ServiceDisplayName.ForPackage(p.PackageName, p.Destination)}'");
+
+            foreach (var f in flights)
+                await EnsureNormalizationDowngradeIsAnchoredAsync(
+                    reservaId, CancellableServiceTable.Flight, f.Id, f.Status,
+                    $"el vuelo {ServiceDisplayName.ForFlight(f.ProductName, f.AirlineCode, f.FlightNumber)}");
+
+            foreach (var a in assistances)
+                await EnsureNormalizationDowngradeIsAnchoredAsync(
+                    reservaId, CancellableServiceTable.Assistance, a.Id, a.Status,
+                    $"la asistencia '{a.PlanType ?? "seguro"}'");
+
+            foreach (var g in generics)
+                await EnsureNormalizationDowngradeIsAnchoredAsync(
+                    reservaId, CancellableServiceTable.Generic, g.Id, g.Status,
+                    $"el servicio '{g.Description ?? "sin descripcion"}'");
+        }
+
+        // Ningun candidato bloqueo: recien aca se aplica el cambio de estado.
         foreach (var h in hotels) h.Status = "Solicitado";
-
-        var transfers = await _context.TransferBookings.Where(t => t.ReservaId == reservaId && t.Status != "Solicitado").ToListAsync();
         foreach (var t in transfers) t.Status = "Solicitado";
-
-        var packages = await _context.PackageBookings.Where(p => p.ReservaId == reservaId && p.Status != "Solicitado").ToListAsync();
         foreach (var p in packages) p.Status = "Solicitado";
-
-        var flights = await _context.FlightSegments.Where(f => f.ReservaId == reservaId && f.Status != "Solicitado").ToListAsync();
         foreach (var f in flights) f.Status = "Solicitado";
-
-        var assistances = await _context.AssistanceBookings.Where(a => a.ReservaId == reservaId && a.Status != "Solicitado").ToListAsync();
         foreach (var a in assistances) a.Status = "Solicitado";
-
-        var generics = await _context.Servicios.Where(s => s.ReservaId == reservaId && s.Status != "Solicitado").ToListAsync();
         foreach (var g in generics) g.Status = "Solicitado";
 
         // SaveChanges sucede al final de UpdateStatusAsync.
+    }
+
+    /// <summary>
+    /// Identidad del traslado para el mensaje de bloqueo: mismo criterio que
+    /// <see cref="ServiceDisplayName.ForTransfer"/>, pero con fallback a "el traslado" (sin comillas)
+    /// cuando el servicio no tiene ningun dato cargado, para no mostrar "el traslado ''".
+    /// </summary>
+    private static string BuildTransferLabel(string? productName, string? pickup, string? dropoff, string? vehicleType)
+    {
+        var label = ServiceDisplayName.ForTransfer(productName, pickup, dropoff, vehicleType);
+        return string.IsNullOrWhiteSpace(label) ? "el traslado" : $"el traslado '{label}'";
+    }
+
+    /// <summary>
+    /// Aplica el candado R1 (misma familia que <c>BookingService.GuardStatusDowngradeAsync</c>) a UN
+    /// servicio candidato de <see cref="NormalizeAllServicesToSolicitadoAsync"/>. Primero el gate barato
+    /// (sin tocar la base): si el estado ACTUAL no cuenta como confirmado con el proveedor, bajarlo a
+    /// "Solicitado" no es una bajada real (ej. ya estaba "Cancelado") y no hay nada que anclar. Si
+    /// bloquea, envuelve el mensaje generico del candado con el nombre del servicio puntual — a
+    /// diferencia de <c>BookingService</c> (que edita UN servicio a la vez desde su propia ficha), aca el
+    /// usuario esta transicionando TODA la reserva y necesita saber CUAL de los servicios la frena.
+    /// </summary>
+    private async Task EnsureNormalizationDowngradeIsAnchoredAsync(
+        int reservaId, CancellableServiceTable serviceTable, int serviceId, string? currentStatus, string serviceLabel)
+    {
+        if (!ReservaCapacityRules.IsStatusDowngradeFromConfirmed(currentStatus, "Solicitado"))
+            return;
+
+        try
+        {
+            await _cancellationService!.EnsureServiceStatusDowngradeHasReceivableAnchorAsync(
+                reservaId, serviceTable, serviceId, CancellationToken.None);
+        }
+        catch (ServiceCancellationRejectedException ex) when (ex.Code == ServiceCancellationRejectedException.Codes.UnanchoredOperatorRefund)
+        {
+            throw new ServiceCancellationRejectedException(
+                ex.Code,
+                $"No se puede completar esta acción: {serviceLabel} ya tiene pagos al operador y la reserva " +
+                "aún no tiene factura emitida para registrar el reembolso a tu favor. Emití la factura de venta " +
+                "o gestioná el reembolso con el operador antes de continuar.");
+        }
     }
 
     private async Task<string> GenerateNumeroReservaAsync(CancellationToken cancellationToken)

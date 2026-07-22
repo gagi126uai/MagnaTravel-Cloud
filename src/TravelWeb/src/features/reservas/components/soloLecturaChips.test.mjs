@@ -592,37 +592,43 @@ test("A.4: collectionStatus=ConDeuda fuera de ventana de aviso → chipPago=null
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * Réplica de la lógica de PaymentReceiptActions para el par Editar/Eliminar cobro.
+ * Réplica de la lógica de PaymentReceiptActions para el par Editar/Eliminar cobro:
+ * ¿se OFRECE SIQUIERA el bloque, sí o no?
  * canEditarEliminar viene directamente de la capacidad del backend.
+ *
+ * P4-1 fix (2026-07-22, spec docs/ux/2026-07-22-p4-retoques-circuito-proveedor.md, P1=A):
+ * ya no recibe `reciboAnulado` como guard local — antes escondía el bloque completo aunque
+ * el motor permitiera Eliminar con recibo anulado. El candado por-cobro real vive en
+ * paymentRowGuard.js (payment.canEdit/canDelete), no acá.
  */
-function calcularCobroEditable({ canEditarEliminar, reciboAnulado }) {
-    // El backend decide si la acción está disponible en este estado.
-    // Guard extra: si el recibo ya fue anulado, no tiene sentido editar el cobro.
-    return Boolean(canEditarEliminar) && !reciboAnulado;
+function calcularCobroEditable({ canEditarEliminar }) {
+    // El backend decide si la acción está disponible en este estado de la reserva.
+    return Boolean(canEditarEliminar);
 }
 
-test("IMP-3: canEditOrDeletePayment=true + sin recibo anulado → Editar y Eliminar visibles", () => {
-    const editable = calcularCobroEditable({ canEditarEliminar: true, reciboAnulado: false });
+test("IMP-3: canEditOrDeletePayment=true → Editar y Eliminar se OFRECEN", () => {
+    const editable = calcularCobroEditable({ canEditarEliminar: true });
     assert.equal(editable, true);
 });
 
 test("IMP-3: canEditOrDeletePayment=false (Closed/terminal) → Editar y Eliminar OCULTOS", () => {
     // Closed: el backend devuelve canEditOrDeletePayment.allowed=false.
     // Antes del fix este caso mostraba los botones (congelado=false en Closed).
-    const editable = calcularCobroEditable({ canEditarEliminar: false, reciboAnulado: false });
+    const editable = calcularCobroEditable({ canEditarEliminar: false });
     assert.equal(editable, false, "En Closed el backend rechaza editar/eliminar cobros");
 });
 
-test("IMP-3: canEditOrDeletePayment=true + recibo anulado → Editar y Eliminar OCULTOS (guard de recibo)", () => {
-    // Aunque el backend permita editar, un recibo anulado ya fue procesado formalmente.
-    const editable = calcularCobroEditable({ canEditarEliminar: true, reciboAnulado: true });
-    assert.equal(editable, false, "Un recibo anulado no se puede editar aunque el backend lo permita");
+test("P4-1: canEditOrDeletePayment=true con recibo anulado → Editar y Eliminar YA NO se esconden (antes: bug, se ocultaban los dos)", () => {
+    // El motor permite eliminar un cobro con recibo anulado; el bloque se ofrece igual.
+    // Cuál botón queda gris (típicamente Editar) lo decide paymentRowGuard.js por cobro.
+    const editable = calcularCobroEditable({ canEditarEliminar: true });
+    assert.equal(editable, true, "El recibo anulado ya no es parámetro de esta función");
 });
 
 test("IMP-3: canEditOrDeletePayment undefined (DTO sin capability) → Editar y Eliminar OCULTOS (seguro por defecto)", () => {
     // Si el DTO no trae la capacidad, Boolean(undefined) = false → botones ocultos.
     // Es mejor no mostrar que mostrar un botón que el server va a rechazar.
-    const editable = calcularCobroEditable({ canEditarEliminar: undefined, reciboAnulado: false });
+    const editable = calcularCobroEditable({ canEditarEliminar: undefined });
     assert.equal(editable, false, "Sin capability del backend se asume false por seguridad");
 });
 

@@ -64,12 +64,16 @@ public static class PaymentCapabilityPolicy
         "No se puede editar el pago porque tiene un recibo emitido. Anulá el recibo y registrá un nuevo pago.";
 
     public const string EditBlockedByVoidedReceiptReason =
-        "No se puede editar el pago porque tiene un recibo anulado que debe preservarse para auditoria.";
+        "No se puede editar el pago porque tiene un recibo anulado que debe preservarse para auditoría.";
 
+    // "(CAE)" se mantiene A PROPOSITO en este texto: es la sigla que el usuario YA ve en el comprobante
+    // AFIP y esta redaccion esta FIRMADA tal cual en docs/ux/2026-07-20-t5-a-t9-contrato-pantalla-motor.md
+    // (linea 142). Tanda P4 (2026-07-22): solo se corrigen las tildes faltantes ("esta"->"está",
+    // "credito"->"crédito"), no se toca la sigla.
     public const string EditBlockedByLiveInvoiceReason =
-        "No se puede editar el pago porque esta vinculado a una factura emitida (CAE). Generá una nota de credito si corresponde.";
+        "No se puede editar el pago porque está vinculado a una factura emitida (CAE). Generá una nota de crédito si corresponde.";
 
-    // ===== Motivos de ELIMINAR (identicos a DeleteGuards.GetPaymentDeleteBlockReasonAsync, con UNA correccion) =====
+    // ===== Motivos de ELIMINAR (fuente UNICA: DeleteGuards/MutationGuards DELEGAN en esta clase) =====
 
     /// <summary>
     /// Correccion de prolijidad (Tanda 6, ya aprobada por el dueño en la spec — no es rediseño de la regla):
@@ -81,7 +85,7 @@ public static class PaymentCapabilityPolicy
         "No se puede eliminar el pago porque tiene un comprobante vigente. Anulá primero el comprobante.";
 
     public const string DeleteBlockedByLiveInvoiceReason =
-        "No se puede eliminar el pago porque esta vinculado a una factura. Generá una nota de credito si corresponde.";
+        "No se puede eliminar el pago porque está vinculado a una factura. Generá una nota de crédito si corresponde.";
 
     /// <summary>Evalua las dos capacidades del pago a partir de su contexto minimo. Pura: no toca la base.</summary>
     public static PaymentCapabilities For(PaymentCapabilityContext ctx) => new(

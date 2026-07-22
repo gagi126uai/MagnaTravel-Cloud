@@ -136,7 +136,7 @@ public class MutationGuardsTests
         var reason = await MutationGuards.GetPaymentMutationBlockReasonAsync(ctx, 12);
         Assert.NotNull(reason);
         Assert.Contains("anulado", reason, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("auditoria", reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("auditoría", reason, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

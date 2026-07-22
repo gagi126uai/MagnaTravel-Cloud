@@ -410,43 +410,43 @@ test("refreshKey: nunca cambia si no hubo acción de plata (sin ciclos infinitos
 // ─── B1: Editar / Eliminar cobro ─────────────────────────────────────────────
 
 /**
- * Replica la lógica de visibilidad de Editar/Eliminar cobro en PaymentReceiptActions.
+ * Replica la lógica de visibilidad (se OFRECE el bloque Editar/Eliminar cobro, sí o no)
+ * en PaymentReceiptActions.
  *
- * Regla: los botones Editar y Eliminar cobro se muestran SOLO cuando:
- *   - No está congelado (Traveling/Lost/Cancelled/FullyInvoiced).
- *   - El recibo NO está anulado (un cobro con recibo anulado está procesado formalmente).
+ * Regla: el bloque Editar/Eliminar se OFRECE solo cuando no está congelado
+ * (Traveling/Lost/Cancelled/FullyInvoiced). En congelado: sin botones de escritura,
+ * solo lectura.
  *
- * En congelado: sin botones de escritura. Solo lectura.
+ * P4-1 fix (2026-07-22, spec docs/ux/2026-07-22-p4-retoques-circuito-proveedor.md, P1=A):
+ * el recibo anulado YA NO se usa acá para esconder el bloque completo — antes escondía
+ * Editar Y Eliminar aunque el motor permitiera Eliminar. Ahora, con recibo anulado, el
+ * bloque SE OFRECE igual; cuál de los dos botones queda gris lo decide el motor por cobro
+ * (payment.canEdit/canDelete, cubierto en paymentRowGuard.test.mjs).
  */
-function calcularVisibilidadEditarEliminar({ congelado, reciboAnulado }) {
-  // Un cobro es editable si no está congelado y su recibo (si lo tiene) no está anulado.
-  return !congelado && !reciboAnulado;
+function calcularVisibilidadEditarEliminar({ congelado }) {
+  return !congelado;
 }
 
-test("B1: cobro sin recibo + no congelado → Editar y Eliminar visibles", () => {
-  const visible = calcularVisibilidadEditarEliminar({ congelado: false, reciboAnulado: false });
+test("B1: cobro sin recibo + no congelado → Editar y Eliminar se OFRECEN", () => {
+  const visible = calcularVisibilidadEditarEliminar({ congelado: false });
   assert.equal(visible, true);
 });
 
-test("B1: cobro con recibo activo + no congelado → Editar y Eliminar visibles", () => {
-  const visible = calcularVisibilidadEditarEliminar({ congelado: false, reciboAnulado: false });
+test("B1: cobro con recibo activo + no congelado → Editar y Eliminar se OFRECEN", () => {
+  const visible = calcularVisibilidadEditarEliminar({ congelado: false });
   assert.equal(visible, true);
 });
 
-test("B1: cobro en estado CONGELADO → Editar y Eliminar NO visibles (solo lectura)", () => {
-  const visible = calcularVisibilidadEditarEliminar({ congelado: true, reciboAnulado: false });
+test("B1: cobro en estado CONGELADO → Editar y Eliminar NO se ofrecen (solo lectura)", () => {
+  const visible = calcularVisibilidadEditarEliminar({ congelado: true });
   assert.equal(visible, false);
 });
 
-test("B1: cobro con recibo ANULADO → Editar y Eliminar NO visibles (ya procesado formalmente)", () => {
-  // Un cobro cuyo recibo fue anulado está documentado; no tiene sentido editarlo.
-  const visible = calcularVisibilidadEditarEliminar({ congelado: false, reciboAnulado: true });
-  assert.equal(visible, false);
-});
-
-test("B1: cobro congelado + recibo anulado → Editar y Eliminar NO visibles (doble bloqueo)", () => {
-  const visible = calcularVisibilidadEditarEliminar({ congelado: true, reciboAnulado: true });
-  assert.equal(visible, false);
+test("P4-1: cobro con recibo ANULADO + no congelado → Editar y Eliminar YA NO se esconden (antes: bug, se ocultaban los dos)", () => {
+  // Antes, un guard local `!reciboAnulado` escondía el bloque completo. Ahora se ofrece
+  // igual; el candado por-botón real (payment.canEdit/canDelete) vive en paymentRowGuard.js.
+  const visible = calcularVisibilidadEditarEliminar({ congelado: false });
+  assert.equal(visible, true, "El recibo anulado ya no es parámetro de esta función");
 });
 
 // ─── I1: Facturación multimoneda por moneda (nuevo backend 2026-06-22) ───────

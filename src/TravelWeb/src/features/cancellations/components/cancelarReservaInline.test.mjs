@@ -14,6 +14,9 @@
  *   8. Mapeo de errores para el caso PaymentsToCredit (400/403/404/409).
  *   9. Mapeo de errores del flujo multi-factura (confirmar y reintentar): 409 requiresApproval
  *      vs 409 genérico vs otros errores.
+ *   10. Alternancia cartel del caso vs cartel de error (P4-2, spec
+ *       docs/ux/2026-07-22-p4-retoques-circuito-proveedor.md, P2=A): en el estado "form" nunca
+ *       conviven los dos carteles — con error, solo se ve el error.
  *
  * ADR-042 (2026-07-01): la lógica del flujo "anular con VARIAS facturas" (aviso previo,
  * "¿Seguro?", avance por nota, éxito/revisión, franja "en revisión") vive en un módulo
@@ -145,6 +148,19 @@ function determinarCartelVisible(caso) {
     if (caso === "DirectCancel") return "cancelar-banner-sin-factura";
     if (caso === "PaymentsToCredit") return "cancelar-banner-saldo-favor";
     return "cancelar-banner-con-factura"; // CreditNote, NotApplicable, PreSale, etc.
+}
+
+// ─── Réplica de la alternancia cartel-del-caso vs cartel-de-error (P4-2) ──────
+
+/**
+ * Devuelve la lista de data-testid de carteles visibles a la vez en el estado "form".
+ * Réplica de los `{!conflictMessage && ...}` del JSX: con error, el cartel del caso
+ * se esconde y solo queda el de error ("cancelar-inline-conflict-msg"); sin error,
+ * se ve solo el cartel del caso.
+ */
+function determinarCartelesVisiblesEnForm(caso, conflictMessage) {
+    if (conflictMessage) return ["cancelar-inline-conflict-msg"];
+    return [determinarCartelVisible(caso)];
 }
 
 // ─── Réplica del mapeo de errores para PaymentsToCredit ──────────────────────
@@ -667,4 +683,56 @@ test("confirmarMulti y reintentarMulti dan el MISMO conflictMessage para require
     const a = mapearErrorConfirmarMulti({ status: 409, payload: { requiresApproval: true } });
     const b = mapearErrorReintentarMulti({ status: 409, payload: { requiresApproval: true } });
     assert.equal(a.conflictMessage, b.conflictMessage);
+});
+
+// ============================================================================
+// Sección 10: alternancia cartel del caso vs cartel de error (P4-2)
+//
+// Antes convivían hasta 2 carteles en el estado "form" (el del caso + el de error).
+// Ahora es alternancia: nunca los dos juntos.
+// ============================================================================
+
+test("sin error → se ve solo el cartel del caso (DirectCancel)", () => {
+    const visibles = determinarCartelesVisiblesEnForm("DirectCancel", null);
+    assert.deepEqual(visibles, ["cancelar-banner-sin-factura"]);
+});
+
+test("sin error → se ve solo el cartel del caso (PaymentsToCredit)", () => {
+    const visibles = determinarCartelesVisiblesEnForm("PaymentsToCredit", null);
+    assert.deepEqual(visibles, ["cancelar-banner-saldo-favor"]);
+});
+
+test("sin error → se ve solo el cartel del caso (CreditNote)", () => {
+    const visibles = determinarCartelesVisiblesEnForm("CreditNote", null);
+    assert.deepEqual(visibles, ["cancelar-banner-con-factura"]);
+});
+
+test("con error → se ve SOLO el cartel de error, nunca el del caso (DirectCancel)", () => {
+    const visibles = determinarCartelesVisiblesEnForm("DirectCancel", "No se pudo anular: motivo X.");
+    assert.deepEqual(visibles, ["cancelar-inline-conflict-msg"]);
+    assert.ok(!visibles.includes("cancelar-banner-sin-factura"), "el cartel del caso no debe convivir con el de error");
+});
+
+test("con error → se ve SOLO el cartel de error, nunca el del caso (CreditNote, el caso ámbar más frecuente con error)", () => {
+    const visibles = determinarCartelesVisiblesEnForm("CreditNote", "El operador ya cobró y no hay factura para anclar el reembolso.");
+    assert.deepEqual(visibles, ["cancelar-inline-conflict-msg"]);
+    assert.ok(!visibles.includes("cancelar-banner-con-factura"), "el cartel ámbar no debe convivir con el de error");
+});
+
+test("nunca hay más de un cartel visible a la vez en el estado form, sea cual sea el caso o el error", () => {
+    for (const caso of ["DirectCancel", "PaymentsToCredit", "CreditNote", "NotApplicable", ""]) {
+        for (const conflictMessage of [null, undefined, "", "algún error"]) {
+            const visibles = determinarCartelesVisiblesEnForm(caso, conflictMessage);
+            assert.equal(visibles.length, 1, `caso=${caso} conflictMessage=${JSON.stringify(conflictMessage)} debe mostrar exactamente 1 cartel`);
+        }
+    }
+});
+
+test("el error se limpia (conflictMessage vuelve a null/undefined) → el cartel del caso reaparece intacto", () => {
+    // Simula el ciclo: error → el vendedor corrige → setConflictMessage(null) (líneas 179/382
+    // del componente) → vuelve a verse el cartel del caso, sin perder información del caso.
+    const conError = determinarCartelesVisiblesEnForm("PaymentsToCredit", "motivo muy corto");
+    const sinError = determinarCartelesVisiblesEnForm("PaymentsToCredit", null);
+    assert.deepEqual(conError, ["cancelar-inline-conflict-msg"]);
+    assert.deepEqual(sinError, ["cancelar-banner-saldo-favor"], "el cartel del caso debe reaparecer igual que antes del error");
 });

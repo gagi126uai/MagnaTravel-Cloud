@@ -277,7 +277,7 @@ public class PaymentServiceDeleteTests
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => service.DeletePaymentAsync(payment.PublicId.ToString(), CancellationToken.None));
         Assert.Contains("factura", ex.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("nota de credito", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("nota de crédito", ex.Message, StringComparison.OrdinalIgnoreCase);
 
         var refreshed = await context.Payments.IgnoreQueryFilters().AsNoTracking().FirstAsync(p => p.Id == 103);
         Assert.False(refreshed.IsDeleted);

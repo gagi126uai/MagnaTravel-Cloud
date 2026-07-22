@@ -576,8 +576,14 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
                         Caso 3 PaymentsToCredit → CELESTE:  sin factura, con cobros (plata → saldo a favor).
                         Caso 4 CreditNote       → ÁMBAR:   con factura CAE → emite NC en AFIP/ARCA.
                         Cualquier otro caso     → ÁMBAR:   fallback conservador (no prometemos nada).
-                        Los textos viven en cancelarReservaCopy.js para que los tests puedan importarlos. */}
-                    {casoAnulacion === "DirectCancel" && (
+                        Los textos viven en cancelarReservaCopy.js para que los tests puedan importarlos.
+
+                        Retoque P4-2 (2026-07-22, spec docs/ux/2026-07-22-p4-retoques-circuito-proveedor.md,
+                        P2=A): este cartel del caso solo se muestra si NO hay error. Cuando el motor
+                        rechaza la anulación, la explicación "qué iba a pasar" ya no aporta — lo único
+                        que importa es el motivo del error y qué hacer. El cartel del caso reaparece
+                        solo cuando el vendedor corrige y el error se limpia. */}
+                    {!conflictMessage && casoAnulacion === "DirectCancel" && (
                         <div
                             className="flex items-start gap-2 rounded-lg border border-green-200 bg-green-50 p-3.5 text-xs text-green-800 dark:bg-green-950/30 dark:border-green-800 dark:text-green-200"
                             data-testid="cancelar-banner-sin-factura"
@@ -586,7 +592,7 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
                         </div>
                     )}
 
-                    {casoAnulacion === "PaymentsToCredit" && (
+                    {!conflictMessage && casoAnulacion === "PaymentsToCredit" && (
                         <div
                             className="flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50 p-3.5 text-xs text-sky-800 dark:bg-sky-950/30 dark:border-sky-800 dark:text-sky-200"
                             data-testid="cancelar-banner-saldo-favor"
@@ -605,7 +611,7 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
                         </div>
                     )}
 
-                    {casoAnulacion !== "DirectCancel" && casoAnulacion !== "PaymentsToCredit" && (
+                    {!conflictMessage && casoAnulacion !== "DirectCancel" && casoAnulacion !== "PaymentsToCredit" && (
                         <div
                             className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3.5 text-xs text-amber-800 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-200"
                             data-testid="cancelar-banner-con-factura"
@@ -618,7 +624,8 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
                     {/* ── Error de conflicto (400/409 recuperable) ──
                         Tanda 3 (2026-07-20): único código de la tabla con botón es el freno de
                         plata R1 (ANNUL_CREDIT_UNANCHORED_OPERATOR_REFUND) — abre EmitirFacturaInline,
-                        que ya existe en la ficha (D1 firmada, no se construye nada nuevo). */}
+                        que ya existe en la ficha (D1 firmada, no se construye nada nuevo).
+                        Cuando este cartel está presente, tapa al cartel del caso de arriba (ver P4-2). */}
                     {conflictMessage && (
                         <div
                             role="alert"
