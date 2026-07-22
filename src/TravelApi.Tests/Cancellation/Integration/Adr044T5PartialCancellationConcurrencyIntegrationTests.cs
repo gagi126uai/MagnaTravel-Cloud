@@ -70,6 +70,11 @@ public sealed class Adr044T5PartialCancellationConcurrencyIntegrationTests
         invoice.ImporteTotal = importeTotal;
         await seed.SaveChangesAsync();
         var reserva = await seed.Reservas.FirstAsync(r => r.Id == resId);
+
+        // Obra "candado coherente" C2 (2026-07-22): las cancelaciones parciales de este archivo cancelan
+        // servicios de VERDAD (no solo prueban rechazos), asi que la reserva necesita autorizacion viva.
+        await CancellationTestData.SeedLiveEditAuthorizationAsync(seed, resId);
+
         return (reserva.PublicId, resId, invId, supplierId);
     }
 

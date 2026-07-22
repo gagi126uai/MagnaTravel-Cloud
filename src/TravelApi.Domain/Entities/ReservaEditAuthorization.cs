@@ -75,7 +75,7 @@ public class ReservaEditAuthorizationChange
 
     /// <summary>
     /// Tipo de operacion: ServiceEdited | ServiceDeleted | ServiceCancelled | ServiceAdded |
-    /// ReservaDataEdited | PassengerAdded | PassengerEdited | PassengerDeleted.
+    /// ServiceCostConfirmed | ReservaDataEdited | PassengerAdded | PassengerEdited | PassengerDeleted.
     /// </summary>
     [Required, MaxLength(50)]
     public string Operation { get; set; } = string.Empty;
@@ -105,6 +105,15 @@ public static class ReservaEditAuthorizationOperations
     public const string ServiceDeleted = "ServiceDeleted";
     public const string ServiceCancelled = "ServiceCancelled";
     public const string ServiceAdded = "ServiceAdded";
+
+    /// <summary>
+    /// Obra "candado coherente" C4 (matriz 2026-07-22): confirmar el costo de un servicio ("Confirmar
+    /// costo") toca plata de la reserva bloqueada, asi que pide destrabar igual que editar/borrar un
+    /// servicio. Es una operacion propia (no reusa ServiceEdited) para que el rastro de auditoria diga
+    /// EXACTAMENTE que paso: no fue una edicion de campos, fue la confirmacion de un costo a confirmar.
+    /// </summary>
+    public const string ServiceCostConfirmed = "ServiceCostConfirmed";
+
     public const string ReservaDataEdited = "ReservaDataEdited";
     public const string PassengerAdded = "PassengerAdded";
     public const string PassengerEdited = "PassengerEdited";

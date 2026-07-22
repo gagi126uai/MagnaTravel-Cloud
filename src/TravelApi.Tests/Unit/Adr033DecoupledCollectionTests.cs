@@ -352,6 +352,18 @@ public class Adr033DecoupledCollectionTests
         ctx.HotelBookings.Add(hotel);
         await ctx.SaveChangesAsync();
 
+        // Obra "candado coherente" C2 (2026-07-22): Confirmed quedo bajo candado de autorizacion — este test
+        // prueba el gate de ESTADO (viva vs no-viva), no el candado (eso ya lo cubre
+        // CandadoCoherenteC2C4C3Tests), asi que sembramos una autorizacion VIVA para que el escenario llegue
+        // limpio al punto que realmente le interesa verificar.
+        ctx.ReservaEditAuthorizations.Add(new ReservaEditAuthorization
+        {
+            ReservaId = reserva.Id,
+            Reason = "Autorizacion de test para ejercitar CancelServiceAsync en estado vivo",
+            ExpiresAt = DateTime.UtcNow.AddMinutes(30),
+        });
+        await ctx.SaveChangesAsync();
+
         var service = BuildCancellationService(ctx);
 
         var result = await service.CancelServiceAsync(

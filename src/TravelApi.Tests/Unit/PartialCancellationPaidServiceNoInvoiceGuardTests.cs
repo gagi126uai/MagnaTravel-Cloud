@@ -102,6 +102,17 @@ public class PartialCancellationPaidServiceNoInvoiceGuardTests
             await ctx.SaveChangesAsync();
         }
 
+        // Obra "candado coherente" C2 (2026-07-22): CancelServiceAsync ahora exige autorizacion viva en
+        // una reserva Confirmada. Este archivo prueba la regla R1 (plata pagada sin factura), no el
+        // candado en si (eso lo cubre Adr020LockGuardTests) — el seed ya nace autorizado.
+        ctx.ReservaEditAuthorizations.Add(new ReservaEditAuthorization
+        {
+            ReservaId = reserva.Id,
+            Reason = "Autorizacion de test para ejercitar CancelServiceAsync",
+            ExpiresAt = DateTime.UtcNow.AddMinutes(30),
+        });
+        await ctx.SaveChangesAsync();
+
         return (reserva, supplier, hotel);
     }
 

@@ -303,6 +303,11 @@ public sealed class ServiceCancellationPreflightIntegrationTests
         });
         await ctx.SaveChangesAsync();
 
+        // Obra "candado coherente" C2 (2026-07-22): uno de los dos tests que usan este seed SI llega a
+        // cancelar de verdad (tras agregar la factura que faltaba) — necesita autorizacion viva. El otro
+        // (sin factura) rechaza ANTES por R1, asi que la autorizacion es inocua para el.
+        await CancellationTestData.SeedLiveEditAuthorizationAsync(ctx, reserva.Id);
+
         return (reserva.Id, reserva.PublicId, hotel.PublicId);
     }
 

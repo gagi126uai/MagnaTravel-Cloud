@@ -225,6 +225,10 @@ public sealed class Adr048ReservaTerminalDerivationE2ETests
             hotel2PublicId = hotel2.PublicId;
             // Sin SupplierPayment a propósito: el operador no cobró nada por estos servicios, así que
             // RefundCap queda en 0 y no hay reembolso pendiente en juego (no es lo que este test mide).
+
+            // Obra "candado coherente" C2 (2026-07-22): este test cancela DOS servicios de verdad sobre
+            // una reserva Confirmada, así que necesita autorización viva.
+            await CancellationTestData.SeedLiveEditAuthorizationAsync(seedCtx, resId);
         }
 
         using var scope = _fixture.BuildServiceProvider().CreateScope();
@@ -304,6 +308,10 @@ public sealed class Adr048ReservaTerminalDerivationE2ETests
             // La agencia YA le pagó al operador el costo neto del hotel -> al cancelar, el operador debe
             // devolver ese reembolso (RefundCap = 500).
             await CancellationTestData.SeedSupplierPaymentAsync(seedCtx, supId, resId, amount: 500m);
+
+            // Obra "candado coherente" C2 (2026-07-22): este test cancela el único servicio de verdad
+            // sobre una reserva Confirmada, así que necesita autorización viva.
+            await CancellationTestData.SeedLiveEditAuthorizationAsync(seedCtx, resId);
         }
 
         var provider = _fixture.BuildServiceProvider();

@@ -101,6 +101,25 @@ internal static class CancellationTestData
     }
 
     /// <summary>
+    /// Obra "candado coherente" C2 (2026-07-22): <c>BookingCancellationService.CancelServiceAsync</c> ahora
+    /// exige una <see cref="ReservaEditAuthorization"/> VIVA cuando la reserva esta Confirmada (mismo
+    /// candado que ya protegia Update/Delete de servicios tipados). Los tests de integracion de este modulo
+    /// prueban la LOGICA de cada flujo de cancelacion (no el candado en si), asi que llaman a este helper
+    /// EXPLICITAMENTE despues de sembrar la reserva cuando su escenario va a intentar cancelar un servicio
+    /// de verdad — mismo criterio "seed explicito, no factory oculto" que el resto de este archivo.
+    /// </summary>
+    public static async Task SeedLiveEditAuthorizationAsync(AppDbContext ctx, int reservaId)
+    {
+        ctx.ReservaEditAuthorizations.Add(new ReservaEditAuthorization
+        {
+            ReservaId = reservaId,
+            Reason = "Autorizacion de test para ejercitar CancelServiceAsync",
+            ExpiresAt = DateTime.UtcNow.AddMinutes(30),
+        });
+        await ctx.SaveChangesAsync();
+    }
+
+    /// <summary>
     /// (2026-07-03) Siembra un pago VIVO al operador imputado a la reserva. Es la pieza que hace que
     /// una anulacion tenga un circuito REAL de reembolso: al armar las lineas, <c>AssignRefundCapsAsync</c>
     /// les asigna <see cref="BookingCancellationLine.RefundCap"/> &gt; 0 (= min(pool pagado al operador,

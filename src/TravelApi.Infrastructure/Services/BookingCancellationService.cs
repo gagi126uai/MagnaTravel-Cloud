@@ -467,6 +467,24 @@ public class BookingCancellationService
             // entidades del intento anterior NO deben quedar rastreadas (doble-add / estado stale en EF).
             _db.ChangeTracker.Clear();
 
+            // 1-bis) C2 (matriz candado 2026-07-22, decision firmada): cierra el bypass real de "anular
+            //    servicio" — antes esta operacion mutaba una reserva CONFIRMADA sin pasar por el candado de
+            //    autorizacion, el mismo que ya protege Update/Delete de servicios tipados (BookingService.cs,
+            //    GuardReservaLockAsync). Reserva en etapa libre (Quotation/Budget/InManagement): no-op. Reserva
+            //    Confirmada CON autorizacion viva: deja rastro auditable (fila ReservaEditAuthorizationChange,
+            //    aditiva, se persiste con el SaveChanges del paso 2-bis de abajo). Reserva Confirmada SIN
+            //    autorizacion: 409, IGUAL exception/mensaje que los demas candados de este metodo.
+            //
+            //    OJO donde va: tiene que ir DESPUES del ChangeTracker.Clear() de arriba (si fuera antes, el
+            //    Clear() de un reintento por colision del primer BC borraria el ReservaEditAuthorizationChange
+            //    ya agregado al ChangeTracker, y la auditoria se perderia en silencio) y ANTES de tocar
+            //    cualquier servicio (punto 2, mas abajo) — es la ultima compuerta antes de mutar. Los preflights
+            //    de arriba (estado vivo, voucher, R1, sin-Payer) siguen corriendo ANTES de esto, sin cambios: un
+            //    servicio bloqueado por esos motivos sigue mostrando ESE motivo, no el candado.
+            await ReservaLockGuard.EnsureCanEditAsync(
+                _db, reserva.Id, ReservaEditAuthorizationOperations.ServiceCancelled,
+                userId, userName, serviceTable.ToString(), creditPlan.ServiceId, request.Reason, ct);
+
             // 2) Marcar el Status cancelado del servicio + CancelledAt/By (no hace SaveChanges: lo hacemos aca).
             var (supplierId, alreadyCancelled) = await MarkTypedServiceCancelledAsync(
                 serviceTable, request.ServicePublicId, reserva.Id, userId, userName, ct);

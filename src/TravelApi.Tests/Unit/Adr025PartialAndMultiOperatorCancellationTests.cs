@@ -118,6 +118,17 @@ public class Adr025PartialAndMultiOperatorCancellationTests
         }
         await ctx.SaveChangesAsync();
 
+        // Obra "candado coherente" C2 (2026-07-22): CancelServiceAsync ahora exige autorizacion viva en
+        // una reserva Confirmada. Este archivo prueba el modelo BC-padre + lineas de ADR-025, no el
+        // candado en si (eso lo cubre Adr020LockGuardTests) — el seed ya nace autorizado.
+        ctx.ReservaEditAuthorizations.Add(new ReservaEditAuthorization
+        {
+            ReservaId = reserva.Id,
+            Reason = "Autorizacion de test para ejercitar CancelServiceAsync",
+            ExpiresAt = DateTime.UtcNow.AddMinutes(30),
+        });
+        await ctx.SaveChangesAsync();
+
         // Pago al operador A (genera saldo de deuda = NetCost - pagado).
         if (paidToSupplierA > 0m)
         {

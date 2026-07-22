@@ -7,9 +7,18 @@ namespace TravelApi.Infrastructure.Services.Reservations;
 /// <summary>
 /// ADR-020 F4 (candado): regla unica de "puedo editar esta reserva CON autorizacion?".
 ///
-/// <para>En el estado CONFIRMADA (Confirmed) la reserva queda bajo candado: cada write-path
-/// (servicios, pasajeros, datos, adjuntos) exige que exista una <see cref="ReservaEditAuthorization"/>
-/// VIVA. En las etapas comerciales tempranas (Quotation, Budget, InManagement) la edicion es libre.</para>
+/// <para>En el estado CONFIRMADA (Confirmed) la reserva queda bajo candado: cada write-path que toca
+/// plata o compromisos de la reserva (servicios — editar/borrar/agregar/cancelar/confirmar costo,
+/// pasajeros, datos de la reserva) exige que exista una <see cref="ReservaEditAuthorization"/> VIVA. En
+/// las etapas comerciales tempranas (Quotation, Budget, InManagement) la edicion es libre.</para>
+///
+/// <para><b>Matriz del candado, decision C4 (2026-07-22,
+/// <c>docs/architecture/2026-07-22-matriz-candado-decisiones-gaston.md</c>)</b>: los ADJUNTOS de la
+/// reserva y la asignacion de pasajeros a servicios quedan LIBRES a proposito — son trabajo operativo
+/// diario sin plata de por medio, no una edicion que necesite destrabar. Este parrafo antes decia lo
+/// contrario (que los adjuntos estaban bajo candado); era una promesa que el codigo nunca cumplio
+/// (<c>AttachmentsController</c> no consulta este guard). Gaston decidio dejar el codigo como esta
+/// (adjuntos libres) y corregir la doc, no al reves.</para>
 ///
 /// <para><b>ADR-036 (2026-06-21, prepago puro):</b> se quitaron <c>Traveling</c> y <c>ToSettle</c> de este
 /// candado. NO porque pasen a ser editables — al contrario: Traveling es SOLO LECTURA TOTAL (Decision 2) y

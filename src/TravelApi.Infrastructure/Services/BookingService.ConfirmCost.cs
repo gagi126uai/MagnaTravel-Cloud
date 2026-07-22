@@ -26,6 +26,9 @@ public partial class BookingService
 {
     // Decision del dueño 2 (ver summary de la clase): confirm-cost se permite aunque la reserva este
     // facturada -> a proposito NO pasa por MutationGuards (solo corrige costo interno, no el comprobante).
+    // C4 (matriz candado 2026-07-22, decision firmada): SI pasa por el candado de autorizacion (toca plata
+    // de la reserva bloqueada), pero A PROPOSITO NO pasa por el gate de estado ADR-035 — eso queda fuera de
+    // esta obra, sin cambios.
     public async Task<HotelBookingDto> ConfirmHotelCostAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, ConfirmCostRequest body, CancellationToken ct)
     {
         await EnsureCatalogEnabledForConfirmAsync(ct);
@@ -34,6 +37,11 @@ public partial class BookingService
 
         return await RunCatalogTransactionAsync(async () =>
         {
+            // El candado va como PRIMERA linea del cuerpo transaccional (RunCatalogTransactionAsync ya limpio
+            // el ChangeTracker antes de invocar este cuerpo): si la reserva esta Confirmada sin autorizacion
+            // viva, corta ANTES de tocar el costo del hotel.
+            await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceCostConfirmed, "HotelBooking", id, "Hotel", ct);
+
             var hotel = await _hotelRepo.GetByIdAsync(id, ct);
             if (hotel == null || hotel.ReservaId != reservaId) throw new KeyNotFoundException("Hotel no encontrado");
 
@@ -61,6 +69,8 @@ public partial class BookingService
 
     // Decision del dueño 2 (ver summary de la clase): confirm-cost se permite aunque la reserva este
     // facturada -> a proposito NO pasa por MutationGuards (solo corrige costo interno, no el comprobante).
+    // C4 (matriz candado 2026-07-22): SI pasa por el candado de autorizacion; a proposito NO por el gate de
+    // estado ADR-035 (fuera de esta obra).
     public async Task<FlightSegmentDto> ConfirmFlightCostAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, ConfirmCostRequest body, CancellationToken ct)
     {
         await EnsureCatalogEnabledForConfirmAsync(ct);
@@ -69,6 +79,8 @@ public partial class BookingService
 
         return await RunCatalogTransactionAsync(async () =>
         {
+            await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceCostConfirmed, "FlightSegment", id, "Aereo", ct);
+
             var flight = await _flightRepo.GetByIdAsync(id, ct);
             if (flight == null || flight.ReservaId != reservaId) throw new KeyNotFoundException("Vuelo no encontrado");
 
@@ -93,6 +105,8 @@ public partial class BookingService
 
     // Decision del dueño 2 (ver summary de la clase): confirm-cost se permite aunque la reserva este
     // facturada -> a proposito NO pasa por MutationGuards (solo corrige costo interno, no el comprobante).
+    // C4 (matriz candado 2026-07-22): SI pasa por el candado de autorizacion; a proposito NO por el gate de
+    // estado ADR-035 (fuera de esta obra).
     public async Task<TransferBookingDto> ConfirmTransferCostAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, ConfirmCostRequest body, CancellationToken ct)
     {
         await EnsureCatalogEnabledForConfirmAsync(ct);
@@ -101,6 +115,8 @@ public partial class BookingService
 
         return await RunCatalogTransactionAsync(async () =>
         {
+            await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceCostConfirmed, "TransferBooking", id, "Traslado", ct);
+
             var transfer = await _transferRepo.GetByIdAsync(id, ct);
             if (transfer == null || transfer.ReservaId != reservaId) throw new KeyNotFoundException("Traslado no encontrado");
 
@@ -125,6 +141,8 @@ public partial class BookingService
 
     // Decision del dueño 2 (ver summary de la clase): confirm-cost se permite aunque la reserva este
     // facturada -> a proposito NO pasa por MutationGuards (solo corrige costo interno, no el comprobante).
+    // C4 (matriz candado 2026-07-22): SI pasa por el candado de autorizacion; a proposito NO por el gate de
+    // estado ADR-035 (fuera de esta obra).
     public async Task<PackageBookingDto> ConfirmPackageCostAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, ConfirmCostRequest body, CancellationToken ct)
     {
         await EnsureCatalogEnabledForConfirmAsync(ct);
@@ -133,6 +151,8 @@ public partial class BookingService
 
         return await RunCatalogTransactionAsync(async () =>
         {
+            await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceCostConfirmed, "PackageBooking", id, "Paquete", ct);
+
             var package = await _packageRepo.GetByIdAsync(id, ct);
             if (package == null || package.ReservaId != reservaId) throw new KeyNotFoundException("Paquete no encontrado");
 
@@ -157,6 +177,8 @@ public partial class BookingService
 
     // Decision del dueño 2 (ver summary de la clase): confirm-cost se permite aunque la reserva este
     // facturada -> a proposito NO pasa por MutationGuards (solo corrige costo interno, no el comprobante).
+    // C4 (matriz candado 2026-07-22): SI pasa por el candado de autorizacion; a proposito NO por el gate de
+    // estado ADR-035 (fuera de esta obra).
     public async Task<AssistanceBookingDto> ConfirmAssistanceCostAsync(string reservaPublicIdOrLegacyId, string publicIdOrLegacyId, ConfirmCostRequest body, CancellationToken ct)
     {
         await EnsureCatalogEnabledForConfirmAsync(ct);
@@ -165,6 +187,8 @@ public partial class BookingService
 
         return await RunCatalogTransactionAsync(async () =>
         {
+            await GuardReservaLockAsync(reservaId, ReservaEditAuthorizationOperations.ServiceCostConfirmed, "AssistanceBooking", id, "Asistencia", ct);
+
             var assistance = await _assistanceRepo.GetByIdAsync(id, ct);
             if (assistance == null || assistance.ReservaId != reservaId) throw new KeyNotFoundException("Asistencia no encontrada");
 
