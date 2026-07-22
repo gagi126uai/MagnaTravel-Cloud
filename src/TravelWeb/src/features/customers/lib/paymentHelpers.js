@@ -50,3 +50,36 @@ export function traducirMetodoPago(method) {
   // Intentar lookup exacto primero, luego capitalizado
   return mapa[method] ?? mapa[normalizado] ?? "";
 }
+
+/**
+ * Traduce el estado de un pago que llega del backend a una etiqueta en español.
+ *
+ * `Payment.Status` (backend) es un string libre, sin enum — hoy solo se asignan
+ * "Paid" | "Pending" | "Cancelled" (ver TravelApi.Domain.Entities.Payment.cs). Como es un
+ * campo libre y no un enum tipado, un valor nuevo podría aparecer sin que el frontend se
+ * entere de antemano: por eso un valor no reconocido NUNCA se muestra crudo (jerga interna
+ * en inglés) — se devuelve "" para que quien llama decida si omite el dato o pone un guion.
+ *
+ * @param {string | null | undefined} status — valor crudo del DTO
+ * @returns {string} — etiqueta en español, o "" si desconocido/vacío
+ */
+export function traducirEstadoPago(status) {
+  if (!status) return "";
+
+  const mapa = {
+    // Inglés (valor real que guarda el backend)
+    Paid:      "Pagado",
+    Pending:   "Pendiente",
+    Cancelled: "Cancelado",
+    // Español, por si algún caller ya normalizado llega a pasar la etiqueta traducida
+    Pagado:    "Pagado",
+    Pendiente: "Pendiente",
+    Cancelado: "Cancelado",
+  };
+
+  // Normalización de case: "paid" → lookup como "Paid"
+  const normalizado = status.charAt(0).toUpperCase() + status.slice(1).toLowerCase();
+
+  // Intentar lookup exacto primero, luego capitalizado
+  return mapa[status] ?? mapa[normalizado] ?? "";
+}

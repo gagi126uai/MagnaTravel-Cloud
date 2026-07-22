@@ -179,7 +179,6 @@ public class OperatorRefundRegisteredReadModelTests
         Assert.Equal(400m, live.NetAmount);
         Assert.False(live.AmountsMasked);
         Assert.NotEqual(Guid.Empty, live.ReservaPublicId);
-        Assert.NotEqual(Guid.Empty, live.RefundReceivedPublicId);
 
         var voided = page.Items.Single(i => i.NumeroReserva == "R-DESHECHA");
         Assert.True(voided.IsVoided);
@@ -357,5 +356,131 @@ public class OperatorRefundRegisteredReadModelTests
         Assert.Equal(1, page.TotalPages);
         Assert.False(page.HasNextPage);
         Assert.False(page.HasPreviousPage);
+    }
+
+    /// <summary>
+    /// Review backend (2026-07-22): pagina 1 vs pagina 2 con MAS filas que el tamaño de pagina, sin que se
+    /// pisen ni se repitan filas. <c>PagedQuery.GetNormalizedPageSize</c> solo acepta 25/50/100 (cualquier
+    /// otro valor cae al default 25 — verificado en <c>PaginationDtos.cs</c>), asi que sembramos 27 filas
+    /// para que la pagina 1 (25) y la pagina 2 (2 restantes) queden con contenido real de las dos.
+    ///
+    /// <para>Ademas de las 25 filas con fecha de carga distinta (una por minuto), las ULTIMAS DOS comparten
+    /// EXACTAMENTE la misma <c>CreatedAt</c> a proposito: es el escenario real de "orden por defecto" con
+    /// empate (dos cashiers cargando en el mismo minuto), y prueba que el desempate por <c>PublicId</c>
+    /// (segundo criterio de <c>ApplyOperatorRefundRegisteredOrdering</c>) es estable y no deja el orden
+    /// librado al azar entre corridas.</para>
+    /// </summary>
+    [Fact]
+    public async Task Paginado_PaginaDosNoSuperpone_OrdenEstablePorFechaConDesempatePorPublicId()
+    {
+        await using var ctx = NewDbContext();
+        var customer = new Customer { FullName = "Cliente Multipagina", IsActive = true };
+        var supplier = new Supplier { Name = "Operador Multipagina", IsActive = true };
+        ctx.Customers.Add(customer);
+        ctx.Suppliers.Add(supplier);
+        await ctx.SaveChangesAsync();
+
+        var refund = new OperatorRefundReceived
+        {
+            SupplierId = supplier.Id,
+            ReceivedAmount = 10_000m,
+            AllocatedAmount = 10_000m,
+            Currency = "ARS",
+            Method = "Transfer",
+            ReceivedByUserId = "cajero-1",
+            ReceivedByUserName = "Cajero Uno",
+        };
+        ctx.OperatorRefundReceived.Add(refund);
+        await ctx.SaveChangesAsync();
+
+        const int TotalRows = 27;
+        var baseTime = new DateTime(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc);
+
+        // Vamos guardando (NumeroReserva, CreatedAt, PublicId) de cada fila sembrada para poder calcular
+        // DESPUES el orden esperado con la MISMA regla que usa el read-model (fecha desc, empate por
+        // PublicId desc), sin tener que adivinar de antemano cual de los dos PublicId de la pareja
+        // empatada es "mayor" segun la comparacion interna de Guid.
+        var seeded = new List<(string NumeroReserva, DateTime CreatedAt, Guid PublicId)>();
+
+        for (var i = 0; i < TotalRows; i++)
+        {
+            var numeroReserva = $"R-PAGE-{i:00}";
+            var reserva = new Reserva
+            {
+                NumeroReserva = numeroReserva, Name = numeroReserva,
+                PayerId = customer.Id, Status = EstadoReserva.Cancelled,
+            };
+            ctx.Reservas.Add(reserva);
+            var invoice = new Invoice { TipoComprobante = 11, Resultado = "A" };
+            ctx.Invoices.Add(invoice);
+            await ctx.SaveChangesAsync();
+
+            var bc = new BookingCancellation
+            {
+                ReservaId = reserva.Id,
+                CustomerId = customer.Id,
+                SupplierId = supplier.Id,
+                OriginatingInvoiceId = invoice.Id,
+                Status = BookingCancellationStatus.Closed,
+                Reason = "rm-page",
+                DraftedByUserId = "vendedor-1",
+            };
+            ctx.BookingCancellations.Add(bc);
+            await ctx.SaveChangesAsync();
+
+            // Las ultimas dos filas (i = 25 y 26) se cargan al MISMO instante: el empate a proposito
+            // descripto en el resumen del test. El resto tiene un minuto de diferencia entre si.
+            var createdAt = i == TotalRows - 1
+                ? baseTime.AddMinutes(TotalRows - 2)
+                : baseTime.AddMinutes(i);
+            var allocation = new OperatorRefundAllocation
+            {
+                OperatorRefundReceivedId = refund.Id,
+                BookingCancellationId = bc.Id,
+                GrossAmount = 100m + i,
+                NetAmount = 100m + i,
+                IsVoided = false,
+                CreatedAt = createdAt,
+                CreatedByUserId = "cajero-1",
+            };
+            ctx.OperatorRefundAllocations.Add(allocation);
+            await ctx.SaveChangesAsync();
+
+            seeded.Add((numeroReserva, createdAt, allocation.PublicId));
+        }
+
+        // Orden esperado calculado con la MISMA regla que ApplyOperatorRefundRegisteredOrdering: fecha
+        // desc, empate por PublicId desc. Lo calculamos aca en base a lo que realmente quedo guardado
+        // (no adivinamos el layout interno de Guid), asi el test sigue siendo valido pase lo que pase
+        // con la implementacion concreta de Guid.CompareTo.
+        var expectedOrder = seeded
+            .OrderByDescending(s => s.CreatedAt)
+            .ThenByDescending(s => s.PublicId)
+            .Select(s => s.NumeroReserva)
+            .ToList();
+
+        var service = new OperatorRefundReadModelService(ctx, AdminAccessor(), permissionResolver: null);
+
+        var page1 = await service.GetSupplierRegisteredRefundsAsync(
+            supplier.Id, new OperatorRefundRegisteredQuery { Page = 1, PageSize = 25 }, CancellationToken.None);
+        var page2 = await service.GetSupplierRegisteredRefundsAsync(
+            supplier.Id, new OperatorRefundRegisteredQuery { Page = 2, PageSize = 25 }, CancellationToken.None);
+
+        Assert.Equal(TotalRows, page1.TotalCount);
+        Assert.Equal(TotalRows, page2.TotalCount);
+        Assert.Equal(2, page1.TotalPages);
+        Assert.Equal(25, page1.Items.Count);
+        Assert.Equal(2, page2.Items.Count);
+        Assert.True(page1.HasNextPage);
+        Assert.False(page2.HasNextPage);
+        Assert.True(page2.HasPreviousPage);
+
+        Assert.Equal(expectedOrder.Take(25), page1.Items.Select(i => i.NumeroReserva));
+        Assert.Equal(expectedOrder.Skip(25), page2.Items.Select(i => i.NumeroReserva));
+
+        // Sin solapamiento: ninguna reserva aparece en las dos paginas a la vez.
+        var page1Reservas = page1.Items.Select(i => i.NumeroReserva).ToHashSet();
+        var page2Reservas = page2.Items.Select(i => i.NumeroReserva).ToHashSet();
+        Assert.Empty(page1Reservas.Intersect(page2Reservas));
     }
 }

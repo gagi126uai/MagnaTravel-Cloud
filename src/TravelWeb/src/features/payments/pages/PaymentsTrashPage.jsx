@@ -37,8 +37,10 @@ export default function PaymentsTrashPage() {
     };
 
     const handleRestore = async (payment) => {
+        // La papelera no trae la moneda del pago (gap del DTO GetDeletedPaymentsAsync); ARS
+        // es el default de la entidad Payment cuando no se especifica otra.
         const result = await Swal.fire({
-            html: `<p>El pago de <b>${formatCurrency(payment.amount)}</b> volverá a estar activo.</p>
+            html: `<p>El pago de <b>${formatCurrency(payment.amount, "ARS")}</b> volverá a estar activo.</p>
                    <p class="text-sm text-gray-500 mt-1">Reserva: ${payment.numeroReserva || "N/A"}</p>`,
             icon: "question",
             showCancelButton: true,
@@ -97,7 +99,7 @@ export default function PaymentsTrashPage() {
                                         {formatDate(payment.deletedAt)}
                                     </span>
                                 }
-                                title={formatCurrency(payment.amount)}
+                                title={formatCurrency(payment.amount, "ARS")}
                                 subtitle={payment.method || "Sin metodo"}
                                 meta={
                                     <>
@@ -151,7 +153,7 @@ export default function PaymentsTrashPage() {
                                                     <CreditCard className="h-4 w-4 text-rose-600 dark:text-rose-400" />
                                                 </div>
                                                 <span className="font-mono font-bold text-rose-600 dark:text-rose-400 line-through">
-                                                    {formatCurrency(p.amount)}
+                                                    {formatCurrency(p.amount, "ARS")}
                                                 </span>
                                             </div>
                                         </td>

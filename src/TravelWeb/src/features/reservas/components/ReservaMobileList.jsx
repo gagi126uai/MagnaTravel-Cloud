@@ -62,13 +62,16 @@ export function ReservaMobileList({ reservas, onRowClick }) {
               </>
             }
             footer={
+              // ReservaListDto no trae moneda por fila (TotalSale/Balance son un escalar
+              // sin bandera de moneda, igual que el caso ya documentado de Supplier.CurrentBalance).
+              // Pasamos ARS solo para evitar el formato gringo en-US del default legacy.
               <div className="text-xs text-slate-500">
-                Venta: <span className="font-medium text-slate-900 dark:text-slate-200">{formatCurrency(reserva.totalSale)}</span>
+                Venta: <span className="font-medium text-slate-900 dark:text-slate-200">{formatCurrency(reserva.totalSale, "ARS")}</span>
               </div>
             }
             footerActions={
               <span className={`text-sm font-bold ${hasPendingBalance ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}>
-                {hasPendingBalance ? `Saldo: ${formatCurrency(reserva.balance)}` : "Pagado"}
+                {hasPendingBalance ? `Saldo: ${formatCurrency(reserva.balance, "ARS")}` : "Pagado"}
               </span>
             }
           />

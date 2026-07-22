@@ -841,6 +841,8 @@ export default function ReservaDetailPage() {
     handleArchiveReserva,
     handleDeleteReserva,
     handleStatusChange,
+    statusChangeBlockedByMoneyGuard,
+    setStatusChangeBlockedByMoneyGuard,
     handleDeleteService,
     handleCancelService,
     handleDeletePassenger,
@@ -1273,6 +1275,39 @@ export default function ReservaDetailPage() {
           (reserva?.adultCount || 0) + (reserva?.childCount || 0) + (reserva?.infantCount || 0)
         }
       />
+
+      {/* Tanda P4 "circuito proveedor" (2026-07-22): aviso fijo (no un toast que
+          desaparece) cuando el cambio de estado ("El cliente aceptó", etc.) rebota
+          por el candado de plata pagada al operador sin factura.
+          FIX B1 (post-E2E, 2026-07-22): SIN botón "Emitir factura". El único escenario
+          donde este aviso puede aparecer es con la reserva todavía en Presupuesto (la
+          transición Presupuesto→En gestión fue justo la que rechazó el motor) — ahí
+          isEarlyStage=true, la solapa "account" ni existe (el useEffect de arriba
+          fuerza activeTab de vuelta a "services") y ADEMÁS en Presupuesto no se puede
+          facturar todavía (canInvoiceSale apagado). Ofrecer un botón que lleva a un
+          callejón sin salida es peor que no ofrecer nada: el mensaje del motor ya le
+          dice al usuario qué hacer (emitir la factura de venta), y "Entendido" solo
+          cierra el aviso. Nota: este bloqueo también puede darse en "bajar el estado"
+          desde otras pantallas (ServiceStatusEditor en SupplierAccountPage), que SÍ
+          tiene botón porque ahí el ancla (factura) puede existir en otra reserva ya
+          operativa — ese caso no es este. */}
+      {statusChangeBlockedByMoneyGuard && (
+        <div
+          className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-300"
+          role="alert"
+          data-testid="status-bloqueo-aviso"
+        >
+          <p>{statusChangeBlockedByMoneyGuard.mensaje}</p>
+          <button
+            type="button"
+            data-testid="status-bloqueo-cerrar"
+            onClick={() => setStatusChangeBlockedByMoneyGuard(null)}
+            className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-rose-700"
+          >
+            Entendido
+          </button>
+        </div>
+      )}
 
       <ReservaSummaryStrip reserva={reserva} />
 

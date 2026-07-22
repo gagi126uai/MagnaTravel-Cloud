@@ -5,6 +5,11 @@ import { isAdmin } from "../../../auth";
 
 export function ReservaKPIs({ stats }) {
     const admin = isAdmin();
+    // Estos totales son un agregado de TODAS las reservas listadas y el DTO del
+    // resumen (ReservaListSummaryDto) no trae desglose por moneda: pasamos ARS
+    // explícito solo para evitar el formato gringo en-US del default legacy.
+    // Riesgo ya existente (no lo genera este fix): si hay reservas en USD, este
+    // total puede estar mezclando montos de distinta moneda en una sola suma.
     return (
         <div className={`grid grid-cols-2 ${admin ? 'md:grid-cols-5' : 'md:grid-cols-4'} gap-3`}>
             <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
@@ -26,7 +31,7 @@ export function ReservaKPIs({ stats }) {
                     <TrendingUp className="h-3.5 w-3.5" />
                     Venta Total
                 </div>
-                <div className="text-xl font-bold text-indigo-600 dark:text-indigo-400">{formatCurrency(stats.totalSaleActive)}</div>
+                <div className="text-xl font-bold text-indigo-600 dark:text-indigo-400">{formatCurrency(stats.totalSaleActive, "ARS")}</div>
             </div>
             {admin && (
                 <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
@@ -34,7 +39,7 @@ export function ReservaKPIs({ stats }) {
                         <Wallet className="h-3.5 w-3.5" />
                         Rentabilidad Est.
                     </div>
-                    <div className="text-xl font-bold text-blue-600 dark:text-blue-400">{formatCurrency(stats.grossProfit)}</div>
+                    <div className="text-xl font-bold text-blue-600 dark:text-blue-400">{formatCurrency(stats.grossProfit, "ARS")}</div>
                 </div>
             )}
             <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
@@ -43,7 +48,7 @@ export function ReservaKPIs({ stats }) {
                     Por Cobrar
                 </div>
                 <div className={`text-xl font-bold ${stats.totalPendingBalance > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                    {formatCurrency(stats.totalPendingBalance)}
+                    {formatCurrency(stats.totalPendingBalance, "ARS")}
                 </div>
             </div>
         </div>

@@ -5,6 +5,11 @@ import { api } from "../api";
 import { formatCurrency } from "../lib/utils";
 import { getPublicId } from "../lib/publicIds";
 import { translateStatus } from "../features/reservas/components/ReservaStatusBadge";
+// Método y estado de un PAGO vienen crudos del backend en inglés (Payment.Method/Status,
+// campos libres sin enum). translateStatus (arriba) es de reservas, NO sirve para pagos:
+// "Cancelled" significa algo distinto en cada dominio. Reusamos el traductor que ya usa
+// el extracto del cliente para no duplicar el mapa acá.
+import { traducirMetodoPago, traducirEstadoPago } from "../features/customers/lib/paymentHelpers";
 
 export default function SearchPalette({ isOpen, onClose }) {
     const [query, setQuery] = useState("");
@@ -189,10 +194,16 @@ export default function SearchPalette({ isOpen, onClose }) {
                                         </div>
                                         <div className="flex-1 min-w-0">
                                             <div className="text-sm font-medium text-slate-900 dark:text-white">
-                                                {formatCurrency(pay.amount)} — {pay.method}
+                                                {/* El buscador global no trae la moneda del pago (gap del DTO de
+                                                    búsqueda, ver PaymentSearchResult en el backend); ARS es el
+                                                    default de la entidad Payment cuando no se especifica otra. */}
+                                                {formatCurrency(pay.amount, "ARS")} — {traducirMetodoPago(pay.method) || "-"}
                                             </div>
                                             <div className="text-xs text-slate-500">
-                                                {pay.numeroReserva || "Sin reserva"} · {pay.status}
+                                                {/* pay.method/pay.status llegan crudos en inglés del backend
+                                                    (campos libres sin enum): nunca se muestran tal cual. Un
+                                                    valor no reconocido cae al guion, jamás a la clave técnica. */}
+                                                {pay.numeroReserva || "Sin reserva"} · {traducirEstadoPago(pay.status) || "-"}
                                             </div>
                                         </div>
                                     </div>

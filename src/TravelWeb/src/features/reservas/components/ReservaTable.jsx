@@ -99,12 +99,15 @@ export function ReservaTable({ reservas, onRowClick, onArchive }) {
                   </div>
                 </DataGridCell>
                 <DataGridCell align="right">
+                  {/* ReservaListDto no trae moneda por fila (TotalSale/Balance son un escalar
+                      sin bandera de moneda). Pasamos ARS solo para evitar el formato gringo
+                      en-US del default legacy; no resuelve el riesgo de mezcla de monedas. */}
                   <div className="flex flex-col items-end gap-1">
-                    <span className="text-sm font-bold text-slate-900 dark:text-white">{formatCurrency(reserva.totalSale)}</span>
+                    <span className="text-sm font-bold text-slate-900 dark:text-white">{formatCurrency(reserva.totalSale, "ARS")}</span>
                     {(moneyStatus.kind === "debe" || moneyStatus.kind === "vencidaConDeuda" || moneyStatus.kind === "debeNoViaja") ? (
                       <div className="flex items-center gap-1 rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600 dark:bg-rose-900/20 dark:text-rose-400">
                         <DollarSign className="h-2.5 w-2.5" />
-                        Debe: {formatCurrency(reserva.balance)}
+                        Debe: {formatCurrency(reserva.balance, "ARS")}
                       </div>
                     ) : moneyStatus.kind === "sinMovimientos" ? (
                       // Sin movimientos: reserva nueva, sin cargos ni cobros todavía.
@@ -124,7 +127,7 @@ export function ReservaTable({ reservas, onRowClick, onArchive }) {
                     ) : moneyStatus.kind === "saldoAFavorAnulada" ? (
                       // Reserva anulada: quedó plata del cliente sin devolver ni aplicar.
                       <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400">
-                        Saldo a favor: {formatCurrency(Math.abs(reserva.balance ?? 0))}
+                        Saldo a favor: {formatCurrency(Math.abs(reserva.balance ?? 0), "ARS")}
                       </span>
                     ) : moneyStatus.kind === "multaPorCobrar" ? (
                       // Reserva anulada: la multa por anulación todavía no se cobró.

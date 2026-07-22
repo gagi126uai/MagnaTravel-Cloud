@@ -1,12 +1,16 @@
 using System;
 using System.Linq;
+using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
+using TravelApi.Controllers;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Exceptions;
 using TravelApi.Infrastructure.Persistence;
@@ -335,5 +339,128 @@ public class OperatorRefundVoidAndReassociateGuardTests
         Assert.DoesNotContain("INV-", ex.Message);
         Assert.Contains("anulado", ex.Message);
         Assert.Contains("no se puede mover", ex.Message);
+    }
+
+    // ============================================================
+    // CONTRATO HTTP a nivel CONTROLLER (review backend 2026-07-22): el body 409 de VoidAllocation y
+    // Reassociate suma `code` SOLO cuando la excepcion es OperatorRefundActionRejectedException (para que
+    // el frontend pueda elegir el boton "Ir a la cuenta del cliente" sin adivinar comparando texto); una
+    // InvalidOperationException generica (cualquier otro rechazo de negocio) sigue mandando SOLO
+    // `message`, sin inventar un `code` que el frontend interpretaria como una causa conocida. Mismo patron
+    // de lectura por reflexion que <see cref="NormalizeToSolicitadoDowngradeGuardTests"/>.
+    // ============================================================
+
+    private static OperatorRefundsController BuildController(IOperatorRefundService refundService)
+    {
+        var controller = new OperatorRefundsController(
+            refundService,
+            Mock.Of<IOperatorRefundReadModelService>(),
+            Mock.Of<IBookingCancellationService>());
+
+        // El metodo lee User.FindFirst(ClaimTypes.NameIdentifier) para el audit del actor: sin un
+        // HttpContext con ClaimsPrincipal esa lectura explota antes de llegar al service.
+        var httpContext = new DefaultHttpContext
+        {
+            User = new ClaimsPrincipal(new ClaimsIdentity(
+                new[] { new Claim(ClaimTypes.NameIdentifier, "cajero-1") }, "Test")),
+        };
+        controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
+        return controller;
+    }
+
+    [Fact]
+    public async Task VoidAllocationController_OperatorRefundActionRejectedException_BodyIncludesCode()
+    {
+        var refundServiceMock = new Mock<IOperatorRefundService>();
+        refundServiceMock
+            .Setup(s => s.VoidAllocationAsync(
+                It.IsAny<Guid>(), It.IsAny<VoidAllocationRequest>(),
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperatorRefundActionRejectedException(
+                OperatorRefundActionRejectedException.Codes.CreditAlreadyUsed,
+                "El saldo a favor de este reembolso ya fue usado por el cliente y requiere autorización."));
+
+        var controller = BuildController(refundServiceMock.Object);
+
+        var result = await controller.VoidAllocation(
+            Guid.NewGuid(), new VoidAllocationRequest("motivo"), CancellationToken.None);
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result.Result);
+        var body = conflict.Value!;
+        var messageProp = body.GetType().GetProperty("message");
+        var codeProp = body.GetType().GetProperty("code");
+        Assert.NotNull(messageProp);
+        Assert.NotNull(codeProp);
+        Assert.Equal(OperatorRefundActionRejectedException.Codes.CreditAlreadyUsed, (string)codeProp!.GetValue(body)!);
+    }
+
+    [Fact]
+    public async Task VoidAllocationController_GenericInvalidOperationException_BodyHasNoCode()
+    {
+        var refundServiceMock = new Mock<IOperatorRefundService>();
+        refundServiceMock
+            .Setup(s => s.VoidAllocationAsync(
+                It.IsAny<Guid>(), It.IsAny<VoidAllocationRequest>(),
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Rechazo generico sin codigo estable."));
+
+        var controller = BuildController(refundServiceMock.Object);
+
+        var result = await controller.VoidAllocation(
+            Guid.NewGuid(), new VoidAllocationRequest("motivo"), CancellationToken.None);
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result.Result);
+        var body = conflict.Value!;
+        var messageProp = body.GetType().GetProperty("message");
+        var codeProp = body.GetType().GetProperty("code");
+        Assert.NotNull(messageProp);
+        // A diferencia del caso de arriba: el objeto anonimo { message } NO tiene ninguna propiedad "code" -
+        // el frontend no puede confundir un rechazo generico con REFUND_CREDIT_ALREADY_USED.
+        Assert.Null(codeProp);
+    }
+
+    [Fact]
+    public async Task ReassociateController_OperatorRefundActionRejectedException_BodyIncludesCode()
+    {
+        var refundServiceMock = new Mock<IOperatorRefundService>();
+        refundServiceMock
+            .Setup(s => s.ReassociateAllocationAsync(
+                It.IsAny<Guid>(), It.IsAny<ReassociateAllocationRequest>(),
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperatorRefundActionRejectedException(
+                OperatorRefundActionRejectedException.Codes.CreditAlreadyUsed,
+                "El saldo a favor de este reembolso ya fue usado por el cliente y requiere autorización."));
+
+        var controller = BuildController(refundServiceMock.Object);
+
+        var result = await controller.Reassociate(
+            Guid.NewGuid(), new ReassociateAllocationRequest(Guid.NewGuid(), "motivo"), CancellationToken.None);
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result.Result);
+        var body = conflict.Value!;
+        var codeProp = body.GetType().GetProperty("code");
+        Assert.NotNull(codeProp);
+        Assert.Equal(OperatorRefundActionRejectedException.Codes.CreditAlreadyUsed, (string)codeProp!.GetValue(body)!);
+    }
+
+    [Fact]
+    public async Task ReassociateController_GenericInvalidOperationException_BodyHasNoCode()
+    {
+        var refundServiceMock = new Mock<IOperatorRefundService>();
+        refundServiceMock
+            .Setup(s => s.ReassociateAllocationAsync(
+                It.IsAny<Guid>(), It.IsAny<ReassociateAllocationRequest>(),
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Rechazo generico sin codigo estable."));
+
+        var controller = BuildController(refundServiceMock.Object);
+
+        var result = await controller.Reassociate(
+            Guid.NewGuid(), new ReassociateAllocationRequest(Guid.NewGuid(), "motivo"), CancellationToken.None);
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result.Result);
+        var body = conflict.Value!;
+        var codeProp = body.GetType().GetProperty("code");
+        Assert.Null(codeProp);
     }
 }

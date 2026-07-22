@@ -263,7 +263,9 @@ export default function ReportsPage() {
    * Las dos listas (cobrosDelMes, pagosProveedores) se cruzan por currency.
    */
   function buildFlujonetoValue() {
-    if (!monedasDisponibles) return formatCurrency(cashFlow);
+    // Modo mono-moneda (sin porMoneda del backend): el agregado no trae bandera de moneda,
+    // así que usamos ARS explícito para no caer en el formato gringo en-US por default.
+    if (!monedasDisponibles) return formatCurrency(cashFlow, "ARS");
 
     const cobros = Array.isArray(porMonedaObj.cobrosDelMes) ? porMonedaObj.cobrosDelMes : [];
     const pagos = Array.isArray(porMonedaObj.pagosProveedores) ? porMonedaObj.pagosProveedores : [];
@@ -366,28 +368,28 @@ export default function ReportsPage() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <KpiCard
               title="Ventas Totales"
-              value={formatCurrency(s.totalSales)}
+              value={formatCurrency(s.totalSales, "ARS")}
               subtitle={`${s.filesCount} expedientes`}
               icon={TrendingUp}
               color="indigo"
             />
             <KpiCard
               title="Margen Bruto"
-              value={formatCurrency(s.grossMargin)}
+              value={formatCurrency(s.grossMargin, "ARS")}
               subtitle={`${s.marginPercent}% ganancia`}
               icon={Percent}
               color="emerald"
             />
             <KpiCard
               title="Promedio Venta"
-              value={s.filesCount > 0 ? formatCurrency(s.totalSales / s.filesCount) : '$0'}
+              value={s.filesCount > 0 ? formatCurrency(s.totalSales / s.filesCount, "ARS") : '$0'}
               subtitle="por expediente"
               icon={BarChart3}
               color="blue"
             />
             <KpiCard
               title="Promedio Costo"
-              value={s.filesCount > 0 ? formatCurrency(s.totalCosts / s.filesCount) : '$0'}
+              value={s.filesCount > 0 ? formatCurrency(s.totalCosts / s.filesCount, "ARS") : '$0'}
               subtitle="por expediente"
               icon={CreditCard}
               color="rose"
@@ -419,7 +421,7 @@ export default function ReportsPage() {
                       tickFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(0)}k` : `$${v}`} />
                     <Tooltip
                       contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                      formatter={(value) => [formatCurrency(value), undefined]}
+                      formatter={(value) => [formatCurrency(value, "ARS"), undefined]}
                     />
                     <Legend wrapperStyle={{ paddingTop: '20px' }} />
                     <Area type="monotone" dataKey="sales" name="Ventas" stroke="#6366f1" fillOpacity={1} fill="url(#colorSales)" strokeWidth={2} />
@@ -464,7 +466,7 @@ export default function ReportsPage() {
                         </div>
                         <div className="text-right">
                           <div className="font-bold text-sm text-indigo-600 dark:text-indigo-400">
-                            {formatCurrency(cust.totalSale)}
+                            {formatCurrency(cust.totalSale, "ARS")}
                           </div>
                         </div>
                       </div>
@@ -488,7 +490,7 @@ export default function ReportsPage() {
             <KpiCard
               title="Cobros (Entradas)"
               value={buildKpiValue(
-                formatCurrency(s.customerPayments),
+                formatCurrency(s.customerPayments, "ARS"),
                 porMonedaObj?.cobrosDelMes
               )}
               subtitle="En este período"
@@ -498,7 +500,7 @@ export default function ReportsPage() {
             <KpiCard
               title="Pagos (Salidas)"
               value={buildKpiValue(
-                formatCurrency(s.supplierPayments),
+                formatCurrency(s.supplierPayments, "ARS"),
                 porMonedaObj?.pagosProveedores
               )}
               subtitle="En este período"

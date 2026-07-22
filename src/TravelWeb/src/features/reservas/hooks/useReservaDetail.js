@@ -14,6 +14,15 @@ import {
     getReservationCollectionKeyForServiceType,
     getReservationServicePublicId
 } from "../lib/reservationServiceModel";
+// Tanda P4 "circuito proveedor" (2026-07-22): usamos esta función SOLO para detectar el
+// code (nunca adivinar por texto), el mismo que ya usan "anular servicio" (Tanda 7) y
+// "bajar el estado" (Tanda P1, SupplierAccountPage). El backend documenta explícitamente
+// que este PUT de status reusa el MISMO code (ver
+// BookingCancellationService.EnsureServiceStatusDowngradeHasReceivableAnchorAsync).
+// Fix B1 (post-E2E, 2026-07-22): acá NO se ofrece el botón "Emitir factura" que da
+// `rechazo.boton` (ver el aviso en ReservaDetailPage) — en este flujo puntual la reserva
+// siempre está en Presupuesto y ahí no hay ningún camino real para facturar.
+import { resolverRechazoAnularServicio } from "../lib/serviceCancellationGuard";
 
 const SERVICE_COLLECTION_ENDPOINTS = Object.freeze({
     flightSegments: (reservaId) => `/reservas/${reservaId}/flights`,
@@ -142,6 +151,13 @@ export function useReservaDetail(reservaId, navigate) {
     const [loading, setLoading] = useState(true);
     const [suppliers, setSuppliers] = useState([]);
     const [serviceCollectionErrors, setServiceCollectionErrors] = useState({});
+    // Tanda P4 (2026-07-22): cuando el cambio de estado (ej. "El cliente aceptó",
+    // Presupuesto → En gestión) rebota por el candado de plata pagada al operador sin
+    // factura, guardamos acá el mensaje real del motor en vez de mostrarlo como toast —
+    // la página pinta un aviso fijo (sin botón: fix B1 post-E2E, la reserva sigue en
+    // Presupuesto y ahí no hay ningún camino para facturar) con un botón "Entendido"
+    // que solo lo cierra.
+    const [statusChangeBlockedByMoneyGuard, setStatusChangeBlockedByMoneyGuard] = useState(null);
     const reservaRef = useRef(null);
     const fetchSequenceRef = useRef(0);
 
@@ -401,13 +417,29 @@ export function useReservaDetail(reservaId, navigate) {
             }
         }
 
+        // Limpiamos el aviso fijo anterior (si lo había) antes de reintentar: no queremos
+        // que quede pegado un aviso viejo si este intento nuevo sale bien o falla por otro motivo.
+        setStatusChangeBlockedByMoneyGuard(null);
+
         try {
             await api.put(`/reservas/${reservaId}/status`, { status: newStatus });
             await fetchReserva();
             showSuccess(`Estado actualizado`);
             return true;
         } catch (error) {
-            showError(getApiErrorMessage(error, "Error al cambiar estado"));
+            // Candado de plata pagada al operador sin factura (mismo code que "anular
+            // servicio"): un toast que desaparece no alcanza — el mensaje del motor trae
+            // la instrucción completa y el usuario necesita leerla con calma en un aviso
+            // fijo (sin botón: en Presupuesto no se puede facturar todavía, fix B1 P4).
+            // El resto de los errores sigue mostrándose como toast, igual que antes.
+            const rechazo = resolverRechazoAnularServicio(error);
+            if (rechazo.boton === "emitir-factura") {
+                setStatusChangeBlockedByMoneyGuard({
+                    mensaje: getApiErrorMessage(error, "Error al cambiar estado"),
+                });
+            } else {
+                showError(getApiErrorMessage(error, "Error al cambiar estado"));
+            }
             return false;
         }
     };
@@ -648,6 +680,8 @@ export function useReservaDetail(reservaId, navigate) {
         handleArchiveReserva,
         handleDeleteReserva,
         handleStatusChange,
+        statusChangeBlockedByMoneyGuard,
+        setStatusChangeBlockedByMoneyGuard,
         handleDeleteService,
         handleCancelService,
         handleDeletePassenger,

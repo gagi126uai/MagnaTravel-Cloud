@@ -17,12 +17,10 @@ public class OperatorRefundRegisteredItemDto
     /// <summary>PublicId de la imputacion (allocation). Es el identificador que usan los botones "Deshacer" y "Corregir reserva".</summary>
     public Guid PublicId { get; set; }
 
-    /// <summary>
-    /// PublicId del ingreso de operador padre (<c>OperatorRefundReceived</c>). Un mismo ingreso fisico
-    /// (una transferencia, un cheque) puede cubrir varias reservas a la vez; este dato le permite a la
-    /// pantalla agrupar las filas que vinieron del mismo deposito, si hiciera falta.
-    /// </summary>
-    public Guid RefundReceivedPublicId { get; set; }
+    // NOTA (review de exposicion de datos, 2026-07-22): antes esta fila tambien mandaba el PublicId del
+    // ingreso de operador padre (OperatorRefundReceived), pero el frontend nunca lo usaba (nada agrupa las
+    // filas por deposito todavia). Se saco de la respuesta HTTP; si el dia de mañana la pantalla agrupa
+    // varias filas que vinieron del mismo deposito fisico, volver a exponerlo aca.
 
     /// <summary>PublicId de la reserva anulada a la que se imputo este reembolso.</summary>
     public Guid ReservaPublicId { get; set; }

@@ -108,7 +108,6 @@ public class OperatorRefundReadModelService : IOperatorRefundReadModelService
             .Select(a => new OperatorRefundRegisteredItemDto
             {
                 PublicId = a.PublicId,
-                RefundReceivedPublicId = a.Refund.PublicId,
                 ReservaPublicId = a.BookingCancellation.Reserva.PublicId,
                 NumeroReserva = a.BookingCancellation.Reserva.NumeroReserva,
                 ClienteNombre = a.BookingCancellation.Customer.FullName,

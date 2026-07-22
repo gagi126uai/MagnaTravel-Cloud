@@ -5,6 +5,9 @@ import { formatCurrency } from "../../../lib/utils";
 import { getPublicId } from "../../../lib/publicIds";
 // Reutilizamos CURRENCY_OPTIONS del alta para que las etiquetas sean idénticas en ambas superficies.
 import { CURRENCY_OPTIONS } from "../lib/nuevoOperadorLogic.js";
+// Mismo helper que usa SupplierTable: el escalar currentBalance no tiene moneda propia
+// (puede mezclar ARS con USD), por eso el saldo real se arma por moneda desde balancesByCurrency.
+import { supplierBalanceLines } from "../lib/supplierBalanceView";
 // Este modal no muestra el desplegable de "¿Suele cobrar multa?" — solo necesita
 // normalizar el valor para el round-trip (ver comentario del estado inicial).
 import { SUPPLIER_PENALTY_BEHAVIOR, valorSelectDesdePenaltyBehavior } from "../../../lib/supplierPenaltyBehavior.js";
@@ -213,9 +216,33 @@ export function SupplierFormModal({ isOpen, onClose, supplier, onSave }) {
                                     <Wallet className="h-4 w-4 text-slate-500" />
                                     <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Saldo Actual</span>
                                 </div>
-                                <span className={`font-mono font-bold ${supplier.currentBalance > 0 ? "text-rose-600" : "text-emerald-600"}`}>
-                                    {formatCurrency(supplier.currentBalance)}
-                                </span>
+                                {(() => {
+                                    // Mismos 3 casos que SupplierTable (fix del reviewer, 2026-07-22):
+                                    // supplierBalanceLines() devuelve [] tanto para "saldo en cero" como
+                                    // para "sin permiso para ver montos" (amountsVisible === false) — hay
+                                    // que distinguirlos ACÁ, antes de preguntar por la lista, porque si no
+                                    // un usuario sin permiso ve "Sin saldo" (afirma un hecho falso: no es
+                                    // que no deba nada, es que no le mostramos cuánto debe).
+                                    if (supplier.amountsVisible === false) {
+                                        return <span className="text-sm text-slate-400" title="Sin permiso para ver montos">—</span>;
+                                    }
+                                    const balanceLines = supplierBalanceLines(supplier);
+                                    if (balanceLines.length === 0) {
+                                        return <span className="text-sm text-slate-500">Sin saldo</span>;
+                                    }
+                                    return (
+                                        <div className="space-y-0.5 text-right font-mono font-bold">
+                                            {balanceLines.map((line) => (
+                                                <div
+                                                    key={line.currency}
+                                                    className={line.balance > 0 ? "text-rose-600" : "text-emerald-600"}
+                                                >
+                                                    {formatCurrency(line.balance, line.currency)}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    );
+                                })()}
                             </div>
                         )}
                     </div>
