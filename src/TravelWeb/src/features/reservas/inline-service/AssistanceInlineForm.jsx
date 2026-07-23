@@ -6,7 +6,11 @@
  *   Días (calculados solos) · Pasajeros · Costo · Venta · Moneda
  *
  * Más detalles (plegado):
- *   Números de voucher por pasajero · Upgrades (edad, embarazo, deportes)
+ *   Confirmación del operador · Números de voucher por pasajero · Upgrades (edad, embarazo, deportes)
+ *
+ * "Confirmación del operador" es el mismo campo que ya tienen Hotel/Traslado/Paquete: sin
+ * cargarlo, el motor de resolución de la reserva nunca da por confirmado el servicio (queda
+ * "Falta voucher" para siempre) y la reserva no puede pasar a Confirmada.
  *
  * Permiso `cobranzas.see_cost`:
  *   - Con permiso: ve el campo Costo + ganancia en el footer.
@@ -124,7 +128,7 @@ export function AssistanceInlineForm({ form, setForm, suppliers, isEditing }) {
     const ganancia = canSeeCost && costoTotal !== null ? redondearDinero(ventaTotal - costoTotal) : null;
 
     // "Más detalles" se abre automáticamente al editar si ya hay datos
-    const tieneDetallesExistentes = Boolean(form.voucherNumbers || form.upgrades);
+    const tieneDetallesExistentes = Boolean(form.voucherNumbers || form.upgrades || form.confirmationNumber);
     const [mostrarDetalles, setMostrarDetalles] = useState(tieneDetallesExistentes || isEditing);
 
     const [camposSugeridos, setCamposSugeridos] = useState({
@@ -395,6 +399,19 @@ export function AssistanceInlineForm({ form, setForm, suppliers, isEditing }) {
 
                 {mostrarDetalles && (
                     <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="sm:col-span-2">
+                            <label className={LABEL_BASE} htmlFor="assistance-confirmacion">Confirmación del operador</label>
+                            <input
+                                id="assistance-confirmacion"
+                                type="text"
+                                className={INPUT_NORMAL}
+                                value={form.confirmationNumber || ""}
+                                onChange={(event) => setForm((prev) => ({ ...prev, confirmationNumber: event.target.value }))}
+                                placeholder="Número o código de confirmación"
+                                data-testid="assistance-confirmacion"
+                                aria-label="Número de confirmación del operador"
+                            />
+                        </div>
                         <div className="sm:col-span-2">
                             <label className={LABEL_BASE} htmlFor="assistance-vouchers">Números de voucher por pasajero</label>
                             <textarea

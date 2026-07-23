@@ -41,7 +41,7 @@ import { HotelInlineForm, calcularNoches, redondearDinero, formatearPrecio } fro
 import { FlightInlineForm, calcularTotalesVuelo } from "./FlightInlineForm";
 import { TransferInlineForm, calcularTotalesTraslado } from "./TransferInlineForm";
 import { PackageInlineForm, calcularTotalesPaquete } from "./PackageInlineForm";
-import { AssistanceInlineForm, calcularTotalesAsistencia } from "./AssistanceInlineForm";
+import { AssistanceInlineForm, calcularTotalesAsistencia, calcularDiasVigencia } from "./AssistanceInlineForm";
 
 // ─── Configuración de pestañas ────────────────────────────────────────────────
 
@@ -288,30 +288,41 @@ function buildAssistanceFormInitial(serviceToEdit) {
         return {
             planName: "", supplierId: "", validFrom: "", validTo: "",
             passengers: "", unitNetCost: "", unitSalePrice: "", currency: "ARS",
-            voucherNumbers: "", upgrades: "", rateId: null, newCatalogProduct: null,
+            voucherNumbers: "", upgrades: "", confirmationNumber: "",
+            rateId: null, newCatalogProduct: null,
         };
     }
     // validFrom/validTo son date-only en el backend
     const pasajeros = Math.max(
         Number(serviceToEdit.adults) || Number(serviceToEdit.passengers) || 1, 1
     );
+    const validFrom = (serviceToEdit.validFrom || "").split("T")[0] || "";
+    const validTo = (serviceToEdit.validTo || "").split("T")[0] || "";
+    // El backend guarda netCost/salePrice como TOTAL de la asistencia (precio por persona/día
+    // × días × pasajeros), igual que Hotel (noches × habitaciones) y Paquete (pasajeros) más
+    // arriba. Para precargar el campo "por persona/día" del form hay que deshacer esa cuenta.
+    // Si no hay vigencia cargada el factor da 0 y no hay forma de deducir el unitario: se
+    // muestra el total tal cual y el vendedor lo corrige a mano (evita dividir por cero).
+    const diasVigencia = calcularDiasVigencia(validFrom, validTo);
+    const factorTotal = Math.max(diasVigencia, 0) * pasajeros;
     return {
         // ADR-018: la identidad de la asistencia se guarda en planType (ya nullable en el backend).
         // Fallback a description/planName/name para servicios cargados antes de ADR-018.
         planName: serviceToEdit.planType || serviceToEdit.description || serviceToEdit.planName || serviceToEdit.name || "",
         supplierId: serviceToEdit.supplierId || serviceToEdit.supplierPublicId || "",
-        validFrom: (serviceToEdit.validFrom || "").split("T")[0] || "",
-        validTo: (serviceToEdit.validTo || "").split("T")[0] || "",
+        validFrom,
+        validTo,
         passengers: String(pasajeros),
-        // Asistencia: precio por persona por día. No podemos dividir por días aquí porque
-        // no tenemos el campo calcularDiasVigencia disponible en el constructor del estado;
-        // si el backend guarda el unitPrice en el futuro se puede ajustar.
-        // Por ahora dejamos el total como referencia y el vendedor lo ajusta.
-        unitNetCost: String(serviceToEdit.netCost || ""),
-        unitSalePrice: String(serviceToEdit.salePrice || ""),
+        unitNetCost: factorTotal > 0
+            ? String(redondearDinero((serviceToEdit.netCost || 0) / factorTotal))
+            : String(serviceToEdit.netCost || ""),
+        unitSalePrice: factorTotal > 0
+            ? String(redondearDinero((serviceToEdit.salePrice || 0) / factorTotal))
+            : String(serviceToEdit.salePrice || ""),
         currency: serviceToEdit.currency || "ARS",
         voucherNumbers: serviceToEdit.policyNumber || serviceToEdit.voucherNumbers || "",
         upgrades: serviceToEdit.notes || serviceToEdit.upgrades || "",
+        confirmationNumber: serviceToEdit.confirmationNumber || "",
         rateId: serviceToEdit.rateId || null,
         newCatalogProduct: null,
     };
@@ -616,6 +627,20 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
         }
 
         if (tabActiva === "Asistencia") {
+            // El backend espera netCost/salePrice como TOTAL de la asistencia (precio por
+            // persona/día × días de vigencia × pasajeros), igual que Hotel (noches ×
+            // habitaciones) y Paquete (pasajeros) más arriba. Reusamos calcularTotalesAsistencia
+            // (mismo cálculo que ya se muestra en pantalla en AssistanceInlineForm) para no
+            // duplicar la cuenta a mano y no desincronizarla del total que el vendedor ve.
+            const totales = calcularTotalesAsistencia({
+                unitSalePrice: formAsistencia.unitSalePrice,
+                unitNetCost: formAsistencia.unitNetCost,
+                passengers: formAsistencia.passengers,
+                validFrom: formAsistencia.validFrom,
+                validTo: formAsistencia.validTo,
+                canSeeCost,
+            });
+
             const payload = {
                 // ADR-018: la identidad de la asistencia va en planType, no en description.
                 // El backend (AssistanceBooking) ya tenía PlanType nullable.
@@ -628,13 +653,14 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 adults: formAsistencia.passengers ? Number(formAsistencia.passengers) : 1,
                 children: 0,
                 supplierId: formAsistencia.supplierId || null,
-                netCost: canSeeCost ? redondearDinero(Number(formAsistencia.unitNetCost) || 0) : 0,
-                salePrice: redondearDinero(Number(formAsistencia.unitSalePrice) || 0),
+                netCost: canSeeCost ? (totales.costoTotal ?? 0) : 0,
+                salePrice: totales.ventaTotal,
                 tax: 0,
                 currency: formAsistencia.currency || "ARS",
                 // policyNumber se usa para los vouchers (campo existente en el backend)
                 policyNumber: formAsistencia.voucherNumbers || null,
                 notes: formAsistencia.upgrades || null,
+                confirmationNumber: formAsistencia.confirmationNumber || null,
             };
             if (formAsistencia.rateId) {
                 payload.rateId = formAsistencia.rateId;

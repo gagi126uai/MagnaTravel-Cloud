@@ -63,8 +63,23 @@ function validarFormAsistencia(form) {
 /**
  * Construye el payload de la asistencia para el backend.
  * ADR-018: la identidad de la asistencia va en planType (ya nullable en AssistanceBooking).
+ *
+ * netCost/salePrice se mandan como TOTAL (unitario × días de vigencia × pasajeros), igual
+ * que Hotel (noches × habitaciones) y Paquete (pasajeros) — el backend SIEMPRE espera el
+ * total (CatalogUnitization.ForAssistance divide por pax×días para sacar el unitario del
+ * tarifario). Bug real detectado en barrido de PROD: antes se mandaba el unitario suelto y
+ * la plata quedaba mal contada (una asistencia de $50/día × 8 días × 2 pax se guardaba como
+ * si costara $50 en total).
  */
 function buildAssistancePayload(form, canSeeCost) {
+    const totales = calcularTotalesAsistencia({
+        unitSalePrice: form.unitSalePrice,
+        unitNetCost: form.unitNetCost,
+        passengers: form.passengers,
+        validFrom: form.validFrom,
+        validTo: form.validTo,
+        canSeeCost,
+    });
     const payload = {
         // ADR-018: identidad en planType, no en description
         planType: form.planName?.trim() || "",
@@ -73,10 +88,13 @@ function buildAssistancePayload(form, canSeeCost) {
         validTo: form.validTo ? `${form.validTo}T00:00:00` : null,
         adults: form.passengers ? Number(form.passengers) : 1,
         supplierId: form.supplierId || null,
-        netCost: canSeeCost ? redondearDinero(Number(form.unitNetCost) || 0) : 0,
-        salePrice: redondearDinero(Number(form.unitSalePrice) || 0),
+        netCost: canSeeCost ? (totales.costoTotal ?? 0) : 0,
+        salePrice: totales.ventaTotal,
         currency: form.currency || "ARS",
         policyNumber: form.voucherNumbers || null,
+        // Sin este campo el motor de resolución nunca da por confirmado el servicio
+        // (queda "Falta voucher" para siempre y la reserva no llega a Confirmada).
+        confirmationNumber: form.confirmationNumber || null,
     };
     if (form.rateId) {
         payload.rateId = form.rateId;
@@ -321,7 +339,7 @@ test("buildAssistancePayload: fechas se mandan SIN sufijo Z (bug fechas corridas
     assert.equal(payload.validTo, "2026-08-19T00:00:00");
 });
 
-test("buildAssistancePayload: sin permiso → netCost = 0", () => {
+test("buildAssistancePayload: sin permiso → netCost = 0, salePrice sigue siendo el TOTAL", () => {
     const form = {
         planName: "AC 150",
         validFrom: "2026-08-12",
@@ -336,8 +354,66 @@ test("buildAssistancePayload: sin permiso → netCost = 0", () => {
     };
     const payload = buildAssistancePayload(form, false);
     assert.equal(payload.netCost, 0);
-    // La venta NO se toca (la envía como precio unitario; el backend calcula)
-    assert.equal(payload.salePrice, 50);
+    // El backend SIEMPRE espera el TOTAL (unitario × días × pasajeros), nunca el precio
+    // unitario suelto — esto es plata real, no un detalle de presentación. 8 días × 2 pax
+    // × $50/día = $800. El permiso de costos solo enmascara netCost, nunca salePrice.
+    assert.equal(payload.salePrice, 800);
+});
+
+test("buildAssistancePayload: el TOTAL enviado es unitario × días de vigencia × pasajeros (plata mal contada, bug de PROD)", () => {
+    // Caso real que motivó el fix: reproduce exactamente el escenario del hallazgo del
+    // barrido de PROD 2026-07-22 (tarifa diaria guardada como si fuera el total).
+    const form = {
+        planName: "AC 150 Americas Plata",
+        validFrom: "2026-08-12",
+        validTo: "2026-08-19", // 8 días de vigencia
+        passengers: 3,
+        supplierId: "supplier-1",
+        unitNetCost: 20,
+        unitSalePrice: 30,
+        currency: "ARS",
+        rateId: "rate-1",
+        newCatalogProduct: null,
+    };
+    const payload = buildAssistancePayload(form, true);
+    // 8 días × 3 pasajeros × $30 = $720 de venta; × $20 = $480 de costo
+    assert.equal(payload.salePrice, 720);
+    assert.equal(payload.netCost, 480);
+});
+
+test("buildAssistancePayload: incluye confirmationNumber (sin este campo la reserva nunca se confirma)", () => {
+    const form = {
+        planName: "AC 150",
+        validFrom: "2026-08-12",
+        validTo: "2026-08-19",
+        passengers: 1,
+        supplierId: "supplier-1",
+        unitNetCost: 40,
+        unitSalePrice: 50,
+        currency: "ARS",
+        rateId: "rate-1",
+        confirmationNumber: "CONF-9988",
+        newCatalogProduct: null,
+    };
+    const payload = buildAssistancePayload(form, true);
+    assert.equal(payload.confirmationNumber, "CONF-9988");
+});
+
+test("buildAssistancePayload: sin confirmationNumber → null (nunca undefined ni cadena vacía silenciosa)", () => {
+    const form = {
+        planName: "AC 150",
+        validFrom: "2026-08-12",
+        validTo: "2026-08-19",
+        passengers: 1,
+        supplierId: "supplier-1",
+        unitNetCost: 40,
+        unitSalePrice: 50,
+        currency: "ARS",
+        rateId: "rate-1",
+        newCatalogProduct: null,
+    };
+    const payload = buildAssistancePayload(form, true);
+    assert.equal(payload.confirmationNumber, null);
 });
 
 // ─── Tests ADR-018: identidad en planType, no en description ─────────────────
@@ -386,11 +462,35 @@ test("buildAssistancePayload: ADR-018 — planName vacío → planType cadena va
 /**
  * Simula el builder de estado de edición para Asistencia.
  * ADR-018: lee planType como fuente primaria de la identidad.
+ *
+ * El backend guarda netCost/salePrice como TOTAL (igual que Hotel/Paquete). Para precargar
+ * el campo "por persona/día" del form hay que dividir por el mismo factor (días × pasajeros)
+ * que se usó para construir el total. Si no hay vigencia cargada el factor da 0 y no hay
+ * forma de deducir el unitario: se muestra el total tal cual (nunca se divide por cero).
  */
 function buildAssistanceFormInitial(serviceToEdit) {
-    if (!serviceToEdit) return { planName: "", rateId: null, newCatalogProduct: null };
+    if (!serviceToEdit) {
+        return {
+            planName: "", unitNetCost: "", unitSalePrice: "",
+            confirmationNumber: "", rateId: null, newCatalogProduct: null,
+        };
+    }
+    const pasajeros = Math.max(Number(serviceToEdit.adults) || Number(serviceToEdit.passengers) || 1, 1);
+    const validFrom = (serviceToEdit.validFrom || "").split("T")[0] || "";
+    const validTo = (serviceToEdit.validTo || "").split("T")[0] || "";
+    const dias = calcularDiasVigencia(validFrom, validTo);
+    const factorTotal = Math.max(dias, 0) * pasajeros;
     return {
         planName: serviceToEdit.planType || serviceToEdit.description || serviceToEdit.planName || serviceToEdit.name || "",
+        validFrom,
+        validTo,
+        unitNetCost: factorTotal > 0
+            ? String(redondearDinero((serviceToEdit.netCost || 0) / factorTotal))
+            : String(serviceToEdit.netCost || ""),
+        unitSalePrice: factorTotal > 0
+            ? String(redondearDinero((serviceToEdit.salePrice || 0) / factorTotal))
+            : String(serviceToEdit.salePrice || ""),
+        confirmationNumber: serviceToEdit.confirmationNumber || "",
         rateId: serviceToEdit.rateId || null,
         newCatalogProduct: null,
     };
@@ -415,4 +515,54 @@ test("buildAssistanceFormInitial: ADR-018 — fallback a description para servic
     };
     const form = buildAssistanceFormInitial(serviceLegacy);
     assert.equal(form.planName, "Cobertura Basica (legacy)");
+});
+
+test("buildAssistanceFormInitial: round-trip — divide el TOTAL guardado por días × pasajeros para precargar el unitario", () => {
+    const serviceToEdit = {
+        planType: "AC 150",
+        validFrom: "2026-08-12T00:00:00",
+        validTo: "2026-08-19T00:00:00", // 8 días
+        adults: 2,
+        netCost: 480, // 8 × 2 × 30
+        salePrice: 720, // 8 × 2 × 45
+        rateId: "rate-1",
+    };
+    const form = buildAssistanceFormInitial(serviceToEdit);
+    assert.equal(form.unitNetCost, "30");
+    assert.equal(form.unitSalePrice, "45");
+});
+
+test("buildAssistanceFormInitial: round-trip — sin vigencia cargada (factor 0) muestra el total tal cual, nunca divide por cero", () => {
+    const serviceToEdit = {
+        planType: "AC 150",
+        validFrom: "",
+        validTo: "",
+        adults: 2,
+        netCost: 480,
+        salePrice: 720,
+        rateId: "rate-1",
+    };
+    const form = buildAssistanceFormInitial(serviceToEdit);
+    assert.equal(form.unitNetCost, "480");
+    assert.equal(form.unitSalePrice, "720");
+});
+
+test("buildAssistanceFormInitial: round-trip — carga confirmationNumber persistido", () => {
+    const serviceToEdit = {
+        planType: "AC 150",
+        validFrom: "2026-08-12T00:00:00",
+        validTo: "2026-08-19T00:00:00",
+        adults: 1,
+        netCost: 40,
+        salePrice: 50,
+        confirmationNumber: "CONF-4455",
+        rateId: "rate-1",
+    };
+    const form = buildAssistanceFormInitial(serviceToEdit);
+    assert.equal(form.confirmationNumber, "CONF-4455");
+});
+
+test("buildAssistanceFormInitial: modo creación (sin servicio a editar) → confirmationNumber vacío", () => {
+    const form = buildAssistanceFormInitial(null);
+    assert.equal(form.confirmationNumber, "");
 });

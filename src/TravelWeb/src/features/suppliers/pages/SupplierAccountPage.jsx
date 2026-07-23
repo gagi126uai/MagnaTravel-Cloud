@@ -1617,7 +1617,10 @@ export default function SupplierAccountPage() {
             confirmColor: "rose",
         });
 
-        if (!result?.isConfirmed) return;
+        // showConfirm() de alerts.js devuelve un booleano (true/false), no un objeto
+        // con isConfirmed. Con `result?.isConfirmed` esto era siempre undefined y el
+        // botón "Eliminar pago" no hacía nada (bug detectado en barrido de PROD).
+        if (!result) return;
 
         try {
             await api.delete(`/suppliers/${publicId}/payments/${paymentId}`);
