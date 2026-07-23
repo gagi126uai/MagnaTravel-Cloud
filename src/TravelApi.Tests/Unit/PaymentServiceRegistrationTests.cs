@@ -127,6 +127,53 @@ public class PaymentServiceRegistrationTests
         Assert.Equal(1, paymentsCount);
     }
 
+    /// <summary>
+    /// Bug real reportado 2026-07-22: un cobro fechado "22/07/2026" en el extracto aparecia
+    /// como "21/7/2026". La causa raiz estaba en el FRONT (EstadoCuentaExtracto.jsx convertia
+    /// la fecha a hora local del navegador con toLocaleDateString(), corriendo un dia para
+    /// atras la medianoche UTC que guarda el backend). Este test PINEA que el lado del
+    /// backend (donde vive PaymentService) YA es correcto y debe seguir siendolo: la fecha
+    /// que el front manda ("2026-07-22T00:00:00Z", que es lo que produce
+    /// `new Date("2026-07-22").toISOString()` para el value crudo de un &lt;input type="date"&gt;)
+    /// se persiste TAL CUAL, sin ninguna conversion de zona horaria — ni la del servidor ni
+    /// ninguna otra. Si alguien "arreglara" NormalizeToUtc para restar/sumar un offset de
+    /// zona horaria, este test lo atraparia.
+    /// </summary>
+    [Fact]
+    public async Task CreatePaymentAsync_WithUtcMidnightPaidAt_PersistsExactSameCalendarDay_NoTimezoneShift()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        var reserva = await SeedConfirmedReservaAsync(context, salePrice: 1000m);
+
+        var service = BuildService(context);
+
+        // Exactamente lo que manda RegistrarCobroInline.jsx cuando el cajero elige "22/07/2026"
+        // en el input de fecha: new Date("2026-07-22").toISOString() → "2026-07-22T00:00:00.000Z".
+        var paidAtElegidoPorElCajero = DateTime.SpecifyKind(new DateTime(2026, 7, 22, 0, 0, 0), DateTimeKind.Utc);
+
+        var dto = await service.CreatePaymentAsync(
+            new CreatePaymentRequest
+            {
+                ReservaId = reserva.PublicId.ToString(),
+                Amount = 150m,
+                Method = "Transferencia",
+                PaidAt = paidAtElegidoPorElCajero
+            },
+            CancellationToken.None);
+
+        // El DTO devuelto al front (para pintar el "Confirmado") ya tiene que traer el mismo dia.
+        Assert.Equal(new DateTime(2026, 7, 22), dto.PaidAt.Date);
+
+        // Y lo que quedo en la fila de Postgres (columna timestamptz) es EXACTAMENTE ese
+        // instante, sin ningun corrimiento de +3/-3 horas ni de ningun otro offset.
+        var persisted = await context.Payments.AsNoTracking().SingleAsync();
+        Assert.Equal(DateTimeKind.Utc, persisted.PaidAt.Kind);
+        Assert.Equal(paidAtElegidoPorElCajero, persisted.PaidAt);
+        Assert.Equal(22, persisted.PaidAt.Day);
+        Assert.Equal(7, persisted.PaidAt.Month);
+        Assert.Equal(2026, persisted.PaidAt.Year);
+    }
+
     [Fact]
     public async Task CreatePaymentAsync_TwoPaymentsThatSumTotalSale_LeaveBalanceZero()
     {

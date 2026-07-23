@@ -18,7 +18,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { formatDate } from "./utils.js";
+import { formatDate, formatDateTime } from "./utils.js";
 
 // ─── Caso 1: fecha-solo-día cruda del input (sin pasar por el backend) ───────
 
@@ -77,6 +77,22 @@ test("formatDate: cadena vacía → '-'", () => {
     assert.equal(formatDate(""), "-");
 });
 
+// ─── Gate data-exposure (2026-07-23): nunca mostrarle al usuario un texto técnico ───
+// como "Invalid Date" — un no-programador no entiende eso, y es justo el tipo de fuga
+// que el gate de exposición de datos internos existe para atrapar.
+
+test("formatDate: string basura (dato sucio, no es fecha) → '-', nunca el texto 'Invalid Date'", () => {
+    const resultado = formatDate("esto-no-es-una-fecha");
+    assert.equal(resultado, "-");
+    assert.ok(!resultado.includes("Invalid"), `No debe filtrar texto técnico, recibido: "${resultado}"`);
+});
+
+test("formatDateTime: string basura (dato sucio, no es fecha) → '-', nunca el texto 'Invalid Date'", () => {
+    const resultado = formatDateTime("esto-no-es-una-fecha");
+    assert.equal(resultado, "-");
+    assert.ok(!resultado.includes("Invalid"), `No debe filtrar texto técnico, recibido: "${resultado}"`);
+});
+
 // ─── Casos borde de calendario pedidos explícitamente por el dueño ──────────
 // (fin de mes, fin de año, 29/02 bisiesto — no solo el día, también mes y año)
 
@@ -106,4 +122,54 @@ test("formatDate: ida y vuelta completa — el día que el usuario tipeó es el 
     const valorDelInput = "2026-05-23";
     const respuestaSimuladaDelBackend = `${valorDelInput}T00:00:00Z`;
     assert.equal(formatDate(respuestaSimuladaDelBackend), "23/05/2026");
+});
+
+// ─── Bug real 2026-07-22: cobro en el extracto mostraba un día menos ────────
+//
+// Repro exacto reportado por el dueño: reserva "F-2026-1112", cobro de Transferencia $150
+// fechado 22/07/2026, el extracto mostraba "21/7/2026". Causa raíz: EstadoCuentaExtracto.jsx
+// (y sus 2 copias paralelas: extracto del proveedor y extracto del cliente 360) llamaban
+// directo a `new Date(linea.date).toLocaleDateString("es-AR")` en vez de reusar formatDate().
+// El valor real que devuelve el backend para linea.date es exactamente el string de abajo
+// (confirmado contra la fila real de Postgres de esa reserva).
+
+test("formatDate: repro EXACTO del bug reportado 2026-07-22 (cobro 22/07 no debe verse 21/7)", () => {
+    assert.equal(formatDate("2026-07-22T00:00:00Z"), "22/07/2026");
+});
+
+// ─── formatDateTime(): mismo criterio, para las pantallas que además muestran hora ──────
+// (Movimientos de caja / Historial de cobros — MovementsTab.jsx, HistoryTab.jsx)
+
+test("formatDateTime: fecha de negocio (medianoche UTC, sin hora real) → solo el día, sin hora inventada", () => {
+    assert.equal(formatDateTime("2026-07-22T00:00:00Z"), "22/07/2026");
+});
+
+test("formatDateTime: null → '-'", () => {
+    assert.equal(formatDateTime(null), "-");
+});
+
+// ─── Prueba de independencia de zona horaria (regla del dueño 2026-07-22: la fecha/hora que
+// rige es SIEMPRE la de Argentina, nunca la del navegador/servidor) ──────────────────────
+//
+// Este caso usa un instante con hora REAL (01:00, no medianoche), a propósito para ejercitar
+// la rama "instante real" de formatDate()/formatDateTime() (la rama de fecha-solo-día nunca
+// necesita zona horaria: lee el string directo). A la 01:00 UTC del 22/07 ya es 22 de julio en
+// UTC (o en cualquier proceso con TZ=UTC, que es lo más común en CI) — pero en Argentina
+// (UTC-3) todavía son las 22:00 del 21 de julio. Si el resultado fuera "22/07/2026" acá,
+// significaría que la función depende de la zona del proceso que corre el test, violando la
+// regla del dueño. Con `timeZone: "America/Argentina/Buenos_Aires"` fijo, el resultado es
+// SIEMPRE "21/07/2026", sin importar en qué zona horaria corra el runner (local, CI, VPS).
+test("formatDate: instante real cerca de medianoche UTC → se ancla a Argentina, no a la zona del proceso que corre el test", () => {
+    assert.equal(formatDate("2026-07-22T01:00:00Z"), "21/07/2026");
+});
+
+test("formatDateTime: mismo anclaje a Argentina para instantes reales (no depende de la zona del proceso)", () => {
+    // Solo verificamos el DÍA (que es lo que corría antes del fix): a la 01:00 UTC del 22/07 ya
+    // es 22 de julio en UTC, pero en Argentina (UTC-3) todavía es 21/07 a la noche. La hora exacta
+    // que imprime Intl acá (formato 12hs sin aclarar am/pm, herencia de toLocaleString("es-AR") de
+    // ANTES de este fix) es un tema aparte, no relacionado con el bug de zona horaria de esta tanda.
+    assert.ok(
+        formatDateTime("2026-07-22T01:00:00Z").startsWith("21/7/2026"),
+        `Esperaba que empiece con "21/7/2026", recibido: "${formatDateTime("2026-07-22T01:00:00Z")}"`
+    );
 });

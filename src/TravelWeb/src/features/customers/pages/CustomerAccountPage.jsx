@@ -615,7 +615,11 @@ export default function CustomerAccountPage() {
               const estaRevirtiendoEsta = revirtiendoAplicacionId === String(aplicacion.applicationPublicId);
               const simbolo = aplicacion.currency === "USD" ? "US$" : "$";
               const monto = Number(aplicacion.amount).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-              const fechaTexto = aplicacion.appliedAt ? new Date(aplicacion.appliedAt).toLocaleDateString("es-AR") : "—";
+              // aplicacion.appliedAt es un instante real de sistema (el backend lo arma con
+              // AppliedAt = PaidAt del pago puente, que siempre es DateTime.UtcNow — no una fecha
+              // que el usuario eligió). formatDate() cae en su rama de "instante real" y lo muestra
+              // en hora de Argentina fija, no en la del navegador.
+              const fechaTexto = aplicacion.appliedAt ? formatDate(aplicacion.appliedAt) : "—";
 
               return (
                 <li key={String(aplicacion.applicationPublicId)} className="px-5 py-3">

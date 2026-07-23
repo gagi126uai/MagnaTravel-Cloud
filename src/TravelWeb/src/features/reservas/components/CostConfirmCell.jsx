@@ -23,6 +23,7 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { Lock } from "lucide-react";
 import { api } from "../../../api";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { SERVICE_RECORD_KIND, getReservationServicePublicId } from "../lib/reservationServiceModel";
@@ -159,8 +160,14 @@ function DialogoCostoCero({ onVolver, onConfirmar }) {
  *   reservaId      — publicId de la reserva para construir la URL del endpoint
  *   onConfirmado   — callback(servicioActualizado) llamado con el DTO devuelto por el backend;
  *                    el padre lo usa para reemplazar el servicio en el estado sin recargar
+ *   candadoActivo  — bool (candado C1, spec 2026-07-22): true cuando la reserva está bloqueada
+ *                    sin autorización de edición viva. El botón "Confirmar costo" queda
+ *                    gris + candadito y, al tocarlo, abre la ventana de destrabar en vez de
+ *                    entrar al modo edición. Default false: comportamiento sin cambios.
+ *   onRequestEdit  — callback () => void que abre la ventana de destrabar (EditAuthorizationModal).
+ *                    Solo se usa cuando candadoActivo=true.
  */
-export function CostConfirmCell({ service, reservaId, onConfirmado }) {
+export function CostConfirmCell({ service, reservaId, onConfirmado, candadoActivo = false, onRequestEdit }) {
     const [modoEdicion, setModoEdicion] = useState(false);
     const [valorCosto, setValorCosto] = useState("");
     const [valorImpuesto, setValorImpuesto] = useState("");
@@ -387,15 +394,32 @@ export function CostConfirmCell({ service, reservaId, onConfirmado }) {
                     >
                         A confirmar
                     </span>
-                    <button
-                        ref={botonConfirmarCostoRef}
-                        type="button"
-                        onClick={entrarModoEdicion}
-                        className={CLASES_BTN_CONFIRMAR_COSTO}
-                        data-testid="btn-confirm-cost"
-                    >
-                        Confirmar costo
-                    </button>
+                    {/* Candado C1 (2026-07-22): con la reserva bloqueada y sin autorización viva,
+                        el botón queda gris + candadito y abre la ventana de destrabar en vez de
+                        entrar al modo edición. */}
+                    {candadoActivo ? (
+                        <button
+                            ref={botonConfirmarCostoRef}
+                            type="button"
+                            onClick={onRequestEdit}
+                            aria-label="Confirmar costo — bloqueado, pedí autorización"
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg border border-slate-200 bg-slate-100 text-slate-500 hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 transition-colors"
+                            data-testid="btn-confirm-cost"
+                        >
+                            <Lock className="h-3 w-3" aria-hidden="true" />
+                            Confirmar costo
+                        </button>
+                    ) : (
+                        <button
+                            ref={botonConfirmarCostoRef}
+                            type="button"
+                            onClick={entrarModoEdicion}
+                            className={CLASES_BTN_CONFIRMAR_COSTO}
+                            data-testid="btn-confirm-cost"
+                        >
+                            Confirmar costo
+                        </button>
+                    )}
                 </div>
             )}
         </>
@@ -406,7 +430,7 @@ export function CostConfirmCell({ service, reservaId, onConfirmado }) {
  * Versión mobile del CostConfirmCell.
  * Mismo flujo, layout vertical apilado (sin la fila de etiquetas separada).
  */
-export function CostConfirmCellMobile({ service, reservaId, onConfirmado }) {
+export function CostConfirmCellMobile({ service, reservaId, onConfirmado, candadoActivo = false, onRequestEdit }) {
     const [modoEdicion, setModoEdicion] = useState(false);
     const [valorCosto, setValorCosto] = useState("");
     const [valorImpuesto, setValorImpuesto] = useState("");
@@ -572,15 +596,30 @@ export function CostConfirmCellMobile({ service, reservaId, onConfirmado }) {
                     >
                         A confirmar
                     </span>
-                    <button
-                        ref={botonConfirmarCostoRef}
-                        type="button"
-                        onClick={entrarModoEdicion}
-                        className={CLASES_BTN_CONFIRMAR_COSTO}
-                        data-testid="btn-confirm-cost"
-                    >
-                        Confirmar costo
-                    </button>
+                    {/* Candado C1 (2026-07-22): mismo tratamiento que la versión desktop. */}
+                    {candadoActivo ? (
+                        <button
+                            ref={botonConfirmarCostoRef}
+                            type="button"
+                            onClick={onRequestEdit}
+                            aria-label="Confirmar costo — bloqueado, pedí autorización"
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg border border-slate-200 bg-slate-100 text-slate-500 hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 transition-colors"
+                            data-testid="btn-confirm-cost"
+                        >
+                            <Lock className="h-3 w-3" aria-hidden="true" />
+                            Confirmar costo
+                        </button>
+                    ) : (
+                        <button
+                            ref={botonConfirmarCostoRef}
+                            type="button"
+                            onClick={entrarModoEdicion}
+                            className={CLASES_BTN_CONFIRMAR_COSTO}
+                            data-testid="btn-confirm-cost"
+                        >
+                            Confirmar costo
+                        </button>
+                    )}
                 </div>
             )}
         </>

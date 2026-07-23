@@ -7,6 +7,7 @@ import { PaginationFooter } from "../../../components/ui/PaginationFooter";
 import { MonthNavigator, monthToBounds } from "../../../components/ui/MonthNavigator";
 import { useMovements } from "../../movements/hooks/useMovements";
 import MovementsTimeline from "../../movements/components/MovementsTimeline";
+import { formatDate } from "../../../lib/utils";
 
 // B1.15 Fase D'.B (2026-05-11): pestaña "Por reserva" de Cobranza y Facturación.
 // Lista reservas con saldo financiero y expand inline → MovementsTimeline
@@ -228,7 +229,10 @@ function ReservaRow({ reserva }) {
             ) : null}
           </div>
           <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 truncate">
-            {reserva.customerName || "Sin cliente"}{reserva.startDate ? ` · Salida ${new Date(reserva.startDate).toLocaleDateString("es-AR")}` : ""}
+            {/* reserva.startDate es la fecha de salida del viaje: día calendario elegido al
+                cargar la reserva, guardado como medianoche UTC — misma familia que PaidAt.
+                formatDate() no la corre un día por la zona horaria del navegador. */}
+            {reserva.customerName || "Sin cliente"}{reserva.startDate ? ` · Salida ${formatDate(reserva.startDate)}` : ""}
           </div>
         </div>
         <div className="hidden sm:block text-right">

@@ -27,12 +27,19 @@
  *                           Si es null, la franja de sugerencia no aparece.
  *   onUsarSugerencia      — callback({ adultCount, childCount, infantCount }) cuando el vendedor
  *                           aprieta [Usar] en la franja. El padre actualiza los casilleros.
+ *   onRequestEdit         — callback () => void: abre la ventana de destrabar (EditAuthorizationModal).
+ *                           Candado C1 (spec 2026-07-22): "Editar" y "Eliminar" de un pasajero YA
+ *                           CARGADO quedan gris + candadito cuando la reserva está bloqueada sin
+ *                           autorización viva. "Agregar Pasajero" y "Cargar" (slot vacío) quedan
+ *                           SIEMPRE encendidos — completar una identidad vacía no espera candado
+ *                           (exención anti-callejón, spec §1.6).
  */
 
 import React, { useState } from 'react';
-import { Plus, User, Trash2, Edit2, Users, Lightbulb } from "lucide-react";
+import { Plus, User, Trash2, Edit2, Users, Lightbulb, Lock } from "lucide-react";
 import { getPublicId } from "../../../lib/publicIds";
 import { PasajeroInlineForm } from "./PasajeroInlineForm";
+import { tieneCandadoDeEdicionActivo } from "./ReservaStatusBadge";
 
 /**
  * Franja de sugerencia de cantidad de pasajeros (Pieza C — ADR-031 v2.1).
@@ -147,10 +154,19 @@ export function PassengerList({
     // agregar/editar/borrar pasajero se ocultan. El padre lo extrae de capabilities.canEditPassengers.
     // Degradación elegante: si no se pasa, se permite editar (mismo comportamiento previo).
     canEditPassengers = true,
+    // Candado C1 (2026-07-22): abre la ventana de destrabar cuando se toca un botón
+    // gris + candadito de "Editar"/"Eliminar" de un pasajero ya cargado.
+    onRequestEdit,
 }) {
     // Slot que tiene el mini-formulario inline abierto.
     // null = ninguno; guardamos el índice del slot.
     const [slotAbierto, setSlotAbierto] = useState(null);
+
+    // Candado C1 (spec 2026-07-22): con la reserva bloqueada y sin autorización viva, los
+    // botones "Editar" y "Eliminar" de un pasajero YA CARGADO quedan gris + candadito.
+    // "Agregar Pasajero" y "Cargar" (slot vacío) NO llevan candado — completar un dato que
+    // falta no espera destrabe (exención anti-callejón, spec §1.6).
+    const candadoDeEdicionActivo = tieneCandadoDeEdicionActivo(reserva);
 
     const passengers = reserva?.passengers || [];
     const adultCount = reserva?.adultCount || 0;
@@ -282,7 +298,30 @@ export function PassengerList({
                                     <div className="flex items-center gap-1 flex-shrink-0">
                                         {canEditPassengers ? (
                                             tieneNombre ? (
-                                                // Pasajero con nombre: Editar + Eliminar
+                                                // Pasajero con nombre: Editar + Eliminar.
+                                                // Candado C1 (2026-07-22): con la reserva bloqueada sin
+                                                // autorización viva, los dos quedan gris + candadito y
+                                                // abren la ventana de destrabar en vez de editar/borrar directo.
+                                                candadoDeEdicionActivo ? (
+                                                    <>
+                                                        <button
+                                                            type="button"
+                                                            onClick={onRequestEdit}
+                                                            aria-label="Editar pasajero — bloqueado, pedí autorización"
+                                                            className="p-2 text-slate-400 hover:bg-slate-100 dark:text-slate-500 dark:hover:bg-slate-800 rounded-lg transition-colors"
+                                                        >
+                                                            <Lock className="w-4 h-4" aria-hidden="true" />
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={onRequestEdit}
+                                                            aria-label="Eliminar pasajero — bloqueado, pedí autorización"
+                                                            className="p-2 text-slate-400 hover:bg-slate-100 dark:text-slate-500 dark:hover:bg-slate-800 rounded-lg transition-colors"
+                                                        >
+                                                            <Lock className="w-4 h-4" aria-hidden="true" />
+                                                        </button>
+                                                    </>
+                                                ) : (
                                                 <>
                                                     <button
                                                         type="button"
@@ -303,6 +342,7 @@ export function PassengerList({
                                                         <Trash2 className="w-4 h-4" />
                                                     </button>
                                                 </>
+                                                )
                                             ) : (
                                                 // Slot sin nombre: botón [Cargar] que abre el inline form
                                                 <button

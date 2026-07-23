@@ -4,6 +4,7 @@ import ConfirmModal from "../../../components/ConfirmModal";
 import { api } from "../../../api";
 import { showSuccess } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors.js";
+import { formatDate } from "../../../lib/utils";
 import { cancellationsApi } from "../api/cancellationsApi";
 import { T5ResolverLegacyList } from "./T5ResolverLegacyList";
 import {
@@ -20,7 +21,11 @@ const money = (amount, currency = "ARS") => new Intl.NumberFormat("es-AR", {
   maximumFractionDigits: 2,
 }).format(Number(amount || 0));
 
-const date = (value) => value ? new Date(value).toLocaleDateString("es-AR") : "—";
+// fix 2026-07-22 (barrida del bug "fechas corridas un día"): antes esto convertía a hora
+// local del navegador con toLocaleDateString("es-AR") sin fijar zona horaria — el plazo
+// RG 4540 (rg4540DeadlineAt más abajo) podía mostrar un día distinto al real según dónde
+// esté el navegador/servidor. formatDate() central fija Argentina explícito. Ver lib/utils.js.
+const date = (value) => value ? formatDate(value) : "—";
 
 export function PartialCreditNoteEmissionPanel({ reserva, canEmit, onChanged }) {
   const reservaPublicId = reserva?.publicId;

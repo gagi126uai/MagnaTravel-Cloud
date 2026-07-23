@@ -1,7 +1,7 @@
 import React from 'react';
 import { ArrowLeft, Trash2, Archive, AlertTriangle, Undo2, Calendar, Pencil, Ban, Lock, XCircle, RefreshCw, CornerUpLeft, FastForward } from "lucide-react";
 import { getReservaArchiveBlockReason } from "../archiveRules";
-import { getStatusConfig, translateStatus, isStatusLocked, isReservaEnEstadoVivo } from "./ReservaStatusBadge";
+import { getStatusConfig, translateStatus, isStatusLocked, isReservaEnEstadoVivo, tieneCandadoDeEdicionActivo } from "./ReservaStatusBadge";
 import { ReservaStatusChips } from "./ReservaStatusChips";
 import { isAdmin } from "../../../auth";
 
@@ -87,6 +87,13 @@ export function ReservaHeader({
 }) {
     const isArchived = reserva.status === 'Archived';
     const locked = isStatusLocked(reserva.status);
+
+    // ─── Candado C1 (spec UX 2026-07-22) ─────────────────────────────────────────
+    // Reserva Confirmada SIN autorización de edición viva: los botones de edición de
+    // esta cabecera (Editar fechas, Reprogramar viaje) se muestran "gris + candadito"
+    // en vez de encendidos. Al tocarlos, en vez de disparar la acción, abren la misma
+    // ventana de destrabar que ya usa la franja ámbar (onRequestEdit → EditAuthorizationModal).
+    const candadoDeEdicionActivo = tieneCandadoDeEdicionActivo(reserva);
 
     // ─── ADR-035: leer capabilities del DTO ──────────────────────────────────────
     // Si el backend no manda capabilities (DTO viejo), se cae en undefined y cada botón
@@ -328,34 +335,65 @@ export function ReservaHeader({
                     </div>
                     {/* "Editar fechas": visible solo cuando canEditReservaData.allowed === true.
                         Feedback 2026-06-19: en estados terminales (Lost/Cancelled/Closed) se oculta,
-                        no se deshabilita, porque la reserva está en solo-lectura visual completa. */}
+                        no se deshabilita, porque la reserva está en solo-lectura visual completa.
+                        Candado C1 (2026-07-22): con la reserva Confirmada y SIN autorización viva,
+                        el botón queda gris + candadito y abre la ventana de destrabar en vez de
+                        editar directo (antes ignoraba el candado — bug real, reserva 1052). */}
                     {canEditDates && onEditDates && (
-                        <button
-                            onClick={onEditDates}
-                            type="button"
-                            data-testid="reserva-action-edit-dates"
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-                            title="Editar fechas del viaje"
-                        >
-                            <Pencil className="w-3.5 h-3.5" />
-                            Editar fechas
-                        </button>
+                        candadoDeEdicionActivo ? (
+                            <button
+                                onClick={onRequestEdit}
+                                type="button"
+                                data-testid="reserva-action-edit-dates"
+                                aria-label="Editar fechas — bloqueado, pedí autorización"
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-500 transition-colors hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
+                            >
+                                <Lock className="w-3.5 h-3.5" aria-hidden="true" />
+                                Editar fechas
+                            </button>
+                        ) : (
+                            <button
+                                onClick={onEditDates}
+                                type="button"
+                                data-testid="reserva-action-edit-dates"
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                                title="Editar fechas del viaje"
+                            >
+                                <Pencil className="w-3.5 h-3.5" />
+                                Editar fechas
+                            </button>
+                        )
                     )}
 
                     {/* "Reprogramar viaje": mueve TODAS las fechas de los servicios desde una nueva fecha de salida.
                         Distinto de "Editar fechas" (override de cabecera): este corre todo el viaje en bloque.
-                        Visible cuando canEditServices.allowed=true → el backend sabe si la reserva es editable. */}
+                        Visible cuando canEditServices.allowed=true → el backend sabe si la reserva es editable.
+                        Candado C1 (2026-07-22): mismo tratamiento que "Editar fechas" — gris + candadito
+                        cuando la reserva está bloqueada sin autorización viva. */}
                     {showRescheduleButton && (
-                        <button
-                            onClick={onReschedule}
-                            type="button"
-                            data-testid="reserva-action-reschedule"
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 hover:border-indigo-300 dark:border-indigo-800 dark:bg-indigo-950/30 dark:text-indigo-300 dark:hover:bg-indigo-900/50"
-                            title="Reprogramar viaje — mueve todas las fechas de los servicios"
-                        >
-                            <FastForward className="w-3.5 h-3.5" />
-                            Reprogramar viaje
-                        </button>
+                        candadoDeEdicionActivo ? (
+                            <button
+                                onClick={onRequestEdit}
+                                type="button"
+                                data-testid="reserva-action-reschedule"
+                                aria-label="Reprogramar viaje — bloqueado, pedí autorización"
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-500 transition-colors hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
+                            >
+                                <Lock className="w-3.5 h-3.5" aria-hidden="true" />
+                                Reprogramar viaje
+                            </button>
+                        ) : (
+                            <button
+                                onClick={onReschedule}
+                                type="button"
+                                data-testid="reserva-action-reschedule"
+                                className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 hover:border-indigo-300 dark:border-indigo-800 dark:bg-indigo-950/30 dark:text-indigo-300 dark:hover:bg-indigo-900/50"
+                                title="Reprogramar viaje — mueve todas las fechas de los servicios"
+                            >
+                                <FastForward className="w-3.5 h-3.5" />
+                                Reprogramar viaje
+                            </button>
+                        )
                     )}
                 </div>
             </div>

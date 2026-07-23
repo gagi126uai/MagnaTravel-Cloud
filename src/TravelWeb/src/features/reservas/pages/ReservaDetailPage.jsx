@@ -15,7 +15,7 @@ import { ReservaVoucherTab } from "../../../components/ReservaVoucherTab";
 // migrados a EstadoCuentaExtracto.jsx. Se conserva este comentario para contexto
 // en caso de que alguien agregue una tabla nueva en esta página.
 import { getApiErrorMessage } from "../../../lib/errors";
-import { formatCurrency } from "../../../lib/utils";
+import { formatCurrency, formatDate } from "../../../lib/utils";
 import { getPublicId, getRelatedPublicId } from "../../../lib/publicIds";
 import { CapacityWarning } from "../components/CapacityWarning";
 import { AvisosPlegadosBar } from "../components/AvisosPlegadosBar";
@@ -328,7 +328,10 @@ function InvoicePdfActions({ invoice, reserva }) {
         <div className="text-[10px] text-slate-400 dark:text-slate-500">
           CAE: {invoice.cae}
           {invoice.vencimientoCAE && (
-            <> · Vto: {new Date(invoice.vencimientoCAE).toLocaleDateString("es-AR")}</>
+            // fix 2026-07-22 (mismo campo que EmitirFacturaInline.jsx): vencimientoCAE es la
+            // fecha que devuelve ARCA (día calendario, sin hora real). formatDate() no la
+            // corre un día por la zona horaria del navegador.
+            <> · Vto: {formatDate(invoice.vencimientoCAE)}</>
           )}
         </div>
       )}
@@ -2236,6 +2239,9 @@ export default function ReservaDetailPage() {
                 // ADR-031 v2.1 — Pieza A: pasajeros con nombre para el control "Para: Todos".
                 // Filtramos la lista de pasajeros de la reserva por los que ya tienen fullName.
                 pasajerosConNombre={(reserva?.passengers || []).filter(p => p?.fullName?.trim())}
+                // Candado C1 (spec 2026-07-22): mismo modal de destrabar que ya usa la
+                // franja ámbar y la cabecera — una única ventana para toda la ficha.
+                onRequestEdit={() => setShowEditAuthModal(true)}
               />
 
               {/* Ficha de carga en línea (ADR-017): solo aparece con EnableCatalogFindOrCreate ON.
@@ -2307,6 +2313,9 @@ export default function ReservaDetailPage() {
                   onConfirm: () => handleDeletePassenger(passengerId),
                 })
               }
+              // Candado C1 (spec 2026-07-22): mismo modal de destrabar que ya usa la
+              // franja ámbar y la cabecera.
+              onRequestEdit={() => setShowEditAuthModal(true)}
             />
           ) : null}
 

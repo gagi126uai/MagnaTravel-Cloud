@@ -70,13 +70,26 @@ const FECHA_SOLO_DIA_REGEX = /^(\d{4})-(\d{2})-(\d{2})(?:T00:00:00(?:\.\d+)?Z?)?
  *     se lee el día/mes/año directo del texto (string-split), sin pasar por
  *     new Date(), para no correr el día por la zona horaria del navegador.
  *   - Cualquier otro instante (ej. createdAt de una factura, con hora real):
- *     se sigue mostrando en hora LOCAL como antes — ahí sí importa la zona
- *     horaria del usuario, porque es un evento que pasó a una hora concreta.
+ *     se muestra en la fecha que corresponde en Argentina (America/Argentina/Buenos_Aires),
+ *     fijada EXPLÍCITAMENTE — no la que el navegador/servidor tengan configurada.
+ *
+ * Regla del dueño (2026-07-22): la fecha que rige es SIEMPRE la de Argentina, sin importar
+ * dónde esté el servidor o el navegador. Por eso NO alcanza con pasar el locale "es-AR" a
+ * Intl (el locale solo define el ORDEN día/mes/año, no la zona horaria de la conversión) —
+ * hay que fijar `timeZone: "America/Argentina/Buenos_Aires"` explícito en las opciones.
  *
  * Nota: si por coincidencia un evento con hora real ocurrió EXACTO a la
  * medianoche UTC, esta función lo trata igual que una fecha-solo-día (mismo
  * día calendario, sin desfase). Es una ambigüedad inherente al formato — no
  * hay forma de distinguir ambos casos solo mirando el string.
+ *
+ * Fix 2026-07-23 (hallazgo del gate data-exposure): un string que no es una fecha válida
+ * (dato sucio, o un bug en otro lado que manda basura) ANTES caía en `new Date(...)`, que
+ * para un string no parseable da un objeto "Invalid Date" — y `toLocaleDateString()` sobre
+ * eso devuelve LITERALMENTE el texto en inglés "Invalid Date", que se mostraría tal cual en
+ * una pantalla en castellano para un usuario no programador. Ahora se detecta ANTES de
+ * formatear y se degrada a "-" (el mismo símbolo que usamos para "sin dato"), nunca un
+ * mensaje técnico.
  */
 export function formatDate(date) {
     if (!date) return "-";
@@ -89,11 +102,54 @@ export function formatDate(date) {
         }
     }
 
-    return new Date(date).toLocaleDateString("es-AR", {
+    const parsed = new Date(date);
+    if (Number.isNaN(parsed.getTime())) return "-";
+
+    return parsed.toLocaleDateString("es-AR", {
         day: "2-digit",
         month: "2-digit",
-        year: "numeric"
+        year: "numeric",
+        timeZone: "America/Argentina/Buenos_Aires",
     });
+}
+
+/**
+ * Formatea una fecha CON hora para mostrarla al usuario ("DD/MM/AAAA, HH:mm").
+ *
+ * Mismo bug que formatDate() de arriba, pero para las pantallas que además quieren
+ * mostrar la hora (ej. Movimientos de caja / Historial de cobros). La diferencia es que
+ * acá SÍ puede haber un instante con hora real que valga la pena mostrar en hora local
+ * (ej. la reversa de un asiento de caja, que ocurre "ahora").
+ *
+ * Regla (2026-07-23, fix bug "cobro del 22/07 aparecía como 21/7" en el extracto — la
+ * misma causa afecta a Movimientos/Historial): si la hora en UTC es EXACTAMENTE medianoche
+ * (00:00:00), el valor es una FECHA DE NEGOCIO (día que el usuario eligió — ej. PaidAt de un
+ * cobro/pago — que el backend guarda como medianoche UTC sin hora real), no un instante real.
+ * En ese caso mostramos SOLO el día (formatDate central), sin inventar una hora que no existe:
+ * convertir esa medianoche a hora de Argentina (UTC-3) la corre al día anterior a las 21:00,
+ * que es exactamente el bug. Si la hora NO es medianoche, es un instante real (ej. "ahora" de
+ * un ajuste manual) y ahí se muestra en la hora de Argentina, fijada explícita (mismo motivo
+ * que formatDate(): el locale "es-AR" no define zona horaria, así que sin `timeZone` explícito
+ * la conversión dependería de dónde esté el navegador/servidor — la regla del dueño exige que
+ * la hora que se muestra sea SIEMPRE la de Argentina).
+ *
+ * Fix 2026-07-23 (hallazgo del gate data-exposure, mismo criterio que formatDate()): un valor
+ * que no es una fecha válida se degrada a "-", nunca al texto técnico "Invalid Date".
+ */
+export function formatDateTime(date) {
+    if (!date) return "-";
+
+    const parsed = new Date(date);
+    if (Number.isNaN(parsed.getTime())) return "-";
+
+    const esFechaDeNegocioSinHoraReal =
+        parsed.getUTCHours() === 0 && parsed.getUTCMinutes() === 0 && parsed.getUTCSeconds() === 0;
+
+    if (esFechaDeNegocioSinHoraReal) {
+        return formatDate(date);
+    }
+
+    return parsed.toLocaleString("es-AR", { timeZone: "America/Argentina/Buenos_Aires" });
 }
 
 /**

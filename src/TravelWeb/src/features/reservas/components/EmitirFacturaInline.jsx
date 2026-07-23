@@ -44,7 +44,7 @@ import { AlertCircle, Calculator, CheckCircle2, Loader2, Plus, Trash2, X } from 
 import { api } from "../../../api";
 import { showError } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
-import { formatCurrency } from "../../../lib/utils";
+import { formatCurrency, formatDate } from "../../../lib/utils";
 // Paso 3 (H2 2026-06-24): helper compartido con ReservaDetailPage para formatear
 // el número de comprobante. Evita que el formato "Factura B 0001-00012345" diverga.
 import { formatearEtiquetaFactura } from "../lib/invoiceFormatUtils";
@@ -1692,7 +1692,10 @@ export function EmitirFacturaInline({
               <p className="text-xs text-slate-500 dark:text-slate-400">
                 CAE: {facturaEmitidaData.cae}
                 {facturaEmitidaData.vencimientoCAE && (
-                  <> · Vto: {new Date(facturaEmitidaData.vencimientoCAE).toLocaleDateString("es-AR")}</>
+                  // fix 2026-07-22: vencimientoCAE es la fecha que devuelve ARCA (día calendario,
+                  // sin hora real). formatDate() no la corre un día por la zona horaria del
+                  // navegador — mismo bug que las fechas de cobro (ver lib/utils.js).
+                  <> · Vto: {formatDate(facturaEmitidaData.vencimientoCAE)}</>
                 )}
               </p>
             )}

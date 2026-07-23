@@ -73,7 +73,7 @@ import { hasPermission } from "../../../auth";
 import { showSuccess, showError } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { getPublicId } from "../../../lib/publicIds";
-import { formatCurrency } from "../../../lib/utils";
+import { formatCurrency, formatDate } from "../../../lib/utils";
 import {
     resolverMonedaPrincipalProveedor,
     calcularEquivalenteProveedor,
@@ -407,7 +407,10 @@ function SelectorServicioImputacion({ servicios, hayServiciosEnOtraMoneda, servi
                 {servicios.map((s) => (
                     <option key={String(s.publicId)} value={String(s.publicId)}>
                         {s.type}{s.description ? ` — ${s.description}` : ""}
-                        {s.date ? ` (${new Date(s.date).toLocaleDateString("es-AR")})` : ""}
+                        {/* fix 2026-07-22 (misma barrida del bug de fechas corridas): formatDate()
+                            no convierte a hora local del navegador una fecha de negocio guardada
+                            como medianoche UTC. */}
+                        {s.date ? ` (${formatDate(s.date)})` : ""}
                     </option>
                 ))}
             </select>
@@ -1015,7 +1018,12 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
             )}
 
             {(esEdicion || paso === "pagar") && !resultadoExito && (
-            <form onSubmit={handleSubmit} className="space-y-4">
+            /* noValidate (fix 2026-07-23, mismo bug que RegistrarCobroInline): el input Monto
+               tiene min="0.01"/required nativos — sin noValidate el navegador corta el submit
+               con su propio cartelito en inglés y handleSubmit ni llega a correr, así que el
+               mensaje en criollo de la línea 849 ("El monto tiene que ser mayor a 0.") nunca
+               se mostraba. */
+            <form onSubmit={handleSubmit} className="space-y-4" noValidate>
 
                 {/* Recuadro "Datos para transferir": cuenta bancaria del proveedor en la moneda del pago.
                     Solo se muestra para nuevos pagos (en edición ya se registró el movimiento).

@@ -1,4 +1,4 @@
-import { formatDate as formatDateCentral } from "../../../lib/utils.js";
+import { formatDate as formatDateCentral, formatDateTime as formatDateTimeCentral } from "../../../lib/utils.js";
 
 export const creditNoteTypes = [3, 8, 13, 53];
 
@@ -53,6 +53,13 @@ export const currencyFormatter = arsFormatter;
  * actual lo usa, pero si alguno llega a pasarlo, respetamos el comportamiento viejo
  * (Intl.DateTimeFormat vía toLocaleDateString) en vez de forzar el formato DD/MM/AAAA
  * fijo de la función central.
+ *
+ * Fix 2026-07-23 (hallazgo del reviewer): esta rama armaba el Intl.DateTimeFormat con
+ * el locale "es-AR" pero SIN `timeZone` explícito — el locale solo define el orden
+ * día/mes/año, no la zona horaria de la conversión. Sin `timeZone` fijo, la conversión
+ * dependería de dónde esté el navegador/servidor, violando la regla del dueño (la fecha
+ * que se muestra es SIEMPRE la de Argentina). Fijamos America/Argentina/Buenos_Aires como
+ * default, pero dejamos que un caller explícito lo pise si algún día hace falta.
  */
 export function formatDate(date, options) {
   if (!date) {
@@ -60,18 +67,25 @@ export function formatDate(date, options) {
   }
 
   if (options) {
-    return new Date(date).toLocaleDateString("es-AR", options);
+    return new Date(date).toLocaleDateString("es-AR", {
+      timeZone: "America/Argentina/Buenos_Aires",
+      ...options,
+    });
   }
 
   return formatDateCentral(date);
 }
 
+/**
+ * Fix 2026-07-22 (mismo bug de "fechas corridas un día" del comentario de arriba, aplicado
+ * acá también): antes esta función SIEMPRE convertía a hora local del navegador con
+ * toLocaleString(), lo que corría un día para atrás cualquier fecha de negocio (ej. un cobro
+ * fechado 22/07 aparecía como "21/7, 21:00" en Movimientos/Historial). Ahora delega a la
+ * formatDateTime() central, que distingue fecha de negocio (medianoche UTC, sin hora real) de
+ * un instante real — ver el comentario de esa función en lib/utils.js.
+ */
 export function formatDateTime(date) {
-  if (!date) {
-    return "-";
-  }
-
-  return new Date(date).toLocaleString("es-AR");
+  return formatDateTimeCentral(date);
 }
 
 export function getInvoiceNetAmount(invoice) {

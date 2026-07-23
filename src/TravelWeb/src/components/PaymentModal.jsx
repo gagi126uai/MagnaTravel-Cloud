@@ -255,7 +255,11 @@ export default function PaymentModal({
                     </button>
                 </div>
 
-                <form onSubmit={handleSubmit} className="p-6 space-y-4">
+                {/* noValidate (fix 2026-07-23, mismo bug que RegistrarCobroInline): el input
+                    Monto tiene required nativo — sin noValidate el navegador corta el submit
+                    con su propio cartelito en inglés y handleSubmit ni llega a correr, así que
+                    el mensaje en criollo ("El monto debe ser mayor a 0") nunca se mostraba. */}
+                <form onSubmit={handleSubmit} className="p-6 space-y-4" noValidate>
 
                     {/* ── Banner de moneda principal (ADR-035) ──────────────────────────────────
                         Aparece en nuevo cobro cuando el DTO trae datos de plata.

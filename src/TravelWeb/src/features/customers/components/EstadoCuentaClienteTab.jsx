@@ -48,7 +48,7 @@
  */
 import { Link } from "react-router-dom";
 import { BookOpen, Loader2, Plus, RefreshCw } from "lucide-react";
-import { formatCurrency } from "../../../lib/utils";
+import { formatCurrency, formatDate } from "../../../lib/utils";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import { formatEtiquetaDocumentoExtracto, formatCierreExtracto } from "../lib/estadoCuentaFormatting";
 import {
@@ -242,7 +242,10 @@ function FilaExtractoCliente({ linea, currency }) {
     <DataGridRow>
       {/* Fecha del movimiento */}
       <DataGridCell className="text-slate-500 dark:text-slate-400">
-        {linea.date ? new Date(linea.date).toLocaleDateString("es-AR") : "—"}
+        {/* fix 2026-07-22: mismo bug que EstadoCuentaExtracto.jsx/SupplierExtractoSection.jsx
+            (cobros fechados corrían un día menos). formatDate() no convierte a hora local del
+            navegador una fecha de negocio (día elegido por el usuario) — ver lib/utils.js. */}
+        {linea.date ? formatDate(linea.date) : "—"}
       </DataGridCell>
 
       {/* Documento (Tanda D2, spec §3): fusión de "Concepto" + "Comprobante" en una sola

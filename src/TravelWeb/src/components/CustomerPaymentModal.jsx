@@ -192,7 +192,11 @@ export default function CustomerPaymentModal({
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-500" aria-label="Cerrar"><X className="h-5 w-5" /></button>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4 p-6">
+        {/* noValidate (fix 2026-07-23, mismo bug que RegistrarCobroInline): el input Monto
+            tiene required/min nativos — sin noValidate el navegador corta el submit con su
+            propio cartelito en inglés y handleSubmit ni llega a correr, así que el mensaje en
+            criollo ("El monto tiene que ser mayor a cero.") nunca se mostraba. */}
+        <form onSubmit={handleSubmit} className="space-y-4 p-6" noValidate>
           <div className="space-y-1.5">
             <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Reserva a imputar</label>
             <div className="relative">

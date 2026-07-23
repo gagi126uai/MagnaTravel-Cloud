@@ -105,6 +105,25 @@ export function isStatusLocked(status) {
 }
 
 /**
+ * Candado de EDICION de la reserva (spec UX "candado coherente", 2026-07-22, decisión C1).
+ *
+ * Devuelve true cuando la reserva está en un estado con candado (Confirmed/Traveling/Closed)
+ * Y NO hay una autorización de edición viva (`hasLiveEditAuthorization`, el mismo campo que
+ * ya usa `ReservaLockBanner`). Cuando da true, los botones de edición (Editar fechas, Anular
+ * servicio, Confirmar costo, etc.) se muestran "gris + candadito" en vez de encendidos: al
+ * tocarlos, en vez de ejecutar la acción, se abre la ventana de destrabar (EditAuthorizationModal).
+ *
+ * En la práctica solo importa para Confirmed: en Traveling/Closed la capacidad de fondo del
+ * backend (canEditServices, canEditPassengers, etc.) ya viene apagada por estado terminal, así
+ * que esos botones ni llegan a evaluar el candado — quedan escondidos ("no aplica"), como manda
+ * la spec. No se duplica ninguna fuente de verdad: reusa isStatusLocked + hasLiveEditAuthorization,
+ * que ya vienen del DTO de la reserva.
+ */
+export function tieneCandadoDeEdicionActivo(reserva) {
+    return isStatusLocked(reserva?.status) && !(reserva?.hasLiveEditAuthorization ?? false);
+}
+
+/**
  * Estados "vivos" del ciclo de la reserva: el viaje todavia esta en curso normal
  * (se esta gestionando, ya esta confirmado, o el cliente ya esta viajando).
  * Mismo criterio que usa la campanita de avisos del backend para decidir si

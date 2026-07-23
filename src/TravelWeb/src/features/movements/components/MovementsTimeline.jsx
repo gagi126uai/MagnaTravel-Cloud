@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { ArrowDown, ArrowUp, FileText, FilePlus, Loader2, Receipt, RotateCcw } from "lucide-react";
 import { KIND_COLORS, KIND_LABELS, STATUS_LABELS } from "../api/movementsApi";
 import { getMovementActions } from "../lib/movementActions";
+import { formatDate } from "../../../lib/utils";
 
 // B1.15 Fase D' (2026-05-11): timeline cronologico de movimientos.
 // Reutilizable en pantalla principal, CustomerAccountPage y ReservaDetailPage.
@@ -88,8 +89,20 @@ function MovementRow({ item, showReservaColumn, onClick, hasActions, onViewPdf, 
   const Icon = iconFor(item.kind);
   const bubbleClass = KIND_BUBBLE_CLASS[item.kind] || KIND_BUBBLE_CLASS.credit_note_reversal;
 
-  const dateFmt = new Date(item.date).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
-  const timeFmt = new Date(item.date).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" });
+  // item.date mezcla semánticas según item.kind: para "payment" es una fecha de negocio
+  // (día elegido por el cajero, medianoche UTC, sin hora real); para facturas/NC/ND puede
+  // ser la fecha fiscal (día calendario de ARCA) o un instante real de emisión — la MISMA
+  // ambigüedad que linea.date en los extractos. formatDate() central ya distingue ambos
+  // casos (ver lib/utils.js), así que no hace falta separar por kind acá.
+  const dateFmt = formatDate(item.date);
+  // La hora se ancla a Argentina explícito (no la del navegador/servidor) — para los items
+  // de fecha de negocio (sin hora real) esto va a mostrar 00:00, que es la ambigüedad
+  // inherente del formato ya documentada en formatDate().
+  const timeFmt = new Date(item.date).toLocaleTimeString("es-AR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "America/Argentina/Buenos_Aires",
+  });
 
   const actions = hasActions ? getMovementActions(item.kind, item.status, { receiptStatus: item.receiptStatus }) : [];
 

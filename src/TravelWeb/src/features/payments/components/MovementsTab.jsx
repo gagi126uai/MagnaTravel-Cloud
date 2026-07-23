@@ -31,6 +31,7 @@ import { ListEmptyState } from "../../../components/ui/ListEmptyState";
 import { MobileRecordCard, MobileRecordList } from "../../../components/ui/MobileRecordCard";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import { formatCurrency } from "../lib/financeUtils";
+import { formatDate, formatDateTime } from "../../../lib/utils";
 
 // Formateador legacy mantenido solo para llamadas locales sin moneda explícita (compatibilidad interna)
 const currency = new Intl.NumberFormat("es-AR", {
@@ -339,7 +340,11 @@ export function MovementsTab({
 
               return (
                 <DataGridRow key={`${movement.sourceType}-${movement.sourcePublicId}`}>
-                  <DataGridCell>{new Date(movement.occurredAt).toLocaleString("es-AR")}</DataGridCell>
+                  {/* fix 2026-07-22: movement.occurredAt sale de CashLedgerEntry.OccurredAt, que para
+                      cobros/pagos ES payment.PaidAt (día de negocio elegido por el cajero, guardado
+                      como medianoche UTC — no un instante con hora real). formatDateTime() no lo
+                      convierte a hora local del navegador; eso era lo que corría el día un dia menos. */}
+                  <DataGridCell>{formatDateTime(movement.occurredAt)}</DataGridCell>
                   <DataGridCell>
                     <div className="flex items-center gap-3">
                       <div className={`rounded-lg p-2 ${isIncome ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400" : "bg-rose-50 text-rose-600 dark:bg-rose-950/30 dark:text-rose-400"}`}>
@@ -423,7 +428,7 @@ export function MovementsTab({
                   </div>
                 }
                 title={sourceLabels[movement.sourceType] || movement.sourceType}
-                subtitle={`${new Date(movement.occurredAt).toLocaleDateString("es-AR")} · ${movement.method}`}
+                subtitle={`${formatDate(movement.occurredAt)} · ${movement.method}`}
                 meta={
                   <>
                     <div className="text-xs text-slate-500 dark:text-slate-400">{movement.description}</div>

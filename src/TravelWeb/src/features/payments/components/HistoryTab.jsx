@@ -18,6 +18,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { getPublicId } from "../../../lib/publicIds";
+import { formatDate, formatDateTime } from "../../../lib/utils";
 
 const currency = new Intl.NumberFormat("es-AR", {
   style: "currency",
@@ -134,7 +135,11 @@ export function HistoryTab({
                   return (
                     <tr key={getPublicId(payment)} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
                       <td className="px-6 py-4 text-sm text-slate-600 dark:text-slate-400">
-                        {new Date(payment.paidAt).toLocaleString("es-AR")}
+                        {/* fix 2026-07-22: payment.paidAt es la fecha que eligió el cajero (día de
+                            negocio guardado como medianoche UTC), no un instante con hora real.
+                            formatDateTime() no la convierte a hora local del navegador — eso era
+                            lo que corría el día un dia menos. Ver lib/utils.js. */}
+                        {formatDateTime(payment.paidAt)}
                       </td>
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
@@ -242,7 +247,7 @@ export function HistoryTab({
                           {payment.reserva?.numeroReserva || "Cobranza"}
                         </div>
                         <div className="text-[10px] text-slate-400 uppercase font-black">
-                          {new Date(payment.paidAt).toLocaleDateString("es-AR")} · {payment.method}
+                          {formatDate(payment.paidAt)} · {payment.method}
                         </div>
                       </div>
                     </div>
@@ -312,7 +317,10 @@ export function HistoryTab({
                       </td>
                       <td className="px-6 py-4">
                         <div className="text-sm font-medium text-slate-900 dark:text-white">
-                          {new Date(invoice.createdAt).toLocaleDateString("es-AR")}
+                          {/* invoice.createdAt es un instante real de sistema (fila creada en ese momento),
+                              no una fecha elegida por el usuario. formatDate() lo muestra en hora de
+                              Argentina fija (no la del navegador) — misma barrida del bug de zona horaria. */}
+                          {formatDate(invoice.createdAt)}
                         </div>
                         <a href={`/reservas/${getPublicId(invoice.reserva)}`} className="text-[10px] text-indigo-500 hover:underline font-bold uppercase tracking-tighter">
                           RES: {invoice.reserva?.numeroReserva || "---"}
@@ -459,7 +467,7 @@ export function HistoryTab({
                       {currency.format(invoice.importeTotal || 0)}
                     </div>
                     <div className="text-[9px] font-bold text-slate-400">
-                      {new Date(invoice.createdAt).toLocaleDateString("es-AR")}
+                      {formatDate(invoice.createdAt)}
                     </div>
                   </div>
                 </div>

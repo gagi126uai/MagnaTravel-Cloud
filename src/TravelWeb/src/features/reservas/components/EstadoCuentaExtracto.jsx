@@ -3,7 +3,7 @@ import { RefreshCw, Loader2, BookOpen } from "lucide-react";
 import { api } from "../../../api";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { getPublicId } from "../../../lib/publicIds";
-import { formatCurrency } from "../../../lib/utils";
+import { formatCurrency, formatDate } from "../../../lib/utils";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import {
   DataGrid,
@@ -249,7 +249,11 @@ function FilaExtracto({ linea, reserva, congelado, renderAccionesFactura, render
   return (
     <DataGridRow>
       <DataGridCell className="text-slate-500 dark:text-slate-400">
-        {linea.date ? new Date(linea.date).toLocaleDateString("es-AR") : "—"}
+        {/* fix 2026-07-22 (bug real: cobro fechado 22/07 mostraba "21/7"): formatDate()
+            reconoce que linea.date es una fecha de negocio (día elegido por el usuario,
+            guardado por el backend como medianoche UTC) y NO la convierte a hora local del
+            navegador — eso era lo que corría el día un dia menos. Ver lib/utils.js. */}
+        {linea.date ? formatDate(linea.date) : "—"}
       </DataGridCell>
       <DataGridCell>
         <span className={esCargo ? "font-medium text-slate-800 dark:text-slate-200" : "text-slate-600 dark:text-slate-400"}>

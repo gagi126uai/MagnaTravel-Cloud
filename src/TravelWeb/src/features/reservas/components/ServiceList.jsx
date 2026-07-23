@@ -36,8 +36,9 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from "react-router-dom";
-import { AlertTriangle, Plus, Plane, Hotel, Car, Package, ShieldCheck, Edit2, Trash2, CheckCircle2, Clock, X, Loader2, FileText, Ban, XSquare, UserX } from "lucide-react";
+import { AlertTriangle, Plus, Plane, Hotel, Car, Package, ShieldCheck, Edit2, Trash2, CheckCircle2, Clock, X, Loader2, FileText, Ban, XSquare, UserX, Lock } from "lucide-react";
 import { isAdmin, hasPermission } from "../../../auth";
+import { tieneCandadoDeEdicionActivo } from "./ReservaStatusBadge";
 import { CancelarVariosServiciosInline } from "./CancelarVariosServiciosInline";
 import { PasajeroInlineForm } from "./PasajeroInlineForm";
 import { ControlAsignacionServicio } from "./ControlAsignacionServicio";
@@ -557,15 +558,21 @@ function ModalBorrarVsCancelar({ service, saleInvoices = [], onBorrar, onCancela
  * - mensaje: string con el detalle del error que mando el backend
  * - rechazo: { codigoConocido: boolean, boton: "emitir-factura"|"ver-vouchers"|null } —
  *   salida de resolverRechazoAnularServicio. Si el codigo NO es ninguno de los 3
- *   catalogados (carrera fuera de lo esperado, o backend viejo sin `code`), caemos al
- *   camino de respaldo que existia antes de esta tanda (parrafo generico + "Ver facturas"),
- *   para no dejar al usuario sin ningun proximo paso.
- * - onIrAFacturas: () => void — navega a la solapa "Estado de Cuenta" (camino de respaldo)
+ *   catalogados (ej: el candado de la reserva, u otra carrera fuera de lo esperado, o
+ *   backend viejo sin `code`), el modal muestra SOLO el mensaje real del motor — que ya
+ *   viene curado en criollo — SIN el parrafo de "nota de credito" ni el boton "Ver
+ *   facturas": esos textos son ESPECIFICOS del motivo NC y quedarian mintiendo si el
+ *   motivo real es otro (fix 2026-07-23: el modal del candado mostraba de yapa el texto
+ *   de NC aunque el candado no tiene nada que ver con facturacion).
  * - onIrAEmitirFactura: () => void — abre la ficha de emision de factura (motivo R1, D1 firmada)
  * - onIrAVouchers: () => void — navega a la solapa "Vouchers" (motivo voucher vivo)
  * - onClose: () => void
+ *
+ * Nota (fix 2026-07-23): este modal YA NO recibe `onIrAFacturas`. El botón "Ver facturas de
+ * la reserva" era el camino de respaldo genérico que se sacó (ver comentario más abajo, junto
+ * al `<div>` de botones) — ningún motivo catalogado hoy lo necesita.
  */
-function ModalBloqueoCancelacionServicio({ mensaje, rechazo, onIrAFacturas, onIrAEmitirFactura, onIrAVouchers, onClose }) {
+function ModalBloqueoCancelacionServicio({ mensaje, rechazo, onIrAEmitirFactura, onIrAVouchers, onClose }) {
     // Si no llega ningun rechazo estructurado (por si algun caller viejo sigue pasando
     // solo el mensaje), tratamos como "codigo no conocido" — mismo camino de respaldo.
     const codigoConocido = rechazo?.codigoConocido === true;
@@ -624,16 +631,14 @@ function ModalBloqueoCancelacionServicio({ mensaje, rechazo, onIrAFacturas, onIr
                     <div className="rounded-xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-200">
                         {mensaje}
                     </div>
-                    {/* Camino de respaldo (Tanda 7): solo cuando el motivo NO es ninguno de los 3
-                        catalogados por `code` — mismo parrafo generico que existia antes de esta
-                        tanda, para no dejar al usuario sin ningun proximo paso ante un 409
-                        inesperado. Con codigo conocido, el texto real de arriba ya alcanza. */}
-                    {!codigoConocido && (
-                        <p className="text-sm text-slate-600 dark:text-slate-300">
-                            Para poder anular este servicio primero hay que gestionar la nota de crédito
-                            correspondiente en la sección de facturación de la reserva.
-                        </p>
-                    )}
+                    {/* Fix 2026-07-23: el párrafo de "nota de crédito" y el botón "Ver facturas"
+                        de acá abajo son ESPECÍFICOS del motivo NC (factura/voucher vivo) y NO
+                        aplican a cualquier 409 — antes se mostraban SIEMPRE que el `code` no
+                        estuviera catalogado, aunque el motivo real fuera otro (ej: el candado de
+                        la reserva). Con código NO catalogado, el mensaje real del motor (arriba,
+                        ya en criollo) es lo único que se muestra; el usuario solo puede cerrar
+                        con "Entendido" — mismo criterio que ya usa el motivo "sin cliente"
+                        catalogado (código conocido, sin botón de camino). */}
                 </div>
 
                 <div className="flex flex-col sm:flex-row justify-end gap-3 border-t border-slate-100 px-6 py-4 dark:border-slate-800">
@@ -677,24 +682,13 @@ function ModalBloqueoCancelacionServicio({ mensaje, rechazo, onIrAFacturas, onIr
                             Ver vouchers de la reserva
                         </button>
                     )}
-                    {/* Camino de respaldo: mismo boton "Ver facturas" de siempre, solo cuando el
-                        motivo no esta catalogado por `code`. El motivo "sin cliente" (catalogado
-                        pero sin pantalla que lo resuelva, ver backlog de la spec) tampoco muestra
-                        boton — el texto real ya dice que falta. */}
-                    {!codigoConocido && onIrAFacturas && (
-                        <button
-                            type="button"
-                            data-testid="btn-ir-a-facturas"
-                            onClick={() => {
-                                onIrAFacturas();
-                                onClose();
-                            }}
-                            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-indigo-700"
-                        >
-                            <FileText className="h-4 w-4" />
-                            Ver facturas de la reserva
-                        </button>
-                    )}
+                    {/* Fix 2026-07-23: el botón "Ver facturas de la reserva" quedaba SIEMPRE
+                        visible con código no catalogado, aunque el motivo real no tuviera nada
+                        que ver con facturación (ej: el candado de la reserva). Ese botón ahora
+                        es EXCLUSIVO del camino NC — no hay camino de respaldo genérico: con
+                        código no catalogado, el mensaje real del motor ya le dice al usuario
+                        qué pasó, y "Entendido" alcanza para cerrar (mismo criterio que "sin
+                        cliente", el motivo catalogado sin botón de camino, arriba). */}
                 </div>
             </div>
         </div>
@@ -1023,6 +1017,12 @@ function MiniFormularioPasajerosFaltantes({ reservaId, reserva, servicio, covera
  *   pasajerosConNombre              — Array de pasajeros que ya tienen fullName cargado.
  *                                     Necesario para el control "Para: Todos" (Pieza A ADR-031 v2.1).
  *                                     Si no se pasa (o vacío), el control aparece en modo deshabilitado.
+ *   onRequestEdit                   — callback () => void: abre la ventana de destrabar
+ *                                     (EditAuthorizationModal). Candado C1 (spec 2026-07-22): se usa
+ *                                     cuando la reserva está bloqueada sin autorización viva — los
+ *                                     botones de escritura de esta lista (Agregar, Editar, Anular
+ *                                     servicio/varios, Confirmar costo) quedan gris + candadito y, al
+ *                                     tocarlos, abren esta ventana en vez de ejecutar la acción.
  */
 export function ServiceList({
     services,
@@ -1066,6 +1066,9 @@ export function ServiceList({
     // ADR-031 v2.1 — Pieza A: pasajeros con nombre para el control "Para: Todos".
     // El padre filtra reserva.passengers por los que tienen fullName.
     pasajerosConNombre = [],
+    // Candado C1 (spec 2026-07-22): abre la ventana de destrabar cuando se toca un botón
+    // gris + candadito de esta lista.
+    onRequestEdit,
 }) {
     // ── ADR-036 punto 4c: estado de pago al operador por servicio ─────────────────
     // Cargamos el estado de pago al montar. Si falla, degradamos silenciosamente:
@@ -1101,6 +1104,13 @@ export function ServiceList({
         // Fallback a canCancel (campo más viejo) si el backend no mandó canCancelServices todavía.
         ? (capabilities.canCancelServices?.allowed ?? capabilities.canCancel?.allowed ?? true)
         : true;
+
+    // ─── Candado C1 (spec UX 2026-07-22) ─────────────────────────────────────────
+    // Reserva Confirmada SIN autorización de edición viva: los botones de escritura de
+    // esta lista (Agregar, Editar, Anular servicio/varios, Confirmar costo) se muestran
+    // "gris + candadito" en vez de encendidos. Al tocarlos, en vez de ejecutar la acción,
+    // abren la misma ventana de destrabar que ya usa la franja ámbar de arriba.
+    const candadoDeEdicionActivo = tieneCandadoDeEdicionActivo(reserva);
     // Gate de costo: con flag OFF se usa isAdmin() (comportamiento original).
     // Con flag ON se usa hasPermission("cobranzas.see_cost") — admin pasa igual (bypass en hasPermission).
     const mostrarCosto = isCatalogFindOrCreateEnabled
@@ -1226,7 +1236,6 @@ export function ServiceList({
                 <ModalBloqueoCancelacionServicio
                     mensaje={modalBloqueo409.mensaje}
                     rechazo={modalBloqueo409.rechazo}
-                    onIrAFacturas={onIrAFacturas}
                     onIrAEmitirFactura={onIrAEmitirFactura}
                     onIrAVouchers={onIrAVouchers}
                     onClose={() => setModalBloqueo409(null)}
@@ -1242,25 +1251,51 @@ export function ServiceList({
                         Texto aclarado 2026-07-22 (P2 firmado por Gaston): ya decía así la sección que
                         este botón abre (CancelarVariosServiciosInline) — solo faltaba el disparador. */}
                     {canCancelServices && puedeCancelarServicios && serviciosCancelables.length > 0 && !showCancelarVarios && (
-                        <button
-                            type="button"
-                            onClick={() => setShowCancelarVarios(true)}
-                            data-testid="btn-cancelar-varios"
-                            className="flex items-center justify-center gap-2 border border-amber-300 bg-amber-50 text-amber-700 px-4 py-2 rounded-lg hover:bg-amber-100 transition-colors text-sm font-semibold dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-900/40"
-                        >
-                            <XSquare className="w-4 h-4" />
-                            Anular varios servicios
-                        </button>
+                        candadoDeEdicionActivo ? (
+                            <button
+                                type="button"
+                                onClick={onRequestEdit}
+                                data-testid="btn-cancelar-varios"
+                                aria-label="Anular varios servicios — bloqueado, pedí autorización"
+                                className="flex items-center justify-center gap-2 border border-slate-200 bg-slate-100 text-slate-500 px-4 py-2 rounded-lg hover:bg-slate-200 transition-colors text-sm font-semibold dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
+                            >
+                                <Lock className="w-4 h-4" aria-hidden="true" />
+                                Anular varios servicios
+                            </button>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={() => setShowCancelarVarios(true)}
+                                data-testid="btn-cancelar-varios"
+                                className="flex items-center justify-center gap-2 border border-amber-300 bg-amber-50 text-amber-700 px-4 py-2 rounded-lg hover:bg-amber-100 transition-colors text-sm font-semibold dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-300 dark:hover:bg-amber-900/40"
+                            >
+                                <XSquare className="w-4 h-4" />
+                                Anular varios servicios
+                            </button>
+                        )
                     )}
                     {/* "Agregar Servicio": oculto en solo lectura (canEditServices.allowed === false).
-                        Guía UX 2026-06-22: en Traveling / Finalizada / Perdida / Anulada no se puede agregar. */}
+                        Guía UX 2026-06-22: en Traveling / Finalizada / Perdida / Anulada no se puede agregar.
+                        Candado C1 (2026-07-22): con la reserva bloqueada sin autorización viva, el botón
+                        queda gris + candadito y abre la ventana de destrabar en vez de agregar directo. */}
                     {puedeEditarServicios && (
-                        <button
-                            onClick={onAddService}
-                            className="flex items-center justify-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors shadow-sm text-sm"
-                        >
-                            <Plus className="w-4 h-4" /> Agregar Servicio
-                        </button>
+                        candadoDeEdicionActivo ? (
+                            <button
+                                type="button"
+                                onClick={onRequestEdit}
+                                aria-label="Agregar servicio — bloqueado, pedí autorización"
+                                className="flex items-center justify-center gap-2 bg-slate-100 text-slate-500 px-4 py-2 rounded-lg hover:bg-slate-200 transition-colors shadow-sm text-sm dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
+                            >
+                                <Lock className="w-4 h-4" aria-hidden="true" /> Agregar Servicio
+                            </button>
+                        ) : (
+                            <button
+                                onClick={onAddService}
+                                className="flex items-center justify-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors shadow-sm text-sm"
+                            >
+                                <Plus className="w-4 h-4" /> Agregar Servicio
+                            </button>
+                        )
                     )}
                 </div>
             </div>
@@ -1506,6 +1541,8 @@ export function ServiceList({
                                                         service={svc}
                                                         reservaId={reservaId}
                                                         onConfirmado={crearCallbackConfirmado(svc.recordKind)}
+                                                        candadoActivo={candadoDeEdicionActivo}
+                                                        onRequestEdit={onRequestEdit}
                                                     />
                                                 </td>
                                             ) : mostrarCosto ? (
@@ -1639,15 +1676,13 @@ export function ServiceList({
                                                         para editar ni para volver a anular/borrar sobre algo que ya quedó sin efecto. */}
                                                     {!esServicioAnulado(svc) && (() => {
                                                         const esConfirmado = esServicioConfirmadoPorOperador(svc);
-                                                        // Tanda 7 (2026-07-20): pre-chequeo de "puedo anular ESTE
-                                                        // servicio" — solo aplica al camino "Anular" (servicio ya
-                                                        // confirmado). "Borrar" un borrador no pasa por estos
-                                                        // candados fiscales (voucher vivo / pago al operador sin
-                                                        // factura / factura viva sin cliente). canCancel llega null
-                                                        // cuando el backend todavía no lo calculó (DTO viejo) → no
-                                                        // bloqueamos nada, degradación elegante (mismo criterio que
-                                                        // canEdit/canDelete del pago, Tanda 6).
-                                                        const bloqueoAnular = esConfirmado
+                                                        // Convivencia de candados (§1.7 de la spec 2026-07-22): con
+                                                        // la reserva bloqueada (candadoDeEdicionActivo), manda el
+                                                        // candado de la RESERVA — todavía no evaluamos el freno
+                                                        // fiscal por servicio (voucher vivo / pago sin factura /
+                                                        // factura sin cliente). Ese freno recién aparece cuando la
+                                                        // reserva ya está destrabada: "un candado a la vez por botón".
+                                                        const bloqueoAnular = esConfirmado && !candadoDeEdicionActivo
                                                             ? resolverBloqueoAnularServicio(svc)
                                                             : { bloqueado: false, motivo: null };
 
@@ -1655,15 +1690,28 @@ export function ServiceList({
                                                         <>
                                                         <div className="flex justify-end gap-1 transition-opacity">
                                                         {puedeEditarServicios && (
-                                                            <button
-                                                                onClick={() => onEditService(svc)}
-                                                                data-testid={`btn-edit-service-${getReservationServicePublicId(svc)}`}
-                                                                aria-label="Editar servicio"
-                                                                className="inline-flex items-center gap-1 p-1.5 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded text-xs font-semibold"
-                                                            >
-                                                                <Edit2 className="w-4 h-4" />
-                                                                Editar
-                                                            </button>
+                                                            candadoDeEdicionActivo ? (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={onRequestEdit}
+                                                                    data-testid={`btn-edit-service-${getReservationServicePublicId(svc)}`}
+                                                                    aria-label="Editar servicio — bloqueado, pedí autorización"
+                                                                    className="inline-flex items-center gap-1 p-1.5 text-slate-400 hover:bg-slate-100 dark:text-slate-500 dark:hover:bg-slate-800 rounded text-xs font-semibold"
+                                                                >
+                                                                    <Lock className="w-4 h-4" aria-hidden="true" />
+                                                                    Editar
+                                                                </button>
+                                                            ) : (
+                                                                <button
+                                                                    onClick={() => onEditService(svc)}
+                                                                    data-testid={`btn-edit-service-${getReservationServicePublicId(svc)}`}
+                                                                    aria-label="Editar servicio"
+                                                                    className="inline-flex items-center gap-1 p-1.5 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded text-xs font-semibold"
+                                                                >
+                                                                    <Edit2 className="w-4 h-4" />
+                                                                    Editar
+                                                                </button>
+                                                            )
                                                         )}
                                                         {/* Papelera: abre el modal que decide borrar vs anular según decisión #9.
                                                             Se oculta si no puede anular (solo lectura) o no puede editar (borrar
@@ -1680,6 +1728,25 @@ export function ServiceList({
                                                             // "Anular varios servicios" (lista). "Borrar" NO se toca (es
                                                             // otra acción, un servicio que ni llegó a confirmarse).
                                                             const textoTacho = esConfirmado ? 'Anular servicio' : 'Borrar';
+
+                                                            // Candado C1 (2026-07-22): con la reserva bloqueada, el tacho
+                                                            // va gris + candadito de RESERVA y abre la ventana de destrabar
+                                                            // — manda antes que el freno fiscal (§1.7, "un candado a la vez").
+                                                            if (candadoDeEdicionActivo) {
+                                                                return (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={onRequestEdit}
+                                                                        data-testid={`btn-delete-service-${getReservationServicePublicId(svc)}`}
+                                                                        aria-label={`${textoTacho} — bloqueado, pedí autorización`}
+                                                                        className="inline-flex items-center gap-1 p-1.5 text-slate-400 hover:bg-slate-100 dark:text-slate-500 dark:hover:bg-slate-800 rounded text-xs font-semibold"
+                                                                    >
+                                                                        <Lock className="w-4 h-4" aria-hidden="true" />
+                                                                        {textoTacho}
+                                                                    </button>
+                                                                );
+                                                            }
+
                                                             // El bloqueado SOLO puede darse con esConfirmado=true (ver
                                                             // bloqueoAnular arriba), así que acá textoTacho siempre es
                                                             // "Anular servicio" — el aria-label ya no necesita agregarle
@@ -1721,7 +1788,9 @@ export function ServiceList({
                                                         {/* Chip "al lado" de la papelera (precedente 2026-06-13):
                                                             motivo real del backend, sin parafrasearlo. Mismo formato
                                                             chico que ya usa el hint de pasajeros faltantes. Nada de
-                                                            tooltip: este texto queda siempre a la vista. */}
+                                                            tooltip: este texto queda siempre a la vista.
+                                                            No se muestra con la reserva bloqueada (bloqueoAnular ya
+                                                            queda en false arriba mientras candadoDeEdicionActivo). */}
                                                         {bloqueoAnular.bloqueado && (
                                                             <span
                                                                 className="max-w-[220px] text-right text-[10px] font-semibold text-amber-700 dark:text-amber-400"
@@ -1965,6 +2034,8 @@ export function ServiceList({
                                                                 service={svc}
                                                                 reservaId={reservaId}
                                                                 onConfirmado={crearCallbackConfirmado(svc.recordKind)}
+                                                                candadoActivo={candadoDeEdicionActivo}
+                                                                onRequestEdit={onRequestEdit}
                                                             />
                                                         </span>
                                                     ) : (
@@ -2069,7 +2140,9 @@ export function ServiceList({
                                                 // Tanda 7 (2026-07-20): mismo pre-chequeo que desktop — solo
                                                 // aplica al camino "Anular" (servicio confirmado). canCancel
                                                 // null → no calculado todavía, no bloqueamos (degradación elegante).
-                                                const bloqueoAnularMobile = esConfirmadoMobile
+                                                // Candado C1 (§1.7): con la reserva bloqueada, manda el candado de
+                                                // reserva — el freno fiscal recién se evalúa una vez destrabada.
+                                                const bloqueoAnularMobile = esConfirmadoMobile && !candadoDeEdicionActivo
                                                     ? resolverBloqueoAnularServicio(svc)
                                                     : { bloqueado: false, motivo: null };
 
@@ -2077,20 +2150,46 @@ export function ServiceList({
                                                     <div className="flex flex-col items-end gap-1">
                                                     <div className="flex items-center gap-2">
                                                         {puedeEditarServicios && (
-                                                            <button
-                                                                onClick={() => onEditService(svc)}
-                                                                data-testid={`btn-edit-service-mobile-${getReservationServicePublicId(svc)}`}
-                                                                aria-label="Editar servicio"
-                                                                className="inline-flex items-center gap-1 p-2 text-slate-500 rounded-lg bg-slate-50 dark:bg-slate-800 text-xs font-semibold"
-                                                            >
-                                                                <Edit2 className="w-3.5 h-3.5" />
-                                                                Editar
-                                                            </button>
+                                                            candadoDeEdicionActivo ? (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={onRequestEdit}
+                                                                    data-testid={`btn-edit-service-mobile-${getReservationServicePublicId(svc)}`}
+                                                                    aria-label="Editar servicio — bloqueado, pedí autorización"
+                                                                    className="inline-flex items-center gap-1 p-2 text-slate-400 rounded-lg bg-slate-100 dark:bg-slate-800 dark:text-slate-500 text-xs font-semibold"
+                                                                >
+                                                                    <Lock className="w-3.5 h-3.5" aria-hidden="true" />
+                                                                    Editar
+                                                                </button>
+                                                            ) : (
+                                                                <button
+                                                                    onClick={() => onEditService(svc)}
+                                                                    data-testid={`btn-edit-service-mobile-${getReservationServicePublicId(svc)}`}
+                                                                    aria-label="Editar servicio"
+                                                                    className="inline-flex items-center gap-1 p-2 text-slate-500 rounded-lg bg-slate-50 dark:bg-slate-800 text-xs font-semibold"
+                                                                >
+                                                                    <Edit2 className="w-3.5 h-3.5" />
+                                                                    Editar
+                                                                </button>
+                                                            )
                                                         )}
                                                         {/* Papelera mobile: mismo modal borrar vs anular.
-                                                            Tanda 7: gris + sin onClick cuando el pre-chequeo bloquea. */}
+                                                            Tanda 7: gris + sin onClick cuando el pre-chequeo bloquea.
+                                                            Candado C1: si la reserva está bloqueada, gris + candadito
+                                                            de reserva manda ANTES que el pre-chequeo fiscal. */}
                                                         {mostrarDestructivoMobile && (
-                                                            bloqueoAnularMobile.bloqueado ? (
+                                                            candadoDeEdicionActivo ? (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={onRequestEdit}
+                                                                    data-testid={`btn-delete-service-mobile-${getReservationServicePublicId(svc)}`}
+                                                                    aria-label={`${textoTachoMobile} — bloqueado, pedí autorización`}
+                                                                    className="inline-flex items-center gap-1 p-2 text-slate-400 rounded-lg bg-slate-100 dark:bg-slate-800 dark:text-slate-500 text-xs font-semibold"
+                                                                >
+                                                                    <Lock className="w-3.5 h-3.5" aria-hidden="true" />
+                                                                    {textoTachoMobile}
+                                                                </button>
+                                                            ) : bloqueoAnularMobile.bloqueado ? (
                                                                 // Igual que desktop: bloqueado solo puede darse con
                                                                 // esConfirmadoMobile=true, así que textoTachoMobile ya
                                                                 // es "Anular servicio" — no se le vuelve a agregar "servicio".

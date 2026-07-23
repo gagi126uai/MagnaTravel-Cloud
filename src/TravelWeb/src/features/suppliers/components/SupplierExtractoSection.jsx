@@ -53,7 +53,7 @@ import { api } from "../../../api";
 import { hasPermission } from "../../../auth";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { getPublicId } from "../../../lib/publicIds";
-import { formatCurrency } from "../../../lib/utils";
+import { formatCurrency, formatDate } from "../../../lib/utils";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import {
     DataGrid,
@@ -240,9 +240,12 @@ export function SupplierExtractoSection({
                                 minimumFractionDigits: 2,
                                 maximumFractionDigits: 2,
                             });
-                            const fechaTexto = aplicacion.appliedAt
-                                ? new Date(aplicacion.appliedAt).toLocaleDateString("es-AR")
-                                : "—";
+                            // aplicacion.appliedAt es un INSTANTE REAL de sistema (backend lo arma con
+                            // AppliedAt = CreatedAt de la aplicación de saldo a favor, no una fecha que el
+                            // usuario eligió), así que formatDate() cae en su rama de "instante real" — la
+                            // arreglamos igual para que esa rama use la hora de Argentina fija (no la del
+                            // navegador), no porque tuviera el bug de corrimiento de día.
+                            const fechaTexto = aplicacion.appliedAt ? formatDate(aplicacion.appliedAt) : "—";
 
                             return (
                                 <li key={aplicacionId} className="px-5 py-3">
@@ -570,7 +573,11 @@ function FilaExtractoProveedor({ linea, currency, montosVisibles, allPayments, c
     return (
         <DataGridRow>
             <DataGridCell className="text-slate-500 dark:text-slate-400">
-                {linea.date ? new Date(linea.date).toLocaleDateString("es-AR") : "—"}
+                {/* fix 2026-07-22: mismo bug que EstadoCuentaExtracto.jsx (cobros/pagos fechados
+                    corrían un día menos al mostrarse). formatDate() no convierte a hora local
+                    una fecha de negocio (día elegido por el usuario, guardada como medianoche
+                    UTC) — ver lib/utils.js. */}
+                {linea.date ? formatDate(linea.date) : "—"}
             </DataGridCell>
 
             <DataGridCell>

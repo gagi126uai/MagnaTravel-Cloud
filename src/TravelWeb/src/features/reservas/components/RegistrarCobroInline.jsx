@@ -277,7 +277,13 @@ export function RegistrarCobroInline({
                 </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-4">
+            {/* noValidate (fix 2026-07-23): sin esto, el navegador cortaba el submit con SU
+                propio cartelito de validación nativa (en inglés, "Value must be greater
+                than...") por el min="0.01"/required del input Monto — el mensaje propio en
+                criollo ("El monto tiene que ser mayor a 0.") nunca llegaba a mostrarse porque
+                handleSubmit ni se ejecutaba. Con noValidate, React SIEMPRE controla la
+                validación y el mensaje que ve el cajero es el nuestro. */}
+            <form onSubmit={handleSubmit} className="space-y-4" noValidate>
 
                 {/* Datos bancarios de la agencia para que el cliente pueda transferir.
                     Decisión de Gaston: "mostrar datos bancarios en pantalla al cobrar".

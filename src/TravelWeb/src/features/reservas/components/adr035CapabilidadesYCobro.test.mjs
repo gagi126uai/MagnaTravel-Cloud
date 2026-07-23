@@ -35,6 +35,24 @@ function debeMostrarLinkOtraMoneda({ esMultimoneda, mostrarOtraMoneda }) {
 }
 
 /**
+ * Replica de la validación de monto de RegistrarCobroInline.handleSubmit (fix 2026-07-23).
+ *
+ * Antes de este fix, el input Monto tenía min="0.01"/required NATIVOS: con el form SIN
+ * noValidate, el navegador cortaba el submit con su propio cartelito en inglés y esta
+ * validación de React ni llegaba a correr — el mensaje en criollo nunca se mostraba.
+ * El fix agrega noValidate al <form> (no testeable con node --test puro, sin DOM), pero
+ * el TEXTO del mensaje que el cajero tiene que ver sí queda fijado acá (regla T-6).
+ *
+ * @returns {string|null} el mensaje de error, o null si el monto es válido.
+ */
+function validarMontoCobro(monto) {
+    if (!monto || parseFloat(monto) <= 0) {
+        return "El monto tiene que ser mayor a 0.";
+    }
+    return null;
+}
+
+/**
  * Replica la condición que muestra los selectores de moneda/imputar.
  * Solo aparecen en multimoneda Y cuando el usuario activó el link.
  */
@@ -132,6 +150,26 @@ test("B cobro: sin monedaPrincipal ni porMoneda → fallback final a ARS", () =>
 
 test("B cobro: reserva null → fallback a ARS (no rompe)", () => {
     assert.equal(resolverMonedaDefault(null), "ARS");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// B2) Tests: mensaje de monto inválido en RegistrarCobroInline (fix 2026-07-23)
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("B2 cobro: monto vacío → mensaje en criollo fijado", () => {
+    assert.equal(validarMontoCobro(""), "El monto tiene que ser mayor a 0.");
+});
+
+test("B2 cobro: monto '0' → mensaje en criollo fijado", () => {
+    assert.equal(validarMontoCobro("0"), "El monto tiene que ser mayor a 0.");
+});
+
+test("B2 cobro: monto negativo → mensaje en criollo fijado", () => {
+    assert.equal(validarMontoCobro("-5"), "El monto tiene que ser mayor a 0.");
+});
+
+test("B2 cobro: monto válido (> 0) → sin error", () => {
+    assert.equal(validarMontoCobro("100.50"), null);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
