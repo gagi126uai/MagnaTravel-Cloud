@@ -202,8 +202,10 @@ public class InvoiceServiceEmissionPreflightTests
     public async Task ReservaSinCliente_Warn_Allowed()
     {
         using var context = new AppDbContext(_dbOptions);
-        // AFIP configurado pero la reserva NO tiene cliente asignado (PayerId null). La emisión real rechazaría
-        // "sin cliente asignado"; el preflight avisa (warn) sin frenar.
+        // FIX bloqueante (2026-07-23): AFIP configurado pero la reserva NO tiene cliente asignado
+        // (PayerId null). Antes la emisión real RECHAZABA este caso (500 en producción). Ahora
+        // emite normalmente a Consumidor Final; el preflight avisa (warn, no frena) informando la
+        // CONSECUENCIA, no un fallo. T-6: el texto exacto que ve el usuario queda fijado acá.
         context.AfipSettings.Add(new AfipSettings { TaxCondition = "Responsable Inscripto" });
         context.Reservas.Add(new Reserva
         {
@@ -220,7 +222,7 @@ public class InvoiceServiceEmissionPreflightTests
 
         Assert.True(result.Allowed);
         Assert.Equal("warn", result.Severity);
-        Assert.Contains("cliente", result.Reason!, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("Esta reserva no tiene un cliente asignado. Se va a facturar a Consumidor Final.", result.Reason);
     }
 
     [Fact]

@@ -1001,13 +1001,15 @@ public class InvoiceService : IInvoiceService
             }
         }
 
-        // WARN (no bloquea): la reserva no tiene cliente asignado. La emisión real rechaza "sin cliente
-        // asignado"; el preflight no puede frenar (regla conservadora) pero avisa para asignarlo antes.
+        // AVISO SUAVE (no bloquea): la reserva no tiene cliente asignado. FIX 2026-07-23: antes la
+        // emisión real RECHAZABA este caso con 500 (bug); ahora emite normalmente a Consumidor Final
+        // (letra B/C según el emisor, nunca A). El texto ya NO anuncia un fallo — informa la
+        // consecuencia y deja seguir (P-20: aviso suave informa, no frena).
         if (!reserva.HasPayer)
         {
             result.Allowed = true;
             result.Severity = "warn";
-            result.Reason = "Esta reserva no tiene un cliente asignado. Asigná el cliente antes de emitir.";
+            result.Reason = "Esta reserva no tiene un cliente asignado. Se va a facturar a Consumidor Final.";
             return result;
         }
 

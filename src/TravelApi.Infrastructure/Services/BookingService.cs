@@ -708,6 +708,13 @@ public partial class BookingService : IBookingService
         var reserva = await _db.Reservas.FirstOrDefaultAsync(r => r.Id == reservaId, ct);
         if (reserva == null) return;
 
+        // FIX (2026-07-23): si el usuario corrigio las fechas A MANO (ReservaService.UpdateDatesAsync),
+        // el recalculo automatico NO las pisa. Antes, guardar CUALQUIER servicio (hotel, vuelo,
+        // transfer, paquete, asistencia) volvia a correr este metodo y sobreescribia la correccion
+        // manual con el MIN/MAX automatico — la fecha "corregida" se perdia en el proximo guardado.
+        // Reservas sin correccion manual (el caso de siempre) siguen recalculando exactamente igual.
+        if (reserva.DatesManuallySet) return;
+
         // El calculo del min/max de fechas de servicios vive en ReservaScheduleCalculator
         // para poder reusarlo desde el lifecycle automation y al construir DTOs.
         var (nextStart, nextEnd) = await ReservaScheduleCalculator.ComputeAsync(_db, reservaId, ct);

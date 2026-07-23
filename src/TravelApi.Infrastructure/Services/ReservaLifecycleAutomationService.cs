@@ -214,13 +214,21 @@ public class ReservaLifecycleAutomationService
     /// servicios y la persiste para que el auto-cierre pueda evaluarla.
     ///
     /// Si una reserva no tiene servicios (no podemos inferir), queda como esta.
+    ///
+    /// <para>FIX N1 (2026-07-23, nit de review T-7): si alguien corrigio las fechas A MANO
+    /// (<c>Reserva.DatesManuallySet</c>, ver <c>ReservaService.UpdateDatesAsync</c>), este job de
+    /// reparacion NO la toca. Caso borde real: una reserva En viaje con EndDate null Y una
+    /// correccion manual previa (ej. el operador ya sabe la fecha real de regreso aunque los
+    /// servicios cargados no la reflejen) — sin este filtro, la proxima corrida del job pisaria
+    /// esa correccion con el recompute automatico, el mismo bug que el fix de esta tanda cerro
+    /// para el guardado de servicios.</para>
     /// </summary>
     public async Task<int> AutoRepairTravelingDatesAsync(CancellationToken ct = default)
     {
         // Limite defensivo: si por alguna razon hay miles de reservas en este
         // estado, evitamos un OOM. La proxima corrida levanta el resto.
         var orphans = await _db.Reservas
-            .Where(r => r.Status == EstadoReserva.Traveling && r.EndDate == null)
+            .Where(r => r.Status == EstadoReserva.Traveling && r.EndDate == null && !r.DatesManuallySet)
             .Take(500)
             .ToListAsync(ct);
 

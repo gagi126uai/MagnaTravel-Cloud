@@ -582,8 +582,13 @@ public class AfipService : IAfipService
 
         if (reserva == null) throw new Exception("Reserva no encontrada");
         
+        // FIX bloqueante (2026-07-23, decision del dueño): antes esto tiraba y la factura de venta
+        // SIN cliente asignado (Consumidor Final) daba 500 SIEMPRE. Todo el resto del pipeline YA
+        // sabia manejar "sin cliente" (ArcaReceptorResolver cae a DocTipo=99/DocNro=0, ProcessInvoiceJob
+        // defaultea CondicionIVAReceptorId=5 cuando no hay CustomerSnapshot, InvoiceTypeResolver es
+        // null-safe) — el UNICO lugar roto era este throw. customer queda nullable de aca en mas;
+        // "sin cliente" = Consumidor Final, un caso de negocio VALIDO, no un error.
         var customer = reserva.Payer;
-        if (customer == null) throw new Exception("La reserva no tiene cliente asignado"); // Allow Consumer Final?
 
         // 2. Load Original Invoice (if Annulment/Note)
         Invoice? originalInvoice = null;
@@ -612,16 +617,19 @@ public class AfipService : IAfipService
         //     letra en silencio.
         // Los casos ya correctos se preservan EXACTO: RI->RI=A, RI->Consumidor Final=B,
         // Monotributo=C, Exento=C.
+        // customer?.TaxCondition: sin cliente (Consumidor Final), ResolveSaleInvoiceType es null-safe
+        // y resuelve igual que si el receptor no tuviera condicion de IVA reconocida (degrada a B/C
+        // segun el emisor — NUNCA a A, que exige CUIT identificado).
         int baseType = InvoiceTypeResolver.ResolveSaleInvoiceType(
             emisorTaxCondition: settings.TaxCondition,
-            receptorTaxCondition: customer.TaxCondition);
+            receptorTaxCondition: customer?.TaxCondition);
 
         // Leyenda obligatoria Ley 27.618 cuando RI factura a Monotributista (Factura A). Va SOLO
         // en ese caso. Se persiste en Invoice.FiscalLegend para que el PDF la imprima
         // (InvoicePdfService.ComposeFiscalLegend). NO va en el envelope WSFEv1: la leyenda es un
         // requisito del comprobante IMPRESO, no un dato que ARCA reciba (no existe ese nodo en el XSD).
         string? fiscalLegend = null;
-        if (InvoiceTypeResolver.RequiresMonotributistaLegend(settings.TaxCondition, customer.TaxCondition))
+        if (InvoiceTypeResolver.RequiresMonotributistaLegend(settings.TaxCondition, customer?.TaxCondition))
         {
             fiscalLegend = InvoiceTypeResolver.LeyendaFacturaAMonotributista;
         }
@@ -808,7 +816,12 @@ public class AfipService : IAfipService
              IssuedByUserName = request.IssuedByUserName,
              OutstandingBalanceAtIssuance = reserva.Balance,
              AgencySnapshot = agencySettings != null ? System.Text.Json.JsonSerializer.Serialize(agencySettings) : null,
-             CustomerSnapshot = System.Text.Json.JsonSerializer.Serialize(customer, new JsonSerializerOptions { ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles }),
+             // customer == null (Consumidor Final) -> null explicito, NO el string "null". ProcessInvoiceJob
+             // ya lo interpreta asi (chequea IsNullOrEmpty(CustomerSnapshot) y cae a DocTipo=99/DocNro=0/
+             // CondicionIVAReceptorId=5 cuando no hay snapshot).
+             CustomerSnapshot = customer != null
+                 ? System.Text.Json.JsonSerializer.Serialize(customer, new JsonSerializerOptions { ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles })
+                 : null,
              Items = invoiceItems,
              Tributes = request.Tributes.Select(t => new InvoiceTribute
              {

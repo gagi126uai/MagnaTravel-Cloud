@@ -70,8 +70,16 @@ public partial class BookingService
 
         // 4) Persistir el desplazamiento + el rastro de auditoria en UN solo SaveChanges (atomico: o se mueve
         //    todo y queda auditado, o no se mueve nada). El audit se STAGEA para entrar en la misma transaccion.
+        //
+        //    FIX (2026-07-23): si una correccion manual anterior (UpdateDatesAsync) habia dejado
+        //    reserva.DatesManuallySet=true, RecalculateReservationScheduleAsync (paso 5) ahora RESPETA esa
+        //    marca y no pisa las fechas. Pero "Reprogramar viaje" es TAMBIEN una accion deliberada del
+        //    usuario — que ademas movio TODOS los servicios — y quiere que la cabecera refleje el nuevo
+        //    min/max. Bajamos la marca ACA (misma transaccion que el shift) para que el paso 5 recalcule
+        //    como siempre.
         if (daysShift != 0)
         {
+            reserva.DatesManuallySet = false;
             StageRescheduleAudit(reservaId, daysShift, servicesMoved);
             await _db.SaveChangesAsync(ct);
         }

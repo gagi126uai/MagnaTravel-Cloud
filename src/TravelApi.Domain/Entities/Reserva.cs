@@ -253,6 +253,20 @@ public class Reserva : IHasPublicId
     public DateTime? EndDate { get; set; }
     public DateTime? ClosedAt { get; set; }
 
+    /// <summary>
+    /// FIX (2026-07-23): true cuando alguien corrigio StartDate/EndDate A MANO desde la ficha
+    /// (ver <c>ReservaService.UpdateDatesAsync</c>). Antes, CUALQUIER guardado posterior de un
+    /// servicio (hotel, vuelo, transfer, paquete, asistencia) volvia a pisar esas fechas con el
+    /// MIN/MAX automatico de los servicios (<c>BookingService.RecalculateReservationScheduleAsync</c>),
+    /// borrando la correccion manual sin que nadie lo pidiera.
+    ///
+    /// <para>Default false = comportamiento de SIEMPRE (el recalculo automatico manda). Se prende
+    /// SOLO cuando el usuario corrige a mano; desde ahi, las fechas manuales tienen prioridad y el
+    /// recalculo automatico deja de tocarlas. Es aditivo: filas viejas quedan en false, sin cambio
+    /// de comportamiento para ellas.</para>
+    /// </summary>
+    public bool DatesManuallySet { get; set; } = false;
+
     // Payer/Main Client
     public int? PayerId { get; set; }
     public Customer? Payer { get; set; }

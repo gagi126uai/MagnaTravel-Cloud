@@ -705,7 +705,11 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(s => s.Origin).HasMaxLength(3).IsRequired(false);
             entity.Property(s => s.Destination).HasMaxLength(3).IsRequired(false);
             entity.Property(s => s.ProductName).HasMaxLength(200);
-            entity.Property(s => s.Status).HasMaxLength(2);
+            // FIX (2026-07-23): estaba en HasMaxLength(2) por error de tipeo. Postgres cortaba
+            // "Solicitado"/"Confirmado" con 22001 (value too long) y el alta de vuelo daba 500
+            // SIEMPRE en produccion. Los demas tipos de servicio (Hotel, Transfer, Package,
+            // Asistencia) usan 50; este ahora queda igual (paridad exacta, ver lineas 493/589/620).
+            entity.Property(s => s.Status).HasMaxLength(50);
 
             entity.HasOne(s => s.Reserva)
                   .WithMany(r => r.FlightSegments)

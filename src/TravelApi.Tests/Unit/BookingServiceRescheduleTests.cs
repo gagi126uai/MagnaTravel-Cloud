@@ -197,6 +197,34 @@ public class BookingServiceRescheduleTests
         Assert.Equal(HotelCheckOut.AddDays(7), result.NewEndDate);
     }
 
+    /// <summary>
+    /// FIX (2026-07-23): "Reprogramar viaje" es una accion deliberada del usuario, igual que la correccion
+    /// manual de fechas (ReservaService.UpdateDatesAsync) — asi que TIENE que seguir recalculando la cabecera
+    /// aunque una correccion manual ANTERIOR hubiera dejado DatesManuallySet=true. Si no bajara la marca, el
+    /// guard nuevo de RecalculateReservationScheduleAsync (pensado para NO pisar una correccion manual al
+    /// guardar un servicio cualquiera) tambien frenaria ESTE recalculo, y la cabecera quedaria vieja despues
+    /// de mover todos los servicios.
+    /// </summary>
+    [Fact]
+    public async Task Reschedule_WithPriorManualDatesFlag_StillRecalculatesHeader()
+    {
+        await using var context = CreateContext();
+        var reserva = await SeedMultiTypeAsync(context);
+        reserva.DatesManuallySet = true; // simula una correccion manual anterior
+        await context.SaveChangesAsync();
+        var service = CreateService(context, CreateMapper());
+
+        var result = await service.RescheduleAsync(reserva.PublicId.ToString(), new RescheduleReservaRequest(DaysShift: 7), CancellationToken.None);
+
+        // La cabecera SI se recalculo (no quedo pisada por la marca vieja).
+        var reloaded = await context.Reservas.SingleAsync();
+        Assert.Equal(HotelCheckIn.AddDays(7), reloaded.StartDate);
+        Assert.Equal(HotelCheckOut.AddDays(7), reloaded.EndDate);
+        Assert.Equal(HotelCheckIn.AddDays(7), result.NewStartDate);
+        // La marca queda abajo: el proximo guardado de un servicio suelto vuelve a recalcular libremente.
+        Assert.False(reloaded.DatesManuallySet);
+    }
+
     // ===================== -N dias idem =====================
 
     [Fact]

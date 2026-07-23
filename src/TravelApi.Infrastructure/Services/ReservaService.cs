@@ -665,6 +665,15 @@ public class ReservaService : IReservaService
             throw new ArgumentException("La fecha de regreso no puede ser anterior a la fecha de salida.");
         }
 
+        // FIX (2026-07-23): a partir de aca, las fechas quedan corregidas A MANO. El recalculo
+        // automatico que corre al guardar cualquier servicio (BookingService.RecalculateReservationScheduleAsync)
+        // respeta este flag y deja de pisarlas. PR-12 (rastro de quien/cuando): la traza de ESTE cambio
+        // ya la deja ReservaLockGuard.EnsureCanEditAsync de arriba, pero SOLO cuando la reserva esta
+        // Confirmada (bajo candado) — en Presupuesto/En gestion (edicion libre, el caso mas comun) no
+        // queda ningun rastro de quien corrigio ni cuando. No se agrega trazabilidad nueva aca: es una
+        // decision de negocio (que campos auditar en estados libres) que excede este fix puntual.
+        reserva.DatesManuallySet = true;
+
         await _context.SaveChangesAsync(ct);
         return await GetReservaByIdAsync(reservaId);
     }
@@ -1855,6 +1864,13 @@ public class ReservaService : IReservaService
         // futura, el job no la toma). Verificado (grep 2026-06-22): nada calcula plata/comision/vencimiento sobre
         // Reserva.StartDate — solo filtros de urgencia/worklist y display; borrarla no descuadra ningun monto.
         reserva.StartDate = null;
+
+        // FIX (2026-07-23): esta accion cuenta con que el PROXIMO guardado de un servicio recompute
+        // StartDate solo (comentario de arriba). Si una correccion manual anterior habia dejado
+        // DatesManuallySet=true, ese recalculo automatico quedaria frenado (ver BookingService.
+        // RecalculateReservationScheduleAsync) y StartDate seguiria en null para siempre. "Sacar de
+        // viaje" es en si misma una correccion de excepcion que pide recalculo fresco: bajamos la marca.
+        reserva.DatesManuallySet = false;
 
         // (7/8) Vuelve a Confirmed por el PUNTO ÚNICO de transición: rastro auditable con Direction = "Correction"
         // (valor NUEVO, exclusivo de esta accion; ningun consumidor backend ramifica sobre Direction) + limpieza del
