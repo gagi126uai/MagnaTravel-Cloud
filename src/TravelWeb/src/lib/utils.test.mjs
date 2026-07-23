@@ -18,7 +18,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { formatDate, formatDateTime } from "./utils.js";
+import { formatDate, formatDateTime, hoyArgentina } from "./utils.js";
 
 // ─── Caso 1: fecha-solo-día cruda del input (sin pasar por el backend) ───────
 
@@ -172,4 +172,45 @@ test("formatDateTime: mismo anclaje a Argentina para instantes reales (no depend
         formatDateTime("2026-07-22T01:00:00Z").startsWith("21/7/2026"),
         `Esperaba que empiece con "21/7/2026", recibido: "${formatDateTime("2026-07-22T01:00:00Z")}"`
     );
+});
+
+// ─── hoyArgentina(): bug real cazado en PROD 2026-07-22 21:50hs ART ─────────────────────
+//
+// "Registrar cobro" proponía por defecto el día 23/07 (mañana) en vez de 22/07 (hoy en
+// Argentina). Causa: `new Date().toISOString().slice(0, 10)` da el día en UTC — a las 21:50
+// ART (UTC-3) ya son las 00:50 UTC del día SIGUIENTE. El dato que se guardaba y mostraba
+// después era fiel (por el fix de la tanda anterior); lo roto era el DEFAULT del campo.
+
+test("hoyArgentina: instante donde en UTC ya es el día siguiente → devuelve el día de Argentina, no el de UTC", () => {
+    // 2026-07-23T01:00:00Z: en UTC ya es 23 de julio. En Argentina (UTC-3) recién son las
+    // 22:00 del 22 de julio — el caso EXACTO del bug reportado (repro con reloj simulado).
+    const instanteSimulado = new Date("2026-07-23T01:00:00Z");
+    assert.equal(hoyArgentina(instanteSimulado), "2026-07-22");
+});
+
+test("hoyArgentina: instante bien entrada la noche en Argentina, lejos de la medianoche UTC → mismo día en ambas zonas", () => {
+    // Caso de control: a las 14:00 UTC (11:00 ART) es el mismo día calendario en las dos
+    // zonas, así que no hay ambigüedad posible — sirve para confirmar que la función no
+    // "adelanta" ni "atrasa" el día en el caso trivial.
+    const instanteSimulado = new Date("2026-07-22T14:00:00Z");
+    assert.equal(hoyArgentina(instanteSimulado), "2026-07-22");
+});
+
+test("hoyArgentina: instante justo antes de medianoche Argentina (23:59 ART) → todavía el día de hoy", () => {
+    // 23:59 ART del 22/07 = 02:59 UTC del 23/07 (Argentina UTC-3). En UTC ya es "mañana",
+    // pero en Argentina falta un minuto para que cambie el día.
+    const instanteSimulado = new Date("2026-07-23T02:59:00Z");
+    assert.equal(hoyArgentina(instanteSimulado), "2026-07-22");
+});
+
+test("hoyArgentina: sin argumento → usa el reloj real (no explota, devuelve formato YYYY-MM-DD)", () => {
+    const resultado = hoyArgentina();
+    assert.match(resultado, /^\d{4}-\d{2}-\d{2}$/);
+});
+
+test("hoyArgentina: fin de año — 31/12 23:00 ART no salta al 1/1 del año siguiente", () => {
+    // 31/12 23:00 ART = 1/1 02:00 UTC del año siguiente. Caso borde de calendario, mismo
+    // criterio que los tests de fin de año de formatDate() de más arriba.
+    const instanteSimulado = new Date("2027-01-01T02:00:00Z");
+    assert.equal(hoyArgentina(instanteSimulado), "2026-12-31");
 });

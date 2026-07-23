@@ -4,7 +4,7 @@ import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
 import { getApiErrorMessage } from "../lib/errors";
 import { getPublicId, getRelatedPublicId } from "../lib/publicIds";
-import { formatCurrency } from "../lib/utils";
+import { formatCurrency, hoyArgentina } from "../lib/utils";
 
 const FX_SOURCES = [
   { value: 5, label: "Manual" },
@@ -14,7 +14,9 @@ const FX_SOURCES = [
 
 const PAYMENT_CURRENCIES = ["ARS", "USD"];
 
-const today = () => new Date().toISOString().split("T")[0];
+// fix 2026-07-22 (bug real en PROD, mismo defecto que RegistrarCobroInline.jsx): usar
+// hoyArgentina() en vez de toISOString().split("T")[0] (día en UTC, no en Argentina).
+const today = () => hoyArgentina();
 
 function pendingCurrencyLines(reserva) {
   const source = Array.isArray(reserva?.debtByCurrency)

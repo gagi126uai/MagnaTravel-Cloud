@@ -21,6 +21,13 @@ import assert from "node:assert/strict";
 // review 2026-07-14, sección J).
 import { construirCamposConversionParaPayload, EXCHANGE_RATE_SOURCE_MANUAL, hayCruceDeMoneda } from "../lib/penaltyCrossCurrency.js";
 
+// Import REAL (no réplica) de hoyArgentina: vive en lib/utils.js, un módulo .js puro sin
+// JSX, así que se puede importar directo (mismo criterio que construirCamposConversionParaPayload
+// de arriba). Fix 2026-07-22: getTodayString() de este archivo usaba
+// new Date().toISOString().split("T")[0] (día en UTC) — reemplazado por el real para que la
+// réplica de abajo no vuelva a divergir silenciosamente del componente real.
+import { hoyArgentina } from "../../../lib/utils.js";
+
 // ─── Réplica de las funciones de ConfirmarMultaOperadorInline.jsx ─────────────
 // Se copian aquí para testearlas sin DOM ni React.
 // Si cambia la lógica del componente, actualizar también estas réplicas.
@@ -37,7 +44,7 @@ import { construirCamposConversionParaPayload, EXCHANGE_RATE_SOURCE_MANUAL, hayC
 // todo la detección de divergencia.
 
 function getTodayString() {
-    return new Date().toISOString().split("T")[0];
+    return hoyArgentina();
 }
 
 /**

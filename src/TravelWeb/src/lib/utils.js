@@ -52,6 +52,39 @@ export function formatCurrency(amount, currency) {
     }).format(number);
 }
 
+/**
+ * Devuelve el día calendario "de hoy" en Argentina (America/Argentina/Buenos_Aires), como
+ * string "YYYY-MM-DD" — el mismo formato que espera el value de un &lt;input type="date"&gt;.
+ *
+ * Bug real cazado en PROD (2026-07-22, 21:50 hora Argentina): el formulario "Registrar cobro"
+ * proponía por defecto el día 23/07 (el día siguiente) en vez de 22/07. La causa era
+ * `new Date().toISOString().slice(0, 10)` (o `.split("T")[0]`): `toISOString()` SIEMPRE da la
+ * fecha en UTC, nunca la del navegador ni la de Argentina. A las 21:50 ART (UTC-3) ya son las
+ * 00:50 UTC del día SIGUIENTE, así que el default saltaba un día para adelante — un cajero que
+ * registra un cobro pasadas las 21hs vería "mañana" preseleccionado en vez de "hoy".
+ *
+ * Esta función reemplaza ese patrón: usa `Intl.DateTimeFormat` con `timeZone` fijo en Argentina
+ * (nunca la zona del navegador ni la del servidor, por la regla del dueño), y arma el string
+ * a mano a partir de las partes con nombre (`formatToParts`) en vez de confiar en que el
+ * `.format()` de un locale en particular ordene año-mes-día — así no depende de qué locale
+ * quede configurado ni de versiones de ICU distintas entre navegadores.
+ *
+ * @param {Date} [ahora] - Instante a evaluar (inyectable para tests de horario límite). Default: ahora real.
+ * @returns {string} "YYYY-MM-DD" del día calendario en Argentina.
+ */
+export function hoyArgentina(ahora = new Date()) {
+    const partes = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Argentina/Buenos_Aires",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).formatToParts(ahora);
+
+    const obtenerParte = (tipo) => partes.find((parte) => parte.type === tipo)?.value;
+
+    return `${obtenerParte("year")}-${obtenerParte("month")}-${obtenerParte("day")}`;
+}
+
 // Bug "fechas corridas un día" (reportado 2026-07-16): reconoce una fecha que en
 // realidad es "un día calendario" (no un instante real con hora). Dos formas posibles:
 //   1. "2026-05-23"                      → value crudo de un <input type="date">

@@ -32,6 +32,7 @@ import { X, AlertTriangle, AlertCircle, Loader2, FileCheck2 } from "lucide-react
 import { cancellationsApi } from "../api/cancellationsApi";
 import { showSuccess, showError } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
+import { hoyArgentina } from "../../../lib/utils";
 import RequestApprovalModal from "../../approvals/components/RequestApprovalModal";
 
 // Valor INT de CancellationConceptKind del backend.
@@ -48,9 +49,11 @@ const AGENCY_CONCEPT_OPTIONS = [
   { value: "AgencyCancellationFee", label: "Cargo de cancelacion" },
 ];
 
-// Fecha de hoy en formato YYYY-MM-DD para el campo date (max del input).
+// Fecha de hoy en formato YYYY-MM-DD para el campo date (default y max del input).
+// fix 2026-07-22 (bug real en PROD, mismo defecto que RegistrarCobroInline.jsx): usar
+// hoyArgentina() en vez de toISOString().split("T")[0] (día en UTC, no en Argentina).
 function getTodayDateString() {
-  return new Date().toISOString().split("T")[0];
+  return hoyArgentina();
 }
 
 export default function ConfirmPenaltyModal({

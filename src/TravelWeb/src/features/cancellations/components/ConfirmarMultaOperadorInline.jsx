@@ -87,7 +87,7 @@ import { AlertTriangle, Loader2, FileCheck2, X } from "lucide-react";
 import { cancellationsApi } from "../api/cancellationsApi";
 import { showSuccess, showError } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
-import { formatCurrency } from "../../../lib/utils";
+import { formatCurrency, hoyArgentina } from "../../../lib/utils";
 import RequestApprovalModal from "../../approvals/components/RequestApprovalModal";
 import { FacturaDestinoSelect } from "./FacturaDestinoSelect";
 import { hayFacturaDestinoAmbigua, facturaDestinoResuelta } from "../lib/facturaDestinoLogic";
@@ -108,9 +108,17 @@ import {
 } from "../lib/penaltyCrossCurrency";
 import { useBnaUsdRateForDate } from "../hooks/useBnaUsdRateForDate";
 
-// Fecha de hoy en formato YYYY-MM-DD para el atributo max del input[type=date].
+// Fecha de hoy en formato YYYY-MM-DD para el atributo max del input[type=date] y para el
+// default del campo "fecha en que el operador cobró".
+//
+// fix 2026-07-22 (bug real en PROD, mismo defecto que RegistrarCobroInline.jsx): antes era
+// `new Date().toISOString().split("T")[0]` (día en UTC). Acá el impacto era doble: además
+// del default mal precargado, el `max` del input quedaba mal calculado — pasadas las 21hs ART
+// (cuando en UTC ya es "mañana"), el `max` permitía elegir un día que en Argentina todavía era
+// futuro, dejando pasar la validación de "la fecha no puede ser futura" que se ve más abajo.
+// hoyArgentina() (lib/utils.js) fija la zona horaria explícita, nunca la del navegador.
 function getTodayString() {
-    return new Date().toISOString().split("T")[0];
+    return hoyArgentina();
 }
 
 // Opciones de moneda para la multa del operador.

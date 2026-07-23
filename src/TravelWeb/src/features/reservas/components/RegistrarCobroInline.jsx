@@ -22,7 +22,7 @@
  */
 
 import { useState, useEffect } from "react";
-import { formatCurrency } from "../../../lib/utils";
+import { formatCurrency, hoyArgentina } from "../../../lib/utils";
 import { api } from "../../../api";
 import { showSuccess } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
@@ -51,7 +51,11 @@ const METODOS_PAGO = [
     { value: "Deposito", label: "Depósito" },
 ];
 
-const fechaHoy = () => new Date().toISOString().split("T")[0];
+// fix 2026-07-22 (bug real en PROD, 21:50hs ART): antes esto era
+// `new Date().toISOString().split("T")[0]`, que da el día en UTC, no en Argentina — pasadas
+// las 21hs ART (cuando en UTC ya es "mañana") el formulario proponía el día siguiente como
+// default. hoyArgentina() (lib/utils.js) fija la zona horaria explícita, nunca la del navegador.
+const fechaHoy = () => hoyArgentina();
 
 /**
  * Determina si un cobro ya guardado es cruzado (pagó en moneda distinta al saldo imputado).

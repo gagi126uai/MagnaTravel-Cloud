@@ -22,6 +22,8 @@
  * (rateDate), nunca la fecha que pidió el usuario.
  */
 
+import { hoyArgentina } from "../../../lib/utils.js";
+
 // ============================================================================
 // Fuente del tipo de cambio — mismos códigos que el resto de la app
 // (ver EXCHANGE_RATE_SOURCE en penaltyPayload.js y FUENTES_TC en RegistrarCobroInline.jsx).
@@ -209,7 +211,10 @@ export function resolverFuenteTC({ fueTocadoPorElUsuario, huboSugerenciaBNA }) {
  */
 export function validarBloqueConversion({ fecha, tipoCambio, fuente, justificacion, hoyIso }) {
   const errores = { fecha: null, tipoCambio: null, justificacion: null };
-  const hoy = hoyIso ?? new Date().toISOString().split("T")[0];
+  // fix 2026-07-22 (bug real en PROD, mismo defecto que RegistrarCobroInline.jsx): el default
+  // era new Date().toISOString().split("T")[0] (día en UTC, no en Argentina). hoyArgentina()
+  // fija la zona horaria explícita. hoyIso sigue siendo el override para tests.
+  const hoy = hoyIso ?? hoyArgentina();
 
   if (!fecha) {
     errores.fecha = "La fecha en que el operador cobró la multa es obligatoria.";

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { FileText, Loader2, Plus, X } from "lucide-react";
 import { api } from "../../../api";
-import { formatCurrency, formatDate } from "../../../lib/utils";
+import { formatCurrency, formatDate, hoyArgentina } from "../../../lib/utils";
 import { getPublicId } from "../../../lib/publicIds";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { showError, showSuccess, showTextPrompt } from "../../../alerts";
@@ -28,7 +28,9 @@ export function SupplierInvoicesSection({ supplierPublicId, overview, canEdit, c
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ number: "", currency: "ARS", issuedAt: new Date().toISOString().slice(0, 10), dueDate: new Date().toISOString().slice(0, 10), selected: {} });
+  // fix 2026-07-22 (bug real en PROD, mismo defecto que RegistrarCobroInline.jsx): antes
+  // new Date().toISOString().slice(0, 10) daba el día en UTC, no en Argentina.
+  const [form, setForm] = useState({ number: "", currency: "ARS", issuedAt: hoyArgentina(), dueDate: hoyArgentina(), selected: {} });
   const [application, setApplication] = useState({});
   const [paymentPickers, setPaymentPickers] = useState({});
 

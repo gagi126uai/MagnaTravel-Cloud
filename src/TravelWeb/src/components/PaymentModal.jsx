@@ -22,7 +22,7 @@ import { DollarSign, X } from "lucide-react";
 import { showError, showSuccess } from "../alerts";
 import { getApiErrorMessage } from "../lib/errors";
 import { getPublicId } from "../lib/publicIds";
-import { formatCurrency } from "../lib/utils";
+import { formatCurrency, hoyArgentina } from "../lib/utils";
 
 // Fuentes de tipo de cambio (mismas que RegistrarCobroInline — enum ExchangeRateSource).
 const FUENTES_TC = [
@@ -40,7 +40,9 @@ const METODOS_PAGO = [
     { value: "Deposito", label: "Depósito" },
 ];
 
-const fechaHoy = () => new Date().toISOString().split("T")[0];
+// fix 2026-07-22 (bug real en PROD, mismo defecto que RegistrarCobroInline.jsx): usar
+// hoyArgentina() en vez de toISOString().split("T")[0] (día en UTC, no en Argentina).
+const fechaHoy = () => hoyArgentina();
 
 /**
  * Determina si un cobro existente es cruzado (pagó en moneda distinta al saldo imputado).

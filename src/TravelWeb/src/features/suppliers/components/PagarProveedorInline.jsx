@@ -73,7 +73,7 @@ import { hasPermission } from "../../../auth";
 import { showSuccess, showError } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { getPublicId } from "../../../lib/publicIds";
-import { formatCurrency, formatDate } from "../../../lib/utils";
+import { formatCurrency, formatDate, hoyArgentina } from "../../../lib/utils";
 import {
     resolverMonedaPrincipalProveedor,
     calcularEquivalenteProveedor,
@@ -114,7 +114,9 @@ const METODOS_PAGO_PROVEEDOR = [
     { value: "Card", label: "Tarjeta" },
 ];
 
-const fechaHoy = () => new Date().toISOString().split("T")[0];
+// fix 2026-07-22 (bug real en PROD, mismo defecto que RegistrarCobroInline.jsx): usar
+// hoyArgentina() en vez de toISOString().split("T")[0] (día en UTC, no en Argentina).
+const fechaHoy = () => hoyArgentina();
 
 // ─── Recuadro "Datos para transferir" ────────────────────────────────────────
 

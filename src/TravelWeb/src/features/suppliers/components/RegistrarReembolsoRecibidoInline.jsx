@@ -32,6 +32,7 @@ import { Loader2, RotateCcw, X } from "lucide-react";
 import { hasPermission } from "../../../auth";
 import { showSuccess } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
+import { hoyArgentina } from "../../../lib/utils";
 import { operatorRefundsApi } from "../api/operatorRefundsApi";
 import {
     aplanarReembolsosPendientesPorMoneda,
@@ -49,7 +50,9 @@ const METODOS_REEMBOLSO = [
     { value: "Card", label: "Tarjeta" },
 ];
 
-const fechaHoy = () => new Date().toISOString().split("T")[0];
+// fix 2026-07-22 (bug real en PROD, mismo defecto que RegistrarCobroInline.jsx): usar
+// hoyArgentina() en vez de toISOString().split("T")[0] (día en UTC, no en Argentina).
+const fechaHoy = () => hoyArgentina();
 
 export function RegistrarReembolsoRecibidoInline({ supplierId, onRegistrado, onCancelar }) {
     // ─── Idempotencia: la llave se genera UNA vez cuando el componente se monta
