@@ -26,6 +26,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { Lock } from "lucide-react";
 import { api } from "../../../api";
 import { getApiErrorMessage } from "../../../lib/errors";
+import { formatCurrency } from "../../../lib/utils";
 import { SERVICE_RECORD_KIND, getReservationServicePublicId } from "../lib/reservationServiceModel";
 
 // Mapa recordKind → segmento del endpoint de confirm-cost
@@ -285,7 +286,11 @@ export function CostConfirmCell({ service, reservaId, onConfirmado, candadoActiv
 
     // ─── Formato del costo en vista lectura ───────────────────────────────────
 
-    const netCostDisplay = (service.netCost || 0).toLocaleString(undefined, { minimumFractionDigits: 2 });
+    // Bug #26 (Tanda 4, 2026-07-24): antes usaba toLocaleString(undefined, ...) — el
+    // locale "undefined" toma el del navegador, que en la mayoría de las máquinas de
+    // desarrollo/testing es en-US ("1,234.56" con coma de miles y punto decimal, al
+    // revés de como lo lee cualquier persona en Argentina). formatCurrency() usa SIEMPRE
+    // es-AR/es-US según la moneda real del servicio, nunca el locale del navegador.
     const moneda = service.currency || "ARS";
 
     // ─── Vista en modo edición ────────────────────────────────────────────────
@@ -383,7 +388,7 @@ export function CostConfirmCell({ service, reservaId, onConfirmado, candadoActiv
     return (
         <>
             {/* Monto del costo */}
-            <div className="text-xs text-slate-500 font-mono">${netCostDisplay}</div>
+            <div className="text-xs text-slate-500 font-mono">{formatCurrency(service.netCost, moneda)}</div>
 
             {/* Pill "A confirmar" + botón "Confirmar costo" (solo si costToConfirm) */}
             {service.costToConfirm && (
@@ -506,8 +511,9 @@ export function CostConfirmCellMobile({ service, reservaId, onConfirmado, candad
         }
     }, [intentarConfirmar, salirModoEdicion]);
 
+    // Bug #26 (Tanda 4, 2026-07-24): mismo fix que la versión desktop de más arriba —
+    // toLocaleString() sin argumentos usaba el locale del navegador (formato gringo).
     const moneda = service.currency || "ARS";
-    const netCostDisplay = (service.netCost || 0).toLocaleString();
 
     if (modoEdicion) {
         return (
@@ -587,7 +593,7 @@ export function CostConfirmCellMobile({ service, reservaId, onConfirmado, candad
 
     return (
         <>
-            <span className="text-[9px] opacity-70">Costo: ${netCostDisplay}</span>
+            <span className="text-[9px] opacity-70">Costo: {formatCurrency(service.netCost, moneda)}</span>
             {service.costToConfirm && (
                 <div className="flex flex-col gap-1 mt-0.5">
                     <span

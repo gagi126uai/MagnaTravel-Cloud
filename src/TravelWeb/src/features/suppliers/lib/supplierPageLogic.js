@@ -20,6 +20,13 @@ import { formatCurrency } from "../../../lib/utils.js";
  *     2026-07-18) — el selector de servicio solo lista los que están en la moneda del pago
  *   - hayServiciosDelProveedorEnReserva: pre-chequeo (b) de la misma tanda — si la reserva
  *     elegida no tiene NINGÚN servicio de este proveedor, hay que avisar antes de confirmar
+ *   - resolverReservaImputadaEnEdicion / incluirReservaImputadaEnLista /
+ *     resolverServicioImputadoEnEdicion / resolverServicioSinteticoEnEdicion: Bug #15
+ *     (Tanda 4, 2026-07-24) — al editar un pago, precargan la imputación real que ya trae
+ *     el DTO del pago (antes se perdía de vista); la versión "sintética" cubre la carrera
+ *     de red mientras la lista de servicios todavía no cargó (fix N1, review Tanda 4)
+ *   - resolverDeudaDeReferenciaParaSobrepago: Bug #3 (Tanda 4) — deuda contra la que se
+ *     compara un pago nuevo o editado para el aviso de sobrepago
  */
 
 /**
@@ -538,6 +545,171 @@ export function resolverMontoAlElegirServicio({ servicioElegido, filaBalance, pu
     return { debeActualizarMonto: true, nuevoMonto: String(servicioElegido.netCost ?? 0) };
 }
 
+// ─── Bug #15 (Tanda 4, 2026-07-24): precargar la imputación real al editar un pago ───────
+// Antes, abrir "Editar" sobre un pago a proveedor SIEMPRE arrancaba en "Sin imputar",
+// aunque el DTO del pago (SupplierPaymentDto) trae `reservaPublicId`/`servicePublicId` con
+// la imputación real. El vendedor perdía de vista adónde había ido la plata de ese pago.
+
+/**
+ * Busca la reserva imputada de un pago en edición dentro de `reservasConDeuda` (lo normal:
+ * esa reserva sigue debiendo). Si YA NO aparece ahí — porque justamente ESTE pago la saldó
+ * por completo — arma una fila mínima con los datos que sí trae el DTO del pago, para que
+ * el desplegable de imputación la siga mostrando en vez de quedar vacío.
+ *
+ * @param {{reservaPublicId?:string|null, numeroReserva?:string|null, fileName?:string|null}|null} paymentToEdit
+ * @param {Array<{reservaPublicId:string}>} reservasConDeuda
+ * @returns {{reservaPublicId:string, numeroReserva:string, fileName:string|null}|null} null si el pago era "a cuenta" (sin reserva)
+ */
+export function resolverReservaImputadaEnEdicion(paymentToEdit, reservasConDeuda) {
+    const reservaId = paymentToEdit?.reservaPublicId;
+    if (!reservaId) return null; // pago "a cuenta": no hay reserva que precargar
+
+    const lista = Array.isArray(reservasConDeuda) ? reservasConDeuda : [];
+    const enLaLista = lista.find((r) => String(r.reservaPublicId) === String(reservaId));
+    if (enLaLista) return enLaLista;
+
+    // Ya no debe (este mismo pago la saldó): la mostramos igual con lo que trae el DTO.
+    return {
+        reservaPublicId: reservaId,
+        numeroReserva: paymentToEdit.numeroReserva || "Reserva",
+        fileName: paymentToEdit.fileName || null,
+    };
+}
+
+/**
+ * Agrega `reservaImputada` a la lista de reservas con deuda SI todavía no está ahí (caso
+ * de la reserva ya saldada por este mismo pago, ver `resolverReservaImputadaEnEdicion`).
+ * Sin esto, el <select> de imputación en edición mostraría un value que no matchea
+ * ninguna <option> y el desplegable se vería vacío pese a haber una imputación real.
+ *
+ * @param {Array<{reservaPublicId:string}>} reservasConDeuda
+ * @param {{reservaPublicId:string}|null} reservaImputada
+ * @returns {Array} lista lista para renderizar en el <select>, sin duplicados
+ */
+export function incluirReservaImputadaEnLista(reservasConDeuda, reservaImputada) {
+    const lista = Array.isArray(reservasConDeuda) ? reservasConDeuda : [];
+    if (!reservaImputada) return lista;
+    const yaEsta = lista.some((r) => String(r.reservaPublicId) === String(reservaImputada.reservaPublicId));
+    return yaEsta ? lista : [...lista, reservaImputada];
+}
+
+/**
+ * Igual que `resolverReservaImputadaEnEdicion` pero para el SERVICIO puntual imputado
+ * (cuando el pago se aplicó a un servicio concreto de la reserva, no a toda ella). Busca
+ * en la lista de servicios YA cargados de esa reserva; si el pago no tenía servicio
+ * imputado, o el servicio ya no está en la lista, no fuerza ninguna selección.
+ *
+ * @param {{servicePublicId?:string|null, serviceRecordKind?:string|null}|null} paymentToEdit
+ * @param {Array<{publicId:string|number, type?:string, description?:string, netCost?:number, currency?:string}>} serviciosDeLaReserva
+ * @returns {{servicePublicId:string, serviceRecordKind:string, descripcion:string, netCost?:number, currency?:string}|null}
+ */
+export function resolverServicioImputadoEnEdicion(paymentToEdit, serviciosDeLaReserva) {
+    const servicioId = paymentToEdit?.servicePublicId;
+    if (!servicioId) return null;
+
+    const lista = Array.isArray(serviciosDeLaReserva) ? serviciosDeLaReserva : [];
+    const encontrado = lista.find((s) => String(s.publicId) === String(servicioId));
+    if (!encontrado) return null; // ya no está en la lista cargada: no forzamos una selección rara
+
+    return {
+        servicePublicId: String(encontrado.publicId),
+        serviceRecordKind: paymentToEdit.serviceRecordKind || "generic",
+        descripcion: encontrado.description || encontrado.type,
+        netCost: encontrado.netCost,
+        currency: encontrado.currency,
+    };
+}
+
+/**
+ * Fix N1 (review de seguridad, Tanda 4, 2026-07-24): siembra el servicio imputado ANTES
+ * de que `serviciosReserva` termine de cargar (carrera de red). Sin esto, si el cajero
+ * guarda el pago editado justo en ese hueco, el PUT salía con `servicePublicId=null` y la
+ * imputación fina se degradaba a nivel-reserva EN SILENCIO — el pago quedaba imputado a
+ * TODA la reserva en vez de al servicio puntual original, sin ningún aviso.
+ *
+ * Esta fila sintética SOLO trae el id y el tipo (lo mínimo para que el payload nunca
+ * pierda el dato); `resolverServicioImputadoEnEdicion` la reemplaza por el objeto
+ * completo (con descripción/costo/moneda reales) apenas `serviciosReserva` carga y
+ * encuentra el servicio. Si nunca lo encuentra (caso raro), la fila sintética queda —
+ * el id sigue siendo correcto igual, aunque el desplegable no muestre su descripción.
+ *
+ * @param {{servicePublicId?:string|null, serviceRecordKind?:string|null}|null} paymentToEdit
+ * @returns {{servicePublicId:string, serviceRecordKind:string, descripcion:string}|null}
+ */
+export function resolverServicioSinteticoEnEdicion(paymentToEdit) {
+    const servicioId = paymentToEdit?.servicePublicId;
+    if (!servicioId) return null; // el pago no tenía servicio imputado: nada que sembrar
+
+    return {
+        servicePublicId: String(servicioId),
+        serviceRecordKind: paymentToEdit.serviceRecordKind || "generic",
+        // Placeholder hasta que resolverServicioImputadoEnEdicion lo reemplace con el
+        // objeto real — nunca se manda al backend, solo se ve un instante en el <select>.
+        descripcion: "Servicio imputado",
+    };
+}
+
+// ─── Bug #3 (Tanda 4, 2026-07-24): aviso de sobrepago al proveedor ────────────────────────
+// Decisión FIRMADA del dueño (P-14): pagar de más al proveedor NUNCA se bloquea, pero
+// SIEMPRE se avisa el excedente antes de guardar (queda como saldo a favor nuestro con
+// el operador). calcularExcedente/construirConfirmacionSobrepagoProveedor viven en
+// lib/overpaymentConfirmLogic.js (se comparten con RegistrarCobroInline y
+// CustomerPaymentModal); acá solo resolvemos la DEUDA de referencia, que es específica de
+// esta pantalla (reserva elegida en el Paso 1, o el saldo global del proveedor).
+
+/**
+ * Calcula la deuda de referencia contra la que comparar un pago (nuevo o editado) para el
+ * aviso de sobrepago. Devuelve null cuando no hay un dato confiable para comparar — en ese
+ * caso NO se muestra ningún aviso (nunca se inventa un número).
+ *
+ * @param {object} params
+ * @param {{reservaPublicId?:string, currency?:string, debe?:number, currencies?:Array<{currency:string,balance:number}>}|null} params.reservaSeleccionada
+ * @param {string} params.saldoImputado — moneda a la que se está imputando el pago
+ * @param {boolean} params.esCruzado — true si la moneda del EFECTIVO (monedaPago) difiere de saldoImputado
+ * @param {Array<{currency:string, balance:number}>} params.balancesByCurrency — saldo global del proveedor (fallback)
+ * @param {{amount?:number, currency?:string}|null} [params.paymentToEdit] — solo en edición: para "devolver" el propio monto ya restado
+ * @returns {number|null}
+ */
+export function resolverDeudaDeReferenciaParaSobrepago({
+    reservaSeleccionada,
+    saldoImputado,
+    esCruzado,
+    balancesByCurrency,
+    paymentToEdit,
+}) {
+    if (!reservaSeleccionada) return null; // "pago a cuenta" o cargo facturado aparte: no hay deuda puntual que comparar
+
+    let deuda = null;
+
+    // Forma "fila elegida en el Paso 1" (pago nuevo): currency/debe singulares. Ojo: NO
+    // filtramos por `esCruzado` acá — esa bandera describe si el EFECTIVO (monedaPago)
+    // difiere de saldoImputado, no si reservaSeleccionada.currency sirve como referencia.
+    // El único chequeo que importa es que la moneda de `debe` coincida con saldoImputado
+    // (si el cajero cambió "Imputar a" a otra moneda, esta comparación ya no matchea sola).
+    if (typeof reservaSeleccionada.debe === "number" && reservaSeleccionada.currency === saldoImputado) {
+        deuda = reservaSeleccionada.debe;
+    } else if (Array.isArray(reservaSeleccionada.currencies)) {
+        // Forma "cruda" de reservasConDeuda (edición, Bug #15): currencies[] con balance por moneda.
+        const linea = reservaSeleccionada.currencies.find((c) => c.currency === saldoImputado);
+        if (linea) deuda = Number(linea.balance);
+    }
+
+    // Sin dato de ESA reserva puntual: usamos el saldo global del proveedor como aproximación.
+    if (deuda == null) {
+        deuda = balancesByCurrency?.find((b) => b.currency === saldoImputado)?.balance ?? null;
+    }
+
+    if (deuda == null) return null;
+
+    // Al editar un pago simple que YA restó su propio monto del saldo, hay que devolvérselo
+    // para comparar contra lo que se debía ANTES de este pago.
+    if (paymentToEdit && !esCruzado && paymentToEdit.currency === saldoImputado) {
+        deuda += Number(paymentToEdit.amount || 0);
+    }
+
+    return deuda;
+}
+
 /**
  * Arma el mensaje del cartel de éxito que se muestra después de registrar un pago NUEVO
  * (reemplaza el cierre silencioso que tenía la ficha antes del rediseño). Usa el `impact`
@@ -546,7 +718,7 @@ export function resolverMontoAlElegirServicio({ servicioElegido, filaBalance, pu
  * podrían mostrar un número distinto al que el resto de la pantalla ve un segundo después
  * (el backend recalcula con el mismo motor que "Deuda por reserva").
  *
- * Cuatro casos:
+ * Cinco casos:
  *   1. Sin `impact` (`null`/`undefined` — no debería pasar en producción, pero el POST YA
  *      se guardó del lado del servidor cuando esta función se llama): mensaje genérico
  *      "Pago registrado.". FIX bloqueante (review 2026-07-21, frontend-reviewer +
@@ -561,11 +733,15 @@ export function resolverMontoAlElegirServicio({ servicioElegido, filaBalance, pu
  *   3. Pago imputado a una reserva, SIN permiso de ver montos (`amountsVisible=false`):
  *      solo decimos A QUÉ reserva se pagó, sin números — nunca se muestran montos a
  *      alguien sin permiso de costo, ni siquiera el que él mismo acaba de escribir.
- *   4. Pago imputado a una reserva, CON permiso: "Bajó la deuda... en $X" + si queda
- *      saldo pendiente o la reserva quedó saldada.
+ *   4. Pago imputado a una reserva, CON permiso, deuda pendiente o saldada: "Bajó la
+ *      deuda... en $X" + si queda saldo pendiente o la reserva quedó saldada.
+ *   5. Bug #3 (Tanda 4, 2026-07-24) — Pago imputado a una reserva, CON permiso, que la
+ *      dejó EN NEGATIVO (se pagó de más contra esa reserva puntual, `remainingBalance`
+ *      negativo): en vez de mostrar "Quedan $-500 pendientes" (confuso, parece que
+ *      todavía se debe), se avisa que quedó un excedente a favor nuestro con el operador.
  *
  * @param {{impact: object|null|undefined, montoImputado: number, monedaImputada: string}} datos
- * @returns {{tipo: "generico"|"a-cuenta"|"reserva-sin-monto"|"reserva", lineas: string[]}} NUNCA null — el pago ya se guardó, siempre hay algo que avisar
+ * @returns {{tipo: "generico"|"a-cuenta"|"reserva-sin-monto"|"reserva"|"reserva-sobrepago", lineas: string[]}} NUNCA null — el pago ya se guardó, siempre hay algo que avisar
  */
 export function construirMensajeExitoPago({ impact, montoImputado, monedaImputada }) {
     if (!impact) {
@@ -591,15 +767,20 @@ export function construirMensajeExitoPago({ impact, montoImputado, monedaImputad
     }
 
     const montoTexto = formatCurrency(montoImputado, monedaImputada || impact.currency);
-    const quedaSaldada = Math.abs(Number(impact.remainingBalance ?? 0)) < 0.005;
+    const restante = Number(impact.remainingBalance ?? 0);
+    const quedaSaldada = Math.abs(restante) < 0.005;
+    // Bug #3: remainingBalance negativo = se pagó de más contra ESA reserva puntual.
+    const quedaSobrepagada = restante < -0.005;
 
     return {
-        tipo: "reserva",
+        tipo: quedaSobrepagada ? "reserva-sobrepago" : "reserva",
         lineas: [
             `Bajó la deuda de ${referenciaDestino} en ${montoTexto}.`,
             quedaSaldada
                 ? "Esa reserva queda saldada con este operador."
-                : `Quedan ${formatCurrency(impact.remainingBalance, impact.currency)} pendientes.`,
+                : quedaSobrepagada
+                    ? `Pagaste de más: quedan ${formatCurrency(Math.abs(restante), impact.currency)} a favor nuestro con este proveedor.`
+                    : `Quedan ${formatCurrency(impact.remainingBalance, impact.currency)} pendientes.`,
         ],
     };
 }

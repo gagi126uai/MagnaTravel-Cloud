@@ -16,6 +16,11 @@ import {
     construirDetalleFilaDeuda,
     construirMensajeExitoPago,
     resolverMontoAlElegirServicio,
+    resolverReservaImputadaEnEdicion,
+    incluirReservaImputadaEnLista,
+    resolverServicioImputadoEnEdicion,
+    resolverServicioSinteticoEnEdicion,
+    resolverDeudaDeReferenciaParaSobrepago,
 } from "./supplierPageLogic.js";
 import { formatCurrency } from "../../../lib/utils.js";
 
@@ -1227,6 +1232,60 @@ describe("construirMensajeExitoPago", () => {
         assert.ok(!resultado.lineas[0].includes("("));
     });
 
+    // ─── Bug #3 (Tanda 4, 2026-07-24): rama de sobrepago (remainingBalance negativo) ──
+
+    it("remainingBalance negativo: tipo 'reserva-sobrepago' y aviso del excedente a favor nuestro", () => {
+        const resultado = construirMensajeExitoPago({
+            impact: {
+                wasImputedToReserva: true,
+                numeroReserva: "F-2026-1051",
+                currency: "ARS",
+                remainingBalance: -500,
+                amountsVisible: true,
+            },
+            montoImputado: 45000,
+            monedaImputada: "ARS",
+        });
+        assert.equal(resultado.tipo, "reserva-sobrepago");
+        assert.equal(resultado.lineas.length, 2);
+        assert.equal(
+            resultado.lineas[1],
+            `Pagaste de más: quedan ${formatCurrency(500, "ARS")} a favor nuestro con este proveedor.`
+        );
+    });
+
+    it("remainingBalance negativo: el excedente se muestra en VALOR ABSOLUTO (nunca un monto negativo)", () => {
+        const resultado = construirMensajeExitoPago({
+            impact: {
+                wasImputedToReserva: true,
+                numeroReserva: "F-1",
+                currency: "USD",
+                remainingBalance: -75,
+                amountsVisible: true,
+            },
+            montoImputado: 300,
+            monedaImputada: "USD",
+        });
+        assert.ok(!resultado.lineas[1].includes("-75"));
+        assert.ok(resultado.lineas[1].includes(formatCurrency(75, "USD")));
+    });
+
+    it("un resto de redondeo negativo menor a medio centavo NO cuenta como sobrepago (sigue siendo saldada)", () => {
+        const resultado = construirMensajeExitoPago({
+            impact: {
+                wasImputedToReserva: true,
+                numeroReserva: "F-1",
+                currency: "ARS",
+                remainingBalance: -0.001,
+                amountsVisible: true,
+            },
+            montoImputado: 1000,
+            monedaImputada: "ARS",
+        });
+        assert.equal(resultado.tipo, "reserva");
+        assert.equal(resultado.lineas[1], "Esa reserva queda saldada con este operador.");
+    });
+
     it("el monto mostrado es el imputado en la moneda imputada (pago cruzado): usa montoEquivalente, no el monto de caja", () => {
         // Ej.: pagó $120.000 en pesos para cancelar deuda en dólares; el equivalente imputado es US$100.
         const resultado = construirMensajeExitoPago({
@@ -1301,5 +1360,285 @@ describe("resolverMontoAlElegirServicio", () => {
             puedeVerMontos: true,
         });
         assert.equal(resultado.nuevoMonto, "0");
+    });
+});
+
+// ─── resolverReservaImputadaEnEdicion (Bug #15, Tanda 4, 2026-07-24) ──────────────────
+// Al editar un pago, precarga la reserva imputada real (antes se perdía, arrancaba en "Sin imputar").
+
+describe("resolverReservaImputadaEnEdicion", () => {
+    it("pago sin reserva imputada (a cuenta): devuelve null, no hay nada que precargar", () => {
+        assert.equal(resolverReservaImputadaEnEdicion({ reservaPublicId: null }, []), null);
+    });
+
+    it("paymentToEdit null/undefined: no rompe, devuelve null", () => {
+        assert.equal(resolverReservaImputadaEnEdicion(null, []), null);
+        assert.equal(resolverReservaImputadaEnEdicion(undefined, []), null);
+    });
+
+    it("la reserva imputada SIGUE en reservasConDeuda: la devuelve tal cual de la lista", () => {
+        const reservasConDeuda = [
+            { reservaPublicId: "r1", numeroReserva: "F-1", currencies: [{ currency: "ARS", balance: 5000 }] },
+            { reservaPublicId: "r2", numeroReserva: "F-2", currencies: [{ currency: "ARS", balance: 1000 }] },
+        ];
+        const resultado = resolverReservaImputadaEnEdicion({ reservaPublicId: "r2" }, reservasConDeuda);
+        assert.equal(resultado.reservaPublicId, "r2");
+        assert.equal(resultado.numeroReserva, "F-2");
+        // Devuelve la fila completa de reservasConDeuda (con su breakdown por moneda)
+        assert.ok(Array.isArray(resultado.currencies));
+    });
+
+    it("la reserva imputada YA NO debe (este pago la saldó): arma una fila mínima con los datos del DTO del pago", () => {
+        const resultado = resolverReservaImputadaEnEdicion(
+            { reservaPublicId: "r9", numeroReserva: "F-9", fileName: "Familia Gómez" },
+            [] // ya no aparece en reservasConDeuda
+        );
+        assert.deepEqual(resultado, { reservaPublicId: "r9", numeroReserva: "F-9", fileName: "Familia Gómez" });
+    });
+
+    it("fila mínima sin numeroReserva/fileName en el DTO: cae a defaults seguros", () => {
+        const resultado = resolverReservaImputadaEnEdicion({ reservaPublicId: "r9" }, []);
+        assert.equal(resultado.numeroReserva, "Reserva");
+        assert.equal(resultado.fileName, null);
+    });
+
+    it("reservasConDeuda null/undefined no rompe (se trata como lista vacía)", () => {
+        const resultado = resolverReservaImputadaEnEdicion({ reservaPublicId: "r1" }, null);
+        assert.equal(resultado.reservaPublicId, "r1");
+    });
+});
+
+// ─── incluirReservaImputadaEnLista (Bug #15) ──────────────────────────────────────────
+
+describe("incluirReservaImputadaEnLista", () => {
+    it("reservaImputada null: devuelve la lista tal cual (nada que agregar)", () => {
+        const lista = [{ reservaPublicId: "r1" }];
+        assert.equal(incluirReservaImputadaEnLista(lista, null), lista);
+    });
+
+    it("la reserva imputada YA está en la lista: no la duplica", () => {
+        const lista = [{ reservaPublicId: "r1", numeroReserva: "F-1" }];
+        const resultado = incluirReservaImputadaEnLista(lista, { reservaPublicId: "r1", numeroReserva: "F-1" });
+        assert.equal(resultado.length, 1);
+    });
+
+    it("la reserva imputada NO está en la lista: la agrega al final", () => {
+        const lista = [{ reservaPublicId: "r1" }];
+        const resultado = incluirReservaImputadaEnLista(lista, { reservaPublicId: "r9", numeroReserva: "F-9" });
+        assert.equal(resultado.length, 2);
+        assert.equal(resultado[1].reservaPublicId, "r9");
+    });
+
+    it("no muta la lista original", () => {
+        const lista = [{ reservaPublicId: "r1" }];
+        incluirReservaImputadaEnLista(lista, { reservaPublicId: "r9" });
+        assert.equal(lista.length, 1);
+    });
+
+    it("reservasConDeuda null/undefined no rompe", () => {
+        const resultado = incluirReservaImputadaEnLista(null, { reservaPublicId: "r1" });
+        assert.deepEqual(resultado, [{ reservaPublicId: "r1" }]);
+    });
+});
+
+// ─── resolverServicioImputadoEnEdicion (Bug #15) ──────────────────────────────────────
+
+describe("resolverServicioImputadoEnEdicion", () => {
+    it("pago sin servicio imputado: devuelve null", () => {
+        assert.equal(resolverServicioImputadoEnEdicion({ servicePublicId: null }, []), null);
+    });
+
+    it("el servicio SÍ está en la lista cargada: arma el objeto de selección completo", () => {
+        const servicios = [
+            { publicId: "s1", type: "Hotel", description: "Bariloche", netCost: 5000, currency: "ARS" },
+        ];
+        const resultado = resolverServicioImputadoEnEdicion(
+            { servicePublicId: "s1", serviceRecordKind: "hotel" },
+            servicios
+        );
+        assert.equal(resultado.servicePublicId, "s1");
+        assert.equal(resultado.serviceRecordKind, "hotel");
+        assert.equal(resultado.descripcion, "Bariloche");
+        assert.equal(resultado.netCost, 5000);
+        assert.equal(resultado.currency, "ARS");
+    });
+
+    it("el servicio NO está (todavía) en la lista cargada: no fuerza ninguna selección rara", () => {
+        const resultado = resolverServicioImputadoEnEdicion({ servicePublicId: "s9" }, [{ publicId: "s1" }]);
+        assert.equal(resultado, null);
+    });
+
+    it("servicio sin description: usa el type como descripción", () => {
+        const servicios = [{ publicId: "s1", type: "Traslado", description: null }];
+        const resultado = resolverServicioImputadoEnEdicion({ servicePublicId: "s1" }, servicios);
+        assert.equal(resultado.descripcion, "Traslado");
+    });
+
+    it("serviceRecordKind ausente en el DTO: cae a 'generic'", () => {
+        const servicios = [{ publicId: "s1", type: "Hotel" }];
+        const resultado = resolverServicioImputadoEnEdicion({ servicePublicId: "s1" }, servicios);
+        assert.equal(resultado.serviceRecordKind, "generic");
+    });
+
+    it("lista de servicios null/undefined no rompe", () => {
+        assert.equal(resolverServicioImputadoEnEdicion({ servicePublicId: "s1" }, null), null);
+        assert.equal(resolverServicioImputadoEnEdicion({ servicePublicId: "s1" }, undefined), null);
+    });
+});
+
+// ─── resolverServicioSinteticoEnEdicion (fix N1, review Tanda 4, 2026-07-24) ──────────
+// Siembra el id del servicio imputado ANTES de que serviciosReserva termine de cargar,
+// para que el id nunca se pierda si el cajero guarda en medio de esa carrera de red.
+
+describe("resolverServicioSinteticoEnEdicion", () => {
+    it("pago sin servicio imputado: devuelve null (nada que sembrar)", () => {
+        assert.equal(resolverServicioSinteticoEnEdicion({ servicePublicId: null }), null);
+    });
+
+    it("paymentToEdit null/undefined: no rompe, devuelve null", () => {
+        assert.equal(resolverServicioSinteticoEnEdicion(null), null);
+        assert.equal(resolverServicioSinteticoEnEdicion(undefined), null);
+    });
+
+    it("pago CON servicio imputado: arma la fila mínima con el id, SIN esperar a que cargue la lista", () => {
+        const resultado = resolverServicioSinteticoEnEdicion({ servicePublicId: "s1", serviceRecordKind: "hotel" });
+        assert.equal(resultado.servicePublicId, "s1");
+        assert.equal(resultado.serviceRecordKind, "hotel");
+        assert.equal(typeof resultado.descripcion, "string");
+    });
+
+    it("serviceRecordKind ausente en el DTO: cae a 'generic' (igual que resolverServicioImputadoEnEdicion)", () => {
+        const resultado = resolverServicioSinteticoEnEdicion({ servicePublicId: "s1" });
+        assert.equal(resultado.serviceRecordKind, "generic");
+    });
+
+    it("el servicePublicId siempre se normaliza a string (consistencia con el resto de la ficha)", () => {
+        const resultado = resolverServicioSinteticoEnEdicion({ servicePublicId: 123 });
+        assert.strictEqual(resultado.servicePublicId, "123");
+    });
+
+    it("NUNCA depende de una lista de servicios: no recibe ni necesita ese segundo argumento", () => {
+        // A diferencia de resolverServicioImputadoEnEdicion, esta función no busca en ningún
+        // lado — es precisamente lo que la hace inmune a la carrera de red.
+        assert.equal(resolverServicioSinteticoEnEdicion.length, 1);
+    });
+
+    it("compuesto con resolverServicioImputadoEnEdicion: el id sobrevive aunque la lista NUNCA llegue a tiempo", () => {
+        const paymentToEdit = { servicePublicId: "s1", serviceRecordKind: "hotel" };
+
+        // Paso 1 (mismo instante que abrir la ficha): se siembra el sintético.
+        let servicioSeleccionado = resolverServicioSinteticoEnEdicion(paymentToEdit);
+        assert.equal(servicioSeleccionado.servicePublicId, "s1");
+
+        // Paso 2: el cajero guarda ANTES de que serviciosReserva termine de cargar
+        // (lista todavía vacía) — el id sigue siendo el correcto, nunca null.
+        assert.equal(servicioSeleccionado.servicePublicId, "s1");
+
+        // Paso 3: la lista finalmente llega — se reemplaza por el objeto completo.
+        const serviciosReserva = [{ publicId: "s1", type: "Hotel", description: "Bariloche", netCost: 5000, currency: "ARS" }];
+        const resuelto = resolverServicioImputadoEnEdicion(paymentToEdit, serviciosReserva);
+        if (resuelto) servicioSeleccionado = resuelto;
+        assert.equal(servicioSeleccionado.descripcion, "Bariloche");
+        assert.equal(servicioSeleccionado.servicePublicId, "s1");
+    });
+});
+
+// ─── resolverDeudaDeReferenciaParaSobrepago (Bug #3, Tanda 4, 2026-07-24) ─────────────
+
+describe("resolverDeudaDeReferenciaParaSobrepago", () => {
+    it("sin reserva seleccionada (pago a cuenta / cargo facturado aparte): devuelve null, no compara nada", () => {
+        const resultado = resolverDeudaDeReferenciaParaSobrepago({
+            reservaSeleccionada: null,
+            saldoImputado: "ARS",
+            esCruzado: false,
+            balancesByCurrency: [{ currency: "ARS", balance: 50000 }],
+            paymentToEdit: null,
+        });
+        assert.equal(resultado, null);
+    });
+
+    it("pago nuevo, forma 'fila del Paso 1' (currency/debe singulares): usa reservaSeleccionada.debe", () => {
+        const resultado = resolverDeudaDeReferenciaParaSobrepago({
+            reservaSeleccionada: { reservaPublicId: "r1", currency: "ARS", debe: 45000 },
+            saldoImputado: "ARS",
+            esCruzado: false,
+            balancesByCurrency: [{ currency: "ARS", balance: 999999 }], // no debería usarse
+            paymentToEdit: null,
+        });
+        assert.equal(resultado, 45000);
+    });
+
+    it("edición, forma 'cruda' de reservasConDeuda (currencies[]): busca la línea de la moneda imputada", () => {
+        const resultado = resolverDeudaDeReferenciaParaSobrepago({
+            reservaSeleccionada: {
+                reservaPublicId: "r1",
+                currencies: [
+                    { currency: "ARS", balance: 12000 },
+                    { currency: "USD", balance: 200 },
+                ],
+            },
+            saldoImputado: "USD",
+            esCruzado: false,
+            balancesByCurrency: [],
+            paymentToEdit: null,
+        });
+        assert.equal(resultado, 200);
+    });
+
+    it("sin dato de la reserva puntual: cae al saldo global del proveedor (balancesByCurrency)", () => {
+        const resultado = resolverDeudaDeReferenciaParaSobrepago({
+            reservaSeleccionada: { reservaPublicId: "r1" }, // sin currency/debe ni currencies
+            saldoImputado: "ARS",
+            esCruzado: false,
+            balancesByCurrency: [{ currency: "ARS", balance: 80000 }],
+            paymentToEdit: null,
+        });
+        assert.equal(resultado, 80000);
+    });
+
+    it("sin NINGÚN dato disponible: devuelve null (nunca inventa un número)", () => {
+        const resultado = resolverDeudaDeReferenciaParaSobrepago({
+            reservaSeleccionada: { reservaPublicId: "r1" },
+            saldoImputado: "USD",
+            esCruzado: false,
+            balancesByCurrency: [{ currency: "ARS", balance: 80000 }], // ninguna línea en USD
+            paymentToEdit: null,
+        });
+        assert.equal(resultado, null);
+    });
+
+    it("edición de un pago simple: le devuelve su propio monto ya restado antes de comparar", () => {
+        // El saldo ya refleja que este pago de $10.000 se restó; para comparar contra lo
+        // que se debía ANTES de este pago hay que sumárselo de nuevo.
+        const resultado = resolverDeudaDeReferenciaParaSobrepago({
+            reservaSeleccionada: { reservaPublicId: "r1", currency: "ARS", debe: 5000 },
+            saldoImputado: "ARS",
+            esCruzado: false,
+            balancesByCurrency: [],
+            paymentToEdit: { amount: 10000, currency: "ARS" },
+        });
+        assert.equal(resultado, 15000);
+    });
+
+    it("edición de un pago cruzado: NO le devuelve el monto (las monedas no coinciden 1 a 1)", () => {
+        const resultado = resolverDeudaDeReferenciaParaSobrepago({
+            reservaSeleccionada: { reservaPublicId: "r1", currency: "USD", debe: 200 },
+            saldoImputado: "USD",
+            esCruzado: true,
+            balancesByCurrency: [],
+            paymentToEdit: { amount: 240000, currency: "ARS" }, // el pago fue en ARS, se imputó a USD
+        });
+        assert.equal(resultado, 200);
+    });
+
+    it("edición pero el pago original era de OTRA moneda: no le devuelve nada (no corresponde a este saldo)", () => {
+        const resultado = resolverDeudaDeReferenciaParaSobrepago({
+            reservaSeleccionada: { reservaPublicId: "r1", currency: "ARS", debe: 5000 },
+            saldoImputado: "ARS",
+            esCruzado: false,
+            balancesByCurrency: [],
+            paymentToEdit: { amount: 100, currency: "USD" },
+        });
+        assert.equal(resultado, 5000);
     });
 });

@@ -22,6 +22,7 @@ import { Plane, ChevronDown, ChevronUp, Calendar, Users } from "lucide-react";
 import { hasPermission } from "../../../auth";
 import { ProductSearchField } from "./ProductSearchField";
 import { redondearDinero, formatearPrecio } from "./HotelInlineForm";
+import { resolverCamposALimpiarAlCrearNuevo } from "./inlineServiceFormHelpers";
 
 // ─── Clases CSS (mismas que HotelInlineForm para coherencia visual) ──────────
 const INPUT_BASE = "w-full py-2 px-3 text-sm border rounded-lg bg-white focus:outline-none focus:ring-1 focus:border-blue-500 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400";
@@ -158,15 +159,20 @@ export function FlightInlineForm({ form, setForm, suppliers, isEditing }) {
     };
 
     const handleCreateNew = (searchText) => {
+        // Bug #28 (Tanda 4, 2026-07-24): antes esto borraba operador/costo/venta/moneda
+        // SIEMPRE, aunque el usuario los hubiera tipeado a mano. Ahora solo se limpian los
+        // campos que TODAVÍA son sugerencia sin tocar (ver resolverCamposALimpiarAlCrearNuevo).
+        const camposLimpios = resolverCamposALimpiarAlCrearNuevo(
+            { supplierId: form.supplierId, netCost: form.netCost, salePrice: form.salePrice, currency: form.currency },
+            camposSugeridos,
+            { supplierId: "", netCost: "", salePrice: "", currency: "ARS" }
+        );
         setForm((prev) => ({
             ...prev,
             routeName: searchText,
             rateId: null,
             newCatalogProduct: { name: searchText, supplierPublicId: "" },
-            supplierId: "",
-            netCost: "",
-            salePrice: "",
-            currency: "ARS",
+            ...camposLimpios,
         }));
         setCamposSugeridos({ supplierId: false, netCost: false, salePrice: false, currency: false });
     };

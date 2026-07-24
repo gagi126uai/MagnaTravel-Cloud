@@ -22,7 +22,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { Search, RefreshCw, Plus } from "lucide-react";
 import { api } from "../../../api";
 import { hasPermission } from "../../../auth";
-import { formatDate } from "../../../lib/utils";
+import { formatDate, formatCurrency } from "../../../lib/utils";
 
 // Mínimo de caracteres para lanzar la búsqueda (igual al backend)
 const MIN_QUERY_LENGTH = 2;
@@ -33,15 +33,6 @@ const STRONG_MATCH_THRESHOLD = 0.65;
 // Cap defensivo: el backend puede mandar más; el dropdown no muestra más de 8 filas
 // para no abrumar al usuario y mantener el rendimiento del DOM.
 const MAX_DISPLAY_RESULTS = 8;
-
-/**
- * Formatea un valor monetario para mostrar en el dropdown.
- * ej: 48000 → "$48.000"
- */
-function formatDropdownPrice(value) {
-    const number = Number(value) || 0;
-    return `$${number.toLocaleString("es-AR", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
-}
 
 /**
  * Convierte la fecha/hora de la última venta a texto legible para el dropdown.
@@ -72,7 +63,11 @@ function SearchResultItem({ result, onSelect, isStrongMatch, canSeeCost, isKeybo
         // Si no hay precio ni salePrice, no mostramos la línea para no confundir
         if (priceValue == null && !sale.salePrice) return null;
 
-        const price = formatDropdownPrice(priceValue ?? sale.salePrice);
+        // Bug #26 (Tanda 4, 2026-07-24): antes esto SIEMPRE mostraba "$" con formato
+        // es-AR, aunque la última venta hubiera sido en dólares — formatCurrency() usa
+        // la moneda REAL de esa venta (sale.currency), "ARS" solo si el dato es legacy
+        // y no la trae.
+        const price = formatCurrency(priceValue ?? sale.salePrice, sale.currency || "ARS");
         const unit = sale.priceUnit === "noche_habitacion" ? "/noche" : "";
         const parts = [
             sale.supplierName,

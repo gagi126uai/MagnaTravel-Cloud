@@ -51,6 +51,10 @@ import {
 import { sugerirFacturaParaServicios } from "../lib/serviceInvoiceMatch";
 import { calcularHintPorTipo, calcularSlotsFaltantesDelSet } from "../lib/pasajeroHint";
 import { resolverBloqueoAnularServicio, resolverRechazoAnularServicio } from "../lib/serviceCancellationGuard";
+import {
+    debeAvisarCondicionFiscalOperadorDesconocida,
+    TEXTO_AVISO_CONDICION_FISCAL_OPERADOR_DESCONOCIDA,
+} from "../lib/supplierTaxConditionWarning";
 import { useServiceNominalCoverage } from "../lib/useServiceNominalCoverage";
 import { UpcomingStartPill, estaEnVentana } from "./UpcomingStartPill";
 import { CostConfirmCell, CostConfirmCellMobile } from "./CostConfirmCell";
@@ -325,6 +329,10 @@ function claseColorEstadoServicio(workflowStatus, reservaStatus) {
  * se preselecciona sola con un texto aclaratorio — ver sugerirFacturaParaServicios en
  * lib/serviceInvoiceMatch.js. El usuario siempre puede cambiarla a mano.
  *
+ * Condición fiscal del operador (Bug #22, Tanda 4, 2026-07-24): en el camino de anulación,
+ * si el servicio trae `supplierTaxConditionUnknown === true`, se muestra un aviso NO
+ * bloqueante (el candado real sigue viviendo en el circuito de nota de crédito).
+ *
  * Props:
  * - service: objeto del servicio
  * - onBorrar: () => void — callback cuando el usuario confirma borrar
@@ -425,6 +433,23 @@ function ModalBorrarVsCancelar({ service, saleInvoices = [], onBorrar, onCancela
                                 <span className="font-bold">Este servicio ya está confirmado.</span>{' '}
                                 Al anularlo, queda tachado en la reserva (no desaparece) — hubo un compromiso real con el operador y puede haber penalidad o saldo a devolver al cliente.
                             </p>
+                            {/* Bug #22 (Tanda 4, 2026-07-24): aviso TEMPRANO y NO bloqueante — el
+                                bloqueo real sigue viviendo más adelante, en el circuito de nota de
+                                crédito (esa es la red de seguridad real). Acá solo le avisamos al
+                                vendedor ANTES para que pueda cargar el dato y evitarse la traba
+                                después. Mismo estilo visual que el aviso de "listas sin refrescar"
+                                de más arriba en este archivo (amber + AlertTriangle). */}
+                            {debeAvisarCondicionFiscalOperadorDesconocida(service) && (
+                                <div
+                                    className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-300"
+                                    data-testid="aviso-condicion-fiscal-operador-desconocida"
+                                >
+                                    <div className="flex items-start gap-3">
+                                        <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                                        <div>{TEXTO_AVISO_CONDICION_FISCAL_OPERADOR_DESCONOCIDA}</div>
+                                    </div>
+                                </div>
+                            )}
                             <div>
                                 <label
                                     htmlFor="motivo-cancelacion-servicio"

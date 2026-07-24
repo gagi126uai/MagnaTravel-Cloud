@@ -33,7 +33,9 @@
 import { useState, useEffect } from "react";
 import { Hotel, ChevronDown, ChevronUp, Calendar, Users } from "lucide-react";
 import { hasPermission } from "../../../auth";
+import { formatCurrency } from "../../../lib/utils";
 import { ProductSearchField } from "./ProductSearchField";
+import { resolverCamposALimpiarAlCrearNuevo } from "./inlineServiceFormHelpers";
 
 // ─── Helpers de formato ──────────────────────────────────────────────────────
 
@@ -50,12 +52,18 @@ function calcularNoches(checkIn, checkOut) {
 }
 
 /**
- * Formatea un número como precio en pesos argentinos.
- * ej: 48000 → "$48.000,00"
+ * Formatea un número como precio en la moneda del servicio.
+ * ej: formatearPrecio(48000, "ARS") → "$48.000,00"
+ *
+ * Bug #26 (Tanda 4, 2026-07-24): antes SIEMPRE mostraba "$" con formato es-AR sin
+ * mirar la moneda real del servicio — un hotel en USD mostraba "$1.200,00" (parecía
+ * pesos) en vez de "US$1.200,00". Delegamos en formatCurrency() (lib/utils.js), el
+ * formateador canónico del proyecto, pasándole SIEMPRE la moneda explícita: si no se
+ * pasa, formatCurrency() cae a su default legacy (USD), que acá rompería el default
+ * histórico de este formulario (ARS). currency = "ARS" solo si el llamador no la pasó.
  */
-function formatearPrecio(valor) {
-    const numero = Number(valor) || 0;
-    return `$${numero.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+function formatearPrecio(valor, currency = "ARS") {
+    return formatCurrency(valor, currency);
 }
 
 /**
@@ -243,22 +251,28 @@ export function HotelInlineForm({ form, setForm, suppliers, isEditing }) {
     };
 
     const handleCreateNew = (searchText) => {
-        // Limpiamos el rateId porque ahora vamos al path "producto nuevo"
+        // Bug #28 (Tanda 4, 2026-07-24): antes esto borraba operador/costo/venta/moneda
+        // SIEMPRE, aunque el usuario los hubiera tipeado a mano. Ahora solo se limpian los
+        // campos que TODAVÍA son sugerencia sin tocar (ver resolverCamposALimpiarAlCrearNuevo).
+        const camposLimpios = resolverCamposALimpiarAlCrearNuevo(
+            { supplierId: form.supplierId, unitNetCost: form.unitNetCost, unitSalePrice: form.unitSalePrice, currency: form.currency },
+            camposSugeridos,
+            { supplierId: "", unitNetCost: "", unitSalePrice: "", currency: "ARS" }
+        );
         setForm((prev) => ({
             ...prev,
             hotelName: searchText,
+            // Limpiamos el rateId porque ahora vamos al path "producto nuevo"
             rateId: null,
             newCatalogProduct: {
                 name: searchText,
                 city: "",
                 supplierPublicId: "",
             },
-            // Al crear nuevo, limpiamos los sugeridos (no hay sugerencia aún)
-            supplierId: "",
-            unitNetCost: "",
-            unitSalePrice: "",
-            currency: "ARS",
+            ...camposLimpios,
         }));
+        // Los campos que quedaron limpios dejan de ser "sugeridos"; los preservados ya
+        // estaban en false (si no, se habrían limpiado), así que todo queda en false.
         setCamposSugeridos({ supplierId: false, unitNetCost: false, unitSalePrice: false, currency: false });
     };
 

@@ -23,8 +23,9 @@
 
 import { useState, useEffect } from "react";
 import { formatCurrency, hoyArgentina } from "../../../lib/utils";
+import { calcularExcedente, construirConfirmacionSobrecobroCliente } from "../../../lib/overpaymentConfirmLogic";
 import { api } from "../../../api";
-import { showSuccess } from "../../../alerts";
+import { showSuccess, showConfirm } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { getPublicId } from "../../../lib/publicIds";
 import { X, CreditCard } from "lucide-react";
@@ -183,6 +184,13 @@ export function RegistrarCobroInline({
         !tipoCambio || parseFloat(tipoCambio) <= 0 || !fechaTC
     );
 
+    // Saldo de la moneda A LA QUE SE IMPUTA este cobro (no siempre es la principal: en modo
+    // "pagar en otra moneda" el cajero puede elegir imputar a la OTRA moneda de la reserva).
+    // Bug #3 (Tanda 4, 2026-07-24): lo usamos para avisar de un sobrecobro antes de guardar.
+    const saldoImputadoActual = reserva?.porMoneda?.find(
+        (pm) => pm.currency === saldoImputado
+    )?.balance ?? null;
+
     const handleSubmit = async (e) => {
         e.preventDefault();
         setErrorGuardar(null);
@@ -194,6 +202,28 @@ export function RegistrarCobroInline({
         if (camposIncompletosParaCruzado) {
             setErrorGuardar("Para cobros cruzados tenés que completar el tipo de cambio y la fecha.");
             return;
+        }
+
+        // Bug #3 (Tanda 4, 2026-07-24): antes, cobrar de más pasaba en silencio. Decisión
+        // FIRMADA del dueño (P-14): nunca se bloquea, pero SIEMPRE se avisa el excedente
+        // antes de guardar. No se chequea en la edición de un cobro cruzado: ahí el monto
+        // queda congelado (ver `estaEditandoCruzado` más arriba), no hay nada que cambie.
+        if (!(paymentToEdit && estaEditandoCruzado) && saldoImputadoActual != null) {
+            const montoAComparar = esCobroCruzadoEnCurso ? montoEquivalente : parseFloat(monto);
+            // Al editar un cobro que YA restó su propio monto del saldo, se lo "devolvemos"
+            // para comparar contra lo que debía el cliente ANTES de este cobro puntual.
+            const deudaAntesDeEsteCobro = saldoImputadoActual + (
+                paymentToEdit && paymentToEdit.currency === saldoImputado
+                    ? Number(paymentToEdit.amount || 0)
+                    : 0
+            );
+            const excedente = calcularExcedente(montoAComparar, deudaAntesDeEsteCobro);
+            if (excedente > 0) {
+                const confirmado = await showConfirm(
+                    construirConfirmacionSobrecobroCliente({ excedente, moneda: saldoImputado })
+                );
+                if (!confirmado) return;
+            }
         }
 
         setSaving(true);

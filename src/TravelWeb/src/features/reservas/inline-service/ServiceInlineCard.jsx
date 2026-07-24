@@ -907,13 +907,18 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                 <div className="text-sm text-slate-700 flex flex-wrap items-center gap-3">
                     {totalesFooter.mostrar && (
                         <>
+                            {/* Bug #26 (Tanda 4, 2026-07-24): antes formatearPrecio() no recibía la
+                                moneda y siempre mostraba "$" con formato es-AR, aunque el servicio
+                                fuera en USD. formActivo?.currency es la moneda REAL del tab activo
+                                (Hotel/Aéreo/Traslado/Paquete/Asistencia tienen todos su propio
+                                selector de moneda) — "ARS" es solo el fallback si todavía no se eligió. */}
                             <span>
-                                Venta <strong>{formatearPrecio(totalesFooter.ventaTotal)}</strong>
+                                Venta <strong>{formatearPrecio(totalesFooter.ventaTotal, formActivo?.currency || "ARS")}</strong>
                             </span>
                             {/* Ganancia: solo para quien tiene permiso de ver costos */}
                             {canSeeCost && totalesFooter.ganancia !== null && (
                                 <span className={totalesFooter.ganancia >= 0 ? "font-semibold text-emerald-600" : "font-semibold text-red-600"}>
-                                    Ganás {formatearPrecio(totalesFooter.ganancia)}
+                                    Ganás {formatearPrecio(totalesFooter.ganancia, formActivo?.currency || "ARS")}
                                 </span>
                             )}
                         </>

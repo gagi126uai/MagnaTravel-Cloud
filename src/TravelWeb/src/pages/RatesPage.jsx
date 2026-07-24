@@ -4,7 +4,7 @@ import { showError, showSuccess } from "../alerts";
 import { Plus, Pencil, Trash2, Search, X, DollarSign, Calculator, Plane, Hotel, Car, Package, Star, ChevronDown, ChevronRight, BedDouble } from "lucide-react";
 import Swal from "sweetalert2";
 import { getPublicId } from "../lib/publicIds";
-import { formatDate } from "../lib/utils";
+import { formatDate, formatCurrency } from "../lib/utils";
 import { PaginationFooter } from "../components/ui/PaginationFooter";
 import { useDebounce } from "../hooks/useDebounce";
 
@@ -1094,8 +1094,13 @@ export default function RatesPage() {
                                                         <td className="px-3 py-2">{v.roomType}</td>
                                                         <td className="px-3 py-2">{v.roomCategory}</td>
                                                         <td className="px-3 py-2">{v.mealPlan}</td>
-                                                        <td className="px-3 py-2 text-right">${v.netCost}</td>
-                                                        <td className="px-3 py-2 text-right">${v.salePrice}</td>
+                                                        {/* Bug #26 (Tanda 4, 2026-07-24): antes mostraba el número crudo sin
+                                                            miles ni decimales ("48000" en vez de "$48.000,00"). Las variaciones
+                                                            no tienen moneda propia: comparten la del formulario (form.currency) —
+                                                            se la pasamos explícita para no caer en el default legacy (USD) de
+                                                            formatCurrency() cuando no se pasa moneda. */}
+                                                        <td className="px-3 py-2 text-right">{formatCurrency(v.netCost, form.currency)}</td>
+                                                        <td className="px-3 py-2 text-right">{formatCurrency(v.salePrice, form.currency)}</td>
                                                         <td className="px-3 py-2 text-center">
                                                             <button type="button" onClick={() => removeRoomVariation(v.id)} className="text-rose-500 hover:text-rose-700">
                                                                 <X className="h-4 w-4" />

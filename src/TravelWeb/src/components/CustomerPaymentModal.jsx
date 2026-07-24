@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { AlignLeft, Calendar, CheckCircle2, CreditCard, DollarSign, FileText, X } from "lucide-react";
 import { api } from "../api";
-import { showError, showSuccess } from "../alerts";
+import { showError, showSuccess, showConfirm } from "../alerts";
 import { getApiErrorMessage } from "../lib/errors";
 import { getPublicId, getRelatedPublicId } from "../lib/publicIds";
 import { formatCurrency, hoyArgentina } from "../lib/utils";
+import { calcularExcedente, construirConfirmacionSobrecobroCliente } from "../lib/overpaymentConfirmLogic";
 
 const FX_SOURCES = [
   { value: 5, label: "Manual" },
@@ -138,8 +139,19 @@ export default function CustomerPaymentModal({
     if (crossCurrency && (!Number(exchangeRate) || !exchangeRateAt)) {
       return showError("Para cobrar en otra moneda completá el tipo de cambio y la fecha.");
     }
-    if (!isCrossCurrency(paymentToEdit) && equivalentAmount > editableBalance + 0.01) {
-      return showError(`El monto excede el saldo pendiente (${formatCurrency(editableBalance, formData.imputedCurrency)}).`);
+    // Bug #3 (Tanda 4, 2026-07-24): esto ANTES era un tope duro que impedía cobrar de más.
+    // Contradecía la decisión FIRMADA del dueño (P-14): cobrar de más NUNCA se bloquea,
+    // solo se avisa el excedente y se pide confirmar (el excedente queda como saldo a
+    // favor del cliente). No se chequea en la edición de un cobro cruzado: ahí el monto
+    // queda congelado, no hay nada nuevo que comparar.
+    if (!isCrossCurrency(paymentToEdit)) {
+      const excedente = calcularExcedente(equivalentAmount, editableBalance);
+      if (excedente > 0) {
+        const confirmado = await showConfirm(
+          construirConfirmacionSobrecobroCliente({ excedente, moneda: formData.imputedCurrency })
+        );
+        if (!confirmado) return;
+      }
     }
 
     setLoading(true);

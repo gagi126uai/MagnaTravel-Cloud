@@ -66,14 +66,15 @@
  *     puedan cerrar esta ficha (ej. el botón "Registrar pago / Cerrar" de la página).
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { CreditCard, Layers, X, Banknote, Copy, Check, ChevronDown, AlertCircle } from "lucide-react";
 import { api } from "../../../api";
 import { hasPermission } from "../../../auth";
-import { showSuccess, showError } from "../../../alerts";
+import { showSuccess, showError, showConfirm } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { getPublicId } from "../../../lib/publicIds";
 import { formatCurrency, formatDate, hoyArgentina } from "../../../lib/utils";
+import { calcularExcedente, construirConfirmacionSobrepagoProveedor } from "../../../lib/overpaymentConfirmLogic";
 import {
     resolverMonedaPrincipalProveedor,
     calcularEquivalenteProveedor,
@@ -85,6 +86,11 @@ import {
     construirDetalleFilaDeuda,
     construirMensajeExitoPago,
     resolverMontoAlElegirServicio,
+    resolverReservaImputadaEnEdicion,
+    incluirReservaImputadaEnLista,
+    resolverServicioImputadoEnEdicion,
+    resolverServicioSinteticoEnEdicion,
+    resolverDeudaDeReferenciaParaSobrepago,
 } from "../lib/supplierPageLogic";
 import { OWNER_TYPE, ACCOUNT_TYPE, resolverCuentaPrincipalPorMoneda } from "../../bank-accounts/lib/bankAccountLogic";
 
@@ -481,6 +487,11 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
     const [reservaSeleccionada, setReservaSeleccionada] = useState(null);
     const [servicioSeleccionado, setServicioSeleccionado] = useState(null);
     const [cargoSeleccionadoId, setCargoSeleccionadoId] = useState("");
+    // Fix #2 (review frontend, Tanda 4, 2026-07-24): true cuando ya se precargó la
+    // imputación (reserva) de un pago en edición al menos una vez para la apertura actual
+    // de la ficha. useRef (no useState) a propósito: cambiarlo NO debe disparar un
+    // re-render, solo sirve de "candado" para el efecto de abajo.
+    const precargaImputacionHechaRef = useRef(false);
 
     // ── Rediseño 2026-07-20: flujo de 2 pasos para pagos NUEVOS ───────────────
     // "elegir" = grilla "¿Qué estás pagando?" (Paso 1) | "pagar" = formulario con
@@ -545,8 +556,20 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
             setMostrarOtraMoneda(false);
         }
         setErrorGuardar(null);
-        setReservaSeleccionada(null);
-        setServicioSeleccionado(null);
+        // Bug #15 (Tanda 4, 2026-07-24): antes esto era SIEMPRE null, aunque el DTO del
+        // pago en edición SÍ trae la imputación real (reservaPublicId/servicePublicId) —
+        // el vendedor perdía de vista adónde había ido la plata. Acá intentamos precargarla
+        // con lo que ya tenemos (reservasConDeuda puede todavía no haber cargado); el efecto
+        // de más abajo la vuelve a resolver apenas esa lista llega, por si esta primera
+        // pasada corrió antes de tiempo.
+        setReservaSeleccionada(paymentToEdit ? resolverReservaImputadaEnEdicion(paymentToEdit, reservasConDeuda) : null);
+        // Fix N1 (review de seguridad, Tanda 4, 2026-07-24): sembramos el servicio imputado
+        // YA en este primer pase (con el id nomás, ver resolverServicioSinteticoEnEdicion) —
+        // así el id nunca se pierde aunque el cajero guarde ANTES de que serviciosReserva
+        // termine de cargar (sin esto, el PUT salía con servicePublicId=null y la imputación
+        // fina se degradaba a nivel-reserva en silencio). El efecto de más abajo la
+        // reemplaza por el objeto completo (con descripción real) apenas la lista llega.
+        setServicioSeleccionado(paymentToEdit ? resolverServicioSinteticoEnEdicion(paymentToEdit) : null);
         setCargoSeleccionadoId("");
         // Rediseño 2026-07-20: cada vez que se abre la ficha (nuevo pago o a editar
         // otro), se vuelve a arrancar en el Paso 1 sin destino elegido ni cartel de
@@ -554,7 +577,29 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
         setPaso("elegir");
         setEsPagoACuenta(false);
         setResultadoExito(null);
+        // Fix #2 (review frontend, Tanda 4): reinicia el flag de "ya precargué la
+        // imputación" cada vez que se abre la ficha (nuevo paymentToEdit) — el efecto de
+        // abajo vuelve a intentar UNA vez para este pago nuevo.
+        precargaImputacionHechaRef.current = false;
     }, [paymentToEdit]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Bug #15 (Tanda 4): reservasConDeuda carga async (ver cargarReservasConDeuda más abajo)
+    // y puede llegar DESPUÉS de que el efecto de arriba haya intentado precargar la
+    // imputación de un pago en edición.
+    //
+    // Fix #2 (review frontend, Tanda 4, 2026-07-24): antes este efecto se repetía en CADA
+    // cambio de reservasConDeuda — si el cajero re-imputaba la reserva A MANO y después
+    // tocaba "Reintentar" en el cartel de error de la grilla (que vuelve a disparar
+    // cargarReservasConDeuda), esta precarga pisaba su selección manual con la del DTO
+    // original. `precargaImputacionHechaRef` asegura que la precarga corra UNA sola vez
+    // por apertura de la ficha (el efecto de arriba resetea el flag en cada paymentToEdit
+    // nuevo) — después de esa primera vez, el cajero es dueño de la selección.
+    useEffect(() => {
+        if (!esEdicion || precargaImputacionHechaRef.current) return;
+        setReservaSeleccionada(resolverReservaImputadaEnEdicion(paymentToEdit, reservasConDeuda));
+        precargaImputacionHechaRef.current = true;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [esEdicion, paymentToEdit, reservasConDeuda]);
 
     // FIX bloqueante (review 2026-07-21, frontend-reviewer #3 + data-exposure-reviewer): si
     // este pedido fallaba, antes solo quedaba un console.warn (invisible para el cajero) y
@@ -676,6 +721,17 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
 
         return () => { cancelled = true; };
     }, [supplierId, reservaSeleccionada?.reservaPublicId, reservaSeleccionada?.numeroReserva]);
+
+    // Bug #15 (Tanda 4, 2026-07-24): al editar un pago imputado a UN servicio puntual (no a
+    // toda la reserva), precargamos esa selección apenas terminan de llegar los servicios de
+    // la reserva (efecto de arriba) — antes el selector de "Servicio de la reserva" siempre
+    // arrancaba en "Sin imputar a un servicio específico" aunque el pago SÍ tenía uno.
+    useEffect(() => {
+        if (!esEdicion || !paymentToEdit?.servicePublicId) return;
+        const servicio = resolverServicioImputadoEnEdicion(paymentToEdit, serviciosReserva);
+        if (servicio) setServicioSeleccionado(servicio);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [esEdicion, paymentToEdit, serviciosReserva]);
 
     // Pre-chequeo (b): reserva elegida sin NINGÚN servicio de este proveedor.
     // Solo lo afirmamos cuando terminó de cargar sin error (mientras carga, no mostramos
@@ -867,7 +923,13 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
     // dos números de "deuda" distintos a la vez (el global del proveedor vs. el de esta
     // reserva puntual). Para "pago a cuenta" y "liquidar cargo" el banner global sigue
     // siendo la referencia correcta, así que ahí no se toca.
-    const ocultarBannerGlobalPorDestinoFijado = !esEdicion && Boolean(reservaSeleccionada);
+    //
+    // Bug #15 (Tanda 4, 2026-07-24): en EDICIÓN el banner también se oculta SIEMPRE, sin
+    // mirar reservaSeleccionada — mismo patrón que RegistrarCobroInline (su banner
+    // equivalente se oculta con `!paymentToEdit`). El "saldo global del proveedor" no tiene
+    // sentido como referencia de un pago que YA se hizo; la imputación real de ESE pago se
+    // ve en la sección "Imputar a una reserva / servicio" de más abajo.
+    const ocultarBannerGlobalPorDestinoFijado = esEdicion || Boolean(reservaSeleccionada);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -887,6 +949,31 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
         if (reservaSinServiciosDelProveedor) {
             setErrorGuardar("Esta reserva no tiene servicios de este proveedor para imputar el pago.");
             return;
+        }
+
+        // Bug #3 (Tanda 4, 2026-07-24): antes, pagarle de más a un proveedor pasaba en
+        // silencio. Decisión FIRMADA del dueño (P-14): nunca se bloquea, pero SIEMPRE se
+        // avisa el excedente antes de guardar. No aplica en edición de pago cruzado o de
+        // liquidación de cargo (`edicionEconomicaBloqueada`): ahí el monto queda congelado,
+        // no hay nada nuevo que comparar.
+        if (!(esEdicion && edicionEconomicaBloqueada)) {
+            const montoAComparar = esCruzado ? montoEquivalente : parseFloat(monto);
+            const deudaDeReferencia = cargoSeleccionado
+                ? null // liquidar un cargo facturado aparte: el monto viene fijo del documento, no es "de más"
+                : resolverDeudaDeReferenciaParaSobrepago({
+                    reservaSeleccionada,
+                    saldoImputado,
+                    esCruzado,
+                    balancesByCurrency,
+                    paymentToEdit: esEdicion ? paymentToEdit : null,
+                });
+            const excedente = deudaDeReferencia != null ? calcularExcedente(montoAComparar, deudaDeReferencia) : 0;
+            if (excedente > 0) {
+                const confirmado = await showConfirm(
+                    construirConfirmacionSobrepagoProveedor({ excedente, moneda: saldoImputado })
+                );
+                if (!confirmado) return;
+            }
         }
 
         setSaving(true);
@@ -1365,12 +1452,16 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
                                     data-testid="pago-reserva"
                                 >
                                     <option value="">Sin imputar a una reserva específica</option>
-                                    {reservasConDeuda.map((r) => (
+                                    {/* Bug #15 (Tanda 4): si la reserva imputada de este pago ya no tiene
+                                        deuda (este mismo pago la saldó), `reservasConDeuda` ya no la trae —
+                                        la agregamos igual para que el <select> muestre la imputación real
+                                        en vez de quedar con un value que no matchea ninguna opción. */}
+                                    {incluirReservaImputadaEnLista(reservasConDeuda, reservaSeleccionada).map((r) => (
                                         <option key={String(r.reservaPublicId)} value={String(r.reservaPublicId)}>
                                             {r.numeroReserva || "Reserva"}{r.fileName ? ` — ${r.fileName}` : ""}
                                         </option>
                                     ))}
-                                    {reservasConDeuda.length === 0 && (
+                                    {reservasConDeuda.length === 0 && !reservaSeleccionada && (
                                         <option disabled>— No hay reservas con deuda —</option>
                                     )}
                                 </select>
