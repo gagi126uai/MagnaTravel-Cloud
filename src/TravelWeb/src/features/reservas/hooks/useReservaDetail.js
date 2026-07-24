@@ -14,15 +14,20 @@ import {
     getReservationCollectionKeyForServiceType,
     getReservationServicePublicId
 } from "../lib/reservationServiceModel";
-// Tanda P4 "circuito proveedor" (2026-07-22): usamos esta función SOLO para detectar el
-// code (nunca adivinar por texto), el mismo que ya usan "anular servicio" (Tanda 7) y
+// Tanda P4 "circuito proveedor" (2026-07-22): usamos este código SOLO para detectar el
+// motivo (nunca adivinar por texto), el mismo que ya usan "anular servicio" (Tanda 7) y
 // "bajar el estado" (Tanda P1, SupplierAccountPage). El backend documenta explícitamente
 // que este PUT de status reusa el MISMO code (ver
 // BookingCancellationService.EnsureServiceStatusDowngradeHasReceivableAnchorAsync).
-// Fix B1 (post-E2E, 2026-07-22): acá NO se ofrece el botón "Emitir factura" que da
-// `rechazo.boton` (ver el aviso en ReservaDetailPage) — en este flujo puntual la reserva
-// siempre está en Presupuesto y ahí no hay ningún camino real para facturar.
-import { resolverRechazoAnularServicio } from "../lib/serviceCancellationGuard";
+// Fix B1 (post-E2E, 2026-07-22): acá NO se ofrece ningún botón de acción — en este flujo
+// puntual la reserva siempre está en Presupuesto y ahí no hay ningún camino real para
+// facturar; el aviso solo sirve para mostrar el mensaje largo del motor en ventana fija
+// en vez de un toast (Aviso 1 del inventario, spec 2026-07-22).
+// Obra "anular sin factura" (2026-07-23): comparamos el `code` DIRECTO (no vía
+// resolverRechazoAnularServicio) porque ese mapeo ya no distingue "botón" — desde esta
+// obra ningún code de esta lib ofrece botón, así que dejó de servir para detectar ESTE
+// motivo puntual entre cualquier otro 409.
+import { CODIGO_RECHAZO_ANULAR_SERVICIO } from "../lib/serviceCancellationGuard";
 
 const SERVICE_COLLECTION_ENDPOINTS = Object.freeze({
     flightSegments: (reservaId) => `/reservas/${reservaId}/flights`,
@@ -432,8 +437,7 @@ export function useReservaDetail(reservaId, navigate) {
             // la instrucción completa y el usuario necesita leerla con calma en un aviso
             // fijo (sin botón: en Presupuesto no se puede facturar todavía, fix B1 P4).
             // El resto de los errores sigue mostrándose como toast, igual que antes.
-            const rechazo = resolverRechazoAnularServicio(error);
-            if (rechazo.boton === "emitir-factura") {
+            if (error?.payload?.code === CODIGO_RECHAZO_ANULAR_SERVICIO.PAGO_SIN_FACTURA) {
                 setStatusChangeBlockedByMoneyGuard({
                     mensaje: getApiErrorMessage(error, "Error al cambiar estado"),
                 });

@@ -13,6 +13,11 @@
  *   - PaymentsToCredit (CELESTE): sin factura, CON cobros → la plata pasa a saldo a favor.
  *   - CreditNote (ÁMBAR):        con factura CAE vivo → anulación formal con Nota de Crédito.
  *
+ * Obra "anular sin factura" (2026-07-23, decisión del dueño): el caso PaymentsToCredit
+ * (CELESTE) suma una línea fija del contador, pegada abajo del aviso de saldo a favor, tanto
+ * en el cartel de confirmar como en el mensaje de éxito — ver TEXTO_AVISO_CONTADOR_COBROS_SIN_FACTURA
+ * en cancelarReservaCopy.js. Es un aviso suave (P-20): no frena ni cambia los botones.
+ *
  * ADR-042 (2026-07-01): dentro del caso CreditNote, cuando la reserva tiene 2+ facturas VIVAS,
  * el flujo cambia: hay un freno extra "¿Seguro?" antes de emitir nada, y las notas de crédito
  * (una por factura) se emiten de a una con un avance visible (PROCESANDO → ÉXITO / EN REVISIÓN).
@@ -22,20 +27,21 @@
  *
  * Tanda 3 "contrato pantalla-motor" (2026-07-20, spec docs/ux/2026-07-20-t3-t4-contrato-pantalla-motor.md):
  * los tres puntos donde el panel puede recibir un 409 (annul-with-credit, draft() y confirm())
- * ahora muestran el motivo REAL que calculó el motor (mapa código → criollo en
- * lib/anularReservaRechazoLogic.js), en vez de un cartel genérico siempre igual. Único caso con
- * botón: el freno de plata R1 (operador ya cobrado, reserva sin factura para anclar el
- * reembolso) muestra "Emitir factura", que abre el panel EmitirFacturaInline que YA existe en
- * la ficha (D1 firmada el 2026-07-18 — no se construye nada nuevo).
+ * muestran el motivo REAL que calculó el motor (mapa código → criollo en
+ * lib/anularReservaRechazoLogic.js), en vez de un cartel genérico siempre igual.
+ *
+ * Obra "anular sin factura" (2026-07-23, decisión del dueño): el freno de plata R1 a nivel
+ * reserva (operador ya cobrado, reserva sin factura para anclar el reembolso) se ELIMINÓ del
+ * backend — anular la reserva entera ya no lo bloquea, así que el botón "Emitir factura" que
+ * ese candado ofrecía se retiró de este panel (mismo criterio que "anular servicio", ver
+ * serviceCancellationGuard.js). Si el código llegara igual por alguna versión vieja cacheada,
+ * el mensaje del motor se sigue mostrando tal cual, sin ningún botón (P-13).
  *
  * Props:
  *   - reserva: objeto de la reserva (necesita publicId, numeroReserva, customerName,
  *              cancellationCase, cancellationCreditByCurrency, requiresInvoiceAnnulmentToCancel).
  *   - onCancelado: callback luego de confirmar exitosamente (nombre legacy mantenido).
  *   - onCerrar: callback cuando el usuario cierra el panel sin anular.
- *   - onIrAEmitirFactura: (Tanda 3, opcional) callback () => void para el botón "Emitir factura"
- *     del freno de plata R1. Cierra este panel y abre EmitirFacturaInline en la ficha — lo
- *     resuelve el padre (ReservaDetailPage), que ya controla cuál panel inline está abierto.
  *   - onSilentRefresh: (ADR-042, opcional) callback para refrescar la reserva/extracto en
  *     segundo plano SIN cerrar el panel — se llama en cuanto el resultado de las notas de
  *     crédito queda resuelto (éxito o revisión), mientras el vendedor sigue viendo el cartel.
@@ -72,6 +78,7 @@ import {
     TEXTO_BANNER_SALDO_FAVOR_NEGRITA,
     TEXTO_BANNER_SALDO_FAVOR_POST_NEGRITA,
     TEXTO_BANNER_CREDIT_NOTE,
+    TEXTO_AVISO_CONTADOR_COBROS_SIN_FACTURA,
     MENSAJE_EXITO_DIRECT_CANCEL,
     MENSAJE_EXITO_PAYMENTS_TO_CREDIT,
     MENSAJE_EXITO_CREDIT_NOTE,
@@ -126,7 +133,7 @@ function formatearMontosSaldoAFavor(creditByCurrency) {
 
 // ─── Componente ───────────────────────────────────────────────────────────────
 
-export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilentRefresh, bookingCancellationToRetry, onIrAEmitirFactura }) {
+export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilentRefresh, bookingCancellationToRetry }) {
     const [reason, setReason] = useState("");
 
     // `processing` cubre todas las llamadas internas como un único loading visible al usuario.
@@ -135,11 +142,6 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
     // Mensaje de conflicto (400/409 recuperable). Se muestra en un banner inline para que
     // el usuario lo vea sin que desaparezca el formulario con lo cargado.
     const [conflictMessage, setConflictMessage] = useState(null);
-
-    // Tanda 3: único código de la tabla que suma un botón al cartel de conflicto (freno de
-    // plata R1). Va aparte de conflictMessage porque los otros 8 códigos del mapa NUNCA lo
-    // necesitan — sería un campo casi siempre en false si lo metiéramos dentro del mensaje.
-    const [conflictMostrarBotonEmitirFactura, setConflictMostrarBotonEmitirFactura] = useState(false);
 
     // ── ADR-042: estado del flujo multi-factura (2+ facturas vivas) ────────────────────────
     // "form"               → panel normal (motivo + banner). Cubre TODO el comportamiento de
@@ -178,7 +180,6 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
         setReason("");
         setProcessing(false);
         setConflictMessage(null);
-        setConflictMostrarBotonEmitirFactura(false);
     }, []);
 
     // Limpieza del intervalo de polling al desmontar (evita un interval huérfano si el
@@ -381,7 +382,6 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
 
         setProcessing(true);
         setConflictMessage(null);
-        setConflictMostrarBotonEmitirFactura(false);
 
         const caso = determinarCasoAnulacion(reserva);
 
@@ -394,9 +394,13 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
         if (caso === "DirectCancel" || caso === "PaymentsToCredit") {
             try {
                 await cancellationsApi.annulWithCredit(reserva.publicId, trimmedReason);
+                // Caso 3 (PaymentsToCredit): el aviso del contador va SIEMPRE pegado abajo del
+                // mensaje de éxito (obra "anular sin factura", 2026-07-23) — este caso implica
+                // por definición que hubo cobros sin factura, así que no depende de ningún dato
+                // extra, es incondicional dentro de este `if`.
                 const mensajeExito = caso === "DirectCancel"
                     ? MENSAJE_EXITO_DIRECT_CANCEL
-                    : MENSAJE_EXITO_PAYMENTS_TO_CREDIT;
+                    : `${MENSAJE_EXITO_PAYMENTS_TO_CREDIT}\n${TEXTO_AVISO_CONTADOR_COBROS_SIN_FACTURA}`;
                 showSuccess(mensajeExito, "Anulación confirmada");
                 onCancelado();
             } catch (error) {
@@ -413,12 +417,11 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
                     // Tanda 3 (2026-07-20): el motor manda un código propio para cada uno de los 4
                     // rechazos posibles de este endpoint (ANNUL_CREDIT_*). El mapa vive en
                     // anularReservaRechazoLogic.js — mismo mapeo que usan los otros 2 puntos de abajo.
-                    const { texto, mostrarBotonEmitirFactura } = resolverTextoRechazoAnularReserva(
+                    const { texto } = resolverTextoRechazoAnularReserva(
                         error,
                         "No se pudo anular la reserva. Probá de nuevo; si el problema sigue, contactá a administración."
                     );
                     setConflictMessage(texto);
-                    setConflictMostrarBotonEmitirFactura(mostrarBotonEmitirFactura);
                 } else {
                     showError("No se pudo anular la reserva. Probá de nuevo en unos segundos.");
                 }
@@ -442,12 +445,11 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
             // catalogado (o no vino ninguno), cae al mismo texto neutro de siempre — NUNCA
             // mostramos el texto crudo del backend fuera de esa tabla.
             if (error?.status === 409) {
-                const { texto, mostrarBotonEmitirFactura } = resolverTextoRechazoAnularReserva(
+                const { texto } = resolverTextoRechazoAnularReserva(
                     error,
                     "No se pudo iniciar la anulación. Probá de nuevo; si el problema sigue, contactá a administración."
                 );
                 setConflictMessage(texto);
-                setConflictMostrarBotonEmitirFactura(mostrarBotonEmitirFactura);
             } else {
                 showError("No se pudo iniciar la anulación. Probá de nuevo en unos segundos.");
             }
@@ -512,12 +514,11 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
                 // Tanda 3 (2026-07-20): agrega INV-093 e INV-100 al mismo mapa código → criollo
                 // que usan los otros 2 puntos de swallow (misma función, un solo lugar para
                 // agregar códigos nuevos).
-                const { texto, mostrarBotonEmitirFactura } = resolverTextoRechazoAnularReserva(
+                const { texto } = resolverTextoRechazoAnularReserva(
                     error,
                     "No se pudo confirmar la anulación. Probá de nuevo; si el problema sigue, contactá a administración."
                 );
                 setConflictMessage(texto);
-                setConflictMostrarBotonEmitirFactura(mostrarBotonEmitirFactura);
             } else {
                 showError("No se pudo confirmar la anulación. Probá de nuevo en unos segundos.");
             }
@@ -595,7 +596,7 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
 
                     {!conflictMessage && casoAnulacion === "PaymentsToCredit" && (
                         <div
-                            className="flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50 p-3.5 text-xs text-sky-800 dark:bg-sky-950/30 dark:border-sky-800 dark:text-sky-200"
+                            className="flex flex-col items-start gap-1.5 rounded-lg border border-sky-200 bg-sky-50 p-3.5 text-xs text-sky-800 dark:bg-sky-950/30 dark:border-sky-800 dark:text-sky-200"
                             data-testid="cancelar-banner-saldo-favor"
                         >
                             {/* Decisión UX (guia 2026-06-25): mostrar el monto cobrado por moneda
@@ -608,6 +609,13 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
                                 {TEXTO_BANNER_SALDO_FAVOR_ANTE_NEGRITA}
                                 <strong>{TEXTO_BANNER_SALDO_FAVOR_NEGRITA}</strong>
                                 {TEXTO_BANNER_SALDO_FAVOR_POST_NEGRITA}
+                            </span>
+                            {/* Obra "anular sin factura" (2026-07-23): aviso SUAVE del contador
+                                (P-20, no frena) — pegado abajo del aviso de saldo a favor, DENTRO
+                                del mismo cartel (mismo bloque semántico, no un cartel aparte ni un
+                                CartelEmergente: es una excepción fiscal puntual, no un bloqueo). */}
+                            <span className="font-semibold" data-testid="cancelar-aviso-contador-cobros-sin-factura">
+                                {TEXTO_AVISO_CONTADOR_COBROS_SIN_FACTURA}
                             </span>
                         </div>
                     )}
@@ -624,9 +632,11 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
 
                     {/* Aviso 4 del inventario (spec cartel emergente 2026-07-22): rechazo LARGO
                         del motor al anular → ventana, no un recuadro incrustado en el panel.
-                        Tanda 3 (2026-07-20): único código de la tabla con botón es el freno de
-                        plata R1 (ANNUL_CREDIT_UNANCHORED_OPERATOR_REFUND) — abre EmitirFacturaInline,
-                        que ya existe en la ficha (D1 firmada, no se construye nada nuevo).
+                        Obra "anular sin factura" (2026-07-23): el freno de plata R1
+                        (ANNUL_CREDIT_UNANCHORED_OPERATOR_REFUND), único código de la tabla que
+                        agregaba un botón ("Emitir factura"), se eliminó del backend — anular la
+                        reserva entera ya no lo bloquea. Esta ventana ya no ofrece ningún botón:
+                        el mensaje real del motor (tal cual, P-13) + "Entendido" alcanza.
                         Al estar en ventana, ya no hace falta "tapar" el cartel del caso de arriba
                         (P4-2): el cartel de arriba y esta ventana nunca compiten por el mismo
                         espacio — igual seguimos ocultando el cartel del caso mientras hay error
@@ -638,12 +648,6 @@ export function CancelarReservaInline({ reserva, onCancelado, onCerrar, onSilent
                         message={conflictMessage}
                         onClose={() => setConflictMessage(null)}
                         dataTestId="cancelar-inline-conflict-msg"
-                        actionTestId="cancelar-inline-btn-emitir-factura"
-                        action={
-                            conflictMostrarBotonEmitirFactura && onIrAEmitirFactura
-                                ? { label: "Emitir factura", onClick: onIrAEmitirFactura }
-                                : null
-                        }
                     />
 
                     {/* ── Motivo obligatorio ── */}

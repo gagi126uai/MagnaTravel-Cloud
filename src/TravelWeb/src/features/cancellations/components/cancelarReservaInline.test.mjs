@@ -48,6 +48,7 @@ import {
     TEXTO_BANNER_SALDO_FAVOR_NEGRITA,
     TEXTO_BANNER_SALDO_FAVOR_POST_NEGRITA,
     TEXTO_BANNER_CREDIT_NOTE,
+    TEXTO_AVISO_CONTADOR_COBROS_SIN_FACTURA,
     MENSAJE_EXITO_DIRECT_CANCEL,
     MENSAJE_EXITO_PAYMENTS_TO_CREDIT,
     MENSAJE_EXITO_CREDIT_NOTE,
@@ -130,9 +131,15 @@ function usaRutaAnnulWithCredit(caso) {
  * Devuelve el texto del toast de éxito según el caso de anulación.
  * Réplica de los showSuccess en handleCancelar. Usa las mismas constantes que
  * el componente (importadas del módulo de copy).
+ *
+ * Obra "anular sin factura" (2026-07-23): en PaymentsToCredit (Caso 3) el toast de éxito
+ * suma SIEMPRE la línea del contador pegada abajo (separada por "\n", igual que el
+ * componente real) — este caso implica por definición que hubo cobros sin factura.
  */
 function elegirMensajeExito(caso) {
-    if (caso === "PaymentsToCredit") return MENSAJE_EXITO_PAYMENTS_TO_CREDIT;
+    if (caso === "PaymentsToCredit") {
+        return `${MENSAJE_EXITO_PAYMENTS_TO_CREDIT}\n${TEXTO_AVISO_CONTADOR_COBROS_SIN_FACTURA}`;
+    }
     if (caso === "DirectCancel") return MENSAJE_EXITO_DIRECT_CANCEL;
     // CreditNote y cualquier otro caso (DTOs viejos, NotApplicable, etc.)
     return MENSAJE_EXITO_CREDIT_NOTE;
@@ -402,10 +409,36 @@ test("DirectCancel: mensaje de éxito = 'Reserva anulada.' (sin mención a NC)",
     assert.equal(elegirMensajeExito("DirectCancel"), "Reserva anulada.");
 });
 
-test("PaymentsToCredit: mensaje de éxito confirma que la plata quedó como saldo a favor", () => {
+test("PaymentsToCredit: mensaje de éxito confirma que la plata quedó como saldo a favor + línea del contador debajo", () => {
     const mensaje = elegirMensajeExito("PaymentsToCredit");
-    assert.equal(mensaje, "Reserva anulada. Lo cobrado quedó como saldo a favor del cliente.");
+    assert.equal(
+        mensaje,
+        "Reserva anulada. Lo cobrado quedó como saldo a favor del cliente.\nHubo cobros sin factura: revisalo con tu contador."
+    );
     assert.ok(!mensaje.includes("nota de crédito"), "No debe mencionar NC en el caso PaymentsToCredit");
+    // El mensaje del operador (reembolso) NUNCA se menciona en el confirm/éxito de anular
+    // reserva (P2=A de la obra 2026-07-23): vive en la cuenta del operador, no acá.
+    assert.ok(!mensaje.toLowerCase().includes("operador"), "No debe mencionar al operador");
+});
+
+// Obra "anular sin factura" (2026-07-23, T-6): fija con Assert/equal exacto el texto nuevo
+// de la línea del contador, tanto solo como dentro del mensaje de éxito combinado.
+test("TEXTO_AVISO_CONTADOR_COBROS_SIN_FACTURA = texto exacto firmado por Gastón", () => {
+    assert.equal(
+        TEXTO_AVISO_CONTADOR_COBROS_SIN_FACTURA,
+        "Hubo cobros sin factura: revisalo con tu contador."
+    );
+});
+
+test("DirectCancel (Caso a): el mensaje de éxito NO lleva la línea del contador (sin cobros, no aplica)", () => {
+    const mensaje = elegirMensajeExito("DirectCancel");
+    assert.equal(mensaje, "Reserva anulada.");
+    assert.ok(!mensaje.includes(TEXTO_AVISO_CONTADOR_COBROS_SIN_FACTURA));
+});
+
+test("CreditNote (con factura): el mensaje de éxito NO lleva la línea del contador (caso ámbar, sin cambios)", () => {
+    const mensaje = elegirMensajeExito("CreditNote");
+    assert.ok(!mensaje.includes(TEXTO_AVISO_CONTADOR_COBROS_SIN_FACTURA));
 });
 
 test("CreditNote: mensaje de éxito menciona la nota de crédito en generación", () => {
@@ -523,6 +556,29 @@ test("partes del banner celeste reconstituyen el texto exacto de la guía UX", (
         "Al anular, esos montos quedan como SALDO A FAVOR del cliente, para usar en otra reserva.";
 
     assert.equal(textoReconstituido, textoGuia);
+});
+
+// Obra "anular sin factura" (2026-07-23, T-6): el cartel de CONFIRMAR (Caso 3) es el texto
+// firmado de siempre + la línea del contador pegada abajo, dentro del MISMO cartel.
+test("cartel de confirmar (Caso 3): banner celeste + línea del contador pegada abajo, texto exacto", () => {
+    const montoEjemplo = "$ 150.000";
+    const bannerCeleste =
+        TEXTO_BANNER_SALDO_FAVOR_INICIO + ` (${montoEjemplo}). ` +
+        TEXTO_BANNER_SALDO_FAVOR_ANTE_NEGRITA +
+        TEXTO_BANNER_SALDO_FAVOR_NEGRITA +
+        TEXTO_BANNER_SALDO_FAVOR_POST_NEGRITA;
+
+    // El componente real renderiza ambas líneas como dos <span> DENTRO del mismo <div> del
+    // cartel (mismo bloque semántico) — acá concatenamos con un separador para comparar el
+    // contenido de texto, no el markup.
+    const textoCompletoDelCartel = `${bannerCeleste} ${TEXTO_AVISO_CONTADOR_COBROS_SIN_FACTURA}`;
+
+    assert.ok(textoCompletoDelCartel.includes("SALDO A FAVOR"));
+    assert.ok(textoCompletoDelCartel.includes("Hubo cobros sin factura: revisalo con tu contador."));
+});
+
+test("cartel de confirmar (Caso a, DirectCancel): NO lleva la línea del contador (sin cobros, no aplica)", () => {
+    assert.ok(!TEXTO_BANNER_DIRECT_CANCEL.includes("contador"));
 });
 
 test("MENSAJE_EXITO_DIRECT_CANCEL = texto exacto de la guía UX 2026-06-25", () => {

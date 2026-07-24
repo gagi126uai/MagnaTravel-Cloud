@@ -38,6 +38,17 @@ export const TEXTO_BANNER_SALDO_FAVOR_POST_NEGRITA =
     " del cliente, para usar en otra reserva.";
 
 /**
+ * Obra "anular sin factura" (2026-07-23, decisión del dueño, respaldo fiscal Ley de IVA
+ * art. 5 inc. b): aviso SUAVE (no frena, P-20) que se agrega SOLO al caso PaymentsToCredit
+ * (Caso 3: sin factura, con cobros del cliente) — como por definición este caso YA implica
+ * que hubo cobros sin comprobante, la línea es incondicional dentro de ese caso, no depende
+ * de ningún dato extra del backend. Texto EXACTO firmado (T-6): va pegado abajo del aviso de
+ * saldo a favor, tanto en el cartel de CONFIRMAR como en el mensaje de ÉXITO.
+ */
+export const TEXTO_AVISO_CONTADOR_COBROS_SIN_FACTURA =
+    "Hubo cobros sin factura: revisalo con tu contador.";
+
+/**
  * Cartel ÁMBAR — caso CreditNote (con factura CAE vivo → emite NC en AFIP/ARCA).
  */
 export const TEXTO_BANNER_CREDIT_NOTE =

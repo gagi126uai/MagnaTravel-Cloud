@@ -2,6 +2,12 @@
  * Tests de lógica pura de la Tanda 3 (spec docs/ux/2026-07-20-t3-t4-contrato-pantalla-motor.md):
  * el mapa código → texto criollo del panel "Anular reserva".
  *
+ * Obra "anular sin factura" (2026-07-23, decisión del dueño): el freno de plata R1 a nivel
+ * reserva (ANNUL_CREDIT_UNANCHORED_OPERATOR_REFUND) se eliminó del backend — dejó de bloquear,
+ * así que el botón "Emitir factura" que ofrecía se retiró (mismo criterio que
+ * serviceCancellationGuard.test.mjs para el R1 de "anular servicio", PR-6: se ajustan solo los
+ * casos del code muerto, sin relajar el resto de la tabla).
+ *
  * Corre con Node puro sin bundler: node --test src/features/cancellations/lib/anularReservaRechazoLogic.test.mjs
  */
 
@@ -29,7 +35,6 @@ test("INV-152 (draft) → texto rescatado del componente muerto, con 'anulación
 
   assert.match(resultado.texto, /varios operadores/);
   assert.equal(resultado.texto.includes("cancelación"), false);
-  assert.equal(resultado.mostrarBotonEmitirFactura, false);
 });
 
 test("INV-081 (draft) → ya hay una anulación en curso", () => {
@@ -41,7 +46,6 @@ test("INV-081 (draft) → ya hay una anulación en curso", () => {
     resultado.texto,
     "Esta reserva ya tiene una anulación en curso. Actualizá la página para ver en qué quedó."
   );
-  assert.equal(resultado.mostrarBotonEmitirFactura, false);
 });
 
 test("INV-100 en draft() → la factura ya fue anulada con NC, no queda nada por anular", () => {
@@ -75,7 +79,6 @@ test("INV-093 (confirm) → la anulación cambió de estado mientras el panel es
     resultado.texto,
     "Esta anulación cambió de estado mientras la tenías abierta. Actualizá la página para ver cómo sigue."
   );
-  assert.equal(resultado.mostrarBotonEmitirFactura, false);
 });
 
 // ─── Códigos del camino annul-with-credit (viajan en payload.code) ───────────────────────
@@ -97,7 +100,6 @@ test("ANNUL_CREDIT_LIVE_INVOICE → avisa que hay que reabrir el panel para el c
 
   assert.match(resultado.texto, /camino con nota de crédito/);
   assert.match(resultado.texto, /Cerrá este panel y volvé a abrir/);
-  assert.equal(resultado.mostrarBotonEmitirFactura, false);
 });
 
 test("ANNUL_CREDIT_NO_PAYER → falta un cliente pagador asignado a la reserva", () => {
@@ -107,16 +109,21 @@ test("ANNUL_CREDIT_NO_PAYER → falta un cliente pagador asignado a la reserva",
 
   assert.match(resultado.texto, /no hay a quién devolverle el saldo a favor/);
   assert.match(resultado.texto, /Asigná un cliente pagador/);
-  assert.equal(resultado.mostrarBotonEmitirFactura, false);
 });
 
-test("ANNUL_CREDIT_UNANCHORED_OPERATOR_REFUND (freno de plata R1) → texto + botón Emitir factura", () => {
+// Obra "anular sin factura" (2026-07-23, decisión del dueño): el backend eliminó este candado
+// (AnnulWithPaymentsToCreditAsync ya no lo lanza) — anular la reserva entera con plata pagada
+// al operador sin factura ya NO rechaza. El código queda como red de seguridad: si de todos
+// modos llegara (versión vieja cacheada), se sigue mostrando el texto tal cual, SIN botón
+// (P-13) — la función ya no tiene ningún campo de botón que ofrecer.
+test("ANNUL_CREDIT_UNANCHORED_OPERATOR_REFUND (freno de plata R1, code muerto) → sigue mostrando el texto, sin ningún botón", () => {
   const error = { status: 409, payload: { code: CODIGO_RECHAZO_ANULAR_RESERVA_CON_FRENO_DE_PLATA } };
 
   const resultado = resolverTextoRechazoAnularReserva(error, TEXTO_NEUTRO_ANNUL_WITH_CREDIT);
 
   assert.match(resultado.texto, /pagaste al operador/);
-  assert.equal(resultado.mostrarBotonEmitirFactura, true);
+  assert.equal(resultado.mostrarBotonEmitirFactura, undefined, "la función ya no expone ningún campo de botón");
+  assert.deepEqual(Object.keys(resultado), ["texto"], "el resultado solo trae `texto`, ningún indicador de botón");
 });
 
 // ─── invariantCode tiene prioridad sobre el `code` genérico del camino con NC ────────────
@@ -137,7 +144,6 @@ test("código no catalogado → cae al texto neutro de ese punto del panel, nunc
   const resultado = resolverTextoRechazoAnularReserva(error, TEXTO_NEUTRO_ANNUL_WITH_CREDIT);
 
   assert.equal(resultado.texto, TEXTO_NEUTRO_ANNUL_WITH_CREDIT);
-  assert.equal(resultado.mostrarBotonEmitirFactura, false);
 });
 
 test("409 sin ningún código en el body → cae al texto neutro", () => {

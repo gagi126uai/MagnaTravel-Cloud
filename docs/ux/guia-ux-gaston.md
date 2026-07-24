@@ -766,6 +766,51 @@ Ronda 2:
 
 - **(2026-06-25 — dependencia técnica, NO es decisión de UX):** para mostrar el cartel correcto, el front necesita distinguir el caso 3 del caso 2 cuando NO hay factura → el backend debe exponer en el DTO de la reserva un dato tipo **"tiene cobros sin factura"** (bool) **+ el monto cobrado por moneda** (el backend ya lo acumula en `PorMoneda`). El campo `requiresInvoiceAnnulmentToCancel` que ya existe sigue marcando el caso 4. Esto solo habilita elegir el cartel; no cambia ninguna decisión de UX.
 
+### Anular procede directo aunque haya pagos al operador sin factura + aviso del contador (2026-07-23, respuestas de Gastón P1/P2/P3 = A)
+
+> **Origen:** hasta hoy, "Anular servicio" se TRABABA cuando el servicio tenía pagos hechos al operador
+> y la reserva todavía no tenía factura de venta; el freno ofrecía dos salidas (emitir factura / gestionar
+> el reembolso). Gastón decidió que ESO DESAPARECE: anular procede directo. El backend, además, informa
+> como dato estructurado si la reserva tenía **cobros del cliente sin factura emitida** — esa plata pasa
+> sola a **saldo a favor** del cliente (regla ya firmada, Caso 3 de arriba). Sesión de 3 preguntas; Gastón
+> eligió las tres recomendadas (A/A/A). Aplica P-14 (confirmar antes de anular), P-20 (aviso suave que no
+> frena) y P-4/P-13 (mensajes del motor se muestran tal cual, sin jerga). NO reabrir.
+
+- **(2026-07-23) El freno "pagaste al operador y no hay factura de venta" DESAPARECE del botón "Anular
+  servicio" y del panel de edición del servicio.** Anular procede directo. El reembolso que el operador
+  tiene que devolver **NO se menciona en el confirm de anular** (P2 = A): vive donde siempre, en la
+  **cuenta del operador, solapa "Reembolsos"**. El cartel de anular queda limpio y habla solo de lo del
+  cliente.
+
+- **(2026-07-23) NO se toca el freno de factura con CAE o voucher vivo** (guía 2026-06-13, línea "Bloqueo
+  por factura/voucher vivo"): si el servicio tiene **factura con CAE o voucher emitido**, sigue frenando
+  igual, con su ventanita y su botón "Ir a la factura" / "Ver vouchers". El cambio de esta fecha saca UN
+  solo freno (el de pago al operador sin factura), no todos.
+
+- **(2026-07-23, P1 = A) Al anular una reserva SIN factura pero CON cobros del cliente (Caso 3, cartel
+  CELESTE), se agrega UNA línea del contador, en criollo, que NO frena** (aviso suave P-20). Texto exacto,
+  pegado abajo del aviso de saldo a favor: **"Hubo cobros sin factura: revisalo con tu contador."** Esta
+  línea aparece en **DOS momentos**: en el cartel de **confirmar** (antes de anular) y en el cartel de
+  **éxito** (después de anular). Es una excepción fiscal puntual a "basta de cartelitos aclarativos"
+  (2026-06-05), del mismo tipo que la línea de la moneda de la multa: acotada a este cartel, no habilita
+  más cartelitos.
+  - Cartel de confirmar (Caso 3): el texto firmado del Caso 3 **+** la línea del contador debajo.
+  - Cartel de éxito (Caso 3): **"Reserva anulada. Lo cobrado quedó como saldo a favor del cliente."** **+**
+    **"Hubo cobros sin factura: revisalo con tu contador."** debajo.
+  - El aviso del contador **NO va en el Cartel Emergente único** (ese componente es solo para bloqueos o
+    confirmaciones ANTES de un click, no para avisos después de un éxito): va **en línea**, dentro del
+    mismo cartel, pegado al mensaje de éxito/confirmación.
+
+- **(2026-07-23, P3 = A) Anular UN servicio suelto queda EXACTAMENTE como hoy:** cartelito "¿Anular
+  servicio?" + motivo obligatorio (mín. 10). **NO suma ningún aviso de plata** (saldo a favor / contador).
+  Todo lo de la plata se maneja al anular la reserva entera, no servicio por servicio.
+
+- **(2026-07-23 — decidido con arquitectura, para la guía) Cambiar el operador de un servicio pagado y
+  bajar el estado de un servicio confirmado y pagado SIGUEN bloqueando** cuando hay pagos al operador sin
+  factura, pero su mensaje **deja de pedir "emitir factura"**: pasa a orientar a **"gestioná primero el
+  reembolso con el operador"**. El texto final lo fija el backend; la pantalla lo muestra **tal cual**
+  (P-13), sin reescribirlo ni agregar jerga.
+
 ## Anular una reserva con VARIAS facturas en distintas monedas (2026-07-01, respuestas de Gastón)
 
 > **Origen:** hasta hoy, una reserva con más de una factura NO se podía anular (cartel de freno que

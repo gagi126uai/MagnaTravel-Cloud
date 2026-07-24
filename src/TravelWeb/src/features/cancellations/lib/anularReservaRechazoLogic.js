@@ -14,6 +14,14 @@
  * punto del panel — NUNCA el texto crudo que manda el backend (podría traer nombres
  * internos de clases, tablas o campos).
  *
+ * Obra "anular sin factura" (2026-07-23, decisión del dueño): el freno de plata R1 para
+ * "anular la reserva entera" (ANNUL_CREDIT_UNANCHORED_OPERATOR_REFUND) se eliminó del backend
+ * — `AnnulWithPaymentsToCreditAsync` ya no lo lanza, siempre deja la línea-ancla del reembolso
+ * en su lugar (mismo criterio que "anular servicio", ver serviceCancellationGuard.js). El
+ * botón "Emitir factura" que este código ofrecía se retira: si de todos modos llegara por una
+ * versión vieja cacheada del front o del backend, se sigue mostrando el texto tal cual, SIN
+ * ningún botón (P-13) — nunca revienta, nunca inventa un camino que ya no existe.
+ *
  * Vive en un .js sin JSX (mismo patrón que multiCreditNoteFlow.js o penaltyPayload.js) para
  * poder testearlo con Node puro, sin bundler.
  */
@@ -32,8 +40,12 @@ function leerCodigoDeNegocio(error) {
   return payload.invariantCode || payload.code || null;
 }
 
-// Único código de la tabla que además de cambiar el texto agrega un botón en el cartel
-// (freno de plata R1, D1 firmada el 2026-07-18: "sí, botón 'Emitir factura' en el cartel").
+// Código del freno de plata R1 a nivel reserva. Hasta la obra "anular sin factura"
+// (2026-07-23) era el único código de la tabla que además del texto agregaba un botón
+// "Emitir factura" (D1 firmada el 2026-07-18) — ese botón se retiró porque el backend ya no
+// lanza este código (el candado se eliminó). Queda EXPORTADO y anclado al valor real del
+// backend (test dedicado) por si algún día vuelve a aparecer un código con este nombre: el
+// texto de la tabla de abajo sigue disponible como red de seguridad, tal cual, sin botón.
 export const CODIGO_RECHAZO_ANULAR_RESERVA_CON_FRENO_DE_PLATA = "ANNUL_CREDIT_UNANCHORED_OPERATOR_REFUND";
 
 // Mapa código → texto criollo, exactamente como lo firmó la spec UX (tabla "el mapa código →
@@ -64,8 +76,12 @@ const MAPA_CODIGO_A_TEXTO = {
 
 /**
  * Resuelve qué texto mostrar en el cartel rojo del panel "Anular reserva" para un 409
- * recibido en cualquiera de los tres puntos de swallow, y si corresponde ofrecer el botón
- * "Emitir factura" (único caso de la tabla que lo lleva).
+ * recibido en cualquiera de los tres puntos de swallow.
+ *
+ * Obra "anular sin factura" (2026-07-23): ya NO devuelve ningún indicador de botón — el
+ * único código de la tabla que ofrecía uno (freno de plata R1, ver
+ * CODIGO_RECHAZO_ANULAR_RESERVA_CON_FRENO_DE_PLATA) dejó de bloquear, así que ningún caso
+ * real ofrece más un camino de "Emitir factura" desde este cartel.
  *
  * `CONCURRENT_EDIT` NO pasa por acá: el componente lo sigue resolviendo antes de llamar a
  * esta función (regla de la spec: "ya funciona bien, no se toca").
@@ -76,7 +92,7 @@ const MAPA_CODIGO_A_TEXTO = {
  *   antes de esta tanda (distinto según sea annul-with-credit / draft / confirm). Es el
  *   fallback para cualquier código que no esté en la tabla de arriba, o si el 409 no
  *   trajo ningún código.
- * @returns {{ texto: string, mostrarBotonEmitirFactura: boolean }}
+ * @returns {{ texto: string }}
  */
 export function resolverTextoRechazoAnularReserva(error, textoNeutro) {
   const codigo = leerCodigoDeNegocio(error);
@@ -84,6 +100,5 @@ export function resolverTextoRechazoAnularReserva(error, textoNeutro) {
 
   return {
     texto: textoMapeado ?? textoNeutro,
-    mostrarBotonEmitirFactura: codigo === CODIGO_RECHAZO_ANULAR_RESERVA_CON_FRENO_DE_PLATA,
   };
 }

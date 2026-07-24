@@ -1,6 +1,13 @@
 /**
  * Tests de lógica pura de la Tanda 7 (spec docs/ux/2026-07-20-t5-a-t9-contrato-pantalla-motor.md):
- * "Anular un servicio: pre-chequeo + candado R1 con camino servido".
+ * "Anular un servicio: pre-chequeo + candado de voucher/sin-cliente con camino servido".
+ *
+ * Obra "anular sin factura" (2026-07-23, decisión del dueño): el freno R1 (pago al operador
+ * sin factura) DEJÓ de bloquear "anular servicio" — resolverBloqueoAnularServicio() sigue
+ * siendo un passthrough genérico del `canCancel` del backend (por eso el test con un motivo
+ * "R1" de ejemplo sigue siendo válido, ya no representa un caso real que el backend mande) y
+ * resolverRechazoAnularServicio() ya no ofrece el botón "Emitir factura" para ese código en
+ * ningún caller (ver la sección de abajo).
  *
  * Corren con Node puro sin bundler: node --test src/features/reservas/lib/serviceCancellationGuard.test.mjs
  */
@@ -16,10 +23,19 @@ import {
 
 const TEXTO_VOUCHER =
   "No se puede anular este servicio: la reserva tiene vouchers emitidos. Anulá los vouchers primero si necesitás corregir datos.";
+// Texto de ejemplo para probar el passthrough genérico de resolverBloqueoAnularServicio: ya
+// no es un motivo real que el backend mande (el freno R1 de "anular servicio" se eliminó),
+// pero la función no le presta atención al contenido, solo lo repite tal cual venga.
 const TEXTO_R1 =
   "No se puede anular este servicio todavía: ya tiene pagos al operador y la reserva aún no tiene factura emitida para registrar el reembolso a tu favor. Emití la factura de venta o gestioná el reembolso con el operador antes de anular el servicio.";
 const TEXTO_SIN_CLIENTE =
   "No se puede anular este servicio: la reserva tiene una factura emitida pero no tiene un cliente asignado para facturarle la nota de crédito. Asigná un cliente a la reserva antes de anular.";
+// Texto REAL que manda hoy el backend cuando "bajar el estado" choca con el freno de plata
+// (obra 2026-07-23): ya no pide "emitir factura", orienta a resolver el reembolso primero.
+const TEXTO_GESTIONAR_REEMBOLSO_BAJAR_ESTADO =
+  "No se puede bajar el estado de este servicio todavía: ya tiene pagos al operador por esta reserva " +
+  "que todavía no están resueltos. Gestioná primero el reembolso con el operador (o cancelá el " +
+  "servicio) antes de cambiar su estado.";
 
 // ─── resolverBloqueoAnularServicio: pre-chequeo (papelera gris + chip) ───────
 
@@ -69,13 +85,17 @@ test("servicio null/undefined → no explota, sin bloqueo", () => {
 
 // ─── resolverRechazoAnularServicio: modal post-409, botón por código ─────────
 
-test("code CANCEL_SERVICE_UNANCHORED_OPERATOR_REFUND (R1) → botón 'Emitir factura'", () => {
+// Obra "anular sin factura" (2026-07-23): el freno R1 dejó de bloquear "anular servicio", así
+// que el POST cancel-service ya no manda este code — pero sigue siendo un código conocido
+// (lo mandan "reasignar operador" y "bajar estado", ver el test de más abajo) y ya no tiene
+// botón: el motor orienta a "gestioná el reembolso con el operador", no a emitir factura.
+test("code CANCEL_SERVICE_UNANCHORED_OPERATOR_REFUND (R1) → código conocido, SIN botón (el freno de 'anular servicio' se eliminó)", () => {
   const error = { status: 409, payload: { code: CODIGO_RECHAZO_ANULAR_SERVICIO.PAGO_SIN_FACTURA, message: TEXTO_R1 } };
 
   const resultado = resolverRechazoAnularServicio(error);
 
   assert.equal(resultado.codigoConocido, true);
-  assert.equal(resultado.boton, "emitir-factura");
+  assert.equal(resultado.boton, null);
 });
 
 test("code CANCEL_SERVICE_VOUCHER_LIVE → botón 'Ver vouchers de la reserva'", () => {
@@ -120,26 +140,26 @@ test("code desconocido (no catalogado) → código NO conocido, sin botón", () 
   assert.equal(resultado.boton, null);
 });
 
-// ─── P1 "circuito proveedor" (2026-07-21): mismo código, un caller nuevo ─────
+// ─── P1 "circuito proveedor" (2026-07-21): mismo código, un caller que sigue bloqueando ──
 //
 // Bajar el workflowStatus de un servicio con pagos al operador ya cobrados también pasa
-// por el candado R1 (ahora los 10 endpoints Update/UpdateStatus de los 5 tipos devuelven
-// el MISMO code que "anular servicio"). ServiceInlineCard.jsx (editor de Hotel/Vuelo/
-// Traslado/Paquete/Asistencia) reusa esta misma función para decidir el botón — este test
-// documenta que el 409 del PUT de edición se resuelve igual que el 409 de cancel-service,
-// sin que el editor necesite su propio mapeo de códigos.
-test("editor de servicio (PUT/PATCH de edición) con code R1 → mismo botón 'Emitir factura' que anular", () => {
+// por el candado de plata (ahora los 10 endpoints Update/UpdateStatus de los 5 tipos
+// devuelven el MISMO code que "anular servicio" solía mandar). ServiceInlineCard.jsx
+// (editor de Hotel/Vuelo/Traslado/Paquete/Asistencia) reusa esta misma función para el
+// cartel de rechazo — este test documenta que el 409 del PUT de edición se resuelve igual
+// que el 409 de cancel-service: código conocido, SIN botón (obra 2026-07-23, el mensaje ya
+// no pide "emitir factura").
+test("editor de servicio (PUT/PATCH de edición) con code R1 → código conocido, SIN botón (ya no pide factura)", () => {
   const error = {
     status: 409,
     payload: {
       code: CODIGO_RECHAZO_ANULAR_SERVICIO.PAGO_SIN_FACTURA,
-      message:
-        "No se puede bajar el estado de este servicio todavía: ya tiene pagos al operador y la reserva aún no tiene factura emitida para registrar el reembolso a tu favor. Emití la factura de venta o gestioná el reembolso con el operador antes de cambiar el estado del servicio.",
+      message: TEXTO_GESTIONAR_REEMBOLSO_BAJAR_ESTADO,
     },
   };
 
   const resultado = resolverRechazoAnularServicio(error);
 
   assert.equal(resultado.codigoConocido, true);
-  assert.equal(resultado.boton, "emitir-factura");
+  assert.equal(resultado.boton, null);
 });

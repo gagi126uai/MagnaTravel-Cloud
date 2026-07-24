@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { Clock, CreditCard, Download, Eye, ExternalLink, FileText, History, Loader2, Paperclip, Pencil, Receipt, Send, Trash2, Users, Plus, RefreshCw, Check, Ban } from "lucide-react";
 import { api } from "../../../api";
 import { showConfirm, showError, showSuccess } from "../../../alerts";
@@ -666,12 +666,7 @@ function PassengerCountsWidget({ initial, expectedCapacity = 0, onSave }) {
 export default function ReservaDetailPage() {
   const { publicId } = useParams();
   const navigate = useNavigate();
-  const location = useLocation();
-  // "Ir a la reserva a facturar" (link desde la cuenta del operador, Tanda P1):
-  // la ficha aterriza directo en Estado de Cuenta con el panel de factura
-  // abierto — el link cumple lo que promete, sin que el usuario busque solo.
-  const llegoParaFacturar = Boolean(location.state?.irAFacturar);
-  const [activeTab, setActiveTab] = useState(llegoParaFacturar ? "account" : "services");
+  const [activeTab, setActiveTab] = useState("services");
 
   // ADR-020: enableSoldToSettleStates eliminado del ciclo. El ciclo es unico y directo.
   // Solo leemos los flags que siguen vigentes.
@@ -754,7 +749,7 @@ export default function ReservaDetailPage() {
   const [cobroAEditar, setCobroAEditar] = useState(null);
   // Ficha de emisión de factura en línea (2026-06-13, guia-ux-gaston.md): reemplaza CreateInvoiceModal.
   // Solo una ficha abierta a la vez: si está abierta la factura, se oculta el botón de cobro y viceversa.
-  const [showFacturaInline, setShowFacturaInline] = useState(llegoParaFacturar);
+  const [showFacturaInline, setShowFacturaInline] = useState(false);
   // ADR-031: el flujo Budget→InManagement ya no pasa por un modal centralizado.
   // El widget de cantidades avanza la reserva directo (sin confirmación extra).
   // confirmReservaModal fue eliminado — ya no hay seteo en isOpen:true en ningún camino.
@@ -2209,15 +2204,10 @@ export default function ReservaDetailPage() {
                 onCancelService={(service, motivo, creditSelection) => handleCancelService(service, motivo, creditSelection)}
                 saleInvoices={activeSaleInvoices}
                 onIrAFacturas={() => setActiveTab("account")}
-                // Tanda 7 "contrato pantalla-motor" (2026-07-20): botones de camino del
-                // modal de bloqueo 409 al anular UN servicio. Mismo patrón que la Tanda 3
-                // (CancelarReservaInline → onIrAEmitirFactura): hay que navegar a la solapa
-                // ANTES de activar el panel/tab, porque ServiceList vive en la solapa
-                // "services" y esos paneles solo se montan dentro de otras solapas.
-                onIrAEmitirFactura={() => {
-                    setActiveTab("account");
-                    setShowFacturaInline(true);
-                }}
+                // Tanda 7 "contrato pantalla-motor" (2026-07-20): botón de camino del modal de
+                // bloqueo 409 al anular UN servicio, único motivo que le queda desde la obra
+                // "anular sin factura" (2026-07-23: el freno por pago al operador sin factura
+                // se eliminó, así que "Emitir factura" ya no aplica acá).
                 onIrAVouchers={() => setActiveTab("voucher")}
                 // ADR-025: "Cancelar varios" en línea.
                 // canCancelServices: gate UI-only; el server siempre re-valida.
@@ -2260,13 +2250,6 @@ export default function ReservaDetailPage() {
                   onCancelar={() => {
                     setShowInlineCard(false);
                     setServiceToEditInline(null);
-                  }}
-                  // P1 "circuito proveedor" (2026-07-21): mismo cableado que ServiceList
-                  // (onIrAEmitirFactura más abajo) — hay que cambiar de solapa ANTES de abrir
-                  // el panel, porque EmitirFacturaInline vive en la solapa "account".
-                  onIrAEmitirFactura={() => {
-                    setActiveTab("account");
-                    setShowFacturaInline(true);
                   }}
                 />
               )}
@@ -2501,14 +2484,6 @@ export default function ReservaDetailPage() {
                   onSilentRefresh={() => {
                     refrescarExtracto();
                     fetchReserva({ showLoading: false, preserveOnError: true });
-                  }}
-                  // Tanda 3 "contrato pantalla-motor" (2026-07-20): botón "Emitir factura" del
-                  // freno de plata R1. Cierra este panel y abre el de emisión de factura que ya
-                  // existe en la ficha — mismo patrón que el resto de los paneles inline (solo
-                  // uno abierto a la vez).
-                  onIrAEmitirFactura={() => {
-                    setShowCancelInline(false);
-                    setShowFacturaInline(true);
                   }}
                 />
               )}

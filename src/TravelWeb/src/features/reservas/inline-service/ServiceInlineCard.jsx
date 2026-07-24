@@ -34,7 +34,6 @@ import { hasPermission } from "../../../auth";
 import { api } from "../../../api";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { getReservationServicePublicId } from "../lib/reservationServiceModel";
-import { resolverRechazoAnularServicio } from "../lib/serviceCancellationGuard";
 import { CartelEmergente, CARTEL_EMERGENTE_VARIANTES } from "../../../components/CartelEmergente";
 import { esRechazoCostoMenorAPagado, agregarConfirmacionCostoMenorAPagado } from "../lib/costConfirmationGuard";
 import { HotelInlineForm, calcularNoches, redondearDinero, formatearPrecio } from "./HotelInlineForm";
@@ -353,13 +352,14 @@ function detectarTabParaEdicion(serviceToEdit) {
  *   suppliers           — lista de proveedores del contexto de la reserva
  *   onGuardado          — callback que se llama con opciones después de guardar exitosamente
  *   onCancelar          — callback para cerrar la ficha sin guardar
- *   onIrAEmitirFactura   — callback () => void: abre la ficha de emisión de factura en la
- *     solapa de Facturación de la MISMA reserva (patrón Tanda 7 de ServiceList/ReservaDetailPage).
- *     Se usa cuando el PUT de edición rechaza con 409 porque el servicio ya tiene pagos al
- *     operador y la reserva todavía no tiene factura para anclar el reembolso (P1 "circuito
- *     proveedor", 2026-07-21). Opcional: si no llega, el botón simplemente no se muestra.
+ *
+ * Obra "anular sin factura" (2026-07-23): el PUT de edición puede seguir rechazando con 409
+ * cuando se reasigna el operador de un servicio pagado o se baja su estado (el servicio ya
+ * tiene pagos al operador que quedarían sin resolver) — pero el motor ya NO ofrece "emitir
+ * factura" como salida, así que este componente ya no necesita un botón de camino para ese
+ * 409: el Cartel Emergente de más abajo solo muestra el mensaje real (tal cual) + "Entendido".
  */
-export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuardado, onCancelar, onIrAEmitirFactura }) {
+export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuardado, onCancelar }) {
     const canSeeCost = hasPermission("cobranzas.see_cost");
 
     // La pestaña activa: si estamos editando, detectamos el tipo automáticamente.
@@ -382,9 +382,9 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
     const [errorValidacion, setErrorValidacion] = useState(null);
     // Rechazo LARGO del motor (409/400 real que devolvió el backend al intentar guardar).
     // Spec del cartel emergente (2026-07-22): esto sí es "lo intentaste y el motor te frenó"
-    // → va al Cartel Emergente (ventana), nunca incrustado en la ficha.
-    // `boton` sale de resolverRechazoAnularServicio (mismo mapeo que "anular servicio": el
-    // backend manda el MISMO code cuando el motivo es "pago al operador sin factura viva").
+    // → va al Cartel Emergente (ventana), nunca incrustado en la ficha. Guarda directo el
+    // mensaje tal cual (string) — desde la obra "anular sin factura" (2026-07-23) ningún
+    // código de este PUT ofrece botón de camino, así que no hace falta guardar nada más.
     const [rechazoMotor, setRechazoMotor] = useState(null);
     // Aviso ÁMBAR de la P3 "circuito proveedor" (2026-07-22, P1=A del cartel emergente): el
     // motor pidió confirmar que bajar el costo del operador genera saldo a favor. Guarda el
@@ -713,15 +713,13 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
 
             // Si falla, la ficha queda abierta con todo intacto (guía UX ronda 2) y el rechazo
             // real del motor se muestra en el Cartel Emergente (spec 2026-07-22).
-            // P1 "circuito proveedor" (2026-07-21): el PUT de edición también puede rechazar con
-            // el MISMO código que "anular servicio" (el servicio ya tiene pagos al operador y la
-            // reserva no tiene factura para anclar el reembolso). Reusamos la lib de la Tanda 7
-            // para decidir si corresponde ofrecer el botón "Emitir factura" — nunca se adivina
-            // el motivo comparando el texto del mensaje.
-            setRechazoMotor({
-                mensaje: getApiErrorMessage(error, "No se pudo guardar. Revisá la conexión y probá de nuevo."),
-                boton: resolverRechazoAnularServicio(error).boton,
-            });
+            // P1 "circuito proveedor" (2026-07-21): el PUT de edición también puede rechazar
+            // cuando se reasigna el operador de un servicio pagado o se baja su estado (la
+            // reserva tiene pagos al operador que quedarían sin resolver). Obra "anular sin
+            // factura" (2026-07-23): ese rechazo ya NO ofrece ningún botón de camino — el
+            // mensaje real del motor (getApiErrorMessage) ya orienta a "gestioná el reembolso
+            // con el operador", así que alcanza con mostrarlo tal cual.
+            setRechazoMotor(getApiErrorMessage(error, "No se pudo guardar. Revisá la conexión y probá de nuevo."));
         } finally {
             setGuardando(false);
         }
@@ -958,22 +956,15 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
                     )}
                     {/* Aviso 3 del inventario (spec 2026-07-22): rechazo LARGO del motor (409/400
                         real) → Cartel Emergente, nunca incrustado. Guía UX ronda 2 sigue firme:
-                        la ficha queda abierta con todo lo cargado intacto detrás de la ventana. */}
+                        la ficha queda abierta con todo lo cargado intacto detrás de la ventana.
+                        Sin botón de camino (obra "anular sin factura", 2026-07-23): el mensaje
+                        real del motor ya le dice al usuario qué hacer, "Entendido" alcanza. */}
                     <CartelEmergente
                         isOpen={Boolean(rechazoMotor)}
                         variant={CARTEL_EMERGENTE_VARIANTES.BLOQUEO}
-                        message={rechazoMotor?.mensaje}
+                        message={rechazoMotor}
                         onClose={() => setRechazoMotor(null)}
                         dataTestId="inline-card-rechazo-motor"
-                        actionTestId="inline-card-emitir-factura"
-                        // Motivo R1 (pago al operador sin factura viva) — mismo botón que la
-                        // Tanda 7 del modal de "anular servicio": lleva a la solapa de
-                        // Facturación de esta misma reserva para emitir la factura pendiente.
-                        action={
-                            rechazoMotor?.boton === "emitir-factura" && onIrAEmitirFactura
-                                ? { label: "Emitir factura", onClick: onIrAEmitirFactura }
-                                : null
-                        }
                     />
                     <div className="flex gap-2">
                         <button

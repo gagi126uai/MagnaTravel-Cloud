@@ -47,7 +47,7 @@ import { showSuccess, showError, showConfirm } from "../../../alerts";
 // P1 "circuito proveedor" (2026-07-21): mismo motivo/código que "anular servicio" (Tanda 7),
 // reusado acá para el PATCH de "bajar el estado" desde la cuenta del proveedor. No se duplica
 // el mapeo code → botón, se importa la misma lib pura.
-import { resolverRechazoAnularServicio } from "../../reservas/lib/serviceCancellationGuard";
+import { CODIGO_RECHAZO_ANULAR_SERVICIO } from "../../reservas/lib/serviceCancellationGuard";
 import { getPublicId } from "../../../lib/publicIds";
 import { useDebounce } from "../../../hooks/useDebounce";
 import { getApiErrorMessage, isDatabaseUnavailableError } from "../../../lib/errors";
@@ -1154,10 +1154,12 @@ function ServiceStatusEditor({ service, onUpdated, canEdit }) {
     const [value, setValue] = useState(service.status || "Solicitado");
     const [saving, setSaving] = useState(false);
     // P1 "circuito proveedor" (2026-07-21): cuando el PATCH de "bajar el estado" choca con el
-    // candado R1 (el servicio ya tiene pagos al operador y la reserva no tiene factura de venta
-    // para anclar el reembolso), el backend manda el MISMO code que "anular servicio". Guardamos
-    // acá el mensaje real + si corresponde ofrecer el camino "Emitir factura" — la fila queda con
-    // un aviso fijo (no un toast que desaparece) porque el usuario necesita el link a la reserva.
+    // candado de plata (el servicio ya tiene pagos al operador que quedarían sin resolver), el
+    // backend manda el MISMO code que "anular servicio" solía mandar. Guardamos acá el mensaje
+    // real para mostrarlo en ventana (Aviso 1 del inventario, spec 2026-07-22: rechazo largo del
+    // motor → Cartel Emergente, no un toast que desaparece solo).
+    // Obra "anular sin factura" (2026-07-23): este rechazo YA NO ofrece el botón "Emitir
+    // factura" — el mensaje del motor orienta a "gestioná el reembolso con el operador".
     const [bloqueoPagoSinFactura, setBloqueoPagoSinFactura] = useState(null);
 
     if (!endpoint || !canEdit) {
@@ -1182,13 +1184,14 @@ function ServiceStatusEditor({ service, onUpdated, canEdit }) {
             // ("Failed to fetch", "Internal Server Error") lleguen al usuario.
             setValue(previous);
             const mensaje = getApiErrorMessage(error, "No se pudo actualizar el estado.");
-            // Mismo código que "anular servicio" (CODIGO_RECHAZO_ANULAR_SERVICIO.PAGO_SIN_FACTURA):
-            // reusamos la lib de la Tanda 7 para no adivinar el motivo comparando texto.
-            const rechazo = resolverRechazoAnularServicio(error);
-            if (rechazo.boton === "emitir-factura") {
-                // El aviso fijo de abajo ya cuenta el motivo con su link: un toast
-                // encima seria señal duplicada compitiendo por la atencion.
-                setBloqueoPagoSinFactura({ mensaje, reservaPublicId: service.reservaPublicId || null });
+            // Mismo code que manda "anular servicio" en otros casos (nunca se adivina el
+            // motivo comparando texto libre) — acá el único code real que puede llegar de este
+            // endpoint es PAGO_SIN_FACTURA (candado de "bajar estado"), así que lo comparamos
+            // directo en vez de reusar el mapeo de botón (que ya no aplica: obra 2026-07-23).
+            if (error?.payload?.code === CODIGO_RECHAZO_ANULAR_SERVICIO.PAGO_SIN_FACTURA) {
+                // Aviso 1 del inventario (spec 2026-07-22): rechazo largo del motor → ventana
+                // fija, no un toast que desaparece solo.
+                setBloqueoPagoSinFactura(mensaje);
             } else {
                 showError(mensaje, "No se pudo cambiar el estado");
             }
@@ -1217,22 +1220,15 @@ function ServiceStatusEditor({ service, onUpdated, canEdit }) {
                 ))}
             </select>
             {/* Aviso 1 del inventario (spec 2026-07-22): rechazo largo del motor → ventana
-                única, no un recuadro incrustado en la fila que deformaba la tabla. */}
+                única, no un recuadro incrustado en la fila que deformaba la tabla. Sin botón
+                de camino (obra "anular sin factura", 2026-07-23): el mensaje ya orienta a
+                gestionar el reembolso con el operador, "Entendido" alcanza. */}
             <CartelEmergente
                 isOpen={Boolean(bloqueoPagoSinFactura)}
                 variant={CARTEL_EMERGENTE_VARIANTES.BLOQUEO}
-                message={bloqueoPagoSinFactura?.mensaje}
+                message={bloqueoPagoSinFactura}
                 onClose={() => setBloqueoPagoSinFactura(null)}
                 dataTestId="status-editor-bloqueo-pago-sin-factura"
-                action={
-                    bloqueoPagoSinFactura?.reservaPublicId
-                        ? {
-                            label: "Ir a la reserva a facturar",
-                            to: `/reservas/${bloqueoPagoSinFactura.reservaPublicId}`,
-                            state: { irAFacturar: true },
-                        }
-                        : null
-                }
             />
         </div>
     );

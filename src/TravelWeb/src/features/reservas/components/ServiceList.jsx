@@ -543,36 +543,25 @@ function ModalBorrarVsCancelar({ service, saleInvoices = [], onBorrar, onCancela
 
 /**
  * Modal que aparece cuando el backend rechaza la anulacion de un servicio con 409.
- * Esto ocurre por uno de 3 motivos reales (Tanda 7, 2026-07-20): voucher emitido vivo,
- * pago al operador sin factura de venta (freno de plata R1), o factura viva sin cliente
- * asignado. Antes de esta tanda el modal mostraba SIEMPRE el mismo parrafo generico de
- * "nota de credito" con el mismo boton "Ver facturas" sin importar el motivo real — ahora
- * cada motivo tiene SU propio boton, elegido por el `code` que manda el backend (nunca
- * adivinando el motivo comparando el texto del mensaje).
- *
- * El mensaje descriptivo viene del backend TAL CUAL (no se reescribe en el front).
+ * Antes de la obra "anular sin factura" (2026-07-23) esto podia pasar por 3 motivos: voucher
+ * emitido vivo, pago al operador sin factura de venta (freno de plata R1), o factura viva sin
+ * cliente asignado. El freno R1 DESAPARECIO por decision del dueno — anular un servicio
+ * procede directo aunque tenga pagos al operador sin factura — asi que hoy este modal solo
+ * puede aparecer por voucher vivo o factura viva sin cliente. El mensaje descriptivo viene
+ * del backend TAL CUAL (no se reescribe en el front).
  *
  * Accesibilidad: foco al boton "Entendido" al montar, Escape cierra, role="dialog".
  *
  * Props:
  * - mensaje: string con el detalle del error que mando el backend
- * - rechazo: { codigoConocido: boolean, boton: "emitir-factura"|"ver-vouchers"|null } —
- *   salida de resolverRechazoAnularServicio. Si el codigo NO es ninguno de los 3
- *   catalogados (ej: el candado de la reserva, u otra carrera fuera de lo esperado, o
- *   backend viejo sin `code`), el modal muestra SOLO el mensaje real del motor — que ya
- *   viene curado en criollo — SIN el parrafo de "nota de credito" ni el boton "Ver
- *   facturas": esos textos son ESPECIFICOS del motivo NC y quedarian mintiendo si el
- *   motivo real es otro (fix 2026-07-23: el modal del candado mostraba de yapa el texto
- *   de NC aunque el candado no tiene nada que ver con facturacion).
- * - onIrAEmitirFactura: () => void — abre la ficha de emision de factura (motivo R1, D1 firmada)
+ * - rechazo: { codigoConocido: boolean, boton: "ver-vouchers"|null } — salida de
+ *   resolverRechazoAnularServicio. Si el codigo NO es ninguno de los catalogados (backend
+ *   viejo sin `code`, u otra carrera fuera de lo esperado), el modal muestra SOLO el mensaje
+ *   real del motor — que ya viene curado en criollo — sin ningun boton extra.
  * - onIrAVouchers: () => void — navega a la solapa "Vouchers" (motivo voucher vivo)
  * - onClose: () => void
- *
- * Nota (fix 2026-07-23): este modal YA NO recibe `onIrAFacturas`. El botón "Ver facturas de
- * la reserva" era el camino de respaldo genérico que se sacó (ver comentario más abajo, junto
- * al `<div>` de botones) — ningún motivo catalogado hoy lo necesita.
  */
-function ModalBloqueoCancelacionServicio({ mensaje, rechazo, onIrAEmitirFactura, onIrAVouchers, onClose }) {
+function ModalBloqueoCancelacionServicio({ mensaje, rechazo, onIrAVouchers, onClose }) {
     // Si no llega ningun rechazo estructurado (por si algun caller viejo sigue pasando
     // solo el mensaje), tratamos como "codigo no conocido" — mismo camino de respaldo.
     const codigoConocido = rechazo?.codigoConocido === true;
@@ -625,20 +614,11 @@ function ModalBloqueoCancelacionServicio({ mensaje, rechazo, onIrAEmitirFactura,
                 </div>
 
                 <div className="p-6 space-y-4">
-                    {/* El mensaje viene del backend con el detalle real (voucher vivo, pago al
-                        operador sin factura, o factura viva sin cliente asignado) — se muestra
-                        TAL CUAL, sin reescribirlo. */}
+                    {/* El mensaje viene del backend con el detalle real (voucher vivo, o factura
+                        viva sin cliente asignado) — se muestra TAL CUAL, sin reescribirlo. */}
                     <div className="rounded-xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900/40 dark:bg-rose-950/20 dark:text-rose-200">
                         {mensaje}
                     </div>
-                    {/* Fix 2026-07-23: el párrafo de "nota de crédito" y el botón "Ver facturas"
-                        de acá abajo son ESPECÍFICOS del motivo NC (factura/voucher vivo) y NO
-                        aplican a cualquier 409 — antes se mostraban SIEMPRE que el `code` no
-                        estuviera catalogado, aunque el motivo real fuera otro (ej: el candado de
-                        la reserva). Con código NO catalogado, el mensaje real del motor (arriba,
-                        ya en criollo) es lo único que se muestra; el usuario solo puede cerrar
-                        con "Entendido" — mismo criterio que ya usa el motivo "sin cliente"
-                        catalogado (código conocido, sin botón de camino). */}
                 </div>
 
                 <div className="flex flex-col sm:flex-row justify-end gap-3 border-t border-slate-100 px-6 py-4 dark:border-slate-800">
@@ -650,23 +630,8 @@ function ModalBloqueoCancelacionServicio({ mensaje, rechazo, onIrAEmitirFactura,
                     >
                         Entendido
                     </button>
-                    {/* Motivo R1 (pago al operador sin factura) — D1 firmada 2026-07-18: boton
-                        "Emitir factura" que abre la ficha de emision en la misma reserva. */}
-                    {boton === "emitir-factura" && onIrAEmitirFactura && (
-                        <button
-                            type="button"
-                            data-testid="btn-ir-a-emitir-factura"
-                            onClick={() => {
-                                onIrAEmitirFactura();
-                                onClose();
-                            }}
-                            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-indigo-700"
-                        >
-                            <FileText className="h-4 w-4" />
-                            Emitir factura
-                        </button>
-                    )}
-                    {/* Motivo voucher vivo — mismo patron que "Ver facturas", pero a la solapa
+                    {/* Motivo voucher vivo — único botón de camino que le queda a este modal
+                        desde la obra "anular sin factura" (2026-07-23): navega a la solapa
                         correcta (Vouchers, no Estado de Cuenta). */}
                     {boton === "ver-vouchers" && onIrAVouchers && (
                         <button
@@ -682,13 +647,6 @@ function ModalBloqueoCancelacionServicio({ mensaje, rechazo, onIrAEmitirFactura,
                             Ver vouchers de la reserva
                         </button>
                     )}
-                    {/* Fix 2026-07-23: el botón "Ver facturas de la reserva" quedaba SIEMPRE
-                        visible con código no catalogado, aunque el motivo real no tuviera nada
-                        que ver con facturación (ej: el candado de la reserva). Ese botón ahora
-                        es EXCLUSIVO del camino NC — no hay camino de respaldo genérico: con
-                        código no catalogado, el mensaje real del motor ya le dice al usuario
-                        qué pasó, y "Entendido" alcanza para cerrar (mismo criterio que "sin
-                        cliente", el motivo catalogado sin botón de camino, arriba). */}
                 </div>
             </div>
         </div>
@@ -1001,10 +959,6 @@ function MiniFormularioPasajerosFaltantes({ reservaId, reserva, servicio, covera
  *                                     reenvía a la sección "Anular varios" (Tanda 4: misma paridad de ayuda
  *                                     en filas fallidas por bloqueo fiscal).
  *                                     Opcional; si no se pasa, el botón no aparece.
- *   onIrAEmitirFactura              — callback () => void: abre la ficha de emisión de factura en la misma
- *                                     reserva (Tanda 7, D1 firmada 2026-07-18). Se usa en el modal de bloqueo
- *                                     409 cuando el motivo es "pago al operador sin factura" (R1).
- *                                     Opcional; si no se pasa, el botón no aparece.
  *   onIrAVouchers                   — callback () => void: navega a la solapa "Vouchers" de la reserva
  *                                     (Tanda 7). Se usa en el modal de bloqueo 409 cuando el motivo es
  *                                     "voucher emitido vivo". Opcional; si no se pasa, el botón no aparece.
@@ -1050,7 +1004,6 @@ export function ServiceList({
     onServiceConfirmed,
     onServiceResolved,
     onIrAFacturas,
-    onIrAEmitirFactura,
     onIrAVouchers,
     // Multimoneda (2026-06-11): true cuando la reserva mezcla servicios en ARS y USD.
     // Cuando es true se muestra el cartelito $/US$ en cada precio y la fila TOTAL al pie.
@@ -1132,8 +1085,9 @@ export function ServiceList({
     const [modalBorrarCancelar, setModalBorrarCancelar] = useState(null);
 
     // Estado del modal de bloqueo fiscal 409: se abre cuando el backend rechaza la
-    // anulacion de un servicio (voucher vivo, pago al operador sin factura, o factura
-    // viva sin cliente asignado — Tanda 7, 2026-07-20).
+    // anulacion de un servicio (voucher vivo, o factura viva sin cliente asignado —
+    // Tanda 7, 2026-07-20; el freno por "pago al operador sin factura" se eliminó en la
+    // obra "anular sin factura", 2026-07-23).
     // Guarda { mensaje, rechazo } — el texto real del backend y el botón que corresponde
     // según el `code` (resolverRechazoAnularServicio).
     const [modalBloqueo409, setModalBloqueo409] = useState(null);
@@ -1179,10 +1133,10 @@ export function ServiceList({
 
             // Si la cancelación fue bloqueada por el backend (409), mostramos el modal
             // explicativo en vez del toast genérico de error.
-            // El 409 ocurre por voucher vivo, pago al operador sin factura (R1), o factura
-            // viva sin cliente asignado (Tanda 7). resolverRechazoAnularServicio lee el
-            // `code` del body para elegir el botón correcto — el mensaje sigue viniendo
-            // del backend tal cual.
+            // El 409 ocurre por voucher vivo o factura viva sin cliente asignado (Tanda 7;
+            // el freno por "pago al operador sin factura" se eliminó, obra 2026-07-23).
+            // resolverRechazoAnularServicio lee el `code` del body para elegir el botón
+            // correcto — el mensaje sigue viniendo del backend tal cual.
             if (!respuesta?.ok && respuesta?.error?.status === 409) {
                 setModalBorrarCancelar(null);
                 setModalBloqueo409({
@@ -1236,7 +1190,6 @@ export function ServiceList({
                 <ModalBloqueoCancelacionServicio
                     mensaje={modalBloqueo409.mensaje}
                     rechazo={modalBloqueo409.rechazo}
-                    onIrAEmitirFactura={onIrAEmitirFactura}
                     onIrAVouchers={onIrAVouchers}
                     onClose={() => setModalBloqueo409(null)}
                 />
