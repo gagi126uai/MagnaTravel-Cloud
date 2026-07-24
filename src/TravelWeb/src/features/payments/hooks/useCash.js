@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../../api";
 import { showError } from "../../../alerts";
 import { useFinanceActions } from "./useFinanceActions";
 import { useDebounce } from "../../../hooks/useDebounce";
 import { isDatabaseUnavailableError } from "../../../lib/errors";
+import { esRespuestaObsoleta, decidirAccionCargaCaja } from "../lib/cashRaceGuard";
 
 const emptyPage = {
   items: [],
@@ -51,6 +52,13 @@ export function useCash() {
   const [databaseUnavailable, setDatabaseUnavailable] = useState(false);
   const debouncedSearch = useDebounce(searchTerm, 300);
 
+  // Fix #41 (Tanda 3, 2026-07-24), "Caja sin carreras": id incremental de pedido. Cada
+  // llamada a loadData saca un número nuevo; cuando la respuesta vuelve, si YA salió un
+  // pedido más nuevo mientras esta estaba en vuelo, la descartamos. Sin esto, si dos
+  // pedidos van "a la vez" (ej. el usuario cambia de mes rápido) y el de ANTES tarda más
+  // en responder que el de DESPUÉS, la respuesta vieja podía pisar a la nueva en pantalla.
+  const requestIdRef = useRef(0);
+
   // Mes seleccionado: guardamos el primer día del mes como Date.
   // Arrancamos en el mes actual del cliente (no en UTC, para evitar bugs de zona horaria).
   const [selectedMonth, setSelectedMonth] = useState(() => {
@@ -83,6 +91,9 @@ export function useCash() {
   })();
 
   const loadData = useCallback(async () => {
+    // Sacamos número de pedido ANTES del await: si mientras esta llamada está en vuelo
+    // se dispara otra (usuario cambió de filtro/mes/página), la de acá queda vieja.
+    const requestId = ++requestIdRef.current;
     setLoading(true);
     try {
       // Mandamos year+month como enteros al backend en ambas llamadas.
@@ -113,31 +124,58 @@ export function useCash() {
         api.get(`/treasury/movements?${movementsParams.toString()}`),
       ]);
 
+      // Guard de respuestas fuera de orden (fix #41): si ya salió un pedido más nuevo
+      // mientras este estaba en vuelo, esta respuesta llegó VIEJA — la descartamos sin
+      // tocar el estado (nunca pisa a la respuesta más reciente, aunque llegue después).
+      if (esRespuestaObsoleta(requestId, requestIdRef.current)) return;
+
       setSummary(summaryRes);
       setMovementsPage({ ...emptyPage, ...(movementsRes || {}) });
       setDatabaseUnavailable(false);
     } catch (error) {
+      if (esRespuestaObsoleta(requestId, requestIdRef.current)) return; // idem: un error viejo tampoco pisa
+
       console.error("Error loading cash module:", error);
       setMovementsPage(emptyPage);
       setDatabaseUnavailable(isDatabaseUnavailableError(error));
       showError("Error al cargar caja.");
     } finally {
-      setLoading(false);
+      if (!esRespuestaObsoleta(requestId, requestIdRef.current)) setLoading(false);
     }
   }, [debouncedSearch, directionFilter, page, pageSize, sourceFilter, selectedMonth]);
 
-  // useEffect principal: se ejecuta cada vez que cambia loadData (que incluye cambios de mes,
-  // página, filtros y búsqueda debounceada).
+  // Fix #41 (Tanda 3, 2026-07-24): ANTES había DOS useEffect separados — uno pedía datos
+  // en cada cambio de loadData, otro reiniciaba la página a 1 en cambios de filtro/mes.
+  // Cambiar un filtro disparaba los DOS en la misma tanda: un pedido con la página VIEJA
+  // bajo el filtro nuevo (se tira), y recién el segundo (ya en página 1) traía lo correcto
+  // — dos pedidos al backend por un solo cambio del usuario. Unificados acá en un único
+  // efecto: si cambió algún filtro/mes (no la página) Y no estábamos ya en la página 1,
+  // solo reiniciamos la página y NO pedimos todavía — el cambio de página vuelve a
+  // disparar este mismo efecto (page es parte de las deps de loadData) y ESA corrida sí
+  // pide, ya con la página correcta. Un solo pedido real por cambio del usuario.
+  const firmaFiltrosRef = useRef(null);
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    const firmaFiltrosActual = JSON.stringify([debouncedSearch, directionFilter, sourceFilter, pageSize, selectedMonth]);
+    const esPrimeraCorrida = firmaFiltrosRef.current === null;
+    const accion = decidirAccionCargaCaja({
+      firmaAnterior: firmaFiltrosRef.current,
+      firmaActual: firmaFiltrosActual,
+      esPrimeraCorrida,
+      page,
+    });
+    firmaFiltrosRef.current = firmaFiltrosActual;
 
-  // Al cambiar filtros o de mes, volvemos a la página 1
-  // para que no quede mostrando una página inexistente en el nuevo conjunto de datos.
-  // selectedMonth se incluye porque cambia el universo de movimientos por completo.
-  useEffect(() => {
-    setPage(1);
-  }, [debouncedSearch, directionFilter, sourceFilter, pageSize, selectedMonth]);
+    if (accion === "reiniciar-pagina") {
+      setPage(1);
+      return;
+    }
+
+    loadData();
+    // page se lee acá pero no hace falta declararlo aparte: ya está incluido en las deps
+    // de loadData (useCallback de arriba), así que un cambio de página igual dispara esta
+    // corrida a través del cambio de identidad de `loadData`.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadData]);
 
   const actions = useFinanceActions(loadData);
 

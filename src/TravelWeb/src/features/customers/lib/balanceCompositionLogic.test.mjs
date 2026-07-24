@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import {
   construirFotoDeSaldo,
   debeMostrarBotonUsarSaldo,
+  resolverBadgeSaldoCliente,
 } from "./balanceCompositionLogic.js";
 
 // ============================================================================
@@ -200,4 +201,59 @@ test("debeMostrarBotonUsarSaldo - sin crédito → false aunque tenga permiso", 
 
 test("debeMostrarBotonUsarSaldo - con crédito pero sin permiso → false", () => {
   assert.strictEqual(debeMostrarBotonUsarSaldo({ creditoAFavor: 500, canUsarSaldo: false }), false);
+});
+
+// ============================================================================
+// resolverBadgeSaldoCliente (Tanda 3, 2026-07-24, fix #4: badge de 3 estados
+// en el listado de clientes)
+// ============================================================================
+
+test("resolverBadgeSaldoCliente - con deuda en ARS → estado 'debe' con el monto de esa moneda", () => {
+  const badge = resolverBadgeSaldoCliente([{ currency: "ARS", amount: 15000 }], []);
+  assert.strictEqual(badge.estado, "debe");
+  assert.deepEqual(badge.montos, [{ currency: "ARS", amount: 15000 }]);
+});
+
+test("resolverBadgeSaldoCliente - sin deuda pero con crédito no aplicado → estado 'aFavor'", () => {
+  const badge = resolverBadgeSaldoCliente([], [{ currency: "ARS", amount: 5000 }]);
+  assert.strictEqual(badge.estado, "aFavor");
+  assert.deepEqual(badge.montos, [{ currency: "ARS", amount: 5000 }]);
+});
+
+test("resolverBadgeSaldoCliente - sin deuda y sin crédito → estado 'alDia'", () => {
+  const badge = resolverBadgeSaldoCliente([], []);
+  assert.strictEqual(badge.estado, "alDia");
+  assert.deepEqual(badge.montos, []);
+});
+
+test("resolverBadgeSaldoCliente - arrays undefined (caller viejo) → 'alDia', nunca revienta", () => {
+  const badge = resolverBadgeSaldoCliente(undefined, undefined);
+  assert.strictEqual(badge.estado, "alDia");
+});
+
+test("resolverBadgeSaldoCliente - deuda en ARS Y crédito en USD al mismo tiempo → gana 'debe' (prioridad al riesgo)", () => {
+  const badge = resolverBadgeSaldoCliente(
+    [{ currency: "ARS", amount: 20000 }],
+    [{ currency: "USD", amount: 100 }]
+  );
+  assert.strictEqual(badge.estado, "debe");
+  // La deuda en ARS no se mezcla con el crédito en USD: solo aparece la moneda que debe.
+  assert.deepEqual(badge.montos, [{ currency: "ARS", amount: 20000 }]);
+});
+
+test("resolverBadgeSaldoCliente - multimoneda: dos monedas con deuda, nunca se suman entre sí", () => {
+  const badge = resolverBadgeSaldoCliente(
+    [{ currency: "ARS", amount: 20000 }, { currency: "USD", amount: 50 }],
+    []
+  );
+  assert.strictEqual(badge.estado, "debe");
+  assert.deepEqual(badge.montos, [
+    { currency: "ARS", amount: 20000 },
+    { currency: "USD", amount: 50 },
+  ]);
+});
+
+test("resolverBadgeSaldoCliente - montos en 0 no cuentan como deuda ni como crédito → 'alDia'", () => {
+  const badge = resolverBadgeSaldoCliente([{ currency: "ARS", amount: 0 }], [{ currency: "ARS", amount: 0 }]);
+  assert.strictEqual(badge.estado, "alDia");
 });

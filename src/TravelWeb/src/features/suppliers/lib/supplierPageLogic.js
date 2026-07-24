@@ -501,6 +501,44 @@ export function construirDetalleFilaDeuda(fila, serviciosPorReserva) {
 }
 
 /**
+ * Fix #46 (Tanda 3, 2026-07-24): decide qué pasa con el campo "Monto" cuando el cajero
+ * cambia el servicio elegido en el selector de imputación del Paso 2.
+ *
+ * Antes de este fix, elegir un servicio puntual NO tocaba el monto: quedaba con el saldo
+ * de la FILA completa que se precargó en el Paso 1 (`fila.balance`, que puede sumar VARIOS
+ * servicios de esa reserva+moneda). El cajero terminaba pagando de más o de menos sin
+ * darse cuenta al refinar hacia un servicio concreto.
+ *
+ * `outstandingToOperator` (el saldo REAL pendiente de ESE servicio, descontando pagos
+ * parciales previos) vive en GET /reservas/{id}/supplier-payment-status — esta ficha no lo
+ * carga hoy (evita un pedido más por cada apertura, y acá se puede estar pagando deuda de
+ * varias reservas distintas, no de una sola). Mientras tanto se usa `netCost` del servicio
+ * como aproximación: es exacto si el servicio no tenía pagos parciales previos, pero puede
+ * sobreestimar el saldo si ya se le pagó algo antes.
+ *
+ * @param {{ servicioElegido: {netCost?: number}|null, filaBalance: number|null|undefined, puedeVerMontos: boolean }} params
+ * @returns {{ debeActualizarMonto: boolean, nuevoMonto: string|null }}
+ */
+export function resolverMontoAlElegirServicio({ servicioElegido, filaBalance, puedeVerMontos }) {
+    // Sin permiso de ver costos, el backend enmascara todo a 0: no autocompletamos nada,
+    // el cajero tipea el monto a mano (mismo criterio que el resto de la ficha).
+    if (!puedeVerMontos) {
+        return { debeActualizarMonto: false, nuevoMonto: null };
+    }
+
+    if (!servicioElegido) {
+        // El cajero volvió a "Sin imputar a un servicio específico": restauramos el saldo
+        // de la fila completa que eligió en el Paso 1. Si no hay una fila de origen (por
+        // ejemplo, en modo edición no existe ese concepto), no tocamos el monto — ya viene
+        // precargado con el importe del pago que se está editando.
+        if (filaBalance == null) return { debeActualizarMonto: false, nuevoMonto: null };
+        return { debeActualizarMonto: true, nuevoMonto: String(filaBalance) };
+    }
+
+    return { debeActualizarMonto: true, nuevoMonto: String(servicioElegido.netCost ?? 0) };
+}
+
+/**
  * Arma el mensaje del cartel de éxito que se muestra después de registrar un pago NUEVO
  * (reemplaza el cierre silencioso que tenía la ficha antes del rediseño). Usa el `impact`
  * que devuelve el backend en la respuesta del POST — NUNCA recalculamos el saldo restante

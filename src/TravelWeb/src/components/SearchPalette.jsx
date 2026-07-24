@@ -10,11 +10,21 @@ import { translateStatus } from "../features/reservas/components/ReservaStatusBa
 // "Cancelled" significa algo distinto en cada dominio. Reusamos el traductor que ya usa
 // el extracto del cliente para no duplicar el mapa acá.
 import { traducirMetodoPago, traducirEstadoPago } from "../features/customers/lib/paymentHelpers";
+import {
+    MENSAJE_ERROR_BUSQUEDA,
+    AVISO_ALCANCE_PROPIO,
+    debeMostrarAvisoAlcancePropio,
+    resolverEstadoBusqueda,
+} from "../lib/searchPaletteLogic";
 
 export default function SearchPalette({ isOpen, onClose }) {
     const [query, setQuery] = useState("");
     const [results, setResults] = useState(null);
     const [loading, setLoading] = useState(false);
+    // Fix #39 (Tanda 3, 2026-07-24): antes un error de red/permiso quedaba atrapado en un
+    // console.error invisible y la pantalla se veía igual que "todavía no buscaste nada".
+    // Este estado guarda el mensaje para mostrarlo de verdad, distinto de "sin resultados".
+    const [errorMensaje, setErrorMensaje] = useState(null);
     const inputRef = useRef(null);
     const navigate = useNavigate();
     const debounceRef = useRef(null);
@@ -24,6 +34,7 @@ export default function SearchPalette({ isOpen, onClose }) {
         if (isOpen) {
             setQuery("");
             setResults(null);
+            setErrorMensaje(null);
             setTimeout(() => inputRef.current?.focus(), 100);
         }
     }, [isOpen]);
@@ -51,16 +62,23 @@ export default function SearchPalette({ isOpen, onClose }) {
 
         if (!value.trim()) {
             setResults(null);
+            setErrorMensaje(null);
             return;
         }
 
         debounceRef.current = setTimeout(async () => {
             setLoading(true);
+            setErrorMensaje(null);
             try {
                 const data = await api.get(`/search?query=${encodeURIComponent(value.trim())}`);
                 setResults(data);
             } catch (error) {
+                // Fix #39: el catch ya NO traga el error. "No se pudo buscar" es un mensaje
+                // DISTINTO de "No se encontraron resultados" — el usuario necesita saber que
+                // la búsqueda ni corrió, no que buscó y no había nada.
                 console.error("Search error:", error);
+                setResults(null);
+                setErrorMensaje(MENSAJE_ERROR_BUSQUEDA);
             } finally {
                 setLoading(false);
             }
@@ -82,8 +100,10 @@ export default function SearchPalette({ isOpen, onClose }) {
 
     if (!isOpen) return null;
 
-    const hasResults = results && (results.reservas?.length > 0 || results.files?.length > 0 || results.customers?.length > 0 || results.payments?.length > 0);
-    const noResults = results && !hasResults && query.trim();
+    // Fix #39: un único punto de decisión (resolverEstadoBusqueda, testeado aparte) para no
+    // dejar que loading/error/vacío/con-resultados se pisen entre sí en el JSX.
+    const estadoBusqueda = resolverEstadoBusqueda({ query, loading, results, errorMensaje });
+    const noResults = estadoBusqueda === "sin-resultados";
 
     return (
         <div className="fixed inset-0 z-[100]">
@@ -149,6 +169,11 @@ export default function SearchPalette({ isOpen, onClose }) {
                                         </span>
                                     </button>
                                 ))}
+                                {/* Fix #39: aviso suave cuando el backend recortó a "lo del usuario"
+                                    (sin reservas.view_all) — señal estructurada, nunca deducida. */}
+                                {debeMostrarAvisoAlcancePropio(results?.scope, "reservas") && (
+                                    <p className="px-3 pt-1 text-[10px] text-slate-400">{AVISO_ALCANCE_PROPIO}</p>
+                                )}
                             </div>
                         )}
 
@@ -208,6 +233,19 @@ export default function SearchPalette({ isOpen, onClose }) {
                                         </div>
                                     </div>
                                 ))}
+                                {debeMostrarAvisoAlcancePropio(results?.scope, "payments") && (
+                                    <p className="px-3 pt-1 text-[10px] text-slate-400">{AVISO_ALCANCE_PROPIO}</p>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Fix #39: error de red/permiso — DISTINTO de "sin resultados". Antes esto
+                            se tragaba en un console.error y la pantalla quedaba como si el usuario
+                            nunca hubiera buscado nada. */}
+                        {estadoBusqueda === "error" && (
+                            <div className="p-8 text-center" role="alert" data-testid="search-error">
+                                <Search className="h-10 w-10 mx-auto text-rose-300 dark:text-rose-800 mb-3" />
+                                <p className="text-sm text-rose-600 dark:text-rose-400">{errorMensaje}</p>
                             </div>
                         )}
 
@@ -220,7 +258,7 @@ export default function SearchPalette({ isOpen, onClose }) {
                         )}
 
                         {/* Initial state hint */}
-                        {!results && !loading && (
+                        {estadoBusqueda === "inicial" && (
                             <div className="p-6 text-center">
                                 <p className="text-xs text-slate-400">Escribí un nombre, número de reserva o cliente</p>
                             </div>

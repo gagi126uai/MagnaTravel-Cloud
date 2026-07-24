@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { Plus, Search, ChevronLeft, ChevronRight, Calendar } from "lucide-react";
 
 import { useReservas } from "../hooks/useReservas";
+import { tabCountKey } from "../lib/reservaTabsMapping";
 import { Button } from "../../../components/ui/button";
 import CreateReservaModal from "../../../components/CreateReservaModal";
 import { FilesPageSkeleton } from "../../../components/ui/skeleton";
@@ -22,13 +23,20 @@ import { ReservaMobileList } from "../components/ReservaMobileList";
  * ADR-036 (2026-06-21): se elimina "A liquidar" (ToSettle) de toda la UI.
  * El estado dejó de existir para el usuario.
  *
+ * Tanda 3 (2026-07-24, #38/#40): se migran los "view" legacy del backend ("reserved" →
+ * "confirmed", "operative" → "traveling") y se agrega la pestaña "Anuladas" (view=cancelled),
+ * separada de "Finalizadas" (antes venian mezcladas — ver docs/ux/2026-07-06-listado-finalizadas-vs-anuladas.md,
+ * firmada). El backend de este cambio se está terminando en paralelo: si "cancelled" todavía
+ * no está soportado, la pestaña puede mostrar de más hasta que se despliegue junto con esto.
+ *
  * "quotation"     → Cotizaciones (borrador)
  * "budget"        → Presupuestos (enviados al cliente)
  * "in-management" → En gestion (el cliente acepto, se solicitan servicios)
  * "active"        → Activas (En gestion + Confirmadas — vista combinada para el dia a dia)
- * "reserved"      → Confirmadas (todos los servicios resueltos, candado activo)
- * "operative"     → En viaje
- * "closed"        → Finalizadas
+ * "confirmed"     → Confirmadas (todos los servicios resueltos, candado activo)
+ * "traveling"     → En viaje
+ * "closed"        → Finalizadas (solo cerradas; anuladas viven en su propia pestaña)
+ * "cancelled"     → Anuladas (incluye "esperando reembolso del operador")
  * "lost"          → Perdidas (no compraron)
  * "archived"      → Archivadas
  */
@@ -36,9 +44,10 @@ const TABS = [
   { value: "quotation", label: "Borradores anteriores" },
   { value: "budget", label: "Presupuestos" },
   { value: "in-management", label: "En gestion" },
-  { value: "reserved", label: "Confirmadas" },
-  { value: "operative", label: "En viaje" },
+  { value: "confirmed", label: "Confirmadas" },
+  { value: "traveling", label: "En viaje" },
   { value: "closed", label: "Finalizadas" },
+  { value: "cancelled", label: "Anuladas" },
   { value: "lost", label: "Perdidas" },
   { value: "archived", label: "Archivadas" },
 ];
@@ -56,16 +65,6 @@ export default function ReservasPage() {
     setIsModalOpen(true);
     navigate(location.pathname, { replace: true });
   }, [location.pathname, location.search, navigate]);
-
-  /**
-   * Mapeo del valor de la tab al key correspondiente en tabCounts del hook.
-   * "in-management" necesita convertirse a camelCase para coincidir con la clave del hook.
-   * ADR-036: "to-settle" eliminado; ya no hay mapeo para ese valor.
-   */
-  const tabCountKey = (tabValue) => {
-    if (tabValue === "in-management") return "inManagement";
-    return tabValue;
-  };
 
   // ADR-020: ciclo unico sin flags de ciclo. El array TABS es directo.
   const tabs = TABS;

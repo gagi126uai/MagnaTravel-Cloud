@@ -34,6 +34,7 @@
   - **Editar** (lápiz) — texto fijo "Editar".
   - **Tacho con texto dinámico:** "Borrar" si el servicio NO está confirmado por el operador (era un borrador, sin compromiso); "Cancelar" si YA está confirmado por el operador (hubo compromiso real, puede haber penalidad/plata del cliente). Esto respeta la decisión #9 del ciclo de vida (borrar vs. cancelar).
 - **(2026-06-08) Estos textos visibles NO reemplazan la accesibilidad:** el icono mantiene además su etiqueta para lectores de pantalla. El texto que ve el vendedor y la etiqueta accesible dicen lo mismo.
+- **(2026-07-24) Botón para confirmar un servicio desde la fila:** "Marcar confirmado" (hotel/paquete/asistencia/traslado confirmado), "Marcar emitido" (aéreo), "No requiere confirmación" (traslado mudo). Va en la misma fila, a la derecha, y abre un casillero en línea para el N° de confirmación del operador. Detalle completo en la sección **"Confirmar un servicio DESDE LA FICHA de la reserva (2026-07-24)"**.
 
 ## Ventanas emergentes y avisos
 
@@ -343,6 +344,56 @@ Ronda 2:
   - En **En gestión** y etapas posteriores: muestra **"Solicitado"** (ya se gestionó la solicitud al operador).
   - "Confirmado" y "Cancelado" (estados concretos que vienen del backend) siempre se muestran tal cual, sin importar la etapa.
   - Cualquier otro valor que venga del backend (ej. "Emitido", "HK") se muestra tal cual.
+
+## Confirmar un servicio DESDE LA FICHA de la reserva (2026-07-24, respuestas de Gastón P1..P4)
+
+> **Origen:** barrido PROD 2026-07-23, bug #34. Desde la ficha de la reserva NO se podía cambiar el
+> estado de ningún servicio: había que saber ir a la cuenta del operador. La decisión #3 del ciclo de
+> vida (2026-06-08) ya había firmado "botón de resolver en la misma fila, a la derecha", pero nunca se
+> construyó en la ficha. Estas 4 respuestas cierran los detalles que faltaban. Todas con la recomendación.
+> Spec de frontend: entregada por `ux-ui-disenador` el 2026-07-24 (esta sección es la fuente de verdad).
+
+- **(2026-07-24, P1=A) El botón de la fila SOLO confirma hacia adelante.** En la fila de cada servicio
+  **pendiente**, a la derecha (junto a Editar / Borrar-o-Cancelar), hay un botón que resuelve el servicio
+  hacia adelante (lo pasa de Solicitado a Confirmado/Emitido). **Deshacer o "bajar" un servicio ya
+  confirmado NO se hace desde la ficha:** eso sigue viviendo únicamente en la cuenta del operador, con sus
+  frenos de plata. La ficha nunca ofrece marcha atrás de estado (evita accidentes; bajar un confirmado es
+  raro y toca reembolsos). Reafirma y concreta la decisión #3 del ciclo de vida (2026-06-08).
+
+- **(2026-07-24, P3=A — texto único) Palabra del botón por tipo:**
+  - **Hotel / Paquete / Asistencia** y **Traslado que el operador confirma** → **"Marcar confirmado"**
+    (una sola palabra fácil para todos).
+  - **Aéreo** → **"Marcar emitido"** (firmado 2026-06-08, decisión #3).
+  - **Traslado mudo** (no requiere confirmación del operador) → mantiene además su atajo
+    **"No requiere confirmación"** (firmado 2026-06-08, decisión #3). O sea, un traslado pendiente puede
+    mostrar los dos botones: "Marcar confirmado" (si el operador lo confirmó) y "No requiere confirmación"
+    (si se destraba a mano). Registro de quién y cuándo, como siempre.
+  - **Aéreo:** el botón "Marcar emitido" queda **apagado** si faltan nombres + documento de todos los
+    pasajeros de su set, con el cartelito "Cargá los nombres primero" (regla 2026-06-15, P5). Sin cambios.
+
+- **(2026-07-24, P2=B) Al tocar el botón se abre un casillero chico EN LA MISMA FILA para el número de
+  confirmación del operador.** No confirma de una: al apretar "Marcar confirmado" / "Marcar emitido", la
+  fila muestra en línea (nunca ventana) un casillero **"N° de confirmación del operador"** (se puede dejar
+  vacío — es opcional) + botón **"Confirmar"** y un **"Cancelar"** para cerrar sin hacer nada. Mismo gesto
+  y misma palabra que la cuenta del operador (P-10). El número que se escriba se guarda junto con la
+  confirmación; si se deja vacío, igual confirma. (El traslado mudo "No requiere confirmación" **no** abre
+  casillero: es un solo click, porque no hay número de operador que cargar.)
+
+- **(2026-07-24, P4=A — unificación) La cuenta del operador usa los MISMOS botones que la ficha para
+  resolver hacia adelante.** En "Servicios comprados" de la cuenta del operador, para pasar un servicio de
+  Solicitado a Confirmado/Emitido se usan los mismos botones ("Marcar confirmado" / "Marcar emitido") con
+  el mismo casillero de número — reemplazan la vieja lista desplegable como forma de resolver hacia
+  adelante. **La capacidad de "bajar" / corregir el estado hacia atrás puede quedar en la cuenta del
+  operador** (es su herramienta de back-office con los frenos), pero como acción **secundaria y separada**
+  del botón de resolver: primero se ve el mismo botón de avanzar que en la ficha; el control para mover
+  hacia atrás queda debajo/aparte, discreto, para no competir con el camino normal (criterio de mínima
+  sorpresa). Un solo lenguaje para avanzar en toda la app; el "bajar" vive en un solo lugar.
+
+- **(2026-07-24) Frenos del motor:** cuando el backend rechaza un cambio de estado (candado de la reserva,
+  gate de nombres, freno de "servicio confirmado y pagado" que orienta al reembolso, downgrade con
+  motivo), se muestran **como hoy**; si el texto del rechazo es largo va al **Cartel emergente único**
+  (tratamiento único de avisos de bloqueo, 2026-07-22). El front nunca muestra el texto crudo del error
+  ni jerga interna.
 
 ## Pasajeros de una reserva — reglas de negocio (2026-06-08)
 

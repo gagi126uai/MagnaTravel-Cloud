@@ -36,14 +36,13 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from "react-router-dom";
-import { AlertTriangle, Plus, Plane, Hotel, Car, Package, ShieldCheck, Edit2, Trash2, CheckCircle2, Clock, X, Loader2, FileText, Ban, XSquare, UserX, Lock } from "lucide-react";
+import { AlertTriangle, Plus, Plane, Hotel, Car, Package, ShieldCheck, Edit2, Trash2, X, Loader2, FileText, Ban, XSquare, UserX, Lock } from "lucide-react";
 import { isAdmin, hasPermission } from "../../../auth";
 import { tieneCandadoDeEdicionActivo } from "./ReservaStatusBadge";
 import { CancelarVariosServiciosInline } from "./CancelarVariosServiciosInline";
 import { PasajeroInlineForm } from "./PasajeroInlineForm";
 import { ControlAsignacionServicio } from "./ControlAsignacionServicio";
-import { api } from "../../../api";
-import { showError, showSuccess } from "../../../alerts";
+import { showError } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
 import {
     SERVICE_RECORD_KIND,
@@ -61,6 +60,7 @@ import { useReservaSupplierPaymentStatus } from "../lib/useReservaSupplierPaymen
 import { buscarEstadoPagoServicio, puedenVerseMontos } from "../lib/supplierPaymentStatusLogic";
 import { OperadorPagoStatusBadge } from "./OperadorPagoStatusBadge";
 import { CancellationPenaltyLabel } from "./CancellationPenaltyLabel";
+import { ResolverServicioInline } from "./ResolverServicioInline";
 
 /**
  * Convierte el recordKind del frontend al serviceType que espera el endpoint de nominal-coverage.
@@ -639,76 +639,12 @@ function ModalBloqueoCancelacionServicio({ mensaje, rechazo, onIrAVouchers, onCl
 }
 
 /**
- * Boton para marcar un vuelo como emitido.
- * Decision 3 (guia UX 2026-06-08): boton en la misma fila, texto "Marcar emitido".
- * Endpoint: POST /api/reservas/{reservaId}/flights/{id}/mark-issued
- */
-function BotonMarcarEmitido({ reservaId, servicePublicId, onResuelto }) {
-    const [loading, setLoading] = useState(false);
-
-    const handleClick = async (e) => {
-        e.stopPropagation();
-        setLoading(true);
-        try {
-            await api.post(`/reservas/${reservaId}/flights/${servicePublicId}/mark-issued`);
-            showSuccess("Vuelo marcado como emitido");
-            if (onResuelto) onResuelto();
-        } catch (error) {
-            showError(getApiErrorMessage(error, "No se pudo marcar el vuelo como emitido."));
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    return (
-        <button
-            type="button"
-            onClick={handleClick}
-            disabled={loading}
-            data-testid="btn-mark-issued"
-            className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700 transition-colors hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300"
-        >
-            <CheckCircle2 className="h-3 w-3" />
-            {loading ? "..." : "Marcar emitido"}
-        </button>
-    );
-}
-
-/**
- * Boton para marcar un traslado como "no requiere confirmacion".
- * Decision 3 (guia UX 2026-06-08): boton en la misma fila, texto "No requiere confirmacion".
- * Endpoint: POST /api/reservas/{reservaId}/transfers/{id}/no-confirmation
- */
-function BotonNoRequiereConfirmacion({ reservaId, servicePublicId, onResuelto }) {
-    const [loading, setLoading] = useState(false);
-
-    const handleClick = async (e) => {
-        e.stopPropagation();
-        setLoading(true);
-        try {
-            await api.post(`/reservas/${reservaId}/transfers/${servicePublicId}/no-confirmation`);
-            showSuccess("Traslado marcado como que no requiere confirmacion");
-            if (onResuelto) onResuelto();
-        } catch (error) {
-            showError(getApiErrorMessage(error, "No se pudo registrar el traslado."));
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    return (
-        <button
-            type="button"
-            onClick={handleClick}
-            disabled={loading}
-            data-testid="btn-no-confirmation"
-            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-bold text-slate-600 transition-colors hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
-        >
-            <Clock className="h-3 w-3" />
-            {loading ? "..." : "No requiere confirmacion"}
-        </button>
-    );
-}
+ * NOTA (Tanda 3, 2026-07-24, fix #34): los botones "Marcar emitido" / "Marcar confirmado" /
+ * "No requiere confirmación" vivían acá como componentes sueltos (uno por tipo, cada uno
+ * confirmando de un solo click, sin casillero para el número del operador). La spec de esta
+ * tanda (guia-ux-gaston.md, sección "Confirmar un servicio DESDE LA FICHA de la reserva")
+ * agrega el casillero inline + unifica el mismo botón con la cuenta del operador — ahora
+ * viven en un único componente reusable: ver ResolverServicioInline.jsx.
 
 /**
  * Resumen de resolucion de servicios para la vista "En gestion" (decision 4 de UX).
@@ -1536,9 +1472,10 @@ export function ServiceList({
                                                             <>
                                                                 {svc.recordKind === SERVICE_RECORD_KIND.FLIGHT && (
                                                                     pasajerosListos ? (
-                                                                        <BotonMarcarEmitido
+                                                                        <ResolverServicioInline
                                                                             reservaId={reservaId}
                                                                             servicePublicId={getReservationServicePublicId(svc)}
+                                                                            recordKind={svc.recordKind}
                                                                             onResuelto={onServiceResolved}
                                                                         />
                                                                     ) : (
@@ -1553,9 +1490,14 @@ export function ServiceList({
                                                                 )}
                                                                 {svc.recordKind === SERVICE_RECORD_KIND.TRANSFER && (
                                                                     pasajerosListos ? (
-                                                                        <BotonNoRequiereConfirmacion
+                                                                        // Fix #34 (Tanda 3, 2026-07-24): un traslado pendiente puede
+                                                                        // mostrar los DOS botones a la vez ("Marcar confirmado" si el
+                                                                        // operador lo confirmó, "No requiere confirmación" si se
+                                                                        // destraba a mano) — ResolverServicioInline arma ambos solo.
+                                                                        <ResolverServicioInline
                                                                             reservaId={reservaId}
                                                                             servicePublicId={getReservationServicePublicId(svc)}
+                                                                            recordKind={svc.recordKind}
                                                                             onResuelto={onServiceResolved}
                                                                         />
                                                                     ) : (
@@ -1567,6 +1509,22 @@ export function ServiceList({
                                                                             Cargá al menos el titular primero
                                                                         </span>
                                                                     )
+                                                                )}
+                                                                {/* Fix #34 (Tanda 3, 2026-07-24): hotel/paquete/asistencia no tenían
+                                                                    NINGÚN botón de resolver desde la ficha — había que ir a la cuenta
+                                                                    del operador. Sin gate de pasajeros pre-emptivo (a diferencia de
+                                                                    aéreo/traslado, "sin cambios" por spec): si falta un dato, el motor
+                                                                    lo rechaza y el mensaje aparece en el propio casillero (ver "Frenos
+                                                                    del motor" en la spec). */}
+                                                                {(svc.recordKind === SERVICE_RECORD_KIND.HOTEL ||
+                                                                    svc.recordKind === SERVICE_RECORD_KIND.PACKAGE ||
+                                                                    svc.recordKind === SERVICE_RECORD_KIND.ASSISTANCE) && (
+                                                                    <ResolverServicioInline
+                                                                        reservaId={reservaId}
+                                                                        servicePublicId={getReservationServicePublicId(svc)}
+                                                                        recordKind={svc.recordKind}
+                                                                        onResuelto={onServiceResolved}
+                                                                    />
                                                                 )}
                                                             </>
                                                         );
@@ -2014,9 +1972,10 @@ export function ServiceList({
                                                     <>
                                                         {svc.recordKind === SERVICE_RECORD_KIND.FLIGHT && (
                                                             pasajerosListos ? (
-                                                                <BotonMarcarEmitido
+                                                                <ResolverServicioInline
                                                                     reservaId={reservaId}
                                                                     servicePublicId={getReservationServicePublicId(svc)}
+                                                                    recordKind={svc.recordKind}
                                                                     onResuelto={onServiceResolved}
                                                                 />
                                                             ) : (
@@ -2032,9 +1991,10 @@ export function ServiceList({
                                                         )}
                                                         {svc.recordKind === SERVICE_RECORD_KIND.TRANSFER && (
                                                             pasajerosListos ? (
-                                                                <BotonNoRequiereConfirmacion
+                                                                <ResolverServicioInline
                                                                     reservaId={reservaId}
                                                                     servicePublicId={getReservationServicePublicId(svc)}
+                                                                    recordKind={svc.recordKind}
                                                                     onResuelto={onServiceResolved}
                                                                 />
                                                             ) : (
@@ -2046,6 +2006,19 @@ export function ServiceList({
                                                                     Cargá al menos el titular primero
                                                                 </span>
                                                             )
+                                                        )}
+                                                        {/* Fix #34 (Tanda 3, 2026-07-24): hotel/paquete/asistencia, sin gate
+                                                            de pasajeros pre-emptivo — ver el comentario equivalente en la
+                                                            versión desktop más arriba en este archivo. */}
+                                                        {(svc.recordKind === SERVICE_RECORD_KIND.HOTEL ||
+                                                            svc.recordKind === SERVICE_RECORD_KIND.PACKAGE ||
+                                                            svc.recordKind === SERVICE_RECORD_KIND.ASSISTANCE) && (
+                                                            <ResolverServicioInline
+                                                                reservaId={reservaId}
+                                                                servicePublicId={getReservationServicePublicId(svc)}
+                                                                recordKind={svc.recordKind}
+                                                                onResuelto={onServiceResolved}
+                                                            />
                                                         )}
                                                     </>
                                                 );

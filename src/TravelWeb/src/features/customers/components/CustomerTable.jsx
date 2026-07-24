@@ -14,6 +14,7 @@ import {
 } from "../../../components/ui/DataGrid";
 import { getPublicId } from "../../../lib/publicIds";
 import { formatCurrency } from "../../../lib/utils";
+import { resolverBadgeSaldoCliente } from "../lib/balanceCompositionLogic";
 
 export function CustomerTable({ customers, onEdit, onToggleStatus, onAccountClick }) {
   const getInitials = (name) => {
@@ -39,7 +40,12 @@ export function CustomerTable({ customers, onEdit, onToggleStatus, onAccountClic
             description="Ajusta la busqueda o crea un nuevo cliente para empezar."
           />
         ) : (
-          customers.map((customer) => (
+          customers.map((customer) => {
+            const saldoBadge = resolverBadgeSaldoCliente(
+              customer.balancesByCurrency,
+              customer.unappliedCreditsByCurrency
+            );
+            return (
             <DataGridRow key={getPublicId(customer)} inactive={!customer.isActive}>
               <DataGridCell className="text-slate-900 dark:text-slate-100">
                 <div className="flex items-center gap-3">
@@ -73,14 +79,25 @@ export function CustomerTable({ customers, onEdit, onToggleStatus, onAccountClic
                 </div>
               </DataGridCell>
               <DataGridCell align="right">
-                {(customer.balancesByCurrency ?? []).length > 0 ? (
-                  (customer.balancesByCurrency ?? []).map((balance) => (
-                    <div key={balance.currency} className="font-mono font-medium text-rose-600 dark:text-rose-400">
-                      {formatCurrency(balance.amount, balance.currency)}
-                    </div>
-                  ))
-                ) : <div className="font-mono font-medium text-emerald-600 dark:text-emerald-400">Al día</div>}
-                {(customer.balancesByCurrency ?? []).length > 0 && <span className="text-[10px] font-semibold uppercase text-rose-500">Deuda</span>}
+                {saldoBadge.estado === "debe" && saldoBadge.montos.map((monto) => (
+                  <div key={monto.currency} className="font-mono font-medium text-rose-600 dark:text-rose-400">
+                    {formatCurrency(monto.amount, monto.currency)}
+                  </div>
+                ))}
+                {saldoBadge.estado === "aFavor" && saldoBadge.montos.map((monto) => (
+                  <div key={monto.currency} className="font-mono font-medium text-emerald-600 dark:text-emerald-400">
+                    {formatCurrency(monto.amount, monto.currency)}
+                  </div>
+                ))}
+                {saldoBadge.estado === "alDia" && (
+                  <div className="font-mono font-medium text-emerald-600 dark:text-emerald-400">Al día</div>
+                )}
+                {saldoBadge.estado === "debe" && (
+                  <span className="text-[10px] font-semibold uppercase text-rose-500">Deuda</span>
+                )}
+                {saldoBadge.estado === "aFavor" && (
+                  <span className="text-[10px] font-semibold uppercase text-emerald-500">A favor</span>
+                )}
               </DataGridCell>
               <DataGridCell align="center">
                 <Badge
@@ -118,7 +135,8 @@ export function CustomerTable({ customers, onEdit, onToggleStatus, onAccountClic
                 </button>
               </DataGridActionCell>
             </DataGridRow>
-          ))
+            );
+          })
         )}
       </DataGridBody>
     </DataGrid>

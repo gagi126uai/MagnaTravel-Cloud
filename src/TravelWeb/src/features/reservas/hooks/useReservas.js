@@ -25,6 +25,12 @@ const emptyPage = {
     operativeCount: 0,
     closedCount: 0,
     lostCount: 0,
+    // Tanda 3 (2026-07-24, #38/#40): cancelledCount y archivedCount son campos nuevos del
+    // backend (pestaña "Anuladas" separada de "Finalizadas" + contador de Archivadas). El
+    // backend se termina en paralelo — si todavia no vienen en la respuesta, quedan en 0
+    // (fallback: comportamiento actual, sin romper si el campo no esta presente).
+    cancelledCount: 0,
+    archivedCount: 0,
     totalSaleActive: 0,
     totalCostActive: 0,
     totalPendingBalance: 0,
@@ -169,14 +175,21 @@ export function useReservas() {
     tabCounts: {
       // ADR-020: todos los estados del ciclo unico, sin flags.
       // ADR-036: toSettle eliminado — "A liquidar" ya no existe como estado visible en la UI.
+      // Tanda 3 (2026-07-24, #38/#40): las claves "confirmed"/"traveling" reemplazan a las
+      // legacy "reserved"/"operative" para que coincidan 1 a 1 con el value de cada pestaña
+      // (ver reservaTabsMapping.js). El campo del resumen (ReservedCount/OperativeCount) no
+      // cambio de nombre en el backend, solo la clave que usa el frontend para leerlo.
       quotation: summary.quotationCount || 0,
       budget: summary.budgetCount || 0,
       inManagement: summary.inManagementCount || 0,
       active: summary.activeCount || 0,
-      reserved: summary.reservedCount || 0,
-      operative: summary.operativeCount || 0,
+      confirmed: summary.reservedCount || 0,
+      traveling: summary.operativeCount || 0,
       closed: summary.closedCount || 0,
+      // cancelledCount/archivedCount: campos nuevos del backend (fallback 0 si aun no vienen).
+      cancelled: summary.cancelledCount || 0,
       lost: summary.lostCount || 0,
+      archived: summary.archivedCount || 0,
     },
     stats: {
       budgetCount: summary.budgetCount || 0,

@@ -5,6 +5,7 @@ import { ListEmptyState } from "../../../components/ui/ListEmptyState";
 import { MobileRecordCard, MobileRecordList } from "../../../components/ui/MobileRecordCard";
 import { getPublicId } from "../../../lib/publicIds";
 import { formatCurrency } from "../../../lib/utils";
+import { resolverBadgeSaldoCliente } from "../lib/balanceCompositionLogic";
 
 export function CustomerMobileList({ customers, onEdit, onAccountClick }) {
   const getInitials = (name) => {
@@ -23,7 +24,12 @@ export function CustomerMobileList({ customers, onEdit, onAccountClick }) {
 
   return (
     <MobileRecordList>
-      {customers.map((customer) => (
+      {customers.map((customer) => {
+        const saldoBadge = resolverBadgeSaldoCliente(
+          customer.balancesByCurrency,
+          customer.unappliedCreditsByCurrency
+        );
+        return (
         <MobileRecordCard
           key={getPublicId(customer)}
           inactive={!customer.isActive}
@@ -66,13 +72,29 @@ export function CustomerMobileList({ customers, onEdit, onAccountClick }) {
           }
           footer={
             <div className="font-mono font-medium">
-              {(customer.balancesByCurrency ?? []).length > 0
-                ? (customer.balancesByCurrency ?? []).map((balance) => (
-                    <div key={balance.currency} className="text-rose-600 dark:text-rose-400">
-                      {formatCurrency(balance.amount, balance.currency)}
+              {saldoBadge.estado === "debe" && (
+                <>
+                  {saldoBadge.montos.map((monto) => (
+                    <div key={monto.currency} className="text-rose-600 dark:text-rose-400">
+                      {formatCurrency(monto.amount, monto.currency)}
                     </div>
-                  ))
-                : <span className="text-emerald-600 dark:text-emerald-400">Al día</span>}
+                  ))}
+                  <span className="text-[10px] font-semibold uppercase text-rose-500">Deuda</span>
+                </>
+              )}
+              {saldoBadge.estado === "aFavor" && (
+                <>
+                  {saldoBadge.montos.map((monto) => (
+                    <div key={monto.currency} className="text-emerald-600 dark:text-emerald-400">
+                      {formatCurrency(monto.amount, monto.currency)}
+                    </div>
+                  ))}
+                  <span className="text-[10px] font-semibold uppercase text-emerald-500">A favor</span>
+                </>
+              )}
+              {saldoBadge.estado === "alDia" && (
+                <span className="text-emerald-600 dark:text-emerald-400">Al día</span>
+              )}
             </div>
           }
           footerActions={
@@ -92,7 +114,8 @@ export function CustomerMobileList({ customers, onEdit, onAccountClick }) {
             </>
           }
         />
-      ))}
+        );
+      })}
     </MobileRecordList>
   );
 }

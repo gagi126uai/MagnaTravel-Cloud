@@ -1,9 +1,13 @@
 import { useEffect, useState } from "react";
 import { X, AlertTriangle, Loader2, Undo2 } from "lucide-react";
 import { api } from "../../../api";
-import { showError, showSuccess } from "../../../alerts";
+import { showConfirm, showError, showSuccess } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { translateStatus } from "./ReservaStatusBadge";
+import { isReservaAnulada } from "../moneyStatus";
+import { construirConfirmacionDeshacerAnulacion } from "../lib/revertAnuladaConfirmLogic";
+import { debeMostrarCartelPorRechazoDeRevert } from "../lib/revertRejectionPresentation";
+import { CartelEmergente, CARTEL_EMERGENTE_VARIANTES } from "../../../components/CartelEmergente";
 
 /**
  * Modal para revertir el status de una Reserva.
@@ -29,6 +33,11 @@ export function RevertStatusModal({ reserva, onClose, onReverted, forceReason = 
     const [supervisorId, setSupervisorId] = useState("");
     const [reason, setReason] = useState("");
     const [submitting, setSubmitting] = useState(false);
+    // Rechazo del motor al confirmar (P-13: se muestra TAL CUAL, nunca se reescribe). La
+    // decisión toast-vs-Cartel emergente único la toma debeMostrarCartelPorRechazoDeRevert
+    // (T-6: primero mira el `code` estructurado del 409, el largo del texto es solo un
+    // fallback legacy — ver ese archivo para el detalle).
+    const [rejectionMessage, setRejectionMessage] = useState(null);
 
     useEffect(() => {
         let cancelled = false;
@@ -67,7 +76,18 @@ export function RevertStatusModal({ reserva, onClose, onReverted, forceReason = 
         && (!forceReason || reasonOk);               // gate de motivo obligatorio (si forceReason)
 
     const handleSubmit = async () => {
+        // ADR-050 (2026-07-24): si la reserva de ORIGEN está anulada, "Volver atrás" deshace
+        // la anulación ENTERA (revive servicios, retira saldo a favor no usado, aborta el
+        // reembolso del operador) — no es un simple cambio de estado. Confirmación EXTRA,
+        // específica para este caso, ANTES de disparar el POST. Para reverts desde otros
+        // estados el flujo sigue igual (el motivo obligatorio de siempre alcanza).
+        if (isReservaAnulada(reserva)) {
+            const confirmado = await showConfirm(construirConfirmacionDeshacerAnulacion());
+            if (!confirmado) return;
+        }
+
         setSubmitting(true);
+        setRejectionMessage(null);
         try {
             await api.post(`/reservas/${reserva.publicId}/revert-status`, {
                 targetStatus,
@@ -77,7 +97,19 @@ export function RevertStatusModal({ reserva, onClose, onReverted, forceReason = 
             showSuccess(`Reserva revertida a ${translateStatus(targetStatus)}`);
             onReverted();
         } catch (error) {
-            showError(getApiErrorMessage(error, "No se pudo revertir la reserva."));
+            // P-13: el mensaje del motor se muestra TAL CUAL, nunca se reescribe ni se mapea
+            // por texto. Los rechazos de ADR-050 (saldo a favor ya usado en otra reserva,
+            // nota de débito de la multa ya emitida) llegan con `code: "UNDO_ANNULMENT_BLOCKED"`
+            // en el 409 — el API client ya lo deja en error.code (ver src/api.js). Con ese code
+            // la decisión toast-vs-cartel es SIEMPRE cartel, sin mirar el largo del texto
+            // (dos de estos mensajes miden 78 y 79 caracteres, por debajo del umbral de
+            // "mensaje largo" — ver revertRejectionPresentation.js para el detalle completo).
+            const mensaje = getApiErrorMessage(error, "No se pudo revertir la reserva.");
+            if (debeMostrarCartelPorRechazoDeRevert({ mensaje, code: error.code })) {
+                setRejectionMessage(mensaje);
+            } else {
+                showError(mensaje);
+            }
         } finally {
             setSubmitting(false);
         }
@@ -233,6 +265,18 @@ export function RevertStatusModal({ reserva, onClose, onReverted, forceReason = 
                     </button>
                 </div>
             </div>
+
+            {/* Rechazo del motor que merece Cartel emergente único (ej. ADR-050: saldo a favor
+                ya usado en otra reserva, nota de débito de la multa ya emitida) — mensaje tal
+                cual, nunca reescrito. Los rechazos que no llegan a este umbral siguen yendo
+                por toast (ver debeMostrarCartelPorRechazoDeRevert más arriba). */}
+            <CartelEmergente
+                isOpen={Boolean(rejectionMessage)}
+                variant={CARTEL_EMERGENTE_VARIANTES.BLOQUEO}
+                message={rejectionMessage}
+                onClose={() => setRejectionMessage(null)}
+                dataTestId="revert-status-cartel-rechazo"
+            />
         </div>
     );
 }

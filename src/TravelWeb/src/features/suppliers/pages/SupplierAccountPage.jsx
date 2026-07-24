@@ -48,6 +48,16 @@ import { showSuccess, showError, showConfirm } from "../../../alerts";
 // reusado acá para el PATCH de "bajar el estado" desde la cuenta del proveedor. No se duplica
 // el mapeo code → botón, se importa la misma lib pura.
 import { CODIGO_RECHAZO_ANULAR_SERVICIO } from "../../reservas/lib/serviceCancellationGuard";
+// P4=A (unificación, Tanda 3, 2026-07-24, fix #34): "Servicios comprados" usa los MISMOS
+// botones "Marcar confirmado"/"Marcar emitido" que la ficha de la reserva para avanzar el
+// estado — un solo lenguaje en toda la app. mapearTipoEspanolARecordKind traduce el Type en
+// español de este listado ("Hotel", "Vuelo", ...) al recordKind en inglés que espera el
+// componente compartido.
+import { ResolverServicioInline } from "../../reservas/components/ResolverServicioInline";
+import {
+    mapearTipoEspanolARecordKind,
+    debeMostrarBotonPrimarioEnCuentaOperador,
+} from "../../reservas/lib/serviceResolutionActions";
 import { getPublicId } from "../../../lib/publicIds";
 import { useDebounce } from "../../../hooks/useDebounce";
 import { getApiErrorMessage, isDatabaseUnavailableError } from "../../../lib/errors";
@@ -1234,6 +1244,66 @@ function ServiceStatusEditor({ service, onUpdated, canEdit }) {
     );
 }
 
+/**
+ * Celda "Estado" de la fila de un servicio comprado (P4=A, unificación, Tanda 3,
+ * 2026-07-24, fix #34): mientras el servicio está "Solicitado" (pendiente), el camino
+ * PRIMARIO para avanzarlo es el MISMO botón "Marcar confirmado"/"Marcar emitido" que ya
+ * usa la ficha de la reserva (ResolverServicioInline) — reemplaza al desplegable como
+ * forma de resolver hacia adelante.
+ *
+ * El desplegable viejo (ServiceStatusEditor) NO desaparece: sigue siendo la única forma
+ * de CORREGIR un estado hacia atrás (ej. deshacer una confirmación por error). Para no
+ * competir con el botón primario, mientras el servicio está pendiente el desplegable
+ * queda ESCONDIDO detrás de un link chico "Corregir a mano" — acción secundaria y
+ * discreta, tal cual pide la spec.
+ *
+ * Cuando el servicio YA está Confirmado/Cancelado, no hay nada que "avanzar": se ve el
+ * desplegable directo, como funcionaba antes de esta tanda (sin cambios en ese caso).
+ */
+function EstadoServicioCell({ service, onUpdated, canEdit }) {
+    const [mostrarCorreccion, setMostrarCorreccion] = useState(false);
+    const recordKind = mapearTipoEspanolARecordKind(service.type);
+    // La decisión de elegibilidad vive en serviceResolutionActions.js (testeada aparte):
+    // requiere permiso de editar, servicio pendiente, tipo con flujo de confirmación
+    // conocido y una reserva asociada (los endpoints reserva-scoped la necesitan).
+    const tieneBotonPrimario = debeMostrarBotonPrimarioEnCuentaOperador({
+        canEdit,
+        status: service.status,
+        recordKind,
+        reservaPublicId: service.reservaPublicId,
+    });
+
+    if (!tieneBotonPrimario) {
+        return <ServiceStatusEditor service={service} onUpdated={onUpdated} canEdit={canEdit} />;
+    }
+
+    return (
+        <div className="flex flex-col items-start gap-1">
+            <ResolverServicioInline
+                reservaId={service.reservaPublicId}
+                servicePublicId={service.publicId}
+                recordKind={recordKind}
+                onResuelto={onUpdated}
+                align="start"
+            />
+            {/* canEdit ya está garantizado acá (tieneBotonPrimario lo exige arriba) — no hace
+                falta volver a chequearlo para mostrar el link de corrección. */}
+            {mostrarCorreccion ? (
+                <ServiceStatusEditor service={service} onUpdated={onUpdated} canEdit={canEdit} />
+            ) : (
+                <button
+                    type="button"
+                    onClick={() => setMostrarCorreccion(true)}
+                    className="text-[10px] text-slate-400 hover:text-slate-600 hover:underline dark:text-slate-500 dark:hover:text-slate-300"
+                    data-testid={`btn-corregir-a-mano-${service.publicId}`}
+                >
+                    Corregir a mano
+                </button>
+            )}
+        </div>
+    );
+}
+
 // ─── Editor del código de confirmación del servicio ──────────────────────────
 
 // Editor inline del codigo de confirmacion del proveedor (PNR para vuelos,
@@ -2136,7 +2206,7 @@ export default function SupplierAccountPage() {
                                                         })()}
                                                     </DataGridCell>
                                                     <DataGridCell>
-                                                        <ServiceStatusEditor
+                                                        <EstadoServicioCell
                                                             service={service}
                                                             canEdit={puedeEditarReservas}
                                                             onUpdated={() => { loadServices(); loadOverview(); }}
@@ -2205,7 +2275,7 @@ export default function SupplierAccountPage() {
                                                             )}
                                                         </div>
                                                         <div className="flex flex-wrap items-center gap-2 mt-1">
-                                                            <ServiceStatusEditor
+                                                            <EstadoServicioCell
                                                                 service={service}
                                                                 canEdit={puedeEditarReservas}
                                                                 onUpdated={() => { loadServices(); loadOverview(); }}

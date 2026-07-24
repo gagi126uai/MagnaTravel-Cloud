@@ -169,3 +169,39 @@ export function construirFotoDeSaldo(composicion, unappliedCreditByCurrency = []
 export function debeMostrarBotonUsarSaldo({ creditoAFavor, canUsarSaldo }) {
   return Number(creditoAFavor ?? 0) > EPS && canUsarSaldo === true;
 }
+
+/**
+ * Badge de 3 estados para la FILA del listado de clientes (Tanda 3, 2026-07-24, #4):
+ * "Debe" (el cliente nos debe, rose) / "A favor" (le debemos nosotros, emerald) / "Al día".
+ *
+ * Antes de esta obra el listado solo miraba `balancesByCurrency` (deuda): si no había deuda,
+ * SIEMPRE decía "Al día" — aunque el cliente tuviera plata a favor sin aplicar
+ * (`unappliedCreditsByCurrency`, campo que ya manda `CustomerListItemDto` pero que la fila
+ * no usaba). Ese era el bug: un cliente con crédito a favor se veía igual que uno sin nada.
+ *
+ * Regla de prioridad: si hay deuda en AL MENOS una moneda, se muestra "Debe" (es el riesgo
+ * financiero más urgente de comunicar), aunque en otra moneda distinta el cliente tenga
+ * crédito a favor. Nunca se suman montos de distintas monedas entre sí.
+ *
+ * @param {Array<{currency:string, amount:number}>} balancesByCurrency - deuda del cliente.
+ * @param {Array<{currency:string, amount:number}>} unappliedCreditsByCurrency - crédito del
+ *   cliente sin aplicar a ninguna reserva.
+ * @returns {{ estado: "debe"|"aFavor"|"alDia", montos: Array<{currency:string, amount:number}> }}
+ */
+export function resolverBadgeSaldoCliente(balancesByCurrency = [], unappliedCreditsByCurrency = []) {
+  const deudas = (Array.isArray(balancesByCurrency) ? balancesByCurrency : [])
+    .filter((item) => Number(item?.amount ?? 0) > EPS);
+
+  if (deudas.length > 0) {
+    return { estado: "debe", montos: deudas.map((item) => ({ currency: item.currency, amount: Number(item.amount) })) };
+  }
+
+  const aFavor = (Array.isArray(unappliedCreditsByCurrency) ? unappliedCreditsByCurrency : [])
+    .filter((item) => Number(item?.amount ?? 0) > EPS);
+
+  if (aFavor.length > 0) {
+    return { estado: "aFavor", montos: aFavor.map((item) => ({ currency: item.currency, amount: Number(item.amount) })) };
+  }
+
+  return { estado: "alDia", montos: [] };
+}

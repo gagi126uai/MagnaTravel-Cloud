@@ -1,0 +1,236 @@
+/**
+ * Botón(es) + casillero inline para RESOLVER un servicio pendiente hacia adelante
+ * (fix #34, Tanda 3, 2026-07-24). Spec completa: docs/ux/guia-ux-gaston.md, sección
+ * "Confirmar un servicio DESDE LA FICHA de la reserva (2026-07-24, respuestas de
+ * Gastón P1..P4)".
+ *
+ * Se usa en DOS lugares con el MISMO componente (P4=A, unificación — "un solo lenguaje
+ * para avanzar en toda la app"):
+ *   - ServiceList.jsx: fila de un servicio pendiente en la ficha de la reserva.
+ *   - SupplierAccountPage.jsx: fila de "Servicios comprados" en la cuenta del operador.
+ *
+ * Comportamiento (P1/P2/P3 de la spec):
+ *   - Un traslado pendiente puede tener DOS botones a la vez ("Marcar confirmado" +
+ *     "No requiere confirmación"); el resto de los tipos tiene uno solo.
+ *   - Los botones que necesitan casillero (todos menos "No requiere confirmación") NO
+ *     confirman al primer click: abren un casillero EN LA MISMA FILA para el N° de
+ *     confirmación del operador (opcional) + [Confirmar] / [Cancelar].
+ *   - "No requiere confirmación" es de un solo click, sin casillero (no hay número que
+ *     cargar — es la excepción que marca la propia spec).
+ *   - Guardando: spinner SOLO en esta fila (el resto de la pantalla sigue usable).
+ *   - Éxito: toast + onResuelto() (el padre recarga/actualiza sin perder scroll).
+ *   - Error: el casillero queda ABIERTO con el número que el usuario ya había escrito
+ *     (nunca se pierde), y el mensaje del motor se muestra tal cual — chico al lado del
+ *     casillero si es corto, o en el Cartel emergente único si es un rechazo largo
+ *     (candado de la reserva, gate de nombres, freno de plata, etc. — "Frenos del
+ *     motor" de la spec).
+ *
+ * Este botón SOLO avanza (Solicitado -> Confirmado/Emitido). Bajar un estado ya
+ * confirmado sigue viviendo únicamente en la cuenta del operador, como acción
+ * secundaria y separada (P4=A) — este componente no la ofrece.
+ */
+
+import { useEffect, useRef, useState } from "react";
+import { CheckCircle2, Loader2 } from "lucide-react";
+import { api } from "../../../api";
+import { showError, showSuccess } from "../../../alerts";
+import { getApiErrorMessage } from "../../../lib/errors";
+import { CartelEmergente, CARTEL_EMERGENTE_VARIANTES } from "../../../components/CartelEmergente";
+import {
+    resolverAccionesParaServicioPendiente,
+    construirRequestResolverServicio,
+    resolverMensajeExito,
+    debeMostrarCartelEmergente,
+} from "../lib/serviceResolutionActions";
+
+const CLASES_BOTON_PRIMARIO = "inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700 transition-colors hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300";
+const CLASES_BOTON_SECUNDARIO = "inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-bold text-slate-600 transition-colors hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300";
+
+/**
+ * Props:
+ *   reservaId       — publicId de la reserva (los endpoints "mark-issued" y
+ *                      "no-confirmation" son reserva-scoped).
+ *   servicePublicId — publicId del servicio (hotel/vuelo/traslado/paquete/asistencia).
+ *   recordKind      — "flight"|"hotel"|"transfer"|"assistance"|"package"|"generic".
+ *   onResuelto      — callback() cuando el servicio se resolvió con éxito. El padre
+ *                      recarga/actualiza el estado (contador "N de M", badge, etc.).
+ *   align           — "end" (default, ficha) | "start" (cuenta del operador, tabla
+ *                      alineada a la izquierda) — solo cambia la alineación visual.
+ */
+export function ResolverServicioInline({ reservaId, servicePublicId, recordKind, onResuelto, align = "end" }) {
+    const acciones = resolverAccionesParaServicioPendiente(recordKind);
+
+    const [accionAbierta, setAccionAbierta] = useState(null); // tipo de la acción con casillero abierto, o null
+    const [numero, setNumero] = useState("");
+    const [guardando, setGuardando] = useState(false);
+    const [errorMensaje, setErrorMensaje] = useState(null);
+    const [mostrarCartel, setMostrarCartel] = useState(false);
+    const inputRef = useRef(null);
+
+    // Al abrir el casillero, el foco va directo al input — el usuario puede tipear el
+    // número sin hacer clic primero (mismo criterio de foco que el resto de la app).
+    useEffect(() => {
+        if (accionAbierta && inputRef.current) inputRef.current.focus();
+    }, [accionAbierta]);
+
+    if (acciones.length === 0) return null; // "generic": sin flujo de confirmación con operador
+
+    const abrirCasillero = (tipo) => {
+        setAccionAbierta(tipo);
+        setNumero("");
+        setErrorMensaje(null);
+        setMostrarCartel(false);
+    };
+
+    const cerrarCasillero = () => {
+        setAccionAbierta(null);
+        setNumero("");
+        setErrorMensaje(null);
+        setMostrarCartel(false);
+    };
+
+    // Camino CON casillero (P2=B): si el motor rechaza, el casillero queda abierto con
+    // el número intacto y el error se muestra en línea (o en el Cartel emergente si es
+    // largo) — nunca un toast que desaparece solo, porque el usuario todavía tiene que
+    // decidir qué hacer con lo que escribió.
+    const ejecutarAccionConCasillero = async (tipo) => {
+        const request = construirRequestResolverServicio({ tipo, recordKind, reservaId, servicePublicId, numero });
+        if (!request) return;
+
+        setGuardando(true);
+        setErrorMensaje(null);
+        try {
+            await api[request.method](request.url, request.body);
+            showSuccess(resolverMensajeExito(tipo));
+            setAccionAbierta(null);
+            setNumero("");
+            onResuelto?.();
+        } catch (error) {
+            const mensaje = getApiErrorMessage(error, "No se pudo confirmar el servicio.");
+            setErrorMensaje(mensaje);
+            setMostrarCartel(debeMostrarCartelEmergente(mensaje));
+        } finally {
+            setGuardando(false);
+        }
+    };
+
+    // "No requiere confirmación": único de 1 click, sin casillero — no hay número que
+    // cargar, así que el error se muestra "como hoy" (toast), igual que el resto de los
+    // botones de 1 click de esta lista.
+    const ejecutarAccionSinCasillero = async (tipo) => {
+        const request = construirRequestResolverServicio({ tipo, recordKind, reservaId, servicePublicId, numero: null });
+        if (!request) return;
+
+        setGuardando(true);
+        try {
+            await api[request.method](request.url, request.body);
+            showSuccess(resolverMensajeExito(tipo));
+            onResuelto?.();
+        } catch (error) {
+            showError(getApiErrorMessage(error, "No se pudo registrar el traslado."));
+        } finally {
+            setGuardando(false);
+        }
+    };
+
+    const alineacion = align === "start" ? "items-start" : "items-end";
+
+    if (!accionAbierta) {
+        return (
+            <div className={`flex flex-col ${alineacion} gap-1`}>
+                {acciones.map((accion) =>
+                    accion.necesitaCasillero ? (
+                        <button
+                            key={accion.tipo}
+                            type="button"
+                            onClick={() => abrirCasillero(accion.tipo)}
+                            disabled={guardando}
+                            data-testid={`btn-resolver-${accion.tipo}-${servicePublicId}`}
+                            className={CLASES_BOTON_PRIMARIO}
+                        >
+                            <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
+                            {accion.etiqueta}
+                        </button>
+                    ) : (
+                        <button
+                            key={accion.tipo}
+                            type="button"
+                            onClick={() => ejecutarAccionSinCasillero(accion.tipo)}
+                            disabled={guardando}
+                            data-testid={`btn-resolver-${accion.tipo}-${servicePublicId}`}
+                            className={CLASES_BOTON_SECUNDARIO}
+                        >
+                            {guardando ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" /> : accion.etiqueta}
+                        </button>
+                    )
+                )}
+            </div>
+        );
+    }
+
+    const accion = acciones.find((a) => a.tipo === accionAbierta);
+    if (!accion) return null;
+
+    return (
+        <div
+            className={`flex flex-col ${alineacion} gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50/70 p-2 dark:border-emerald-800 dark:bg-emerald-950/20`}
+            data-testid={`casillero-resolver-${servicePublicId}`}
+        >
+            <label
+                htmlFor={`numero-confirmacion-${servicePublicId}`}
+                className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-300"
+            >
+                N° de confirmación del operador
+            </label>
+            <input
+                id={`numero-confirmacion-${servicePublicId}`}
+                ref={inputRef}
+                type="text"
+                value={numero}
+                onChange={(e) => setNumero(e.target.value)}
+                disabled={guardando}
+                placeholder="Opcional"
+                className="w-32 rounded border border-emerald-200 bg-white px-2 py-1 text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-emerald-400 dark:border-emerald-800 dark:bg-slate-900 dark:text-white"
+                data-testid={`input-numero-confirmacion-${servicePublicId}`}
+            />
+
+            {/* Rechazo corto: chico, pegado al casillero. Los rechazos largos van al Cartel
+                emergente único (ver abajo) — nunca los dos a la vez. */}
+            {errorMensaje && !mostrarCartel && (
+                <p className="text-[10px] text-rose-600 dark:text-rose-400" role="alert">
+                    {errorMensaje}
+                </p>
+            )}
+
+            <div className="flex gap-1">
+                <button
+                    type="button"
+                    onClick={() => ejecutarAccionConCasillero(accion.tipo)}
+                    disabled={guardando}
+                    data-testid={`btn-confirmar-resolver-${servicePublicId}`}
+                    className={CLASES_BOTON_PRIMARIO}
+                >
+                    {guardando && <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />}
+                    {guardando ? "Guardando…" : "Confirmar"}
+                </button>
+                <button
+                    type="button"
+                    onClick={cerrarCasillero}
+                    disabled={guardando}
+                    data-testid={`btn-cancelar-resolver-${servicePublicId}`}
+                    className={CLASES_BOTON_SECUNDARIO}
+                >
+                    Cancelar
+                </button>
+            </div>
+
+            <CartelEmergente
+                isOpen={mostrarCartel}
+                variant={CARTEL_EMERGENTE_VARIANTES.BLOQUEO}
+                message={errorMensaje}
+                onClose={() => setMostrarCartel(false)}
+                dataTestId={`cartel-emergente-resolver-${servicePublicId}`}
+            />
+        </div>
+    );
+}

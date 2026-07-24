@@ -15,6 +15,7 @@ import {
     agruparServiciosPorReserva,
     construirDetalleFilaDeuda,
     construirMensajeExitoPago,
+    resolverMontoAlElegirServicio,
 } from "./supplierPageLogic.js";
 import { formatCurrency } from "../../../lib/utils.js";
 
@@ -1240,5 +1241,65 @@ describe("construirMensajeExitoPago", () => {
             monedaImputada: "USD",
         });
         assert.ok(resultado.lineas[0].includes(formatCurrency(100, "USD")));
+    });
+});
+
+// ─── resolverMontoAlElegirServicio (Tanda 3, 2026-07-24, fix #46) ─────────────────────
+// El monto del pago tiene que recalcularse al elegir un servicio puntual en el Paso 2,
+// no quedarse con el saldo de la fila completa (que puede sumar varios servicios).
+
+describe("resolverMontoAlElegirServicio", () => {
+    it("elige un servicio → el monto pasa a ser el netCost de ESE servicio", () => {
+        const resultado = resolverMontoAlElegirServicio({
+            servicioElegido: { netCost: 5000 },
+            filaBalance: 12000, // la fila completa tenía más de un servicio
+            puedeVerMontos: true,
+        });
+        assert.equal(resultado.debeActualizarMonto, true);
+        assert.equal(resultado.nuevoMonto, "5000");
+    });
+
+    it("vuelve a 'Sin imputar a un servicio específico' → restaura el saldo de la fila completa", () => {
+        const resultado = resolverMontoAlElegirServicio({
+            servicioElegido: null,
+            filaBalance: 12000,
+            puedeVerMontos: true,
+        });
+        assert.equal(resultado.debeActualizarMonto, true);
+        assert.equal(resultado.nuevoMonto, "12000");
+    });
+
+    it("vuelve a 'Sin imputar' pero NO hay fila de origen (ej. modo edición) → no toca el monto", () => {
+        const resultado = resolverMontoAlElegirServicio({
+            servicioElegido: null,
+            filaBalance: null,
+            puedeVerMontos: true,
+        });
+        assert.equal(resultado.debeActualizarMonto, false);
+        assert.equal(resultado.nuevoMonto, null);
+    });
+
+    it("sin permiso de ver costos (cobranzas.see_cost) → nunca autocompleta el monto, ni al elegir ni al deseleccionar", () => {
+        const alElegir = resolverMontoAlElegirServicio({
+            servicioElegido: { netCost: 5000 },
+            filaBalance: 12000,
+            puedeVerMontos: false,
+        });
+        const alDeseleccionar = resolverMontoAlElegirServicio({
+            servicioElegido: null,
+            filaBalance: 12000,
+            puedeVerMontos: false,
+        });
+        assert.equal(alElegir.debeActualizarMonto, false);
+        assert.equal(alDeseleccionar.debeActualizarMonto, false);
+    });
+
+    it("servicio elegido sin netCost (dato faltante) → cae a 0, nunca deja el campo con un valor viejo", () => {
+        const resultado = resolverMontoAlElegirServicio({
+            servicioElegido: {},
+            filaBalance: 12000,
+            puedeVerMontos: true,
+        });
+        assert.equal(resultado.nuevoMonto, "0");
     });
 });

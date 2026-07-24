@@ -84,6 +84,7 @@ import {
     agruparServiciosPorReserva,
     construirDetalleFilaDeuda,
     construirMensajeExitoPago,
+    resolverMontoAlElegirServicio,
 } from "../lib/supplierPageLogic";
 import { OWNER_TYPE, ACCOUNT_TYPE, resolverCuentaPrincipalPorMoneda } from "../../bank-accounts/lib/bankAccountLogic";
 
@@ -401,6 +402,12 @@ function SelectorServicioImputacion({ servicios, hayServiciosEnOtraMoneda, servi
                         servicePublicId: String(elegido.publicId),
                         serviceRecordKind: tipoARecordKind(elegido.type),
                         descripcion: elegido.description || elegido.type,
+                        // Fix #46 (Tanda 3, 2026-07-24): el padre necesita el costo neto de
+                        // ESTE servicio puntual para recalcular el monto del pago (ver
+                        // handleServicioChange). netCost/currency viajan en la lista que ya
+                        // se cargó — no hace falta pedirle nada nuevo al backend.
+                        netCost: elegido.netCost,
+                        currency: elegido.currency,
                     });
                 }}
                 className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-emerald-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
@@ -742,6 +749,22 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
         if (!publicId) { setReservaSeleccionada(null); return; }
         const encontrada = reservasConDeuda.find((r) => String(r.reservaPublicId) === publicId);
         setReservaSeleccionada(encontrada || { reservaPublicId: publicId, numeroReserva: publicId });
+    };
+
+    // Fix #46 (Tanda 3, 2026-07-24): recalcula el monto del pago al elegir/deselecionar un
+    // servicio puntual en el selector de imputación. La decisión de QUÉ monto poner vive en
+    // `resolverMontoAlElegirServicio` (supplierPageLogic.js, lógica pura y testeada aparte)
+    // — acá solo se conecta con el estado del formulario. Mismo patrón que `handleCargoChange`
+    // de arriba.
+    const handleServicioChange = (elegido) => {
+        setServicioSeleccionado(elegido);
+
+        const { debeActualizarMonto, nuevoMonto } = resolverMontoAlElegirServicio({
+            servicioElegido: elegido,
+            filaBalance: reservaSeleccionada?.debe ?? null,
+            puedeVerMontos,
+        });
+        if (debeActualizarMonto) setMonto(nuevoMonto);
     };
 
     // ── Handlers del Paso 1 "¿Qué estás pagando?" (rediseño 2026-07-20) ───────────────
@@ -1381,7 +1404,7 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
                                     servicios={serviciosFiltradosPorMoneda}
                                     hayServiciosEnOtraMoneda={serviciosReserva.length > 0}
                                     servicioSeleccionado={servicioSeleccionado}
-                                    onServicioChange={setServicioSeleccionado}
+                                    onServicioChange={handleServicioChange}
                                 />
                             )
                         )}
@@ -1413,7 +1436,7 @@ export function PagarProveedorInline({ supplierId, balancesByCurrency, openInvoi
                                 servicios={serviciosFiltradosPorMoneda}
                                 hayServiciosEnOtraMoneda={serviciosReserva.length > 0}
                                 servicioSeleccionado={servicioSeleccionado}
-                                onServicioChange={setServicioSeleccionado}
+                                onServicioChange={handleServicioChange}
                             />
                         )}
                     </div>
