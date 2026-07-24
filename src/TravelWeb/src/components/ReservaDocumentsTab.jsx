@@ -5,6 +5,7 @@ import { Check, Download, Eye, File, FileText, Loader2, Paperclip, Pencil, Trash
 import { api } from "../api";
 import { getApiErrorMessage } from "../lib/errors";
 import { getPublicId } from "../lib/publicIds";
+import { formatDateTime } from "../lib/utils";
 
 function formatFileSize(bytes) {
   if (!bytes) return "0 B";
@@ -225,7 +226,7 @@ function DocumentRow({ file, onDelete, onDownload, onRename, soloLectura = false
           <span>{formatFileSize(fileSize)}</span>
           {uploadedAt ? (
             <span>
-              {new Date(uploadedAt).toLocaleDateString()} {new Date(uploadedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              {formatDateTime(uploadedAt)}
             </span>
           ) : null}
           {uploadedBy ? <span>Subido por {uploadedBy}</span> : null}

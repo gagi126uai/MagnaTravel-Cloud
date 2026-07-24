@@ -32,6 +32,7 @@ import { showConfirm, showError, showSuccess } from "../alerts";
 import { PaginationFooter } from "../components/ui/PaginationFooter";
 import { MobileRecordCard, MobileRecordList } from "../components/ui/MobileRecordCard";
 import { getPublicId, getRelatedPublicId } from "../lib/publicIds";
+import { formatDate } from "../lib/utils";
 
 const STATUSES = [
     { value: "Nuevo", label: "Consulta nueva", dot: "bg-slate-400", badge: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300" },
@@ -90,7 +91,7 @@ function timeAgo(dateStr) {
     if (hours < 24) return `hace ${hours}h`;
     const days = Math.floor(hours / 24);
     if (days < 7) return `hace ${days}d`;
-    return new Date(dateStr).toLocaleDateString("es-AR");
+    return formatDate(dateStr);
 }
 
 export default function CRMPage() {

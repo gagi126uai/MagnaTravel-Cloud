@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { api } from "../api";
-import { format, isToday, isYesterday, formatDistanceToNow } from "date-fns";
+import { format, formatDistanceToNow } from "date-fns";
 import { es } from "date-fns/locale";
+import { aHoraArgentina } from "../lib/utils";
 import {
   Shield,
   Search,
@@ -267,10 +268,20 @@ function translateAction(action) { return actionTranslations[action] || action; 
 function translateField(field) { return fieldTranslations[field] || field; }
 
 function formatTimestamp(ts) {
-  const date = new Date(ts);
-  if (isToday(date)) return `Hoy ${format(date, "HH:mm", { locale: es })}`;
-  if (isYesterday(date)) return `Ayer ${format(date, "HH:mm", { locale: es })}`;
-  return format(date, "d MMM yyyy HH:mm", { locale: es });
+  // Regla del dueño: la fecha/hora que se muestra es SIEMPRE la de Argentina, sin
+  // importar el huso del navegador. date-fns (isToday/isYesterday/format) no acepta
+  // timeZone — siempre lee los getters LOCALES del navegador — así que anclamos tanto
+  // el timestamp del evento COMO el "ahora" a Argentina con aHoraArgentina() antes de
+  // compararlos, y comparamos "mismo día calendario" a mano en vez de usar
+  // isToday/isYesterday (que comparan contra un `new Date()` que no podemos anclar).
+  const fecha = aHoraArgentina(ts);
+  const hoyEnArgentina = aHoraArgentina(new Date());
+  const ayerEnArgentina = new Date(hoyEnArgentina);
+  ayerEnArgentina.setDate(ayerEnArgentina.getDate() - 1);
+
+  if (fecha.toDateString() === hoyEnArgentina.toDateString()) return `Hoy ${format(fecha, "HH:mm", { locale: es })}`;
+  if (fecha.toDateString() === ayerEnArgentina.toDateString()) return `Ayer ${format(fecha, "HH:mm", { locale: es })}`;
+  return format(fecha, "d MMM yyyy HH:mm", { locale: es });
 }
 
 function formatRelative(ts) {

@@ -18,20 +18,9 @@ import { TrendingUp, ChevronRight, AlertCircle, RefreshCw, ArrowLeft, ExternalLi
 import { MonthNavigator, monthToBounds } from "../../../components/ui/MonthNavigator";
 import { useCommissionsSummary } from "../hooks/useCommissionsSummary";
 import { useCommissionsAccruals } from "../hooks/useCommissionsAccruals";
-import { formatCurrency } from "../../../lib/utils";
+import { formatCurrency, formatDate } from "../../../lib/utils";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-/**
- * Formatea una fecha ISO como "03/06/2026".
- * Usa la zona horaria local para evitar que el timezone la corra un día.
- */
-function formatFechaCorta(isoString) {
-  if (!isoString) return "—";
-  const d = new Date(isoString);
-  if (isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
-}
 
 /**
  * Etiqueta del estado de una acumulación de comisión.
@@ -244,7 +233,7 @@ function DetalleVendedor({ sellerName, items, loading, error, onReload, onVolver
                     <EstadoComisionBadge status={accrual.status} />
                   </td>
                   <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
-                    {formatFechaCorta(accrual.createdAt)}
+                    {formatDate(accrual.createdAt)}
                   </td>
                   <td className="px-4 py-3 text-right">
                     {accrual.reservaPublicId && (

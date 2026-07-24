@@ -5,6 +5,7 @@ import { creditNoteReconciliationApi } from "../api/creditNoteReconciliationApi"
 import { ReconciliationStatusPill, ReceiptStatusPill } from "./ReconciliationStatusPill";
 import { showError, showSuccess, showConfirm } from "../../../alerts";
 import { getApiErrorMessage } from "../../../lib/errors";
+import { formatDateTime } from "../../../lib/utils";
 
 /**
  * FC1.3 Fase 3 (ADR-010): fila expandida de un caso de reconciliacion en la bandeja.
@@ -37,8 +38,8 @@ export default function ReconciliationRow({ caso, onResolved, onApprovalRequired
   const notesEmpty = notes.trim().length === 0;
   const canResolve = !busyResolve && (!notesRequired || !notesEmpty);
 
-  const openedAtFmt = new Date(caso.openedAt).toLocaleString("es-AR");
-  const resolvedAtFmt = caso.resolvedAt ? new Date(caso.resolvedAt).toLocaleString("es-AR") : null;
+  const openedAtFmt = formatDateTime(caso.openedAt);
+  const resolvedAtFmt = caso.resolvedAt ? formatDateTime(caso.resolvedAt) : null;
   const isClosed = caso.status === "Resolved";
 
   // ─── Anular un recibo individual ─────────────────────────────────────────────
@@ -290,7 +291,7 @@ export default function ReconciliationRow({ caso, onResolved, onApprovalRequired
  */
 function ReceiptRow({ recibo, isVoiding, casoClosed, onVoid }) {
   const isLive = recibo.currentStatus === "Issued";
-  const voidedAtFmt = recibo.voidedAt ? new Date(recibo.voidedAt).toLocaleString("es-AR") : null;
+  const voidedAtFmt = recibo.voidedAt ? formatDateTime(recibo.voidedAt) : null;
 
   return (
     <div

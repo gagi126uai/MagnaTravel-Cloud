@@ -1,11 +1,29 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "../api";
 import { showError } from "../alerts";
+import { formatDate } from "../lib/utils";
 import {
     TrendingUp, TrendingDown, Users, MapPin, Wallet, BarChart3,
     Calendar, ArrowUpRight, ArrowDownRight, Loader2, RefreshCw,
     Trophy, Target, DollarSign, Activity
 } from "lucide-react";
+
+const MESES_CORTOS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+
+/**
+ * Formatea el eje X del grafico de flujo de caja como "15 jul".
+ *
+ * Parte del DD/MM/AAAA que ya devuelve formatDate() (helper único, ver T-4)
+ * en vez de leer la fecha con new Date() de nuevo — así no reintroducimos el
+ * bug de fechas-solo-día corridas un día (el backend manda el día del flujo
+ * de caja como fecha-solo-día, sin hora real).
+ */
+function formatFechaEjeCashflow(value) {
+    const fechaCorta = formatDate(value);
+    if (fechaCorta === "-") return "-";
+    const [dia, mes] = fechaCorta.split("/");
+    return `${dia} ${MESES_CORTOS[Number(mes) - 1]}`;
+}
 
 export default function AnalyticsPage() {
     const [sellers, setSellers] = useState([]);
@@ -274,7 +292,7 @@ export default function AnalyticsPage() {
                             })}
                         </div>
                         <div className="flex justify-between mt-3 text-[9px] font-bold text-slate-400">
-                            <span>{new Date(cashflow.historical[0]?.date).toLocaleDateString("es-AR", { day: "2-digit", month: "short" })}</span>
+                            <span>{formatFechaEjeCashflow(cashflow.historical[0]?.date)}</span>
                             <div className="flex gap-4">
                                 <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-400"></span> Ingresos</span>
                                 <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-rose-400"></span> Egresos</span>

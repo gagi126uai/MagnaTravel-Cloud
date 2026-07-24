@@ -76,12 +76,13 @@ export function ReservaLockBanner({
     // Franja verde "destrabada": hay una autorizacion de edicion vigente.
     // El admin ya aprobó — el vendedor puede editar hasta que venza la autorización.
     if (hasLiveEditAuthorization) {
-        // Formateamos la hora de vencimiento en hora local (HH:MM) para mostrarla al vendedor.
+        // Regla del dueño: la hora que se muestra es SIEMPRE la de Argentina, sin
+        // importar el huso del navegador del vendedor — por eso timeZone va fijo.
         let textoVencimiento = '';
         if (editAuthorizationExpiresAt) {
             const fecha = new Date(editAuthorizationExpiresAt);
             if (!isNaN(fecha)) {
-                textoVencimiento = ` hasta las ${fecha.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}`;
+                textoVencimiento = ` hasta las ${fecha.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires' })}`;
             }
         }
 

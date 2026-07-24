@@ -6,6 +6,7 @@ import { getApiErrorMessage } from "../lib/errors";
 import { getPublicId } from "../lib/publicIds";
 import { useAuthState, isAdmin, hasPermission } from "../auth";
 import { puedeEnviarVoucher, resolverDestinatarioPorDefecto, resolverCandidatosDestinatario } from "./voucherSendLogic";
+import { formatDateTime } from "../lib/utils";
 
 function getPassengerName(passenger) {
   return passenger?.fullName || passenger?.FullName || passenger?.name || passenger?.Name || "Pasajero";
@@ -13,11 +14,6 @@ function getPassengerName(passenger) {
 
 function getPassengerId(passenger) {
   return getPublicId(passenger);
-}
-
-function formatDateTime(value) {
-  if (!value) return "-";
-  return `${new Date(value).toLocaleDateString()} ${new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
 }
 
 function formatMoney(value) {

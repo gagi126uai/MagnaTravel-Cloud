@@ -19,6 +19,7 @@ import { useCallback } from "react";
 import { RefreshCw, FileX2, ExternalLink } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { usePendingCreditNoteReviewList } from "../hooks/usePendingCreditNoteReviewList";
+import { formatDate } from "../../../lib/utils";
 
 export default function CancellationCreditNoteInboxPage() {
   const { items, loading, error, reload } = usePendingCreditNoteReviewList();
@@ -130,13 +131,7 @@ export default function CancellationCreditNoteInboxPage() {
  * - onVerReserva: () => void — navega al detalle de la reserva
  */
 function CreditNoteReviewRow({ row, onVerReserva }) {
-  const fechaReview = row.enteredReviewAt
-    ? new Date(row.enteredReviewAt).toLocaleDateString("es-AR", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-      })
-    : "—";
+  const fechaReview = formatDate(row.enteredReviewAt);
 
   // Formateamos el monto con su moneda (si existe).
   // Regla multimoneda: cada fila muestra su moneda propia — no sumamos entre monedas.

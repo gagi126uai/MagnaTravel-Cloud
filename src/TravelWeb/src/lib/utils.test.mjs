@@ -18,7 +18,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { formatDate, formatDateTime, hoyArgentina } from "./utils.js";
+import { formatDate, formatDateTime, hoyArgentina, aHoraArgentina } from "./utils.js";
 
 // ─── Caso 1: fecha-solo-día cruda del input (sin pasar por el backend) ───────
 
@@ -164,14 +164,20 @@ test("formatDate: instante real cerca de medianoche UTC → se ancla a Argentina
 });
 
 test("formatDateTime: mismo anclaje a Argentina para instantes reales (no depende de la zona del proceso)", () => {
-    // Solo verificamos el DÍA (que es lo que corría antes del fix): a la 01:00 UTC del 22/07 ya
-    // es 22 de julio en UTC, pero en Argentina (UTC-3) todavía es 21/07 a la noche. La hora exacta
-    // que imprime Intl acá (formato 12hs sin aclarar am/pm, herencia de toLocaleString("es-AR") de
-    // ANTES de este fix) es un tema aparte, no relacionado con el bug de zona horaria de esta tanda.
-    assert.ok(
-        formatDateTime("2026-07-22T01:00:00Z").startsWith("21/7/2026"),
-        `Esperaba que empiece con "21/7/2026", recibido: "${formatDateTime("2026-07-22T01:00:00Z")}"`
-    );
+    // A la 01:00 UTC del 22/07 ya es 22 de julio en UTC, pero en Argentina (UTC-3) todavía es
+    // 21/07 a las 22:00 de la noche.
+    assert.equal(formatDateTime("2026-07-22T01:00:00Z"), "21/07/2026, 22:00");
+});
+
+// Fix 2026-07-24 (regresión detectada por el reviewer en ReservaDocumentsTab/ReservaVoucherTab):
+// antes formatDateTime() dejaba que Intl eligiera el formato "por default" (sin opciones
+// explícitas), lo que daba hora de 12 SIN am/pm y CON segundos — ambiguo ("02:30:45" a las
+// 14:30 ART, ¿de la mañana o de la tarde?). Ahora fijamos hour23 sin segundos a mano, así el
+// resultado no depende de qué formato "por default" elija el motor de turno.
+test("formatDateTime: hora de tarde se muestra en formato 24hs, sin segundos, sin ambigüedad am/pm", () => {
+    // 17:30:45 UTC = 14:30:45 ART. Antes del fix esto podía salir "02:30:45" (12hs sin
+    // aclarar tarde/mañana) — con el fix tiene que ser inequívocamente "14:30", sin segundos.
+    assert.equal(formatDateTime("2026-07-22T17:30:45Z"), "22/07/2026, 14:30");
 });
 
 // ─── hoyArgentina(): bug real cazado en PROD 2026-07-22 21:50hs ART ─────────────────────
@@ -213,4 +219,67 @@ test("hoyArgentina: fin de año — 31/12 23:00 ART no salta al 1/1 del año sig
     // criterio que los tests de fin de año de formatDate() de más arriba.
     const instanteSimulado = new Date("2027-01-01T02:00:00Z");
     assert.equal(hoyArgentina(instanteSimulado), "2026-12-31");
+});
+
+// ─── Bug real 2026-07-23 (#6/#25 del barrido de PROD): check-in/check-out de un Hotel ───
+// en "Servicios Contratados" (ServiceList.jsx) se veían UN DÍA ANTES. Causa raíz: la tabla
+// tenía su PROPIA función local `formatFechaSegura()` (idéntica al bug original de esta
+// suite, `new Date(...).toLocaleDateString()` sin timeZone) en vez de reusar formatDate()
+// central. Se migró ServiceList.jsx para llamar directo a formatDate() — por eso NO existe
+// un archivo espejo `ServiceList.test.mjs`: ya no queda lógica de formateo propia ahí para
+// testear, todo el comportamiento vive acá y ya está cubierto por los casos de arriba. Este
+// test deja el caso concreto documentado con los nombres de campo reales de la tabla
+// (checkIn/checkOut) para que quede trazable al hallazgo del barrido.
+test("formatDate: check-in de Hotel (fecha-solo-día, medianoche UTC) se muestra igual sin importar el huso del navegador — bug #6/#25 del barrido", () => {
+    // svc.checkIn tal como lo manda el backend: medianoche UTC del día que el vendedor cargó.
+    const checkInDelBackend = "2026-08-15T00:00:00Z";
+    assert.equal(formatDate(checkInDelBackend), "15/08/2026");
+});
+
+// ─── aHoraArgentina(): helper para pantallas que usan date-fns (Auditoría, notificaciones,
+// timelines) en vez de formatDate()/formatDateTime(), porque necesitan formatos que Intl no
+// arma directo (ej. "Hoy 14:30", "d MMM yyyy"). date-fns no acepta timeZone — siempre lee los
+// getters LOCALES del navegador — así que esta función devuelve un Date cuyos getters locales
+// YA son los de Argentina, para que date-fns los use sin saber que está "mintiendo".
+
+test("aHoraArgentina: instante real cerca de medianoche UTC → los getters locales dan el día de Argentina, no el de UTC", () => {
+    // A la 01:00 UTC del 22/07 ya es 22 de julio en UTC, pero en Argentina (UTC-3) todavía
+    // son las 22:00 del 21 de julio — mismo caso límite que los tests de formatDate() de arriba.
+    const resultado = aHoraArgentina("2026-07-22T01:00:00Z");
+    assert.equal(resultado.getDate(), 21);
+    assert.equal(resultado.getMonth(), 6); // julio = índice 6
+    assert.equal(resultado.getFullYear(), 2026);
+    assert.equal(resultado.getHours(), 22);
+    assert.equal(resultado.getMinutes(), 0);
+});
+
+test("aHoraArgentina: acepta tanto un Date como un string ISO, con el mismo resultado", () => {
+    const desdeString = aHoraArgentina("2026-07-22T01:00:00Z");
+    const desdeDate = aHoraArgentina(new Date("2026-07-22T01:00:00Z"));
+    assert.equal(desdeString.getTime(), desdeDate.getTime());
+});
+
+// ─── Casos borde pedidos por el reviewer (2026-07-24): el blindaje hourCycle:"h23" existe
+// específicamente para que la medianoche dé "00" y nunca "24" (lo que rodaría el día) — estos
+// dos casos ejercitan justo los extremos donde ese blindaje importa.
+
+test("aHoraArgentina: medianoche ART exacta (00:00) → hora 0, día correcto, no rueda al día siguiente", () => {
+    // 03:00 UTC = 00:00 ART (UTC-3). Es el caso exacto que hourCycle:"h23" blinda: si el motor
+    // devolviera "24" en vez de "00" para esta hora, new Date(..., 24, ...) rodaría al día 23.
+    const resultado = aHoraArgentina("2026-07-22T03:00:00Z");
+    assert.equal(resultado.getDate(), 22);
+    assert.equal(resultado.getMonth(), 6); // julio = índice 6
+    assert.equal(resultado.getFullYear(), 2026);
+    assert.equal(resultado.getHours(), 0);
+    assert.equal(resultado.getMinutes(), 0);
+});
+
+test("aHoraArgentina: mediodía ART (12:00) → hora 12, sin ambigüedad con formato 12hs", () => {
+    // 15:00 UTC = 12:00 ART (UTC-3).
+    const resultado = aHoraArgentina("2026-07-22T15:00:00Z");
+    assert.equal(resultado.getDate(), 22);
+    assert.equal(resultado.getMonth(), 6); // julio = índice 6
+    assert.equal(resultado.getFullYear(), 2026);
+    assert.equal(resultado.getHours(), 12);
+    assert.equal(resultado.getMinutes(), 0);
 });

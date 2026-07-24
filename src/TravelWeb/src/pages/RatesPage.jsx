@@ -4,6 +4,7 @@ import { showError, showSuccess } from "../alerts";
 import { Plus, Pencil, Trash2, Search, X, DollarSign, Calculator, Plane, Hotel, Car, Package, Star, ChevronDown, ChevronRight, BedDouble } from "lucide-react";
 import Swal from "sweetalert2";
 import { getPublicId } from "../lib/publicIds";
+import { formatDate } from "../lib/utils";
 import { PaginationFooter } from "../components/ui/PaginationFooter";
 import { useDebounce } from "../hooks/useDebounce";
 
@@ -737,7 +738,7 @@ export default function RatesPage() {
                                                             </td>
                                                             <td className="px-4 py-2 text-xs">
                                                                 <div className={`flex flex-col ${isExpired ? 'text-red-600 font-medium' : 'text-slate-500'}`}>
-                                                                    <span>{new Date(rate.validFrom).toLocaleDateString()} - {new Date(rate.validTo).toLocaleDateString()}</span>
+                                                                    <span>{formatDate(rate.validFrom)} - {formatDate(rate.validTo)}</span>
                                                                     {isExpired && <span>Vencida</span>}
                                                                 </div>
                                                             </td>
@@ -798,10 +799,10 @@ export default function RatesPage() {
                                                 <td className="px-4 py-3">
                                                     <div className="flex flex-col text-xs">
                                                         <span className="text-slate-700 dark:text-slate-300">
-                                                            Desde: {rate.validFrom ? new Date(rate.validFrom).toLocaleDateString() : "-"}
+                                                            Desde: {formatDate(rate.validFrom)}
                                                         </span>
                                                         <span className="text-slate-500 dark:text-slate-400">
-                                                            Hasta: {rate.validTo ? new Date(rate.validTo).toLocaleDateString() : "-"}
+                                                            Hasta: {formatDate(rate.validTo)}
                                                         </span>
                                                     </div>
                                                 </td>
@@ -879,7 +880,7 @@ export default function RatesPage() {
                                                             </div>
                                                             <div className="flex justify-between items-center mt-3 pt-2 border-t border-slate-200 dark:border-slate-700 border-dashed">
                                                                 <div className={`text-xs ${isExpired ? 'text-red-500 font-medium' : 'text-slate-400'}`}>
-                                                                    {isExpired ? 'Vencida: ' : 'Vence: '}{new Date(rate.validTo).toLocaleDateString()}
+                                                                    {isExpired ? 'Vencida: ' : 'Vence: '}{formatDate(rate.validTo)}
                                                                 </div>
                                                                 <div className="flex gap-2">
                                                                     <button onClick={(e) => { e.stopPropagation(); editRate(rate); }} className="p-1 text-indigo-600 bg-indigo-50 rounded dark:bg-indigo-900/30 dark:text-indigo-400"><Pencil className="h-4 w-4" /></button>
@@ -923,7 +924,7 @@ export default function RatesPage() {
                                                 Prov: <span className="font-medium text-slate-700 dark:text-slate-300">{rate.supplierName || "-"}</span>
                                             </div>
                                             <div className={`${isExpired ? 'text-red-500 font-bold' : ''}`}>
-                                                {isExpired ? 'Vencida' : `Vence: ${new Date(rate.validTo).toLocaleDateString()}`}
+                                                {isExpired ? 'Vencida' : `Vence: ${formatDate(rate.validTo)}`}
                                             </div>
                                         </div>
 

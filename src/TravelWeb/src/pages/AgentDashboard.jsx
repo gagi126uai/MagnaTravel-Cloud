@@ -7,6 +7,7 @@ import { BnaUsdSellerRateCard } from "../components/BnaUsdSellerRateCard";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { DashboardSkeleton } from "../components/ui/skeleton";
 import { getPublicId } from "../lib/publicIds";
+import { formatDate } from "../lib/utils";
 
 export default function AgentDashboard() {
     const { user } = useAuthState();
@@ -85,7 +86,7 @@ export default function AgentDashboard() {
                                         <div className="text-xs text-muted-foreground">{trip.numeroReserva}</div>
                                     </div>
                                     <div className="text-right">
-                                        <div className="font-medium text-blue-600 dark:text-blue-400">{new Date(trip.startDate).toLocaleDateString()}</div>
+                                        <div className="font-medium text-blue-600 dark:text-blue-400">{formatDate(trip.startDate)}</div>
                                         <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-700">{trip.status}</span>
                                     </div>
                                 </div>

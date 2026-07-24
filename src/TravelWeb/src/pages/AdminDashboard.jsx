@@ -41,6 +41,7 @@ import {
 import { BnaUsdSellerRateCard } from "../components/BnaUsdSellerRateCard";
 import { DashboardSkeleton } from "../components/ui/skeleton";
 import { getPublicId } from "../lib/publicIds";
+import { formatDate } from "../lib/utils";
 
 export default function DashboardPage() {
     const [dashboard, setDashboard] = useState(null);
@@ -322,7 +323,7 @@ export default function DashboardPage() {
                                         </div>
                                         <div className="text-right">
                                             <div className="font-medium text-blue-600 dark:text-blue-400">
-                                                {new Date(trip.startDate).toLocaleDateString()}
+                                                {formatDate(trip.startDate)}
                                             </div>
                                             <BadgeStatus status={trip.status} />
                                         </div>

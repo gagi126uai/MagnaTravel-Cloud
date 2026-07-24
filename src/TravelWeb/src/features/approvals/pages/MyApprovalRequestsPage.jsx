@@ -3,6 +3,7 @@ import { Inbox, RefreshCw } from "lucide-react";
 import { REQUEST_TYPE_LABELS } from "../api/approvalsApi";
 import { useApprovalsList } from "../hooks/useApprovals";
 import ApprovalStatusPill from "../components/ApprovalStatusPill";
+import { formatDateTime } from "../../../lib/utils";
 
 // B1.15 Fase B' Parte 2 (2026-05-11): vista del solicitante. Muestra todas sus
 // solicitudes en cualquier estado, ordenadas por fecha descendente. El backend
@@ -75,9 +76,9 @@ export default function MyApprovalRequestsPage() {
 }
 
 function MyApprovalRow({ request }) {
-  const requestedAt = new Date(request.requestedAt).toLocaleString("es-AR");
-  const resolvedAt = request.resolvedAt ? new Date(request.resolvedAt).toLocaleString("es-AR") : null;
-  const expiresAt = new Date(request.expiresAt).toLocaleString("es-AR");
+  const requestedAt = formatDateTime(request.requestedAt);
+  const resolvedAt = request.resolvedAt ? formatDateTime(request.resolvedAt) : null;
+  const expiresAt = formatDateTime(request.expiresAt);
 
   return (
     <div className="px-6 py-5 space-y-2">

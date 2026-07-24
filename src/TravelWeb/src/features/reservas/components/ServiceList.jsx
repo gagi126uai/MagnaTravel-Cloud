@@ -56,7 +56,7 @@ import { useServiceNominalCoverage } from "../lib/useServiceNominalCoverage";
 import { UpcomingStartPill, estaEnVentana } from "./UpcomingStartPill";
 import { CostConfirmCell, CostConfirmCellMobile } from "./CostConfirmCell";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
-import { formatCurrency } from "../../../lib/utils";
+import { formatCurrency, formatDate } from "../../../lib/utils";
 import { useReservaSupplierPaymentStatus } from "../lib/useReservaSupplierPaymentStatus";
 import { buscarEstadoPagoServicio, puedenVerseMontos } from "../lib/supplierPaymentStatusLogic";
 import { OperadorPagoStatusBadge } from "./OperadorPagoStatusBadge";
@@ -306,21 +306,6 @@ function claseColorEstadoServicio(workflowStatus, reservaStatus) {
     // Se diferencia de "Confirmado" (verde intenso) para no confundir "en camino" con "cerrado".
     if (etiqueta === 'Finalizado') return 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400';
     return 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400';
-}
-
-/**
- * Formatea una fecha para mostrar en la tabla. Devuelve '-' si el valor
- * no existe o no es una fecha válida (evita que aparezca "Invalid Date").
- *
- * Se usa en la columna Fecha/Estancia para fechas de inicio Y fin,
- * porque Paquete puede no tener fecha de fin informada por el operador.
- */
-function formatFechaSegura(valor) {
-    if (!valor) return '-';
-    const fecha = new Date(valor);
-    // getTime() devuelve NaN si la fecha no es válida
-    if (Number.isNaN(fecha.getTime())) return '-';
-    return fecha.toLocaleDateString('es-AR');
 }
 
 /**
@@ -651,17 +636,6 @@ function ModalBloqueoCancelacionServicio({ mensaje, rechazo, onIrAVouchers, onCl
             </div>
         </div>
     );
-}
-
-/**
- * Formatea una fecha ISO en texto corto legible (ej. "08/06/2026").
- * Retorna null si la fecha no es válida o no existe.
- */
-function formatFechaCancelacion(valorFecha) {
-    if (!valorFecha) return null;
-    const fecha = new Date(valorFecha);
-    if (Number.isNaN(fecha.getTime())) return null;
-    return fecha.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
 /**
@@ -1360,7 +1334,7 @@ export function ServiceList({
                                                             <span>por <span className="font-semibold">{svc.cancelledByUserName}</span></span>
                                                         )}
                                                         {svc.cancelledAt && (
-                                                            <span>el {formatFechaCancelacion(svc.cancelledAt)}</span>
+                                                            <span>el {formatDate(svc.cancelledAt)}</span>
                                                         )}
                                                     </div>
                                                 )}
@@ -1395,23 +1369,23 @@ export function ServiceList({
                                             <td className="py-4 align-middle whitespace-nowrap text-xs text-slate-600 dark:text-slate-400">
                                                 {svc.recordKind === SERVICE_RECORD_KIND.HOTEL || svc.recordKind === SERVICE_RECORD_KIND.PACKAGE ? (
                                                     <div className="flex flex-col">
-                                                        <span>{formatFechaSegura(svc.date || svc.startDate || svc.checkIn)}</span>
+                                                        <span>{formatDate(svc.date || svc.startDate || svc.checkIn)}</span>
                                                         {/* FIX: solo mostrar "al ..." si hay fecha de fin válida.
                                                             Paquete puede no tener endDate si el operador no la informa. */}
-                                                        {formatFechaSegura(svc.endDate || svc.checkOut) !== '-' && (
-                                                            <span className="text-[10px] opacity-60">al {formatFechaSegura(svc.endDate || svc.checkOut)}</span>
+                                                        {formatDate(svc.endDate || svc.checkOut) !== '-' && (
+                                                            <span className="text-[10px] opacity-60">al {formatDate(svc.endDate || svc.checkOut)}</span>
                                                         )}
                                                     </div>
                                                 ) : svc.recordKind === SERVICE_RECORD_KIND.ASSISTANCE ? (
                                                     // Asistencia: muestra vigencia desde/hasta (fechas date-only)
                                                     <div className="flex flex-col">
-                                                        <span>{formatFechaSegura(svc.validFrom)}</span>
-                                                        {formatFechaSegura(svc.validTo) !== '-' && (
-                                                            <span className="text-[10px] opacity-60">al {formatFechaSegura(svc.validTo)}</span>
+                                                        <span>{formatDate(svc.validFrom)}</span>
+                                                        {formatDate(svc.validTo) !== '-' && (
+                                                            <span className="text-[10px] opacity-60">al {formatDate(svc.validTo)}</span>
                                                         )}
                                                     </div>
                                                 ) : (
-                                                    formatFechaSegura(svc.date)
+                                                    formatDate(svc.date)
                                                 )}
                                             </td>
                                             <td className="py-4 align-middle whitespace-nowrap">
@@ -1909,7 +1883,7 @@ export function ServiceList({
                                                 <span>por <span className="font-semibold">{svc.cancelledByUserName}</span></span>
                                             )}
                                             {svc.cancelledAt && (
-                                                <span>el {formatFechaCancelacion(svc.cancelledAt)}</span>
+                                                <span>el {formatDate(svc.cancelledAt)}</span>
                                             )}
                                         </div>
                                     )}
@@ -1949,14 +1923,14 @@ export function ServiceList({
                                         <div className="text-[11px] text-slate-500 flex flex-col gap-0.5">
                                             <span>
                                                 {svc.recordKind === SERVICE_RECORD_KIND.ASSISTANCE
-                                                    ? (svc.validFrom ? `Vigencia: ${formatFechaSegura(svc.validFrom)}` : '-')
-                                                    : formatFechaSegura(svc.date)}
+                                                    ? (svc.validFrom ? `Vigencia: ${formatDate(svc.validFrom)}` : '-')
+                                                    : formatDate(svc.date)}
                                                 {/* FIX: solo agregar "al ..." si la fecha de fin es válida */}
                                                 {(svc.recordKind === SERVICE_RECORD_KIND.HOTEL || svc.recordKind === SERVICE_RECORD_KIND.PACKAGE) &&
-                                                    formatFechaSegura(svc.endDate || svc.checkOut) !== '-' &&
-                                                    ` al ${formatFechaSegura(svc.endDate || svc.checkOut)}`}
+                                                    formatDate(svc.endDate || svc.checkOut) !== '-' &&
+                                                    ` al ${formatDate(svc.endDate || svc.checkOut)}`}
                                                 {svc.recordKind === SERVICE_RECORD_KIND.ASSISTANCE && svc.validTo &&
-                                                    ` al ${formatFechaSegura(svc.validTo)}`}
+                                                    ` al ${formatDate(svc.validTo)}`}
                                             </span>
                                             <div className="flex gap-2 items-center mt-1 flex-wrap">
                                                 {/* Precio de venta: con cartelito de moneda en modo multimoneda.

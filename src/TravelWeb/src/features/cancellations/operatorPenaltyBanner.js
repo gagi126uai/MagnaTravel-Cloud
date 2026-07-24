@@ -28,7 +28,7 @@
  */
 
 import { debeMostrarReintentarDeshacer } from "./lib/undoDebitNoteLogic.js";
-import { formatCurrency } from "../../lib/utils.js";
+import { formatCurrency, formatDate } from "../../lib/utils.js";
 
 // Traduce cada estado del backend a un slug corto y estable, usado tanto para armar
 // el data-testid (banner-multa-<slug>) como — en algunos casos — el texto mostrado.
@@ -481,8 +481,9 @@ export function copyAccionTrabada({ state, canRetryDebitNote, canCorrectAmountCu
  * @returns {string}
  */
 export function textoRastroWaived({ waivedAt, waivedByName, revertedAt, revertedByName }) {
-  const formatearFecha = (iso) =>
-    new Date(iso).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
+  // formatDate (helper único, ver T-4) ya resuelve el día calendario correcto en
+  // Argentina, sin importar el huso del navegador que esté mirando la ficha.
+  const formatearFecha = formatDate;
 
   let texto;
   if (waivedAt && waivedByName) {

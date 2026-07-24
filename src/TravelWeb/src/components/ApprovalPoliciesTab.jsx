@@ -3,6 +3,7 @@ import { Loader2, RefreshCw, Save, ShieldCheck } from "lucide-react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
 import { REQUEST_TYPE_LABELS } from "../features/approvals/api/approvalsApi";
+import { formatDateTime } from "../lib/utils";
 
 // B1.15 Fase B'' (2026-05-11): editor de policies de workflow. Solo Admin.
 //
@@ -130,7 +131,7 @@ function PolicyRow({ policy, onSave }) {
             <code className="text-[10px] font-mono text-slate-400">{policy.requestType}</code>
           </div>
           <div className="text-xs text-slate-500 dark:text-slate-400">
-            Actualizada {new Date(policy.updatedAt).toLocaleString("es-AR")}
+            Actualizada {formatDateTime(policy.updatedAt)}
             {policy.updatedByUserName ? ` por ${policy.updatedByUserName}` : ""}
           </div>
         </div>

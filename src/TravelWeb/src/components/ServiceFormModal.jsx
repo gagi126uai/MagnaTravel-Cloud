@@ -82,13 +82,6 @@ const getHotelQuantity = (form) => {
     return Math.max(nights || 1, 1) * rooms;
 };
 
-const formatShortDate = (value) => {
-    if (!value) return "Sin definir";
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return "Sin definir";
-    return date.toLocaleDateString("es-AR");
-};
-
 const toIsoDate = (value, fieldLabel) => {
     if (!value) {
         throw new Error(`Completa ${fieldLabel}.`);

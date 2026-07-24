@@ -13,6 +13,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertCircle, Calculator, Plus, Trash2, X } from "lucide-react";
 import { api } from "../api";
 import { showError, showSuccess } from "../alerts";
+import { formatDate } from "../lib/utils";
 
 // Alícuotas de IVA según catálogo de ARCA/AFIP.
 // El id coincide con el AlicuotaIvaId que espera el backend.
@@ -363,7 +364,8 @@ export default function CreateInvoiceModal({
             </button>
             <div className="text-right">
               <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider block">Fecha</span>
-              <span className="text-sm font-medium text-gray-900 dark:text-white">{new Date().toLocaleDateString()}</span>
+              {/* Fecha de HOY en Argentina, sin importar el huso del navegador (regla del dueño). */}
+              <span className="text-sm font-medium text-gray-900 dark:text-white">{formatDate(new Date())}</span>
             </div>
           </div>
         </div>
@@ -549,12 +551,15 @@ export default function CreateInvoiceModal({
                   <div className="text-xs text-slate-500 dark:text-slate-400">
                     Fecha del TC que se registrará:{" "}
                     <span className="font-medium text-slate-700 dark:text-slate-200">
+                      {/* Regla del dueño: la fecha/hora que se muestra es SIEMPRE la de Argentina,
+                          sin importar el huso del navegador del operador. */}
                       {new Date().toLocaleDateString("es-AR", {
                         day: "2-digit",
                         month: "2-digit",
                         year: "numeric",
                         hour: "2-digit",
                         minute: "2-digit",
+                        timeZone: "America/Argentina/Buenos_Aires",
                       })}
                     </span>
                   </div>

@@ -144,7 +144,9 @@ export default function MaintenanceTab() {
                                     </>
                                 )}
                                 <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
-                                    Ejecutado {lastResult.ranAt.toLocaleTimeString("es-AR")}
+                                    {/* Regla del dueño: la hora que se muestra es SIEMPRE la de Argentina,
+                                        sin importar en qué huso esté el navegador del admin que ejecuta esto. */}
+                                    Ejecutado {lastResult.ranAt.toLocaleTimeString("es-AR", { timeZone: "America/Argentina/Buenos_Aires" })}
                                 </p>
                             </div>
                         </div>

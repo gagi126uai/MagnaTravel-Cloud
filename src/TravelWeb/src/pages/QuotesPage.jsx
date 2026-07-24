@@ -5,6 +5,7 @@ import { showConfirm, showError, showSuccess } from "../alerts";
 import { ArrowRight, Calendar, Check, Edit, FileText, Loader2, Plus, Search, Send, Trash2, Users, X } from "lucide-react";
 import { MobileRecordCard, MobileRecordList } from "../components/ui/MobileRecordCard";
 import { getPublicId, getRelatedPublicId } from "../lib/publicIds";
+import { formatDate } from "../lib/utils";
 
 const SERVICE_TYPES = ["Hotel", "Vuelo", "Transfer", "Paquete", "Excursion", "Seguro", "Otro"];
 const STATUS_COLORS = {
@@ -200,7 +201,7 @@ export default function QuotesPage() {
                                     {filtered.map((quote) => (
                                         <tr key={getPublicId(quote)} onClick={() => loadDetail(getPublicId(quote))} className="group cursor-pointer transition-colors hover:bg-slate-50/50 dark:hover:bg-slate-800/20">
                                             <td className="whitespace-nowrap px-4 py-3 align-middle"><span className="rounded-md bg-indigo-50 px-2 py-1 text-[11px] font-black text-indigo-500 dark:bg-indigo-900/20">{quote.quoteNumber}</span></td>
-                                            <td className="px-4 py-3 align-middle"><div className="truncate text-sm font-semibold text-slate-900 dark:text-white">{quote.title}</div><div className="truncate text-xs text-slate-400">{quote.customer?.fullName || quote.customerName || "Sin cliente asociado"}</div>{quote.leadName && <div className="truncate text-[11px] text-indigo-500">Posible cliente: {quote.leadName}</div>}<div className="mt-1 flex items-center gap-1 text-xs text-slate-400"><Calendar className="h-3 w-3" />{quote.createdAt ? new Date(quote.createdAt).toLocaleDateString() : "-"}</div></td>
+                                            <td className="px-4 py-3 align-middle"><div className="truncate text-sm font-semibold text-slate-900 dark:text-white">{quote.title}</div><div className="truncate text-xs text-slate-400">{quote.customer?.fullName || quote.customerName || "Sin cliente asociado"}</div>{quote.leadName && <div className="truncate text-[11px] text-indigo-500">Posible cliente: {quote.leadName}</div>}<div className="mt-1 flex items-center gap-1 text-xs text-slate-400"><Calendar className="h-3 w-3" />{formatDate(quote.createdAt)}</div></td>
                                             <td className="px-4 py-3 align-middle"><div className="text-sm text-slate-600 dark:text-slate-300">{quote.destination || <span className="italic text-slate-400">Sin destino</span>}</div><div className="flex items-center gap-1 text-xs text-slate-400"><Users className="h-3 w-3" />{(quote.adults || 0) + (quote.children || 0)} pax</div></td>
                                             <td className="whitespace-nowrap px-4 py-3 align-middle"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${STATUS_COLORS[quote.status] || STATUS_COLORS.Borrador}`}>{quote.status}</span></td>
                                             <td className="whitespace-nowrap px-4 py-3 text-right align-middle"><div className="text-sm font-black text-indigo-600 dark:text-indigo-400">{fmt(quote.totalSale)}</div><div className="text-[10px] text-slate-400">Neto: {fmt(quote.totalCost)}</div></td>
@@ -241,7 +242,7 @@ function QuoteMobileCard({ quote, fmt, onOpen, onEdit, onDelete }) {
             subtitle={quote.customer?.fullName || quote.customerName || "Sin cliente asociado"}
             meta={
                 <>
-                    <span className="flex items-center gap-2 text-xs"><Calendar className="h-3.5 w-3.5 text-slate-400" />{quote.createdAt ? new Date(quote.createdAt).toLocaleDateString() : "-"}</span>
+                    <span className="flex items-center gap-2 text-xs"><Calendar className="h-3.5 w-3.5 text-slate-400" />{formatDate(quote.createdAt)}</span>
                     <span className="flex items-center gap-2 text-xs"><Users className="h-3.5 w-3.5 text-slate-400" />{quote.destination || "Sin destino"} · {(quote.adults || 0) + (quote.children || 0)} pax</span>
                     {quote.leadName ? <span className="text-[11px] text-indigo-500">Posible cliente: {quote.leadName}</span> : null}
                 </>

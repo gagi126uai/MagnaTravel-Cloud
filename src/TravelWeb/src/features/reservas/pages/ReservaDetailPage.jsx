@@ -1840,7 +1840,7 @@ export default function ReservaDetailPage() {
               {' '}El saldo a cobrar se actualizó automáticamente.
               {reserva.changesPendingSince && (
                 <span className="ml-1 text-amber-700 dark:text-amber-300 text-xs">
-                  (desde el {new Date(reserva.changesPendingSince).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" })})
+                  (desde el {formatDate(reserva.changesPendingSince)})
                 </span>
               )}
 

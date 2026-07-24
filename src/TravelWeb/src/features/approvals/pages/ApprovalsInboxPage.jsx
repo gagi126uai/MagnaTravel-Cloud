@@ -4,6 +4,7 @@ import { approvalsApi, REQUEST_TYPE_LABELS } from "../api/approvalsApi";
 import { useApprovalsList } from "../hooks/useApprovals";
 import { showError, showSuccess } from "../../../alerts";
 import ApprovalStatusPill from "../components/ApprovalStatusPill";
+import { formatDateTime } from "../../../lib/utils";
 
 // B1.15 Fase B' Parte 2 (2026-05-11): bandeja del reviewer (Admin/Colaborador).
 // Lista todos los ApprovalRequest en estado Pending y permite aprobar o rechazar
@@ -118,8 +119,8 @@ function ApprovalInboxRow({ request, onResolved }) {
     }
   };
 
-  const requestedAtFmt = new Date(request.requestedAt).toLocaleString("es-AR");
-  const expiresAtFmt = new Date(request.expiresAt).toLocaleString("es-AR");
+  const requestedAtFmt = formatDateTime(request.requestedAt);
+  const expiresAtFmt = formatDateTime(request.expiresAt);
 
   return (
     <div className="px-6 py-5 space-y-3">

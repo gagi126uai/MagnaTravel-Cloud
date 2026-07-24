@@ -3,7 +3,7 @@ import { api } from "../api";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { Activity } from "lucide-react";
-import { camelize } from "../lib/utils";
+import { camelize, aHoraArgentina } from "../lib/utils";
 import { parseBasicFormatting } from "../lib/basicFormatting";
 
 export default function ReservaTimeline({ reservaId }) {
@@ -91,7 +91,7 @@ export default function ReservaTimeline({ reservaId }) {
                                         )}
                                     </div>
                                     <div className="whitespace-nowrap text-right text-xs font-medium text-slate-500 dark:text-slate-400">
-                                        <time dateTime={event.timestamp}>{format(new Date(event.timestamp), "d MMM HH:mm", { locale: es })}</time>
+                                        <time dateTime={event.timestamp}>{format(aHoraArgentina(event.timestamp), "d MMM HH:mm", { locale: es })}</time>
                                     </div>
                                 </div>
                             </div>

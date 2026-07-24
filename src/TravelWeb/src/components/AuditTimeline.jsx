@@ -3,6 +3,7 @@ import { api } from "../api";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { Clock, User, Activity, ArrowRight } from "lucide-react";
+import { aHoraArgentina } from "../lib/utils";
 
 const fieldTranslations = {
     Status: 'Estado',
@@ -136,7 +137,7 @@ export default function AuditTimeline({ entityName, entityId }) {
                                             )}
                                         </div>
                                         <div className="text-right text-sm whitespace-nowrap text-gray-500 dark:text-slate-400">
-                                            <time dateTime={log.timestamp}>{format(new Date(log.timestamp), "d MMM HH:mm", { locale: es })}</time>
+                                            <time dateTime={log.timestamp}>{format(aHoraArgentina(log.timestamp), "d MMM HH:mm", { locale: es })}</time>
                                         </div>
                                     </div>
                                 </div>

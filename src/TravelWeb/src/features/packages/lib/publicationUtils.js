@@ -1,4 +1,14 @@
 import { buildAppUrl } from "../../../api";
+import { formatDate } from "../../../lib/utils";
+
+// Nombres de mes para formatLongDate. Se arman a partir del DD/MM/AAAA que ya
+// devuelve formatDate() (helper único, ver T-4) en vez de tocar Date/timeZone
+// de nuevo acá: así evitamos duplicar la lógica que evita el bug "un día antes"
+// (fechas-solo-día que se corren al convertir con la zona horaria del navegador).
+const MESES_LARGOS = [
+  "enero", "febrero", "marzo", "abril", "mayo", "junio",
+  "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+];
 
 export function createClientId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -37,27 +47,18 @@ export function formatMoney(value, currency = "USD") {
 }
 
 export function formatShortDate(value) {
-  if (!value) {
-    return "-";
-  }
-
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "-" : date.toLocaleDateString("es-AR");
+  return formatDate(value);
 }
 
 export function formatLongDate(value) {
-  if (!value) {
-    return "-";
-  }
+  // Partimos del DD/MM/AAAA que ya calculó formatDate() con la fecha correcta
+  // en Argentina, en vez de volver a leer la fecha con new Date(): así no
+  // reintroducimos el bug de fechas-solo-día corridas un día.
+  const shortDate = formatDate(value);
+  if (shortDate === "-") return "-";
 
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? "-"
-    : date.toLocaleDateString("es-AR", {
-        day: "numeric",
-        month: "long",
-        year: "numeric",
-      });
+  const [dia, mes, anio] = shortDate.split("/");
+  return `${Number(dia)} de ${MESES_LARGOS[Number(mes) - 1]} de ${anio}`;
 }
 
 function sanitizeEmbedToken(value) {

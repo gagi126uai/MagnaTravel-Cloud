@@ -85,6 +85,55 @@ export function hoyArgentina(ahora = new Date()) {
     return `${obtenerParte("year")}-${obtenerParte("month")}-${obtenerParte("day")}`;
 }
 
+/**
+ * Convierte un instante real (Date o string parseable) a un Date "de mentira" cuyos
+ * componentes LOCALES (año, mes, día, hora, minuto, segundo) son los que corresponden
+ * a Argentina (America/Argentina/Buenos_Aires) — sin importar el huso del navegador.
+ *
+ * Por qué existe: algunas pantallas usan `date-fns` (format, isToday, isYesterday,
+ * etc.) en vez de formatDate()/formatDateTime() de acá arriba, porque necesitan
+ * formatos que Intl no arma directo (ej. "Hoy 14:30", "d MMM yyyy"). `date-fns` no
+ * acepta un parámetro `timeZone` como sí hace Intl/toLocaleString — sus funciones
+ * siempre leen los getters LOCALES del navegador (getFullYear, getHours, etc.).
+ *
+ * El truco (mismo que ya se usaba suelto en PackageEmbedExperience.jsx y
+ * supplierAging.js, ahora centralizado acá — helper único, ver T-4): primero leemos
+ * con Intl los componentes de fecha/hora que corresponden a Argentina, y con esos
+ * armamos un Date nuevo — como `new Date(year, month, day, hour, ...)` interpreta los
+ * componentes como hora LOCAL del proceso que corre el código, sus getters locales
+ * (los que usa date-fns) devuelven exactamente los valores de Argentina, sin importar
+ * en qué huso esté el navegador o el servidor.
+ *
+ * Blindaje (2026-07-24, pedido por el reviewer): usamos `hourCycle: "h23"` en vez de
+ * `hour12: false`. Con `hour12: false` la medianoche puede salir como "00" (lo que
+ * necesitamos) o como "24" según el ICU del motor — hoy funciona de casualidad porque el
+ * ICU que corre acá devuelve "00", pero un ICU distinto que devolviera "24" haría que
+ * `obtenerNumero("hour")` valga 24 y `new Date(..., 24, ...)` ruede al día siguiente,
+ * reintroduciendo el mismo bug de "un día corrido" que esta función existe para evitar.
+ * `hourCycle: "h23"` fuerza el rango 00-23 sin ambigüedad, sin importar el ICU.
+ *
+ * @param {Date|string} instante - instante real a convertir.
+ * @returns {Date} Date cuyos getters locales devuelven la hora de Argentina.
+ */
+export function aHoraArgentina(instante) {
+    const fecha = instante instanceof Date ? instante : new Date(instante);
+    const partes = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Argentina/Buenos_Aires",
+        year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", second: "2-digit",
+        hourCycle: "h23",
+    }).formatToParts(fecha);
+    const obtenerNumero = (tipo) => Number(partes.find((parte) => parte.type === tipo)?.value);
+    return new Date(
+        obtenerNumero("year"),
+        obtenerNumero("month") - 1,
+        obtenerNumero("day"),
+        obtenerNumero("hour"),
+        obtenerNumero("minute"),
+        obtenerNumero("second"),
+    );
+}
+
 // Bug "fechas corridas un día" (reportado 2026-07-16): reconoce una fecha que en
 // realidad es "un día calendario" (no un instante real con hora). Dos formas posibles:
 //   1. "2026-05-23"                      → value crudo de un <input type="date">
@@ -168,6 +217,17 @@ export function formatDate(date) {
  *
  * Fix 2026-07-23 (hallazgo del gate data-exposure, mismo criterio que formatDate()): un valor
  * que no es una fecha válida se degrada a "-", nunca al texto técnico "Invalid Date".
+ *
+ * Fix 2026-07-24 (regresión detectada por el reviewer en ReservaDocumentsTab/ReservaVoucherTab):
+ * `toLocaleString("es-AR", { timeZone })` SIN opciones explícitas le deja a Intl elegir el
+ * formato por default — y ese default viene con SEGUNDOS y hora de 12 SIN aclarar am/pm
+ * ("22/7/2026, 02:30:45" a las 14:30 ART: ambiguo, ¿son las 2 de la madrugada o las 2 de la
+ * tarde?). Antes de este fix esas dos pantallas mostraban hora de 24hs (mejor UX) porque el
+ * comportamiento legacy de `new Date(...).toLocaleString()` en Node/Chrome con TZ=UTC daba por
+ * casualidad ese formato — dejó de ser cierto en cuanto fijamos `timeZone` explícito acá. Para
+ * no depender de qué formato "por default" elija Intl (puede cambiar entre navegadores/versiones
+ * de ICU), fijamos las opciones a mano: `hour23` explícito y sin segundos (no aportan nada al
+ * usuario en una pantalla de gestión, solo ruido).
  */
 export function formatDateTime(date) {
     if (!date) return "-";
@@ -182,7 +242,15 @@ export function formatDateTime(date) {
         return formatDate(date);
     }
 
-    return parsed.toLocaleString("es-AR", { timeZone: "America/Argentina/Buenos_Aires" });
+    return parsed.toLocaleString("es-AR", {
+        timeZone: "America/Argentina/Buenos_Aires",
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23",
+    });
 }
 
 /**

@@ -3,6 +3,7 @@ import { useAlerts } from "../contexts/AlertsContext";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { CheckCircle, AlertCircle, Info, Bell, Check } from "lucide-react";
+import { aHoraArgentina } from "../lib/utils";
 
 export default function NotificationsPage() {
     const { notifications, markAsRead, refreshAlerts } = useAlerts();
@@ -47,7 +48,7 @@ export default function NotificationsPage() {
                             <div className="flex-1">
                                 <p className="text-slate-800 font-medium">{notif.message}</p>
                                 <p className="text-xs text-slate-400 mt-1">
-                                    {format(new Date(notif.createdAt), "dd 'de' MMMM, HH:mm", { locale: es })}
+                                    {format(aHoraArgentina(notif.createdAt), "dd 'de' MMMM, HH:mm", { locale: es })}
                                 </p>
                             </div>
                             <button

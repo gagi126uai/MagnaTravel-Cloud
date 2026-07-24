@@ -10,12 +10,15 @@ const formatRate = (value) =>
 
 const formatFetchedAt = (value) => {
   if (!value) return "-";
+  // Regla del dueño: la hora que se muestra es SIEMPRE la de Argentina, sin
+  // importar el huso del navegador — por eso timeZone va fijo, no implícito.
   return new Date(value).toLocaleString("es-AR", {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+    timeZone: "America/Argentina/Buenos_Aires",
   });
 };
 

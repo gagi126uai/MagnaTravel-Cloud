@@ -445,15 +445,7 @@ function getDestinationStatus(destination) {
   return { key: "draft", label: "Borrador" };
 }
 
-function formatUpdatedDate(value) {
-  if (!value) {
-    return "-";
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "-";
-  }
-
-  return date.toLocaleDateString("es-AR");
-}
+// formatShortDate (importado de publicationUtils, mismo formato DD/MM/AAAA que
+// necesitamos acá) ya resuelve el día correcto en Argentina — reusarlo evita
+// tener una segunda función local con la misma lógica (helper único, ver T-4).
+const formatUpdatedDate = formatShortDate;

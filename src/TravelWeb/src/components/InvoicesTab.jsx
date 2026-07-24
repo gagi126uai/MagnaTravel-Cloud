@@ -5,6 +5,7 @@ import Swal from "sweetalert2";
 import { showError, showSuccess } from "../alerts";
 import CreateInvoiceModal from "./CreateInvoiceModal";
 import { getPublicId } from "../lib/publicIds";
+import { formatDate } from "../lib/utils";
 
 export default function InvoicesTab({ reservaId, balance, onInvoiceCreated, readOnly = false, clientName, clientCuit }) {
     const [invoices, setInvoices] = useState([]);
@@ -153,7 +154,7 @@ export default function InvoicesTab({ reservaId, balance, onInvoiceCreated, read
                             {invoices.map((inv) => (
                                 <tr key={getPublicId(inv)} className="hover:bg-gray-50 dark:hover:bg-slate-700/50">
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-slate-400">
-                                        {new Date(inv.createdAt).toLocaleDateString()}
+                                        {formatDate(inv.createdAt)}
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">
                                         {getInvoiceLabel(inv.tipoComprobante)}
