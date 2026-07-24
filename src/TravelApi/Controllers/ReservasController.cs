@@ -593,6 +593,14 @@ public class ReservasController : ControllerBase
         {
             return StatusCode(StatusCodes.Status403Forbidden, new { message = ex.Message });
         }
+        catch (UndoAnnulmentBlockedException ex)
+        {
+            // ADR-050 (2026-07-24, fix B1 del review frontend): este catch va ANTES que el de
+            // InvalidOperationException a proposito (misma tecnica que OperatorRefundActionRejectedException en
+            // OperatorRefundsController) — sumamos `code` al body SIN tocar el `message` firmado por el dueño,
+            // para que el frontend elija toast-vs-cartel por codigo estable en vez de adivinar por el largo del texto.
+            return Conflict(new { message = ex.Message, code = UndoAnnulmentBlockedException.Code });
+        }
         catch (InvalidOperationException ex)
         {
             return Conflict(new { message = ex.Message });

@@ -73,6 +73,15 @@ public class ClientCreditEntry : IHasPublicId
     public int? SourceReservaId { get; set; }
     public Reserva? SourceReserva { get; set; }
 
+    // --- Origen "anular reserva sin factura" (ADR-050, 2026-07-24) ---
+    // Enlace estructural al Payment "puente" NEGATIVO que CancellationToClientCreditConverter.Convert crea
+    // SIEMPRE junto con este credito (misma llamada, mismo ChangeTracker). Sin esta FK, "Volver atrás" no
+    // tendria forma de encontrar el credito EXACTO que corresponde al puente que esta tachando: dos ciclos
+    // sucesivos de anular/deshacer/re-anular sobre la MISMA reserva dejarian varios creditos con el mismo
+    // SourceReservaId+Currency, y elegir el equivocado tacharia (o dejaria vivo) el saldo que no es.
+    public int? SourceBridgePaymentId { get; set; }
+    public Payment? SourceBridgePayment { get; set; }
+
     /// <summary>SOBREPAGO: actor que registro el cobro que dejo el excedente. Audit. Null en creditos de cancelacion.</summary>
     [MaxLength(450)]
     public string? CreatedByUserId { get; set; }

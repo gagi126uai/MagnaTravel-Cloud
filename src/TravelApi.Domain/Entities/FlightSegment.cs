@@ -184,6 +184,16 @@ public class FlightSegment : IHasPublicId
     [MaxLength(200)]
     public string? CancelledByUserName { get; set; }
 
+    /// <summary>
+    /// ADR-050 (2026-07-24): el <c>Status</c> (codigo IATA crudo, ej. "HK") que tenia el vuelo JUSTO ANTES de
+    /// cancelarse. Se estampa cada vez que el vuelo pasa a cancelado (anular la reserva entera, cancelar este
+    /// vuelo suelto, o que el operador cambie su estado). Permite a "Volver atrás" restaurar el codigo IATA
+    /// EXACTO en vez de adivinar uno generico. Null en vuelos legacy nunca cancelados o cancelados antes de
+    /// esta obra (el revivir hace fallback a "Solicitado" en ese caso).
+    /// </summary>
+    [MaxLength(50)]
+    public string? StatusBeforeCancellation { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     // Tarifario - snapshot de precios al momento de crear

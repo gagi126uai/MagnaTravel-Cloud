@@ -219,6 +219,28 @@ public interface IBookingCancellationService
         int reservaId, string userId, string? userName, CancellationToken ct);
 
     /// <summary>
+    /// ADR-050 (2026-07-24, "Volver atrás deshace la anulación entera"): aborta la
+    /// <see cref="BookingCancellation"/> activa de la reserva (la que ancló el
+    /// receivable del operador cuando se anuló "sin factura") como parte de deshacer esa anulación.
+    ///
+    /// <para><b>Defensa en profundidad (M2 del review de arquitectura)</b>: rechaza con
+    /// <c>InvalidOperationException</c> (409) si el BC ya tiene NC emitida (<c>CreditNoteInvoiceId</c>), reembolso
+    /// del operador recibido (<c>ReceivedRefundAmount &gt; 0</c>), ND de multa emitida
+    /// (<c>DebitNoteInvoiceId</c>, en el BC o en cualquiera de sus líneas) o una factura de venta ancla
+    /// (<c>OriginatingInvoiceId</c>) — cualquiera de esas señales significa que ya hay un comprobante o un
+    /// movimiento de plata real que "Volver atrás" NO puede pisar. <c>ReservaService.RevertStatusAsync</c> ya
+    /// valida lo mismo agregado ANTES de llamar acá; esto es la última barrera mirando el BC directo.</para>
+    ///
+    /// <para><b>No-op</b> si la reserva no tiene ningún BC activo (Status distinto de Aborted/Closed) — pasa
+    /// cuando la anulación nunca dejó plata al operador y por lo tanto nunca creó el ancla.</para>
+    ///
+    /// <para>NO hace SaveChanges: corre dentro de la transacción del caller (patrón FC4, igual que
+    /// <c>ReservaService.UndoAnnulmentAsync</c>).</para>
+    /// </summary>
+    Task AbortActiveAnnulmentForRevertAsync(
+        int reservaId, string? actorUserId, string? actorUserName, CancellationToken ct);
+
+    /// <summary>
     /// Plata viva (familia R1): impide REASIGNAR el operador (o cambiar la moneda) de UN servicio ya pagado al
     /// operador saliente cuando NO hay factura viva que ancle el receivable. Reasignar el operador (o mover el
     /// servicio a otra moneda) hace desaparecer su compra confirmada del bucket del operador saliente, dejando su

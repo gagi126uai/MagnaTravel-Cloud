@@ -142,6 +142,15 @@ public static class AuditActions
     public const string BookingCancellationAborted = "BookingCancellationAborted";
 
     /// <summary>
+    /// ADR-050 (2026-07-24): BC abortado porque "Volver atrás" deshizo la anulación entera de la reserva que lo
+    /// originó. Distinto de <see cref="BookingCancellationAborted"/> (ese es un abort manual explícito de un
+    /// Drafted); este dispara desde <c>AbortActiveAnnulmentForRevertAsync</c> como parte del undo, sobre un BC
+    /// que puede venir de más adelante en su ciclo de vida (Drafted..ClientCreditApplied), siempre que no tenga
+    /// NC/ND/refund ya generados (defensa en profundidad, mismos gates que bloquean el undo entero).
+    /// </summary>
+    public const string BookingCancellationAbortedForAnnulmentRevert = "BookingCancellationAbortedForAnnulmentRevert";
+
+    /// <summary>
     /// B1 (2026-06-03): un segundo <c>DraftAsync</c> sobre una reserva que ya tenia
     /// un draft "puro" (Drafted, sin NC ni ND) NO creo una fila nueva: reuso el draft
     /// existente (reintento idempotente del flujo draft -> confirm). Sirve para distinguir
@@ -310,6 +319,14 @@ public static class AuditActions
     /// estado origen, el destino (Cancelled) y el motivo — la lista de saldos a favor viaja VACIA.
     /// </summary>
     public const string ReservaAnnulledDirectlyWithoutCredit = "ReservaAnnulledDirectlyWithoutCredit";
+
+    /// <summary>
+    /// ADR-050 (2026-07-24): "Volver atrás" deshizo una anulación entera (Cancelled -&gt; InManagement con
+    /// <c>Reserva.AnnulledAt</c> vivo). El detail JSON lleva la reserva y el motivo — NUNCA costos ni datos
+    /// sensibles. Los sub-efectos (servicios revividos, saldo a favor tachado, cancelación abortada) quedan
+    /// trazados por sus propios eventos/estados (F-6: cada contra-asiento se audita donde ocurre).
+    /// </summary>
+    public const string ReservaAnnulmentUndone = "ReservaAnnulmentUndone";
 
     /// <summary>
     /// FC1.2.3 (2026-05-18): cuando el ultimo withdraw deja el BC sin saldos

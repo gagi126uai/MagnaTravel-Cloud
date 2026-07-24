@@ -29,4 +29,11 @@ public enum WithdrawalKind
 
     /// <summary>Reversal post-T3: el cliente devuelve dinero ya retirado para que se re-acredite al operador. Solo via <c>ApprovalRequest.ClientRefundReversal</c>.</summary>
     ReversedToOperator = 4,
+
+    /// <summary>
+    /// ADR-050 (2026-07-24): el credito se anula porque se DESHIZO la anulación de reserva que lo originó
+    /// ("Volver atrás"). NO es un retiro real del cliente (no genera <c>ManualCashMovement</c>, igual que
+    /// <see cref="KeptAsCredit"/>): es un contra-asiento contable que documenta por qué el saldo bajó a cero.
+    /// </summary>
+    VoidedByAnnulmentUndo = 5,
 }

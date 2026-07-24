@@ -163,6 +163,16 @@ public class HotelBooking : IHasPublicId
     [MaxLength(200)]
     public string? CancelledByUserName { get; set; }
 
+    /// <summary>
+    /// ADR-050 (2026-07-24): el <c>Status</c> que tenía el servicio JUSTO ANTES de cancelarse. Se estampa cada
+    /// vez que el servicio pasa a cancelado (por cualquiera de los caminos: anular la reserva entera, cancelar
+    /// este servicio suelto, o que el operador cambie su estado). Permite a "Volver atrás" restaurar el estado
+    /// EXACTO en vez de adivinar uno genérico. Null en servicios legacy nunca cancelados o cancelados antes de
+    /// esta obra (el revivir hace fallback a "Solicitado" en ese caso).
+    /// </summary>
+    [MaxLength(50)]
+    public string? StatusBeforeCancellation { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public int GetExpectedPaxCount() => Adults + Children;

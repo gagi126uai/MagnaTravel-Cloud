@@ -137,6 +137,12 @@ public static class CancellationToClientCreditConverter
             };
             db.Payments.Add(bridge);
 
+            // ADR-050 (2026-07-24): enlace estructural credito<->puente (navegacion, no Id: ninguno de los dos
+            // esta guardado todavia). EF hace la fixup del FK solo cuando ambos entran Added al mismo
+            // SaveChanges. "Volver atrás" lo usa para encontrar el credito EXACTO que corresponde al puente
+            // que esta tachando, sin ambiguedad entre ciclos anular/deshacer/re-anular sucesivos.
+            credit.SourceBridgePayment = bridge;
+
             converted.Add((currency, paidInCurrency));
 
             logger.LogInformation(

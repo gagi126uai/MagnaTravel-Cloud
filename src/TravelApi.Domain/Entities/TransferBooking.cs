@@ -143,6 +143,11 @@ public class TransferBooking : IHasPublicId
     [MaxLength(200)]
     public string? CancelledByUserName { get; set; }
 
+    /// <summary>ADR-050 (2026-07-24): <c>Status</c> justo antes de cancelarse, para que "Volver atrás" lo
+    /// restaure exacto. Ver el XML-doc gemelo en <see cref="HotelBooking.StatusBeforeCancellation"/>.</summary>
+    [MaxLength(50)]
+    public string? StatusBeforeCancellation { get; set; }
+
     // === ADR-020 (2026-06-07): marca "no requiere confirmacion" — exclusiva del traslado ===
     // Hay traslados que no necesitan confirmacion del operador para considerarse RESUELTOS (ej.
     // traslado propio o contratado en destino). Cualquier vendedor puede marcarlo; se registra

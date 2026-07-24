@@ -267,6 +267,25 @@ public class Reserva : IHasPublicId
     /// </summary>
     public bool DatesManuallySet { get; set; } = false;
 
+    /// <summary>
+    /// ADR-050 (2026-07-24, "Volver atrás deshace la anulación"): instante EXACTO en que se ejecutó el acto de
+    /// ANULAR la reserva completa (no una cancelación de servicios sueltos). Es el mismo <c>DateTime.UtcNow</c>
+    /// que se pasa a los canceladores de servicios (<c>ReservaServiceCanceller</c>/
+    /// <c>BookingCancellationService.CancelAllReservaServicesAsync</c>), así <c>RevertStatusAsync</c> puede
+    /// distinguir "qué servicios se cancelaron EN ESTE acto" (<c>CancelledAt &gt;= AnnulledAt</c>, se revive al
+    /// deshacer) de "qué servicios ya estaban cancelados de antes, uno por uno" (no se revive).
+    ///
+    /// <para><b>Null = la reserva NO nació Cancelled de un acto de Anular</b>: llegó a Cancelled porque se
+    /// cancelaron todos sus servicios uno por uno (sin pasar por Anular). En ese caso "Volver atrás" NO
+    /// intenta deshacer nada — solo el flip de estado de siempre (decisión firmada del dueño, 2026-07-24).</para>
+    /// </summary>
+    public DateTime? AnnulledAt { get; set; }
+
+    /// <summary>Usuario que ejecutó el acto de anular. Null si <see cref="AnnulledAt"/> es null o el actor no viajó
+    /// (proceso de sistema). Ver <see cref="AnnulledAt"/>.</summary>
+    [MaxLength(450)]
+    public string? AnnulledByUserId { get; set; }
+
     // Payer/Main Client
     public int? PayerId { get; set; }
     public Customer? Payer { get; set; }

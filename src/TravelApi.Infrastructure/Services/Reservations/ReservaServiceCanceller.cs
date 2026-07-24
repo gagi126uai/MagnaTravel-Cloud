@@ -29,19 +29,27 @@ internal static class ReservaServiceCanceller
     /// <summary>
     /// Cancela todos los servicios vivos (no-cancelados) de la reserva en las 6 tablas, estampando el actor y la
     /// fecha. NO llama a SaveChanges: lo hace el caller en la misma unidad de trabajo.
+    ///
+    /// <para><b>ADR-050 (2026-07-24, "Volver atrás")</b>: <paramref name="annulAt"/> es el UNICO instante que
+    /// captura el acto de anular (lo calcula el caller UNA vez, no cada fila con su propio
+    /// <c>DateTime.UtcNow</c>). Así queda igual, al microsegundo, a <c>Reserva.AnnulledAt</c> — el undo
+    /// necesita comparar <c>servicio.CancelledAt &gt;= reserva.AnnulledAt</c> para saber "¿este servicio se
+    /// canceló EN ESTE acto o ya estaba cancelado de antes?", y una comparación entre dos <c>UtcNow</c>
+    /// tomados por separado (aunque sea en la misma llamada) podría dar el orden equivocado. También se
+    /// estampa <c>StatusBeforeCancellation</c> con el <c>Status</c> viejo ANTES de pisarlo, para que el undo
+    /// pueda restaurar el estado exacto en vez de adivinar uno genérico.</para>
     /// </summary>
     public static async Task CancelAllLiveServicesAsync(
-        AppDbContext db, int reservaId, string? userId, string? userName, CancellationToken ct = default)
+        AppDbContext db, int reservaId, DateTime annulAt, string? userId, string? userName, CancellationToken ct = default)
     {
-        var now = DateTime.UtcNow;
-
         var flights = await db.FlightSegments.Where(f => f.ReservaId == reservaId).ToListAsync(ct);
         foreach (var flight in flights)
         {
             if (ServiceResolutionRules.IsCancelled(flight)) continue;
             // "UN" = cancelado para vuelos (MapFlightStatus). El literal "Cancelado" NO lo sacaria del saldo.
+            flight.StatusBeforeCancellation = flight.Status;
             flight.Status = "UN";
-            flight.CancelledAt = now;
+            flight.CancelledAt = annulAt;
             flight.CancelledByUserId = userId;
             flight.CancelledByUserName = userName;
         }
@@ -50,8 +58,9 @@ internal static class ReservaServiceCanceller
         foreach (var hotel in hotels)
         {
             if (ServiceResolutionRules.IsCancelled(hotel)) continue;
+            hotel.StatusBeforeCancellation = hotel.Status;
             hotel.Status = WorkflowStatuses.Cancelado;
-            hotel.CancelledAt = now;
+            hotel.CancelledAt = annulAt;
             hotel.CancelledByUserId = userId;
             hotel.CancelledByUserName = userName;
         }
@@ -60,8 +69,9 @@ internal static class ReservaServiceCanceller
         foreach (var transfer in transfers)
         {
             if (ServiceResolutionRules.IsCancelled(transfer)) continue;
+            transfer.StatusBeforeCancellation = transfer.Status;
             transfer.Status = WorkflowStatuses.Cancelado;
-            transfer.CancelledAt = now;
+            transfer.CancelledAt = annulAt;
             transfer.CancelledByUserId = userId;
             transfer.CancelledByUserName = userName;
         }
@@ -70,8 +80,9 @@ internal static class ReservaServiceCanceller
         foreach (var package in packages)
         {
             if (ServiceResolutionRules.IsCancelled(package)) continue;
+            package.StatusBeforeCancellation = package.Status;
             package.Status = WorkflowStatuses.Cancelado;
-            package.CancelledAt = now;
+            package.CancelledAt = annulAt;
             package.CancelledByUserId = userId;
             package.CancelledByUserName = userName;
         }
@@ -80,8 +91,9 @@ internal static class ReservaServiceCanceller
         foreach (var assistance in assistances)
         {
             if (ServiceResolutionRules.IsCancelled(assistance)) continue;
+            assistance.StatusBeforeCancellation = assistance.Status;
             assistance.Status = WorkflowStatuses.Cancelado;
-            assistance.CancelledAt = now;
+            assistance.CancelledAt = annulAt;
             assistance.CancelledByUserId = userId;
             assistance.CancelledByUserName = userName;
         }
@@ -90,8 +102,9 @@ internal static class ReservaServiceCanceller
         foreach (var service in genericServices)
         {
             if (ServiceResolutionRules.IsCancelled(service)) continue;
+            service.StatusBeforeCancellation = service.Status;
             service.Status = WorkflowStatuses.Cancelado;
-            service.CancelledAt = now;
+            service.CancelledAt = annulAt;
             service.CancelledByUserId = userId;
             service.CancelledByUserName = userName;
         }

@@ -325,6 +325,16 @@ public class ReservaDto
     /// </summary>
     public List<CancelledPenaltyByCurrencyDto> CancelledPenaltiesByCurrency { get; set; } = new();
 
+    /// <summary>
+    /// FIX #27 (Tanda 3 del barrido de PROD, 2026-07-23): aviso NO bloqueante (P-20, mismo patron que
+    /// <see cref="TravelApi.Application.Contracts.Reservations.RescheduleReservaResult.Warning"/>). Hoy solo lo
+    /// llena <c>ReservaService.UpdateDatesAsync</c> (corregir StartDate/EndDate a mano) cuando la ventana que el
+    /// usuario guardo NO CONTIENE las fechas reales de los servicios cargados — por ejemplo, corrigio la salida
+    /// pero se olvido de correr tambien la vuelta. Null en cualquier otra lectura de una reserva (no se
+    /// recalcula al pedir el detalle, solo al guardar el cambio que lo dispara).
+    /// </summary>
+    public string? Warning { get; set; }
+
     public string? CustomerName { get; set; } // Flattened
     public CustomerDto? Payer { get; set; } // Nested for frontend convenience
     public decimal TotalCost { get; set; }

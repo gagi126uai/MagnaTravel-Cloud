@@ -3369,6 +3369,18 @@ public class SupplierService : ISupplierService
             paidByService[servicePublicId] = current + imputedAmount;
         }
 
+        // 2-bis) FIX #16 (Tanda 3, 2026-07-23): pagos hechos a NIVEL RESERVA (ServicePublicId == null) se
+        // reparten FIFO por moneda+operador entre los servicios vivos, y se suman al mismo bucket de efectivo
+        // de arriba. Va ANTES del saldo a favor para que el credito solo cubra lo que el efectivo -- imputado
+        // a un servicio puntual O a nivel reserva -- dejo pendiente (ver el XML-doc del metodo).
+        var reservaLevelAttributedByService = await AttributeReservaLevelPaymentsToServicesAsync(
+            reservaId, serviceRows, paidByService, operatorChargesOfCancelledServices, cancellationToken);
+        foreach (var (servicePublicId, attributedAmount) in reservaLevelAttributedByService)
+        {
+            paidByService.TryGetValue(servicePublicId, out var current);
+            paidByService[servicePublicId] = current + attributedAmount;
+        }
+
         // 3) Saldo a favor con el operador APLICADO a ESTA reserva (bug 2026-07-03). La aplicacion se hace a nivel
         //    RESERVA (SupplierCreditApplication.TargetReservaId), pero el estado "pagado al operador" es POR
         //    SERVICIO. Atribuimos el monto aplicado a los servicios de la MISMA moneda y el MISMO operador en
@@ -3503,15 +3515,83 @@ public class SupplierService : ISupplierService
         if (keysToDrain.Count == 0) return result;
 
         // FIFO cronologico: se cubren primero los servicios mas antiguos (mismo espiritu que el drenaje del pool).
-        // Un servicio de operador CommissionOnly no genera deuda: no recibe credito (coherente con el loop que
-        // arma la respuesta, que tambien lo excluye). Un servicio sin operador no tiene clave: se ignora.
-        //
-        // ADR-048 T2 (2026-07-17, regla 6/7): un servicio anulado SIN cargo real del operador tampoco genera
-        // deuda -- no puede "consumir" saldo a favor que despues no se le muestra a nadie (quedaria plata
-        // repartida a un servicio invisible en el listado, y otro servicio vivo la veria de menos). Por eso se
-        // filtra con el MISMO ResolveServiceDebtBasis que usa el listado final, y el tope de cada servicio anulado
-        // CON cargo real es el cargo, no el costo pleno de la compra.
-        var orderedServices = serviceRows
+        // Ver BuildFifoOrderedServicesWithDebt/DrainFifoByServiceOrder: la MISMA mecanica de reparto la reusa
+        // AttributeReservaLevelPaymentsToServicesAsync (FIX #16, Tanda 3) para los pagos a nivel reserva.
+        var orderedServices = BuildFifoOrderedServicesWithDebt(serviceRows, operatorChargesOfCancelledServices);
+        DrainFifoByServiceOrder(orderedServices, remainingByKey, paidByService, result);
+
+        return result;
+    }
+
+    /// <summary>
+    /// FIX #16 (Tanda 3 del barrido de PROD, 2026-07-23): reparte los pagos hechos a NIVEL RESERVA
+    /// (<see cref="SupplierPayment"/> con <c>ServicePublicId == null</c> — un pago al operador que no se
+    /// imputo a un servicio puntual, por ejemplo un anticipo cargado desde la cuenta del proveedor) entre los
+    /// servicios de la reserva, por moneda+operador, con la MISMA mecanica FIFO cronologica que ya usaba
+    /// <see cref="AttributeSupplierCreditToServicesAsync"/> para el saldo a favor.
+    ///
+    /// <para><b>Por que hacia falta</b>: antes de este fix, <see cref="GetReservaSupplierPaymentStatusAsync"/>
+    /// solo miraba pagos con <c>ServicePublicId != null</c> (imputados a un servicio puntual). Un pago
+    /// registrado a nivel reserva JAMAS entraba al calculo de "pagado al operador" por servicio, asi que el
+    /// cartel decia "Operador impago" aunque el pago cubriera el costo entero (hallazgo #16 del barrido).</para>
+    ///
+    /// <para>El resultado se suma directamente al bucket de EFECTIVO (<c>paidByService</c>, mutado por el
+    /// caller), no al de credito: es plata que realmente salio de caja, solo que no se imputo a un servicio
+    /// puntual al momento de registrarla.</para>
+    /// </summary>
+    private async Task<Dictionary<Guid, decimal>> AttributeReservaLevelPaymentsToServicesAsync(
+        int reservaId,
+        List<ReservaServicePaymentRow> serviceRows,
+        IReadOnlyDictionary<Guid, decimal> paidByService,
+        IReadOnlyDictionary<Guid, CancelledServiceOperatorCharge> operatorChargesOfCancelledServices,
+        CancellationToken cancellationToken)
+    {
+        var result = new Dictionary<Guid, decimal>();
+
+        var reservaLevelPayments = await _dbContext.SupplierPayments
+            .AsNoTracking()
+            .Where(p => p.ReservaId == reservaId && p.ServicePublicId == null)
+            .Select(p => new { p.SupplierId, p.Currency, p.ImputedCurrency, p.Amount, p.ImputedAmount })
+            .ToListAsync(cancellationToken);
+        if (reservaLevelPayments.Count == 0) return result;
+
+        // Bucket por (operador, moneda EFECTIVA de la deuda) — igual criterio que el resto de la cuenta del
+        // proveedor: si el pago cruzo moneda, se imputa por el equivalente en la moneda de la deuda
+        // (ImputedCurrency/ImputedAmount), no por lo que salio de caja.
+        var remainingByKey = new Dictionary<(int SupplierId, string Currency), decimal>();
+        foreach (var payment in reservaLevelPayments)
+        {
+            var effectiveCurrency = Monedas.Normalizar(payment.ImputedCurrency ?? payment.Currency);
+            var effectiveAmount = payment.ImputedAmount ?? payment.Amount;
+            var key = (payment.SupplierId, effectiveCurrency);
+            remainingByKey.TryGetValue(key, out var acc);
+            remainingByKey[key] = acc + effectiveAmount;
+        }
+
+        var hasSomethingToDrain = remainingByKey
+            .Any(kvp => Math.Round(kvp.Value, 2, MidpointRounding.AwayFromZero) > 0m);
+        if (!hasSomethingToDrain) return result;
+
+        var orderedServices = BuildFifoOrderedServicesWithDebt(serviceRows, operatorChargesOfCancelledServices);
+        DrainFifoByServiceOrder(orderedServices, remainingByKey, paidByService, result);
+
+        return result;
+    }
+
+    /// <summary>
+    /// Ordena los servicios de una reserva por antiguedad (FIFO) descartando los que NO generan deuda con el
+    /// operador: servicios de proveedor <c>CommissionOnly</c> (intermediacion, la agencia no compra), y
+    /// servicios anulados SIN un cargo real del operador imputado (ADR-048 T2, regla 6/7 — ver
+    /// <see cref="ResolveServiceDebtBasis"/>). Fuente UNICA de esta mecanica: la usan tanto el reparto de saldo
+    /// a favor (<see cref="AttributeSupplierCreditToServicesAsync"/>) como el reparto de pagos a nivel reserva
+    /// (<see cref="AttributeReservaLevelPaymentsToServicesAsync"/>, FIX #16) — evita que las dos mecanicas de
+    /// reparto diverjan con el tiempo.
+    /// </summary>
+    private static IEnumerable<(ReservaServicePaymentRow Service, ServiceDebtBasis DebtBasis)> BuildFifoOrderedServicesWithDebt(
+        List<ReservaServicePaymentRow> serviceRows,
+        IReadOnlyDictionary<Guid, CancelledServiceOperatorCharge> operatorChargesOfCancelledServices)
+    {
+        return serviceRows
             .Where(s => s.SupplierId.HasValue)
             .Where(s => !s.SupplierInvoicingMode.HasValue
                      || SupplierDebtCalculator.SupplierGeneratesPurchaseDebt(s.SupplierInvoicingMode.Value))
@@ -3519,7 +3599,21 @@ public class SupplierService : ISupplierService
             .Where(x => x.DebtBasis.Applies)
             .OrderBy(x => x.Service.CreatedAt)
             .ThenBy(x => x.Service.PublicId);
+    }
 
+    /// <summary>
+    /// Drena un pool de plata disponible por (operador, moneda) (<paramref name="remainingByKey"/>, MUTADO
+    /// in-place) entre los servicios de <paramref name="orderedServices"/> en orden FIFO, tapando primero lo
+    /// que <paramref name="paidByService"/> (efectivo YA imputado directamente) dejo pendiente en cada uno.
+    /// Nunca reparte mas de lo que un servicio necesita ni mas de lo que el pool tiene disponible para su
+    /// (operador, moneda). El resultado queda en <paramref name="result"/> (servicioPublicId -> monto tomado).
+    /// </summary>
+    private static void DrainFifoByServiceOrder(
+        IEnumerable<(ReservaServicePaymentRow Service, ServiceDebtBasis DebtBasis)> orderedServices,
+        Dictionary<(int SupplierId, string Currency), decimal> remainingByKey,
+        IReadOnlyDictionary<Guid, decimal> paidByService,
+        Dictionary<Guid, decimal> result)
+    {
         foreach (var (service, debtBasis) in orderedServices)
         {
             var key = (service.SupplierId!.Value, Monedas.Normalizar(service.Currency));
@@ -3529,7 +3623,7 @@ public class SupplierService : ISupplierService
 
             paidByService.TryGetValue(service.PublicId, out var cashPaid);
             // La porcion ya saldada por retencion del operador (solo aplica a servicios anulados con multa
-            // retenida) cuenta como "cubierta" antes de repartir credito, igual que en el listado final.
+            // retenida) cuenta como "cubierta" antes de repartir, igual que en el listado final.
             decimal effectiveCashPaid = cashPaid + debtBasis.AlreadySettledByOperatorRetention;
             decimal outstandingAfterCash = Math.Round(debtBasis.CostBasis - effectiveCashPaid, 2, MidpointRounding.AwayFromZero);
             if (outstandingAfterCash <= 0m) continue;
@@ -3538,8 +3632,6 @@ public class SupplierService : ISupplierService
             result[service.PublicId] = take;
             remainingByKey[key] = Math.Round(remaining - take, 2, MidpointRounding.AwayFromZero);
         }
-
-        return result;
     }
 
     // ===================================================================================================

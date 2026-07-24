@@ -2518,6 +2518,26 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .IsRequired(false)
                   .OnDelete(DeleteBehavior.Restrict);
 
+            // ADR-050 (2026-07-24): enlace al Payment puente que "Volver atrás" tacha junto con este credito.
+            // Restrict: el puente nunca se hard-borra (F-6), asi que esta FK nunca queda huerfana.
+            entity.HasOne(c => c.SourceBridgePayment)
+                  .WithMany()
+                  .HasForeignKey(c => c.SourceBridgePaymentId)
+                  .IsRequired(false)
+                  .OnDelete(DeleteBehavior.Restrict);
+
+            // Endurecimiento (review de seguridad, 2026-07-24, espejo del patron de arriba
+            // IX_ClientCreditEntries_SourceDebitNoteAnnulment_OnePerEvent): a lo sumo UN credito por puente. El
+            // acoplamiento credito<->puente es 1:1 por diseño (CancellationToClientCreditConverter crea exactamente
+            // un ClientCreditEntry y un Payment-puente por moneda en el MISMO acto, y los enlaza por navegacion
+            // antes del primer SaveChanges) — el indice UNICO PARCIAL (WHERE not null) lo vuelve una invariante que
+            // Postgres rechaza romper (23505), no solo una convencion de codigo. Parcial para no chocar entre los
+            // creditos de OTROS origenes (allocation/sobrepago/multa deshecha), que dejan esta FK en null.
+            entity.HasIndex(c => c.SourceBridgePaymentId)
+                  .IsUnique()
+                  .HasFilter("\"SourceBridgePaymentId\" IS NOT NULL")
+                  .HasDatabaseName("IX_ClientCreditEntries_SourceBridgePayment_OnePerBridge");
+
             // ADR-044 "Deshacer una multa ya emitida": origen "multa deshecha" (tercer origen, ver el XML-doc
             // de la entidad). Restrict: el evento de deshacer no se borra mientras exista el credito que originó.
             entity.HasOne(c => c.SourceDebitNoteAnnulment)

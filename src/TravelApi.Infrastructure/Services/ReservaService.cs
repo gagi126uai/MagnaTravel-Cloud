@@ -683,7 +683,52 @@ public class ReservaService : IReservaService
         reserva.DatesManuallySet = true;
 
         await _context.SaveChangesAsync(ct);
-        return await GetReservaByIdAsync(reservaId);
+
+        var dto = await GetReservaByIdAsync(reservaId);
+
+        // FIX #27 (Tanda 3, 2026-07-23): aviso suave (P-20, nunca bloquea) si la ventana que el usuario
+        // acaba de guardar a mano NO CUBRE las fechas reales de los servicios cargados (ej: corrigio la
+        // salida pero se olvido de correr tambien la vuelta). Se compara DESPUES de guardar, contra el
+        // MISMO calculo que usa el recalculo automatico (ReservaScheduleCalculator), asi el aviso usa
+        // exactamente la misma nocion de "fecha real" que el resto del sistema.
+        dto.Warning = await BuildDatesCoherenceWarningAsync(reservaId, reserva.StartDate, reserva.EndDate, ct);
+
+        return dto;
+    }
+
+    /// <summary>
+    /// Compara la ventana de cabecera recien guardada (<paramref name="headerStart"/>/<paramref name="headerEnd"/>)
+    /// contra el MIN/MAX real de fechas de los servicios cargados (<see cref="ReservaScheduleCalculator"/>). Si
+    /// la cabecera NO CONTIENE ese rango real (o quedo sin fecha donde los servicios si tienen), devuelve el
+    /// texto de aviso fijo; si no hay servicios cargados todavia, no hay nada contra que comparar (null, sin
+    /// aviso). Comparacion por fecha-calendario (.Date): un desfasaje de horas dentro del mismo dia no cuenta.
+    /// </summary>
+    private async Task<string?> BuildDatesCoherenceWarningAsync(
+        int reservaId, DateTime? headerStart, DateTime? headerEnd, CancellationToken ct)
+    {
+        var (servicesStart, servicesEnd) = await ReservaScheduleCalculator.ComputeAsync(_context, reservaId, ct);
+
+        // Sin servicios cargados todavia: no hay "fecha real" contra la cual comparar.
+        if (!servicesStart.HasValue && !servicesEnd.HasValue)
+            return null;
+
+        var headerCoversServiceStart = servicesStart.HasValue
+            && headerStart.HasValue
+            && headerStart.Value.Date <= servicesStart.Value.Date;
+        var headerCoversServiceEnd = servicesEnd.HasValue
+            && headerEnd.HasValue
+            && headerEnd.Value.Date >= servicesEnd.Value.Date;
+
+        var servicesHaveNoStart = !servicesStart.HasValue;
+        var servicesHaveNoEnd = !servicesEnd.HasValue;
+
+        var startIsCoherent = servicesHaveNoStart || headerCoversServiceStart;
+        var endIsCoherent = servicesHaveNoEnd || headerCoversServiceEnd;
+
+        if (startIsCoherent && endIsCoherent)
+            return null;
+
+        return "Ojo: las fechas que guardaste no coinciden con las de los servicios cargados. Revisá que sea lo que querés.";
     }
 
     /// <summary>
@@ -1236,11 +1281,15 @@ public class ReservaService : IReservaService
         //      (a) existe el puente de "saldo a favor por anulacion" -> hubo conversion de cobros (PaymentsToCredit).
         //          Usamos el Method del puente — es UNICO de esta operacion; NO usamos SourceReservaId del credito
         //          porque el converter de SOBREPAGO tambien lo setea y daria falso positivo.
+        //          ADR-050 (2026-07-24): el puente tiene que estar VIVO (!IsDeleted). "Volver atrás" tacha
+        //          (IsDeleted=true) el puente de un ciclo anterior sin borrarlo (F-6) — si este guard no lo
+        //          excluyera, un re-anular DESPUÉS de deshacer nunca podría crear el saldo a favor de nuevo
+        //          (quedaría atascado en "ya convertido" para siempre, viendo el puente tachado).
         //      (b) la reserva ya esta Cancelled -> cubre el caso DIRECTO sin cobros (DirectCancel), que NO deja
         //          puente (no hay plata que trasladar): sin esta señal, un segundo clic veria la reserva ya
         //          anulada, fallaria la precondicion de estado firme y devolveria un 409 confuso.
         var alreadyConverted = await _context.Payments.AnyAsync(
-            p => p.ReservaId == id && p.Method == CancellationToClientCreditConverter.BridgeMethod, ct);
+            p => p.ReservaId == id && p.Method == CancellationToClientCreditConverter.BridgeMethod && !p.IsDeleted, ct);
         var alreadyCancelled = string.Equals(reserva.Status, EstadoReserva.Cancelled, StringComparison.OrdinalIgnoreCase);
         if (alreadyConverted || alreadyCancelled)
             return;
@@ -1317,11 +1366,17 @@ public class ReservaService : IReservaService
     {
         var fromStatus = reserva.Status;
 
+        // ADR-050 (2026-07-24, "Volver atrás"): UN solo instante para todo el acto de anular. Se estampa en
+        // Reserva.AnnulledAt (mas abajo, junto con el cambio de estado) y se pasa IDENTICO al cancelador de
+        // servicios como CancelledAt de cada uno — asi el undo puede comparar "CancelledAt >= AnnulledAt" sin
+        // ambiguedad entre dos DateTime.UtcNow tomados por separado.
+        var annulAt = DateTime.UtcNow;
+
         // a) Cancelar TODOS los servicios vivos de la reserva. Sin esto, la reserva quedaria Cancelled pero con
         //    venta confirmada exigible (ConfirmedSale > 0): el saldo no daria 0 una vez sacada la plata pagada.
         //    Reusa la MISMA fuente que la anulacion total formal (CancelAllReservaServicesAsync de
         //    BookingCancellationService) via el helper compartido. No hace SaveChanges (lo cerramos abajo).
-        await Reservations.ReservaServiceCanceller.CancelAllLiveServicesAsync(_context, reserva.Id, actorUserId, actorUserName, ct);
+        await Reservations.ReservaServiceCanceller.CancelAllLiveServicesAsync(_context, reserva.Id, annulAt, actorUserId, actorUserName, ct);
 
         // a-bis) Obra "anular sin factura" (2026-07-23, decision del dueño): dejar el ANCLA del receivable del
         //    operador para TODOS los servicios recien cancelados que tenian plata pagada. Reemplaza al viejo
@@ -1352,6 +1407,13 @@ public class ReservaService : IReservaService
         //    marca + borra el detalle de cambios pendientes, atómico con el resto (el caller cierra la transacción).
         //    Enriquecemos el log respecto del código viejo agregando ByUserName y el motivo (mismos datos que ya
         //    lleva el evento de auditoría de abajo); son campos aditivos del rastro, no cambian la lógica.
+        //
+        //    ADR-050: esta reserva SIEMPRE llega a Cancelled directo (nunca PendingOperatorRefund — este camino
+        //    es "sin factura", no pasa por el circuito fiscal formal). Por eso acá es seguro estampar
+        //    AnnulledAt/AnnulledByUserId junto con la transición: "Volver atrás" solo se ofrece cuando el
+        //    estado actual YA es Cancelled con AnnulledAt != null (gate en RevertStatusAsync).
+        reserva.AnnulledAt = annulAt;
+        reserva.AnnulledByUserId = actorUserId;
         await TravelApi.Infrastructure.Reservations.ReservaStatusTransitioner.ApplyAsync(
             _context, reserva, EstadoReserva.Cancelled, "Forward",
             actorUserId, actorUserName, reason, ct);
@@ -1585,6 +1647,52 @@ public class ReservaService : IReservaService
         return EstadoReserva.Budget;
     }
 
+    /// <summary>
+    /// ADR-033 (gate D2) + ADR-050 (2026-07-24, ampliación "Volver atrás"): motivo, en criollo, por el que NO se
+    /// puede reabrir/revertir una reserva Cancelada — o <c>null</c> si no hay ninguno. Fuente ÚNICA para
+    /// <see cref="GetRevertOptionsAsync"/> (la lista de opciones que arma la UI) y <see cref="RevertStatusAsync"/>
+    /// (el enforcement real): las dos preguntan EXACTAMENTE lo mismo, así la UI nunca ofrece un botón que
+    /// después el backend rechaza con un 409 confuso.
+    /// </summary>
+    private async Task<string?> EvaluateCancelledRevertBlockersAsync(int reservaId, CancellationToken ct)
+    {
+        // 1) La cancelación (camino formal CON factura, ADR-002) ya generó una Nota de Crédito, un reembolso del
+        //    operador registrado, o un saldo a favor atado a esa BC. Deshacer eso es por su propio circuito, no
+        //    reabriendo el estado.
+        var hasFiscalOrMoneyTrace = await _context.BookingCancellations
+            .Where(bc => bc.ReservaId == reservaId)
+            .AnyAsync(bc =>
+                bc.CreditNoteInvoiceId != null
+                || bc.ReceivedRefundAmount > 0
+                || _context.ClientCreditEntries.Any(cce => cce.BookingCancellationId == bc.Id),
+                ct);
+        if (hasFiscalOrMoneyTrace)
+            return "Esta cancelacion ya genero una nota de credito, un saldo a favor o un reintegro del operador. " +
+                   "No se puede revertir sin deshacer ese movimiento por su circuito.";
+
+        // 2) ADR-050 (decisión (2) del dueño): ya se emitió la Nota de Débito de la multa del operador. Es un
+        //    comprobante fiscal sellado, simétrico al bloqueo de la NC de arriba — no se puede deshacer.
+        var hasIssuedPenaltyDebitNote = await _context.BookingCancellations
+            .Where(bc => bc.ReservaId == reservaId)
+            .AnyAsync(bc => bc.DebitNoteInvoiceId != null || bc.Lines.Any(l => l.DebitNoteInvoiceId != null), ct);
+        if (hasIssuedPenaltyDebitNote)
+            return "Ya se emitió la nota de débito de la multa. No se puede deshacer la anulación.";
+
+        // 3) ADR-050 (decisión (1) del dueño): el saldo a favor del camino "anular sin factura"
+        //    (CancellationToClientCreditConverter) ya se usó en OTRA reserva — no está disponible para
+        //    "devolver". Se correlaciona por el puente VIVO (SourceBridgePayment sin tachar): un puente ya
+        //    tachado por un undo ANTERIOR sobre esta misma reserva no cuenta (ver el guard "alreadyConverted").
+        var hasConsumedAnnulCredit = await _context.ClientCreditEntries
+            .Where(c => c.SourceReservaId == reservaId
+                     && c.SourceBridgePayment != null
+                     && !c.SourceBridgePayment!.IsDeleted)
+            .AnyAsync(c => c.RemainingBalance < c.CreditedAmount || c.IsFullyConsumed, ct);
+        if (hasConsumedAnnulCredit)
+            return "Ese saldo a favor ya se usó en otra reserva. No se puede deshacer la anulación.";
+
+        return null;
+    }
+
     public async Task<RevertOptionsDto> GetRevertOptionsAsync(string publicIdOrLegacyId, string actorUserId, bool actorIsAdmin, CancellationToken ct = default)
     {
         var id = await ResolveRequiredIdAsync<Reserva>(publicIdOrLegacyId, ct);
@@ -1632,16 +1740,10 @@ public class ReservaService : IReservaService
         if (string.Equals(reserva.Status, EstadoReserva.Cancelled, StringComparison.OrdinalIgnoreCase)
             && dto.AllowedTargets.Count > 0)
         {
-            var hasFiscalOrMoneyTrace = await _context.BookingCancellations.AsNoTracking()
-                .Where(bc => bc.ReservaId == id)
-                .AnyAsync(bc =>
-                    bc.CreditNoteInvoiceId != null
-                    || bc.ReceivedRefundAmount > 0
-                    || _context.ClientCreditEntries.Any(cce => cce.BookingCancellationId == bc.Id),
-                    ct);
-            if (hasFiscalOrMoneyTrace)
+            var blockingReason = await EvaluateCancelledRevertBlockersAsync(id, ct);
+            if (blockingReason != null)
             {
-                dto.HardBlockers.Add("Esta cancelacion ya genero una nota de credito, un saldo a favor o un reintegro del operador. No se puede revertir sin deshacer ese movimiento por su circuito.");
+                dto.HardBlockers.Add(blockingReason);
                 dto.AllowedTargets.Clear();
             }
         }
@@ -1730,21 +1832,13 @@ public class ReservaService : IReservaService
         // que la factura no captura. Anclado en la BookingCancellation de la reserva (ata NC + credito + refund).
         if (string.Equals(reserva.Status, EstadoReserva.Cancelled, StringComparison.OrdinalIgnoreCase))
         {
-            // 1) NC emitida:            BookingCancellation.CreditNoteInvoiceId != null
-            // 2) Refund recibido:       BookingCancellation.ReceivedRefundAmount > 0
-            // 3) Saldo a favor de la cancelacion: existe un ClientCreditEntry apuntando a una BC de esta reserva
-            //    (cubre el caso refund -> credito del cliente).
-            var hasFiscalOrMoneyTrace = await _context.BookingCancellations
-                .Where(bc => bc.ReservaId == id)
-                .AnyAsync(bc =>
-                    bc.CreditNoteInvoiceId != null
-                    || bc.ReceivedRefundAmount > 0
-                    || _context.ClientCreditEntries.Any(cce => cce.BookingCancellationId == bc.Id),
-                    ct);
-            if (hasFiscalOrMoneyTrace)
-                throw new InvalidOperationException(
-                    "Esta cancelacion ya genero una nota de credito, un saldo a favor o un reintegro del operador. " +
-                    "No se puede revertir sin deshacer ese movimiento por su circuito.");
+            var blockingReason = await EvaluateCancelledRevertBlockersAsync(id, ct);
+            // FIX B1 (review frontend, 2026-07-24): el unico target legal desde Cancelled es InManagement (ver
+            // ReservaStatusTransitions.Revert), asi que este gate ES el gate de "deshacer anulacion" — viaja con
+            // codigo estable UNDO_ANNULMENT_BLOCKED para que el controller devuelva {message, code} y el
+            // frontend deje de adivinar toast-vs-cartel por el largo del texto (T-6).
+            if (blockingReason != null)
+                throw new UndoAnnulmentBlockedException(blockingReason);
         }
 
         // Autorizacion
@@ -1782,6 +1876,23 @@ public class ReservaService : IReservaService
             if (string.IsNullOrWhiteSpace(reason)) reason = "(reversion por admin sin motivo declarado)";
         }
 
+        // ADR-050 (2026-07-24, "Volver atrás deshace la anulación entera", decisión firmada del dueño): si la
+        // reserva está Cancelada por un ACTO de anular (Reserva.AnnulledAt != null) y el destino pedido es
+        // InManagement, este revert NO es un simple flip de estado — hay que deshacer TODO lo que ese acto
+        // movió (servicios revividos, saldo a favor retirado, cancelación abortada). Se ejecuta en su propia
+        // transacción Serializable (patrón FC4, B2 del review de arquitectura) y retorna acá mismo.
+        //
+        // Decisión (3) del dueño: si AnnulledAt es null, la reserva llegó a Cancelada cancelando sus servicios
+        // uno por uno SIN pasar por "Anular" — no hay nada que deshacer, cae al camino genérico de abajo (solo
+        // cambia el Status, comportamiento de siempre).
+        if (string.Equals(reserva.Status, EstadoReserva.Cancelled, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(request.TargetStatus, EstadoReserva.InManagement, StringComparison.OrdinalIgnoreCase)
+            && reserva.AnnulledAt.HasValue)
+        {
+            await UndoAnnulmentAsync(id, reason, actorUserId, actorUserName, authSuperiorId, authSuperiorName, ct);
+            return await GetReservaByIdAsync(id);
+        }
+
         // Re-abrir una reserva cerrada borra el ClosedAt. ADR-036 (2026-06-21): el unico revert de Closed es
         // a Traveling (Closed->ToSettle murio junto con el estado). Sino la reserva figura "cerrada el dia X"
         // pero esta abierta -> dato inconsistente.
@@ -1808,6 +1919,280 @@ public class ReservaService : IReservaService
 
         await _context.SaveChangesAsync(ct);
         return await GetReservaByIdAsync(id);
+    }
+
+    // ============= ADR-050 (2026-07-24): "Volver atrás" deshace la anulación entera =============
+
+    /// <summary>
+    /// ADR-050: orquesta el UNDO de una anulación (Cancelled -&gt; InManagement con <c>Reserva.AnnulledAt</c>
+    /// vivo). Patrón FC4 (mismo que <see cref="AnnulWithPaymentsToCreditAsync"/>): <c>Serializable</c> +
+    /// <c>ExecutionStrategy</c> por fuera, recarga fresca + revalidación + <c>ChangeTracker.Clear</c> por
+    /// dentro — así un doble clic o una carrera real bajo Postgres reintenta sobre datos frescos en vez de
+    /// duplicar o pisar plata (B2 del review de arquitectura: <c>RevertStatusAsync</c> no abría transacción).
+    /// </summary>
+    private async Task UndoAnnulmentAsync(
+        int id, string reason, string? actorUserId, string? actorUserName,
+        string? authSuperiorId, string? authSuperiorName, CancellationToken ct)
+    {
+        if (_context.Database.IsRelational())
+        {
+            var strategy = _context.Database.CreateExecutionStrategy();
+            await strategy.ExecuteAsync(async () =>
+            {
+                await using var transaction = await _context.Database.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+                await LoadValidateAndApplyUndoAnnulmentAsync(id, reason, actorUserId, actorUserName, authSuperiorId, authSuperiorName, ct);
+                await transaction.CommitAsync(ct);
+            });
+        }
+        else
+        {
+            await LoadValidateAndApplyUndoAnnulmentAsync(id, reason, actorUserId, actorUserName, authSuperiorId, authSuperiorName, ct);
+        }
+    }
+
+    /// <summary>
+    /// Cuerpo real del undo: recarga fresca, revalida TODO dentro de la transacción (defensa en profundidad
+    /// ante carreras) y aplica el efecto completo en el orden que evita que el motor de estados vea un estado
+    /// intermedio inconsistente y "re-derive" la reserva de vuelta a Cancelled (B4 del review de arquitectura):
+    /// primero se revive todo EN MEMORIA (servicios, saldo, cancelación abortada, marca de anulación) y se
+    /// TRANSICIONA el estado; recién con la reserva ya persistida en InManagement se recalculan los saldos
+    /// (esos recálculos son los que, si corrieran ANTES de la transición, podrían ver "0 servicios cancelados
+    /// pero Status=Cancelled" y confundirse).
+    /// </summary>
+    private async Task LoadValidateAndApplyUndoAnnulmentAsync(
+        int id, string reason, string? actorUserId, string? actorUserName,
+        string? authSuperiorId, string? authSuperiorName, CancellationToken ct)
+    {
+        // Pizarra limpia (mismo motivo que LoadValidateAndApplyAnnulWithPaymentsToCreditAsync): un reintento de
+        // la ExecutionStrategy no debe arrastrar entidades Added/Modified de un intento anterior abortado.
+        _context.ChangeTracker.Clear();
+
+        var reserva = await _context.Reservas
+            .Include(r => r.Servicios)
+            .Include(r => r.FlightSegments)
+            .Include(r => r.HotelBookings)
+            .Include(r => r.TransferBookings)
+            .Include(r => r.PackageBookings)
+            .Include(r => r.AssistanceBookings)
+            .FirstOrDefaultAsync(r => r.Id == id, ct)
+            ?? throw new KeyNotFoundException("Reserva no encontrada");
+
+        // Guard de idempotencia (doble clic / reintento perdedor de una carrera Serializable): si otro
+        // intento/request ya deshizo esta anulación, la reserva ya no está Cancelled con AnnulledAt vivo ->
+        // no-op silencioso (mismo patrón que AnnulWithPaymentsToCreditAsync).
+        if (!string.Equals(reserva.Status, EstadoReserva.Cancelled, StringComparison.OrdinalIgnoreCase)
+            || reserva.AnnulledAt is null)
+            return;
+
+        var annulledAt = reserva.AnnulledAt.Value;
+
+        // Revalidación de los gates D2/ADR-050 DENTRO de la transacción, sobre datos frescos: el chequeo de
+        // RevertStatusAsync ya corrió afuera (antes de abrir esta transacción), pero pudo quedar stale bajo
+        // concurrencia real (otro request pudo haber consumido el saldo o emitido la ND justo en el medio).
+        // FIX B1 (review frontend, 2026-07-24): misma excepcion tipada que la revalidacion de afuera de la
+        // transaccion — si una carrera real cambio el estado justo en el medio (doble clic, otro request), el
+        // 409 que llega al frontend tiene que traer el mismo codigo estable, no degradar a InvalidOperationException
+        // pelada.
+        var blockingReason = await EvaluateCancelledRevertBlockersAsync(id, ct);
+        if (blockingReason != null)
+            throw new UndoAnnulmentBlockedException(blockingReason);
+
+        // a) Revivir los servicios cancelados EN ESTE acto de anular (CancelledAt >= AnnulledAt). Los que ya
+        //    estaban cancelados de antes, uno por uno, NO se tocan (decisión (3) del dueño).
+        ReviveServicesCancelledDuringAnnulment(reserva, annulledAt);
+
+        // b) Retirar (tachar, F-6) el saldo a favor del camino "anular sin factura", si lo hay. No-op si la
+        //    anulación fue DirectCancel (sin cobros, nunca generó saldo a favor).
+        await VoidAnnulCreditBridgesAsync(reserva.Id, actorUserId, actorUserName, ct);
+
+        // c) Abortar la BookingCancellation que quedó anclando el receivable del operador de esta anulación
+        //    (si existe). No-op si nunca hubo plata pagada al operador sin factura.
+        if (_cancellationService is not null)
+        {
+            await _cancellationService.AbortActiveAnnulmentForRevertAsync(reserva.Id, actorUserId, actorUserName, ct);
+        }
+
+        // e) Limpiar la marca: esta reserva deja de estar "anulada por un acto".
+        reserva.AnnulledAt = null;
+        reserva.AnnulledByUserId = null;
+
+        // f) Transición de estado por el PUNTO ÚNICO (T-7): rastro auditable + limpieza de marcas de revisión.
+        await TravelApi.Infrastructure.Reservations.ReservaStatusTransitioner.ApplyAsync(
+            _context, reserva, EstadoReserva.InManagement, "Revert",
+            actorUserId, actorUserName, reason, ct,
+            authorizedBySuperiorUserId: authSuperiorId,
+            authorizedBySuperiorUserName: authSuperiorName);
+
+        // Mismo tratamiento CRM que cualquier otro revert a un estado firme (idempotente).
+        await MarkSourceLeadAsWonIfReservaIsFirmAsync(reserva);
+
+        // Audit stageado: entra en el MISMO commit que todo lo de arriba (servicios revividos, saldo tachado,
+        // BC abortado, cambio de estado). Sin costos ni datos sensibles.
+        if (_auditService is not null)
+        {
+            var details = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                reservaPublicId = reserva.PublicId,
+                reservaId = reserva.Id,
+                reason,
+            });
+            _auditService.StageBusinessEvent(
+                AuditActions.ReservaAnnulmentUndone,
+                AuditActions.ReservaEntityName,
+                reserva.Id.ToString(),
+                details,
+                actorUserId ?? string.Empty,
+                actorUserName);
+        }
+
+        // Persistir TODO lo de arriba ANTES de recalcular: los persisters de abajo leen con AsNoTracking desde
+        // la base, no desde el ChangeTracker (mismo patrón que ApplyAnnulWithPaymentsToCreditAsync).
+        await _context.SaveChangesAsync(ct);
+
+        // d) Recalcular deuda de cada operador afectado + plata del cliente (Balance/ConfirmedSale restaurados)
+        //    + pool de saldo a favor consumible del operador. Mismos 3 pasos, en el mismo orden, que
+        //    BookingCancellationService.RecalculateMoneyAfterTotalCancellationAsync — se llama a los MISMOS
+        //    helpers internos del assembly (no se duplica la fórmula).
+        await TravelApi.Infrastructure.Reservations.SupplierDebtPersister.PersistForReservaSuppliersAsync(_context, reserva.Id, ct);
+        await ReservaMoneyPersister.PersistAsync(_context, reserva.Id, ct);
+        var affectedSuppliers = await TravelApi.Infrastructure.Reservations.SupplierDebtPersister
+            .GetReservaSupplierIdsAsync(_context, reserva.Id, ct);
+        foreach (var supplierId in affectedSuppliers)
+        {
+            await TravelApi.Infrastructure.Reservations.SupplierCreditReconciler.ReconcileAsync(
+                _context, supplierId, sourceSupplierPaymentId: null, actorUserId, actorUserName, _auditService, ct);
+        }
+    }
+
+    /// <summary>
+    /// ADR-050: revive, EN MEMORIA, cada servicio que se canceló EN el acto de anular que se está deshaciendo
+    /// (<c>CancelledAt &gt;= annulledAt</c>). Un servicio cancelado ANTES de ese instante (cancelación
+    /// individual, uno por uno) NO se toca — sigue cancelado (decisión (3) del dueño). Restaura
+    /// <c>StatusBeforeCancellation</c>; si es null (dato legacy, cancelado antes de esta obra), cae a
+    /// "Solicitado" — el estado inicial de cualquier servicio nuevo.
+    /// </summary>
+    private static void ReviveServicesCancelledDuringAnnulment(Reserva reserva, DateTime annulledAt)
+    {
+        const string fallbackStatus = "Solicitado";
+
+        foreach (var flight in reserva.FlightSegments)
+        {
+            if (!ServiceResolutionRules.IsCancelled(flight)) continue;
+            if (!flight.CancelledAt.HasValue || flight.CancelledAt.Value < annulledAt) continue;
+            flight.Status = flight.StatusBeforeCancellation ?? fallbackStatus;
+            flight.CancelledAt = null;
+            flight.CancelledByUserId = null;
+            flight.CancelledByUserName = null;
+            flight.StatusBeforeCancellation = null;
+        }
+
+        foreach (var hotel in reserva.HotelBookings)
+        {
+            if (!ServiceResolutionRules.IsCancelled(hotel)) continue;
+            if (!hotel.CancelledAt.HasValue || hotel.CancelledAt.Value < annulledAt) continue;
+            hotel.Status = hotel.StatusBeforeCancellation ?? fallbackStatus;
+            hotel.CancelledAt = null;
+            hotel.CancelledByUserId = null;
+            hotel.CancelledByUserName = null;
+            hotel.StatusBeforeCancellation = null;
+        }
+
+        foreach (var transfer in reserva.TransferBookings)
+        {
+            if (!ServiceResolutionRules.IsCancelled(transfer)) continue;
+            if (!transfer.CancelledAt.HasValue || transfer.CancelledAt.Value < annulledAt) continue;
+            transfer.Status = transfer.StatusBeforeCancellation ?? fallbackStatus;
+            transfer.CancelledAt = null;
+            transfer.CancelledByUserId = null;
+            transfer.CancelledByUserName = null;
+            transfer.StatusBeforeCancellation = null;
+        }
+
+        foreach (var package in reserva.PackageBookings)
+        {
+            if (!ServiceResolutionRules.IsCancelled(package)) continue;
+            if (!package.CancelledAt.HasValue || package.CancelledAt.Value < annulledAt) continue;
+            package.Status = package.StatusBeforeCancellation ?? fallbackStatus;
+            package.CancelledAt = null;
+            package.CancelledByUserId = null;
+            package.CancelledByUserName = null;
+            package.StatusBeforeCancellation = null;
+        }
+
+        foreach (var assistance in reserva.AssistanceBookings)
+        {
+            if (!ServiceResolutionRules.IsCancelled(assistance)) continue;
+            if (!assistance.CancelledAt.HasValue || assistance.CancelledAt.Value < annulledAt) continue;
+            assistance.Status = assistance.StatusBeforeCancellation ?? fallbackStatus;
+            assistance.CancelledAt = null;
+            assistance.CancelledByUserId = null;
+            assistance.CancelledByUserName = null;
+            assistance.StatusBeforeCancellation = null;
+        }
+
+        foreach (var service in reserva.Servicios)
+        {
+            if (!ServiceResolutionRules.IsCancelled(service)) continue;
+            if (!service.CancelledAt.HasValue || service.CancelledAt.Value < annulledAt) continue;
+            service.Status = service.StatusBeforeCancellation ?? fallbackStatus;
+            service.CancelledAt = null;
+            service.CancelledByUserId = null;
+            service.CancelledByUserName = null;
+            service.StatusBeforeCancellation = null;
+        }
+    }
+
+    /// <summary>
+    /// ADR-050 (B1 del review de arquitectura — F-6, "nada se borra, se tacha"): retira el saldo a favor que
+    /// dejó el camino "anular sin factura" (<see cref="CancellationToClientCreditConverter"/>) SIN borrar nada.
+    /// El <see cref="ClientCreditEntry"/> queda con <c>RemainingBalance=0</c>/<c>IsFullyConsumed=true</c> por un
+    /// <see cref="ClientCreditWithdrawal"/> de tipo <see cref="WithdrawalKind.VoidedByAnnulmentUndo"/> — un
+    /// CONTRA-ASIENTO auditable, no un borrado. El <see cref="Payment"/> "puente" queda tachado
+    /// (<c>IsDeleted=true</c>), el mismo mecanismo de soft-delete que el proyecto ya usa para Payment.
+    /// No-op si la anulación fue DirectCancel (sin cobros, nunca generó saldo a favor).
+    /// </summary>
+    private async Task VoidAnnulCreditBridgesAsync(int reservaId, string? actorUserId, string? actorUserName, CancellationToken ct)
+    {
+        var liveBridges = await _context.Payments
+            .Where(p => p.ReservaId == reservaId
+                     && p.Method == CancellationToClientCreditConverter.BridgeMethod
+                     && !p.IsDeleted)
+            .ToListAsync(ct);
+
+        if (liveBridges.Count == 0) return;
+
+        var now = DateTime.UtcNow;
+        foreach (var bridge in liveBridges)
+        {
+            // El enlace estructural (SourceBridgePaymentId) es lo que permite distinguir el credito de ESTE
+            // ciclo de anulacion de creditos de ciclos anular/deshacer/re-anular ANTERIORES sobre la misma
+            // reserva (todos comparten SourceReservaId+Currency). Ver el XML-doc de ClientCreditEntry.
+            var credit = await _context.ClientCreditEntries
+                .FirstOrDefaultAsync(c => c.SourceBridgePaymentId == bridge.Id, ct)
+                ?? throw new InvalidOperationException(
+                    "No se pudo identificar el saldo a favor asociado a esta anulación. Contactá a soporte técnico antes de continuar.");
+
+            // Defensa en profundidad: EvaluateCancelledRevertBlockersAsync YA revalidó esto arriba, en la MISMA
+            // transacción; esta es la última barrera antes de tocar plata.
+            if (credit.RemainingBalance != credit.CreditedAmount || credit.IsFullyConsumed)
+                throw new InvalidOperationException(
+                    "Ese saldo a favor ya se usó en otra reserva. No se puede deshacer la anulación.");
+
+            _context.ClientCreditWithdrawals.Add(new ClientCreditWithdrawal
+            {
+                ClientCreditEntryId = credit.Id,
+                Amount = credit.RemainingBalance,
+                Kind = WithdrawalKind.VoidedByAnnulmentUndo,
+                ExecutedByUserId = actorUserId ?? string.Empty,
+                ExecutedByUserName = actorUserName ?? "Sistema",
+                ExecutedAt = now,
+            });
+            credit.RemainingBalance = 0m;
+            credit.IsFullyConsumed = true;
+
+            bridge.IsDeleted = true;
+            bridge.DeletedAt = now;
+        }
     }
 
     /// <summary>
@@ -2196,11 +2581,15 @@ public class ReservaService : IReservaService
                 cancellationToken),
             ReservedCount = await summaryBaseQuery.CountAsync(r => r.Status == EstadoReserva.Confirmed, cancellationToken),
             OperativeCount = await summaryBaseQuery.CountAsync(r => r.Status == EstadoReserva.Traveling, cancellationToken),
-            ClosedCount = await summaryBaseQuery.CountAsync(r =>
-                r.Status == EstadoReserva.Closed ||
-                r.Status == EstadoReserva.Cancelled ||
-                r.Status == "Archived",
-                cancellationToken),
+            // FIX #37/#38 (Tanda 3): ClosedCount ahora es SOLO Closed, para que el numero del contador
+            // coincida con lo que trae la pestaña "closed" de ApplyReservaView (contador==tabla). Antes
+            // este contador tambien sumaba Cancelled y "Archived" pero la tabla de esa pestaña solo
+            // mostraba Closed+Cancelled — el numero nunca cerraba con las filas reales.
+            ClosedCount = await summaryBaseQuery.CountAsync(r => r.Status == EstadoReserva.Closed, cancellationToken),
+            // Pestaña nueva "Anuladas": mismo PAR de estados que la rama "cancelled" de ApplyReservaView.
+            CancelledCount = await summaryBaseQuery.CountAsync(
+                r => EstadoReserva.VoidedStatuses.Contains(r.Status), cancellationToken),
+            ArchivedCount = await summaryBaseQuery.CountAsync(r => r.Status == "Archived", cancellationToken),
             LostCount = await summaryBaseQuery.CountAsync(r => r.Status == EstadoReserva.Lost, cancellationToken),
             // Totales "activos" via patron NEGATIVO (todo lo que NO esta cerrado/cancelado/archivado/perdido).
             // ADR-020: ahora excluimos Lost igual que Cancelled (una reserva Perdida nunca tuvo venta exigible).
@@ -6065,31 +6454,68 @@ public class ReservaService : IReservaService
             (r.Payer != null && r.Payer.FullName.ToLower().Contains(normalized)));
     }
 
-    // ADR-020: claves de tab del ciclo unico en kebab-case. La clave "reserved" historica se renombro
-    // a "confirmed" (el frontend que mandaba tab=reserved se actualiza en F3).
-    private static IQueryable<Reserva> ApplyReservaView(IQueryable<Reserva> query, string? view)
+    /// <summary>
+    /// Aplica el filtro de "pestaña" (view) del listado de reservas. FIX #37/#38 (Tanda 3, barrido
+    /// 2026-07-22, spec UX firmada docs/ux/2026-07-06-listado-finalizadas-vs-anuladas.md P1-A/P2-A/P3-A):
+    /// antes esta funcion tenia un <c>default</c> mudo que agrupaba CUALQUIER view no reconocido (incluido
+    /// <see cref="EstadoReserva.PendingOperatorRefund"/>, que no tenia rama propia) bajo "active" — una
+    /// reserva "Esperando reembolso" no aparecia en NINGUNA pestaña del listado.
+    /// </summary>
+    private IQueryable<Reserva> ApplyReservaView(IQueryable<Reserva> query, string? view)
     {
-        return (view ?? "active").Trim().ToLowerInvariant() switch
+        var normalizedView = (view ?? "active").Trim().ToLowerInvariant();
+
+        switch (normalizedView)
         {
-            "quotation" => query.Where(r => r.Status == EstadoReserva.Quotation),
-            "budget" => query.Where(r => r.Status == EstadoReserva.Budget),
-            "in-management" => query.Where(r => r.Status == EstadoReserva.InManagement),
-            "confirmed" => query.Where(r => r.Status == EstadoReserva.Confirmed),
-            "traveling" => query.Where(r => r.Status == EstadoReserva.Traveling),
-            // ADR-036 (2026-06-21): el tab "to-settle" murio junto con el estado. Una clave desconocida
-            // (incluida "to-settle" si quedara cacheada en algun cliente viejo) cae al default "active".
-            "closed" => query.Where(r =>
-                r.Status == EstadoReserva.Closed ||
-                r.Status == EstadoReserva.Cancelled),
-            "lost" => query.Where(r => r.Status == EstadoReserva.Lost),
-            "archived" => query.Where(r => r.Status == "Archived"),
-            // "active" (default) = todo lo que esta en gestion activa (ni Cotizacion/Presupuesto/Perdido,
-            // ni cerrada/cancelada/archivada): En gestion + Confirmada + En viaje.
-            _ => query.Where(r =>
-                r.Status == EstadoReserva.InManagement ||
-                r.Status == EstadoReserva.Confirmed ||
-                r.Status == EstadoReserva.Traveling)
-        };
+            case "quotation":
+                return query.Where(r => r.Status == EstadoReserva.Quotation);
+            case "budget":
+                return query.Where(r => r.Status == EstadoReserva.Budget);
+            case "in-management":
+                return query.Where(r => r.Status == EstadoReserva.InManagement);
+            // ADR-020: clave nueva "confirmed". "reserved" es el alias legacy que todavia manda el front
+            // en las pestañas Confirmadas/En viaje (la migracion F3 al kebab-case nuevo no se hizo) — se
+            // acepta como sinonimo mientras el front se actualiza (compat T-8, no se rompe nada en el aire).
+            case "confirmed":
+            case "reserved":
+                return query.Where(r => r.Status == EstadoReserva.Confirmed);
+            case "traveling":
+            case "operative":
+                return query.Where(r => r.Status == EstadoReserva.Traveling);
+            // FIX #37/#38: "Finalizadas" ahora es SOLO Closed. Antes esta rama tambien traia Cancelled,
+            // mezclando reservas que terminaron bien con reservas anuladas en la misma pestaña.
+            case "closed":
+                return query.Where(r => r.Status == EstadoReserva.Closed);
+            // Rama nueva "Anuladas": el PAR VoidedStatuses (Cancelled + PendingOperatorRefund, ver el
+            // XML-doc de EstadoReserva.VoidedStatuses). Antes de este fix, PendingOperatorRefund no caia
+            // en ninguna pestaña — quedaba invisible en todo listado (#37/#38).
+            case "cancelled":
+                return query.Where(r => EstadoReserva.VoidedStatuses.Contains(r.Status));
+            case "lost":
+                return query.Where(r => r.Status == EstadoReserva.Lost);
+            case "archived":
+                return query.Where(r => r.Status == "Archived");
+            // Boton "Todas" de Cobranza y Facturacion (#37/#38): sin filtro de estado, la pagina completa.
+            case "all":
+                return query;
+            case "active":
+                // "active" (default) = todo lo que esta en gestion activa (ni Cotizacion/Presupuesto/Perdido,
+                // ni cerrada/cancelada/archivada): En gestion + Confirmada + En viaje.
+                return query.Where(r =>
+                    r.Status == EstadoReserva.InManagement ||
+                    r.Status == EstadoReserva.Confirmed ||
+                    r.Status == EstadoReserva.Traveling);
+            default:
+                // El default deja de ser MUDO (#37/#38): un view que no reconocemos (typo del front, cache
+                // vieja, clave "to-settle" del estado muerto de ADR-036) sigue devolviendo "active" para no
+                // romper la pantalla, pero ahora queda LOGUEADO — antes esto se perdia en silencio.
+                _logger.LogWarning(
+                    "ApplyReservaView: view desconocido '{View}', se usa el default 'active'.", normalizedView);
+                return query.Where(r =>
+                    r.Status == EstadoReserva.InManagement ||
+                    r.Status == EstadoReserva.Confirmed ||
+                    r.Status == EstadoReserva.Traveling);
+        }
     }
 
     private static IQueryable<Reserva> ApplyReservaOrdering(IQueryable<Reserva> query, ReservaListQuery request)

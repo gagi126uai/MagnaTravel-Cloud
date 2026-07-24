@@ -43,12 +43,17 @@ public class SearchService : ISearchService
     {
         if (string.IsNullOrWhiteSpace(query))
         {
-            return new SearchResultsResponse(string.Empty, [], [], []);
+            // Consulta vacia: no hay recorte por permisos que informar, todas las secciones en false.
+            return new SearchResultsResponse(string.Empty, [], [], [], new SearchScopeInfo(false, false, false, false));
         }
 
         var normalized = query.Trim().ToLowerInvariant();
 
-        // Resolver scope segun permisos del user actual.
+        // Resolver scope segun permisos del user actual. El bypass por rol "Admin" (verificado en la
+        // revision de la Tanda 3, 2026-07-23) es el MISMO patron canonico que usa el resto del sistema
+        // (PermissionAuthorizationHandler a nivel framework, y ReservaService.GetReservasWithScopeAsync
+        // como service equivalente): no es una resolucion divergente, es la fuente unica de "admin bypassea
+        // todo" documentada ahi. No se cambia a proposito.
         var httpUser = _httpContextAccessor?.HttpContext?.User;
         var currentUserId = httpUser?.FindFirstValue(ClaimTypes.NameIdentifier);
         var isAdmin = httpUser?.IsInRole("Admin") ?? false;
@@ -130,6 +135,14 @@ public class SearchService : ISearchService
                 .ToListAsync(cancellationToken);
         }
 
-        return new SearchResultsResponse(query, customers, reservas, payments);
+        // FIX #39: señal estructurada por seccion (P-8/T-13) — el front decide como avisar
+        // "esto es lo tuyo, puede haber mas" sin tener que adivinar a partir de una lista vacia.
+        var scope = new SearchScopeInfo(
+            CustomersHidden: !hasClientesView,
+            ReservasScopedToOwn: !hasReservasViewAll,
+            PaymentsHidden: !hasCobranzasView,
+            PaymentsScopedToOwn: hasCobranzasView && !hasCobranzasViewAll);
+
+        return new SearchResultsResponse(query, customers, reservas, payments, scope);
     }
 }

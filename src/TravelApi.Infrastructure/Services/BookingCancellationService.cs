@@ -680,6 +680,7 @@ public class BookingCancellationService
                     ?? throw new KeyNotFoundException("Vuelo no encontrado.");
                 if (flight.ReservaId != reservaId) throw new KeyNotFoundException("Vuelo no encontrado.");
                 if (ServiceResolutionRules.IsCancelled(flight)) return (flight.SupplierId, true);
+                flight.StatusBeforeCancellation = flight.Status; // ADR-050: estado crudo previo (para "Volver atrás")
                 flight.Status = "UN"; // codigo IATA de cancelacion (MapFlightStatus -> Cancelado)
                 flight.CancelledAt = DateTime.UtcNow;
                 flight.CancelledByUserId = userId;
@@ -692,6 +693,7 @@ public class BookingCancellationService
                     ?? throw new KeyNotFoundException("Hotel no encontrado.");
                 if (hotel.ReservaId != reservaId) throw new KeyNotFoundException("Hotel no encontrado.");
                 if (ServiceResolutionRules.IsCancelled(hotel)) return (hotel.SupplierId, true);
+                hotel.StatusBeforeCancellation = hotel.Status; // ADR-050
                 hotel.Status = WorkflowStatuses.Cancelado;
                 hotel.CancelledAt = DateTime.UtcNow;
                 hotel.CancelledByUserId = userId;
@@ -704,6 +706,7 @@ public class BookingCancellationService
                     ?? throw new KeyNotFoundException("Traslado no encontrado.");
                 if (transfer.ReservaId != reservaId) throw new KeyNotFoundException("Traslado no encontrado.");
                 if (ServiceResolutionRules.IsCancelled(transfer)) return (transfer.SupplierId, true);
+                transfer.StatusBeforeCancellation = transfer.Status; // ADR-050
                 transfer.Status = WorkflowStatuses.Cancelado;
                 transfer.CancelledAt = DateTime.UtcNow;
                 transfer.CancelledByUserId = userId;
@@ -716,6 +719,7 @@ public class BookingCancellationService
                     ?? throw new KeyNotFoundException("Paquete no encontrado.");
                 if (package.ReservaId != reservaId) throw new KeyNotFoundException("Paquete no encontrado.");
                 if (ServiceResolutionRules.IsCancelled(package)) return (package.SupplierId, true);
+                package.StatusBeforeCancellation = package.Status; // ADR-050
                 package.Status = WorkflowStatuses.Cancelado;
                 package.CancelledAt = DateTime.UtcNow;
                 package.CancelledByUserId = userId;
@@ -728,6 +732,7 @@ public class BookingCancellationService
                     ?? throw new KeyNotFoundException("Asistencia no encontrada.");
                 if (assistance.ReservaId != reservaId) throw new KeyNotFoundException("Asistencia no encontrada.");
                 if (ServiceResolutionRules.IsCancelled(assistance)) return (assistance.SupplierId, true);
+                assistance.StatusBeforeCancellation = assistance.Status; // ADR-050
                 assistance.Status = WorkflowStatuses.Cancelado;
                 assistance.CancelledAt = DateTime.UtcNow;
                 assistance.CancelledByUserId = userId;
@@ -741,6 +746,7 @@ public class BookingCancellationService
                     ?? throw new KeyNotFoundException("Servicio no encontrado.");
                 if (service.ReservaId != reservaId) throw new KeyNotFoundException("Servicio no encontrado.");
                 if (ServiceResolutionRules.IsCancelled(service)) return (service.SupplierId, true);
+                service.StatusBeforeCancellation = service.Status; // ADR-050
                 service.Status = WorkflowStatuses.Cancelado;
                 service.CancelledAt = DateTime.UtcNow;
                 service.CancelledByUserId = userId;
@@ -766,20 +772,26 @@ public class BookingCancellationService
     /// no lo vuelve a tocar (no pisa CancelledAt/By previos). <b>NO hace SaveChanges</b>: corre dentro de la
     /// misma transaccion del caller (ConfirmAsync paso 9 / ForceArcaConfirmationAsync) para ser atomico con la
     /// transicion de estado de la reserva.</para>
+    ///
+    /// <para><b>ADR-050 (2026-07-24, "Volver atrás")</b>: <paramref name="annulAt"/> es el UNICO instante del
+    /// acto de anular, calculado UNA vez por el caller e igual, al microsegundo, a <c>Reserva.AnnulledAt</c>.
+    /// El undo compara <c>servicio.CancelledAt &gt;= reserva.AnnulledAt</c> para decidir qué servicios revivir;
+    /// tomar un <c>DateTime.UtcNow</c> distinto por fila rompería esa comparación. También se estampa
+    /// <c>StatusBeforeCancellation</c> (el <c>Status</c> viejo, ANTES de pisarlo) para que el undo restaure el
+    /// estado exacto.</para>
     /// </summary>
     private async Task CancelAllReservaServicesAsync(
-        int reservaId, string userId, string? userName, CancellationToken ct)
+        int reservaId, DateTime annulAt, string userId, string? userName, CancellationToken ct)
     {
-        var now = DateTime.UtcNow;
-
         // Aereos: Status mapea por codigo IATA. "UN" = cancelado (MapFlightStatus). Poner "Cancelado" literal
         // NO lo sacaria del saldo ni de la deuda, por eso el codigo, igual que el path por-servicio.
         var flights = await _db.FlightSegments.Where(f => f.ReservaId == reservaId).ToListAsync(ct);
         foreach (var flight in flights)
         {
             if (ServiceResolutionRules.IsCancelled(flight)) continue;
+            flight.StatusBeforeCancellation = flight.Status;
             flight.Status = "UN";
-            flight.CancelledAt = now;
+            flight.CancelledAt = annulAt;
             flight.CancelledByUserId = userId;
             flight.CancelledByUserName = userName;
         }
@@ -788,8 +800,9 @@ public class BookingCancellationService
         foreach (var hotel in hotels)
         {
             if (ServiceResolutionRules.IsCancelled(hotel)) continue;
+            hotel.StatusBeforeCancellation = hotel.Status;
             hotel.Status = WorkflowStatuses.Cancelado;
-            hotel.CancelledAt = now;
+            hotel.CancelledAt = annulAt;
             hotel.CancelledByUserId = userId;
             hotel.CancelledByUserName = userName;
         }
@@ -798,8 +811,9 @@ public class BookingCancellationService
         foreach (var transfer in transfers)
         {
             if (ServiceResolutionRules.IsCancelled(transfer)) continue;
+            transfer.StatusBeforeCancellation = transfer.Status;
             transfer.Status = WorkflowStatuses.Cancelado;
-            transfer.CancelledAt = now;
+            transfer.CancelledAt = annulAt;
             transfer.CancelledByUserId = userId;
             transfer.CancelledByUserName = userName;
         }
@@ -808,8 +822,9 @@ public class BookingCancellationService
         foreach (var package in packages)
         {
             if (ServiceResolutionRules.IsCancelled(package)) continue;
+            package.StatusBeforeCancellation = package.Status;
             package.Status = WorkflowStatuses.Cancelado;
-            package.CancelledAt = now;
+            package.CancelledAt = annulAt;
             package.CancelledByUserId = userId;
             package.CancelledByUserName = userName;
         }
@@ -818,8 +833,9 @@ public class BookingCancellationService
         foreach (var assistance in assistances)
         {
             if (ServiceResolutionRules.IsCancelled(assistance)) continue;
+            assistance.StatusBeforeCancellation = assistance.Status;
             assistance.Status = WorkflowStatuses.Cancelado;
-            assistance.CancelledAt = now;
+            assistance.CancelledAt = annulAt;
             assistance.CancelledByUserId = userId;
             assistance.CancelledByUserName = userName;
         }
@@ -828,8 +844,9 @@ public class BookingCancellationService
         foreach (var service in genericServices)
         {
             if (ServiceResolutionRules.IsCancelled(service)) continue;
+            service.StatusBeforeCancellation = service.Status;
             service.Status = WorkflowStatuses.Cancelado;
-            service.CancelledAt = now;
+            service.CancelledAt = annulAt;
             service.CancelledByUserId = userId;
             service.CancelledByUserName = userName;
         }
@@ -1098,6 +1115,60 @@ public class BookingCancellationService
             }),
             userId: userId,
             userName: userName);
+    }
+
+    /// <summary>
+    /// ADR-050 (2026-07-24, "Volver atrás deshace la anulación entera"): aborta el <see cref="BookingCancellation"/>
+    /// activo de la reserva (el que <see cref="EnsureOperatorReceivableAnchorLinesAsync"/> creó/reusó para anclar
+    /// el receivable del operador cuando se anuló "sin factura"), como parte de deshacer esa anulación. Ver el
+    /// contrato completo en <see cref="IBookingCancellationService.AbortActiveAnnulmentForRevertAsync"/>.
+    /// </summary>
+    public async Task AbortActiveAnnulmentForRevertAsync(
+        int reservaId, string? actorUserId, string? actorUserName, CancellationToken ct)
+    {
+        var bc = await _db.BookingCancellations
+            .Include(b => b.Lines)
+            .Where(b => b.ReservaId == reservaId
+                     && b.Status != BookingCancellationStatus.Aborted
+                     && b.Status != BookingCancellationStatus.Closed)
+            .OrderByDescending(b => b.Id)
+            .FirstOrDefaultAsync(ct);
+
+        // No-op: la anulación nunca dejó plata al operador sin factura (DirectCancel sin servicios con RefundCap,
+        // o la reserva no tenía ningún servicio con operador) -> nunca se creó el ancla, nada que abortar.
+        if (bc is null) return;
+
+        // Defensa en profundidad (M2 del review de arquitectura): estas mismas señales YA bloquearon el undo
+        // entero en ReservaService.RevertStatusAsync (gate D2 agregado), pero si llegamos hasta acá con alguna
+        // viva, es un bug de otra capa — mejor rechazar ruidosamente que abortar un BC con plata/fiscalidad real.
+        if (bc.CreditNoteInvoiceId != null)
+            throw new InvalidOperationException(
+                "Esta cancelación ya generó una nota de crédito. No se puede deshacer la anulación.");
+        if (bc.ReceivedRefundAmount > 0m)
+            throw new InvalidOperationException(
+                "El operador ya devolvió dinero de esta cancelación. No se puede deshacer la anulación.");
+        if (bc.DebitNoteInvoiceId != null || bc.Lines.Any(l => l.DebitNoteInvoiceId != null))
+            throw new InvalidOperationException(
+                "Ya se emitió la nota de débito de la multa. No se puede deshacer la anulación.");
+        if (bc.OriginatingInvoiceId != null)
+            throw new InvalidOperationException(
+                "Esta cancelación está anclada a una factura de venta. No se puede deshacer la anulación por esta vía.");
+
+        bc.Status = BookingCancellationStatus.Aborted;
+
+        // Audit STAGEADO (mismo commit que el resto del undo, que cierra la transacción).
+        _auditService.StageBusinessEvent(
+            action: AuditActions.BookingCancellationAbortedForAnnulmentRevert,
+            entityName: AuditActions.BookingCancellationEntityName,
+            entityId: bc.Id.ToString(),
+            details: JsonSerializer.Serialize(new
+            {
+                bc.PublicId,
+                bc.ReservaId,
+                linesCount = bc.Lines.Count,
+            }),
+            userId: actorUserId ?? string.Empty,
+            userName: actorUserName);
     }
 
     /// <summary>
@@ -3069,13 +3140,24 @@ public class BookingCancellationService
         // ===================================================================
         async Task PersistConfirmationCoreAsync()
         {
+            // ADR-050 (2026-07-24, "Volver atrás"): UN solo instante para todo el acto de anular. Se estampa en
+            // Reserva.AnnulledAt (mas abajo) Y se pasa IDENTICO a CancelAllReservaServicesAsync como CancelledAt
+            // de cada servicio, para que el undo pueda comparar "CancelledAt >= AnnulledAt" sin ambiguedad.
+            var annulAt = DateTime.UtcNow;
+
             // 8) Transicionar BC + Reserva (HC2 plan v3: bypass UpdateStatusAsync — el state machine general
             //    no contempla la transicion lateral a PendingOperatorRefund, lo hacemos directo).
             bc.Status = BookingCancellationStatus.AwaitingFiscalConfirmation;
-            bc.ConfirmedWithClientAt = DateTime.UtcNow;
+            bc.ConfirmedWithClientAt = annulAt;
             bc.ConfirmedByUserId = userId;
             bc.ConfirmedByUserName = userName;
-            bc.OperatorRefundDueBy = DateTime.UtcNow.AddDays(settings.OperatorRefundTimeoutDays);
+            bc.OperatorRefundDueBy = annulAt.AddDays(settings.OperatorRefundTimeoutDays);
+
+            // ADR-050: la reserva queda marcada como "anulada por un acto" desde este momento, aunque el Status
+            // todavia no sea Cancelled (recien llega ahi cuando el operador termina de reembolsar). "Volver
+            // atrás" solo revive lo que se cancelo EN este acto (StatusBeforeCancellation + CancelledAt).
+            bc.Reserva.AnnulledAt = annulAt;
+            bc.Reserva.AnnulledByUserId = userId;
 
             // 8-pre) ADR-042 §3.5 step 2: persistir UNA fila hija Pending por factura a anular, en el mismo
             //        commit que la transicion. La completitud (todas OK / parcial / todas fallan) se decide
@@ -3107,7 +3189,8 @@ public class BookingCancellationService
 
             // 8-bis) CAMBIO 2 (2026-06-24): anulacion TOTAL -> marcar TODOS los servicios de la reserva como
             //        Cancelado, en la MISMA transaccion que la transicion de estado (atomico). Idempotente.
-            await CancelAllReservaServicesAsync(bc.ReservaId, userId, userName, ct);
+            //        ADR-050: annulAt compartido (ver arriba), no un UtcNow nuevo por dentro del helper.
+            await CancelAllReservaServicesAsync(bc.ReservaId, annulAt, userId, userName, ct);
 
             // 8-bis.5) Persistir el estado de la reserva + los servicios cancelados ANTES de recalcular. Los
             //          persisters (SupplierDebtPersister/ReservaMoneyPersister) leen con AsNoTracking, es decir
@@ -4235,8 +4318,16 @@ public class BookingCancellationService
         BookingCancellation bc, ApprovalRequest approval, Invoice creditNote,
         string? reason, string userId, string? userName, CancellationToken ct)
     {
+        // ADR-050 (2026-07-24, "Volver atrás"): UN solo instante para todo el acto de anular, igual al que se
+        // estampa en Reserva.AnnulledAt y en el CancelledAt de cada servicio (ver el XML-doc de
+        // CancelAllReservaServicesAsync). El Status de la reserva puede seguir en PendingOperatorRefund en este
+        // punto (recien pasa a Cancelled cuando el operador termina de reembolsar) — igual queda marcada.
+        var annulAt = DateTime.UtcNow;
+        bc.Reserva.AnnulledAt = annulAt;
+        bc.Reserva.AnnulledByUserId = userId;
+
         // Servicios -> Cancelado (idempotente; ademas cubre BCs legacy confirmados antes de CAMBIO 2).
-        await CancelAllReservaServicesAsync(bc.ReservaId, userId, userName, ct);
+        await CancelAllReservaServicesAsync(bc.ReservaId, annulAt, userId, userName, ct);
         // Persistir estado + servicios ANTES de recalcular (los persisters leen AsNoTracking desde la base).
         await _db.SaveChangesAsync(ct);
         // Recalcular deuda de operadores + plata del cliente + comision (determinista/idempotente).

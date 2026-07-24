@@ -495,7 +495,7 @@ public class SupplierPaymentByServiceTests
         var hotel = await AddConfirmedHotelAsync(context, supplier.Id, reserva.Id, netCost: 1000m);
 
         var service = CreateService(context);
-        // Pago a la reserva SIN imputar a un servicio puntual (comportamiento previo).
+        // Pago a la reserva SIN imputar a un servicio puntual (a nivel reserva).
         var request = new SupplierPaymentRequest(
             Amount: 400m, Method: "Transfer", Reference: null, Notes: null,
             ReservaId: reserva.PublicId.ToString(), ServicioReservaId: null);
@@ -505,10 +505,15 @@ public class SupplierPaymentByServiceTests
         Assert.Null(payment.ServiceRecordKind);
         Assert.Null(payment.ServicePublicId);
 
-        // El servicio NO queda imputado: sigue "unpaid" en la vista por servicio (el pago fue a nivel reserva).
+        // FIX #16 (Tanda 3, 2026-07-23): el pago a nivel reserva AHORA se reparte FIFO por moneda+operador
+        // entre los servicios vivos (ver AttributeReservaLevelPaymentsToServicesAsync). Antes del fix este
+        // pago quedaba invisible para la vista por servicio y el hotel seguia "unpaid" pese a tener 400
+        // pagados — el bug real (hallazgo #16 del barrido).
         var statusDto = await service.GetReservaSupplierPaymentStatusAsync(reserva.Id, CancellationToken.None);
         var line = ServiceLine(statusDto, hotel.PublicId);
-        Assert.Equal(ServiceSupplierPaymentStatuses.Unpaid, line.Status);
+        Assert.Equal(ServiceSupplierPaymentStatuses.Partial, line.Status);
+        Assert.Equal(400m, line.PaidToOperator);
+        Assert.Equal(600m, line.OutstandingToOperator);
     }
 
     // ===== H4 (2026-06-24): "operador impago" SOLO en estados donde el servicio se concreto con el operador =====

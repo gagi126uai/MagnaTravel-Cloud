@@ -427,7 +427,10 @@ public class Adr033DecoupledCollectionTests
 
         var service = NewReservaService(ctx);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // FIX B1 (review frontend ADR-050, 2026-07-24): este gate D2 (que ya existia antes de ADR-050) ahora
+        // viaja tipado como UndoAnnulmentBlockedException — sigue siendo InvalidOperationException (herencia),
+        // pero el frontend usa el codigo estable, no el texto, para elegir toast-vs-cartel.
+        var ex = await Assert.ThrowsAsync<UndoAnnulmentBlockedException>(() =>
             service.RevertStatusAsync(
                 reserva.PublicId.ToString(),
                 new RevertStatusRequest(EstadoReserva.InManagement, AuthorizedBySuperiorUserId: null, Reason: "Intento"),
@@ -465,7 +468,8 @@ public class Adr033DecoupledCollectionTests
 
         var service = NewReservaService(ctx);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // FIX B1 (review frontend ADR-050, 2026-07-24): idem arriba — tipado, no InvalidOperationException pelada.
+        await Assert.ThrowsAsync<UndoAnnulmentBlockedException>(() =>
             service.RevertStatusAsync(
                 reserva.PublicId.ToString(),
                 new RevertStatusRequest(EstadoReserva.InManagement, AuthorizedBySuperiorUserId: null, Reason: "Intento"),
@@ -914,7 +918,8 @@ public class Adr033DecoupledCollectionTests
 
         var service = NewReservaService(ctx);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        // FIX B1 (review frontend ADR-050, 2026-07-24): idem arriba — tipado, no InvalidOperationException pelada.
+        var ex = await Assert.ThrowsAsync<UndoAnnulmentBlockedException>(() =>
             service.RevertStatusAsync(
                 reserva.PublicId.ToString(),
                 new RevertStatusRequest(EstadoReserva.InManagement, AuthorizedBySuperiorUserId: null, Reason: "Intento"),

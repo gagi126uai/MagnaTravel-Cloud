@@ -157,6 +157,11 @@ public class AssistanceBooking : IHasPublicId
     [MaxLength(200)]
     public string? CancelledByUserName { get; set; }
 
+    /// <summary>ADR-050 (2026-07-24): <c>Status</c> justo antes de cancelarse, para que "Volver atrás" lo
+    /// restaure exacto. Ver el XML-doc gemelo en <see cref="HotelBooking.StatusBeforeCancellation"/>.</summary>
+    [MaxLength(50)]
+    public string? StatusBeforeCancellation { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     // Capacidad de pasajeros del servicio (mismo contrato que Hotel/Package).

@@ -2439,8 +2439,10 @@ public partial class BookingService : IBookingService
         StampServiceCancellation(
             wasCancelled: WorkflowStatusHelper.MapGenericStatus(oldStatus ?? string.Empty) == WorkflowStatuses.Cancelado,
             isCancelled: WorkflowStatusHelper.MapGenericStatus(newStatus) == WorkflowStatuses.Cancelado,
+            oldStatus: oldStatus,
             setCancelledAt: value => hotel.CancelledAt = value,
-            setCancelledBy: (id, name) => { hotel.CancelledByUserId = id; hotel.CancelledByUserName = name; });
+            setCancelledBy: (id, name) => { hotel.CancelledByUserId = id; hotel.CancelledByUserName = name; },
+            setStatusBeforeCancellation: value => hotel.StatusBeforeCancellation = value);
         if (confirmationNumber != null)
             hotel.ConfirmationNumber = string.IsNullOrWhiteSpace(confirmationNumber) ? null : confirmationNumber.Trim();
         await _hotelRepo.UpdateAsync(hotel, ct);
@@ -2488,8 +2490,10 @@ public partial class BookingService : IBookingService
         StampServiceCancellation(
             wasCancelled: WorkflowStatusHelper.MapGenericStatus(oldStatus ?? string.Empty) == WorkflowStatuses.Cancelado,
             isCancelled: WorkflowStatusHelper.MapGenericStatus(newStatus) == WorkflowStatuses.Cancelado,
+            oldStatus: oldStatus,
             setCancelledAt: value => transfer.CancelledAt = value,
-            setCancelledBy: (id, name) => { transfer.CancelledByUserId = id; transfer.CancelledByUserName = name; });
+            setCancelledBy: (id, name) => { transfer.CancelledByUserId = id; transfer.CancelledByUserName = name; },
+            setStatusBeforeCancellation: value => transfer.StatusBeforeCancellation = value);
         if (confirmationNumber != null)
             transfer.ConfirmationNumber = string.IsNullOrWhiteSpace(confirmationNumber) ? null : confirmationNumber.Trim();
         await _transferRepo.UpdateAsync(transfer, ct);
@@ -2533,8 +2537,10 @@ public partial class BookingService : IBookingService
         StampServiceCancellation(
             wasCancelled: WorkflowStatusHelper.MapGenericStatus(oldStatus ?? string.Empty) == WorkflowStatuses.Cancelado,
             isCancelled: WorkflowStatusHelper.MapGenericStatus(newStatus) == WorkflowStatuses.Cancelado,
+            oldStatus: oldStatus,
             setCancelledAt: value => package.CancelledAt = value,
-            setCancelledBy: (id, name) => { package.CancelledByUserId = id; package.CancelledByUserName = name; });
+            setCancelledBy: (id, name) => { package.CancelledByUserId = id; package.CancelledByUserName = name; },
+            setStatusBeforeCancellation: value => package.StatusBeforeCancellation = value);
         if (confirmationNumber != null)
             package.ConfirmationNumber = string.IsNullOrWhiteSpace(confirmationNumber) ? null : confirmationNumber.Trim();
         await _packageRepo.UpdateAsync(package, ct);
@@ -2584,8 +2590,10 @@ public partial class BookingService : IBookingService
         StampServiceCancellation(
             wasCancelled: WorkflowStatusHelper.MapFlightStatus(oldStatus ?? string.Empty) == WorkflowStatuses.Cancelado,
             isCancelled: WorkflowStatusHelper.MapFlightStatus(newStatus) == WorkflowStatuses.Cancelado,
+            oldStatus: oldStatus,
             setCancelledAt: value => flight.CancelledAt = value,
-            setCancelledBy: (id, name) => { flight.CancelledByUserId = id; flight.CancelledByUserName = name; });
+            setCancelledBy: (id, name) => { flight.CancelledByUserId = id; flight.CancelledByUserName = name; },
+            setStatusBeforeCancellation: value => flight.StatusBeforeCancellation = value);
         // FlightSegment no tiene ConfirmationNumber; el codigo de confirmacion del proveedor
         // se almacena en PNR (ver SupplierService.BuildSupplierServicesQuery).
         if (confirmationNumber != null)
@@ -2697,23 +2705,32 @@ public partial class BookingService : IBookingService
     /// movimiento de plata que provoca (el servicio sale de ConfirmedSale, baja el saldo del cliente)
     /// tiene que quedar auditado con quien/cuando, igual que la cancelacion de la papelera (F5).
     /// Si el servicio sale de cancelado (se re-solicito o re-confirmo), la marca se limpia.
+    ///
+    /// <para><b>ADR-050 (2026-07-24, "Volver atrás")</b>: ademas estampa <c>StatusBeforeCancellation</c> con el
+    /// <paramref name="oldStatus"/> crudo (para vuelo, el codigo IATA tal cual, no el mapeado) — es lo que un
+    /// futuro "Volver atrás" restauraria si este servicio llegara a formar parte de una anulación total. Se
+    /// limpia en la rama "des-cancelar", simétrico a <c>CancelledAt</c>/<c>CancelledBy</c>.</para>
     /// </summary>
     private void StampServiceCancellation(
         bool wasCancelled,
         bool isCancelled,
+        string? oldStatus,
         Action<DateTime?> setCancelledAt,
-        Action<string?, string?> setCancelledBy)
+        Action<string?, string?> setCancelledBy,
+        Action<string?> setStatusBeforeCancellation)
     {
         if (isCancelled && !wasCancelled)
         {
             var (userId, userName) = GetActor();
             setCancelledAt(DateTime.UtcNow);
             setCancelledBy(userId, userName);
+            setStatusBeforeCancellation(oldStatus);
         }
         else if (!isCancelled && wasCancelled)
         {
             setCancelledAt(null);
             setCancelledBy(null, null);
+            setStatusBeforeCancellation(null);
         }
     }
 
@@ -2748,8 +2765,10 @@ public partial class BookingService : IBookingService
         StampServiceCancellation(
             wasCancelled: WorkflowStatusHelper.MapGenericStatus(oldStatus ?? string.Empty) == WorkflowStatuses.Cancelado,
             isCancelled: WorkflowStatusHelper.MapGenericStatus(newStatus) == WorkflowStatuses.Cancelado,
+            oldStatus: oldStatus,
             setCancelledAt: value => assistance.CancelledAt = value,
-            setCancelledBy: (id, name) => { assistance.CancelledByUserId = id; assistance.CancelledByUserName = name; });
+            setCancelledBy: (id, name) => { assistance.CancelledByUserId = id; assistance.CancelledByUserName = name; },
+            setStatusBeforeCancellation: value => assistance.StatusBeforeCancellation = value);
         if (confirmationNumber != null)
             assistance.ConfirmationNumber = string.IsNullOrWhiteSpace(confirmationNumber) ? null : confirmationNumber.Trim();
         await _assistanceRepo.UpdateAsync(assistance, ct);

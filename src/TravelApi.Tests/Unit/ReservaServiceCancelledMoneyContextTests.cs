@@ -420,9 +420,10 @@ public class ReservaServiceCancelledMoneyContextTests
     [Fact]
     public async Task List_MixedPage_OnlyCancelledRowsGetContext()
     {
-        // Página mixta (vista "closed" trae Finalizadas Y Anuladas): una fila ANULADA (con multa viva) y una
-        // fila FINALIZADA con deuda. Solo la anulada recibe contexto de plata; la Finalizada queda en null (el
-        // chip de anulación no aplica; esa usa el chip de deuda normal).
+        // Página mixta (vista "all" trae TODOS los estados, Finalizadas Y Anuladas juntas — FIX #37/#38,
+        // Tanda 3 2026-07-23: desde ese fix "closed" es SOLO Finalizadas, Anuladas tiene su propia pestaña):
+        // una fila ANULADA (con multa viva) y una fila FINALIZADA con deuda. Solo la anulada recibe contexto
+        // de plata; la Finalizada queda en null (el chip de anulación no aplica; esa usa el chip de deuda normal).
         await using var context = CreateContext();
 
         var cancelled = new Reserva
@@ -446,7 +447,7 @@ public class ReservaServiceCancelledMoneyContextTests
         var service = CreateService(context);
 
         var page = await service.GetReservasAsync(
-            new ReservaListQuery { View = "closed" }, CancellationToken.None);
+            new ReservaListQuery { View = "all" }, CancellationToken.None);
 
         var cancelledRow = page.Items.Single(i => i.NumeroReserva == "F-2026-0100");
         var closedRow = page.Items.Single(i => i.NumeroReserva == "F-2026-0101");
@@ -483,8 +484,9 @@ public class ReservaServiceCancelledMoneyContextTests
 
         var service = CreateService(context);
 
+        // FIX #37/#38 (Tanda 3, 2026-07-23): las dos filas son Cancelled -> viven en la pestaña "cancelled".
         var page = await service.GetReservasAsync(
-            new ReservaListQuery { View = "closed" }, CancellationToken.None);
+            new ReservaListQuery { View = "cancelled" }, CancellationToken.None);
 
         var liveRow = page.Items.Single(i => i.NumeroReserva == "F-2026-0300");
         var underReviewRow = page.Items.Single(i => i.NumeroReserva == "F-2026-0301");
@@ -551,8 +553,9 @@ public class ReservaServiceCancelledMoneyContextTests
             penaltyAmount: 3500m, penaltyCurrencyAtEvent: "PES", debitNoteInvoiceId: debitNoteId);
 
         var service = CreateService(context);
+        // FIX #37/#38 (Tanda 3, 2026-07-23): la fila es Cancelled -> vive en la pestaña "cancelled".
         var page = await service.GetReservasAsync(
-            new ReservaListQuery { View = "closed" }, CancellationToken.None);
+            new ReservaListQuery { View = "cancelled" }, CancellationToken.None);
 
         var row = page.Items.Single(i => i.NumeroReserva == "F-2026-0400");
         Assert.Equal("MultaPorCobrar", row.CancelledMoneyContext);
@@ -580,8 +583,9 @@ public class ReservaServiceCancelledMoneyContextTests
             penaltyAmount: 3500m, penaltyCurrencyAtEvent: "PES");
 
         var service = CreateService(context);
+        // FIX #37/#38 (Tanda 3, 2026-07-23): la fila es Cancelled -> vive en la pestaña "cancelled".
         var page = await service.GetReservasAsync(
-            new ReservaListQuery { View = "closed" }, CancellationToken.None);
+            new ReservaListQuery { View = "cancelled" }, CancellationToken.None);
 
         var row = page.Items.Single(i => i.NumeroReserva == "F-2026-0401");
         Assert.Equal("MultaPorCobrar", row.CancelledMoneyContext);

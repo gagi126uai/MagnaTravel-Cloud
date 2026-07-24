@@ -228,6 +228,13 @@ public static class ManualCashMovementBuilder
                 "KeptAsCredit no genera ManualCashMovement: el cliente decide dejar el saldo. " +
                 "El caller no debe invocar el builder en este kind.");
         }
+        if (withdrawal.Kind == WithdrawalKind.VoidedByAnnulmentUndo)
+        {
+            throw new InvalidOperationException(
+                "VoidedByAnnulmentUndo no genera ManualCashMovement: es un contra-asiento contable interno " +
+                "de \"Volver atrás\" (ADR-050), no un retiro fisico del cliente. El caller no debe invocar el " +
+                "builder en este kind.");
+        }
 
         // Caso especial: ReversedToOperator devuelve plata a caja (cliente
         // re-entrega dinero ya recibido). El resto sale como Expense.
