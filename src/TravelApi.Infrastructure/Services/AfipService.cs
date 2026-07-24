@@ -429,9 +429,13 @@ public class AfipService : IAfipService
             // UniqueId must be 32-bit unsigned int
             var uniqueId = (uint)(DateTime.UtcNow.Ticks % uint.MaxValue);
             
-            // AFIP expects Argentina Time (UTC-3)
-            var argentinaTime = DateTime.UtcNow.AddHours(-3);
-            
+            // AFIP/ARCA exige el ticket de login (WSAA) en hora de pared de Argentina. Antes esto
+            // restaba 3 horas a mano (DateTime.UtcNow.AddHours(-3)) — el patron prohibido: asume
+            // que Argentina nunca tiene horario de verano. ArgentinaTime usa el huso horario real
+            // del sistema operativo, asi que si la ley cambiara algun dia, esto se sigue calculando
+            // bien solo.
+            var argentinaTime = ArgentinaTime.GetArgentinaNow();
+
             var xml = new XElement("loginTicketRequest",
                 new XAttribute("version", "1.0"),
                 new XElement("header",
@@ -1040,6 +1044,42 @@ public class AfipService : IAfipService
     }
 
     /// <summary>
+    /// Arma las DOS fechas fiscales del envelope FECAESolicitar (CbteFch = fecha de emision,
+    /// FchVtoPago = vencimiento de pago a 10 dias) a partir de un instante UTC. Extraido como
+    /// metodo puro (mismo patron que <see cref="BuildMonedaSoapFragment"/>) para poder testear
+    /// EXACTAMENTE el codigo que corre en produccion sin depender del reloj de la maquina que
+    /// ejecuta el test.
+    ///
+    /// <para><b>Regla del dueno</b>: ambas fechas son el DIA CALENDARIO ARGENTINO del instante
+    /// recibido, nunca el dia del huso horario del servidor (ver <see cref="ArgentinaTime"/>).</para>
+    ///
+    /// <para><b>NIT N2 (honestidad del rastro)</b>: <i>SUPUESTO no verificado contra la spec de
+    /// ARCA</i> — para Concepto=2 (servicios, hardcoded mas abajo) la RG de servicios da una
+    /// tolerancia amplia (se menciona +/-10 dias entre CbteFch y la fecha real de proceso en
+    /// documentacion de terceros/foros, no confirmado linea por linea contra el manual WSFEv1 de
+    /// ARCA). Si esto vale, un job que corre unos segundos despues de medianoche Argentina (por
+    /// ejemplo encolado 23:59 y procesado 00:01) seguiria mandando una fecha valida. Confirmar
+    /// contra el spec oficial de ARCA antes de asumir esto como garantia dura; hasta entonces es
+    /// una hipotesis razonable, no un hecho verificado.</para>
+    /// </summary>
+    /// <param name="nowUtc">Instante UTC a partir del cual se calcula el dia calendario argentino (normalmente <c>DateTime.UtcNow</c>).</param>
+    /// <returns>
+    /// <c>CbteFchDate</c> es el dia puro (sin hora) que hay que persistir en
+    /// <see cref="TravelApi.Domain.Entities.Invoice.CbteFchArgentina"/> — fix B1 (revision
+    /// reviewer): antes solo se devolvian los strings ya formateados para el SOAP y no habia forma
+    /// de guardar el mismo dia exacto para el PDF/QR, asi que el PDF terminaba re-derivandolo de
+    /// <c>IssuedAt</c> (instante distinto) y podia divergir. <c>CbteFch</c>/<c>FchVtoPago</c> son
+    /// los strings "yyyyMMdd" que van en el envelope, sin cambios.
+    /// </returns>
+    internal static (DateTime CbteFchDate, string CbteFch, string FchVtoPago) BuildComprobanteFechas(DateTime nowUtc)
+    {
+        var argentinaToday = ArgentinaTime.ToArgentinaTime(nowUtc).Date;
+        var cbteFch = argentinaToday.ToString("yyyyMMdd");
+        var fchVtoPago = argentinaToday.AddDays(10).ToString("yyyyMMdd");
+        return (argentinaToday, cbteFch, fchVtoPago);
+    }
+
+    /// <summary>
     /// FC1.3.F2.5 (multimoneda) — fuente UNICA del fragmento SOAP &lt;MonId&gt;/&lt;MonCotiz&gt; que
     /// viaja en el envelope FECAESolicitar de <see cref="ProcessInvoiceJob"/>.
     ///
@@ -1385,7 +1425,13 @@ public class AfipService : IAfipService
             // Para emisor Monotributo FiscalLegend siempre fue NULL, asi que el envelope queda
             // BYTE-IDENTICO al historico (no se quita ningun nodo que se estuviera emitiendo en Mono).
 
-            var today = DateTime.Now.ToString("yyyyMMdd");
+            // BUG CRITICO FISCAL (barrido 2026-07-22, hallazgo #1): antes esto era
+            // "DateTime.Now.ToString(...)" — hora del SERVIDOR (el contenedor de produccion corre
+            // en UTC). Un comprobante emitido a las 22hs de Argentina ya es "manana" en UTC, asi
+            // que CbteFch (la fecha de emision que viaja a ARCA) salia fechado un dia despues del
+            // dia real. BuildComprobanteFechas centraliza el fix (dia calendario ARGENTINO) para
+            // que FC/NC/ND, que comparten este mismo metodo, queden todas cubiertas por igual.
+            var (cbteFchDate, cbteFch, fchVtoPago) = BuildComprobanteFechas(DateTime.UtcNow);
 
             // For Factura C, ImpNeto MUST be exactly equal to the subtotal before taxes.
             // And ImpIVA MUST be 0.
@@ -1440,16 +1486,16 @@ public class AfipService : IAfipService
                     <DocNro>{docNro}</DocNro>
                     <CbteDesde>{cbteNro}</CbteDesde>
                     <CbteHasta>{cbteNro}</CbteHasta>
-                    <CbteFch>{today}</CbteFch>
+                    <CbteFch>{cbteFch}</CbteFch>
                     <ImpTotal>{invoice.ImporteTotal.ToString("0.00", CultureInfo.InvariantCulture)}</ImpTotal>
                     <ImpTotConc>0</ImpTotConc>
                     <ImpNeto>{impNeto.ToString("0.00", CultureInfo.InvariantCulture)}</ImpNeto>
                     <ImpOpEx>0</ImpOpEx>
                     <ImpTrib>{invoice.Tributes.Sum(t=>t.Importe).ToString("0.00", CultureInfo.InvariantCulture)}</ImpTrib>
                     <ImpIVA>{impIva.ToString("0.00", CultureInfo.InvariantCulture)}</ImpIVA>
-                    <FchServDesde>{today}</FchServDesde>
-                    <FchServHasta>{today}</FchServHasta>
-                    <FchVtoPago>{DateTime.Now.AddDays(10).ToString("yyyyMMdd")}</FchVtoPago>
+                    <FchServDesde>{cbteFch}</FchServDesde>
+                    <FchServHasta>{cbteFch}</FchServHasta>
+                    <FchVtoPago>{fchVtoPago}</FchVtoPago>
                     <!-- FC1.3.F2.5 (multimoneda, 2026-05-28): MonId/MonCotiz salen de la Invoice
                          (poblada en CreatePendingInvoice). El armado lo centraliza
                          BuildMonedaSoapFragment para que el test unit blinde el MISMO codigo que
@@ -1606,6 +1652,12 @@ public class AfipService : IAfipService
             // CAE (Resultado="A"). Es la evidencia fiscal de cuando se emitio realmente el comprobante. UTC
             // para coherencia con el resto de timestamps (la columna es timestamptz).
             invoice.IssuedAt = DateTime.UtcNow;
+            // Fix B1 (revision reviewer): CbteFchArgentina guarda el MISMO dia que se mando en
+            // <CbteFch> mas arriba (cbteFchDate, calculado ANTES del POST). Kind=Utc porque Postgres
+            // lo exige al escribir, pero es una fecha pura (no un instante) — ver el doc-comment de
+            // Invoice.CbteFchArgentina. NO usar invoice.IssuedAt para esto: son dos cosas distintas
+            // (IssuedAt es CUANDO se proceso, CbteFchArgentina es QUE DIA se le dijo a ARCA).
+            invoice.CbteFchArgentina = DateTime.SpecifyKind(cbteFchDate, DateTimeKind.Utc);
 
             // IDEMPOTENCIA: emision exitosa -> resolvemos la key. La factura ya tiene CAE; un
             // re-despacho ahora corta por el guard Resultado=="A" al inicio del job.
@@ -2813,6 +2865,16 @@ public class AfipService : IAfipService
             if (arcaResult.IssuedAt.HasValue)
             {
                 invoice.IssuedAt = DateTime.SpecifyKind(arcaResult.IssuedAt.Value, DateTimeKind.Utc);
+
+                // Fix B1 (revision reviewer, ESTE es el camino que causaba el bug original):
+                // arcaResult.IssuedAt viene de ParseVoucherDetailExtras parseando el <CbteFch> que
+                // ARCA devolvio en FECompConsultar (fecha-a-medianoche, Kind=Unspecified) — es EL
+                // MISMO dia que ARCA tiene registrado, no un instante real. Antes esto se reusaba
+                // para invoice.IssuedAt y el PDF lo pasaba por ArgentinaTime.ToArgentinaTime (pensado
+                // para instantes), lo que restaba 3 horas a una medianoche y corria la fecha un dia
+                // para atras — bug deterministico. Ahora CbteFchArgentina guarda el mismo dato crudo
+                // (sin esa conversion indebida) para que el PDF/QR lean el dia real sin recalcular.
+                invoice.CbteFchArgentina = DateTime.SpecifyKind(arcaResult.IssuedAt.Value, DateTimeKind.Utc);
             }
             invoice.Observaciones = null;
 
@@ -3069,8 +3131,9 @@ public class AfipService : IAfipService
 
         var cert = new X509Certificate2(GetCertificateData(settings), GetCertificatePassword(settings), X509KeyStorageFlags.Exportable);
         var uniqueId = (uint)(DateTime.UtcNow.Ticks % uint.MaxValue);
-        var argentinaTime = DateTime.UtcNow.AddHours(-3);
-        
+        // Mismo fix que EnsureAuth: ArgentinaTime reemplaza el AddHours(-3) hardcodeado.
+        var argentinaTime = ArgentinaTime.GetArgentinaNow();
+
         var xml = new XElement("loginTicketRequest",
             new XAttribute("version", "1.0"),
             new XElement("header",

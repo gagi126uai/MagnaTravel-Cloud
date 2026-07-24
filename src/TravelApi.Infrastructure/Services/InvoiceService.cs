@@ -2596,6 +2596,16 @@ public class InvoiceService : IInvoiceService
                 if (arcaResult.IssuedAt.HasValue)
                 {
                     creditNoteToConfirm.IssuedAt = DateTime.SpecifyKind(arcaResult.IssuedAt.Value, DateTimeKind.Utc);
+
+                    // Fix B1/N2 (revision seguridad, mismo camino que AfipService.ProcessInvoiceJob
+                    // recovery): arcaResult.IssuedAt viene de parsear el <CbteFch> que ARCA devolvio
+                    // (fecha-a-medianoche, Kind=Unspecified) — es EL DIA que ARCA tiene registrado, no
+                    // un instante real. Sin esta linea, esta NC recuperada por idempotencia quedaba con
+                    // CbteFchArgentina en null y el PDF/QR caian al fallback (IssuedAt por
+                    // ArgentinaTime), que le resta 3 horas a esa medianoche y muestra el dia ANTERIOR —
+                    // el mismo bug B1 que ya se habia cerrado para AfipService, reproducido aca por ser
+                    // un camino de recovery hermano que no se habia tocado.
+                    creditNoteToConfirm.CbteFchArgentina = DateTime.SpecifyKind(arcaResult.IssuedAt.Value, DateTimeKind.Utc);
                 }
             }
 

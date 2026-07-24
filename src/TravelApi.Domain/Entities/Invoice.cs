@@ -17,7 +17,40 @@ public class Invoice : IHasPublicId
     
     public string? CAE { get; set; }
     public DateTime? VencimientoCAE { get; set; }
-    
+
+    /// <summary>
+    /// Fix B1 (revision reviewer, barrido fechas 2026-07-2x): dia calendario ARGENTINO EXACTO que
+    /// viaja como <c>&lt;CbteFch&gt;</c> en el envelope a ARCA (la fecha de emision oficial que
+    /// ARCA registra para este comprobante). Es la fuente unica de verdad para "Fecha de Emisión"
+    /// en el PDF y para el campo <c>fecha</c> del QR — ambos tienen que coincidir byte a byte con
+    /// lo que ARCA tiene registrado, y antes de este campo se DERIVABAN de <c>IssuedAt</c>, lo que
+    /// podia divergir (ver el bug documentado abajo).
+    ///
+    /// <para><b>Por que es <c>DateTime?</c> y NO pasa nunca por <see cref="TravelApi.Domain.Helpers.ArgentinaTime"/></b>:
+    /// este campo NO es un instante (no representa "cuando paso algo"), es una FECHA PURA — mismo
+    /// patron que <see cref="VencimientoCAE"/>. Se guarda como medianoche marcada Kind=Utc (Postgres
+    /// timestamptz exige Kind=Utc al escribir con Npgsql), pero esa medianoche representa el DIA,
+    /// no un momento real en UTC. Convertirlo con <c>ArgentinaTime.ToArgentinaTime</c> le restaria 3
+    /// horas y lo correria a el DIA ANTERIOR — exactamente el bug que este campo vino a cerrar (ver
+    /// <c>InvoicePdfService.GetEmissionDateArgentina</c>).</para>
+    ///
+    /// <para><b>Bug que motivo este campo (B1)</b>: en el camino de recuperacion anti-doble-CAE
+    /// (<c>ProcessInvoiceJob</c>, idempotencia), <c>IssuedAt</c> se seteaba con el <c>CbteFch</c>
+    /// que devuelve ARCA parseado como fecha-a-medianoche y re-etiquetado Kind=Utc. El PDF/QR
+    /// pasaban ese valor por <c>ArgentinaTime.ToArgentinaTime</c> (pensado para instantes reales) y
+    /// mostraban un dia ANTES del <c>CbteFch</c> real, de forma deterministica. Este campo se llena
+    /// con el mismo dato crudo (sin la conversion que rompia todo) en AMBOS caminos de emision
+    /// (normal y recovery), asi PDF/QR coinciden siempre con ARCA.</para>
+    ///
+    /// <para><b>Nullable, SIN backfill</b>: las facturas emitidas ANTES de esta columna quedan en
+    /// null (no hay forma confiable de reconstruir el dia exacto sin volver a consultar ARCA
+    /// factura por factura). Para esas, <c>InvoicePdfService.GetEmissionDateArgentina</c> cae al
+    /// fallback historico (derivar de <c>IssuedAt</c>/<c>CreatedAt</c> vía <c>ArgentinaTime</c>),
+    /// que puede seguir mostrando el dia corrido para facturas viejas recuperadas por idempotencia
+    /// — riesgo residual conocido y documentado, no bloqueante para esta migracion aditiva.</para>
+    /// </summary>
+    public DateTime? CbteFchArgentina { get; set; }
+
     public string? Resultado { get; set; } // A (Aprobado), R (Rechazado), P (Parcial)
     public string? Observaciones { get; set; } // Error messages from AFIP
 

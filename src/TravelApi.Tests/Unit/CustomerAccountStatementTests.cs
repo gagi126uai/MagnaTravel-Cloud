@@ -422,4 +422,78 @@ public class CustomerAccountStatementTests
         await Assert.ThrowsAsync<KeyNotFoundException>(
             () => service.GetCustomerAccountStatementAsync(999999, CancellationToken.None));
     }
+
+    // ===================== N1 (revision seguridad): extracto usa el MISMO dia que el PDF =====================
+
+    /// <summary>
+    /// Fix N1 (revision seguridad, consistencia extracto vs PDF, ultima ronda del fix de fechas
+    /// 2026-07-2x): la fecha de la linea del extracto del CLIENTE tiene que ser el MISMO dia
+    /// calendario que muestra <c>InvoicePdfService.GetEmissionDateArgentina</c> para esa factura —
+    /// ambos leen <c>CbteFchArgentina</c> como fuente unica cuando existe. <c>IssuedAt</c> queda
+    /// DELIBERADAMENTE en otro dia (20/07): si el extracto no priorizara CbteFchArgentina, esta
+    /// prueba fallaria mostrando la fecha vieja.
+    /// </summary>
+    [Fact]
+    public async Task InvoiceLine_UsesCbteFchArgentina_SameDayAsThePdf()
+    {
+        using var context = CreateContext();
+        var customer = await AddCustomerAsync(context, "Cliente extracto fix N1");
+        var reserva = await AddReservaAsync(context, customer.Id, "R-B1N1", EstadoReserva.Confirmed, new DateTime(2026, 1, 1));
+
+        var invoice = new Invoice
+        {
+            ReservaId = reserva.Id,
+            TipoComprobante = 11, // Factura C
+            PuntoDeVenta = 1,
+            NumeroComprobante = 555,
+            Resultado = "A",
+            ImporteTotal = 50_000m,
+            MonId = "PES",
+            IssuedAt = new DateTime(2026, 07, 20, 5, 0, 0, DateTimeKind.Utc),
+            CbteFchArgentina = new DateTime(2026, 07, 22, 0, 0, 0, DateTimeKind.Utc),
+        };
+        context.Invoices.Add(invoice);
+        await context.SaveChangesAsync();
+
+        var statement = await CreateService(context).GetCustomerAccountStatementAsync(customer.Id, CancellationToken.None);
+
+        var line = Assert.Single(Assert.Single(statement.Currencies).Lines);
+        Assert.Equal(invoice.CbteFchArgentina, line.Date);
+
+        // Misma fuente unica que el PDF: el mismo dia calendario (22/07), no el de IssuedAt (20/07).
+        var fechaEnPdf = InvoicePdfService.GetEmissionDateArgentina(invoice);
+        Assert.Equal(new DateTime(2026, 07, 22), fechaEnPdf);
+    }
+
+    /// <summary>
+    /// Fallback (factura vieja sin CbteFchArgentina): el extracto sigue usando IssuedAt tal cual
+    /// (comportamiento historico, sin cambios).
+    /// </summary>
+    [Fact]
+    public async Task InvoiceLine_WithoutCbteFchArgentina_FallsBackToIssuedAt()
+    {
+        using var context = CreateContext();
+        var customer = await AddCustomerAsync(context, "Cliente extracto legacy N1");
+        var reserva = await AddReservaAsync(context, customer.Id, "R-B1N1-Legacy", EstadoReserva.Confirmed, new DateTime(2026, 1, 1));
+
+        var invoice = new Invoice
+        {
+            ReservaId = reserva.Id,
+            TipoComprobante = 11,
+            PuntoDeVenta = 1,
+            NumeroComprobante = 556,
+            Resultado = "A",
+            ImporteTotal = 50_000m,
+            MonId = "PES",
+            IssuedAt = new DateTime(2026, 07, 20, 5, 0, 0, DateTimeKind.Utc),
+            CbteFchArgentina = null,
+        };
+        context.Invoices.Add(invoice);
+        await context.SaveChangesAsync();
+
+        var statement = await CreateService(context).GetCustomerAccountStatementAsync(customer.Id, CancellationToken.None);
+
+        var line = Assert.Single(Assert.Single(statement.Currencies).Lines);
+        Assert.Equal(invoice.IssuedAt, line.Date);
+    }
 }

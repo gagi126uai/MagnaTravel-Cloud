@@ -81,7 +81,8 @@ public class VoucherService : IVoucherService
         AppendAssistances(reserva, html);
 
         html.AppendLine("<div class='footer'>");
-        html.AppendLine($"<p>Voucher generado el {DateTime.UtcNow.AddHours(-3):dd/MM/yyyy HH:mm} hs (Argentina)</p>");
+        // Fix patron prohibido (barrido 2026-07-22): AddHours(-3) a mano -> ArgentinaTime (T-4).
+        html.AppendLine($"<p>Voucher generado el {ArgentinaTime.GetArgentinaNow():dd/MM/yyyy HH:mm} hs (Argentina)</p>");
         html.AppendLine($"<p><strong>{EscapeHtml(agency?.AgencyName ?? "MagnaTravel")}</strong> | {EscapeHtml(agency?.Email)} | {EscapeHtml(agency?.Phone)}</p>");
         html.AppendLine("<p style='margin-top:8px;font-style:italic'>Este documento no tiene validez como comprobante fiscal.</p>");
         html.AppendLine("</div></body></html>");
@@ -115,7 +116,8 @@ public class VoucherService : IVoucherService
                     .DefaultTextStyle(x => x.FontSize(9).FontColor(Colors.Grey.Darken1))
                     .Text(text =>
                     {
-                        text.Span($"Voucher generado el {DateTime.UtcNow.AddHours(-3):dd/MM/yyyy HH:mm} hs");
+                        // Fix patron prohibido (barrido 2026-07-22): AddHours(-3) a mano -> ArgentinaTime (T-4).
+                        text.Span($"Voucher generado el {ArgentinaTime.GetArgentinaNow():dd/MM/yyyy HH:mm} hs");
                         text.Span(" | ");
                         text.Span(agency?.AgencyName ?? "MagnaTravel").SemiBold();
                     });

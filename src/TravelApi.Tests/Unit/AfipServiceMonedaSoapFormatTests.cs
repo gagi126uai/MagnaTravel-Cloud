@@ -130,4 +130,62 @@ public class AfipServiceMonedaSoapFormatTests
             string.Empty,
             AfipService.BuildCanMisMonExtFragment("pes"));
     }
+
+    // ---------------------------------------------------------------------------------------
+    // Bug critico fiscal (barrido PROD 2026-07-22, hallazgo #1): CbteFch/FchVtoPago se armaban
+    // con DateTime.Now (hora del SERVIDOR, UTC en el contenedor de produccion). Una factura
+    // emitida ~22hs Argentina salia fechada un dia despues ("23/07" en vez de "22/07"). Estos
+    // tests blindan AfipService.BuildComprobanteFechas, el metodo REAL que arma <CbteFch> y
+    // <FchVtoPago> en el envelope FECAESolicitar (FC/NC/ND comparten el mismo codigo).
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// CasoDelBugReal: un instante UTC de madrugada (23/07 01:30 UTC) que en Argentina todavia
+    /// es la noche del dia anterior (22/07 22:30). CbteFch tiene que salir "20260722", NO
+    /// "20260723" — este es exactamente el caso que produjo el hallazgo de PROD.
+    /// </summary>
+    [Fact]
+    public void BuildComprobanteFechas_InstanteDeMadrugadaUtc_CbteFchUsaElDiaArgentino()
+    {
+        var instanteUtc = new DateTime(2026, 07, 23, 1, 30, 0, DateTimeKind.Utc);
+
+        var (cbteFchDate, cbteFch, _) = AfipService.BuildComprobanteFechas(instanteUtc);
+
+        Assert.Equal("20260722", cbteFch);
+        // CbteFchDate (fix B1: lo que se persiste en Invoice.CbteFchArgentina) tiene que ser el
+        // MISMO dia que el string, sin componente horario.
+        Assert.Equal(new DateTime(2026, 07, 22), cbteFchDate);
+    }
+
+    /// <summary>
+    /// FchVtoPago (vencimiento de pago) es CbteFch + 10 dias, calculado sobre el MISMO dia
+    /// argentino que CbteFch — no sobre el dia UTC del servidor.
+    /// </summary>
+    [Fact]
+    public void BuildComprobanteFechas_InstanteDeMadrugadaUtc_FchVtoPagoSumaDiezDiasAlDiaArgentino()
+    {
+        var instanteUtc = new DateTime(2026, 07, 23, 1, 30, 0, DateTimeKind.Utc);
+
+        var (_, _, fchVtoPago) = AfipService.BuildComprobanteFechas(instanteUtc);
+
+        // 22/07/2026 + 10 dias = 01/08/2026.
+        Assert.Equal("20260801", fchVtoPago);
+    }
+
+    /// <summary>
+    /// Caso sin cruce de medianoche: un instante de la tarde UTC (22/07 15:00 UTC = 22/07 12:00
+    /// ART) da el mismo dia calendario en ambos husos. Confirma que el fix no rompe el caso
+    /// comun (la inmensa mayoria de las facturas se emiten en horario habil).
+    /// </summary>
+    [Fact]
+    public void BuildComprobanteFechas_InstanteDeLaTardeUtc_MismoDiaEnAmbosHusos()
+    {
+        var instanteUtc = new DateTime(2026, 07, 22, 15, 0, 0, DateTimeKind.Utc);
+
+        var (cbteFchDate, cbteFch, fchVtoPago) = AfipService.BuildComprobanteFechas(instanteUtc);
+
+        Assert.Equal(new DateTime(2026, 07, 22), cbteFchDate);
+        Assert.Equal("20260722", cbteFch);
+        Assert.Equal("20260801", fchVtoPago);
+    }
 }

@@ -1329,7 +1329,8 @@ public class CustomerService : ICustomerService
                 invoice.PuntoDeVenta,
                 invoice.NumeroComprobante,
                 invoice.IssuedAt,
-                invoice.CreatedAt
+                invoice.CreatedAt,
+                invoice.CbteFchArgentina
             })
             .ToListAsync(cancellationToken);
 
@@ -1383,8 +1384,15 @@ public class CustomerService : ICustomerService
                 InvoiceComprobanteCategory.CreditNote => "Nota de credito",
                 _ => "Comprobante"
             };
+            // N1 (revision seguridad, consistencia extracto vs PDF): preferimos CbteFchArgentina —
+            // el mismo dia EXACTO que AfipService mando/registro como <CbteFch> en ARCA y que usa
+            // InvoicePdfService.GetEmissionDateArgentina para el PDF. Es una fecha PURA (medianoche
+            // Kind=Utc que representa un DIA, no un instante), asi que NO se convierte con
+            // ArgentinaTime aca tampoco — el front la reconoce por su forma (regex FECHA_SOLO_DIA en
+            // utils.js) y la muestra tal cual, sin pasarla por conversion de huso horario. Fallback a
+            // IssuedAt/CreatedAt (comportamiento actual, sin cambios) para facturas sin la columna.
             inputLines.Add(new CustomerAccountStatementInputLine(
-                Date: invoice.IssuedAt ?? invoice.CreatedAt,
+                Date: invoice.CbteFchArgentina ?? invoice.IssuedAt ?? invoice.CreatedAt,
                 Kind: kind,
                 Description: description,
                 DocumentRef: $"{invoice.PuntoDeVenta:D4}-{invoice.NumeroComprobante:D8}",

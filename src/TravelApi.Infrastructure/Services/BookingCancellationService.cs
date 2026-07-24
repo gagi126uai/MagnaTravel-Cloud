@@ -7257,6 +7257,15 @@ public class BookingCancellationService
                 InvoiceMonId = b.OriginatingInvoice != null ? b.OriginatingInvoice.MonId : null,
                 // ADR-044 "Deshacer una multa ya emitida" (2026-07-14): fecha de emision (CAE) de la ND vigente,
                 // para el aviso informativo RG 4540 en el front (avisar, no bloquear).
+                //
+                // N1 (revision seguridad, evaluado y DESCARTADO a proposito): este campo NO es candidato al
+                // mismo cambio que ReservaService/CustomerService (preferir CbteFchArgentina). El front hace
+                // "ahoraMs - emitidoMs" en MILISEGUNDOS para contar los 15 dias corridos de la RG 4540
+                // (calcularAvisoPlazoDeshacerMulta en operatorPenaltyBanner.js) -- eso necesita un INSTANTE
+                // real, no un dia calendario. CbteFchArgentina es una fecha pura (medianoche Kind=Utc que
+                // representa un DIA, no un momento); metiendola aca introduciria un error sistematico de
+                // varias horas en la cuenta de dias del plazo fiscal. IssuedAt (el instante real en que ARCA
+                // aprobo el CAE) es el campo correcto para esta cuenta y se deja sin cambios.
                 DebitNoteIssuedAt = b.DebitNoteInvoice != null ? b.DebitNoteInvoice.IssuedAt : null,
                 // Configuracion de multas de cancelacion (2026-07-14): que tan seguido cobra multa ESTE operador,
                 // para sugerir el camino en el paso de la pregunta (ver SuggestedPenaltyPath mas abajo). Se trae

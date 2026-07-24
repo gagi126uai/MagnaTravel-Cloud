@@ -126,7 +126,7 @@ public class InvoicePdfService : IInvoicePdfService
                         r.ConstantItem(60).AlignRight().Text($"{invoice.NumeroComprobante:00000000}").Bold();
                     });
 
-                    column.Item().PaddingTop(5).Text($"Fecha de Emisión: {invoice.CreatedAt:dd/MM/yyyy}");
+                    column.Item().PaddingTop(5).Text($"Fecha de Emisión: {GetEmissionDateArgentina(invoice):dd/MM/yyyy}");
                     column.Item().Text($"CUIT: {settings.Cuit}");
                     column.Item().Text($"Ingresos Brutos: {settings.Cuit}"); // Assume IIBB same as CUIT
                     
@@ -461,6 +461,42 @@ public class InvoicePdfService : IInvoicePdfService
     
     private int GetInvoiceCode(int type) => type;
 
+    /// <summary>
+    /// Fecha de emision que se MUESTRA en el PDF y en el QR de ARCA (regla del dueno: dia
+    /// calendario ARGENTINO, sin importar el huso del servidor — ver <see cref="ArgentinaTime"/>).
+    ///
+    /// <para><b>Fix B1 (revision reviewer): camino PRINCIPAL = <c>Invoice.CbteFchArgentina</c></b>.
+    /// Ese campo guarda el DIA EXACTO que <c>AfipService</c> mando/registro como <c>CbteFch</c> en
+    /// ARCA (ver el doc-comment de <c>Invoice.CbteFchArgentina</c>). Es una fecha PURA, no un
+    /// instante — por eso se devuelve TAL CUAL, sin pasar por <c>ArgentinaTime.ToArgentinaTime</c>.
+    /// Pasarla por ahi la correria un dia para atras (exactamente el bug B1 que este campo vino a
+    /// cerrar: <c>IssuedAt</c> seteado desde una fecha-a-medianoche en el camino de recuperacion
+    /// anti-doble-CAE, convertido como si fuera un instante real).</para>
+    ///
+    /// <para><b>Fallback (facturas emitidas ANTES de esta columna, sin backfill)</b>: si
+    /// <c>CbteFchArgentina</c> es null, se deriva de <c>IssuedAt</c> (o <c>CreatedAt</c> si tampoco
+    /// hay <c>IssuedAt</c>) convertido con <c>ArgentinaTime</c> — el calculo historico, con el
+    /// riesgo residual conocido y documentado de mostrar un dia corrido para facturas viejas que
+    /// fueron recuperadas por el camino de idempotencia (no hay forma de reconstruir el dia exacto
+    /// sin volver a consultar ARCA factura por factura).</para>
+    /// </summary>
+    /// <remarks>
+    /// <c>internal</c> (no <c>private</c>) a proposito: mismo patron que
+    /// <c>AfipService.BuildComprobanteFechas</c>. El proyecto no tiene libreria de extraccion de
+    /// texto de PDF (ver <c>InvoicePdfFiscalLegendTests</c>), asi que la unica forma de blindar
+    /// con un test unit la logica de conversion — sin volverse fragil parseando bytes de PDF —
+    /// es exponer el calculo puro y testearlo directo.
+    /// </remarks>
+    internal static DateTime GetEmissionDateArgentina(Invoice invoice)
+    {
+        if (invoice.CbteFchArgentina.HasValue)
+        {
+            return invoice.CbteFchArgentina.Value;
+        }
+
+        return ArgentinaTime.ToArgentinaTime(invoice.IssuedAt ?? invoice.CreatedAt);
+    }
+
     private object GenerateAfipQrData(Invoice invoice, AfipSettings settings)
     {
         // AFIP QR JSON Structure v1
@@ -495,7 +531,12 @@ public class InvoicePdfService : IInvoicePdfService
         return new
         {
             ver = 1,
-            fecha = invoice.CreatedAt.ToString("yyyy-MM-dd"),
+            // BUG CRITICO FISCAL (barrido 2026-07-22): esta "fecha" es el CbteFch que ARCA valida
+            // contra su propio registro del comprobante al escanear el QR. Tiene que ser EXACTAMENTE
+            // el mismo dia calendario argentino que se mando en <CbteFch> (ver GetEmissionDateArgentina).
+            // Antes usaba invoice.CreatedAt.ToString("yyyy-MM-dd") crudo (hora UTC del servidor, sin
+            // convertir): un QR con la fecha equivocada puede no validar contra ARCA.
+            fecha = GetEmissionDateArgentina(invoice).ToString("yyyy-MM-dd"),
             cuit = cuit,
             ptoVta = invoice.PuntoDeVenta,
             tipoCmp = invoice.TipoComprobante,

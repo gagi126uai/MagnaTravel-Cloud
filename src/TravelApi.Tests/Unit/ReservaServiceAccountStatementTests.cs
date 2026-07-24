@@ -453,6 +453,63 @@ public class ReservaServiceAccountStatementTests
         Assert.DoesNotContain("Margin", blockProps);
     }
 
+    // ===================== N1 (revision seguridad): extracto usa el MISMO dia que el PDF =====================
+
+    /// <summary>
+    /// Fix N1 (revision seguridad, consistencia extracto vs PDF, ultima ronda del fix de fechas
+    /// 2026-07-2x): la fecha de la linea del extracto tiene que ser el MISMO dia calendario que
+    /// muestra <c>InvoicePdfService.GetEmissionDateArgentina</c> para esa factura — ambos leen
+    /// <c>CbteFchArgentina</c> como fuente unica cuando existe. <c>IssuedAt</c> queda
+    /// DELIBERADAMENTE en otro dia (20/07): si el extracto no priorizara CbteFchArgentina, esta
+    /// prueba fallaria mostrando la fecha vieja.
+    /// </summary>
+    [Fact]
+    public async Task InvoiceLine_UsesCbteFchArgentina_SameDayAsThePdf()
+    {
+        await using var ctx = new AppDbContext(_dbOptions);
+        ctx.Reservas.Add(new Reserva { Id = 1, NumeroReserva = "F-B1N1", Name = "R", Status = EstadoReserva.Confirmed });
+
+        var invoice = LiveInvoice(1, tipo: 11, total: 50000m, date: new DateTime(2026, 07, 20, 5, 0, 0, DateTimeKind.Utc));
+        invoice.IssuedAt = new DateTime(2026, 07, 20, 5, 0, 0, DateTimeKind.Utc);
+        invoice.CbteFchArgentina = new DateTime(2026, 07, 22, 0, 0, 0, DateTimeKind.Utc);
+        ctx.Invoices.Add(invoice);
+        await ctx.SaveChangesAsync();
+
+        var service = BuildService(ctx);
+        var statement = await service.GetAccountStatementAsync("1", CancellationToken.None);
+
+        var line = Assert.Single(Assert.Single(statement.Currencies).Lines);
+        Assert.Equal(invoice.CbteFchArgentina, line.Date);
+
+        // Misma fuente unica que el PDF: el mismo dia calendario (22/07), no el de IssuedAt (20/07).
+        var fechaEnPdf = InvoicePdfService.GetEmissionDateArgentina(invoice);
+        Assert.Equal(new DateTime(2026, 07, 22), fechaEnPdf);
+    }
+
+    /// <summary>
+    /// Fallback (factura vieja sin CbteFchArgentina): el extracto sigue usando IssuedAt tal cual
+    /// (comportamiento historico, sin cambios) — el front lo convierte a hora argentina en el
+    /// navegador (no es una fecha-a-medianoche, es un instante real).
+    /// </summary>
+    [Fact]
+    public async Task InvoiceLine_WithoutCbteFchArgentina_FallsBackToIssuedAt()
+    {
+        await using var ctx = new AppDbContext(_dbOptions);
+        ctx.Reservas.Add(new Reserva { Id = 1, NumeroReserva = "F-B1N1-Legacy", Name = "R", Status = EstadoReserva.Confirmed });
+
+        var invoice = LiveInvoice(1, tipo: 11, total: 50000m, date: new DateTime(2026, 07, 20, 5, 0, 0, DateTimeKind.Utc));
+        invoice.IssuedAt = new DateTime(2026, 07, 20, 5, 0, 0, DateTimeKind.Utc);
+        invoice.CbteFchArgentina = null;
+        ctx.Invoices.Add(invoice);
+        await ctx.SaveChangesAsync();
+
+        var service = BuildService(ctx);
+        var statement = await service.GetAccountStatementAsync("1", CancellationToken.None);
+
+        var line = Assert.Single(Assert.Single(statement.Currencies).Lines);
+        Assert.Equal(invoice.IssuedAt, line.Date);
+    }
+
     // ===================== Reserva inexistente: KeyNotFound =====================
 
     [Fact]

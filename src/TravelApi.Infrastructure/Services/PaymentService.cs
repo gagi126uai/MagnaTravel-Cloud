@@ -13,6 +13,7 @@ using TravelApi.Application.Exceptions;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
 using TravelApi.Domain.Exceptions;
+using TravelApi.Domain.Helpers;
 using TravelApi.Domain.Reservations;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Reservations;
@@ -1302,7 +1303,10 @@ public class PaymentService : IPaymentService
                 {
                     col.Spacing(12);
                     col.Item().Text($"Comprobante {receipt.ReceiptNumber}").FontSize(16).Bold();
-                    col.Item().Text($"Emitido: {receipt.IssuedAt:dd/MM/yyyy HH:mm}");
+                    // BUG CRITICO FISCAL (barrido 2026-07-22): receipt.IssuedAt se guarda en UTC (correcto
+                    // para la DB), pero antes se imprimia CRUDO en el recibo sin convertir a hora argentina.
+                    // Un recibo emitido a las 22hs de Argentina salia fechado al dia siguiente.
+                    col.Item().Text($"Emitido: {ArgentinaTime.ToArgentinaTime(receipt.IssuedAt):dd/MM/yyyy HH:mm}");
                     col.Item().Text($"Reserva: {payment.Reserva?.NumeroReserva ?? "-"}");
                     col.Item().Text($"Cliente: {payment.Reserva?.Payer?.FullName ?? "Consumidor Final"}");
                     col.Item().Text($"Metodo: {payment.Method}");

@@ -208,11 +208,17 @@ public class ReservaService : IReservaService
     /// libro mayor quedaba incoherente. Mostrando AMBAS lineas, el saldo cierra: factura 80k cargo, NC 80k
     /// abono -> saldo de esa anulacion = 0.</para>
     ///
-    /// <para>La fecha de cada linea es la de EMISION FISCAL (<c>Invoice.IssuedAt</c>, la fecha que ARCA aprobo
-    /// el CAE), con fallback a <c>CreatedAt</c> para comprobantes legacy sin IssuedAt: asi el orden cronologico
-    /// del libro mayor respeta la fecha del comprobante AFIP y no el timestamp de fila.</para>
+    /// <para>La fecha de cada linea es la de EMISION FISCAL. Prioridad (N1, revision seguridad, consistencia
+    /// extracto vs PDF): <c>Invoice.CbteFchArgentina</c> primero — el mismo dia EXACTO que se mando/registro
+    /// como <c>&lt;CbteFch&gt;</c> en ARCA, el que usa <c>InvoicePdfService.GetEmissionDateArgentina</c> para
+    /// el PDF. Fallback a <c>IssuedAt</c> (fecha que ARCA aprobo el CAE) y despues a <c>CreatedAt</c> para
+    /// comprobantes legacy sin ninguna de las dos columnas: asi el orden cronologico del libro mayor respeta
+    /// la fecha del comprobante AFIP y no el timestamp de fila.</para>
     /// </summary>
-    private static void AddInvoiceLines(Reserva file, List<AccountStatementInputLine> lines)
+    // internal (no private): InternalsVisibleTo("TravelApi.Tests") ya configurado en el csproj (mismo
+    // patron que AfipService.BuildComprobanteFechas). Permite testear directo la formula de fecha del
+    // movimiento sin tener que levantar todo GetAccountStatementAsync con un DbContext.
+    internal static void AddInvoiceLines(Reserva file, List<AccountStatementInputLine> lines)
     {
         if (file.Invoices == null) return;
 
@@ -233,11 +239,13 @@ public class ReservaService : IReservaService
             string documentRef = $"{invoice.PuntoDeVenta:D4}-{invoice.NumeroComprobante:D8}";
 
             // Fecha del movimiento en el extracto = fecha de EMISION FISCAL del comprobante, no el timestamp
-            // de fila. Invoice.IssuedAt es la fecha que ARCA aprobo el CAE (en la reconciliacion se parsea del
-            // nodo <CbteFch> del comprobante AFIP), asi que es la fecha correcta para ORDENAR el libro mayor.
-            // Fallback a CreatedAt para comprobantes legacy/historicos que se backfillearon sin IssuedAt (la
-            // columna es nullable): preferimos la fiscal cuando existe y degradamos al timestamp de fila si no.
-            DateTime movementDate = invoice.IssuedAt ?? invoice.CreatedAt;
+            // de fila. CbteFchArgentina es el dia EXACTO que se mando a ARCA (fix B1/N1): es una fecha PURA
+            // (medianoche Kind=Utc que representa un DIA, no un instante), asi que NO se convierte con
+            // ArgentinaTime aca — el front la reconoce por su forma (regex FECHA_SOLO_DIA en utils.js) y la
+            // muestra tal cual. Si es null (factura legacy sin la columna), caemos a IssuedAt (fecha que ARCA
+            // aprobo el CAE, un instante real que el front SI convierte con huso horario) y despues a
+            // CreatedAt para comprobantes historicos sin ninguna de las dos.
+            DateTime movementDate = invoice.CbteFchArgentina ?? invoice.IssuedAt ?? invoice.CreatedAt;
 
             switch (category)
             {

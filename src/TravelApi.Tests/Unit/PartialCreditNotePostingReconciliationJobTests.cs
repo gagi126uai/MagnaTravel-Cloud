@@ -612,6 +612,59 @@ public class ReconcileStuckPartialCreditNoteServiceTests
     }
 
     // =====================================================================================
+    // Fix B1/N2 (revision seguridad, ultima ronda del fix de fechas 2026-07-2x): el mismo bug
+    // que ya se habia cerrado en AfipService.ProcessInvoiceJob (camino de recovery anti-doble-CAE)
+    // estaba REPRODUCIDO aca — este es el camino HERMANO de recovery para una NC parcial, y
+    // seteaba IssuedAt pero se olvidaba de poblar CbteFchArgentina. Sin la columna poblada, el PDF
+    // y el QR de esa NC caian al fallback historico (ArgentinaTime sobre una fecha-a-medianoche) y
+    // mostraban un dia ANTES del CbteFch real que ARCA tiene registrado — el bug B1 exacto, en un
+    // lugar distinto del codigo.
+    // =====================================================================================
+
+    [Fact]
+    public async Task Reconcile_OrphanKeyAndArcaConfirms_PopulatesCbteFchArgentinaWithSameRawValueAsIssuedAt()
+    {
+        var ctx = NewDbContext();
+
+        // Forma real que devuelve ARCA y que AfipService.ParseVoucherDetailExtras parsea de
+        // <CbteFch>: fecha-a-medianoche (no un instante real con hora). La marcamos Kind=Utc en
+        // el mock para simular EXACTAMENTE lo que hace el codigo de produccion antes de guardarla
+        // (DateTime.SpecifyKind(arcaResult.IssuedAt.Value, DateTimeKind.Utc)).
+        var cbteFchQueArcaTieneRegistrado = new DateTime(2026, 07, 22, 0, 0, 0, DateTimeKind.Utc);
+
+        var (service, _, _, _) = BuildService(
+            ctx,
+            arcaWhenNumberKnown: (pv, tipo, lastSeen) =>
+                new TravelApi.Application.DTOs.ArcaCompoundQueryResult(
+                    Found: true, LastNumero: 5001, Cae: "75123456789099",
+                    CbteAsoc: 1234, IssuedAt: cbteFchQueArcaTieneRegistrado,
+                    ImporteTotal: 30_000m, MonId: "PES", MonCotiz: 1m));
+
+        var (_, creditNote) = await SeedAsync(ctx, keyLastSeenNumero: 4999,
+            keyCreatedAt: DateTime.UtcNow.AddMinutes(-30));
+
+        var result = await service.ReconcileStuckPartialCreditNoteAsync(creditNote.Id, CancellationToken.None);
+
+        Assert.Equal(PartialCreditNotePostingReconcileOutcome.Confirmed, result.Outcome);
+
+        var ncPost = await ctx.Invoices.AsNoTracking().FirstAsync(i => i.Id == creditNote.Id);
+
+        // La columna nueva quedo poblada (antes del fix N2 se quedaba en null para siempre en
+        // este camino).
+        Assert.NotNull(ncPost.CbteFchArgentina);
+        // Mismo valor CRUDO que IssuedAt: no hay una segunda formula que pueda divergir.
+        Assert.Equal(ncPost.IssuedAt, ncPost.CbteFchArgentina);
+        Assert.Equal(cbteFchQueArcaTieneRegistrado, ncPost.CbteFchArgentina);
+
+        // Consistencia real PDF/QR: GetEmissionDateArgentina tiene que devolver el dia EXACTO
+        // (22/07), no un dia antes. Si alguien rompiera el fix N2 (dejara de poblar la columna),
+        // este assert fallaria mostrando 21/07 (el fallback via ArgentinaTime sobre la medianoche).
+        var fechaQueVeElUsuarioEnPdfYQr =
+            TravelApi.Infrastructure.Services.InvoicePdfService.GetEmissionDateArgentina(ncPost);
+        Assert.Equal(new DateTime(2026, 07, 22), fechaQueVeElUsuarioEnPdfYQr);
+    }
+
+    // =====================================================================================
     // B-2 (falso match): ARCA tiene un comprobante del MISMO MONTO pero asociado a OTRA factura
     //      (CbteAsoc != NumeroComprobante de nuestra origen) -> NO confirma con el CAE ajeno.
     // =====================================================================================
