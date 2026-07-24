@@ -203,6 +203,10 @@ public sealed class PostgresIntegrationFixture : IAsyncLifetime
 
         // (f) INV-118: FiscalSnapshot consistente fuera de Drafted/Aborted.
         //     Codigo de status: 0=Drafted, 1=AwaitingFiscalConfirmation, ..., 6=Aborted.
+        //     Obra "anular sin factura" (2026-07-23, migracion AnnulWithoutInvoice_RelaxFiscalSnapshotCheck):
+        //     un BC SIN ancla fiscal (OriginatingInvoiceId null) queda exento GLOBALMENTE (cualquier Status) —
+        //     nunca emite NC, asi que nunca tiene snapshot que completar. Mismo SQL que la migracion real;
+        //     mantener sincronizado si cambia.
         await ctx.Database.ExecuteSqlRawAsync("""
             ALTER TABLE "BookingCancellations"
               DROP CONSTRAINT IF EXISTS chk_BookingCancellations_fiscalsnapshot_consistent;
@@ -210,6 +214,7 @@ public sealed class PostgresIntegrationFixture : IAsyncLifetime
               ADD CONSTRAINT chk_BookingCancellations_fiscalsnapshot_consistent
               CHECK (
                 "Status" IN (0, 6)
+                OR "OriginatingInvoiceId" IS NULL
                 OR (
                   "FiscalSnapshot_Source" <> 0
                   AND "FiscalSnapshot_ExchangeRateAtOriginalInvoice" > 0

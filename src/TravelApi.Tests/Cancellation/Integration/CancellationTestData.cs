@@ -170,11 +170,17 @@ internal static class CancellationTestData
     /// persistir el BC (la FK la resuelve por la navigation property, igual que produccion).
     /// </para>
     /// </summary>
+    /// <summary>
+    /// Obra "anular sin factura" (2026-07-23): <paramref name="originatingInvoiceId"/> pasa a <c>int?</c>
+    /// (espeja <c>BookingCancellation.OriginatingInvoiceId</c>, ahora opcional). TODOS los callers existentes
+    /// siguen compilando sin tocarlos: pasan un <c>int</c> real, que convierte implícito a <c>int?</c>. Los
+    /// tests nuevos que necesiten un BC SIN ancla fiscal pasan <c>null</c> explícito.
+    /// </summary>
     public static BookingCancellation NewCancellation(
         int customerId,
         int supplierId,
         int reservaId,
-        int originatingInvoiceId,
+        int? originatingInvoiceId,
         BookingCancellationStatus status = BookingCancellationStatus.Drafted,
         string lineCurrency = "ARS")
     {

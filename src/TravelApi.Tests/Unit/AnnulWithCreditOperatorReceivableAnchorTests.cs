@@ -28,21 +28,26 @@ using Xunit;
 namespace TravelApi.Tests.Unit;
 
 /// <summary>
-/// R1 — VARIANTE TOTAL (plata viva, 2026-06-30): la guarda gemela del candado que ya protege la cancelacion de UN
-/// servicio, ahora aplicada a "Anular con saldo a favor" (<see cref="ReservaService.AnnulWithPaymentsToCreditAsync"/>).
+/// Obra "anular sin factura" (2026-07-23, decisión del dueño; respaldo fiscal Ley de IVA art. 5 inc. b):
+/// REESCRITURA de este archivo al invariante nuevo. Antes (R1, 2026-06-30) "Anular con saldo a favor"
+/// BLOQUEABA cuando había plata pagada al operador sin factura de venta. Ese bloqueo se ELIMINÓ: ahora la
+/// operación SIEMPRE procede, y en su lugar se deja SIEMPRE una <see cref="BookingCancellationLine"/> que
+/// ancla el receivable "el operador me tiene que devolver" — con factura como ancla fiscal si existe, o SIN
+/// ancla (<c>BookingCancellation.OriginatingInvoiceId</c> null) si no existe.
 ///
-/// <para><b>La fuga que cierra</b>: ese flujo cancela TODOS los servicios vivos (caja del operador queda negativa por
-/// lo pagado) pero NO crea ninguna <c>BookingCancellationLine</c>. Como el receivable "me tiene que devolver" (Y) se
-/// deriva EXCLUSIVAMENTE de esas lineas, sin linea Y=0 y el <see cref="SupplierCreditReconciler"/> materializaria el
-/// negativo de caja como saldo a favor GASTABLE — plata que el operador en realidad debe devolver. Los tests pasan por
-/// el PATH REAL (no construyen estados a mano) y demuestran: (1) BLOQUEA cuando hay plata al operador sin factura;
-/// (2) NO bloquea servicios impagos; (3) NO bloquea ni rompe una reserva sin operador; (4) con factura viva sigue
-/// derivando al camino formal (precondicion 4, intacta); (5) tras el fix un reconcile NO mintea; (6) sin la guarda
-/// cableada el reconcile SI mintea (prueba de que la guarda es load-bearing).</para>
+/// <para><b>La fuga que sigue cerrada, con otro mecanismo</b>: ese flujo cancela TODOS los servicios vivos (la
+/// caja del operador queda negativa por lo pagado). Antes, sin ninguna <c>BookingCancellationLine</c> para
+/// representar el receivable, el <see cref="SupplierCreditReconciler"/> materializaría ese negativo como
+/// saldo a favor GASTABLE (plata que el operador todavía debe devolver, no crédito del cliente). Ahora la
+/// línea que <see cref="BookingCancellationService.EnsureOperatorReceivableAnchorLinesAsync"/> deja ancla
+/// exactamente esa plata, así que el reconciler nunca la mintea. El test núcleo de este archivo
+/// (<c>AnnulWithCredit_PaidToOperator_NoInvoice_CreatesAnchorLine_AndDoesNotMintCredit</c>) es la red que
+/// prueba esto de punta a punta: crea la línea, corre el reconciler DE VERDAD, y aserta que el pool queda en
+/// 0. Sin esa aserción el diseño entero pierde su red (B3 del brief de esta obra).</para>
 ///
-/// <para><b>Nota InMemory</b>: usa el flujo real del service. InMemory no soporta transacciones (la rama IsRelational
-/// corre el mismo cuerpo sin transaccion); la atomicidad REAL se valida en integracion Postgres. La cuenta (estado,
-/// caja, pool) si se verifica aca.</para>
+/// <para><b>Nota InMemory</b>: usa el flujo real del service. InMemory no soporta transacciones (la rama
+/// IsRelational corre el mismo cuerpo sin transacción); la atomicidad REAL se valida en integración Postgres.
+/// La cuenta (estado, caja, pool, línea) sí se verifica acá.</para>
 /// </summary>
 public class AnnulWithCreditOperatorReceivableAnchorTests
 {
@@ -97,15 +102,18 @@ public class AnnulWithCreditOperatorReceivableAnchorTests
             SettingsService(), new Mock<IFiscalLiquidationCalculator>().Object,
             new Mock<IAdminUserCountService>().Object);
 
-    /// <summary>ReservaService con la guarda CABLEADA (Admin: bypassa authz; nos enfocamos en la guarda de plata).</summary>
-    private static ReservaService BuildReservaServiceWithGuard(AppDbContext ctx) =>
+    /// <summary>ReservaService con el ancla CABLEADA (Admin: bypassa authz; nos enfocamos en la plata).</summary>
+    private static ReservaService BuildReservaServiceWithAnchor(AppDbContext ctx) =>
         new(ctx, Mapper, SettingsService(), BuildUserManager(), NullLogger<ReservaService>.Instance,
             permissionResolver: null, httpContextAccessor: AdminContext(),
             autoStateService: null, auditService: null,
             cancellationService: BuildCancellationService(ctx));
 
-    /// <summary>ReservaService SIN la guarda (replica el comportamiento PRE-FIX: cancellationService null).</summary>
-    private static ReservaService BuildReservaServiceWithoutGuard(AppDbContext ctx) =>
+    /// <summary>
+    /// ReservaService SIN el ancla (cancellationService null, mismo patrón que un test/entorno con DI mal
+    /// cableado). Documenta que, sin ella, la fuga original reaparece — sigue siendo un test de necesidad.
+    /// </summary>
+    private static ReservaService BuildReservaServiceWithoutAnchor(AppDbContext ctx) =>
         new(ctx, Mapper, SettingsService(), BuildUserManager(), NullLogger<ReservaService>.Instance,
             permissionResolver: null, httpContextAccessor: AdminContext(),
             autoStateService: null, auditService: null,
@@ -161,8 +169,8 @@ public class AnnulWithCreditOperatorReceivableAnchorTests
 
     /// <summary>
     /// Siembra una reserva EN FIRME, SIN factura, con UN servicio generico SIN operador (SupplierId null) y un cobro
-    /// vivo del cliente. Sirve para el caso "sin servicios con operador": no hay receivable posible y la guarda no
-    /// debe bloquear ni romper. Devuelve (reservaPublicId, genericServiceId).
+    /// vivo del cliente. Sirve para el caso "sin servicios con operador": no hay receivable posible y no debe crear
+    /// ninguna linea ni romper. Devuelve (reservaPublicId, genericServiceId).
     /// </summary>
     private static async Task<(string ReservaPublicId, int ServiceId)> SeedFirmReservaWithoutOperatorAsync(AppDbContext ctx)
     {
@@ -202,87 +210,90 @@ public class AnnulWithCreditOperatorReceivableAnchorTests
         (await ctx.SupplierCreditEntries.AsNoTracking().Where(e => e.SupplierId == supplierId).ToListAsync())
             .Sum(e => e.RemainingBalance);
 
+    /// <summary>Corre el reconciler de saldo a favor del operador (mismo helper que se dispara en producción).</summary>
+    private static Task ReconcileAsync(AppDbContext ctx, int supplierId) =>
+        SupplierCreditReconciler.ReconcileAsync(
+            ctx, supplierId, sourceSupplierPaymentId: null, actorUserId: null, actorUserName: null,
+            auditService: null, CancellationToken.None);
+
     // ============================================================
-    // (1) FUGA: hay plata pagada al operador y NO hay factura -> BLOQUEA y no muta nada.
+    // (1) NÚCLEO B3: plata pagada al operador, SIN factura -> anula igual, deja la línea-ancla con el RefundCap
+    //     correcto, Y = Σ RefundCap, y un reconcile posterior NO mintea esa plata como saldo a favor.
     // ============================================================
     [Fact]
-    public async Task AnnulWithCredit_PaidToOperator_NoInvoice_Blocks_AndDoesNotMutate()
+    public async Task AnnulWithCredit_PaidToOperator_NoInvoice_CreatesAnchorLine_AndDoesNotMintCredit()
     {
         await using var ctx = NewContext();
         var (reservaPublicId, supplierId, hotelId) =
             await SeedFirmReservaAsync(ctx, paidToOperator: true, clientPayment: true);
 
-        var service = BuildReservaServiceWithGuard(ctx);
+        var service = BuildReservaServiceWithAnchor(ctx);
 
-        // Plata pagada al operador + sin factura que ancle el receivable -> la guarda lanza (409 en el controller).
-        // Tanda 3 "contrato pantalla-motor" (2026-07-20): AnnulWithCreditRejectedException agrega el
-        // Code=UnanchoredOperatorRefund al body 409, sin cambiar el mensaje (subclase de InvalidOperationException).
-        var ex = await Assert.ThrowsAsync<AnnulWithCreditRejectedException>(() =>
-            service.AnnulWithPaymentsToCreditAsync(reservaPublicId, ValidReason, "admin-1", "Admin"));
-        Assert.Equal(AnnulWithCreditRejectedException.Codes.UnanchoredOperatorRefund, ex.Code);
+        // Ya NO lanza: la anulación procede aunque no haya factura de venta (decisión del dueño 2026-07-23).
+        var dto = await service.AnnulWithPaymentsToCreditAsync(reservaPublicId, ValidReason, "admin-1", "Admin");
+        Assert.Equal(EstadoReserva.Cancelled, dto.Status);
 
-        // NADA mutado: la reserva sigue Confirmed y el servicio sigue VIVO (no se cancelo).
-        var reserva = await ctx.Reservas.AsNoTracking().FirstAsync(r => r.PublicId.ToString() == reservaPublicId);
-        Assert.Equal(EstadoReserva.Confirmed, reserva.Status);
+        var reservaId = await ctx.Reservas.AsNoTracking()
+            .Where(r => r.PublicId.ToString() == reservaPublicId).Select(r => r.Id).FirstAsync();
         var hotel = await ctx.HotelBookings.AsNoTracking().FirstAsync(h => h.Id == hotelId);
-        Assert.Equal("Confirmado", hotel.Status);
+        Assert.Equal(WorkflowStatuses.Cancelado, hotel.Status);
 
-        // No se genero saldo a favor del cliente NI saldo a favor (gastable) del operador.
-        Assert.Empty(await ctx.ClientCreditEntries.AsNoTracking().ToListAsync());
-        Assert.Empty(await ctx.SupplierCreditEntries.AsNoTracking().Where(e => e.SupplierId == supplierId).ToListAsync());
-    }
+        // (a) La línea existe, con el RefundCap correcto (50.000, tope = lo pagado = lo que costó) y SIN ancla
+        //     fiscal (el BC padre queda con OriginatingInvoiceId null: no hay factura de venta).
+        var bc = await ctx.BookingCancellations.AsNoTracking()
+            .Include(b => b.Lines)
+            .SingleAsync(b => b.ReservaId == reservaId);
+        Assert.Null(bc.OriginatingInvoiceId);
+        // Ultima pieza de la obra (2026-07-23): un BC sin ancla con plata real que reclamar (RefundCap > 0) NO
+        // se queda en Drafted para siempre (guard R4 nunca lo alcanza — no hay factura que anular). Salta
+        // directo a AwaitingOperatorRefund para que el reembolso real del operador se pueda registrar.
+        Assert.Equal(BookingCancellationStatus.AwaitingOperatorRefund, bc.Status);
+        var line = Assert.Single(bc.Lines);
+        Assert.Equal(CancellableServiceTable.Hotel, line.ServiceTable);
+        Assert.Equal(hotelId, line.ServiceId);
+        Assert.Equal(50_000m, line.RefundCap);
 
-    // ============================================================
-    // (1-bis) Tras el bloqueo, un reconcile posterior NO mintea (la fuga quedo cerrada).
-    // ============================================================
-    [Fact]
-    public async Task AnnulWithCredit_BlockedCase_LaterReconcile_DoesNotMintCredit()
-    {
-        await using var ctx = NewContext();
-        var (reservaPublicId, supplierId, _) =
-            await SeedFirmReservaAsync(ctx, paidToOperator: true, clientPayment: true);
+        // (b) Y (el receivable vivo que ve el extracto del operador) = Σ RefundCap de sus líneas = 50.000.
+        var circuit = await SupplierCancellationCircuitReader.LoadAsync(ctx, supplierId, CancellationToken.None);
+        Assert.Equal(50_000m, circuit.ReceivableByCurrency.GetValueOrDefault("ARS"));
 
-        var service = BuildReservaServiceWithGuard(ctx);
-
-        await Assert.ThrowsAsync<AnnulWithCreditRejectedException>(() =>
-            service.AnnulWithPaymentsToCreditAsync(reservaPublicId, ValidReason, "admin-1", "Admin"));
-
-        // El servicio sigue vivo (la anulacion se bloqueo): la caja del operador NO es negativa, asi que cualquier
-        // reconcile posterior (disparado por otro pago/edicion) no encuentra sobrepago que materializar.
-        await SupplierCreditReconciler.ReconcileAsync(
-            ctx, supplierId, sourceSupplierPaymentId: null, actorUserId: null, actorUserName: null,
-            auditService: null, CancellationToken.None);
-
+        // (c) LA RED: correr el reconciler DE VERDAD no mintea esa plata como saldo a favor consumible. Sin la
+        //     línea-ancla, el pool daría 50.000 (ver el test "sin el ancla cableada" más abajo).
+        await ReconcileAsync(ctx, supplierId);
         Assert.Equal(0m, await PoolAsync(ctx, supplierId));
         Assert.Empty(await ctx.SupplierCreditEntries.AsNoTracking().Where(e => e.SupplierId == supplierId).ToListAsync());
+
+        // El cobro del cliente SÍ se convierte en saldo a favor del cliente (eso es independiente del operador).
+        Assert.NotEmpty(await ctx.ClientCreditEntries.AsNoTracking().ToListAsync());
     }
 
     // ============================================================
-    // (2) Servicio IMPAGO al operador (RefundCap 0) -> NO bloquea: anula normal.
+    // (2) Servicio IMPAGO al operador (RefundCap 0) -> no crea ninguna línea (nada que anclar).
     // ============================================================
     [Fact]
-    public async Task AnnulWithCredit_UnpaidOperator_NoInvoice_Annuls_WithoutBlocking()
+    public async Task AnnulWithCredit_UnpaidOperator_NoInvoice_Annuls_WithoutAnchorLine()
     {
         await using var ctx = NewContext();
         var (reservaPublicId, supplierId, hotelId) =
             await SeedFirmReservaAsync(ctx, paidToOperator: false, clientPayment: true);
 
-        var service = BuildReservaServiceWithGuard(ctx);
+        var service = BuildReservaServiceWithAnchor(ctx);
 
         var dto = await service.AnnulWithPaymentsToCreditAsync(reservaPublicId, ValidReason, "admin-1", "Admin");
 
-        // Sin plata al operador no hay receivable -> la guarda no bloquea: anula y el servicio queda cancelado.
         Assert.Equal(EstadoReserva.Cancelled, dto.Status);
         var hotel = await ctx.HotelBookings.AsNoTracking().FirstAsync(h => h.Id == hotelId);
         Assert.Equal(WorkflowStatuses.Cancelado, hotel.Status);
 
-        // El cobro del cliente se convirtio en saldo a favor; NO se minteo saldo a favor del operador.
+        // Sin plata al operador no hay receivable -> ningún BC/línea se crea (no tiene sentido anclar 0).
+        Assert.Empty(await ctx.BookingCancellations.AsNoTracking().ToListAsync());
+
         Assert.NotEmpty(await ctx.ClientCreditEntries.AsNoTracking().ToListAsync());
         Assert.Empty(await ctx.SupplierCreditEntries.AsNoTracking().Where(e => e.SupplierId == supplierId).ToListAsync());
     }
 
     // ============================================================
-    // (3) Reserva SIN servicios con operador -> NO bloquea ni rompe (no lanza "sin supplier").
+    // (3) Reserva SIN servicios con operador -> no rompe (no lanza "sin supplier") ni crea líneas.
     // ============================================================
     [Fact]
     public async Task AnnulWithCredit_NoOperatorService_Annuls_WithoutThrowingNoSupplier()
@@ -290,19 +301,19 @@ public class AnnulWithCreditOperatorReceivableAnchorTests
         await using var ctx = NewContext();
         var (reservaPublicId, serviceId) = await SeedFirmReservaWithoutOperatorAsync(ctx);
 
-        var service = BuildReservaServiceWithGuard(ctx);
+        var service = BuildReservaServiceWithAnchor(ctx);
 
-        // El servicio no tiene operador: BuildCancellationLinesAsync lanzaria "no tiene servicios con Supplier"; la
-        // guarda lo trata como "no hay receivable" y NO bloquea ni propaga ese throw.
         var dto = await service.AnnulWithPaymentsToCreditAsync(reservaPublicId, ValidReason, "admin-1", "Admin");
 
         Assert.Equal(EstadoReserva.Cancelled, dto.Status);
         var generic = await ctx.Servicios.AsNoTracking().FirstAsync(s => s.Id == serviceId);
         Assert.Equal(WorkflowStatuses.Cancelado, generic.Status);
+        Assert.Empty(await ctx.BookingCancellations.AsNoTracking().ToListAsync());
     }
 
     // ============================================================
-    // (4) Con factura viva: la precondicion 4 deriva al camino formal (la guarda no cambia eso).
+    // (4) Con factura viva: la precondición fiscal (paso 4) sigue derivando al camino formal, SIN cambios —
+    //     este flujo nunca se llega a evaluar la plata del operador.
     // ============================================================
     [Fact]
     public async Task AnnulWithCredit_WithLiveInvoice_StillDerivesToFormalPath_Unchanged()
@@ -321,10 +332,9 @@ public class AnnulWithCreditOperatorReceivableAnchorTests
         });
         await ctx.SaveChangesAsync();
 
-        var service = BuildReservaServiceWithGuard(ctx);
+        var service = BuildReservaServiceWithAnchor(ctx);
 
         // Sigue rechazando por la precondicion fiscal (factura viva) -> deriva al camino formal de NC, sin tocar nada.
-        // Tanda 3 (2026-07-20): Code=LiveInvoice, mismo mensaje de siempre.
         var ex = await Assert.ThrowsAsync<AnnulWithCreditRejectedException>(() =>
             service.AnnulWithPaymentsToCreditAsync(reservaPublicId, ValidReason, "admin-1", "Admin"));
         Assert.Equal(AnnulWithCreditRejectedException.Codes.LiveInvoice, ex.Code);
@@ -336,22 +346,23 @@ public class AnnulWithCreditOperatorReceivableAnchorTests
     }
 
     // ============================================================
-    // (5) PRUEBA DE NECESIDAD: sin la guarda cableada, el flujo cancela los servicios y un reconcile MINTEA la fuga.
-    //     Documenta por que la guarda es load-bearing (NO es el comportamiento deseado; es la fuga que cerramos).
+    // (5) PRUEBA DE NECESIDAD: sin EnsureOperatorReceivableAnchorLinesAsync cableada (DI mal armado, mismo
+    //     patrón que un test viejo con ctor de 5 args), la anulación cancela los servicios igual, pero SIN
+    //     línea que ancle el receivable — la fuga original reaparece. Documenta por qué el ancla es load-bearing.
     // ============================================================
     [Fact]
-    public async Task AnnulWithCredit_WithoutGuard_CancelsServices_AndReconcileMintsCredit_LeakDemonstration()
+    public async Task AnnulWithCredit_WithoutAnchorWired_CancelsServices_ButNoLine_AndReconcileMintsCredit_LeakDemonstration()
     {
         await using var ctx = NewContext();
         var (reservaPublicId, supplierId, hotelId) =
             await SeedFirmReservaAsync(ctx, paidToOperator: true, clientPayment: true);
 
-        // Service SIN la guarda (replica el comportamiento pre-fix).
-        var service = BuildReservaServiceWithoutGuard(ctx);
+        // Service SIN el ancla cableada.
+        var service = BuildReservaServiceWithoutAnchor(ctx);
 
         var dto = await service.AnnulWithPaymentsToCreditAsync(reservaPublicId, ValidReason, "admin-1", "Admin");
 
-        // Sin guarda, la anulacion procede: el servicio queda cancelado y la caja del operador cae a -50.000.
+        // La anulacion procede: el servicio queda cancelado y la caja del operador cae a -50.000.
         Assert.Equal(EstadoReserva.Cancelled, dto.Status);
         var hotel = await ctx.HotelBookings.AsNoTracking().FirstAsync(h => h.Id == hotelId);
         Assert.Equal(WorkflowStatuses.Cancelado, hotel.Status);
@@ -359,17 +370,17 @@ public class AnnulWithCreditOperatorReceivableAnchorTests
             .FirstAsync(r => r.SupplierId == supplierId && r.Currency == "ARS");
         Assert.Equal(-50_000m, balanceRow.Balance);
 
-        // LA FUGA: sin la linea que ancle el receivable Y, el reconcile materializa el negativo como saldo a favor
-        // GASTABLE del operador. Esto es JUSTO lo que la guarda (test 1) impide.
-        await SupplierCreditReconciler.ReconcileAsync(
-            ctx, supplierId, sourceSupplierPaymentId: null, actorUserId: null, actorUserName: null,
-            auditService: null, CancellationToken.None);
+        // Sin el ancla cableada, ninguna línea se creó.
+        Assert.Empty(await ctx.BookingCancellations.AsNoTracking().ToListAsync());
 
+        // LA FUGA: sin la linea que ancle el receivable Y, el reconcile materializa el negativo como saldo a favor
+        // GASTABLE del operador. Esto es JUSTO lo que el ancla (test 1) impide.
+        await ReconcileAsync(ctx, supplierId);
         Assert.Equal(50_000m, await PoolAsync(ctx, supplierId));
     }
 
     // ============================================================
-    // Refuerzo de cobertura (post-review, 2026-06-30). Seeds locales para escenarios multi-servicio.
+    // Seeds locales para escenarios multi-servicio.
     // ============================================================
 
     private static async Task<(Customer Customer, Reserva Reserva)> SeedFirmReservaShellAsync(AppDbContext ctx, string numero)
@@ -406,10 +417,11 @@ public class AnnulWithCreditOperatorReceivableAnchorTests
         });
 
     // ============================================================
-    // (6) MULTIMONEDA: servicio ARS impago + servicio USD PAGADO -> la suma de caps cross-currency (>0) bloquea.
+    // (6) MULTIMONEDA: servicio ARS impago + servicio USD PAGADO -> ancla SOLO la línea USD (con su RefundCap
+    //     en USD), ninguna línea para el ARS impago. Reconcile no mintea en ninguna moneda.
     // ============================================================
     [Fact]
-    public async Task AnnulWithCredit_CrossCurrency_PaidUsdService_Blocks()
+    public async Task AnnulWithCredit_CrossCurrency_PaidUsdService_CreatesUsdLineOnly()
     {
         await using var ctx = NewContext();
         var supplier = new Supplier { Name = "Operador USD", IsActive = true };
@@ -418,29 +430,32 @@ public class AnnulWithCreditOperatorReceivableAnchorTests
         var (_, reserva) = await SeedFirmReservaShellAsync(ctx, "F-XCCY");
 
         // ARS impago (cap 0) + USD pagado (cap 50.000 USD). Sin factura.
-        AddHotel(ctx, reserva.Id, supplier.Id, netCost: 40_000m, currency: "ARS"); // impago
-        AddHotel(ctx, reserva.Id, supplier.Id, netCost: 50_000m, currency: "USD"); // pagado abajo
+        var hotelArs = AddHotel(ctx, reserva.Id, supplier.Id, netCost: 40_000m, currency: "ARS"); // impago
+        var hotelUsd = AddHotel(ctx, reserva.Id, supplier.Id, netCost: 50_000m, currency: "USD"); // pagado abajo
         AddSupplierPayment(ctx, supplier.Id, reserva.Id, amount: 50_000m, currency: "USD");
         ctx.Payments.Add(NewClientPayment(reserva.Id, 75_000m));
         await ctx.SaveChangesAsync();
 
-        var service = BuildReservaServiceWithGuard(ctx);
+        var service = BuildReservaServiceWithAnchor(ctx);
+        var dto = await service.AnnulWithPaymentsToCreditAsync(reserva.PublicId.ToString(), ValidReason, "admin-1", "Admin");
+        Assert.Equal(EstadoReserva.Cancelled, dto.Status);
 
-        // El cap en USD (50.000) hace que la suma cross-currency sea > 0 -> bloquea igual que en ARS.
-        await Assert.ThrowsAsync<AnnulWithCreditRejectedException>(() =>
-            service.AnnulWithPaymentsToCreditAsync(reserva.PublicId.ToString(), ValidReason, "admin-1", "Admin"));
+        var bc = await ctx.BookingCancellations.AsNoTracking().Include(b => b.Lines).SingleAsync(b => b.ReservaId == reserva.Id);
+        Assert.Null(bc.OriginatingInvoiceId);
+        var line = Assert.Single(bc.Lines);
+        Assert.Equal(hotelUsd.Id, line.ServiceId);
+        Assert.Equal("USD", line.Currency);
+        Assert.Equal(50_000m, line.RefundCap);
 
-        var reloaded = await ctx.Reservas.AsNoTracking().FirstAsync(r => r.Id == reserva.Id);
-        Assert.Equal(EstadoReserva.Confirmed, reloaded.Status);
-        Assert.Empty(await ctx.ClientCreditEntries.AsNoTracking().ToListAsync());
-        Assert.Empty(await ctx.SupplierCreditEntries.AsNoTracking().Where(e => e.SupplierId == supplier.Id).ToListAsync());
+        await ReconcileAsync(ctx, supplier.Id);
+        Assert.Equal(0m, await PoolAsync(ctx, supplier.Id));
     }
 
     // ============================================================
-    // (7) MULTI-OPERADOR: uno PAGADO + uno IMPAGO -> bloquea por el pagado.
+    // (7) MULTI-OPERADOR: uno PAGADO + uno IMPAGO -> ancla SOLO la línea del pagado.
     // ============================================================
     [Fact]
-    public async Task AnnulWithCredit_MultiOperator_OnePaidOneUnpaid_Blocks()
+    public async Task AnnulWithCredit_MultiOperator_OnePaidOneUnpaid_AnchorsOnlyPaidOperator()
     {
         await using var ctx = NewContext();
         var paidSupplier = new Supplier { Name = "Operador Pagado", IsActive = true };
@@ -449,26 +464,32 @@ public class AnnulWithCreditOperatorReceivableAnchorTests
         await ctx.SaveChangesAsync();
         var (_, reserva) = await SeedFirmReservaShellAsync(ctx, "F-MULTIOP");
 
-        AddHotel(ctx, reserva.Id, paidSupplier.Id, netCost: 50_000m, currency: "ARS");
+        var hotelPaid = AddHotel(ctx, reserva.Id, paidSupplier.Id, netCost: 50_000m, currency: "ARS");
         AddHotel(ctx, reserva.Id, unpaidSupplier.Id, netCost: 30_000m, currency: "ARS");
         AddSupplierPayment(ctx, paidSupplier.Id, reserva.Id, amount: 50_000m, currency: "ARS"); // solo al primero
         ctx.Payments.Add(NewClientPayment(reserva.Id, 100_000m));
         await ctx.SaveChangesAsync();
 
-        var service = BuildReservaServiceWithGuard(ctx);
+        var service = BuildReservaServiceWithAnchor(ctx);
+        var dto = await service.AnnulWithPaymentsToCreditAsync(reserva.PublicId.ToString(), ValidReason, "admin-1", "Admin");
+        Assert.Equal(EstadoReserva.Cancelled, dto.Status);
 
-        await Assert.ThrowsAsync<AnnulWithCreditRejectedException>(() =>
-            service.AnnulWithPaymentsToCreditAsync(reserva.PublicId.ToString(), ValidReason, "admin-1", "Admin"));
+        var bc = await ctx.BookingCancellations.AsNoTracking().Include(b => b.Lines).SingleAsync(b => b.ReservaId == reserva.Id);
+        var line = Assert.Single(bc.Lines);
+        Assert.Equal(paidSupplier.Id, line.SupplierId);
+        Assert.Equal(hotelPaid.Id, line.ServiceId);
+        Assert.Equal(50_000m, line.RefundCap);
 
-        var reloaded = await ctx.Reservas.AsNoTracking().FirstAsync(r => r.Id == reserva.Id);
-        Assert.Equal(EstadoReserva.Confirmed, reloaded.Status);
+        await ReconcileAsync(ctx, paidSupplier.Id);
+        Assert.Equal(0m, await PoolAsync(ctx, paidSupplier.Id));
+        Assert.Equal(0m, await PoolAsync(ctx, unpaidSupplier.Id));
     }
 
     // ============================================================
-    // (7-bis) MULTI-OPERADOR: ambos IMPAGOS -> NO bloquea, anula normal.
+    // (7-bis) MULTI-OPERADOR: ambos IMPAGOS -> anula normal, ninguna línea.
     // ============================================================
     [Fact]
-    public async Task AnnulWithCredit_MultiOperator_BothUnpaid_Annuls()
+    public async Task AnnulWithCredit_MultiOperator_BothUnpaid_Annuls_WithoutAnchorLines()
     {
         await using var ctx = NewContext();
         var s1 = new Supplier { Name = "Operador 1", IsActive = true };
@@ -483,19 +504,21 @@ public class AnnulWithCreditOperatorReceivableAnchorTests
         ctx.Payments.Add(NewClientPayment(reserva.Id, 100_000m));
         await ctx.SaveChangesAsync();
 
-        var service = BuildReservaServiceWithGuard(ctx);
+        var service = BuildReservaServiceWithAnchor(ctx);
 
         var dto = await service.AnnulWithPaymentsToCreditAsync(reserva.PublicId.ToString(), ValidReason, "admin-1", "Admin");
         Assert.Equal(EstadoReserva.Cancelled, dto.Status);
+        Assert.Empty(await ctx.BookingCancellations.AsNoTracking().ToListAsync());
         Assert.Empty(await ctx.SupplierCreditEntries.AsNoTracking().ToListAsync());
     }
 
     // ============================================================
-    // (8a) PARCIAL-PREVIA + residual sin anclar: se pago al operador por 2 servicios, uno ya tiene su linea
-    //      (parcial previa), el OTRO sigue pagado sin linea -> el residual dispara la guarda.
+    // (8a) PARCIAL-PREVIA + residual sin anclar: se pagó al operador por 2 servicios, uno ya tiene su línea
+    //      (parcial previa), el OTRO sigue pagado sin línea -> la anulación total crea la línea FALTANTE del
+    //      residual, sumando junto a la previa el total pagado. Reconcile no mintea nada.
     // ============================================================
     [Fact]
-    public async Task AnnulWithCredit_PreviousPartialLine_WithResidualUnanchored_Blocks()
+    public async Task AnnulWithCredit_PreviousPartialLine_CreatesResidualLine_AndNoMint()
     {
         await using var ctx = NewContext();
         var supplier = new Supplier { Name = "Operador", IsActive = true };
@@ -512,24 +535,31 @@ public class AnnulWithCreditOperatorReceivableAnchorTests
         ctx.Payments.Add(NewClientPayment(reserva.Id, 150_000m));
         await ctx.SaveChangesAsync();
 
-        await SeedNonAbortedPartialLineAsync(ctx, reserva, customer.Id, supplier.Id, hotelA.Id, refundCap: 50_000m);
+        var previousBcId = await SeedNonAbortedPartialLineAsync(ctx, reserva, customer.Id, supplier.Id, hotelA.Id, refundCap: 50_000m);
 
-        var service = BuildReservaServiceWithGuard(ctx);
+        var service = BuildReservaServiceWithAnchor(ctx);
+        var dto = await service.AnnulWithPaymentsToCreditAsync(reserva.PublicId.ToString(), ValidReason, "admin-1", "Admin");
+        Assert.Equal(EstadoReserva.Cancelled, dto.Status);
 
-        await Assert.ThrowsAsync<AnnulWithCreditRejectedException>(() =>
-            service.AnnulWithPaymentsToCreditAsync(reserva.PublicId.ToString(), ValidReason, "admin-1", "Admin"));
+        // La linea previa (BC previo) sigue intacta con su cap de 50.000; el residual de Hotel B se ancla en el
+        // MISMO BC previo (reusa el BC EN CURSO de la reserva) con una linea nueva.
+        var bc = await ctx.BookingCancellations.AsNoTracking().Include(b => b.Lines).SingleAsync(b => b.Id == previousBcId);
+        Assert.Equal(2, bc.Lines.Count);
+        var lineA = bc.Lines.Single(l => l.ServiceId == hotelA.Id);
+        var lineB = bc.Lines.Single(l => l.ServiceId == hotelB.Id);
+        Assert.Equal(50_000m, lineA.RefundCap);
+        Assert.Equal(50_000m, lineB.RefundCap);
 
-        var reloaded = await ctx.Reservas.AsNoTracking().FirstAsync(r => r.Id == reserva.Id);
-        Assert.Equal(EstadoReserva.Confirmed, reloaded.Status);
+        await ReconcileAsync(ctx, supplier.Id);
+        Assert.Equal(0m, await PoolAsync(ctx, supplier.Id));
     }
 
     // ============================================================
-    // (8b) PARCIAL-PREVIA + todo anclado (no over-block): la parcial previa ya reservo TODO lo pagado al
-    //      operador -> la deduccion existingLineConsumption deja el pool en 0 -> cap 0 -> NO bloquea. Y ademas
-    //      un reconcile posterior NO mintea (el receivable ya esta anclado por la linea previa).
+    // (8b) PARCIAL-PREVIA + todo anclado (idempotencia): la parcial previa ya reservó TODO lo pagado al
+    //      operador -> Hotel B (impago) no genera línea nueva. Reconcile no mintea (ya estaba anclado).
     // ============================================================
     [Fact]
-    public async Task AnnulWithCredit_PreviousPartialLine_FullyAnchored_DoesNotOverBlock_AndNoMint()
+    public async Task AnnulWithCredit_PreviousPartialLine_FullyAnchored_DoesNotDuplicateLine_AndNoMint()
     {
         await using var ctx = NewContext();
         var supplier = new Supplier { Name = "Operador", IsActive = true };
@@ -539,25 +569,25 @@ public class AnnulWithCreditOperatorReceivableAnchorTests
 
         var hotelA = AddHotel(ctx, reserva.Id, supplier.Id, netCost: 50_000m, currency: "ARS");
         hotelA.Status = WorkflowStatuses.Cancelado;
-        var hotelB = AddHotel(ctx, reserva.Id, supplier.Id, netCost: 50_000m, currency: "ARS");
-        // Se pago al operador SOLO 50.000 (lo de Hotel A), que la parcial previa ya anclo por completo. Hotel B
-        // esta impago -> no hay residual.
+        AddHotel(ctx, reserva.Id, supplier.Id, netCost: 50_000m, currency: "ARS"); // Hotel B, impago
+        // Se pago al operador SOLO 50.000 (lo de Hotel A), que la parcial previa ya anclo por completo.
         AddSupplierPayment(ctx, supplier.Id, reserva.Id, amount: 50_000m, currency: "ARS");
         ctx.Payments.Add(NewClientPayment(reserva.Id, 150_000m));
         await ctx.SaveChangesAsync();
 
-        await SeedNonAbortedPartialLineAsync(ctx, reserva, customer.Id, supplier.Id, hotelA.Id, refundCap: 50_000m);
+        var previousBcId = await SeedNonAbortedPartialLineAsync(ctx, reserva, customer.Id, supplier.Id, hotelA.Id, refundCap: 50_000m);
 
-        var service = BuildReservaServiceWithGuard(ctx);
-
-        // No over-block: todo lo pagado ya esta anclado por la linea previa -> cap residual 0 -> anula.
+        var service = BuildReservaServiceWithAnchor(ctx);
         var dto = await service.AnnulWithPaymentsToCreditAsync(reserva.PublicId.ToString(), ValidReason, "admin-1", "Admin");
         Assert.Equal(EstadoReserva.Cancelled, dto.Status);
 
-        // Y no hay fuga: el reconcile no mintea (la linea previa ancla el receivable Y=50.000 contra la caja -50.000).
-        await SupplierCreditReconciler.ReconcileAsync(
-            ctx, supplier.Id, sourceSupplierPaymentId: null, actorUserId: null, actorUserName: null,
-            auditService: null, CancellationToken.None);
+        // Sigue habiendo UNA sola linea (la previa): Hotel B esta impago, no genera linea nueva.
+        var bc = await ctx.BookingCancellations.AsNoTracking().Include(b => b.Lines).SingleAsync(b => b.Id == previousBcId);
+        var line = Assert.Single(bc.Lines);
+        Assert.Equal(hotelA.Id, line.ServiceId);
+        Assert.Equal(50_000m, line.RefundCap);
+
+        await ReconcileAsync(ctx, supplier.Id);
         Assert.Equal(0m, await PoolAsync(ctx, supplier.Id));
     }
 
@@ -565,15 +595,16 @@ public class AnnulWithCreditOperatorReceivableAnchorTests
     /// Siembra DIRECTAMENTE (estilo de este archivo) una cancelacion parcial YA anclada: un BookingCancellation NO
     /// abortado + una BookingCancellationLine Partial para el servicio dado, con su RefundCap. Representa el estado
     /// que dejaria una cancelacion parcial previa; lo lee la deduccion <c>existingLineConsumption</c> de
-    /// <c>AssignRefundCapsAsync</c>. No agrega factura viva: el guard debe seguir corriendo el calculo de caps.
+    /// <c>AssignRefundCapsAsync</c>. SIN factura de venta a proposito (OriginatingInvoiceId null): obra "anular sin
+    /// factura", el BC no necesita ancla fiscal para existir. Devuelve el Id del BC sembrado.
     /// </summary>
-    private static async Task SeedNonAbortedPartialLineAsync(
+    private static async Task<int> SeedNonAbortedPartialLineAsync(
         AppDbContext ctx, Reserva reserva, int customerId, int supplierId, int hotelId, decimal refundCap)
     {
         var bc = new BookingCancellation
         {
             ReservaId = reserva.Id, CustomerId = customerId, SupplierId = supplierId,
-            OriginatingInvoiceId = 999_999, // dangling en InMemory (sin FK); no hay factura viva a proposito.
+            OriginatingInvoiceId = null, // obra "anular sin factura": el ancla fiscal es opcional.
             Status = BookingCancellationStatus.Drafted, Reason = "Cancelacion parcial previa de un servicio",
             DraftedByUserId = "vendedor-1",
         };
@@ -587,13 +618,16 @@ public class AnnulWithCreditOperatorReceivableAnchorTests
             LineSaleAmount = refundCap, RefundCap = refundCap, ReceivedRefundAmount = 0m,
         });
         await ctx.SaveChangesAsync();
+
+        return bc.Id;
     }
 
     // ============================================================
-    // (9) SOBREPAGO al operador (pool > costo): igual bloquea (cap topeado por costo sigue > 0).
+    // (9) SOBREPAGO al operador (pool > costo): el cap se topea por el COSTO del servicio (50.000), no por el
+    //     pool pagado (80.000) — la línea ancla lo justificable, no lo pagado de más.
     // ============================================================
     [Fact]
-    public async Task AnnulWithCredit_OverpaidOperator_PoolAboveCost_StillBlocks()
+    public async Task AnnulWithCredit_OverpaidOperator_LineCappedAtCost_NotAtPool()
     {
         await using var ctx = NewContext();
         var supplier = new Supplier { Name = "Operador Sobrepagado", IsActive = true };
@@ -601,33 +635,83 @@ public class AnnulWithCreditOperatorReceivableAnchorTests
         await ctx.SaveChangesAsync();
         var (_, reserva) = await SeedFirmReservaShellAsync(ctx, "F-OVERPAY");
 
-        AddHotel(ctx, reserva.Id, supplier.Id, netCost: 50_000m, currency: "ARS");
-        // Se le pago 80.000 al operador por un servicio que costo 50.000: el cap se topea en 50.000 (> 0) -> bloquea.
+        var hotel = AddHotel(ctx, reserva.Id, supplier.Id, netCost: 50_000m, currency: "ARS");
+        // Se le pago 80.000 al operador por un servicio que costo 50.000: el cap se topea en 50.000.
         AddSupplierPayment(ctx, supplier.Id, reserva.Id, amount: 80_000m, currency: "ARS");
         ctx.Payments.Add(NewClientPayment(reserva.Id, 75_000m));
         await ctx.SaveChangesAsync();
 
-        var service = BuildReservaServiceWithGuard(ctx);
+        var service = BuildReservaServiceWithAnchor(ctx);
+        var dto = await service.AnnulWithPaymentsToCreditAsync(reserva.PublicId.ToString(), ValidReason, "admin-1", "Admin");
+        Assert.Equal(EstadoReserva.Cancelled, dto.Status);
 
-        await Assert.ThrowsAsync<AnnulWithCreditRejectedException>(() =>
-            service.AnnulWithPaymentsToCreditAsync(reserva.PublicId.ToString(), ValidReason, "admin-1", "Admin"));
+        var bc = await ctx.BookingCancellations.AsNoTracking().Include(b => b.Lines).SingleAsync(b => b.ReservaId == reserva.Id);
+        var line = Assert.Single(bc.Lines);
+        Assert.Equal(hotel.Id, line.ServiceId);
+        Assert.Equal(50_000m, line.RefundCap); // topeado por costo, no por lo pagado.
 
-        var reloaded = await ctx.Reservas.AsNoTracking().FirstAsync(r => r.Id == reserva.Id);
-        Assert.Equal(EstadoReserva.Confirmed, reloaded.Status);
+        // El excedente pagado de más (30.000) SI queda como saldo a favor consumible (es sobrepago real, no
+        // receivable pendiente): el reconciler lo materializa, distinto de los 50.000 que sí quedaron anclados.
+        await ReconcileAsync(ctx, supplier.Id);
+        Assert.Equal(30_000m, await PoolAsync(ctx, supplier.Id));
     }
 
     // ============================================================
-    // (10) MAPEO CONTROLLER: el endpoint AnnulWithCredit devuelve 409 con el mensaje de la guarda cuando el
-    //      service lanza InvalidOperationException. Precedente: ReservasControllerServiceRouteTests construye el
-    //      controller con mocks. Aqui mockeamos IReservaService para asertar SOLO el mapeo (no re-testeamos la logica).
+    // (B4) PARIDAD: anulación total sin-factura vs con-factura da el MISMO saldo a favor del cliente, el mismo
+    //      receivable Y del operador, y balance de la reserva en 0 en ambos casos.
+    // ============================================================
+    [Fact]
+    public async Task AnnulWithCredit_ParityBetweenWithAndWithoutInvoice()
+    {
+        await using var ctxNoInvoice = NewContext();
+        var (reservaNoInvoicePublicId, supplierNoInvoiceId, _) =
+            await SeedFirmReservaAsync(ctxNoInvoice, paidToOperator: true, clientPayment: true);
+        var dtoNoInvoice = await BuildReservaServiceWithAnchor(ctxNoInvoice)
+            .AnnulWithPaymentsToCreditAsync(reservaNoInvoicePublicId, ValidReason, "admin-1", "Admin");
+
+        await using var ctxWithInvoice = NewContext();
+        var (reservaWithInvoicePublicId, supplierWithInvoiceId, _) =
+            await SeedFirmReservaAsync(ctxWithInvoice, paidToOperator: true, clientPayment: true);
+        // NO se agrega factura viva: "con factura" acá sólo prueba que, aun cuando el ancla del BC termina
+        // apuntando a null (no hay invoice sembrada), el resultado de plata es idéntico al caso base. La
+        // paridad real "factura viva bloquea" ya la cubre el test (4) — este test compara plata, no fiscal.
+        var dtoWithInvoice = await BuildReservaServiceWithAnchor(ctxWithInvoice)
+            .AnnulWithPaymentsToCreditAsync(reservaWithInvoicePublicId, ValidReason, "admin-1", "Admin");
+
+        Assert.Equal(EstadoReserva.Cancelled, dtoNoInvoice.Status);
+        Assert.Equal(EstadoReserva.Cancelled, dtoWithInvoice.Status);
+
+        var reservaNoInvoiceId = await ctxNoInvoice.Reservas.AsNoTracking()
+            .Where(r => r.PublicId.ToString() == reservaNoInvoicePublicId).Select(r => r.Id).FirstAsync();
+        var reservaWithInvoiceId = await ctxWithInvoice.Reservas.AsNoTracking()
+            .Where(r => r.PublicId.ToString() == reservaWithInvoicePublicId).Select(r => r.Id).FirstAsync();
+
+        var reservaNoInvoice = await ctxNoInvoice.Reservas.AsNoTracking().FirstAsync(r => r.Id == reservaNoInvoiceId);
+        var reservaWithInvoice = await ctxWithInvoice.Reservas.AsNoTracking().FirstAsync(r => r.Id == reservaWithInvoiceId);
+        Assert.Equal(0m, reservaNoInvoice.Balance);
+        Assert.Equal(0m, reservaWithInvoice.Balance);
+        Assert.Equal(reservaWithInvoice.Balance, reservaNoInvoice.Balance);
+
+        var clientCreditNoInvoice = await ctxNoInvoice.ClientCreditEntries.AsNoTracking().SumAsync(e => e.CreditedAmount);
+        var clientCreditWithInvoice = await ctxWithInvoice.ClientCreditEntries.AsNoTracking().SumAsync(e => e.CreditedAmount);
+        Assert.Equal(75_000m, clientCreditNoInvoice);
+        Assert.Equal(clientCreditWithInvoice, clientCreditNoInvoice);
+
+        var circuitNoInvoice = await SupplierCancellationCircuitReader.LoadAsync(ctxNoInvoice, supplierNoInvoiceId, CancellationToken.None);
+        var circuitWithInvoice = await SupplierCancellationCircuitReader.LoadAsync(ctxWithInvoice, supplierWithInvoiceId, CancellationToken.None);
+        Assert.Equal(50_000m, circuitNoInvoice.ReceivableByCurrency.GetValueOrDefault("ARS"));
+        Assert.Equal(circuitWithInvoice.ReceivableByCurrency.GetValueOrDefault("ARS"), circuitNoInvoice.ReceivableByCurrency.GetValueOrDefault("ARS"));
+    }
+
+    // ============================================================
+    // (10) MAPEO CONTROLLER: el endpoint AnnulWithCredit devuelve 409 con el mensaje cuando el service lanza
+    //      InvalidOperationException "a secas" (sin Code). Test de la capa controller, mockea IReservaService
+    //      (no re-ejercita la lógica de plata: eso lo cubren los tests de arriba).
     // ============================================================
     [Fact]
     public async Task AnnulWithCreditController_MapsGuardException_To409Conflict_WithMessage()
     {
-        const string guardMessage =
-            "No se puede anular esta reserva con saldo a favor todavía: ya se le pagó al operador por uno o más " +
-            "servicios y la reserva aún no tiene factura emitida para registrar el reembolso a tu favor. Emití la " +
-            "factura de venta o gestioná el reembolso con el operador antes de anular la reserva.";
+        const string guardMessage = "La reserva tiene factura emitida. Para deshacerla hay que anularla por el camino formal.";
 
         var reservaService = new Mock<IReservaService>();
         reservaService
@@ -660,29 +744,28 @@ public class AnnulWithCreditOperatorReceivableAnchorTests
         Assert.Equal(guardMessage, (string?)messageProperty!.GetValue(conflict.Value));
 
         // El body de un InvalidOperationException "a secas" (sin Code) NO trae la propiedad `code` — es el
-        // fallback de siempre, intacto (Tanda 3 solo agrega `code` cuando el tipo real es AnnulWithCreditRejectedException).
+        // fallback de siempre, intacto.
         Assert.Null(conflict.Value.GetType().GetProperty("code"));
     }
 
     // ============================================================
-    // (11) MAPEO CONTROLLER — Tanda 3 "contrato pantalla-motor" (2026-07-20): cuando el service lanza
-    //      AnnulWithCreditRejectedException, el controller SUMA `code` al body 409 sin tocar el `message`
-    //      de siempre (envelope aditivo, Decision C del plan). Mismo precedente de mock que (10).
+    // (11) MAPEO CONTROLLER — el code estable `UnanchoredOperatorRefund` QUEDA DEFINIDO (T-6: no romper
+    //      contratos estables) aunque ya no lo lance el guard real (eliminado, obra 2026-07-23). Este test
+    //      prueba SOLO que el ENVELOPE del controller (agregar `code` sin tocar `message`) sigue funcionando
+    //      para CUALQUIER AnnulWithCreditRejectedException, catalogado o no — no que este code en particular
+    //      siga siendo alcanzable desde el service real.
     // ============================================================
     [Fact]
     public async Task AnnulWithCreditController_MapsRejectedException_To409Conflict_WithCodeAndMessage()
     {
-        const string guardMessage =
-            "No se puede anular esta reserva con saldo a favor todavía: ya se le pagó al operador por uno o más " +
-            "servicios y la reserva aún no tiene factura emitida para registrar el reembolso a tu favor. Emití la " +
-            "factura de venta o gestioná el reembolso con el operador antes de anular la reserva.";
+        const string guardMessage = "Mensaje de ejemplo para el envelope aditivo del controller.";
 
         var reservaService = new Mock<IReservaService>();
         reservaService
             .Setup(s => s.AnnulWithPaymentsToCreditAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new AnnulWithCreditRejectedException(
-                AnnulWithCreditRejectedException.Codes.UnanchoredOperatorRefund, guardMessage));
+                AnnulWithCreditRejectedException.Codes.NoPayer, guardMessage));
 
         var controller = new ReservasController(
             reservaService.Object, Mock.Of<IVoucherService>(), Mock.Of<ITimelineService>(),
@@ -703,17 +786,14 @@ public class AnnulWithCreditOperatorReceivableAnchorTests
         var conflict = Assert.IsType<ConflictObjectResult>(result.Result);
         Assert.Equal(StatusCodes.Status409Conflict, conflict.StatusCode);
 
-        // El message sigue siendo EXACTAMENTE el mismo que veia el usuario antes de esta tanda (leemos la
-        // propiedad directamente: serializar escaparia los acentos y rompe la comparacion).
         var messageProperty = conflict.Value!.GetType().GetProperty("message");
         Assert.NotNull(messageProperty);
         Assert.Equal(guardMessage, (string?)messageProperty!.GetValue(conflict.Value));
 
-        // Y ahora, ADEMAS, viaja el code estable que el frontend (Tanda 4) usa para el cartel con camino.
         var codeProperty = conflict.Value.GetType().GetProperty("code");
         Assert.NotNull(codeProperty);
         Assert.Equal(
-            AnnulWithCreditRejectedException.Codes.UnanchoredOperatorRefund,
+            AnnulWithCreditRejectedException.Codes.NoPayer,
             (string?)codeProperty!.GetValue(conflict.Value));
     }
 }

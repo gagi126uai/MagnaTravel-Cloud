@@ -28,9 +28,18 @@ HAVING count(*) > 1;
 
 -- Control 2: duplicados vivos por OriginatingInvoiceId.
 -- Esperado: 0 filas.
+--
+-- NOTA (obra "anular sin factura", 2026-07-23): OriginatingInvoiceId pasó a ser NULLABLE (una cancelación
+-- puede quedar SIN factura de venta que la ancle, ver BookingCancellation.OriginatingInvoiceId). El índice
+-- único real (IX_BookingCancellations_OriginatingInvoiceId) ya excluye los NULL con su propio filtro parcial
+-- ("OriginatingInvoiceId" IS NOT NULL AND "Status" NOT IN (4, 6)) — en SQL, NULL <> NULL, así que Postgres
+-- NUNCA los trata como duplicados entre sí. Pero GROUP BY sí agrupa todos los NULL juntos como un solo grupo:
+-- sin este WHERE, dos o más BC sin factura (perfectamente válidos) dispararían un FALSO POSITIVO acá. El
+-- WHERE "OriginatingInvoiceId" IS NOT NULL alinea este control con lo que el índice real permite.
 SELECT "OriginatingInvoiceId", count(*) AS vivos
 FROM "BookingCancellations"
 WHERE "Status" <> 6
+  AND "OriginatingInvoiceId" IS NOT NULL
 GROUP BY "OriginatingInvoiceId"
 HAVING count(*) > 1;
 

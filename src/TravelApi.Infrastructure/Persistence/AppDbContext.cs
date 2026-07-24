@@ -1840,9 +1840,15 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
             // Closed=4). Una factura puede tener varias filas BC a lo largo del tiempo (una anulacion
             // parcial cerrada + otra nueva abierta despues); lo que sigue prohibido es que DOS queden
             // simultaneamente EN CURSO sobre la misma factura.
+            //
+            // Obra "anular sin factura" (2026-07-23, decision del dueño): OriginatingInvoiceId paso a ser
+            // OPCIONAL (ver XML-doc de la entidad). El filtro parcial suma "IS NOT NULL": un indice UNIQUE
+            // con HasFilter en Postgres NUNCA compara dos NULL como iguales (NULL <> NULL en SQL), asi que
+            // el "IS NOT NULL" es solo para dejar la intencion explicita en el DDL — sin el, Postgres de
+            // todos modos dejaria convivir infinitos BC con OriginatingInvoiceId NULL sin violar el UNIQUE.
             entity.HasIndex(b => b.OriginatingInvoiceId)
                   .IsUnique()
-                  .HasFilter("\"Status\" NOT IN (4, 6)")
+                  .HasFilter("\"OriginatingInvoiceId\" IS NOT NULL AND \"Status\" NOT IN (4, 6)")
                   .HasDatabaseName("IX_BookingCancellations_OriginatingInvoiceId");
 
             entity.HasOne(b => b.Reserva)
@@ -1860,9 +1866,14 @@ public class AppDbContext : IdentityDbContext<ApplicationUser>
                   .HasForeignKey(b => b.SupplierId)
                   .OnDelete(DeleteBehavior.Restrict);
 
+            // Obra "anular sin factura" (2026-07-23): la FK pasa a IsRequired(false) porque
+            // OriginatingInvoiceId ahora es nullable. OnDelete se mantiene en Restrict (no cambia: cuando
+            // SI hay factura, preservamos el mismo criterio de siempre — nunca borrar la factura ancla por
+            // debajo de una cancelacion viva).
             entity.HasOne(b => b.OriginatingInvoice)
                   .WithMany()
                   .HasForeignKey(b => b.OriginatingInvoiceId)
+                  .IsRequired(false)
                   .OnDelete(DeleteBehavior.Restrict);
 
             // NC opcional: existe solo despues de T0. SetNull para que el rollback

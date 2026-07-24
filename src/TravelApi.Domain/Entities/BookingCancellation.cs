@@ -39,12 +39,24 @@ public class BookingCancellation : IHasPublicId
     public Supplier Supplier { get; set; } = null!;
 
     /// <summary>
-    /// FK a la factura original (A/B/C) que sera anulada. UNIQUE como precondicion
-    /// (INV-100, <c>OnePerReservaInvoicePolicy=true</c>): si la reserva tiene mas
-    /// de una factura activa, la cancelacion rechaza con mensaje claro.
+    /// FK a la factura de venta (A/B/C) que ancla el circuito FISCAL de esta cancelacion (la que se
+    /// anula con Nota de Credito). <b>OPCIONAL desde 2026-07-23</b> (decision del dueño, respaldada
+    /// fiscalmente: Ley de IVA art. 5 inc. b — el hecho imponible nace con la prestacion o el cobro AL
+    /// CLIENTE, nunca con el pago al operador). Antes esta columna era obligatoria y bloqueaba anular un
+    /// servicio/reserva con plata pagada al operador si todavia no existia factura de venta.
+    ///
+    /// <para><b>Null = sin ancla fiscal</b>: no hay factura de venta viva, asi que este BC NUNCA emite
+    /// Nota de Credito/Debito ni transiciona a un estado fiscal (ver el guard "R4" en
+    /// <c>BookingCancellationService</c>). El BC igual sirve para su otro proposito, que es
+    /// INDEPENDIENTE de la factura: anclar el receivable "el operador me tiene que devolver" en sus
+    /// <see cref="Lines"/> (<c>RefundCap</c>), para que <c>SupplierCreditReconciler</c> NUNCA confunda esa
+    /// plata pendiente de devolucion con saldo a favor gastable. Ese receivable del operador VIVE
+    /// SIEMPRE en las <see cref="BookingCancellationLine"/>, con o sin ancla fiscal.</para>
+    ///
+    /// <para>Ver addendum 2026-07-23 a <c>docs/architecture/2026-07-18-contrato-pantalla-motor-PLAN-remediacion.md</c>.</para>
     /// </summary>
-    public int OriginatingInvoiceId { get; set; }
-    public Invoice OriginatingInvoice { get; set; } = null!;
+    public int? OriginatingInvoiceId { get; set; }
+    public Invoice? OriginatingInvoice { get; set; }
 
     /// <summary>FK a la NC fiscal emitida en T0. Null hasta que el service llame a InvoiceService.AnnulAsync.</summary>
     public int? CreditNoteInvoiceId { get; set; }

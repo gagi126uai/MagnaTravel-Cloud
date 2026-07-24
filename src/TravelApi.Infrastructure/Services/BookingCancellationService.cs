@@ -418,17 +418,12 @@ public class BookingCancellationService
             throw new ServiceCancellationRejectedException(
                 ServiceCancellationRejectedException.Codes.VoucherLive, voucherBlockReason);
 
-        // 0-bis) R1 (Pasos B/C, plata viva, 2026-06-30): NO cancelar un servicio PAGADO al operador si no se puede
-        //    ANCLAR el receivable "me tiene que devolver". El registro del lado-operador (la linea de cancelacion
-        //    con su RefundCap) cuelga de un BookingCancellation, que exige <c>OriginatingInvoiceId</c> (factura de
-        //    venta viva) — es ancla ESTRUCTURAL (FK no-null + indice unico). Si la reserva todavia NO tiene factura
-        //    (ADR-037 desacoplo facturar de cobrar: se le puede pagar al operador antes de facturar al cliente),
-        //    cancelar dejaria la caja del operador en negativo SIN linea que represente el receivable -> el
-        //    reconciler mintearia ese negativo como saldo a favor GASTABLE (no es saldo a favor: el operador te
-        //    debe el reembolso). Hasta que exista la factura que ancle el receivable, BLOQUEAMOS con un mensaje
-        //    claro (la accion se retoma tras facturar o gestionar el reembolso). Solo bloquea el caso con fuga real
-        //    (servicio con plata pagada al operador + sin factura); un servicio impago, o con factura, sigue igual.
-        await EnsurePaidServiceCancellationHasReceivableAnchorAsync(reserva, serviceTable, request.ServicePublicId, ct);
+        // 0-bis) Obra "anular sin factura" (2026-07-23, decision del dueño): ANTES este paso bloqueaba con 409
+        //    si el servicio tenia plata pagada al operador y la reserva no tenia factura viva. ESE bloqueo
+        //    DESAPARECIO — ver el comentario historico arriba de EnsureServiceOperatorOrCurrencyChangeHasReceivableAnchorAsync.
+        //    Ahora el servicio se cancela SIEMPRE (con o sin factura); mas abajo (paso 5,
+        //    ApplyServiceCancellationCreditLineAsync -> RecordPartialCancellationLineAsync) se deja SIEMPRE la
+        //    linea-ancla del receivable del operador cuando corresponde, factura o no.
 
         // 0-ter) ADR-044 T5 Addendum, Decision A punto 4 (2026-07-11): bloqueo duro SOLO si hay factura de
         //    venta viva PERO la reserva no tiene Payer asignado. Antes esto se resolvia en silencio dentro de
@@ -901,91 +896,218 @@ public class BookingCancellationService
         => TravelApi.Infrastructure.Reservations.SupplierCreditReconciler.ReconcileAsync(
             _db, supplierId, sourceSupplierPaymentId: null, actorUserId, actorUserName, _auditService, ct);
 
+    // ============================================================
+    // Obra "anular sin factura" (2026-07-23, decision del dueño, respaldo fiscal Ley de IVA art. 5 inc. b):
+    // ACA vivian EnsurePaidServiceCancellationHasReceivableAnchorAsync (cancelar UN servicio) y
+    // EnsureReservaAnnulHasReceivableAnchorAsync (anular la reserva ENTERA) — los dos candados R1 que
+    // BLOQUEABAN la operacion cuando habia plata pagada al operador y la reserva no tenia factura de venta
+    // viva. La exigencia de factura para anular DESAPARECIO: la reserva se puede cancelar/anular igual, y en
+    // su lugar SIEMPRE se deja una BookingCancellationLine que ancla el receivable del operador (con o sin
+    // factura — ver GetOrCreateServiceCancellationBcAndLineAsync y EnsureOperatorReceivableAnchorLinesAsync
+    // mas abajo). Los otros DOS candados de la misma familia R1 (reasignar operador/moneda y bajar el estado
+    // de un servicio, ambos mas abajo) SI se mantienen — decision del dueño: esos casos no dejan rastro de
+    // ningun tipo del receivable, a diferencia de cancelar/anular que ahora crean la linea-ancla.
+    //
+    // Ver addendum 2026-07-23 a docs/architecture/2026-07-18-contrato-pantalla-motor-PLAN-remediacion.md.
+    // ============================================================
+
     /// <summary>
-    /// R1 (Pasos B/C, plata viva, 2026-06-30): impide cancelar un servicio PAGADO al operador cuando NO hay forma de
-    /// ANCLAR el receivable "me tiene que devolver" (no existe factura de venta viva que sostenga el
-    /// <see cref="BookingCancellation"/> padre de la linea). Sin ese ancla, cancelar deja la caja del operador en
-    /// negativo sin linea que represente el receivable y el reconciler mintearia ese negativo como saldo a favor.
+    /// Obra "anular sin factura" (2026-07-23, decision del dueño): deja (o completa) el ANCLA del receivable
+    /// del operador para TODOS los servicios de la reserva que tienen plata pagada, cuando se anula la
+    /// reserva ENTERA por el camino sin Nota de Credito
+    /// (<c>ReservaService.ApplyAnnulWithPaymentsToCreditAsync</c>). Reemplaza al viejo candado bloqueante
+    /// <c>EnsureReservaAnnulHasReceivableAnchorAsync</c> (eliminado): en vez de RECHAZAR la anulacion cuando
+    /// hay plata sin factura, arma/reusa el <see cref="BookingCancellation"/> activo de la reserva y le
+    /// agrega una <see cref="BookingCancellationLine"/> por cada servicio con <c>RefundCap &gt; 0</c>.
     ///
-    /// <para>Bloquea SOLO el caso con fuga real: el servicio tiene plata pagada al operador (su <c>RefundCap</c>
-    /// reconstruido seria &gt; 0) Y la reserva no tiene factura viva. Un servicio impago (RefundCap 0) o una reserva
-    /// con factura no se bloquean. El <c>RefundCap</c> se calcula con el MISMO armado que el path real
-    /// (<see cref="BuildCancellationLinesAsync"/> + <see cref="AssignRefundCapsAsync"/>), read-only, ANTES de tocar
-    /// el servicio, para no dejar estado a medias. Lanza <see cref="InvalidOperationException"/> -> el controller la
-    /// mapea a 409, igual que los demas candados de esta operacion.</para>
+    /// <para><b>Con factura de venta viva</b>: el ancla es esa factura (mismo comportamiento fiscal que
+    /// tenia el camino formal). <b>Sin factura</b>: el BC queda con <c>OriginatingInvoiceId</c> null — nunca
+    /// emite NC/ND (guard R4), pero la linea igual ancla el receivable para que
+    /// <see cref="TravelApi.Infrastructure.Reservations.SupplierCreditReconciler"/> nunca lo confunda con
+    /// saldo a favor consumible.</para>
+    ///
+    /// <para><b>Por que arma TODAS las lineas de UN saque (alcance Full), en vez de un servicio a la vez</b>:
+    /// cuando dos o mas servicios comparten operador+moneda, el pool pagado se REPARTE entre ellos
+    /// (<see cref="AssignRefundCapsAsync"/>, greedy). Si se llamara a
+    /// <see cref="GetOrCreateServiceCancellationBcAndLineAsync"/> servicio por servicio, cada llamada
+    /// recalcularia el RefundCap leyendo <c>_db.BookingCancellationLines</c> DIRECTO DE LA BASE — que
+    /// todavia no veria las lineas de los servicios ya procesados en ESTE MISMO loop (no hay SaveChanges
+    /// entre medio) — y cada servicio se llevaria el cap COMPLETO del pool en vez de su parte: el receivable
+    /// total anclado quedaria por ENCIMA de lo que el operador realmente cobro. Por eso este metodo arma el
+    /// batch entero con <see cref="BuildCancellationLinesAsync"/> en alcance Full (UNA sola pasada de
+    /// reparto correcto) y despues solo pega/dedup — no reusa el helper por-servicio para el reparto.</para>
+    ///
+    /// <para><b>Cuando llamarlo</b>: DESPUES de cancelar los servicios (paso a del caller) pero ANTES de que
+    /// ese cambio de estado se persista — el filtro "ya cancelado" de <see cref="BuildCancellationLinesAsync"/>
+    /// necesita ver TODAVIA el estado viejo en la base para no excluir a los servicios que se estan
+    /// cancelando en ESTE mismo acto (si los viera ya Cancelado, los tomaria por "cancelados en un evento
+    /// PREVIO" y los saltearia). Y ANTES de recalcular la deuda del operador, en la MISMA transaccion del
+    /// caller (F-5): todo commitea junto o nada.</para>
+    ///
+    /// <para>Idempotente (no duplica lineas ya existentes por tabla+servicio). Si la reserva no tiene ningun
+    /// servicio con plata pagada al operador, es no-op silencioso (no hay nada que anclar).</para>
     /// </summary>
-    private async Task EnsurePaidServiceCancellationHasReceivableAnchorAsync(
-        Reserva reserva, CancellableServiceTable serviceTable, Guid servicePublicId, CancellationToken ct)
+    public async Task EnsureOperatorReceivableAnchorLinesAsync(
+        int reservaId, string userId, string? userName, CancellationToken ct)
     {
-        // Resolver el Id (int) del servicio puntual, validando pertenencia a la reserva. Si no resuelve, no
-        // bloqueamos: el servicio se valida/404ea al marcarlo mas adelante.
-        var serviceId = await ResolveServiceIdAsync(serviceTable, servicePublicId, reserva.Id, ct);
-        if (serviceId is null) return;
+        var reserva = await _db.Reservas.AsNoTracking()
+            .FirstOrDefaultAsync(r => r.Id == reservaId, ct);
+        if (reserva is null) return; // la reserva la valida el propio caller; aca no bloqueamos.
 
-        // Nucleo compartido con la anulacion TOTAL: reconstruye, read-only, lo pagado al operador por ESTE servicio
-        // (su RefundCap). 0 = impago o reserva con factura viva -> sin fuga. > 0 = hay plata sin ancla -> bloqueo.
-        decimal wouldBeRefundCap = await ComputeUnanchoredOperatorRefundCapAsync(
-            reserva, BookingCancellationLineScope.Partial, serviceTable, serviceId.Value, ct);
+        // Ancla fiscal: factura de venta VIVA de la reserva si la hay (mismo criterio que
+        // RecordPartialCancellationLineAsync/DraftAsync: sin NC, sin ND, con CAE, no anulada). Si no hay,
+        // el BC se crea igual, sin ancla (null) — decision del dueño 2026-07-23.
+        var anchorInvoiceId = await _db.Invoices.AsNoTracking()
+            .Where(i => i.ReservaId == reservaId
+                     && !LiveInvoiceCreditNoteTypes.Contains(i.TipoComprobante)
+                     && !LiveInvoiceDebitNoteTypes.Contains(i.TipoComprobante)
+                     && !string.IsNullOrEmpty(i.CAE)
+                     && i.AnnulmentStatus != AnnulmentStatus.Succeeded)
+            .OrderByDescending(i => i.CreatedAt)
+            .Select(i => (int?)i.Id)
+            .FirstOrDefaultAsync(ct);
 
-        if (wouldBeRefundCap > 0m)
-            // Tanda 7 (2026-07-20): mismo envelope aditivo que los otros dos candados de CancelServiceAsync
-            // (CANCEL_SERVICE_UNANCHORED_OPERATOR_REFUND). El frontend usa este code para ofrecer el boton
-            // "Emitir factura" (D1 firmada por Gaston, 2026-07-18) en vez del texto fijo de "nota de credito".
-            throw new ServiceCancellationRejectedException(
-                ServiceCancellationRejectedException.Codes.UnanchoredOperatorRefund,
-                ServiceCancellationPreflightPolicy.UnanchoredOperatorRefundBlockedReason);
+        // Arma TODAS las lineas candidatas de UN saque (alcance Full), con el reparto de pool correcto entre
+        // hermanas del mismo operador+moneda. throwIfNoOperatorService:false: una reserva sin ningun servicio
+        // con operador no tiene nada que anclar, no es un error.
+        var candidateLines = await BuildCancellationLinesAsync(
+            reserva, BookingCancellationLineScope.Full, ct, throwIfNoOperatorService: false);
+
+        var linesToAnchor = candidateLines.Where(l => l.RefundCap > 0m).ToList();
+        if (linesToAnchor.Count == 0) return; // sin operador, o ningun servicio con plata pagada: nada que anclar.
+
+        // Guard con excepcion tipada (no un "!" heredado): si hay plata para anclar, hace falta un Customer
+        // para el BC padre. El caller (ReservaService) ya exige PayerId cuando hay COBROS vivos del cliente,
+        // pero eso es una condicion distinta (cobros del cliente, no pagos al operador); por eso se revalida
+        // aca, en el UNICO lugar que arma el BookingCancellation nuevo.
+        if (reserva.PayerId is null)
+            throw new InvalidOperationException(
+                "No se puede registrar el reembolso del operador: la reserva no tiene un cliente pagador asignado.");
+
+        var bc = await _db.BookingCancellations
+            .Include(b => b.Lines)
+            .Where(b => b.ReservaId == reservaId
+                     && b.Status != BookingCancellationStatus.Aborted
+                     && b.Status != BookingCancellationStatus.Closed)
+            .OrderByDescending(b => b.Id)
+            .FirstOrDefaultAsync(ct);
+
+        if (bc is null)
+        {
+            bc = new BookingCancellation
+            {
+                ReservaId = reservaId,
+                CustomerId = reserva.PayerId.Value,
+                SupplierId = 0, // se setea abajo con el operador de la primera linea (denormalizado).
+                OriginatingInvoiceId = anchorInvoiceId,
+                Status = BookingCancellationStatus.Drafted,
+                Reason = "Anulacion total de la reserva (con saldo a favor del cliente)",
+                DraftedAt = DateTime.UtcNow,
+                DraftedByUserId = userId,
+                DraftedByUserName = userName,
+                AmountPaidAtCancellation = 0m,
+                EstimatedRefundAmount = 0m,
+                ReceivedRefundAmount = 0m,
+                FiscalSnapshot = new FiscalSnapshot { Source = ExchangeRateSource.Unset, FetchedAt = default },
+                IsLegacyPreCancellationModel = false,
+            };
+            _db.BookingCancellations.Add(bc);
+        }
+
+        bool anyLineAdded = false;
+        foreach (var candidate in linesToAnchor)
+        {
+            // Idempotencia: no duplicar si el BC ya tiene linea para (tabla, servicio) — ej. reintento tras
+            // un fallo a mitad de camino en un intento anterior de la ExecutionStrategy.
+            bool alreadyExists = bc.Lines.Any(l => l.ServiceTable == candidate.ServiceTable && l.ServiceId == candidate.ServiceId);
+            if (alreadyExists) continue;
+
+            bc.Lines.Add(candidate);
+            if (bc.SupplierId == 0)
+                bc.SupplierId = candidate.SupplierId;
+            anyLineAdded = true;
+        }
+
+        if (!anyLineAdded) return;
+
+        // Ultima pieza de la obra (2026-07-23): un BC sin ancla nunca pasa por ConfirmAsync (guard R4), asi que
+        // sin este empujon quedaria en Drafted para siempre y OperatorRefundService nunca podria recibirle el
+        // reembolso real. Ver XML-doc del helper.
+        PromoteUnanchoredBcToAwaitingOperatorRefundIfNeeded(bc, userId, userName);
+
+        await _db.SaveChangesAsync(ct);
     }
 
     /// <summary>
-    /// R1 — VARIANTE TOTAL (plata viva, gemela de <see cref="EnsurePaidServiceCancellationHasReceivableAnchorAsync"/>,
-    /// 2026-06-30): impide ANULAR una reserva entera ("Anular con saldo a favor", flujo
-    /// <c>ReservaService.AnnulWithPaymentsToCreditAsync</c>) cuando se le pagó al operador por uno o más servicios y
-    /// NO hay factura de venta viva que ancle el receivable "me tiene que devolver".
+    /// Ultima pieza de la obra "anular sin factura" (2026-07-23, decisión del dueño): un BC SIN ancla fiscal
+    /// (<c>OriginatingInvoiceId</c> null) nunca pasa por <see cref="ConfirmAsync"/> (guard R4 corta ahí porque
+    /// no hay ninguna Nota de Crédito que emitir) — la única forma en que un BC CON factura sale de
+    /// <see cref="BookingCancellationStatus.Drafted"/>. Sin este empujón, un BC sin ancla quedaría en Drafted
+    /// PARA SIEMPRE, y <c>OperatorRefundService.EnsureBookingCancellationCanReceiveOperatorRefund</c> (INV-093)
+    /// exige <see cref="BookingCancellationStatus.AwaitingOperatorRefund"/> o superior para aceptar el reembolso
+    /// real del operador — el vendedor jamás podría registrarlo.
     ///
-    /// <para><b>Por que existe</b>: ese flujo cancela TODOS los servicios vivos (caja del operador queda negativa por
-    /// lo pagado) pero, a diferencia de la anulación formal con Nota de Crédito, NO crea ninguna
-    /// <see cref="BookingCancellationLine"/>. Como el receivable Y se deriva EXCLUSIVAMENTE de esas líneas, sin línea
-    /// Y=0 y el reconciler (<c>SupplierCreditReconciler</c>) materializaría el negativo de caja como saldo a favor
-    /// GASTABLE — plata que en realidad el operador debe devolver. Mismo agujero que R1 para un servicio suelto,
-    /// extendido a la anulación total.</para>
+    /// <para>Este método hace ESE único salto lateral (Drafted → AwaitingOperatorRefund), apenas el BC sin ancla
+    /// tiene plata real que reclamar (<c>Σ Lines.RefundCap &gt; 0</c>). Con ancla fiscal (factura viva) NO
+    /// aplica: ese camino sigue Drafted → AwaitingFiscalConfirmation vía <see cref="ConfirmAsync"/>, sin
+    /// cambios.</para>
     ///
-    /// <para><b>Que bloquea</b>: SOLO el caso con fuga real (algún servicio con plata pagada al operador + reserva
-    /// SIN factura viva). Reserva con factura (el path normal ancla el receivable), servicios impagos al operador
-    /// (RefundCap 0), o reserva sin ningún servicio con operador (no hay receivable posible) NO se bloquean. El cálculo
-    /// es READ-ONLY (reusa <see cref="ComputeUnanchoredOperatorRefundCapAsync"/>), corre ANTES de mutar nada y lanza
-    /// <see cref="InvalidOperationException"/> -> el controller la mapea a 409, igual que los demás candados de plata.</para>
+    /// <para><b>Idempotente</b>: solo actúa si <c>bc.Status == Drafted</c> — un BC que ya avanzó (a
+    /// AwaitingOperatorRefund por una llamada anterior, o a ClientCreditApplied porque ya recibió un reembolso)
+    /// nunca retrocede ni se vuelve a tocar. Llamarlo repetidas veces sobre el mismo BC es seguro.</para>
+    ///
+    /// <para><b>NO setea <c>OperatorRefundDueBy</c></b> (decisión explícita del dueño, 2026-07-23): el job de
+    /// timeout <c>OperatorRefundTimeoutJob</c>/la alarma "operador no reembolsó" (<c>AlertService.
+    /// ComputeAbandonedOperatorRefundsAsync</c>) filtran por <c>OperatorRefundDueBy != null</c>, así que un BC
+    /// sin ancla simplemente NUNCA aparece ahí — no se abandona por timeout ni genera alarma de vencido. Es un
+    /// trade-off aceptado, no un olvido: la interacción del job de timeout con reservas parciales vivas (un
+    /// servicio cancelado sin factura, el resto de la reserva sigue activa) no está verificada todavía. Cuando
+    /// se audite esa interacción, éste es el lugar donde decidir si empieza a setear el plazo.</para>
+    ///
+    /// <para><b>Rastro (N4, PR-12, 2026-07-23)</b>: reusa el MISMO mecanismo con el que <see cref="ConfirmAsync"/>
+    /// audita sus transiciones de estado (<c>_auditService.StageBusinessEvent</c>, STAGEADO — no hace su
+    /// propio <c>SaveChanges</c>, entra en el MISMO commit que el caller). Deja quién disparó el salto
+    /// (<paramref name="userId"/>/<paramref name="userName"/>: el actor de la operación que originó la línea —
+    /// cancelar un servicio o anular la reserva), cuándo, y con qué <c>RefundCap</c> total quedó anclado. NO es
+    /// un rastro dedicado nuevo (el dueño pidió explícitamente no inventar una tabla): es una fila de
+    /// <c>AuditLogs</c> más, igual que el resto de los eventos de este módulo.</para>
     /// </summary>
-    public async Task EnsureReservaAnnulHasReceivableAnchorAsync(int reservaId, CancellationToken ct)
+    private void PromoteUnanchoredBcToAwaitingOperatorRefundIfNeeded(BookingCancellation bc, string userId, string? userName)
     {
-        // Carga liviana de la reserva (solo Id/NumeroReserva se usan aguas abajo). AsNoTracking: es solo lectura y
-        // corre dentro de la transaccion de anulacion del caller, antes de cualquier mutacion.
-        var reserva = await _db.Reservas.AsNoTracking()
-            .FirstOrDefaultAsync(r => r.Id == reservaId, ct);
-        if (reserva is null) return; // la reserva se valida en el flujo de anulacion; aca no bloqueamos.
+        if (bc.OriginatingInvoiceId is not null) return; // con ancla: sigue el flujo fiscal normal (ConfirmAsync).
+        if (bc.Status != BookingCancellationStatus.Drafted) return; // idempotente: nunca retrocede ni se re-toca.
+        decimal totalRefundCap = bc.Lines.Sum(l => l.RefundCap);
+        if (totalRefundCap <= 0m) return; // sin plata real que reclamar, se queda en Drafted.
 
-        // Alcance TOTAL (todos los servicios con operador, sin filtro). Suma del RefundCap reconstruido de todas las
-        // líneas; si algún servicio tiene plata pagada al operador y no hay factura, da > 0 y bloqueamos.
-        decimal wouldBeRefundCap = await ComputeUnanchoredOperatorRefundCapAsync(
-            reserva, BookingCancellationLineScope.Full, onlyServiceTable: null, onlyServiceId: null, ct);
+        bc.Status = BookingCancellationStatus.AwaitingOperatorRefund;
 
-        if (wouldBeRefundCap > 0m)
-            // Tanda 3 "contrato pantalla-motor" (2026-07-20): AnnulWithCreditRejectedException agrega un
-            // Code estable al body 409 (ANNUL_CREDIT_UNANCHORED_OPERATOR_REFUND) SIN cambiar el mensaje de
-            // siempre — el frontend lo usa para ofrecer el boton "Emitir factura" (D1 firmada por Gastón).
-            throw new AnnulWithCreditRejectedException(
-                AnnulWithCreditRejectedException.Codes.UnanchoredOperatorRefund,
-                "No se puede anular esta reserva con saldo a favor todavía: ya se le pagó al operador por uno o más " +
-                "servicios y la reserva aún no tiene factura emitida para registrar el reembolso a tu favor. Emití la " +
-                "factura de venta o gestioná el reembolso con el operador antes de anular la reserva.");
+        _logger.LogInformation(
+            "metric:booking_cancellation_promoted_awaiting_operator_refund | BcPublicId={BcPublicId} " +
+            "ReservaId={ReservaId} TotalRefundCap={TotalRefundCap} UserId={UserId}",
+            bc.PublicId, bc.ReservaId, totalRefundCap, userId);
+
+        _auditService.StageBusinessEvent(
+            action: AuditActions.BookingCancellationPromotedToAwaitingOperatorRefund,
+            entityName: AuditActions.BookingCancellationEntityName,
+            entityId: bc.Id.ToString(),
+            details: JsonSerializer.Serialize(new
+            {
+                bc.PublicId,
+                bc.ReservaId,
+                totalRefundCap,
+            }),
+            userId: userId,
+            userName: userName);
     }
 
     /// <summary>
     /// R1 — VARIANTE REASIGNACIÓN (plata viva, 2026-07-01): impide REASIGNAR el operador (o cambiar la moneda) de un
-    /// servicio ya pagado al operador saliente cuando no hay factura viva que ancle el receivable. Es la TERCERA cara
-    /// de la misma familia: comparte el núcleo <see cref="ComputeUnanchoredOperatorRefundCapAsync"/> con
-    /// <see cref="EnsurePaidServiceCancellationHasReceivableAnchorAsync"/> (cancelar un servicio) y
-    /// <see cref="EnsureReservaAnnulHasReceivableAnchorAsync"/> (anular la reserva), así los tres candados usan UN
-    /// solo criterio y no pueden divergir.
+    /// servicio ya pagado al operador saliente cuando no hay factura viva que ancle el receivable. Comparte el
+    /// núcleo <see cref="ComputeUnanchoredOperatorRefundCapAsync"/> con
+    /// <see cref="EnsureServiceStatusDowngradeHasReceivableAnchorAsync"/> (bajar el estado), la otra cara de la
+    /// familia R1 que sigue bloqueando (obra "anular sin factura", 2026-07-23: decisión del dueño — cancelar un
+    /// servicio suelto y anular la reserva entera DEJARON de bloquear, ver
+    /// <see cref="EnsureOperatorReceivableAnchorLinesAsync"/>).
     ///
     /// <para><b>Por qué es preciso (no over-block del prepago a cuenta)</b>: el pool de lo pagado al operador se arma
     /// con <c>SupplierPayments.Where(p =&gt; p.ReservaId == reservaId ...)</c> (ver <see cref="AssignRefundCapsAsync"/>),
@@ -1005,31 +1127,35 @@ public class BookingCancellationService
             .FirstOrDefaultAsync(r => r.Id == reservaId, ct);
         if (reserva is null) return; // la reserva la valida el propio Update; aca no bloqueamos.
 
-        // Mismo núcleo que los otros dos candados de la familia, en alcance PARCIAL filtrado a ESTE servicio: 0 =
-        // impago / con factura viva / sin operador -> sin fuga. > 0 = hay plata pagada al operador IMPUTADA A ESTA
-        // RESERVA por este servicio que quedaría colgada al reasignarlo/cambiarle la moneda.
+        // Mismo núcleo que el otro candado de la familia que sigue vivo, en alcance PARCIAL filtrado a ESTE
+        // servicio: 0 = impago / con factura viva / sin operador -> sin fuga. > 0 = hay plata pagada al operador
+        // IMPUTADA A ESTA RESERVA por este servicio que quedaría colgada al reasignarlo/cambiarle la moneda.
         decimal wouldBeRefundCap = await ComputeUnanchoredOperatorRefundCapAsync(
             reserva, BookingCancellationLineScope.Partial, serviceTable, serviceId, ct);
 
         if (wouldBeRefundCap > 0m)
+            // Obra "anular sin factura" (2026-07-23): el texto YA NO pide "emitir factura" (dejó de ser
+            // requisito, decisión del dueño). Este candado en particular SIGUE bloqueando (reasignar el
+            // operador saliente lo deja sin rastro del receivable, a diferencia de cancelar/anular que ahora
+            // crean la línea-ancla), así que orientamos al paso que sí lo resuelve: primero gestionar el
+            // reembolso con el operador (que le devuelva la plata o se cancele el servicio, que SÍ deja rastro).
             throw new InvalidOperationException(isCurrencyChange
                 ? "No se puede cambiar la moneda de este servicio: hay pagos a este operador por esta reserva que " +
-                  "todavía no tienen factura que los respalde. Emití la factura de venta o gestioná el reembolso con " +
-                  "el operador antes de cambiar la moneda del servicio."
-                : "No se puede cambiar el operador de este servicio: hay pagos a este operador por esta reserva que " +
-                  "todavía no tienen factura que los respalde. Emití la factura de venta o gestioná el reembolso con " +
-                  "el operador antes de cambiar el operador.");
+                  "todavía no están resueltos. Gestioná primero el reembolso con el operador (o cancelá el " +
+                  "servicio) antes de cambiar la moneda."
+                : "No se puede cambiar el operador de este servicio: hay pagos al operador saliente por esta " +
+                  "reserva que todavía no están resueltos. Gestioná primero el reembolso con el operador (o " +
+                  "cancelá el servicio) antes de cambiar el operador.");
     }
 
     /// <summary>
     /// P1 "circuito proveedor" (2026-07-21): impide BAJAR el estado de un servicio de Confirmado a
     /// no-confirmado (ej. "des-confirmar" desde la ficha de edición) cuando ese servicio tiene plata
-    /// pagada al operador y la reserva NO tiene factura de venta viva que ancle el reembolso. Es la
-    /// CUARTA cara de la familia R1: comparte el núcleo <see cref="ComputeUnanchoredOperatorRefundCapAsync"/>
-    /// con <see cref="EnsurePaidServiceCancellationHasReceivableAnchorAsync"/> (anular un servicio),
-    /// <see cref="EnsureReservaAnnulHasReceivableAnchorAsync"/> (anular la reserva) y
+    /// pagada al operador y la reserva NO tiene factura de venta viva que ancle el reembolso. Comparte el
+    /// núcleo <see cref="ComputeUnanchoredOperatorRefundCapAsync"/> con
     /// <see cref="EnsureServiceOperatorOrCurrencyChangeHasReceivableAnchorAsync"/> (reasignar operador/
-    /// moneda) — así los cuatro candados de "plata pagada sin ancla" no pueden divergir con el tiempo.
+    /// moneda) — la otra cara de la familia R1 que sigue bloqueando (ver nota de la obra "anular sin
+    /// factura", 2026-07-23, arriba).
     ///
     /// <para><b>Por qué existe (hallazgo de Gaston, 2026-07-21)</b>: antes de esta tanda, "bajar el
     /// estado" tenía su PROPIA regla, más ancha e imprecisa: bloqueaba mirando el TOTAL de
@@ -1339,15 +1465,15 @@ public class BookingCancellationService
     /// evento queda trazable.
     ///
     /// <para><b>Idempotente</b>: si ya existe una linea Partial para ese (tabla, servicio) en el BC del
-    /// evento, no la duplica. <b>No emite NC</b> (decision #3): el armado queda como borrador para revision
-    /// manual.</para>
+    /// evento, no la duplica. <b>No emite NC</b>: el armado queda como borrador para revision manual.</para>
     ///
-    /// <para><b>Limitacion declarada (NO inventar)</b>: el padre <see cref="BookingCancellation"/> exige
-    /// <c>OriginatingInvoiceId</c> (factura de venta) y hay un UNIQUE por reserva. Si la reserva NO tiene
-    /// factura viva, no hay ancla fiscal donde colgar el BC: en ese caso se omite la creacion de la linea
-    /// (no hay NC posible ni evento fiscal) y queda solo el servicio cancelado + la deuda recalculada. La
-    /// reconciliacion del modelo BC-padre-unico vs cancelacion parcial sin factura es Q abierta del ADR
-    /// (UNIQUE por reserva); fuera del alcance de este fix.</para>
+    /// <para><b>Obra "anular sin factura" (2026-07-23, decision del dueño)</b>: ANTES este metodo omitia la
+    /// linea entera cuando la reserva no tenia factura viva ("decision #3", ahora derogada). Eso ya NO pasa:
+    /// la factura de venta se busca igual (se usa como ancla fiscal SI existe), pero si NO hay, la linea se
+    /// crea IGUAL con <c>OriginatingInvoiceId</c> null en su BC padre — el BC sin ancla nunca emite NC/ND
+    /// (guard R4 en <see cref="ConfirmAsync"/> y afines) pero la linea SIGUE anclando el receivable "el
+    /// operador me tiene que devolver" para que <c>SupplierCreditReconciler</c> nunca lo confunda con saldo
+    /// a favor gastable.</para>
     /// </summary>
     private async Task RecordPartialCancellationLineAsync(
         Reserva reserva,
@@ -1362,7 +1488,7 @@ public class BookingCancellationService
         if (serviceId is null) return; // no deberia pasar (ya se marco), defensivo.
 
         // Buscar la factura de venta VIVA de la reserva (misma regla que DraftAsync: no NC, CAE, no anulada).
-        // Si no hay, no hay ancla fiscal para el BC padre -> no creamos linea (ver limitacion en el doc).
+        // Si la hay, ancla el BC padre. Si NO la hay, el BC se crea IGUAL, sin ancla (ver XML-doc arriba).
         var originatingInvoiceId = await _db.Invoices.AsNoTracking()
             .Where(i => i.ReservaId == reserva.Id
                      && !LiveInvoiceCreditNoteTypes.Contains(i.TipoComprobante) // no NC
@@ -1372,13 +1498,17 @@ public class BookingCancellationService
             .OrderByDescending(i => i.CreatedAt)
             .Select(i => (int?)i.Id)
             .FirstOrDefaultAsync(ct);
-        if (originatingInvoiceId is null) return;
 
         if (reserva.PayerId is null) return; // sin Payer no hay BC posible (mismo precondicion que DraftAsync).
 
+        // skipIfNoOperatorRefundCap: true — este camino NO tiene ambigüedad de factura destino (a diferencia
+        // del camino T5 con factura), asi que el UNICO motivo para crear el BC/linea es anclar plata real
+        // pagada al operador. Si el servicio no tiene operador, o tiene operador pero no le pagamos nada
+        // (RefundCap 0), no hay nada que anclar: no tiene sentido abrir un BC/linea vacios.
         var (bc, _, isNewLine) = await GetOrCreateServiceCancellationBcAndLineAsync(
-            reserva, serviceTable, serviceId.Value, originatingInvoiceId.Value, userId, userName, ct);
-        if (!isNewLine) return; // idempotencia: ya existia la linea para (tabla, servicio).
+            reserva, serviceTable, serviceId.Value, originatingInvoiceId, userId, userName, ct,
+            skipIfNoOperatorRefundCap: true);
+        if (bc is null || !isNewLine) return; // nada que anclar, o ya existia la linea para (tabla, servicio).
 
         await _db.SaveChangesAsync(ct);
     }
@@ -1387,8 +1517,9 @@ public class BookingCancellationService
     /// ADR-044 T5 Addendum, Decision C (2026-07-11): nucleo compartido de "conseguime el BC EN CURSO de esta
     /// reserva (o creame uno nuevo) y agregale la linea Partial de este servicio, si todavia no la tiene".
     /// Antes esta logica vivia duplicada; ahora <see cref="RecordPartialCancellationLineAsync"/> (sin factura
-    /// viva, comportamiento historico) y <see cref="ResolveServiceCancellationCreditLineAsync"/> (con factura
-    /// viva, T5) comparten el MISMO armado — no pueden divergir en como se resuelve/crea el BC padre.
+    /// viva, comportamiento historico), <see cref="ApplyServiceCancellationCreditLineAsync"/> (con factura
+    /// viva, T5) y <see cref="EnsureOperatorReceivableAnchorLinesAsync"/> (anulacion total sin NC) comparten
+    /// el MISMO armado — no pueden divergir en como se resuelve/crea el BC padre.
     ///
     /// <para>Decision C (excluir Closed del UNIQUE, no solo Aborted) aplica aca: un BC Closed es un evento
     /// fiscal TERMINADO (NC con CAE, reembolso consumido); reenganchar una linea nueva a esa fila muerta la
@@ -1397,17 +1528,34 @@ public class BookingCancellationService
     ///
     /// <para><b>NO hace SaveChanges</b>: el caller decide cuando persistir (puede necesitar setear mas campos
     /// de la linea antes, ej. TargetInvoiceId/ConfirmedGrossCreditAmount en el camino T5).</para>
+    ///
+    /// <para>
+    /// <paramref name="anchorInvoiceId"/> es OPCIONAL desde la obra "anular sin factura" (2026-07-23): null
+    /// significa "sin ancla fiscal" (el BC nuevo queda con <c>OriginatingInvoiceId</c> null, ver XML-doc de
+    /// la entidad). <paramref name="skipIfNoOperatorRefundCap"/> controla que hacer si el servicio NO tiene
+    /// operador o no tiene plata pagada que anclar (<c>RefundCap == 0</c>):
+    /// <list type="bullet">
+    /// <item><c>true</c> (caller sin factura, o la anulacion total): en vez de lanzar, devuelve
+    /// <c>(null, null, false)</c> — no hay nada que anclar, no tiene sentido abrir un BC/linea vacios.</item>
+    /// <item><c>false</c> (default, caller CON factura — comportamiento HISTORICO sin cambios): lanza
+    /// <see cref="InvalidOperationException"/> si el servicio no tiene operador (mismo mensaje de siempre).
+    /// Con factura SIEMPRE hace falta una linea (aunque el <c>RefundCap</c> de logre en 0) porque esa linea
+    /// es tambien el ANCLA del credito fiscal al cliente (<c>TargetInvoiceId</c>/<c>ConfirmedGrossCreditAmount</c>),
+    /// no solo del receivable del operador.</item>
+    /// </list>
+    /// </para>
     /// </summary>
-    private async Task<(BookingCancellation Bc, BookingCancellationLine Line, bool IsNewLine)> GetOrCreateServiceCancellationBcAndLineAsync(
+    private async Task<(BookingCancellation? Bc, BookingCancellationLine? Line, bool IsNewLine)> GetOrCreateServiceCancellationBcAndLineAsync(
         Reserva reserva,
         CancellableServiceTable serviceTable,
         int serviceId,
-        int anchorInvoiceId,
+        int? anchorInvoiceId,
         string userId,
         string? userName,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool skipIfNoOperatorRefundCap = false)
     {
-        // Include tanto Lines como CreditNotes: el camino T5 (ResolveServiceCancellationCreditLineAsync)
+        // Include tanto Lines como CreditNotes: el camino T5 (ApplyServiceCancellationCreditLineAsync)
         // necesita agregar una fila hija a bc.CreditNotes (reserva del cap acumulativo) via la navegacion;
         // sin el Include, un BC EXISTENTE traeria esa coleccion "vacia" para el change tracker (no se
         // cargo), y un Add() por navegacion no se detectaria/persistiria en el SaveChanges del caller.
@@ -1420,12 +1568,57 @@ public class BookingCancellationService
             .OrderByDescending(b => b.Id)
             .FirstOrDefaultAsync(ct);
 
+        // Idempotencia: no duplicar la linea si el BC (encontrado) ya tiene una para (tabla, servicio).
+        if (bc is not null)
+        {
+            var existingLine = bc.Lines.FirstOrDefault(l => l.ServiceTable == serviceTable && l.ServiceId == serviceId);
+            if (existingLine is not null)
+                return (bc, existingLine, IsNewLine: false);
+        }
+
+        // Construir la linea Partial reusando el mismo armado que el path total (incluye el RefundCap, B2).
+        // throwIfNoOperatorService:false SIEMPRE aca: el caso "sin operador" se maneja explicito abajo segun
+        // skipIfNoOperatorRefundCap, en vez de dejar que BuildCancellationLinesAsync tire por su cuenta.
+        var builtLines = await BuildCancellationLinesAsync(
+            reserva, BookingCancellationLineScope.Partial, ct,
+            onlyServiceTable: serviceTable, onlyServiceId: serviceId, throwIfNoOperatorService: false);
+
+        if (builtLines.Count == 0)
+        {
+            if (skipIfNoOperatorRefundCap)
+                return (null, null, IsNewLine: false); // sin operador: no hay receivable posible, nada que anclar.
+
+            // Comportamiento HISTORICO (caller con factura): sin operador no hay a quien devolverle ni
+            // servicio que creditar — mismo mensaje que siempre tiraba BuildCancellationLinesAsync.
+            throw new InvalidOperationException(
+                $"El servicio indicado de la reserva {reserva.NumeroReserva} no existe o no tiene operador asignado.");
+        }
+
+        var partialLine = builtLines[0];
+
+        // B2 (review, obra "anular sin factura"): sin plata pagada al operador no hay nada que anclar. Abrir
+        // un BC/linea vacios (RefundCap 0) solo agregaria ruido a la bandeja sin ningun receivable real que
+        // representar. Con factura (skipIfNoOperatorRefundCap=false) SIEMPRE se crea la linea igual: ahi
+        // tambien es el ancla del credito fiscal al cliente, no solo del receivable del operador.
+        if (skipIfNoOperatorRefundCap && partialLine.RefundCap <= 0m)
+            return (null, null, IsNewLine: false);
+
+        // Recien ahora, si hacia falta, creamos el BC padre — evita abrir una fila muerta cuando el servicio
+        // no tenia nada que anclar (los dos `return` de arriba salen ANTES de este punto).
         if (bc is null)
         {
+            // Guard con excepcion tipada (no un "!" heredado): esta precondicion la exigian TODOS los
+            // callers historicos por su cuenta (RecordPartialCancellationLineAsync la chequeaba antes de
+            // llamar), pero ahora este metodo tiene mas callers (EnsureOperatorReceivableAnchorLinesAsync) y
+            // conviene que la garantice el UNICO lugar que arma un BookingCancellation nuevo, no cada caller.
+            if (reserva.PayerId is null)
+                throw new InvalidOperationException(
+                    "No se puede registrar el reembolso del operador: la reserva no tiene un cliente pagador asignado.");
+
             bc = new BookingCancellation
             {
                 ReservaId = reserva.Id,
-                CustomerId = reserva.PayerId!.Value,
+                CustomerId = reserva.PayerId.Value,
                 SupplierId = 0, // se setea abajo con el operador de la primera linea (denormalizado).
                 OriginatingInvoiceId = anchorInvoiceId,
                 Status = BookingCancellationStatus.Drafted,
@@ -1437,23 +1630,14 @@ public class BookingCancellationService
                 EstimatedRefundAmount = 0m,
                 ReceivedRefundAmount = 0m,
                 // Snapshot vacio: en Drafted el CHECK SQL lo permite. La emision fiscal completa el snapshot
-                // en un paso de confirmacion aparte (mismo patron Draft/Confirm de siempre).
+                // en un paso de confirmacion aparte (mismo patron Draft/Confirm de siempre) — y solo aplica
+                // si el BC tiene ancla fiscal; sin ancla, el snapshot se queda vacio para siempre (nunca hay
+                // emision, guard R4).
                 FiscalSnapshot = new FiscalSnapshot { Source = ExchangeRateSource.Unset, FetchedAt = default },
                 IsLegacyPreCancellationModel = false,
             };
             _db.BookingCancellations.Add(bc);
         }
-
-        // Idempotencia: no duplicar la linea si ya existe para (tabla, servicio).
-        var existingLine = bc.Lines.FirstOrDefault(l => l.ServiceTable == serviceTable && l.ServiceId == serviceId);
-        if (existingLine is not null)
-            return (bc, existingLine, IsNewLine: false);
-
-        // Construir la linea Partial reusando el mismo armado que el path total (incluye el RefundCap, B2).
-        var builtLines = await BuildCancellationLinesAsync(
-            reserva, BookingCancellationLineScope.Partial, ct,
-            onlyServiceTable: serviceTable, onlyServiceId: serviceId);
-        var partialLine = builtLines[0]; // BuildCancellationLinesAsync tira si no arma ninguna.
 
         bc.Lines.Add(partialLine);
 
@@ -1461,6 +1645,11 @@ public class BookingCancellationService
         // todavia estaba en 0, lo fijamos con el operador de esta primera linea.
         if (bc.SupplierId == 0)
             bc.SupplierId = partialLine.SupplierId;
+
+        // Ultima pieza de la obra (2026-07-23): cubre el caller SIN factura (RecordPartialCancellationLineAsync).
+        // No-op si bc.OriginatingInvoiceId no es null (caller CON factura, T5): ese camino sigue Drafted ->
+        // AwaitingFiscalConfirmation via ConfirmAsync, sin cambios. Ver XML-doc del helper.
+        PromoteUnanchoredBcToAwaitingOperatorRefundIfNeeded(bc, userId, userName);
 
         return (bc, partialLine, IsNewLine: true);
     }
@@ -1585,8 +1774,14 @@ public class BookingCancellationService
 
         // 2) Factura destino resuelta. Ya estamos bajo el FOR UPDATE de esa factura (transaccion externa de
         // CancelServiceAsync): leer-remanente + decidir-monto + escribir corre serializado.
-        var (bc, line, _) = await GetOrCreateServiceCancellationBcAndLineAsync(
+        // skipIfNoOperatorRefundCap queda en su default (false): con factura SIEMPRE hace falta la linea
+        // (es el ancla del credito fiscal al cliente), asi que el resultado nunca es null aca.
+        var (bcOrNull, lineOrNull, _) = await GetOrCreateServiceCancellationBcAndLineAsync(
             reserva, serviceTable, plan.ServiceId.Value, plan.TargetInvoiceId.Value, userId, userName, ct);
+        // No-nulls: con factura (skipIfNoOperatorRefundCap en su default false) el metodo SIEMPRE crea/reusa
+        // la linea — nunca devuelve null aca. Se capturan en variables no-nulas para el resto del metodo.
+        var bc = bcOrNull!;
+        var line = lineOrNull!;
 
         line.TargetInvoiceId = plan.TargetInvoiceId.Value;
 
@@ -2219,8 +2414,25 @@ public class BookingCancellationService
                 "Esta cancelación ya no se puede confirmar porque cambió de estado. Actualizá la página.",
                 invariantCode: "INV-093");
 
+        // 2-bis) GUARD R4 (obra "anular sin factura", 2026-07-23): un BC SIN ancla fiscal (OriginatingInvoiceId
+        //    null, ver XML-doc de la entidad) no tiene ninguna factura de venta viva para anular: este metodo
+        //    entero (emitir la Nota de Credito, correr el clasificador fiscal, transicionar a estados fiscales)
+        //    no aplica. Cortamos ACA, antes de tocar nada mas, en vez de dejar que un dereference de
+        //    OriginatingInvoice mas abajo explote con un NullReferenceException tecnico. Este metodo (ConfirmAsync)
+        //    NUNCA se ejecuta para un BC sin ancla — pero eso NO lo deja colgado en Drafted para siempre: ultima
+        //    pieza de la obra (2026-07-23), PromoteUnanchoredBcToAwaitingOperatorRefundIfNeeded lo salta
+        //    directamente a AwaitingOperatorRefund apenas tiene plata real que reclamar (Σ RefundCap > 0), desde
+        //    GetOrCreateServiceCancellationBcAndLineAsync/EnsureOperatorReceivableAnchorLinesAsync — sin pasar por
+        //    este metodo. Asi OperatorRefundService puede recibir el reembolso real igual que un BC con factura.
+        if (bc.OriginatingInvoiceId is null)
+            throw new BusinessInvariantViolationException(
+                "Esta cancelación no tiene una factura de venta asociada, así que no corresponde emitir " +
+                "ningún comprobante fiscal por ella. El reembolso del operador se sigue gestionando igual, " +
+                "desde la cuenta del proveedor.",
+                invariantCode: "INV-BC-NOANCHOR");
+
         // 3) MIG2: la Invoice original ya esta anulada → bloquear.
-        if (bc.OriginatingInvoice.AnnulmentStatus == AnnulmentStatus.Succeeded)
+        if (bc.OriginatingInvoice!.AnnulmentStatus == AnnulmentStatus.Succeeded)
             throw new BusinessInvariantViolationException(
                 "La factura original ya fue anulada (NC aprobada). No se puede confirmar la cancelacion.",
                 invariantCode: "INV-100");
@@ -2566,17 +2778,18 @@ public class BookingCancellationService
             // concurrentes leyendo el mismo remanente "libre" de la misma factura — el segundo INSERT de BC lo
             // rechaza el unico. Ver el test de integracion que fija esta imposibilidad. Fallback (si el
             // argumento del unico no bastara): envolver leer-decidir-emitir en el lock (mas caro).
+            // .Value: seguro por el guard R4 de arriba (2-bis), que ya cortó si OriginatingInvoiceId era null.
             var remainingCreditableAmount = await RunUnderInvoiceLockAsync(
-                bc.OriginatingInvoiceId,
-                () => ComputeInvoiceRemainingCreditableAmountAsync(bc.OriginatingInvoiceId, ct, excludeBookingCancellationId: bc.Id),
+                bc.OriginatingInvoiceId.Value,
+                () => ComputeInvoiceRemainingCreditableAmountAsync(bc.OriginatingInvoiceId.Value, ct, excludeBookingCancellationId: bc.Id),
                 ct);
 
             var calculatorInput = new FiscalLiquidationInput(
-                OriginatingInvoice: bc.OriginatingInvoice,
+                OriginatingInvoice: bc.OriginatingInvoice!,
                 Items: invoiceItems,
                 Supplier: supplier,
                 InvoicingModeAtEvent: bc.FiscalSnapshot.InvoicingModeAtEvent,
-                OriginalInvoiceAmount: bc.OriginatingInvoice.ImporteTotal,
+                OriginalInvoiceAmount: bc.OriginatingInvoice!.ImporteTotal,
                 CancellationAmount: remainingCreditableAmount,
                 OperatorPenaltyAmount: 0m,
                 RetentionNatureChangedByUser: false,
@@ -2770,7 +2983,8 @@ public class BookingCancellationService
 
             if (requiresApproval)
             {
-                var principalInvoiceId = bc.OriginatingInvoiceId;
+                // .Value: seguro por el guard R4 de arriba (2-bis), que ya cortó si OriginatingInvoiceId era null.
+                var principalInvoiceId = bc.OriginatingInvoiceId!.Value;
                 var annulmentApproval = await _approvalService.FindActiveApprovedAsync(
                     ApprovalRequestType.InvoiceAnnulment, "Invoice", principalInvoiceId, userId, ct);
                 if (annulmentApproval is null)
@@ -2994,6 +3208,19 @@ public class BookingCancellationService
                 "Esta cancelación ya no está lista para resolver la devolución. Actualizá la página.",
                 invariantCode: "INV-T5-RESOLVE-STATE");
 
+        // GUARD R4 (obra "anular sin factura", 2026-07-23): un BC SIN ancla fiscal (OriginatingInvoiceId
+        // null) puede llegar aca en Drafted con lineas Partial SIN resolver (las que
+        // RecordPartialCancellationLineAsync crea sin factura). "Resolver" esas lineas contra una factura
+        // recien elegida acá dejaría el BC padre igual sin ancla (este metodo solo toca line.TargetInvoiceId,
+        // nunca bc.OriginatingInvoiceId) — el paso siguiente (emitir la NC) rechazaría igual, pero mejor
+        // frenar ACA con un mensaje claro que dejar avanzar al usuario para chocar recién al emitir.
+        if (bc.OriginatingInvoiceId is null)
+            throw new BusinessInvariantViolationException(
+                "Esta cancelación no tiene una factura de venta asociada, así que no corresponde emitir " +
+                "ningún comprobante fiscal por ella. El reembolso del operador se sigue gestionando igual, " +
+                "desde la cuenta del proveedor.",
+                invariantCode: "INV-BC-NOANCHOR");
+
         // Spec UX 2026-07-17: con VARIOS servicios pendientes, el request dice CUAL renglon se resuelve. Con
         // uno solo pendiente, el formulario viejo (sin indicar renglon) lo sigue resolviendo sin fricción.
         var selectedLine = SelectLineToResolve(bc, partialLines, request.BookingCancellationLinePublicId);
@@ -3182,6 +3409,17 @@ public class BookingCancellationService
             throw new BusinessInvariantViolationException(
                 "Esta cancelación ya no está lista para confirmar la devolución. Actualizá la página.",
                 invariantCode: "INV-T5-EMIT-STATE");
+
+        // GUARD R4 (obra "anular sin factura", 2026-07-23): defensa en profundidad — hoy este metodo YA es
+        // inalcanzable para un BC sin ancla (sus lineas nunca tienen TargetInvoiceId resuelto, ver el paso 3
+        // de mas abajo, y ResolvePartialCreditNoteAsync ya rechaza ANTES de poder resolverlo). Igual cortamos
+        // aca temprano con el mismo mensaje: un BC sin factura de venta jamás emite Nota de Credito.
+        if (bc.OriginatingInvoiceId is null)
+            throw new BusinessInvariantViolationException(
+                "Esta cancelación no tiene una factura de venta asociada, así que no corresponde emitir " +
+                "ningún comprobante fiscal por ella. El reembolso del operador se sigue gestionando igual, " +
+                "desde la cuenta del proveedor.",
+                invariantCode: "INV-BC-NOANCHOR");
 
         // 3) Spec UX 2026-07-17 (T5 varios pendientes): esta cancelacion puede tener VARIOS servicios, cada
         //    uno resuelto (o no) contra SU propia factura. Ya NO exigimos que TODAS las lineas Partial esten
@@ -4760,9 +4998,11 @@ public class BookingCancellationService
             .AsNoTracking()
             .AnyAsync(c => c.BookingCancellationId == bcId, ct);
 
+        // .Value: seguro por el guard de arriba (bc.Status == AwaitingFiscalConfirmation solo se alcanza
+        // DESPUES de ConfirmAsync, que ya exige OriginatingInvoiceId no nulo — ver guard R4 en ConfirmAsync).
         var originatingInvoiceIds = hasChildren
             ? pendingChildOriginatingInvoiceIds
-            : new List<int> { bc.OriginatingInvoiceId };
+            : new List<int> { bc.OriginatingInvoiceId!.Value };
 
         // NC types (NC A/B/C): 3, 8, 13. Solo estas cuentan como Nota de Credito de anulacion.
         var ncTipos = new[] { 3, 8, 13 };
@@ -5597,6 +5837,13 @@ public class BookingCancellationService
         // Ese es el caso del anular-total que ABSORBIO un draft parcial (FRENTE E): pasa a ser una anulacion
         // TOTAL en curso con su propio circuito, y mostrarlo como "Pendiente de emisión" con el monto de las
         // Partial seria engañoso. Un Drafted de anulacion total normal (solo Full) tampoco entra por lo mismo.
+        //
+        // GUARD R4 / M2 (obra "anular sin factura", 2026-07-23): TAMBIEN se excluye un Drafted SIN ancla
+        // fiscal (OriginatingInvoiceId null). Esos BC tienen linea Partial (RecordPartialCancellationLineAsync
+        // las crea igual ahora, sin factura) pero JAMAS van a tener una Nota de Credito que emitir — sin este
+        // filtro quedarian "pendientes de revisar" para siempre en esta bandeja, aunque no haya nada que un
+        // admin pueda hacer con ellos aca (el reembolso del operador se gestiona desde la cuenta del
+        // proveedor, no desde esta pantalla).
         var candidates = await _db.BookingCancellations
             .AsNoTracking()
             .Include(b => b.Reserva)
@@ -5604,6 +5851,7 @@ public class BookingCancellationService
             .Include(b => b.Lines)
             .Where(b => PendingCreditNoteReviewStates.Contains(b.Status)
                      || (b.Status == BookingCancellationStatus.Drafted
+                         && b.OriginatingInvoiceId != null
                          && b.Lines.Any(l => l.Scope == BookingCancellationLineScope.Partial)
                          && !b.Lines.Any(l => l.Scope == BookingCancellationLineScope.Full)))
             // Mas antiguo primero (prioridad de revision). Los T5 no tienen ConfirmedWithClientAt (quedan en
@@ -5755,12 +6003,14 @@ public class BookingCancellationService
         // seguridad de concurrencia por los indices unicos parciales (M1/C2): ver el comentario detallado en
         // ConfirmAsync — vale identico aca.
         var penaltyOverride = req.OperatorPenaltyAmountOverride ?? 0m;
+        // .Value: seguro aca — ManualReviewPending (gate del paso 2) SOLO se alcanza via ConfirmAsync, que ya
+        // exige OriginatingInvoiceId no nulo (guard R4). Un BC sin ancla fiscal nunca llega a este estado.
         var remainingCreditableAmount = await RunUnderInvoiceLockAsync(
-            bc.OriginatingInvoiceId,
-            () => ComputeInvoiceRemainingCreditableAmountAsync(bc.OriginatingInvoiceId, ct, excludeBookingCancellationId: bc.Id),
+            bc.OriginatingInvoiceId!.Value,
+            () => ComputeInvoiceRemainingCreditableAmountAsync(bc.OriginatingInvoiceId!.Value, ct, excludeBookingCancellationId: bc.Id),
             ct);
         var calculatorInput = new FiscalLiquidationInput(
-            OriginatingInvoice: bc.OriginatingInvoice,
+            OriginatingInvoice: bc.OriginatingInvoice!,
             Items: invoiceItems,
             Supplier: supplier,
             InvoicingModeAtEvent: bc.FiscalSnapshot.InvoicingModeAtEvent,
@@ -6785,7 +7035,9 @@ public class BookingCancellationService
 
         // Reevaluar la completitud: reabre a AwaitingFiscalConfirmation si quedan Pending (para que los
         // callbacks reintentados encuentren el BC), o completa si todas las faltantes ya tenian CAE.
-        var outcome = await ReevaluateBcCompletenessAndTransitionAsync(bc, bc.OriginatingInvoiceId, ct);
+        // .Value: seguro — el caller (RetryCreditNotesAsync) ya exige bc.Status en {ArcaRejected,
+        // AwaitingFiscalConfirmation}, estados que solo se alcanzan via ConfirmAsync (guard R4).
+        var outcome = await ReevaluateBcCompletenessAndTransitionAsync(bc, bc.OriginatingInvoiceId!.Value, ct);
 
         return (toEnqueue, outcome == MultiNcOutcome.AllSucceeded);
     }
@@ -12231,17 +12483,31 @@ public class BookingCancellationService
 
                 await _db.SaveChangesAsync(ct);
 
-                // Encolar la NC en AFIP. En Fase 1 emite total (mismo path que FC1.2).
-                // Pasamos requesterIsAdmin=true porque el approval FC1.3 ya cubrio la
-                // autorizacion (no necesitamos otro approval InvoiceAnnulment).
-                await _invoiceService.EnqueueAnnulmentAsync(
-                    id: bc.OriginatingInvoiceId,
-                    userId: resolverUserId,
-                    userName: resolverUserName,
-                    reason: $"FC1.3 manual review approved: {resolverNotes?.Trim()}",
-                    requesterIsAdmin: true,
-                    ct: ct,
-                    approvalRequestId: approvalRequestId);
+                // GUARD R4 (obra "anular sin factura", 2026-07-23): defensa en profundidad. Hoy este bloque
+                // es estructuralmente inalcanzable para un BC sin ancla (ManualReviewPending solo se llega
+                // via ConfirmAsync, que ya exige OriginatingInvoiceId no nulo) — pero si el ancla llegara a
+                // faltar por algun camino futuro, no hay factura que anular: saltamos con log en vez de
+                // pasarle un id inventado a AFIP.
+                if (bc.OriginatingInvoiceId is null)
+                {
+                    _logger.LogWarning(
+                        "OnApprovedAsync FC1.3: BC {BcPublicId} sin OriginatingInvoiceId (sin ancla fiscal). " +
+                        "No hay factura que anular; se omite EnqueueAnnulmentAsync.", bc.PublicId);
+                }
+                else
+                {
+                    // Encolar la NC en AFIP. En Fase 1 emite total (mismo path que FC1.2).
+                    // Pasamos requesterIsAdmin=true porque el approval FC1.3 ya cubrio la
+                    // autorizacion (no necesitamos otro approval InvoiceAnnulment).
+                    await _invoiceService.EnqueueAnnulmentAsync(
+                        id: bc.OriginatingInvoiceId.Value,
+                        userId: resolverUserId,
+                        userName: resolverUserName,
+                        reason: $"FC1.3 manual review approved: {resolverNotes?.Trim()}",
+                        requesterIsAdmin: true,
+                        ct: ct,
+                        approvalRequestId: approvalRequestId);
+                }
 
                 // Marcar el approval como Consumed para que no se reuse.
                 await _approvalService.MarkConsumedAsync(approvalRequestId, ct);
@@ -13363,8 +13629,10 @@ public class BookingCancellationService
         await _db.SaveChangesAsync(ct);
 
         // 7) Encolar la NC parcial real contra ARCA (job Hangfire F2.2).
+        // .Value: seguro — este metodo ya abortó arriba (paso 1) si bc.FiscalLiquidation es null, y ese VO
+        // SOLO lo persiste ConfirmAsync para un BC CON ancla fiscal (guard R4). Sin ancla, nunca se llega aca.
         await _invoiceService.EnqueuePartialCreditNoteAsync(
-            originalInvoiceId: bc.OriginatingInvoiceId,
+            originalInvoiceId: bc.OriginatingInvoiceId!.Value,
             liquidation: emissionInput,
             userId: resolverUserId,
             userName: resolverUserName,
@@ -13846,7 +14114,10 @@ public class BookingCancellationService
             ReservaPublicId = bc.Reserva.PublicId,
             CustomerPublicId = bc.Customer.PublicId,
             SupplierPublicId = bc.Supplier.PublicId,
-            OriginatingInvoicePublicId = bc.OriginatingInvoice.PublicId,
+            // Obra "anular sin factura" (2026-07-23): OriginatingInvoice puede ser null (BC sin ancla fiscal).
+            // ?. en vez del acceso directo de antes: sin esto, el GET de la ficha tiraba NullReferenceException
+            // (500 tecnico) para cualquier cancelacion sin factura.
+            OriginatingInvoicePublicId = bc.OriginatingInvoice?.PublicId,
             CreditNoteInvoicePublicId = bc.CreditNoteInvoice?.PublicId,
             Reason = bc.Reason,
             DraftedAt = bc.DraftedAt,

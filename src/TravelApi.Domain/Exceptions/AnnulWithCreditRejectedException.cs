@@ -41,9 +41,13 @@ public sealed class AnnulWithCreditRejectedException : InvalidOperationException
         /// acreditarle el saldo a favor (precondicion de pagador, paso 6).</summary>
         public const string NoPayer = "ANNUL_CREDIT_NO_PAYER";
 
-        /// <summary>Freno de plata R1: se le pago al operador por uno o mas servicios y la reserva todavia no
-        /// tiene factura para anclar ese reembolso (precondicion de receivable, paso 7,
-        /// <see cref="TravelApi.Application.Interfaces.IBookingCancellationService.EnsureReservaAnnulHasReceivableAnchorAsync"/>).</summary>
+        /// <summary>
+        /// Obra "anular sin factura" (2026-07-23): este codigo QUEDA DEFINIDO (no se renombra: T-6, no romper
+        /// contratos estables del frontend) pero DEJO DE LANZARSE — el freno de plata R1 para "anular la
+        /// reserva entera" se eliminó (decisión del dueño). Ver
+        /// <see cref="TravelApi.Application.Interfaces.IBookingCancellationService.EnsureOperatorReceivableAnchorLinesAsync"/>,
+        /// que reemplaza el bloqueo por anclar SIEMPRE el receivable, con o sin factura.
+        /// </summary>
         public const string UnanchoredOperatorRefund = "ANNUL_CREDIT_UNANCHORED_OPERATOR_REFUND";
     }
 

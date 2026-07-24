@@ -52,30 +52,13 @@ public sealed class ServiceCancellationPreflightIntegrationTests
     public Task DisposeAsync() => Task.CompletedTask;
 
     [Fact]
-    public async Task ServicioPagadoAlOperador_SinFactura_FlagBloqueaYElGuardRealRechazaConElMismoCodigo()
+    public async Task ServicioPagadoAlOperador_SinFactura_FlagYaNoBloquea_YElGuardRealCreaLaLineaAncla_ObraAnularSinFactura20260723()
     {
+        // Obra "anular sin factura" (2026-07-23, decisión del dueño): el candado R1 que bloqueaba "anular
+        // servicio" se ELIMINÓ. El flag del DTO ya no bloquea (los dos caminos de la ficha), y el guard real
+        // ACEPTA de verdad, dejando la línea-ancla (RefundCap correcto) en un BC SIN factura de venta.
         var (reservaId, reservaPublicId, hotelPublicId) = await SeedReservaConServicioPagadoSinFacturaAsync();
 
-        await AssertFlagMatchesRealRejectionAsync(
-            reservaId, reservaPublicId, hotelPublicId,
-            expectedReason: ServiceCancellationPreflightPolicy.UnanchoredOperatorRefundBlockedReason,
-            expectedCode: ServiceCancellationRejectedException.Codes.UnanchoredOperatorRefund);
-    }
-
-    [Fact]
-    public async Task MismaReserva_TrasEmitirLaFacturaQueFaltaba_FlagDejaDeBloquearYElGuardRealAceptaAnular()
-    {
-        var (reservaId, reservaPublicId, hotelPublicId) = await SeedReservaConServicioPagadoSinFacturaAsync();
-
-        // El camino correcto que el propio candado R1 sugiere: emitir la factura de venta que faltaba.
-        // Con eso, el ancla del receivable ya existe -> R1 deja de tener fuga que cerrar.
-        await using (var seedCtx = _fixture.CreateDbContext())
-        {
-            seedCtx.Invoices.Add(NewLiveInvoice(reservaId, 80_000m, numeroComprobante: 1));
-            await seedCtx.SaveChangesAsync();
-        }
-
-        // El flag del DTO ya no bloquea por R1...
         await using (var detailCtx = _fixture.CreateDbContext())
         await using (var detailBcCtx = _fixture.CreateDbContext())
         {
@@ -88,7 +71,71 @@ public sealed class ServiceCancellationPreflightIntegrationTests
             Assert.Null(hotelDto.CanCancel.Reason);
         }
 
-        // ...y el guard REAL (intentar anular de verdad) tambien acepta: el servicio queda anulado.
+        await using (var collectionCtx = _fixture.CreateDbContext())
+        await using (var collectionBcCtx = _fixture.CreateDbContext())
+        {
+            var bookingService = BuildBookingService(collectionCtx, BuildBookingCancellationService(collectionBcCtx));
+            var hotelDeLaColeccion = Assert.Single(await bookingService.GetHotelsAsync(reservaId, CancellationToken.None));
+            Assert.NotNull(hotelDeLaColeccion.CanCancel);
+            Assert.True(hotelDeLaColeccion.CanCancel!.Allowed);
+        }
+
+        await using (var actCtx = _fixture.CreateDbContext())
+        {
+            var bcService = BuildBookingCancellationService(actCtx);
+            var result = await bcService.CancelServiceAsync(
+                new CancelServiceRequest(reservaPublicId, "Hotel", hotelPublicId, "T7: anular sin factura"),
+                "tester", "Tester Integracion", CancellationToken.None);
+
+            Assert.Equal(1, result.CancelledServicesCount);
+        }
+
+        // La línea-ancla del receivable del operador quedó creada, SIN factura (BC.OriginatingInvoiceId null),
+        // con el RefundCap correcto (50.000, lo pagado).
+        await using (var assertCtx = _fixture.CreateDbContext())
+        {
+            var bc = await assertCtx.BookingCancellations
+                .Include(b => b.Lines)
+                .SingleAsync(b => b.ReservaId == reservaId);
+            Assert.Null(bc.OriginatingInvoiceId);
+            // Ultima pieza de la obra (2026-07-23): con RefundCap > 0 y sin ancla,
+            // PromoteUnanchoredBcToAwaitingOperatorRefundIfNeeded promueve el BC — ya NO se queda en Drafted
+            // para siempre (mismo criterio que fijan los unit tests idénticos, ej.
+            // PartialCancellationPaidServiceNoInvoiceGuardTests / AnnulWithCreditOperatorReceivableAnchorTests).
+            Assert.Equal(BookingCancellationStatus.AwaitingOperatorRefund, bc.Status);
+            var line = Assert.Single(bc.Lines);
+            Assert.Equal(50_000m, line.RefundCap);
+        }
+    }
+
+    [Fact]
+    public async Task MismaReserva_ConFacturaViva_LaLineaQuedaAncladaAEsaFactura()
+    {
+        // Paridad (B4): con factura viva, la línea del servicio cancelado ancla A ESA factura
+        // (OriginatingInvoiceId != null) — mismo comportamiento fiscal de siempre, sin cambios de esta obra.
+        var (reservaId, reservaPublicId, hotelPublicId) = await SeedReservaConServicioPagadoSinFacturaAsync();
+
+        int invoiceId;
+        await using (var seedCtx = _fixture.CreateDbContext())
+        {
+            var invoice = NewLiveInvoice(reservaId, 80_000m, numeroComprobante: 1);
+            seedCtx.Invoices.Add(invoice);
+            await seedCtx.SaveChangesAsync();
+            invoiceId = invoice.Id;
+        }
+
+        await using (var detailCtx = _fixture.CreateDbContext())
+        await using (var detailBcCtx = _fixture.CreateDbContext())
+        {
+            var reservaService = BuildReservaService(detailCtx, BuildBookingCancellationService(detailBcCtx));
+            var dto = await reservaService.GetReservaByIdAsync(reservaId);
+            var hotelDto = Assert.Single(dto.HotelBookings);
+
+            Assert.NotNull(hotelDto.CanCancel);
+            Assert.True(hotelDto.CanCancel!.Allowed, $"Motivo inesperado: {hotelDto.CanCancel.Reason}");
+            Assert.Null(hotelDto.CanCancel.Reason);
+        }
+
         await using (var actCtx = _fixture.CreateDbContext())
         {
             var bcService = BuildBookingCancellationService(actCtx);
@@ -98,70 +145,72 @@ public sealed class ServiceCancellationPreflightIntegrationTests
 
             Assert.Equal(1, result.CancelledServicesCount);
         }
+
+        await using (var assertCtx = _fixture.CreateDbContext())
+        {
+            var bc = await assertCtx.BookingCancellations
+                .Include(b => b.Lines)
+                .SingleAsync(b => b.ReservaId == reservaId);
+            Assert.Equal(invoiceId, bc.OriginatingInvoiceId);
+            var line = Assert.Single(bc.Lines);
+            Assert.Equal(50_000m, line.RefundCap);
+        }
     }
 
     [Fact]
-    public async Task DosServiciosMismoOperadorYMoneda_PoolInsuficiente_FlagBloqueaAmbosPorqueElGuardRealRechazariaACualquieraEvaluadoSolo()
+    public async Task DosServiciosMismoOperadorYMoneda_PoolInsuficiente_ElPrimeroEnCancelarSeLlevaElPool_ObraAnularSinFactura20260723()
     {
-        // Hallazgo del backend-dotnet-reviewer (2026-07-20, B1): el pool pagado a UN operador se reparte
-        // GREEDY entre sus servicios cuando se reconstruye la reserva ENTERA de una sola vez (correcto para
-        // "anular la reserva completa", donde las lineas compiten de verdad por el mismo pool AL MISMO
-        // TIEMPO). Pero el guard REAL de un servicio SUELTO lo evalua AISLADO: ve el pool COMPLETO, sin
-        // competir con un hermano que todavia no se esta cancelando. Con 2 servicios del MISMO operador+moneda
-        // y pool insuficiente para los dos, el reparto greedy le daba cap 0 al segundo -> el flag decia
-        // "se puede anular" -> pero al clickear, el guard real (aislado, pool completo) igual lo rechazaba.
-        // Este test prueba que el preflight AHORA marca bloqueados a LOS DOS (nunca de menos), cruzando cada
-        // uno contra el guard real por separado.
+        // Obra "anular sin factura" (2026-07-23): ya no hay candado R1 que bloquear, así que este escenario
+        // pasa de "el reviewer encontró un falso negativo del preflight" a un caso de REPARTO REAL: dos
+        // servicios del MISMO operador+moneda comparten un pool insuficiente (30.000 pagados, 50.000 cada
+        // uno). Cada CancelServiceAsync es su propia transacción con su propio commit, así que el SEGUNDO
+        // intento SÍ ve la línea que el primero ya persistió — greedy por orden de llegada, sin doble conteo.
         var (reservaId, reservaPublicId, hotelAPublicId, hotelBPublicId) =
             await SeedReservaConDosServiciosMismoOperadorPoolInsuficienteAsync();
 
-        // (a) el flag del DTO bloquea a los DOS servicios por R1.
+        // El flag del DTO ya no bloquea a ninguno de los dos (R1 se eliminó).
         await using (var detailCtx = _fixture.CreateDbContext())
         await using (var detailBcCtx = _fixture.CreateDbContext())
         {
             var reservaService = BuildReservaService(detailCtx, BuildBookingCancellationService(detailBcCtx));
             var dto = await reservaService.GetReservaByIdAsync(reservaId);
             Assert.Equal(2, dto.HotelBookings.Count);
-
-            foreach (var hotelDto in dto.HotelBookings)
+            Assert.All(dto.HotelBookings, hotelDto =>
             {
                 Assert.NotNull(hotelDto.CanCancel);
-                Assert.False(hotelDto.CanCancel!.Allowed,
-                    $"Servicio {hotelDto.PublicId} deberia estar bloqueado por R1 (pool insuficiente compartido).");
-                Assert.Equal(ServiceCancellationPreflightPolicy.UnanchoredOperatorRefundBlockedReason, hotelDto.CanCancel.Reason);
-            }
+                Assert.True(hotelDto.CanCancel!.Allowed);
+            });
         }
 
-        // (a-bis) el camino REAL de la ficha (GET /reservas/{id}/hotels) bloquea igual a los DOS.
-        await using (var collectionCtx = _fixture.CreateDbContext())
-        await using (var collectionBcCtx = _fixture.CreateDbContext())
+        // Cancelar Hotel A primero: se lleva TODO el pool disponible (30.000), topeado por su propio costo
+        // (50.000) -> RefundCap = 30.000.
+        await using (var actCtxA = _fixture.CreateDbContext())
         {
-            var bookingService = BuildBookingService(collectionCtx, BuildBookingCancellationService(collectionBcCtx));
-            var hotelesDeLaColeccion = (await bookingService.GetHotelsAsync(reservaId, CancellationToken.None)).ToList();
-            Assert.Equal(2, hotelesDeLaColeccion.Count);
-
-            foreach (var hotelDto in hotelesDeLaColeccion)
-            {
-                Assert.NotNull(hotelDto.CanCancel);
-                Assert.False(hotelDto.CanCancel!.Allowed,
-                    $"GET /reservas/{{id}}/hotels: servicio {hotelDto.PublicId} deberia estar bloqueado por R1.");
-                Assert.Equal(ServiceCancellationPreflightPolicy.UnanchoredOperatorRefundBlockedReason, hotelDto.CanCancel.Reason);
-            }
+            var bcService = BuildBookingCancellationService(actCtxA);
+            var result = await bcService.CancelServiceAsync(
+                new CancelServiceRequest(reservaPublicId, "Hotel", hotelAPublicId, "T7: pool compartido, primero"),
+                "tester", "Tester Integracion", CancellationToken.None);
+            Assert.Equal(1, result.CancelledServicesCount);
         }
 
-        // (b) cruce contra el guard REAL: intentar anular CADA UNO por separado (en contextos independientes,
-        // sin que el intento anterior haya mutado nada) tiene que rechazar con el mismo motivo/codigo.
-        foreach (var servicePublicId in new[] { hotelAPublicId, hotelBPublicId })
+        // Cancelar Hotel B despues: el pool ya esta agotado por la linea de A (persistida) -> RefundCap 0 ->
+        // no hay nada que anclar, no se crea linea para B (pero el servicio SI se cancela).
+        await using (var actCtxB = _fixture.CreateDbContext())
         {
-            await using var actCtx = _fixture.CreateDbContext();
-            var bcService = BuildBookingCancellationService(actCtx);
-            var ex = await Assert.ThrowsAsync<ServiceCancellationRejectedException>(() =>
-                bcService.CancelServiceAsync(
-                    new CancelServiceRequest(reservaPublicId, "Hotel", servicePublicId, "T7: pool compartido insuficiente"),
-                    "tester", "Tester Integracion", CancellationToken.None));
+            var bcService = BuildBookingCancellationService(actCtxB);
+            var result = await bcService.CancelServiceAsync(
+                new CancelServiceRequest(reservaPublicId, "Hotel", hotelBPublicId, "T7: pool compartido, segundo"),
+                "tester", "Tester Integracion", CancellationToken.None);
+            Assert.Equal(1, result.CancelledServicesCount);
+        }
 
-            Assert.Equal(ServiceCancellationRejectedException.Codes.UnanchoredOperatorRefund, ex.Code);
-            Assert.Equal(ServiceCancellationPreflightPolicy.UnanchoredOperatorRefundBlockedReason, ex.Message);
+        await using (var assertCtx = _fixture.CreateDbContext())
+        {
+            var bc = await assertCtx.BookingCancellations
+                .Include(b => b.Lines)
+                .SingleAsync(b => b.ReservaId == reservaId);
+            var line = Assert.Single(bc.Lines); // Solo A tiene línea; B no tenía nada que anclar.
+            Assert.Equal(30_000m, line.RefundCap);
         }
     }
 

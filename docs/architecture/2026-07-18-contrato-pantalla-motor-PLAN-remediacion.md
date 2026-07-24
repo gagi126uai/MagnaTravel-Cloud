@@ -314,3 +314,30 @@ Hoy dice "esto lo tiene que revisar una persona" y no dice quién ni dónde. Nec
 - **Lo que este plan NO arregla:** la zona `AfipService.cs` y Ley 25.345 quedan explícitamente afuera (§4). No las doy por cerradas.
 - **Testeable:** cada tanda trae E2E real + test cruzado; ninguna es "confiá en que anda". El cierre end-to-end (correr la app) es regla global, no opcional.
 - **Cambios del review incorporados (§Cambios tras review):** los 2 bloqueantes (cómputo R1 en el GET con short-circuit; cross-check por integración Postgres para flags con estado en DB) están resueltos, más el cubo backlog (§4.2), el swap confirmado de M4, la reformulación informativa/fork de §6, y las rutas corregidas. Verifiqué en el repo lo que el review pidió confirmar: `MutationGuards` en `Infrastructure/Services/Reservations/` con `GetReservaVoucherOnlyBlockReasonAsync` en `:419`, y `ServiceCancellationBlockReason` seteado en `ReservaService.cs:2747-2748` — el realineo de T4 es un swap, no lógica nueva.
+
+---
+
+## 8. Addendum (2026-07-23) — Se reabre Camino A: la premisa de la Decisión A cambió
+
+**Este addendum NO borra nada de arriba** (F-6): la Decisión A (§1, "Decisión A") documentó correctamente el estado del código y el razonamiento **al 2026-07-18**, con la premisa de negocio vigente en ese momento. Ese razonamiento sigue siendo válido *para esa premisa*. Lo que cambió es la premisa, no el análisis técnico.
+
+### Qué cambió
+
+El dueño (Gastón) tomó una decisión de negocio nueva el 2026-07-23, con respaldo fiscal explícito: **la factura de venta deja de ser requisito para anular un servicio o una reserva con plata ya pagada al operador.** Fundamento fiscal (Ley de IVA, art. 5 inc. b): el hecho imponible de una operación de servicios nace con la prestación o el cobro AL CLIENTE — nunca con el pago que la agencia le hace a SU operador. Exigir una factura de venta como condición para registrar un movimiento que es, en esencia, una cuenta a cobrar contra el operador, no tiene sustento fiscal: son dos hechos económicos distintos (venta al cliente vs. compra al operador) que la Decisión A original había atado por una razón estructural del modelo de datos, no por una razón fiscal.
+
+Esto invalida la premisa central de la Decisión A original: *"Sin esa factura no hay `BookingCancellation` (su FK `OriginatingInvoiceId` es no-null) → no hay línea que represente el receivable → hay que BLOQUEAR."* La premisa "sin factura no puede existir el ancla" era una limitación de diseño (FK no-null), no una regla de negocio ni una regla fiscal. El dueño, con el respaldo fiscal de arriba, decidió que esa limitación se levanta.
+
+### Qué se reabrió (Camino A, antes descartado en A.2)
+
+`docs/architecture/2026-07-18-contrato-pantalla-motor-PLAN-remediacion.md` §1 recomendaba **A.1 — no reabrir Camino A** (no hacer nullable `OriginatingInvoiceId`) por el riesgo de "reintroduce exactamente la fuga que R1 vino a cerrar". Esa fuga (el reconciler mintiendo un negativo de caja del operador como saldo a favor gastable) se sigue evitando, pero con **Camino A endurecido**: en vez de mantener el ancla obligatoria, `BookingCancellation.OriginatingInvoiceId` pasa a ser **opcional** (`int?`), y la línea (`BookingCancellationLine`, con su `RefundCap`) que representa el receivable del operador se crea **SIEMPRE** — con factura como ancla fiscal si existe, o sin ancla (`OriginatingInvoiceId` null) si no existe. La fuga se cierra por la existencia de la LÍNEA, no por la existencia de la FACTURA: son dos cosas distintas que el diseño original de 2026-06-30 había fusionado.
+
+Un BC sin ancla fiscal (`OriginatingInvoiceId` null) queda con un candado duro nuevo ("guard R4"): **jamás emite Nota de Crédito ni Nota de Débito, ni transiciona a ningún estado fiscal** (permanece en `Drafted` para siempre) — pero su línea sigue anclando el receivable del operador para que `SupplierCreditReconciler` nunca lo confunda con saldo a favor consumible. Esto es exactamente lo que la Decisión A original temía perder ("la cadena receivable se deriva de ahí"), solo que ahora esa cadena arranca en la LÍNEA, no en la FACTURA.
+
+### Qué NO cambió (siguen bloqueando, decisión del dueño 2026-07-23)
+
+De los 4 candados de la familia R1 (§ Decisión A original + extensiones posteriores: reasignación 2026-07-01, downgrade 2026-07-21), **2 se eliminaron** (cancelar un servicio suelto, anular la reserva entera — ahora SIEMPRE anclan en vez de bloquear) y **2 se mantienen** (reasignar el operador/moneda de un servicio, bajar el estado de un servicio de Confirmado a no-confirmado). El dueño decidió mantener estos dos porque, a diferencia de cancelar/anular, esas dos acciones NO dejan ningún rastro del receivable (no crean una `BookingCancellationLine`) — ahí la fuga original sigue siendo real y sigue sin tener un camino servido distinto de "resolvé el reembolso con el operador primero". Sus mensajes se actualizaron para ya no pedir "emití la factura" (dejó de ser el camino), sino a gestionar el reembolso con el operador.
+
+### Ver también
+
+- Detalle completo del diseño e implementación: obra "anular servicio/reserva con pagos al operador SIN factura de venta" (2026-07-23), `src/TravelApi.Domain/Entities/BookingCancellation.cs`, `src/TravelApi.Infrastructure/Services/BookingCancellationService.cs` (bloque comentado "Obra 'anular sin factura'" antes de `EnsureOperatorReceivableAnchorLinesAsync`), migración `Adr049_AnnulWithoutInvoice_MakeOriginatingInvoiceIdOptional`.
+- Reglas de la Constitución del producto citadas en el brief de esta obra: F-1, F-2, F-5, F-6, F-11, T-1, T-2, T-6, T-7, T-8, T-13, PR-6, PR-12 (`docs/estandares/2026-07-22-constitucion-producto-v1.md`).

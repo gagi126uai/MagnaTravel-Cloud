@@ -1290,18 +1290,10 @@ public class ReservaService : IReservaService
                 "La reserva tiene cobros pero no tiene un cliente pagador asignado; no se puede generar saldo a favor.");
         }
 
-        // 7) Precondicion de PLATA AL OPERADOR (R1, gemela de la cancelacion de UN servicio): si a algun servicio se le
-        //    pago al operador y la reserva NO tiene factura que ancle el receivable "me tiene que devolver", anular
-        //    cancelaria todos los servicios (caja del operador negativa) SIN dejar la linea que representa ese
-        //    receivable -> el reconciler del saldo a favor mintearia ese negativo como credito GASTABLE. Bloqueamos
-        //    ANTES de mutar nada. La guarda vive en BookingCancellationService (misma logica, alcance TOTAL) para no
-        //    duplicar el calculo del RefundCap. Solo corre si el service esta cableado (en runtime siempre lo inyecta
-        //    DI; los tests que no anulan con plata al operador no lo inyectan y la guarda queda inerte, comportamiento
-        //    seguro). Lanza InvalidOperationException -> el controller la mapea a 409, igual que las demas precondiciones.
-        if (_cancellationService is not null)
-        {
-            await _cancellationService.EnsureReservaAnnulHasReceivableAnchorAsync(reserva.Id, ct);
-        }
+        // 7) Obra "anular sin factura" (2026-07-23, decision del dueño): ANTES este paso bloqueaba con 409 si
+        //    a algun servicio se le pago al operador y la reserva no tenia factura que anclara el receivable.
+        //    Ese bloqueo DESAPARECIO: la reserva se anula igual, y el ancla del receivable del operador se deja
+        //    SIEMPRE (con o sin factura) dentro de ApplyAnnulWithPaymentsToCreditAsync, paso (a-bis) mas abajo.
 
         await ApplyAnnulWithPaymentsToCreditAsync(reserva, reason, actorUserId, actorUserName, ct);
     }
@@ -1322,6 +1314,23 @@ public class ReservaService : IReservaService
         //    Reusa la MISMA fuente que la anulacion total formal (CancelAllReservaServicesAsync de
         //    BookingCancellationService) via el helper compartido. No hace SaveChanges (lo cerramos abajo).
         await Reservations.ReservaServiceCanceller.CancelAllLiveServicesAsync(_context, reserva.Id, actorUserId, actorUserName, ct);
+
+        // a-bis) Obra "anular sin factura" (2026-07-23, decision del dueño): dejar el ANCLA del receivable del
+        //    operador para TODOS los servicios recien cancelados que tenian plata pagada. Reemplaza al viejo
+        //    candado bloqueante (EnsureReservaAnnulHasReceivableAnchorAsync, eliminado): en vez de RECHAZAR la
+        //    anulacion cuando hay plata sin factura, este paso arma/reutiliza el BookingCancellation activo de
+        //    la reserva y le agrega una BookingCancellationLine por cada servicio con RefundCap>0 — CON factura
+        //    de venta viva como ancla fiscal si la reserva la tiene, o SIN ancla (OriginatingInvoiceId null) si
+        //    no. Tiene que correr ANTES de que el cambio de estado de los servicios (paso a) se persista: el
+        //    filtro "ya cancelado" de BuildCancellationLinesAsync necesita ver TODAVIA el estado viejo en la
+        //    base para no excluir a los servicios que se estan cancelando en ESTE mismo acto. Corre solo si el
+        //    service esta cableado (en runtime siempre lo inyecta DI; los tests que no ejercitan plata al
+        //    operador no lo inyectan, comportamiento seguro sin cambios).
+        if (_cancellationService is not null)
+        {
+            await _cancellationService.EnsureOperatorReceivableAnchorLinesAsync(
+                reserva.Id, actorUserId ?? string.Empty, actorUserName, ct);
+        }
 
         // b) Convertir la plata viva en saldo a favor del cliente, por moneda. NO hace SaveChanges (corre dentro
         //    de la transaccion del caller). Devuelve el detalle por moneda para el audit.
@@ -6237,11 +6246,18 @@ public class ReservaService : IReservaService
         }
         catch (ServiceCancellationRejectedException ex) when (ex.Code == ServiceCancellationRejectedException.Codes.UnanchoredOperatorRefund)
         {
+            // Obra "anular sin factura" (2026-07-23): el texto YA NO pide "emitir factura" (dejó de ser
+            // requisito, decisión del dueño) — mismo Code (T-1, estable) y MISMO estilo de mensaje que los
+            // otros dos candados de la familia que siguen bloqueando (ServiceCancellationPreflightPolicy.
+            // UnanchoredOperatorRefundBlockedReasonForStatusDowngrade y el de reasignar operador/moneda en
+            // BookingCancellationService.EnsureServiceOperatorOrCurrencyChangeHasReceivableAnchorAsync).
+            // Este wrapper sigue existiendo (no se refactoriza hoy) porque necesita nombrar CUÁL servicio de
+            // la reserva frena la normalización — el mensaje genérico de la excepción capturada no lo sabe.
             throw new ServiceCancellationRejectedException(
                 ex.Code,
-                $"No se puede completar esta acción: {serviceLabel} ya tiene pagos al operador y la reserva " +
-                "aún no tiene factura emitida para registrar el reembolso a tu favor. Emití la factura de venta " +
-                "o gestioná el reembolso con el operador antes de continuar.");
+                $"No se puede completar esta acción: {serviceLabel} ya tiene pagos al operador que todavía " +
+                "no están resueltos. Gestioná primero el reembolso con el operador (o cancelá el servicio) " +
+                "antes de continuar.");
         }
     }
 

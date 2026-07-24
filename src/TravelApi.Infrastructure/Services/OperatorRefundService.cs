@@ -366,7 +366,11 @@ public class OperatorRefundService : IOperatorRefundService
         // 5) Validar matriz fiscal Mono/RI usando el FiscalSnapshot cristalizado.
         //    Hacemos PRIMERO la validacion porque rechaza antes de tocar BD:
         //    un usuario equivocado se entera con HTTP 409 sin pasar por retry.
+        //    hasFiscalAnchor=false (obra "anular sin factura"): un BC sin ancla NUNCA completa su FiscalSnapshot
+        //    (no hay evento fiscal que fotografiar), asi que ValidateFiscalMatrix necesita saberlo para no
+        //    confundir "sin snapshot" con "snapshot corrupto" (ver el fix dentro del metodo).
         ValidateFiscalMatrix(
+            hasFiscalAnchor: bc.OriginatingInvoiceId is not null,
             agencyTaxConditionAtEvent: bc.FiscalSnapshot?.AgencyTaxConditionAtEvent,
             supplierTaxConditionAtEvent: bc.FiscalSnapshot?.SupplierTaxConditionAtEvent,
             deductions: request.Deductions);
@@ -951,7 +955,12 @@ public class OperatorRefundService : IOperatorRefundService
         int refundSupplierId,
         string refundCurrency)
     {
-        // INV-093: solo BCs post-CAE (esperando reembolso o con credito ya aplicado) pueden recibir imputaciones.
+        // INV-093: solo BCs con la cara CLIENTE resuelta (NC con CAE) o SIN cara fiscal (sin factura, obra
+        // "anular sin factura" 2026-07-23) pueden recibir imputaciones. Antes esto solo se alcanzaba post-CAE;
+        // ahora un BC sin ancla fiscal llega a AwaitingOperatorRefund directo (Drafted -> AwaitingOperatorRefund,
+        // ver BookingCancellationService.PromoteUnanchoredBcToAwaitingOperatorRefundIfNeeded), sin pasar por
+        // ARCA — nunca hubo NC que emitir. Los dos caminos convergen al MISMO estado, asi que esta guarda no
+        // necesita distinguir cual fue.
         var validStates = new[]
         {
             BookingCancellationStatus.AwaitingOperatorRefund,
@@ -1011,12 +1020,49 @@ public class OperatorRefundService : IOperatorRefundService
     /// Valida la matriz Agencia × Operador × Deducciones segun el snapshot
     /// fiscal capturado al confirmar el BC. Las reglas vivien aca porque son
     /// runtime (no se pueden expresar como CHECK SQL sin acoplar dos tablas).
+    ///
+    /// <para><b>Fix (obra "anular sin factura", 2026-07-23, hallazgo del sweep del item 5-iv)</b>: un BC SIN
+    /// ancla fiscal (<paramref name="hasFiscalAnchor"/> false) NUNCA completa su <c>FiscalSnapshot</c> — no hay
+    /// evento fiscal que fotografiar (guard R4). Antes de este fix, <c>agencyTaxConditionAtEvent</c>/
+    /// <c>supplierTaxConditionAtEvent</c> llegaban siempre null para esos BC, <c>TaxConditionNormalizer.Normalize(null)</c>
+    /// da <c>Unknown</c>, y el primer chequeo de abajo tiraba INV-118 SIEMPRE — bloqueando CUALQUIER registro de
+    /// reembolso (con o sin deducciones), el mismo agujero sin salida que toda esta obra vino a cerrar. Con
+    /// <paramref name="hasFiscalAnchor"/> false, la matriz Mono/RI (que depende del snapshot) directamente NO
+    /// aplica — pero las retenciones impositivas SÍ siguen bloqueadas: una retención (IVA/Ganancias/IIBB) es,
+    /// por definición, un descuento sobre un comprobante fiscal, y sin factura no hay ninguno. El resto de las
+    /// deducciones (gasto administrativo, costo bancario, etc., que no son fiscales) pasa sin tocar la matriz.
+    /// Necesita confirmación contable: si algún día se permite retener sobre un reembolso sin factura, este
+    /// bloqueo hay que revisarlo con travel-agency-accountant-argentina.</para>
     /// </summary>
     private static void ValidateFiscalMatrix(
+        bool hasFiscalAnchor,
         string? agencyTaxConditionAtEvent,
         string? supplierTaxConditionAtEvent,
         IReadOnlyList<DeductionLineRequest> deductions)
     {
+        if (!hasFiscalAnchor)
+        {
+            // Kinds 10..39 = retenciones impositivas AR (IVA + Ganancias + IIBB): exigen un comprobante fiscal
+            // real detras. Sin factura, se rechazan puntualmente (mensaje claro) en vez de dejarlas pasar sin
+            // validar (agujero) o reventar TODO el registro con INV-118 (el bug que este fix cierra).
+            // Kind 40 = ForeignTax (impuesto del pais destino del operador): aunque NO genera credito fiscal AR
+            // (por eso vive fuera del rango 10-39 de "retenciones AR"), SIGUE siendo una deduccion atada a un
+            // comprobante — bloqueado por defecto sin factura de venta, mismo motivo que las retenciones AR.
+            // Kind 99 (Other, cajon de sastre no-fiscal) sigue pasando sin tocar esta guarda.
+            // Necesita confirmacion de contador: si algun dia se permite esta deduccion sobre un reembolso sin
+            // factura, revisar con travel-agency-accountant-argentina antes de sacar el bloqueo.
+            bool hasWithholdingDeduction = deductions.Any(d => (int)d.Kind is >= 10 and <= 40);
+            if (hasWithholdingDeduction)
+            {
+                throw new BusinessInvariantViolationException(
+                    "Esta cancelación no tiene una factura de venta asociada: no se pueden registrar " +
+                    "retenciones impositivas sobre este reintegro. Usá una deducción de gasto administrativo, " +
+                    "costo bancario u otro concepto no fiscal.",
+                    invariantCode: "INV-BC-NOANCHOR-WITHHOLDING");
+            }
+            return; // sin factura y sin retenciones declaradas: no hay snapshot que validar, nada mas que chequear.
+        }
+
         var agencyCanonical = TaxConditionNormalizer.Normalize(agencyTaxConditionAtEvent);
         var supplierCanonical = TaxConditionNormalizer.Normalize(supplierTaxConditionAtEvent);
 
@@ -1348,6 +1394,14 @@ public class OperatorRefundService : IOperatorRefundService
         //    distinto al viejo BC si vienen de FiscalSnapshots diferentes).
         // Resolvemos la moneda de destino en una variable local para que el mensaje al usuario no
         // exponga el camino interno (FiscalSnapshot.CurrencyAtEvent): solo mostramos el codigo de moneda.
+        //
+        // GAP CONOCIDO (obra "anular sin factura", 2026-07-23, NO resuelto en esta tanda — fuera del alcance
+        // de los tests que exige el fix): si el BC de destino no tiene ancla fiscal (OriginatingInvoiceId
+        // null), su FiscalSnapshot nunca se completa y destinationCurrency siempre da null -> esta validacion
+        // SIEMPRE rechaza con "sin definir", sin importar la moneda real. Reasociar un reembolso HACIA un BC
+        // sin factura queda roto (no se puede). El fix simetrico al de EnsureBookingCancellationCanReceiveOperatorRefund
+        // (usar la moneda de newBc.Lines en vez del snapshot) no se aplico aca: no lo ejercita ningun test de
+        // esta obra. Queda anotado para la proxima vez que se toque Reassociate.
         var destinationCurrency = newBc.FiscalSnapshot?.CurrencyAtEvent;
         if (!string.Equals(
                 oldAllocation.Refund.Currency,
@@ -1381,6 +1435,7 @@ public class OperatorRefundService : IOperatorRefundService
                 RequiresAccountingReview: d.RequiresAccountingReview))
             .ToList();
         ValidateFiscalMatrix(
+            hasFiscalAnchor: newBc.OriginatingInvoiceId is not null,
             agencyTaxConditionAtEvent: newBc.FiscalSnapshot?.AgencyTaxConditionAtEvent,
             supplierTaxConditionAtEvent: newBc.FiscalSnapshot?.SupplierTaxConditionAtEvent,
             deductions: deductionsAsRequest);

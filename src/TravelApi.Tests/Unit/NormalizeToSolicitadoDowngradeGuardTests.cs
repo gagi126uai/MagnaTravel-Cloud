@@ -162,8 +162,14 @@ public class NormalizeToSolicitadoDowngradeGuardTests
             () => service.UpdateStatusAsync(reserva.Id, EstadoReserva.InManagement));
 
         Assert.Equal(ServiceCancellationRejectedException.Codes.UnanchoredOperatorRefund, ex.Code);
-        Assert.Contains("Sheraton Bariloche", ex.Message);
-        Assert.Contains("Emití la factura de venta", ex.Message);
+        // Obra "anular sin factura" (2026-07-23): el Code queda igual (T-1, estable); el TEXTO se alineó al
+        // mismo estilo que los otros dos candados de la familia que siguen bloqueando — ya no pide "emitir
+        // factura" (dejó de ser requisito). T-6: texto exacto fijado acá.
+        Assert.Equal(
+            "No se puede completar esta acción: el hotel 'Sheraton Bariloche' ya tiene pagos al operador " +
+            "que todavía no están resueltos. Gestioná primero el reembolso con el operador (o cancelá el " +
+            "servicio) antes de continuar.",
+            ex.Message);
 
         // Nada mutó: ni el servicio bajó de estado ni la reserva avanzó (rechazo atómico).
         var reloadedHotel = await ctx.HotelBookings.AsNoTracking().FirstAsync(h => h.Id == hotel.Id);
