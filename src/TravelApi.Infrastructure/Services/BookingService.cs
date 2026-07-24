@@ -775,7 +775,10 @@ public partial class BookingService : IBookingService
         var inputs = await ServiceCancellationCapabilityStamper.LoadInputsAsync(_db, _cancellationService, reservaId, ct);
         if (inputs is not null)
             foreach (var dto in dtos)
+            {
                 dto.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Flight, dto.PublicId);
+                dto.SupplierTaxConditionUnknown = ServiceCancellationCapabilityStamper.EvaluateSupplierTaxConditionUnknown(inputs, CancellableServiceTable.Flight, dto.PublicId);
+            }
 
         return dtos;
     }
@@ -1205,7 +1208,10 @@ public partial class BookingService : IBookingService
         var inputs = await ServiceCancellationCapabilityStamper.LoadInputsAsync(_db, _cancellationService, reservaId, ct);
         if (inputs is not null)
             foreach (var dto in dtos)
+            {
                 dto.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Hotel, dto.PublicId);
+                dto.SupplierTaxConditionUnknown = ServiceCancellationCapabilityStamper.EvaluateSupplierTaxConditionUnknown(inputs, CancellableServiceTable.Hotel, dto.PublicId);
+            }
 
         return dtos;
     }
@@ -1525,7 +1531,10 @@ public partial class BookingService : IBookingService
         var inputs = await ServiceCancellationCapabilityStamper.LoadInputsAsync(_db, _cancellationService, reservaId, ct);
         if (inputs is not null)
             foreach (var dto in dtos)
+            {
                 dto.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Package, dto.PublicId);
+                dto.SupplierTaxConditionUnknown = ServiceCancellationCapabilityStamper.EvaluateSupplierTaxConditionUnknown(inputs, CancellableServiceTable.Package, dto.PublicId);
+            }
 
         return dtos;
     }
@@ -1809,7 +1818,10 @@ public partial class BookingService : IBookingService
         var inputs = await ServiceCancellationCapabilityStamper.LoadInputsAsync(_db, _cancellationService, reservaId, ct);
         if (inputs is not null)
             foreach (var dto in dtos)
+            {
                 dto.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Transfer, dto.PublicId);
+                dto.SupplierTaxConditionUnknown = ServiceCancellationCapabilityStamper.EvaluateSupplierTaxConditionUnknown(inputs, CancellableServiceTable.Transfer, dto.PublicId);
+            }
 
         return dtos;
     }
@@ -2144,7 +2156,10 @@ public partial class BookingService : IBookingService
         var inputs = await ServiceCancellationCapabilityStamper.LoadInputsAsync(_db, _cancellationService, reservaId, ct);
         if (inputs is not null)
             foreach (var dto in dtos)
+            {
                 dto.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Assistance, dto.PublicId);
+                dto.SupplierTaxConditionUnknown = ServiceCancellationCapabilityStamper.EvaluateSupplierTaxConditionUnknown(inputs, CancellableServiceTable.Assistance, dto.PublicId);
+            }
 
         return dtos;
     }

@@ -85,4 +85,11 @@ public class FlightSegmentDto
     /// 6 DTOs de servicio).
     /// </summary>
     public CapabilityDto? CanCancel { get; set; }
+
+    /// <summary>
+    /// Bug #22 del barrido (2026-07-24): aviso temprano de operador sin condición fiscal cargada. Ver el
+    /// XML-doc completo en <see cref="HotelBookingDto.SupplierTaxConditionUnknown"/> (mismo campo, mismo
+    /// criterio, replicado en los 6 DTOs de servicio).
+    /// </summary>
+    public bool SupplierTaxConditionUnknown { get; set; }
 }

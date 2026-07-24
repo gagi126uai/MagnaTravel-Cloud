@@ -484,9 +484,25 @@ public record CancelServiceResultDto(
 /// <c>PublicId</c>, nunca el id interno. Con la clave por <c>PublicId</c> ningun consumidor necesita una
 /// query extra de "mapear PublicId a id interno" solo para leer este flag.</para>
 /// </param>
+/// <param name="ServicesWithUnknownSupplierTaxCondition">
+/// Bug #22 del barrido ("NC tardía"), 2026-07-24: los servicios (tabla + <c>PublicId</c>) cuyo OPERADOR no
+/// tiene condición fiscal cargada (o tiene un texto que no normaliza a ninguna condición conocida). A
+/// diferencia de <see cref="ServicesBlockedByUnanchoredOperatorRefund"/>, esto NUNCA bloquea "Anular
+/// servicio": es un AVISO temprano para que el vendedor complete la ficha del operador ANTES de llegar al
+/// bloqueo tardío <c>INV-118</c> (que sigue siendo la red de seguridad real al confirmar la cancelación).
+///
+/// <para>Misma fuente de verdad que <c>INV-118</c>
+/// (<c>BookingCancellationService.ResolveServerSideTaxIdentity</c>): un supplier entra a este conjunto
+/// cuando <c>TaxConditionNormalizer.Normalize(supplier.TaxCondition)</c> da <c>TaxConditionCanonical.Unknown</c>.
+/// Se calcula para TODOS los servicios vivos con operador asignado, tengan o no plata pagada — a diferencia
+/// de <see cref="ServicesBlockedByUnanchoredOperatorRefund"/> (short-circuit con factura viva), este aviso
+/// aplica SIEMPRE, porque el bloqueo tardío que previene (INV-118) no depende de si la reserva ya tiene
+/// factura de venta.</para>
+/// </param>
 public record ServiceCancellationPreflightResult(
     bool HasLiveSaleInvoiceWithoutPayer,
-    IReadOnlySet<(CancellableServiceTable ServiceTable, Guid ServicePublicId)> ServicesBlockedByUnanchoredOperatorRefund
+    IReadOnlySet<(CancellableServiceTable ServiceTable, Guid ServicePublicId)> ServicesBlockedByUnanchoredOperatorRefund,
+    IReadOnlySet<(CancellableServiceTable ServiceTable, Guid ServicePublicId)> ServicesWithUnknownSupplierTaxCondition
 );
 
 /// <summary>

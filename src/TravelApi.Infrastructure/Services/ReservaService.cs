@@ -6085,32 +6085,56 @@ public class ReservaService : IReservaService
         foreach (var hotel in file.HotelBookings)
         {
             var row = dto.HotelBookings.FirstOrDefault(x => x.PublicId == hotel.PublicId);
-            if (row is not null) row.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Hotel, hotel.PublicId);
+            if (row is not null)
+            {
+                row.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Hotel, hotel.PublicId);
+                row.SupplierTaxConditionUnknown = ServiceCancellationCapabilityStamper.EvaluateSupplierTaxConditionUnknown(inputs, CancellableServiceTable.Hotel, hotel.PublicId);
+            }
         }
         foreach (var flight in file.FlightSegments)
         {
             var row = dto.FlightSegments.FirstOrDefault(x => x.PublicId == flight.PublicId);
-            if (row is not null) row.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Flight, flight.PublicId);
+            if (row is not null)
+            {
+                row.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Flight, flight.PublicId);
+                row.SupplierTaxConditionUnknown = ServiceCancellationCapabilityStamper.EvaluateSupplierTaxConditionUnknown(inputs, CancellableServiceTable.Flight, flight.PublicId);
+            }
         }
         foreach (var transfer in file.TransferBookings)
         {
             var row = dto.TransferBookings.FirstOrDefault(x => x.PublicId == transfer.PublicId);
-            if (row is not null) row.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Transfer, transfer.PublicId);
+            if (row is not null)
+            {
+                row.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Transfer, transfer.PublicId);
+                row.SupplierTaxConditionUnknown = ServiceCancellationCapabilityStamper.EvaluateSupplierTaxConditionUnknown(inputs, CancellableServiceTable.Transfer, transfer.PublicId);
+            }
         }
         foreach (var package in file.PackageBookings)
         {
             var row = dto.PackageBookings.FirstOrDefault(x => x.PublicId == package.PublicId);
-            if (row is not null) row.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Package, package.PublicId);
+            if (row is not null)
+            {
+                row.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Package, package.PublicId);
+                row.SupplierTaxConditionUnknown = ServiceCancellationCapabilityStamper.EvaluateSupplierTaxConditionUnknown(inputs, CancellableServiceTable.Package, package.PublicId);
+            }
         }
         foreach (var assistance in file.AssistanceBookings)
         {
             var row = dto.AssistanceBookings.FirstOrDefault(x => x.PublicId == assistance.PublicId);
-            if (row is not null) row.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Assistance, assistance.PublicId);
+            if (row is not null)
+            {
+                row.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Assistance, assistance.PublicId);
+                row.SupplierTaxConditionUnknown = ServiceCancellationCapabilityStamper.EvaluateSupplierTaxConditionUnknown(inputs, CancellableServiceTable.Assistance, assistance.PublicId);
+            }
         }
         foreach (var generic in file.Servicios)
         {
             var row = dto.Servicios.FirstOrDefault(x => x.PublicId == generic.PublicId);
-            if (row is not null) row.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Generic, generic.PublicId);
+            if (row is not null)
+            {
+                row.CanCancel = ServiceCancellationCapabilityStamper.Evaluate(inputs, CancellableServiceTable.Generic, generic.PublicId);
+                row.SupplierTaxConditionUnknown = ServiceCancellationCapabilityStamper.EvaluateSupplierTaxConditionUnknown(inputs, CancellableServiceTable.Generic, generic.PublicId);
+            }
         }
     }
 

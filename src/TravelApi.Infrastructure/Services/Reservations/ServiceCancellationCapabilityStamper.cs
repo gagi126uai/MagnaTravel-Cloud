@@ -82,4 +82,14 @@ public static class ServiceCancellationCapabilityStamper
         var cap = ServiceCancellationPreflightPolicy.Evaluate(ctx);
         return new CapabilityDto { Allowed = cap.Allowed, Reason = cap.Reason };
     }
+
+    /// <summary>
+    /// Bug #22 del barrido ("NC tardía", 2026-07-24): si ESTE servicio puntual tiene el operador SIN
+    /// condición fiscal cargada — un AVISO, nunca un bloqueo (por eso vive AFUERA de <see cref="Evaluate"/>,
+    /// que solo decide <c>Allowed</c>/<c>Reason</c>). Pura: solo lee el hecho ya calculado por
+    /// <see cref="ServiceCancellationPreflightResult.ServicesWithUnknownSupplierTaxCondition"/>.
+    /// </summary>
+    public static bool EvaluateSupplierTaxConditionUnknown(
+        ReservaInputs inputs, CancellableServiceTable table, Guid servicePublicId)
+        => inputs.Preflight.ServicesWithUnknownSupplierTaxCondition.Contains((table, servicePublicId));
 }

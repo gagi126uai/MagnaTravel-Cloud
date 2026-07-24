@@ -1308,7 +1308,15 @@ public class BookingCancellationService
             new HashSet<(CancellableServiceTable, Guid)>();
 
         var reserva = await _db.Reservas.AsNoTracking().FirstOrDefaultAsync(r => r.Id == reservaId, ct);
-        if (reserva is null) return new ServiceCancellationPreflightResult(false, emptyBlockedSet);
+        if (reserva is null) return new ServiceCancellationPreflightResult(false, emptyBlockedSet, emptyBlockedSet);
+
+        // Bug #22 del barrido ("NC tardía", 2026-07-24): a diferencia de R1 (candado por plata pagada al
+        // operador, que SOLO puede aplicar sin factura viva), el aviso de "condicion fiscal del operador
+        // desconocida" tiene que calcularse SIEMPRE — con o sin factura viva — porque el bloqueo tardio que
+        // previene (INV-118, al confirmar la cancelacion) tampoco depende de eso. Por eso los candidatos se
+        // juntan ACA, ANTES del short-circuit de R1 de mas abajo, y se reusan para las dos cosas.
+        var candidates = await BuildOperatorPaidServiceCandidatesAsync(reservaId, ct);
+        var servicesWithUnknownSupplierTaxCondition = await ComputeServicesWithUnknownSupplierTaxConditionAsync(candidates, ct);
 
         bool hasLiveSaleInvoice = await ReservaHasLiveSaleInvoiceAsync(reservaId, ct);
         if (hasLiveSaleInvoice)
@@ -1317,13 +1325,13 @@ public class BookingCancellationService
             // falta reconstruir nada. El unico candado uniforme que puede seguir aplicando es "factura viva
             // sin cliente asignado" (exige la factura Y la ausencia de Payer, por eso solo se evalua aca).
             bool hasLiveSaleInvoiceWithoutPayer = reserva.PayerId is null;
-            return new ServiceCancellationPreflightResult(hasLiveSaleInvoiceWithoutPayer, emptyBlockedSet);
+            return new ServiceCancellationPreflightResult(
+                hasLiveSaleInvoiceWithoutPayer, emptyBlockedSet, servicesWithUnknownSupplierTaxCondition);
         }
 
-        // Sin factura viva: "sin cliente" no puede aplicar (ese candado exige la factura primero). Se juntan
-        // los candidatos (servicios vivos con operador) en UN batch, sin calcular cap todavia.
-        var candidates = await BuildOperatorPaidServiceCandidatesAsync(reservaId, ct);
-        if (candidates.Count == 0) return new ServiceCancellationPreflightResult(false, emptyBlockedSet);
+        // Sin factura viva: "sin cliente" no puede aplicar (ese candado exige la factura primero).
+        if (candidates.Count == 0)
+            return new ServiceCancellationPreflightResult(false, emptyBlockedSet, servicesWithUnknownSupplierTaxCondition);
 
         var supplierIds = candidates.Select(c => c.SupplierId).Distinct().ToList();
         var pool = await ComputeAvailableOperatorRefundPoolAsync(reservaId, supplierIds, ct);
@@ -1340,7 +1348,51 @@ public class BookingCancellationService
             .Select(c => (c.Table, c.ServicePublicId))
             .ToHashSet();
 
-        return new ServiceCancellationPreflightResult(false, blockedServices);
+        return new ServiceCancellationPreflightResult(false, blockedServices, servicesWithUnknownSupplierTaxCondition);
+    }
+
+    /// <summary>
+    /// Bug #22 del barrido ("NC tardía", 2026-07-24): de la misma tanda de candidatos que arma
+    /// <see cref="BuildOperatorPaidServiceCandidatesAsync"/> (servicios vivos con operador asignado), marca
+    /// los que tienen el operador SIN condicion fiscal cargada (o con un texto que no normaliza a ninguna
+    /// condicion conocida) — MISMA fuente de verdad que <see cref="ResolveServerSideTaxIdentity"/> (el
+    /// candado real INV-118): <see cref="TaxConditionNormalizer.Normalize"/> sobre <c>Supplier.TaxCondition</c>
+    /// dando <see cref="TaxConditionCanonical.Unknown"/>. UNA sola query extra (los suppliers de los
+    /// candidatos), nunca una consulta por servicio.
+    /// </summary>
+    private async Task<IReadOnlySet<(CancellableServiceTable ServiceTable, Guid ServicePublicId)>>
+        ComputeServicesWithUnknownSupplierTaxConditionAsync(
+            List<OperatorPaidServiceCandidate> candidates, CancellationToken ct)
+    {
+        if (candidates.Count == 0) return new HashSet<(CancellableServiceTable, Guid)>();
+
+        // Trampa de datos (NO es un bug de este fix): Hotel/Flight/Transfer/Package/Assistance guardan
+        // SupplierId como int NO nullable — "sin operador" se representa con el sentinel 0 (Id real arranca
+        // en 1 por identity), no con null. Sin este filtro, un servicio SIN operador terminaria buscando el
+        // Supplier Id=0 (que no existe), la condicion fiscal daria "no encontrada" y el aviso saldria FALSO
+        // POSITIVO ("el operador no tiene condicion fiscal") para un servicio que ni siquiera tiene operador.
+        var supplierIds = candidates
+            .Select(c => c.SupplierId)
+            .Where(id => id > 0)
+            .Distinct()
+            .ToList();
+        if (supplierIds.Count == 0) return new HashSet<(CancellableServiceTable, Guid)>();
+
+        var supplierTaxConditionById = await _db.Suppliers.AsNoTracking()
+            .Where(s => supplierIds.Contains(s.Id))
+            .Select(s => new { s.Id, s.TaxCondition })
+            .ToDictionaryAsync(s => s.Id, s => s.TaxCondition, ct);
+
+        var result = new HashSet<(CancellableServiceTable, Guid)>();
+        foreach (var candidate in candidates)
+        {
+            if (candidate.SupplierId <= 0) continue; // sin operador: no hay de quien avisar la condicion fiscal.
+
+            string? rawTaxCondition = supplierTaxConditionById.TryGetValue(candidate.SupplierId, out var tc) ? tc : null;
+            if (TaxConditionNormalizer.Normalize(rawTaxCondition) == TaxConditionCanonical.Unknown)
+                result.Add((candidate.Table, candidate.ServicePublicId));
+        }
+        return result;
     }
 
     /// <summary>

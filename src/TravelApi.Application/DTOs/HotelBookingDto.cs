@@ -95,5 +95,18 @@ public class HotelBookingDto
     /// significa bloqueado.
     /// </summary>
     public CapabilityDto? CanCancel { get; set; }
+
+    /// <summary>
+    /// Bug #22 del barrido ("NC tardía", 2026-07-24): true si el OPERADOR de este servicio no tiene su
+    /// condición fiscal cargada. A diferencia de <see cref="CanCancel"/>, esto NUNCA apaga la papelera: es
+    /// un AVISO para que el modal "Borrar vs Cancelar" lo muestre ANTES de que el usuario anule el servicio,
+    /// para completar la ficha del operador a tiempo — de lo contrario, la nota de crédito recién avisa
+    /// TARDE (al confirmar la cancelación) que falta ese dato.
+    ///
+    /// <para>Fuente única: <c>ServiceCancellationPreflightResult.ServicesWithUnknownSupplierTaxCondition</c>,
+    /// la MISMA condición que bloquea de verdad al confirmar (<c>INV-118</c>). Default <c>false</c> (no
+    /// avisa) cuando no se calculó — mismo criterio "sin dato = sin aviso" que evita falsos positivos.</para>
+    /// </summary>
+    public bool SupplierTaxConditionUnknown { get; set; }
 }
 

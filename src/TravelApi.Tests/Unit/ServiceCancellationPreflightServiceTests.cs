@@ -174,5 +174,139 @@ public class ServiceCancellationPreflightServiceTests
 
         Assert.False(result.HasLiveSaleInvoiceWithoutPayer);
         Assert.Empty(result.ServicesBlockedByUnanchoredOperatorRefund);
+        Assert.Empty(result.ServicesWithUnknownSupplierTaxCondition);
+    }
+
+    // ---------- Bug #22 del barrido ("NC tardía", 2026-07-24): aviso temprano de operador sin condicion fiscal ----------
+
+    [Fact]
+    public async Task ServicioConOperadorSinCondicionFiscalCargada_MarcaElAvisoNuevo()
+    {
+        await using var ctx = NewContext();
+        var customer = new Customer { FullName = "Cliente T22", IsActive = true };
+        // TaxCondition nunca se cargo (caso real del bug: alta rapida de operador sin completar la ficha).
+        var supplier = new Supplier { Name = "Operador sin condicion fiscal", IsActive = true, TaxCondition = null };
+        ctx.Customers.Add(customer);
+        ctx.Suppliers.Add(supplier);
+        await ctx.SaveChangesAsync();
+
+        var reserva = new Reserva { NumeroReserva = "R-T22-1", Name = "R-T22-1", PayerId = customer.Id, Status = EstadoReserva.Confirmed };
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        var hotel = new HotelBooking
+        {
+            ReservaId = reserva.Id, SupplierId = supplier.Id, Status = "Confirmado",
+            NetCost = 10_000m, SalePrice = 20_000m, Currency = "ARS",
+        };
+        ctx.HotelBookings.Add(hotel);
+        await ctx.SaveChangesAsync();
+
+        var service = BuildBcService(ctx);
+        var result = await service.GetServiceCancellationPreflightAsync(reserva.Id, CancellationToken.None);
+
+        Assert.Contains((CancellableServiceTable.Hotel, hotel.PublicId), result.ServicesWithUnknownSupplierTaxCondition);
+    }
+
+    [Fact]
+    public async Task ServicioConOperadorConCondicionFiscalCargada_NoMarcaElAviso()
+    {
+        await using var ctx = NewContext();
+        var customer = new Customer { FullName = "Cliente T22b", IsActive = true };
+        var supplier = new Supplier
+        {
+            Name = "Operador con condicion fiscal completa", IsActive = true,
+            TaxCondition = TaxConditions.IvaResponsableInscripto,
+        };
+        ctx.Customers.Add(customer);
+        ctx.Suppliers.Add(supplier);
+        await ctx.SaveChangesAsync();
+
+        var reserva = new Reserva { NumeroReserva = "R-T22-2", Name = "R-T22-2", PayerId = customer.Id, Status = EstadoReserva.Confirmed };
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        var hotel = new HotelBooking
+        {
+            ReservaId = reserva.Id, SupplierId = supplier.Id, Status = "Confirmado",
+            NetCost = 10_000m, SalePrice = 20_000m, Currency = "ARS",
+        };
+        ctx.HotelBookings.Add(hotel);
+        await ctx.SaveChangesAsync();
+
+        var service = BuildBcService(ctx);
+        var result = await service.GetServiceCancellationPreflightAsync(reserva.Id, CancellationToken.None);
+
+        Assert.DoesNotContain((CancellableServiceTable.Hotel, hotel.PublicId), result.ServicesWithUnknownSupplierTaxCondition);
+    }
+
+    [Fact]
+    public async Task ServicioSinOperadorAsignado_NuncaEntraAlAvisoNuevo()
+    {
+        // Mismo patron que "sin operador no hay plata que anclar" (R1): sin operador, tampoco hay de quien
+        // avisar la condicion fiscal. El servicio queda directamente afuera del candidato, ni bloqueado ni
+        // avisado.
+        await using var ctx = NewContext();
+        var customer = new Customer { FullName = "Cliente T22c", IsActive = true };
+        ctx.Customers.Add(customer);
+        await ctx.SaveChangesAsync();
+
+        var reserva = new Reserva { NumeroReserva = "R-T22-3", Name = "R-T22-3", PayerId = customer.Id, Status = EstadoReserva.Confirmed };
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        var hotel = new HotelBooking
+        {
+            // HotelBooking.SupplierId es int NO nullable: "sin operador" se representa con el sentinel 0
+            // (Ids reales arrancan en 1 por identity) — no dejarlo explicito para no confundir con un
+            // SupplierId real.
+            ReservaId = reserva.Id, Status = "Confirmado",
+            NetCost = 10_000m, SalePrice = 20_000m, Currency = "ARS",
+        };
+        ctx.HotelBookings.Add(hotel);
+        await ctx.SaveChangesAsync();
+
+        var service = BuildBcService(ctx);
+        var result = await service.GetServiceCancellationPreflightAsync(reserva.Id, CancellationToken.None);
+
+        Assert.Empty(result.ServicesWithUnknownSupplierTaxCondition);
+    }
+
+    [Fact]
+    public async Task ReservaConFacturaViva_SigueMarcandoElAvisoDeCondicionFiscalDesconocida()
+    {
+        // A diferencia de R1 (ServicesBlockedByUnanchoredOperatorRefund), el aviso nuevo NO tiene
+        // short-circuit por factura viva: el bloqueo tardio que previene (INV-118, al confirmar la
+        // cancelacion) no depende de si la reserva ya tiene factura de venta.
+        await using var ctx = NewContext();
+        var customer = new Customer { FullName = "Cliente T22d", IsActive = true };
+        var supplier = new Supplier { Name = "Operador sin condicion, con factura viva", IsActive = true, TaxCondition = null };
+        ctx.Customers.Add(customer);
+        ctx.Suppliers.Add(supplier);
+        await ctx.SaveChangesAsync();
+
+        var reserva = new Reserva { NumeroReserva = "R-T22-4", Name = "R-T22-4", PayerId = customer.Id, Status = EstadoReserva.Confirmed };
+        ctx.Reservas.Add(reserva);
+        await ctx.SaveChangesAsync();
+
+        var hotel = new HotelBooking
+        {
+            ReservaId = reserva.Id, SupplierId = supplier.Id, Status = "Confirmado",
+            NetCost = 10_000m, SalePrice = 20_000m, Currency = "ARS",
+        };
+        ctx.HotelBookings.Add(hotel);
+        ctx.Invoices.Add(new Invoice
+        {
+            TipoComprobante = 11, PuntoDeVenta = 1, NumeroComprobante = 3, CAE = "cae-t22-4", Resultado = "A",
+            ImporteTotal = 20_000m, ReservaId = reserva.Id, AnnulmentStatus = AnnulmentStatus.None, CreatedAt = DateTime.UtcNow,
+        });
+        await ctx.SaveChangesAsync();
+
+        var service = BuildBcService(ctx);
+        var result = await service.GetServiceCancellationPreflightAsync(reserva.Id, CancellationToken.None);
+
+        Assert.False(result.HasLiveSaleInvoiceWithoutPayer);
+        Assert.Empty(result.ServicesBlockedByUnanchoredOperatorRefund); // R1 sigue resuelto por la factura viva
+        Assert.Contains((CancellableServiceTable.Hotel, hotel.PublicId), result.ServicesWithUnknownSupplierTaxCondition);
     }
 }
