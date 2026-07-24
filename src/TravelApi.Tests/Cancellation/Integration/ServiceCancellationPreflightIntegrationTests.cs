@@ -190,6 +190,10 @@ public sealed class ServiceCancellationPreflightIntegrationTests
             var result = await bcService.CancelServiceAsync(
                 new CancelServiceRequest(reservaPublicId, "Hotel", hotelAPublicId, "T7: pool compartido, primero"),
                 "tester", "Tester Integracion", CancellationToken.None);
+            // CancelServiceAsync.CancelledServicesCount es el contador AGREGADO "N de M servicios cancelado"
+            // de TODA la reserva (CountServicesAsync recorre las 6 colecciones de servicios con operador y
+            // cuenta cuántos están Cancelado, no "cuántos canceló esta llamada"). Tras cancelar SOLO A, 1 de
+            // los 2 hoteles de la reserva está cancelado.
             Assert.Equal(1, result.CancelledServicesCount);
         }
 
@@ -201,7 +205,15 @@ public sealed class ServiceCancellationPreflightIntegrationTests
             var result = await bcService.CancelServiceAsync(
                 new CancelServiceRequest(reservaPublicId, "Hotel", hotelBPublicId, "T7: pool compartido, segundo"),
                 "tester", "Tester Integracion", CancellationToken.None);
-            Assert.Equal(1, result.CancelledServicesCount);
+            // FIX (2026-07-24, diagnóstico del fallo real en CI Postgres): esta aserción decía 1, asumiendo
+            // (incorrectamente) que el contador era "cancelados EN ESTA LLAMADA". Es acumulado de la reserva
+            // (mismo criterio que arriba): tras cancelar TAMBIÉN B, los 2 de los 2 hoteles están cancelados.
+            // Confirmado que NO es un bug de plata (ver la aserción de la línea-ancla más abajo, sin cambios,
+            // y el test unit gemelo PartialCancellationPaidServiceNoInvoiceGuardTests.
+            // TwoServicesSameSupplierAndCurrency_InsufficientPool_FirstToCancelTakesThePool_SecondGetsNoLine,
+            // que reproduce esta MISMA secuencia con DbContexts separados y confirma RefundCap=30.000 sin
+            // duplicar ni una sola línea).
+            Assert.Equal(2, result.CancelledServicesCount);
         }
 
         await using (var assertCtx = _fixture.CreateDbContext())
@@ -209,6 +221,9 @@ public sealed class ServiceCancellationPreflightIntegrationTests
             var bc = await assertCtx.BookingCancellations
                 .Include(b => b.Lines)
                 .SingleAsync(b => b.ReservaId == reservaId);
+            // LA PLATA (confirmada empíricamente, no solo por lectura de código — ver el test unit gemelo
+            // referenciado arriba): AssignRefundCapsAsync descuenta del pool lo que la línea de A YA consumió
+            // ANTES de repartir para B, así que B queda con RefundCap 0 y no genera línea — sin doble conteo.
             var line = Assert.Single(bc.Lines); // Solo A tiene línea; B no tenía nada que anclar.
             Assert.Equal(30_000m, line.RefundCap);
         }

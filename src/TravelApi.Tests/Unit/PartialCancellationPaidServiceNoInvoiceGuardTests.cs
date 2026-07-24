@@ -317,4 +317,129 @@ public class PartialCancellationPaidServiceNoInvoiceGuardTests
             .Sum(e => e.RemainingBalance);
         Assert.Equal(10_000m, pool);
     }
+
+    // ============================================================
+    // Diagnóstico CI Postgres (2026-07-24): DOS servicios del MISMO operador+moneda comparten un pool
+    // insuficiente (30.000 pagados, 50.000 cada uno). Reproduce la secuencia EXACTA del test de integración
+    // ServiceCancellationPreflightIntegrationTests.DosServiciosMismoOperadorYMoneda_PoolInsuficiente_...
+    // con DbContexts SEPARADOS (mismo nombre de base InMemory, como dos conexiones reales) por cada fase —
+    // igual que _fixture.CreateDbContext() en el test de integración — para que la lectura de la línea de A
+    // (AssignRefundCapsAsync -> existingLineConsumption) pase por una consulta fresca a la "base", no por el
+    // ChangeTracker de un contexto compartido.
+    //
+    // VEREDICTO (a): la plata está BIEN. AssignRefundCapsAsync (línea ~13013) descuenta del pool lo que la
+    // línea de A YA consumió (RefundCap + RetainedDeductionAmount) ANTES de repartir para B — el pool
+    // disponible para B da 0, y GetOrCreateServiceCancellationBcAndLineAsync (skipIfNoOperatorRefundCap=true)
+    // NO crea línea para un RefundCap 0. Este test lo prueba empíricamente (no solo por lectura de código).
+    //
+    // La aserción real que rompía en Postgres NO era esta: CancelServiceAsync.CancelledServicesCount es un
+    // contador AGREGADO de la reserva completa ("N de M servicios cancelado", CountServicesAsync cuenta TODOS
+    // los servicios con operador de la reserva, cancelados vs total — ver su propio XML-doc). El test de
+    // integración afirmaba 1 en la SEGUNDA cancelación (Hotel B), pero para ese momento la reserva tiene 2
+    // servicios cancelados de 2 (A y B) — el valor correcto es 2. Ese fue el único error: el test asumía
+    // (incorrectamente) que el contador era "cancelados EN ESTA LLAMADA" en vez de "cancelados en la reserva
+    // hasta ahora". El fix (PR-6, sin relajar nada) va en el archivo de integración, corrigiendo la aserción
+    // al valor cumulativo correcto — no en el código de plata, que este test confirma que ya es correcto.
+    // ============================================================
+    [Fact]
+    public async Task TwoServicesSameSupplierAndCurrency_InsufficientPool_FirstToCancelTakesThePool_SecondGetsNoLine()
+    {
+        string dbName = $"pool-split-{Guid.NewGuid()}";
+        DbContextOptions<AppDbContext> Options() => new DbContextOptionsBuilder<AppDbContext>()
+            .UseInMemoryDatabase(dbName)
+            .ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
+
+        int reservaId;
+        Guid reservaPublicId, hotelAPublicId, hotelBPublicId;
+        int supplierId;
+
+        // Fase SEED: reserva Confirmada, DOS hoteles del MISMO operador (50.000 cada uno), UN pago imputado de
+        // 30.000 (insuficiente para los dos) + autorización de edición viva (candado C2, reserva Confirmada).
+        await using (var seedCtx = new AppDbContext(Options()))
+        {
+            var customer = new Customer { FullName = "Cliente pool compartido", IsActive = true };
+            var supplier = new Supplier { Name = "Operador pool compartido", IsActive = true };
+            seedCtx.Customers.Add(customer);
+            seedCtx.Suppliers.Add(supplier);
+            await seedCtx.SaveChangesAsync();
+            supplierId = supplier.Id;
+
+            var reserva = new Reserva
+            {
+                NumeroReserva = "R-POOLSPLIT", Name = "Pool compartido", PayerId = customer.Id, Status = EstadoReserva.Confirmed,
+            };
+            seedCtx.Reservas.Add(reserva);
+            await seedCtx.SaveChangesAsync();
+            reservaId = reserva.Id;
+            reservaPublicId = reserva.PublicId;
+
+            var hotelA = new HotelBooking { ReservaId = reserva.Id, SupplierId = supplier.Id, Status = "Confirmado", NetCost = 50_000m, SalePrice = 80_000m, Currency = "ARS" };
+            var hotelB = new HotelBooking { ReservaId = reserva.Id, SupplierId = supplier.Id, Status = "Confirmado", NetCost = 50_000m, SalePrice = 80_000m, Currency = "ARS" };
+            seedCtx.HotelBookings.AddRange(hotelA, hotelB);
+            await seedCtx.SaveChangesAsync();
+            hotelAPublicId = hotelA.PublicId;
+            hotelBPublicId = hotelB.PublicId;
+
+            seedCtx.SupplierPayments.Add(new SupplierPayment
+            {
+                SupplierId = supplier.Id, ReservaId = reserva.Id, Amount = 30_000m, Currency = "ARS",
+                ImputedCurrency = "ARS", ImputedAmount = 30_000m, PaidAt = DateTime.UtcNow, Method = "Transfer",
+            });
+            await seedCtx.SaveChangesAsync();
+
+            seedCtx.ReservaEditAuthorizations.Add(new ReservaEditAuthorization
+            {
+                ReservaId = reserva.Id,
+                Reason = "Autorizacion de test para ejercitar CancelServiceAsync",
+                ExpiresAt = DateTime.UtcNow.AddMinutes(30),
+            });
+            await seedCtx.SaveChangesAsync();
+        }
+
+        // Fase ACT A: cancelar Hotel A en un DbContext PROPIO (mismo patrón que _fixture.CreateDbContext() en
+        // el test de integración) — se lleva TODO el pool disponible (30.000), topeado por su costo (50.000).
+        int cancelledAfterA;
+        await using (var ctxA = new AppDbContext(Options()))
+        {
+            var serviceA = BuildBcService(ctxA);
+            var resultA = await serviceA.CancelServiceAsync(
+                new CancelServiceRequest(reservaPublicId, "Hotel", hotelAPublicId, "pool compartido, primero"),
+                "tester", "Tester Integracion", CancellationToken.None);
+            cancelledAfterA = resultA.CancelledServicesCount;
+        }
+        // "N de M servicios cancelado": tras cancelar SOLO A, 1 de los 2 servicios de la reserva está cancelado.
+        Assert.Equal(1, cancelledAfterA);
+
+        // Fase ACT B: cancelar Hotel B en OTRO DbContext propio — el pool ya está agotado por la línea de A,
+        // que este contexto lee FRESCA desde la "base" (no hay ChangeTracker compartido con la fase A).
+        int cancelledAfterB;
+        await using (var ctxB = new AppDbContext(Options()))
+        {
+            var serviceB = BuildBcService(ctxB);
+            var resultB = await serviceB.CancelServiceAsync(
+                new CancelServiceRequest(reservaPublicId, "Hotel", hotelBPublicId, "pool compartido, segundo"),
+                "tester", "Tester Integracion", CancellationToken.None);
+            cancelledAfterB = resultB.CancelledServicesCount;
+        }
+        // Tras cancelar TAMBIÉN B, los 2 de los 2 servicios de la reserva están cancelados — NO es "1 cancelado
+        // en esta llamada" (el contador es acumulado de la reserva, ver el comentario largo arriba del test).
+        Assert.Equal(2, cancelledAfterB);
+
+        // Fase ASSERT: LA PLATA. Solo UNA línea (la de A) — B no tenía nada que anclar (pool ya consumido) —
+        // y esa única línea tiene el RefundCap correcto (30.000, no 50.000 ni 60.000): sin doble conteo.
+        await using (var assertCtx = new AppDbContext(Options()))
+        {
+            var bc = await assertCtx.BookingCancellations.AsNoTracking()
+                .Include(b => b.Lines)
+                .SingleAsync(b => b.ReservaId == reservaId);
+            var line = Assert.Single(bc.Lines);
+            Assert.Equal(30_000m, line.RefundCap);
+
+            // Ambos hoteles quedaron Cancelados igual (B se cancela aunque no tenga línea que anclar: no hay
+            // plata suya pendiente de devolver, no hay nada que ocultarle al reconciler).
+            var hotels = await assertCtx.HotelBookings.AsNoTracking().Where(h => h.ReservaId == reservaId).ToListAsync();
+            Assert.All(hotels, h => Assert.Equal("Cancelado", h.Status));
+        }
+    }
 }
