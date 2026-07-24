@@ -417,6 +417,14 @@ public sealed class ServiceCancellationPreflightIntegrationTests
         });
         await ctx.SaveChangesAsync();
 
+        // Obra "candado coherente" C2 (2026-07-22, mismo motivo que SeedReservaConServicioPagadoSinFacturaAsync
+        // arriba): este test SI llega a cancelar de verdad (dos veces, Hotel A y Hotel B) sobre una reserva
+        // Confirmada — CancelServiceAsync exige autorizacion de edicion viva (ReservaLockGuard.EnsureCanEditAsync)
+        // antes de tocar el servicio. Sin esto, el guard de candado (una regla DISTINTA de R1, que esta obra no
+        // toca) rechaza con "La reserva esta confirmada (con candado)..." antes de siquiera llegar al reparto del
+        // pool que este test quiere ejercitar.
+        await CancellationTestData.SeedLiveEditAuthorizationAsync(ctx, reserva.Id);
+
         return (reserva.Id, reserva.PublicId, hotelA.PublicId, hotelB.PublicId);
     }
 
