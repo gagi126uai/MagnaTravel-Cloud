@@ -24,7 +24,14 @@ public class BookingCancellationDto
     public Guid CustomerPublicId { get; set; }
     public Guid SupplierPublicId { get; set; }
 
-    public Guid OriginatingInvoicePublicId { get; set; }
+    /// <summary>
+    /// Obra "anular sin factura" (2026-07-23): nullable — un BC sin factura de venta asociada (ancla fiscal
+    /// opcional, ver <c>BookingCancellation.OriginatingInvoiceId</c>) no tiene ninguna factura que exponer
+    /// aca. Antes de este cambio SIEMPRE habia una factura, asi que este campo nunca era null; los
+    /// consumidores viejos que asumian un Guid siempre presente deben tratar null como "sin factura", NUNCA
+    /// como <c>Guid.Empty</c> disfrazado de factura real.
+    /// </summary>
+    public Guid? OriginatingInvoicePublicId { get; set; }
     public Guid? CreditNoteInvoicePublicId { get; set; }
 
     public string Reason { get; set; } = string.Empty;

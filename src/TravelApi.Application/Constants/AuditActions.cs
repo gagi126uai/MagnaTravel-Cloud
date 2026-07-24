@@ -127,6 +127,16 @@ public static class AuditActions
     public const string BookingCancellationConfirmed = "BookingCancellationConfirmed";
 
     /// <summary>
+    /// Obra "anular sin factura" (2026-07-23, PR-12 — rastro de la transicion). Un BC SIN ancla fiscal
+    /// (<c>OriginatingInvoiceId</c> null) salta DIRECTO de <c>Drafted</c> a <c>AwaitingOperatorRefund</c>
+    /// (nunca pasa por <c>ConfirmAsync</c>, que dispara <see cref="BookingCancellationConfirmed"/> — ese
+    /// evento es exclusivo del camino CON factura). Este es el equivalente para el camino SIN factura: deja
+    /// rastro de quien/cuando se disparó el salto y con qué <c>RefundCap</c> total. Ver
+    /// <c>BookingCancellationService.PromoteUnanchoredBcToAwaitingOperatorRefundIfNeeded</c>.
+    /// </summary>
+    public const string BookingCancellationPromotedToAwaitingOperatorRefund = "BookingCancellationPromotedToAwaitingOperatorRefund";
+
+    /// <summary>
     /// FC1.2.1: BC abortado desde <c>Drafted</c> (sin side-effects fiscales).
     /// </summary>
     public const string BookingCancellationAborted = "BookingCancellationAborted";

@@ -197,22 +197,26 @@ public interface IBookingCancellationService
         CancellationToken ct);
 
     /// <summary>
-    /// R1 — VARIANTE TOTAL (plata viva, 2026-06-30): guarda que <c>ReservaService.AnnulWithPaymentsToCreditAsync</c>
-    /// ("Anular con saldo a favor", sin Nota de Crédito) invoca ANTES de mutar nada. Bloquea la anulación cuando se le
-    /// pagó al operador por uno o más servicios y la reserva todavía NO tiene factura de venta viva que ancle el
-    /// receivable "me tiene que devolver".
+    /// Obra "anular sin factura" (2026-07-23, decision del dueño): reemplaza al viejo candado bloqueante
+    /// <c>EnsureReservaAnnulHasReceivableAnchorAsync</c> (eliminado). Ya NO se bloquea "Anular con saldo a
+    /// favor" cuando hay plata pagada al operador sin factura de venta viva: en su lugar, este metodo deja
+    /// (o completa) la BookingCancellationLine que ancla el receivable "el operador me tiene que devolver"
+    /// para CADA servicio de la reserva que tenga <c>RefundCap &gt; 0</c>, con o sin factura viva.
     ///
-    /// <para><b>Por qué</b>: ese flujo cancela todos los servicios vivos (la caja del operador queda negativa) sin
-    /// crear líneas de cancelación; como el receivable se deriva de esas líneas, sin ellas el reconciler del saldo a
-    /// favor materializaría el negativo como crédito GASTABLE (plata que el operador debe devolver). Es la gemela del
-    /// candado que ya protege la cancelación de UN servicio suelto.</para>
+    /// <para><b>Por qué hace falta</b>: ese flujo cancela todos los servicios vivos (la caja del operador queda
+    /// negativa) pero, a diferencia de la anulación formal con Nota de Crédito, no dejaba ninguna
+    /// <c>BookingCancellationLine</c>. Como el receivable Y que usa <c>SupplierCreditReconciler</c> se deriva
+    /// EXCLUSIVAMENTE de esas líneas, sin ellas el reconciler materializaría el negativo de caja como crédito
+    /// GASTABLE (plata que el operador todavía debe devolver, no saldo a favor del cliente).</para>
     ///
-    /// <para><b>No bloquea</b> los casos sin fuga: reserva con factura viva (el path normal ancla el receivable),
-    /// servicios impagos al operador, o reserva sin ningún servicio con operador. Lanza
-    /// <c>InvalidOperationException</c> (el controller la mapea a 409) solo cuando hay plata pagada al operador sin
-    /// factura que la ancle. Es READ-ONLY: no persiste nada.</para>
+    /// <para><b>Con factura de venta viva</b>: la línea queda anclada a esa factura (mismo comportamiento que
+    /// antes tenía el path formal). <b>Sin factura</b>: la línea queda con <c>OriginatingInvoiceId</c> null en
+    /// su BC padre — sigue anclando el receivable igual, solo que el BC nunca emite NC/ND para ella (guard R4).
+    /// Idempotente (no duplica líneas ya existentes). Debe llamarse DESPUÉS de cancelar los servicios y ANTES de
+    /// recalcular la deuda del operador, en la misma transacción del caller.</para>
     /// </summary>
-    Task EnsureReservaAnnulHasReceivableAnchorAsync(int reservaId, CancellationToken ct);
+    Task EnsureOperatorReceivableAnchorLinesAsync(
+        int reservaId, string userId, string? userName, CancellationToken ct);
 
     /// <summary>
     /// Plata viva (familia R1): impide REASIGNAR el operador (o cambiar la moneda) de UN servicio ya pagado al
@@ -221,8 +225,8 @@ public interface IBookingCancellationService
     /// caja en negativo por lo pagado; como ese cambio NO crea ninguna línea de cancelación, el reconciler del saldo
     /// a favor materializaría ese negativo como crédito GASTABLE (plata que el operador debe devolver).
     ///
-    /// <para>Usa el MISMO criterio PRECISO que <see cref="EnsureReservaAnnulHasReceivableAnchorAsync"/> y que el
-    /// candado de cancelar un servicio suelto: reconstruye el <c>RefundCap</c> del servicio (lo pagado al operador
+    /// <para>Usa el MISMO criterio PRECISO que la cancelación de un servicio suelto y que la anulación total:
+    /// reconstruye el <c>RefundCap</c> del servicio (lo pagado al operador
     /// IMPUTADO A ESTA RESERVA, topeado por el costo del servicio). El pool EXCLUYE el prepago "a cuenta"
     /// (pagos sin reserva imputada), así que un saldo a favor on-account del operador NO dispara este candado.
     /// Lanza <c>InvalidOperationException</c> (el controller la mapea a 409) solo cuando el cap resultante es &gt; 0;
@@ -237,12 +241,16 @@ public interface IBookingCancellationService
     /// <summary>
     /// P1 "circuito proveedor" (2026-07-21): impide BAJAR el estado de un servicio de Confirmado a
     /// no-confirmado (ej. "des-confirmar" desde la ficha de edición) cuando ese servicio tiene plata
-    /// pagada al operador y la reserva NO tiene factura de venta viva que ancle el reembolso. Es la
-    /// CUARTA cara de la familia R1, junto con "anular un servicio suelto" (<c>CancelServiceAsync</c>),
-    /// <see cref="EnsureReservaAnnulHasReceivableAnchorAsync"/> (anular la reserva entera) y
-    /// <see cref="EnsureServiceOperatorOrCurrencyChangeHasReceivableAnchorAsync"/> (reasignar operador/
-    /// moneda): las cuatro reconstruyen el mismo <c>RefundCap</c> del servicio (lo pagado al operador
-    /// IMPUTADO A ESTA RESERVA, topeado por su costo) y solo bloquean si da &gt; 0.
+    /// pagada al operador y la reserva NO tiene factura de venta viva que ancle el reembolso.
+    ///
+    /// <para>De la familia R1 original (2026-06-30/07-01) solo quedan DOS candados bloqueantes: este
+    /// (bajar el estado) y <see cref="EnsureServiceOperatorOrCurrencyChangeHasReceivableAnchorAsync"/>
+    /// (reasignar operador/moneda). Los otros dos (cancelar un servicio suelto y anular la reserva
+    /// entera) dejaron de bloquear — obra "anular sin factura" (2026-07-23, decisión del dueño): ahora
+    /// SIEMPRE dejan la línea-ancla del receivable en vez de rechazar (ver
+    /// <see cref="EnsureOperatorReceivableAnchorLinesAsync"/>). Los dos que quedan reconstruyen el mismo
+    /// <c>RefundCap</c> del servicio (lo pagado al operador IMPUTADO A ESTA RESERVA, topeado por su costo)
+    /// y solo bloquean si da &gt; 0.</para>
     ///
     /// <para><b>Por qué existe (hallazgo de Gaston, 2026-07-21)</b>: antes de esta tanda, "bajar el
     /// estado" tenía su PROPIA regla, más ancha e imprecisa (miraba el total de pagos de TODA la
