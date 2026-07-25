@@ -298,8 +298,12 @@ public static class ArcaReceptorResolver
         return checkDigit == actualCheckDigit;
     }
 
-    /// <summary>Quita guiones, puntos y espacios de una cadena de identificacion (CUIT "20-12345678-9").</summary>
-    private static string CleanNumericString(string? value)
+    /// <summary>
+    /// Quita guiones, puntos y espacios de una cadena de identificacion (CUIT "20-12345678-9").
+    /// PUBLICA (H2, barrido 2026-07-25): <see cref="CuitValidator"/> la reusa para el gate de alta/edicion
+    /// de cliente, asi el "limpiar el numero" queda en UN solo lugar en vez de reimplementarse ahi.
+    /// </summary>
+    public static string CleanNumericString(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
         {

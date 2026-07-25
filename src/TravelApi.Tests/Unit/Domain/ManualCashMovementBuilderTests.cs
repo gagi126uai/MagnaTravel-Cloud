@@ -68,7 +68,10 @@ public class ManualCashMovementBuilderTests
         Assert.Equal("Transfer", movement.Method);
         Assert.Equal("OperatorRefund", movement.Category);
         Assert.Contains("Operador Test SA", movement.Description);
-        Assert.Contains(refund.PublicId.ToString(), movement.Description);
+        // Hallazgo H5 (barrido E2E 2026-07-25, gate data-exposure): el texto que ve el cashier en el
+        // Libro de Caja NUNCA debe traer un GUID interno. El nombre del operador alcanza para
+        // identificar el movimiento.
+        Assert.DoesNotContain(refund.PublicId.ToString(), movement.Description);
         Assert.Equal("TX-12345", movement.Reference);
         Assert.Equal("user-cashier", movement.CreatedBy);
         Assert.Equal(refund.SupplierId, movement.RelatedSupplierId);

@@ -309,4 +309,40 @@ public class ReservaServiceTests
         Assert.Equal(1, dbReserva.ChildCount);
         Assert.Equal(0, dbReserva.InfantCount);
     }
+
+    // ================================================================
+    // Hallazgo H13 (barrido E2E 2026-07-25): "Registrar cobro" se OCULTABA en el front sin motivo
+    // en una reserva saldada, aunque el motor YA calculaba el mensaje. Este test verifica el
+    // CONTRATO backend de punta a punta (DB -> ReservaService.GetReservaByIdAsync -> DTO que viaja
+    // por HTTP): que Capabilities.CanRegisterPayment.Reason efectivamente llegue poblado. La causa
+    // del hallazgo era 100% de pantalla (el boton no se pintaba ni deshabilitado); el backend ya
+    // hacia su parte, verificado aca para que quede blindado.
+    // ================================================================
+    [Fact]
+    public async Task GetReservaByIdAsync_ReservaSaldada_ExponeElMotivoDeNoRegistrarCobro()
+    {
+        using var context = new AppDbContext(_dbOptions);
+        context.Reservas.Add(new Reserva
+        {
+            Id = 1, NumeroReserva = "F-2026-H13", Name = "Reserva saldada",
+            Status = EstadoReserva.Confirmed, // venta firme
+            Balance = 0m, // SIN saldo pendiente
+        });
+        await context.SaveChangesAsync();
+
+        // GetReservaByIdAsync arma dto.Capabilities DESPUES de mapear la entidad: mockear el mapper
+        // solo para el resto de los campos no afecta la asercion, mismo patron que los tests de
+        // arriba.
+        _mapperMock
+            .Setup(m => m.Map<ReservaDto>(It.IsAny<Reserva>()))
+            .Returns((Reserva r) => new ReservaDto { Status = r.Status, Balance = r.Balance });
+
+        var service = new ReservaService(context, _mapperMock.Object, _settingsServiceMock.Object, BuildUserManager(), NullLogger<ReservaService>.Instance);
+
+        var dto = await service.GetReservaByIdAsync(1);
+
+        Assert.False(dto.Capabilities.CanRegisterPayment.Allowed);
+        Assert.Equal(Reserva.NoPendingBalanceForChargeMessage, dto.Capabilities.CanRegisterPayment.Reason);
+        Assert.Equal("Esta reserva no tiene saldo pendiente para cobrar.", dto.Capabilities.CanRegisterPayment.Reason);
+    }
 }

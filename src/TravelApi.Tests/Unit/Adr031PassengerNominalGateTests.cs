@@ -20,10 +20,13 @@ using Xunit;
 namespace TravelApi.Tests.Unit;
 
 /// <summary>
-/// ADR-031: gate de pasajeros nominales POR SERVICIO al resolver/emitir, y el aflojamiento del gate de
-/// Presupuesto (Budget -> InManagement ya no exige nombres). Estos tests usan un ReservaService REAL con
-/// el motor de estados enchufado, asi se verifica el efecto end-to-end mas importante: si falta cobertura
-/// nominal, la operacion se RECHAZA y la reserva NO auto-confirma (cierra el bypass B1 del ADR §2.4).
+/// ADR-031: gate de pasajeros nominales POR SERVICIO al resolver/emitir, y el gate de Presupuesto
+/// (Budget -> InManagement) que desde el hallazgo H7 (barrido E2E 2026-07-25, decision firmada de
+/// Gaston) vuelve a exigir un dato nominal minimo: el TITULAR con nombre cargado (no toda la
+/// cobertura nominal, que sigue exigiendose recien al resolver/emitir cada servicio). Estos tests
+/// usan un ReservaService REAL con el motor de estados enchufado, asi se verifica el efecto
+/// end-to-end mas importante: si falta cobertura nominal, la operacion se RECHAZA y la reserva NO
+/// auto-confirma (cierra el bypass B1 del ADR §2.4).
 /// </summary>
 public class Adr031PassengerNominalGateTests
 {
@@ -358,17 +361,54 @@ public class Adr031PassengerNominalGateTests
         Assert.Equal(EstadoReserva.InManagement, (await ctx.Reservas.FindAsync(1))!.Status);
     }
 
-    // ===================== Budget -> InManagement: avanza con cantidad SIN nombres =====================
+    // ===================== Budget -> InManagement: cantidad + titular con nombre =====================
+    //
+    // Hallazgo H7 (barrido E2E 2026-07-25, decision FIRMADA de Gaston el mismo dia): el aflojamiento
+    // original de ADR-031 ("Budget -> InManagement ya no exige nombres") dejaba pasar reservas SIN
+    // NADIE nombrado, que recien chocaban despues al confirmar hotel/traslado. Gaston pidio unificar
+    // el gate: sigue sin exigirse la cobertura NOMINAL COMPLETA (eso se mantiene para el momento de
+    // resolver/emitir cada servicio, mas abajo en este archivo), pero AHORA hace falta que exista un
+    // TITULAR con nombre cargado. El test de abajo reemplaza al viejo
+    // "BudgetToInManagement_AdvancesWithDeclaredCount_WithoutNominals" (0 nominales ya NO avanza).
 
     [Fact]
-    public async Task BudgetToInManagement_AdvancesWithDeclaredCount_WithoutNominals()
+    public async Task BudgetToInManagement_SinNingunPasajeroCargado_EsRechazado()
     {
         await using var ctx = NewContext();
         ctx.Reservas.Add(new Reserva
         {
             Id = 1, NumeroReserva = "F-1", Name = "Test", Status = EstadoReserva.Budget,
-            AdultCount = 2, ChildCount = 0, InfantCount = 0 // 2 declarados, 0 nominales
+            AdultCount = 2, ChildCount = 0, InfantCount = 0 // 2 declarados, CERO pasajeros cargados
         });
+        ctx.HotelBookings.Add(new HotelBooking
+        {
+            Id = 10, ReservaId = 1, HotelName = "Hotel", Status = "Solicitado", SalePrice = 200m,
+            CheckIn = DateTime.UtcNow.Date.AddDays(10), CheckOut = DateTime.UtcNow.Date.AddDays(12)
+        });
+        await ctx.SaveChangesAsync();
+
+        var reservaService = NewReservaService(ctx);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => reservaService.UpdateStatusAsync(1, EstadoReserva.InManagement));
+
+        Assert.Contains("titular", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(EstadoReserva.Budget, (await ctx.Reservas.FindAsync(1))!.Status); // no transiciono
+    }
+
+    [Fact]
+    public async Task BudgetToInManagement_ConTitularNombradoPeroSinElRestoDeLosNominales_Avanza()
+    {
+        // El gate NUEVO (H7) solo exige el TITULAR con nombre — no toda la cobertura nominal (eso
+        // sigue siendo exigencia de mas tarde, por tipo de servicio). Con 2 declarados y SOLO el
+        // titular cargado, la transicion debe seguir permitida.
+        await using var ctx = NewContext();
+        ctx.Reservas.Add(new Reserva
+        {
+            Id = 1, NumeroReserva = "F-1", Name = "Test", Status = EstadoReserva.Budget,
+            AdultCount = 2, ChildCount = 0, InfantCount = 0
+        });
+        ctx.Passengers.Add(new Passenger { Id = 1, ReservaId = 1, FullName = "Titular Uno" });
         ctx.HotelBookings.Add(new HotelBooking
         {
             Id = 10, ReservaId = 1, HotelName = "Hotel", Status = "Solicitado", SalePrice = 200m,

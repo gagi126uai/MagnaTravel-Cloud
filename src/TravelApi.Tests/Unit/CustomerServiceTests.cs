@@ -9,6 +9,7 @@ using TravelApi.Application.Constants;
 using TravelApi.Application.DTOs;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
+using TravelApi.Domain.Helpers;
 using TravelApi.Infrastructure.Persistence;
 using TravelApi.Infrastructure.Reservations;
 using TravelApi.Infrastructure.Services;
@@ -178,7 +179,11 @@ namespace TravelApi.Tests.Unit
             {
                 Id = customer.Id,
                 FullName = customer.FullName,
-                TaxId = "20-11111111-1", // CAMBIA el CUIT
+                // CAMBIA el CUIT. Digito verificador VALIDO (barrido H2, 2026-07-25): con el gate nuevo de
+                // CuitValidator, un CUIT invalido se rechaza ANTES de llegar al guard de factura viva que
+                // este test quiere ejercitar — necesita un numero que pase el checksum para probar lo que
+                // dice probar.
+                TaxId = "20-11111111-2",
                 TaxCondition = customer.TaxCondition,
                 IsActive = true
             };
@@ -210,14 +215,16 @@ namespace TravelApi.Tests.Unit
             {
                 Id = customer.Id,
                 FullName = customer.FullName,
-                TaxId = "20-22222222-2",
+                // Digito verificador VALIDO (barrido H2, 2026-07-25): este test prueba que el cambio de
+                // CUIT se PERMITE sin factura viva, no la validez del numero en si.
+                TaxId = "20-22222222-3",
                 TaxCondition = customer.TaxCondition,
                 IsActive = true
             };
 
             var result = await service.UpdateCustomerAsync(customer.Id, incoming, CancellationToken.None);
 
-            Assert.Equal("20-22222222-2", result.TaxId);
+            Assert.Equal("20-22222222-3", result.TaxId);
         }
 
         /// <summary>
@@ -240,7 +247,9 @@ namespace TravelApi.Tests.Unit
             {
                 Id = customer.Id,
                 FullName = customer.FullName,
-                TaxId = "20-33333333-3", // CAMBIA el CUIT
+                // CAMBIA el CUIT. Digito verificador VALIDO (barrido H2, 2026-07-25): mismo motivo que
+                // arriba, este test prueba el bloqueo por factura viva, no la validez del numero.
+                TaxId = "20-33333333-4",
                 TaxCondition = "Responsable Inscripto", // Y TAMBIEN cambia la condicion
                 TaxConditionId = 1,
                 IsActive = true
@@ -337,6 +346,108 @@ namespace TravelApi.Tests.Unit
                 AuditActions.CustomerTaxConditionChanged,
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()),
                 Times.Never);
+        }
+
+        // ================================================================
+        // Hallazgo H2 (barrido E2E 2026-07-25): un CUIT con el digito verificador mal tipeado se
+        // aceptaba sin avisar nada, tanto en el alta como en la edicion. Ahora CuitValidator bloquea.
+        // ================================================================
+
+        [Fact]
+        public async Task CreateCustomerAsync_CuitConDigitoVerificadorInvalido_Bloquea()
+        {
+            using var context = new AppDbContext(_dbOptions);
+            var service = new CustomerService(context, new FinancePositionService(context));
+            var customer = new Customer { FullName = "Cliente CUIT Invalido", TaxId = "20-12345678-5" }; // DV mal
+
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => service.CreateCustomerAsync(customer, CancellationToken.None));
+
+            Assert.Equal(CuitValidator.InvalidCuitMessage, ex.Message);
+            Assert.Equal(0, await context.Customers.CountAsync());
+        }
+
+        [Fact]
+        public async Task CreateCustomerAsync_CuitConDigitoVerificadorValido_Permite()
+        {
+            using var context = new AppDbContext(_dbOptions);
+            var service = new CustomerService(context, new FinancePositionService(context));
+            var customer = new Customer { FullName = "Cliente CUIT Valido", TaxId = "20-12345678-6" }; // DV correcto
+
+            var result = await service.CreateCustomerAsync(customer, CancellationToken.None);
+
+            Assert.Equal("20-12345678-6", result.TaxId);
+        }
+
+        [Fact]
+        public async Task CreateCustomerAsync_SinCuitCargado_Permite()
+        {
+            // Un cliente con solo DNI (sin CUIT) sigue dandose de alta sin problema: el gate no exige
+            // que TENGA CUIT, solo bloquea uno presente pero mal formado.
+            using var context = new AppDbContext(_dbOptions);
+            var service = new CustomerService(context, new FinancePositionService(context));
+            var customer = new Customer { FullName = "Cliente Sin CUIT", TaxId = null, DocumentType = "DNI", DocumentNumber = "30111222" };
+
+            var result = await service.CreateCustomerAsync(customer, CancellationToken.None);
+
+            Assert.Null(result.TaxId);
+        }
+
+        [Fact]
+        public async Task UpdateCustomerAsync_NuevoCuitConDigitoVerificadorInvalido_Bloquea()
+        {
+            using var context = new AppDbContext(_dbOptions);
+            var customer = new Customer { Id = 60, FullName = "Cliente a editar", TaxId = null, TaxCondition = "Consumidor Final" };
+            context.Customers.Add(customer);
+            await context.SaveChangesAsync();
+            context.ChangeTracker.Clear();
+
+            var service = new CustomerService(context, new FinancePositionService(context));
+            var incoming = new Customer
+            {
+                Id = customer.Id,
+                FullName = customer.FullName,
+                TaxId = "20-12345678-5", // DV mal
+                TaxCondition = customer.TaxCondition,
+                IsActive = true
+            };
+
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => service.UpdateCustomerAsync(customer.Id, incoming, CancellationToken.None));
+
+            Assert.Equal(CuitValidator.InvalidCuitMessage, ex.Message);
+
+            var dbCustomer = await context.Customers.FindAsync(customer.Id);
+            Assert.Null(dbCustomer!.TaxId); // no se persistio el CUIT invalido
+        }
+
+        /// <summary>
+        /// Un cliente con un CUIT invalido cargado DE ANTES de este fix (dato legacy) no queda bloqueado
+        /// para editar campos que NO tocan el CUIT: bloquear ediciones no relacionadas por un dato viejo
+        /// seria una sorpresa desproporcionada para el vendedor.
+        /// </summary>
+        [Fact]
+        public async Task UpdateCustomerAsync_CuitLegacyInvalidoSinCambiarlo_NoBloqueaOtrosCampos()
+        {
+            using var context = new AppDbContext(_dbOptions);
+            var customer = new Customer { Id = 61, FullName = "Cliente legacy", TaxId = "20-12345678-5", TaxCondition = "Consumidor Final" };
+            context.Customers.Add(customer);
+            await context.SaveChangesAsync();
+            context.ChangeTracker.Clear();
+
+            var service = new CustomerService(context, new FinancePositionService(context));
+            var incoming = new Customer
+            {
+                Id = customer.Id,
+                FullName = "Nombre corregido",
+                TaxId = customer.TaxId, // SIN CAMBIOS (sigue siendo el CUIT invalido de antes)
+                TaxCondition = customer.TaxCondition,
+                IsActive = true
+            };
+
+            var result = await service.UpdateCustomerAsync(customer.Id, incoming, CancellationToken.None);
+
+            Assert.Equal("Nombre corregido", result.FullName);
         }
 
         /// <summary>

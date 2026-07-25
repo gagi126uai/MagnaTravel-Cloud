@@ -2172,6 +2172,19 @@ public class SupplierService : ISupplierService
         }
     }
 
+    // Hallazgo H9 (barrido E2E 2026-07-25): la regla "solo agregar el parentesis del detalle
+    // (ciudad/ruta/tramo) si HAY dato real" es UNA sola regla de negocio, pero vive REPETIDA en los
+    // 3 Select() de abajo (Vuelo/Hotel/Traslado) en vez de en un helper compartido como
+    // ServiceDisplayName. Motivo tecnico (mismo que documenta ServiceDisplayName): estos Select()
+    // son LINQ-to-SQL (EF los traduce a una consulta Postgres), y EF Core NO puede traducir una
+    // llamada a un metodo C# arbitrario adentro de un Select — solo entiende un catalogo acotado
+    // de metodos del framework (como string.IsNullOrWhiteSpace, que SI es traducible). Si
+    // llamaramos aca a ServiceDisplayName.WithParenthetical(...), la consulta explotaria en
+    // produccion con "could not be translated" (el MISMO bug de fondo que tiro el buscador global
+    // el mismo dia: ver SearchServiceSqlTranslationIntegrationTests). Por eso la regla se REPLICA a
+    // mano con ternarios traducibles (string.IsNullOrWhiteSpace + concatenacion), como ya hacia el
+    // fix de Asistencia del hallazgo #47 (mas abajo). Blindado contra Postgres real en
+    // SupplierServiceAssistanceDescriptionIntegrationTests.
     private IQueryable<SupplierAccountServiceListItemDto> BuildSupplierServicesQuery(int supplierId)
     {
         var flights = _dbContext.FlightSegments
@@ -2181,7 +2194,12 @@ public class SupplierService : ISupplierService
             {
                 PublicId = segment.PublicId,
                 Type = "Vuelo",
-                Description = ((segment.AirlineName ?? string.Empty) + " " + (segment.FlightNumber ?? string.Empty) + " (" + (segment.Origin ?? string.Empty) + "-" + (segment.Destination ?? string.Empty) + ")").Trim(),
+                // H9: el par Origen-Destino solo se agrega si AMBOS tienen dato; si falta alguno
+                // (o los dos), antes salia "AA 1234 (-)" con un guion suelto. Ahora, sin ruta
+                // completa, el nombre queda solo con aerolinea + numero de vuelo.
+                Description = (string.IsNullOrWhiteSpace(segment.Origin) || string.IsNullOrWhiteSpace(segment.Destination))
+                    ? ((segment.AirlineName ?? string.Empty) + " " + (segment.FlightNumber ?? string.Empty)).Trim()
+                    : ((segment.AirlineName ?? string.Empty) + " " + (segment.FlightNumber ?? string.Empty) + " (" + segment.Origin + "-" + segment.Destination + ")").Trim(),
                 Confirmation = segment.PNR ?? segment.TicketNumber,
                 NetCost = segment.NetCost,
                 SalePrice = segment.SalePrice,
@@ -2200,7 +2218,10 @@ public class SupplierService : ISupplierService
             {
                 PublicId = booking.PublicId,
                 Type = "Hotel",
-                Description = ((booking.HotelName ?? string.Empty) + " (" + (booking.City ?? string.Empty) + ")").Trim(),
+                // H9: sin ciudad cargada, antes salia "Hotel Palace ()". Ahora el nombre queda solo.
+                Description = string.IsNullOrWhiteSpace(booking.City)
+                    ? (booking.HotelName ?? string.Empty).Trim()
+                    : ((booking.HotelName ?? string.Empty) + " (" + booking.City + ")").Trim(),
                 Confirmation = booking.ConfirmationNumber,
                 NetCost = booking.NetCost,
                 SalePrice = booking.SalePrice,
@@ -2219,7 +2240,12 @@ public class SupplierService : ISupplierService
             {
                 PublicId = transfer.PublicId,
                 Type = "Traslado",
-                Description = ((transfer.VehicleType ?? string.Empty) + " (" + (transfer.PickupLocation ?? string.Empty) + " -> " + (transfer.DropoffLocation ?? string.Empty) + ")").Trim(),
+                // H9: la ruta pickup -> dropoff solo se agrega si AMBOS extremos tienen dato; antes
+                // sin ninguno salia "Sedan ( -> )". Mismo criterio "todo o nada" que
+                // ServiceDisplayName.RouteOrEmpty usa para el mismo caso fuera de una consulta SQL.
+                Description = (string.IsNullOrWhiteSpace(transfer.PickupLocation) || string.IsNullOrWhiteSpace(transfer.DropoffLocation))
+                    ? (transfer.VehicleType ?? string.Empty).Trim()
+                    : ((transfer.VehicleType ?? string.Empty) + " (" + transfer.PickupLocation + " -> " + transfer.DropoffLocation + ")").Trim(),
                 Confirmation = transfer.ConfirmationNumber,
                 NetCost = transfer.NetCost,
                 SalePrice = transfer.SalePrice,

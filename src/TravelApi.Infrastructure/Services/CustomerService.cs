@@ -252,6 +252,15 @@ public class CustomerService : ICustomerService
 
     public async Task<Customer> CreateCustomerAsync(Customer customer, CancellationToken cancellationToken)
     {
+        // Hallazgo H2 (barrido E2E 2026-07-25): antes se aceptaba CUALQUIER numero de 11 digitos como
+        // CUIT, aunque el digito verificador no cerrara. Riesgo fiscal real: ese CUIT despues se usa
+        // para facturar. Bloqueamos ACA, antes de tocar la base — un TaxId vacio sigue siendo valido
+        // (no todo cliente tiene CUIT cargado).
+        if (!CuitValidator.IsValidOrEmpty(customer.TaxId))
+        {
+            throw new InvalidOperationException(CuitValidator.InvalidCuitMessage);
+        }
+
         if (!string.IsNullOrWhiteSpace(customer.DocumentType) && !string.IsNullOrWhiteSpace(customer.DocumentNumber))
         {
             var docType = customer.DocumentType.Trim();
@@ -419,6 +428,16 @@ public class CustomerService : ICustomerService
         var taxConditionChanged =
             existing.TaxConditionId != incomingTaxConditionId ||
             !string.Equals(existing.TaxCondition, incomingTaxCondition, StringComparison.Ordinal);
+
+        // Hallazgo H2 (barrido E2E 2026-07-25): mismo bloqueo que el alta, pero SOLO cuando el CUIT
+        // realmente cambia en este PUT. Si no se toco, no lo re-validamos: bloquear ediciones NO
+        // relacionadas (ej. cambiar el telefono) por un CUIT viejo mal cargado ANTES de este fix seria
+        // una sorpresa desproporcionada para el vendedor. La primera vez que alguien intente poner o
+        // corregir un CUIT invalido, ahi si se bloquea.
+        if (taxIdChanged && !CuitValidator.IsValidOrEmpty(customer.TaxId))
+        {
+            throw new InvalidOperationException(CuitValidator.InvalidCuitMessage);
+        }
 
         if (taxIdChanged)
         {

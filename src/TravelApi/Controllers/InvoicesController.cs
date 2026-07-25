@@ -236,6 +236,17 @@ public class InvoicesController : ControllerBase
     [RequireOwnership(OwnedEntity.Invoice, "publicIdOrLegacyId", bypassPermission: Permissions.CobranzasViewAll)]
     public async Task<IActionResult> AnnulInvoice(string publicIdOrLegacyId, [FromBody] AnnulInvoiceRequest? request, CancellationToken ct)
     {
+        // Hallazgo H6 (barrido E2E 2026-07-25): anular una FACTURA (dispara NC fiscal) no pedia
+        // motivo — un Si/No pelado, distinta vara que "anular reserva" (que SI exige >= 10
+        // caracteres, ver ReservasController.AnnulWithCredit). Mismo criterio aca: validacion en
+        // el BORDE (no se confia en el front), 400 con mensaje propio en español, mismo largo
+        // minimo que el resto de los motivos de anulacion fiscal del sistema.
+        var reason = request?.Reason?.Trim() ?? string.Empty;
+        if (reason.Length < 10)
+        {
+            return BadRequest(new { message = "El motivo de la anulación de la factura es obligatorio y debe tener al menos 10 caracteres." });
+        }
+
         // B1.15 Fase 2a (review final): idempotencia. EnqueueAnnulmentAsync rechaza
         // re-encolar si la factura esta Pending o Succeeded (evita doble NC en AFIP).
         // B1.15 Fase D (2026-05-11): tambien puede tirar ApprovalRequiredException si
@@ -245,7 +256,6 @@ public class InvoicesController : ControllerBase
         {
             var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "System";
             var userName = User.FindFirst("FullName")?.Value ?? User.FindFirst(ClaimTypes.Name)?.Value;
-            var reason = request?.Reason?.Trim();
             var requesterIsAdmin = User.IsInRole("Admin");
             var id = await _entityReferenceResolver.ResolveRequiredIdAsync<Invoice>(publicIdOrLegacyId, ct);
             await _invoiceService.EnqueueAnnulmentAsync(id, userId, userName, reason, requesterIsAdmin, ct);

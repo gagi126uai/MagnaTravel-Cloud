@@ -107,6 +107,14 @@ public class NormalizeToSolicitadoDowngradeGuardTests
         ctx.Reservas.Add(reserva);
         await ctx.SaveChangesAsync();
 
+        // Hallazgo H7 (barrido E2E 2026-07-25): "cliente aceptó" (Budget -> InManagement) ahora
+        // exige un TITULAR con nombre cargado (antes solo miraba la CANTIDAD declarada arriba). Sin
+        // esto, los tests de este archivo que esperan que la transicion SIGA de largo (para llegar a
+        // probar el downgrade-guard de servicios) se frenarian antes, por un motivo ajeno a lo que
+        // cada test quiere ejercitar.
+        ctx.Passengers.Add(new Passenger { ReservaId = reserva.Id, FullName = "Titular Test" });
+        await ctx.SaveChangesAsync();
+
         var hotel = new HotelBooking
         {
             ReservaId = reserva.Id, SupplierId = supplier.Id, Status = "Confirmado",

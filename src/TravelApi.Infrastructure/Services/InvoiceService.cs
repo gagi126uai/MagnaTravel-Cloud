@@ -1060,9 +1060,21 @@ public class InvoiceService : IInvoiceService
 
     public async Task<byte[]> GetPdfAsync(int id, CancellationToken ct)
     {
+        // Hallazgo H1 (barrido E2E 2026-07-25): esta consulta NO traia los renglones ni los
+        // tributos de la factura (faltaban estos dos Include). Como el proyecto NO usa lazy
+        // loading proxies (ver AppDbContext), una navegacion no incluida no se completa sola:
+        // invoice.Items quedaba con el valor default de la entidad (lista vacia), SIEMPRE,
+        // sin importar cuantos renglones hubiera realmente en la tabla InvoiceItem. Por eso
+        // InvoicePdfService.ComposeContent (linea ~250, "!invoice.Items.Any()") caia SIEMPRE
+        // al texto generico "Servicios Turisticos - Res ...": el cliente recibia el PDF sin
+        // el detalle real de lo que compro, para CUALQUIER factura, no solo la del hallazgo.
+        // La creacion de la factura (AfipService.CreatePendingInvoice) ya grababa los renglones
+        // bien — el bug estaba pura y exclusivamente en esta lectura para el PDF/WhatsApp.
         var invoice = await _context.Invoices
             .Include(i => i.Reserva)
             .ThenInclude(t => t.Payer)
+            .Include(i => i.Items)
+            .Include(i => i.Tributes)
             .FirstOrDefaultAsync(i => i.Id == id, ct);
 
         if (invoice == null) throw new KeyNotFoundException("Factura no encontrada");

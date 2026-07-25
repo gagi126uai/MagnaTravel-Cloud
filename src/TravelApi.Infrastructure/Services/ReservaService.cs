@@ -5029,9 +5029,31 @@ public class ReservaService : IReservaService
                 "Declará al menos 1 pasajero antes de marcar que el cliente aceptó.");
         }
 
-        // ADR-031: ya NO se exigen los pasajeros NOMINALES (nombre/documento) en este punto. Esa
-        // exigencia se movio al momento de resolver/emitir cada servicio con el operador (gate por
-        // tipo en PassengerNominalRules, invocado desde BookingService). Aca solo se valida la CANTIDAD.
+        // ADR-031: ya NO se exigen los pasajeros NOMINALES completos (nombre/documento) en este
+        // punto. Esa exigencia se movio al momento de resolver/emitir cada servicio con el operador
+        // (gate por tipo en PassengerNominalRules, invocado desde BookingService). Aca solo se
+        // validaba la CANTIDAD (AdultCount + ChildCount + InfantCount), que es un NUMERO en la
+        // cabecera de la reserva y NO garantiza que exista ni una sola fila cargada en Passengers.
+        //
+        // Hallazgo H7 (barrido E2E 2026-07-25, decision FIRMADA de Gaston el mismo dia): eso dejaba
+        // pasar reservas a En gestion sin NADIE nombrado — recien chocaban despues, al confirmar
+        // hotel/traslado (que SI exige el nombre del titular, mismo PassengerNominalRules de mas
+        // abajo). Gaston pidio unificar el gate: "El cliente aceptó" tambien exige que exista un
+        // TITULAR con nombre cargado (no toda la cobertura nominal completa — eso sigue siendo mas
+        // tarde, por tipo de servicio). Reusamos PassengerNominalRules.GetLeadPassenger (la MISMA
+        // definicion de "quien es el titular": el primer pasajero por Id ascendente) para no
+        // reinventar el criterio en dos lugares.
+        var reservaPassengers = await _context.Passengers
+            .AsNoTracking()
+            .Where(passenger => passenger.ReservaId == id)
+            .OrderBy(passenger => passenger.Id)
+            .ToListAsync();
+        var leadPassenger = PassengerNominalRules.GetLeadPassenger(reservaPassengers);
+        if (leadPassenger == null || string.IsNullOrWhiteSpace(leadPassenger.FullName))
+        {
+            throw new InvalidOperationException(
+                "Cargá al menos el nombre del titular antes de avanzar.");
+        }
     }
 
     /// <summary>

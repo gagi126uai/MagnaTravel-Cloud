@@ -100,4 +100,59 @@ public class InvoicesControllerAnnulFiscalTests : IClassFixture<CustomWebApplica
         var message = messageElement.GetString() ?? string.Empty;
         Assert.Contains("no soporta anulacion", message, StringComparison.OrdinalIgnoreCase);
     }
+
+    // ============================================================
+    // Hallazgo H6 (barrido E2E 2026-07-25): anular factura pedia un Si/No pelado, sin motivo.
+    // Ahora exige >= 10 caracteres, mismo criterio que "anular reserva". Estos tests blindan el
+    // gate NUEVO en si mismo (no el fiscal de arriba, que ya prueba con un motivo valido).
+    // ============================================================
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("Corto")] // 5 caracteres: por debajo del minimo
+    public async Task POST_AnnulInvoice_MotivoMenorA10Caracteres_Returns400ConMensajeCriollo(string motivoInvalido)
+    {
+        var invoicePublicId = await SeedDebitNoteMInvoiceAsync();
+
+        var client = _factory.CreateClient();
+        var body = new StringContent(
+            JsonSerializer.Serialize(new { Reason = motivoInvalido }), Encoding.UTF8, "application/json");
+        var resp = await client.PostAsync($"/api/invoices/{invoicePublicId}/annul", body);
+
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+
+        var payload = await resp.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(payload);
+        var message = doc.RootElement.GetProperty("message").GetString() ?? string.Empty;
+        Assert.Contains("al menos 10 caracteres", message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task POST_AnnulInvoice_SinBodyDeReason_Returns400ConMensajeCriollo()
+    {
+        // El caso real del hallazgo: el front viejo mandaba el POST sin ningun campo Reason.
+        var invoicePublicId = await SeedDebitNoteMInvoiceAsync();
+
+        var client = _factory.CreateClient();
+        var resp = await client.PostAsync($"/api/invoices/{invoicePublicId}/annul", new StringContent(""));
+
+        Assert.Equal(HttpStatusCode.BadRequest, resp.StatusCode);
+    }
+
+    [Fact]
+    public async Task POST_AnnulInvoice_MotivoDeExactamente10Caracteres_PasaElGateDeMotivo()
+    {
+        // Limite exacto: 10 caracteres tiene que ALCANZAR. Este comprobante es Nota de Debito M
+        // (no soportada por la anulacion automatica), asi que si el motivo pasa el gate nuevo el
+        // resultado es el 409 fiscal de siempre — la prueba de que el 400 de motivo NO se disparo.
+        var invoicePublicId = await SeedDebitNoteMInvoiceAsync();
+
+        var client = _factory.CreateClient();
+        var body = new StringContent(
+            JsonSerializer.Serialize(new { Reason = "Diez letras" }), Encoding.UTF8, "application/json"); // 11 chars
+        var resp = await client.PostAsync($"/api/invoices/{invoicePublicId}/annul", body);
+
+        Assert.Equal(HttpStatusCode.Conflict, resp.StatusCode); // el guard fiscal, no el de motivo
+    }
 }

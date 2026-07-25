@@ -117,7 +117,13 @@ public static class ManualCashMovementBuilder
             OccurredAt = refund.ReceivedAt,
             Method = refund.Method,
             Category = "OperatorRefund",
-            Description = $"Devolucion del operador {refund.Supplier.Name} ({refund.PublicId})",
+            // Hallazgo H5 (barrido E2E 2026-07-25, gate data-exposure): antes esta linea concatenaba
+            // refund.PublicId (un GUID interno) directo en el texto que el cashier ve en el Libro de
+            // Caja — "Devolucion del operador SANTA CATALINA VIAJES S R L (7d94dc68-...)". Un GUID no
+            // le dice nada a un usuario no programador; es puro ruido tecnico que ademas filtra un
+            // identificador interno a una pantalla de negocio. El nombre del operador YA identifica el
+            // movimiento sin ambiguedad (no hace falta un ID mas para diferenciarlo en el listado).
+            Description = $"Devolucion del operador {refund.Supplier.Name}",
             Reference = refund.Reference,
             CreatedBy = createdByUserId,
             RelatedSupplierId = refund.SupplierId,

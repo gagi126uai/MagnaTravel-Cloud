@@ -2,6 +2,7 @@ using System;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Identity;
@@ -134,6 +135,12 @@ public class InvoicesControllerAnnulApprovalWorkflowTests : IClassFixture<Custom
         client.DefaultRequestHeaders.Add(TestAuthHandler.TestUserRolesHeader, "Vendedor");
     }
 
+    // Hallazgo H6 (barrido E2E 2026-07-25): AnnulInvoice ahora exige un motivo >= 10 caracteres
+    // ANTES de llegar al workflow de approval que estos tests ejercitan. Sin este body, todos
+    // caerian en el 400 nuevo y nunca probarian lo que dicen probar.
+    private static StringContent ValidReasonBody() =>
+        new("{ \"Reason\": \"Motivo de prueba de anulacion\" }", Encoding.UTF8, "application/json");
+
     [Fact]
     public async Task POST_Annul_Vendedor_NoApproval_Returns409WithRequiresApproval()
     {
@@ -141,7 +148,7 @@ public class InvoicesControllerAnnulApprovalWorkflowTests : IClassFixture<Custom
         var client = _factory.CreateClient();
         SetVendedorHeaders(client, seed.VendedorId);
 
-        var resp = await client.PostAsync($"/api/invoices/{seed.OwnInvoicePublicId}/annul", new StringContent(""));
+        var resp = await client.PostAsync($"/api/invoices/{seed.OwnInvoicePublicId}/annul", ValidReasonBody());
         Assert.Equal(HttpStatusCode.Conflict, resp.StatusCode);
 
         var body = await resp.Content.ReadAsStringAsync();
@@ -175,7 +182,7 @@ public class InvoicesControllerAnnulApprovalWorkflowTests : IClassFixture<Custom
         var client = _factory.CreateClient();
         SetVendedorHeaders(client, seed.VendedorId);
 
-        var resp = await client.PostAsync($"/api/invoices/{seed.OwnInvoicePublicId}/annul", new StringContent(""));
+        var resp = await client.PostAsync($"/api/invoices/{seed.OwnInvoicePublicId}/annul", ValidReasonBody());
         Assert.Equal(HttpStatusCode.Accepted, resp.StatusCode);
     }
 
@@ -186,7 +193,7 @@ public class InvoicesControllerAnnulApprovalWorkflowTests : IClassFixture<Custom
         // Default headers → Admin (TestAuthHandler).
         var client = _factory.CreateClient();
 
-        var resp = await client.PostAsync($"/api/invoices/{seed.OwnInvoicePublicId}/annul", new StringContent(""));
+        var resp = await client.PostAsync($"/api/invoices/{seed.OwnInvoicePublicId}/annul", ValidReasonBody());
         Assert.Equal(HttpStatusCode.Accepted, resp.StatusCode);
     }
 
