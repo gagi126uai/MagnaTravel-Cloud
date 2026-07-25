@@ -65,6 +65,13 @@ export function ResolverServicioInline({ reservaId, servicePublicId, recordKind,
     const [guardando, setGuardando] = useState(false);
     const [errorMensaje, setErrorMensaje] = useState(null);
     const [mostrarCartel, setMostrarCartel] = useState(false);
+    // H8 (2026-07-25): rechazo de la acción SIN casillero ("No requiere confirmación").
+    // Antes este camino solo mostraba un toast (showError) sin importar el largo del
+    // mensaje — un rechazo largo (ej. candado C2 de destrabe, o el gate de titular de H7)
+    // se veía 4 segundos y desaparecía solo, "moría mudo" para el cajero que no llegó a
+    // leerlo entero. Mismo criterio que el camino CON casillero: corto = toast, largo =
+    // Cartel emergente que hay que cerrar a mano.
+    const [errorSinCasillero, setErrorSinCasillero] = useState(null);
     const inputRef = useRef(null);
 
     // Al abrir el casillero, el foco va directo al input — el usuario puede tipear el
@@ -115,8 +122,8 @@ export function ResolverServicioInline({ reservaId, servicePublicId, recordKind,
     };
 
     // "No requiere confirmación": único de 1 click, sin casillero — no hay número que
-    // cargar, así que el error se muestra "como hoy" (toast), igual que el resto de los
-    // botones de 1 click de esta lista.
+    // cargar. El rechazo corto sigue yendo por toast (como antes); el rechazo LARGO va
+    // al Cartel emergente único, para que no se pierda como un toast que se cierra solo.
     const ejecutarAccionSinCasillero = async (tipo) => {
         const request = construirRequestResolverServicio({ tipo, recordKind, reservaId, servicePublicId, numero: null });
         if (!request) return;
@@ -127,7 +134,12 @@ export function ResolverServicioInline({ reservaId, servicePublicId, recordKind,
             showSuccess(resolverMensajeExito(tipo));
             onResuelto?.();
         } catch (error) {
-            showError(getApiErrorMessage(error, "No se pudo registrar el traslado."));
+            const mensaje = getApiErrorMessage(error, "No se pudo registrar el traslado.");
+            if (debeMostrarCartelEmergente(mensaje)) {
+                setErrorSinCasillero(mensaje);
+            } else {
+                showError(mensaje);
+            }
         } finally {
             setGuardando(false);
         }
@@ -164,6 +176,16 @@ export function ResolverServicioInline({ reservaId, servicePublicId, recordKind,
                         </button>
                     )
                 )}
+
+                {/* H8: rechazo largo de "No requiere confirmación" — mismo Cartel que el resto
+                    de la app, no un toast que se cierra solo. */}
+                <CartelEmergente
+                    isOpen={Boolean(errorSinCasillero)}
+                    variant={CARTEL_EMERGENTE_VARIANTES.BLOQUEO}
+                    message={errorSinCasillero}
+                    onClose={() => setErrorSinCasillero(null)}
+                    dataTestId={`cartel-emergente-resolver-sin-casillero-${servicePublicId}`}
+                />
             </div>
         );
     }

@@ -11,6 +11,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { isReservaAnulada } from "../moneyStatus.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Lógica copiada de RegistrarCobroInline.jsx (la función de resolución de moneda)
@@ -749,4 +750,130 @@ test("F PaymentModal cruzado: TC vacío → montoEquivalente es null (no rompe)"
         if (!isNaN(tc) && tc > 0) montoEquivalente = 100 / tc;
     }
     assert.equal(montoEquivalente, null, "sin TC no se muestra equivalente");
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// H13 (2026-07-25): "Registrar cobro" en reserva saldada — botón visible APAGADO
+// con el motivo del motor debajo, en vez de desaparecer sin avisar (ReservaDetailPage).
+//
+// Fix de review (B1, 2026-07-25): la primera versión mostraba el botón apagado en
+// CUALQUIER estado que trajera la capability (Presupuesto, Perdida, Anulada...),
+// donde el motivo del motor ("Pasala a En gestión primero") no tiene sentido y
+// reintroduce el patrón "motivo por botón" que el dueño sacó para esos estados de
+// solo lectura. Ahora el motivo-en-botón SOLO se muestra en los estados donde
+// cobrar es conceptualmente posible: venta firme (En gestión/Confirmada/Finalizada)
+// o En viaje (ahí "el viaje ya empezó" SÍ es un motivo correcto).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Replica la lógica de la barra de acciones de ReservaDetailPage para el botón
+ * "Registrar cobro". Antes del fix, el botón directamente desaparecía cuando
+ * capabilities.canRegisterPayment.allowed era false y el cajero se quedaba sin
+ * explicación.
+ *
+ * Ahora: si el backend mandó la capability Y el estado de la reserva es uno donde
+ * cobrar tiene sentido (no pre-venta, no terminal-sin-venta), el botón se muestra
+ * habilitado si allowed=true, o apagado con el motivo (reason) si allowed=false.
+ * En pre-venta (Cotización/Presupuesto) y en terminales sin venta (Perdida/Anulada)
+ * el botón se OCULTA, igual que "Emitir factura"/"Anular reserva" en esos estados.
+ * Sin capabilities (DTO viejo), se degrada al comportamiento de siempre:
+ * habilitado, sin motivo que mostrar.
+ *
+ * @param {{ status: string, isVoided?: boolean, capabilities?: object }} reserva
+ */
+function calcularEstadoBotonRegistrarCobro(reserva) {
+    const capRegPago = reserva?.capabilities?.canRegisterPayment;
+    const habilitado = !capRegPago || capRegPago.allowed;
+
+    const isEarlyStage = reserva?.status === "Quotation" || reserva?.status === "Budget";
+    const esEstadoDondeCobrarTieneSentido =
+        !isEarlyStage && reserva?.status !== "Lost" && !isReservaAnulada(reserva);
+
+    const mostrar = habilitado || (Boolean(capRegPago) && esEstadoDondeCobrarTieneSentido);
+    const motivo = !habilitado && mostrar ? (capRegPago?.reason ?? null) : null;
+    return { mostrar, habilitado, motivo };
+}
+
+test("H13 cobro: sin capabilities (DTO viejo) → botón habilitado, sin motivo", () => {
+    const estado = calcularEstadoBotonRegistrarCobro({ status: "Confirmed" });
+    assert.equal(estado.mostrar, true);
+    assert.equal(estado.habilitado, true);
+    assert.equal(estado.motivo, null);
+});
+
+test("H13 cobro: canRegisterPayment.allowed=true → botón habilitado, sin motivo", () => {
+    const reserva = { status: "Confirmed", capabilities: { canRegisterPayment: { allowed: true, reason: null } } };
+    const estado = calcularEstadoBotonRegistrarCobro(reserva);
+    assert.equal(estado.mostrar, true);
+    assert.equal(estado.habilitado, true);
+    assert.equal(estado.motivo, null);
+});
+
+test("H13 cobro: reserva CONFIRMADA y SALDADA (allowed=false, balance<=0) → botón VISIBLE y APAGADO con el motivo", () => {
+    // Este es el caso concreto que reportó Gaston en el barrido E2E: antes el
+    // botón desaparecía sin explicación cuando la reserva ya no tenía saldo.
+    const reserva = {
+        status: "Confirmed",
+        capabilities: {
+            canRegisterPayment: { allowed: false, reason: "Esta reserva no tiene saldo pendiente para cobrar." },
+        },
+    };
+    const estado = calcularEstadoBotonRegistrarCobro(reserva);
+    assert.equal(estado.mostrar, true, "el botón tiene que seguir viéndose (apagado), nunca desaparecer mudo");
+    assert.equal(estado.habilitado, false);
+    assert.equal(estado.motivo, "Esta reserva no tiene saldo pendiente para cobrar.");
+});
+
+test("H13 cobro: reserva En viaje (allowed=false, motivo del viaje) → también visible y apagado con SU motivo", () => {
+    // "En viaje" NO es venta firme (SaleFirmStatuses no la incluye), pero SIGUE siendo un
+    // estado donde el motivo de rechazo es correcto ("el viaje ya empezó, no se cobra acá") —
+    // por eso el botón se muestra apagado igual que en los estados de venta firme.
+    const reserva = {
+        status: "Traveling",
+        capabilities: {
+            canRegisterPayment: { allowed: false, reason: "No se puede cobrar mientras la reserva está en viaje." },
+        },
+    };
+    const estado = calcularEstadoBotonRegistrarCobro(reserva);
+    assert.equal(estado.mostrar, true);
+    assert.equal(estado.habilitado, false);
+    assert.equal(estado.motivo, "No se puede cobrar mientras la reserva está en viaje.");
+});
+
+// ─── Límite del fix de review: estados terminales/pre-venta → botón OCULTO ────
+
+test("H13 cobro LÍMITE: reserva ANULADA (Cancelled) → botón OCULTO, no gris con motivo sin sentido", () => {
+    // Antes del fix de review, esta reserva mostraba el botón gris con "Pasala a En
+    // gestión primero" — un consejo sin sentido en una reserva sin efecto.
+    const reserva = {
+        status: "Cancelled",
+        isVoided: true,
+        capabilities: {
+            canRegisterPayment: { allowed: false, reason: "No se puede registrar un cobro en este estado de la reserva. Pasala a En gestion primero." },
+        },
+    };
+    const estado = calcularEstadoBotonRegistrarCobro(reserva);
+    assert.equal(estado.mostrar, false, "en una reserva anulada el botón de cobro no debe verse, ni siquiera apagado");
+});
+
+test("H13 cobro LÍMITE: reserva PERDIDA (Lost) → botón OCULTO", () => {
+    const reserva = {
+        status: "Lost",
+        capabilities: {
+            canRegisterPayment: { allowed: false, reason: "No se puede registrar un cobro en este estado de la reserva. Pasala a En gestion primero." },
+        },
+    };
+    const estado = calcularEstadoBotonRegistrarCobro(reserva);
+    assert.equal(estado.mostrar, false);
+});
+
+test("H13 cobro LÍMITE: reserva en PRESUPUESTO (Budget, pre-venta) → botón OCULTO", () => {
+    const reserva = {
+        status: "Budget",
+        capabilities: {
+            canRegisterPayment: { allowed: false, reason: "No se puede registrar un cobro en este estado de la reserva. Pasala a En gestion primero." },
+        },
+    };
+    const estado = calcularEstadoBotonRegistrarCobro(reserva);
+    assert.equal(estado.mostrar, false, "en Presupuesto (pre-venta) todavía no hay nada que cobrar");
 });

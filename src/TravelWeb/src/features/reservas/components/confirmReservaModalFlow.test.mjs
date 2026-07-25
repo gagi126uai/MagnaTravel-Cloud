@@ -7,9 +7,12 @@
  *   0) PATCH /passenger-counts (persistir la composición adultos/menores/infantes)
  *   1) PUT /status (cambiar estado a InManagement)
  *
- * El único requisito de UI para habilitar el botón es que la suma de pasajeros
- * declarados sea >= 1. Los nombres se cargan DESPUÉS (en la solapa Pasajeros
- * o mediante el mini-formulario inline al emitir cada servicio).
+ * H7 (2026-07-25, decisión firmada de Gastón): el requisito de UI para habilitar
+ * el botón CAMBIÓ. Antes alcanzaba con la CANTIDAD declarada (>= 1); ahora hace
+ * falta que el TITULAR (primer pasajero) tenga el NOMBRE cargado — mismo criterio
+ * que ya usa el motor para confirmar hotel/traslado (calcularHintHotelTraslado).
+ * Antes de este fix se podía avanzar con pasajeros "fantasma" sin nombre y recién
+ * chocaba más adelante al confirmar un servicio con el operador.
  *
  * Cómo correr:
  *   node --test src/features/reservas/components/confirmReservaModalFlow.test.mjs
@@ -17,21 +20,23 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { calcularHintHotelTraslado } from "../lib/pasajeroHint.js";
 
 // ─── Lógica pura: validación previa al avance ─────────────────────────────────
 
 /**
  * Replica la validación defensiva del handleConfirmReservation del ReservaDetailPage.
- * El botón debe estar deshabilitado cuando total = 0.
- * El backend también valida, pero queremos corroborarlo en el front.
+ * El botón debe estar deshabilitado cuando falta el titular con nombre — se apoya
+ * en la MISMA función pura que usa ReservaHeader, para que front y "el mismo front"
+ * nunca diverjan entre sí. El backend también re-valida, esto es la capa de UI.
  *
- * @param {{ adultCount: number, childCount: number, infantCount: number }} reserva
+ * @param {{ passengers?: object[] }} reserva
  * @returns {string|null} — null si puede avanzar, mensaje de error si no
  */
 function validarAntesDeAvanzar(reserva) {
-    const total = (reserva?.adultCount || 0) + (reserva?.childCount || 0) + (reserva?.infantCount || 0);
-    if (total === 0) {
-        return "Tiene que haber al menos 1 pasajero declarado antes de continuar.";
+    const { faltaTitular } = calcularHintHotelTraslado(reserva?.passengers);
+    if (faltaTitular) {
+        return "Tiene que haber un pasajero titular con el nombre cargado antes de continuar.";
     }
     return null;
 }
@@ -76,27 +81,33 @@ async function simularAvanceSinModal({ reserva, targetStatus, apiMocks }) {
 const resolveOk = () => async () => ({ ok: true });
 const rejectWith = (message) => async () => { throw new Error(message); };
 
-// ─── Tests: validación previa ─────────────────────────────────────────────────
+// ─── Tests: validación previa (H7: titular CON NOMBRE, no solo cantidad) ──────
 
-test("validar: 0 adultos + 0 menores + 0 infantes → error, no puede avanzar", () => {
-    const error = validarAntesDeAvanzar({ adultCount: 0, childCount: 0, infantCount: 0 });
-    assert.ok(error, "debe devolver mensaje de error con 0 pasajeros");
-    assert.ok(error.includes("al menos 1"), `mensaje inesperado: ${error}`);
+test("validar: sin pasajeros cargados → error, no puede avanzar", () => {
+    const error = validarAntesDeAvanzar({ passengers: [] });
+    assert.ok(error, "debe devolver mensaje de error sin pasajeros");
+    assert.ok(error.includes("titular"), `mensaje inesperado: ${error}`);
 });
 
-test("validar: 1 adulto → puede avanzar (sin importar que no haya nombres)", () => {
-    const error = validarAntesDeAvanzar({ adultCount: 1, childCount: 0, infantCount: 0 });
-    assert.equal(error, null, "con 1 pasajero declarado el front habilita el avance");
+test("validar: titular CON nombre → puede avanzar", () => {
+    const error = validarAntesDeAvanzar({ passengers: [{ fullName: "Juan Perez" }] });
+    assert.equal(error, null, "con el titular nombrado el front habilita el avance");
 });
 
-test("validar: 0 adultos + 2 menores → puede avanzar", () => {
-    const error = validarAntesDeAvanzar({ adultCount: 0, childCount: 2, infantCount: 0 });
-    assert.equal(error, null);
+test("validar: titular SIN nombre (pasajero fantasma) → error, no puede avanzar", () => {
+    // Este es el caso concreto que reportó el barrido E2E: antes bastaba con haber
+    // declarado la CANTIDAD, aunque el titular no tuviera el nombre cargado.
+    const error = validarAntesDeAvanzar({ passengers: [{ fullName: "" }] });
+    assert.ok(error, "titular sin nombre no puede avanzar, aunque haya un registro de pasajero");
 });
 
-test("validar: solo infantes → puede avanzar", () => {
-    const error = validarAntesDeAvanzar({ adultCount: 0, childCount: 0, infantCount: 1 });
-    assert.equal(error, null);
+test("validar: hay más de un pasajero pero el titular (primero) no tiene nombre → error", () => {
+    // Solo importa el PRIMER pasajero de la lista (el titular) — mismo criterio
+    // que calcularHintHotelTraslado usa para hotel/traslado en toda la app.
+    const error = validarAntesDeAvanzar({
+        passengers: [{ fullName: "" }, { fullName: "Acompañante Con Nombre" }],
+    });
+    assert.ok(error, "el nombre de un acompañante no reemplaza al del titular");
 });
 
 test("validar: reserva null → error (caso defensivo)", () => {
@@ -120,7 +131,7 @@ test("buildPassengerCountsPayload: infantCount va como 0, no se omite", () => {
 
 test("flujo sin modal: secuencia correcta → patch-counts PRIMERO, luego put-status", async () => {
     const llamadas = await simularAvanceSinModal({
-        reserva: { adultCount: 2, childCount: 0, infantCount: 0 },
+        reserva: { adultCount: 2, childCount: 0, infantCount: 0, passengers: [{ fullName: "Juan Perez" }] },
         targetStatus: "InManagement",
         apiMocks: {
             patchCounts: resolveOk(),
@@ -144,7 +155,7 @@ test("flujo sin modal: NO se crea ningún pasajero nominal en el avance", async 
     };
 
     await simularAvanceSinModal({
-        reserva: { adultCount: 1, childCount: 1, infantCount: 0 },
+        reserva: { adultCount: 1, childCount: 1, infantCount: 0, passengers: [{ fullName: "Juan Perez" }] },
         targetStatus: "InManagement",
         apiMocks: apiMockConEspía,
     });
@@ -157,7 +168,7 @@ test("flujo sin modal: si PATCH counts falla → NO se ejecuta el PUT status", a
 
     await assert.rejects(
         () => simularAvanceSinModal({
-            reserva: { adultCount: 1, childCount: 0, infantCount: 0 },
+            reserva: { adultCount: 1, childCount: 0, infantCount: 0, passengers: [{ fullName: "Juan Perez" }] },
             targetStatus: "InManagement",
             apiMocks: {
                 patchCounts: rejectWith("Error en counts"),
@@ -176,7 +187,7 @@ test("flujo sin modal: si PATCH counts falla → NO se ejecuta el PUT status", a
 test("flujo sin modal: si PUT status falla → el error se propaga", async () => {
     await assert.rejects(
         () => simularAvanceSinModal({
-            reserva: { adultCount: 1, childCount: 0, infantCount: 0 },
+            reserva: { adultCount: 1, childCount: 0, infantCount: 0, passengers: [{ fullName: "Juan Perez" }] },
             targetStatus: "InManagement",
             apiMocks: {
                 patchCounts: resolveOk(),
@@ -190,12 +201,12 @@ test("flujo sin modal: si PUT status falla → el error se propaga", async () =>
     );
 });
 
-test("flujo sin modal: validación 0 pax → no se llama ninguna API", async () => {
+test("flujo sin modal: validación sin titular con nombre → no se llama ninguna API", async () => {
     let apiLlamada = false;
 
     await assert.rejects(
         () => simularAvanceSinModal({
-            reserva: { adultCount: 0, childCount: 0, infantCount: 0 },
+            reserva: { adultCount: 0, childCount: 0, infantCount: 0, passengers: [] },
             targetStatus: "InManagement",
             apiMocks: {
                 patchCounts: async () => { apiLlamada = true; },
@@ -203,7 +214,7 @@ test("flujo sin modal: validación 0 pax → no se llama ninguna API", async () 
             },
         }),
         (err) => {
-            assert.ok(err.message.includes("al menos 1"));
+            assert.ok(err.message.includes("titular"));
             return true;
         }
     );
@@ -213,20 +224,19 @@ test("flujo sin modal: validación 0 pax → no se llama ninguna API", async () 
 
 // ─── Tests: comportamiento del botón en el UI (lógica pura) ──────────────────
 
-test("botón 'El cliente aceptó' deshabilitado cuando total = 0", () => {
-    // La lógica de deshabilitar es: total === 0 → disabled
-    const reservaCerosPax = { adultCount: 0, childCount: 0, infantCount: 0 };
-    const total = (reservaCerosPax.adultCount) + (reservaCerosPax.childCount) + (reservaCerosPax.infantCount);
-    assert.equal(total === 0, true, "total 0 → botón debe estar deshabilitado");
+test("botón 'El cliente aceptó' deshabilitado sin pasajeros cargados", () => {
+    const { faltaTitular } = calcularHintHotelTraslado([]);
+    assert.equal(faltaTitular, true, "sin pasajeros → botón debe estar deshabilitado");
 });
 
-test("botón habilitado aunque no haya nombres cargados (solo necesita cantidad >= 1)", () => {
-    // El botón NO exige nombres — solo exige que haya al menos 1 declarado.
-    // Importante: este era el comportamiento del modal viejo, pero ahora el botón
-    // se habilita sin esperar nombres.
-    const reservaConCantidad = { adultCount: 2, childCount: 1, infantCount: 0, passengers: [] };
-    const total = reservaConCantidad.adultCount + reservaConCantidad.childCount + reservaConCantidad.infantCount;
-    assert.equal(total > 0, true, "hay cantidad declarada → botón habilitado");
-    // Cero pasajeros nominales no bloquea el avance en el front
-    assert.equal(reservaConCantidad.passengers.length, 0, "no hay nominales pero el botón igual se habilita");
+test("botón deshabilitado si hay cantidad declarada pero el titular no tiene nombre", () => {
+    // H7: este es el bug que arregla — antes esta reserva HABILITABA el botón
+    // (bastaba con adultCount+childCount+infantCount >= 1). Ahora no alcanza.
+    const { faltaTitular } = calcularHintHotelTraslado([{ fullName: "" }]);
+    assert.equal(faltaTitular, true, "cantidad declarada sin nombre del titular → sigue deshabilitado");
+});
+
+test("botón habilitado cuando el titular tiene nombre cargado", () => {
+    const { faltaTitular } = calcularHintHotelTraslado([{ fullName: "Juan Perez" }]);
+    assert.equal(faltaTitular, false, "titular con nombre → botón habilitado");
 });

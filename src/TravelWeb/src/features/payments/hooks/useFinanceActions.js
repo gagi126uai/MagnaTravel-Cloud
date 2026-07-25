@@ -1,5 +1,5 @@
 import { api } from "../../../api";
-import { showConfirm, showError, showSuccess } from "../../../alerts";
+import { showConfirm, showError, showSuccess, showTextPrompt } from "../../../alerts";
 import { getPublicId } from "../../../lib/publicIds";
 
 // B1.15 Fase D (2026-05-11): options.onApprovalRequired (opcional). Cuando
@@ -75,20 +75,26 @@ export function useFinanceActions(loadData, options = {}) {
   };
 
   const handleAnnulInvoice = async (invoice) => {
-    const confirmed = await showConfirm({
+    // H6 (2026-07-25): el motivo de la anulación queda auditado, igual que el motivo
+    // de reversa de reservas (RevertStatusModal) y el de facturas de proveedor
+    // (SupplierInvoicesSection) — por eso pedimos un texto de al menos 10 caracteres
+    // en vez de un simple Sí/No. showTextPrompt ya valida el mínimo y solo devuelve
+    // el texto (trimeado) cuando el usuario confirma; si cancela devuelve null.
+    // Conservamos el aviso fiscal de IVA por período que antes mostraba el swal Sí/No.
+    const reason = await showTextPrompt({
       title: "Anular factura",
-      text: "Se emitirá una nota de crédito por el importe total.",
-      details: "La nota de crédito impacta IVA en el período fiscal de su emisión, no en el de la factura origen (Ley IVA 23.349, art. 12). Si la factura pertenece a un período ya declarado, verificar el impacto antes de continuar.",
-      confirmText: "Sí, anular",
-      confirmColor: "red",
+      text: "Se emitirá una nota de crédito por el importe total. La nota de crédito impacta IVA en el período fiscal de su emisión, no en el de la factura origen (Ley IVA 23.349, art. 12). Si la factura pertenece a un período ya declarado, verificá el impacto antes de continuar.",
+      placeholder: "Motivo de la anulación (mín. 10 caracteres)",
+      confirmText: "Anular",
+      minLength: 10,
     });
 
-    if (!confirmed) {
+    if (!reason) {
       return;
     }
 
     try {
-      const response = await api.post(`/invoices/${getPublicId(invoice)}/annul`);
+      const response = await api.post(`/invoices/${getPublicId(invoice)}/annul`, { reason });
       showSuccess(response?.message || response?.Message || "Anulacion encolada.");
       await loadData();
     } catch (error) {

@@ -30,7 +30,7 @@ import {
 import { ListEmptyState } from "../../../components/ui/ListEmptyState";
 import { MobileRecordCard, MobileRecordList } from "../../../components/ui/MobileRecordCard";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
-import { formatCurrency } from "../lib/financeUtils";
+import { buildMovementRowKey, formatCurrency } from "../lib/financeUtils";
 import { formatDate, formatDateTime } from "../../../lib/utils";
 
 // Formateador legacy mantenido solo para llamadas locales sin moneda explícita (compatibilidad interna)
@@ -334,12 +334,12 @@ export function MovementsTab({
               description="Todavia no hay ingresos o egresos registrados en caja."
             />
           ) : (
-            movements.map((movement) => {
+            movements.map((movement, index) => {
               const isIncome = movement.direction === "Income";
               const isManual = movement.isManual;
 
               return (
-                <DataGridRow key={`${movement.sourceType}-${movement.sourcePublicId}`}>
+                <DataGridRow key={buildMovementRowKey(movement, index)}>
                   {/* fix 2026-07-22: movement.occurredAt sale de CashLedgerEntry.OccurredAt, que para
                       cobros/pagos ES payment.PaidAt (día de negocio elegido por el cajero, guardado
                       como medianoche UTC — no un instante con hora real). formatDateTime() no lo
@@ -415,13 +415,13 @@ export function MovementsTab({
         />
       ) : (
         <MobileRecordList>
-          {movements.map((movement) => {
+          {movements.map((movement, index) => {
             const isIncome = movement.direction === "Income";
             const isManual = movement.isManual;
 
             return (
               <MobileRecordCard
-                key={`${movement.sourceType}-${movement.sourcePublicId}`}
+                key={buildMovementRowKey(movement, index)}
                 accentSlot={
                   <div className={`rounded-xl p-2 ${isIncome ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400" : "bg-rose-50 text-rose-600 dark:bg-rose-950/30 dark:text-rose-400"}`}>
                     {isIncome ? <ArrowDownLeft className="h-4 w-4" /> : <ArrowUpRight className="h-4 w-4" />}

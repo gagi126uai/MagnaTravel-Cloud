@@ -4,6 +4,7 @@ import { getReservaArchiveBlockReason } from "../archiveRules";
 import { getStatusConfig, translateStatus, isStatusLocked, isReservaEnEstadoVivo, tieneCandadoDeEdicionActivo } from "./ReservaStatusBadge";
 import { ReservaStatusChips } from "./ReservaStatusChips";
 import { isAdmin } from "../../../auth";
+import { calcularHintHotelTraslado } from "../lib/pasajeroHint";
 
 // Bug "fechas corridas un día" (2026-07-16): startDate/endDate de la reserva son
 // fechas-solo-día (el usuario elige un día calendario, no una hora). El backend las
@@ -82,7 +83,6 @@ export function ReservaHeader({
     onRequestEdit,
     onMarkLost,
     serviciosCancelados = null,
-    totalPasajerosDeclarados = null,
     onCorrectTraveling,
 }) {
     const isArchived = reserva.status === 'Archived';
@@ -436,40 +436,48 @@ export function ReservaHeader({
                     )}
 
                     {reserva.status === 'Budget' && (() => {
-                        // P2 (ADR-031): el botón se apaga cuando no hay ningún pasajero declarado.
-                        // totalPasajerosDeclarados viene del padre (suma adultCount + childCount + infantCount).
-                        // Si el padre no lo pasa (null), asumimos que puede avanzar (graceful degradation).
-                        const sinPasajeros = totalPasajerosDeclarados !== null && totalPasajerosDeclarados === 0;
+                        // H7 (2026-07-25, decisión firmada de Gastón): no alcanza con la CANTIDAD
+                        // de pasajeros declarada (P2/ADR-031, lo que exigía antes) — hace falta que
+                        // el TITULAR (primer pasajero de la lista) tenga el nombre cargado. Sin este
+                        // gate se podía avanzar a "En gestión" con pasajeros "fantasma" sin nombre y
+                        // recién chocaba más adelante al intentar confirmar un servicio con el
+                        // operador (hallazgo #7 del barrido E2E 2026-07-25).
+                        //
+                        // Reusamos calcularHintHotelTraslado (pasajeroHint.js) en vez de escribir
+                        // el chequeo de nuevo acá: es EL MISMO criterio que ya usa el motor para
+                        // confirmar hotel/traslado, así el front nunca diverge de esa regla. Cubre
+                        // también el caso "sin pasajeros" (lista vacía → faltaTitular=true).
+                        const { faltaTitular } = calcularHintHotelTraslado(reserva.passengers);
                         return (
                             <>
                                 <button
                                     onClick={() => onStatusChange('InManagement')}
-                                    disabled={sinPasajeros}
+                                    disabled={faltaTitular}
                                     data-testid="reserva-action-client-accepted"
-                                    data-disabled-reason={sinPasajeros ? "sin-pasajeros" : undefined}
+                                    data-disabled-reason={faltaTitular ? "sin-titular-con-nombre" : undefined}
                                     className={`px-5 py-2.5 rounded-xl font-bold text-sm shadow-sm transition-all active:scale-95 ${
-                                        sinPasajeros
+                                        faltaTitular
                                             ? 'bg-slate-300 dark:bg-slate-700 text-slate-500 dark:text-slate-400 cursor-not-allowed shadow-none'
                                             : 'bg-cyan-600 hover:bg-cyan-700 text-white'
                                     }`}
                                     title={
-                                        sinPasajeros
-                                            ? "Tiene que haber al menos 1 pasajero declarado"
+                                        faltaTitular
+                                            ? "Tiene que haber un pasajero titular con el nombre cargado"
                                             : "El cliente acepto el presupuesto — empieza la gestion con los operadores"
                                     }
                                 >
                                     El cliente acepto
                                 </button>
-                                {/* Cartelito informativo: solo cuando no hay pasajeros.
+                                {/* Cartelito informativo: solo cuando falta el titular con nombre.
                                     Feedback 2026-06-19: este cartelito bajo el BOTÓN PRIMARIO está
                                     permitido porque explica un requisito previo (no un bloqueo del estado).
                                     Los carteles de motivo de OTROS botones (Cancelar, Archivar) sí se eliminaron. */}
-                                {sinPasajeros && (
+                                {faltaTitular && (
                                     <p
                                         className="text-xs text-amber-600 dark:text-amber-400 font-medium"
                                         data-testid="reserva-action-client-accepted-hint"
                                     >
-                                        Tiene que haber al menos 1 pasajero
+                                        Tiene que haber un pasajero titular con nombre
                                     </p>
                                 )}
                             </>

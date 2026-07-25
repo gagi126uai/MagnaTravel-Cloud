@@ -79,7 +79,7 @@ import {
 import { ENLACE_REABRIR_PASO_MULTA } from "../../cancellations/lib/reabrirPasoMultaTextos.js";
 import { elegirMonedaSugeridaParaMulta } from "../lib/operatorPenaltyCurrency";
 import { hasPermission, isAdmin } from "../../../auth";
-import { calcularSugerenciaComposicion } from "../lib/pasajeroHint";
+import { calcularSugerenciaComposicion, calcularHintHotelTraslado } from "../lib/pasajeroHint";
 import { EstadoCuentaResumen } from "../components/EstadoCuentaResumen";
 import { EstadoCuentaExtracto } from "../components/EstadoCuentaExtracto";
 // Paso 3 (H2 2026-06-24): helper compartido con EmitirFacturaInline para formatear
@@ -1138,23 +1138,27 @@ export default function ReservaDetailPage() {
    * Flujo "El cliente acepto": pasa DIRECTO a En gestion sin abrir modal de nombres.
    *
    * ADR-031 (2026-06-15): el modal de pasajeros FUE ELIMINADO del flujo de avance.
-   * El único requisito para avanzar es que haya al menos 1 pasajero declarado
-   * (suma de adultCount + childCount + infantCount >= 1). Los nombres se cargan
-   * después, en la solapa Pasajeros o mediante el mini-formulario inline al emitir.
    *
-   * Si falta la cantidad (total = 0), el botón ya está apagado en ReservaHeader
-   * y el usuario no puede hacer click (validación defensiva también acá).
+   * H7 (2026-07-25, decisión firmada de Gastón): el requisito para avanzar YA NO es
+   * solo la CANTIDAD declarada — hace falta que el TITULAR (primer pasajero) tenga
+   * el nombre cargado. Antes se podía avanzar con pasajeros "fantasma" sin nombre y
+   * recién chocaba más adelante al confirmar un servicio con el operador. El resto
+   * de los datos (documento, fecha de nacimiento) se sigue cargando después, en la
+   * solapa Pasajeros o el mini-formulario inline al emitir.
    *
-   * NOTA: el endpoint /transition-readiness sigue existiendo en el backend y
-   * el backend valida que la cantidad sea >= 1. Si hay otros bloqueos que el
-   * backend retorna (reglas no-pax), los mostramos con showError.
+   * Si falta el titular con nombre, el botón ya está apagado en ReservaHeader
+   * (mismo criterio, calcularHintHotelTraslado) y el usuario no puede hacer click —
+   * esta es la validación defensiva por si igual se llega acá.
+   *
+   * NOTA: el endpoint /transition-readiness sigue existiendo en el backend y el
+   * backend re-valida el mismo requisito. Si hay otros bloqueos que el backend
+   * retorna, los mostramos con showError.
    */
   const handleConfirmReservation = async (targetStatus = "InManagement") => {
-    // Validación defensiva en el front: la suma debe ser >= 1.
-    // ReservaHeader ya bloquea el botón si es 0, pero re-verificamos.
-    const totalPax = (reserva?.adultCount || 0) + (reserva?.childCount || 0) + (reserva?.infantCount || 0);
-    if (totalPax === 0) {
-      showError("Tiene que haber al menos 1 pasajero declarado antes de continuar.");
+    // Validación defensiva en el front, mismo criterio que ReservaHeader.
+    const { faltaTitular } = calcularHintHotelTraslado(reserva?.passengers);
+    if (faltaTitular) {
+      showError("Tiene que haber un pasajero titular con el nombre cargado antes de continuar.");
       return;
     }
 
@@ -1276,10 +1280,6 @@ export default function ReservaDetailPage() {
         onCorrectTraveling={() => setShowCorrectTravelingModal(true)}
         onReschedule={() => setShowRescheduleModal(true)}
         serviciosCancelados={serviciosCancelados}
-        totalPasajerosDeclarados={
-          // P2 (ADR-031): ReservaHeader lo usa para deshabilitar "El cliente aceptó" cuando no hay pax.
-          (reserva?.adultCount || 0) + (reserva?.childCount || 0) + (reserva?.infantCount || 0)
-        }
       />
 
       {/* Tanda P4 "circuito proveedor" (2026-07-22): aviso fijo (no un toast que
@@ -2360,11 +2360,17 @@ export default function ReservaDetailPage() {
                     ? true               // DTO viejo sin capabilities → permitir si tiene el permiso
                     : puedeAnularFormal || puedeEliminarSimple);
 
-                // Mostramos cada acción SOLO si está disponible. En estados de solo lectura
-                // (En viaje, Finalizada, etc.) el backend apaga la capability → el botón NO
-                // aparece. Nada de botón gris con un mensajito rojo debajo: el cartel de
-                // solo-lectura de arriba ya explica el porqué (decisión Gaston 2026-06-22,
-                // coherente con "un solo cartel arriba, nunca motivos pegados a cada botón").
+                // Mostramos "Emitir factura" y "Anular reserva" SOLO si están disponibles. En estados
+                // de solo lectura (En viaje, Finalizada, etc.) el backend apaga la capability → el botón
+                // NO aparece. Nada de botón gris con un mensajito rojo debajo: el cartel de solo-lectura
+                // de arriba ya explica el porqué (decisión Gaston 2026-06-22, coherente con "un solo
+                // cartel arriba, nunca motivos pegados a cada botón").
+                //
+                // H13 (2026-07-25, decisión firmada): "Registrar cobro" es la EXCEPCIÓN a esa regla.
+                // Cuando la reserva ya está saldada (o no es cobrable por otro motivo), el botón se
+                // ve pero queda APAGADO con el motivo del motor debajo — antes desaparecía sin avisar
+                // y el cajero no entendía por qué no podía cobrar. Mismo patrón visual que "El cliente
+                // aceptó" en ReservaHeader (botón disabled + textito amarillo con el motivo abajo).
                 // (2026-06-24): si ya hay una factura EN PROCESO (encolada, esperando CAE), NO ofrecemos
                 // "Emitir factura": el estado de facturación todavía no la cuenta (solo cuenta las que tienen
                 // CAE), así que sin esto el botón seguiría visible y el usuario reemitiría otra (rebota 409).
@@ -2372,19 +2378,51 @@ export default function ReservaDetailPage() {
                 const facturaEnProceso = reserva.hasInvoiceInProgress === true;
                 const mostrarFactura = reserva.invoicingStatus !== 'FullyInvoiced' && facturaHabilitada && !facturaEnProceso;
                 const mostrarCancelar = canCancelReserva && cancelarHabilitado;
-                if (!registroPagoHabilitado && !mostrarFactura && !mostrarCancelar && !facturaEnProceso) return null;
+                // H13 fix (review B1, 2026-07-25): el motivo-en-botón SOLO tiene sentido en los
+                // estados donde cobrar es conceptualmente posible: venta firme (En gestión,
+                // Confirmada, Finalizada) o En viaje (ahí el motivo "el viaje ya empezó" SÍ es
+                // correcto). En pre-venta (isEarlyStage: Cotización/Presupuesto) y en terminales
+                // sin venta (Perdida/Anulada) el botón vuelve a OCULTARSE como antes: mostrar
+                // "Pasala a En gestión primero" en una reserva anulada es un consejo sin sentido,
+                // y reintroduce el patrón "motivo por botón" que el dueño sacó para esos estados
+                // de solo lectura (ahí manda el cartel único de arriba, no un motivo por botón).
+                // Reusamos los MISMOS helpers que ya gobiernan el resto de la pantalla
+                // (isEarlyStage, isReservaAnulada) en vez de tipear una lista nueva a mano.
+                const esEstadoDondeCobrarTieneSentido =
+                  !isEarlyStage && reserva.status !== 'Lost' && reserva.status !== 'Archived' && !isReservaAnulada(reserva);
+                const mostrarCobro = registroPagoHabilitado || (Boolean(capRegPago) && esEstadoDondeCobrarTieneSentido);
+                if (!mostrarCobro && !mostrarFactura && !mostrarCancelar && !facturaEnProceso) return null;
 
                 return (
                   <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/50">
 
-                    {registroPagoHabilitado && (
-                      <button
-                        onClick={() => { setCobroAEditar(null); setShowCobroInline(true); }}
-                        className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white transition-all hover:bg-emerald-700"
-                        data-testid="btn-registrar-cobro"
-                      >
-                        <Plus className="w-4 h-4" /> Registrar cobro
-                      </button>
+                    {mostrarCobro && (
+                      <>
+                        <button
+                          onClick={() => { setCobroAEditar(null); setShowCobroInline(true); }}
+                          disabled={!registroPagoHabilitado}
+                          data-testid="btn-registrar-cobro"
+                          data-disabled-reason={!registroPagoHabilitado ? "cobro-no-habilitado" : undefined}
+                          title={!registroPagoHabilitado ? capRegPago?.reason : undefined}
+                          className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-bold transition-all ${
+                            registroPagoHabilitado
+                              ? "bg-emerald-600 text-white hover:bg-emerald-700"
+                              : "cursor-not-allowed bg-slate-300 text-slate-500 dark:bg-slate-700 dark:text-slate-400"
+                          }`}
+                        >
+                          <Plus className="w-4 h-4" /> Registrar cobro
+                        </button>
+                        {/* Motivo debajo del botón apagado, igual que el hint de "El cliente aceptó"
+                            en ReservaHeader — el cajero tiene que ENTENDER por qué no puede cobrar. */}
+                        {!registroPagoHabilitado && capRegPago?.reason && (
+                          <p
+                            className="text-xs font-medium text-amber-600 dark:text-amber-400"
+                            data-testid="btn-registrar-cobro-hint"
+                          >
+                            {capRegPago.reason}
+                          </p>
+                        )}
+                      </>
                     )}
 
                     {/* Emitir factura — ADR-037: facturación desacoplada del estado (habilitada en
