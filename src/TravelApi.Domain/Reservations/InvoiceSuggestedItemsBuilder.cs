@@ -236,11 +236,15 @@ public static class InvoiceSuggestedItemsBuilder
         if (name.Length == 0)
             return "Alojamiento";
 
+        // Hallazgo #8 (barrido T5, 2026-07-24): ServiceLabelHelper evita "Hotel Hotel Sheraton" cuando
+        // el nombre real del hotel ya arranca con "Hotel " (caso comun en la carga real).
+        string hotelLabel = ServiceLabelHelper.WithPrefix("Hotel", name, fallbackWhenEmpty: name);
+
         // "Hotel Sheraton (3 noches)" — las noches ayudan al operador a reconocer la linea.
         if (hotel.Nights > 0)
-            return $"Hotel {name} ({hotel.Nights} {(hotel.Nights == 1 ? "noche" : "noches")})";
+            return $"{hotelLabel} ({hotel.Nights} {(hotel.Nights == 1 ? "noche" : "noches")})";
 
-        return $"Hotel {name}";
+        return hotelLabel;
     }
 
     public static string DescribeTransfer(TransferBooking transfer)

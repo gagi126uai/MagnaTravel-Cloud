@@ -45,12 +45,12 @@ public class InvoicePdfService : IInvoicePdfService
         var titleStyle = TextStyle.Default.FontSize(20).SemiBold().FontColor(Colors.Blue.Medium);
         var subTitleStyle = TextStyle.Default.FontSize(10).SemiBold().FontColor(Colors.Grey.Darken2);
         var addressStyle = TextStyle.Default.FontSize(9).FontColor(Colors.Grey.Darken1);
-        
+
         // Priority: Fantasy Name (AgencyName) > Legal Name
         // Try to use Snapshot first
         if (!string.IsNullOrEmpty(invoice.AgencySnapshot))
         {
-            try 
+            try
             {
                 var snapshot = JsonSerializer.Deserialize<AgencySettings>(invoice.AgencySnapshot);
                 if (snapshot != null) agencySettings = snapshot;
@@ -60,9 +60,31 @@ public class InvoicePdfService : IInvoicePdfService
 
         var mainTitle = !string.IsNullOrEmpty(agencySettings.AgencyName) ? agencySettings.AgencyName : agencySettings.LegalName;
         var legalName = agencySettings.LegalName;
-        
+
         container.Column(mainColumn =>
         {
+            // Fuga/regla del proyecto (barrido T5, 2026-07-24, item #1): MagnaTravel factura HOY en el
+            // ambiente de HOMOLOGACION de ARCA aunque la app corra en PROD (decision del dueño, ver
+            // regla-pruebas-prod-solo-homologacion-facturas). Un comprobante de homologacion NO tiene
+            // validez fiscal — es una prueba con la estructura real, pero ARCA nunca lo valida como
+            // pago de impuestos. Si el vendedor se lo imprime a un cliente sin esta banda, el cliente
+            // cree que tiene una factura real. AfipSettings.IsProduction ya decide (mas abajo en este
+            // mismo service, ver WsfeUrlProd/WsfeUrlDev en AfipService) a que ambiente de ARCA se
+            // mando el comprobante — lo reusamos aca en vez de inventar un flag nuevo.
+            //
+            // OJO (limite conocido, documentado a proposito): Invoice NO guarda por comprobante en que
+            // ambiente se emitio — se lee la config ACTUAL de AfipSettings al generar el PDF. Si el
+            // dueño pasa a produccion real mas adelante, un PDF viejo re-descargado de una factura que
+            // SI fue de homologacion en su momento dejaria de mostrar la banda. Persistir el ambiente
+            // por comprobante es una mejora aparte (agregar una columna a Invoice), no se hizo aca para
+            // mantener el cambio chico y aditivo.
+            if (!settings.IsProduction)
+            {
+                mainColumn.Item().PaddingBottom(8).Background(Colors.Red.Darken1).Padding(6).AlignCenter()
+                    .Text("SIN VALIDEZ FISCAL — COMPROBANTE DE HOMOLOGACIÓN (AMBIENTE DE PRUEBAS DE ARCA)")
+                    .FontSize(11).Bold().FontColor(Colors.White);
+            }
+
             mainColumn.Item().Row(row =>
             {
                 // Left: Agency Identity

@@ -148,7 +148,7 @@ public partial class BookingService
             if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, reservaId, ct))
                 hotel.Status = "Solicitado";
             var statusBlock = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(
-                _db, reservaId, $"Hotel {hotel.HotelName ?? "sin nombre"}", hotel.Status, ct);
+                _db, reservaId, ServiceLabelHelper.WithPrefix("Hotel", hotel.HotelName, "sin nombre"), hotel.Status, ct);
             if (statusBlock != null) throw new InvalidOperationException(statusBlock);
 
             // ADR-031 (bypass B1, path catalogo): el alta puede dejar el hotel resuelto -> exigir el
@@ -504,7 +504,7 @@ public partial class BookingService
             if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, reservaId, ct))
                 assistance.Status = "Solicitado";
             var statusBlock = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(
-                _db, reservaId, $"Asistencia {assistance.PlanType ?? "seguro"}", assistance.Status, ct);
+                _db, reservaId, ServiceLabelHelper.WithPrefix("Asistencia", assistance.PlanType, "seguro"), assistance.Status, ct);
             if (statusBlock != null) throw new InvalidOperationException(statusBlock);
 
             // ADR-031 (bypass B1, path catalogo): el alta puede dejar la asistencia resuelta -> exigir

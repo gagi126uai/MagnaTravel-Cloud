@@ -263,4 +263,115 @@ public class ReservaServiceViewTabsTests
         Assert.Equal(1, page.TotalCount);
         Assert.Equal(EstadoReserva.InManagement, page.Items.Single().Status);
     }
+
+    /// <summary>
+    /// Barrido T5 (2026-07-24, item #7 + retoque del reviewer): "Pagadas" (settled) y "Con deuda
+    /// vencida" (overdue) del listado de Cobranza y Facturacion no tenian rama propia en
+    /// <c>ApplyReservaView</c> — el front ya mandaba esas claves (STATUS_FILTER_OPTIONS de
+    /// PaymentsByReservaPage.jsx) pero caian en el <c>default</c> mudo y devolvian EXACTAMENTE lo
+    /// mismo que "Activas" (filtro FANTASMA: el vendedor elegia "Pagadas" y veia la lista de siempre).
+    /// Estos tests blindan que ahora "settled"/"overdue" filtran de verdad y DIFIEREN de "active".
+    /// </summary>
+    [Fact]
+    public async Task Settled_view_returns_only_sale_firm_reservas_with_settled_collection_status()
+    {
+        var options = NewDbOptions();
+        await using (var ctx = new AppDbContext(options))
+        {
+            // Venta firme (Confirmed) + Saldado -> DEBE aparecer en "Pagadas".
+            ctx.Reservas.Add(new Reserva
+            {
+                NumeroReserva = "F-SETTLED-OK", Name = "Pagada de verdad", Status = EstadoReserva.Confirmed,
+                DerivedCollectionStatus = "Saldado",
+            });
+            // Venta firme (Confirmed) pero CON deuda -> NO debe aparecer en "Pagadas".
+            ctx.Reservas.Add(new Reserva
+            {
+                NumeroReserva = "F-SETTLED-DEBT", Name = "Con deuda", Status = EstadoReserva.Confirmed,
+                DerivedCollectionStatus = "ConDeuda",
+            });
+            // Saldado pero En Viaje (Traveling NO es venta firme cobrable, ver EstadoReserva.SaleFirmStatuses)
+            // -> NO debe aparecer en "Pagadas" aunque su eje de cobro diga Saldado.
+            ctx.Reservas.Add(new Reserva
+            {
+                NumeroReserva = "F-SETTLED-TRAVELING", Name = "En viaje saldada", Status = EstadoReserva.Traveling,
+                DerivedCollectionStatus = "Saldado",
+            });
+            // Saldado pero Anulada -> NO debe aparecer (la plata de una anulada se resuelve por el
+            // circuito de cancelacion, no por "Pagadas").
+            ctx.Reservas.Add(new Reserva
+            {
+                NumeroReserva = "F-SETTLED-CANCELLED", Name = "Anulada saldada", Status = EstadoReserva.Cancelled,
+                DerivedCollectionStatus = "Saldado",
+            });
+            await ctx.SaveChangesAsync();
+        }
+
+        await using var readCtx = new AppDbContext(options);
+        var service = BuildService(readCtx);
+
+        var settledPage = await service.GetReservasAsync(new ReservaListQuery { View = "settled" }, CancellationToken.None);
+        var activePage = await service.GetReservasAsync(new ReservaListQuery { View = "active" }, CancellationToken.None);
+
+        Assert.Equal(1, settledPage.TotalCount);
+        Assert.Equal("F-SETTLED-OK", settledPage.Items.Single().NumeroReserva);
+
+        // La prueba central del fix: antes "settled" era un ALIAS FANTASMA de "active" (mismo resultado
+        // siempre). Aca "active" trae las 3 reservas vivas (OK Confirmed-saldada + DEBT Confirmed-con-deuda
+        // + TRAVELING En-viaje), "settled" trae SOLO la saldada de verdad (1) -> los sets tienen que ser
+        // DISTINTOS.
+        Assert.NotEqual(activePage.TotalCount, settledPage.TotalCount);
+    }
+
+    [Fact]
+    public async Task Overdue_view_returns_only_finished_trips_with_a_real_positive_balance()
+    {
+        var yesterday = DateTime.UtcNow.Date.AddDays(-1);
+        var tomorrow = DateTime.UtcNow.Date.AddDays(1);
+
+        var options = NewDbOptions();
+        await using (var ctx = new AppDbContext(options))
+        {
+            // Venta firme (Confirmed) + viaje ya terminado + debe -> DEBE aparecer en "Con deuda vencida".
+            ctx.Reservas.Add(new Reserva
+            {
+                NumeroReserva = "F-OVERDUE-OK", Name = "Vencida de verdad", Status = EstadoReserva.Confirmed,
+                EndDate = yesterday, Balance = 100m,
+            });
+            // Venta firme + viaje ya terminado, pero SIN deuda (Balance 0) -> NO debe aparecer.
+            ctx.Reservas.Add(new Reserva
+            {
+                NumeroReserva = "F-OVERDUE-NODEBT", Name = "Terminada sin deuda", Status = EstadoReserva.Confirmed,
+                EndDate = yesterday, Balance = 0m,
+            });
+            // Venta firme + debe, pero el viaje TODAVIA no arranco -> NO debe aparecer (no esta vencida).
+            ctx.Reservas.Add(new Reserva
+            {
+                NumeroReserva = "F-OVERDUE-FUTURE", Name = "Confirmada futura con deuda", Status = EstadoReserva.Confirmed,
+                EndDate = tomorrow, Balance = 100m,
+            });
+            // En viaje (Traveling) con deuda y fecha vencida -> NO debe aparecer: en prepago puro una
+            // reserva jamas entra a Traveling debiendo (ADR-036), no es venta firme cobrable.
+            ctx.Reservas.Add(new Reserva
+            {
+                NumeroReserva = "F-OVERDUE-TRAVELING", Name = "En viaje con deuda", Status = EstadoReserva.Traveling,
+                EndDate = yesterday, Balance = 100m,
+            });
+            await ctx.SaveChangesAsync();
+        }
+
+        await using var readCtx = new AppDbContext(options);
+        var service = BuildService(readCtx);
+
+        var overduePage = await service.GetReservasAsync(new ReservaListQuery { View = "overdue" }, CancellationToken.None);
+        var activePage = await service.GetReservasAsync(new ReservaListQuery { View = "active" }, CancellationToken.None);
+
+        Assert.Equal(1, overduePage.TotalCount);
+        Assert.Equal("F-OVERDUE-OK", overduePage.Items.Single().NumeroReserva);
+
+        // Mismo criterio que el test de "settled": antes "overdue" tambien era un alias fantasma de
+        // "active". Aca "active" trae las 4 reservas vivas (3 Confirmed + 1 Traveling), "overdue" trae
+        // SOLO la vencida de verdad (1) -> tienen que diferir.
+        Assert.NotEqual(activePage.TotalCount, overduePage.TotalCount);
+    }
 }

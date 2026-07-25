@@ -2257,7 +2257,13 @@ public class SupplierService : ISupplierService
             {
                 PublicId = assistance.PublicId,
                 Type = "Asistencia",
-                Description = ((assistance.PlanType ?? "Seguro") + " (" + (assistance.CoverageZone ?? string.Empty) + ")").Trim(),
+                // Hallazgo #47 (barrido T5, 2026-07-24): antes se concatenaba " (" + CoverageZone + ")"
+                // SIEMPRE, sin mirar si CoverageZone tenia dato -> con zona vacia salia "Seguro ()" en la
+                // cuenta del operador. Ahora, sin zona cargada, el parentesis directamente no se agrega.
+                // string.IsNullOrWhiteSpace SI se puede traducir a SQL aca (es un Select de EF Core).
+                Description = string.IsNullOrWhiteSpace(assistance.CoverageZone)
+                    ? (assistance.PlanType ?? "Seguro").Trim()
+                    : ((assistance.PlanType ?? "Seguro") + " (" + assistance.CoverageZone + ")").Trim(),
                 Confirmation = assistance.ConfirmationNumber ?? assistance.PolicyNumber,
                 NetCost = assistance.NetCost,
                 SalePrice = assistance.SalePrice,
@@ -2725,8 +2731,13 @@ public class SupplierService : ISupplierService
                         .Where(s => servicePublicIds.Contains(s.PublicId))
                         .Select(s => new { s.PublicId, s.PlanType, s.CoverageZone })
                         .ToListAsync(cancellationToken);
+                    // Hallazgo #47 (barrido T5, 2026-07-24): mismo guard que la Description de arriba
+                    // (SupplierAccountServiceListItemDto) — sin CoverageZone cargada, no se agrega el
+                    // parentesis vacio "()" a la etiqueta que ve el operador en la fila de pago / selector.
                     foreach (var assistance in assistances)
-                        result[(group.Key, assistance.PublicId)] = ((assistance.PlanType ?? "Seguro") + " (" + (assistance.CoverageZone ?? string.Empty) + ")").Trim();
+                        result[(group.Key, assistance.PublicId)] = string.IsNullOrWhiteSpace(assistance.CoverageZone)
+                            ? (assistance.PlanType ?? "Seguro").Trim()
+                            : ((assistance.PlanType ?? "Seguro") + " (" + assistance.CoverageZone + ")").Trim();
                     break;
 
                 case ServicePaymentRecordKinds.Generic:

@@ -121,7 +121,8 @@ public class CancellationsController : ControllerBase
             return SanitizedBadRequest(ex);
         }
         // BusinessInvariantViolationException lo atrapa GlobalExceptionHandler
-        // (409 con invariantCode + constraintName). No la catcheamos aca.
+        // (409 con invariantCode; constraintName ya NO viaja en la respuesta desde el
+        // saneo del barrido T5, 2026-07-24 — sigue solo en el log del servidor). No la catcheamos aca.
         catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
         {
             return StatusCode(StatusCodes.Status503ServiceUnavailable, DatabaseExceptionClassifier.CreateProblemDetails());
@@ -1262,7 +1263,8 @@ public class CancellationsController : ControllerBase
             });
         }
         // BusinessInvariantViolationException la atrapa GlobalExceptionHandler
-        // (409 ProblemDetails con invariantCode + constraintName + code).
+        // (409 ProblemDetails con invariantCode + code; constraintName ya NO viaja en la
+        // respuesta desde el saneo del barrido T5, 2026-07-24 — sigue solo en el log del servidor).
         // Mismo criterio que Draft/Confirm — no la catcheamos aca.
         catch (Exception ex) when (DatabaseExceptionClassifier.IsDatabaseUnavailable(ex))
         {

@@ -1705,7 +1705,16 @@ public class AfipService : IAfipService
             // arriba). El throw se mantiene para que Hangfire registre el job
             // como failed en el dashboard (visibilidad operativa).
             invoice.Resultado = "PENDING";
-            invoice.Observaciones = $"Error técnico: {ex.Message}";
+            // Fuga tecnica (barrido T5, 2026-07-24): antes esto guardaba ex.Message crudo en
+            // Observaciones, y Observaciones se muestra tal cual en la ficha como "Motivo del
+            // rechazo" (ver HistoryTab.jsx). Un mensaje de excepcion de .NET puede traer texto de
+            // framework, nombres de clase/campo, o hasta fragmentos de conexion — nada de eso debe
+            // llegar a la pantalla de un vendedor. El detalle tecnico completo va SOLO al logger;
+            // el usuario ve un mensaje de negocio generico y sabe que puede reintentar.
+            invoice.Observaciones = "No se pudo confirmar la respuesta de ARCA por un problema tecnico. Reintenta en unos minutos.";
+            _logger.LogError(ex,
+                "ProcessInvoiceJob: excepcion tecnica al procesar la respuesta de ARCA para Invoice {InvoiceId}",
+                invoice.Id);
             await _context.SaveChangesAsync();
             throw;
         }

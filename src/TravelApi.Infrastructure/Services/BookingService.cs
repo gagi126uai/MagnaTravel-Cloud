@@ -1287,7 +1287,7 @@ public partial class BookingService : IBookingService
             hotel.Status = "Solicitado";
 
         var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(
-            _db, reservaId, $"Hotel {hotel.HotelName ?? "sin nombre"}", hotel.Status, ct);
+            _db, reservaId, ServiceLabelHelper.WithPrefix("Hotel", hotel.HotelName, "sin nombre"), hotel.Status, ct);
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
 
         // ADR-031 (bypass B1): el alta puede dejar el hotel ya "Confirmado" (request con status resuelto
@@ -1411,7 +1411,7 @@ public partial class BookingService : IBookingService
         if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, reservaId, ct))
             hotel.Status = "Solicitado";
 
-        var label = $"Hotel {hotel.HotelName ?? "sin nombre"}";
+        var label = ServiceLabelHelper.WithPrefix("Hotel", hotel.HotelName, "sin nombre");
         var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, reservaId, label, hotel.Status, ct);
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
         await GuardStatusDowngradeAsync(reservaId, CancellableServiceTable.Hotel, hotel.Id, oldStatus, hotel.Status, ct);
@@ -1447,7 +1447,7 @@ public partial class BookingService : IBookingService
         var hotelChange = new PendingServiceChange
         {
             ServiceType = "Hotel",
-            ServiceDescription = string.IsNullOrWhiteSpace(hotel.HotelName) ? "Hotel" : $"Hotel {hotel.HotelName}",
+            ServiceDescription = ServiceLabelHelper.WithPrefix("Hotel", hotel.HotelName, fallbackWhenEmpty: string.Empty),
             ServicePublicId = hotel.PublicId,
             Currency = hotel.Currency,
             OldSalePrice = oldSalePrice,
@@ -2228,7 +2228,7 @@ public partial class BookingService : IBookingService
             assistance.Status = "Solicitado";
 
         var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(
-            _db, reservaId, $"Asistencia {assistance.PlanType ?? "seguro"}", assistance.Status, ct);
+            _db, reservaId, ServiceLabelHelper.WithPrefix("Asistencia", assistance.PlanType, "seguro"), assistance.Status, ct);
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
 
         // ADR-031 (bypass B1): el alta puede dejar la asistencia resuelta -> exigir nombre + documento +
@@ -2324,7 +2324,7 @@ public partial class BookingService : IBookingService
         if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, reservaId, ct))
             assistance.Status = "Solicitado";
 
-        var label = $"Asistencia {assistance.PlanType ?? "seguro"}";
+        var label = ServiceLabelHelper.WithPrefix("Asistencia", assistance.PlanType, "seguro");
         var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, reservaId, label, assistance.Status, ct);
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
         await GuardStatusDowngradeAsync(reservaId, CancellableServiceTable.Assistance, assistance.Id, oldStatus, assistance.Status, ct);
@@ -2359,7 +2359,7 @@ public partial class BookingService : IBookingService
         var assistanceChange = new PendingServiceChange
         {
             ServiceType = "Asistencia",
-            ServiceDescription = string.IsNullOrWhiteSpace(assistance.PlanType) ? "Asistencia al viajero" : $"Asistencia {assistance.PlanType}",
+            ServiceDescription = ServiceLabelHelper.WithPrefix("Asistencia", assistance.PlanType, fallbackWhenEmpty: "al viajero"),
             ServicePublicId = assistance.PublicId,
             Currency = assistance.Currency,
             OldSalePrice = oldSalePrice,
@@ -2440,7 +2440,7 @@ public partial class BookingService : IBookingService
         if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, hotel.ReservaId, ct))
             newStatus = "Solicitado";
 
-        var label = $"Hotel {hotel.HotelName ?? "sin nombre"}";
+        var label = ServiceLabelHelper.WithPrefix("Hotel", hotel.HotelName, "sin nombre");
         var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, hotel.ReservaId, label, newStatus, ct);
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
         await GuardStatusDowngradeAsync(hotel.ReservaId, CancellableServiceTable.Hotel, hotel.Id, oldStatus, newStatus, ct);
@@ -2765,7 +2765,7 @@ public partial class BookingService : IBookingService
         if (await ReservaCapacityRules.ShouldForceSolicitadoStatusAsync(_db, assistance.ReservaId, ct))
             newStatus = "Solicitado";
 
-        var label = $"Asistencia {assistance.PlanType ?? "seguro"}";
+        var label = ServiceLabelHelper.WithPrefix("Asistencia", assistance.PlanType, "seguro");
         var statusBlockReason = await ReservaCapacityRules.GetServiceStatusBlockReasonAsync(_db, assistance.ReservaId, label, newStatus, ct);
         if (statusBlockReason != null) throw new InvalidOperationException(statusBlockReason);
         await GuardStatusDowngradeAsync(assistance.ReservaId, CancellableServiceTable.Assistance, assistance.Id, oldStatus, newStatus, ct);

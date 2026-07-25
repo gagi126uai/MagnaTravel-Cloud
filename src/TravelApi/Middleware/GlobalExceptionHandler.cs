@@ -47,13 +47,13 @@ public class GlobalExceptionHandler : IExceptionHandler
                 Detail = invariant.Message,
             };
 
-            // Los codigos de invariante y constraint van como extensions para que
-            // el frontend pueda decidir si mostrar un copy especifico o un link a
-            // ayuda. NO incluimos InnerException — puede contener nombres de columna.
+            // El codigo de invariante (INV-XXX) va como extension para que el frontend pueda
+            // decidir si mostrar un copy especifico. NO incluimos InnerException ni
+            // ConstraintName en la respuesta: el nombre del CHECK es jerga de base de datos
+            // (fuga tecnica detectada en el barrido T5, 2026-07-24) — ya quedo logueado arriba
+            // con LogWarning para diagnostico interno.
             if (invariant.InvariantCode is not null)
                 problem.Extensions["invariantCode"] = invariant.InvariantCode;
-            if (invariant.ConstraintName is not null)
-                problem.Extensions["constraintName"] = invariant.ConstraintName;
             problem.Extensions["code"] = "business_invariant_violation";
 
             httpContext.Response.StatusCode = problem.Status.Value;

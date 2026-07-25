@@ -41,6 +41,17 @@ public class TimelineService : ITimelineService
         var paymentIds = await _context.Payments.Where(x => x.ReservaId == reservaId).Select(x => x.PublicId.ToString()).ToListAsync(cancellationToken);
         var invoiceIds = await _context.Invoices.Where(x => x.ReservaId == reservaId).Select(x => x.PublicId.ToString()).ToListAsync(cancellationToken);
 
+        // Item #6 (barrido T5, 2026-07-24): monto/moneda/metodo REALES de cada pago, leidos directo de
+        // la tabla (no del diff generico de auditoria — ver el comentario mas abajo, junto al armado del
+        // evento). IgnoreQueryFilters() a proposito: un pago anulado (IsDeleted=true) igual pudo dejar
+        // eventos en el timeline (alta, anulacion) y quermos poder mostrar CUANTO fue ese pago aunque ya
+        // este anulado, en vez de dejar el campo vacio.
+        var paymentMoneyByPublicId = await _context.Payments
+            .IgnoreQueryFilters()
+            .Where(p => p.ReservaId == reservaId)
+            .Select(p => new { PublicId = p.PublicId.ToString(), p.Amount, p.Currency, p.Method })
+            .ToDictionaryAsync(p => p.PublicId, p => p, cancellationToken);
+
         var rId = reservaId.ToString();
         var rPublicId = await _context.Reservas.Where(x => x.Id == reservaId).Select(x => x.PublicId.ToString()).FirstOrDefaultAsync(cancellationToken);
 
@@ -134,8 +145,33 @@ public class TimelineService : ITimelineService
                 }
                 catch
                 {
+                    // RIESGO CONOCIDO (no se toca en esta tanda, ver item #6 del barrido T5, 2026-07-24):
+                    // el auto-audit generico de AppDbContext.OnBeforeSaveChanges guarda el "Create" como
+                    // {"Campo": valorCrudo} (sin envolver en {Old,New}), pero aca arriba SIEMPRE se
+                    // deserializa como Dictionary<string, Dictionary<string, JsonElement>> — eso hace que
+                    // CUALQUIER alta (no solo Pago) caiga siempre en este catch y muestre el texto
+                    // generico de abajo en vez del detalle real. Es un bug preexistente y mas grande que
+                    // este item puntual (afecta TODAS las entidades, no solo Payment); arreglarlo toca el
+                    // auto-audit compartido por todo el sistema, asi que queda FUERA de este cambio chico
+                    // y aditivo — reportado para una tanda propia. La correccion de ESTE item (monto y
+                    // metodo de pago en el historial) se resuelve mas abajo leyendo el Payment real
+                    // directo de la tabla, sin depender de este diff.
                     details.Add("Modificaciones en campos técnicos.");
                 }
+            }
+
+            // Item #6 (barrido T5, 2026-07-24): monto/moneda/metodo del pago, SOLO para eventos sobre un
+            // Payment, leidos de paymentMoneyByPublicId (la tabla real) en vez del diff generico de
+            // arriba (que para el "Create" cae siempre en el catch, ver el comentario ahi). Null para
+            // cualquier otro tipo de evento (Reserva, Factura, servicios, etc.) — no aplica.
+            decimal? paymentAmount = null;
+            string? paymentCurrency = null;
+            string? paymentMethod = null;
+            if (log.EntityName == "Payment" && paymentMoneyByPublicId.TryGetValue(log.EntityId, out var paymentMoney))
+            {
+                paymentAmount = paymentMoney.Amount;
+                paymentCurrency = paymentMoney.Currency;
+                paymentMethod = paymentMoney.Method;
             }
 
             events.Add(new TimelineEventDto
@@ -145,7 +181,10 @@ public class TimelineService : ITimelineService
                 EventType = eventType,
                 Title = title,
                 Details = details.Count > 0 ? string.Join("\n", details) : null,
-                RelatedEntityType = log.EntityName
+                RelatedEntityType = log.EntityName,
+                Amount = paymentAmount,
+                Currency = paymentCurrency,
+                PaymentMethod = paymentMethod
             });
         }
 

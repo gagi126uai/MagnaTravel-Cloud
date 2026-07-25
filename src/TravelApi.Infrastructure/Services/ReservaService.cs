@@ -954,28 +954,53 @@ public class ReservaService : IReservaService
         };
     }
 
-    /// <summary>Construye un label legible del servicio para mensajes de error.</summary>
+    /// <summary>
+    /// Construye un label legible del servicio para mensajes de error (los que ve el vendedor cuando
+    /// un servicio ya esta lleno de pasajeros, ver <see cref="ReservaCapacityRules.GetServiceFullBlockReasonAsync"/>).
+    ///
+    /// Fuga tecnica (barrido T5, 2026-07-24): el branch de Transfer decia "Transfer" en ingles (el resto
+    /// del sistema usa "Traslado", ver <c>BookingService.cs</c>/<c>SupplierService.cs</c>) y el fallback
+    /// devolvia <c>serviceType</c> crudo — para Vuelo/Servicio generico eso hubiera mostrado el token
+    /// interno en ingles "Flight"/"Generic" (<see cref="AssignmentServiceType"/>) tal cual. Hoy ese
+    /// fallback no se alcanza en la practica (Vuelo y Generico no declaran capacidad, ver
+    /// <c>GetServiceCapacityAsync</c>), pero se corrige igual: es una etiqueta de error, no un detalle
+    /// interno, y no depende de que la regla de capacidad no cambie manana.
+    /// </summary>
     private async Task<string> BuildServiceLabelAsync(string serviceType, int serviceId, CancellationToken ct)
     {
         return serviceType switch
         {
-            AssignmentServiceType.Hotel => await _context.HotelBookings.AsNoTracking()
-                .Where(b => b.Id == serviceId)
-                .Select(b => $"Hotel {b.HotelName ?? "sin nombre"}")
-                .FirstOrDefaultAsync(ct) ?? "Hotel",
+            // Hallazgo #8 (barrido T5, 2026-07-24): se trae el NOMBRE crudo del hotel (no armado en el
+            // Select — EF no puede traducir ServiceLabelHelper.WithPrefix a SQL) y el prefijo "Hotel " se
+            // antepone RECIEN aca en memoria, con el guard que evita "Hotel Hotel Sheraton" cuando el
+            // nombre real del hotel ya arranca con "Hotel ".
+            AssignmentServiceType.Hotel => ServiceLabelHelper.WithPrefix(
+                "Hotel",
+                await _context.HotelBookings.AsNoTracking()
+                    .Where(b => b.Id == serviceId)
+                    .Select(b => b.HotelName)
+                    .FirstOrDefaultAsync(ct),
+                fallbackWhenEmpty: "sin nombre"),
             AssignmentServiceType.Transfer => await _context.TransferBookings.AsNoTracking()
                 .Where(b => b.Id == serviceId)
-                .Select(b => $"Transfer {b.VehicleType ?? ""}".Trim())
-                .FirstOrDefaultAsync(ct) ?? "Transfer",
+                .Select(b => $"Traslado {b.VehicleType ?? ""}".Trim())
+                .FirstOrDefaultAsync(ct) ?? "Traslado",
             AssignmentServiceType.Package => await _context.PackageBookings.AsNoTracking()
                 .Where(b => b.Id == serviceId)
                 .Select(b => $"Paquete {b.PackageName ?? "sin nombre"}")
                 .FirstOrDefaultAsync(ct) ?? "Paquete",
-            AssignmentServiceType.Assistance => await _context.AssistanceBookings.AsNoTracking()
-                .Where(b => b.Id == serviceId)
-                .Select(b => $"Asistencia {b.PlanType ?? "seguro"}")
-                .FirstOrDefaultAsync(ct) ?? "Asistencia",
-            _ => serviceType
+            // Mismo guard que Hotel arriba: se trae el PlanType crudo y el prefijo "Asistencia " se
+            // antepone en memoria, sin duplicarlo si el plan ya arranca con "Asistencia".
+            AssignmentServiceType.Assistance => ServiceLabelHelper.WithPrefix(
+                "Asistencia",
+                await _context.AssistanceBookings.AsNoTracking()
+                    .Where(b => b.Id == serviceId)
+                    .Select(b => b.PlanType)
+                    .FirstOrDefaultAsync(ct),
+                fallbackWhenEmpty: "seguro"),
+            AssignmentServiceType.Flight => "Vuelo",
+            AssignmentServiceType.Generic => "Servicio",
+            _ => "Servicio",
         };
     }
 
@@ -6522,6 +6547,34 @@ public class ReservaService : IReservaService
             // Boton "Todas" de Cobranza y Facturacion (#37/#38): sin filtro de estado, la pagina completa.
             case "all":
                 return query;
+            // Pestañas "Pagadas" / "Con deuda vencida" de Cobranza y Facturación -> Por reserva (barrido T5,
+            // 2026-07-24, item #7): el front (PaymentsByReservaPage.jsx, STATUS_FILTER_OPTIONS) ya mandaba estas
+            // dos claves, pero no tenian rama propia aca -> caian en el "default" mudo y devolvian EXACTAMENTE
+            // lo mismo que "Activas". El vendedor elegia "Pagadas" y veia la misma lista de siempre, sin darse
+            // cuenta de que el filtro no habia hecho nada.
+            case "settled":
+                // "Pagadas" = venta firme (En gestion / Confirmada / Cerrada) que ya quedo saldada DE VERDAD (con
+                // actividad de cobro real, no una reserva nueva sin movimientos). Reusa el eje ya materializado
+                // DerivedCollectionStatus (ADR-048 T5) en vez de recalcular el saldo por moneda a mano: es la
+                // MISMA fuente que ya lee el resto del sistema, y filtra sobre una columna en vez de recomputar.
+                return query.Where(r =>
+                    EstadoReserva.SaleFirmStatuses.Contains(r.Status) &&
+                    r.DerivedCollectionStatus == ReservaCollectionStatus.Settled);
+            case "overdue":
+                // "Con deuda vencida" = MISMO criterio exacto que el chip "Vencida con deuda" de la ficha
+                // (ver ReservationDebtRules.HasOverdueDebt), traducido a IQueryable para que el filtro corra en
+                // Postgres en vez de traer todas las reservas a memoria: venta firme + el viaje ya termino +
+                // todavia debe. El umbral de 0.005 es la MISMA tolerancia de redondeo que usa
+                // ReservaCollectionStatus.Epsilon (evita falsos "debe" por un resto de centavo de conversion).
+                // UtcNow a proposito (NO hora argentina): empata la regla canonica del chip de la ficha
+                // (ReservationDebtRules.HasOverdueDebt), que este filtro replica y que TAMBIEN evalua
+                // "todayUtc" con UtcNow.Date — usar otra hora aca haria que este filtro y el chip
+                // discreparan sobre que reservas estan "vencidas".
+                var todayUtc = DateTime.UtcNow.Date;
+                return query.Where(r =>
+                    EstadoReserva.SaleFirmStatuses.Contains(r.Status) &&
+                    r.EndDate.HasValue && r.EndDate.Value.Date < todayUtc &&
+                    r.Balance > 0.005m);
             case "active":
                 // "active" (default) = todo lo que esta en gestion activa (ni Cotizacion/Presupuesto/Perdido,
                 // ni cerrada/cancelada/archivada): En gestion + Confirmada + En viaje.

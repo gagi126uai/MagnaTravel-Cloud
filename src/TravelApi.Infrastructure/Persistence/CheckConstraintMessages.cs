@@ -45,7 +45,14 @@ internal static class CheckConstraintMessages
             "chk_bookingcancellations_fiscalsnapshot_consistent" =>
                 ("La cancelacion requiere un snapshot fiscal completo (moneda, tipo de cambio y fuente) antes de confirmarla con el cliente.", "INV-118"),
 
-            _ => ($"Operacion rechazada por restriccion de integridad: {constraintName}.", "INV-UNKNOWN"),
+            // Fuga tecnica (barrido T5, 2026-07-24): antes este fallback interpolaba el nombre
+            // CRUDO del CHECK constraint (ej. "chk_travelfiles_status_valid") directo en el
+            // mensaje que el frontend muestra al vendedor. Eso es jerga de base de datos que un
+            // no-programador no puede interpretar, y ademas revela nombres de tabla/columna
+            // internos. El nombre real del constraint SIGUE viajando al logger (interceptor de
+            // arriba) para que el equipo lo agregue al mapeo apenas se vea en logs — pero nunca
+            // al usuario.
+            _ => ("No se pudo completar la operacion porque viola una regla de integridad del sistema. Si el problema persiste, contacta a soporte.", "INV-UNKNOWN"),
         };
     }
 }
