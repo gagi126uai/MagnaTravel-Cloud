@@ -5,6 +5,7 @@ import { es } from "date-fns/locale";
 import { Activity } from "lucide-react";
 import { camelize, aHoraArgentina } from "../lib/utils";
 import { parseBasicFormatting } from "../lib/basicFormatting";
+import { traducirMetodoEnLineaHistorial, resumenAltaDePagoHistorial } from "../lib/reservaTimelineText";
 
 export default function ReservaTimeline({ reservaId }) {
     const [events, setEvents] = useState([]);
@@ -44,7 +45,12 @@ export default function ReservaTimeline({ reservaId }) {
     return (
         <div className="flow-root">
             <ul role="list" className="-mb-8">
-                {events.map((event, eventIdx) => (
+                {events.map((event, eventIdx) => {
+                    // Se calcula UNA sola vez por evento (antes se llamaba 3 veces en cada
+                    // render: en el "if" del JSX, adentro del <p> y en el "if" de al lado —
+                    // hallazgo menor del reviewer, 2026-07-24).
+                    const resumenAlta = resumenAltaDePagoHistorial(event);
+                    return (
                     <li key={eventIdx}>
                         <div className="relative pb-8">
                             {eventIdx !== events.length - 1 ? (
@@ -69,24 +75,47 @@ export default function ReservaTimeline({ reservaId }) {
                                             por <span className="font-medium text-slate-900 dark:text-white">{event.actor}</span>
                                         </p>
 
-                                        {event.details && (
+                                        {/*
+                                          Hallazgo #5 del barrido (2026-07-24): cuando el evento es un Alta de
+                                          Pago, mostramos una frase resumen en criollo ("Cobro registrado: $X —
+                                          Transferencia") en vez de la lista técnica de campos de abajo — el
+                                          backend ya manda importe y método en el diff, acá solo se los junta
+                                          en una sola oración legible. Si por algún motivo no hay resumen posible
+                                          (evento viejo sin esos campos en el diff), seguimos mostrando la lista
+                                          de siempre — nunca se pierde información.
+                                        */}
+                                        {resumenAlta && (
+                                            <p
+                                                className="mt-1 text-sm font-semibold text-emerald-700 dark:text-emerald-400"
+                                                data-testid="timeline-resumen-alta-pago"
+                                            >
+                                                {resumenAlta}
+                                            </p>
+                                        )}
+
+                                        {event.details && !resumenAlta && (
                                             <div className="mt-2 rounded-xl border border-slate-100 bg-slate-50/50 p-4 text-sm text-slate-700 dark:border-slate-700/50 dark:bg-slate-900/30 dark:text-slate-300">
-                                                {event.details.split('\n').map((line, i) => (
-                                                    <div
-                                                        key={i}
-                                                        className="mb-1.5 last:mb-0 leading-relaxed"
-                                                    >
-                                                        {parseBasicFormatting(line).map((token, tokenIndex) => {
-                                                            if (token.style === "bold") {
-                                                                return <strong key={tokenIndex} className="font-bold text-slate-900 dark:text-white">{token.text}</strong>;
-                                                            }
-                                                            if (token.style === "italic") {
-                                                                return <em key={tokenIndex} className="italic text-slate-500">{token.text}</em>;
-                                                            }
-                                                            return <span key={tokenIndex}>{token.text}</span>;
-                                                        })}
-                                                    </div>
-                                                ))}
+                                                {event.details.split('\n').map((line, i) => {
+                                                    // Único lugar donde puede colarse texto crudo/en inglés: el valor
+                                                    // del campo Método de pago en pagos viejos (ver reservaTimelineText.js).
+                                                    const lineaTraducida = traducirMetodoEnLineaHistorial(line);
+                                                    return (
+                                                        <div
+                                                            key={i}
+                                                            className="mb-1.5 last:mb-0 leading-relaxed"
+                                                        >
+                                                            {parseBasicFormatting(lineaTraducida).map((token, tokenIndex) => {
+                                                                if (token.style === "bold") {
+                                                                    return <strong key={tokenIndex} className="font-bold text-slate-900 dark:text-white">{token.text}</strong>;
+                                                                }
+                                                                if (token.style === "italic") {
+                                                                    return <em key={tokenIndex} className="italic text-slate-500">{token.text}</em>;
+                                                                }
+                                                                return <span key={tokenIndex}>{token.text}</span>;
+                                                            })}
+                                                        </div>
+                                                    );
+                                                })}
                                             </div>
                                         )}
                                     </div>
@@ -97,7 +126,8 @@ export default function ReservaTimeline({ reservaId }) {
                             </div>
                         </div>
                     </li>
-                ))}
+                    );
+                })}
             </ul>
         </div>
     );

@@ -7,7 +7,7 @@ import { MobileRecordCard, MobileRecordList } from "../components/ui/MobileRecor
 import { getPublicId, getRelatedPublicId } from "../lib/publicIds";
 import { formatDate } from "../lib/utils";
 
-const SERVICE_TYPES = ["Hotel", "Vuelo", "Transfer", "Paquete", "Excursion", "Seguro", "Otro"];
+const SERVICE_TYPES = ["Hotel", "Vuelo", "Traslado", "Paquete", "Excursion", "Seguro", "Otro"];
 const STATUS_COLORS = {
     Borrador: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
     Enviada: "bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400",

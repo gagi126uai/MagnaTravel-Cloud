@@ -98,10 +98,15 @@ function MovementRow({ item, showReservaColumn, onClick, hasActions, onViewPdf, 
   // La hora se ancla a Argentina explícito (no la del navegador/servidor) — para los items
   // de fecha de negocio (sin hora real) esto va a mostrar 00:00, que es la ambigüedad
   // inherente del formato ya documentada en formatDate().
+  //
+  // hallazgo #19 del barrido (2026-07-24): sin `hourCycle: "h23"`, Intl arma la hora en
+  // formato 12 horas con "a. m."/"p. m." aunque se pida `hour: "2-digit"` — mismo bug que
+  // ya se corrigió en formatDateTime() (lib/utils.js). Todo el sistema muestra hora de 24hs.
   const timeFmt = new Date(item.date).toLocaleTimeString("es-AR", {
     hour: "2-digit",
     minute: "2-digit",
     timeZone: "America/Argentina/Buenos_Aires",
+    hourCycle: "h23",
   });
 
   const actions = hasActions ? getMovementActions(item.kind, item.status, { receiptStatus: item.receiptStatus }) : [];

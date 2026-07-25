@@ -34,7 +34,7 @@ const entityTranslations = {
   Reserva: "Reserva", Customer: "Cliente", Supplier: "Proveedor",
   Payment: "Cobro", Invoice: "Factura", Passenger: "Pasajero",
   ServicioReserva: "Servicio", FlightSegment: "Vuelo",
-  HotelBooking: "Hotel", PackageBooking: "Paquete", TransferBooking: "Transfer",
+  HotelBooking: "Hotel", PackageBooking: "Paquete", TransferBooking: "Traslado",
   Lead: "Posible cliente", LeadActivity: "Actividad Lead",
   Quote: "Cotización", QuoteItem: "Ãtem Cotización",
   ReservaAttachment: "Adjunto", SupplierPayment: "Pago a proveedor",
@@ -147,7 +147,7 @@ const fieldTranslations = {
   PackageName: "Nombre del paquete", DurationDays: "Duración (días)",
   Adults: "Adultos", Children: "Menores",
   IncludesFlight: "Incluye vuelo", IncludesHotel: "Incluye hotel",
-  IncludesTransfer: "Incluye transfer", IncludesExcursions: "Incluye excursiones",
+  IncludesTransfer: "Incluye traslado", IncludesExcursions: "Incluye excursiones",
   IncludesInsurance: "Incluye seguro", IncludesMeals: "Incluye comidas",
   Itinerary: "Itinerario",
 

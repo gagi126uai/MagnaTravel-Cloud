@@ -4,6 +4,7 @@ import { ExternalLink, TrendingUp } from "lucide-react";
 import { formatCurrency } from "../../../lib/utils";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import { isAdmin, hasPermission } from "../../../auth";
+import { formatearFaltaFacturar } from "../lib/invoicingSummaryLogic";
 
 /**
  * Franja de 3 ejes del Estado de Cuenta de una reserva.
@@ -92,15 +93,9 @@ export function EstadoCuentaResumen({ reserva, saldoClientePorMoneda, loadingSal
               />
               {/* F4-5: data-testid en mono-moneda también, para consistencia en tests. */}
               <div data-testid="kpi-falta-facturar">
-                <EjeNumero
-                  label="Falta facturar"
+                <EjeFaltaFacturar
                   valor={reserva.disponibleParaFacturar}
                   moneda={reserva.porMoneda?.[0]?.currency ?? "ARS"}
-                  colorClass={
-                    (reserva.disponibleParaFacturar ?? 0) > 0
-                      ? "text-amber-700 dark:text-amber-400"
-                      : "text-slate-400 dark:text-slate-600"
-                  }
                 />
               </div>
             </>
@@ -288,9 +283,36 @@ function EjeNumero({ label, valor, moneda, colorClass }) {
 }
 
 /**
+ * "Falta facturar" en modo mono-moneda (hallazgo #23 del barrido de PROD 2026-07-24):
+ * si `disponibleParaFacturar` da negativo (se facturó más de lo vendido firme), en vez
+ * del número pelado con signo se muestra la frase explicativa que arma
+ * `formatearFaltaFacturar` — mismo criterio que la versión multimoneda de abajo.
+ */
+function EjeFaltaFacturar({ valor, moneda }) {
+  const { texto, esExceso } = formatearFaltaFacturar(valor, moneda);
+  const colorClass = esExceso
+    ? "text-violet-700 dark:text-violet-400"
+    : (valor ?? 0) > 0
+    ? "text-amber-700 dark:text-amber-400"
+    : "text-slate-400 dark:text-slate-600";
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+        Falta facturar
+      </span>
+      <span className={`text-xl font-extrabold leading-none ${colorClass}`}>
+        {texto}
+      </span>
+    </div>
+  );
+}
+
+/**
  * Columna numérica multimoneda con color condicional por valor.
- * Se usa para "Falta facturar" donde el color cambia según si queda algo pendiente (ámbar)
- * o si ya está todo facturado (gris apagado).
+ * Se usa para "Falta facturar" donde el color cambia según si queda algo pendiente (ámbar),
+ * ya está todo facturado (gris apagado) o se facturó de MÁS (hallazgo #23 del barrido:
+ * en ese caso `formatearFaltaFacturar` arma la frase explicativa en vez del número negativo pelado).
  *
  * F4-5: acepta `rowTestIdPrefix` para agregar data-testid por fila de moneda.
  * Ej: rowTestIdPrefix="kpi-falta-facturar" → data-testid="kpi-falta-facturar-ars" / "...-usd".
@@ -304,11 +326,14 @@ function ColumnaNumericaMultiCondicional({ label, porMoneda, campo, rowTestIdPre
       <div className="flex flex-col gap-1">
         {porMoneda.map((pm) => {
           const valor = pm[campo] ?? 0;
-          // Color ámbar si queda algo pendiente, gris si es cero o negativo.
-          const colorClass =
-            valor > 0
-              ? "text-amber-700 dark:text-amber-400"
-              : "text-slate-400 dark:text-slate-600";
+          const { texto, esExceso } = formatearFaltaFacturar(valor, pm.currency);
+          // Ámbar si queda algo pendiente, violeta si se facturó de más (llama la atención
+          // sin ser un color de error), gris si es cero.
+          const colorClass = esExceso
+            ? "text-violet-700 dark:text-violet-400"
+            : valor > 0
+            ? "text-amber-700 dark:text-amber-400"
+            : "text-slate-400 dark:text-slate-600";
           return (
             <div
               key={pm.currency}
@@ -317,7 +342,7 @@ function ColumnaNumericaMultiCondicional({ label, porMoneda, campo, rowTestIdPre
             >
               <CurrencyBadge currency={pm.currency} size="sm" />
               <span className={`text-lg font-extrabold leading-none ${colorClass}`}>
-                {formatCurrency(valor, pm.currency)}
+                {texto}
               </span>
             </div>
           );

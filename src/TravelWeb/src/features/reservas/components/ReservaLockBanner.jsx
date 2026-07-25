@@ -78,11 +78,13 @@ export function ReservaLockBanner({
     if (hasLiveEditAuthorization) {
         // Regla del dueño: la hora que se muestra es SIEMPRE la de Argentina, sin
         // importar el huso del navegador del vendedor — por eso timeZone va fijo.
+        // hallazgo #19 del barrido (2026-07-24): `hourCycle: 'h23'` explícito, si no Intl
+        // arma la hora en formato 12hs con "a. m."/"p. m." — el resto del sistema usa 24hs.
         let textoVencimiento = '';
         if (editAuthorizationExpiresAt) {
             const fecha = new Date(editAuthorizationExpiresAt);
             if (!isNaN(fecha)) {
-                textoVencimiento = ` hasta las ${fecha.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires' })}`;
+                textoVencimiento = ` hasta las ${fecha.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires', hourCycle: 'h23' })}`;
             }
         }
 

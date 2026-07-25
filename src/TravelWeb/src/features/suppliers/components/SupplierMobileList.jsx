@@ -57,13 +57,16 @@ export function SupplierMobileList({ suppliers, onEdit, onToggleStatus, onAccoun
           subtitle={supplier.taxId || "Sin CUIT"}
           meta={
             <>
+              {/* Hallazgo #9 del barrido (2026-07-24): unificado a "—" (em dash), mismo símbolo
+                  que ya usa el footer de esta tarjeta para "sin dato" (más abajo) — antes esta
+                  tarjeta mezclaba dos símbolos distintos para lo mismo. */}
               <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
                 <Building2 className="h-3.5 w-3.5 opacity-70" />
-                <span className="truncate">{supplier.contactName || "-"}</span>
+                <span className="truncate">{supplier.contactName || "—"}</span>
               </div>
               <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
                 <Mail className="h-3.5 w-3.5 opacity-70" />
-                <span className="truncate">{supplier.email || "-"}</span>
+                <span className="truncate">{supplier.email || "—"}</span>
               </div>
             </>
           }

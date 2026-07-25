@@ -12,6 +12,8 @@ const formatFetchedAt = (value) => {
   if (!value) return "-";
   // Regla del dueño: la hora que se muestra es SIEMPRE la de Argentina, sin
   // importar el huso del navegador — por eso timeZone va fijo, no implícito.
+  // hallazgo #19 del barrido (2026-07-24): `hourCycle: "h23"` explícito, si no Intl
+  // arma la hora en formato 12hs con "a. m."/"p. m." — el resto del sistema usa 24hs.
   return new Date(value).toLocaleString("es-AR", {
     day: "2-digit",
     month: "2-digit",
@@ -19,6 +21,7 @@ const formatFetchedAt = (value) => {
     hour: "2-digit",
     minute: "2-digit",
     timeZone: "America/Argentina/Buenos_Aires",
+    hourCycle: "h23",
   });
 };
 

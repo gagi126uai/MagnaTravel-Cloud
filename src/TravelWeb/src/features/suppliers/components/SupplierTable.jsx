@@ -78,7 +78,11 @@ export function SupplierTable({ suppliers, onEdit, onToggleStatus, onAccountClic
               </DataGridCell>
               <DataGridCell>
                 <div className="flex flex-col gap-1 text-xs">
-                  <span className="font-medium text-slate-600 dark:text-slate-300">{supplier.contactName || "-"}</span>
+                  {/* Hallazgo #9 del barrido (2026-07-24): esta misma tabla mezclaba "-" acá y
+                      "—" en la columna de Saldo (unas líneas más abajo) para el mismo concepto
+                      ("no hay dato"). Unificado a "—" (em dash), el símbolo que ya domina en el
+                      resto del sistema para celdas sin dato. */}
+                  <span className="font-medium text-slate-600 dark:text-slate-300">{supplier.contactName || "—"}</span>
                   {supplier.email ? <span className="truncate text-slate-400">{supplier.email}</span> : null}
                 </div>
               </DataGridCell>

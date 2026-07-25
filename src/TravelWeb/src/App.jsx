@@ -35,6 +35,7 @@ import PublicCountryEmbedPage from "./pages/PublicCountryEmbedPage";
 import PublicPackageEmbedPage from "./pages/PublicPackageEmbedPage";
 import PreviewCountryPage from "./pages/PreviewCountryPage";
 import PreviewPackagePage from "./pages/PreviewPackagePage";
+import NotFoundPage from "./pages/NotFoundPage";
 import { AlertsProvider } from "./contexts/AlertsContext";
 import { OperationalFlagsProvider } from "./contexts/OperationalFlagsContext";
 import { Toaster } from "sonner";
@@ -344,6 +345,11 @@ export default function App() {
                       path="/admin"
                       element={isAdmin() ? <AdminHubPage /> : <Navigate to="/dashboard" replace />}
                     />
+                    {/* Ruta atrapa-todo (hallazgo #18 del barrido 2026-07-24): sin esto, cualquier
+                        URL que no matchee ninguna ruta de arriba (ej. "/operators" en vez de
+                        "/suppliers") no renderizaba nada — pantalla en blanco con el menú visible
+                        pero sin contenido ni aviso. Va SIEMPRE al final para no tapar rutas reales. */}
+                    <Route path="*" element={<NotFoundPage />} />
                   </Routes>
                   </ErrorBoundary>
                 </Layout>

@@ -28,7 +28,7 @@
  * Cartel Emergente (traje ámbar de confirmación) con "Volver a corregir" / "Sí, confirmar".
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Hotel, Plane, Car, Package, ShieldCheck, AlertCircle } from "lucide-react";
 import { hasPermission } from "../../../auth";
 import { api } from "../../../api";
@@ -392,6 +392,18 @@ export function ServiceInlineCard({ reservaId, serviceToEdit, suppliers, onGuard
     // (cartel rojo), son dos estados mutuamente excluyentes que se limpian entre sí en cada
     // intento de guardado. También va al Cartel Emergente (traje confirmación, ámbar).
     const [avisoCostoMenorAPagado, setAvisoCostoMenorAPagado] = useState(null);
+
+    // Hallazgo #31 del barrido (2026-07-24): el aviso corto de validación ("Escribí la ruta
+    // o aerolínea.", etc.) solo se recalculaba en el próximo click de "Guardar" — validarForm()
+    // corre SOLO adentro de handleGuardar. Si el vendedor completaba el campo que faltaba pero
+    // no volvía a tocar "Guardar", el cartelito quedaba pegado en pantalla como si el campo
+    // siguiera vacío, aunque ya no lo estuviera. Este efecto limpia ese aviso apenas el
+    // vendedor vuelve a tocar CUALQUIER campo del tipo activo (o cambia de pestaña) — no hace
+    // falta re-validar entero, alcanza con sacar el aviso viejo; el próximo "Guardar" ya lo
+    // recalcula de cero si todavía falta algo.
+    useEffect(() => {
+        setErrorValidacion(null);
+    }, [tabActiva, formHotel, formVuelo, formTraslado, formPaquete, formAsistencia]);
 
     const esEdicion = Boolean(serviceToEdit);
 

@@ -65,7 +65,7 @@ export function getAdvertenciaCapacidad(paxCount, capacity) {
 
   const detalle = [];
   if (cap.hotel > 0 && paxCount > cap.hotel) detalle.push(`hotel para ${cap.hotel}`);
-  if (cap.transfer > 0 && paxCount > cap.transfer) detalle.push(`transfer para ${cap.transfer}`);
+  if (cap.transfer > 0 && paxCount > cap.transfer) detalle.push(`traslado para ${cap.transfer}`);
   if (cap.package > 0 && paxCount > cap.package) detalle.push(`paquete para ${cap.package}`);
 
   return { ...cap, detalle };

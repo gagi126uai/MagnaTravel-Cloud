@@ -552,7 +552,9 @@ export default function CreateInvoiceModal({
                     Fecha del TC que se registrará:{" "}
                     <span className="font-medium text-slate-700 dark:text-slate-200">
                       {/* Regla del dueño: la fecha/hora que se muestra es SIEMPRE la de Argentina,
-                          sin importar el huso del navegador del operador. */}
+                          sin importar el huso del navegador del operador.
+                          hallazgo #19 del barrido (2026-07-24): `hourCycle: "h23"` explícito, si no
+                          Intl arma la hora en formato 12hs con "a. m."/"p. m." — acá va 24hs. */}
                       {new Date().toLocaleDateString("es-AR", {
                         day: "2-digit",
                         month: "2-digit",
@@ -560,6 +562,7 @@ export default function CreateInvoiceModal({
                         hour: "2-digit",
                         minute: "2-digit",
                         timeZone: "America/Argentina/Buenos_Aires",
+                        hourCycle: "h23",
                       })}
                     </span>
                   </div>
