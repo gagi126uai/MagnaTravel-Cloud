@@ -99,7 +99,7 @@ public class SearchService : ISearchService
         var reservas = await reservasQuery
             .OrderByDescending(f => f.CreatedAt)
             .Take(5)
-            .Select(f => new ReservaSearchResult(f.PublicId, f.NumeroReserva, f.Name, f.Status.ToString(), f.Payer != null ? f.Payer.FullName : null))
+            .Select(f => new ReservaSearchResult(f.PublicId, f.NumeroReserva, f.Name, f.Status, f.Payer != null ? f.Payer.FullName : null))
             .ToListAsync(cancellationToken);
 
         // Payments: requiere cobranzas.view base; si no tiene cobranzas.view_all, filtrar
@@ -114,8 +114,13 @@ public class SearchService : ISearchService
             var paymentsQuery = _dbContext.Payments
                 .AsNoTracking()
                 .Include(p => p.Reserva)
+                // OJO: Payment.Status es string; el .ToString() que habia aca era un no-op que
+                // Npgsql NO puede traducir a SQL ("Translation of method 'object.ToString' failed")
+                // y tiraba 500 en PROD para CUALQUIER busqueda (hotfix 2026-07-25). InMemory lo
+                // toleraba, por eso los tests unit daban verde: la red real es el test de
+                // integracion contra Postgres.
                 .Where(p => p.Method.ToLower().Contains(normalized) ||
-                    p.Status.ToString().ToLower().Contains(normalized));
+                    p.Status.ToLower().Contains(normalized));
 
             if (!hasCobranzasViewAll)
             {
@@ -129,7 +134,7 @@ public class SearchService : ISearchService
                 .Select(p => new PaymentSearchResult(
                     p.PublicId,
                     p.Amount,
-                    p.Status.ToString(),
+                    p.Status,
                     p.Method,
                     p.Reserva != null ? p.Reserva.NumeroReserva : null))
                 .ToListAsync(cancellationToken);
