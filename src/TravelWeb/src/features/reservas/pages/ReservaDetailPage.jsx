@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Clock, CreditCard, Download, Eye, ExternalLink, FileText, History, Loader2, Paperclip, Pencil, Receipt, Send, Trash2, Users, Plus, RefreshCw, Check, Ban } from "lucide-react";
 import { api } from "../../../api";
-import { showConfirm, showError, showSuccess } from "../../../alerts";
+import { showConfirm, showError, showSuccess, showWarning } from "../../../alerts";
 import ReservaTimeline from "../../../components/ReservaTimeline";
 import ConfirmModal from "../../../components/ConfirmModal";
 import { CartelEmergente, CARTEL_EMERGENTE_VARIANTES } from "../../../components/CartelEmergente";
@@ -1116,8 +1116,15 @@ export default function ReservaDetailPage() {
   const handleSaveReservaDates = async (payload) => {
     // Lanza si falla para que el modal muestre el error inline.
     try {
-      await api.patch(`/reservas/${publicId}/dates`, payload);
+      const actualizada = await api.patch(`/reservas/${publicId}/dates`, payload);
       showSuccess("Fechas actualizadas");
+      // Bug #27 del barrido (pieza que faltó en la Tanda 3): el motor compara las fechas
+      // recién guardadas contra las de los servicios y manda `warning` con el texto firmado
+      // ("Ojo: las fechas que guardaste no coinciden..."). La pantalla nunca lo mostraba —
+      // detectado en la prueba integral E2E del 2026-07-25. Aviso no bloqueante → toast warning.
+      if (actualizada?.warning) {
+        showWarning(actualizada.warning);
+      }
       setShowEditDatesModal(false);
       await fetchReserva({ showLoading: false, preserveOnError: true });
     } catch (error) {
