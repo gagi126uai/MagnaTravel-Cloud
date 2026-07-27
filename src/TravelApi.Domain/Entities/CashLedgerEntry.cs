@@ -123,4 +123,27 @@ public class CashLedgerEntry : IHasPublicId
 
     /// <summary>true = este asiento YA fue revertido (sale del indice de "vigentes"; no se cuenta dos veces).</summary>
     public bool IsReversed { get; set; }
+
+    /// <summary>
+    /// Firma post-verificacion Lote 2 (2026-07-27): distingue POR QUE quedo sin efecto un par
+    /// original+reversa. Un movimiento manual puede revertirse por dos motivos MUY distintos para
+    /// el cajero:
+    ///   - EDICION (<see cref="TreasuryService.UpdateManualMovementAsync"/>): el usuario corrigio un
+    ///     dato del movimiento (monto, fecha, descripcion...) y el sistema arma un asiento nuevo. El
+    ///     par viejo no esta "anulado" en el sentido de negocio, quedo REEMPLAZADO por el nuevo.
+    ///   - ANULACION real (<see cref="TreasuryService.DeleteManualMovementAsync"/>): el usuario decidio
+    ///     que el movimiento nunca debio existir. Ahi si es "Anulado" sin mas.
+    ///
+    /// Antes del Lote 2 ambos casos se veian identicos en el Libro de Caja (badge "Anulado" para los
+    /// dos), lo cual confundia al cajero cuando solo habia corregido un dato. Este flag es ADITIVO:
+    /// nace en <c>false</c> para todo lo persistido antes de esta tanda (pares viejos de ediciones
+    /// pasadas siguen mostrando "Anulado"; no hay backfill porque no hay forma de saber, sin este dato,
+    /// cuales de esos pares viejos nacieron de una edicion vs de una anulacion real).
+    ///
+    /// Se marca <c>true</c> en LAS DOS patas del par (el original marcado <see cref="IsReversed"/> y su
+    /// reversa con <see cref="IsReversal"/>) cuando <c>ReverseLiveManualMovementLedgerEntryAsync</c> se
+    /// invoca desde una edicion. El asiento NUEVO que reemplaza al par (el que queda vigente despues de
+    /// editar) NO lleva esta marca: sigue en <c>false</c> porque es el que rige hoy.
+    /// </summary>
+    public bool IsReplaced { get; set; }
 }

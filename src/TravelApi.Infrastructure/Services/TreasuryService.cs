@@ -409,7 +409,10 @@ public class TreasuryService : ITreasuryService
                 LedgerSourceType = e.SourceType,
                 // H14: anulado = esta fila ya fue reemplazada (IsReversed) O es la que reemplaza a otra
                 // (IsReversal). Cualquiera de las dos formas dice "esta fila no cuenta para el saldo vivo".
-                IsAnnulled = e.IsReversed || e.IsReversal
+                IsAnnulled = e.IsReversed || e.IsReversal,
+                // Firma post-verificacion Lote 2: "Reemplazado" (edicion) vs "Anulado" (anulacion real).
+                // Ver el XML-doc de CashMovementDto.IsReplaced y CashLedgerEntry.IsReplaced.
+                IsReplaced = e.IsReplaced
             });
 
         if (!string.Equals(query.Direction, "all", StringComparison.OrdinalIgnoreCase))
@@ -496,7 +499,14 @@ public class TreasuryService : ITreasuryService
     /// reversa (orden estricto del indice unico parcial). NO hace SaveChanges. Si no hay asiento vigente
     /// (movimiento legacy sin backfill), no hace nada.
     /// </summary>
-    private async Task ReverseLiveManualMovementLedgerEntryAsync(int manualMovementId, CancellationToken cancellationToken)
+    /// <param name="isReplacement">
+    /// Firma post-verificacion Lote 2 (2026-07-27): <c>true</c> cuando este metodo se invoca desde
+    /// <see cref="UpdateManualMovementAsync"/> (el par queda REEMPLAZADO por un asiento nuevo con los
+    /// datos corregidos). <c>false</c> cuando se invoca desde <see cref="DeleteManualMovementAsync"/>
+    /// (el par queda ANULADO de verdad, no hay reemplazo). Ver <see cref="CashLedgerEntry.IsReplaced"/>.
+    /// </param>
+    private async Task ReverseLiveManualMovementLedgerEntryAsync(
+        int manualMovementId, bool isReplacement, CancellationToken cancellationToken)
     {
         var live = await _dbContext.CashLedgerEntries
             .FirstOrDefaultAsync(
@@ -505,8 +515,14 @@ public class TreasuryService : ITreasuryService
         if (live is null) return;
 
         live.IsReversed = true;
+        // Hallazgo N1 (review 2026-07-27): `live` es SIEMPRE un asiento recien fetcheado con
+        // IsReplaced=false (nace en false y aca es la PRIMERA vez que se revierte, nunca podria venir en
+        // true). Un `if` explicito documenta la intencion mejor que una asignacion incondicional: si
+        // isReplacement es false (anulacion real), NO tocamos el campo — se queda en su default seguro
+        // en vez de reescribirlo con el mismo valor por costumbre.
+        if (isReplacement) live.IsReplaced = true;
         var reversal = TravelApi.Domain.Helpers.CashLedgerEntryFactory.Reverse(
-            live, DateTime.UtcNow, live.CreatedByUserId, live.CreatedByUserName);
+            live, DateTime.UtcNow, live.CreatedByUserId, live.CreatedByUserName, isReplacement: isReplacement);
         _dbContext.CashLedgerEntries.Add(reversal);
     }
 
@@ -535,7 +551,9 @@ public class TreasuryService : ITreasuryService
         entity.RelatedSupplierId = relatedSupplierId;
 
         // ADR-022 §4.5: editar el monto/moneda del manual = reversa del asiento viejo + asiento nuevo.
-        await ReverseLiveManualMovementLedgerEntryAsync(entity.Id, cancellationToken);
+        // Firma post-verificacion Lote 2: isReplacement=true porque este par queda sin efecto por una
+        // EDICION (hay un asiento nuevo abajo que lo reemplaza), no por una anulacion real.
+        await ReverseLiveManualMovementLedgerEntryAsync(entity.Id, isReplacement: true, cancellationToken: cancellationToken);
         var updatedLedgerEntry = TravelApi.Domain.Helpers.CashLedgerEntryFactory.ForManualMovement(
             entity, currencyOverride: null, actorUserId: entity.CreatedBy, actorUserName: entity.CreatedBy);
         _dbContext.CashLedgerEntries.Add(updatedLedgerEntry);
@@ -554,7 +572,9 @@ public class TreasuryService : ITreasuryService
 
         // ADR-022 §4.5: anular el manual NO borra su asiento: se marca IsReversed=true y se inserta su
         // reversa, asi la caja netea a 0 sin reescribir la historia.
-        await ReverseLiveManualMovementLedgerEntryAsync(entity.Id, cancellationToken);
+        // Firma post-verificacion Lote 2: isReplacement=false porque esto SI es una anulacion real
+        // (no hay ningun asiento nuevo que lo reemplace).
+        await ReverseLiveManualMovementLedgerEntryAsync(entity.Id, isReplacement: false, cancellationToken: cancellationToken);
 
         await _dbContext.SaveChangesAsync(cancellationToken);
     }

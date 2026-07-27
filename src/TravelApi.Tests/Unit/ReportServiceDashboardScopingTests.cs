@@ -611,4 +611,202 @@ public class ReportServiceDashboardScopingTests
 
         Assert.Equal(-80m, dto.PorMoneda.MargenBruto.Single(x => x.Currency == Monedas.USD).Amount);
     }
+
+    // ============================================================================================
+    // Obra 5 "Ventas personales" (firma post-verificacion Lote 2, 2026-07-27): el dashboard de un
+    // vendedor SIN reservas.view_all debe mostrar SOLAMENTE su propia cartera en ventas/costos/margen/
+    // cobros/saldo pendiente — antes solo ReservasPendientes y ProximosViajes respetaban el ownerFilter,
+    // el resto del dashboard mostraba la facturacion de TODA la agencia (fuga senalada por security).
+    // ============================================================================================
+
+    /// <summary>
+    /// Dos reservas (vendedor-A y vendedor-B, mismo criterio que <see cref="SeedAsync"/>) mas un cobro
+    /// real de caja y un pago a proveedor por cada una, para poder verificar que "Cobros del mes" y
+    /// "Pagos a proveedores" tambien quedan acotados a la cartera del vendedor.
+    ///
+    /// Cierre de hueco (2026-07-27, decision del orquestador): "Pagos a proveedores" se suma a este seed
+    /// compartido porque el criterio firmado es el MISMO para los tres ejes (cobros, saldo pendiente,
+    /// pagos a proveedor): todos se atan a la reserva del vendedor via join, ninguno queda afuera.
+    /// </summary>
+    private static async Task SeedConCobrosAsync(AppDbContext context)
+    {
+        await SeedAsync(context);
+        var thisMonth = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc).AddDays(3);
+
+        context.Payments.AddRange(
+            new Payment { ReservaId = 1, Amount = 300m, Currency = Monedas.ARS, PaidAt = thisMonth, AffectsCash = true },
+            new Payment { ReservaId = 2, Amount = 800m, Currency = Monedas.ARS, PaidAt = thisMonth, AffectsCash = true });
+
+        context.SupplierPayments.AddRange(
+            new SupplierPayment { ReservaId = 1, Amount = 100m, Currency = Monedas.ARS, PaidAt = thisMonth },
+            new SupplierPayment { ReservaId = 2, Amount = 400m, Currency = Monedas.ARS, PaidAt = thisMonth });
+        await context.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task Dashboard_VendedorSinViewAll_VentasCostosYMargenSonSoloSuCartera()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedConCobrosAsync(context);
+
+        // vendedor-A: sin reservas.view_all, pero CON cobranzas.see_cost, para poder verificar que el
+        // recorte por cartera tambien aplica al costo/margen (no solo a la venta).
+        var accessor = BuildContextAccessor("vendedor-A", "Vendedor");
+        var resolver = BuildResolver("vendedor-A", Permissions.ReportesView, Permissions.CobranzasSeeCost);
+
+        var service = new ReportService(context, _bnaMock.Object, resolver, accessor);
+        var dto = await service.GetDashboardAsync(CancellationToken.None);
+
+        // Solo su reserva (venta 1000, costo 600, margen 400), NO la suma de las dos (3000/1800/1200).
+        Assert.Equal(1000m, dto.VentasDelMes);
+        Assert.Equal(600m, dto.CostosDelMes);
+        Assert.Equal(400m, dto.MargenBruto);
+
+        // Mismo recorte en los desgloses por moneda (unica moneda sembrada: ARS).
+        Assert.Equal(1000m, dto.PorMoneda.VentasDelMes.Single(x => x.Currency == Monedas.ARS).Amount);
+        Assert.Equal(600m, dto.PorMoneda.CostosDelMes.Single(x => x.Currency == Monedas.ARS).Amount);
+        Assert.Equal(400m, dto.PorMoneda.MargenBruto.Single(x => x.Currency == Monedas.ARS).Amount);
+
+        // Saldo pendiente (AR): solo el de su reserva (300), no el total de las dos (300+800=1100).
+        Assert.Equal(300m, dto.PorMoneda.SaldoPendiente.Single(x => x.Currency == Monedas.ARS).Amount);
+
+        // Cobros del mes: solo el cobro de su reserva (300), no el de la reserva ajena (800).
+        Assert.Equal(300m, dto.PorMoneda.CobrosDelMes.Single(x => x.Currency == Monedas.ARS).Amount);
+
+        // Cierre de hueco (2026-07-27): Pagos a proveedores tambien es SU cartera. Solo el pago a
+        // proveedor de su reserva (100), NO el de la reserva ajena (400) ni la suma de ambas (500).
+        Assert.Equal(100m, dto.PagosProveedores);
+        Assert.Equal(100m, dto.PorMoneda.PagosProveedores.Single(x => x.Currency == Monedas.ARS).Amount);
+
+        // Hallazgo de review (2026-07-27, bloqueante backend+security): CobrosDelMes y SaldoPendiente
+        // ESCALARES tambien son SU cartera (no solo el desglose por moneda de arriba).
+        Assert.Equal(300m, dto.CobrosDelMes);
+        Assert.Equal(300m, dto.SaldoPendiente);
+
+        // filesByStatus/DistribucionEstados: solo su reserva (Confirmed), no las dos.
+        Assert.Equal(1, dto.Reservados);
+        Assert.Equal(1, dto.DistribucionEstados.Reserved);
+
+        // TendenciaHistorica (6 meses): el ultimo balde (indice 5) es el mes en curso. Con
+        // cobranzas.see_cost, ve venta Y costo, pero SOLO de su cartera (1000/600), no la suma (3000/1800).
+        var esteMes = dto.TendenciaHistorica[5];
+        Assert.Equal(1000m, esteMes.Sales);
+        Assert.Equal(600m, esteMes.Costs);
+    }
+
+    [Fact]
+    public async Task Dashboard_AdminSigueViendoTodaLaAgencia_VentasCostosMargenCobrosYSaldo()
+    {
+        // Regresion: el admin (o cualquiera con reservas.view_all) NO debe verse afectado por el
+        // recorte de la obra 5. Debe seguir viendo la agencia entera, exactamente como antes.
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedConCobrosAsync(context);
+
+        var accessor = BuildContextAccessor("admin-1", "Admin");
+        var resolver = BuildResolver("admin-1");
+
+        var service = new ReportService(context, _bnaMock.Object, resolver, accessor);
+        var dto = await service.GetDashboardAsync(CancellationToken.None);
+
+        Assert.Equal(3000m, dto.VentasDelMes);
+        Assert.Equal(1800m, dto.CostosDelMes);
+        Assert.Equal(1200m, dto.MargenBruto);
+
+        Assert.Equal(3000m, dto.PorMoneda.VentasDelMes.Single(x => x.Currency == Monedas.ARS).Amount);
+        Assert.Equal(1800m, dto.PorMoneda.CostosDelMes.Single(x => x.Currency == Monedas.ARS).Amount);
+        Assert.Equal(1200m, dto.PorMoneda.MargenBruto.Single(x => x.Currency == Monedas.ARS).Amount);
+
+        Assert.Equal(1100m, dto.PorMoneda.SaldoPendiente.Single(x => x.Currency == Monedas.ARS).Amount);
+        Assert.Equal(1100m, dto.PorMoneda.CobrosDelMes.Single(x => x.Currency == Monedas.ARS).Amount);
+
+        // Regresion (cierre de hueco 2026-07-27): el admin sigue viendo el total de pagos a proveedor de
+        // las dos reservas (100+400=500), nunca acotado a una sola cartera.
+        Assert.Equal(500m, dto.PagosProveedores);
+        Assert.Equal(500m, dto.PorMoneda.PagosProveedores.Single(x => x.Currency == Monedas.ARS).Amount);
+
+        // Regresion (hallazgo de review 2026-07-27): CobrosDelMes/SaldoPendiente escalares, conteo por
+        // estado y tendencia historica siguen mostrando la agencia ENTERA para el admin.
+        Assert.Equal(1100m, dto.CobrosDelMes);
+        Assert.Equal(1100m, dto.SaldoPendiente);
+        Assert.Equal(2, dto.Reservados);
+        Assert.Equal(2, dto.DistribucionEstados.Reserved);
+
+        var esteMes = dto.TendenciaHistorica[5];
+        Assert.Equal(3000m, esteMes.Sales);
+        Assert.Equal(1800m, esteMes.Costs);
+    }
+
+    // ============================================================================================
+    // Hallazgo de review (2026-07-27, bloqueante backend+security) + firma de Gaston (adenda
+    // 2026-07-27 tarde, docs/ux/guia-ux-gaston.md): "Cuentas por pagar" SI se acota (deuda con
+    // proveedores no atribuible a la cartera de un vendedor puntual), pero "Posibles clientes
+    // activos" (Leads) NO — Gaston firmo explicitamente que los leads son COMPARTIDOS y un CONTEO no
+    // expone plata, asi que ese widget muestra la agencia entera para CUALQUIER usuario. Ver el test
+    // de blindaje mas abajo.
+    // ============================================================================================
+
+    [Fact]
+    public async Task Dashboard_VendedorSinViewAll_VePosiblesClientesDeTodaLaAgencia()
+    {
+        // Firma de Gaston (adenda 2026-07-27 tarde): revierte un hallazgo de review del mismo dia que
+        // habia acotado este conteo por Lead.AssignedToUserId. Los leads son COMPARTIDOS (cualquier
+        // vendedor puede seguir a cualquier cliente potencial) y un CONTEO no expone plata ni
+        // facturacion — no aplica el criterio "el vendedor no ve los numeros de toda la agencia" que
+        // si rige para ventas/costos/cobros/saldo pendiente. Este test blinda la decision: NO reabrir
+        // sin una firma nueva.
+        await using var context = new AppDbContext(_dbOptions);
+        context.Leads.AddRange(
+            new Lead { FullName = "Lead de A", Status = LeadStatus.New, AssignedToUserId = "vendedor-A" },
+            new Lead { FullName = "Lead de B", Status = LeadStatus.Contacted, AssignedToUserId = "vendedor-B" },
+            // Perdido/Ganado nunca cuentan, para nadie.
+            new Lead { FullName = "Lead perdido de A", Status = LeadStatus.Lost, AssignedToUserId = "vendedor-A" });
+        await context.SaveChangesAsync();
+
+        var accessor = BuildContextAccessor("vendedor-A", "Vendedor");
+        var resolver = BuildResolver("vendedor-A", Permissions.ReportesView); // sin reservas.view_all
+
+        var service = new ReportService(context, _bnaMock.Object, resolver, accessor);
+        var dto = await service.GetDashboardAsync(CancellationToken.None);
+
+        // 2 leads activos (New + Contactado) de VENDEDORES DISTINTOS: el vendedor-A SIN view_all ve
+        // los dos, no solo el suyo.
+        Assert.Equal(2, dto.ActivePotentialCustomers);
+    }
+
+    [Fact]
+    public async Task Dashboard_VendedorConSeeCostSinViewAll_CuentasPorPagarQuedaVacia()
+    {
+        // Hallazgo de review (2026-07-27): aunque el vendedor TENGA cobranzas.see_cost, "Cuentas por
+        // pagar" (deuda con PROVEEDORES) no se puede atribuir a la cartera de un vendedor puntual — es
+        // un pasivo de la agencia entera con el operador. Queda VACIA sin reservas.view_all, sin
+        // importar el permiso de costo (a diferencia de CostosDelMes, que SI sigue viendose acotado).
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedMultiCurrencyAsync(context); // reserva de vendedor-A + SupplierBalanceByCurrency ARS/USD
+
+        var accessor = BuildContextAccessor("vendedor-A", "Vendedor");
+        var resolver = BuildResolver("vendedor-A", Permissions.ReportesView, Permissions.CobranzasSeeCost);
+
+        var service = new ReportService(context, _bnaMock.Object, resolver, accessor);
+        var dto = await service.GetDashboardAsync(CancellationToken.None);
+
+        Assert.Empty(dto.PorMoneda.CuentasPorPagar);
+        // Contraste: el costo de SU cartera si sigue viendose (no es un enmascarado general por costo).
+        Assert.NotEmpty(dto.PorMoneda.CostosDelMes);
+    }
+
+    [Fact]
+    public async Task Dashboard_AdminConSeeCost_CuentasPorPagarSigueMostrandoLaAgenciaEntera_Regresion()
+    {
+        await using var context = new AppDbContext(_dbOptions);
+        await SeedMultiCurrencyAsync(context);
+
+        var accessor = BuildContextAccessor("colaborador-1", "Colaborador");
+        var resolver = BuildResolver("colaborador-1",
+            Permissions.ReportesView, Permissions.CobranzasSeeCost, Permissions.ReservasViewAll);
+
+        var service = new ReportService(context, _bnaMock.Object, resolver, accessor);
+        var dto = await service.GetDashboardAsync(CancellationToken.None);
+
+        Assert.NotEmpty(dto.PorMoneda.CuentasPorPagar);
+    }
 }

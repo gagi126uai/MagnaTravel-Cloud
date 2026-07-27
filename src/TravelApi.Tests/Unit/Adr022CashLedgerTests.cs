@@ -250,15 +250,22 @@ public class Adr022CashLedgerTests
         Assert.True(original.IsReversed);
         Assert.False(original.IsReversal);
         Assert.Equal(300m, original.Amount);
+        // Hallazgo de review (2026-07-27, bloqueante backend+security): la firma "par de Caja por
+        // EDICION" (IsReplaced) cubre TAMBIEN el ciclo de edicion de un cobro, no solo movimientos
+        // manuales. El par de esta edicion debe quedar marcado "Reemplazado", no "Anulado" a secas.
+        Assert.True(original.IsReplaced);
 
         var reversal = entries.Single(e => e.IsReversal);
         Assert.Equal(300m, reversal.Amount);
         Assert.Equal(CashMovementDirections.Expense, reversal.Direction);
         Assert.Equal(original.Id, reversal.ReversedEntryId);
+        Assert.True(reversal.IsReplaced);
 
         // El unico asiento VIGENTE (no reversa, no revertido) es el nuevo por 500.
         var vigente = entries.Single(e => !e.IsReversal && !e.IsReversed);
         Assert.Equal(500m, vigente.Amount);
+        // El asiento nuevo NO es "un reemplazo de si mismo": queda en false.
+        Assert.False(vigente.IsReplaced);
 
         // Neto del libro = 300 - 300 + 500 = 500 (la edicion no reescribio el pasado).
         decimal neto = entries.Sum(e =>
@@ -287,9 +294,97 @@ public class Adr022CashLedgerTests
         // No queda ningun asiento vigente para ese pago.
         Assert.DoesNotContain(entries, e => !e.IsReversal && !e.IsReversed);
 
+        // Hallazgo de review (2026-07-27): esto es una ANULACION real (borrar el cobro), no una edicion:
+        // las dos patas del par deben quedar en IsReplaced=false ("Anulado", no "Reemplazado").
+        Assert.All(entries, e => Assert.False(e.IsReplaced));
+
         decimal neto = entries.Sum(e =>
             e.Direction == CashMovementDirections.Income ? e.Amount : -e.Amount);
         Assert.Equal(0m, neto);
+    }
+
+    [Fact]
+    public async Task EditThenDeletePayment_EditPairStaysReplaced_DeletePairIsNotReplaced()
+    {
+        // Hallazgo de review (2026-07-27, bloqueante backend+security): caso encadenado editar->anular.
+        // El par de la EDICION (original viejo + su reversa) debe conservar IsReplaced=true para siempre
+        // (la historia no se reescribe); el par NUEVO que nace de la ANULACION (el asiento vigente
+        // post-edicion + su reversa) debe quedar en IsReplaced=false, porque ese si es un cierre real.
+        await using var context = new AppDbContext(_dbOptions);
+        var reserva = await SeedReservaAsync(context);
+        var service = BuildPaymentService(context);
+
+        var dto = await service.CreatePaymentAsync(new CreatePaymentRequest
+        {
+            ReservaId = reserva.PublicId.ToString(), Amount = 300m, Method = "Transfer",
+        }, CancellationToken.None);
+
+        await service.UpdatePaymentAsync(dto.PublicId.ToString(), new UpdatePaymentRequest
+        {
+            Amount = 500m, Method = "Transfer",
+        }, CancellationToken.None);
+
+        await service.DeletePaymentAsync(dto.PublicId.ToString(), CancellationToken.None);
+
+        var entries = await context.CashLedgerEntries.OrderBy(e => e.Id).ToListAsync();
+        // 4 asientos: original(300, edicion) -> reversa(300, edicion) -> nuevo(500, ahora anulado) -> reversa(500, anulacion).
+        Assert.Equal(4, entries.Count);
+
+        var editPair = entries.Where(e => e.Amount == 300m).ToList();
+        Assert.Equal(2, editPair.Count);
+        Assert.All(editPair, e => Assert.True(e.IsReplaced));
+
+        var deletePair = entries.Where(e => e.Amount == 500m).ToList();
+        Assert.Equal(2, deletePair.Count);
+        Assert.All(deletePair, e => Assert.False(e.IsReplaced));
+
+        // Ningun asiento queda vigente: el ultimo (500) tambien se anulo.
+        Assert.DoesNotContain(entries, e => !e.IsReversal && !e.IsReversed);
+    }
+
+    [Fact]
+    public async Task DeleteThenRestorePayment_TheAnnulmentPairStaysNotReplaced()
+    {
+        // Hallazgo B4 (re-review 2026-07-27, bloqueante backend+security): RestorePaymentAsync (la
+        // "Papelera" de cobros) revive un Payment soft-deleted (IsDeleted=false) SIN tocar el par de
+        // asientos que dejo su anulacion — ver PaymentService.cs:1370-1371. Este test fija esa conducta EN
+        // VIVO como CONTRATO: el par de la anulacion real sigue en IsReplaced=false ("Anulado") despues de
+        // restaurar, aunque el Payment vuelva a estar "vivo" (IsDeleted=false). Es la MISMA razon por la
+        // que la migracion de backfill (Adr022_M3_BackfillIsReplacedFromLiveOriginStatus) no puede confiar
+        // solo en IsDeleted=false para Payment: necesita ademas el rastro de AuditLogs "PaymentAnnulled".
+        // Si este test alguna vez empezara a fallar, significa que alguien cambio RestorePaymentAsync para
+        // "des-marcar" el par viejo — y en ese caso HAY QUE avisar al reviewer de la migracion, porque el
+        // criterio del backfill dejaria de ser consistente con el codigo en vivo.
+        await using var context = new AppDbContext(_dbOptions);
+        var reserva = await SeedReservaAsync(context);
+        var service = BuildPaymentService(context);
+
+        var dto = await service.CreatePaymentAsync(new CreatePaymentRequest
+        {
+            ReservaId = reserva.PublicId.ToString(), Amount = 400m, Method = "Transfer",
+        }, CancellationToken.None);
+
+        await service.DeletePaymentAsync(dto.PublicId.ToString(), CancellationToken.None);
+
+        var paymentId = (await context.Payments.IgnoreQueryFilters().SingleAsync(p => p.PublicId == dto.PublicId)).Id;
+        await service.RestorePaymentAsync(paymentId, CancellationToken.None);
+
+        var entries = await context.CashLedgerEntries
+            .Where(e => e.PaymentId == paymentId)
+            .OrderBy(e => e.Id)
+            .ToListAsync();
+
+        // 3 asientos: el par de la anulacion (original 400 + su reversa) siguen intactos, MAS el asiento
+        // NUEVO que la restauracion re-asienta (RestorePaymentAsync no des-revierte, crea uno nuevo).
+        Assert.Equal(3, entries.Count);
+
+        var annulmentPair = entries.Where(e => e.IsReversed || e.IsReversal).ToList();
+        Assert.Equal(2, annulmentPair.Count);
+        Assert.All(annulmentPair, e => Assert.False(e.IsReplaced));
+
+        var live = entries.Single(e => !e.IsReversal && !e.IsReversed);
+        Assert.Equal(400m, live.Amount);
+        Assert.False(live.IsReplaced); // el asiento nuevo tampoco es "un reemplazo de si mismo".
     }
 
     // ====================================================================================

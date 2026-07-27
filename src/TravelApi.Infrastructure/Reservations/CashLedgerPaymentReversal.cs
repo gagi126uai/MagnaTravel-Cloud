@@ -27,11 +27,20 @@ public static class CashLedgerPaymentReversal
     /// movio caja y no tiene asiento). Si el cobro no tiene asiento vigente (legacy sin backfill todavia),
     /// no hace nada — mismo no-op tolerante que el camino canonico.</para>
     /// </summary>
+    /// <param name="isReplacement">
+    /// Hallazgo de review (2026-07-27, bloqueante T-5/backend+security): la firma "par de Caja por
+    /// EDICION" es GENERICA — cubre cobros y pagos a proveedor, no solo movimientos manuales. <c>true</c>
+    /// cuando este metodo se invoca desde una EDICION de cobro (<c>PaymentService.UpdatePaymentAsync</c>,
+    /// <c>ReservaService</c> camino legacy de edicion): el par queda REEMPLAZADO por el asiento nuevo que
+    /// el caller inserta a continuacion. <c>false</c> (default) cuando es una ANULACION real (borrar el
+    /// cobro): no hay ningun asiento nuevo que lo reemplace. Ver <see cref="CashLedgerEntry.IsReplaced"/>.
+    /// </param>
     public static async Task ReverseLivePaymentEntryAsync(
         AppDbContext db,
         int paymentId,
         string? actorUserId,
         string? actorUserName,
+        bool isReplacement = false,
         CancellationToken ct = default)
     {
         var live = await db.CashLedgerEntries
@@ -42,8 +51,13 @@ public static class CashLedgerPaymentReversal
 
         // 1) sacar el viejo del indice de vigentes ANTES de insertar nada nuevo.
         live.IsReversed = true;
+        // Hallazgo N1 (review 2026-07-27): mismo criterio que TreasuryService/SupplierService — `live`
+        // nace en IsReplaced=false y esta es la primera vez que se revierte; el `if` documenta la
+        // intencion en vez de reescribir incondicionalmente con el mismo valor en la anulacion real.
+        if (isReplacement) live.IsReplaced = true;
         // 2) insertar la reversa (Direction invertida, ReversedEntryId al viejo).
-        var reversal = CashLedgerEntryFactory.Reverse(live, DateTime.UtcNow, actorUserId, actorUserName);
+        var reversal = CashLedgerEntryFactory.Reverse(
+            live, DateTime.UtcNow, actorUserId, actorUserName, isReplacement: isReplacement);
         db.CashLedgerEntries.Add(reversal);
     }
 }

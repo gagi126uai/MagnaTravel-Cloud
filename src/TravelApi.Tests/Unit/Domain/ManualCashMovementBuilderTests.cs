@@ -276,9 +276,57 @@ public class ManualCashMovementBuilderTests
 
         Assert.Equal(CashMovementDirections.Income, movement.Direction);
         Assert.Equal("ClientCreditReversal", movement.Category);
-        // Hallazgo B1 (review 2026-07-27, bloqueante T-5): texto criollo por kind, sin el nombre del enum.
-        Assert.Contains("devuelto al operador", movement.Description);
+        // Firma post-verificacion Lote 2 (2026-07-27): ReversedToOperator ya NO usa la plantilla
+        // generica "Retiro de saldo a favor ... devuelto al operador" (sonaba a que el cliente se
+        // llevaba plata). Ahora tiene frase COMPLETA propia: es la agencia devolviendole el saldo
+        // a favor del cliente al operador.
+        Assert.Contains("Devolucion al operador del saldo a favor", movement.Description);
+        Assert.DoesNotContain("Retiro de saldo a favor", movement.Description);
         Assert.DoesNotContain("ReversedToOperator", movement.Description);
+    }
+
+    [Fact]
+    public void BuildExpenseForWithdrawal_con_reversed_to_operator_y_cliente_cargado_nombra_al_cliente()
+    {
+        // Firma post-verificacion Lote 2 (2026-07-27): la frase propia de ReversedToOperator debe
+        // quedar gramaticalmente bien tanto con nombre real ("...a favor de Juan Perez") como con el
+        // generico ("...a favor del cliente"). Este test cubre el caso con Customer cargado.
+        var entry = BuildValidEntry();
+        entry.Customer = new Customer { Id = 5, FullName = "Juan Perez" };
+        var withdrawal = new ClientCreditWithdrawal
+        {
+            Id = 64,
+            ClientCreditEntryId = entry.Id,
+            Amount = 5_000m,
+            Kind = WithdrawalKind.ReversedToOperator,
+            ExecutedByUserId = "user-cashier",
+            ExecutedByUserName = "Cashier",
+        };
+
+        var movement = ManualCashMovementBuilder.BuildExpenseForWithdrawal(withdrawal, entry, "user-cashier");
+
+        Assert.Equal("Devolucion al operador del saldo a favor de Juan Perez", movement.Description);
+    }
+
+    [Fact]
+    public void BuildExpenseForWithdrawal_con_reversed_to_operator_sin_cliente_cargado_usa_generico()
+    {
+        // Complemento del test anterior: sin Customer Include-do, la frase cae al generico
+        // "del saldo a favor del cliente" (sigue leyendose bien, no rompe gramaticalmente).
+        var entry = BuildValidEntry();
+        var withdrawal = new ClientCreditWithdrawal
+        {
+            Id = 65,
+            ClientCreditEntryId = entry.Id,
+            Amount = 5_000m,
+            Kind = WithdrawalKind.ReversedToOperator,
+            ExecutedByUserId = "user-cashier",
+            ExecutedByUserName = "Cashier",
+        };
+
+        var movement = ManualCashMovementBuilder.BuildExpenseForWithdrawal(withdrawal, entry, "user-cashier");
+
+        Assert.Equal("Devolucion al operador del saldo a favor del cliente", movement.Description);
     }
 
     [Fact]

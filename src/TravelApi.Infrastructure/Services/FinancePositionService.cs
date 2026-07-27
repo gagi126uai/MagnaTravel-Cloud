@@ -47,7 +47,8 @@ public class FinancePositionService : IFinancePositionService
         _dbContext = dbContext;
     }
 
-    public async Task<List<FinanceCurrencyAmount>> GetAccountsReceivableByCurrencyAsync(CancellationToken cancellationToken)
+    public async Task<List<FinanceCurrencyAmount>> GetAccountsReceivableByCurrencyAsync(
+        CancellationToken cancellationToken, string? ownerUserId = null)
     {
         // Join explicito contra Reservas (no nav implicita) para correr igual en Postgres e InMemory.
         // Solo saldos positivos (lo que el cliente debe), de reservas activas.
@@ -55,6 +56,10 @@ public class FinancePositionService : IFinancePositionService
             from row in _dbContext.ReservaMoneyByCurrency
             join reservaPadre in _dbContext.Reservas on row.ReservaId equals reservaPadre.Id
             where ReceivableDebtStatuses.Contains(reservaPadre.Status) && row.Balance > 0
+                // Firma post-verificacion Lote 2 (obra 5): ownerUserId==null (default) = comportamiento
+                // de siempre (AR de toda la agencia, lo que sigue usando Tesoreria). Cuando el dashboard
+                // del vendedor lo pasa, acota a SU cartera.
+                && (ownerUserId == null || reservaPadre.ResponsibleUserId == ownerUserId)
             select new { row.Currency, row.Balance };
 
         var grouped = await query

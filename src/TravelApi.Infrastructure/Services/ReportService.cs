@@ -56,7 +56,28 @@ public class ReportService : IReportService
         var canSeeCost = isAdmin || (perms?.Contains(Permissions.CobranzasSeeCost) ?? false);
         var hasReservasViewAll = isAdmin || (perms?.Contains(Permissions.ReservasViewAll) ?? false);
 
-        var filesByStatus = await _dbContext.Reservas
+        // Firma post-verificacion Lote 2 (2026-07-27, obra 5 "Ventas personales"): scope UNICO de "mi
+        // cartera" para TODO el dashboard de un vendedor sin reservas.view_all. Antes este mismo criterio
+        // se recalculaba dos veces mas abajo (una para "Proximos viajes", otra para "Cobros pendientes")
+        // y NO se aplicaba a ventas/costos/margen del mes ni a los desgloses por moneda — un vendedor sin
+        // permiso de ver toda la agencia igual veia la facturacion TOTAL de la agencia en su dashboard.
+        // Se unifica aca arriba para que ventas, costos, margen, cobros y saldo pendiente usen EXACTAMENTE
+        // el mismo filtro que ya usaban ReservasPendientes/ProximosViajes. El admin (hasReservasViewAll
+        // via rol Admin) sigue viendo todo: ownerFilter queda null y ningun query se acota.
+        var ownerFilter = hasReservasViewAll
+            ? null
+            : (string.IsNullOrEmpty(currentUserId) ? "__no_user__" : currentUserId);
+
+        // Hallazgo de review (2026-07-27, bloqueante backend+security): el criterio firmado es "el
+        // vendedor no ve los numeros de toda la agencia" SIN EXCEPCIONES. filesByStatus alimenta los 3
+        // contadores del semaforo (Presupuestos/Reservados/Operativos) y DistribucionEstados: con
+        // ownerFilter activo, se acota a las reservas del vendedor.
+        var filesByStatusQuery = _dbContext.Reservas.AsQueryable();
+        if (ownerFilter != null)
+        {
+            filesByStatusQuery = filesByStatusQuery.Where(f => f.ResponsibleUserId == ownerFilter);
+        }
+        var filesByStatus = await filesByStatusQuery
             .GroupBy(f => f.Status)
             .Select(g => new { Status = g.Key, Count = g.Count() })
             .ToListAsync(cancellationToken);
@@ -70,25 +91,59 @@ public class ReportService : IReportService
         // ADR-022 (fix #3): solo pagos que MOVIERON caja (AffectsCash). Excluye los Payment "puente" de
         // AffectsCash=false (sobrepago "SaldoAFavor" y reversion de NC) que existen para imputar saldo, no
         // para mover plata: si se contaran, su monto negativo ensuciaria el total de cobranzas del mes.
-        var paymentsThisMonth = await _dbContext.Payments
-            .Where(p => p.PaidAt >= startOfMonth && !p.IsDeleted && p.AffectsCash)
-            .SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
+        //
+        // Hallazgo de review (2026-07-27): mismo left join Payments->Reservas que CobrosDelMes por moneda
+        // (ver BuildDashboardByCurrencyAsync). Un cobro sin reserva asociada no se le puede atribuir a
+        // ningun vendedor puntual: con ownerFilter activo queda AFUERA (criterio conservador, consistente
+        // con el resto del dashboard).
+        var paymentsThisMonthQuery =
+            from p in _dbContext.Payments
+            join reservaPadre in _dbContext.Reservas on p.ReservaId equals reservaPadre.Id into reservaJoin
+            from reservaPadre in reservaJoin.DefaultIfEmpty()
+            where p.PaidAt >= startOfMonth && !p.IsDeleted && p.AffectsCash
+                && (ownerFilter == null || (reservaPadre != null && reservaPadre.ResponsibleUserId == ownerFilter))
+            select p.Amount;
 
-        var outstandingBalance = await _dbContext.Reservas
-            .Where(f => f.Status != EstadoReserva.Closed && f.Status != EstadoReserva.Cancelled && f.Status != EstadoReserva.Budget)
+        var paymentsThisMonth = await paymentsThisMonthQuery
+            .SumAsync(amount => (decimal?)amount, cancellationToken) ?? 0m;
+
+        // Hallazgo de review (2026-07-27): "Saldo pendiente" escalar tambien es cartera del vendedor.
+        var outstandingBalanceQuery = _dbContext.Reservas
+            .Where(f => f.Status != EstadoReserva.Closed && f.Status != EstadoReserva.Cancelled && f.Status != EstadoReserva.Budget);
+        if (ownerFilter != null)
+        {
+            outstandingBalanceQuery = outstandingBalanceQuery.Where(f => f.ResponsibleUserId == ownerFilter);
+        }
+        var outstandingBalance = await outstandingBalanceQuery
             .SumAsync(f => (decimal?)f.Balance, cancellationToken) ?? 0m;
 
+        // Firma post-verificacion Lote 2 (obra 5): ventas y costos del mes acotados a ownerFilter cuando el
+        // vendedor no tiene reservas.view_all (ver el comentario de ownerFilter mas arriba).
         var salesThisMonth = await _dbContext.Reservas
-            .Where(f => f.CreatedAt >= startOfMonth && f.Status != EstadoReserva.Budget && f.Status != EstadoReserva.Cancelled)
+            .Where(f => f.CreatedAt >= startOfMonth && f.Status != EstadoReserva.Budget && f.Status != EstadoReserva.Cancelled
+                && (ownerFilter == null || f.ResponsibleUserId == ownerFilter))
             .SumAsync(f => (decimal?)f.TotalSale, cancellationToken) ?? 0m;
 
         var costsThisMonth = await _dbContext.Reservas
-            .Where(f => f.CreatedAt >= startOfMonth && f.Status != EstadoReserva.Budget && f.Status != EstadoReserva.Cancelled)
+            .Where(f => f.CreatedAt >= startOfMonth && f.Status != EstadoReserva.Budget && f.Status != EstadoReserva.Cancelled
+                && (ownerFilter == null || f.ResponsibleUserId == ownerFilter))
             .SumAsync(f => (decimal?)f.TotalCost, cancellationToken) ?? 0m;
 
-        var supplierPaymentsThisMonth = await _dbContext.SupplierPayments
-            .Where(p => p.PaidAt >= startOfMonth)
-            .SumAsync(p => (decimal?)p.Amount, cancellationToken) ?? 0m;
+        // Firma post-verificacion Lote 2 (2026-07-27, cierre de hueco pedido por el orquestador): un pago
+        // a proveedor tambien es parte de "mi cartera" cuando esta atado a UNA reserva del vendedor. Mismo
+        // patron de left join que CobrosDelMes (ver BuildDashboardByCurrencyAsync mas abajo): un pago a
+        // proveedor SIN reserva asociada (SupplierPayment.ReservaId null) no se le puede atribuir a ningun
+        // vendedor puntual, asi que con ownerFilter activo queda AFUERA (mismo criterio conservador).
+        var supplierPaymentsThisMonthQuery =
+            from p in _dbContext.SupplierPayments
+            join reservaPadre in _dbContext.Reservas on p.ReservaId equals reservaPadre.Id into reservaJoin
+            from reservaPadre in reservaJoin.DefaultIfEmpty()
+            where p.PaidAt >= startOfMonth
+                && (ownerFilter == null || (reservaPadre != null && reservaPadre.ResponsibleUserId == ownerFilter))
+            select p.Amount;
+
+        var supplierPaymentsThisMonth = await supplierPaymentsThisMonthQuery
+            .SumAsync(amount => (decimal?)amount, cancellationToken) ?? 0m;
 
         var grossMarginThisMonth = salesThisMonth - costsThisMonth;
 
@@ -105,14 +160,10 @@ public class ReportService : IReportService
         // sobre la reserva del join.
         if (!hasReservasViewAll)
         {
-            // Sentinel imposible si no hay user resoluble (devuelve lista vacia).
-            var ownerFilter = string.IsNullOrEmpty(currentUserId) ? "__no_user__" : currentUserId;
+            // ownerFilter ya trae el sentinel "__no_user__" resuelto arriba (una sola vez para todo el
+            // metodo, ver el comentario junto a su declaracion).
             upcomingQuery = upcomingQuery.Where(f => f.ResponsibleUserId == ownerFilter);
         }
-
-        var ownerFilterForPending = hasReservasViewAll
-            ? null
-            : (string.IsNullOrEmpty(currentUserId) ? "__no_user__" : currentUserId);
 
         // H15 (barrido E2E 2026-07-25): el widget "Cobros Pendientes" mostraba una reserva YA SALDADA
         // (o incluso sobre-cobrada) como si tuviera plata pendiente. Causa: este filtro solo miraba
@@ -135,7 +186,7 @@ public class ReportService : IReportService
                 && reservaPadre.Status != EstadoReserva.Cancelled
                 && (reservaPadre.DerivedCollectionStatus == null
                     || reservaPadre.DerivedCollectionStatus == ReservaCollectionStatus.WithDebt)
-                && (ownerFilterForPending == null || reservaPadre.ResponsibleUserId == ownerFilterForPending)
+                && (ownerFilter == null || reservaPadre.ResponsibleUserId == ownerFilter)
             select new { row.Currency, row.Balance, reservaPadre.PublicId, reservaPadre.NumeroReserva, reservaPadre.Name, reservaPadre.Status };
 
         var pendingReservas = new List<PendingReservaDto>();
@@ -168,8 +219,16 @@ public class ReportService : IReportService
 
         var sixMonthsAgo = startOfMonth.AddMonths(-5);
 
-        var monthlyData = await _dbContext.Reservas
-            .Where(f => f.CreatedAt >= sixMonthsAgo && f.Status != EstadoReserva.Budget && f.Status != EstadoReserva.Cancelled)
+        // Hallazgo de review (2026-07-27): la tendencia historica de 6 meses tambien es cartera del
+        // vendedor — sin esto, un vendedor sin reservas.view_all veia el grafico de VENTA de toda la
+        // agencia (aunque costo/margen ya estuvieran enmascarados por canSeeCost mas abajo).
+        var monthlyDataQuery = _dbContext.Reservas
+            .Where(f => f.CreatedAt >= sixMonthsAgo && f.Status != EstadoReserva.Budget && f.Status != EstadoReserva.Cancelled);
+        if (ownerFilter != null)
+        {
+            monthlyDataQuery = monthlyDataQuery.Where(f => f.ResponsibleUserId == ownerFilter);
+        }
+        var monthlyData = await monthlyDataQuery
             .GroupBy(f => new { f.CreatedAt.Year, f.CreatedAt.Month })
             .Select(g => new
             {
@@ -211,6 +270,13 @@ public class ReportService : IReportService
             cancelados
         );
 
+        // Firma de Gaston (adenda 2026-07-27 tarde, docs/ux/guia-ux-gaston.md): "Posibles clientes
+        // activos" muestra los de TODA LA AGENCIA, sin importar reservas.view_all. Los leads son
+        // COMPARTIDOS (cualquier vendedor puede seguir a cualquier cliente potencial) y un simple
+        // CONTEO no expone plata ni facturacion — no aplica el criterio "el vendedor no ve los numeros
+        // de toda la agencia" que si rige para ventas/costos/cobros. Se habia acotado por
+        // Lead.AssignedToUserId en un hallazgo de review anterior (mismo dia); ESTA firma lo revierte
+        // a proposito. NO reabrir sin una firma nueva de Gaston.
         var activePotentialCustomers = await _dbContext.Leads
             .CountAsync(lead => lead.Status != LeadStatus.Won && lead.Status != LeadStatus.Lost, cancellationToken);
 
@@ -226,7 +292,7 @@ public class ReportService : IReportService
         // ventas/costos por moneda del servicio (tabla hija filtrada por CreatedAt del mes); saldo
         // pendiente y cuentas por pagar por moneda del saldo contra las tablas hijas. CostosDelMes y
         // CuentasPorPagar se enmascaran (lista vacia) si el user no ve costos, igual que los escalares.
-        var porMoneda = await BuildDashboardByCurrencyAsync(startOfMonth, canSeeCost, cancellationToken);
+        var porMoneda = await BuildDashboardByCurrencyAsync(startOfMonth, canSeeCost, ownerFilter, cancellationToken);
 
         // B1.15 Fase 2a (FIX 4): si el user NO tiene cobranzas.see_cost, ocultar
         // CostosDelMes / MargenBruto / PagosProveedores. Patron consistente con
@@ -312,38 +378,74 @@ public class ReportService : IReportService
     /// CostosDelMes y CuentasPorPagar quedan vacios si <paramref name="canSeeCost"/> es false (mismo
     /// criterio de enmascarado que los escalares).
     /// </summary>
+    /// <param name="ownerFilter">
+    /// Firma post-verificacion Lote 2 (2026-07-27, obra 5 "Ventas personales"): <c>null</c> = agencia
+    /// entera (admin o vendedor con reservas.view_all). Con valor, acota Ventas/Costos/Margen/Cobros/Saldo
+    /// pendiente/Pagos a proveedores a las reservas de ESE vendedor (<c>Reserva.ResponsibleUserId</c>).
+    ///
+    /// Cierre de hueco (2026-07-27, decision del orquestador): Pagos a proveedores TAMBIEN se acota — el
+    /// criterio firmado por Gaston es "el vendedor no ve los numeros de toda la agencia", sin excepciones.
+    /// Antes de este cierre quedaba deliberadamente afuera (dato de costo, ya enmascarado por
+    /// <paramref name="canSeeCost"/>); ahora, ademas del enmascarado por costo, se acota por cartera.
+    /// </param>
     private async Task<DashboardByCurrencyDto> BuildDashboardByCurrencyAsync(
-        DateTime startOfMonth, bool canSeeCost, CancellationToken cancellationToken)
+        DateTime startOfMonth, bool canSeeCost, string? ownerFilter, CancellationToken cancellationToken)
     {
         // Cobros del mes por moneda REAL del cobro.
         // ADR-022 / FC4 (fix I2, 2026-06-14): solo pagos que MOVIERON caja (AffectsCash). Sin este filtro
         // los Payment "puente" (AffectsCash=false) se cuelan en "Cobros por moneda": el de sobrepago
         // ("SaldoAFavor", negativo) ensucia el total, y el de saldo a favor APLICADO (FC4, positivo) infla
         // el panel con un ingreso de caja que nunca entro. Mismo criterio que CobrosDelMes/TotalRevenue.
+        //
+        // Firma post-verificacion Lote 2 (obra 5): un cobro sin reserva asociada (Payment.ReservaId null,
+        // ej. un ajuste manual de caja) no se le puede atribuir a ningun vendedor puntual. Con ownerFilter
+        // activo, esos cobros quedan AFUERA del "Cobros del mes" del vendedor (es dinero que no es de su
+        // cartera); el admin (ownerFilter null) los sigue viendo todos, left join preservado con `into`.
+        var cobrosQuery =
+            from p in _dbContext.Payments
+            join reservaPadre in _dbContext.Reservas on p.ReservaId equals reservaPadre.Id into reservaJoin
+            from reservaPadre in reservaJoin.DefaultIfEmpty()
+            where p.PaidAt >= startOfMonth && !p.IsDeleted && p.AffectsCash
+                && (ownerFilter == null || (reservaPadre != null && reservaPadre.ResponsibleUserId == ownerFilter))
+            select new { p.Currency, p.Amount };
+
         var cobros = await SumByCurrencyAsync(
-            _dbContext.Payments
-                .Where(p => p.PaidAt >= startOfMonth && !p.IsDeleted && p.AffectsCash)
-                .GroupBy(p => p.Currency)
-                .Select(g => new CurrencyAmount(g.Key, g.Sum(p => p.Amount))),
+            cobrosQuery
+                .GroupBy(x => x.Currency)
+                .Select(g => new CurrencyAmount(g.Key, g.Sum(x => x.Amount))),
             cancellationToken);
 
         // Pagos a proveedor del mes por moneda REAL del egreso.
+        //
+        // Cierre de hueco (2026-07-27, decision del orquestador): mismo patron de left join que cobros
+        // (arriba). Un pago a proveedor SIN reserva asociada (SupplierPayment.ReservaId null) no se le
+        // puede atribuir a ningun vendedor puntual: con ownerFilter activo queda AFUERA (mismo criterio
+        // conservador que ya se aplico a CobrosDelMes). El admin (ownerFilter null) sigue viendo todo.
+        var pagosProveedoresQuery =
+            from p in _dbContext.SupplierPayments
+            join reservaPadre in _dbContext.Reservas on p.ReservaId equals reservaPadre.Id into reservaJoin
+            from reservaPadre in reservaJoin.DefaultIfEmpty()
+            where p.PaidAt >= startOfMonth
+                && (ownerFilter == null || (reservaPadre != null && reservaPadre.ResponsibleUserId == ownerFilter))
+            select new { p.Currency, p.Amount };
+
         var pagosProveedores = await SumByCurrencyAsync(
-            _dbContext.SupplierPayments
-                .Where(p => p.PaidAt >= startOfMonth)
-                .GroupBy(p => p.Currency)
-                .Select(g => new CurrencyAmount(g.Key, g.Sum(p => p.Amount))),
+            pagosProveedoresQuery
+                .GroupBy(x => x.Currency)
+                .Select(g => new CurrencyAmount(g.Key, g.Sum(x => x.Amount))),
             cancellationToken);
 
         // Ventas/costos del mes por moneda del servicio (tabla hija), filtrando reservas creadas en el mes
         // y excluyendo Budget/Cancelled (mismo filtro que el escalar VentasDelMes/CostosDelMes). Join
         // explicito contra Reservas (no nav implicita) para correr igual en Postgres e InMemory.
+        // Firma post-verificacion Lote 2 (obra 5): ownerFilter acota a la cartera del vendedor.
         var monthQuery =
             from row in _dbContext.ReservaMoneyByCurrency
             join reservaPadre in _dbContext.Reservas on row.ReservaId equals reservaPadre.Id
             where reservaPadre.CreatedAt >= startOfMonth
                 && reservaPadre.Status != EstadoReserva.Budget
                 && reservaPadre.Status != EstadoReserva.Cancelled
+                && (ownerFilter == null || reservaPadre.ResponsibleUserId == ownerFilter)
             select new { row.Currency, row.TotalSale, row.TotalCost };
 
         var ventas = await SumByCurrencyAsync(
@@ -367,13 +469,23 @@ public class ReportService : IReportService
         // Si no se inyecto el servicio (unit tests con ctor corto), se construye sobre el mismo DbContext.
         var financePosition = _financePositionService ?? new FinancePositionService(_dbContext);
 
-        // AR (cuentas por cobrar): plata de venta -> NO se enmascara.
-        var saldoPendiente = (await financePosition.GetAccountsReceivableByCurrencyAsync(cancellationToken))
+        // AR (cuentas por cobrar): plata de venta -> NO se enmascara. Firma post-verificacion Lote 2:
+        // ownerFilter viaja al servicio compartido para que el "Saldo pendiente" del vendedor sea SU
+        // cartera (Tesoreria sigue llamando sin este parametro, ve la agencia entera).
+        var saldoPendiente = (await financePosition.GetAccountsReceivableByCurrencyAsync(cancellationToken, ownerFilter))
             .Select(x => new CurrencyAmount(x.Currency, x.Amount))
             .ToList();
 
         // AP (cuentas por pagar): dato de costo -> se enmascara si no ve costos.
-        var cuentasPorPagar = canSeeCost
+        //
+        // Hallazgo de review (2026-07-27): ademas del enmascarado por costo, con ownerFilter activo esta
+        // lista queda VACIA sin importar canSeeCost. La deuda con proveedores (SupplierBalanceByCurrency)
+        // es un pasivo de la AGENCIA con el operador, no de una reserva puntual: a diferencia de
+        // CuentasPorCobrar (que sale de ReservaMoneyByCurrency, atado 1:1 a una reserva y por lo tanto a
+        // un vendedor), la deuda a proveedor no tiene forma de atribuirse a la cartera de un vendedor
+        // especifico. Mostrarsela igual (aunque tenga cobranzas.see_cost) violaria el criterio firmado
+        // "el vendedor no ve los numeros de toda la agencia".
+        var cuentasPorPagar = (canSeeCost && ownerFilter == null)
             ? (await financePosition.GetAccountsPayableByCurrencyAsync(cancellationToken))
                 .Select(x => new CurrencyAmount(x.Currency, x.Amount))
                 .ToList()

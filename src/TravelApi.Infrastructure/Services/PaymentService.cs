@@ -1598,13 +1598,21 @@ public class PaymentService : IPaymentService
     /// de Add de la reversa). NO hace SaveChanges — lo hace el caller dentro de su transaccion.
     /// Si el pago no tiene asiento vigente (legacy sin backfill todavia), no hace nada.
     /// </summary>
-    private async Task ReverseLivePaymentLedgerEntryAsync(int paymentId, CancellationToken cancellationToken)
+    /// <param name="isReplacement">
+    /// Hallazgo de review (2026-07-27, bloqueante T-5/backend+security): <c>true</c> cuando el par
+    /// original+reversa queda sin efecto porque el usuario EDITO el cobro (hay un asiento nuevo que lo
+    /// reemplaza, ver <see cref="UpdatePaymentAsync"/>). <c>false</c> cuando es una anulacion real (ver
+    /// <c>DeletePaymentCoreAsync</c>). Mismo criterio "Reemplazado" vs "Anulado" que ya rige para
+    /// movimientos manuales (<see cref="CashLedgerEntry.IsReplaced"/>).
+    /// </param>
+    private async Task ReverseLivePaymentLedgerEntryAsync(
+        int paymentId, bool isReplacement, CancellationToken cancellationToken)
     {
         // ADR-022 §4.5: la mecanica de la reversa vive en CashLedgerPaymentReversal (punto unico, compartido
         // con el path legacy ReservaService.DeletePaymentAsync). Aca solo resolvemos el actor y delegamos.
         var (userId, userName) = ResolveLedgerActor();
         await TravelApi.Infrastructure.Reservations.CashLedgerPaymentReversal.ReverseLivePaymentEntryAsync(
-            _dbContext, paymentId, userId, userName, cancellationToken);
+            _dbContext, paymentId, userId, userName, isReplacement, cancellationToken);
     }
 
     /// <summary>
@@ -1799,7 +1807,9 @@ public class PaymentService : IPaymentService
         // -> nuevo; la historia no se reescribe. Solo aplica a pagos que mueven caja.
         if (payment.AffectsCash)
         {
-            await ReverseLivePaymentLedgerEntryAsync(payment.Id, cancellationToken);
+            // isReplacement=true: este par queda REEMPLAZADO por el asiento nuevo de abajo (edicion),
+            // no anulado sin mas.
+            await ReverseLivePaymentLedgerEntryAsync(payment.Id, isReplacement: true, cancellationToken);
             var (actorUserId, actorUserName) = ResolveLedgerActor();
             var newEntry = TravelApi.Domain.Helpers.CashLedgerEntryFactory.ForPayment(
                 payment, actorUserId, actorUserName);
@@ -2028,8 +2038,9 @@ public class PaymentService : IPaymentService
         // ADR-022 §4.5: anular un cobro NO borra su asiento. En la misma SaveChanges se marca el asiento
         // vigente IsReversed=true y se inserta su reversa (Direction invertida). El neto original+reversa
         // queda en 0 y la historia no vibra. Solo aplica a pagos que movieron caja.
+        // isReplacement=false: esto es una anulacion real, no hay ningun asiento nuevo que la reemplace.
         if (payment.AffectsCash)
-            await ReverseLivePaymentLedgerEntryAsync(payment.Id, cancellationToken);
+            await ReverseLivePaymentLedgerEntryAsync(payment.Id, isReplacement: false, cancellationToken);
 
         await _dbContext.SaveChangesAsync(cancellationToken);
 

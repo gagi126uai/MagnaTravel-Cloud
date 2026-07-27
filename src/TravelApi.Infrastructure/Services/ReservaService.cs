@@ -4673,8 +4673,10 @@ public class ReservaService : IReservaService
         // Un puente/saldo a favor ya fue bloqueado arriba (AffectsCash=false igual no entra aca).
         if (payment.AffectsCash)
         {
+            // Hallazgo de review (2026-07-27): isReplacement=true — este par queda REEMPLAZADO por el
+            // asiento nuevo de abajo (edicion del cobro por el camino legacy), no anulado sin mas.
             await CashLedgerPaymentReversal.ReverseLivePaymentEntryAsync(
-                _context, payment.Id, GetCurrentUserIdOrNull(), GetCurrentUserNameOrNull());
+                _context, payment.Id, GetCurrentUserIdOrNull(), GetCurrentUserNameOrNull(), isReplacement: true);
             _context.CashLedgerEntries.Add(
                 TravelApi.Domain.Helpers.CashLedgerEntryFactory.ForPayment(
                     payment, GetCurrentUserIdOrNull(), GetCurrentUserNameOrNull()));
@@ -4785,8 +4787,10 @@ public class ReservaService : IReservaService
         // tiene AffectsCash=false, asi que no entra aca (ademas ya fue bloqueado/limpiado arriba).
         if (payment.AffectsCash)
         {
+            // isReplacement=false: esto es una anulacion real (DeletePaymentAsync legacy), sin asiento
+            // nuevo que la reemplace.
             await CashLedgerPaymentReversal.ReverseLivePaymentEntryAsync(
-                _context, payment.Id, GetCurrentUserIdOrNull(), GetCurrentUserNameOrNull());
+                _context, payment.Id, GetCurrentUserIdOrNull(), GetCurrentUserNameOrNull(), isReplacement: false);
         }
 
         await _context.SaveChangesAsync();

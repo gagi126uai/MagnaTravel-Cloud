@@ -162,11 +162,43 @@ public static class CashLedgerEntryFactory
     /// </summary>
     /// <param name="original">El asiento vigente que se anula. Debe tener Id real (ya persistido).</param>
     /// <param name="occurredAt">Fecha de la anulacion (normalmente "ahora").</param>
+    /// <param name="isReplacement">
+    /// Firma post-verificacion Lote 2 (2026-07-27) + hallazgo de review (2026-07-27, bloqueante T-5/
+    /// backend+security): <c>true</c> SOLO cuando este par original+reversa queda sin efecto porque el
+    /// usuario EDITO el hecho economico (hay un asiento nuevo que lo reemplaza), no porque lo haya
+    /// anulado de verdad. Ver el XML-doc de <see cref="CashLedgerEntry.IsReplaced"/> para el detalle
+    /// completo.
+    ///
+    /// Correccion N2 (re-review 2026-07-27): el conteo de "5 callers" de una version anterior de este
+    /// comentario era incorrecto. Este metodo (<c>Reverse</c>) tiene exactamente 3 call-sites en codigo de
+    /// PRODUCCION (verificado por busqueda, sin contar el test unitario que lo ejercita directo):
+    /// <list type="bullet">
+    /// <item><c>TreasuryService.ReverseLiveManualMovementLedgerEntryAsync</c> — invocado desde
+    ///   <c>UpdateManualMovementAsync</c> (pasa <c>true</c>) y <c>DeleteManualMovementAsync</c> (pasa
+    ///   <c>false</c>).</item>
+    /// <item><c>SupplierService.ReverseLiveSupplierPaymentLedgerEntryAsync</c> — invocado desde
+    ///   <c>UpdateSupplierPaymentAsync</c> (<c>true</c>) y <c>DeleteSupplierPaymentAsync</c>
+    ///   (<c>false</c>).</item>
+    /// <item><c>CashLedgerPaymentReversal.ReverseLivePaymentEntryAsync</c> — el UNICO helper compartido
+    ///   por el camino canonico de cobros (<c>PaymentService.UpdatePaymentAsync</c> pasa <c>true</c>,
+    ///   <c>DeletePaymentCoreAsync</c> pasa <c>false</c>) Y su espejo legacy en <c>ReservaService</c>
+    ///   (mismo patron: edicion <c>true</c>, borrado <c>false</c>). No son 2 callers de <c>Reverse</c>
+    ///   distintos: los dos servicios llaman al MISMO helper, que es el unico que invoca el factory.</item>
+    /// </list>
+    /// <see cref="ManualCashMovementBuilder"/> NO llama a este factory (arma <c>ManualCashMovement</c>
+    /// POCOs, no <c>CashLedgerEntry</c>). Tampoco existe una "reversa de OperatorRefund": un
+    /// <c>OperatorRefundReceived</c> nunca se revierte via este metodo (su unico uso de
+    /// <c>IsReversal</c>/<c>IsReversed</c> en el modelo es el indice unico parcial de
+    /// <c>CashLedgerEntry</c>, no una llamada a <c>Reverse</c>). Default <c>false</c> por seguridad: un
+    /// caller nuevo que no piense en este parametro cae en "Anulado", el texto mas conservador, nunca en
+    /// un falso "Reemplazado".
+    /// </param>
     public static CashLedgerEntry Reverse(
         CashLedgerEntry original,
         DateTime occurredAt,
         string? actorUserId,
-        string? actorUserName)
+        string? actorUserName,
+        bool isReplacement = false)
     {
         if (original is null) throw new ArgumentNullException(nameof(original));
         if (original.IsReversal)
@@ -176,6 +208,10 @@ public static class CashLedgerEntryFactory
             ? CashMovementDirections.Expense
             : CashMovementDirections.Income;
 
+        // Nota didactica: este factory sigue siendo "puro" (no mutamos `original` aca). El caller es
+        // quien debe marcar `original.IsReplaced = isReplacement` en el MISMO momento en que marca
+        // `original.IsReversed = true` (mismo contrato que ya existia para IsReversed). Ver
+        // TreasuryService.ReverseLiveManualMovementLedgerEntryAsync.
         return new CashLedgerEntry
         {
             Direction = invertedDirection,
@@ -185,6 +221,7 @@ public static class CashLedgerEntryFactory
             OccurredAt = occurredAt,
             SourceType = original.SourceType,
             IsReversal = true,
+            IsReplaced = isReplacement,
             ReversedEntryId = original.Id,
             // Conservar el MISMO FK de origen (trazabilidad). Sale del indice unico por IsReversal=true.
             PaymentId = original.PaymentId,

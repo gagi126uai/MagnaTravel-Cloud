@@ -85,6 +85,16 @@ public class CashMovementDto
     /// <c>CashLedgerEntry</c>, seccion "Anular != borrar (reversa)").
     /// </summary>
     public bool IsAnnulled { get; set; }
+
+    /// <summary>
+    /// Firma post-verificacion Lote 2 (2026-07-27): true SOLO cuando esta fila quedo sin efecto porque
+    /// el usuario EDITO el movimiento manual (hay un asiento nuevo que la reemplaza), NO porque lo haya
+    /// anulado de verdad. El front usa este flag para mostrar el badge "Reemplazado" en vez de "Anulado"
+    /// en ese caso puntual — ver <c>CashLedgerEntry.IsReplaced</c> para el detalle completo de la regla.
+    /// Pares viejos de ediciones ANTERIORES a esta tanda (sin backfill posible) siguen mostrando
+    /// "Anulado": este flag nace en <c>false</c> para todo lo ya persistido.
+    /// </summary>
+    public bool IsReplaced { get; set; }
 }
 
 public class ManualCashMovementDto

@@ -21,7 +21,15 @@ public interface IFinancePositionService
     /// en estado firme con deuda (InManagement / Confirmed / Closed; ADR-036 quito Traveling y ToSettle). Es
     /// plata de VENTA (no costo): NO se enmascara.
     /// </summary>
-    Task<List<FinanceCurrencyAmount>> GetAccountsReceivableByCurrencyAsync(CancellationToken cancellationToken);
+    /// <param name="ownerUserId">
+    /// Firma post-verificacion Lote 2 (2026-07-27, obra 5 "Ventas personales"): opcional. Si viene con
+    /// valor, acota el AR a las reservas de ESE vendedor (<c>Reserva.ResponsibleUserId</c>) — lo usa el
+    /// dashboard del vendedor sin <c>reservas.view_all</c>, para que "Saldo pendiente" muestre SU cartera
+    /// y no la de toda la agencia. Con <c>null</c> (default) el comportamiento es identico al de siempre:
+    /// AR de la agencia entera. Tesoreria (que siempre ve todo) sigue llamando sin este parametro.
+    /// </param>
+    Task<List<FinanceCurrencyAmount>> GetAccountsReceivableByCurrencyAsync(
+        CancellationToken cancellationToken, string? ownerUserId = null);
 
     /// <summary>
     /// Cuentas por PAGAR por moneda: suma de <c>SupplierBalanceByCurrency.Balance &gt; 0</c> (deuda con

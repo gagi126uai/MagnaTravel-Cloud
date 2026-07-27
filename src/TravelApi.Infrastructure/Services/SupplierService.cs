@@ -1658,7 +1658,8 @@ public class SupplierService : ISupplierService
 
         // ADR-022 §4.5: editar el monto = reversa del asiento viejo + asiento nuevo (orden estricto:
         // marcar viejo IsReversed ANTES de insertar). El libro conserva viejo (-) -> reversa (+) -> nuevo.
-        await ReverseLiveSupplierPaymentLedgerEntryAsync(payment.Id, cancellationToken);
+        // isReplacement=true: el par queda REEMPLAZADO por el asiento nuevo de abajo (edicion).
+        await ReverseLiveSupplierPaymentLedgerEntryAsync(payment.Id, isReplacement: true, cancellationToken);
         var (updUserId, updUserName) = ResolveCurrentActor();
         var newLedgerEntry = TravelApi.Domain.Helpers.CashLedgerEntryFactory.ForSupplierPayment(
             payment, updUserId, updUserName);
@@ -1732,7 +1733,8 @@ public class SupplierService : ISupplierService
 
         // ADR-022 §4.5: anular el pago NO borra su asiento: se marca IsReversed=true y se inserta su
         // reversa (Income que netea el Expense original). El libro conserva la historia.
-        await ReverseLiveSupplierPaymentLedgerEntryAsync(payment.Id, cancellationToken);
+        // isReplacement=false: esto es una anulacion real, sin asiento nuevo que la reemplace.
+        await ReverseLiveSupplierPaymentLedgerEntryAsync(payment.Id, isReplacement: false, cancellationToken);
 
         // ADR-021 §15.6bis (BUG LATENTE CORREGIDO): antes hacia `currentDebt + payment.Amount`, que
         // suma el AMOUNT DE CAJA al recalculo — esto da el numero correcto SOLO si el pago fue en la
@@ -1814,7 +1816,15 @@ public class SupplierService : ISupplierService
     /// reversa). NO hace SaveChanges — lo hace el caller. Si el pago no tiene asiento vigente (legacy sin
     /// backfill todavia), no hace nada.
     /// </summary>
-    private async Task ReverseLiveSupplierPaymentLedgerEntryAsync(int supplierPaymentId, CancellationToken cancellationToken)
+    /// <param name="isReplacement">
+    /// Hallazgo de review (2026-07-27, bloqueante T-5/backend+security): <c>true</c> cuando se invoca
+    /// desde la EDICION del pago a proveedor (hay un asiento nuevo que reemplaza al par, ver la linea que
+    /// llama a este metodo dentro de <c>UpdateSupplierPaymentAsync</c>). <c>false</c> cuando es la
+    /// ANULACION real (<see cref="DeleteSupplierPaymentAsync"/>). Mismo criterio "Reemplazado" vs
+    /// "Anulado" que ya rige para movimientos manuales y cobros de cliente (<see cref="CashLedgerEntry.IsReplaced"/>).
+    /// </param>
+    private async Task ReverseLiveSupplierPaymentLedgerEntryAsync(
+        int supplierPaymentId, bool isReplacement, CancellationToken cancellationToken)
     {
         var live = await _dbContext.CashLedgerEntries
             .FirstOrDefaultAsync(
@@ -1824,8 +1834,12 @@ public class SupplierService : ISupplierService
 
         var (userId, userName) = ResolveCurrentActor();
         live.IsReversed = true;
+        // Hallazgo N1 (review 2026-07-27): mismo criterio que TreasuryService — `live` nace en
+        // IsReplaced=false y esta es la primera vez que se revierte; el `if` documenta la intencion en
+        // vez de reescribir incondicionalmente con el mismo valor en el camino de anulacion.
+        if (isReplacement) live.IsReplaced = true;
         var reversal = TravelApi.Domain.Helpers.CashLedgerEntryFactory.Reverse(
-            live, DateTime.UtcNow, userId, userName);
+            live, DateTime.UtcNow, userId, userName, isReplacement: isReplacement);
         _dbContext.CashLedgerEntries.Add(reversal);
     }
 

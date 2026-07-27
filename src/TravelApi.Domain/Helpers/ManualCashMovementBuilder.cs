@@ -304,11 +304,24 @@ public static class ManualCashMovementBuilder
         // switch EXHAUSTIVO con default que revienta: si algun dia se agrega un kind nuevo que SI llegue
         // hasta esta linea, mejor fallar ruidosamente en un test que persistir el nombre del enum en
         // produccion sin que nadie se de cuenta.
-        var kindLabel = withdrawal.Kind switch
+        //
+        // Firma post-verificacion Lote 2 (2026-07-27): ReversedToOperator NO es un "retiro" del
+        // cliente, es la agencia devolviendole la plata al operador (Direction=Income, ver arriba). Por
+        // eso ese kind NO usa la plantilla generica "Retiro de saldo a favor {cliente} {kindLabel}":
+        // tiene su frase COMPLETA propia. PhysicalCash y Transfer si son retiros de verdad y siguen con
+        // la plantilla generica de siempre. Se arma la Description ENTERA en un solo switch (en vez de
+        // separar un "kindLabel" intermedio) para que el caso especial no tenga que pasar por una rama
+        // que no le aplica.
+        //
+        // customerLabel ya viene armado como "de Juan Perez" o "del cliente" (linea de arriba): en el
+        // caso ReversedToOperator alcanza con anteponer "del saldo a favor" para que quede
+        // gramaticalmente correcto en los dos casos ("...a favor de Juan Perez" / "...a favor del
+        // cliente").
+        var description = withdrawal.Kind switch
         {
-            WithdrawalKind.PhysicalCash => "en efectivo",
-            WithdrawalKind.Transfer => "por transferencia",
-            WithdrawalKind.ReversedToOperator => "devuelto al operador",
+            WithdrawalKind.PhysicalCash => $"Retiro de saldo a favor {customerLabel} en efectivo",
+            WithdrawalKind.Transfer => $"Retiro de saldo a favor {customerLabel} por transferencia",
+            WithdrawalKind.ReversedToOperator => $"Devolucion al operador del saldo a favor {customerLabel}",
             _ => throw new InvalidOperationException(
                 $"WithdrawalKind sin texto criollo definido para el Libro de Caja: {withdrawal.Kind}"),
         };
@@ -325,7 +338,7 @@ public static class ManualCashMovementBuilder
             OccurredAt = withdrawal.ExecutedAt,
             Method = method,
             Category = category,
-            Description = $"Retiro de saldo a favor {customerLabel} {kindLabel}",
+            Description = description,
             // Reference no existe en la entity Withdrawal; lo dejamos null.
             // El service caller puede setearlo a un dato externo si aplica
             // (ej. numero de transferencia bancaria).

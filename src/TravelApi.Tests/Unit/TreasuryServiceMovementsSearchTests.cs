@@ -200,10 +200,57 @@ public class TreasuryServiceMovementsSearchTests
         Assert.True(contraAsiento.IsAnnulled, "el contra-asiento tambien debe marcarse anulado (es el reverso, no un movimiento vivo).");
         Assert.False(nuevo.IsAnnulled, "el asiento nuevo (post-edicion) sigue vigente.");
 
+        // Firma post-verificacion Lote 2 (2026-07-27): el par de una EDICION se etiqueta "Reemplazado"
+        // en la pantalla (IsReplaced=true), NO "Anulado a secas". El asiento nuevo (vigente) no lleva
+        // esta marca: el reemplazo describe al par viejo, no a lo que rige hoy.
+        Assert.True(original.IsReplaced, "el asiento viejo de una EDICION debe marcarse Reemplazado.");
+        Assert.True(contraAsiento.IsReplaced, "el contra-asiento de una EDICION tambien debe marcarse Reemplazado.");
+        Assert.False(nuevo.IsReplaced, "el asiento nuevo (post-edicion) no es un reemplazo de si mismo.");
+
         // Las 3 filas son asientos DISTINTOS: cada una con su propio PublicId, aunque el original y el
         // contra-asiento compartan el mismo SourcePublicId (los dos apuntan al mismo ManualCashMovement).
         Assert.NotEqual(original.PublicId, contraAsiento.PublicId);
         Assert.NotEqual(contraAsiento.PublicId, nuevo.PublicId);
         Assert.Equal(original.SourcePublicId, contraAsiento.SourcePublicId);
+    }
+
+    [Fact]
+    public async Task GetMovementsAsync_TrasAnularUnManual_ElParQuedaAnuladoPeroNoReemplazado()
+    {
+        // Firma post-verificacion Lote 2 (2026-07-27): a diferencia de una EDICION (test de arriba), una
+        // ANULACION real (DeleteManualMovementAsync) no crea ningun asiento nuevo que reemplace al par.
+        // El par sigue mostrando "Anulado" (IsAnnulled=true) pero IsReplaced debe quedar en false: nadie
+        // lo reemplazo, el movimiento se dio de baja sin mas.
+        await using var context = CreateContext();
+        var service = CreateService(context);
+
+        var created = await service.CreateManualMovementAsync(
+            new UpsertManualCashMovementRequest
+            {
+                Direction = CashMovementDirections.Expense,
+                Amount = 500m,
+                OccurredAt = DateTime.UtcNow,
+                Method = "Cash",
+                Category = "Otros",
+                Description = "Gasto a anular",
+            },
+            createdBy: "cajero-1",
+            CancellationToken.None);
+
+        var manualEntity = await context.ManualCashMovements.SingleAsync(m => m.PublicId == created.PublicId);
+        await service.DeleteManualMovementAsync(manualEntity.Id, CancellationToken.None);
+
+        var page = await service.GetMovementsAsync(
+            new TreasuryMovementsQuery { PageSize = 25 }, CancellationToken.None);
+
+        // Anular NO crea un asiento nuevo (a diferencia de editar): solo quedan 2 filas, el original y
+        // su contra-asiento.
+        Assert.Equal(2, page.Items.Count);
+
+        foreach (var row in page.Items)
+        {
+            Assert.True(row.IsAnnulled, "las dos filas del par anulado deben seguir marcadas Anulado.");
+            Assert.False(row.IsReplaced, "una anulacion real NUNCA se marca Reemplazado (no hay asiento nuevo).");
+        }
     }
 }

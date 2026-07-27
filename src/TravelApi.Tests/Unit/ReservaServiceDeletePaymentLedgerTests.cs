@@ -130,6 +130,11 @@ public class ReservaServiceDeletePaymentLedgerTests
         Assert.Equal(100m, reversal.Amount);
         Assert.False(reversal.IsReversed);
 
+        // Hallazgo de review (2026-07-27, bloqueante backend+security): esto es una ANULACION real por
+        // el camino legacy (borrar el cobro), no una edicion: las dos patas quedan en IsReplaced=false.
+        Assert.False(original.IsReplaced);
+        Assert.False(reversal.IsReplaced);
+
         // No queda NINGUN asiento vigente del cobro (ni reversado ni reversa): el neto de caja es 0.
         var liveEntries = entries.Where(e => !e.IsReversal && !e.IsReversed).ToList();
         Assert.Empty(liveEntries);
@@ -160,9 +165,17 @@ public class ReservaServiceDeletePaymentLedgerTests
         var liveEntry = Assert.Single(live);                       // un unico asiento vigente
         Assert.Equal(CashMovementDirections.Income, liveEntry.Direction);
         Assert.Equal(150m, liveEntry.Amount);                      // con el monto NUEVO
+        // Hallazgo de review (2026-07-27): el asiento nuevo (vigente) no es "un reemplazo de si mismo".
+        Assert.False(liveEntry.IsReplaced);
 
         var old = entries.Single(e => !e.IsReversal && e.Amount == 100m && e.IsReversed);
-        Assert.Contains(entries, e => e.IsReversal && e.ReversedEntryId == old.Id && e.Amount == 100m);
+        var oldReversal = Assert.Single(entries, e => e.IsReversal && e.ReversedEntryId == old.Id && e.Amount == 100m);
+
+        // Hallazgo de review (2026-07-27, bloqueante backend+security): esto SI es una EDICION por el
+        // camino legacy (ReservaService.UpdatePaymentAsync nested): las dos patas del par viejo quedan
+        // marcadas "Reemplazado" (IsReplaced=true), no "Anulado" a secas.
+        Assert.True(old.IsReplaced);
+        Assert.True(oldReversal.IsReplaced);
 
         // Neto de caja del cobro: 100 - 100 + 150 = 150 (Income - Expense).
         var net = entries.Sum(e => e.Direction == CashMovementDirections.Income ? e.Amount : -e.Amount);

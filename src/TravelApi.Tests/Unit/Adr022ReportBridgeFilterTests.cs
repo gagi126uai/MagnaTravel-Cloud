@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 using TravelApi.Application.Interfaces;
@@ -38,7 +41,28 @@ public class Adr022ReportBridgeFilterTests
     {
         var bna = new Mock<IBnaExchangeRateService>();
         bna.Setup(b => b.GetUsdSellerRateAsync(It.IsAny<CancellationToken>())).ReturnsAsync((BnaUsdSellerRateDto?)null);
-        return new ReportService(context, bna.Object);
+
+        // Firma post-verificacion Lote 2 (obra 5, 2026-07-27): GetDashboardAsync ahora acota ventas/costos/
+        // margen/cobros/saldo pendiente por vendedor cuando NO hay reservas.view_all (ver ReportService).
+        // Este archivo prueba la exclusion de puentes de pago (sobrepago/NC/saldo aplicado), un tema
+        // ORTOGONAL al scope por vendedor: las reservas seed no tienen ResponsibleUserId, asi que sin un
+        // usuario Admin explicito el owner-scope las dejaria afuera y estos tests fallarian por una razon
+        // que no tiene nada que ver con lo que estan probando. Se simula un usuario Admin (bypass total)
+        // para que el dashboard siga viendo la agencia entera, igual que antes de esta tanda.
+        var accessor = new HttpContextAccessor
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity(
+                    new[] { new Claim(ClaimTypes.NameIdentifier, "admin-test"), new Claim(ClaimTypes.Role, "Admin") },
+                    "Test"))
+            }
+        };
+        var resolver = new Mock<IUserPermissionResolver>();
+        resolver.Setup(r => r.GetPermissionsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlySet<string>)new HashSet<string>());
+
+        return new ReportService(context, bna.Object, resolver.Object, accessor);
     }
 
     private static Payment RealPayment(int id, decimal amount, DateTime at) => new()

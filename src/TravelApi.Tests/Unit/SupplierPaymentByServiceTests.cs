@@ -561,4 +561,60 @@ public class SupplierPaymentByServiceTests
         var line = ServiceLine(statusDto, hotel.PublicId);
         Assert.Equal(ServiceSupplierPaymentStatuses.Unpaid, line.Status);
     }
+
+    // ============================================================================================
+    // Hallazgo de review (2026-07-27, bloqueante backend+security): la firma "par de Caja por EDICION"
+    // (CashLedgerEntry.IsReplaced) es GENERICA — tambien cubre el pago a proveedor, no solo movimientos
+    // manuales o cobros de cliente. Editar un pago a proveedor debe marcar su par "Reemplazado"; anularlo
+    // debe marcar su par "Anulado" (IsReplaced=false).
+    // ============================================================================================
+
+    [Fact]
+    public async Task EditSupplierPayment_MarksLedgerPairAsReplaced()
+    {
+        await using var context = CreateContext();
+        var supplier = await AddSupplierAsync(context, "Mayorista");
+        var reserva = await AddReservaAsync(context, "F-LEDGER-EDIT");
+        var hotel = await AddConfirmedHotelAsync(context, supplier.Id, reserva.Id, netCost: 1000m);
+
+        var service = CreateService(context);
+        var paymentPublicId = await service.AddSupplierPaymentAsync(
+            supplier.Id, PaymentToService(600m, reserva, ServicePaymentRecordKinds.Hotel, hotel.PublicId), CancellationToken.None);
+        var paymentId = (await context.SupplierPayments.SingleAsync(p => p.PublicId == paymentPublicId)).Id;
+
+        await service.UpdateSupplierPaymentAsync(
+            supplier.Id, paymentId, PaymentToService(800m, reserva, ServicePaymentRecordKinds.Hotel, hotel.PublicId), CancellationToken.None);
+
+        var entries = await context.CashLedgerEntries.OrderBy(e => e.Id).ToListAsync();
+        Assert.Equal(3, entries.Count); // original(600) -> reversa(600) -> nuevo(800)
+
+        var editPair = entries.Where(e => e.Amount == 600m).ToList();
+        Assert.Equal(2, editPair.Count);
+        Assert.All(editPair, e => Assert.True(e.IsReplaced));
+
+        var nuevo = entries.Single(e => !e.IsReversal && !e.IsReversed);
+        Assert.Equal(800m, nuevo.Amount);
+        Assert.False(nuevo.IsReplaced);
+    }
+
+    [Fact]
+    public async Task DeleteSupplierPayment_MarksLedgerPairAsAnnulledNotReplaced()
+    {
+        await using var context = CreateContext();
+        var supplier = await AddSupplierAsync(context, "Mayorista");
+        var reserva = await AddReservaAsync(context, "F-LEDGER-DELETE");
+        var hotel = await AddConfirmedHotelAsync(context, supplier.Id, reserva.Id, netCost: 1000m);
+
+        var service = CreateService(context);
+        var paymentPublicId = await service.AddSupplierPaymentAsync(
+            supplier.Id, PaymentToService(600m, reserva, ServicePaymentRecordKinds.Hotel, hotel.PublicId), CancellationToken.None);
+        var paymentId = (await context.SupplierPayments.SingleAsync(p => p.PublicId == paymentPublicId)).Id;
+
+        await service.DeleteSupplierPaymentAsync(supplier.Id, paymentId, CancellationToken.None);
+
+        var entries = await context.CashLedgerEntries.ToListAsync();
+        Assert.Equal(2, entries.Count); // original(600) revertido + su reversa
+        // Esto es una ANULACION real (no hay asiento nuevo que reemplace): las dos patas quedan en false.
+        Assert.All(entries, e => Assert.False(e.IsReplaced));
+    }
 }
