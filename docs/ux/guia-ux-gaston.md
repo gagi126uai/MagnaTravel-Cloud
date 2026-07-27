@@ -1933,3 +1933,25 @@ más de una factura, y viene escondido con defaults.
   también encuentra por NOMBRE de servicio · pestaña "Todas" en Reservas (primera, con contador) · se
   guarda la HORA REAL de cada cobro para auditoría (la Caja sigue mostrando la fecha de negocio) ·
   T-14 "hora argentina siempre" pasa a la constitución.
+
+## Firmas post-verificación del Lote 2 (2026-07-27, respuestas de Gastón a las 6 preguntas)
+
+> **Origen:** verificación E2E del Lote 2 en PROD (2026-07-27) + observaciones de las reviews.
+> Gastón respondió las 6 preguntas el mismo día, todas con la recomendación única. **NO reabrir.**
+
+- **(2026-07-27) Texto del retiro al operador en el Libro de Caja:** "en efectivo" y "por
+  transferencia" quedan como están; el caso operador pasa a frase propia:
+  **"Devolución al operador del saldo a favor de {cliente}"** (es un ingreso a caja, no un retiro).
+- **(2026-07-27) Par de Caja por EDICIÓN se etiqueta "Reemplazado"**, distinto del par por anulación
+  real que sigue diciendo "Anulado". El cajero distingue qué pasó sin abrir nada.
+- **(2026-07-27) Ficha del cliente (pestaña Datos) se unifica con el casillero único** del alta, y si
+  el cliente tiene el OTRO documento guardado (CUIT y DNI a la vez, hay 5 casos reales), se muestra
+  debajo como dato de solo lectura ("También tiene DNI ..."). No se esconde ningún documento.
+- **(2026-07-27) Al entrar a Reservas se arranca DIRECTO en la pestaña "Todas"** (seleccionada y
+  resaltada): lo que se ve es lo que dice la pestaña. Se filtra después si hace falta.
+- **(2026-07-27) "Ventas personales" del dashboard del vendedor pasa a ser personal DE VERDAD:** el
+  motor filtra por vendedor (hoy muestra las ventas de toda la agencia — además de mentir, expone la
+  facturación total a cualquier vendedor). El arreglo es en el motor, no un rename.
+- **(2026-07-27) Estados de reserva en inglés en los dashboards ("Confirmed", "InManagement") se
+  traducen** con las mismas etiquetas criollas de las pestañas de Reservas. Entra en el próximo lote
+  de pulido junto con todo lo anterior.
