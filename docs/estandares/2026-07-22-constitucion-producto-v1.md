@@ -285,6 +285,13 @@ una fecha de vencimiento, un plazo fiscal, una conversión de moneda, un saldo, 
 calcula el backend y el front solo los pinta. Nunca se reconstruye un dato restando montos ni interpretando
 strings en la pantalla. *(guia-ux-gaston 2026-07-03, reafirmada 2026-07-14, 2026-07-15, 2026-07-16.)*
 
+**T-14 · Hora argentina siempre.** Toda fecha y hora que ve el usuario se muestra en hora argentina, y toda
+regla de negocio que depende de "hoy" (fecha de emisión de un comprobante, vencimientos, fecha de negocio de
+un cobro) se calcula con la hora argentina, nunca con UTC crudo. El almacenamiento interno sigue en UTC; la
+conversión vive en helpers únicos (`hoyArgentina()` y sus equivalentes del motor), jamás repartida a mano por
+las pantallas. *(Firmada 2026-07-25; origen: fecha de emisión de factura en UTC del barrido 2026-07-22 y
+hora real de cobros de la prueba integral 2026-07-25.)*
+
 ---
 
 ## CAPA 4 — PROCESO (cómo se decide y se entrega)

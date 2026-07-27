@@ -1904,3 +1904,32 @@ más de una factura, y viene escondido con defaults.
   (banner) · `CustomerAccountOverviewDto.taxIdLocked` (candado del CUIT) · `GET /api/customers/{id}`
   (taxId, taxConditionId, documentType, documentNumber, email, phone, address, isActive). El PUT reusa
   el endpoint que ya usa el modal del listado.
+
+## Firmas de la prueba integral E2E (2026-07-25, respuestas de Gastón a las 12 preguntas)
+
+> **Origen:** prueba integral E2E contra PROD del 2026-07-25 (informe
+> `docs/explicaciones/2026-07-25-prueba-integral-e2e-prod.md`, 20 hallazgos). Gastón respondió las 12
+> preguntas de decisión el mismo día. **NO reabrir ninguna.**
+
+- **(2026-07-25) Alta de cliente unificada (mockup A firmado):** el formulario de alta/edición del
+  listado lleva UN casillero de documento: desplegable de tipo (CUIT / CUIL / DNI / Pasaporte / Otro) +
+  número, con la lupita de búsqueda AFIP visible SOLO para CUIT/CUIL/DNI. La pantalla manda el tipo
+  elegido al motor (eso revive el aviso de cliente duplicado, que nunca corría).
+- **(2026-07-25) Vencimiento de pasaporte SIEMPRE visible:** campo de fecha opcional en la sección
+  "Datos personales" de la ficha de pasajero, para todos, sin depender del tipo de documento.
+- **(2026-07-25) Reserva saldada = botón "Registrar cobro" VISIBLE y APAGADO con el motivo del motor**
+  ("Esta reserva no tiene saldo pendiente para cobrar."), solo en venta firme; en presupuesto/perdida/
+  anulada/archivada el botón no aparece. (Criterio P-9 resuelto para este caso.)
+- **(2026-07-25) Pantalla 404 aprobada tal cual** está hoy. No se toca.
+- **(2026-07-25) Aviso "cargá los nombres para elegir" SOLO en aéreo y traslado.** En hotel, paquete,
+  asistencia y genérico no aparece.
+- **(2026-07-25) Gate de titular unificado:** avanzar un presupuesto (y "El cliente aceptó") exige
+  titular CON NOMBRE cargado, no solo la cantidad de pasajeros. La pantalla apaga el botón con ese
+  motivo y el motor lo exige igual.
+- **(2026-07-25) Anular una factura pide MOTIVO obligatorio (mínimo 10 caracteres)** en un diálogo con
+  campo de texto (patrón del revert de reserva), conservando el aviso fiscal de IVA por período. El
+  motivo queda auditado.
+- **(2026-07-25) Otras firmas del día:** CUIT inválido se BLOQUEA en alta/edición · el buscador global
+  también encuentra por NOMBRE de servicio · pestaña "Todas" en Reservas (primera, con contador) · se
+  guarda la HORA REAL de cada cobro para auditoría (la Caja sigue mostrando la fecha de negocio) ·
+  T-14 "hora argentina siempre" pasa a la constitución.
