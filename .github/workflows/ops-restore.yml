@@ -200,7 +200,7 @@ jobs:
                 echo "== Destino: base SOMBRA (<db>_shadow). La base viva NO se toca. =="
                 echo
 
-                scripts/ops/restore-db.sh --backup "${BACKUP_PATH}" --target shadow
+                bash scripts/ops/restore-db.sh --backup "${BACKUP_PATH}" --target shadow
 
                 echo
                 echo "== Verificacion: conteo de filas en la base SOMBRA (algunas tablas clave) =="
@@ -288,7 +288,7 @@ jobs:
                 fi
 
                 echo "== Paso 1/3: respaldo de la base VIVA completa, antes de tocar nada =="
-                scripts/ops/backup-db.sh
+                bash scripts/ops/backup-db.sh
 
                 echo
                 echo "== Paso 2/3: restaurando SOLO datos (--data-only) de: ${TABLA_LIST_CLEAN[*]} =="
