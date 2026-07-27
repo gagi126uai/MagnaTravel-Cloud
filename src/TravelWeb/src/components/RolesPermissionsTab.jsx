@@ -129,7 +129,25 @@ export default function RolesPermissionsTab() {
   const formatPermission = (perm) => {
     const parts = perm.split(".");
     const action = parts[1];
-    const labels = { view: "Ver", edit: "Editar", delete: "Eliminar", users: "Usuarios", afip: "AFIP" };
+    // Fix data-exposure (review lote de hallazgos): esta pantalla es la única que
+    // pinta el catálogo de permisos tal cual lo devuelve la API. Si un token nuevo
+    // no tiene traducción acá, el usuario ve el nombre técnico en snake_case
+    // (ej. "data_wipe") en vez de una etiqueta en criollo. Cada vez que se agrega
+    // un permiso nuevo en Permissions.cs, hay que sumar su etiqueta acá también.
+    const labels = {
+      view: "Ver",
+      edit: "Editar",
+      delete: "Eliminar",
+      users: "Usuarios",
+      afip: "AFIP",
+      view_all: "Ver todas",
+      cancel: "Anular",
+      data_wipe: "Empezar de cero",
+      force_arca_confirmation: "Forzar confirmación ARCA",
+      classify_agency_penalty: "Clasificar multa de agencia",
+      receipt_void: "Anular recibo",
+      authorize_locked_edit: "Autorizar edición con candado",
+    };
     return labels[action] || action;
   };
 
