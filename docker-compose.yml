@@ -96,6 +96,10 @@ services:
     volumes:
       - ./uploads:/app/Uploads
       - ./logs:/app/logs
+      # Obra "Empezar de cero" (2026-07-27): destino del pg_dump que la propia API genera antes de un
+      # borrado masivo (SystemDataWipeService). Mismo host-path que postgres-backup usa para sus dumps
+      # automaticos (./backups/postgres), en un subdirectorio propio para no mezclar con los diarios/semanales.
+      - ./backups/postgres/wipe:/backups/wipe
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
@@ -119,6 +123,9 @@ services:
       Hangfire__SchedulerEnabled: "false"
       HostedServices__RealtimeEnabled: "true"
       Metrics__Token: ${METRICS_TOKEN:?METRICS_TOKEN is required}
+      # Obra "Empezar de cero": directorio DENTRO del contenedor donde queda el dump antes de un borrado
+      # masivo. Coincide con el volumen montado arriba (./backups/postgres/wipe:/backups/wipe).
+      Wipe__BackupDirectory: /backups/wipe
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health/ready || exit 1"]
       interval: 15s
