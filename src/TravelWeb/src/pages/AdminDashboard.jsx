@@ -89,7 +89,8 @@ export default function DashboardPage() {
         { name: 'Confirmada', value: dashboard.distribucionEstados?.reserved ?? dashboard.distribucionEstados?.Reserved ?? 0, color: '#f59e0b' }, // Amber-500
         { name: 'En viaje', value: dashboard.distribucionEstados?.operational ?? dashboard.distribucionEstados?.Operational ?? 0, color: '#10b981' }, // Emerald-500
         { name: 'Finalizada', value: dashboard.distribucionEstados?.closed ?? dashboard.distribucionEstados?.Closed ?? 0, color: '#6366f1' }, // Indigo-500
-        { name: 'Cancelada', value: dashboard.distribucionEstados?.cancelled ?? dashboard.distribucionEstados?.Cancelled ?? 0, color: '#ef4444' }, // Red-500
+        // Vocabulario firmado: "Anular" = sin efecto (el estado Cancelled se muestra "Anulada", igual que la pestania de Reservas).
+        { name: 'Anulada', value: dashboard.distribucionEstados?.cancelled ?? dashboard.distribucionEstados?.Cancelled ?? 0, color: '#ef4444' }, // Red-500
     ].filter(item => item.value > 0);
 
     // ADR-021 Capa 6: dashboard.porMoneda trae los mismos totales pero SEPARADOS por
