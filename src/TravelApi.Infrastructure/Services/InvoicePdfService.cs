@@ -78,6 +78,12 @@ public class InvoicePdfService : IInvoicePdfService
             // SI fue de homologacion en su momento dejaria de mostrar la banda. Persistir el ambiente
             // por comprobante es una mejora aparte (agregar una columna a Invoice), no se hizo aca para
             // mantener el cambio chico y aditivo.
+            //
+            // ACTUALIZACION (obra "Empezar de cero", 2026-07-27): la columna que este comentario pedia YA
+            // EXISTE (Invoice.WasIssuedInProduction, agregada para el candado fiscal del borrado masivo de
+            // datos — ver SystemDataWipeService). Sigue SIN conectarse aca a proposito (alcance de esa obra
+            // era el candado, no este PDF): cablear el PDF para leer invoice.WasIssuedInProduction en vez de
+            // settings.IsProduction cierra este gap por completo, queda como mejora de bajo esfuerzo pendiente.
             if (!settings.IsProduction)
             {
                 mainColumn.Item().PaddingBottom(8).Background(Colors.Red.Darken1).Padding(6).AlignCenter()

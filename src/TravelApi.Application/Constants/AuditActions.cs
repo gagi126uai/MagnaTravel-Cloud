@@ -668,4 +668,31 @@ public static class AuditActions
     /// datos sensibles (documentos, datos de pago).</para>
     /// </summary>
     public const string AdminSelfAuthorized = "AdminSelfAuthorized";
+
+    // ===== Obra "Empezar de cero" (2026-07-27) =====
+
+    /// <summary>
+    /// Obra "Empezar de cero" (2026-07-27): un Admin borro TODOS los datos cargados (reservas, clientes,
+    /// proveedores, facturas, catalogo, etc.), con backup previo obligatorio. Es la accion mas destructiva
+    /// del sistema, por eso este audit log es OBLIGATORIO y se inserta con SQL crudo DENTRO de la MISMA
+    /// transaccion que el borrado (ver <c>SystemDataWipeService</c>): o se borro todo y quedo auditado, o
+    /// no paso nada. EntityName=<see cref="SystemDataWipeEntityName"/>, EntityId=timestamp del wipe (no hay
+    /// una fila que sobreviva para referenciar). El detail JSON lleva los conteos borrados por grupo, el
+    /// nombre del archivo de backup de Postgres, el prefijo del backup de MinIO y si se incluyo el grupo de
+    /// configuracion — NUNCA datos sensibles (no hay PII en un resumen de conteos).
+    /// </summary>
+    public const string SystemDataWiped = "SystemDataWiped";
+
+    /// <summary>
+    /// Fix menor #6 (revision 2026-07-27): un intento de "Empezar de cero" fue RECHAZADO (frase que no
+    /// coincide, contraseña incorrecta, candado fiscal activo, o el backup previo fallo). Se audita SIEMPRE,
+    /// aunque no se haya borrado nada: un intento fallido de la operacion mas destructiva del sistema es
+    /// informacion de seguridad relevante (¿alguien esta probando contraseñas? ¿el candado fiscal esta
+    /// frenando algo seguido?). El detail JSON lleva el motivo del rechazo (texto en criollo, el mismo que ve
+    /// el usuario) — JAMAS la contraseña provista, ni siquiera enmascarada.
+    /// </summary>
+    public const string SystemDataWipeRejected = "SystemDataWipeRejected";
+
+    /// <summary>Obra "Empezar de cero": entityName para los eventos de borrado masivo (exitoso o rechazado).</summary>
+    public const string SystemDataWipeEntityName = "SystemDataWipe";
 }

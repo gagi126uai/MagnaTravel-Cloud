@@ -616,6 +616,12 @@ builder.Services.AddScoped<IMessageService, MessageService>();
 builder.Services.AddScoped<IFileStoragePort, MinioFileStoragePort>();
 builder.Services.AddSingleton<InternalMetricsService>();
 
+// Obra "Empezar de cero" (2026-07-27): borrado masivo de datos con backup previo obligatorio.
+// El puerto de backup depende de IMinioClient (registrado mas abajo via AddMinio) - el orden de
+// registro no importa para DI (resuelve lazy), pero se agrega aca al lado de sus pares.
+builder.Services.AddScoped<IWipeBackupPort, PgDumpAndMinioWipeBackupPort>();
+builder.Services.AddScoped<ISystemDataWipeService, SystemDataWipeService>();
+
 var realtimeHostedServicesEnabled = builder.Configuration.GetValue("HostedServices:RealtimeEnabled", true);
 if (realtimeHostedServicesEnabled)
 {

@@ -55,6 +55,21 @@ public class Invoice : IHasPublicId
     public string? Observaciones { get; set; } // Error messages from AFIP
 
     /// <summary>
+    /// Obra "Empezar de cero" (2026-07-27): candado fiscal para el borrado masivo de datos. Guarda, AL MOMENTO
+    /// DE EMITIR (CAE aprobado), si <c>AfipSettings.IsProduction</c> era <c>true</c>. Es la mejora que
+    /// <c>InvoicePdfService</c> ya venia anticipando por escrito (persistir el ambiente POR COMPROBANTE en vez
+    /// de leer la config actual): un comprobante real (ambiente productivo de ARCA) NUNCA se puede borrar del
+    /// sistema aunque despues el dueño reconfigure AFIP a homologacion.
+    ///
+    /// <para><b>Nullable, SIN backfill</b> (T-8, tabla "Invoices" con datos reales en PROD): las facturas
+    /// emitidas ANTES de esta columna quedan en <c>NULL</c>. El candado de "Empezar de cero" NO confia solo en
+    /// esta columna para esos historicos — usa ADEMAS un chequeo cinturon-y-tiradores
+    /// (<c>AfipSettings.IsProduction == true</c> y existe alguna factura con CAE) para cubrir el hueco. Ver
+    /// <c>SystemDataWipeService.EvaluateFiscalLockAsync</c>.</para>
+    /// </summary>
+    public bool? WasIssuedInProduction { get; set; }
+
+    /// <summary>
     /// Leyenda fiscal obligatoria del comprobante (campo Obs del WSFEv1 / texto del PDF).
     ///
     /// <para><b>Por que es un campo aparte de <see cref="Observaciones"/></b>: Observaciones

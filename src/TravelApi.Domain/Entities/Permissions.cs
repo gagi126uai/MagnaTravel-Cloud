@@ -89,6 +89,16 @@ public static class Permissions
     public const string ConfiguracionUsers = "configuracion.users";
     public const string ConfiguracionAfip = "configuracion.afip";
 
+    /// <summary>
+    /// Obra "Empezar de cero" (2026-07-27): borrado masivo e irreversible de TODOS los datos cargados
+    /// (reservas, clientes, proveedores, facturas, catalogo, etc.), con backup previo obligatorio. Es la
+    /// accion mas destructiva del sistema — por eso vive en un permiso PROPIO, aparte de
+    /// <see cref="ConfiguracionAfip"/> o <see cref="ConfiguracionUsers"/>, y NO entra en los defaults de
+    /// Colaborador ni Vendedor (ver <see cref="DefaultColaborador"/>/<see cref="DefaultVendedor"/>): solo
+    /// Admin la tiene, y solo por venir incluida en <see cref="DefaultAdmin"/> (que es "todos los permisos").
+    /// </summary>
+    public const string ConfiguracionDataWipe = "configuracion.data_wipe";
+
     // CRM
     public const string CrmView = "crm.view";
     public const string CrmEdit = "crm.edit";
@@ -173,7 +183,7 @@ public static class Permissions
         ["Caja"] = new[] { CajaView, CajaEdit },
         ["Tesoreria"] = new[] { TesoreriaSupplierPayments },
         ["Reportes"] = new[] { ReportesView },
-        ["Configuración"] = new[] { ConfiguracionView, ConfiguracionUsers, ConfiguracionAfip },
+        ["Configuración"] = new[] { ConfiguracionView, ConfiguracionUsers, ConfiguracionAfip, ConfiguracionDataWipe },
         ["CRM"] = new[] { CrmView, CrmEdit },
         ["Tarifario"] = new[] { TarifarioView, TarifarioEdit },
         ["Paises y destinos"] = new[] { PaquetesView, PaquetesEdit, PaquetesPublish },

@@ -1646,6 +1646,11 @@ public class AfipService : IAfipService
             invoice.CAE = cae;
             invoice.VencimientoCAE = DateTime.ParseExact(caeVto, "yyyyMMdd", null).ToUniversalTime();
             invoice.NumeroComprobante = cbteNro; // Assign actual number used
+            // Obra "Empezar de cero" (2026-07-27): candado fiscal del borrado masivo de datos. Congelamos
+            // ACA (momento real de emision) si este comprobante salio en el ambiente PRODUCTIVO de ARCA. Una
+            // vez que el dueño reconfigure AfipSettings mas adelante, este valor NO cambia retroactivamente
+            // (a diferencia de leer settings.IsProduction en vivo, que perderia el dato historico).
+            invoice.WasIssuedInProduction = settings.IsProduction;
             // Observado (O): preservamos las observaciones; aprobado limpio (A): null como antes.
             invoice.Observaciones = successObservations;
             // ADR-024 item 3 (auditoria de emision, 2026-06-12): IssuedAt = momento en que ARCA aprobo el
@@ -2871,6 +2876,10 @@ public class AfipService : IAfipService
             invoice.CAE = arcaResult.Cae;
             invoice.Resultado = "A";
             invoice.NumeroComprobante = arcaResult.LastNumero ?? invoice.NumeroComprobante;
+            // Obra "Empezar de cero" (2026-07-27): mismo candado fiscal que el path normal de emision (mas
+            // arriba en este archivo) — este es el MISMO evento ("comprobante quedo con CAE aprobado"), solo
+            // que llego por recovery de idempotencia en vez del POST directo.
+            invoice.WasIssuedInProduction = settings.IsProduction;
             if (arcaResult.IssuedAt.HasValue)
             {
                 invoice.IssuedAt = DateTime.SpecifyKind(arcaResult.IssuedAt.Value, DateTimeKind.Utc);

@@ -2605,6 +2605,19 @@ public class InvoiceService : IInvoiceService
                 creditNoteToConfirm.CAE = arcaResult.Cae;
                 creditNoteToConfirm.Resultado = "A";
                 creditNoteToConfirm.NumeroComprobante = arcaResult.LastNumero ?? creditNoteToConfirm.NumeroComprobante;
+
+                // Obra "Empezar de cero" (2026-07-27): mismo candado fiscal que AfipService.ProcessInvoiceJob —
+                // este es un tercer camino (recovery de idempotencia de la NC parcial huerfana) donde el
+                // comprobante tambien queda con CAE aprobado. Sin esto, una NC parcial recuperada por ESTE
+                // camino especifico quedaria sin marcar y dependeria solo del respaldo cinturon-y-tiradores
+                // (AfipSettings.IsProduction actual + CAE no nulo) del candado del wipe.
+                //
+                // Fix B (revision seguridad, 2026-07-27): "?? true", NO "?? false". Si por algun motivo
+                // AfipSettings no esta cargado en este instante exacto (carrera improbable, config recien
+                // borrada), FAIL-CLOSED: asumimos que PODRIA ser produccion. Un falso bloqueo del wipe es
+                // aceptable; asumir homologacion cuando no sabemos y dejar pasar un comprobante fiscal real no.
+                var afipSettingsForLock = await _context.AfipSettings.AsNoTracking().FirstOrDefaultAsync(ct);
+                creditNoteToConfirm.WasIssuedInProduction = afipSettingsForLock?.IsProduction ?? true;
                 if (arcaResult.IssuedAt.HasValue)
                 {
                     creditNoteToConfirm.IssuedAt = DateTime.SpecifyKind(arcaResult.IssuedAt.Value, DateTimeKind.Utc);
