@@ -261,7 +261,10 @@ jobs:
                   # es la convencion de pg_restore/pg_dump para preservar
                   # mayusculas/minusculas en identificadores (si no, los
                   # pliega a minusculas y no matchea "AfipSettings").
-                  TABLE_ARGS+=("--table=\"${t}\"")
+                  # pg_restore hace match SENSIBLE a mayusculas contra el nombre tal
+                  # cual figura en el dump: se pasa sin comillas literales (con comillas
+                  # el patron no matchea nada y el restore termina "ok" sin restaurar).
+                  TABLE_ARGS+=("--table=${t}")
                   TABLA_LIST_CLEAN+=("${t}")
                 done
 
