@@ -1955,3 +1955,17 @@ más de una factura, y viene escondido con defaults.
 - **(2026-07-27) Estados de reserva en inglés en los dashboards ("Confirmed", "InManagement") se
   traducen** con las mismas etiquetas criollas de las pestañas de Reservas. Entra en el próximo lote
   de pulido junto con todo lo anterior.
+
+### Adenda 2026-07-27 (tarde) — 4 firmas más de Gastón, salidas de las reviews del lote de pulido
+
+- **(2026-07-27) Candado de la ficha del cliente:** con CUIT trabado por comprobantes emitidos, el
+  casillero de documento queda trabado ENTERO (tipo + número + lupita); el DNI/pasaporte guardado se
+  VE en la línea "También tiene ..." pero no se corrige desde ahí (un camino de corrección específico
+  queda como obra futura si hace falta).
+- **(2026-07-27) Backfill de "Reemplazado":** la historia vieja del Libro de Caja se backfillea para
+  que los pares nacidos de EDICIONES anteriores al deploy también digan "Reemplazado" (SQL aditivo y
+  reversible, criterio verificable en los datos).
+- **(2026-07-27) "Posibles clientes activos" del dashboard del vendedor muestra los de TODA la
+  agencia** (los leads son compartidos hasta que alguien los toma; un conteo no expone plata).
+- **(2026-07-27) El período inicial de Reservas queda en "Mes en curso"** aunque la pestaña arranque
+  en "Todas" (pestaña y contadores son consistentes entre sí; el período se amplía a mano si hace falta).
