@@ -4,6 +4,7 @@ using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
 using Moq;
 using TravelApi.Application.Interfaces;
 using TravelApi.Domain.Entities;
@@ -38,6 +39,35 @@ public sealed class SearchServiceSqlTranslationIntegrationTests
 
     public Task InitializeAsync() => _fixture.ResetDatabaseAsync();
     public Task DisposeAsync() => Task.CompletedTask;
+
+    /// <summary>
+    /// Inserta una fila minima en <c>AspNetUsers</c> para satisfacer la FK
+    /// <c>FK_TravelFiles_AspNetUsers_ResponsibleUserId</c> (Postgres real SI valida
+    /// FKs; InMemory no, por eso este bug paso desapercibido en la suite unit).
+    ///
+    /// Patron copiado de <see cref="Cancellation.Integration.OwnershipResolverPostgresTests"/>:
+    /// SQL crudo en vez de <c>UserManager</c> porque esta fixture (<see cref="PostgresIntegrationFixture"/>)
+    /// no levanta el stack de Identity; solo necesitamos que la FILA exista para
+    /// que el insert de la reserva pase la constraint. <c>ON CONFLICT DO NOTHING</c>
+    /// lo hace idempotente si dos tests reusan el mismo userId.
+    /// </summary>
+    private static async Task SeedAspNetUserAsync(TravelApi.Infrastructure.Persistence.AppDbContext ctx, string userId)
+    {
+        await ctx.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "AspNetUsers"
+              ("Id", "UserName", "NormalizedUserName", "Email", "NormalizedEmail",
+               "EmailConfirmed", "PasswordHash", "SecurityStamp", "ConcurrencyStamp",
+               "PhoneNumberConfirmed", "TwoFactorEnabled", "LockoutEnabled",
+               "AccessFailedCount", "FullName", "IsActive")
+            VALUES
+              ({userId}, {userId}, {userId.ToUpperInvariant()},
+               {userId + "@test.local"}, {(userId + "@test.local").ToUpperInvariant()},
+               true, 'test-hash', {Guid.NewGuid().ToString()}, {Guid.NewGuid().ToString()},
+               false, false, false,
+               0, {"Test User " + userId}, true)
+            ON CONFLICT ("Id") DO NOTHING;
+            """);
+    }
 
     [Fact]
     public async Task SearchAsync_ComoAdmin_TraduceLasTresConsultasASqlSinExplotar()
@@ -159,6 +189,13 @@ public sealed class SearchServiceSqlTranslationIntegrationTests
     public async Task SearchAsync_ComoVendedorSinViewAll_BuscandoHotelDeReservaAjena_NoLaEncuentra()
     {
         await using var ctx = _fixture.CreateDbContext();
+
+        // "vendedor-B" es el dueno de la reserva ajena (va en ResponsibleUserId, con FK real
+        // a AspNetUsers en Postgres). "vendedor-A" es quien busca: no queda referenciado por
+        // ninguna FK en este test puntual, pero lo sembramos igual para que la fila exista si
+        // el escenario crece (ej. agregarle una reserva propia) sin volver a pisar esta FK.
+        await SeedAspNetUserAsync(ctx, "vendedor-A");
+        await SeedAspNetUserAsync(ctx, "vendedor-B");
 
         var supplier = new Supplier { Name = "Hotelera Search SA" };
         ctx.Suppliers.Add(supplier);
