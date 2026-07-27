@@ -39,9 +39,11 @@ import {
 } from "recharts";
 
 import { BnaUsdSellerRateCard } from "../components/BnaUsdSellerRateCard";
+import { CurrencyBadge } from "../components/ui/CurrencyBadge";
 import { DashboardSkeleton } from "../components/ui/skeleton";
 import { getPublicId } from "../lib/publicIds";
-import { formatDate } from "../lib/utils";
+import { construirLineasKpiConCompatibilidad } from "../lib/dashboardKpiCurrency";
+import { formatCurrency, formatDate } from "../lib/utils";
 
 export default function DashboardPage() {
     const [dashboard, setDashboard] = useState(null);
@@ -89,6 +91,12 @@ export default function DashboardPage() {
         { name: 'Cancelada', value: dashboard.distribucionEstados?.cancelled ?? dashboard.distribucionEstados?.Cancelled ?? 0, color: '#ef4444' }, // Red-500
     ].filter(item => item.value > 0);
 
+    // ADR-021 Capa 6: dashboard.porMoneda trae los mismos totales pero SEPARADOS por
+    // moneda (nunca mezclados) — ver DashboardByCurrencyDto en IReportService.cs. Los
+    // escalares de arriba (dashboard.ventasDelMes, etc.) son compat vieja y hoy siempre
+    // coinciden con el único ítem ARS de cada lista.
+    const porMoneda = dashboard.porMoneda || null;
+
     return (
         <div className="space-y-8 animate-in fade-in duration-500">
             {/* Header */}
@@ -125,7 +133,7 @@ export default function DashboardPage() {
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                 <KpiCard
                     title="Ventas del Mes"
-                    value={dashboard.ventasDelMes}
+                    lineasPorMoneda={construirLineasKpiConCompatibilidad(porMoneda?.ventasDelMes, dashboard.ventasDelMes)}
                     icon={TrendingUp}
                     color="text-indigo-600 dark:text-indigo-400"
                     bg="bg-indigo-50 dark:bg-indigo-900/10"
@@ -133,7 +141,15 @@ export default function DashboardPage() {
                 />
                 <KpiCard
                     title="Margen Bruto"
-                    value={dashboard.margenBruto}
+                    // BL-2 (revisión 2026-07-27): `DashboardByCurrencyDto.margenBruto` ya viene
+                    // del backend con el mismo contrato que ventasDelMes/cobrosDelMes ([{amount,
+                    // currency}]) — se pinta por moneda igual que las otras tarjetas. El fallback
+                    // a `valorSinMoneda` (número pelado, SIN cartelito de moneda) queda SOLO para
+                    // cuando `porMoneda` no vino en absoluto (deploy viejo en caché, sin ningún
+                    // desglose por moneda todavía) — no afirmamos una moneda que no podemos
+                    // garantizar en ese caso.
+                    lineasPorMoneda={porMoneda ? construirLineasKpiConCompatibilidad(porMoneda.margenBruto, dashboard.margenBruto) : null}
+                    valorSinMoneda={dashboard.margenBruto}
                     icon={PieChart}
                     color="text-emerald-600 dark:text-emerald-400"
                     bg="bg-emerald-50 dark:bg-emerald-900/10"
@@ -141,7 +157,7 @@ export default function DashboardPage() {
                 />
                 <KpiCard
                     title="Cobros Clientes"
-                    value={dashboard.cobrosDelMes}
+                    lineasPorMoneda={construirLineasKpiConCompatibilidad(porMoneda?.cobrosDelMes, dashboard.cobrosDelMes)}
                     icon={Wallet}
                     color="text-blue-600 dark:text-blue-400"
                     bg="bg-blue-50 dark:bg-blue-900/10"
@@ -149,7 +165,13 @@ export default function DashboardPage() {
                 />
                 <KpiCard
                     title="Saldo Pendiente"
-                    value={dashboard.saldoPendiente}
+                    // H16 (barrido E2E 2026-07-25): saldoPendiente puede dar negativo EN UNA
+                    // MONEDA PUNTUAL cuando el saldo a favor de los clientes en esa moneda supera
+                    // lo que efectivamente deben — no es un error. negativoEsSaldoAFavor hace que
+                    // esa línea se muestre en positivo con la leyenda "A favor de clientes"
+                    // (BL-3: esa leyenda se pinta POR LÍNEA adentro de KpiCard, no una sola vez
+                    // al pie de la tarjeta — ver comentario dentro de KpiCard).
+                    lineasPorMoneda={construirLineasKpiConCompatibilidad(porMoneda?.saldoPendiente, dashboard.saldoPendiente, { negativoEsSaldoAFavor: true })}
                     icon={AlertCircle}
                     color="text-rose-600 dark:text-rose-400"
                     bg="bg-rose-50 dark:bg-rose-900/10"
@@ -281,7 +303,11 @@ export default function DashboardPage() {
                                         </div>
                                         <div className="text-right">
                                             <div className="font-bold text-rose-700 dark:text-rose-400">
-                                                ${reserva.balance?.toLocaleString()}
+                                                {/* H16: toLocaleString() sin locale fijo dependía del navegador y
+                                                    mostraba "$9205" sin separador de miles. formatCurrency() es el
+                                                    helper único es-AR (T-4); reserva.currency respeta la moneda
+                                                    real de esa reserva puntual (puede no ser ARS). */}
+                                                {formatCurrency(reserva.balance, reserva.currency || "ARS")}
                                             </div>
                                             <div className="text-[10px] text-muted-foreground uppercase">Pendiente</div>
                                         </div>
@@ -340,7 +366,21 @@ export default function DashboardPage() {
     );
 }
 
-function KpiCard({ title, value, icon: Icon, color, bg, trend }) {
+/**
+ * Tarjeta de un indicador numérico del dashboard (ventas, cobros, saldo pendiente, etc).
+ *
+ * Multimoneda (fix B3, revisión 2026-07-27): recibe `lineasPorMoneda` (armado por
+ * `construirLineasKpiConCompatibilidad`, ver `lib/dashboardKpiCurrency.js`) y pinta UNA
+ * LÍNEA POR MONEDA con su propio cartelito $/US$ — regla P-3, nunca un número que mezcle
+ * pesos y dólares. Antes esta tarjeta recibía un único `value` ya sumado entre monedas y
+ * le pegaba el formato "ARS" encima, aunque el total real mezclara ARS+USD.
+ *
+ * `valorSinMoneda` es la excepción: se usa SOLO cuando `lineasPorMoneda` viene `null`
+ * (hoy, solo Margen Bruto en un deploy viejo sin `porMoneda` en absoluto) — se muestra
+ * el número pelado, sin cartelito de moneda, para no afirmar algo que no se puede
+ * garantizar.
+ */
+function KpiCard({ title, lineasPorMoneda, valorSinMoneda, icon: Icon, color, bg, trend }) {
     return (
         <Card className={`border-none shadow-sm ${bg} transition-all hover:scale-[1.02] cursor-default`}>
             <CardContent className="p-6">
@@ -348,13 +388,40 @@ function KpiCard({ title, value, icon: Icon, color, bg, trend }) {
                     <p className={`text-sm font-medium ${color} opacity-80`}>{title}</p>
                     <Icon className={`h-4 w-4 ${color}`} />
                 </div>
-                <div className="mt-2 flex items-baseline gap-2">
-                    <span className={`text-3xl font-bold ${color}`}>
-                        ${value?.toLocaleString() || '0'}
-                    </span>
-                </div>
-                {trend && (
-                    <p className={`text-xs ${color} mt-1 opacity-70`}>{trend}</p>
+                {lineasPorMoneda ? (
+                    <div className="mt-2 space-y-2">
+                        {lineasPorMoneda.map((linea) => (
+                            <div key={linea.currency}>
+                                <div className="flex items-center gap-1.5">
+                                    <CurrencyBadge currency={linea.currency} size="sm" />
+                                    <span className={`text-2xl font-bold ${color}`}>
+                                        {formatCurrency(linea.monto, linea.currency)}
+                                    </span>
+                                </div>
+                                {/* BL-3 (revisión 2026-07-27): la leyenda va POR LÍNEA, no una sola
+                                    al pie de la tarjeta. Con ARS a favor del cliente y USD en deuda
+                                    AL MISMO TIEMPO, una sola leyenda compartida no dejaba saber cuál
+                                    moneda era cuál (P-3: monedas jamás mezcladas, ni siquiera en el
+                                    texto de apoyo). */}
+                                {linea.esSaldoAFavor ? (
+                                    <p className={`text-xs ${color} font-semibold`}>A favor de clientes</p>
+                                ) : trend ? (
+                                    <p className={`text-xs ${color} opacity-70`}>{trend}</p>
+                                ) : null}
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <>
+                        <div className="mt-2">
+                            {/* Margen Bruto en deploy viejo sin porMoneda: número pelado, sin
+                                cartelito de moneda (ver comentario en el call site). */}
+                            <span className={`text-3xl font-bold ${color}`}>
+                                {(Number(valorSinMoneda) || 0).toLocaleString("es-AR")}
+                            </span>
+                        </div>
+                        {trend ? <p className={`text-xs ${color} mt-1 opacity-70`}>{trend}</p> : null}
+                    </>
                 )}
             </CardContent>
         </Card>

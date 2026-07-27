@@ -23,6 +23,7 @@ import {
     calcularSlotsFaltantesDelSet,
     calcularSugerenciaComposicion,
     calcularTotalPasajerosDeclarados,
+    faltaTitularConNombre,
 } from "./pasajeroHint.js";
 
 // ─── Helpers para construir pasajeros de prueba ───────────────────────────────
@@ -368,4 +369,23 @@ test("calcularSugerenciaComposicion: no ambigua → ambigua false", () => {
     const sug = calcularSugerenciaComposicion(readiness(2, 1, 0, false), reservaVacia);
     assert.ok(sug);
     assert.equal(sug.ambigua, false);
+});
+
+// ─── faltaTitularConNombre (alias legible de calcularHintHotelTraslado, gate H7) ───────
+
+test("faltaTitularConNombre: titular con nombre → false (no falta)", () => {
+    assert.equal(faltaTitularConNombre([paxConTodo(1)]), false);
+});
+
+test("faltaTitularConNombre: sin pasajeros → true (falta)", () => {
+    assert.equal(faltaTitularConNombre([]), true);
+});
+
+test("faltaTitularConNombre: titular sin nombre → true (falta)", () => {
+    assert.equal(faltaTitularConNombre([{ fullName: "" }]), true);
+});
+
+test("faltaTitularConNombre: passengers null/undefined → true (falta, conservador)", () => {
+    assert.equal(faltaTitularConNombre(null), true);
+    assert.equal(faltaTitularConNombre(undefined), true);
 });

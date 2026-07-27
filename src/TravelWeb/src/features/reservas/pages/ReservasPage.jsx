@@ -39,8 +39,13 @@ import { ReservaMobileList } from "../components/ReservaMobileList";
  * "cancelled"     → Anuladas (incluye "esperando reembolso del operador")
  * "lost"          → Perdidas (no compraron)
  * "archived"      → Archivadas
+ * "all"           → Todas (sin filtro de estado; H20, 2026-07-25, decision firmada 12)
  */
 const TABS = [
+  // "Todas" primero (mismo lugar que ya usa el boton "Todas" de Cobranza/Facturacion):
+  // sin filtro de estado, la vista completa para buscar cualquier reserva sin adivinar
+  // en que pestaña esta.
+  { value: "all", label: "Todas" },
   { value: "quotation", label: "Borradores anteriores" },
   { value: "budget", label: "Presupuestos" },
   { value: "in-management", label: "En gestion" },
@@ -138,6 +143,7 @@ export default function ReservasPage() {
             <button
               key={tab.value}
               onClick={() => setViewFilter(tab.value)}
+              data-testid={`tab-reservas-${tab.value}`}
               className={`flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-all ${
                 viewFilter === tab.value
                   ? "bg-white text-slate-900 shadow dark:bg-slate-700 dark:text-white"

@@ -47,6 +47,11 @@ const emptyPassengerForm = {
     documentType: "DNI",
     documentNumber: "",
     birthDate: "",
+    // P2 (barrido E2E 2026-07-25, decisión firmada 6): vencimiento de pasaporte, SIEMPRE
+    // visible en "Datos personales" y opcional (no todos los pasajeros viajan con
+    // pasaporte). El backend ya tiene Passenger.PassportExpiry + la alarma de vigencia;
+    // acá solo faltaba el campo en pantalla.
+    passportExpiry: "",
     nationality: "",
     phone: "",
     email: "",
@@ -320,6 +325,7 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
                 ...emptyPassengerForm,
                 ...passengerToEdit,
                 birthDate: passengerToEdit.birthDate ? passengerToEdit.birthDate.split("T")[0] : "",
+                passportExpiry: passengerToEdit.passportExpiry ? passengerToEdit.passportExpiry.split("T")[0] : "",
             });
         } else {
             setFormData(emptyPassengerForm);
@@ -340,6 +346,7 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
 
         const payload = { ...formData };
         if (!payload.birthDate) payload.birthDate = null;
+        if (!payload.passportExpiry) payload.passportExpiry = null;
         if (payload.nationality === "") payload.nationality = null;
         if (payload.phone === "") payload.phone = null;
         if (payload.email === "") payload.email = null;
@@ -496,10 +503,17 @@ export default function PassengerFormModal({ isOpen, onClose, reservaId, onSucce
 
                     <section className={panelClass}>
                         <SectionTitle icon={CalendarDays}>Datos personales</SectionTitle>
-                        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                        <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
                             <div>
                                 <label className={labelClass}>Fecha nacimiento</label>
                                 <input type="date" className={inputClass} value={formData.birthDate || ""} onChange={(event) => updateField("birthDate", event.target.value)} />
+                            </div>
+                            <div>
+                                {/* P2 (2026-07-25): opcional a propósito — no todos los pasajeros
+                                    viajan con pasaporte. Siempre visible (decisión firmada 6), no
+                                    escondido detrás de ningún tipo de documento. */}
+                                <label className={labelClass}>Vencimiento pasaporte</label>
+                                <input type="date" className={inputClass} value={formData.passportExpiry || ""} onChange={(event) => updateField("passportExpiry", event.target.value)} />
                             </div>
                             <div>
                                 <label className={labelClass}>Nacionalidad</label>

@@ -30,7 +30,8 @@ import {
 import { ListEmptyState } from "../../../components/ui/ListEmptyState";
 import { MobileRecordCard, MobileRecordList } from "../../../components/ui/MobileRecordCard";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
-import { buildMovementRowKey, formatCurrency } from "../lib/financeUtils";
+import { getApiErrorMessage } from "../../../lib/errors";
+import { formatCurrency } from "../lib/financeUtils";
 import { formatDate, formatDateTime } from "../../../lib/utils";
 
 // Formateador legacy mantenido solo para llamadas locales sin moneda explícita (compatibilidad interna)
@@ -71,6 +72,9 @@ const toLocalDateTime = (value) => {
 function ManualMovementModal({ open, onClose, onSubmit, movement }) {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
+  // H12 (barrido E2E 2026-07-25): mensaje de validación propio en español, mostrado en un
+  // cartel dentro de la ficha (P-6/P-7) — nunca el cartelito nativo del navegador en inglés.
+  const [errorValidacion, setErrorValidacion] = useState(null);
 
   useEffect(() => {
     if (!open) {
@@ -92,6 +96,7 @@ function ManualMovementModal({ open, onClose, onSubmit, movement }) {
           }
         : emptyForm
     );
+    setErrorValidacion(null);
   }, [movement, open]);
 
   if (!open) {
@@ -104,6 +109,30 @@ function ManualMovementModal({ open, onClose, onSubmit, movement }) {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    setErrorValidacion(null);
+
+    // H12: validación propia en español. Antes, con el navegador validando el "required"/
+    // "min" nativo de estos inputs, el cartelito que aparecía era el del navegador (en
+    // inglés) y handleSubmit ni se ejecutaba — el mensaje en criollo nunca llegaba a verse
+    // (mismo bug que ya se corrigió en RegistrarCobroInline.jsx, obra C1). Con noValidate
+    // en el <form>, el control de estos 4 campos queda 100% en React.
+    if (!form.amount || Number(form.amount) <= 0) {
+      setErrorValidacion("El monto tiene que ser mayor a 0.");
+      return;
+    }
+    if (!form.method.trim()) {
+      setErrorValidacion("El método es obligatorio.");
+      return;
+    }
+    if (!form.category.trim()) {
+      setErrorValidacion("La categoría es obligatoria.");
+      return;
+    }
+    if (!form.description.trim()) {
+      setErrorValidacion("La descripción es obligatoria.");
+      return;
+    }
+
     setSaving(true);
     try {
       await onSubmit({
@@ -118,6 +147,12 @@ function ManualMovementModal({ open, onClose, onSubmit, movement }) {
         relatedSupplierPublicId: form.relatedSupplierPublicId || null,
       });
       onClose();
+    } catch (error) {
+      // Fix menor (revisión 2026-07-27): antes el rechazo del motor solo se veía en un
+      // toast que se cierra solo, y la promesa quedaba rechazada sin manejar (onSubmit →
+      // useFinanceActions la relanza). Mismo patrón que CustomerFormModal (P-6/P-7): el
+      // motivo queda EN LÍNEA, a la vista, para que el usuario lo lea con calma.
+      setErrorValidacion(getApiErrorMessage(error, "No se pudo guardar el movimiento."));
     } finally {
       setSaving(false);
     }
@@ -140,7 +175,10 @@ function ManualMovementModal({ open, onClose, onSubmit, movement }) {
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="grid gap-4 p-6 md:grid-cols-2">
+        {/* noValidate (H12, obra C1): sin esto, el navegador cortaba el submit con SU propio
+            cartelito de validación en inglés (por el min="0.01"/required de estos inputs) y
+            el mensaje propio en criollo de handleSubmit nunca llegaba a mostrarse. */}
+        <form onSubmit={handleSubmit} className="grid gap-4 p-6 md:grid-cols-2" noValidate>
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700 dark:text-slate-300">Direccion</label>
             <select
@@ -218,6 +256,18 @@ function ManualMovementModal({ open, onClose, onSubmit, movement }) {
               required
             />
           </div>
+
+          {/* Cartel de error (P-6/P-7): en línea, arriba de los botones, se queda a la vista
+              mientras el usuario corrige — nunca un toast que desaparece solo. */}
+          {errorValidacion && (
+            <div
+              className="md:col-span-2 rounded-lg bg-rose-50 border border-rose-200 px-4 py-3 text-sm text-rose-700 dark:bg-rose-950/20 dark:border-rose-900/40 dark:text-rose-300"
+              role="alert"
+              data-testid="movimiento-manual-error"
+            >
+              {errorValidacion}
+            </div>
+          )}
 
           <div className="md:col-span-2 flex justify-end gap-3 pt-2">
             <button
@@ -334,12 +384,17 @@ export function MovementsTab({
               description="Todavia no hay ingresos o egresos registrados en caja."
             />
           ) : (
-            movements.map((movement, index) => {
+            movements.map((movement) => {
               const isIncome = movement.direction === "Income";
               const isManual = movement.isManual;
 
               return (
-                <DataGridRow key={buildMovementRowKey(movement, index)}>
+                // H14 (2026-07-25): key = movement.publicId, el PublicId ESTABLE del propio asiento
+                // de caja que ahora manda el motor. Reemplaza la key sintética
+                // "sourceType-sourcePublicId-direction-índice" (parche de H4): un movimiento manual
+                // y su contra-asiento comparten sourcePublicId, pero cada uno tiene su PROPIO
+                // publicId, así que ya no hace falta armar nada a mano en el front.
+                <DataGridRow key={movement.publicId}>
                   {/* fix 2026-07-22: movement.occurredAt sale de CashLedgerEntry.OccurredAt, que para
                       cobros/pagos ES payment.PaidAt (día de negocio elegido por el cajero, guardado
                       como medianoche UTC — no un instante con hora real). formatDateTime() no lo
@@ -351,8 +406,20 @@ export function MovementsTab({
                         {isIncome ? <ArrowDownLeft className="h-4 w-4" /> : <ArrowUpRight className="h-4 w-4" />}
                       </div>
                       <div>
-                        <div className="text-sm font-semibold text-slate-900 dark:text-white">
-                          {sourceLabels[movement.sourceType] || movement.sourceType}
+                        <div className="flex items-center gap-2">
+                          <div className="text-sm font-semibold text-slate-900 dark:text-white">
+                            {sourceLabels[movement.sourceType] || movement.sourceType}
+                          </div>
+                          {/* H14: badge "Anulado" en AMBAS filas del par (el asiento viejo reemplazado
+                              y su contra-asiento) — antes ninguna de las dos filas avisaba nada. */}
+                          {movement.isAnnulled && (
+                            <span
+                              className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+                              data-testid={`movimiento-anulado-badge-${movement.publicId}`}
+                            >
+                              Anulado
+                            </span>
+                          )}
                         </div>
                         <div className="text-xs text-slate-500 dark:text-slate-400">
                           {movement.numeroReserva ? `Reserva ${movement.numeroReserva}` : movement.supplierName || "Sin vinculo"}
@@ -379,23 +446,51 @@ export function MovementsTab({
                   </DataGridCell>
                   <DataGridActionCell>
                     {isManual && isAdmin ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => openEdit(movement)}
-                          className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-indigo-600 dark:hover:bg-slate-800"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onDeleteManualMovement(movement)}
-                          className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-rose-600 dark:hover:bg-slate-800"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </>
+                      // H14 (P-9): un movimiento ya anulado no se puede volver a editar ni anular —
+                      // los botones quedan APAGADOS, con el motivo siempre a la vista al lado (nunca
+                      // solo en un tooltip).
+                      <div className="flex flex-col items-end gap-1">
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => !movement.isAnnulled && openEdit(movement)}
+                            disabled={movement.isAnnulled}
+                            aria-disabled={movement.isAnnulled}
+                            aria-label="Editar"
+                            data-testid={`movimiento-editar-${movement.publicId}`}
+                            className={`rounded-lg p-2 transition-colors ${
+                              movement.isAnnulled
+                                ? "cursor-not-allowed text-slate-300 dark:text-slate-700"
+                                : "text-slate-500 hover:bg-slate-100 hover:text-indigo-600 dark:hover:bg-slate-800"
+                            }`}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => !movement.isAnnulled && onDeleteManualMovement(movement)}
+                            disabled={movement.isAnnulled}
+                            aria-disabled={movement.isAnnulled}
+                            aria-label="Anular"
+                            data-testid={`movimiento-anular-${movement.publicId}`}
+                            className={`rounded-lg p-2 transition-colors ${
+                              movement.isAnnulled
+                                ? "cursor-not-allowed text-slate-300 dark:text-slate-700"
+                                : "text-slate-500 hover:bg-slate-100 hover:text-rose-600 dark:hover:bg-slate-800"
+                            }`}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                        {movement.isAnnulled && (
+                          <span className="text-[9px] text-slate-400 text-right">
+                            Ya está anulado, no se puede editar ni anular de nuevo.
+                          </span>
+                        )}
+                      </div>
                     ) : (
+                      // El badge "Anulado" para estos movimientos automáticos ya se muestra junto
+                      // al origen (columna Origen, arriba) — no se repite acá (P-16).
                       <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Automatico</span>
                     )}
                   </DataGridActionCell>
@@ -415,17 +510,28 @@ export function MovementsTab({
         />
       ) : (
         <MobileRecordList>
-          {movements.map((movement, index) => {
+          {movements.map((movement) => {
             const isIncome = movement.direction === "Income";
             const isManual = movement.isManual;
 
             return (
               <MobileRecordCard
-                key={buildMovementRowKey(movement, index)}
+                // H14: misma key estable que la tabla desktop (movement.publicId).
+                key={movement.publicId}
                 accentSlot={
                   <div className={`rounded-xl p-2 ${isIncome ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-950/30 dark:text-emerald-400" : "bg-rose-50 text-rose-600 dark:bg-rose-950/30 dark:text-rose-400"}`}>
                     {isIncome ? <ArrowDownLeft className="h-4 w-4" /> : <ArrowUpRight className="h-4 w-4" />}
                   </div>
+                }
+                statusSlot={
+                  movement.isAnnulled ? (
+                    <span
+                      className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+                      data-testid={`movimiento-anulado-badge-mobile-${movement.publicId}`}
+                    >
+                      Anulado
+                    </span>
+                  ) : null
                 }
                 title={sourceLabels[movement.sourceType] || movement.sourceType}
                 subtitle={`${formatDate(movement.occurredAt)} · ${movement.method}`}
@@ -451,22 +557,47 @@ export function MovementsTab({
                 }
                 footerActions={
                   isManual && isAdmin ? (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => openEdit(movement)}
-                        className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-indigo-600 dark:hover:bg-slate-800"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onDeleteManualMovement(movement)}
-                        className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-rose-600 dark:hover:bg-slate-800"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </>
+                    // H14 (P-9): mismo criterio que la tabla desktop — botones apagados +
+                    // motivo a la vista cuando el movimiento ya fue anulado.
+                    <div className="flex flex-col items-end gap-1">
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => !movement.isAnnulled && openEdit(movement)}
+                          disabled={movement.isAnnulled}
+                          aria-disabled={movement.isAnnulled}
+                          aria-label="Editar"
+                          data-testid={`movimiento-editar-mobile-${movement.publicId}`}
+                          className={`rounded-lg p-2 transition-colors ${
+                            movement.isAnnulled
+                              ? "cursor-not-allowed text-slate-300 dark:text-slate-700"
+                              : "text-slate-500 hover:bg-slate-100 hover:text-indigo-600 dark:hover:bg-slate-800"
+                          }`}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => !movement.isAnnulled && onDeleteManualMovement(movement)}
+                          disabled={movement.isAnnulled}
+                          aria-disabled={movement.isAnnulled}
+                          aria-label="Anular"
+                          data-testid={`movimiento-anular-mobile-${movement.publicId}`}
+                          className={`rounded-lg p-2 transition-colors ${
+                            movement.isAnnulled
+                              ? "cursor-not-allowed text-slate-300 dark:text-slate-700"
+                              : "text-slate-500 hover:bg-slate-100 hover:text-rose-600 dark:hover:bg-slate-800"
+                          }`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                      {movement.isAnnulled && (
+                        <span className="text-[9px] text-slate-400 text-right">
+                          Ya está anulado, no se puede editar ni anular de nuevo.
+                        </span>
+                      )}
+                    </div>
                   ) : (
                     <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Automatico</span>
                   )

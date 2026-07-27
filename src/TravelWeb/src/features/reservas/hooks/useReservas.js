@@ -5,6 +5,7 @@ import { useDebounce } from "../../../hooks/useDebounce";
 import { getApiErrorMessage, isDatabaseUnavailableError } from "../../../lib/errors";
 import { getPublicId } from "../../../lib/publicIds";
 import { getReservaArchiveBlockReason } from "../archiveRules";
+import { calcularContadorTodas } from "../lib/reservaTabsMapping";
 
 const emptyPage = {
   items: [],
@@ -190,6 +191,9 @@ export function useReservas() {
       cancelled: summary.cancelledCount || 0,
       lost: summary.lostCount || 0,
       archived: summary.archivedCount || 0,
+      // H20 (2026-07-25): pestaña "Todas" — suma de los 9 estados excluyentes (ver
+      // calcularContadorTodas). No hay campo "AllCount" propio en el backend.
+      all: calcularContadorTodas(summary),
     },
     stats: {
       budgetCount: summary.budgetCount || 0,

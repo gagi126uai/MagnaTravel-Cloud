@@ -1565,6 +1565,7 @@ export function ServiceList({
                                                             reservaId={reservaId}
                                                             serviceType={serviceType}
                                                             servicePublicId={servicePublicId}
+                                                            recordKind={svc.recordKind}
                                                             pasajerosConNombre={pasajerosConNombre}
                                                             coverage={coverage}
                                                             coverageLoading={coverageLoading}
@@ -2168,6 +2169,7 @@ export function ServiceList({
                                                 reservaId={reservaId}
                                                 serviceType={serviceType}
                                                 servicePublicId={servicePublicId}
+                                                recordKind={svc.recordKind}
                                                 pasajerosConNombre={pasajerosConNombre}
                                                 coverage={coverage}
                                                 coverageLoading={coverageLoading}

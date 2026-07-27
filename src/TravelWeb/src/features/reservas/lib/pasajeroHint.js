@@ -110,6 +110,22 @@ export function calcularHintHotelTraslado(passengers) {
 }
 
 /**
+ * Alias legible de calcularHintHotelTraslado para el gate de titular (H7, 2026-07-25):
+ * "El cliente aceptó" en ReservaHeader y su validación defensiva en
+ * handleConfirmReservation (ReservaDetailPage) solo necesitan esta única pregunta —
+ * "¿falta el titular con nombre?" — no el objeto completo de hint por tipo de servicio.
+ * Nombrar la función por lo que decide (en vez de por el helper interno que reusa)
+ * hace que el gate se entienda leyendo el nombre, sin tener que ir a leer el docstring
+ * de calcularHintHotelTraslado. Mismo criterio exacto, cero lógica nueva.
+ *
+ * @param {object[]} passengers - lista de pasajeros de la reserva
+ * @returns {boolean} true si falta el titular con nombre cargado
+ */
+export function faltaTitularConNombre(passengers) {
+    return calcularHintHotelTraslado(passengers).faltaTitular;
+}
+
+/**
  * Calcula el hint para un servicio de ASISTENCIA.
  *
  * Regla: TODOS los N pasajeros declarados deben tener fullName + documentNumber + birthDate.

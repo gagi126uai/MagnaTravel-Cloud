@@ -13,6 +13,8 @@
  * operador) — un solo lenguaje para avanzar en toda la app.
  */
 
+import { SERVICE_RECORD_KIND } from "./reservationServiceModel.js";
+
 // Mapeo recordKind -> segmento de URL de los endpoints PATCH .../status que ya existen
 // en el backend (hotel-bookings, package-bookings, assistance-bookings, transfer-bookings).
 // El aéreo NO está acá a propósito: "Marcar emitido" usa mark-issued (ver más abajo),
@@ -184,4 +186,20 @@ export function mapearTipoEspanolARecordKind(tipoEspanol) {
  */
 export function debeMostrarBotonPrimarioEnCuentaOperador({ canEdit, status, recordKind, reservaPublicId }) {
     return Boolean(canEdit) && status === "Solicitado" && recordKind !== "generic" && Boolean(reservaPublicId);
+}
+
+/**
+ * H19 (barrido E2E 2026-07-25, decisión firmada 9): el aviso "Para: Todos — cargá los
+ * nombres para elegir" del control de asignación (ControlAsignacionServicio) antes salía
+ * en la fila de CUALQUIER servicio sin pasajeros con nombre todavía, incluidos hotel,
+ * paquete y asistencia — ruido en filas donde elegir un pasajero puntual (asiento de avión,
+ * lugar en el traslado) no es una necesidad real hoy. Se restringe a los dos tipos donde sí
+ * lo es: aéreo y traslado. En el resto, sin nombres cargados, el control simplemente no se
+ * muestra todavía (una vez que hay nombres, el control aparece igual para todos los tipos).
+ *
+ * @param {string} recordKind - "flight"|"hotel"|"transfer"|"assistance"|"package"|"generic"
+ * @returns {boolean}
+ */
+export function debeMostrarAvisoSinNombresParaElegir(recordKind) {
+    return recordKind === SERVICE_RECORD_KIND.FLIGHT || recordKind === SERVICE_RECORD_KIND.TRANSFER;
 }

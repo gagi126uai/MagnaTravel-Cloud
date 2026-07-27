@@ -5,9 +5,11 @@ import { api } from "../api";
 import { useAuthState } from "../auth";
 import { BnaUsdSellerRateCard } from "../components/BnaUsdSellerRateCard";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
+import { CurrencyBadge } from "../components/ui/CurrencyBadge";
 import { DashboardSkeleton } from "../components/ui/skeleton";
 import { getPublicId } from "../lib/publicIds";
-import { formatDate } from "../lib/utils";
+import { construirLineasKpiConCompatibilidad } from "../lib/dashboardKpiCurrency";
+import { formatCurrency, formatDate } from "../lib/utils";
 
 export default function AgentDashboard() {
     const { user } = useAuthState();
@@ -63,7 +65,12 @@ export default function AgentDashboard() {
             <BnaUsdSellerRateCard rate={dashboard.bnaUsdSellerRate} />
 
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                <KpiCard title="Ventas personales" value={dashboard.ventasDelMes || 0} icon={TrendingUp} color="text-indigo-600 dark:text-indigo-400" bg="bg-indigo-50 dark:bg-indigo-900/10" />
+                {/* B3 (revisión 2026-07-27): "Ventas personales" separa ARS/USD igual que el
+                    dashboard de administración — ver lib/dashboardKpiCurrency.js.
+                    Ítem 4 del re-review: se usa construirLineasKpiConCompatibilidad en vez del
+                    ternario a mano, que caía al escalar viejo también cuando la lista puntual
+                    venía VACÍA (mes sin ventas = dato real, no dato faltante). */}
+                <KpiCard title="Ventas personales" lineasPorMoneda={construirLineasKpiConCompatibilidad(dashboard.porMoneda?.ventasDelMes, dashboard.ventasDelMes)} icon={TrendingUp} color="text-indigo-600 dark:text-indigo-400" bg="bg-indigo-50 dark:bg-indigo-900/10" />
                 <KpiCard title="Proximas salidas" value={dashboard.proximosViajes?.length || 0} icon={Calendar} color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-50 dark:bg-emerald-900/10" isCurrency={false} />
                 <KpiCard title="Posibles clientes activos" value={dashboard.activePotentialCustomers || 0} icon={Briefcase} color="text-amber-600 dark:text-amber-400" bg="bg-amber-50 dark:bg-amber-900/10" isCurrency={false} />
             </div>
@@ -114,7 +121,16 @@ export default function AgentDashboard() {
     );
 }
 
-function KpiCard({ title, value, icon: Icon, color, bg, isCurrency = true }) {
+/**
+ * Tarjeta KPI del dashboard del vendedor.
+ *
+ * Dos modos:
+ *   - `lineasPorMoneda` (multimoneda, fix B3 2026-07-27): una línea por moneda con su
+ *     cartelito $/US$ — mismo patrón que AdminDashboard.jsx (ver lib/dashboardKpiCurrency.js).
+ *   - `value` + `isCurrency` (modo legacy): para las tarjetas que NO son plata ("Proximas
+ *     salidas", "Posibles clientes activos" — cuentan filas, no montos).
+ */
+function KpiCard({ title, value, lineasPorMoneda, icon: Icon, color, bg, isCurrency = true }) {
     return (
         <Card className={`border-none shadow-sm ${bg} transition-all hover:scale-[1.02] cursor-default`}>
             <CardContent className="p-6">
@@ -122,7 +138,22 @@ function KpiCard({ title, value, icon: Icon, color, bg, isCurrency = true }) {
                     <p className={`text-sm font-medium ${color} opacity-80`}>{title}</p>
                     <Icon className={`h-4 w-4 ${color}`} />
                 </div>
-                <div className={`mt-2 text-3xl font-bold ${color}`}>{isCurrency ? `$${value?.toLocaleString() || "0"}` : value}</div>
+                {lineasPorMoneda ? (
+                    <div className="mt-2 space-y-1">
+                        {lineasPorMoneda.map((linea) => (
+                            <div key={linea.currency} className="flex items-center gap-1.5">
+                                <CurrencyBadge currency={linea.currency} size="sm" />
+                                <span className={`text-2xl font-bold ${color}`}>
+                                    {formatCurrency(linea.monto, linea.currency)}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    // H16 (2026-07-25): toLocaleString() sin locale fijo dependía del navegador
+                    // ("$9205" sin separador de miles). formatCurrency() es el helper único es-AR (T-4).
+                    <div className={`mt-2 text-3xl font-bold ${color}`}>{isCurrency ? formatCurrency(value || 0, "ARS") : value}</div>
+                )}
             </CardContent>
         </Card>
     );

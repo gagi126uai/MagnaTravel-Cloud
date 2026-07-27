@@ -53,7 +53,7 @@ import { api } from "../../../api";
 import { hasPermission } from "../../../auth";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { getPublicId } from "../../../lib/publicIds";
-import { formatCurrency, formatDate } from "../../../lib/utils";
+import { esAnioRealista, formatCurrency, formatDate, formatDateTime } from "../../../lib/utils";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import {
     DataGrid,
@@ -578,6 +578,16 @@ function FilaExtractoProveedor({ linea, currency, montosVisibles, allPayments, c
                     una fecha de negocio (día elegido por el usuario, guardada como medianoche
                     UTC) — ver lib/utils.js. */}
                 {linea.date ? formatDate(linea.date) : "—"}
+                {/* H17 (2026-07-25): hora REAL de registro del pago (auditoría), debajo de la
+                    fecha de negocio — que NO cambia (sigue siendo la fecha elegida al pagar).
+                    pagoCompleto.registeredAt es un instante real (SupplierPayment.CreatedAt). */}
+                {/* Guarda contra filas históricas sin backfill (2026-07-27): un registeredAt con
+                    año "cero" del motor (0001-01-01) no se muestra — ver esAnioRealista en lib/utils. */}
+                {esPago && pagoCompleto?.registeredAt && esAnioRealista(pagoCompleto.registeredAt) && (
+                    <div className="mt-0.5 text-[10px] text-slate-400 dark:text-slate-500">
+                        Registrado: {formatDateTime(pagoCompleto.registeredAt)}
+                    </div>
+                )}
             </DataGridCell>
 
             <DataGridCell>

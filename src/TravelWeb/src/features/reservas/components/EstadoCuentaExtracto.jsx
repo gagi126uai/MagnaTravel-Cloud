@@ -3,7 +3,7 @@ import { RefreshCw, Loader2, BookOpen } from "lucide-react";
 import { api } from "../../../api";
 import { getApiErrorMessage } from "../../../lib/errors";
 import { getPublicId } from "../../../lib/publicIds";
-import { formatCurrency, formatDate } from "../../../lib/utils";
+import { esAnioRealista, formatCurrency, formatDate, formatDateTime } from "../../../lib/utils";
 import { CurrencyBadge } from "../../../components/ui/CurrencyBadge";
 import {
   DataGrid,
@@ -254,6 +254,17 @@ function FilaExtracto({ linea, reserva, congelado, renderAccionesFactura, render
             guardado por el backend como medianoche UTC) y NO la convierte a hora local del
             navegador — eso era lo que corría el día un dia menos. Ver lib/utils.js. */}
         {linea.date ? formatDate(linea.date) : "—"}
+        {/* H17 (2026-07-25): hora REAL de registro del cobro (auditoría), debajo de la
+            fecha de negocio de arriba — que NO se toca (sigue siendo la fecha elegida por
+            el cajero). cobroOrigen.registeredAt es un instante real (Payment.CreatedAt),
+            así que formatDateTime() lo muestra con hora de Argentina fija. */}
+        {/* Guarda contra filas históricas sin backfill (2026-07-27): un registeredAt con
+            año "cero" del motor (0001-01-01) no se muestra — ver esAnioRealista en lib/utils. */}
+        {esCobro && cobroOrigen?.registeredAt && esAnioRealista(cobroOrigen.registeredAt) && (
+          <div className="mt-0.5 text-[10px] text-slate-400 dark:text-slate-500">
+            Registrado: {formatDateTime(cobroOrigen.registeredAt)}
+          </div>
+        )}
       </DataGridCell>
       <DataGridCell>
         <span className={esCargo ? "font-medium text-slate-800 dark:text-slate-200" : "text-slate-600 dark:text-slate-400"}>

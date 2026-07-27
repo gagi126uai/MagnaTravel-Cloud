@@ -14,7 +14,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildMovementRowKey, formatDate } from "./financeUtils.js";
+import { formatDate } from "./financeUtils.js";
 
 // ─── Caso 1: fecha-solo-día (ej. item.startDate de un viaje en Cobranzas) ────
 
@@ -87,37 +87,6 @@ test("formatDate: ida y vuelta — la fecha de salida de un viaje se muestra sin
     assert.equal(formatDate(respuestaSimuladaDelBackend), "23/05/2026");
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// H4 (2026-07-25): buildMovementRowKey — keys únicas en la lista de Caja
-// (MovementsTab + su versión mobile). Bug: un movimiento manual y su
-// contra-asiento comparten sourceType+sourcePublicId (misma fila fantasma al
-// filtrar, porque React confundía las dos filas con la misma key).
-// ─────────────────────────────────────────────────────────────────────────────
-
-test("buildMovementRowKey: movimiento manual normal → key estable con sus datos", () => {
-    const movimiento = { sourceType: "ManualAdjustment", sourcePublicId: "abc-123", direction: "Income" };
-    assert.equal(buildMovementRowKey(movimiento, 0), "ManualAdjustment-abc-123-Income-0");
-});
-
-test("buildMovementRowKey: manual + su contra-asiento (mismo sourcePublicId) → keys DISTINTAS", () => {
-    // Caso real del bug: la reversa comparte sourceType y sourcePublicId con el original,
-    // pero el backend SIEMPRE invierte el Direction (ver CashLedgerEntryFactory.Reverse).
-    const original = { sourceType: "ManualAdjustment", sourcePublicId: "abc-123", direction: "Income" };
-    const contraAsiento = { sourceType: "ManualAdjustment", sourcePublicId: "abc-123", direction: "Expense" };
-    const keyOriginal = buildMovementRowKey(original, 0);
-    const keyContraAsiento = buildMovementRowKey(contraAsiento, 1);
-    assert.notEqual(keyOriginal, keyContraAsiento, "las dos filas de un mismo movimiento manual no pueden compartir key");
-});
-
-test("buildMovementRowKey: dos movimientos distintos con distinto sourcePublicId → keys distintas", () => {
-    const movimientoA = { sourceType: "CustomerPayment", sourcePublicId: "pago-1", direction: "Income" };
-    const movimientoB = { sourceType: "CustomerPayment", sourcePublicId: "pago-2", direction: "Income" };
-    assert.notEqual(buildMovementRowKey(movimientoA, 0), buildMovementRowKey(movimientoB, 1));
-});
-
-test("buildMovementRowKey: el índice desempata como último recurso si todo lo demás coincide", () => {
-    // Escenario hipotético (no debería pasar con los datos reales de hoy), pero la key
-    // tiene que seguir siendo única para que React nunca confunda dos filas.
-    const movimiento = { sourceType: "ManualAdjustment", sourcePublicId: "abc-123", direction: "Income" };
-    assert.notEqual(buildMovementRowKey(movimiento, 0), buildMovementRowKey(movimiento, 1));
-});
+// buildMovementRowKey (H4, 2026-07-25) y sus tests se retiraron en H14 (2026-07-25): el
+// motor ahora manda `publicId`, el identificador ESTABLE del propio asiento de caja, y
+// MovementsTab.jsx lo usa directo como key de fila — ver financeUtils.js.

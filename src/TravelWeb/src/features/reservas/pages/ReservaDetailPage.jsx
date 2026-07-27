@@ -79,7 +79,7 @@ import {
 import { ENLACE_REABRIR_PASO_MULTA } from "../../cancellations/lib/reabrirPasoMultaTextos.js";
 import { elegirMonedaSugeridaParaMulta } from "../lib/operatorPenaltyCurrency";
 import { hasPermission, isAdmin } from "../../../auth";
-import { calcularSugerenciaComposicion, calcularHintHotelTraslado } from "../lib/pasajeroHint";
+import { calcularSugerenciaComposicion, faltaTitularConNombre } from "../lib/pasajeroHint";
 import { EstadoCuentaResumen } from "../components/EstadoCuentaResumen";
 import { EstadoCuentaExtracto } from "../components/EstadoCuentaExtracto";
 // Paso 3 (H2 2026-06-24): helper compartido con EmitirFacturaInline para formatear
@@ -1147,7 +1147,7 @@ export default function ReservaDetailPage() {
    * solapa Pasajeros o el mini-formulario inline al emitir.
    *
    * Si falta el titular con nombre, el botón ya está apagado en ReservaHeader
-   * (mismo criterio, calcularHintHotelTraslado) y el usuario no puede hacer click —
+   * (mismo criterio, faltaTitularConNombre) y el usuario no puede hacer click —
    * esta es la validación defensiva por si igual se llega acá.
    *
    * NOTA: el endpoint /transition-readiness sigue existiendo en el backend y el
@@ -1156,7 +1156,7 @@ export default function ReservaDetailPage() {
    */
   const handleConfirmReservation = async (targetStatus = "InManagement") => {
     // Validación defensiva en el front, mismo criterio que ReservaHeader.
-    const { faltaTitular } = calcularHintHotelTraslado(reserva?.passengers);
+    const faltaTitular = faltaTitularConNombre(reserva?.passengers);
     if (faltaTitular) {
       showError("Tiene que haber un pasajero titular con el nombre cargado antes de continuar.");
       return;

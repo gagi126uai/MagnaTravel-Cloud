@@ -42,11 +42,12 @@ export default function CustomersPage() {
     setIsModalOpen(true);
   };
 
+  // P1 (2026-07-25): handleSaveCustomer ya no traga el error — si falla, lo relanza para
+  // que CustomerFormModal lo muestre en su propio cartel (P-6/P-7), en vez de un toast
+  // genérico que no dice el motivo real (duplicado H3, CUIT inválido H2).
   const onSave = async (formData, customerId) => {
-    const success = await handleSaveCustomer(formData, customerId);
-    if (success) {
-      setIsModalOpen(false);
-    }
+    await handleSaveCustomer(formData, customerId);
+    setIsModalOpen(false);
   };
 
   return (

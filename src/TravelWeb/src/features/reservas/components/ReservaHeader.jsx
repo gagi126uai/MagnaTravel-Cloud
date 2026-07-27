@@ -4,7 +4,7 @@ import { getReservaArchiveBlockReason } from "../archiveRules";
 import { getStatusConfig, translateStatus, isStatusLocked, isReservaEnEstadoVivo, tieneCandadoDeEdicionActivo } from "./ReservaStatusBadge";
 import { ReservaStatusChips } from "./ReservaStatusChips";
 import { isAdmin } from "../../../auth";
-import { calcularHintHotelTraslado } from "../lib/pasajeroHint";
+import { faltaTitularConNombre } from "../lib/pasajeroHint";
 
 // Bug "fechas corridas un día" (2026-07-16): startDate/endDate de la reserva son
 // fechas-solo-día (el usuario elige un día calendario, no una hora). El backend las
@@ -443,11 +443,11 @@ export function ReservaHeader({
                         // recién chocaba más adelante al intentar confirmar un servicio con el
                         // operador (hallazgo #7 del barrido E2E 2026-07-25).
                         //
-                        // Reusamos calcularHintHotelTraslado (pasajeroHint.js) en vez de escribir
-                        // el chequeo de nuevo acá: es EL MISMO criterio que ya usa el motor para
-                        // confirmar hotel/traslado, así el front nunca diverge de esa regla. Cubre
-                        // también el caso "sin pasajeros" (lista vacía → faltaTitular=true).
-                        const { faltaTitular } = calcularHintHotelTraslado(reserva.passengers);
+                        // faltaTitularConNombre (alias de calcularHintHotelTraslado, pasajeroHint.js)
+                        // en vez de escribir el chequeo de nuevo acá: es EL MISMO criterio que ya usa
+                        // el motor para confirmar hotel/traslado, así el front nunca diverge de esa
+                        // regla. Cubre también el caso "sin pasajeros" (lista vacía → true).
+                        const faltaTitular = faltaTitularConNombre(reserva.passengers);
                         return (
                             <>
                                 <button

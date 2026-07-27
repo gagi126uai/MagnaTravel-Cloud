@@ -58,8 +58,10 @@ export function construirUrlBusquedaHistorica(campo, formData, take = 5) {
  *   { fullName, documentType, documentNumber, birthDate, nationality, gender,
  *     phone, email, passportExpiry, usageCount, score }
  *
- * Los campos del form son los mismos pero el modal tiene "passportExpiry" mapeado
- * como campo extra (por ahora no tiene input visible, pero lo guardamos).
+ * P2 (barrido E2E 2026-07-25): "passportExpiry" ahora SÍ tiene input visible en la
+ * sección "Datos personales" del modal (antes se guardaba en el form pero no se
+ * mostraba en pantalla) — se mapea igual que birthDate, para que elegir un pasajero
+ * histórico autocomplete también su vencimiento de pasaporte conocido.
  *
  * @param {object} sugerencia - Un ítem de la respuesta del backend.
  * @returns {object} Campos listos para setFormData en el modal.
@@ -71,6 +73,9 @@ export function mapearSugerenciaAlForm(sugerencia) {
         documentNumber: sugerencia.documentNumber || "",
         // El backend devuelve birthDate como ISO string o null
         birthDate: sugerencia.birthDate ? sugerencia.birthDate.split("T")[0] : "",
+        // Mismo criterio que birthDate: ISO string o null, recortado a "YYYY-MM-DD"
+        // para que calce directo en el <input type="date"> del formulario.
+        passportExpiry: sugerencia.passportExpiry ? sugerencia.passportExpiry.split("T")[0] : "",
         nationality: sugerencia.nationality || "",
         gender: sugerencia.gender || "M",
         phone: sugerencia.phone || "",

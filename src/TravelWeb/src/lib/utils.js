@@ -254,6 +254,29 @@ export function formatDateTime(date) {
 }
 
 /**
+ * Guarda barata contra filas históricas sin backfill (2026-07-27, revisión de hallazgos).
+ * Algunas filas viejas de auditoría (ej. `registeredAt` de pagos/cobros previos a la obra
+ * que agregó ese campo) quedaron con la fecha "cero" que usa el motor para "sin dato"
+ * (0001-01-01), no con `null`. Un `new Date("0001-01-01")` es técnicamente una fecha
+ * VÁLIDA (no da `NaN`), así que `formatDateTime()` la formatearía tal cual y mostraría
+ * "Registrado: 01/01/0001" — un dato técnico que no le sirve a nadie. Esta función
+ * descarta cualquier año anterior al 2000 (ningún dato real de MagnaTravel es de antes).
+ *
+ * @param {Date|string|null|undefined} value
+ * @returns {boolean}
+ */
+export function esAnioRealista(value) {
+    if (!value) return false;
+    const parsed = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(parsed.getTime())) return false;
+    // getUTCFullYear() (no getFullYear()): acá solo nos interesa un chequeo grueso de
+    // "¿esto es una fecha real o la fecha cero del motor?" — usar el año LOCAL del
+    // navegador podría correr una medianoche UTC al año anterior según el huso horario
+    // (mismo tipo de bug que ya resolvieron formatDate()/formatDateTime() de acá arriba).
+    return parsed.getUTCFullYear() >= 2000;
+}
+
+/**
  * Derives up to 2 uppercase initials from a full name string.
  * Returns "?" when name is empty or not a string.
  */

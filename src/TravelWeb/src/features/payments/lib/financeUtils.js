@@ -121,21 +121,7 @@ export function isCreditNote(invoice) {
   return creditNoteTypes.includes(invoice?.tipoComprobante);
 }
 
-/**
- * H4 (2026-07-25): arma una key ÚNICA para cada fila de la lista de movimientos de Caja.
- *
- * El bug: un movimiento manual y su contra-asiento (la reversa que genera "Anular
- * movimiento manual") comparten SourceType y SourcePublicId — ambos apuntan al MISMO
- * ManualCashMovement (ver CashLedgerEntryFactory.Reverse en el backend). Con
- * `key={sourceType-sourcePublicId}` React veía dos filas con la MISMA key y renderizaba
- * mal la lista al filtrar (filas fantasma que no correspondían a los datos reales).
- *
- * La reversa SIEMPRE invierte el Direction (Income↔Expense) respecto del original, así
- * que sumar el direction a la key ya alcanza para separarlas. Sumamos también el índice
- * de la fila como último desempate — es estable porque el orden de `movements` no cambia
- * entre renders para los mismos datos, y nos cubre ante cualquier otro caso futuro de
- * SourcePublicId repetido que hoy no contemplamos.
- */
-export function buildMovementRowKey(movement, index) {
-  return `${movement.sourceType}-${movement.sourcePublicId}-${movement.direction}-${index}`;
-}
+// buildMovementRowKey (H4, 2026-07-25) se retiró en H14 (2026-07-25): el motor ahora manda
+// `publicId`, el identificador ESTABLE del propio asiento de caja (distinto para el original
+// y su contra-asiento), así que el front ya no necesita armar ninguna key a mano. Ver
+// MovementsTab.jsx (key={movement.publicId}).

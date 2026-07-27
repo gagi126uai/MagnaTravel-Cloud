@@ -16,6 +16,7 @@ import {
     debeMostrarCartelEmergente,
     mapearTipoEspanolARecordKind,
     debeMostrarBotonPrimarioEnCuentaOperador,
+    debeMostrarAvisoSinNombresParaElegir,
 } from "./serviceResolutionActions.js";
 
 // ─── resolverAccionesParaServicioPendiente: elegibilidad de botón por tipo (P3=A) ─────
@@ -226,4 +227,30 @@ test("sin reserva asociada -> NO muestra el boton (los endpoints son reserva-sco
         canEdit: true, status: "Solicitado", recordKind: "hotel", reservaPublicId: null,
     });
     assert.equal(resultado, false);
+});
+
+// ─── debeMostrarAvisoSinNombresParaElegir (H19, barrido 2026-07-25, decision firmada 9) ────
+
+test("aereo -> muestra el aviso de sin nombres", () => {
+    assert.equal(debeMostrarAvisoSinNombresParaElegir("flight"), true);
+});
+
+test("traslado -> muestra el aviso de sin nombres", () => {
+    assert.equal(debeMostrarAvisoSinNombresParaElegir("transfer"), true);
+});
+
+test("hotel -> NO muestra el aviso (antes salia en todas las filas)", () => {
+    assert.equal(debeMostrarAvisoSinNombresParaElegir("hotel"), false);
+});
+
+test("paquete -> NO muestra el aviso", () => {
+    assert.equal(debeMostrarAvisoSinNombresParaElegir("package"), false);
+});
+
+test("asistencia -> NO muestra el aviso", () => {
+    assert.equal(debeMostrarAvisoSinNombresParaElegir("assistance"), false);
+});
+
+test("generico -> NO muestra el aviso", () => {
+    assert.equal(debeMostrarAvisoSinNombresParaElegir("generic"), false);
 });

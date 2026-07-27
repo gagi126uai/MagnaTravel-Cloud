@@ -59,22 +59,20 @@ export function useCustomers() {
     setPage(1);
   }, [debouncedSearch, showInactive, pageSize]);
 
+  // P1 (2026-07-25): esta función YA NO atrapa el error del motor con un toast genérico —
+  // lo relanza tal cual para que CustomerFormModal lo muestre EN LÍNEA (P-6/P-7). Es
+  // necesario para que el guard de duplicados (H3) y el CUIT inválido (H2) — que este
+  // mismo lote revive del lado del front — lleguen al vendedor con su motivo real, en vez
+  // de un "No se pudo guardar el cliente" mudo que no dice por qué.
   const handleSaveCustomer = async (formData, customerId = null) => {
-    try {
-      if (customerId) {
-        await api.put(`/customers/${customerId}`, formData);
-        showSuccess("Cliente actualizado correctamente");
-      } else {
-        await api.post("/customers", formData);
-        showSuccess("Cliente creado exitosamente");
-      }
-      await fetchCustomers();
-      return true;
-    } catch (error) {
-      console.error("Error saving customer:", error);
-      showError("No se pudo guardar el cliente");
-      return false;
+    if (customerId) {
+      await api.put(`/customers/${customerId}`, formData);
+      showSuccess("Cliente actualizado correctamente");
+    } else {
+      await api.post("/customers", formData);
+      showSuccess("Cliente creado exitosamente");
     }
+    await fetchCustomers();
   };
 
   const handleToggleStatus = async (customer) => {

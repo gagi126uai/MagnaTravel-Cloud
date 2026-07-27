@@ -11,10 +11,16 @@
  *   - Al tocar → despliega PanelAsignarPasajeros.
  *   - Tras guardar o cancelar → cierra el panel.
  *
+ * H19 (barrido E2E 2026-07-25, decisión firmada 9): el aviso de "sin nombres" solo se
+ * muestra en aéreo y traslado (ver debeMostrarAvisoSinNombresParaElegir). En el resto de
+ * los tipos, sin nombres cargados el control no muestra nada todavía — evita el ruido de
+ * un aviso en filas donde elegir un pasajero puntual no es una necesidad real hoy.
+ *
  * Props:
  *   reservaId            — publicId de la reserva
  *   serviceType          — tipo en formato backend ("Hotel", "Flight", "Transfer", etc.)
  *   servicePublicId      — publicId del servicio
+ *   recordKind           — tipo en formato front ("flight"|"hotel"|"transfer"|"assistance"|"package")
  *   pasajerosConNombre   — array de pasajeros que ya tienen fullName cargado
  *   coverage             — ServiceNominalCoverageDto | null (del hook useServiceNominalCoverage)
  *   coverageLoading      — bool: si el hook está cargando la coverage
@@ -27,11 +33,13 @@
 import React, { useState } from "react";
 import { ChevronDown, Users } from "lucide-react";
 import { PanelAsignarPasajeros } from "./PanelAsignarPasajeros";
+import { debeMostrarAvisoSinNombresParaElegir } from "../lib/serviceResolutionActions";
 
 export function ControlAsignacionServicio({
     reservaId,
     serviceType,
     servicePublicId,
+    recordKind,
     pasajerosConNombre,
     coverage,
     coverageLoading,
@@ -64,6 +72,11 @@ export function ControlAsignacionServicio({
     // Si no hay nombres, el control queda disabled: no se puede acotar sin conocer
     // a los pasajeros concretos (la UX lo dice explícitamente).
     if (!hayNombresCargados) {
+        // H19: fuera de aéreo/traslado, sin nombres el control no muestra nada todavía
+        // (nada que "elegir" para el usuario en esta fila por ahora).
+        if (!debeMostrarAvisoSinNombresParaElegir(recordKind)) {
+            return null;
+        }
         return (
             <span
                 className={`inline-flex items-center gap-1 text-[10px] text-slate-400 dark:text-slate-500 italic ${className}`}

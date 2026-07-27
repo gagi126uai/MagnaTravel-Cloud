@@ -18,7 +18,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { formatDate, formatDateTime, hoyArgentina, aHoraArgentina } from "./utils.js";
+import { formatDate, formatDateTime, hoyArgentina, aHoraArgentina, esAnioRealista } from "./utils.js";
 
 // ─── Caso 1: fecha-solo-día cruda del input (sin pasar por el backend) ───────
 
@@ -138,7 +138,7 @@ test("formatDate: repro EXACTO del bug reportado 2026-07-22 (cobro 22/07 no debe
 });
 
 // ─── formatDateTime(): mismo criterio, para las pantallas que además muestran hora ──────
-// (Movimientos de caja / Historial de cobros — MovementsTab.jsx, HistoryTab.jsx)
+// (Movimientos de caja / Historial de cobros — MovementsTab.jsx, PaymentsHistoryPage.jsx)
 
 test("formatDateTime: fecha de negocio (medianoche UTC, sin hora real) → solo el día, sin hora inventada", () => {
     assert.equal(formatDateTime("2026-07-22T00:00:00Z"), "22/07/2026");
@@ -282,4 +282,36 @@ test("aHoraArgentina: mediodía ART (12:00) → hora 12, sin ambigüedad con for
     assert.equal(resultado.getFullYear(), 2026);
     assert.equal(resultado.getHours(), 12);
     assert.equal(resultado.getMinutes(), 0);
+});
+
+// ─── esAnioRealista — guarda contra filas históricas sin backfill (2026-07-27) ─────
+
+test("esAnioRealista: fecha 'cero' del motor (0001-01-01) -> false", () => {
+    assert.equal(esAnioRealista("0001-01-01T00:00:00Z"), false);
+});
+
+test("esAnioRealista: fecha real reciente -> true", () => {
+    assert.equal(esAnioRealista("2026-07-22T15:00:00Z"), true);
+});
+
+test("esAnioRealista: año exactamente 2000 -> true (límite inclusive)", () => {
+    assert.equal(esAnioRealista("2000-01-01T00:00:00Z"), true);
+});
+
+test("esAnioRealista: año 1999 -> false", () => {
+    assert.equal(esAnioRealista("1999-12-31T00:00:00Z"), false);
+});
+
+test("esAnioRealista: null/undefined -> false, sin lanzar", () => {
+    assert.equal(esAnioRealista(null), false);
+    assert.equal(esAnioRealista(undefined), false);
+});
+
+test("esAnioRealista: string no parseable -> false, sin lanzar", () => {
+    assert.equal(esAnioRealista("no-es-una-fecha"), false);
+});
+
+test("esAnioRealista: acepta un objeto Date directo", () => {
+    assert.equal(esAnioRealista(new Date("2026-01-01T00:00:00Z")), true);
+    assert.equal(esAnioRealista(new Date("0001-01-01T00:00:00Z")), false);
 });

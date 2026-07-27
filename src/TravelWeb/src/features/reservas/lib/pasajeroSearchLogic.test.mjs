@@ -166,6 +166,7 @@ test("mapeo: campos faltantes en la sugerencia → valores por defecto seguros",
     assert.equal(form.documentType, "DNI", "documentType default");
     assert.equal(form.documentNumber, "", "documentNumber vacío si no viene");
     assert.equal(form.birthDate, "", "birthDate vacío si no viene");
+    assert.equal(form.passportExpiry, "", "passportExpiry vacío si no viene");
     assert.equal(form.nationality, "", "nationality vacío si no viene");
     assert.equal(form.gender, "M", "gender default M");
     assert.equal(form.phone, "", "phone vacío si no viene");
@@ -178,12 +179,15 @@ test("mapeo: las notas siempre quedan vacías (no se copian del histórico)", ()
     assert.equal(form.notes, "", "notas siempre vacías al autocompletar");
 });
 
-test("mapeo: passportExpiry del backend no rompe el mapeo (campo extra, no se mapea aún)", () => {
-    // El campo passportExpiry existe en el backend pero el modal no tiene input visible todavía
-    const form = mapearSugerenciaAlForm(sugerencia({ passportExpiry: "2028-01-01" }));
-    // El test verifica que no explota y que los campos conocidos llegan bien
+test("mapeo: passportExpiry del backend SÍ se mapea (P2, 2026-07-25: ya tiene input visible)", () => {
+    const form = mapearSugerenciaAlForm(sugerencia({ passportExpiry: "2028-01-01T00:00:00Z" }));
     assert.equal(form.fullName, "Ana García");
-    assert.ok(!("passportExpiry" in form), "passportExpiry no debe estar en el form todavía");
+    assert.equal(form.passportExpiry, "2028-01-01", "se recorta a YYYY-MM-DD, igual que birthDate");
+});
+
+test("mapeo: sin passportExpiry en la sugerencia -> vacío (no rompe)", () => {
+    const form = mapearSugerenciaAlForm(sugerencia({ passportExpiry: null }));
+    assert.equal(form.passportExpiry, "");
 });
 
 // ─── esDuplicadoEnReserva ─────────────────────────────────────────────────────
