@@ -1,0 +1,325 @@
+name: Ops - Restore de backups (NO TOCA LA BASE VIVA salvo restaurar-tablas)
+
+# ============================================================================
+# QUE ES ESTO
+# ----------------------------------------------------------------------------
+# Herramienta MANUAL para mirar y restaurar backups de Postgres del VPS de
+# produccion, hermana de ops-diagnostico.yml. Se dispara A MANO desde la
+# pestania Actions o con `gh workflow run ops-restore.yml`, y usa la misma
+# llave SSH que el deploy (secrets VPS_*).
+#
+# QUE PUEDE HACER:
+#   - listar-backups   : ls -lh de los directorios de backup. SOLO LECTURA.
+#   - restaurar-shadow  : restaura un .dump ENTERO en la base SOMBRA
+#                         (<db>_shadow). NUNCA toca la base viva. Al final
+#                         imprime conteos de filas de unas pocas tablas para
+#                         confirmar que la sombra quedo sana.
+#   - restaurar-tablas  : restaura SOLO las tablas indicadas (--data-only,
+#                         no borra ni recrea esquema) desde el .dump hacia la
+#                         BASE VIVA. Antes de tocar nada hace un pg_dump de
+#                         respaldo de la base viva completa. Requiere
+#                         confirmacion=RESTAURAR.
+#
+# QUE **NO** HACE (a proposito, en esta version):
+#   - NO hay restore total a la base PRIMARY/viva. scripts/ops/restore-db.sh
+#     soporta --target primary, pero es destructivo (DROP SCHEMA + reemplazo
+#     completo) y NO se expone desde este workflow todavia. Si algun dia hace
+#     falta, se agrega con mas ceremonia (doble confirmacion, aviso de
+#     downtime, backup obligatorio verificado, etc.), no reutilizando esta
+#     accion.
+#   - NUNCA borra volumenes, buckets, ni corre down -v / prune / docker rm.
+#
+# ADVERTENCIA DE PRIVACIDAD
+#   La salida de cada corrida QUEDA GUARDADA en los logs del run de Actions
+#   (nombres de tablas, conteos de filas). Puede insinuar volumen de negocio.
+#   El repositorio DEBE seguir siendo PRIVADO. Nunca se imprimen secretos.
+#
+# SEGURIDAD TECNICA
+#   - Las entradas del usuario NO se interpolan directo en el script: viajan
+#     como variables de entorno (envs:), igual que en ops-diagnostico.yml.
+#   - 'archivo' se valida con regex ^[A-Za-z0-9._-]+\.dump$ (sin '/': anti
+#     path traversal) y se busca UNICAMENTE dentro de los 4 directorios de
+#     backup permitidos, nunca por ruta libre.
+#   - 'tablas' se valida nombre por nombre con ^[A-Za-z0-9_]+$.
+#   - Las acciones que escriben (restaurar-shadow, restaurar-tablas) exigen
+#     confirmacion=RESTAURAR (texto exacto) o el job falla ANTES de tocar
+#     Docker/Postgres.
+#   - restaurar-tablas usa --data-only (nunca DROP/CREATE de esquema) y hace
+#     un backup completo de la base viva ANTES de escribir nada.
+# ============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      accion:
+        description: "Que quiero hacer"
+        type: choice
+        required: true
+        options:
+          - listar-backups
+          - restaurar-shadow
+          - restaurar-tablas
+      archivo:
+        description: "Nombre del .dump (sin ruta), ej: wipe-20260727-223313.dump. Requerido salvo para listar-backups."
+        type: string
+        required: false
+        default: ""
+      tablas:
+        description: "Solo para restaurar-tablas: nombres de tabla separados por coma, ej: AfipSettings,AgencySettings,WhatsAppBotConfigs"
+        type: string
+        required: false
+        default: ""
+      confirmacion:
+        description: "Para restaurar-shadow y restaurar-tablas: escribir exactamente RESTAURAR"
+        type: string
+        required: false
+        default: ""
+
+# Solo lectura del repo: no necesita escribir nada en GitHub.
+permissions:
+  contents: read
+
+# Grupo propio para NO encolarse ni contra los deploys (ci-cd-main) ni contra
+# el diagnostico (ops-diagnostico). cancel-in-progress: false => si hay otra
+# restauracion corriendo, esta espera en vez de pisarla.
+concurrency:
+  group: ops-restore
+  cancel-in-progress: false
+
+jobs:
+  restore:
+    name: Restore de backups (VPS)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ejecutar restore por SSH
+        uses: appleboy/ssh-action@v1.2.0
+        # Las entradas del usuario se pasan como variables de entorno del step
+        # y se reenvian al VPS via `envs:`. Asi el texto que escribio la
+        # persona NUNCA se interpola directo en el script remoto.
+        env:
+          ACCION: ${{ inputs.accion }}
+          ARCHIVO: ${{ inputs.archivo }}
+          TABLAS: ${{ inputs.tablas }}
+          CONFIRMACION: ${{ inputs.confirmacion }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          command_timeout: 15m
+          envs: ACCION,ARCHIVO,TABLAS,CONFIRMACION
+          script: |
+            set -euo pipefail
+            cd "${{ secrets.VPS_PROJECT_DIR }}"
+
+            echo "== Ops-restore: accion='${ACCION}' — $(date -u +%Y-%m-%dT%H:%M:%SZ) =="
+            echo
+
+            # Directorios permitidos para buscar backups. NUNCA se acepta una
+            # ruta libre desde el input: siempre se busca 'archivo' adentro
+            # de estos 4 directorios y nada mas (anti path traversal).
+            ALLOWED_DIRS=(backups/postgres/wipe backups/postgres/daily backups/postgres/weekly backups/postgres/manual)
+
+            # ------------------------------------------------------------
+            # Valida el nombre de archivo: sin '/', termina en .dump.
+            # ------------------------------------------------------------
+            validar_archivo() {
+              if [ -z "${ARCHIVO}" ]; then
+                echo "ERROR: 'archivo' es obligatorio para accion='${ACCION}'."
+                exit 1
+              fi
+              if ! [[ "${ARCHIVO}" =~ ^[A-Za-z0-9._-]+\.dump$ ]]; then
+                echo "ERROR: 'archivo' invalido: '${ARCHIVO}'. Debe ser solo un nombre de archivo (sin '/'), terminado en .dump."
+                exit 1
+              fi
+            }
+
+            # ------------------------------------------------------------
+            # Busca 'archivo' UNICAMENTE dentro de ALLOWED_DIRS. Si aparece
+            # en mas de uno, corta (ambiguo) en vez de adivinar cual usar.
+            # Deja el resultado en BACKUP_PATH.
+            # ------------------------------------------------------------
+            resolver_backup() {
+              local encontrados=()
+              local dir
+              for dir in "${ALLOWED_DIRS[@]}"; do
+                if [ -f "${dir}/${ARCHIVO}" ]; then
+                  encontrados+=("${dir}/${ARCHIVO}")
+                fi
+              done
+              if [ "${#encontrados[@]}" -eq 0 ]; then
+                echo "ERROR: no se encontro '${ARCHIVO}' en ninguno de estos directorios: ${ALLOWED_DIRS[*]}"
+                exit 1
+              fi
+              if [ "${#encontrados[@]}" -gt 1 ]; then
+                echo "ERROR: '${ARCHIVO}' aparece en mas de un directorio permitido, es ambiguo:"
+                printf '  %s\n' "${encontrados[@]}"
+                exit 1
+              fi
+              BACKUP_PATH="${encontrados[0]}"
+            }
+
+            # ------------------------------------------------------------
+            # Las acciones que escriben exigen confirmacion=RESTAURAR
+            # (texto exacto) ANTES de tocar Docker/Postgres.
+            # ------------------------------------------------------------
+            exigir_confirmacion() {
+              if [ "${CONFIRMACION}" != "RESTAURAR" ]; then
+                echo "ERROR: esta accion escribe datos. Hay que pasar confirmacion=RESTAURAR (mayusculas, texto exacto). Valor recibido: '${CONFIRMACION}'"
+                exit 1
+              fi
+            }
+
+            case "${ACCION}" in
+              # ----------------------------------------------------------
+              # LISTAR-BACKUPS: solo lectura. ls -lh de los 4 directorios.
+              # ----------------------------------------------------------
+              listar-backups)
+                for dir in "${ALLOWED_DIRS[@]}"; do
+                  echo "== ${dir} =="
+                  if [ -d "${dir}" ]; then
+                    ls -lh "${dir}"/*.dump 2>/dev/null || echo "(sin backups .dump en ${dir})"
+                  else
+                    echo "(el directorio no existe)"
+                  fi
+                  echo
+                done
+                ;;
+
+              # ----------------------------------------------------------
+              # RESTAURAR-SHADOW: restaura el .dump ENTERO en <db>_shadow.
+              # NUNCA toca la base viva (scripts/ops/restore-db.sh --target
+              # shadow dropea y recrea SOLO la base sombra).
+              # ----------------------------------------------------------
+              restaurar-shadow)
+                validar_archivo
+                resolver_backup
+                exigir_confirmacion
+
+                echo "== Backup a restaurar: ${BACKUP_PATH} =="
+                echo "== Destino: base SOMBRA (<db>_shadow). La base viva NO se toca. =="
+                echo
+
+                scripts/ops/restore-db.sh --backup "${BACKUP_PATH}" --target shadow
+
+                echo
+                echo "== Verificacion: conteo de filas en la base SOMBRA (algunas tablas clave) =="
+                # shellcheck disable=SC1091
+                . scripts/ops/lib/env.sh
+                load_env_file .env
+                POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-travel_db}"
+                POSTGRES_DB="${POSTGRES_DB:-travel}"
+                POSTGRES_USER="${POSTGRES_USER:-traveluser}"
+                RESTORE_SHADOW_DB="${RESTORE_SHADOW_DB:-${POSTGRES_DB}_shadow}"
+
+                if [ -z "${POSTGRES_PASSWORD:-}" ]; then
+                  echo "ERROR: POSTGRES_PASSWORD no esta definido en .env del VPS."
+                  exit 1
+                fi
+
+                for tabla in TravelFiles Customers Payments Invoices; do
+                  echo "-- ${tabla} --"
+                  docker exec \
+                    -e PGPASSWORD="${POSTGRES_PASSWORD}" \
+                    -e PGOPTIONS='-c default_transaction_read_only=on' \
+                    "${POSTGRES_CONTAINER}" \
+                    psql -h 127.0.0.1 -U "${POSTGRES_USER}" -d "${RESTORE_SHADOW_DB}" -P pager=off \
+                      -c "SELECT count(*) FROM \"${tabla}\";" \
+                    || echo "(no se pudo contar '${tabla}' en la sombra; revisar si la tabla existe en este dump)"
+                done
+                ;;
+
+              # ----------------------------------------------------------
+              # RESTAURAR-TABLAS: SOLO datos (--data-only) de las tablas
+              # indicadas, desde el .dump hacia la BASE VIVA. No borra ni
+              # recrea esquema. Antes de escribir, respalda la base viva
+              # completa (scripts/ops/backup-db.sh).
+              # ----------------------------------------------------------
+              restaurar-tablas)
+                validar_archivo
+                resolver_backup
+                exigir_confirmacion
+
+                if [ -z "${TABLAS}" ]; then
+                  echo "ERROR: 'tablas' es obligatorio para accion=restaurar-tablas (lista separada por comas)."
+                  exit 1
+                fi
+
+                IFS=',' read -r -a TABLA_LIST_RAW <<< "${TABLAS}"
+
+                TABLE_ARGS=()
+                TABLA_LIST_CLEAN=()
+                for t in "${TABLA_LIST_RAW[@]}"; do
+                  t="$(printf '%s' "${t}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+                  [ -z "${t}" ] && continue
+                  if ! [[ "${t}" =~ ^[A-Za-z0-9_]+$ ]]; then
+                    echo "ERROR: nombre de tabla invalido: '${t}'. Solo letras, numeros y guion bajo."
+                    exit 1
+                  fi
+                  # Nota: el nombre va entre comillas dobles LITERALES dentro
+                  # del valor (--table="Nombre"), no solo comillas de shell:
+                  # es la convencion de pg_restore/pg_dump para preservar
+                  # mayusculas/minusculas en identificadores (si no, los
+                  # pliega a minusculas y no matchea "AfipSettings").
+                  TABLE_ARGS+=("--table=\"${t}\"")
+                  TABLA_LIST_CLEAN+=("${t}")
+                done
+
+                if [ "${#TABLE_ARGS[@]}" -eq 0 ]; then
+                  echo "ERROR: no quedo ninguna tabla valida tras limpiar 'tablas'."
+                  exit 1
+                fi
+
+                echo "== Backup a restaurar: ${BACKUP_PATH} =="
+                echo "== Tablas: ${TABLA_LIST_CLEAN[*]} =="
+                echo "== Destino: BASE VIVA — SOLO datos de estas tablas (--data-only, no toca esquema) =="
+                echo
+
+                # shellcheck disable=SC1091
+                . scripts/ops/lib/env.sh
+                load_env_file .env
+                POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-travel_db}"
+                POSTGRES_DB="${POSTGRES_DB:-travel}"
+                POSTGRES_USER="${POSTGRES_USER:-traveluser}"
+
+                if [ -z "${POSTGRES_PASSWORD:-}" ]; then
+                  echo "ERROR: POSTGRES_PASSWORD no esta definido en .env del VPS."
+                  exit 1
+                fi
+
+                echo "== Paso 1/3: respaldo de la base VIVA completa, antes de tocar nada =="
+                scripts/ops/backup-db.sh
+
+                echo
+                echo "== Paso 2/3: restaurando SOLO datos (--data-only) de: ${TABLA_LIST_CLEAN[*]} =="
+                echo "AVISO: --data-only no borra ni recrea el esquema (no hay DROP/CREATE TABLE)."
+                echo "AVISO: si alguna de estas tablas ya tuviera filas, esto las duplicaria (son INSERT"
+                echo "sin control de conflicto). Para este caso las tablas de destino estan vacias."
+                docker exec -i \
+                  -e PGPASSWORD="${POSTGRES_PASSWORD}" \
+                  "${POSTGRES_CONTAINER}" \
+                  pg_restore --data-only --no-owner --no-acl -h 127.0.0.1 -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \
+                  "${TABLE_ARGS[@]}" \
+                  < "${BACKUP_PATH}"
+
+                echo
+                echo "== Paso 3/3: conteo de filas restauradas por tabla (BASE VIVA) =="
+                for t in "${TABLA_LIST_CLEAN[@]}"; do
+                  echo "-- ${t} --"
+                  docker exec \
+                    -e PGPASSWORD="${POSTGRES_PASSWORD}" \
+                    -e PGOPTIONS='-c default_transaction_read_only=on' \
+                    "${POSTGRES_CONTAINER}" \
+                    psql -h 127.0.0.1 -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" -P pager=off \
+                      -c "SELECT count(*) FROM \"${t}\";"
+                done
+                ;;
+
+              *)
+                echo "ERROR: accion desconocida: '${ACCION}'"
+                exit 1
+                ;;
+            esac
+
+            echo
+            echo "== Ops-restore OK =="
