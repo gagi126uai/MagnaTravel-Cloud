@@ -390,6 +390,44 @@ test("mismo caso con CUIL (número distinto del taxId vigente) -> también se mu
     assert.deepEqual(resultado, { tipoDocumento: "CUIL", numeroDocumento: "27999888776" });
 });
 
+// Fix bloqueante del reviewer (2026-07-27, verificación visual en PROD — caso real
+// "JAIR", uno de los 5 clientes legacy con CUIT+DNI): documentType NULL en la BD (nunca
+// se llegó a cargar el tipo), pero taxId + documentNumber son números REALES y
+// distintos. Antes, la guarda `if (!taxId || !documentType || !documentNumber)` cortaba
+// camino apenas veía documentType null y devolvía null SIN mirar el número — el DNI
+// quedaba invisible en toda la ficha, contra la firma ("no se esconde ningún documento").
+test("caso real JAIR: taxId=20360536565, documentNumber=36053656, documentType=NULL -> el alternativo SÍ aparece (tipo null)", () => {
+    const resultado = obtenerDocumentoAlternativo({
+        taxId: "20360536565",
+        documentType: null,
+        documentNumber: "36053656",
+    });
+    assert.deepEqual(resultado, { tipoDocumento: null, numeroDocumento: "36053656" });
+});
+
+test("inverso del caso JAIR: documentNumber IGUAL al taxId (sin guiones) y documentType null -> no hay nada que mostrar (no repetir el mismo número)", () => {
+    assert.equal(
+        obtenerDocumentoAlternativo({ taxId: "20360536565", documentType: null, documentNumber: "20360536565" }),
+        null
+    );
+});
+
+test("los números son el mismo documento aunque uno tenga guiones y el otro no -> no hay nada que mostrar (normalización)", () => {
+    assert.equal(
+        obtenerDocumentoAlternativo({ taxId: "20-36053656-5", documentType: "CUIT", documentNumber: "20360536565" }),
+        null
+    );
+    assert.equal(
+        obtenerDocumentoAlternativo({ taxId: "20360536565", documentType: null, documentNumber: "20-36053656-5" }),
+        null
+    );
+});
+
+test("cliente con documentType null pero SIN documentNumber -> no hay nada que mostrar", () => {
+    assert.equal(obtenerDocumentoAlternativo({ taxId: "20360536565", documentType: null, documentNumber: "" }), null);
+    assert.equal(obtenerDocumentoAlternativo({ taxId: "20360536565", documentType: null }), null);
+});
+
 test("cliente null/undefined -> no rompe, no hay nada que mostrar", () => {
     assert.equal(obtenerDocumentoAlternativo(null), null);
     assert.equal(obtenerDocumentoAlternativo(undefined), null);
@@ -408,6 +446,13 @@ test("tipo DNI/Pasaporte/CUIT/CUIL -> el tipo se muestra tal cual", () => {
     assert.equal(describirDocumentoAlternativo({ tipoDocumento: "DNI", numeroDocumento: "36053656" }), "DNI 36053656");
     assert.equal(describirDocumentoAlternativo({ tipoDocumento: "Pasaporte", numeroDocumento: "AB123456" }), "Pasaporte AB123456");
     assert.equal(describirDocumentoAlternativo({ tipoDocumento: "CUIT", numeroDocumento: "20999888777" }), "CUIT 20999888777");
+});
+
+test("caso real JAIR: tipoDocumento null -> frase genérica 'un documento {numero}', NUNCA 'null 36053656'", () => {
+    assert.equal(
+        describirDocumentoAlternativo({ tipoDocumento: null, numeroDocumento: "36053656" }),
+        "un documento 36053656"
+    );
 });
 
 test("sin documento alternativo (null/undefined) -> cadena vacía, no rompe", () => {

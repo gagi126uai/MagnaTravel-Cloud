@@ -177,6 +177,16 @@ export function construirPayloadDocumento({ tipoDocumento, numeroDocumento, docu
     };
 }
 
+// Compara dos números de documento IGNORANDO guiones/espacios (fix del reviewer,
+// verificación visual en PROD 2026-07-27, caso real "JAIR"): un CUIT puede estar
+// guardado con guiones en un campo ("20-36053656-5") y sin guiones en el otro
+// ("20360536565") — son el MISMO número, y compararlos con `===` a secas los trataba
+// como dos documentos distintos por error.
+function sonElMismoNumero(numeroA, numeroB) {
+    const normalizar = (valor) => (valor || "").replace(/[-\s]/g, "");
+    return normalizar(numeroA) === normalizar(numeroB);
+}
+
 /**
  * Devuelve el documento GUARDADO que el casillero único NO está mostrando, para pintarlo
  * como dato de SOLO LECTURA en la ficha del cliente (Obra 3, firma de Gastón 2026-07-27:
@@ -190,39 +200,45 @@ export function construirPayloadDocumento({ tipoDocumento, numeroDocumento, docu
  * CUIT oculto) no puede darse con el modelo actual: si hubiera un taxId cargado,
  * `construirEstadoInicialDocumento` ya lo mostraría a él, no al DNI.
  *
- * Fix bloqueante del reviewer (2026-07-27): había un SEGUNDO caso borde que este helper
- * escondía por error — un cliente legacy con `documentType` FISCAL (CUIT/CUIL) pero con
- * un `documentNumber` DISTINTO del `taxId` vigente (dato inconsistente real, no un
- * duplicado). Antes, como `esTipoDocumentoFiscal(documentType)` daba `true`, la función
- * devolvía `null` asumiendo "es el mismo dato" sin comparar los números — ese
- * `documentNumber` quedaba invisible en toda la pantalla, violando la firma ("no se
- * esconde ningún documento"). Ahora se compara el NÚMERO, no solo el tipo.
+ * Fix bloqueante del reviewer (2026-07-27, primera vuelta): había un caso borde que este
+ * helper escondía por error — un cliente legacy con `documentType` FISCAL (CUIT/CUIL)
+ * pero con un `documentNumber` DISTINTO del `taxId` vigente (dato inconsistente real, no
+ * un duplicado). Se agregó la comparación por NÚMERO, no solo por tipo.
+ *
+ * Fix bloqueante del reviewer (2026-07-27, verificación visual en PROD — caso real
+ * "JAIR"): quedaba un TERCER caso borde. Un cliente legacy puede tener `taxId` cargado,
+ * un `documentNumber` real y DISTINTO, pero `documentType` en `NULL` (dato legacy
+ * incompleto, nunca se llegó a cargar el tipo). La guarda de arriba exigía
+ * `documentType` truthy ANTES de comparar los números — con `documentType` null, la
+ * función cortaba camino y devolvía `null` sin siquiera mirar el número, y ese DNI
+ * quedaba invisible en toda la ficha. Ahora `documentType` es OPCIONAL: alcanza con
+ * tener `taxId` + `documentNumber` real y distinto para mostrar el alternativo, con
+ * tipo `null` cuando no hay dato de tipo (ver `describirDocumentoAlternativo`, que arma
+ * la frase genérica "un documento ..." para ese caso).
  *
  * @param {{taxId?: string|null, documentType?: string|null, documentNumber?: string|null}|null|undefined} customer
- * @returns {{tipoDocumento: string, numeroDocumento: string}|null}
+ * @returns {{tipoDocumento: string|null, numeroDocumento: string}|null}
  */
 export function obtenerDocumentoAlternativo(customer) {
     const taxId = (customer?.taxId || "").trim();
-    const documentType = customer?.documentType;
+    const documentType = customer?.documentType || null;
     const documentNumber = (customer?.documentNumber || "").trim();
 
-    if (!taxId || !documentType || !documentNumber) {
+    if (!taxId || !documentNumber) {
         return null;
     }
 
-    if (esTipoDocumentoFiscal(documentType)) {
-        if (documentNumber === taxId) {
-            // Mismo número que ya se ve en el casillero (o un duplicado legacy exacto) —
-            // no hay un SEGUNDO documento distinto que mostrar.
-            return null;
-        }
-        // Caso borde real: documentType fiscal (CUIT/CUIL) pero con un número DISTINTO
-        // del taxId vigente — dato legacy inconsistente, pero es un documento guardado
-        // de verdad. La etiqueta es el propio tipo (CUIT/CUIL), que siempre está claro
-        // en esta rama (esTipoDocumentoFiscal solo da true para esos dos valores).
-        return { tipoDocumento: documentType, numeroDocumento: documentNumber };
+    if (sonElMismoNumero(documentNumber, taxId)) {
+        // Mismo número que ya se ve en el casillero (con o sin guiones, con o sin tipo
+        // cargado) — no hay un SEGUNDO documento distinto que mostrar.
+        return null;
     }
 
+    // A partir de acá, documentNumber es un número REAL y DISTINTO del taxId vigente:
+    // hay un documento guardado que el casillero no muestra. `documentType` puede venir
+    // con un tipo concreto (CUIT/CUIL/DNI/Pasaporte/Otro) o en `null` (caso JAIR) — en
+    // los dos casos hay que mostrarlo, la única diferencia es la etiqueta (ver
+    // describirDocumentoAlternativo).
     return { tipoDocumento: documentType, numeroDocumento: documentNumber };
 }
 
@@ -234,13 +250,23 @@ export function obtenerDocumentoAlternativo(customer) {
  * documento en vez de una categoría genérica — se reemplaza por una frase legible
  * ("también tiene otro documento AB123").
  *
- * @param {{tipoDocumento: string, numeroDocumento: string}|null|undefined} documentoAlternativo
+ * Fix bloqueante del reviewer (2026-07-27, caso real "JAIR" verificado en PROD):
+ * `tipoDocumento` puede venir en `null` (dato legacy sin tipo cargado en la BD, solo hay
+ * número) — para ese caso se arma una frase genérica ("también tiene un documento
+ * 36053656"), coherente con el mismo criterio que "Otro": nunca se inventa un tipo que
+ * no está guardado, pero tampoco se esconde el número.
+ *
+ * @param {{tipoDocumento: string|null, numeroDocumento: string}|null|undefined} documentoAlternativo
  * @returns {string} texto listo para insertar después de "También tiene " (cadena vacía
  *   si no hay documento alternativo, para que el caller pueda usarlo sin chequear null).
  */
 export function describirDocumentoAlternativo(documentoAlternativo) {
     if (!documentoAlternativo) {
         return "";
+    }
+    if (!documentoAlternativo.tipoDocumento) {
+        // Caso JAIR: no hay tipo guardado, pero el número es un documento real.
+        return `un documento ${documentoAlternativo.numeroDocumento}`;
     }
     if (documentoAlternativo.tipoDocumento === "Otro") {
         return `otro documento ${documentoAlternativo.numeroDocumento}`;
